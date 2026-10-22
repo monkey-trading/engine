@@ -67,7 +67,8 @@ pub struct LogWriter {
     last: Option<Offset>,
     /// A new segment could not be created; the current one keeps taking appends meanwhile.
     rotation_failing: bool,
-    /// Entries were appended since the open segment was last synced.
+    /// The open segment may hold bytes this writer has not synced: entries appended since its last
+    /// sync, or a segment reopened from disk.
     pub(super) unsynced: bool,
 }
 
@@ -177,7 +178,8 @@ impl SegmentedLog {
     /// A writer that appends to the last segment, or starts a new one at the next command if the
     /// manifest lists the last one. It publishes the manifest on `manifest`, starting now, with
     /// everything read counted as flushed. An earlier process may have died before syncing what it
-    /// wrote, so the last segment and the directory are synced first.
+    /// wrote, so the last segment and the directory are synced first, and the open segment starts
+    /// marked unsynced, so a flush with no new append still syncs it before publishing a cursor.
     /// Error cases:
     /// - the directory cannot be created, opened, or synced
     /// - the manifest cannot be trimmed to its whole lines, or opened for appending
@@ -213,7 +215,7 @@ impl SegmentedLog {
             None => None,
         };
         manifest.send_replace(Manifest { flushed: self.last, ..self.manifest });
-        let (last, rotation_failing, unsynced) = (self.last, false, false);
+        let (last, rotation_failing, unsynced) = (self.last, false, open.is_some());
         Ok(LogWriter {
             dir: self.dir,
             segment_commands,
@@ -253,8 +255,8 @@ impl LogWriter {
         Ok(offset)
     }
 
-    /// Writes buffered entries to the open segment and syncs it to the disk, unless nothing was
-    /// appended since the last sync, then publishes the last of them as flushed. Called after each
+    /// Writes buffered entries to the open segment and syncs it to the disk, unless the segment is
+    /// already synced, then publishes the last of them as flushed. Called after each
     /// command batch: a command must be durable before its effects are acknowledged to clients or
     /// read from disk by the stream, and in a confidential VM the guest page cache is lost whenever
     /// the VM stops.

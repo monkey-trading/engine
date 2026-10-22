@@ -167,6 +167,27 @@ fn a_synced_flush_leaves_nothing_to_sync() {
 }
 
 #[test]
+fn a_reopened_writer_starts_unsynced_until_its_first_sync() {
+    // A segment an earlier process wrote may hold bytes no sync of this writer covers: the reopened
+    // writer starts unsynced, so a flush with no new append still syncs before publishing a cursor.
+    let dir = scratch_dir("reopen-flag");
+    write(&dir, 2, &[cmd(0)]);
+    let mut writer =
+        SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(2, watch::channel(Manifest::default()).0).unwrap();
+    assert!(writer.unsynced, "the reopened open segment may hold unsynced bytes");
+    writer.flush().unwrap();
+    assert!(!writer.unsynced, "the flush with no new append synced the reopened segment");
+
+    // With every segment listed there is no open segment that could hold unsynced bytes.
+    let dir = scratch_dir("reopen-listed");
+    write(&dir, 2, &[cmd(0), cmd(1), cmd(2)]);
+    fs::remove_file(dir.join(SEG_2)).unwrap();
+    let writer =
+        SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(2, watch::channel(Manifest::default()).0).unwrap();
+    assert!(!writer.unsynced);
+}
+
+#[test]
 fn a_reopened_log_lists_its_full_last_segment_at_the_next_command() {
     // Also what a crash between syncing a full segment and storing the manifest leaves.
     let dir = scratch_dir("reopen-full");
