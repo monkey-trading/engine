@@ -50,8 +50,9 @@ pub struct AdminArgs {
     /// The node's API, as `https://host:port`.
     #[arg(short, long, default_value = "https://127.0.0.1:8080")]
     node: Uri,
-    /// The node's attested TLS key: `tls_public_key_sha256` from its `/v1/attestation`, in hex,
-    /// once its quote is checked. The connection is refused for any other key.
+    /// The node's attested TLS key hash, in hex: the last 32 bytes of the `bundle` its
+    /// `/v1/attestation` serves, once the bundle is checked against the quote's report data. The
+    /// connection is refused for any other key.
     #[arg(short, long, value_parser = tls::parse_pin)]
     pin: [u8; 32],
     /// A file holding the operator's private key in hex. Without it, `OPERATOR_KEY_FILE` names the

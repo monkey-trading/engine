@@ -122,6 +122,51 @@ fn segments_start_at_a_command_and_the_manifest_lists_completed_ones() {
 }
 
 #[test]
+fn a_flush_syncs_the_open_segment_only_after_an_append() {
+    // The first segment opens through a link to `/dev/null`, which cannot be synced, so a flush
+    // fails exactly when it syncs.
+    let dir = scratch_dir("flush-sync");
+    let mut writer =
+        SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(10, watch::channel(Manifest::default()).0).unwrap();
+    std::os::unix::fs::symlink("/dev/null", dir.join(format!("{SEG_0}.tmp"))).unwrap();
+    writer.append(&cmd(0)).unwrap();
+    let err = writer.flush().unwrap_err();
+    assert!(format!("{err:#}").contains("syncing log"), "{err:#}");
+
+    // With nothing appended since the last sync, a flush does not sync.
+    writer.unsynced = false;
+    writer.flush().unwrap();
+}
+
+#[test]
+fn a_reopened_segment_is_synced_before_its_entries_count_as_flushed() {
+    // A process that died after writing entries, before syncing them, leaves them in the page cache,
+    // where a power loss drops them. Reopened here through a link to `/dev/null`, the segment cannot
+    // be synced, so a writer that skipped syncing it would start and count them as flushed.
+    let dir = scratch_dir("reopen-unsynced");
+    let mut writer =
+        SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(10, watch::channel(Manifest::default()).0).unwrap();
+    writer.append(&cmd(0)).unwrap();
+    drop(writer);
+    let log = SegmentedLog::open(&dir, |_| Ok(())).unwrap();
+    let segment = dir.join(SEG_0);
+    fs::remove_file(&segment).unwrap();
+    std::os::unix::fs::symlink("/dev/null", &segment).unwrap();
+    let err = log.into_writer(10, watch::channel(Manifest::default()).0).err().unwrap();
+    assert!(format!("{err:#}").contains(&format!("syncing {}", segment.display())), "{err:#}");
+}
+
+#[test]
+fn a_synced_flush_leaves_nothing_to_sync() {
+    let dir = scratch_dir("synced");
+    let mut writer =
+        SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(10, watch::channel(Manifest::default()).0).unwrap();
+    writer.append(&cmd(0)).unwrap();
+    writer.flush().unwrap();
+    assert!(!writer.unsynced);
+}
+
+#[test]
 fn a_reopened_log_lists_its_full_last_segment_at_the_next_command() {
     // Also what a crash between syncing a full segment and storing the manifest leaves.
     let dir = scratch_dir("reopen-full");

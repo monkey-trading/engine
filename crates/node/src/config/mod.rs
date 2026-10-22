@@ -3,7 +3,8 @@
 //! under `eip712`) and the operator (`operator.public_key`, with the same chain id and vault),
 //! each recorded when the log first activates a protocol version that needs it and fixed for the
 //! life of the log; and the `[genesis]` section, sequenced after protocol activation. Everything
-//! else configures this node only.
+//! else configures this node only. The SHA-256 of the file is bound into the enclave's
+//! attestation, so a verifier can match it against a published copy of the file.
 
 use std::net::SocketAddr;
 use std::num::{NonZeroU32, NonZeroUsize};
@@ -23,6 +24,7 @@ use engine_core::types::{AccountId, MarketId, Millis};
 use k256::ecdsa;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
+use sha2::{Digest, Sha256};
 
 mod benchmarks;
 pub use benchmarks::{BenchmarkSection, BenchmarkSource, Publisher};
@@ -32,6 +34,12 @@ mod checkpoints;
 pub use checkpoints::CheckpointSection;
 mod telemetry;
 pub use crate::config::telemetry::*;
+
+/// Built with the `production` feature: mock TEE, custody, and feed providers are refused.
+#[cfg(feature = "production")]
+const PRODUCTION_BUILD: bool = true;
+#[cfg(not(feature = "production"))]
+const PRODUCTION_BUILD: bool = false;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -101,6 +109,9 @@ pub struct NodeConfig {
     /// Sequenced as admin commands after protocol activation on a log's first boot, all or nothing,
     /// so the rules every fill ran under are part of the public record.
     pub genesis: Genesis,
+    /// SHA-256 of the file `load` read, which the attestation binds; not a config key.
+    #[serde(skip)]
+    pub file_sha256: [u8; 32],
 }
 
 #[derive(Debug, Deserialize)]
@@ -217,8 +228,9 @@ pub struct FeedsSection {
 
 /// Live venue feeds.
 ///
-/// TODO: this file comes from host storage, so the host chooses the venues and the symbol each
-/// market reads; the attestation must bind the config's hash before that choice is verifiable.
+/// This file comes from host storage, so the host chooses the venues and the symbol each market
+/// reads; the attestation binds the file's SHA-256, so a verifier checks that choice against a
+/// published copy of the config.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VenuesSection {
@@ -280,8 +292,8 @@ pub struct TimeSection {
     pub interval: Duration,
     /// Servers run by independent operators; a sample needs replies from a strict majority.
     ///
-    /// TODO: this file sits on host storage, so these keys are trusted only once the attestation
-    /// binds the config's hash (#26).
+    /// This file sits on host storage; the attestation binds its SHA-256, so a verifier checks these
+    /// keys against a published copy of the config.
     pub servers: Vec<RoughtimeServer>,
 }
 
@@ -354,7 +366,7 @@ impl Venue {
 }
 
 impl NodeConfig {
-    /// Reads and validates the config file at `path`.
+    /// Reads and validates the config file at `path`, and records the SHA-256 of the bytes it read.
     /// Error cases:
     /// - the file cannot be read, or is not valid TOML for this schema (unknown keys included);
     ///   the error names the line but never quotes it, since a line may hold a credential
@@ -375,12 +387,15 @@ impl NodeConfig {
     /// - `operator.public_key` or `custody.vault` does not parse
     /// - genesis lists a market id, a market symbol, or a benchmark name twice
     /// - the engine would reject a genesis command
+    /// - this is a production build and a TEE, custody, or feed provider is `mock`
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        let cfg: NodeConfig = toml::from_str(&text)
+        let mut cfg: NodeConfig = toml::from_str(&text)
             .map_err(|e| parse_error(&e, &text))
             .with_context(|| format!("parsing {}", path.display()))?;
         cfg.validate().with_context(|| format!("validating {}", path.display()))?;
+        cfg.refuse_mocks(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
+        cfg.file_sha256 = Sha256::digest(text.as_bytes()).into();
         Ok(cfg)
     }
 
@@ -456,6 +471,8 @@ mod validation;
 
 #[cfg(test)]
 mod custody_tests;
+#[cfg(test)]
+mod production_tests;
 #[cfg(test)]
 mod telemetry_tests;
 #[cfg(test)]

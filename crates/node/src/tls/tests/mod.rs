@@ -34,7 +34,7 @@ use crate::history::Reader;
 use crate::limits::ApiLimits;
 use crate::log::Manifest;
 use crate::sequencer::{Request, StreamMsg};
-use crate::tee::{Attestation, EnclaveKey, MockAttestor, attest_key};
+use crate::tee::{Attestation, AttestationBundle, EnclaveKey, MockAttestor, attest_bundle};
 use crate::test_support::dev_config;
 
 const V4: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
@@ -113,9 +113,11 @@ async fn the_certificate_key_is_the_attested_one() {
     assert_eq!(status, 200);
 
     let served: serde_json::Value = serde_json::from_str(&body).unwrap();
-    let report_data = hex::decode(served["report_data"].as_str().unwrap().trim_start_matches("0x")).unwrap();
+    let field = |name: &str| hex::decode(served[name].as_str().unwrap().trim_start_matches("0x")).unwrap();
+    let (bundle, report_data) = (field("bundle"), field("report_data"));
     let presented = seen.lock().unwrap().expect("the handshake presented a certificate");
-    assert_eq!(report_data[32..], presented, "report data bytes 32..64 are the presented key's hash");
+    assert_eq!(report_data[..32], Sha256::digest(&bundle)[..], "report data bytes 0..32 hash the served bundle");
+    assert_eq!(bundle[73..105], presented, "bundle bytes 73..105 are the presented key's hash");
     assert_eq!(served["tls_public_key_sha256"], format!("0x{}", hex::encode(presented)));
     assert!(served["quote"].as_str().unwrap().ends_with(&hex::encode(&report_data)));
 
@@ -314,7 +316,12 @@ impl TestNode {
     /// Serves the API on a free port of `ip` under `api`'s limits.
     async fn start(api: ApiSection, ip: IpAddr) -> Self {
         let tls = TlsIdentity::generate().unwrap();
-        let attestation = attest_key(&MockAttestor, &EnclaveKey::generate(), &tls.public_key_sha256).unwrap();
+        let bundle = AttestationBundle {
+            enclave_address: EnclaveKey::generate().address(),
+            config_sha256: [0; 32],
+            tls_public_key_sha256: tls.public_key_sha256,
+        };
+        let attestation = attest_bundle(&MockAttestor, &bundle).unwrap();
         let listener = TcpListener::bind(SocketAddr::new(ip, 0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let (tx, mut rx) = mpsc::channel(64);
@@ -350,9 +357,7 @@ impl TestNode {
     /// Error cases:
     /// - the connection or handshake fails
     async fn connect(&self, from: IpAddr) -> io::Result<ClientTls<TcpStream>> {
-        let report_data = hex::decode(self.attestation.report_data.trim_start_matches("0x")).unwrap();
-        let pin = report_data[32..].try_into().unwrap();
-        self.connect_with(from, Some(pin), Arc::default()).await
+        self.connect_with(from, Some(attested_tls_key(&self.attestation)), Arc::default()).await
     }
 
     /// A TLS connection from `from` that checks the server's key against `pin` and records its hash
@@ -446,6 +451,15 @@ async fn http_head(conn: &mut ClientTls<TcpStream>, method: &str, path: &str, bo
     conn.read_to_end(&mut response).await.unwrap();
     let response = String::from_utf8(response).unwrap();
     (response[9..12].parse().unwrap(), response)
+}
+
+/// The TLS key hash a verifier pins: bundle bytes 73..105, once the bundle's SHA-256 matches report
+/// data bytes 0..32.
+fn attested_tls_key(attestation: &Attestation) -> [u8; 32] {
+    let bundle = hex::decode(attestation.bundle.trim_start_matches("0x")).unwrap();
+    let report_data = hex::decode(attestation.report_data.trim_start_matches("0x")).unwrap();
+    assert_eq!(report_data[..32], Sha256::digest(&bundle)[..], "the bundle is the attested one");
+    bundle[73..105].try_into().unwrap()
 }
 
 /// Everything the server sends on `conn` until it closes the connection, with or without a TLS

@@ -61,12 +61,11 @@ deterministic state machine that applies the trading rules; `engine-node`, which
 into it, publishes the log and its signed checkpoints, and serves the public REST and WebSocket API;
 the custody vault contract that will hold collateral on Arbitrum One; and the enclave image the node
 runs in, together with the attestation that vouches for it. The vault contract takes deposits but
-cannot pay anything out yet, and is in scope as published here; the enclave image is still being
-built, and is in scope as soon as its code is published. A trading account must be able to sign
-requests with its own key, since the engine accepts no contract signatures: a contract wallet funds
-a key that signs for it through the vault's `depositFor`, and a balance credited to a contract
-account can be recovered only through the exit (#48), so a report of that alone is not a new
-finding.
+cannot pay anything out yet, and is in scope as published here; the enclave image, built from
+`image`, is in scope as published here too. A trading account must be able to sign requests with its
+own key, since the engine accepts no contract signatures: a contract wallet funds a key that signs
+for it through the vault's `depositFor`, and a balance credited to a contract account can be
+recovered only through the exit (#48), so a report of that alone is not a new finding.
 
 The findings that matter most let someone take funds they are not owed, fill an order at a price the
 rules do not allow, make the state the node reports differ from the state its published log replays
@@ -80,10 +79,11 @@ scope when a production configuration can reach it, or when whoever runs an atte
 switch them on, since the node reads its configuration from the machine it runs on. A production
 configuration uses hardware attestation, on-chain custody, live prices, and signed requests.
 Requests are signed, and the node refuses unsigned ones unless both the enclave and custody are
-mocks. The other three are not finished: the node can request an attestation report through
-configfs-tsm, but attestation on SEV-SNP hardware and a verifier for it are still being built, as
-are live prices, the separate signed benchmark publisher worker, and on-chain custody, which credits
-vault deposits but does not yet pay withdrawals.
+mocks, and a production build of the node refuses every mock provider. The other three are not
+finished: the node builds into a reproducible SEV-SNP image and requests an attestation report
+through configfs-tsm, but booting that image on SEV-SNP hardware and a verifier for its quotes are
+still being built, as are live prices, the separate signed benchmark publisher worker, and on-chain
+custody, which credits vault deposits but does not yet pay withdrawals.
 
 Out of scope are volumetric denial of service, meaning attacks that work only by flooding the API or
 the network with traffic; social engineering of anyone involved with the project; reorganisations of
@@ -128,11 +128,12 @@ provider mirroring its transcript. The single-fault guarantee still assumes an h
 serves the intended chain and token; endpoint independence alone cannot establish that. It still trusts
 a compromised majority, operator independence is not machine-verifiable, and it takes the vault,
 its token, provider endpoints and finality tag from the
-host-supplied configuration, and keeps its deposit cursor on host storage, where a cursor moved
+host-supplied configuration, which only a verifier holding a published copy of it can check against
+the attested config hash, and keeps its deposit cursor on host storage, where a cursor moved
 forward skips deposits; checkpoint reconciliation detects the resulting deposit-count mismatch
-and escalates after its configured catch-up deadline; and the node refuses unsigned requests unless both the
-enclave and custody are mocks, but does not yet refuse mock custody or simulated prices when it runs
-with hardware attestation, whose report vouches for the signing key but not for the configuration. A
+and escalates after its configured catch-up deadline; and the enclave image's kernel takes input
+from its host that the launch measurement does not cover, without yet bounding it: the data disk's
+filesystem, the ACPI tables, the emulated devices, and the network configuration. A
 gap that this policy, an open issue, or a `TODO` in the code already records is known, so a report
 of it is not a new finding, though its details stay private under the disclosure timeline above; a
 way around a check that exists is a new finding.

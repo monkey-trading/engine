@@ -68,6 +68,8 @@ jobs:
         run: cargo test --workspace --locked
       - name: Check sequencer command latency at 100k accounts
         run: cargo test -p engine-core --test hot_path_benchmark --locked -- --ignored --nocapture
+      - name: Test the node's production build
+        run: cargo test -p engine-node --features production --locked --lib production_build
 
   # Every committed reference log must replay to its roots, and the accounting invariants must hold,
   # on x86_64 and aarch64. The `test` job runs both suites on x86_64 Linux, and this job on aarch64
@@ -188,11 +190,62 @@ jobs:
       - name: Run the durable alert outbox kill/restart dev scenario
         run: ./scripts/dev-alert-outbox.sh
 
+  # Builds the enclave image twice on separate runners with no shared cache, then boots it under
+  # QEMU: the production image must refuse mock providers, and the dev image must attest its config
+  # hash. `image-compare` fails if the two builds differ by a single byte.
+  image:
+    name: image (${{ matrix.run }})
+    strategy:
+      fail-fast: false
+      matrix:
+        run: [first, second]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the image
+        run: ./scripts/build-image.sh out/image
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-${{ matrix.run }}
+          path: out/image/
+          retention-days: 14
+          if-no-files-found: error
+      - name: Install QEMU
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends qemu-system-x86 xxd
+      - name: Boot the image and check it refuses mock providers
+        run: ./scripts/check-image.sh out/image
+      - name: Build the dev image
+        if: matrix.run == 'second'
+        run: ./scripts/build-image.sh --variant dev out/image-dev
+      - name: Boot the dev image and check its attestation
+        if: matrix.run == 'second'
+        run: ./scripts/check-image.sh out/image-dev
+
+  image-compare:
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: image-*
+      - name: Compare the two builds
+        run: |
+          (cd image-first && sha256sum -c SHA256SUMS)
+          (cd image-second && sha256sum -c SHA256SUMS)
+          diff image-first/SHA256SUMS image-second/SHA256SUMS
+          cat image-first/SHA256SUMS image-first/measurement.json
+
   # The single check to require in branch rules. It runs even when a job it needs fails or is
   # skipped, and passes only if every one of them succeeded. Add every new job to `needs`.
   ci-passed:
     if: always()
-    needs: [fmt, file-loc, clippy, test, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, dev-metrics-alerts, dev-alert-outbox]
+    needs: [fmt, file-loc, clippy, test, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, dev-metrics-alerts, dev-alert-outbox, image, image-compare]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

@@ -1,7 +1,10 @@
 //! Genesis is all or nothing: a genesis the engine would reject writes nothing, and recovery refuses
-//! a log whose genesis did not reach the checkpoint after its house capital credit.
+//! a log whose genesis did not reach the checkpoint after its house capital credit, or is not the
+//! config's.
 
 use super::*;
+
+use engine_core::params::NotionalWeighting;
 
 use crate::config::{CustodyProvider, Genesis, NodeConfig};
 use crate::test_support::ANVIL_CONFIG;
@@ -179,4 +182,54 @@ fn a_required_command_the_engine_rejects_stops_the_sequencer_at_the_first_sample
     assert!(!matches!(written.last(), Some(LogEntry::Checkpoint(_))), "{written:?}");
     let err = try_recover(&dir, &signed(31_337)).0.err().expect("refused");
     assert!(format!("{err:#}").contains("the engine rejected seq"), "{err:#}");
+}
+
+#[test]
+fn a_restart_under_another_genesis_refuses_to_start_and_writes_nothing() {
+    let dir = scratch_dir("genesis-mismatch");
+    let genesis = dev_config().genesis;
+    let mut seq = recover(&dir, &signed(31_337));
+    seq.activate_protocol().unwrap();
+    seq.genesis(&genesis).unwrap();
+    drop(seq);
+    let written = log_entries(&dir);
+
+    // The genesis it ran restarts; any edit to the config's genesis is refused.
+    assert!(!recover(&dir, &signed(31_337)).needs_genesis());
+    let edits = [
+        ("house capital", (|g: &mut Genesis| g.house_capital += Fixed::ONE) as fn(&mut Genesis)),
+        ("benchmark rate", |g| g.benchmarks[0].annual_bps += 1),
+        ("one more market", |g| g.markets.push(g.markets[0].clone())),
+        ("one market fewer", |g| drop(g.markets.pop())),
+    ];
+    for (what, edit) in edits {
+        let mut other = dev_config().genesis;
+        edit(&mut other);
+        let err = recover_with(&dir, &signed(31_337), genesis_commands(&other)).err().unwrap();
+        assert!(format!("{err:#}").contains("differs from the config's [genesis]"), "{what}: {err:#}");
+    }
+    assert_eq!(log_entries(&dir), written);
+}
+
+#[test]
+fn a_genesis_set_before_the_notional_weighting_takes_the_one_the_node_carried() {
+    // A log from before `V11`, whose genesis parameters have no weighting, resumes under a config
+    // that adds one; once the node has carried it into the log, a config naming another is refused.
+    let dir = scratch_dir("genesis-carried-notional");
+    fs::create_dir_all(&dir).unwrap();
+    fs::copy(V1_DEV, dir.join("00000000000000000000.jsonl")).unwrap();
+    let config = finished_genesis(&log_entries(&dir));
+    let Some(Command::Admin(AdminCommand::SetParams(params))) = config.first() else {
+        panic!("genesis sets parameters")
+    };
+    let weighting = params.toxicity.notional.expect("the config adds a weighting");
+    recover_with(&dir, &signed(31_337), config.clone()).unwrap().carry_toxicity_notional(weighting).unwrap();
+    recover_with(&dir, &signed(31_337), config.clone()).unwrap();
+
+    let mut other = config;
+    if let Some(Command::Admin(AdminCommand::SetParams(params))) = other.first_mut() {
+        params.toxicity.notional = Some(NotionalWeighting { prior: weighting.memory, ..weighting });
+    }
+    let err = recover_with(&dir, &signed(31_337), other).err().unwrap();
+    assert!(format!("{err:#}").contains("differs from the config's [genesis]"), "{err:#}");
 }

@@ -52,6 +52,8 @@ impl ReplayedLog {
             bail!("the log records operator {recorded:?}, but the config gives {:?}", cfg.operator);
         }
         genesis.ensure_closed()?;
+        // So is one naming another genesis: the node would attest rules its engine does not run.
+        genesis.ensure_matches(&cfg.genesis)?;
         if !deferred.is_empty() && cfg.checkpoints.is_none() {
             bail!("checkpoint-gated withdrawals require the checkpoint service");
         }
@@ -67,7 +69,7 @@ impl Sequencer {
     /// Error cases:
     /// - the log cannot be read or replayed (see `read_log`)
     /// - the log records a client auth or an operator other than the config's, or a genesis it did
-    ///   not apply in full
+    ///   not apply in full, or one other than the config's
     /// - the log cannot be opened for appending, or written
     pub fn recover(
         cfg: SequencerConfig<'_>,
@@ -139,7 +141,8 @@ impl Sequencer {
     /// Recovers the log `read_log` already authenticated.
     /// Error cases:
     /// - the log records a client auth or an operator other than the config's, or a genesis it did
-    ///   not apply in full (see `GenesisProgress::ensure_closed`)
+    ///   not apply in full (see `GenesisProgress::ensure_closed`), or one other than the config's
+    ///   (see `GenesisProgress::ensure_matches`)
     /// - the log cannot be opened for appending, or written
     pub fn recover_from(
         log: ReplayedLog,

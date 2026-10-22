@@ -1,6 +1,6 @@
-//! Node wiring: attest the enclave key and the API's TLS key, recover the engine from its log and
-//! the history index, then run the sequencer, ticker, price feeds, custody, trusted time check,
-//! history index, API, rate-limit upkeep, monitor, metrics listener, and alert routing as
+//! Node wiring: attest the enclave key, the config, and the API's TLS key, recover the engine from
+//! its log and the history index, then run the sequencer, ticker, price feeds, custody, trusted time
+//! check, history index, API, rate-limit upkeep, monitor, metrics listener, and alert routing as
 //! supervised tasks. Any task stopping stops the node. On SIGTERM or ctrl-c, every task but the
 //! sequencer is stopped; the sequencer then drains what is queued and writes a final checkpoint,
 //! and the alerts already logged are delivered.
@@ -31,8 +31,8 @@ mod preflight;
 use crate::limits::{ApiLimits, run_retain};
 use crate::log::Manifest;
 use crate::metrics::Metrics;
-use crate::sequencer::{ReplayedLog, Request, Sequencer, SequencerConfig};
-use crate::tee::{Attestor, ConfigfsTsm, EnclaveKey, MockAttestor, attest_key};
+use crate::sequencer::{ReplayedLog, Request, Sequencer, SequencerConfig, genesis_commands};
+use crate::tee::{AttestationBundle, Attestor, ConfigfsTsm, EnclaveKey, MockAttestor, attest_bundle};
 use crate::telemetry::Telemetry;
 use crate::tls::{TlsIdentity, serve};
 use crate::{metrics, monitor, trusted_time};
@@ -104,14 +104,18 @@ async fn serve_node(
         warn!("using the public development signing key: mock attestation only");
     }
     let tls = TlsIdentity::generate()?;
-    let attestation = Arc::new(
-        attest_key(attestor.as_ref(), &key, &tls.public_key_sha256).context("attesting the enclave and TLS keys")?,
-    );
+    let bundle = AttestationBundle {
+        enclave_address: key.address(),
+        config_sha256: cfg.file_sha256,
+        tls_public_key_sha256: tls.public_key_sha256,
+    };
+    let attestation = Arc::new(attest_bundle(attestor.as_ref(), &bundle).context("attesting the enclave")?);
     info!(
         enclave = %key.address_hex(),
+        config_sha256 = %attestation.config_sha256,
         tls_public_key_sha256 = %attestation.tls_public_key_sha256,
         provider = %attestation.provider,
-        "enclave and TLS keys attested"
+        "enclave, config, and TLS key attested"
     );
 
     let checkpoint_setup = crate::checkpoints::setup::connect(&cfg, &key)
@@ -153,6 +157,7 @@ async fn serve_node(
         client_auth: client_auth.clone(),
         operator,
         metrics: metrics.clone(),
+        genesis: genesis_commands(&cfg.genesis),
     };
     let custody = Custody::connect(&cfg.custody, log.last_seq())
         .inspect_err(|e| error!(alert = "custody_connect_failed", "refusing to serve: {e:#}"))?;

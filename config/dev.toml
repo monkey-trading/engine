@@ -5,8 +5,9 @@
 # Everything under [genesis] is protocol. On first boot it is sequenced into
 # the public log as admin commands, so the rules every fill ran under are on
 # record. It goes in all or nothing: a value the engine would reject fails the
-# config load, and a log whose first boot stopped partway through genesis is
-# refused (remove data/dev/log and data/dev/history with the node stopped).
+# config load, and a log whose first boot stopped partway through genesis, or
+# that ran another genesis, is refused (remove data/dev/log and data/dev/history
+# with the node stopped).
 #
 # Margin rates, the fee, financing markups and benchmark rates are placeholders
 # at professional-client leverage levels; set them before launch.

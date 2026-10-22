@@ -168,7 +168,9 @@ async fn the_sequencer_runs_on_while_the_index_writer_waits_on_its_file() {
             node.submit(deposit(1, &format!("dep-{n}"))).await;
         }
     };
-    timeout(Duration::from_secs(3), sequenced).await.expect("the sequencer does not wait on the index");
+    // Each submit is its own batch, and each batch syncs the log to disk, which macOS makes a full
+    // disk flush; a sequencer waiting on the index would never finish at all.
+    timeout(Duration::from_secs(30), sequenced).await.expect("the sequencer does not wait on the index");
     let reader = Reader::new(file(&index), ready());
     assert!(every_page(&reader, TRADER, None, 200).await.is_empty(), "the writer took nothing while blocked");
     lock.execute_batch("ROLLBACK").unwrap();

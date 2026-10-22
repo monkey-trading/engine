@@ -1,0 +1,25 @@
+#!/bin/sh
+# PID 1 of the enclave image. Mounts the kernel filesystems and the host's data disk, makes the
+# root and /dev read-only so the engine's state can live only on that disk, runs the engine, and
+# powers the guest off when it exits. The engine's inputs from the host are the API and metrics
+# ports, its outbound network, the clock, and the data disk, which holds the config file (its hash
+# is bound into the attestation), the event log, the history index, and the custody deposit cursor.
+#
+# TODO: the kernel also consumes host input the launch measurement does not cover, and nothing
+# bounds what a crafted one can do: the ext4 filesystem the host built, the ACPI tables, the
+# emulated virtio devices, serial port, and real-time clock, and DHCP replies. Authenticate the
+# disk (dm-integrity with a key derived inside the enclave, or a raw block device for the log) and
+# measure the ACPI tables.
+set -eu
+mount -t devtmpfs devtmpfs /dev
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t configfs configfs /sys/kernel/config
+mount -t ext4 -o nosuid,nodev,noexec /dev/vda /data
+mount -o remount,ro /
+mount -o remount,bind,ro /dev
+status=0
+/engine run --config /data/config.toml || status=$?
+echo "engine exited with status $status; powering off"
+sync
+poweroff -f

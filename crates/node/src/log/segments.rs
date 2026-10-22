@@ -67,6 +67,8 @@ pub struct LogWriter {
     last: Option<Offset>,
     /// A new segment could not be created; the current one keeps taking appends meanwhile.
     rotation_failing: bool,
+    /// Entries were appended since the open segment was last synced.
+    pub(super) unsynced: bool,
 }
 
 /// What the manifest needs to know about a segment, kept up to date as it is written.
@@ -174,11 +176,12 @@ impl SegmentedLog {
 
     /// A writer that appends to the last segment, or starts a new one at the next command if the
     /// manifest lists the last one. It publishes the manifest on `manifest`, starting now, with
-    /// everything read counted as flushed.
+    /// everything read counted as flushed. An earlier process may have died before syncing what it
+    /// wrote, so the last segment and the directory are synced first.
     /// Error cases:
     /// - the directory cannot be created, opened, or synced
     /// - the manifest cannot be trimmed to its whole lines, or opened for appending
-    /// - the last segment cannot be opened for appending
+    /// - the last segment cannot be opened for appending, or synced
     pub fn into_writer(self, segment_commands: u64, manifest: watch::Sender<Manifest>) -> anyhow::Result<LogWriter> {
         fs::create_dir_all(&self.dir).with_context(|| format!("creating {}", self.dir.display()))?;
         // Drop a listing a crash cut short, so the next one starts on its own line.
@@ -190,16 +193,13 @@ impl SegmentedLog {
                 .and_then(|f| f.set_len(self.manifest_len))
                 .with_context(|| format!("trimming {}", manifest_path.display()))?;
         }
-        let created = !manifest_path.exists();
         let manifest_file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&manifest_path)
             .with_context(|| format!("opening {}", manifest_path.display()))?;
         let dir_handle = File::open(&self.dir).with_context(|| format!("opening {}", self.dir.display()))?;
-        if created {
-            dir_handle.sync_all().with_context(|| format!("syncing {}", self.dir.display()))?;
-        }
+        dir_handle.sync_all().with_context(|| format!("syncing {}", self.dir.display()))?;
         let open = match self.open {
             Some(segment) => {
                 let path = self.dir.join(segment_name(segment.first_seq));
@@ -207,12 +207,13 @@ impl SegmentedLog {
                     .append(true)
                     .open(&path)
                     .with_context(|| format!("opening {}", path.display()))?;
+                file.sync_data().with_context(|| format!("syncing {}", path.display()))?;
                 Some((segment, BufWriter::new(file)))
             }
             None => None,
         };
         manifest.send_replace(Manifest { flushed: self.last, ..self.manifest });
-        let (last, rotation_failing) = (self.last, false);
+        let (last, rotation_failing, unsynced) = (self.last, false, false);
         Ok(LogWriter {
             dir: self.dir,
             segment_commands,
@@ -222,6 +223,7 @@ impl SegmentedLog {
             open,
             last,
             rotation_failing,
+            unsynced,
         })
     }
 }
@@ -243,35 +245,38 @@ impl LogWriter {
         let (segment, out) = self.open.as_mut().context("log entry before the first command of its segment")?;
         let mut line = serde_json::to_vec(entry).context("encoding log entry")?;
         line.push(b'\n');
+        // Set first: the buffer may reach the file before `flush`, and those bytes need syncing too.
+        self.unsynced = true;
         out.write_all(&line).context("writing log entry")?;
         segment.record(&line, Some(entry));
         self.last = Some(offset);
         Ok(offset)
     }
 
-    /// Writes buffered entries to the file, then publishes the last of them as flushed. Called
-    /// after each command batch: a command must be durable before its effects are acknowledged to
-    /// clients or read from disk by the stream.
+    /// Writes buffered entries to the open segment and syncs it to the disk, unless nothing was
+    /// appended since the last sync, then publishes the last of them as flushed. Called after each
+    /// command batch: a command must be durable before its effects are acknowledged to clients or
+    /// read from disk by the stream, and in a confidential VM the guest page cache is lost whenever
+    /// the VM stops.
     /// Error cases:
-    /// - the write to the file fails
+    /// - the write to the file, or the sync, fails
     pub fn flush(&mut self) -> anyhow::Result<()> {
-        if let Some((_, out)) = &mut self.open {
+        if let Some((_, out)) = self.open.as_mut().filter(|_| self.unsynced) {
             out.flush().context("flushing log")?;
+            out.get_ref().sync_data().context("syncing log")?;
+            self.unsynced = false;
         }
         let last = self.last;
         self.manifest.send_modify(|published| published.flushed = last);
         Ok(())
     }
 
-    /// Flushes, then forces the open segment's data and the directory entry naming it to
+    /// Flushes, which syncs the open segment's data, then forces the directory entry naming it to
     /// storage, so its entries survive a host kill or a power loss as well as a process crash.
     /// Error cases:
     /// - the write or either sync fails
     pub fn sync(&mut self) -> anyhow::Result<()> {
         self.flush()?;
-        if let Some((_, out)) = &self.open {
-            out.get_ref().sync_data().context("syncing log")?;
-        }
         self.dir_handle.sync_all().with_context(|| format!("syncing {}", self.dir.display()))
     }
 
@@ -283,7 +288,7 @@ impl LogWriter {
     /// - the new segment cannot be created and no segment is open
     /// - a segment by the new name already exists
     /// - the current segment cannot be flushed or synced, or its listing cannot be stored
-    /// - the new segment cannot be renamed into place
+    /// - the new segment cannot be renamed into place, or the directory naming it synced
     fn start_segment(&mut self, first_seq: u64) -> anyhow::Result<()> {
         let path = self.dir.join(segment_name(first_seq));
         let staged = self.dir.join(format!("{}.tmp", segment_name(first_seq)));
@@ -316,6 +321,8 @@ impl LogWriter {
         }
         fs::rename(&staged, &path).with_context(|| format!("renaming {} into place", staged.display()))?;
         self.open = Some((Segment::empty(first_seq), BufWriter::new(file)));
+        // A flush syncs only the segment's data, so its name is made durable here.
+        self.dir_handle.sync_all().with_context(|| format!("syncing {}", self.dir.display()))?;
         if std::mem::take(&mut self.rotation_failing) {
             info!(alert_resolved = "log_rotation_failed", "log segments rotate again");
         }

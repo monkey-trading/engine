@@ -69,14 +69,14 @@ impl ServerCertVerifier for PinnedKey {
     }
 }
 
-/// Parses a pin: the node's attested `tls_public_key_sha256`, 32 bytes in hex.
+/// Parses a pin: the TLS key hash in the node's attested bundle, 32 bytes in hex.
 /// Error cases:
 /// - not 32 bytes of hex, with or without `0x`
 pub(crate) fn parse_pin(text: &str) -> Result<[u8; 32], String> {
     hex::decode(text.trim_start_matches("0x"))
         .ok()
         .and_then(|bytes| bytes.try_into().ok())
-        .ok_or_else(|| "a pin is the node's attested tls_public_key_sha256: 32 bytes in hex".to_owned())
+        .ok_or_else(|| "a pin is the TLS key hash in the node's attested bundle: 32 bytes in hex".to_owned())
 }
 
 /// A TLS 1.3 connection to `host`:`port` whose server key hashes to `pin`.

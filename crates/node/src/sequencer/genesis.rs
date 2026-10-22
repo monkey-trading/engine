@@ -1,13 +1,14 @@
 //! Genesis: the `[genesis]` config as the commands that open a log, the check that the engine
 //! accepts every one of them before any is written, and how far a replayed log got through them.
 //! Genesis is all or nothing: recovery refuses a log that started genesis without reaching the
-//! checkpoint after its house capital credit.
+//! checkpoint after its house capital credit, and one whose genesis is not the config's.
 
 use anyhow::{Context, bail};
 use engine_core::Engine;
 use engine_core::auth::{ClientAuth, Operator};
 use engine_core::command::{AdminCommand, Command, Sequenced};
 use engine_core::event::Event;
+use engine_core::params::NotionalWeighting;
 
 use crate::config::Genesis;
 use crate::sequencer::required::activation_commands;
@@ -35,6 +36,11 @@ pub struct GenesisProgress {
     restarted: Option<u64>,
     /// Whether any command follows the credit.
     followed: bool,
+    /// The commands from the start of genesis to its credit, in order.
+    commands: Vec<Command>,
+    /// The toxicity notional weighting the node carried, after genesis, into parameters set before
+    /// `V11` without one (see `Sequencer::carry_toxicity_notional`).
+    carried: Option<NotionalWeighting>,
 }
 
 impl GenesisProgress {
@@ -43,6 +49,9 @@ impl GenesisProgress {
         let cmd = &sequenced.cmd;
         if self.credited {
             self.followed = true;
+            if let Command::Admin(AdminCommand::SetToxicityNotional(weighting)) = cmd {
+                self.carried.get_or_insert(*weighting);
+            }
             return;
         }
         if self.started.is_none() && !is_genesis_command(cmd) {
@@ -52,6 +61,7 @@ impl GenesisProgress {
             self.restarted.get_or_insert(sequenced.seq);
         }
         self.started.get_or_insert(sequenced.seq);
+        self.commands.push(cmd.clone());
         match rejection(events) {
             Some(reason) => {
                 self.rejected.get_or_insert_with(|| (sequenced.seq, reason.to_owned()));
@@ -82,6 +92,46 @@ impl GenesisProgress {
             return Ok(());
         };
         bail!("{flaw}; {}", if self.followed { KEEP_LOG } else { FRESH_LOG })
+    }
+
+    /// Refuses a log whose genesis is not `genesis`, the commands the config's genesis sequences, so
+    /// the config hash the node attests names the genesis its engine runs under. Parameters genesis
+    /// set before `V11` have no toxicity notional weighting: the config's stands in for it, and once
+    /// the node has carried a weighting into the log, it must be that one.
+    /// Error cases:
+    /// - genesis started, and its commands differ from `genesis`
+    pub fn ensure_matches(&self, genesis: &[Command]) -> anyhow::Result<()> {
+        if self.started.is_none() {
+            return Ok(());
+        }
+        let mut ran = self.commands.clone();
+        if let (
+            Some(Command::Admin(AdminCommand::SetParams(logged))),
+            Some(Command::Admin(AdminCommand::SetParams(config))),
+        ) = (ran.first_mut(), genesis.first())
+            && logged.toxicity.notional.is_none()
+        {
+            logged.toxicity.notional = self.carried.or(config.toxicity.notional);
+        }
+        if ran == genesis {
+            return Ok(());
+        }
+        let index = ran.iter().zip(genesis).take_while(|(got, want)| got == want).count();
+        bail!(
+            "the log's genesis differs from the config's [genesis] at command {index}; start the node under \
+             the [genesis] the log was started with"
+        )
+    }
+
+    /// The genesis the log ran, as the config of a node that resumes the log gives it: parameters set
+    /// before `V11` take `weighting`, which the node carries into the log.
+    #[cfg(test)]
+    pub(crate) fn as_config(&self, weighting: Option<NotionalWeighting>) -> Vec<Command> {
+        let mut genesis = self.commands.clone();
+        if let Some(Command::Admin(AdminCommand::SetParams(params))) = genesis.first_mut() {
+            params.toxicity.notional = params.toxicity.notional.or(weighting);
+        }
+        genesis
     }
 }
 

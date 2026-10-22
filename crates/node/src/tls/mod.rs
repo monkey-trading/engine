@@ -1,10 +1,11 @@
 //! The public API's server: TLS terminated inside the enclave, so the host can neither read nor
 //! alter client traffic, under the connection caps and timeouts in `[api]`. The key is generated
 //! in the enclave at boot and never leaves it; a restart makes a new one, and a new attestation.
-//! The certificate is self-signed; what makes it trustworthy is the attestation, whose report data
-//! carries the SHA-256 of the certificate's DER SubjectPublicKeyInfo in bytes 32..64. A client
-//! that has checked the quote pins that hash, which is the key pin curl takes as
-//! `--pinnedpubkey sha256//<base64 of report data bytes 32..64>`.
+//! The certificate is self-signed; what makes it trustworthy is the attestation, whose bundle
+//! carries the SHA-256 of the certificate's DER SubjectPublicKeyInfo in bytes 73..105 (see
+//! `tee::AttestationBundle`). A client that has checked the quote, and that the bundle hashes to its
+//! report data, pins that hash, which is the key pin curl takes as
+//! `--pinnedpubkey sha256//<base64 of bundle bytes 73..105>`.
 
 use std::io::{self, ErrorKind};
 use std::pin::Pin;
