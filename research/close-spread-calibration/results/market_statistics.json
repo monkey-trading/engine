@@ -1,0 +1,5962 @@
+{
+  "engine_revision": "41a9ef4a52cb26ac592c5a0e372f610d8d1ba067",
+  "input_sha256": {
+    "genesis_inventory": "72ffcc75459ccd23ea1459d87d905746b59a0b3d55ede0fe9a1ba55865dc0e55",
+    "genesis_file_informational": "5d3ef4fd6b5ca7e6b68b4976879bdabb91036e9adcb6be6151aaf41ee1d2ceee",
+    "bars": "d742bab6c751e97338bbb82d7801f22aec3a5bed7d01904b7dcdd9ed076ec522",
+    "catalogue.py": "8426ed40b977bc18c2b80fa240b3d2c22c56b2c871363017e9b84af159cb6396",
+    "derive/markets.py": "32629c08a2adcb27109f4dddd529828ccc81421fd583245e673d9108d1edd428",
+    "fetch/markets.py": "11d775b4a2fb9bbb226abf79c6d8f3484b60a035e31fc0058aedcf0d41fba855"
+  },
+  "week0_utc": "2024-10-28T00:00:00+00:00",
+  "validation_start_utc": "2026-04-27T00:00:00+00:00",
+  "end_exclusive_utc": "2026-10-12T00:00:00+00:00",
+  "calibration_weeks": 78,
+  "validation_weeks": 24,
+  "split_rule": "chronological; grid established before any parameter selection",
+  "protocol_params": {
+    "profit_fee_bps": 1000,
+    "closeout_level_bps": 5000,
+    "house_total_cap_bps": 20000,
+    "stress_move_window_ms": 60000,
+    "stress_cooldown_ms": 300000,
+    "max_resting_orders": 100,
+    "rollover": {
+      "tz": "Europe/London",
+      "hour": 22,
+      "minute": 0
+    },
+    "toxicity": {
+      "horizon_ms": 2000,
+      "ewma_weight_bps": 1000,
+      "tiers": [
+        {
+          "min_score_bps": 5,
+          "extra_spread_bps": 1
+        },
+        {
+          "min_score_bps": 15,
+          "extra_spread_bps": 3
+        }
+      ],
+      "notional": {
+        "prior": "10000",
+        "memory": "10000000"
+      }
+    },
+    "stress_levels": [
+      {
+        "size_spread_multiplier_bps": 10000,
+        "min_spread_bps": 0
+      },
+      {
+        "size_spread_multiplier_bps": 20000,
+        "min_spread_bps": 2,
+        "trigger": {
+          "divergence_share_bps": 6000,
+          "move_bps": 150,
+          "utilisation_bps": 8000
+        }
+      },
+      {
+        "size_spread_multiplier_bps": 40000,
+        "min_spread_bps": 10,
+        "trigger": {
+          "divergence_share_bps": 8000,
+          "move_bps": 300,
+          "utilisation_bps": 9500
+        }
+      }
+    ]
+  },
+  "markets": [
+    {
+      "market": {
+        "id": 1,
+        "symbol": "BTC-USD",
+        "asset_class": "crypto",
+        "max_slippage_bps": 25,
+        "house_cap_bps": 3000,
+        "margin_tiers": [
+          {
+            "up_to": "1000000",
+            "bps": 1000
+          },
+          {
+            "bps": 2000
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "2000000",
+            "bps": 0
+          },
+          {
+            "up_to": "10000000",
+            "bps": 3
+          },
+          {
+            "bps": 8
+          }
+        ],
+        "schedule": {
+          "kind": "always_open"
+        },
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 25,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 500,
+          "day_basis": 365
+        }
+      },
+      "source": "binance",
+      "ticker": "BTCUSDT",
+      "instrument_note": "Binance spot, USDT quote",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 13104,
+        "abs_hourly_p99_bps": 184.36921614939823,
+        "abs_hourly_max_bps": 502.6971225649948,
+        "abs_gap_max_bps": 0.0,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 173.89034862137632,
+          "p975_bps": 205.26405399282706,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "c69fcf2afdbd7cd82c9bc724d11d16e5b81c6068eaf31349dc66004c7fb6f385",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 4032,
+        "abs_hourly_p99_bps": 158.7858469092096,
+        "abs_hourly_max_bps": 482.3107548179274,
+        "abs_gap_max_bps": 0.0,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 131.35960200292755,
+          "p975_bps": 184.21216480044913,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "0e459824c5b8a523c33f4c5c619b15e478e0a57e14af46f05961db27df1d5d30",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 2,
+        "symbol": "ETH-USD",
+        "asset_class": "crypto",
+        "max_slippage_bps": 25,
+        "house_cap_bps": 2000,
+        "margin_tiers": [
+          {
+            "up_to": "1000000",
+            "bps": 1000
+          },
+          {
+            "bps": 2000
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "1000000",
+            "bps": 0
+          },
+          {
+            "up_to": "5000000",
+            "bps": 3
+          },
+          {
+            "bps": 8
+          }
+        ],
+        "schedule": {
+          "kind": "always_open"
+        },
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 25,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 500,
+          "day_basis": 365
+        }
+      },
+      "source": "binance",
+      "ticker": "ETHUSDT",
+      "instrument_note": "Binance spot, USDT quote",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 13104,
+        "abs_hourly_p99_bps": 271.7201431057488,
+        "abs_hourly_max_bps": 1174.113129648271,
+        "abs_gap_max_bps": 0.0,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 246.08921719812983,
+          "p975_bps": 293.5841665335205,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "d4a108c70fc95c64a7f9fdf97afca14a80d6abb1f8cd5d4b0390fb9550d40ee7",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 4032,
+        "abs_hourly_p99_bps": 204.8134857763212,
+        "abs_hourly_max_bps": 597.0723492329691,
+        "abs_gap_max_bps": 0.0,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 169.47743476288343,
+          "p975_bps": 254.87565267025107,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "f8b13188b7c4036fb7506bf16e58a7c43ff983a273c8ac43b56d8a5cac7f74d4",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 3,
+        "symbol": "SOL-USD",
+        "asset_class": "crypto",
+        "max_slippage_bps": 25,
+        "house_cap_bps": 1000,
+        "margin_tiers": [
+          {
+            "up_to": "1000000",
+            "bps": 1000
+          },
+          {
+            "bps": 2000
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "1000000",
+            "bps": 0
+          },
+          {
+            "up_to": "5000000",
+            "bps": 3
+          },
+          {
+            "bps": 8
+          }
+        ],
+        "schedule": {
+          "kind": "always_open"
+        },
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 25,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 500,
+          "day_basis": 365
+        }
+      },
+      "source": "binance",
+      "ticker": "SOLUSDT",
+      "instrument_note": "Binance spot, USDT quote",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 13104,
+        "abs_hourly_p99_bps": 306.08083118204615,
+        "abs_hourly_max_bps": 1186.414970204692,
+        "abs_gap_max_bps": 0.0,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 284.99018624554355,
+          "p975_bps": 351.02113171335645,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "4491a75ad559d3e58590a883f540c700ae6ee91e78583205628d4f5864e14b38",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 4032,
+        "abs_hourly_p99_bps": 227.89309765822,
+        "abs_hourly_max_bps": 594.5238105282141,
+        "abs_gap_max_bps": 0.0,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 191.6636100733611,
+          "p975_bps": 260.9157792271207,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "d2fcfb80070cd07e46987d3321130e98a5049ad17fc031b168e04bf638a23d49",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 10,
+        "symbol": "EUR-USD",
+        "asset_class": "fx",
+        "max_slippage_bps": 5,
+        "house_cap_bps": 5000,
+        "margin_tiers": [
+          {
+            "up_to": "5000000",
+            "bps": 50
+          },
+          {
+            "up_to": "25000000",
+            "bps": 100
+          },
+          {
+            "bps": 300
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "10000000",
+            "bps": 0
+          },
+          {
+            "up_to": "50000000",
+            "bps": 1
+          },
+          {
+            "bps": 3
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 5,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "ESTR",
+          "markup_bps": 100,
+          "day_basis": 360
+        },
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/New_York",
+          "windows": [
+            {
+              "open": "Sun 17:00",
+              "close": "Fri 17:00"
+            }
+          ],
+          "closures": [
+            {
+              "from": "2026-12-24T17:00:00",
+              "to": "2026-12-25T17:00:00"
+            },
+            {
+              "from": "2026-12-31T17:00:00",
+              "to": "2027-01-01T17:00:00"
+            },
+            {
+              "from": "2027-12-23T17:00:00",
+              "to": "2027-12-24T17:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "EURUSD=X",
+      "instrument_note": "spot FX",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 9213,
+        "abs_hourly_p99_bps": 35.45269654420583,
+        "abs_hourly_max_bps": 126.86834893925037,
+        "abs_gap_max_bps": 111.69156593775273,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 31.370690836649477,
+          "p975_bps": 39.708630681818185,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "cec52fd2c9bc0dbb8805310e801034252a584ef590c2120e95b5c4615ac91158",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 2851,
+        "abs_hourly_p99_bps": 23.72810669990689,
+        "abs_hourly_max_bps": 54.74957490381954,
+        "abs_gap_max_bps": 36.10502216983436,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 18.353137482062284,
+          "p975_bps": 29.207263553190245,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "5be45823e52e9afa739fd5521227a211ac0a3ae34d6d29ba3b4c4b26c0d403f7",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 11,
+        "symbol": "GBP-USD",
+        "asset_class": "fx",
+        "max_slippage_bps": 5,
+        "house_cap_bps": 5000,
+        "margin_tiers": [
+          {
+            "up_to": "5000000",
+            "bps": 50
+          },
+          {
+            "up_to": "25000000",
+            "bps": 100
+          },
+          {
+            "bps": 300
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "10000000",
+            "bps": 0
+          },
+          {
+            "up_to": "50000000",
+            "bps": 1
+          },
+          {
+            "bps": 3
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 5,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SONIA",
+          "markup_bps": 100,
+          "day_basis": 365
+        },
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/New_York",
+          "windows": [
+            {
+              "open": "Sun 17:00",
+              "close": "Fri 17:00"
+            }
+          ],
+          "closures": [
+            {
+              "from": "2026-12-24T17:00:00",
+              "to": "2026-12-25T17:00:00"
+            },
+            {
+              "from": "2026-12-31T17:00:00",
+              "to": "2027-01-01T17:00:00"
+            },
+            {
+              "from": "2027-12-23T17:00:00",
+              "to": "2027-12-24T17:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "GBPUSD=X",
+      "instrument_note": "spot FX",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 9214,
+        "abs_hourly_p99_bps": 31.440470997582768,
+        "abs_hourly_max_bps": 96.22405514451584,
+        "abs_gap_max_bps": 83.0730206841646,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 29.376765588938454,
+          "p975_bps": 34.241242698379175,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "bee102d4c649e607d0d7713b9d111ab3af380b379fcb3da95acd8f90bed2791d",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 2851,
+        "abs_hourly_p99_bps": 24.760603867588298,
+        "abs_hourly_max_bps": 53.67352903435599,
+        "abs_gap_max_bps": 39.246814706655684,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 20.57879656219303,
+          "p975_bps": 28.40956822688688,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "624adcf352c26bfe4b92219fa8779d2587d4d6b5fddf866d4a82bb4c1fb6d45f",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 12,
+        "symbol": "USD-JPY",
+        "asset_class": "fx",
+        "quote_currency": {
+          "currency": "jpy",
+          "fx_market": 12
+        },
+        "max_slippage_bps": 5,
+        "house_cap_bps": 5000,
+        "margin_tiers": [
+          {
+            "up_to": "5000000",
+            "bps": 50
+          },
+          {
+            "up_to": "25000000",
+            "bps": 100
+          },
+          {
+            "bps": 300
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "10000000",
+            "bps": 0
+          },
+          {
+            "up_to": "50000000",
+            "bps": 1
+          },
+          {
+            "bps": 3
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 5,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 100,
+          "day_basis": 360
+        },
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/New_York",
+          "windows": [
+            {
+              "open": "Sun 17:00",
+              "close": "Fri 17:00"
+            }
+          ],
+          "closures": [
+            {
+              "from": "2026-12-24T17:00:00",
+              "to": "2026-12-25T17:00:00"
+            },
+            {
+              "from": "2026-12-31T17:00:00",
+              "to": "2027-01-01T17:00:00"
+            },
+            {
+              "from": "2027-12-23T17:00:00",
+              "to": "2027-12-24T17:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "JPY=X",
+      "instrument_note": "spot FX",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 9144,
+        "abs_hourly_p99_bps": 40.78293697966309,
+        "abs_hourly_max_bps": 147.76103016987054,
+        "abs_gap_max_bps": 130.59540554711546,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 35.30752183845914,
+          "p975_bps": 44.619248750486726,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "942119a0f7d9fd00f7f07a5cf58a981a71e228cabd575c3d7977519ff76d28bf",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 2837,
+        "abs_hourly_p99_bps": 33.6333128725126,
+        "abs_hourly_max_bps": 196.74872908294356,
+        "abs_gap_max_bps": 27.738399947765842,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 27.20694389627838,
+          "p975_bps": 54.59044962401916,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "f45f33b7b389e99cf328e105bb8cb59a3eedcd92de879b56082505ef10464803",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 13,
+        "symbol": "AUD-USD",
+        "asset_class": "fx",
+        "max_slippage_bps": 5,
+        "house_cap_bps": 5000,
+        "margin_tiers": [
+          {
+            "up_to": "5000000",
+            "bps": 50
+          },
+          {
+            "up_to": "25000000",
+            "bps": 100
+          },
+          {
+            "bps": 300
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "10000000",
+            "bps": 0
+          },
+          {
+            "up_to": "50000000",
+            "bps": 1
+          },
+          {
+            "bps": 3
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 5,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "AONIA",
+          "markup_bps": 100,
+          "day_basis": 365
+        },
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/New_York",
+          "windows": [
+            {
+              "open": "Sun 17:00",
+              "close": "Fri 17:00"
+            }
+          ],
+          "closures": [
+            {
+              "from": "2026-12-24T17:00:00",
+              "to": "2026-12-25T17:00:00"
+            },
+            {
+              "from": "2026-12-31T17:00:00",
+              "to": "2027-01-01T17:00:00"
+            },
+            {
+              "from": "2027-12-23T17:00:00",
+              "to": "2027-12-24T17:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "AUDUSD=X",
+      "instrument_note": "spot FX",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 9276,
+        "abs_hourly_p99_bps": 44.830187969564534,
+        "abs_hourly_max_bps": 184.98007118558883,
+        "abs_gap_max_bps": 114.2621919347481,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 38.31640460269801,
+          "p975_bps": 50.78853874743211,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "1221585389fb47f3f131504492f8bfd96fe35f15b72360d48ca00e1a2cd731d9",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 2851,
+        "abs_hourly_p99_bps": 32.312091380535776,
+        "abs_hourly_max_bps": 61.07575643726313,
+        "abs_gap_max_bps": 45.83472121418661,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 26.524759526470177,
+          "p975_bps": 38.18271094279262,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "79f91b27322751e74bbc10705dbecd413b94b221149e782da6635795cc7e425a",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 20,
+        "symbol": "US500",
+        "asset_class": "index",
+        "max_slippage_bps": 10,
+        "house_cap_bps": 5000,
+        "margin_tiers": [
+          {
+            "up_to": "5000000",
+            "bps": 50
+          },
+          {
+            "up_to": "25000000",
+            "bps": 100
+          },
+          {
+            "bps": 500
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "5000000",
+            "bps": 0
+          },
+          {
+            "up_to": "25000000",
+            "bps": 1
+          },
+          {
+            "bps": 4
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "contracts": [
+          {
+            "contract": "ESZ6",
+            "from": "2026-09-10T14:30:00Z"
+          },
+          {
+            "contract": "ESH7",
+            "from": "2026-12-10T14:30:00Z"
+          },
+          {
+            "contract": "ESM7",
+            "from": "2027-03-11T14:30:00Z"
+          },
+          {
+            "contract": "ESU7",
+            "from": "2027-06-10T14:30:00Z"
+          },
+          {
+            "contract": "ESZ7",
+            "from": "2027-09-09T14:30:00Z"
+          },
+          {
+            "contract": "ESH8",
+            "from": "2027-12-09T14:30:00Z"
+          }
+        ],
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/Chicago",
+          "windows": [
+            {
+              "open": "Sun 17:00",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Mon 17:00",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Tue 17:00",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Wed 17:00",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Thu 17:00",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closures": [
+            {
+              "from": "2026-11-26T12:00:00",
+              "to": "2026-11-26T16:00:00"
+            },
+            {
+              "from": "2026-11-27T12:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T12:00:00",
+              "to": "2026-12-25T16:00:00"
+            },
+            {
+              "from": "2026-12-31T17:00:00",
+              "to": "2027-01-01T16:00:00"
+            },
+            {
+              "from": "2027-01-18T12:00:00",
+              "to": "2027-01-18T16:00:00"
+            },
+            {
+              "from": "2027-02-15T12:00:00",
+              "to": "2027-02-15T16:00:00"
+            },
+            {
+              "from": "2027-03-25T17:00:00",
+              "to": "2027-03-26T16:00:00"
+            },
+            {
+              "from": "2027-05-31T12:00:00",
+              "to": "2027-05-31T16:00:00"
+            },
+            {
+              "from": "2027-06-18T12:00:00",
+              "to": "2027-06-18T16:00:00"
+            },
+            {
+              "from": "2027-07-05T12:00:00",
+              "to": "2027-07-05T16:00:00"
+            },
+            {
+              "from": "2027-09-06T12:00:00",
+              "to": "2027-09-06T16:00:00"
+            },
+            {
+              "from": "2027-11-25T12:00:00",
+              "to": "2027-11-25T16:00:00"
+            },
+            {
+              "from": "2027-11-26T12:00:00",
+              "to": "2027-11-26T16:00:00"
+            },
+            {
+              "from": "2027-12-23T17:00:00",
+              "to": "2027-12-24T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "ES=F",
+      "instrument_note": "CME E-mini S&P 500 front month",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 8525,
+        "abs_hourly_p99_bps": 88.10586737094077,
+        "abs_hourly_max_bps": 673.0523518574448,
+        "abs_gap_max_bps": 181.37499216437755,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 70.28585373133829,
+          "p975_bps": 109.131183546034,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "e430dcedcc8c0e104b38f5deb2f917614cdef95884b411d3196f5998744c412c",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 2664,
+        "abs_hourly_p99_bps": 56.82082137450021,
+        "abs_hourly_max_bps": 167.21615453562123,
+        "abs_gap_max_bps": 87.76287760230926,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 46.57814048973041,
+          "p975_bps": 74.79835251806512,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "1b0ec88315db7d5d123e69061eb994208fe9800b90c0858227f7dfe711718806",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 21,
+        "symbol": "US100",
+        "asset_class": "index",
+        "max_slippage_bps": 10,
+        "house_cap_bps": 5000,
+        "margin_tiers": [
+          {
+            "up_to": "5000000",
+            "bps": 50
+          },
+          {
+            "up_to": "25000000",
+            "bps": 100
+          },
+          {
+            "bps": 500
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "5000000",
+            "bps": 0
+          },
+          {
+            "up_to": "25000000",
+            "bps": 1
+          },
+          {
+            "bps": 4
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "contracts": [
+          {
+            "contract": "NQZ6",
+            "from": "2026-09-10T14:30:00Z"
+          },
+          {
+            "contract": "NQH7",
+            "from": "2026-12-10T14:30:00Z"
+          },
+          {
+            "contract": "NQM7",
+            "from": "2027-03-11T14:30:00Z"
+          },
+          {
+            "contract": "NQU7",
+            "from": "2027-06-10T14:30:00Z"
+          },
+          {
+            "contract": "NQZ7",
+            "from": "2027-09-09T14:30:00Z"
+          },
+          {
+            "contract": "NQH8",
+            "from": "2027-12-09T14:30:00Z"
+          }
+        ],
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/Chicago",
+          "windows": [
+            {
+              "open": "Sun 17:00",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Mon 17:00",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Tue 17:00",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Wed 17:00",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Thu 17:00",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closures": [
+            {
+              "from": "2026-11-26T12:00:00",
+              "to": "2026-11-26T16:00:00"
+            },
+            {
+              "from": "2026-11-27T12:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T12:00:00",
+              "to": "2026-12-25T16:00:00"
+            },
+            {
+              "from": "2026-12-31T17:00:00",
+              "to": "2027-01-01T16:00:00"
+            },
+            {
+              "from": "2027-01-18T12:00:00",
+              "to": "2027-01-18T16:00:00"
+            },
+            {
+              "from": "2027-02-15T12:00:00",
+              "to": "2027-02-15T16:00:00"
+            },
+            {
+              "from": "2027-03-25T17:00:00",
+              "to": "2027-03-26T16:00:00"
+            },
+            {
+              "from": "2027-05-31T12:00:00",
+              "to": "2027-05-31T16:00:00"
+            },
+            {
+              "from": "2027-06-18T12:00:00",
+              "to": "2027-06-18T16:00:00"
+            },
+            {
+              "from": "2027-07-05T12:00:00",
+              "to": "2027-07-05T16:00:00"
+            },
+            {
+              "from": "2027-09-06T12:00:00",
+              "to": "2027-09-06T16:00:00"
+            },
+            {
+              "from": "2027-11-25T12:00:00",
+              "to": "2027-11-25T16:00:00"
+            },
+            {
+              "from": "2027-11-26T12:00:00",
+              "to": "2027-11-26T16:00:00"
+            },
+            {
+              "from": "2027-12-23T17:00:00",
+              "to": "2027-12-24T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "NQ=F",
+      "instrument_note": "CME E-mini Nasdaq-100 front month",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 8527,
+        "abs_hourly_p99_bps": 110.33677488121783,
+        "abs_hourly_max_bps": 767.7234822976322,
+        "abs_gap_max_bps": 219.2116127201057,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 95.48296876204442,
+          "p975_bps": 130.0281080888819,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "f11ca5bcff944450bd8e8c71621b5b185a8ab86229930c34c4b2a34088412ad7",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 2664,
+        "abs_hourly_p99_bps": 96.0854013107133,
+        "abs_hourly_max_bps": 293.60357934577456,
+        "abs_gap_max_bps": 138.89576171614684,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 81.89283615403919,
+          "p975_bps": 120.38891031612474,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "67a1cfff7f944bdc6d5a7bcca4afe6c1c3093045fddb34525f04f5dbb24c3a3f",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 22,
+        "symbol": "US30",
+        "asset_class": "index",
+        "max_slippage_bps": 10,
+        "house_cap_bps": 5000,
+        "margin_tiers": [
+          {
+            "up_to": "5000000",
+            "bps": 50
+          },
+          {
+            "up_to": "25000000",
+            "bps": 100
+          },
+          {
+            "bps": 500
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "5000000",
+            "bps": 0
+          },
+          {
+            "up_to": "25000000",
+            "bps": 1
+          },
+          {
+            "bps": 4
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "contracts": [
+          {
+            "contract": "YMZ6",
+            "from": "2026-09-10T14:30:00Z"
+          },
+          {
+            "contract": "YMH7",
+            "from": "2026-12-10T14:30:00Z"
+          },
+          {
+            "contract": "YMM7",
+            "from": "2027-03-11T14:30:00Z"
+          },
+          {
+            "contract": "YMU7",
+            "from": "2027-06-10T14:30:00Z"
+          },
+          {
+            "contract": "YMZ7",
+            "from": "2027-09-09T14:30:00Z"
+          },
+          {
+            "contract": "YMH8",
+            "from": "2027-12-09T14:30:00Z"
+          }
+        ],
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/Chicago",
+          "windows": [
+            {
+              "open": "Sun 17:00",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Mon 17:00",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Tue 17:00",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Wed 17:00",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Thu 17:00",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closures": [
+            {
+              "from": "2026-11-26T12:00:00",
+              "to": "2026-11-26T16:00:00"
+            },
+            {
+              "from": "2026-11-27T12:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T12:00:00",
+              "to": "2026-12-25T16:00:00"
+            },
+            {
+              "from": "2026-12-31T17:00:00",
+              "to": "2027-01-01T16:00:00"
+            },
+            {
+              "from": "2027-01-18T12:00:00",
+              "to": "2027-01-18T16:00:00"
+            },
+            {
+              "from": "2027-02-15T12:00:00",
+              "to": "2027-02-15T16:00:00"
+            },
+            {
+              "from": "2027-03-25T17:00:00",
+              "to": "2027-03-26T16:00:00"
+            },
+            {
+              "from": "2027-05-31T12:00:00",
+              "to": "2027-05-31T16:00:00"
+            },
+            {
+              "from": "2027-06-18T12:00:00",
+              "to": "2027-06-18T16:00:00"
+            },
+            {
+              "from": "2027-07-05T12:00:00",
+              "to": "2027-07-05T16:00:00"
+            },
+            {
+              "from": "2027-09-06T12:00:00",
+              "to": "2027-09-06T16:00:00"
+            },
+            {
+              "from": "2027-11-25T12:00:00",
+              "to": "2027-11-25T16:00:00"
+            },
+            {
+              "from": "2027-11-26T12:00:00",
+              "to": "2027-11-26T16:00:00"
+            },
+            {
+              "from": "2027-12-23T17:00:00",
+              "to": "2027-12-24T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "YM=F",
+      "instrument_note": "CBOT E-mini Dow front month",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 8523,
+        "abs_hourly_p99_bps": 81.98424520973131,
+        "abs_hourly_max_bps": 590.2852283430014,
+        "abs_gap_max_bps": 224.55046554010752,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 66.89273917054706,
+          "p975_bps": 100.12795919356755,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "d9366cbad7c53245295c8284ea9690c789b8549a84d49e8125c31fde0aeba67e",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 2664,
+        "abs_hourly_p99_bps": 57.615341602524595,
+        "abs_hourly_max_bps": 115.99204468462918,
+        "abs_gap_max_bps": 66.85247168012539,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 48.40248062482874,
+          "p975_bps": 64.70846044895963,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "fcef73da7c73aea2a929406dd837f828511a1a50770c060e5b2cb0590aa42afb",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 23,
+        "symbol": "DE40",
+        "asset_class": "index",
+        "quote_currency": {
+          "currency": "eur",
+          "fx_market": 10
+        },
+        "max_slippage_bps": 10,
+        "house_cap_bps": 5000,
+        "margin_tiers": [
+          {
+            "up_to": "5000000",
+            "bps": 50
+          },
+          {
+            "up_to": "25000000",
+            "bps": 100
+          },
+          {
+            "bps": 500
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "5000000",
+            "bps": 0
+          },
+          {
+            "up_to": "25000000",
+            "bps": 1
+          },
+          {
+            "bps": 4
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "ESTR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "contracts": [
+          {
+            "contract": "FDAXZ6",
+            "from": "2026-09-10T14:30:00Z"
+          },
+          {
+            "contract": "FDAXH7",
+            "from": "2026-12-10T14:30:00Z"
+          },
+          {
+            "contract": "FDAXM7",
+            "from": "2027-03-11T14:30:00Z"
+          },
+          {
+            "contract": "FDAXU7",
+            "from": "2027-06-10T14:30:00Z"
+          },
+          {
+            "contract": "FDAXZ7",
+            "from": "2027-09-09T14:30:00Z"
+          },
+          {
+            "contract": "FDAXH8",
+            "from": "2027-12-09T14:30:00Z"
+          }
+        ],
+        "schedule": {
+          "kind": "weekly",
+          "tz": "Europe/Berlin",
+          "windows": [
+            {
+              "open": "Mon 02:10",
+              "close": "Mon 22:00"
+            },
+            {
+              "open": "Tue 02:10",
+              "close": "Tue 22:00"
+            },
+            {
+              "open": "Wed 02:10",
+              "close": "Wed 22:00"
+            },
+            {
+              "open": "Thu 02:10",
+              "close": "Thu 22:00"
+            },
+            {
+              "open": "Fri 02:10",
+              "close": "Fri 22:00"
+            }
+          ],
+          "closed_dates": [
+            "2026-12-24",
+            "2026-12-25",
+            "2026-12-31",
+            "2027-01-01",
+            "2027-03-26",
+            "2027-03-29",
+            "2027-12-24",
+            "2027-12-31"
+          ],
+          "special_sessions": [
+            {
+              "from": "2026-10-26T01:10:00",
+              "to": "2026-10-26T02:10:00"
+            },
+            {
+              "from": "2026-10-27T01:10:00",
+              "to": "2026-10-27T02:10:00"
+            },
+            {
+              "from": "2026-10-28T01:10:00",
+              "to": "2026-10-28T02:10:00"
+            },
+            {
+              "from": "2026-10-29T01:10:00",
+              "to": "2026-10-29T02:10:00"
+            },
+            {
+              "from": "2026-10-30T01:10:00",
+              "to": "2026-10-30T02:10:00"
+            },
+            {
+              "from": "2026-11-02T01:10:00",
+              "to": "2026-11-02T02:10:00"
+            },
+            {
+              "from": "2026-11-03T01:10:00",
+              "to": "2026-11-03T02:10:00"
+            },
+            {
+              "from": "2026-11-04T01:10:00",
+              "to": "2026-11-04T02:10:00"
+            },
+            {
+              "from": "2026-11-05T01:10:00",
+              "to": "2026-11-05T02:10:00"
+            },
+            {
+              "from": "2026-11-06T01:10:00",
+              "to": "2026-11-06T02:10:00"
+            },
+            {
+              "from": "2026-11-09T01:10:00",
+              "to": "2026-11-09T02:10:00"
+            },
+            {
+              "from": "2026-11-10T01:10:00",
+              "to": "2026-11-10T02:10:00"
+            },
+            {
+              "from": "2026-11-11T01:10:00",
+              "to": "2026-11-11T02:10:00"
+            },
+            {
+              "from": "2026-11-12T01:10:00",
+              "to": "2026-11-12T02:10:00"
+            },
+            {
+              "from": "2026-11-13T01:10:00",
+              "to": "2026-11-13T02:10:00"
+            },
+            {
+              "from": "2026-11-16T01:10:00",
+              "to": "2026-11-16T02:10:00"
+            },
+            {
+              "from": "2026-11-17T01:10:00",
+              "to": "2026-11-17T02:10:00"
+            },
+            {
+              "from": "2026-11-18T01:10:00",
+              "to": "2026-11-18T02:10:00"
+            },
+            {
+              "from": "2026-11-19T01:10:00",
+              "to": "2026-11-19T02:10:00"
+            },
+            {
+              "from": "2026-11-20T01:10:00",
+              "to": "2026-11-20T02:10:00"
+            },
+            {
+              "from": "2026-11-23T01:10:00",
+              "to": "2026-11-23T02:10:00"
+            },
+            {
+              "from": "2026-11-24T01:10:00",
+              "to": "2026-11-24T02:10:00"
+            },
+            {
+              "from": "2026-11-25T01:10:00",
+              "to": "2026-11-25T02:10:00"
+            },
+            {
+              "from": "2026-11-26T01:10:00",
+              "to": "2026-11-26T02:10:00"
+            },
+            {
+              "from": "2026-11-27T01:10:00",
+              "to": "2026-11-27T02:10:00"
+            },
+            {
+              "from": "2026-11-30T01:10:00",
+              "to": "2026-11-30T02:10:00"
+            },
+            {
+              "from": "2026-12-01T01:10:00",
+              "to": "2026-12-01T02:10:00"
+            },
+            {
+              "from": "2026-12-02T01:10:00",
+              "to": "2026-12-02T02:10:00"
+            },
+            {
+              "from": "2026-12-03T01:10:00",
+              "to": "2026-12-03T02:10:00"
+            },
+            {
+              "from": "2026-12-04T01:10:00",
+              "to": "2026-12-04T02:10:00"
+            },
+            {
+              "from": "2026-12-07T01:10:00",
+              "to": "2026-12-07T02:10:00"
+            },
+            {
+              "from": "2026-12-08T01:10:00",
+              "to": "2026-12-08T02:10:00"
+            },
+            {
+              "from": "2026-12-09T01:10:00",
+              "to": "2026-12-09T02:10:00"
+            },
+            {
+              "from": "2026-12-10T01:10:00",
+              "to": "2026-12-10T02:10:00"
+            },
+            {
+              "from": "2026-12-11T01:10:00",
+              "to": "2026-12-11T02:10:00"
+            },
+            {
+              "from": "2026-12-14T01:10:00",
+              "to": "2026-12-14T02:10:00"
+            },
+            {
+              "from": "2026-12-15T01:10:00",
+              "to": "2026-12-15T02:10:00"
+            },
+            {
+              "from": "2026-12-16T01:10:00",
+              "to": "2026-12-16T02:10:00"
+            },
+            {
+              "from": "2026-12-17T01:10:00",
+              "to": "2026-12-17T02:10:00"
+            },
+            {
+              "from": "2026-12-18T01:10:00",
+              "to": "2026-12-18T02:10:00"
+            },
+            {
+              "from": "2026-12-21T01:10:00",
+              "to": "2026-12-21T02:10:00"
+            },
+            {
+              "from": "2026-12-22T01:10:00",
+              "to": "2026-12-22T02:10:00"
+            },
+            {
+              "from": "2026-12-23T01:10:00",
+              "to": "2026-12-23T02:10:00"
+            },
+            {
+              "from": "2026-12-28T01:10:00",
+              "to": "2026-12-28T02:10:00"
+            },
+            {
+              "from": "2026-12-29T01:10:00",
+              "to": "2026-12-29T02:10:00"
+            },
+            {
+              "from": "2026-12-30T01:10:00",
+              "to": "2026-12-30T02:10:00"
+            },
+            {
+              "from": "2027-01-04T01:10:00",
+              "to": "2027-01-04T02:10:00"
+            },
+            {
+              "from": "2027-01-05T01:10:00",
+              "to": "2027-01-05T02:10:00"
+            },
+            {
+              "from": "2027-01-06T01:10:00",
+              "to": "2027-01-06T02:10:00"
+            },
+            {
+              "from": "2027-01-07T01:10:00",
+              "to": "2027-01-07T02:10:00"
+            },
+            {
+              "from": "2027-01-08T01:10:00",
+              "to": "2027-01-08T02:10:00"
+            },
+            {
+              "from": "2027-01-11T01:10:00",
+              "to": "2027-01-11T02:10:00"
+            },
+            {
+              "from": "2027-01-12T01:10:00",
+              "to": "2027-01-12T02:10:00"
+            },
+            {
+              "from": "2027-01-13T01:10:00",
+              "to": "2027-01-13T02:10:00"
+            },
+            {
+              "from": "2027-01-14T01:10:00",
+              "to": "2027-01-14T02:10:00"
+            },
+            {
+              "from": "2027-01-15T01:10:00",
+              "to": "2027-01-15T02:10:00"
+            },
+            {
+              "from": "2027-01-18T01:10:00",
+              "to": "2027-01-18T02:10:00"
+            },
+            {
+              "from": "2027-01-19T01:10:00",
+              "to": "2027-01-19T02:10:00"
+            },
+            {
+              "from": "2027-01-20T01:10:00",
+              "to": "2027-01-20T02:10:00"
+            },
+            {
+              "from": "2027-01-21T01:10:00",
+              "to": "2027-01-21T02:10:00"
+            },
+            {
+              "from": "2027-01-22T01:10:00",
+              "to": "2027-01-22T02:10:00"
+            },
+            {
+              "from": "2027-01-25T01:10:00",
+              "to": "2027-01-25T02:10:00"
+            },
+            {
+              "from": "2027-01-26T01:10:00",
+              "to": "2027-01-26T02:10:00"
+            },
+            {
+              "from": "2027-01-27T01:10:00",
+              "to": "2027-01-27T02:10:00"
+            },
+            {
+              "from": "2027-01-28T01:10:00",
+              "to": "2027-01-28T02:10:00"
+            },
+            {
+              "from": "2027-01-29T01:10:00",
+              "to": "2027-01-29T02:10:00"
+            },
+            {
+              "from": "2027-02-01T01:10:00",
+              "to": "2027-02-01T02:10:00"
+            },
+            {
+              "from": "2027-02-02T01:10:00",
+              "to": "2027-02-02T02:10:00"
+            },
+            {
+              "from": "2027-02-03T01:10:00",
+              "to": "2027-02-03T02:10:00"
+            },
+            {
+              "from": "2027-02-04T01:10:00",
+              "to": "2027-02-04T02:10:00"
+            },
+            {
+              "from": "2027-02-05T01:10:00",
+              "to": "2027-02-05T02:10:00"
+            },
+            {
+              "from": "2027-02-08T01:10:00",
+              "to": "2027-02-08T02:10:00"
+            },
+            {
+              "from": "2027-02-09T01:10:00",
+              "to": "2027-02-09T02:10:00"
+            },
+            {
+              "from": "2027-02-10T01:10:00",
+              "to": "2027-02-10T02:10:00"
+            },
+            {
+              "from": "2027-02-11T01:10:00",
+              "to": "2027-02-11T02:10:00"
+            },
+            {
+              "from": "2027-02-12T01:10:00",
+              "to": "2027-02-12T02:10:00"
+            },
+            {
+              "from": "2027-02-15T01:10:00",
+              "to": "2027-02-15T02:10:00"
+            },
+            {
+              "from": "2027-02-16T01:10:00",
+              "to": "2027-02-16T02:10:00"
+            },
+            {
+              "from": "2027-02-17T01:10:00",
+              "to": "2027-02-17T02:10:00"
+            },
+            {
+              "from": "2027-02-18T01:10:00",
+              "to": "2027-02-18T02:10:00"
+            },
+            {
+              "from": "2027-02-19T01:10:00",
+              "to": "2027-02-19T02:10:00"
+            },
+            {
+              "from": "2027-02-22T01:10:00",
+              "to": "2027-02-22T02:10:00"
+            },
+            {
+              "from": "2027-02-23T01:10:00",
+              "to": "2027-02-23T02:10:00"
+            },
+            {
+              "from": "2027-02-24T01:10:00",
+              "to": "2027-02-24T02:10:00"
+            },
+            {
+              "from": "2027-02-25T01:10:00",
+              "to": "2027-02-25T02:10:00"
+            },
+            {
+              "from": "2027-02-26T01:10:00",
+              "to": "2027-02-26T02:10:00"
+            },
+            {
+              "from": "2027-03-01T01:10:00",
+              "to": "2027-03-01T02:10:00"
+            },
+            {
+              "from": "2027-03-02T01:10:00",
+              "to": "2027-03-02T02:10:00"
+            },
+            {
+              "from": "2027-03-03T01:10:00",
+              "to": "2027-03-03T02:10:00"
+            },
+            {
+              "from": "2027-03-04T01:10:00",
+              "to": "2027-03-04T02:10:00"
+            },
+            {
+              "from": "2027-03-05T01:10:00",
+              "to": "2027-03-05T02:10:00"
+            },
+            {
+              "from": "2027-03-08T01:10:00",
+              "to": "2027-03-08T02:10:00"
+            },
+            {
+              "from": "2027-03-09T01:10:00",
+              "to": "2027-03-09T02:10:00"
+            },
+            {
+              "from": "2027-03-10T01:10:00",
+              "to": "2027-03-10T02:10:00"
+            },
+            {
+              "from": "2027-03-11T01:10:00",
+              "to": "2027-03-11T02:10:00"
+            },
+            {
+              "from": "2027-03-12T01:10:00",
+              "to": "2027-03-12T02:10:00"
+            },
+            {
+              "from": "2027-03-15T01:10:00",
+              "to": "2027-03-15T02:10:00"
+            },
+            {
+              "from": "2027-03-16T01:10:00",
+              "to": "2027-03-16T02:10:00"
+            },
+            {
+              "from": "2027-03-17T01:10:00",
+              "to": "2027-03-17T02:10:00"
+            },
+            {
+              "from": "2027-03-18T01:10:00",
+              "to": "2027-03-18T02:10:00"
+            },
+            {
+              "from": "2027-03-19T01:10:00",
+              "to": "2027-03-19T02:10:00"
+            },
+            {
+              "from": "2027-03-22T01:10:00",
+              "to": "2027-03-22T02:10:00"
+            },
+            {
+              "from": "2027-03-23T01:10:00",
+              "to": "2027-03-23T02:10:00"
+            },
+            {
+              "from": "2027-03-24T01:10:00",
+              "to": "2027-03-24T02:10:00"
+            },
+            {
+              "from": "2027-03-25T01:10:00",
+              "to": "2027-03-25T02:10:00"
+            },
+            {
+              "from": "2027-11-01T01:10:00",
+              "to": "2027-11-01T02:10:00"
+            },
+            {
+              "from": "2027-11-02T01:10:00",
+              "to": "2027-11-02T02:10:00"
+            },
+            {
+              "from": "2027-11-03T01:10:00",
+              "to": "2027-11-03T02:10:00"
+            },
+            {
+              "from": "2027-11-04T01:10:00",
+              "to": "2027-11-04T02:10:00"
+            },
+            {
+              "from": "2027-11-05T01:10:00",
+              "to": "2027-11-05T02:10:00"
+            },
+            {
+              "from": "2027-11-08T01:10:00",
+              "to": "2027-11-08T02:10:00"
+            },
+            {
+              "from": "2027-11-09T01:10:00",
+              "to": "2027-11-09T02:10:00"
+            },
+            {
+              "from": "2027-11-10T01:10:00",
+              "to": "2027-11-10T02:10:00"
+            },
+            {
+              "from": "2027-11-11T01:10:00",
+              "to": "2027-11-11T02:10:00"
+            },
+            {
+              "from": "2027-11-12T01:10:00",
+              "to": "2027-11-12T02:10:00"
+            },
+            {
+              "from": "2027-11-15T01:10:00",
+              "to": "2027-11-15T02:10:00"
+            },
+            {
+              "from": "2027-11-16T01:10:00",
+              "to": "2027-11-16T02:10:00"
+            },
+            {
+              "from": "2027-11-17T01:10:00",
+              "to": "2027-11-17T02:10:00"
+            },
+            {
+              "from": "2027-11-18T01:10:00",
+              "to": "2027-11-18T02:10:00"
+            },
+            {
+              "from": "2027-11-19T01:10:00",
+              "to": "2027-11-19T02:10:00"
+            },
+            {
+              "from": "2027-11-22T01:10:00",
+              "to": "2027-11-22T02:10:00"
+            },
+            {
+              "from": "2027-11-23T01:10:00",
+              "to": "2027-11-23T02:10:00"
+            },
+            {
+              "from": "2027-11-24T01:10:00",
+              "to": "2027-11-24T02:10:00"
+            },
+            {
+              "from": "2027-11-25T01:10:00",
+              "to": "2027-11-25T02:10:00"
+            },
+            {
+              "from": "2027-11-26T01:10:00",
+              "to": "2027-11-26T02:10:00"
+            },
+            {
+              "from": "2027-11-29T01:10:00",
+              "to": "2027-11-29T02:10:00"
+            },
+            {
+              "from": "2027-11-30T01:10:00",
+              "to": "2027-11-30T02:10:00"
+            },
+            {
+              "from": "2027-12-01T01:10:00",
+              "to": "2027-12-01T02:10:00"
+            },
+            {
+              "from": "2027-12-02T01:10:00",
+              "to": "2027-12-02T02:10:00"
+            },
+            {
+              "from": "2027-12-03T01:10:00",
+              "to": "2027-12-03T02:10:00"
+            },
+            {
+              "from": "2027-12-06T01:10:00",
+              "to": "2027-12-06T02:10:00"
+            },
+            {
+              "from": "2027-12-07T01:10:00",
+              "to": "2027-12-07T02:10:00"
+            },
+            {
+              "from": "2027-12-08T01:10:00",
+              "to": "2027-12-08T02:10:00"
+            },
+            {
+              "from": "2027-12-09T01:10:00",
+              "to": "2027-12-09T02:10:00"
+            },
+            {
+              "from": "2027-12-10T01:10:00",
+              "to": "2027-12-10T02:10:00"
+            },
+            {
+              "from": "2027-12-13T01:10:00",
+              "to": "2027-12-13T02:10:00"
+            },
+            {
+              "from": "2027-12-14T01:10:00",
+              "to": "2027-12-14T02:10:00"
+            },
+            {
+              "from": "2027-12-15T01:10:00",
+              "to": "2027-12-15T02:10:00"
+            },
+            {
+              "from": "2027-12-16T01:10:00",
+              "to": "2027-12-16T02:10:00"
+            },
+            {
+              "from": "2027-12-17T01:10:00",
+              "to": "2027-12-17T02:10:00"
+            },
+            {
+              "from": "2027-12-20T01:10:00",
+              "to": "2027-12-20T02:10:00"
+            },
+            {
+              "from": "2027-12-21T01:10:00",
+              "to": "2027-12-21T02:10:00"
+            },
+            {
+              "from": "2027-12-22T01:10:00",
+              "to": "2027-12-22T02:10:00"
+            },
+            {
+              "from": "2027-12-23T01:10:00",
+              "to": "2027-12-23T02:10:00"
+            },
+            {
+              "from": "2027-12-27T01:10:00",
+              "to": "2027-12-27T02:10:00"
+            },
+            {
+              "from": "2027-12-28T01:10:00",
+              "to": "2027-12-28T02:10:00"
+            },
+            {
+              "from": "2027-12-29T01:10:00",
+              "to": "2027-12-29T02:10:00"
+            },
+            {
+              "from": "2027-12-30T01:10:00",
+              "to": "2027-12-30T02:10:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "^GDAXI",
+      "instrument_note": "DAX cash index; the venue's future trades longer hours, so gaps are overstated",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 3370,
+        "abs_hourly_p99_bps": 141.5486439878221,
+        "abs_hourly_max_bps": 629.709556010006,
+        "abs_gap_max_bps": 629.709556010006,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 114.55113027637766,
+          "p975_bps": 167.89383755310192,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "7833e00c0524fa17279935bf7c9f110f5650d3d722952e5e23c4bbe40ee2d963",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 1071,
+        "abs_hourly_p99_bps": 118.04125242777647,
+        "abs_hourly_max_bps": 180.31641837100256,
+        "abs_gap_max_bps": 166.63309688478216,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 95.98775553004658,
+          "p975_bps": 132.5437677993184,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "3bc33f559448f282edcba02478b903e89b8d0a1623d886be8a2858f5bb97608b",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 24,
+        "symbol": "UK100",
+        "asset_class": "index",
+        "quote_currency": {
+          "currency": "gbp",
+          "fx_market": 11
+        },
+        "max_slippage_bps": 10,
+        "house_cap_bps": 5000,
+        "margin_tiers": [
+          {
+            "up_to": "5000000",
+            "bps": 50
+          },
+          {
+            "up_to": "25000000",
+            "bps": 100
+          },
+          {
+            "bps": 500
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "5000000",
+            "bps": 0
+          },
+          {
+            "up_to": "25000000",
+            "bps": 1
+          },
+          {
+            "bps": 4
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SONIA",
+          "markup_bps": 250,
+          "day_basis": 365
+        },
+        "contracts": [
+          {
+            "contract": "ZZ6",
+            "from": "2026-09-10T14:30:00Z"
+          },
+          {
+            "contract": "ZH7",
+            "from": "2026-12-10T14:30:00Z"
+          },
+          {
+            "contract": "ZM7",
+            "from": "2027-03-11T14:30:00Z"
+          },
+          {
+            "contract": "ZU7",
+            "from": "2027-06-10T14:30:00Z"
+          },
+          {
+            "contract": "ZZ7",
+            "from": "2027-09-09T14:30:00Z"
+          },
+          {
+            "contract": "ZH8",
+            "from": "2027-12-09T14:30:00Z"
+          }
+        ],
+        "schedule": {
+          "kind": "weekly",
+          "tz": "Europe/London",
+          "windows": [
+            {
+              "open": "Mon 01:00",
+              "close": "Mon 21:00"
+            },
+            {
+              "open": "Tue 01:00",
+              "close": "Tue 21:00"
+            },
+            {
+              "open": "Wed 01:00",
+              "close": "Wed 21:00"
+            },
+            {
+              "open": "Thu 01:00",
+              "close": "Thu 21:00"
+            },
+            {
+              "open": "Fri 01:00",
+              "close": "Fri 21:00"
+            }
+          ],
+          "closed_dates": [
+            "2026-12-25",
+            "2026-12-28",
+            "2027-01-01",
+            "2027-03-26",
+            "2027-03-29",
+            "2027-05-03",
+            "2027-05-31",
+            "2027-08-30",
+            "2027-12-27",
+            "2027-12-28"
+          ],
+          "closures": [
+            {
+              "from": "2026-12-24T12:30:00",
+              "to": "2026-12-24T21:00:00"
+            },
+            {
+              "from": "2026-12-31T12:30:00",
+              "to": "2026-12-31T21:00:00"
+            },
+            {
+              "from": "2027-12-24T12:30:00",
+              "to": "2027-12-24T21:00:00"
+            },
+            {
+              "from": "2027-12-31T12:30:00",
+              "to": "2027-12-31T21:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "^FTSE",
+      "instrument_note": "FTSE 100 cash index; the venue's future trades longer hours, so gaps are overstated",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 3375,
+        "abs_hourly_p99_bps": 99.17859178637055,
+        "abs_hourly_max_bps": 508.790134152299,
+        "abs_gap_max_bps": 508.790134152299,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 77.64697773902675,
+          "p975_bps": 130.32334035835356,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "4e8baedbd91623ff425d005416bfb7643865d291a95ffb7e3273b779899a0d67",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 1053,
+        "abs_hourly_p99_bps": 90.1236903199838,
+        "abs_hourly_max_bps": 182.33717026764833,
+        "abs_gap_max_bps": 110.29721614919994,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 75.0271307365616,
+          "p975_bps": 110.29721614919994,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "90302080e2620f74ce857c5357ac5966f36ab04a211ca6ca5d10e39b03529aff",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 25,
+        "symbol": "JP225",
+        "asset_class": "index",
+        "quote_currency": {
+          "currency": "jpy",
+          "fx_market": 12
+        },
+        "max_slippage_bps": 10,
+        "house_cap_bps": 5000,
+        "margin_tiers": [
+          {
+            "up_to": "5000000",
+            "bps": 50
+          },
+          {
+            "up_to": "25000000",
+            "bps": 100
+          },
+          {
+            "bps": 500
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "5000000",
+            "bps": 0
+          },
+          {
+            "up_to": "25000000",
+            "bps": 1
+          },
+          {
+            "bps": 4
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "TONA",
+          "markup_bps": 250,
+          "day_basis": 365
+        },
+        "contracts": [
+          {
+            "contract": "NIYZ6",
+            "from": "2026-09-03T01:00:00Z"
+          },
+          {
+            "contract": "NIYH7",
+            "from": "2026-12-03T01:00:00Z"
+          },
+          {
+            "contract": "NIYM7",
+            "from": "2027-03-04T01:00:00Z"
+          },
+          {
+            "contract": "NIYU7",
+            "from": "2027-06-03T01:00:00Z"
+          },
+          {
+            "contract": "NIYZ7",
+            "from": "2027-09-02T01:00:00Z"
+          },
+          {
+            "contract": "NIYH8",
+            "from": "2027-12-02T01:00:00Z"
+          }
+        ],
+        "schedule": {
+          "kind": "weekly",
+          "tz": "Asia/Tokyo",
+          "windows": [
+            {
+              "open": "Mon 08:45",
+              "close": "Mon 15:45"
+            },
+            {
+              "open": "Tue 08:45",
+              "close": "Tue 15:45"
+            },
+            {
+              "open": "Wed 08:45",
+              "close": "Wed 15:45"
+            },
+            {
+              "open": "Thu 08:45",
+              "close": "Thu 15:45"
+            },
+            {
+              "open": "Fri 08:45",
+              "close": "Fri 15:45"
+            },
+            {
+              "open": "Mon 17:00",
+              "close": "Tue 06:00"
+            },
+            {
+              "open": "Tue 17:00",
+              "close": "Wed 06:00"
+            },
+            {
+              "open": "Wed 17:00",
+              "close": "Thu 06:00"
+            },
+            {
+              "open": "Thu 17:00",
+              "close": "Fri 06:00"
+            },
+            {
+              "open": "Fri 17:00",
+              "close": "Sat 06:00"
+            }
+          ],
+          "closures": [
+            {
+              "from": "2026-11-23T08:45:00",
+              "to": "2026-11-24T06:00:00"
+            },
+            {
+              "from": "2026-12-31T08:45:00",
+              "to": "2027-01-02T06:00:00"
+            },
+            {
+              "from": "2027-09-20T08:45:00",
+              "to": "2027-09-21T06:00:00"
+            },
+            {
+              "from": "2027-12-31T08:45:00",
+              "to": "2028-01-01T06:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "NIY=F",
+      "instrument_note": "CME Nikkei 225 yen future, near the venue's day and night sessions",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 8531,
+        "abs_hourly_p99_bps": 114.52910325224686,
+        "abs_hourly_max_bps": 747.456189042052,
+        "abs_gap_max_bps": 374.8920760005315,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 95.70507183048198,
+          "p975_bps": 132.43934170402542,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "b0f5274bc101ec9bac42f69914230e3308ca90bb585fd1f6bf9623ceba2c0a03",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 2668,
+        "abs_hourly_p99_bps": 136.95941755241336,
+        "abs_hourly_max_bps": 261.3057014352064,
+        "abs_gap_max_bps": 283.4118089450693,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 109.9016201259782,
+          "p975_bps": 161.8660639189538,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "cb42e649e00077e63e0b4bb63d4982af47e20c6b5f49e7656690e67ac8eb995d",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 30,
+        "symbol": "XAU-USD",
+        "asset_class": "commodity",
+        "max_slippage_bps": 10,
+        "house_cap_bps": 3000,
+        "margin_tiers": [
+          {
+            "up_to": "2000000",
+            "bps": 100
+          },
+          {
+            "bps": 500
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "2000000",
+            "bps": 0
+          },
+          {
+            "up_to": "10000000",
+            "bps": 2
+          },
+          {
+            "bps": 6
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "contracts": [
+          {
+            "contract": "GCZ6",
+            "from": "2026-09-28T14:30:00Z"
+          },
+          {
+            "contract": "GCG7",
+            "from": "2026-11-25T14:30:00Z"
+          },
+          {
+            "contract": "GCJ7",
+            "from": "2027-01-27T14:30:00Z"
+          },
+          {
+            "contract": "GCM7",
+            "from": "2027-03-29T14:30:00Z"
+          },
+          {
+            "contract": "GCQ7",
+            "from": "2027-05-26T14:30:00Z"
+          },
+          {
+            "contract": "GCV7",
+            "from": "2027-07-28T14:30:00Z"
+          },
+          {
+            "contract": "GCZ7",
+            "from": "2027-09-28T14:30:00Z"
+          },
+          {
+            "contract": "GCG8",
+            "from": "2027-11-26T14:30:00Z"
+          },
+          {
+            "contract": "GCJ8",
+            "from": "2028-01-27T14:30:00Z"
+          }
+        ],
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/Chicago",
+          "windows": [
+            {
+              "open": "Sun 17:00",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Mon 17:00",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Tue 17:00",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Wed 17:00",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Thu 17:00",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closures": [
+            {
+              "from": "2026-11-26T12:00:00",
+              "to": "2026-11-26T16:00:00"
+            },
+            {
+              "from": "2026-11-27T12:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T12:00:00",
+              "to": "2026-12-25T16:00:00"
+            },
+            {
+              "from": "2026-12-31T17:00:00",
+              "to": "2027-01-01T16:00:00"
+            },
+            {
+              "from": "2027-01-18T12:00:00",
+              "to": "2027-01-18T16:00:00"
+            },
+            {
+              "from": "2027-02-15T12:00:00",
+              "to": "2027-02-15T16:00:00"
+            },
+            {
+              "from": "2027-03-25T17:00:00",
+              "to": "2027-03-26T16:00:00"
+            },
+            {
+              "from": "2027-05-31T12:00:00",
+              "to": "2027-05-31T16:00:00"
+            },
+            {
+              "from": "2027-06-18T13:30:00",
+              "to": "2027-06-18T16:00:00"
+            },
+            {
+              "from": "2027-07-05T12:00:00",
+              "to": "2027-07-05T16:00:00"
+            },
+            {
+              "from": "2027-09-06T12:00:00",
+              "to": "2027-09-06T16:00:00"
+            },
+            {
+              "from": "2027-11-25T12:00:00",
+              "to": "2027-11-25T16:00:00"
+            },
+            {
+              "from": "2027-11-26T12:00:00",
+              "to": "2027-11-26T16:00:00"
+            },
+            {
+              "from": "2027-12-23T17:00:00",
+              "to": "2027-12-24T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "GC=F",
+      "instrument_note": "COMEX gold front month",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 8543,
+        "abs_hourly_p99_bps": 128.92399520034581,
+        "abs_hourly_max_bps": 565.3970714171262,
+        "abs_gap_max_bps": 221.60986077276326,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 103.10478809452644,
+          "p975_bps": 155.83170785816418,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "d617bd0dabea9811b006e60f890fb71188cc775f940502d4220b254486858196",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 2672,
+        "abs_hourly_p99_bps": 110.91054721374772,
+        "abs_hourly_max_bps": 233.6374075241913,
+        "abs_gap_max_bps": 204.77852055590694,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 91.66727022970322,
+          "p975_bps": 130.47383913164884,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "5126672a72610e94adba35941c2991f35399e273c50c78447c4b8ccdf38ba46e",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 31,
+        "symbol": "XAG-USD",
+        "asset_class": "commodity",
+        "max_slippage_bps": 10,
+        "house_cap_bps": 3000,
+        "margin_tiers": [
+          {
+            "up_to": "2000000",
+            "bps": 100
+          },
+          {
+            "bps": 500
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "2000000",
+            "bps": 0
+          },
+          {
+            "up_to": "10000000",
+            "bps": 2
+          },
+          {
+            "bps": 6
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "contracts": [
+          {
+            "contract": "SIZ6",
+            "from": "2026-08-27T14:30:00Z"
+          },
+          {
+            "contract": "SIH7",
+            "from": "2026-11-25T14:30:00Z"
+          },
+          {
+            "contract": "SIK7",
+            "from": "2027-02-24T14:30:00Z"
+          },
+          {
+            "contract": "SIN7",
+            "from": "2027-04-28T14:30:00Z"
+          },
+          {
+            "contract": "SIU7",
+            "from": "2027-06-28T14:30:00Z"
+          },
+          {
+            "contract": "SIZ7",
+            "from": "2027-08-27T14:30:00Z"
+          },
+          {
+            "contract": "SIH8",
+            "from": "2027-11-26T14:30:00Z"
+          },
+          {
+            "contract": "SIK8",
+            "from": "2028-02-25T14:30:00Z"
+          }
+        ],
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/Chicago",
+          "windows": [
+            {
+              "open": "Sun 17:00",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Mon 17:00",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Tue 17:00",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Wed 17:00",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Thu 17:00",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closures": [
+            {
+              "from": "2026-11-26T12:00:00",
+              "to": "2026-11-26T16:00:00"
+            },
+            {
+              "from": "2026-11-27T12:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T12:00:00",
+              "to": "2026-12-25T16:00:00"
+            },
+            {
+              "from": "2026-12-31T17:00:00",
+              "to": "2027-01-01T16:00:00"
+            },
+            {
+              "from": "2027-01-18T12:00:00",
+              "to": "2027-01-18T16:00:00"
+            },
+            {
+              "from": "2027-02-15T12:00:00",
+              "to": "2027-02-15T16:00:00"
+            },
+            {
+              "from": "2027-03-25T17:00:00",
+              "to": "2027-03-26T16:00:00"
+            },
+            {
+              "from": "2027-05-31T12:00:00",
+              "to": "2027-05-31T16:00:00"
+            },
+            {
+              "from": "2027-06-18T13:30:00",
+              "to": "2027-06-18T16:00:00"
+            },
+            {
+              "from": "2027-07-05T12:00:00",
+              "to": "2027-07-05T16:00:00"
+            },
+            {
+              "from": "2027-09-06T12:00:00",
+              "to": "2027-09-06T16:00:00"
+            },
+            {
+              "from": "2027-11-25T12:00:00",
+              "to": "2027-11-25T16:00:00"
+            },
+            {
+              "from": "2027-11-26T12:00:00",
+              "to": "2027-11-26T16:00:00"
+            },
+            {
+              "from": "2027-12-23T17:00:00",
+              "to": "2027-12-24T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "SI=F",
+      "instrument_note": "COMEX silver front month",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 8541,
+        "abs_hourly_p99_bps": 268.5774011864752,
+        "abs_hourly_max_bps": 1373.4289850289374,
+        "abs_gap_max_bps": 602.8845663015887,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 202.78878275013957,
+          "p975_bps": 355.08903418975285,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "6dafef0f189130ea47db48766a8123438799e1c38393e06a0f23dd4a4701a1af",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 2673,
+        "abs_hourly_p99_bps": 230.9771449664188,
+        "abs_hourly_max_bps": 371.71526624083083,
+        "abs_gap_max_bps": 284.08025243682886,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 190.19796952387043,
+          "p975_bps": 265.2389507235582,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "b8e5d71eacb79a5f20c1c19e54131990483d1d8c0423db5dbb6d4db63a1b4d69",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 32,
+        "symbol": "WTI",
+        "asset_class": "commodity",
+        "max_slippage_bps": 10,
+        "house_cap_bps": 3000,
+        "margin_tiers": [
+          {
+            "up_to": "2000000",
+            "bps": 100
+          },
+          {
+            "bps": 500
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "2000000",
+            "bps": 0
+          },
+          {
+            "up_to": "10000000",
+            "bps": 2
+          },
+          {
+            "bps": 6
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "contracts": [
+          {
+            "contract": "CLZ6",
+            "from": "2026-10-16T14:30:00Z"
+          },
+          {
+            "contract": "CLF7",
+            "from": "2026-11-18T14:30:00Z"
+          },
+          {
+            "contract": "CLG7",
+            "from": "2026-12-17T14:30:00Z"
+          },
+          {
+            "contract": "CLH7",
+            "from": "2027-01-15T14:30:00Z"
+          },
+          {
+            "contract": "CLJ7",
+            "from": "2027-02-18T14:30:00Z"
+          },
+          {
+            "contract": "CLK7",
+            "from": "2027-03-18T14:30:00Z"
+          },
+          {
+            "contract": "CLM7",
+            "from": "2027-04-16T14:30:00Z"
+          },
+          {
+            "contract": "CLN7",
+            "from": "2027-05-18T14:30:00Z"
+          },
+          {
+            "contract": "CLQ7",
+            "from": "2027-06-17T14:30:00Z"
+          },
+          {
+            "contract": "CLU7",
+            "from": "2027-07-16T14:30:00Z"
+          },
+          {
+            "contract": "CLV7",
+            "from": "2027-08-18T14:30:00Z"
+          },
+          {
+            "contract": "CLX7",
+            "from": "2027-09-17T14:30:00Z"
+          },
+          {
+            "contract": "CLZ7",
+            "from": "2027-10-18T14:30:00Z"
+          },
+          {
+            "contract": "CLF8",
+            "from": "2027-11-17T14:30:00Z"
+          },
+          {
+            "contract": "CLG8",
+            "from": "2027-12-16T14:30:00Z"
+          },
+          {
+            "contract": "CLH8",
+            "from": "2028-01-18T14:30:00Z"
+          }
+        ],
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/Chicago",
+          "windows": [
+            {
+              "open": "Sun 17:00",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Mon 17:00",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Tue 17:00",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Wed 17:00",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Thu 17:00",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closures": [
+            {
+              "from": "2026-11-26T12:00:00",
+              "to": "2026-11-26T16:00:00"
+            },
+            {
+              "from": "2026-11-27T12:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T12:00:00",
+              "to": "2026-12-25T16:00:00"
+            },
+            {
+              "from": "2026-12-31T17:00:00",
+              "to": "2027-01-01T16:00:00"
+            },
+            {
+              "from": "2027-01-18T12:00:00",
+              "to": "2027-01-18T16:00:00"
+            },
+            {
+              "from": "2027-02-15T12:00:00",
+              "to": "2027-02-15T16:00:00"
+            },
+            {
+              "from": "2027-03-25T17:00:00",
+              "to": "2027-03-26T16:00:00"
+            },
+            {
+              "from": "2027-05-31T12:00:00",
+              "to": "2027-05-31T16:00:00"
+            },
+            {
+              "from": "2027-06-18T13:30:00",
+              "to": "2027-06-18T16:00:00"
+            },
+            {
+              "from": "2027-07-05T12:00:00",
+              "to": "2027-07-05T16:00:00"
+            },
+            {
+              "from": "2027-09-06T12:00:00",
+              "to": "2027-09-06T16:00:00"
+            },
+            {
+              "from": "2027-11-25T12:00:00",
+              "to": "2027-11-25T16:00:00"
+            },
+            {
+              "from": "2027-11-26T12:00:00",
+              "to": "2027-11-26T16:00:00"
+            },
+            {
+              "from": "2027-12-23T17:00:00",
+              "to": "2027-12-24T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "CL=F",
+      "instrument_note": "NYMEX WTI front month",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 8372,
+        "abs_hourly_p99_bps": 215.28873009140636,
+        "abs_hourly_max_bps": 1764.577300728845,
+        "abs_gap_max_bps": 2097.9146284574126,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 170.44077876964937,
+          "p975_bps": 257.7148728713591,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "3c9daf9ac2260ab274cd2a3f39fff4be94dc7ff63483fe7d1bee336ab2caff33",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 2673,
+        "abs_hourly_p99_bps": 275.12671836708694,
+        "abs_hourly_max_bps": 514.6633751036512,
+        "abs_gap_max_bps": 550.3746710070509,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 213.5175370634194,
+          "p975_bps": 308.98755580534856,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "6d2b5c1f14e381a0afaca75c924c62cc2434c4e32f8467142a7e5283da0b37d1",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 33,
+        "symbol": "BRENT",
+        "asset_class": "commodity",
+        "max_slippage_bps": 10,
+        "house_cap_bps": 3000,
+        "margin_tiers": [
+          {
+            "up_to": "2000000",
+            "bps": 100
+          },
+          {
+            "bps": 500
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "2000000",
+            "bps": 0
+          },
+          {
+            "up_to": "10000000",
+            "bps": 2
+          },
+          {
+            "bps": 6
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "contracts": [
+          {
+            "contract": "BRNZ6",
+            "from": "2026-09-28T14:30:00Z"
+          },
+          {
+            "contract": "BRNF7",
+            "from": "2026-10-28T14:30:00Z"
+          },
+          {
+            "contract": "BRNG7",
+            "from": "2026-11-26T14:30:00Z"
+          },
+          {
+            "contract": "BRNH7",
+            "from": "2026-12-23T14:30:00Z"
+          },
+          {
+            "contract": "BRNJ7",
+            "from": "2027-01-27T14:30:00Z"
+          },
+          {
+            "contract": "BRNK7",
+            "from": "2027-02-24T14:30:00Z"
+          },
+          {
+            "contract": "BRNM7",
+            "from": "2027-03-25T14:30:00Z"
+          },
+          {
+            "contract": "BRNN7",
+            "from": "2027-04-28T14:30:00Z"
+          },
+          {
+            "contract": "BRNQ7",
+            "from": "2027-05-26T14:30:00Z"
+          },
+          {
+            "contract": "BRNU7",
+            "from": "2027-06-28T14:30:00Z"
+          },
+          {
+            "contract": "BRNV7",
+            "from": "2027-07-28T14:30:00Z"
+          },
+          {
+            "contract": "BRNX7",
+            "from": "2027-08-26T14:30:00Z"
+          },
+          {
+            "contract": "BRNZ7",
+            "from": "2027-09-28T14:30:00Z"
+          },
+          {
+            "contract": "BRNF8",
+            "from": "2027-10-27T14:30:00Z"
+          },
+          {
+            "contract": "BRNG8",
+            "from": "2027-11-26T14:30:00Z"
+          },
+          {
+            "contract": "BRNH8",
+            "from": "2027-12-23T14:30:00Z"
+          },
+          {
+            "contract": "BRNJ8",
+            "from": "2028-01-27T14:30:00Z"
+          }
+        ],
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/New_York",
+          "windows": [
+            {
+              "open": "Sun 18:00",
+              "close": "Mon 18:00"
+            },
+            {
+              "open": "Mon 20:00",
+              "close": "Tue 18:00"
+            },
+            {
+              "open": "Tue 20:00",
+              "close": "Wed 18:00"
+            },
+            {
+              "open": "Wed 20:00",
+              "close": "Thu 18:00"
+            },
+            {
+              "open": "Thu 20:00",
+              "close": "Fri 18:00"
+            }
+          ],
+          "closures": [
+            {
+              "from": "2026-11-26T13:30:00",
+              "to": "2026-11-26T18:00:00"
+            },
+            {
+              "from": "2026-11-27T15:00:00",
+              "to": "2026-11-27T18:00:00"
+            },
+            {
+              "from": "2026-12-24T14:00:00",
+              "to": "2026-12-25T18:00:00"
+            },
+            {
+              "from": "2026-12-31T15:00:00",
+              "to": "2027-01-01T18:00:00"
+            },
+            {
+              "from": "2027-03-25T20:00:00",
+              "to": "2027-03-26T18:00:00"
+            },
+            {
+              "from": "2027-05-31T13:30:00",
+              "to": "2027-05-31T18:00:00"
+            },
+            {
+              "from": "2027-06-18T13:30:00",
+              "to": "2027-06-18T18:00:00"
+            },
+            {
+              "from": "2027-07-05T13:30:00",
+              "to": "2027-07-05T18:00:00"
+            },
+            {
+              "from": "2027-09-06T13:30:00",
+              "to": "2027-09-06T18:00:00"
+            },
+            {
+              "from": "2027-11-25T14:30:00",
+              "to": "2027-11-25T18:00:00"
+            },
+            {
+              "from": "2027-11-26T15:00:00",
+              "to": "2027-11-26T18:00:00"
+            },
+            {
+              "from": "2027-12-24T08:00:00",
+              "to": "2027-12-24T18:00:00"
+            },
+            {
+              "from": "2027-12-31T15:00:00",
+              "to": "2027-12-31T18:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "BZ=F",
+      "instrument_note": "NYMEX Brent last-day future, front month",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 8519,
+        "abs_hourly_p99_bps": 219.52459294078844,
+        "abs_hourly_max_bps": 1606.428121036702,
+        "abs_gap_max_bps": 1596.7176051172135,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 176.7641078552323,
+          "p975_bps": 273.8115863173827,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "e6ddf34f1fb74931d96c6493963e45ba2e24643400317feab87abadd7a810db0",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 2640,
+        "abs_hourly_p99_bps": 418.1460809501502,
+        "abs_hourly_max_bps": 1519.7861645916237,
+        "abs_gap_max_bps": 818.0454767998452,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 260.2488413771859,
+          "p975_bps": 666.4531970139449,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "883a757ca2a58b7a023bf3b50b141415368ce7cfbd7bee153252bd8892505e55",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 40,
+        "symbol": "AAPL",
+        "asset_class": "equity",
+        "max_slippage_bps": 15,
+        "house_cap_bps": 1000,
+        "min_order_notional": "10",
+        "margin_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 1000
+          },
+          {
+            "up_to": "2000000",
+            "bps": 2000
+          },
+          {
+            "bps": 5000
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 0
+          },
+          {
+            "up_to": "2000000",
+            "bps": 3
+          },
+          {
+            "bps": 10
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/New_York",
+          "windows": [
+            {
+              "open": "Mon 09:30",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Tue 09:30",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Wed 09:30",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Thu 09:30",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Fri 09:30",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closed_dates": [
+            "2026-11-26",
+            "2026-12-25",
+            "2027-01-01",
+            "2027-01-18",
+            "2027-02-15",
+            "2027-03-26",
+            "2027-05-31",
+            "2027-06-18",
+            "2027-07-05",
+            "2027-09-06",
+            "2027-11-25",
+            "2027-12-24"
+          ],
+          "closures": [
+            {
+              "from": "2026-11-27T13:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T13:00:00",
+              "to": "2026-12-24T16:00:00"
+            },
+            {
+              "from": "2027-11-26T13:00:00",
+              "to": "2027-11-26T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "AAPL",
+      "instrument_note": "NYSE/Nasdaq regular session",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 2596,
+        "abs_hourly_p99_bps": 276.2524654059471,
+        "abs_hourly_max_bps": 811.257504560379,
+        "abs_gap_max_bps": 816.3925762290806,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 218.14544868100768,
+          "p975_bps": 330.07945294967897,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "5d8ab71e13001ab04bb12e29366419dc2dab55dbe2f47b8b301ab1fd7f2a0352",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 812,
+        "abs_hourly_p99_bps": 255.79685952996883,
+        "abs_hourly_max_bps": 931.8516431438344,
+        "abs_gap_max_bps": 869.8502814975832,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 215.48442235987537,
+          "p975_bps": 367.03533756661017,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "8992d46a4eded2b27fe8b95c260ce3e26aa739d723042b0a0b728863753c76af",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 41,
+        "symbol": "MSFT",
+        "asset_class": "equity",
+        "max_slippage_bps": 15,
+        "house_cap_bps": 1000,
+        "min_order_notional": "10",
+        "margin_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 1000
+          },
+          {
+            "up_to": "2000000",
+            "bps": 2000
+          },
+          {
+            "bps": 5000
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 0
+          },
+          {
+            "up_to": "2000000",
+            "bps": 3
+          },
+          {
+            "bps": 10
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/New_York",
+          "windows": [
+            {
+              "open": "Mon 09:30",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Tue 09:30",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Wed 09:30",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Thu 09:30",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Fri 09:30",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closed_dates": [
+            "2026-11-26",
+            "2026-12-25",
+            "2027-01-01",
+            "2027-01-18",
+            "2027-02-15",
+            "2027-03-26",
+            "2027-05-31",
+            "2027-06-18",
+            "2027-07-05",
+            "2027-09-06",
+            "2027-11-25",
+            "2027-12-24"
+          ],
+          "closures": [
+            {
+              "from": "2026-11-27T13:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T13:00:00",
+              "to": "2026-12-24T16:00:00"
+            },
+            {
+              "from": "2027-11-26T13:00:00",
+              "to": "2027-11-26T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "MSFT",
+      "instrument_note": "regular session",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 2596,
+        "abs_hourly_p99_bps": 237.1721909482668,
+        "abs_hourly_max_bps": 1149.8350877917833,
+        "abs_gap_max_bps": 986.4983150979776,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 202.3251924018277,
+          "p975_bps": 267.217916073588,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "de677ffefe56c8643f302c45ff44fcff3f61c5d178aa85eb89a1d8f6e261f33f",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 812,
+        "abs_hourly_p99_bps": 293.22686484806536,
+        "abs_hourly_max_bps": 1465.0822809793515,
+        "abs_gap_max_bps": 1174.820670563966,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 253.40753722855595,
+          "p975_bps": 354.77385454120775,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "7e28d1e28d43503b15f934295fbf52356bcc1050d5c1d8822a55fbcafca146e4",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 42,
+        "symbol": "NVDA",
+        "asset_class": "equity",
+        "max_slippage_bps": 15,
+        "house_cap_bps": 1000,
+        "min_order_notional": "10",
+        "margin_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 1000
+          },
+          {
+            "up_to": "2000000",
+            "bps": 2000
+          },
+          {
+            "bps": 5000
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 0
+          },
+          {
+            "up_to": "2000000",
+            "bps": 3
+          },
+          {
+            "bps": 10
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/New_York",
+          "windows": [
+            {
+              "open": "Mon 09:30",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Tue 09:30",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Wed 09:30",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Thu 09:30",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Fri 09:30",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closed_dates": [
+            "2026-11-26",
+            "2026-12-25",
+            "2027-01-01",
+            "2027-01-18",
+            "2027-02-15",
+            "2027-03-26",
+            "2027-05-31",
+            "2027-06-18",
+            "2027-07-05",
+            "2027-09-06",
+            "2027-11-25",
+            "2027-12-24"
+          ],
+          "closures": [
+            {
+              "from": "2026-11-27T13:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T13:00:00",
+              "to": "2026-12-24T16:00:00"
+            },
+            {
+              "from": "2027-11-26T13:00:00",
+              "to": "2027-11-26T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "NVDA",
+      "instrument_note": "regular session",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 2596,
+        "abs_hourly_p99_bps": 413.8812070921189,
+        "abs_hourly_max_bps": 1302.2698180507666,
+        "abs_gap_max_bps": 1248.972754241069,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 365.8787574086113,
+          "p975_bps": 473.8171884437908,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "f4775f190ad624fabdcc469e95b46ddb63b55f9922a389d47d089465ccbd8d5d",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 812,
+        "abs_hourly_p99_bps": 354.94746704930884,
+        "abs_hourly_max_bps": 751.1324476630961,
+        "abs_gap_max_bps": 601.8137290385843,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 275.01369259482783,
+          "p975_bps": 387.70418499641164,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "75334dcbebdec8314308013fb272c16f46bcf3d3f12fbe634a8701e3f4a89501",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 43,
+        "symbol": "AMZN",
+        "asset_class": "equity",
+        "max_slippage_bps": 15,
+        "house_cap_bps": 1000,
+        "min_order_notional": "10",
+        "margin_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 1000
+          },
+          {
+            "up_to": "2000000",
+            "bps": 2000
+          },
+          {
+            "bps": 5000
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 0
+          },
+          {
+            "up_to": "2000000",
+            "bps": 3
+          },
+          {
+            "bps": 10
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/New_York",
+          "windows": [
+            {
+              "open": "Mon 09:30",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Tue 09:30",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Wed 09:30",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Thu 09:30",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Fri 09:30",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closed_dates": [
+            "2026-11-26",
+            "2026-12-25",
+            "2027-01-01",
+            "2027-01-18",
+            "2027-02-15",
+            "2027-03-26",
+            "2027-05-31",
+            "2027-06-18",
+            "2027-07-05",
+            "2027-09-06",
+            "2027-11-25",
+            "2027-12-24"
+          ],
+          "closures": [
+            {
+              "from": "2026-11-27T13:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T13:00:00",
+              "to": "2026-12-24T16:00:00"
+            },
+            {
+              "from": "2027-11-26T13:00:00",
+              "to": "2027-11-26T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "AMZN",
+      "instrument_note": "regular session",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 2596,
+        "abs_hourly_p99_bps": 317.30672968481707,
+        "abs_hourly_max_bps": 1067.469092609377,
+        "abs_gap_max_bps": 1231.3176285500574,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 264.0999170486223,
+          "p975_bps": 373.71774120083734,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "79856053325b4973425d743ba7f44270b9ac5c33cec20d60db56fd99bca02a39",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 812,
+        "abs_hourly_p99_bps": 292.92836559724486,
+        "abs_hourly_max_bps": 1423.550901648909,
+        "abs_gap_max_bps": 1226.747412377316,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 227.27420151314334,
+          "p975_bps": 467.5510195869286,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "3b117643b154b47073e2d6cc23287b651a9d89a50504a0c17c2386356480b6af",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 44,
+        "symbol": "GOOGL",
+        "asset_class": "equity",
+        "max_slippage_bps": 15,
+        "house_cap_bps": 1000,
+        "min_order_notional": "10",
+        "margin_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 1000
+          },
+          {
+            "up_to": "2000000",
+            "bps": 2000
+          },
+          {
+            "bps": 5000
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 0
+          },
+          {
+            "up_to": "2000000",
+            "bps": 3
+          },
+          {
+            "bps": 10
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/New_York",
+          "windows": [
+            {
+              "open": "Mon 09:30",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Tue 09:30",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Wed 09:30",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Thu 09:30",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Fri 09:30",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closed_dates": [
+            "2026-11-26",
+            "2026-12-25",
+            "2027-01-01",
+            "2027-01-18",
+            "2027-02-15",
+            "2027-03-26",
+            "2027-05-31",
+            "2027-06-18",
+            "2027-07-05",
+            "2027-09-06",
+            "2027-11-25",
+            "2027-12-24"
+          ],
+          "closures": [
+            {
+              "from": "2026-11-27T13:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T13:00:00",
+              "to": "2026-12-24T16:00:00"
+            },
+            {
+              "from": "2027-11-26T13:00:00",
+              "to": "2027-11-26T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "GOOGL",
+      "instrument_note": "regular session",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 2596,
+        "abs_hourly_p99_bps": 315.42810496967064,
+        "abs_hourly_max_bps": 861.8396280363493,
+        "abs_gap_max_bps": 723.5763220039697,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 274.9417677507169,
+          "p975_bps": 369.948883830545,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "812c7954f22035426a716c21d480a1b1834f1455c6b0aab006f3d3d461917e98",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 812,
+        "abs_hourly_p99_bps": 286.19477277654073,
+        "abs_hourly_max_bps": 685.9678812316463,
+        "abs_gap_max_bps": 684.1794686291332,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 235.88919279316977,
+          "p975_bps": 397.9439864630319,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "ddb0a21e2f71f9fac0424a6f237e8ed0ebd30676ec416aae4b5a0805ceaf2f75",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 45,
+        "symbol": "META",
+        "asset_class": "equity",
+        "max_slippage_bps": 15,
+        "house_cap_bps": 1000,
+        "min_order_notional": "10",
+        "margin_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 1000
+          },
+          {
+            "up_to": "2000000",
+            "bps": 2000
+          },
+          {
+            "bps": 5000
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 0
+          },
+          {
+            "up_to": "2000000",
+            "bps": 3
+          },
+          {
+            "bps": 10
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/New_York",
+          "windows": [
+            {
+              "open": "Mon 09:30",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Tue 09:30",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Wed 09:30",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Thu 09:30",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Fri 09:30",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closed_dates": [
+            "2026-11-26",
+            "2026-12-25",
+            "2027-01-01",
+            "2027-01-18",
+            "2027-02-15",
+            "2027-03-26",
+            "2027-05-31",
+            "2027-06-18",
+            "2027-07-05",
+            "2027-09-06",
+            "2027-11-25",
+            "2027-12-24"
+          ],
+          "closures": [
+            {
+              "from": "2026-11-27T13:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T13:00:00",
+              "to": "2026-12-24T16:00:00"
+            },
+            {
+              "from": "2027-11-26T13:00:00",
+              "to": "2027-11-26T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "META",
+      "instrument_note": "regular session",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 2596,
+        "abs_hourly_p99_bps": 358.22710156031036,
+        "abs_hourly_max_bps": 1203.3225033375702,
+        "abs_gap_max_bps": 1150.1069857435527,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 264.59643529152993,
+          "p975_bps": 428.4697540153559,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "2b7426a864dc646403b8873d8e7971e0a84ed52cd331ba7dfaeefc5f97cc011d",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 812,
+        "abs_hourly_p99_bps": 417.1563185887474,
+        "abs_hourly_max_bps": 1009.7910294217543,
+        "abs_gap_max_bps": 1043.6113525970243,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 352.7770860706911,
+          "p975_bps": 703.7387143549398,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "24b2f8fe3503bf74e9cc9f3d57e8371470dacf1b734c6ac9543f5030e5b25c85",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 46,
+        "symbol": "TSLA",
+        "asset_class": "equity",
+        "max_slippage_bps": 15,
+        "house_cap_bps": 1000,
+        "min_order_notional": "10",
+        "margin_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 1000
+          },
+          {
+            "up_to": "2000000",
+            "bps": 2000
+          },
+          {
+            "bps": 5000
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 0
+          },
+          {
+            "up_to": "2000000",
+            "bps": 3
+          },
+          {
+            "bps": 10
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/New_York",
+          "windows": [
+            {
+              "open": "Mon 09:30",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Tue 09:30",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Wed 09:30",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Thu 09:30",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Fri 09:30",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closed_dates": [
+            "2026-11-26",
+            "2026-12-25",
+            "2027-01-01",
+            "2027-01-18",
+            "2027-02-15",
+            "2027-03-26",
+            "2027-05-31",
+            "2027-06-18",
+            "2027-07-05",
+            "2027-09-06",
+            "2027-11-25",
+            "2027-12-24"
+          ],
+          "closures": [
+            {
+              "from": "2026-11-27T13:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T13:00:00",
+              "to": "2026-12-24T16:00:00"
+            },
+            {
+              "from": "2027-11-26T13:00:00",
+              "to": "2027-11-26T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "TSLA",
+      "instrument_note": "regular session",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 2596,
+        "abs_hourly_p99_bps": 577.3337212310852,
+        "abs_hourly_max_bps": 1181.6282090374057,
+        "abs_gap_max_bps": 1256.222569136559,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 494.8373010125667,
+          "p975_bps": 647.4213848564137,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "f4deb4997f804b334a3faf2921e9625a0ca0220a7073a3798b57d828b28efd54",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 812,
+        "abs_hourly_p99_bps": 420.60496805019966,
+        "abs_hourly_max_bps": 1340.2219493211353,
+        "abs_gap_max_bps": 883.599054820656,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 324.99173678988456,
+          "p975_bps": 560.9240095970757,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "92f9f3dee85854dbfd89f694a0b34f4c9093ae0b8196dfcfec482e9ace80633b",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 47,
+        "symbol": "AVGO",
+        "asset_class": "equity",
+        "max_slippage_bps": 15,
+        "house_cap_bps": 1000,
+        "min_order_notional": "10",
+        "margin_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 1000
+          },
+          {
+            "up_to": "2000000",
+            "bps": 2000
+          },
+          {
+            "bps": 5000
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 0
+          },
+          {
+            "up_to": "2000000",
+            "bps": 3
+          },
+          {
+            "bps": 10
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/New_York",
+          "windows": [
+            {
+              "open": "Mon 09:30",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Tue 09:30",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Wed 09:30",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Thu 09:30",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Fri 09:30",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closed_dates": [
+            "2026-11-26",
+            "2026-12-25",
+            "2027-01-01",
+            "2027-01-18",
+            "2027-02-15",
+            "2027-03-26",
+            "2027-05-31",
+            "2027-06-18",
+            "2027-07-05",
+            "2027-09-06",
+            "2027-11-25",
+            "2027-12-24"
+          ],
+          "closures": [
+            {
+              "from": "2026-11-27T13:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T13:00:00",
+              "to": "2026-12-24T16:00:00"
+            },
+            {
+              "from": "2027-11-26T13:00:00",
+              "to": "2027-11-26T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "AVGO",
+      "instrument_note": "regular session",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 2596,
+        "abs_hourly_p99_bps": 447.7337931571995,
+        "abs_hourly_max_bps": 2122.3649924289884,
+        "abs_gap_max_bps": 1810.371581333651,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 361.1485335054944,
+          "p975_bps": 549.1555907106223,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "4b71ca5bb3f77e6fd4f95d88b570c9f5fc2480780b001d4f105f0db0b50dd9ed",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 812,
+        "abs_hourly_p99_bps": 460.8330085446419,
+        "abs_hourly_max_bps": 1512.7495279048358,
+        "abs_gap_max_bps": 1441.3189700588393,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 379.10959255265965,
+          "p975_bps": 528.9445978051689,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "75b7f6c823b1ecc97d4bbb47a9d8f8e344c53751f6bbac975746135ecb9ed793",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 48,
+        "symbol": "BRK.B",
+        "asset_class": "equity",
+        "max_slippage_bps": 15,
+        "house_cap_bps": 1000,
+        "min_order_notional": "10",
+        "margin_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 1000
+          },
+          {
+            "up_to": "2000000",
+            "bps": 2000
+          },
+          {
+            "bps": 5000
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 0
+          },
+          {
+            "up_to": "2000000",
+            "bps": 3
+          },
+          {
+            "bps": 10
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/New_York",
+          "windows": [
+            {
+              "open": "Mon 09:30",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Tue 09:30",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Wed 09:30",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Thu 09:30",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Fri 09:30",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closed_dates": [
+            "2026-11-26",
+            "2026-12-25",
+            "2027-01-01",
+            "2027-01-18",
+            "2027-02-15",
+            "2027-03-26",
+            "2027-05-31",
+            "2027-06-18",
+            "2027-07-05",
+            "2027-09-06",
+            "2027-11-25",
+            "2027-12-24"
+          ],
+          "closures": [
+            {
+              "from": "2026-11-27T13:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T13:00:00",
+              "to": "2026-12-24T16:00:00"
+            },
+            {
+              "from": "2027-11-26T13:00:00",
+              "to": "2027-11-26T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "BRK-B",
+      "instrument_note": "regular session",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 2596,
+        "abs_hourly_p99_bps": 162.40465709293457,
+        "abs_hourly_max_bps": 564.5290480192325,
+        "abs_gap_max_bps": 530.6800560921874,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 127.6478311769724,
+          "p975_bps": 211.66771707544197,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "d5053492fa2e72990fbcabb0c06c6a21b69f379e3f6b3cc8616af9507f96d26c",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 812,
+        "abs_hourly_p99_bps": 124.96265063662486,
+        "abs_hourly_max_bps": 274.9314928140866,
+        "abs_gap_max_bps": 124.98461002630519,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 91.84924900209106,
+          "p975_bps": 158.0662366230445,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "7d45c73fef854923e60dc53766677301eac18f9fdce0ad23e9a21357c39bb16e",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 49,
+        "symbol": "JPM",
+        "asset_class": "equity",
+        "max_slippage_bps": 15,
+        "house_cap_bps": 1000,
+        "min_order_notional": "10",
+        "margin_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 1000
+          },
+          {
+            "up_to": "2000000",
+            "bps": 2000
+          },
+          {
+            "bps": 5000
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 0
+          },
+          {
+            "up_to": "2000000",
+            "bps": 3
+          },
+          {
+            "bps": 10
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/New_York",
+          "windows": [
+            {
+              "open": "Mon 09:30",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Tue 09:30",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Wed 09:30",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Thu 09:30",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Fri 09:30",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closed_dates": [
+            "2026-11-26",
+            "2026-12-25",
+            "2027-01-01",
+            "2027-01-18",
+            "2027-02-15",
+            "2027-03-26",
+            "2027-05-31",
+            "2027-06-18",
+            "2027-07-05",
+            "2027-09-06",
+            "2027-11-25",
+            "2027-12-24"
+          ],
+          "closures": [
+            {
+              "from": "2026-11-27T13:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T13:00:00",
+              "to": "2026-12-24T16:00:00"
+            },
+            {
+              "from": "2027-11-26T13:00:00",
+              "to": "2027-11-26T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "JPM",
+      "instrument_note": "regular session",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 2596,
+        "abs_hourly_p99_bps": 252.28310480028114,
+        "abs_hourly_max_bps": 951.397711408078,
+        "abs_gap_max_bps": 606.1295454353639,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 195.99598767267085,
+          "p975_bps": 319.48744867585526,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "a96c3e666372775f5783582679224ba897c060329ae479b9e4880c43d8d926e4",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 812,
+        "abs_hourly_p99_bps": 197.21927385078283,
+        "abs_hourly_max_bps": 324.5466761734612,
+        "abs_gap_max_bps": 226.84742627724822,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 154.8466399590674,
+          "p975_bps": 239.40070497621005,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "60153b88ade5e1ab99b969ca2e1d77455864b6c00dac7078cd64e8db2c259a4d",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 50,
+        "symbol": "V",
+        "asset_class": "equity",
+        "max_slippage_bps": 15,
+        "house_cap_bps": 1000,
+        "min_order_notional": "10",
+        "margin_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 1000
+          },
+          {
+            "up_to": "2000000",
+            "bps": 2000
+          },
+          {
+            "bps": 5000
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 0
+          },
+          {
+            "up_to": "2000000",
+            "bps": 3
+          },
+          {
+            "bps": 10
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/New_York",
+          "windows": [
+            {
+              "open": "Mon 09:30",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Tue 09:30",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Wed 09:30",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Thu 09:30",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Fri 09:30",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closed_dates": [
+            "2026-11-26",
+            "2026-12-25",
+            "2027-01-01",
+            "2027-01-18",
+            "2027-02-15",
+            "2027-03-26",
+            "2027-05-31",
+            "2027-06-18",
+            "2027-07-05",
+            "2027-09-06",
+            "2027-11-25",
+            "2027-12-24"
+          ],
+          "closures": [
+            {
+              "from": "2026-11-27T13:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T13:00:00",
+              "to": "2026-12-24T16:00:00"
+            },
+            {
+              "from": "2027-11-26T13:00:00",
+              "to": "2027-11-26T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "V",
+      "instrument_note": "regular session",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 2596,
+        "abs_hourly_p99_bps": 198.0818805994303,
+        "abs_hourly_max_bps": 649.5535297069171,
+        "abs_gap_max_bps": 442.4903470081321,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 177.79201293845858,
+          "p975_bps": 229.442613487412,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "cb7896c322d4ff4564066b5093e5c1d4114bc12d8ec3d533021c9ef70be5150d",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 812,
+        "abs_hourly_p99_bps": 176.02123119068705,
+        "abs_hourly_max_bps": 939.1499512688243,
+        "abs_gap_max_bps": 871.6022676059845,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 153.82462485311285,
+          "p975_bps": 244.48181118274337,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "c71cb9618f8e870490e46c3c4764828cbb979b69a8ae4757a10db4c4c768e7ad",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 51,
+        "symbol": "MA",
+        "asset_class": "equity",
+        "max_slippage_bps": 15,
+        "house_cap_bps": 1000,
+        "min_order_notional": "10",
+        "margin_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 1000
+          },
+          {
+            "up_to": "2000000",
+            "bps": 2000
+          },
+          {
+            "bps": 5000
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 0
+          },
+          {
+            "up_to": "2000000",
+            "bps": 3
+          },
+          {
+            "bps": 10
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/New_York",
+          "windows": [
+            {
+              "open": "Mon 09:30",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Tue 09:30",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Wed 09:30",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Thu 09:30",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Fri 09:30",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closed_dates": [
+            "2026-11-26",
+            "2026-12-25",
+            "2027-01-01",
+            "2027-01-18",
+            "2027-02-15",
+            "2027-03-26",
+            "2027-05-31",
+            "2027-06-18",
+            "2027-07-05",
+            "2027-09-06",
+            "2027-11-25",
+            "2027-12-24"
+          ],
+          "closures": [
+            {
+              "from": "2026-11-27T13:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T13:00:00",
+              "to": "2026-12-24T16:00:00"
+            },
+            {
+              "from": "2027-11-26T13:00:00",
+              "to": "2027-11-26T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "MA",
+      "instrument_note": "regular session",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 2596,
+        "abs_hourly_p99_bps": 209.7783866303142,
+        "abs_hourly_max_bps": 540.0973435589151,
+        "abs_gap_max_bps": 343.0284687045663,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 178.40269877962695,
+          "p975_bps": 252.23436609395853,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "68999409820362cce6856a0d7a40ec399b547dd4ee141ecbaf1d8cdcb70a082b",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 812,
+        "abs_hourly_p99_bps": 208.71832539825814,
+        "abs_hourly_max_bps": 367.3567206434866,
+        "abs_gap_max_bps": 439.4520244145308,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 176.1229919118017,
+          "p975_bps": 287.10421653198574,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "518de29fa6e205579b7922620c992a65ea967df2da6fb0ab817359a6de320b28",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 52,
+        "symbol": "LLY",
+        "asset_class": "equity",
+        "max_slippage_bps": 15,
+        "house_cap_bps": 1000,
+        "min_order_notional": "10",
+        "margin_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 1000
+          },
+          {
+            "up_to": "2000000",
+            "bps": 2000
+          },
+          {
+            "bps": 5000
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 0
+          },
+          {
+            "up_to": "2000000",
+            "bps": 3
+          },
+          {
+            "bps": 10
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/New_York",
+          "windows": [
+            {
+              "open": "Mon 09:30",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Tue 09:30",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Wed 09:30",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Thu 09:30",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Fri 09:30",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closed_dates": [
+            "2026-11-26",
+            "2026-12-25",
+            "2027-01-01",
+            "2027-01-18",
+            "2027-02-15",
+            "2027-03-26",
+            "2027-05-31",
+            "2027-06-18",
+            "2027-07-05",
+            "2027-09-06",
+            "2027-11-25",
+            "2027-12-24"
+          ],
+          "closures": [
+            {
+              "from": "2026-11-27T13:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T13:00:00",
+              "to": "2026-12-24T16:00:00"
+            },
+            {
+              "from": "2027-11-26T13:00:00",
+              "to": "2027-11-26T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "LLY",
+      "instrument_note": "regular session",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 2596,
+        "abs_hourly_p99_bps": 365.3392315124421,
+        "abs_hourly_max_bps": 1431.119508378394,
+        "abs_gap_max_bps": 1447.8632056876254,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 289.439654251291,
+          "p975_bps": 422.5335652344792,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "bc25a6a6bab995d40a1c85e1ea5525a132416e3cf61d834ea962552e27ee6582",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 812,
+        "abs_hourly_p99_bps": 387.09419751645913,
+        "abs_hourly_max_bps": 876.6369849029996,
+        "abs_gap_max_bps": 557.4850629226146,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 312.14447855402426,
+          "p975_bps": 458.22913978965164,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "ed21cc71291523c75097cce4f8c904554b3dde726b5e834b055efeb7781caef3",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 53,
+        "symbol": "JNJ",
+        "asset_class": "equity",
+        "max_slippage_bps": 15,
+        "house_cap_bps": 1000,
+        "min_order_notional": "10",
+        "margin_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 1000
+          },
+          {
+            "up_to": "2000000",
+            "bps": 2000
+          },
+          {
+            "bps": 5000
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 0
+          },
+          {
+            "up_to": "2000000",
+            "bps": 3
+          },
+          {
+            "bps": 10
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/New_York",
+          "windows": [
+            {
+              "open": "Mon 09:30",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Tue 09:30",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Wed 09:30",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Thu 09:30",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Fri 09:30",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closed_dates": [
+            "2026-11-26",
+            "2026-12-25",
+            "2027-01-01",
+            "2027-01-18",
+            "2027-02-15",
+            "2027-03-26",
+            "2027-05-31",
+            "2027-06-18",
+            "2027-07-05",
+            "2027-09-06",
+            "2027-11-25",
+            "2027-12-24"
+          ],
+          "closures": [
+            {
+              "from": "2026-11-27T13:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T13:00:00",
+              "to": "2026-12-24T16:00:00"
+            },
+            {
+              "from": "2027-11-26T13:00:00",
+              "to": "2027-11-26T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "JNJ",
+      "instrument_note": "regular session",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 2596,
+        "abs_hourly_p99_bps": 159.46486725930137,
+        "abs_hourly_max_bps": 530.0291349514471,
+        "abs_gap_max_bps": 520.6277758400327,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 129.75088251097725,
+          "p975_bps": 189.5745331709947,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "c3beea59e51ea46f2ef1bdb14386746175936d1ed5b60a89dde783f2691cf9ad",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 812,
+        "abs_hourly_p99_bps": 215.40614592214888,
+        "abs_hourly_max_bps": 409.4226253134913,
+        "abs_gap_max_bps": 248.10043713417465,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 182.09812963940638,
+          "p975_bps": 270.1239499282322,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "27d144fb3348adab401874b80be05f690260c4539bacf880811f6f525306d598",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 54,
+        "symbol": "XOM",
+        "asset_class": "equity",
+        "max_slippage_bps": 15,
+        "house_cap_bps": 1000,
+        "min_order_notional": "10",
+        "margin_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 1000
+          },
+          {
+            "up_to": "2000000",
+            "bps": 2000
+          },
+          {
+            "bps": 5000
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 0
+          },
+          {
+            "up_to": "2000000",
+            "bps": 3
+          },
+          {
+            "bps": 10
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/New_York",
+          "windows": [
+            {
+              "open": "Mon 09:30",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Tue 09:30",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Wed 09:30",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Thu 09:30",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Fri 09:30",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closed_dates": [
+            "2026-11-26",
+            "2026-12-25",
+            "2027-01-01",
+            "2027-01-18",
+            "2027-02-15",
+            "2027-03-26",
+            "2027-05-31",
+            "2027-06-18",
+            "2027-07-05",
+            "2027-09-06",
+            "2027-11-25",
+            "2027-12-24"
+          ],
+          "closures": [
+            {
+              "from": "2026-11-27T13:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T13:00:00",
+              "to": "2026-12-24T16:00:00"
+            },
+            {
+              "from": "2027-11-26T13:00:00",
+              "to": "2027-11-26T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "XOM",
+      "instrument_note": "regular session",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 2596,
+        "abs_hourly_p99_bps": 228.7572637917795,
+        "abs_hourly_max_bps": 602.4492858987174,
+        "abs_gap_max_bps": 629.3066248579568,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 197.7396520656196,
+          "p975_bps": 245.02810490495017,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "54759d325def92de7a4f8e3969d48648f0fd9c4efc29f07dd1863b2616f4b0a8",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 812,
+        "abs_hourly_p99_bps": 273.4314623210263,
+        "abs_hourly_max_bps": 423.44338132883325,
+        "abs_gap_max_bps": 494.523625467882,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 221.88584796481442,
+          "p975_bps": 327.9518364000888,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "e0a568027dcbb6429b2c195316308d7f5c247af858de24d0678b1658869d2226",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 55,
+        "symbol": "WMT",
+        "asset_class": "equity",
+        "max_slippage_bps": 15,
+        "house_cap_bps": 1000,
+        "min_order_notional": "10",
+        "margin_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 1000
+          },
+          {
+            "up_to": "2000000",
+            "bps": 2000
+          },
+          {
+            "bps": 5000
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 0
+          },
+          {
+            "up_to": "2000000",
+            "bps": 3
+          },
+          {
+            "bps": 10
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/New_York",
+          "windows": [
+            {
+              "open": "Mon 09:30",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Tue 09:30",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Wed 09:30",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Thu 09:30",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Fri 09:30",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closed_dates": [
+            "2026-11-26",
+            "2026-12-25",
+            "2027-01-01",
+            "2027-01-18",
+            "2027-02-15",
+            "2027-03-26",
+            "2027-05-31",
+            "2027-06-18",
+            "2027-07-05",
+            "2027-09-06",
+            "2027-11-25",
+            "2027-12-24"
+          ],
+          "closures": [
+            {
+              "from": "2026-11-27T13:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T13:00:00",
+              "to": "2026-12-24T16:00:00"
+            },
+            {
+              "from": "2027-11-26T13:00:00",
+              "to": "2027-11-26T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "WMT",
+      "instrument_note": "regular session",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 2596,
+        "abs_hourly_p99_bps": 210.47346768919388,
+        "abs_hourly_max_bps": 621.7532643622731,
+        "abs_gap_max_bps": 501.01364923627693,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 184.75201828527824,
+          "p975_bps": 250.18712035755954,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "d0eeea005e43d611919ed7b37f124fe91557e15c66f454de935dd084d9f084a2",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 812,
+        "abs_hourly_p99_bps": 217.78351336684685,
+        "abs_hourly_max_bps": 932.4229184949537,
+        "abs_gap_max_bps": 702.4856244086229,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 179.6860434176014,
+          "p975_bps": 267.17684728406135,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "800edd82b36651b7cb00f9363eb49937f1721764a358a7cd4c98c204247960fe",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 56,
+        "symbol": "COST",
+        "asset_class": "equity",
+        "max_slippage_bps": 15,
+        "house_cap_bps": 1000,
+        "min_order_notional": "10",
+        "margin_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 1000
+          },
+          {
+            "up_to": "2000000",
+            "bps": 2000
+          },
+          {
+            "bps": 5000
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 0
+          },
+          {
+            "up_to": "2000000",
+            "bps": 3
+          },
+          {
+            "bps": 10
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/New_York",
+          "windows": [
+            {
+              "open": "Mon 09:30",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Tue 09:30",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Wed 09:30",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Thu 09:30",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Fri 09:30",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closed_dates": [
+            "2026-11-26",
+            "2026-12-25",
+            "2027-01-01",
+            "2027-01-18",
+            "2027-02-15",
+            "2027-03-26",
+            "2027-05-31",
+            "2027-06-18",
+            "2027-07-05",
+            "2027-09-06",
+            "2027-11-25",
+            "2027-12-24"
+          ],
+          "closures": [
+            {
+              "from": "2026-11-27T13:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T13:00:00",
+              "to": "2026-12-24T16:00:00"
+            },
+            {
+              "from": "2027-11-26T13:00:00",
+              "to": "2027-11-26T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "COST",
+      "instrument_note": "regular session",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 2596,
+        "abs_hourly_p99_bps": 175.8651981822738,
+        "abs_hourly_max_bps": 628.6319106455265,
+        "abs_gap_max_bps": 353.7031750174476,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 154.795865852803,
+          "p975_bps": 211.46215993915817,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "186610d06aa6c67b57f3c5335b1455d36a930ab9dd555d19938326b75da0c56c",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 812,
+        "abs_hourly_p99_bps": 218.00226926927235,
+        "abs_hourly_max_bps": 416.4211920093738,
+        "abs_gap_max_bps": 270.01754515781704,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 140.01110159250416,
+          "p975_bps": 296.90319316266186,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "0068da6ae56f9db5cdca01501ad1c3dfe418df333ae1bc5e41ab43c654e1b349",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 57,
+        "symbol": "NFLX",
+        "asset_class": "equity",
+        "max_slippage_bps": 15,
+        "house_cap_bps": 1000,
+        "min_order_notional": "10",
+        "margin_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 1000
+          },
+          {
+            "up_to": "2000000",
+            "bps": 2000
+          },
+          {
+            "bps": 5000
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 0
+          },
+          {
+            "up_to": "2000000",
+            "bps": 3
+          },
+          {
+            "bps": 10
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/New_York",
+          "windows": [
+            {
+              "open": "Mon 09:30",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Tue 09:30",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Wed 09:30",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Thu 09:30",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Fri 09:30",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closed_dates": [
+            "2026-11-26",
+            "2026-12-25",
+            "2027-01-01",
+            "2027-01-18",
+            "2027-02-15",
+            "2027-03-26",
+            "2027-05-31",
+            "2027-06-18",
+            "2027-07-05",
+            "2027-09-06",
+            "2027-11-25",
+            "2027-12-24"
+          ],
+          "closures": [
+            {
+              "from": "2026-11-27T13:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T13:00:00",
+              "to": "2026-12-24T16:00:00"
+            },
+            {
+              "from": "2027-11-26T13:00:00",
+              "to": "2027-11-26T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "NFLX",
+      "instrument_note": "regular session",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 2596,
+        "abs_hourly_p99_bps": 296.17543361150706,
+        "abs_hourly_max_bps": 1143.1180599206998,
+        "abs_gap_max_bps": 1444.440806263336,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 263.9149331897051,
+          "p975_bps": 365.83058668197157,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "af1be74c7aefb89f6c34f5d224ab2fbb6d492b163ee564abd6eddc54be61d411",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 812,
+        "abs_hourly_p99_bps": 334.642578465549,
+        "abs_hourly_max_bps": 896.963010149299,
+        "abs_gap_max_bps": 1212.7123398387914,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 270.9250508388559,
+          "p975_bps": 400.460593404914,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "eb26c4971a8beddb9ef1066967fb9b9673e3cfd2bc13fe67390e04a9f4bbbcd7",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 58,
+        "symbol": "AMD",
+        "asset_class": "equity",
+        "max_slippage_bps": 15,
+        "house_cap_bps": 1000,
+        "min_order_notional": "10",
+        "margin_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 1000
+          },
+          {
+            "up_to": "2000000",
+            "bps": 2000
+          },
+          {
+            "bps": 5000
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 0
+          },
+          {
+            "up_to": "2000000",
+            "bps": 3
+          },
+          {
+            "bps": 10
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/New_York",
+          "windows": [
+            {
+              "open": "Mon 09:30",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Tue 09:30",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Wed 09:30",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Thu 09:30",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Fri 09:30",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closed_dates": [
+            "2026-11-26",
+            "2026-12-25",
+            "2027-01-01",
+            "2027-01-18",
+            "2027-02-15",
+            "2027-03-26",
+            "2027-05-31",
+            "2027-06-18",
+            "2027-07-05",
+            "2027-09-06",
+            "2027-11-25",
+            "2027-12-24"
+          ],
+          "closures": [
+            {
+              "from": "2026-11-27T13:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T13:00:00",
+              "to": "2026-12-24T16:00:00"
+            },
+            {
+              "from": "2027-11-26T13:00:00",
+              "to": "2027-11-26T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "AMD",
+      "instrument_note": "regular session",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 2596,
+        "abs_hourly_p99_bps": 587.0345097887297,
+        "abs_hourly_max_bps": 2800.9718393680305,
+        "abs_gap_max_bps": 3746.3604288952697,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 497.165780623419,
+          "p975_bps": 687.0389333386281,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "980e87d54649a842e6059f63f226bd55a0a2f27b21112adcb3b3fa4bae6b6cb3",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 812,
+        "abs_hourly_p99_bps": 732.5383352433798,
+        "abs_hourly_max_bps": 1573.200146675235,
+        "abs_gap_max_bps": 1513.5671593452826,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 547.8504779174788,
+          "p975_bps": 959.9645758773504,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "7ee37535a5892f64a84adffc13cc26563b06cab750e512d5b9afb1f93ccf950c",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    },
+    {
+      "market": {
+        "id": 59,
+        "symbol": "ORCL",
+        "asset_class": "equity",
+        "max_slippage_bps": 15,
+        "house_cap_bps": 1000,
+        "min_order_notional": "10",
+        "margin_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 1000
+          },
+          {
+            "up_to": "2000000",
+            "bps": 2000
+          },
+          {
+            "bps": 5000
+          }
+        ],
+        "spread_tiers": [
+          {
+            "up_to": "500000",
+            "bps": 0
+          },
+          {
+            "up_to": "2000000",
+            "bps": 3
+          },
+          {
+            "bps": 10
+          }
+        ],
+        "price_rules": {
+          "max_age_ms": 1000,
+          "max_divergence_bps": 10,
+          "min_sources": 2
+        },
+        "financing": {
+          "benchmark": "SOFR",
+          "markup_bps": 250,
+          "day_basis": 360
+        },
+        "schedule": {
+          "kind": "weekly",
+          "tz": "America/New_York",
+          "windows": [
+            {
+              "open": "Mon 09:30",
+              "close": "Mon 16:00"
+            },
+            {
+              "open": "Tue 09:30",
+              "close": "Tue 16:00"
+            },
+            {
+              "open": "Wed 09:30",
+              "close": "Wed 16:00"
+            },
+            {
+              "open": "Thu 09:30",
+              "close": "Thu 16:00"
+            },
+            {
+              "open": "Fri 09:30",
+              "close": "Fri 16:00"
+            }
+          ],
+          "closed_dates": [
+            "2026-11-26",
+            "2026-12-25",
+            "2027-01-01",
+            "2027-01-18",
+            "2027-02-15",
+            "2027-03-26",
+            "2027-05-31",
+            "2027-06-18",
+            "2027-07-05",
+            "2027-09-06",
+            "2027-11-25",
+            "2027-12-24"
+          ],
+          "closures": [
+            {
+              "from": "2026-11-27T13:00:00",
+              "to": "2026-11-27T16:00:00"
+            },
+            {
+              "from": "2026-12-24T13:00:00",
+              "to": "2026-12-24T16:00:00"
+            },
+            {
+              "from": "2027-11-26T13:00:00",
+              "to": "2027-11-26T16:00:00"
+            }
+          ]
+        }
+      },
+      "source": "yahoo",
+      "ticker": "ORCL",
+      "instrument_note": "regular session",
+      "resolution": "1h transformed log returns, units 1e-6; grid UTC",
+      "calibration": {
+        "active_hours": 2596,
+        "abs_hourly_p99_bps": 489.30368619604167,
+        "abs_hourly_max_bps": 3871.3573661294636,
+        "abs_gap_max_bps": 3210.4091789511285,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 417.5000904194648,
+          "p975_bps": 604.0721558767892,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "2a86de15c934961eb275f788fa5bfa79940eba25dcfe26fd413f2a30a339e5f2",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      },
+      "validation": {
+        "active_hours": 812,
+        "abs_hourly_p99_bps": 519.2203462928568,
+        "abs_hourly_max_bps": 1201.404618601457,
+        "abs_gap_max_bps": 1193.7905409827306,
+        "hourly_p99_week_block_bootstrap": {
+          "p025_bps": 447.7860319567621,
+          "p975_bps": 648.4260552479356,
+          "replicates": 200,
+          "seed": 147,
+          "replicate_sha256": "719d8ea523d0393bdec03283944c41287e39d773bbe9b957693450cfd8acff9f",
+          "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
+        },
+        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
+      }
+    }
+  ]
+}

@@ -173,7 +173,10 @@ an index: load only the rule whose hint matches the current action.
   fetch and derive its public data (raw pulls in gitignored `data/raw/`, the derived dataset in
   `data/derived/`), the Python model behind `run.py`, its tests, and `results/`. Its `README.md`
   gives the method, sources, results, and how to re-run. Research may name the platforms whose
-  public data it studies, inside `research/` and its PR only.
+  public data it studies, inside `research/` and its PR only. `close-spread-calibration/` calibrates
+  per-market close-spread ceilings (#147): pinned inventory and source audit, a pricing model
+  checked against `Engine::apply` fills, the isolated-position sweep, per-market results, and the
+  ceiling representation proposal for #344. Its `README.md` documents the pipeline and tests.
 - **scripts/** — `check-file-loc.sh`, the 500-line cap per Rust file, opted in per crate;
   `dev-corporate-actions.sh`, the signed localhost TLS/API dividend, split and restart scenario;
   `check-reference-logs.sh`, which fails a branch that changes a committed reference log;
@@ -395,6 +398,11 @@ Run from the repo root:
   `research/cap-calibration/requirements.txt`: `python -I research/cap-calibration/run.py <command>`
   (`all` re-runs the simulations and report from the committed data), and its tests with
   `python -I -m pytest research/cap-calibration/tests`
+- Close-spread research, from a virtualenv with `research/close-spread-calibration/requirements.txt`:
+  `python -I research/close-spread-calibration/run.py`, then
+  `python -I research/close-spread-calibration/report.py`; tests:
+  `python -I -m unittest discover -s research/close-spread-calibration/tests` and
+  `cargo test -p engine-core --test close_spread_calibration --locked`
 - Build the enclave image: `scripts/build-image.sh [--variant production|dev] <out-dir>` (Docker,
   slow; see `image/README.md`), then `scripts/check-image.sh <out-dir>` to boot it under QEMU;
   `scripts/check-image-retry.sh` scans `image/Dockerfile` so every download runs under `retry` and
