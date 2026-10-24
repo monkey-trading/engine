@@ -106,6 +106,9 @@ pub enum ProtocolVersion {
     V17,
     /// Dated benchmark histories select each rollover's rate by its local date, including catch-up.
     V18,
+    /// Reserved for signed whole-USDC approvals and the public, fully reserved FIFO withdrawal
+    /// queue. Activation and reference fixtures await integration of its real predecessors.
+    V22,
 }
 
 impl ProtocolVersion {

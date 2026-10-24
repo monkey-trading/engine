@@ -99,6 +99,12 @@ this crate and reproduce the signed state roots exactly.
 - `src/closeout.rs` — account close-out and bad-debt write-off
 - `src/benchmark.rs` — dated publisher snapshots, effective-date lookup, staleness, and retention
 - `src/funds.rs` — deposits, withdrawals, house capital, and overnight financing
+- `src/withdrawal.rs` — reserved V22 FIFO reservations, bounded partial approval, and exact USDC conversion
+- `src/merkle/withdrawal.rs` — payable approval leaves and root inclusion proofs
+- `tests/withdrawal_queue.rs` — reservations, partial FIFO, cash conservation, precision, and stale marks
+- `tests/withdrawal_commitment.rs` — approval ABI, tamper rejection, serialization/replay, and incremental roots
+- `tests/withdrawal_pagination.rs` — bounded scans, global positions, empty account continuations, and restart
+- `tests/withdrawals/setup.rs` — shared Engine::apply-driven withdrawal setup
 - `src/admin.rs` — operator commands and signed admin commands
 - `src/stress.rs` — stress levels: the automatic triggers, the move window, and the floors
 - `src/auth.rs` — client auth, the operator record, request signatures and nonces, and the checks

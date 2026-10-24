@@ -19,12 +19,29 @@ pub(super) struct Gate {
     pub healthy: bool,
     pub recovery: Vec<Work>,
     pub pending: Vec<(u64, AccountId, Fixed, u64)>,
+    pub payouts: crate::sequencer::payouts::Payouts,
+    pub approvals: Option<crate::checkpoints::ApprovalRegistry>,
+    pub unproved: std::collections::BTreeSet<(AccountId, u64)>,
+    pub unregistered: std::collections::BTreeSet<(AccountId, u64)>,
+    pub issuance: std::collections::BTreeMap<(u64, usize), (AccountId, u64)>,
 }
 
 impl Gate {
     /// Starts paused until the first reconciliation succeeds.
     pub fn new(sink: mpsc::Sender<Work>, parent: crate::log::CheckpointParent) -> Self {
-        Self { sink, registry: None, parent, healthy: false, recovery: Vec::new(), pending: Vec::new() }
+        Self {
+            sink,
+            registry: None,
+            parent,
+            healthy: false,
+            recovery: Vec::new(),
+            pending: Vec::new(),
+            payouts: Default::default(),
+            approvals: None,
+            unproved: Default::default(),
+            unregistered: Default::default(),
+            issuance: Default::default(),
+        }
     }
 }
 
@@ -60,8 +77,10 @@ impl Sequencer {
             deferred_withdrawals: self.gate.is_some(),
         };
         self.record(LogEntry::Checkpoint(cp.clone()))?;
+        self.capture_payout_proofs();
         if self.gate.is_some() {
             self.log.sync()?;
+            self.register_payouts()?;
             self.queue_checkpoint(cp)?;
             if let Some(gate) = &mut self.gate {
                 gate.parent = crate::log::CheckpointParent { has_checkpoint: true, seq, root: root.into() };
@@ -123,6 +142,7 @@ impl Sequencer {
                 vault: self.vault,
                 signature,
                 approved_seq: Some(seq),
+                authorization: None,
             }))?;
         }
         Ok(())

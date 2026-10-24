@@ -156,7 +156,7 @@ impl CheckpointRpc {
             }),
             deferred_withdrawals: obsolete.deferred_withdrawals,
         };
-        self.submissions.validate_checkpoint(&cp)?;
+        self.submissions()?.validate_checkpoint(&cp)?;
         ensure!(
             cp.seq <= obsolete.seq && (cp.seq != obsolete.seq || cp.root == obsolete.root),
             "reserved nonce consumer is outside the obsolete checkpoint prefix"

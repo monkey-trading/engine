@@ -16,15 +16,15 @@ impl CheckpointRpc {
     /// Error cases:
     /// - authorization, canonical progress, nonce ownership, durability, or RPC checks fail
     pub(in crate::checkpoints::rpc) async fn post_reserved(&self, cp: &Checkpoint) -> anyhow::Result<()> {
-        self.submissions.validate_checkpoint(cp)?;
-        let _lock = self.submissions.lock()?;
+        self.submissions()?.validate_checkpoint(cp)?;
+        let _lock = self.submissions()?.lock()?;
         let latest = self.checked_latest(cp).await?;
         if latest.checkpoint == Some((cp.seq, cp.root.clone())) {
             return Ok(());
         }
         self.check_parent(cp, &latest)?;
         let latest_nonce = self.relayer_nonce(BlockNumberOrTag::Latest).await?;
-        let mut reservation = match self.submissions.read()? {
+        let mut reservation = match self.submissions()?.read()? {
             Some(previous) if previous.checkpoint == *cp => {
                 if latest_nonce > previous.nonce {
                     ensure!(latest_nonce == previous.nonce + 1, "unrelated relayer nonce consumption");
@@ -56,7 +56,7 @@ impl CheckpointRpc {
             }
             None => {
                 self.check_free_nonce(latest_nonce).await?;
-                self.submissions.reserve(cp.clone(), latest_nonce, None)?
+                self.submissions()?.reserve(cp.clone(), latest_nonce, None)?
             }
         };
         let tx = TransactionRequest::default()
@@ -74,10 +74,10 @@ impl CheckpointRpc {
             }
         }
         // A preceding sync failure must not turn a merely visible reservation into a send.
-        self.submissions.sync()?;
+        self.submissions()?.sync()?;
         let hash = self.deadline(self.client.request("eth_sendTransaction", (tx,))).await?;
         reservation.transaction_hash = Some(hash);
-        self.submissions.store(&reservation)?;
+        self.submissions()?.store(&reservation)?;
         Ok(())
     }
 
@@ -157,7 +157,7 @@ impl CheckpointRpc {
         reused_through: Option<Checkpoint>,
     ) -> anyhow::Result<Reservation> {
         self.check_parent(cp, &self.checked_latest(cp).await?)?;
-        let previous = self.submissions.read()?.context("submission reservation disappeared")?;
+        let previous = self.submissions()?.read()?.context("submission reservation disappeared")?;
         let obsolete = if previous.checkpoint == *cp {
             previous.reused_through.as_ref().context("consumed reservation has no reuse provenance")?
         } else {
@@ -165,7 +165,7 @@ impl CheckpointRpc {
         };
         self.check_finalized_parent(cp, obsolete).await?;
         self.check_free_nonce(nonce).await?;
-        self.submissions.reserve(cp.clone(), nonce, reused_through)
+        self.submissions()?.reserve(cp.clone(), nonce, reused_through)
     }
 }
 

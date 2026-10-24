@@ -237,6 +237,10 @@ impl Engine {
                         params.share_divergence_triggers(widest.unwrap_or(0));
                     }
                 }
+                if self.protocol_version < ProtocolVersion::V22 && *version >= ProtocolVersion::V22 {
+                    self.withdrawal_cash =
+                        Some(self.house_cash + self.accounts.values().map(|acct| acct.balance).sum());
+                }
                 self.protocol_version = *version;
             }
         }

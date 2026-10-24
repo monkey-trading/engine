@@ -163,6 +163,8 @@ jobs:
         run: ./scripts/dev-vault-deposits.sh
       - name: Run the checkpoint dev scenario
         run: ./scripts/dev-checkpoints.sh
+      - name: Run signed withdrawals, crash recovery, and FIFO liquidity on Anvil
+        run: ./scripts/dev-withdrawals.sh
 
   dev-metrics-alerts:
     runs-on: ubuntu-24.04

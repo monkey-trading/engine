@@ -248,6 +248,7 @@ pub fn sequencer_config(dir: &Path, manifest: watch::Sender<Manifest>) -> Sequen
         manifest,
         checkpoint_every: CHECKPOINT_EVERY,
         checkpoint_registry: None,
+        approval_registry: None,
         checkpoint_parent: Default::default(),
         checkpoints: None,
         chain_id: 31337,

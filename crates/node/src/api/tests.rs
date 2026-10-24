@@ -304,6 +304,7 @@ async fn serve_with(node: &TestSequencer, dir: &Path, manifest: watch::Receiver<
         auth: ClientAuth::Unsigned,
         operator: dev_config().operator().unwrap(),
         mock_custody: true,
+        payouts_enabled: true,
         clock: now_ms,
         log_dir: dir.to_owned(),
         manifest,
@@ -327,6 +328,7 @@ async fn serve_history(history: Reader) -> SocketAddr {
         auth: ClientAuth::Unsigned,
         operator: dev_config().operator().unwrap(),
         mock_custody: false,
+        payouts_enabled: false,
         clock: now_ms,
         log_dir: PathBuf::new(),
         manifest: watch::channel(Manifest::default()).1,
@@ -418,7 +420,7 @@ async fn get(addr: SocketAddr, path: &str) -> (u16, Vec<u8>) {
 }
 
 /// API state over a channel no sequencer reads, so a test sees each request the API sends.
-fn api_state(mock_custody: bool) -> (ApiState, mpsc::Receiver<sequencer::Request>) {
+pub(super) fn api_state(mock_custody: bool) -> (ApiState, mpsc::Receiver<sequencer::Request>) {
     let (tx, rx) = mpsc::channel(1);
     let attestation = Arc::new(attest_key(&MockAttestor, &EnclaveKey::generate(), &[0; 32]).unwrap());
     let (stream, _) = broadcast::channel(1);
@@ -430,6 +432,7 @@ fn api_state(mock_custody: bool) -> (ApiState, mpsc::Receiver<sequencer::Request
         auth: ClientAuth::Unsigned,
         operator: dev_config().operator().unwrap(),
         mock_custody,
+        payouts_enabled: mock_custody,
         clock: now_ms,
         log_dir: scratch_dir("api-state"),
         manifest,

@@ -66,8 +66,24 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     let checkpoint_relayer = accounts[9];
     let key = Arc::new(EnclaveKey::generate());
     let token = deploy(&provider, relayer, "MockUSDC.sol/MockUSDC.json", &[]).await;
-    let vault =
-        deploy(&provider, relayer, "Vault.sol/Vault.json", &(token, Address::from(key.address())).abi_encode()).await;
+    let vault = deploy(
+        &provider,
+        relayer,
+        "Vault.sol/Vault.json",
+        &(
+            token,
+            Address::from(key.address()),
+            deploy(
+                &provider,
+                relayer,
+                "TimelockController.sol/TimelockController.json",
+                &(U256::from(1), vec![relayer], vec![Address::ZERO], Address::ZERO).abi_encode(),
+            )
+            .await,
+        )
+            .abi_encode(),
+    )
+    .await;
     let domain = CheckpointDomain { chain_id: 31337, vault: AccountId(vault.into()) };
     let section: CheckpointSection = toml::from_str(&format!(
         "rpc_url = {url:?}\nrelayer = '{checkpoint_relayer:#x}'\nretry_interval = '40ms'\nrpc_timeout = '2s'"
@@ -284,7 +300,12 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
         domain: Some(domain),
         deferred_withdrawals: true,
     };
-    let work = crate::checkpoints::Work { checkpoint, liabilities: current.balance, deposits: current.deposits };
+    let work = crate::checkpoints::Work {
+        checkpoint,
+        liabilities: current.balance,
+        deposits: current.deposits,
+        authorized: Fixed::ZERO,
+    };
     include_checkpoint(&delayed, &work.checkpoint).await;
     assert_eq!(delayed.reconcile(&work).await.unwrap(), (None, false));
     let nonce = provider.request::<_, U64>("eth_getTransactionCount", (checkpoint_relayer, "latest")).await.unwrap();

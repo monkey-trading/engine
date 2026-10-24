@@ -17,6 +17,7 @@ use crate::tee::EnclaveKey;
 use crate::test_support::scratch_dir;
 
 mod fakes;
+mod lifecycle;
 mod nonce_progress;
 use crate::checkpoints::rpc::submission::tests::fakes::Server;
 
@@ -47,7 +48,7 @@ async fn long_pending_survives_restart_without_another_send_or_finality_release(
         retry: Duration::from_millis(10),
         pending_deposits_critical_after: Duration::from_secs(1),
     };
-    let work = Work { checkpoint: cp.clone(), liabilities: Fixed::ZERO, deposits: 0 };
+    let work = Work { checkpoint: cp.clone(), liabilities: Fixed::ZERO, deposits: 0, authorized: Fixed::ZERO };
     assert!(poster.reconcile(&work).await.is_err(), "pending is not canonical inclusion");
     server.state.lock().unwrap().latest = Some(cp.clone());
     assert_eq!(poster.reconcile(&work).await.unwrap(), (None, false), "latest inclusion cannot release withdrawals");

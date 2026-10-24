@@ -65,6 +65,7 @@ fn main() -> anyhow::Result<()> {
                     vault,
                     signature,
                     approved_seq: None,
+                    authorization: None,
                 }),
             )?;
         }

@@ -1,0 +1,113 @@
+//! Opt-in local Anvil scenario over `node::run`; no production configuration enables these hooks.
+
+mod client;
+mod flows;
+mod node;
+mod rpc;
+mod services;
+
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::PathBuf;
+use std::time::Duration;
+
+use anyhow::{Context, ensure};
+use engine_core::command::{AdminCommand, Command, Sequenced};
+use engine_core::event::Event;
+use engine_core::protocol::ProtocolVersion;
+use engine_core::types::AccountId;
+use serde::{Deserialize, Serialize};
+use tokio::time::timeout;
+
+use crate::config::{CustodyProvider, FeedProvider, NodeConfig, TeeProvider};
+use crate::sequencer::Sequencer;
+
+const CHILD_CONFIG: &str = "ENGINE_WITHDRAWAL_SCENARIO_CHILD_CONFIG";
+const CHILD_FEED: &str = "ENGINE_WITHDRAWAL_SCENARIO_CHILD_FEED";
+const CHILD_TEST: &str = "sequencer::withdrawal_scenario::node_child";
+
+#[derive(Deserialize, Serialize)]
+struct Barrier {
+    account: AccountId,
+    nonce: u64,
+}
+
+/// Queues V22 for this explicitly opted-in test child without activating the production LATEST.
+/// Error cases:
+/// - test bootstrap is rejected or cannot be durably logged
+pub(crate) fn bootstrap(seq: &mut Sequencer) -> anyhow::Result<()> {
+    if std::env::var_os(CHILD_CONFIG).is_none()
+        || ProtocolVersion::LATEST >= ProtocolVersion::V22
+        || seq.engine.protocol_version() >= ProtocolVersion::V22
+    {
+        return Ok(());
+    }
+    ensure!(seq.chain_id == 31337 && seq.gate.is_some(), "scenario bootstrap requires local gated custody");
+    seq.sequence_required(
+        "local withdrawal scenario V22",
+        vec![Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V22 })],
+    )
+}
+
+/// Blocks the armed child after RAM approval and before the first command log append.
+/// Error cases:
+/// - the test barrier cannot be read or its reached marker cannot be synced
+pub(crate) fn before_approval_log(sequenced: &Sequenced, events: &[Event]) -> anyhow::Result<()> {
+    let Command::Withdraw { account, auth: Some(auth), .. } = &sequenced.cmd else { return Ok(()) };
+    if !events.iter().any(|event| matches!(event, Event::WithdrawalApproved { .. })) {
+        return Ok(());
+    }
+    let Some(config) = std::env::var_os(CHILD_CONFIG) else { return Ok(()) };
+    let config = PathBuf::from(config);
+    let dir = config.parent().context("scenario config parent")?;
+    let arm = dir.join("barrier.arm");
+    let bytes = match std::fs::read(&arm) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    let expected: Barrier = serde_json::from_slice(&bytes)?;
+    if expected.account != *account || expected.nonce != auth.nonce {
+        return Ok(());
+    }
+    let mut reached = OpenOptions::new().write(true).create_new(true).open(dir.join("barrier.reached"))?;
+    reached.write_all(&serde_json::to_vec(sequenced)?)?;
+    reached.sync_all()?;
+    // The parent must SIGKILL this actual node process; the approval has not entered its log.
+    loop {
+        std::thread::park_timeout(Duration::from_secs(1));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "local Anvil end-to-end; scripts/dev-withdrawals.sh runs the parent only"]
+async fn dev_scenario_signed_withdrawals_and_fifo() -> anyhow::Result<()> {
+    timeout(Duration::from_secs(240), async {
+        flows::payments_and_crashes().await?;
+        flows::shortfall_and_fifo().await
+    })
+    .await
+    .context("whole withdrawal scenario exceeded four minutes")?
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "child entry point; launched only by the local withdrawal scenario"]
+async fn node_child() -> anyhow::Result<()> {
+    let path = PathBuf::from(std::env::var_os(CHILD_CONFIG).context("scenario child config is required")?);
+    let mut cfg = NodeConfig::load(&path)?;
+    ensure!(cfg.tee.provider == TeeProvider::Mock && cfg.tee.use_published_mock_key, "local public mock signer only");
+    ensure!(cfg.custody.provider == CustodyProvider::Evm && cfg.custody.chain_id == 31337, "local Anvil only");
+    let endpoint = std::env::var(CHILD_FEED).context("scenario feed endpoint")?;
+    ensure!(endpoint.starts_with("ws://127.0.0.1:"), "scenario feed is loopback only");
+    // Production config still enforces venue-owned WSS domains. Only this test child substitutes
+    // a loopback Bitstamp server after validation, keeping the real feed parser and node wiring.
+    cfg.feeds.provider = FeedProvider::Venues;
+    cfg.feeds.venues = Some(toml::from_str(&format!(
+        "timeout='5s'\nreconnect_min='40ms'\nreconnect_max='200ms'\nstale_after='3s'\n\
+         [[connections]]\nvenue='bitstamp'\nurl={endpoint:?}\nsymbols=[{{market=1,symbol='btcusd'}}]"
+    ))?);
+    let telemetry = crate::telemetry::init_telemetry(&cfg, |name| {
+        (name == "ENGINE_ALERTS_CRITICAL_URL").then(|| "http://127.0.0.1:9/alerts".to_owned())
+    })?;
+    crate::node::run(cfg, telemetry).await
+}

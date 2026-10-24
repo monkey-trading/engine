@@ -13,9 +13,10 @@ use crate::auth::{ClientAuth, Operator};
 use crate::benchmark::BenchmarkHistory;
 use crate::engine::{Engine, Markout};
 use crate::merkle::{
-    AccountLeaf, AccountProof, MarketLeaf, MarketProof, PositionProof, SparseMerkleTree, account_key,
-    credited_ref_hash, credited_ref_key, globals_key, json_hash, market_key, markout_hash, markout_key, order_hash,
-    order_key, position_hash, position_key, request_nonce_hash, request_nonce_key,
+    AccountLeaf, AccountProof, MarketLeaf, MarketProof, PositionProof, SparseMerkleTree, WithdrawalApprovalProof,
+    account_key, credited_ref_hash, credited_ref_key, globals_key, json_hash, market_key, markout_hash, markout_key,
+    order_hash, order_key, position_hash, position_key, request_nonce_hash, request_nonce_key,
+    withdrawal_approval_hash, withdrawal_approval_key, withdrawal_queue_hash, withdrawal_queue_key,
 };
 use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
@@ -58,6 +59,8 @@ struct Touched {
     markets: BTreeSet<MarketId>,
     nonces: BTreeSet<AccountId>,
     refs: BTreeSet<String>,
+    withdrawal_queue: BTreeSet<u64>,
+    withdrawal_approvals: BTreeSet<B256>,
     changed: Changed,
 }
 
@@ -79,6 +82,10 @@ struct Globals<'a> {
     markout_base: u64,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     benchmark_history: &'a BenchmarkHistory,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    withdrawal_cash: Option<Fixed>,
+    #[serde(skip_serializing_if = "is_zero")]
+    withdrawal_next_ticket: u64,
 }
 
 impl Engine {
@@ -100,11 +107,18 @@ impl Engine {
     /// yet, as on `V9`'s first root, every leaf is hashed.
     pub(crate) fn merkle_root(&mut self) -> B256 {
         let touched = self.take_touched();
-        let Touched { accounts, markets, nonces, refs, changed: Changed { markouts, positions, orders } } =
-            match &self.tree {
-                Some(_) => touched,
-                None => self.every_key(),
-            };
+        let Touched {
+            accounts,
+            markets,
+            nonces,
+            refs,
+            withdrawal_queue,
+            withdrawal_approvals,
+            changed: Changed { markouts, positions, orders },
+        } = match &self.tree {
+            Some(_) => touched,
+            None => self.every_key(),
+        };
         let mut changes = BTreeMap::from([(globals_key(), Some(json_hash(&self.globals())))]);
         let account_leaves: Vec<(AccountId, Option<AccountLeaf>)> =
             accounts.into_iter().map(|id| (id, self.accounts.get(&id).map(AccountLeaf::of))).collect();
@@ -140,6 +154,16 @@ impl Engine {
             let order = self.accounts.get(&id).and_then(|acct| acct.orders.get(&order_id));
             (order_key(order_id), order.map(|order| order_hash(id, order)))
         }));
+        changes.extend(
+            withdrawal_queue
+                .into_iter()
+                .map(|seq| (withdrawal_queue_key(seq), self.withdrawal_queue.get(&seq).map(withdrawal_queue_hash))),
+        );
+        changes.extend(
+            withdrawal_approvals
+                .into_iter()
+                .map(|key| (key, self.withdrawal_approvals.get(&key).map(withdrawal_approval_hash))),
+        );
 
         // A seq has been applied: `V9` takes effect through a sequenced `ActivateProtocol`.
         let seq = self.last_seq.expect("a state root under V9 follows a command");
@@ -196,6 +220,14 @@ impl Engine {
             .unzip();
         let siblings = proof(account_key(account));
         Some(AccountProof { seq: state.seq, root: state.root, account, leaf, siblings, positions, markets })
+    }
+
+    /// Proves the exact immutable payout against the last computed root, or `None` until included.
+    pub fn approval_proof(&self, account: AccountId, nonce: u64) -> Option<WithdrawalApprovalProof> {
+        let state = self.tree.as_ref()?;
+        let approval = *self.withdrawal_approval(account, nonce)?;
+        let siblings = state.tree.proof(withdrawal_approval_key(account, nonce))?;
+        Some(WithdrawalApprovalProof { seq: state.seq, root: state.root, approval, siblings })
     }
 
     /// What the last state root hashed, or `None` before the first root under `V9`.
@@ -265,6 +297,8 @@ impl Engine {
             markets: self.markets.take_touched(),
             nonces: self.request_nonces.take_touched(),
             refs: self.credited_refs.take_touched(),
+            withdrawal_queue: self.withdrawal_queue.take_touched(),
+            withdrawal_approvals: self.withdrawal_approvals.take_touched(),
             changed: std::mem::take(&mut self.changed),
         }
     }
@@ -277,6 +311,8 @@ impl Engine {
             markets: self.markets.keys().copied().collect(),
             nonces: self.request_nonces.keys().copied().collect(),
             refs: self.credited_refs.iter().cloned().collect(),
+            withdrawal_queue: self.withdrawal_queue.keys().copied().collect(),
+            withdrawal_approvals: self.withdrawal_approvals.keys().copied().collect(),
             changed: Changed {
                 markouts: (self.markout_base..).take(self.markouts.len()).collect(),
                 positions: accounts()
@@ -310,6 +346,10 @@ impl Engine {
             global_reduce_only,
             markout_base,
             benchmark_history,
+            withdrawal_cash,
+            withdrawal_queue: _,
+            withdrawal_next_ticket,
+            withdrawal_approvals: _,
             changed: _,
             tree: _,
             hot_indexes: _,
@@ -329,11 +369,13 @@ impl Engine {
             global_reduce_only: *global_reduce_only,
             markout_base: *markout_base,
             benchmark_history,
+            withdrawal_cash: *withdrawal_cash,
+            withdrawal_next_ticket: *withdrawal_next_ticket,
         }
     }
 }
 
-/// Whether a markout index is zero, as it stays before `V9`.
+/// Whether a persisted index is zero, so its default stays out of earlier state encodings.
 pub(crate) fn is_zero(index: &u64) -> bool {
     *index == 0
 }

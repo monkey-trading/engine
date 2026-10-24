@@ -1,6 +1,9 @@
 //! On-chain checkpoint commitments, replay protection, and collateral reconciliation.
 
 pub(crate) mod accounting;
+mod lifecycle;
+pub(crate) use lifecycle::{APPROVAL_PAGE_SIZE, AcceptedCheckpoint, ApprovalRegistry, Observation};
+pub use lifecycle::{ApprovalId, ApprovalStatus, LifecycleEvidence};
 mod rpc;
 pub(crate) mod setup;
 pub(crate) mod signature;
@@ -14,7 +17,7 @@ use anyhow::{Context, ensure};
 use engine_core::Fixed;
 use tokio::sync::mpsc;
 use tokio::time::{MissedTickBehavior, interval};
-use tracing::{Instrument, error, info, warn};
+use tracing::{Instrument, error, warn};
 
 use crate::checkpoints::accounting::Accounting;
 use crate::log::{Checkpoint, CheckpointDomain};
@@ -26,12 +29,18 @@ pub(crate) struct Work {
     pub checkpoint: Checkpoint,
     pub liabilities: Fixed,
     pub deposits: u64,
+    pub authorized: Fixed,
 }
 
 impl Work {
     /// Captures custody accounting without traversing engine accounts or credited references.
     pub(crate) fn capture(checkpoint: Checkpoint, accounting: Accounting) -> Self {
-        Self { checkpoint, liabilities: accounting.liabilities, deposits: accounting.deposits }
+        Self {
+            checkpoint,
+            liabilities: accounting.liabilities,
+            deposits: accounting.deposits,
+            authorized: accounting.unpaid(),
+        }
     }
 }
 
@@ -68,6 +77,39 @@ pub(crate) trait CheckpointChain: Send + Sync {
     /// Error cases:
     /// - an RPC call fails, decodes incorrectly, or serves another chain
     async fn state(&self, view: View) -> anyhow::Result<VaultState>;
+    /// Reads lifecycle metadata together with collateral at one canonical block.
+    /// Error cases:
+    /// - the state read fails or the approval page exceeds its bounded size
+    async fn observe(&self, view: View, approvals: &[ApprovalId]) -> anyhow::Result<Observation> {
+        ensure!(approvals.len() <= APPROVAL_PAGE_SIZE, "approval query exceeds page size");
+        Ok(Observation { view, state: self.state(view).await?, lifecycle: None })
+    }
+
+    /// Authenticates accepted identities against the already sampled canonical observation.
+    /// Error cases:
+    /// - historical metadata is unavailable or the requested page exceeds its bound
+    async fn accepted_checkpoints(
+        &self,
+        at: &Observation,
+        sequences: &[u64],
+    ) -> anyhow::Result<Vec<AcceptedCheckpoint>> {
+        ensure!(sequences.len() <= APPROVAL_PAGE_SIZE, "checkpoint authority query exceeds page size");
+        ensure!(at.view == View::Finalized, "historical authority requires a finalized observation");
+        sequences
+            .iter()
+            .map(|seq| {
+                let (accepted, root) = at.state.checkpoint.as_ref().context("vault has no accepted checkpoint")?;
+                ensure!(seq == accepted, "adapter cannot authenticate historical checkpoint authorities");
+                Ok(AcceptedCheckpoint {
+                    seq: *seq,
+                    root: root.clone(),
+                    signer: at.state.signer,
+                    signer_epoch: at.lifecycle.as_ref().map_or(1, |evidence| evidence.signer_epoch),
+                })
+            })
+            .collect()
+    }
+
     /// Relays a signed checkpoint. Receipt loss is safe: the next state read detects the post.
     /// Error cases:
     /// - submission fails, times out, or reverts
@@ -101,16 +143,17 @@ impl<R: CheckpointChain> Poster<R> {
     /// Error cases:
     /// - reading fails, the authorized signer differs, or the log does not contain the posted root
     pub async fn startup(&self, anchor: Option<&Checkpoint>) -> anyhow::Result<()> {
-        let state = self.chain.state(View::Finalized).await?;
+        let at = self.chain.observe(View::Finalized, &[]).await?;
+        at.validate(&[])?;
+        let state = &at.state;
         ensure!(state.signer == self.signer, "vault signer differs from this enclave; signer recovery is required");
-        if let Some((seq, root)) = state.checkpoint {
+        if let Some((seq, root)) = &state.checkpoint {
             let cp = anchor.context("log is shorter than the latest posted checkpoint")?;
-            ensure!(cp.seq == seq && cp.root == root, "log differs from the latest posted checkpoint at seq {seq}");
+            ensure!(cp.seq == *seq && cp.root == *root, "log differs from the latest posted checkpoint at seq {seq}");
             signature::verify_domain(cp, self.domain)?;
-            ensure!(
-                cp.signer.parse::<engine_core::types::AccountId>()? == state.signer,
-                "posted checkpoint signer mismatch"
-            );
+            let accepted = self.chain.accepted_checkpoints(&at, &[*seq]).await?;
+            ensure!(accepted.len() == 1, "vault did not authenticate the posted checkpoint");
+            accepted[0].verify(cp)?;
         }
         Ok(())
     }
@@ -126,12 +169,27 @@ impl<R: CheckpointChain> Poster<R> {
     /// Restores the durable signed tail before accepting newly sequenced checkpoints.
     /// Error cases:
     /// - the sequencer disappears or authenticated chain state conflicts
+    #[cfg(test)]
     pub async fn run_with_recovery(
+        self,
+        rx: mpsc::Receiver<Work>,
+        tx: mpsc::Sender<Request>,
+        recovery: Vec<Work>,
+    ) -> anyhow::Result<()> {
+        self.run_with_approvals(rx, tx, recovery, Default::default()).await
+    }
+
+    /// Polls bounded pages of replay-registered approvals while extending the checkpoint chain.
+    /// Error cases:
+    /// - the sequencer disappears, registry is poisoned, or authenticated state conflicts
+    pub async fn run_with_approvals(
         self,
         mut rx: mpsc::Receiver<Work>,
         tx: mpsc::Sender<Request>,
         recovery: Vec<Work>,
+        approvals: ApprovalRegistry,
     ) -> anyhow::Result<()> {
+        let mut approval_cursor = None;
         let mut queued = VecDeque::from(recovery);
         let mut latest = None;
         let mut pending_since = None;
@@ -156,16 +214,17 @@ impl<R: CheckpointChain> Poster<R> {
                     let span = tracing::info_span!("checkpoint", checkpoint_seq = work.checkpoint.seq,
                         checkpoint_root = %work.checkpoint.root, latest_seq = tracing::field::Empty,
                         finalized_seq = tracing::field::Empty);
-                    let result = self.reconcile_known(work, &known).instrument(span.clone()).await;
-                    if matches!(result, Ok((Some(_), false))) {
+                    let page = approval_page(&approvals, approval_cursor)?;
+                    let result = self.reconcile_lifecycle(work, &known, &page).instrument(span.clone()).await;
+                    if matches!(result, Ok((Some(_), false, _))) {
                         let since = pending_since.get_or_insert_with(tokio::time::Instant::now);
                         if since.elapsed() >= self.pending_deposits_critical_after {
                             span.in_scope(|| error!(alert = "collateral_mismatch", "withdrawals paused: collateral reconciliation exceeded its catch-up deadline"));
                         }
-                    } else if matches!(result, Ok((_, true))) {
+                    } else if matches!(result, Ok((_, true, _))) {
                         pending_since = None;
                     }
-                    let (posted, healthy) = match result {
+                    let (posted, healthy, lifecycle) = match result {
                         Ok(status) => status,
                         Err(error) => {
                             if error.is::<Conflict>() {
@@ -173,10 +232,19 @@ impl<R: CheckpointChain> Poster<R> {
                                 return Err(error);
                             }
                             span.in_scope(|| warn!(alert = "checkpoint_post_failed", "checkpoint remains queued: {error:#}"));
-                            (None, false)
+                            (None, false, None)
                         }
                     };
-                    tx.send(Request::CheckpointStatus { posted, healthy }).await.map_err(|_| anyhow::anyhow!("sequencer stopped"))?;
+                    if let Some(evidence) = &lifecycle {
+                        approval_cursor = page.last().map(|approval| (approval.account, approval.nonce));
+                        let mut registered = approvals.lock().map_err(|_| anyhow::anyhow!("approval registry is poisoned"))?;
+                        for status in &evidence.approvals {
+                            if status.claimed && registered.get(&(status.approval.account, status.approval.nonce)) == Some(&status.approval) {
+                                registered.remove(&(status.approval.account, status.approval.nonce));
+                            }
+                        }
+                    }
+                    tx.send(Request::CheckpointStatus { posted, healthy, lifecycle }).await.map_err(|_| anyhow::anyhow!("sequencer stopped"))?;
                     if let Some(posted) = posted {
                         let confirmed = known.iter().find(|work| work.checkpoint.seq == posted).map(|work| (*work).clone());
                         while queued.front().is_some_and(|work| work.checkpoint.seq <= posted) { queued.pop_front(); }
@@ -190,126 +258,30 @@ impl<R: CheckpointChain> Poster<R> {
             }
         }
     }
-
-    /// Verifies/extends the commitment and compares collateral to the checkpoint's ledger.
-    /// Error cases:
-    /// - the chain read or post fails, or a signer/root conflicts with the local log
-    #[cfg(test)]
-    async fn reconcile(&self, work: &Work) -> anyhow::Result<(Option<u64>, bool)> {
-        self.reconcile_known(work, &[work]).await
-    }
-
-    /// Matches public relays to the authenticated local chain before accepting a covered prefix.
-    /// Error cases:
-    /// - unavailable/lagging views, unknown progress, or a proved conflicting local commitment
-    async fn reconcile_known(&self, work: &Work, known: &[&Work]) -> anyhow::Result<(Option<u64>, bool)> {
-        let mut work = work;
-        let mut state = self.chain.state(View::Latest).await?;
-        tracing::Span::current()
-            .record("latest_seq", tracing::field::debug(state.checkpoint.as_ref().map(|(seq, _)| *seq)));
-        if let Some((seq, root)) = &state.checkpoint
-            && *seq > work.checkpoint.seq
-        {
-            work = known
-                .iter()
-                .copied()
-                .find(|work| work.checkpoint.seq == *seq)
-                .context("vault advanced to a checkpoint not yet received by this worker")?;
-            if work.checkpoint.root != *root {
-                return Err(Conflict("conflicting publicly relayed checkpoint root").into());
-            }
-        }
-        let cp = &work.checkpoint;
-        signature::verify_domain(cp, self.domain)?;
-        if state.signer != self.signer || cp.signer.parse::<engine_core::types::AccountId>()? != self.signer {
-            return Err(Conflict("checkpoint signer differs from the authorized vault signer").into());
-        }
-        match &state.checkpoint {
-            Some((seq, root)) if *seq == cp.seq => {
-                if *root != cp.root {
-                    return Err(Conflict("conflicting posted checkpoint root").into());
-                }
-            }
-            Some((seq, _)) if *seq > cp.seq => {
-                return Err(Conflict("vault advanced beyond the local checkpoint").into());
-            }
-            _ => {
-                let parent = cp.parent.context("on-chain checkpoints require signed parent metadata")?;
-                let expected = state
-                    .checkpoint
-                    .as_ref()
-                    .map(|(seq, root)| -> anyhow::Result<_> {
-                        Ok(crate::log::CheckpointParent {
-                            has_checkpoint: true,
-                            seq: *seq,
-                            root: root.parse::<engine_core::eip712::B256>()?,
-                        })
-                    })
-                    .transpose()?
-                    .unwrap_or_default();
-                if parent != expected {
-                    ensure!(
-                        !(parent.has_checkpoint && (!expected.has_checkpoint || expected.seq < parent.seq)),
-                        "checkpoint view is behind the signed predecessor; awaiting backend catch-up"
-                    );
-                    return Err(Conflict("signed parent differs from the latest vault checkpoint").into());
-                }
-                self.chain.post(cp).await?;
-                // A submitted transaction is not a commitment. Verify inclusion before release.
-                state = self.chain.state(View::Latest).await?;
-                ensure!(
-                    state.checkpoint == Some((cp.seq, cp.root.clone())) && state.signer == self.signer,
-                    "checkpoint transaction is not included in the authorized vault"
-                );
-            }
-        }
-        // Latest inclusion prevents duplicate submission, but is revocable by a shallow reorg.
-        tracing::Span::current()
-            .record("latest_seq", tracing::field::debug(state.checkpoint.as_ref().map(|(seq, _)| *seq)));
-        let included_height = state.height;
-        let state = self.chain.state(View::Finalized).await?;
-        tracing::Span::current()
-            .record("finalized_seq", tracing::field::debug(state.checkpoint.as_ref().map(|(seq, _)| *seq)));
-        ensure!(included_height >= state.height, "latest checkpoint view is behind the finalized view");
-        if state.signer != self.signer {
-            return Err(Conflict("finalized vault signer differs from this enclave").into());
-        }
-        let Some((seq, root)) = &state.checkpoint else { return Ok((None, false)) };
-        if *seq < known.iter().map(|work| work.checkpoint.seq).min().unwrap_or(cp.seq) {
-            return Ok((None, false));
-        }
-        let finalized = known
-            .iter()
-            .copied()
-            .find(|work| work.checkpoint.seq == *seq)
-            .context("finalized checkpoint has not yet reached this worker")?;
-        signature::verify_domain(&finalized.checkpoint, self.domain)?;
-        if finalized.checkpoint.root != *root {
-            return Err(Conflict("finalized checkpoint conflicts with local log").into());
-        }
-        let work = finalized;
-        let cp = &work.checkpoint;
-        let healthy = state.balance == work.liabilities && state.deposits == work.deposits;
-        if healthy {
-            info!(alert_resolved = "collateral_mismatch", "vault collateral reconciles");
-            info!(alert_resolved = "checkpoint_post_failed", "checkpoint is posted");
-            info!(alert_resolved = "collateral_pending_deposits", "vault deposits are credited");
-        } else if state.deposits > work.deposits && state.balance >= work.liabilities {
-            warn!(
-                alert = "collateral_pending_deposits",
-                "withdrawals await the checkpoint covering final deposit credits"
-            );
-        } else {
-            error!(
-                alert = "collateral_mismatch",
-                "withdrawals paused: vault collateral or deposit count differs from ledger"
-            );
-        }
-        Ok((Some(cp.seq), healthy))
-    }
 }
 
+mod reconciliation;
+
+#[cfg(test)]
+mod lifecycle_tests;
 #[cfg(test)]
 mod scenario;
 #[cfg(test)]
 mod tests;
+
+/// Selects one bounded ordered page without cloning the full approval registry.
+/// Error cases:
+/// - the registry lock is poisoned
+fn approval_page(
+    registry: &ApprovalRegistry,
+    cursor: Option<(engine_core::types::AccountId, u64)>,
+) -> anyhow::Result<Vec<ApprovalId>> {
+    use std::ops::Bound::{Excluded, Unbounded};
+    let registered = registry.lock().map_err(|_| anyhow::anyhow!("approval registry is poisoned"))?;
+    let page: Vec<_> = registered
+        .range((cursor.map_or(Unbounded, Excluded), Unbounded))
+        .take(APPROVAL_PAGE_SIZE)
+        .map(|(_, approval)| *approval)
+        .collect();
+    Ok(if page.is_empty() { registered.values().take(APPROVAL_PAGE_SIZE).copied().collect() } else { page })
+}

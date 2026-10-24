@@ -117,9 +117,9 @@ async fn failed_post_is_retried_and_never_releases_a_signature_early() {
     let (tx, mut rx) = mpsc::channel(4);
     work_tx.send(work).await.unwrap();
     let task = tokio::spawn(poster.run(work_rx, tx));
-    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { posted: None, healthy: false })));
+    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { posted: None, healthy: false, .. })));
     assert!(chain.state.lock().unwrap().checkpoint.is_none());
-    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { posted: Some(5), healthy: true })));
+    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { posted: Some(5), healthy: true, .. })));
     assert_eq!(*chain.posts.lock().unwrap(), 1);
     drop(work_tx);
     task.await.unwrap().unwrap();
@@ -208,7 +208,7 @@ async fn a_provisional_then_orphaned_approval_never_releases_a_signature() {
     let posted = seq.last_seq();
     let (tx, rx) = mpsc::channel(64);
     let task = tokio::spawn(seq.run(rx));
-    tx.send(Request::CheckpointStatus { posted, healthy: true }).await.unwrap();
+    tx.send(Request::CheckpointStatus { posted, healthy: true, lifecycle: None }).await.unwrap();
     submit(&tx, crate::test_support::deposit(100, "finality-deposit")).await;
     submit(&tx, crate::test_support::withdraw(40)).await;
     let mut work = None;
@@ -245,13 +245,13 @@ async fn a_provisional_then_orphaned_approval_never_releases_a_signature() {
         }
         let (posted, healthy) = poster.reconcile(&work).await.unwrap();
         assert_eq!((posted, healthy), (None, false));
-        tx.send(Request::CheckpointStatus { posted, healthy }).await.unwrap();
+        tx.send(Request::CheckpointStatus { posted, healthy, lifecycle: None }).await.unwrap();
         sync(&tx).await;
         assert!(signed_rx.try_recv().is_err(), "unfinalized or orphaned inclusion cannot release an approval");
     }
     *finalized.lock().unwrap() = poster.chain.state.lock().unwrap().clone();
     let (posted, healthy) = poster.reconcile(&work).await.unwrap();
-    tx.send(Request::CheckpointStatus { posted, healthy }).await.unwrap();
+    tx.send(Request::CheckpointStatus { posted, healthy, lifecycle: None }).await.unwrap();
     sync(&tx).await;
     let released = signed_rx.try_recv().expect("finalized healthy approval releases");
     assert_eq!(released.approved_seq, Some(work.checkpoint.seq));
@@ -288,7 +288,12 @@ fn checkpoint(key: &EnclaveKey, seq: u64, root: [u8; 32]) -> Checkpoint {
 fn poster() -> (Poster<Chain>, Work) {
     let key = EnclaveKey::generate();
     let checkpoint = checkpoint(&key, 5, [3; 32]);
-    let work = Work { checkpoint: checkpoint.clone(), liabilities: Fixed::from_int(100), deposits: 1 };
+    let work = Work {
+        checkpoint: checkpoint.clone(),
+        liabilities: Fixed::from_int(100),
+        deposits: 1,
+        authorized: Fixed::ZERO,
+    };
     let chain = Chain {
         state: Arc::new(Mutex::new(VaultState {
             height: 0,
@@ -397,7 +402,7 @@ async fn publicly_relayed_work_beyond_the_full_worker_queue_is_recognized() {
     let (tx, mut status) = mpsc::channel(8);
     let task = tokio::spawn(poster.run_with_recovery(input, tx, chain));
     assert!(
-        matches!(status.recv().await, Some(Request::CheckpointStatus {posted: Some(seq), healthy: true}) if seq == advanced.checkpoint.seq)
+        matches!(status.recv().await, Some(Request::CheckpointStatus {posted: Some(seq), healthy: true, ..}) if seq == advanced.checkpoint.seq)
     );
     assert_eq!(registry.lock().unwrap().len(), 1, "finalized covered prefix retires from the registry");
     drop(sink);
