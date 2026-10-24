@@ -16,8 +16,8 @@ use tokio::task::JoinHandle;
 
 use crate::checkpoints::rpc::{
     balanceOfCall, checkpointEpochAtCall, checkpointRootsCall, checkpointSignerAtCall, checkpointSignerCall,
-    depositCountCall, hasCheckpointAtCall, hasCheckpointCall, latestRootCall, latestSeqCall, signerEpochCall,
-    totalWithdrawnCall, usdcCall, usedNoncesCall,
+    depositCountCall, hasCheckpointAtCall, hasCheckpointCall, latestRootCall, latestSeqCall, signerAtEpochCall,
+    signerEpochCall, totalWithdrawnCall, usdcCall, usedNoncesCall,
 };
 use crate::log::Checkpoint;
 use crate::tee::EnclaveKey;
@@ -36,6 +36,7 @@ pub struct RpcState {
     pub signer: alloy::primitives::Address,
     pub epoch: u64,
     pub finalized_epoch: Option<u64>,
+    pub epoch_signers: BTreeMap<u64, alloy::primitives::Address>,
     pub paid: U256,
     pub finalized_paid: Option<U256>,
     pub balance: U256,
@@ -78,6 +79,7 @@ impl Server {
             finalized_signer: None,
             epoch: 1,
             finalized_epoch: None,
+            epoch_signers: BTreeMap::from([(1, alloy::primitives::Address::from(EnclaveKey::test_key().address()))]),
             paid: U256::ZERO,
             finalized_paid: None,
             balance: U256::ZERO,
@@ -226,6 +228,11 @@ async fn answer(State(state): State<Arc<Mutex<RpcState>>>, Json(request): Json<V
                 } else {
                     state.epoch
                 })
+            } else if selector == hex::encode(signerAtEpochCall::SELECTOR) {
+                let epoch = signerAtEpochCall::abi_decode(&hex::decode(&input[2..]).unwrap()).unwrap().epoch;
+                signerAtEpochCall::abi_encode_returns(
+                    &state.epoch_signers.get(&epoch).copied().unwrap_or(alloy::primitives::Address::ZERO),
+                )
             } else if selector == hex::encode(totalWithdrawnCall::SELECTOR) {
                 totalWithdrawnCall::abi_encode_returns(&if finalized {
                     state.finalized_paid.unwrap_or(state.paid)

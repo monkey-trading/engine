@@ -247,8 +247,8 @@ impl Stream {
                 match self.socket.next().await.context("stream closed before payout")?? {
                     Message::Text(text) => {
                         let value: Value = serde_json::from_str(&text)?;
-                        if value["type"] == "withdrawal" {
-                            self.pending.push_back(serde_json::from_value(value)?);
+                        if let Some(payout) = payout_frame(value)? {
+                            self.pending.push_back(payout);
                         }
                     }
                     Message::Ping(data) => self.socket.send(Message::Pong(data)).await?,
@@ -260,4 +260,35 @@ impl Stream {
         .await
         .context("actual public stream payout deadline")?
     }
+}
+
+/// Removes only the stream envelope before decoding the strict withdrawal payload.
+/// Error cases:
+/// - a withdrawal frame lacks a valid offset or contains an invalid payload
+fn payout_frame(mut frame: Value) -> anyhow::Result<Option<SignedWithdrawal>> {
+    if frame["type"] != "withdrawal" {
+        return Ok(None);
+    }
+    let object = frame.as_object_mut().context("stream frame object")?;
+    let offset = object.remove("offset").context("withdrawal frame offset")?;
+    let _: crate::log::Offset = serde_json::from_value(offset)?;
+    object.remove("type");
+    Ok(Some(serde_json::from_value(frame)?))
+}
+
+#[test]
+fn actual_stream_envelope_decodes_without_weakening_the_withdrawal_payload() {
+    let (payout, _) = crate::withdrawals::tests::vector();
+    let message = crate::sequencer::StreamMsg::new(
+        crate::log::Offset::start_of(5),
+        crate::log::LogEntry::Withdrawal(payout.clone()),
+    );
+    let frame = serde_json::to_value(message).unwrap();
+    assert_eq!(payout_frame(frame.clone()).unwrap(), Some(payout));
+    let mut unknown = frame.clone();
+    unknown["unexpected_payload_field"] = true.into();
+    assert!(payout_frame(unknown).is_err());
+    let mut missing = frame;
+    missing.as_object_mut().unwrap().remove("offset");
+    assert!(payout_frame(missing).is_err());
 }

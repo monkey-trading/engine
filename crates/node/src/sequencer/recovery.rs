@@ -127,7 +127,7 @@ impl Sequencer {
         parent: Option<crate::log::CheckpointParent>,
         mut observe: impl FnMut(&LogEntry),
     ) -> anyhow::Result<ReplayedLog> {
-        Self::read_log_with_authorities(dir, domain, signer, parent, Vec::new(), &mut observe)
+        Self::read_log_with_authorities(dir, domain, signer, parent, Default::default(), &mut observe)
     }
 
     /// Replays accepted history while requiring the current signer for the unanchored tail.
@@ -138,7 +138,7 @@ impl Sequencer {
         domain: Option<crate::log::CheckpointDomain>,
         signer: Option<AccountId>,
         parent: Option<crate::log::CheckpointParent>,
-        authorities: Vec<crate::checkpoints::AcceptedCheckpoint>,
+        authorities: crate::checkpoints::SignerHistory,
         mut observe: impl FnMut(&LogEntry),
     ) -> anyhow::Result<ReplayedLog> {
         let mut replay = parent

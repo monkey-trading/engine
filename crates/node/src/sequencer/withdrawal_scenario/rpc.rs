@@ -112,7 +112,7 @@ impl Chain {
             .deploy(
                 deployer,
                 "TimelockController.sol/TimelockController.json",
-                &(U256::from(1), vec![deployer], vec![Address::ZERO], Address::ZERO).abi_encode(),
+                &(U256::from(1), vec![deployer], vec![Address::ZERO], Address::ZERO).abi_encode_params(),
             )
             .await?;
         chain.vault = chain

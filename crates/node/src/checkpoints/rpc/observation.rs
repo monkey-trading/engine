@@ -9,7 +9,7 @@ use anyhow::{Context, ensure};
 use crate::checkpoints::rpc::{
     CheckpointRpc, balanceOfCall, checkpointEpochAtCall, checkpointRootsCall, checkpointSignerAtCall,
     checkpointSignerCall, depositCountCall, hasCheckpointAtCall, hasCheckpointCall, latestRootCall, latestSeqCall,
-    signerEpochCall, totalWithdrawnCall, usdcCall, usedNoncesCall,
+    signerAtEpochCall, signerEpochCall, totalWithdrawnCall, usdcCall, usedNoncesCall,
 };
 use crate::checkpoints::{
     APPROVAL_PAGE_SIZE, AcceptedCheckpoint, ApprovalId, ApprovalStatus, LifecycleEvidence, Observation, VaultState,
@@ -162,5 +162,30 @@ impl CheckpointRpc {
             });
         }
         Ok(accepted)
+    }
+
+    /// Authenticates payout signers independently of the epoch that accepted their proof root.
+    /// Error cases:
+    /// - an epoch is absent/future, the canonical block was orphaned, or RPC fails
+    pub(super) async fn read_epoch_signers(
+        &self,
+        at: &Observation,
+        epochs: &[u64],
+    ) -> anyhow::Result<Vec<engine_core::types::AccountId>> {
+        ensure!(epochs.len() <= APPROVAL_PAGE_SIZE, "signer epoch query exceeds page size");
+        ensure!(at.view == View::Finalized, "signer history requires a finalized observation");
+        let evidence = at.lifecycle.as_ref().context("signer history requires a pinned canonical observation")?;
+        let block = BlockId::hash_canonical(evidence.block_hash);
+        let vault = Address::from(self.domain.vault.0);
+        let mut signers = Vec::with_capacity(epochs.len());
+        for epoch in epochs {
+            ensure!(*epoch > 0 && *epoch <= evidence.signer_epoch, "signer epoch is outside finalized history");
+            let signer = signerAtEpochCall::abi_decode_returns(
+                &self.call(vault, signerAtEpochCall { epoch: *epoch }.abi_encode(), block).await?,
+            )?;
+            ensure!(signer != Address::ZERO, "vault has no signer for the requested epoch");
+            signers.push(engine_core::types::AccountId(signer.into()));
+        }
+        Ok(signers)
     }
 }

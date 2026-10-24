@@ -30,6 +30,7 @@ sol! {
     function latestRoot() external view returns (bytes32);
     function depositCount() external view returns (uint256);
     function signerEpoch() external view returns (uint64);
+    function signerAtEpoch(uint64 epoch) external view returns (address);
     function totalWithdrawn() external view returns (uint256);
     function usedNonces(address account, uint64 nonce) external view returns (bool);
     function hasCheckpointAt(uint64 seq) external view returns (bool);
@@ -171,6 +172,14 @@ impl CheckpointChain for CheckpointRpc {
         sequences: &[u64],
     ) -> anyhow::Result<Vec<AcceptedCheckpoint>> {
         self.read_accepted_checkpoints(at, sequences).await
+    }
+
+    async fn epoch_signers(
+        &self,
+        at: &Observation,
+        epochs: &[u64],
+    ) -> anyhow::Result<Vec<engine_core::types::AccountId>> {
+        self.read_epoch_signers(at, epochs).await
     }
 
     /// Relays at a durable explicit nonce; only later canonical state reads confirm inclusion.

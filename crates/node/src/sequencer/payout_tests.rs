@@ -1,5 +1,6 @@
 //! Payout release, durable redelivery and signer/expiry reissues on real approval proofs.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,7 +13,7 @@ use engine_core::protocol::ProtocolVersion;
 use engine_core::types::AccountId;
 use tokio::sync::{broadcast, mpsc, watch};
 
-use crate::checkpoints::{AcceptedCheckpoint, ApprovalId, ApprovalStatus, LifecycleEvidence};
+use crate::checkpoints::{AcceptedCheckpoint, ApprovalId, ApprovalStatus, LifecycleEvidence, SignerHistory};
 use crate::clock::test_clock::TestClock;
 use crate::log::{Checkpoint, CheckpointDomain, LogEntry, Manifest};
 use crate::sequencer::{Sequencer, SequencerConfig, SignedWithdrawal};
@@ -192,7 +193,7 @@ fn rotation_requires_accepted_historical_signers_and_reissues_with_the_current_e
     let key = Arc::new(EnclaveKey::generate());
     let signer = AccountId(key.address());
     let entries = log_entries(&node.dir);
-    let authorities = entries
+    let checkpoints = entries
         .iter()
         .filter_map(|entry| match entry {
             LogEntry::Checkpoint(cp) => Some(AcceptedCheckpoint {
@@ -204,6 +205,8 @@ fn rotation_requires_accepted_historical_signers_and_reissues_with_the_current_e
             _ => None,
         })
         .collect();
+    let epochs = BTreeMap::from([(1, AccountId(node.seq.key.address())), (2, signer)]);
+    let authorities = SignerHistory { checkpoints, epochs: epochs.clone() };
     let parent = crate::log::CheckpointParent { has_checkpoint: true, seq: cp.seq, root: cp.root.parse().unwrap() };
     let domain = node.domain();
     assert!(Sequencer::read_log_with_trust(&node.dir, Some(domain), Some(signer), |_| {}).is_err());
@@ -225,6 +228,43 @@ fn rotation_requires_accepted_historical_signers_and_reissues_with_the_current_e
     assert_eq!(reissued.authorization.as_ref().unwrap().signer_epoch, 2);
     crate::withdrawals::verify(&reissued, domain, signer).unwrap();
     assert!(crate::withdrawals::verify(&old, domain, signer).is_err());
+    let next_key = Arc::new(EnclaveKey::generate());
+    let next_signer = AccountId(next_key.address());
+    drop(recovered);
+    let mut history = SignerHistory {
+        checkpoints: log_entries(&node.dir)
+            .into_iter()
+            .filter_map(|entry| match entry {
+                LogEntry::Checkpoint(cp) => Some(AcceptedCheckpoint {
+                    seq: cp.seq,
+                    root: cp.root,
+                    signer: cp.signer.parse().unwrap(),
+                    signer_epoch: 1,
+                }),
+                _ => None,
+            })
+            .collect(),
+        epochs,
+    };
+    history.epochs.insert(3, next_signer);
+    let log =
+        Sequencer::read_log_with_authorities(&node.dir, Some(domain), Some(next_signer), Some(parent), history, |_| {})
+            .expect("epoch2 reissue on epoch1 root survives another rotation without an epoch2 checkpoint");
+    let (withdrawals, mut signed) = mpsc::unbounded_channel();
+    let cfg = SequencerConfig { checkpoint_parent: parent, ..node.config() };
+    let mut recovered = Sequencer::recover_from(log, cfg, next_key, broadcast::channel(128).0, withdrawals).unwrap();
+    recovered.trust(sample_around(node.clock.as_ref())).unwrap();
+    recovered.checkpoint_status(Some(cp.seq), true).unwrap();
+    evidence.signer = next_signer;
+    evidence.signer_epoch = 3;
+    recovered.release_payouts(&evidence).unwrap();
+    recovered.flush().unwrap();
+    let next = signed.try_recv().unwrap();
+    assert_eq!(next.nonce, old.nonce);
+    assert_eq!(next.authorization.as_ref().unwrap().checkpoint_seq, cp.seq);
+    assert_eq!(next.authorization.as_ref().unwrap().signer_epoch, 3);
+    crate::withdrawals::verify(&next, domain, next_signer).unwrap();
+    assert!(crate::withdrawals::verify(&reissued, domain, next_signer).is_err());
 }
 
 struct Node {

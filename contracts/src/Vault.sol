@@ -53,6 +53,8 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     /// @notice Authorized enclave address, provisioned after verifying its attestation.
     address public checkpointSigner;
     uint64 public signerEpoch = 1;
+    /// @notice Historical signer identity for replay; custody still requires the current signer.
+    mapping(uint64 epoch => address signer) public signerAtEpoch;
     TimelockController public immutable governance;
     bool public depositsPaused;
     bool public withdrawalsPaused;
@@ -105,6 +107,7 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         if (address(governance_).code.length == 0 || governance_.getMinDelay() == 0) revert InvalidGovernance();
         usdc = usdc_;
         checkpointSigner = checkpointSigner_;
+        signerAtEpoch[signerEpoch] = checkpointSigner_;
         governance = governance_;
     }
 
@@ -119,6 +122,7 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         address previous = checkpointSigner;
         checkpointSigner = signer;
         signerEpoch++;
+        signerAtEpoch[signerEpoch] = signer;
         emit SignerChanged(previous, signer, signerEpoch);
     }
 

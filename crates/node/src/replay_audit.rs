@@ -1,12 +1,13 @@
 //! Read-only public-log audits using the vault's canonical finalized signer history.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, ensure};
 use engine_core::types::AccountId;
 
-use crate::checkpoints::{APPROVAL_PAGE_SIZE, AcceptedCheckpoint, CheckpointChain, CheckpointRpc, View, signature};
+use crate::checkpoints::{APPROVAL_PAGE_SIZE, CheckpointChain, CheckpointRpc, SignerHistory, View, signature};
 use crate::config::{CustodyProvider, NodeConfig};
 use crate::log::{self, Checkpoint, CheckpointDomain, CheckpointParent, LogEntry, SegmentedLog};
 use crate::sequencer::Replayed;
@@ -15,7 +16,7 @@ use crate::sequencer::Replayed;
 #[derive(Debug)]
 struct AuditTrust {
     parent: CheckpointParent,
-    authorities: Vec<AcceptedCheckpoint>,
+    authorities: SignerHistory,
 }
 
 /// Verifies a public log against configured custody and an independently trusted current signer.
@@ -71,8 +72,9 @@ async fn build_trust(
         })
         .transpose()?
         .unwrap_or_default();
-    let candidates = checkpoint_candidates(path, parent)?;
-    let mut authorities = Vec::with_capacity(candidates.len());
+    let mut epochs = BTreeSet::new();
+    let candidates = checkpoint_candidates(path, parent, &mut epochs)?;
+    let mut authorities = SignerHistory::default();
     for page in candidates.chunks(APPROVAL_PAGE_SIZE) {
         let sequences = page.iter().map(|checkpoint| checkpoint.seq).collect::<Vec<_>>();
         let accepted = chain.accepted_checkpoints(&at, &sequences).await?;
@@ -81,20 +83,30 @@ async fn build_trust(
             authority.verify(checkpoint)?;
             ensure!(authority.signer_epoch <= evidence.signer_epoch, "accepted checkpoint has a future signer epoch");
             signature::verify_domain(checkpoint, domain)?;
-            authorities.push(authority);
+            authorities.checkpoints.push(authority);
         }
     }
+    authorities.authenticate_epochs(chain, &at, epochs).await?;
     Ok(AuditTrust { parent, authorities })
 }
 
 /// Reads candidate identities without opening a writer, repairing a manifest, or trusting the log.
 /// Error cases:
 /// - the path or manifest cannot be read, or the exact finalized checkpoint is absent
-fn checkpoint_candidates(path: &Path, parent: CheckpointParent) -> anyhow::Result<Vec<Checkpoint>> {
+fn checkpoint_candidates(
+    path: &Path,
+    parent: CheckpointParent,
+    epochs: &mut BTreeSet<u64>,
+) -> anyhow::Result<Vec<Checkpoint>> {
     let found = fs::metadata(path).with_context(|| format!("no readable log at {}", path.display()))?;
     let mut candidates = Vec::new();
     let mut anchor_found = !parent.has_checkpoint;
     let mut visit = |entry| {
+        if let LogEntry::Withdrawal(withdrawal) = &entry
+            && let Some(auth) = &withdrawal.authorization
+        {
+            epochs.insert(auth.signer_epoch);
+        }
         if let LogEntry::Checkpoint(checkpoint) = entry
             && checkpoint.parent.is_some()
             && parent.has_checkpoint

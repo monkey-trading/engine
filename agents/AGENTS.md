@@ -36,7 +36,8 @@ an index: load only the rule whose hint matches the current action.
   servers, the custody adapter (mock, or EVM vault deposits over alloy), checkpoint posting and collateral
   reconciliation (`checkpoints/`), with strict signature replay and startup checks against the
   vault's finalized commitment before history writes, plus authenticated withdrawal authorization replay,
-  bounded finalized claim polling and signer history, and public FIFO queue/account-position reads.
+  bounded finalized claim polling, immutable signer-epoch history independent of approval-root history,
+  and public FIFO queue/account-position reads.
   Withdrawal authorizations carry EIP-712 data and an approval inclusion proof; custody's used nonce
   determines payment, and unpaid approvals are reissued after expiry or signer rotation. It also has
   price feeds: live crypto

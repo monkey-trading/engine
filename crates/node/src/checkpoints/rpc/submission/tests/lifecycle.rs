@@ -4,7 +4,9 @@ use alloy::primitives::{B256, U256};
 use alloy::sol_types::SolCall;
 
 use super::*;
-use crate::checkpoints::rpc::{checkpointEpochAtCall, checkpointRootsCall, checkpointSignerAtCall, usedNoncesCall};
+use crate::checkpoints::rpc::{
+    checkpointEpochAtCall, checkpointRootsCall, checkpointSignerAtCall, signerAtEpochCall, usedNoncesCall,
+};
 use crate::checkpoints::{ApprovalId, ApprovalStatus, View};
 
 #[tokio::test]
@@ -21,6 +23,8 @@ async fn collateral_paid_epoch_nonce_and_history_reads_use_the_same_canonical_fi
         state.finalized_paid = Some(U256::from(3_000_001));
         state.epoch = 3;
         state.finalized_epoch = Some(2);
+        let signer = state.signer;
+        state.epoch_signers.insert(2, signer);
         state.balance = U256::from(70_000_000);
         state.claimed.insert((Address::from(approval.account.0), approval.nonce));
         state.accepted.insert(cp.seq, (cp.clone(), 1));
@@ -37,6 +41,7 @@ async fn collateral_paid_epoch_nonce_and_history_reads_use_the_same_canonical_fi
     let accepted = chain.accepted_checkpoints(&at, &[cp.seq]).await.unwrap();
     accepted[0].verify(&cp).unwrap();
     assert_eq!(accepted[0].signer_epoch, 1);
+    assert_eq!(chain.epoch_signers(&at, &[1, 2]).await.unwrap(), vec![at.state.signer; 2]);
     let calls = &server.state.lock().unwrap().calls;
     assert!(calls.len() >= 13);
     assert!(
@@ -48,9 +53,34 @@ async fn collateral_paid_epoch_nonce_and_history_reads_use_the_same_canonical_fi
         checkpointRootsCall::SELECTOR,
         checkpointSignerAtCall::SELECTOR,
         checkpointEpochAtCall::SELECTOR,
+        signerAtEpochCall::SELECTOR,
     ] {
         assert!(calls.iter().any(|(actual, _)| *actual == hex::encode(selector)), "required pinned selector");
     }
+}
+
+#[tokio::test]
+async fn signer_epoch_queries_bind_exact_calldata_and_refuse_future_missing_or_orphaned_history() {
+    let dir = scratch_dir("payout-epoch-identity-rpc");
+    let server = Server::start(&dir).await;
+    let old = Address::repeat_byte(7);
+    {
+        let mut state = server.state.lock().unwrap();
+        state.epoch = 2;
+        state.epoch_signers.insert(1, old);
+        let signer = state.signer;
+        state.epoch_signers.insert(2, signer);
+    }
+    let chain = rpc(&server.url, &dir);
+    let at = chain.observe(View::Finalized, &[]).await.unwrap();
+    assert_eq!(chain.epoch_signers(&at, &[2, 1]).await.unwrap(), [at.state.signer, AccountId(old.into())]);
+    assert!(chain.epoch_signers(&at, &[0]).await.is_err());
+    assert!(chain.epoch_signers(&at, &[3]).await.is_err());
+    assert!(chain.epoch_signers(&at, &[1; crate::checkpoints::APPROVAL_PAGE_SIZE + 1]).await.is_err());
+    server.state.lock().unwrap().epoch_signers.remove(&1);
+    assert!(chain.epoch_signers(&at, &[1]).await.is_err());
+    server.state.lock().unwrap().orphan = Some(at.lifecycle.as_ref().unwrap().block_hash);
+    assert!(chain.epoch_signers(&at, &[2]).await.is_err());
 }
 
 #[tokio::test]

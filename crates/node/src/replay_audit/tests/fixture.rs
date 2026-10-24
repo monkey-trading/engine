@@ -14,8 +14,8 @@ use engine_core::types::AccountId;
 use engine_core::{Engine, Fixed};
 
 use crate::checkpoints::{
-    APPROVAL_PAGE_SIZE, AcceptedCheckpoint, ApprovalId, CheckpointChain, LifecycleEvidence, Observation, VaultState,
-    View,
+    APPROVAL_PAGE_SIZE, AcceptedCheckpoint, ApprovalId, CheckpointChain, LifecycleEvidence, Observation, SignerHistory,
+    VaultState, View,
 };
 use crate::log::{Checkpoint, CheckpointDomain, CheckpointParent, CommandEntry, LogEntry};
 use crate::sequencer::SignedWithdrawal;
@@ -23,11 +23,15 @@ use crate::tee::EnclaveKey;
 use crate::test_support::{TRADER, deposit, scratch_dir, withdraw};
 use crate::withdrawals::{Authorization, LIFETIME_SECONDS};
 
+type HistoryQuery = (B256, Vec<u64>);
+
 #[derive(Clone)]
 pub(super) struct Chain {
     pub(super) at: Observation,
     pub(super) accepted: Arc<Mutex<BTreeMap<u64, AcceptedCheckpoint>>>,
-    pub(super) pages: Arc<Mutex<Vec<(B256, Vec<u64>)>>>,
+    pub(super) pages: Arc<Mutex<Vec<HistoryQuery>>>,
+    pub(super) epochs: Arc<Mutex<BTreeMap<u64, AccountId>>>,
+    pub(super) epoch_pages: Arc<Mutex<Vec<HistoryQuery>>>,
 }
 
 impl CheckpointChain for Chain {
@@ -71,6 +75,25 @@ impl CheckpointChain for Chain {
 
     async fn post(&self, _: &Checkpoint) -> anyhow::Result<()> {
         panic!("audit must never send a transaction")
+    }
+
+    async fn epoch_signers(&self, at: &Observation, epochs: &[u64]) -> anyhow::Result<Vec<AccountId>> {
+        assert_eq!(at.view, View::Finalized);
+        assert!(epochs.len() <= APPROVAL_PAGE_SIZE);
+        let hash = at.lifecycle.as_ref().unwrap().block_hash;
+        assert_eq!(hash, self.at.lifecycle.as_ref().unwrap().block_hash);
+        self.epoch_pages.lock().unwrap().push((hash, epochs.to_vec()));
+        epochs
+            .iter()
+            .map(|epoch| {
+                self.epochs
+                    .lock()
+                    .unwrap()
+                    .get(epoch)
+                    .copied()
+                    .ok_or_else(|| anyhow::anyhow!("missing immutable signer epoch"))
+            })
+            .collect()
     }
 }
 
@@ -138,6 +161,11 @@ impl Fixture {
                 (second.seq, accepted(&second, 2)),
             ]))),
             pages: Default::default(),
+            epochs: Arc::new(Mutex::new(BTreeMap::from([
+                (1, AccountId(old.address())),
+                (2, AccountId(current.address())),
+            ]))),
+            epoch_pages: Default::default(),
         };
         let dir = scratch_dir(name);
         fs::create_dir_all(&dir).unwrap();
@@ -153,6 +181,13 @@ impl Fixture {
     pub(super) fn parent(&self) -> CheckpointParent {
         let (seq, root) = self.chain.at.state.checkpoint.as_ref().unwrap();
         CheckpointParent { has_checkpoint: true, seq: *seq, root: root.parse().unwrap() }
+    }
+
+    pub(super) fn history(&self) -> SignerHistory {
+        SignerHistory {
+            checkpoints: self.chain.accepted.lock().unwrap().values().cloned().collect(),
+            epochs: self.chain.epochs.lock().unwrap().clone(),
+        }
     }
 }
 

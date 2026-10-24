@@ -86,7 +86,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/withdrawal_scenario/` — actual Anvil/TLS/stream/custody crash and FIFO scenarios with local signed time
 - `src/withdrawals.rs` — vault EIP-712 digests and exact approval inclusion verification
 - `src/api/withdrawal_queue.rs` — public FIFO pagination and account queue positions
-- `src/node/signer_history.rs` — finalized accepted checkpoint identities before recovery writes
+- `src/node/signer_history.rs` — finalized accepted roots and immutable signer epochs before recovery writes
 - `src/replay_audit.rs` and `src/replay_audit/` — read-only custody-backed historical signer audits and tests
 - `src/log/segments/durability_tests.rs` — failed-fsync stream publication regression
 - `src/test_support/written.rs` — shared in-memory test output capture

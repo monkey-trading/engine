@@ -2,7 +2,7 @@
 
 pub(crate) mod accounting;
 mod lifecycle;
-pub(crate) use lifecycle::{APPROVAL_PAGE_SIZE, AcceptedCheckpoint, ApprovalRegistry, Observation};
+pub(crate) use lifecycle::{APPROVAL_PAGE_SIZE, AcceptedCheckpoint, ApprovalRegistry, Observation, SignerHistory};
 pub use lifecycle::{ApprovalId, ApprovalStatus, LifecycleEvidence};
 mod rpc;
 pub(crate) mod setup;
@@ -106,6 +106,26 @@ pub(crate) trait CheckpointChain: Send + Sync {
                     signer: at.state.signer,
                     signer_epoch: at.lifecycle.as_ref().map_or(1, |evidence| evidence.signer_epoch),
                 })
+            })
+            .collect()
+    }
+
+    /// Reads immutable signer epochs at the already pinned finalized block, in query order.
+    /// Error cases:
+    /// - the adapter cannot authenticate an epoch, or the query exceeds its work bound
+    async fn epoch_signers(
+        &self,
+        at: &Observation,
+        epochs: &[u64],
+    ) -> anyhow::Result<Vec<engine_core::types::AccountId>> {
+        ensure!(epochs.len() <= APPROVAL_PAGE_SIZE, "signer epoch query exceeds page size");
+        ensure!(at.view == View::Finalized, "signer history requires a finalized observation");
+        let evidence = at.lifecycle.as_ref().context("signer history requires canonical lifecycle evidence")?;
+        epochs
+            .iter()
+            .map(|epoch| {
+                ensure!(*epoch == evidence.signer_epoch, "adapter cannot authenticate retired signer epochs");
+                Ok(evidence.signer)
             })
             .collect()
     }

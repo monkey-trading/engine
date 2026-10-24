@@ -77,7 +77,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
                 &provider,
                 relayer,
                 "TimelockController.sol/TimelockController.json",
-                &(U256::from(1), vec![relayer], vec![Address::ZERO], Address::ZERO).abi_encode(),
+                &(U256::from(1), vec![relayer], vec![Address::ZERO], Address::ZERO).abi_encode_params(),
             )
             .await,
         )
@@ -350,12 +350,12 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
 
 async fn deploy(provider: &RpcClient, from: Address, artifact: &str, args: &[u8]) -> Address {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/out");
-    let artifact: serde_json::Value =
+    let compiled: serde_json::Value =
         serde_json::from_slice(&std::fs::read(root.join(artifact)).expect("forge build first")).unwrap();
-    let mut input = hex::decode(artifact["bytecode"]["object"].as_str().unwrap().trim_start_matches("0x")).unwrap();
+    let mut input = hex::decode(compiled["bytecode"]["object"].as_str().unwrap().trim_start_matches("0x")).unwrap();
     input.extend_from_slice(args);
     let receipt = transact(provider, TransactionRequest::default().from(from).input(input.into())).await;
-    assert!(receipt.status(), "deployment reverted");
+    assert!(receipt.status(), "{artifact} deployment reverted");
     receipt.contract_address.unwrap()
 }
 

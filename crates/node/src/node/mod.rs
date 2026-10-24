@@ -322,7 +322,7 @@ fn read_log_and_history_observe(
     parent: Option<crate::log::CheckpointParent>,
     mut observe: impl FnMut(&crate::log::LogEntry),
 ) -> anyhow::Result<(ReplayedLog, HistoryPlan)> {
-    read_log_and_history_authorities(cfg, signer, parent, Vec::new(), &mut observe)
+    read_log_and_history_authorities(cfg, signer, parent, Default::default(), &mut observe)
 }
 
 /// Replays with independently finalized historical signer evidence before any persisted mutation.
@@ -332,7 +332,7 @@ fn read_log_and_history_authorities(
     cfg: &NodeConfig,
     signer: Option<AccountId>,
     parent: Option<crate::log::CheckpointParent>,
-    authorities: Vec<crate::checkpoints::AcceptedCheckpoint>,
+    authorities: crate::checkpoints::SignerHistory,
     mut observe: impl FnMut(&crate::log::LogEntry),
 ) -> anyhow::Result<(ReplayedLog, HistoryPlan)> {
     let history_failed = |e: &anyhow::Error| error!(alert = "history_recovery_failed", "refusing to serve: {e:#}");

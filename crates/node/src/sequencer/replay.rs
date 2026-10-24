@@ -70,6 +70,7 @@ pub(super) struct Replay {
     payout_proofs: BTreeMap<(AccountId, u64), engine_core::merkle::WithdrawalApprovalProof>,
     payout_checkpoints: BTreeMap<u64, engine_core::eip712::B256>,
     authorities: BTreeMap<u64, crate::checkpoints::AcceptedCheckpoint>,
+    signer_epochs: BTreeMap<u64, AccountId>,
     unproved: BTreeSet<(AccountId, u64)>,
     payout_order: BTreeMap<(AccountId, u64), usize>,
     requires_checkpoint_gate: bool,
@@ -92,14 +93,20 @@ impl Replay {
     /// Pins only independently accepted checkpoints within the finalized recovery anchor.
     /// Error cases:
     /// - an authority lies beyond the trusted prefix, or duplicate identities conflict
-    pub(super) fn set_authorities(
-        &mut self,
-        authorities: Vec<crate::checkpoints::AcceptedCheckpoint>,
-    ) -> anyhow::Result<()> {
-        for authority in authorities {
+    pub(super) fn set_authorities(&mut self, history: crate::checkpoints::SignerHistory) -> anyhow::Result<()> {
+        self.signer_epochs = history.epochs;
+        ensure!(
+            self.signer_epochs.iter().all(|(epoch, signer)| *epoch > 0 && signer.0 != [0; 20]),
+            "invalid historical signer epoch evidence"
+        );
+        for authority in history.checkpoints {
             ensure!(
                 self.recovery_parent.is_some_and(|parent| parent.has_checkpoint && authority.seq <= parent.seq),
                 "historical signer evidence is outside the finalized anchor"
+            );
+            ensure!(
+                self.signer_epochs.get(&authority.signer_epoch) == Some(&authority.signer),
+                "checkpoint signer differs from immutable epoch history"
             );
             if let Some(previous) = self.authorities.insert(authority.seq, authority.clone()) {
                 ensure!(previous == authority, "conflicting historical signer evidence");
@@ -173,22 +180,26 @@ impl Replay {
                     ensure!(explicit == recorded, "withdrawal trusted deployment differs from recorded deployment");
                 }
                 let authority = if let Some(auth) = &w.authorization {
-                    self.authorities
-                        .get(&auth.checkpoint_seq)
-                        .filter(|accepted| {
-                            accepted.root == auth.checkpoint_root.to_string()
-                                && accepted.signer == auth.signer
-                                && accepted.signer_epoch == auth.signer_epoch
-                        })
-                        .map(|accepted| accepted.signer)
+                    if self.signer_epochs.is_empty() {
+                        self.trusted_signer
+                    } else {
+                        ensure!(
+                            self.authorities
+                                .get(&auth.checkpoint_seq)
+                                .is_some_and(|accepted| accepted.root == auth.checkpoint_root.to_string()),
+                            "typed payout root was not accepted in the finalized prefix"
+                        );
+                        let signer = self
+                            .signer_epochs
+                            .get(&auth.signer_epoch)
+                            .context("typed payout signer epoch lacks authenticated history")?;
+                        ensure!(*signer == auth.signer, "typed payout signer differs from immutable epoch history");
+                        Some(*signer)
+                    }
                 } else {
                     self.authorities.range(engine.last_seq().unwrap_or(0)..).next().map(|(_, accepted)| accepted.signer)
                 };
-                let signer = if w.authorization.as_ref().is_some_and(|auth| Some(auth.signer) == self.trusted_signer) {
-                    self.trusted_signer
-                } else {
-                    authority.or(self.trusted_signer)
-                };
+                let signer = authority.or(self.trusted_signer);
                 crate::checkpoints::signature::verify_withdrawal(w, self.domain.or(recorded), signer)?;
                 if let Some(auth) = &w.authorization {
                     let approval =
@@ -376,7 +387,7 @@ pub(crate) fn replay_path_with_authorities(
     domain: CheckpointDomain,
     signer: AccountId,
     parent: crate::log::CheckpointParent,
-    authorities: Vec<crate::checkpoints::AcceptedCheckpoint>,
+    authorities: crate::checkpoints::SignerHistory,
 ) -> anyhow::Result<Replayed> {
     let found = fs::metadata(path).with_context(|| format!("no readable log at {}", path.display()))?;
     let mut replay = Replay::with_recovery(Some(domain), Some(signer), parent);
