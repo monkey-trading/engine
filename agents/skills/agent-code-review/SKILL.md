@@ -171,7 +171,10 @@ fixes its class, not only the cited instance:
 4. **Re-read the fix diff** before the next review round, against the finding's scenario and its
    neighbours, to check that the fix creates no mirror-image defect.
 5. **Record the invariant and the sites fixed** in the branch's fix notes, under a heading for the
-   round, so every later round checks the class instead of rediscovering it. An entry stays only
+   round, so every later round checks the class instead of rediscovering it. A fix made outside a
+   numbered round — in a self-review or when addressing PR comments — goes under a heading naming
+   its source and the next round, numbered from the round log ([The review loop](#the-review-loop)),
+   such as `Self-review, before round 1` or `PR comments, before round 4`. An entry stays only
    while the branch means its invariant to hold: any change that alters a recorded invariant — a
    later fix, a revert, a rejected fix, or a change the user asks for — rewrites or removes the
    entry. The notes are the gitignored
