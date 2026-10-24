@@ -77,6 +77,12 @@ impl<K: Ord + Clone, V> TrackedMap<K, V> {
         self.map.insert(key, value)
     }
 
+    /// Removes the entry at `key`, recording its deletion for the state tree.
+    pub fn remove(&mut self, key: &K) -> Option<V> {
+        self.touched.insert(key.clone());
+        self.map.remove(key)
+    }
+
     /// Every entry for change, recording every key; for maps that stay small, such as markets.
     pub fn iter_mut(&mut self) -> IterMut<'_, K, V> {
         self.touched.extend(self.map.keys().cloned());

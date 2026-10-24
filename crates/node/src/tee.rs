@@ -149,9 +149,7 @@ impl EnclaveKey {
         self.sign_digest(checkpoint_digest_v2(chain_id, vault, seq, root, parent))
     }
 
-    /// Signs an approved withdrawal for the vault on `chain_id` to pay out.
-    ///
-    /// TODO: move to EIP-712 typed data once the vault contract is written.
+    /// Preserves the historical pre-V22 withdrawal bytes for replay of earlier logs.
     pub fn sign_withdrawal(
         &self,
         chain_id: u64,
@@ -161,6 +159,13 @@ impl EnclaveKey {
         nonce: u64,
     ) -> String {
         self.sign_digest(withdrawal_digest(chain_id, vault, account, amount, nonce))
+    }
+
+    /// Signs a whole-USDC payout only after the caller has verified its durable approval boundary.
+    /// Error cases:
+    /// - the authorization fields cannot form a valid vault digest
+    pub(crate) fn sign_payout(&self, withdrawal: &crate::sequencer::SignedWithdrawal) -> anyhow::Result<String> {
+        Ok(self.sign_digest(crate::withdrawals::digest(withdrawal)?.0))
     }
 
     /// 65-byte `r || s || v` with `v` in {27, 28}, as `ecrecover` expects.
@@ -262,6 +267,16 @@ mod tests {
         let (vault, root) = ([9u8; 20], [7u8; 32]);
         let sig = key.sign_checkpoint(1, &vault, 42, &root);
         assert_eq!(&recover(checkpoint_digest(1, &vault, 42, &root), &sig), key.key.verifying_key());
+    }
+
+    #[test]
+    fn tee_withdrawal_signature_matches_the_vault_vector_byte_for_byte() {
+        let (withdrawal, vector) = crate::withdrawals::tests::vector();
+        let mut secret = [0u8; 32];
+        secret[30..].copy_from_slice(&0x1234u16.to_be_bytes());
+        let key = EnclaveKey { key: SigningKey::from_bytes((&secret).into()).unwrap() };
+        assert_eq!(key.address_hex().to_lowercase(), vector["signer"].as_str().unwrap().to_lowercase());
+        assert_eq!(key.sign_payout(&withdrawal).unwrap(), vector["signature"].as_str().unwrap());
     }
 
     #[test]

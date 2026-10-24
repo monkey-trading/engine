@@ -268,11 +268,14 @@ impl LogWriter {
     /// Error cases:
     /// - the write or either sync fails
     pub fn sync(&mut self) -> anyhow::Result<()> {
-        self.flush()?;
-        if let Some((_, out)) = &self.open {
+        if let Some((_, out)) = &mut self.open {
+            out.flush().context("flushing log before sync")?;
             out.get_ref().sync_data().context("syncing log")?;
         }
-        self.dir_handle.sync_all().with_context(|| format!("syncing {}", self.dir.display()))
+        self.dir_handle.sync_all().with_context(|| format!("syncing {}", self.dir.display()))?;
+        let last = self.last;
+        self.manifest.send_modify(|published| published.flushed = last);
+        Ok(())
     }
 
     /// Starts the segment for `first_seq`, first syncing and listing the current one, if any. The
@@ -447,3 +450,6 @@ fn command_seq(entry: &LogEntry) -> Option<u64> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod durability_tests;

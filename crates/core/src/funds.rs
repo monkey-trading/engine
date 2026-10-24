@@ -1,7 +1,7 @@
 //! Cash in and out of the engine: deposits, withdrawals, house capital, and overnight financing.
 //!
-//! Cash is conserved: client balances plus house cash always equal deposits plus house capital,
-//! less approved withdrawals. Every movement below debits one side and credits the other.
+//! Cash is conserved: client balances, house cash and V22 pending reservations equal deposits plus
+//! house capital, less approved withdrawals. Internal movements debit one side and credit another.
 
 use std::collections::BTreeMap;
 
@@ -14,6 +14,7 @@ use crate::event::{Event, Reject};
 use crate::fixed::Rounding;
 use crate::protocol::ProtocolVersion;
 use crate::types::{AccountId, MarketId};
+use crate::withdrawal::whole_usdc;
 
 impl Engine {
     /// Credits a finalised vault deposit, at most once per chain reference.
@@ -31,12 +32,16 @@ impl Engine {
         }
         self.credited_refs.insert(chain_ref.to_owned());
         self.accounts.entry(account).or_default().balance += amount;
+        if let Some(cash) = &mut self.withdrawal_cash {
+            *cash += amount;
+        }
         events.push(Event::Deposited { account, amount });
     }
 
     /// Authorises the request, then approves a withdrawal of free cash: no more than the balance,
     /// and no more than equity above the margin requirement. Approval bumps the account's
-    /// withdrawal nonce, which the enclave signs with the payout.
+    /// withdrawal nonce, which the enclave signs with the payout. From V22, reserves whole USDC
+    /// first; the bounded FIFO pass allocates each payable part its own nonce.
     pub(crate) fn withdraw(
         &mut self,
         account: AccountId,
@@ -51,17 +56,22 @@ impl Engine {
             let (equity, margin) = self.equity_and_margin(acct, None);
             acct.balance.min(equity - margin).max(Fixed::ZERO)
         });
+        let payable = if self.protocol_version >= ProtocolVersion::V22 { whole_usdc(amount) } else { amount };
         let reason = if let Err(reason) = authorised {
             Some(reason)
-        } else if !amount.is_valid_input() {
+        } else if !amount.is_valid_input() || !payable.is_positive() {
             Some(Reject::InvalidAmount)
-        } else if amount > available {
+        } else if payable > available {
             Some(Reject::InsufficientFunds { available })
         } else {
             None
         };
         if let Some(reason) = reason {
             events.push(Event::WithdrawalRejected { account, amount, reason });
+            return;
+        }
+        if self.protocol_version >= ProtocolVersion::V22 {
+            self.reserve_withdrawal(account, payable, events);
             return;
         }
         let acct = self.accounts.get_mut(&account).expect("an account with funds available exists");
@@ -90,6 +100,9 @@ impl Engine {
         }
         self.credited_refs.insert(chain_ref.to_owned());
         self.house_cash += amount;
+        if let Some(cash) = &mut self.withdrawal_cash {
+            *cash += amount;
+        }
         events.push(Event::HouseCapitalMoved { amount, nav: self.house_nav() });
     }
 

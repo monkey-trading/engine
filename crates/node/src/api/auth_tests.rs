@@ -324,6 +324,7 @@ impl Node {
             auth,
             operator: dev_config().operator().unwrap(),
             mock_custody: true,
+            payouts_enabled: true,
             clock,
             log_dir: dir.clone(),
             manifest,

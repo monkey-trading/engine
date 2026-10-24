@@ -42,7 +42,7 @@ impl ReplayedLog {
     /// Error cases:
     /// - the deployment, genesis, or required checkpoint service differs from the replayed log
     pub(crate) fn validate_recovery(&self, cfg: &SequencerConfig<'_>) -> anyhow::Result<()> {
-        let Replayed { engine, genesis, deferred, .. } = &self.replayed;
+        let Replayed { engine, genesis, deferred, requires_checkpoint_gate, .. } = &self.replayed;
         // A config naming another client auth or operator, and so another chain, vault, or admin key,
         // is the wrong one for this log: refuse before anything is written or signed under it.
         if let Some(recorded) = engine.client_auth().filter(|recorded| **recorded != cfg.client_auth) {
@@ -52,7 +52,7 @@ impl ReplayedLog {
             bail!("the log records operator {recorded:?}, but the config gives {:?}", cfg.operator);
         }
         genesis.ensure_closed()?;
-        if !deferred.is_empty() && cfg.checkpoints.is_none() {
+        if (*requires_checkpoint_gate || !deferred.is_empty()) && cfg.checkpoints.is_none() {
             bail!("checkpoint-gated withdrawals require the checkpoint service");
         }
         Ok(())
@@ -127,8 +127,23 @@ impl Sequencer {
         parent: Option<crate::log::CheckpointParent>,
         mut observe: impl FnMut(&LogEntry),
     ) -> anyhow::Result<ReplayedLog> {
+        Self::read_log_with_authorities(dir, domain, signer, parent, Default::default(), &mut observe)
+    }
+
+    /// Replays accepted history while requiring the current signer for the unanchored tail.
+    /// Error cases:
+    /// - trusted history is inconsistent, or ordinary replay/recovery validation fails
+    pub(crate) fn read_log_with_authorities(
+        dir: &Path,
+        domain: Option<crate::log::CheckpointDomain>,
+        signer: Option<AccountId>,
+        parent: Option<crate::log::CheckpointParent>,
+        authorities: crate::checkpoints::SignerHistory,
+        mut observe: impl FnMut(&LogEntry),
+    ) -> anyhow::Result<ReplayedLog> {
         let mut replay = parent
             .map_or_else(|| Replay::with_trust(domain, signer), |parent| Replay::with_recovery(domain, signer, parent));
+        replay.set_authorities(authorities)?;
         let log = SegmentedLog::open(dir, |entry| {
             observe(&entry);
             replay.apply(&entry)
@@ -160,9 +175,12 @@ impl Sequencer {
             last_checkpoint_ts,
             last_signed_checkpoint,
             recovery_work,
+            payout_proofs,
+            payout_order,
             ..
         } = replayed;
-        let checkpoint_unsigned = cfg.checkpoints.is_some() && (!unsigned.is_empty() || !deferred.is_empty());
+        let checkpoint_unsigned = cfg.checkpoints.is_some()
+            && (!unsigned.is_empty() || !deferred.is_empty() || engine.withdrawal_approvals().next().is_some());
         info!(commands, checkpoints, "recovered from log");
         if let Some(ts) = last_checkpoint_ts {
             cfg.metrics.last_checkpoint_seconds.set(ts as f64 / 1000.0);
@@ -192,6 +210,7 @@ impl Sequencer {
             gate: cfg.checkpoints.map(|sink| {
                 let mut gate = Gate::new(sink, cfg.checkpoint_parent);
                 gate.registry = cfg.checkpoint_registry;
+                gate.approvals = cfg.approval_registry;
                 gate
             }),
             accounting,
@@ -217,7 +236,20 @@ impl Sequencer {
         }
         if let Some(gate) = &mut sequencer.gate {
             gate.pending.extend(deferred);
+            for approval in sequencer.engine.withdrawal_approvals() {
+                let key = (approval.account, approval.nonce);
+                let index = *payout_order.get(&key).context("immutable approval lacks its validated event order")?;
+                let mut payout = crate::sequencer::payouts::Payout::new(*approval, index);
+                payout.proof = payout_proofs.get(&key).cloned();
+                if payout.proof.is_none() {
+                    gate.unproved.insert(key);
+                }
+                gate.unregistered.insert(key);
+                gate.issuance.insert(payout.order, key);
+                gate.payouts.insert(key, payout);
+            }
         }
+        sequencer.register_payouts()?;
         if let Some(gate) = &mut sequencer.gate {
             // Resume every durable signature before extending the chain. In particular an
             // unmined child remains a live commitment even while latest equals finalized.

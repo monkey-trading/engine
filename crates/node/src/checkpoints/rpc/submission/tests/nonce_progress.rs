@@ -430,7 +430,7 @@ fn poster(server: &Server, dir: &Path) -> Poster<CheckpointRpc> {
 
 /// Supplies exact authenticated work with the same zero collateral as the fixture vault.
 fn work(checkpoint: Checkpoint) -> Work {
-    Work { checkpoint, liabilities: Fixed::ZERO, deposits: 0 }
+    Work { checkpoint, liabilities: Fixed::ZERO, deposits: 0, authorized: Fixed::ZERO }
 }
 
 /// Models permissionless finality followed by the relayer transaction leaving every mempool.

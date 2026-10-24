@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity 0.8.36;
-import {Test} from "forge-std/Test.sol";
+import {GovernanceTest} from "./helpers/GovernanceTest.sol";
 import {Vault} from "../src/Vault.sol";
 import {IERC20} from "@openzeppelin-contracts/token/ERC20/IERC20.sol";
 
-contract CheckpointsTest is Test {
+contract CheckpointsTest is GovernanceTest {
     Vault private vault;
     uint256 private constant KEY = 0x1234;
 
     function setUp() public {
-        vault = new Vault(IERC20(address(1)), vm.addr(KEY));
+        governance = _deployGovernance();
+        vault = new Vault(IERC20(address(1)), vm.addr(KEY), governance);
     }
 
     function testFuzzOnlyIncreasingSignedCheckpoints(uint64 seq, bytes32 root) public {
@@ -63,7 +64,7 @@ contract CheckpointsTest is Test {
 
     function testRefusesAnotherVaultOrChain() public {
         bytes memory signature = sign(vault, 2, bytes32(uint256(7)), false, 0, 0, KEY);
-        Vault other = new Vault(IERC20(address(1)), vm.addr(KEY));
+        Vault other = new Vault(IERC20(address(1)), vm.addr(KEY), governance);
         vm.expectRevert(Vault.InvalidCheckpointSigner.selector);
         other.postCheckpoint(2, bytes32(uint256(7)), false, 0, 0, signature);
         vm.chainId(block.chainid + 1);
@@ -73,10 +74,10 @@ contract CheckpointsTest is Test {
 
     function testRefusesZeroSignerAndUnsupportedChain() public {
         vm.expectRevert(Vault.ZeroAddress.selector);
-        new Vault(IERC20(address(1)), address(0));
+        new Vault(IERC20(address(1)), address(0), governance);
         vm.chainId(uint256(type(uint64).max) + 1);
         vm.expectRevert(Vault.UnsupportedChain.selector);
-        new Vault(IERC20(address(1)), address(2));
+        new Vault(IERC20(address(1)), address(2), governance);
     }
 
     function testRejectsMissingSignature() public {

@@ -262,6 +262,7 @@ impl Node {
             auth: ClientAuth::Unsigned,
             operator,
             mock_custody: true,
+            payouts_enabled: true,
             clock: || NOW,
             log_dir: dir.clone(),
             manifest,

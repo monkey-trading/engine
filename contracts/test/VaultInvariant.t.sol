@@ -2,6 +2,7 @@
 pragma solidity 0.8.36;
 
 import {Test, Vm} from "forge-std/Test.sol";
+import {GovernanceTest} from "./helpers/GovernanceTest.sol";
 
 import {Vault} from "../src/Vault.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
@@ -50,14 +51,15 @@ contract VaultHandler is Test {
     }
 }
 
-contract VaultInvariantTest is Test {
+contract VaultInvariantTest is GovernanceTest {
     MockUSDC internal usdc;
     Vault internal vault;
     VaultHandler internal handler;
 
     function setUp() public {
+        governance = _deployGovernance();
         usdc = new MockUSDC();
-        vault = new Vault(usdc, address(0x1234));
+        vault = new Vault(usdc, address(0x1234), governance);
         handler = new VaultHandler(usdc, vault);
         targetContract(address(handler));
     }

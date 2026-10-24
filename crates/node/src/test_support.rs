@@ -3,9 +3,8 @@
 
 use std::collections::BTreeMap;
 use std::fmt::Debug;
-use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use engine_core::auth::ClientAuth;
@@ -24,8 +23,10 @@ use tracing::field::{Field, Visit};
 use tracing::subscriber::DefaultGuard;
 use tracing::{Event as LogEvent, Subscriber};
 use tracing_subscriber::Registry;
-use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
+
+mod written;
+pub use written::Written;
 
 use crate::api::{Feed, MAX_BACKFILLS};
 use crate::clock::{Clock, SystemClock};
@@ -248,6 +249,7 @@ pub fn sequencer_config(dir: &Path, manifest: watch::Sender<Manifest>) -> Sequen
         manifest,
         checkpoint_every: CHECKPOINT_EVERY,
         checkpoint_registry: None,
+        approval_registry: None,
         checkpoint_parent: Default::default(),
         checkpoints: None,
         chain_id: 31337,
@@ -423,6 +425,8 @@ pub fn every_event() -> Vec<Event> {
         Event::Deposited { account, amount },
         Event::DepositRejected { account, amount, chain_ref: "0xab:1".into(), reason: Reject::DuplicateReference },
         Event::WithdrawalApproved { account, amount, nonce: 1 },
+        Event::WithdrawalQueued { account, amount, requested_seq: 12 },
+        Event::WithdrawalQueueUpdated { account, requested_seq: 12, remaining: amount },
         Event::WithdrawalRejected { account, amount, reason: Reject::InsufficientFunds { available: amount } },
         Event::HouseCapitalMoved { amount, nav: amount },
         Event::OrderAccepted { account, client_id: 1, order_id: 3 },
@@ -445,6 +449,8 @@ pub fn every_event() -> Vec<Event> {
             Event::Deposited { .. }
             | Event::DepositRejected { .. }
             | Event::WithdrawalApproved { .. }
+            | Event::WithdrawalQueued { .. }
+            | Event::WithdrawalQueueUpdated { .. }
             | Event::WithdrawalRejected { .. }
             | Event::HouseCapitalMoved { .. }
             | Event::OrderAccepted { .. }
@@ -466,34 +472,4 @@ pub fn every_event() -> Vec<Event> {
         }
     }
     events
-}
-
-/// A log writer that keeps what it is given.
-#[derive(Clone, Default)]
-pub struct Written(Arc<Mutex<Vec<u8>>>);
-
-impl io::Write for Written {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-impl<'w> MakeWriter<'w> for Written {
-    type Writer = Written;
-
-    fn make_writer(&'w self) -> Self::Writer {
-        self.clone()
-    }
-}
-
-impl Written {
-    /// Everything written so far.
-    pub fn text(&self) -> String {
-        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
-    }
 }

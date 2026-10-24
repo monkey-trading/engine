@@ -4,6 +4,7 @@ test = "test"
 script = "script"
 out = "out"
 libs = ["dependencies"]
+fs_permissions = [{ access = "read", path = "./test/fixtures" }]
 solc_version = "0.8.36"
 # Arbitrum One supports Cancun (transient storage, used by the reentrancy guard).
 evm_version = "cancun"

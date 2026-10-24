@@ -128,6 +128,7 @@ fn state() -> (ApiState, mpsc::Receiver<Request>) {
         auth: ClientAuth::Unsigned,
         operator: cfg.operator().unwrap(),
         mock_custody: true,
+        payouts_enabled: true,
         clock: now_ms,
         log_dir: scratch_dir("benchmark-schedule-api"),
         manifest: watch::channel(Manifest::default()).1,

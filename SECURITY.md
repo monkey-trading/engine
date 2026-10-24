@@ -60,8 +60,8 @@ The policy covers the code in this repository and what is built from it: `engine
 deterministic state machine that applies the trading rules; `engine-node`, which sequences commands
 into it, publishes the log and its signed checkpoints, and serves the public REST and WebSocket API;
 the custody vault contract that will hold collateral on Arbitrum One; and the enclave image the node
-runs in, together with the attestation that vouches for it. The vault contract takes deposits but
-cannot pay anything out yet, and is in scope as published here; the enclave image is still being
+runs in, together with the attestation that vouches for it. The vault contract accepts deposits and
+pays signed withdrawals with approval inclusion proofs, and is in scope as published here; the enclave image is still being
 built, and is in scope as soon as its code is published. A trading account must be able to sign
 requests with its own key, since the engine accepts no contract signatures: a contract wallet funds
 a key that signs for it through the vault's `depositFor`, and a balance credited to a contract
@@ -82,8 +82,8 @@ configuration uses hardware attestation, on-chain custody, live prices, and sign
 Requests are signed, and the node refuses unsigned ones unless both the enclave and custody are
 mocks. The other three are not finished: the node can request an attestation report through
 configfs-tsm, but attestation on SEV-SNP hardware and a verifier for it are still being built, as
-are live prices, the separate signed benchmark publisher worker, and on-chain custody, which credits
-vault deposits but does not yet pay withdrawals.
+are live prices and the separate signed benchmark publisher worker. On-chain custody and withdrawal
+claims are exercised on a local chain; production deployment remains out of scope for the development scenarios.
 
 Out of scope are volumetric denial of service, meaning attacks that work only by flooding the API or
 the network with traffic; social engineering of anyone involved with the project; reorganisations of
@@ -106,8 +106,13 @@ history for writes; checkpoint signatures verify
 against their chain, vault, and named signer. New posts also sign the exact predecessor sequence
 and root, which the vault compares atomically to fence divergent same-key publishers. The checkpoint RPC still supplies the canonical chain
 view, and a signature's named signer must be checked against a trusted attestation or the vault's
-authorized signer. Withdrawal completion evidence also requires that independently trusted signer
-and its deployment before replay can clear an approval. Latest transaction inclusion alone never
+authorized signer. A withdrawal signature never settles its approval: finalized custody nonce-use
+evidence does. Signatures expire after 24 hours and bind the current signer epoch; the vault rejects
+retired epochs immediately. Accepted checkpoint history authenticates historical roots; immutable
+signer-epoch history independently authenticates reissues against older roots during recovery and
+custody-backed replay. The unanchored checkpoint tail still requires the current signer.
+The deployment's multisig proposes changes through its nonzero-delay timelock, which alone rotates
+the signer or changes deposit/withdrawal pauses. Latest transaction inclusion alone never
 authorizes withdrawal release; the configured custody finality tag and confirmation depth apply.
 Hardware EVM custody requires this protection. Some checks are still being built:
 the alert outbox persists pages on host disk, whose schema and rows it checks but whose deletion or

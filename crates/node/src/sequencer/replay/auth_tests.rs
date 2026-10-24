@@ -124,6 +124,7 @@ fn pending(
             vault: domain.vault,
             signature: key.sign_withdrawal(domain.chain_id, &domain.vault.0, TRADER, Fixed::from_int(40), nonce),
             approved_seq: deferred.then_some(1),
+            authorization: None,
         },
     )
 }

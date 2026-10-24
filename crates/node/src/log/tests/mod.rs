@@ -377,6 +377,7 @@ fn withdrawal(nonce: u64) -> LogEntry {
         vault: AccountId([2; 20]),
         signature: "0x01".into(),
         approved_seq: None,
+        authorization: None,
     })
 }
 

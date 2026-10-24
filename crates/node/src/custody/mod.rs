@@ -8,7 +8,7 @@
 //! - checkpoints: post the signed state roots so anyone can check the enclave against the public
 //!   log.
 //!
-//! Deposits (`evm`) and the optional checkpoint service are built; on-chain withdrawal payouts remain pending.
+//! The checkpoint service gates withdrawal authorizations; accounts or relayers claim them at the vault.
 
 use alloy::primitives::{Address, U256};
 use anyhow::Context;
@@ -60,7 +60,7 @@ impl Custody {
         let vault: Address = cfg.vault.parse().context("custody.vault")?;
         let rpc = Quorum::connect(evm, vault)?;
         let watcher = DepositWatcher::start(rpc, evm, cfg.chain_id, vault, log_seq)?;
-        warn!("EVM custody: deposits are credited; withdrawals are refused until on-chain payouts exist");
+        warn!("EVM custody requires finalized checkpoint inclusion before withdrawal authorization");
         Ok(Custody::Evm(Box::new(watcher)))
     }
 
@@ -88,7 +88,7 @@ impl Custody {
 /// Logs each signed withdrawal until the sequencer goes away.
 async fn log_withdrawals(mut withdrawals: mpsc::UnboundedReceiver<SignedWithdrawal>) {
     while let Some(w) = withdrawals.recv().await {
-        info!(account = %w.account, amount = %w.amount, nonce = w.nonce, "withdrawal signed; payout is not on-chain yet");
+        info!(account = %w.account, amount = %w.amount, nonce = w.nonce, "withdrawal authorization available for vault claim");
     }
 }
 

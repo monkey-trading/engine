@@ -1,5 +1,6 @@
 //! Deterministic signing and canonical-state RPC for submission regressions.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -14,7 +15,9 @@ use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
 use crate::checkpoints::rpc::{
-    balanceOfCall, checkpointSignerCall, depositCountCall, hasCheckpointCall, latestRootCall, latestSeqCall, usdcCall,
+    balanceOfCall, checkpointEpochAtCall, checkpointRootsCall, checkpointSignerAtCall, checkpointSignerCall,
+    depositCountCall, hasCheckpointAtCall, hasCheckpointCall, latestRootCall, latestSeqCall, signerAtEpochCall,
+    signerEpochCall, totalWithdrawnCall, usdcCall, usedNoncesCall,
 };
 use crate::log::Checkpoint;
 use crate::tee::EnclaveKey;
@@ -31,6 +34,15 @@ pub struct RpcState {
     pub reject_send: bool,
     pub resurface_on_send: Option<Value>,
     pub signer: alloy::primitives::Address,
+    pub epoch: u64,
+    pub finalized_epoch: Option<u64>,
+    pub epoch_signers: BTreeMap<u64, alloy::primitives::Address>,
+    pub paid: U256,
+    pub finalized_paid: Option<U256>,
+    pub balance: U256,
+    pub claimed: BTreeSet<(alloy::primitives::Address, u64)>,
+    pub accepted: BTreeMap<u64, (Checkpoint, u64)>,
+    pub calls: Vec<(String, B256)>,
     pub finalized_signer: Option<alloy::primitives::Address>,
     pub consumer: Option<Value>,
     pub consumed_at: u64,
@@ -65,6 +77,15 @@ impl Server {
             resurface_on_send: None,
             signer: alloy::primitives::Address::from(EnclaveKey::test_key().address()),
             finalized_signer: None,
+            epoch: 1,
+            finalized_epoch: None,
+            epoch_signers: BTreeMap::from([(1, alloy::primitives::Address::from(EnclaveKey::test_key().address()))]),
+            paid: U256::ZERO,
+            finalized_paid: None,
+            balance: U256::ZERO,
+            claimed: Default::default(),
+            accepted: Default::default(),
+            calls: Vec::new(),
             consumer: None,
             consumed_at: 6,
             orphan: None,
@@ -187,15 +208,60 @@ async fn answer(State(state): State<Arc<Mutex<RpcState>>>, Json(request): Json<V
             assert_eq!(params.as_array().unwrap().len(), 2);
             assert_eq!(params[1]["requireCanonical"], true);
             assert!(params[1]["blockHash"].as_str().is_some());
+            let hash: B256 = serde_json::from_value(params[1]["blockHash"].clone()).unwrap();
+            if state.orphan == Some(hash) {
+                return rpc_error(&request, "header is no longer canonical");
+            }
             let finalized = params[1]["blockHash"] == json!(B256::repeat_byte(8));
-            let checkpoint = if finalized { &state.finalized } else { &state.latest };
             let input = params[0].get("input").or_else(|| params[0].get("data")).unwrap().as_str().unwrap();
             let selector = &input[2..10];
+            state.calls.push((selector.to_owned(), hash));
+            let checkpoint = if finalized { &state.finalized } else { &state.latest };
             let bytes = if selector == hex::encode(usdcCall::SELECTOR) {
                 usdcCall::abi_encode_returns(&alloy::primitives::Address::repeat_byte(2))
             } else if selector == hex::encode(checkpointSignerCall::SELECTOR) {
                 let signer = if finalized { state.finalized_signer.unwrap_or(state.signer) } else { state.signer };
                 checkpointSignerCall::abi_encode_returns(&signer)
+            } else if selector == hex::encode(signerEpochCall::SELECTOR) {
+                signerEpochCall::abi_encode_returns(&if finalized {
+                    state.finalized_epoch.unwrap_or(state.epoch)
+                } else {
+                    state.epoch
+                })
+            } else if selector == hex::encode(signerAtEpochCall::SELECTOR) {
+                let epoch = signerAtEpochCall::abi_decode(&hex::decode(&input[2..]).unwrap()).unwrap().epoch;
+                signerAtEpochCall::abi_encode_returns(
+                    &state.epoch_signers.get(&epoch).copied().unwrap_or(alloy::primitives::Address::ZERO),
+                )
+            } else if selector == hex::encode(totalWithdrawnCall::SELECTOR) {
+                totalWithdrawnCall::abi_encode_returns(&if finalized {
+                    state.finalized_paid.unwrap_or(state.paid)
+                } else {
+                    state.paid
+                })
+            } else if selector == hex::encode(usedNoncesCall::SELECTOR) {
+                {
+                    let query = usedNoncesCall::abi_decode(&hex::decode(&input[2..]).unwrap()).unwrap();
+                    usedNoncesCall::abi_encode_returns(&state.claimed.contains(&(query.account, query.nonce)))
+                }
+            } else if selector == hex::encode(hasCheckpointAtCall::SELECTOR) {
+                let seq = hasCheckpointAtCall::abi_decode(&hex::decode(&input[2..]).unwrap()).unwrap().seq;
+                hasCheckpointAtCall::abi_encode_returns(
+                    &(state.accepted.contains_key(&seq) || checkpoint.as_ref().is_some_and(|cp| cp.seq == seq)),
+                )
+            } else if selector == hex::encode(checkpointRootsCall::SELECTOR) {
+                let seq = checkpointRootsCall::abi_decode(&hex::decode(&input[2..]).unwrap()).unwrap().seq;
+                let cp = state.accepted.get(&seq).map(|(cp, _)| cp).or(checkpoint.as_ref()).unwrap();
+                checkpointRootsCall::abi_encode_returns(&cp.root.parse().unwrap())
+            } else if selector == hex::encode(checkpointSignerAtCall::SELECTOR) {
+                let seq = checkpointSignerAtCall::abi_decode(&hex::decode(&input[2..]).unwrap()).unwrap().seq;
+                let cp = state.accepted.get(&seq).map(|(cp, _)| cp).or(checkpoint.as_ref()).unwrap();
+                checkpointSignerAtCall::abi_encode_returns(&alloy::primitives::Address::from(
+                    cp.signer.parse::<engine_core::types::AccountId>().unwrap().0,
+                ))
+            } else if selector == hex::encode(checkpointEpochAtCall::SELECTOR) {
+                let seq = checkpointEpochAtCall::abi_decode(&hex::decode(&input[2..]).unwrap()).unwrap().seq;
+                checkpointEpochAtCall::abi_encode_returns(&state.accepted.get(&seq).map_or(1, |(_, epoch)| *epoch))
             } else if selector == hex::encode(hasCheckpointCall::SELECTOR) {
                 hasCheckpointCall::abi_encode_returns(&checkpoint.is_some())
             } else if selector == hex::encode(latestSeqCall::SELECTOR) {
@@ -203,7 +269,7 @@ async fn answer(State(state): State<Arc<Mutex<RpcState>>>, Json(request): Json<V
             } else if selector == hex::encode(latestRootCall::SELECTOR) {
                 latestRootCall::abi_encode_returns(&checkpoint.as_ref().unwrap().root.parse().unwrap())
             } else if selector == hex::encode(balanceOfCall::SELECTOR) {
-                balanceOfCall::abi_encode_returns(&U256::ZERO)
+                balanceOfCall::abi_encode_returns(&state.balance)
             } else {
                 assert_eq!(selector, hex::encode(depositCountCall::SELECTOR));
                 depositCountCall::abi_encode_returns(&U256::ZERO)

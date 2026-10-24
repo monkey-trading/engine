@@ -6,7 +6,7 @@ use anyhow::Context;
 use engine_core::types::AccountId;
 use tokio::sync::mpsc;
 
-use crate::checkpoints::{CheckpointChain, CheckpointRpc, Poster, View, Work};
+use crate::checkpoints::{ApprovalRegistry, CheckpointChain, CheckpointRpc, Observation, Poster, View, Work};
 use crate::config::NodeConfig;
 use crate::log::CheckpointDomain;
 use crate::tee::EnclaveKey;
@@ -15,6 +15,8 @@ pub(crate) struct Setup {
     pub poster: Poster<CheckpointRpc>,
     pub tx: mpsc::Sender<Work>,
     pub rx: mpsc::Receiver<Work>,
+    pub approvals: ApprovalRegistry,
+    pub observation: Observation,
     pub parent: crate::log::CheckpointParent,
     pub posted_seq: Option<u64>,
 }
@@ -40,13 +42,18 @@ pub(crate) async fn connect(cfg: &NodeConfig, key: &Arc<EnclaveKey>) -> anyhow::
     // Await that boundary without opening persisted state; an orphaned inclusion may disappear.
     let state = tokio::time::timeout(evm.stall_critical_after, async {
         loop {
-            let latest = chain.state(View::Latest).await?;
-            let finalized = chain.state(View::Finalized).await?;
+            let latest = chain.observe(View::Latest, &[]).await?;
+            let finalized = chain.observe(View::Finalized, &[]).await?;
+            latest.validate(&[])?;
+            finalized.validate(&[])?;
             anyhow::ensure!(
-                latest.signer == AccountId(key.address()) && finalized.signer == AccountId(key.address()),
+                latest.state.signer == AccountId(key.address()) && finalized.state.signer == AccountId(key.address()),
                 "vault signer differs from this enclave; signer recovery is required"
             );
-            if latest.checkpoint == finalized.checkpoint {
+            if latest.state.checkpoint == finalized.state.checkpoint
+                && latest.lifecycle.as_ref().map(|evidence| evidence.signer_epoch)
+                    == finalized.lifecycle.as_ref().map(|evidence| evidence.signer_epoch)
+            {
                 break anyhow::Ok(finalized);
             }
             tokio::time::sleep(checkpoints.retry_interval).await;
@@ -54,8 +61,9 @@ pub(crate) async fn connect(cfg: &NodeConfig, key: &Arc<EnclaveKey>) -> anyhow::
     })
     .await
     .context("checkpoint startup awaits custody finality beyond its stall deadline")??;
-    let parent = match state.checkpoint {
-        Some((seq, root)) => crate::log::CheckpointParent { has_checkpoint: true, seq, root: root.parse()? },
+    chain.authenticate_reservation(&state).await?;
+    let parent = match &state.state.checkpoint {
+        Some((seq, root)) => crate::log::CheckpointParent { has_checkpoint: true, seq: *seq, root: root.parse()? },
         None => Default::default(),
     };
     let posted_seq = parent.has_checkpoint.then_some(parent.seq);
@@ -73,5 +81,5 @@ pub(crate) async fn connect(cfg: &NodeConfig, key: &Arc<EnclaveKey>) -> anyhow::
             .stall_critical_after,
     };
     let (tx, rx) = mpsc::channel(64);
-    Ok(Some(Setup { poster, tx, rx, posted_seq, parent }))
+    Ok(Some(Setup { poster, tx, rx, posted_seq, parent, approvals: Default::default(), observation: state }))
 }

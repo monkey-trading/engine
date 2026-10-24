@@ -17,7 +17,10 @@ an index: load only the rule whose hint matches the current action.
   by the operator key the log records, protocol versions, and the state tree (a keccak-256 sparse
   Merkle tree over the state, with account proofs, in `merkle/`). It does no IO and uses no clocks,
   randomness, or floats. `impl Engine` is split by area (`engine.rs`, `marks.rs`, `execution/`,
-  `markouts.rs`, `closeout.rs`, `funds.rs`, `admin.rs`, `stress.rs`, `auth.rs`). Unit tests sit
+  `markouts.rs`, `closeout.rs`, `funds.rs`, `admin.rs`, `stress.rs`, `auth.rs`).
+  `withdrawal.rs` reserves FIFO requests and creates whole-USDC partial
+  approvals under the reserved V22 rules; `merkle/withdrawal.rs` proves each approval against a root.
+  Unit tests sit
   inline; protocol tests are in `tests/` by area, with the shared harness in `tests/common/`.
   `tests/reference/` holds one reference log per protocol version, written once by
   `examples/reference_log/` and replayed to its roots by `tests/reference_logs.rs`;
@@ -32,7 +35,11 @@ an index: load only the rule whose hint matches the current action.
   TEE attestation (configfs-tsm for TDX and SEV-SNP), the trusted time check against Roughtime
   servers, the custody adapter (mock, or EVM vault deposits over alloy), checkpoint posting and collateral
   reconciliation (`checkpoints/`), with strict signature replay and startup checks against the
-  vault's finalized commitment before history writes, plus authenticated withdrawal completion replay,
+  vault's finalized commitment before history writes, plus authenticated withdrawal authorization replay,
+  bounded finalized claim polling, immutable signer-epoch history independent of approval-root history,
+  and public FIFO queue/account-position reads.
+  Withdrawal authorizations carry EIP-712 data and an approval inclusion proof; custody's used nonce
+  determines payment, and unpaid approvals are reissued after expiry or signer rotation. It also has
   price feeds: live crypto
   venue WebSockets (`feeds/`, one adapter per venue) and a mock, Prometheus metrics on an operator
   listener, and alert routing to webhooks with a bounded durable outbox outside the public log.
@@ -48,7 +55,11 @@ an index: load only the rule whose hint matches the current action.
   Dependencies (forge-std, OpenZeppelin) come from the Soldeer registry, pinned with checksums in
   `soldeer.lock` and installed into the gitignored `dependencies/`; there are no git submodules.
   The vault stores increasing state checkpoints whose signed parents match its latest commitment,
-  authorized by its immutable enclave signer; the constructor requires that attestation-verified signer as its second argument.
+  authorized by its attestation-verified enclave signer. Withdrawals require its current signer and
+  epoch, an unused account nonce, a 24-hour authorization, and approval inclusion in an accepted root.
+  The constructor takes the token, signer and an existing OpenZeppelin timelock with a nonzero delay;
+  deployment gives that timelock its multisig proposer. The timelock manages signer rotation and
+  independent deposit/withdrawal pauses.
 - **config/** — node configs. `dev.toml` runs the TEE, custody and feeds as mocks on one machine,
   and checks the clock against public Roughtime servers, citing each server's key source;
   `feeds.provider = "venues"` prices its crypto markets from live venues instead, leaving the others
@@ -81,7 +92,8 @@ an index: load only the rule whose hint matches the current action.
   `dev-vault-deposits.sh`, the vault deposit and RPC quorum dev scenarios on Anvil, with
   `dev-rpc-proxy.py` providing three local fault-injection endpoints; `dev-metrics-alerts.sh`,
   the metrics and alert routing dev scenario; `dev-alert-outbox.sh`, the isolated alert retry
-  kill/restart scenario.
+  kill/restart scenario; `dev-withdrawals.sh`, the actual Anvil/TLS withdrawal, pre-log crash,
+  unpaid redelivery, and FIFO liquidity scenario.
 - **ops/** — operator assets: `grafana/engine-node.json`, the node's Grafana dashboard, and
   `prometheus/engine-node-rules.yml`, the alerting rules for a down node or failing alert pages.
 - **.github/workflows/** — `ci.yaml`: fmt, the file line cap, clippy, tests, the reference-log
@@ -146,6 +158,9 @@ Run from the repo root:
   and a mock USDC, runs a node on `config/anvil.toml`, and checks each deposit credits once;
   `RPC_QUORUM_SCENARIO=1` also injects a fictional deposit, stops providers and checks recovery;
   needs `python3`)
+- Signed withdrawal and FIFO dev scenario: `./scripts/dev-withdrawals.sh` (needs Anvil, Forge,
+  Cargo and pinned contract dependencies; uses local signed time and price servers, and preserves
+  its child logs under `SCENARIO_LOG_DIR` or a fresh temporary artifact directory)
 - Sign and submit an admin command as the operator: `cargo run -p engine-node -- admin --pin <the
   node's attested tls_public_key_sha256> <command>`, with the key from `--key-file`,
   `OPERATOR_KEY_FILE`, or `OPERATOR_KEY`; `config/dev.toml` names the public key of the local test

@@ -81,6 +81,15 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/mod.rs` — the sequencer, checkpoints, and metrics
 - `src/sequencer/messages.rs` — sequencer requests, stream messages, and signed withdrawals
 - `src/sequencer/checkpoints.rs` — checkpoint creation, custody reconciliation, and signature release
+- `src/sequencer/payouts.rs` — durable unpaid delivery, finalized claim evidence, expiry, and epoch reissues
+- `src/sequencer/payout_tests.rs` — release order across claim pages, durability, restart, expiry, and rotation
+- `src/sequencer/withdrawal_scenario/` — actual Anvil/TLS/stream/custody crash and FIFO scenarios with local signed time
+- `src/withdrawals.rs` — vault EIP-712 digests and exact approval inclusion verification
+- `src/api/withdrawal_queue.rs` — public FIFO pagination and account queue positions
+- `src/node/signer_history.rs` — finalized accepted roots and immutable signer epochs before recovery writes
+- `src/replay_audit.rs` and `src/replay_audit/` — read-only custody-backed historical signer audits and tests
+- `src/log/segments/durability_tests.rs` — failed-fsync stream publication regression
+- `src/test_support/written.rs` — shared in-memory test output capture
 - `src/sequencer/checkpoints/accounting_tests.rs` — live/recovery accounting oracles and gated 100k-account capture scaling
 - `src/sequencer/checkpoint_tests.rs` — confirmed-prefix signature gating and restart tests
 - `src/sequencer/fixture_tests.rs` — test-only signing of copies of placeholder protocol fixtures
@@ -189,6 +198,12 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   with real attestation refuses, and their tests
 - `src/checkpoints/mod.rs` — posting, retry, signed-parent commitment checks, and collateral reconciliation
 - `src/checkpoints/accounting.rs` — bounded custody totals derived from computed engine events
+- `src/checkpoints/lifecycle.rs` — pinned signer/epoch, cumulative paid amounts, and approval nonce-use evidence
+- `src/checkpoints/lifecycle_tests.rs` — paid cash reconciliation, bounded claim polling, and rotated authorities
+- `src/checkpoints/reconciliation.rs` — finalized cash reconciliation against deposits less authenticated payouts
+- `src/checkpoints/rpc/observation.rs` — same-block balance, epoch, paid total, and bounded claim reads
+- `src/checkpoints/rpc/authority.rs` — accepted historical signer identities for rotated nonce journals
+- `src/checkpoints/rpc/submission/tests/lifecycle.rs` — canonical pinned history and retired journal recovery
 - `src/checkpoints/accounting/tests.rs` — cash/reference recomputation oracles and arithmetic boundaries
 - `src/checkpoints/signature.rs` — shared strict checkpoint signature and domain verification
 - `src/checkpoints/rpc.rs` — pinned-block vault reads and transaction relay through a signing RPC
@@ -350,6 +365,23 @@ The local scenario uses three proxies to one Anvil process, for fault injection 
 ports default to 18545–18547 and can be overridden with `RPC_A_PORT`, `RPC_B_PORT`, `RPC_C_PORT`.
 `SCENARIO_LOG_DIR` preserves its logs. `config/anvil.toml` expects local endpoints on 8545–8547 when
 run directly; the scenario rewrites these to its proxy ports.
+
+The reserved V22 withdrawal rules reserve an accepted request from trading cash, rounding down to
+whole USDC base units and retaining any smaller residual in the account. A public FIFO queue
+approves its head partially when cash is short; each part has its own payout nonce. Trading losses
+trigger another queue pass but do not create vault tokens. New deposits and house capital add
+physical payout capacity. The node signs only after the approval is synced and included in a
+finalized accepted checkpoint; a logged signature remains unpaid until the vault reports its used
+nonce. Expired approvals are reissued with the same nonce and a new 24-hour authorization.
+
+`GET /v1/withdrawals?limit=50&after=<request-seq>` returns `seq`, `queue` and `next`.
+`GET /v1/accounts/<address>/withdrawals` filters the same FIFO and reports each request's global
+one-based `position`. Both endpoints bound their scan to 1–200 requests; an account page may be
+empty and still have `next`, which clients must follow. Queue records include the reserved amount,
+remaining amount and original request sequence; queue changes also appear in the public log and
+account history. `POST /v1/withdrawals` retains the signed client request format. Its later
+`withdrawal` stream message carries the exact approved amount and nonce, signer epoch, issue/expiry
+seconds, accepted checkpoint and approval proof needed by `Vault.withdraw`.
 
 On-chain checkpoint posting uses an optional `[checkpoints]` section, required with hardware EVM
 custody. `node.checkpoint_every` sets the periodic frequency; every approved withdrawal also forces

@@ -8,7 +8,9 @@ use engine_core::auth::{ClientAuth, Operator};
 use engine_core::types::AccountId;
 use engine_node::admin::{self, AdminArgs, HexKey, KeyEnv};
 use engine_node::log::CheckpointDomain;
-use engine_node::{NodeConfig, init_logging, init_telemetry, replay_path_with_trust, run_dedicated};
+use engine_node::{
+    NodeConfig, init_logging, init_telemetry, replay_path_with_custody, replay_path_with_trust, run_dedicated,
+};
 
 #[derive(Subcommand)]
 enum Cmd {
@@ -31,6 +33,9 @@ enum Cmd {
         /// Pin an enclave signer obtained from a verified attestation or the vault.
         #[arg(long)]
         signer: Option<AccountId>,
+        /// Verify historical signers against this deployment's finalized vault history.
+        #[arg(long, requires = "signer", conflicts_with_all = ["chain_id", "vault"])]
+        custody_config: Option<PathBuf>,
     },
     /// Sign an admin command with the operator's key and submit it to a node. The key comes from
     /// `--key-file`, or the `OPERATOR_KEY_FILE` or `OPERATOR_KEY` environment variable, never the
@@ -59,16 +64,26 @@ fn main() -> anyhow::Result<()> {
             let telemetry = init_telemetry(&cfg, |var| std::env::var(var).ok())?;
             run_dedicated(cfg, telemetry)
         }
-        Cmd::Replay { log: path, chain_id, vault, signer } => {
+        Cmd::Replay { log: path, chain_id, vault, signer, custody_config } => {
             init_logging("info")?;
             let domain = chain_id.zip(vault).map(|(chain_id, vault)| CheckpointDomain { chain_id, vault });
-            let mut replayed = replay_path_with_trust(&path, domain, signer)?;
-            if let Some(signer) = signer {
-                anyhow::ensure!(
-                    replayed.checkpoint_signers.iter().all(|named| *named == signer),
-                    "checkpoint signer differs from --signer"
-                );
-            }
+            let mut replayed = if let Some(config) = custody_config {
+                let cfg = NodeConfig::load(&config)?;
+                let signer = signer.ok_or_else(|| anyhow::anyhow!("--custody-config requires --signer"))?;
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?
+                    .block_on(replay_path_with_custody(&path, &cfg, signer))?
+            } else {
+                let replayed = replay_path_with_trust(&path, domain, signer)?;
+                if let Some(signer) = signer {
+                    anyhow::ensure!(
+                        replayed.checkpoint_signers.iter().all(|named| *named == signer),
+                        "checkpoint signer differs from --signer"
+                    );
+                }
+                replayed
+            };
             let activations: Vec<String> =
                 replayed.activations.iter().map(|(version, seq)| format!("{version:?} from seq {seq}")).collect();
             println!(
@@ -105,5 +120,69 @@ fn main() -> anyhow::Result<()> {
             };
             tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(admin::run(args, env)).map(drop)
         }
+    }
+}
+
+#[cfg(test)]
+mod replay_cli_tests {
+    use super::*;
+
+    #[test]
+    fn custody_audit_requires_independent_signer_and_owns_the_domain() {
+        assert!(
+            Cli::try_parse_from(["engine", "replay", "--log", "public", "--custody-config", "audit.toml"]).is_err()
+        );
+        let signer = "0x1111111111111111111111111111111111111111";
+        assert!(
+            Cli::try_parse_from([
+                "engine",
+                "replay",
+                "--log",
+                "public",
+                "--custody-config",
+                "audit.toml",
+                "--signer",
+                signer
+            ])
+            .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "engine",
+                "replay",
+                "--log",
+                "public",
+                "--custody-config",
+                "audit.toml",
+                "--signer",
+                signer,
+                "--chain-id",
+                "31337",
+                "--vault",
+                signer
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn strict_replay_without_custody_config_keeps_existing_arguments() {
+        let cli = Cli::try_parse_from(["engine", "replay", "--log", "public"]).unwrap();
+        assert!(matches!(cli.cmd, Cmd::Replay { custody_config: None, signer: None, .. }));
+        let signer = "0x1111111111111111111111111111111111111111";
+        let cli = Cli::try_parse_from([
+            "engine",
+            "replay",
+            "--log",
+            "public",
+            "--chain-id",
+            "31337",
+            "--vault",
+            signer,
+            "--signer",
+            signer,
+        ])
+        .unwrap();
+        assert!(matches!(cli.cmd, Cmd::Replay { custody_config: None, chain_id: Some(31337), signer: Some(_), .. }));
     }
 }
