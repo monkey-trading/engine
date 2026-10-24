@@ -86,8 +86,8 @@ the same state root on every machine and build.
 - Every input a decision depends on arrives in a `Command`. Anything the node computes from
   outside data (an index, a rate) is either recomputed by the engine from logged inputs, or logged
   itself.
-- Before protocol `V5`, the state root hashes the canonical serialization of the whole `Engine`;
-  a field added, renamed, or reordered changes every root after it. From `V5`, it is the root of
+- Before protocol `V9`, the state root hashes the canonical serialization of the whole `Engine`;
+  a field added, renamed, or reordered changes every root after it. From `V9`, it is the root of
   the state tree in `merkle/`, whose leaves encode the state in parts; a field added to any of them
   changes the roots that leaf is in. Treat either as a protocol change
   ([development-checklist](../../rules/development-checklist.md), Determinism and replay).
