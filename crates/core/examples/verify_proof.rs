@@ -1,7 +1,8 @@
 //! Checks an account proof from the node's `GET /v1/accounts/{address}/proof` against a state root
 //! taken from a signed checkpoint, without the node, and prints the balance and positions it proves.
 //!
-//! `curl -s http://127.0.0.1:8080/v1/accounts/<address>/proof |
+//! For a local dev node with a self-signed certificate (`--insecure` is dev-only):
+//! `curl --fail --silent --show-error --insecure https://127.0.0.1:8080/v1/accounts/<address>/proof |
 //!     cargo run -p engine-core --example verify_proof -- <root>`
 
 use std::io::Read;

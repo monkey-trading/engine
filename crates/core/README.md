@@ -170,12 +170,15 @@ replays that log with the same calls.
 From `V9`, `Engine::account_proof` proves an account's leaf, and the leaf of each market it holds
 a position in, against the last root computed, and `AccountProof::verify` checks it against a root
 from a signed checkpoint. `src/merkle/mod.rs` and `src/merkle/leaf.rs` document the layout a
-Solidity verifier follows. To check a proof the node serves:
+Solidity verifier follows. For a local dev node with a self-signed certificate, check a proof with:
 
 ```bash
-curl -s http://127.0.0.1:8080/v1/accounts/<address>/proof |
+curl --fail --silent --show-error --insecure https://127.0.0.1:8080/v1/accounts/<address>/proof |
     cargo run -p engine-core --example verify_proof -- <root>
 ```
+
+The command above is for local development only. Against a remote node, verify its attestation
+and pin its attested TLS key as described in the [TLS guide](../../README.md#running-it-locally).
 
 A client signs each request with its account key under the EIP-712 domain of the vault, with the
 account's next nonce and an expiry at most five minutes ahead:
