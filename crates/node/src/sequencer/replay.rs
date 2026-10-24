@@ -40,6 +40,7 @@ pub struct Replayed {
     pub checkpoint_signers: BTreeSet<AccountId>,
     pub(crate) payout_proofs: BTreeMap<(AccountId, u64), engine_core::merkle::WithdrawalApprovalProof>,
     pub(crate) payout_order: BTreeMap<(AccountId, u64), usize>,
+    pub(crate) requires_checkpoint_gate: bool,
 }
 
 /// Re-applies a log entry by entry, as it is read, and checks every checkpoint root, logged event,
@@ -71,6 +72,7 @@ pub(super) struct Replay {
     authorities: BTreeMap<u64, crate::checkpoints::AcceptedCheckpoint>,
     unproved: BTreeSet<(AccountId, u64)>,
     payout_order: BTreeMap<(AccountId, u64), usize>,
+    requires_checkpoint_gate: bool,
 }
 
 impl Replay {
@@ -231,6 +233,7 @@ impl Replay {
                     bail!("state root mismatch at seq {}: log says {}, replay gives {root}", cp.seq, cp.root);
                 }
                 crate::checkpoints::signature::verify_with_domain(cp, engine, self.domain)?;
+                self.requires_checkpoint_gate |= cp.parent.is_some();
                 self.payout_checkpoints.insert(cp.seq, cp.root.parse()?);
                 for (account, nonce) in std::mem::take(&mut self.unproved) {
                     self.payout_proofs.insert(
@@ -287,6 +290,7 @@ impl Replay {
             checkpoint_signers: self.checkpoint_signers,
             payout_proofs: self.payout_proofs,
             payout_order: self.payout_order,
+            requires_checkpoint_gate: self.requires_checkpoint_gate,
             last_signed_checkpoint: self.last_signed_checkpoint,
             recovery_work: self.recovery_work,
         }

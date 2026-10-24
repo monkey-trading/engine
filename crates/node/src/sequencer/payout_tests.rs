@@ -130,6 +130,29 @@ fn restart_redelivers_a_previously_signed_unpaid_approval_without_debiting_it_ag
 }
 
 #[test]
+fn signed_payout_history_cannot_disable_its_checkpoint_gate_on_restart() {
+    let mut node = Node::new("payout-gate-cannot-disable");
+    let cp = node.approve();
+    node.seq.release_payouts(&node.evidence(&cp)).unwrap();
+    node.seq.flush().unwrap();
+    assert!(node.signed.try_recv().is_ok());
+    let manifest_path = node.dir.join("manifest.jsonl");
+    let mut manifest = std::fs::read(&manifest_path).unwrap();
+    manifest.extend_from_slice(b"{partial");
+    std::fs::write(&manifest_path, &manifest).unwrap();
+    let before = log_entries(&node.dir);
+    let result = Sequencer::recover(
+        sequencer_config(&node.dir, watch::channel(Manifest::default()).0),
+        node.seq.key.clone(),
+        broadcast::channel(128).0,
+        mpsc::unbounded_channel().0,
+    );
+    assert!(result.err().unwrap().to_string().contains("checkpoint-gated withdrawals require the checkpoint service"));
+    assert_eq!(log_entries(&node.dir), before, "a refused configuration must not append or repair history");
+    assert_eq!(std::fs::read(manifest_path).unwrap(), manifest, "refusal must precede even partial-manifest repair");
+}
+
+#[test]
 fn expiry_reissues_the_same_nonce_and_authenticated_claim_stops_delivery() {
     let mut node = Node::new("payout-expiry");
     let cp = node.approve();

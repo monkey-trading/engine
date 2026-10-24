@@ -42,7 +42,7 @@ impl ReplayedLog {
     /// Error cases:
     /// - the deployment, genesis, or required checkpoint service differs from the replayed log
     pub(crate) fn validate_recovery(&self, cfg: &SequencerConfig<'_>) -> anyhow::Result<()> {
-        let Replayed { engine, genesis, deferred, .. } = &self.replayed;
+        let Replayed { engine, genesis, deferred, requires_checkpoint_gate, .. } = &self.replayed;
         // A config naming another client auth or operator, and so another chain, vault, or admin key,
         // is the wrong one for this log: refuse before anything is written or signed under it.
         if let Some(recorded) = engine.client_auth().filter(|recorded| **recorded != cfg.client_auth) {
@@ -52,7 +52,7 @@ impl ReplayedLog {
             bail!("the log records operator {recorded:?}, but the config gives {:?}", cfg.operator);
         }
         genesis.ensure_closed()?;
-        if !deferred.is_empty() && cfg.checkpoints.is_none() {
+        if (*requires_checkpoint_gate || !deferred.is_empty()) && cfg.checkpoints.is_none() {
             bail!("checkpoint-gated withdrawals require the checkpoint service");
         }
         Ok(())

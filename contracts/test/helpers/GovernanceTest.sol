@@ -20,9 +20,10 @@ abstract contract GovernanceTest is Test {
 
     function _govern(address target, bytes memory data) internal {
         bytes32 salt = bytes32(operationCount++);
+        uint256 delay = governance.getMinDelay();
         vm.prank(multisig);
-        governance.schedule(target, 0, data, bytes32(0), salt, governance.getMinDelay());
-        vm.warp(block.timestamp + governance.getMinDelay());
+        governance.schedule(target, 0, data, bytes32(0), salt, delay);
+        vm.warp(block.timestamp + delay);
         governance.execute(target, 0, data, bytes32(0), salt);
     }
 }
