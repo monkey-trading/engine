@@ -32,3 +32,4 @@ recursive_deps = false
 [dependencies]
 forge-std = "1.17.0"
 "@openzeppelin-contracts" = "5.7.0"
+# Temporary CI gating check.
