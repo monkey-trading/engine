@@ -50,8 +50,13 @@ async fn recovered_claims_retire_without_trusted_time_or_healthy_reconciliation(
             recovered.trust(sample_around(node.clock.as_ref())).unwrap();
         }
         let registry = recovered.gate.as_ref().unwrap().approvals.as_ref().unwrap().clone();
-        // The fixture credits deposits without vault references; the mock vault holds them as one.
-        let work = Work { deposits: 1, ..Work::capture(last.clone(), node.seq.accounting, &node.seq.engine) };
+        // The fixture credits deposits without vault references; the mock vault holds them as one
+        // and its claim is final, so the work is canonical despite the unscanned ledger receipts.
+        let work = Work {
+            deposits: 1,
+            coverage: crate::checkpoints::DepositCoverage::Canonical,
+            ..Work::capture(last.clone(), node.seq.accounting, &node.seq.engine)
+        };
         let healthy = Arc::new(AtomicBool::new(unavailable_time));
         let chain = ClaimChain {
             work: work.clone(),

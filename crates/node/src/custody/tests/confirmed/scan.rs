@@ -130,7 +130,11 @@ async fn a_reorg_of_scanned_empty_windows_cannot_hide_a_new_receipt_or_its_repla
     assert_eq!(node.read(|e| e.accounts()[&TRADER].unfinalised_deposits).await, usdc("0"));
     assert_eq!(
         node.submit(withdraw("100")).await,
-        vec![Event::WithdrawalApproved { account: TRADER, amount: usdc("100"), nonce: 1 }]
+        vec![
+            Event::WithdrawalQueued { account: TRADER, amount: usdc("100"), requested_seq: 8 },
+            Event::WithdrawalApproved { account: TRADER, amount: usdc("100"), nonce: 1 },
+            Event::WithdrawalQueueUpdated { account: TRADER, requested_seq: 8, remaining: usdc("0") },
+        ]
     );
     assert_eq!(logs.lines_with("alert=\"deposit_reversed\"").len(), 1);
     node.stop().await;

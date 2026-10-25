@@ -262,6 +262,7 @@ fn scaling_history(dir: &Path, approvals: usize, unrelated: u8) -> (Engine, Vec<
         Command::Deposit { account: TRADER, amount: Fixed::from_int(25), chain_ref: "dev:known-funds".into() },
     );
     let mut expected = Vec::new();
+    let mut last_parent = CheckpointParent::default();
     for _ in 0..approvals {
         let events = apply(
             &mut engine,
@@ -281,6 +282,7 @@ fn scaling_history(dir: &Path, approvals: usize, unrelated: u8) -> (Engine, Vec<
             &mut entries,
             CheckpointDomain { chain_id: cfg.chain_id, vault: cfg.vault },
         );
+        last_parent = CheckpointParent { has_checkpoint: true, seq, root: engine.state_root().into() };
         expected.push((seq, account, amount, nonce));
     }
     let legacy_deposits = replay(&entries).unwrap().legacy_deposits.values().cloned().collect();
@@ -292,14 +294,31 @@ fn scaling_history(dir: &Path, approvals: usize, unrelated: u8) -> (Engine, Vec<
         )
         .contains(&Event::AdminApplied)
     );
+    // The tail checkpoint covers the unsigned finality-activation command: recovery adopts no
+    // command its last authenticated checkpoint did not cover.
+    parented_checkpoint(
+        &mut engine,
+        &mut entries,
+        CheckpointDomain { chain_id: cfg.chain_id, vault: cfg.vault },
+        last_parent,
+    );
     (engine, entries, expected)
 }
 
 fn deferred_checkpoint(engine: &mut Engine, entries: &mut Vec<LogEntry>, domain: CheckpointDomain) -> u64 {
+    parented_checkpoint(engine, entries, domain, CheckpointParent::default()).seq
+}
+
+/// A checkpoint whose signed parent names the previous checkpoint, covering every command before it.
+fn parented_checkpoint(
+    engine: &mut Engine,
+    entries: &mut Vec<LogEntry>,
+    domain: CheckpointDomain,
+    parent: CheckpointParent,
+) -> CheckpointParent {
     let seq = engine.last_seq().unwrap();
     let root = engine.state_root();
     let key = EnclaveKey::test_key();
-    let parent = CheckpointParent::default();
     entries.push(LogEntry::Checkpoint(Checkpoint {
         seq,
         root: format!("0x{}", hex::encode(root)),
@@ -309,7 +328,7 @@ fn deferred_checkpoint(engine: &mut Engine, entries: &mut Vec<LogEntry>, domain:
         parent: Some(parent),
         deferred_withdrawals: true,
     }));
-    seq
+    CheckpointParent { has_checkpoint: true, seq, root: root.into() }
 }
 
 fn config(dir: &Path, work: mpsc::Sender<Work>) -> SequencerConfig<'_> {
@@ -353,6 +372,9 @@ fn activated_history(dir: &Path, later_funding: bool) -> (Engine, Vec<LogEntry>,
     );
     let original_seq =
         deferred_checkpoint(&mut engine, &mut entries, CheckpointDomain { chain_id: cfg.chain_id, vault: cfg.vault });
+    // The tail checkpoint below covers the unsigned finality-activation command: recovery adopts
+    // no command its last authenticated checkpoint did not cover.
+    let original_root = engine.state_root();
     assert!(
         apply(
             &mut engine,
@@ -397,6 +419,12 @@ fn activated_history(dir: &Path, later_funding: bool) -> (Engine, Vec<LogEntry>,
         );
         assert_eq!(engine.custody_deposit_coverage(), Some(2));
     }
+    parented_checkpoint(
+        &mut engine,
+        &mut entries,
+        CheckpointDomain { chain_id: cfg.chain_id, vault: cfg.vault },
+        CheckpointParent { has_checkpoint: true, seq: original_seq, root: original_root.into() },
+    );
     (engine, entries, original_seq)
 }
 
