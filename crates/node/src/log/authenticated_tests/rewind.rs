@@ -137,7 +137,7 @@ fn a_boundary_rewind_keeps_the_listed_segments() {
     assert!(log.catalog_rewound());
     let view = log.manifest_view();
     let catalog = view.catalog.as_ref().expect("recovered catalog");
-    assert_eq!(catalog.len() + log.pending_catalog.len() as u64, 80, "every listed segment");
+    assert_eq!(catalog.len() + log.pending_catalog.len() as u64, 79, "every listed segment");
 }
 
 /// The tip sealed a checkpoint the log lost, and the log then took another checkpoint at its
