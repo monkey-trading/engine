@@ -289,6 +289,98 @@ async fn a_legacy_alert_resolves_once_when_its_receipt_is_adopted_and_credits_re
     node.stop().await;
 }
 
+#[tokio::test]
+async fn a_moved_index_of_an_unresolved_legacy_credit_is_withheld_with_critical() {
+    let dir = scratch("legacy-moved-unresolved");
+    let node = start_old(&dir).await;
+    let d = legacy_receipt();
+    node.submit(Command::Deposit { account: TRADER, amount: usdc("100"), chain_ref: d.chain_ref() }).await;
+    node.stop().await;
+    let (logs, _guard) = Logs::capture();
+    let node = Node::start_confirmed(&dir);
+    // The legacy transaction is canonical, but at another log index than the credited one.
+    let chains = chains(None, Some(VaultDeposit { log_index: 2, ..d.clone() }));
+    let cfg: EvmCustodySection = toml::from_str(&evm_toml(&dir, 100)).unwrap();
+    let mut watcher = DepositWatcher::start(quorum(&chains), &cfg, CHAIN_ID, VAULT, node.last_seq().await).unwrap();
+    watcher.poll(&node.tx).await.unwrap();
+    watcher.poll(&node.tx).await.unwrap();
+    assert_eq!(
+        (node.balance(TRADER).await, node.read(|e| e.accounts()[&TRADER].unfinalised_deposits).await),
+        (Some(usdc("100")), usdc("100")),
+        "the moved index is not credited again"
+    );
+    assert_eq!(node.read(|e| e.unresolved_legacy_deposit().map(|l| l.chain_ref.clone())).await, Some(d.chain_ref()));
+    assert!(logs.lines_with("alert=\"legacy_deposit_unproven\"").iter().any(|line| line.contains("ERROR")));
+    node.stop().await;
+    let receipts = crate::test_support::log_entries(&dir.join("log"))
+        .iter()
+        .filter(|entry| matches!(entry, crate::log::LogEntry::Command(c) if matches!(c.sequenced.cmd, Command::CustodyDeposit(_))))
+        .count();
+    assert_eq!(receipts, 0);
+}
+
+#[tokio::test]
+async fn an_adopted_legacy_receipt_reincluded_after_the_head_at_another_index_credits_once() {
+    let dir = scratch("legacy-adopted-late");
+    let node = start_old(&dir).await;
+    let d = legacy_receipt();
+    node.submit(Command::Deposit { account: TRADER, amount: usdc("100"), chain_ref: d.chain_ref() }).await;
+    node.stop().await;
+    let node = Node::start_confirmed(&dir);
+    let chains = chains(None, Some(d.clone()));
+    let cfg: EvmCustodySection = toml::from_str(&evm_toml(&dir, 100)).unwrap();
+    let mut watcher = DepositWatcher::start(quorum(&chains), &cfg, CHAIN_ID, VAULT, node.last_seq().await).unwrap();
+    watcher.poll(&node.tx).await.unwrap();
+    watcher.poll(&node.tx).await.unwrap();
+    assert_eq!(node.read(|e| e.unresolved_legacy_deposit().cloned()).await, None, "the legacy credit is adopted");
+    // A reorg drops the transaction with no replacement up to the head, so the receipt is debited.
+    for chain in &chains {
+        chain.remove(&d);
+        let mut state = chain.0.lock().unwrap();
+        state.forks.extend((5..=7).map(|height| (height, B256::from(U256::from(100 + height)))));
+    }
+    for _ in 0..3 {
+        watcher.poll(&node.tx).await.unwrap();
+    }
+    assert_eq!(node.balance(TRADER).await, Some(usdc("0")));
+    // The transaction returns beyond that head, at another log index: a fresh receipt credits once.
+    let late = VaultDeposit { tx_hash: d.tx_hash, ..deposit(0, 9, Beneficiary::Trader(TRADER), 100 * USDC) };
+    let late = VaultDeposit { log_index: 2, ..late };
+    for chain in &chains {
+        chain.add(late.clone());
+        let mut state = chain.0.lock().unwrap();
+        (state.head, state.final_block) = (9, Some(9));
+    }
+    watcher.poll(&node.tx).await.unwrap();
+    watcher.poll(&node.tx).await.unwrap();
+    assert_eq!(
+        (node.balance(TRADER).await, node.read(|e| e.accounts()[&TRADER].unfinalised_deposits).await),
+        (Some(usdc("100")), usdc("100"))
+    );
+    node.stop().await;
+    let updates: Vec<_> = crate::test_support::log_entries(&dir.join("log"))
+        .into_iter()
+        .filter_map(|entry| match entry {
+            crate::log::LogEntry::Command(c) => match c.sequenced.cmd {
+                Command::CustodyDeposit(update) => Some(*update),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert!(
+        matches!(
+            updates.as_slice(),
+            [
+                engine_core::deposits::DepositUpdate::Credit { .. },
+                engine_core::deposits::DepositUpdate::Reverse { .. },
+                engine_core::deposits::DepositUpdate::Credit { .. },
+            ]
+        ),
+        "adoption, the debit at the head, and one late credit: {updates:?}"
+    );
+}
+
 async fn start_old(dir: &Path) -> Node {
     let node = Node::start(dir);
     for cmd in [

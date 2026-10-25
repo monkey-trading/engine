@@ -265,7 +265,7 @@ async fn configured_confirmation_depth_and_missing_tags_bound_early_credit() {
 
 #[tokio::test]
 async fn durable_transitions_survive_lost_replies_at_every_delivery_boundary() {
-    for cutoff in [Cutoff::Credit, Cutoff::Finalise, Cutoff::Progress, Cutoff::Reverse] {
+    for cutoff in [Cutoff::Credit, Cutoff::Finalise, Cutoff::Progress, Cutoff::Reverse, Cutoff::Replace] {
         let dir = scratch("confirmed-delivery-boundary");
         let node = Node::start_confirmed(&dir);
         assert!(node.read(|e| e.deposit_finality_enabled()).await);
@@ -274,10 +274,14 @@ async fn durable_transitions_survive_lost_replies_at_every_delivery_boundary() {
         let original = confirmed_deposit(0, 3, 100);
         add(&chains, &original);
         let mut w = watcher(&chains, &dir, 10, None);
-        if matches!(cutoff, Cutoff::Reverse) {
+        if matches!(cutoff, Cutoff::Reverse | Cutoff::Replace) {
             w.poll(&node.tx).await.unwrap();
+            let moved = VaultDeposit { block: 5, block_hash: fork_hash(5), log_index: 9, ..original.clone() };
             for chain in &chains {
                 chain.remove(&original);
+                if matches!(cutoff, Cutoff::Replace) {
+                    chain.add(moved.clone());
+                }
                 fork(chain, 3, 5);
             }
         }
@@ -291,13 +295,13 @@ async fn durable_transitions_survive_lost_replies_at_every_delivery_boundary() {
         let mut w = watcher(&chains, &dir, 10, node.last_seq().await);
         catch_up(&mut w, &node.tx).await;
         assert_eq!(node.balance(TRADER).await, Some(usdc(expected)));
-        let locked = if matches!(cutoff, Cutoff::Credit) { "100" } else { "0" };
+        let locked = if matches!(cutoff, Cutoff::Credit | Cutoff::Replace) { "100" } else { "0" };
         assert_eq!(node.read(|e| e.accounts()[&TRADER].unfinalised_deposits).await, usdc(locked));
         node.stop().await;
-        let credit_count = crate::test_support::log_entries(&dir.join("log")).iter().filter(|entry| {
-            matches!(entry, crate::log::LogEntry::Command(command) if matches!(&command.sequenced.cmd, Command::CustodyDeposit(update) if matches!(update.as_ref(), DepositUpdate::Credit { .. })))
-        }).count();
-        assert_eq!(credit_count, 1, "durable credit must never be submitted twice after reply loss");
+        let credits = transitions(&dir, |update| matches!(update, DepositUpdate::Credit { .. }));
+        assert_eq!(credits, 1, "durable credit must never be submitted twice after reply loss");
+        let moves = transitions(&dir, |update| matches!(update, DepositUpdate::Replace { .. }));
+        assert_eq!(moves, usize::from(matches!(cutoff, Cutoff::Replace)), "a durable move is never repeated");
     }
 }
 
@@ -355,6 +359,7 @@ enum Cutoff {
     Finalise,
     Progress,
     Reverse,
+    Replace,
 }
 
 /// Polls until the watcher has nothing left to read: it reached the confirmed tag, or waits on it.
@@ -401,6 +406,7 @@ fn lose_reply_after(real: &mpsc::Sender<Request>, cutoff: Cutoff) -> mpsc::Sende
                     (Cutoff::Credit, DepositUpdate::Credit { .. })
                         | (Cutoff::Finalise, DepositUpdate::Finalise { .. })
                         | (Cutoff::Reverse, DepositUpdate::Reverse { .. })
+                        | (Cutoff::Replace, DepositUpdate::Replace { .. })
                 ),
                 _ => false,
             };
