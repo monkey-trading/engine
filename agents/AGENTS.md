@@ -19,7 +19,8 @@ an index: load only the rule whose hint matches the current action.
   shared by net realised losses, halvings, and cumulative entitlements), protocol versions, and the
   state tree (a keccak-256 sparse Merkle tree over the state, with account and entitlement proofs, in
   `merkle/`). It does no IO and uses no clocks,
-  randomness, or floats. `impl Engine` is split by area (`engine.rs`, `marks.rs`, `execution/`,
+  randomness, or floats. `impl Engine` is split by area (`engine/mod.rs` for state and dispatch
+  with per-market state in `engine/market.rs`, `marks.rs`, `execution/`,
   `markouts.rs`, `closeout.rs`, `funds.rs`, `deposits.rs` with legacy migration in `deposits/`,
   `admin.rs`, `stress.rs`, `auth.rs`). `withdrawal.rs` reserves FIFO requests and creates
   whole-USDC partial approvals under the V22 rules; `merkle/withdrawal.rs` proves each approval

@@ -10,6 +10,10 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::ops::Bound;
 
+mod market;
+
+pub use market::MarketState;
+
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 
@@ -129,10 +133,6 @@ pub struct Engine {
     #[serde(skip)]
     pub(crate) tree: Option<StateTree>,
 }
-
-mod market;
-
-pub use market::MarketState;
 
 /// A fill waiting to be marked against the index once its horizon has passed.
 #[derive(Clone, Debug, Serialize, Deserialize)]
