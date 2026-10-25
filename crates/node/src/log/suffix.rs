@@ -257,9 +257,12 @@ impl SegmentedLog {
         }
         // The tip signs its active segment's first seq too. Only a tip that extends the boundary
         // names bytes past the rebuild; a tip at the boundary's own version, or the boundary view
-        // when no head verifies, names a segment the rebuild reuses.
-        if tip.certified() != &boundary.catalog && Some(tip.next_seq()) != active_first {
-            let first_seq = tip.next_seq();
+        // when no head verifies, names a segment the rebuild reuses. The signed position, not the
+        // recovery view's next_seq: the view's live completions are segments the manifest listed,
+        // not bytes the tip holds open. Past the recovered segments its file is a leftover the
+        // writer would refuse to link over; at or before them the file is recovery's own.
+        if tip.certified() != &boundary.catalog && tip.certified().completed_segments > completed {
+            let first_seq = tip.certified().next_seq;
             ensure!(
                 !self.dir.join(segment_name(first_seq)).try_exists()?,
                 "segment {} the catalog tip holds open past the recovered log is still on disk",

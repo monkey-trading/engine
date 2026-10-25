@@ -140,6 +140,36 @@ fn a_boundary_rewind_keeps_the_listed_segments() {
     assert_eq!(catalog.len() + log.pending_catalog.len() as u64, 79, "every listed segment");
 }
 
+/// The tip behind a retained suffix: the newest surviving head sealed early, the log then took
+/// more than a live window of segments, and a signed history head shows a lost tail. The
+/// history-lost rewind reuses every listed segment; the tip's signed open position names a
+/// segment the log completed long ago, so its file must not read as leftover.
+#[test]
+fn a_rewind_with_the_tip_behind_a_long_suffix_keeps_the_listed_segments() {
+    let mut f = fixture("catalog-rewind-tip-behind-suffix", 1);
+    for seq in 0..3 {
+        f.writer.append(&command(seq)).expect("initial");
+    }
+    let c = boundary(&mut f, 2);
+    for seq in 3..10 {
+        f.writer.append(&command(seq)).expect("before the tip");
+    }
+    f.writer.flush_catalog().expect("the tip seals early");
+    let t = latest(&f.heads);
+    for seq in 10..80 {
+        f.writer.append(&command(seq)).expect("past the tip");
+    }
+    f.writer.sync().expect("durable");
+    drop(f.writer);
+    let mut log = SegmentedLog::open_suffix(&f.dir, f.read.clone(), &c, Some(&t), |_| Ok(())).expect("recovery");
+    assert!(!log.catalog_rewound(), "the log lists every segment the tip covers");
+    log.rewind_catalog(f.read.clone(), &c).expect("the rewind keeps the segments past the tip");
+    assert!(log.catalog_rewound());
+    let view = log.manifest_view();
+    let catalog = view.catalog.as_ref().expect("recovered catalog");
+    assert_eq!(catalog.len() + log.pending_catalog.len() as u64, 79, "every listed segment");
+}
+
 /// The tip sealed a checkpoint the log lost, and the log then took another checkpoint at its
 /// offset and completed that segment. The catalog would refuse that segment, so the cache is
 /// rejected.
