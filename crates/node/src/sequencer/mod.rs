@@ -295,6 +295,12 @@ impl Sequencer {
         self.flush()
     }
 
+    /// The state root of the engine a test's recovered sequencer holds.
+    #[cfg(test)]
+    pub fn state_root(&mut self) -> [u8; 32] {
+        self.engine.state_root()
+    }
+
     /// The stamp for a command now, if trusted time admits it. The host clock is untrusted inside
     /// a TEE: it can't move sequenced time backwards, and nothing is logged unless the clock and the
     /// stamp are within the drift bound of trusted time.

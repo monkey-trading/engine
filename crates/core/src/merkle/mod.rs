@@ -15,7 +15,9 @@
 //!   legacy principal awaiting canonical evidence (its historical custody reference's UTF-8 bytes),
 //!   and from `V22` 32 a withdrawal approval (`address` account, `uint64` nonce) and 33 a queued
 //!   withdrawal (`uint64` request seq). Approval value hashes bind the exact payable fields
-//!   ([`withdrawal_approval_hash`]).
+//!   ([`withdrawal_approval_hash`]). From `V23`, kind 21 holds a pending corporate instruction and
+//!   entitlement snapshot, and kind 22 a retained corporate identity (UTF-8 id bytes); their values
+//!   hash the canonical JSON.
 //! - **Paths.** The key's bits, most significant first, are the path from the root: bit `d`,
 //!   `(uint256(key) >> (255 - d)) & 1`, picks the child at depth `d + 1`, 0 left and 1 right.
 //! - **Leaves.** `keccak256(abi.encodePacked(bytes1(0x00), key, valueHash))`; each kind's

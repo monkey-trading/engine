@@ -60,7 +60,7 @@ use crate::futures::FuturesState;
 use crate::market::{MarketSpec, QuoteCurrency};
 use crate::merkle::keccak;
 use crate::price::{Index, SourceQuote};
-use crate::types::{AccountId, MarketId, OrderId};
+use crate::types::{AccountId, MarketId, Millis, OrderId};
 
 /// The kind byte that starts each key.
 const GLOBALS: u8 = 0;
@@ -76,6 +76,8 @@ const PERIOD_RESULT: u8 = 9;
 const RECEIPT: u8 = 10;
 const RECEIPT_INDEX: u8 = 11;
 const LEGACY_PRINCIPAL: u8 = 12;
+const CORPORATE_ACTION: u8 = 21;
+const CORPORATE_REFERENCE: u8 = 22;
 
 /// The structs whose ABI encodings account, position, and market leaves hash.
 mod typed {
@@ -162,6 +164,10 @@ struct MarketRest<'a> {
     /// Left out while `None`, as it is for every market before `V21`, so earlier roots stand.
     #[serde(skip_serializing_if = "Option::is_none")]
     futures: &'a Option<FuturesState>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    corporate_action_blocked: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_split_at: &'a Option<Millis>,
 }
 
 /// What a resting order's leaf covers.
@@ -238,10 +244,22 @@ impl MarketLeaf {
             stress,
             resting: _,
             processed_index,
+            processed_index,
             futures,
+            corporate_action_blocked,
+            last_split_at,
         } = market;
-        let rest =
-            MarketRest { spec, quotes, open: *open, reduce_only: *reduce_only, stress, processed_index, futures };
+        let rest = MarketRest {
+            spec,
+            quotes,
+            open: *open,
+            reduce_only: *reduce_only,
+            stress,
+            processed_index,
+            futures,
+            corporate_action_blocked: *corporate_action_blocked,
+            last_split_at,
+        };
         MarketLeaf {
             mark: *mark,
             quote_currency: spec.quote_currency,
@@ -320,6 +338,16 @@ pub(crate) fn credited_ref_key(chain_ref: &str) -> B256 {
 /// The key of the markout at `index`.
 pub(crate) fn markout_key(index: u64) -> B256 {
     keccak(&[&[MARKOUT], &index.to_be_bytes()])
+}
+
+/// The key of a pending corporate instruction and its entitlements.
+pub(crate) fn corporate_action_key(id: &str) -> B256 {
+    keccak(&[&[CORPORATE_ACTION], id.as_bytes()])
+}
+
+/// The key of a corporate identity retained after completion.
+pub(crate) fn corporate_reference_key(id: &str) -> B256 {
+    keccak(&[&[CORPORATE_REFERENCE], id.as_bytes()])
 }
 
 /// The value hash of `account`'s resting order.

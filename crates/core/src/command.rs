@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::Fixed;
 use crate::auth::{ClientAuth, Operator, RequestAuth};
 use crate::benchmark::BenchmarkBatch;
+use crate::corporate::CorporateAction;
 use crate::deposits::{CustodyCheckpoint, DepositUpdate, LegacyDeposit};
 use crate::emissions::EmissionSchedule;
 use crate::market::MarketSpec;
@@ -94,6 +95,8 @@ pub enum AdminCommand {
         version: ProtocolVersion,
         legacy_deposits: Vec<LegacyDeposit>,
     },
+    /// An immutable corporate instruction, submitted before the previous venue close.
+    ScheduleCorporateAction(CorporateAction),
     SetParams(ProtocolParams),
     /// Lists a new market or replaces an existing market's spec.
     UpsertMarket(MarketSpec),
@@ -195,8 +198,8 @@ impl AdminCommand {
     }
 
     /// Whether the operator may sign this command: listings, parameters, benchmark rates, stress
-    /// floors, reduce-only, and the emission schedule. The node alone sequences the others, from its
-    /// config and build.
+    /// floors, reduce-only, the emission schedule, and corporate actions. The node alone sequences the
+    /// others, from its config and build.
     pub fn is_operator_command(&self) -> bool {
         match self {
             AdminCommand::SetParams(_)
@@ -206,6 +209,7 @@ impl AdminCommand {
             | AdminCommand::SetStressFloor { .. }
             | AdminCommand::SetReduceOnly { .. }
             | AdminCommand::InitEmissions(_) => true,
+            AdminCommand::ScheduleCorporateAction(_) => true,
             AdminCommand::SetClientAuth(_)
             | AdminCommand::SetOperator(_)
             | AdminCommand::SetToxicityNotional(_)

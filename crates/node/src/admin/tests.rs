@@ -289,6 +289,33 @@ fn a_pin_is_the_attested_key_hash_in_hex() {
     assert!(Cli::try_parse_from(["engine", "set-reduce-only", "true"]).is_err(), "the pin is required");
 }
 
+#[test]
+fn corporate_action_file_requires_explicit_withholding_and_validates_its_range() {
+    let dir = scratch_dir("corporate-admin-input");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("action.toml");
+    let input = "id = 'dividend'\nmarket = 40\nprevious_close = 1792526400000\nex_open = 1792589400000\n[adjustment]\nkind = 'dividend'\ngross_per_unit = '4'\n";
+    fs::write(&path, input).unwrap();
+    let read = || action(&["schedule-corporate-action", path.to_str().unwrap()]).command();
+    assert!(format!("{:#}", read().unwrap_err()).contains("withholding_rate"));
+    for (rate, valid) in [("0", true), ("1", true), ("0.25", true), ("-0.01", false), ("1.01", false)] {
+        fs::write(&path, format!("{input}withholding_rate = '{rate}'\n")).unwrap();
+        match read() {
+            Ok(AdminCommand::ScheduleCorporateAction(action)) if valid => {
+                assert_eq!(
+                    action.adjustment,
+                    engine_core::corporate::Adjustment::Dividend {
+                        gross_per_unit: "4".parse().unwrap(),
+                        withholding_rate: rate.parse().unwrap(),
+                    }
+                );
+            }
+            Err(err) if !valid => assert!(err.to_string().contains("withholding_rate"), "{err:#}"),
+            other => panic!("rate={rate}, valid={valid}: {other:?}"),
+        }
+    }
+}
+
 // ── Helpers ──
 
 /// The action `engine admin <args>` parses to.

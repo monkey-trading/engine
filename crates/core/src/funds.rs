@@ -134,17 +134,23 @@ impl Engine {
     /// missed day is charged in turn, at the marks the engine holds. From `V6`, each day's charges
     /// are followed by a close-out check of every account.
     pub(crate) fn run_rollovers(&mut self, events: &mut Vec<Event>) {
-        let Some(params) = &self.params else { return };
+        while self.next_rollover.is_some_and(|at| at <= self.now) {
+            self.run_one_rollover(events);
+        }
+    }
+
+    /// Applies exactly the scheduled rollover, for chronological corporate-action catch-up.
+    pub(crate) fn run_one_rollover(&mut self, events: &mut Vec<Event>) {
+        let params = self.params.as_ref().expect("scheduled rollover has parameters");
         let rollover = params.rollover.clone();
-        while let Some(at) = self.next_rollover.filter(|at| *at <= self.now) {
-            self.charge_financing(events);
-            if self.protocol_version >= ProtocolVersion::V18 {
-                self.prune_benchmark_history(self.benchmark_date(at));
-            }
-            self.next_rollover = Some(rollover.next_after(at));
-            if self.protocol_version >= ProtocolVersion::V6 {
-                self.check_all_closeouts(events);
-            }
+        let at = self.next_rollover.expect("caller checks scheduled rollover");
+        self.charge_financing(events);
+        if self.protocol_version >= ProtocolVersion::V18 {
+            self.prune_benchmark_history(self.benchmark_date(at));
+        }
+        self.next_rollover = Some(rollover.next_after(at));
+        if self.protocol_version >= ProtocolVersion::V6 {
+            self.check_all_closeouts(events);
         }
     }
 
@@ -190,12 +196,15 @@ impl Engine {
     }
 
     /// One day's financing on `pos` in USD, positive when the account pays, or `None` when the market
-    /// has no mark to value it at or, from `V14`, its benchmark has no rate. Before `V14` a benchmark
-    /// with no rate counts as zero. From `V5` the amount rounds up, so a charge rounds against the
-    /// account and a credit toward zero; before `V5` it truncates. A market quoted in another
+    /// has no mark to value it at, a failed split blocks it, or, from `V14`, its benchmark has no
+    /// rate. Before `V14` a benchmark with no rate counts as zero. From `V5` the amount rounds up,
+    /// so a charge rounds against the account and a credit toward zero; before `V5` it truncates. A market quoted in another
     /// currency converts the amount to USD rounded up, the same way.
     fn daily_financing(&self, market_id: MarketId, pos: Position) -> Option<Fixed> {
         let market = self.markets.get(&market_id)?;
+        if market.corporate_action_blocked {
+            return None;
+        }
         let mark = market.mark?;
         let financing = &market.spec.financing;
         if self.protocol_version >= ProtocolVersion::V18 {

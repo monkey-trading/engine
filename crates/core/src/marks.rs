@@ -2,6 +2,7 @@
 //! at its index from them.
 
 use crate::Fixed;
+use crate::corporate::Adjustment;
 use crate::engine::Engine;
 use crate::event::Event;
 use crate::market::QuoteCurrency;
@@ -35,11 +36,41 @@ impl Engine {
         let now = self.now;
         let v12 = self.protocol_version >= ProtocolVersion::V12;
         let v21 = self.protocol_version >= ProtocolVersion::V21;
+        let pending_split = self
+            .corporate_actions
+            .values()
+            .filter(|p| {
+                p.instruction.market == market_id
+                    && p.failure.is_none()
+                    && matches!(p.instruction.adjustment, Adjustment::Split { .. })
+                    && p.instruction.ex_open > now
+            })
+            .map(|p| (p.instruction.previous_close, p.instruction.ex_open))
+            .min();
         let Some(market) = self.markets.get_mut(&market_id) else {
             events.push(Event::PricesRejected { market: market_id, reason: "unknown market".into() });
             return false;
         };
+        if market.corporate_action_blocked {
+            events.push(Event::PricesRejected {
+                market: market_id,
+                reason: "quote units are blocked by a failed split".into(),
+            });
+            return false;
+        }
         for quote in quotes {
+            if pending_split.is_some_and(|(close, open)| now >= close || quote.ts >= open) {
+                events.push(Event::PricesRejected {
+                    market: market_id,
+                    reason: "quote units are ambiguous during a pending split closure".into(),
+                });
+                continue;
+            }
+            if market.last_split_at.is_some_and(|at| quote.ts < at) {
+                events
+                    .push(Event::PricesRejected { market: market_id, reason: "quote predates the last split".into() });
+                continue;
+            }
             if !quote.is_well_formed() {
                 let reason = format!("malformed quote from {}", quote.source);
                 events.push(Event::PricesRejected { market: market_id, reason });

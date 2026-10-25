@@ -128,11 +128,15 @@ pub enum ProtocolVersion {
     /// nonce. Activation sets payout capacity to the conserved cash less principal awaiting
     /// finality, which joins it when its receipt finalises.
     V22,
+    /// Pre-close corporate instructions capture entitlements and apply cash dividends and splits,
+    /// rounding each scaled price and quantity once, before ex-date opening execution, in
+    /// chronological order with financing. A failed split blocks its market and its financing.
+    V23,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V22;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V23;
 
     /// Whether this rule set credits exact receipts with withdrawal principal locks.
     pub fn supports_deposit_finality(self) -> bool {

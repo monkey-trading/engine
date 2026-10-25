@@ -2,6 +2,7 @@
 
 use alloy::primitives::B256;
 use engine_core::Fixed;
+use engine_core::corporate::{Adjustment, CorporateAction};
 use engine_core::deposits::{DepositBeneficiary, DepositReceipt, DepositReject, DepositStatus};
 use engine_core::emissions::TokenUnits;
 use engine_core::event::{CancelReason, Event, Fill, Reject};
@@ -101,6 +102,21 @@ pub fn every_event() -> Vec<Event> {
     });
     events.push(Event::CustodyDepositRejected { receipt: house, reason: DepositReject::InvalidAmount });
     events.extend([
+        Event::CorporateActionScheduled {
+            action: CorporateAction {
+                id: "sample".into(),
+                market,
+                previous_close: 1000,
+                ex_open: 2000,
+                adjustment: Adjustment::Dividend { gross_per_unit: amount, withholding_rate: Fixed::from_bps(2500) },
+            },
+        },
+        Event::CorporateEntitlementsCaptured { id: "sample".into(), market, at: 1000, accounts: 1 },
+        Event::CorporateDividend { id: "sample".into(), market, account, quantity: amount, amount, fx_mark: None },
+        Event::CorporateSplit { id: "sample".into(), market, new_units: 4, old_units: 1 },
+        Event::CorporateCashInLieu { id: "sample".into(), market, account, amount },
+        Event::CorporateActionApplied { id: "sample".into(), market, at: 2000 },
+        Event::CorporateActionFailed { id: "sample".into(), market, at: 2000, reason: "inexact split".into() },
         Event::Deposited { account, amount },
         Event::DepositRejected { account, amount, chain_ref: "0xab:1".into(), reason: Reject::DuplicateReference },
         Event::WithdrawalApproved { account, amount, nonce: 1 },
@@ -111,6 +127,7 @@ pub fn every_event() -> Vec<Event> {
         Event::OrderAccepted { account, client_id: 1, order_id: 3 },
         Event::OrderCancelled { account, order_id: 3, reason: CancelReason::Client },
         Event::OrderCancelled { account, order_id: 3, reason: CancelReason::Unfillable },
+        Event::OrderCancelled { account, order_id: 3, reason: CancelReason::Split },
         Event::Fill(fill),
         Event::CloseOut { account, equity: amount, margin: amount },
         Event::BadDebt { account, amount },
@@ -141,7 +158,14 @@ pub fn every_event() -> Vec<Event> {
     ]);
     for event in &events {
         match event {
-            Event::Deposited { .. }
+            Event::CorporateActionScheduled { .. }
+            | Event::CorporateEntitlementsCaptured { .. }
+            | Event::CorporateDividend { .. }
+            | Event::CorporateSplit { .. }
+            | Event::CorporateCashInLieu { .. }
+            | Event::CorporateActionApplied { .. }
+            | Event::CorporateActionFailed { .. }
+            | Event::Deposited { .. }
             | Event::DepositRejected { .. }
             | Event::CustodyDepositChanged { .. }
             | Event::CustodyDepositRejected { .. }

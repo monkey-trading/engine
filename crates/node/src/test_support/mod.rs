@@ -1,6 +1,9 @@
 //! Shared test harness: scratch directories, the committed dev config, a running sequencer, a
 //! history index following it, and a log layer that hands every alert to the test.
 
+mod events;
+pub use events::every_event;
+
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};

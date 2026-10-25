@@ -38,6 +38,14 @@ or minus a markup. Under V18, a separate operator worker fetches dated rates fro
 publishers. After downtime, each missed rollover uses the rate effective on its local date. The
 worker setup and stale-rate policy are in [engine-node](crates/node/README.md#dated-benchmark-worker).
 
+From V21, signed operator instructions schedule stock dividends and splits, and index dividend
+points, before the previous venue close. The engine captures those holdings and applies the
+adjustment at the ex-date open, before opening fills. Long dividends receive the signed input's
+net amount, shorts pay gross, and splits adjust positions, resting orders and stored prices
+together, rounding each price once and settling any rounded-off fraction of a position in cash.
+The [operator runbook](crates/node/README.md#corporate-actions-operator-runbook) describes required
+inputs, recorded FX valuation and failure handling.
+
 Accounts are kept in US dollars. A market quoted in another currency, such as Germany 40 in euros
 or Japan 225 in yen, accrues profit and loss in that currency and converts it to dollars at the
 engine's own price for the currency pair, the same way for margin, exposure, and financing. While

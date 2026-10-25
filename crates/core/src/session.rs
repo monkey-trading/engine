@@ -68,6 +68,13 @@ impl fmt::Display for WeekTime {
     }
 }
 
+impl WeekTime {
+    /// The minute in the venue's civil week, for calendar-boundary validation.
+    pub(crate) fn minute_of_week(self) -> u32 {
+        self.0
+    }
+}
+
 impl FromStr for WeekTime {
     type Err = String;
 

@@ -218,6 +218,7 @@ fn every_rejection_and_delivery_series_starts_at_zero() {
         "engine_rejections_total{event=\"deposit_rejected\",reason=\"duplicate_reference\"} 0\n",
         "engine_rejections_total{event=\"prices_rejected\",reason=\"quote_ahead\"} 0\n",
         "engine_rejections_total{event=\"admin_rejected\",reason=\"other\"} 0\n",
+        "engine_rejections_total{event=\"corporate_action_failed\",reason=\"other\"} 0\n",
         "engine_alert_deliveries_total{severity=\"critical\",outcome=\"sent\"} 0\n",
         "engine_alert_deliveries_total{severity=\"warning\",outcome=\"dropped\"} 0\n",
     ] {
@@ -225,10 +226,24 @@ fn every_rejection_and_delivery_series_starts_at_zero() {
     }
     assert_eq!(
         text.matches("engine_rejections_total{").count(),
-        3 * REJECT_KINDS.len() + DEPOSIT_REJECT_KINDS.len() + PRICES_REJECT_REASONS.len() + 1
+        3 * REJECT_KINDS.len() + DEPOSIT_REJECT_KINDS.len() + PRICES_REJECT_REASONS.len() + 2
     );
     assert_eq!(text.matches("engine_alert_deliveries_total{").count(), 2 * 3);
     assert!(text.contains("engine_alert_attempts_failed_total{severity=\"warning\"} 0\n"), "{text}");
+}
+
+#[test]
+fn corporate_action_failures_increment_the_counter_without_action_id_labels() {
+    let metrics = Metrics::new();
+    metrics.record(&Event::CorporateActionFailed {
+        id: "private-action-identity".into(),
+        market: 40,
+        at: 2000,
+        reason: "precision".into(),
+    });
+    let text = metrics.encode();
+    assert!(text.contains("engine_rejections_total{event=\"corporate_action_failed\",reason=\"other\"} 1\n"), "{text}");
+    assert!(!text.contains("private-action-identity"));
 }
 
 /// The dashboard and the alerting rules read only metrics this node exports, and every `up` they

@@ -56,6 +56,11 @@
 //!   the market stays open from its stamp to its sequencing, and dropped after any closure; a market
 //!   may price from futures contracts, its index the front contract's median plus a roll adjustment
 //!   that takes the gap between the contracts at each roll.
+//! - From `V23`, the signed operator schedules stock dividends and splits, and index dividend
+//!   points, before the previous close; holdings at that close receive the adjustment at the
+//!   ex-date open, before opening execution, in order with missed financing. Splits round each
+//!   scaled price once and settle rounded-off position fractions in cash, and a failed split
+//!   blocks its market.
 
 pub mod account;
 mod admin;
@@ -63,6 +68,7 @@ pub mod auth;
 pub mod benchmark;
 mod closeout;
 pub mod command;
+pub mod corporate;
 pub mod deposits;
 pub mod eip712;
 pub mod emissions;

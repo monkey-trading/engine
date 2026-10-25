@@ -187,6 +187,9 @@ pub(super) fn resolve_reversal(chain_ref: &str) {
 /// Raises an alert for an engine event an operator must look at.
 pub(super) fn alert_on(event: &Event) {
     match event {
+        Event::CorporateActionFailed { id: action, market, reason, .. } => {
+            error!(alert = "corporate_action_failed", action, market, "corporate action failed: {reason}");
+        }
         // A finalised deposit the engine will not credit leaves user funds in the vault and
         // nothing re-examines it.
         Event::DepositRejected { account, amount, chain_ref, reason } => {
@@ -220,6 +223,19 @@ mod tests {
         BenchmarkAlerts::default().note(&Event::BenchmarkRateMissing { benchmark: "Sofr".into(), markets: vec![11] });
         assert_eq!(logs.critical("benchmark_rate_missing"), 1);
         assert_eq!(logs.count("benchmark=\"Sofr\""), 1);
+    }
+
+    #[test]
+    fn corporate_action_failure_raises_a_critical_alert_with_its_identity() {
+        let (logs, _guard) = Logs::capture();
+        alert_on(&Event::CorporateActionFailed {
+            id: "split-input".into(),
+            market: 40,
+            at: 2000,
+            reason: "inexact ratio".into(),
+        });
+        assert_eq!(logs.critical("corporate_action_failed"), 1);
+        assert_eq!(logs.count("action=\"split-input\""), 1);
     }
 }
 

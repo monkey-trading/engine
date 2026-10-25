@@ -34,6 +34,8 @@ use crate::tee::{AttestationBundle, EnclaveKey, MockAttestor, attest_bundle};
 use crate::test_support::{DEV_CONFIG, dev_config, log_entries, sample_around, scratch_dir, sequencer_config};
 use crate::tls::{TlsIdentity, serve};
 
+mod corporate;
+
 /// The dev operator key, whose public key `config/dev.toml` names.
 const DEV_KEY: [u8; 32] = [0x42; 32];
 /// The time the test sequencer stamps every command with, and the API and `engine admin` count
@@ -252,6 +254,9 @@ struct Node {
     state: ApiState,
     dir: PathBuf,
     tls: TlsIdentity,
+    stamps: Arc<TestClock>,
+    key: Arc<EnclaveKey>,
+    task: tokio::task::JoinHandle<anyhow::Result<()>>,
 }
 
 impl Node {
@@ -272,7 +277,7 @@ impl Node {
         // Trusted time agrees with the fixed clock, so the queued activation and genesis go in now.
         seq.trust(sample_around(stamps.as_ref())).unwrap();
         let (tx, rx) = mpsc::channel(1024);
-        tokio::spawn(seq.run(rx));
+        let task = tokio::spawn(seq.run(rx));
         let tls = TlsIdentity::generate().unwrap();
         let bundle = AttestationBundle {
             enclave_address: key.address(),
@@ -296,7 +301,7 @@ impl Node {
             emission_budget: None,
             listing: Default::default(),
         };
-        Node { state, dir, tls }
+        Node { state, dir, tls, stamps, key, task }
     }
 
     /// Serves the API on a free port of the IPv4 loopback.

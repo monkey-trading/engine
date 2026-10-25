@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
+use crate::corporate::CorporateAction;
 use crate::deposits::{DepositReceipt, DepositReject, DepositStatus};
 use crate::emissions::TokenUnits;
 use crate::price::PriceError;
@@ -13,6 +14,50 @@ use crate::types::{AccountId, MarketId, Millis, OrderId, Side};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
+    CorporateActionScheduled {
+        action: CorporateAction,
+    },
+    CorporateEntitlementsCaptured {
+        id: String,
+        market: MarketId,
+        at: Millis,
+        accounts: usize,
+    },
+    /// Signed account credit in USD; negative for a short's gross debit.
+    CorporateDividend {
+        id: String,
+        market: MarketId,
+        account: AccountId,
+        quantity: Fixed,
+        amount: Fixed,
+        fx_mark: Option<Fixed>,
+    },
+    CorporateSplit {
+        id: String,
+        market: MarketId,
+        new_units: u32,
+        old_units: u32,
+    },
+    CorporateActionApplied {
+        id: String,
+        market: MarketId,
+        at: Millis,
+    },
+    /// Signed USD realised by closing, at the post-split mark, the fraction a split rounded off a
+    /// position.
+    CorporateCashInLieu {
+        id: String,
+        market: MarketId,
+        account: AccountId,
+        amount: Fixed,
+    },
+    /// No partial adjustment. A failed split stops its market dealing; a failed dividend pays nothing.
+    CorporateActionFailed {
+        id: String,
+        market: MarketId,
+        at: Millis,
+        reason: String,
+    },
     Deposited {
         account: AccountId,
         amount: Fixed,
@@ -232,6 +277,8 @@ pub enum CancelReason {
     /// Triggered but couldn't fill (margin, house capacity, or reduce-only
     /// with no position left).
     Unfillable,
+    /// A split rounded its quantity or price to zero, or took its quantity past the input bound.
+    Split,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
