@@ -193,6 +193,10 @@ pub(super) fn event_kind(event: &Event) -> Result<u8> {
         Event::WithdrawalQueueUpdated { .. } => "withdrawal_queue_updated",
         Event::CorporateDividend { .. } => "corporate_dividend",
         Event::CorporateCashInLieu { .. } => "corporate_cash_in_lieu",
+        Event::Staked { .. } => "staked",
+        Event::Unstaked { .. } => "unstaked",
+        Event::StakingRejected { .. } => "staking_rejected",
+        Event::DistributionAllocated { .. } => "distribution_allocated",
         // Listed, not matched by a wildcard, so a new event does not compile until it is classified.
         Event::HouseCapitalMoved { .. }
         | Event::CorporateActionScheduled { .. }
@@ -212,10 +216,6 @@ pub(super) fn event_kind(event: &Event) -> Result<u8> {
         | Event::AdminRejected { .. }
         | Event::EmissionPeriodClosed { .. }
         | Event::EmissionPeriodsCancelled { .. }
-        | Event::Staked { .. }
-        | Event::Unstaked { .. }
-        | Event::StakingRejected { .. }
-        | Event::DistributionAllocated { .. }
         | Event::DistributionEpochClosed { .. }
         | Event::DistributionEpochsSkipped { .. } => bail!("event is not an account-history kind"),
     };

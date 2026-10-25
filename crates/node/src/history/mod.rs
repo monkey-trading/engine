@@ -66,6 +66,10 @@ pub const KINDS: [&str; 18] = [
     "withdrawal_queue_updated",
     "corporate_dividend",
     "corporate_cash_in_lieu",
+    "staked",
+    "unstaked",
+    "staking_rejected",
+    "distribution_allocated",
 ];
 /// The SQLite file of the index, in `history.dir`; SQLite keeps its `-wal` and `-shm` files beside it.
 pub const INDEX_FILE: &str = "history.sqlite";

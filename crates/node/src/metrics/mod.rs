@@ -26,7 +26,7 @@ use prometheus_client::registry::Registry;
 
 const CONTENT_TYPE_OPENMETRICS: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
 /// Every `kind` a typed rejection reason can have; see `reject_kind`.
-const REJECT_KINDS: [&str; 20] = [
+const REJECT_KINDS: [&str; 22] = [
     "unknown_market",
     "unknown_order",
     "invalid_order",
@@ -47,6 +47,8 @@ const REJECT_KINDS: [&str; 20] = [
     "invalid_nonce",
     "expired",
     "expiry_too_far",
+    "staking_not_initialised",
+    "insufficient_stake",
 ];
 /// Every reason a price rejection can have; see `prices_reject_reason`.
 const PRICES_REJECT_REASONS: [&str; 6] =

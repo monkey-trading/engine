@@ -954,6 +954,11 @@ one event `type`: `deposited`, `deposit_rejected`, `custody_deposit_changed`,
 index that reads at most `limit + 1` entries, and at most 16 pages are read at once. Until the index
 has taken every command the log held when the node started, the route answers 503 (`history is
 catching up with the log`). History is public, like the log.
+`emission_allocated`, `staked`, `unstaked`, `staking_rejected`, or `distribution_allocated`.
+`?limit=` is 1 to 200, 50 by default. A page is one search of a SQLite index that reads
+at most `limit + 1` entries, and at most 16 pages are read at once. Until the index has taken every
+command the log held when the node started, the route answers 503 (`history is catching up with the
+log`). History is public, like the log.
 
 Without `[snapshots]`, the history index is a SQLite file in `history.dir`, derived from the log
 alone. A supervised task
