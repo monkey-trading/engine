@@ -13,6 +13,7 @@ use axum::http::header::CONTENT_TYPE;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use engine_core::Fixed;
+use engine_core::deposits::DepositReject;
 use engine_core::event::{Event, Reject};
 use engine_core::types::MarketId;
 use prometheus_client::encoding::EncodeLabelSet;
@@ -25,7 +26,7 @@ use prometheus_client::registry::Registry;
 
 const CONTENT_TYPE_OPENMETRICS: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
 /// Every `kind` a typed rejection reason can have; see `reject_kind`.
-const REJECT_KINDS: [&str; 19] = [
+const REJECT_KINDS: [&str; 20] = [
     "unknown_market",
     "unknown_order",
     "invalid_order",
@@ -40,6 +41,7 @@ const REJECT_KINDS: [&str; 19] = [
     "too_many_orders",
     "invalid_amount",
     "duplicate_reference",
+    "custody_receipt_required",
     "missing_signature",
     "invalid_signature",
     "invalid_nonce",
@@ -48,6 +50,16 @@ const REJECT_KINDS: [&str; 19] = [
 ];
 /// Every reason a price rejection can have; see `prices_reject_reason`.
 const PRICES_REJECT_REASONS: [&str; 4] = ["unknown_market", "malformed_quote", "quote_ahead", "other"];
+/// Every custody receipt rejection reason; see `deposit_reject_kind`.
+const DEPOSIT_REJECT_KINDS: [&str; 7] = [
+    "protocol_not_active",
+    "invalid_receipt",
+    "invalid_amount",
+    "arithmetic_overflow",
+    "unknown_receipt",
+    "conflicting_receipt",
+    "settled_receipt",
+];
 /// Every delivery outcome of an alert page.
 const DELIVERY_OUTCOMES: [&str; 3] = ["sent", "failed", "dropped"];
 
@@ -197,6 +209,7 @@ impl Metrics {
         let rejections = typed
             .iter()
             .flat_map(|event| REJECT_KINDS.map(|reason| (*event, reason)))
+            .chain(DEPOSIT_REJECT_KINDS.map(|reason| ("custody_deposit_rejected", reason)))
             .chain(PRICES_REJECT_REASONS.map(|reason| ("prices_rejected", reason)))
             .chain([("admin_rejected", "other")]);
         rejections.for_each(|(event, reason)| {
@@ -228,6 +241,9 @@ impl Metrics {
             Event::DepositRejected { reason, .. } => {
                 rejection("deposit_rejected", reject_kind(reason));
             }
+            Event::CustodyDepositRejected { reason, .. } => {
+                rejection("custody_deposit_rejected", deposit_reject_kind(reason));
+            }
             Event::PricesRejected { reason, .. } => {
                 rejection("prices_rejected", prices_reject_reason(reason));
             }
@@ -257,6 +273,19 @@ async fn scrape(State(metrics): State<Arc<Metrics>>) -> impl IntoResponse {
     ([(CONTENT_TYPE, CONTENT_TYPE_OPENMETRICS)], metrics.encode())
 }
 
+/// A custody receipt rejection reason as the public log names it.
+fn deposit_reject_kind(reason: &DepositReject) -> &'static str {
+    match reason {
+        DepositReject::ProtocolNotActive => "protocol_not_active",
+        DepositReject::InvalidReceipt => "invalid_receipt",
+        DepositReject::InvalidAmount => "invalid_amount",
+        DepositReject::ArithmeticOverflow => "arithmetic_overflow",
+        DepositReject::UnknownReceipt => "unknown_receipt",
+        DepositReject::ConflictingReceipt => "conflicting_receipt",
+        DepositReject::SettledReceipt => "settled_receipt",
+    }
+}
+
 /// A rejection reason's `kind` in the public log.
 fn reject_kind(reason: &Reject) -> &'static str {
     match reason {
@@ -274,6 +303,7 @@ fn reject_kind(reason: &Reject) -> &'static str {
         Reject::TooManyOrders { .. } => "too_many_orders",
         Reject::InvalidAmount => "invalid_amount",
         Reject::DuplicateReference => "duplicate_reference",
+        Reject::CustodyReceiptRequired => "custody_receipt_required",
         Reject::MissingSignature => "missing_signature",
         Reject::InvalidSignature => "invalid_signature",
         Reject::InvalidNonce { .. } => "invalid_nonce",

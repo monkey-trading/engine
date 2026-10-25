@@ -59,6 +59,7 @@ pub mod auth;
 pub mod benchmark;
 mod closeout;
 pub mod command;
+pub mod deposits;
 pub mod eip712;
 pub mod emissions;
 pub mod engine;

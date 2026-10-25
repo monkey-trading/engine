@@ -7,7 +7,7 @@ use engine_core::types::AccountId;
 use tokio::sync::mpsc;
 
 use crate::checkpoints::{CheckpointChain, CheckpointRpc, Poster, View, Work};
-use crate::config::NodeConfig;
+use crate::config::{EvmCustodySection, FinalityTag, NodeConfig};
 use crate::log::CheckpointDomain;
 use crate::tee::EnclaveKey;
 
@@ -19,6 +19,11 @@ pub(crate) struct Setup {
     pub posted_seq: Option<u64>,
 }
 
+/// Checkpoint release follows custody withdrawal finality, independently of early credit depth.
+fn release_policy(evm: &EvmCustodySection) -> (FinalityTag, u64) {
+    (evm.withdrawal_finality_tag, 0)
+}
+
 /// Connects the checkpoint endpoint and reads its rollback anchor before log recovery.
 /// Error cases:
 /// - configuration, transport, or vault reads fail
@@ -27,12 +32,13 @@ pub(crate) async fn connect(cfg: &NodeConfig, key: &Arc<EnclaveKey>) -> anyhow::
     let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
     let token = cfg.custody.evm.as_ref().context("checkpoint custody is not EVM")?.usdc;
     let evm = cfg.custody.evm.as_ref().context("checkpoint custody is not EVM")?;
+    let (release_tag, release_depth) = release_policy(evm);
     let chain = CheckpointRpc::new(
         checkpoints,
         domain,
         token,
-        evm.finality_tag,
-        evm.confirmations,
+        release_tag,
+        release_depth,
         &cfg.node.log_dir,
         AccountId(key.address()),
     )?;
@@ -74,4 +80,21 @@ pub(crate) async fn connect(cfg: &NodeConfig, key: &Arc<EnclaveKey>) -> anyhow::
     };
     let (tx, rx) = mpsc::channel(64);
     Ok(Some(Setup { poster, tx, rx, posted_seq, parent }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn latest_credit_and_its_confirmation_depth_cannot_weaken_checkpoint_release() {
+        let cfg: NodeConfig = toml::from_str(include_str!("../../../../config/anvil.toml")).unwrap();
+        let mut evm = cfg.custody.evm.unwrap();
+        evm.withdrawal_finality_tag = FinalityTag::Finalized;
+        for tag in [FinalityTag::Latest, FinalityTag::Safe, FinalityTag::Finalized] {
+            evm.finality_tag = tag;
+            evm.confirmations = 37;
+            assert_eq!(release_policy(&evm), (FinalityTag::Finalized, 0));
+        }
+    }
 }

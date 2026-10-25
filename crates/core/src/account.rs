@@ -90,6 +90,9 @@ pub struct RestingOrder {
 pub struct Account {
     /// Cash: deposits - withdrawals + realised PnL - fees - financing.
     pub balance: Fixed,
+    /// Principal credited before Ethereum finality: collateral, excluded from withdrawals.
+    #[serde(default, skip_serializing_if = "Fixed::is_zero")]
+    pub unfinalised_deposits: Fixed,
     pub positions: BTreeMap<MarketId, Position>,
     pub orders: BTreeMap<OrderId, RestingOrder>,
     /// EWMA of fill markouts in whole bps; see `ToxicityParams`. From `V11` it is the score rounded

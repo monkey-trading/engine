@@ -196,7 +196,13 @@ fn a_fresh_log_records_client_auth_and_the_operator_and_activates_the_latest_ver
     let operator = dev_config().operator().unwrap();
     assert_eq!(cmds[0], Command::Admin(AdminCommand::SetClientAuth(signed(31_337))));
     assert_eq!(cmds[1], Command::Admin(AdminCommand::SetOperator(operator)));
-    assert_eq!(cmds[2], Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::LATEST }));
+    assert_eq!(
+        cmds[2],
+        Command::Admin(AdminCommand::ActivateCustodyFinality {
+            version: ProtocolVersion::LATEST,
+            legacy_deposits: vec![],
+        })
+    );
     let replayed = replay(&entries).unwrap();
     assert_eq!(replayed.engine.protocol_version(), ProtocolVersion::LATEST);
     assert_eq!(replayed.engine.client_auth(), Some(&signed(31_337)));
@@ -244,7 +250,13 @@ fn protocol_activation_and_genesis_wait_for_trusted_time_then_go_in_order() {
     let written = commands(&log_entries(&dir));
     assert!(matches!(written[0], Command::Admin(AdminCommand::SetClientAuth(_))), "{:?}", written[0]);
     assert!(matches!(written[1], Command::Admin(AdminCommand::SetOperator(_))), "{:?}", written[1]);
-    assert!(matches!(written[2], Command::Admin(AdminCommand::ActivateProtocol { .. })), "{:?}", written[2]);
+    assert_eq!(
+        written[2],
+        Command::Admin(AdminCommand::ActivateCustodyFinality {
+            version: ProtocolVersion::LATEST,
+            legacy_deposits: vec![],
+        })
+    );
     assert!(matches!(written.last(), Some(Command::HouseCapital { .. })), "{written:?}");
     assert!(!seq.needs_genesis());
 }

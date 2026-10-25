@@ -59,15 +59,12 @@ fn a_genesis_entry_of_any_kind_the_engine_would_reject_queues_and_writes_nothing
         assert!(format!("{err:#}").contains(expected), "expected {expected:?}, got {err:#}");
         seq.trust(trusted_now()).unwrap();
         let written = commands(&log_entries(&dir));
-        let activation = |cmd: &Command| {
-            matches!(
-                cmd,
-                Command::Admin(
-                    AdminCommand::SetClientAuth(_)
-                        | AdminCommand::SetOperator(_)
-                        | AdminCommand::ActivateProtocol { .. }
-                )
-            )
+        let activation = |cmd: &Command| match cmd {
+            Command::Admin(AdminCommand::SetClientAuth(_) | AdminCommand::SetOperator(_)) => true,
+            Command::Admin(AdminCommand::ActivateCustodyFinality { version, legacy_deposits }) => {
+                *version == ProtocolVersion::LATEST && legacy_deposits.is_empty()
+            }
+            _ => false,
         };
         assert!(!written.is_empty() && written.iter().all(activation), "{expected}: {written:?}");
         assert!(seq.needs_genesis(), "{expected}");

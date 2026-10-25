@@ -1,8 +1,8 @@
 //! Collateral custody. USDC sits in a vault contract on an EVM L2. The chain handles custody only
 //! and never touches execution:
-//! - deposits: watch the vault's deposit events, wait for finality, then sequence
-//!   `Command::Deposit` (or `Command::HouseCapital` for a deposit to the house) with the
-//!   transaction hash and log index as its reference;
+//! - deposits: from V20, sequence exact quorum-proven receipts on confirmation, lock principal
+//!   against withdrawals until Ethereum finality, and reconcile canonical reversals; older logs
+//!   retain their legacy credit commands and cursor semantics;
 //! - withdrawals: the engine approves, the enclave signs, and the vault pays out against the
 //!   enclave signature;
 //! - checkpoints: post the signed state roots so anyone can check the enclave against the public
@@ -12,8 +12,11 @@
 
 use alloy::primitives::{Address, U256};
 use anyhow::Context;
+use engine_core::Engine;
 use engine_core::Fixed;
+use engine_core::deposits::LegacyDeposit;
 use engine_core::fixed::DECIMALS;
+use std::collections::BTreeMap;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
@@ -35,11 +38,34 @@ use crate::sequencer::{Request, SignedWithdrawal};
 /// USDC's decimals on every chain Circle issues it on.
 const USDC_DECIMALS: u32 = 6;
 
+/// Proves the finality needed to redeliver an old approval before writable recovery.
+/// Error cases:
+/// - invalid custody configuration, missing quorum or canonical finality evidence
+pub(crate) async fn prove_legacy_withdrawals(
+    cfg: &CustodySection,
+    engine: &Engine,
+    ledger: &BTreeMap<String, LegacyDeposit>,
+    approvals: &crate::sequencer::legacy::Approvals,
+) -> anyhow::Result<crate::sequencer::legacy::Authorizations> {
+    let evm = cfg.evm.as_ref().context("legacy EVM finality proof needs custody.evm")?;
+    let vault = cfg.vault.parse().context("custody.vault")?;
+    DepositWatcher::prove_legacy_withdrawals(
+        Quorum::connect(evm, vault)?,
+        evm,
+        cfg.chain_id,
+        vault,
+        engine,
+        ledger,
+        approvals,
+    )
+    .await
+}
+
 /// A connected custody provider, ready to run.
 pub enum Custody {
     /// No chain: deposits come from the dev endpoint and withdrawals are only logged.
     Mock,
-    /// Credits final vault deposits from an EVM chain.
+    /// Credits quorum-proven vault deposits and reconciles their principal finality.
     Evm(Box<DepositWatcher<Quorum<VaultRpc>>>),
 }
 

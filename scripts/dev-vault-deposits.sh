@@ -2,9 +2,9 @@
 # Dev scenario for vault deposits, on a local Anvil chain with a node on config/anvil.toml:
 #   1. start Anvil and deploy a mock USDC and the vault;
 #   2. run a node with custody.provider = "evm" against them, after a first boot that never gets
-#      trusted time stored the deposit cursor before the log's first command;
+#      trusted time records no custody progress before the log's first command;
 #   3. deposit as a trader, for the trader from another account, and as the house, restart the
-#      node mid-way (once with its cursor lost), and deposit again;
+#      node mid-way (once with a forged forward host cursor), and deposit again;
 #   4. reorg a deposit away before it is final, then include the same transaction again.
 # Passes when every deposit is credited once, only after the configured confirmations, house NAV
 # equals the house deposits, and the node's log replays.
@@ -49,6 +49,10 @@ cleanup() {
   if [[ -n "${SCENARIO_LOG_DIR:-}" ]]; then
     mkdir -p "$SCENARIO_LOG_DIR"
     cp "$work"/*.log "$SCENARIO_LOG_DIR/" 2>/dev/null || true
+    if [[ "${DEPOSIT_FINALITY_SCENARIO:-0}" == "1" ]]; then
+      cp "$work/anvil.toml" "$SCENARIO_LOG_DIR/finality-config.toml" 2>/dev/null || true
+      [[ -d "$work/log" ]] && cp -R "$work/log" "$SCENARIO_LOG_DIR/finality-log" || true
+    fi
   fi
   rm -rf "$work"
 }
@@ -83,8 +87,12 @@ stays() {
 trader_balance() { curl -sk "$api/v1/accounts/$trader" | jq -r '.balance // "none"'; }
 fictional_balance() { curl -sk "$api/v1/accounts/0xabababababababababababababababababababab" | jq -r '.balance // "none"'; }
 house_nav() { curl -sk "$api/v1/house" | jq -r '.nav'; }
-rescanned_deposits() { jq -r '.next_deposit_id' "$work/custody-cursor.json" 2>/dev/null || echo none; }
-cursor_stored() { [[ -f "$work/custody-cursor.json" ]] && echo yes || echo no; }
+rescanned_deposits() {
+  jq -sr '[.[] | select(.entry == "command" and .cmd.type == "custody_finalised") | .cmd.deposit_count] | last // "none"' "$work"/log/[0-9]*.jsonl 2>/dev/null || echo none
+}
+progress_tip() {
+  jq -sr '[.[] | select(.entry == "command" and .cmd.type == "custody_finalised") | .cmd.block] | last // "none"' "$work"/log/[0-9]*.jsonl
+}
 log_commands() {
   local n=0 f
   for f in "$work"/log/[0-9]*.jsonl; do
@@ -159,7 +167,7 @@ for port in "$rpc_a_port" "$rpc_b_port" "$rpc_c_port"; do
   done
 done
 
-step "A first boot without trusted time stores the deposit cursor while the log is empty"
+step "A first boot without trusted time records no custody progress"
 # Rewrite original config tokens once so destination ports cannot cascade into later matches.
 python3 - "$root/config/anvil.toml" "$work" "$rpc_a_port" "$rpc_b_port" "$rpc_c_port" "$api_port" "$metrics_port" >"$work/anvil.toml" <<'PY_CONFIG'
 import re
@@ -178,16 +186,25 @@ replacements = {
 pattern = "|".join(map(re.escape, replacements))
 print(re.sub(pattern, lambda match: replacements[match[0]], Path(source).read_text()), end="")
 PY_CONFIG
+if [[ "${DEPOSIT_FINALITY_SCENARIO:-0}" == "1" ]]; then
+  step "Prove confirmed collateral, finality-gated approval, and exact-once reversal through the real watcher/quorum/sequencer"
+  CARGO_TERM_COLOR=never ENGINE_FINALITY_FIXTURE="$work/anvil.toml" ENGINE_FINALITY_RPC="$rpc" ENGINE_FINALITY_TEST_KEY="$trader_key" \
+    cargo test -p engine-node --lib --locked custody::tests::anvil_finality::anvil_confirmation_finality_scenario -- --ignored --exact | tee "$work/finality-test.log"
+  grep -q '^test result: ok. 1 passed; 0 failed;' "$work/finality-test.log" || fail "finality scenario did not execute exactly one successful test"
+  echo "PASS: immediate trade; finalised-only approval headroom; finality release; canonical debit and Critical"
+  echo "Approval eligibility was exercised through the sequencer; no physical payout or HTTP cash-out was attempted."
+  exit 0
+fi
 # Every Roughtime server points at a closed local port, so no sample arrives and nothing is
-# sequenced, while the watcher reads the blocks so far and stores its cursor. That boot's time
-# alerts are expected, so it logs apart from node.log.
+# sequenced. The watcher may read the chain, but it cannot persist finalised progress or unlock
+# principal outside the log. That boot's time alerts are expected and logged apart from node.log.
 sed -E 's#^address = ".*"#address = "127.0.0.1:9"#' "$work/anvil.toml" >"$work/anvil-no-time.toml"
 start_node "$work/anvil-no-time.toml" "$work/node-no-time.log"
-wait_for cursor_stored yes
-[[ "$(log_commands)" == "0" ]] || fail "a command was sequenced without trusted time"
+stays log_commands 0
+[[ ! -f "$work/custody-cursor.json" ]] || fail "custody persisted a host cursor before trusted sequencing"
 stop_node
 
-step "Start the node with EVM custody; it resumes from that cursor"
+step "Start the node with EVM custody and replayed progress"
 start_node
 [[ "$(house_nav)" == "0" ]] || fail "genesis credited house capital under EVM custody"
 code="$(curl -sk -o /dev/null -w '%{http_code}' -X POST "$api/v1/dev/deposit" \
@@ -225,10 +242,19 @@ mine 3
 start_node
 wait_for trader_balance 1300
 
-step "With its cursor lost, the node reads every deposit again and credits none twice"
+step "A forged forward host cursor cannot skip replayed custody progress"
 stop_node
-rm "$work/custody-cursor.json"
+python3 - "$work/custody-cursor.json" "$vault" <<'PY_CURSOR'
+import json
+import sys
+from pathlib import Path
+Path(sys.argv[1]).write_text(json.dumps({"chain_id": 31337, "vault": sys.argv[2], "next_block": 999999,
+    "next_deposit_id": 999999, "log_seq": None, "last_block_hash": None, "crediting": None}))
+PY_CURSOR
 start_node
+mine 1
+expected_tip="$(cast rpc eth_getBlockByNumber safe false --rpc-url "$rpc" | python3 -c 'import json,sys; print(int(json.load(sys.stdin)["number"], 16) - 2)')"
+wait_for progress_tip "$expected_tip"
 wait_for rescanned_deposits 4
 stays trader_balance 1300
 [[ "$(house_nav)" == "5000000" ]] || fail "house NAV changed on the rescan"
@@ -295,8 +321,7 @@ fi
 step "The log holds one command per deposit and replays"
 stop_node
 # Genesis's zero house capital credit marks genesis done; every other credit is a vault deposit.
-deposits="$(jq -c 'select(.entry == "command" and (.cmd.type == "deposit" or .cmd.type == "house_capital")
-  and .cmd.chain_ref != "genesis")' "$work"/log/[0-9]*.jsonl | wc -l | tr -d ' ')"
+deposits="$(jq -c 'select(.entry == "command" and .cmd.type == "custody_deposit" and .cmd.action == "credit")' "$work"/log/[0-9]*.jsonl | wc -l | tr -d ' ')"
 [[ "$deposits" == "$expected_deposits" ]] || fail "expected $expected_deposits deposit commands in the log, found $deposits"
 "$engine" replay --log "$work/log" | grep -q '^verified' || fail "the log does not replay"
 # Restarts, the rescan, and the reorg are all expected: none of them may raise an alert.

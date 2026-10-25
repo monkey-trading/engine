@@ -89,8 +89,8 @@ custody, which credits vault deposits but does not yet pay withdrawals.
 
 Out of scope are volumetric denial of service, meaning attacks that work only by flooding the API or
 the network with traffic; social engineering of anyone involved with the project; reorganisations of
-Arbitrum One that undo a block after its batch reached Ethereum, the finality the custody adapter
-waits for; and vulnerabilities in third-party services, such as the venues and benchmark publishers that supply data, the
+Arbitrum One that undo an Ethereum-finalised block (the L2 `finalized` tag); and vulnerabilities in
+third-party services, such as the venues and benchmark publishers that supply data, the
 Arbitrum network, the USDC contract, and the enclave hardware, which should be reported to their
 owners. How the engine handles what those services send it, including a venue that quotes a false
 price, is in scope.
@@ -110,7 +110,8 @@ and root, which the vault compares atomically to fence divergent same-key publis
 view, and a signature's named signer must be checked against a trusted attestation or the vault's
 authorized signer. Withdrawal completion evidence also requires that independently trusted signer
 and its deployment before replay can clear an approval. Latest transaction inclusion alone never
-authorizes withdrawal release; the configured custody finality tag and confirmation depth apply.
+authorizes withdrawal release; checkpoint startup and release use custody's withdrawal finality tag,
+independently of the latest credit tag and its confirmation depth.
 Hardware EVM custody requires this protection. Optional recovery snapshots require independently
 provisioned attested signer pins and authenticate the complete snapshot, its deployment, and its
 checkpoint; with them, account history and the segment catalog are read and updated only through
@@ -137,11 +138,28 @@ serves the intended chain and token; endpoint independence alone cannot establis
 a compromised majority, operator independence is not machine-verifiable, and it takes the vault,
 its token, provider endpoints and finality tag from the
 host-supplied configuration, which only a verifier holding a published copy of it can check against
-the attested config hash, and keeps its deposit cursor on host storage, where a cursor moved
-forward skips deposits; checkpoint reconciliation detects the resulting deposit-count mismatch
-and escalates after its configured catch-up deadline; and the enclave image's kernel takes input
-from its host that the launch measurement does not cover, without yet bounding it: the data disk's
-filesystem, the ACPI tables, the emulated devices, and the network configuration. A
+the attested config hash. From V20, deposits trade on sequencer confirmation (`latest`, less
+configured confirmations), while principal can be withdrawn only after Ethereum finality (`finalized`).
+Hardware-TEE validation refuses a different tag pair. Exact receipts, unfinalised principal and
+finalised scan progress are deterministic sequenced state. Legacy EVM credits gain no finality from
+their old tag, credit status, host cursor or a config change: activation records their verified credit
+ledger and locks unresolved principal without another cash credit. Exact canonical receipt proof
+and withdrawal finality release each lock independently. Missing or ambiguous historical identity
+keeps that principal locked with Critical; an adopted receipt uses the normal reversal path. Recovery
+refuses to sign a stranded legacy approval that consumes unresolved principal until independent
+finality proof succeeds, before opening the public log for writing. Inherited unsigned approvals retain
+their authenticated approval prefix across activation; later funding requires checkpoint coverage of
+its own sequence before signature release. Finality proof authorizes only the specific inherited
+obligations it proves safe and never applies cash again. A quorum-proven pre-finality reversal
+debits once, raises Critical and runs the existing executable close-out/flat-account house write-off;
+stale positions wait for prices, and negative house NAV does not halt trading. A deposit reincluded in another block with the same beneficiary and amount moves to its
+replacement receipt in one transition, including at a changed log index: cash nets out, no close-out
+runs and Critical is still raised. An orphan with no replacement up to the eligible head is debited.
+Pre-finality reversals and handling of missing quorum
+are in scope. Earlier protocols keep a host cursor whose advancement can skip deposits; checkpoint reconciliation detects the resulting deposit-count mismatch and escalates after its configured catch-up deadline. The checkpoint transport trusts its separately configured RPC endpoint; deposit quorum does not automatically protect that client.
+The enclave image's kernel takes input from its host that the launch measurement does not cover,
+without yet bounding it: the data disk's filesystem, the ACPI tables, the emulated devices, and the
+network configuration. A
 gap that this policy, an open issue, or a `TODO` in the code already records is known, so a report
 of it is not a new finding, though its details stay private under the disclosure timeline above; a
 way around a check that exists is a new finding.

@@ -69,6 +69,7 @@ quote_age() {
 
 step "build the node"
 (cd "$root" && cargo build -p engine-node --locked --quiet)
+engine="$(cargo metadata --format-version 1 --no-deps --manifest-path "$root/Cargo.toml" | jq -r .target_directory)/debug/engine"
 
 step "start a webhook receiver on 127.0.0.1:$hook_port"
 python3 - "$hook_port" "$work/pages.jsonl" <<'PY' &
@@ -117,7 +118,7 @@ done
 
 step "run the node; BTC-USD quotes stop ${stop_after}s after boot"
 ENGINE_ALERTS_CRITICAL_URL="http://127.0.0.1:$hook_port/hooks/$secret" \
-  "$root/target/debug/engine" run --config "$work/node.toml" > "$work/node.log" 2>&1 &
+  "$engine" run --config "$work/node.toml" > "$work/node.log" 2>&1 &
 node_pid=$!
 started="$(date +%s)"
 until grep -q 'first trusted time sample: sequencing started' "$work/node.log"; do

@@ -1,11 +1,12 @@
 //! Log replay: re-applies a log as it is read and checks it against what the open-source engine
 //! produces.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, bail, ensure};
+use engine_core::deposits::LegacyDeposit;
 use engine_core::event::Event;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{AccountId, Millis};
@@ -18,6 +19,9 @@ use crate::snapshot::{Progress, RecoveryBase, Snapshot};
 
 /// The result of replaying a log.
 pub struct Replayed {
+    /// Successful legacy EVM credits, derived from verified commands, never a host cursor.
+    pub legacy_deposits: BTreeMap<String, LegacyDeposit>,
+    pub(crate) legacy_approvals: crate::sequencer::legacy::Approvals,
     pub engine: Engine,
     pub(crate) accounting: Accounting,
     pub commands: u64,
@@ -48,6 +52,8 @@ pub struct Replayed {
 /// recovery and third-party audit (`engine replay`).
 #[derive(Default)]
 pub(super) struct Replay {
+    legacy_deposits: BTreeMap<String, LegacyDeposit>,
+    legacy_approvals: crate::sequencer::legacy::Approvals,
     engine: Engine,
     commands: u64,
     command_prefix: [u8; 32],
@@ -112,6 +118,12 @@ impl Replay {
         parent: Option<crate::log::CheckpointParent>,
     ) -> anyhow::Result<Self> {
         snapshot.context.validate(&snapshot.checkpoint, domain)?;
+        snapshot.context.validate_engine(&snapshot.checkpoint, &engine)?;
+        crate::sequencer::legacy::check_snapshot_provenance(
+            &engine,
+            &snapshot.progress.activations,
+            &snapshot.context.deferred,
+        )?;
         ensure!(
             trusted_signer
                 .is_none_or(|signer| { snapshot.context.checkpoint_signers.iter().all(|named| *named == signer) }),
@@ -139,6 +151,8 @@ impl Replay {
         let Snapshot { progress: Progress { genesis, activations, checkpoints }, context, checkpoint, .. } = snapshot;
         let last_checkpoint_ts = Some(engine.now());
         Ok(Self {
+            legacy_deposits: BTreeMap::new(),
+            legacy_approvals: crate::sequencer::legacy::Approvals::default(),
             engine,
             commands: context.commands,
             command_prefix: context.command_prefix,
@@ -182,6 +196,7 @@ impl Replay {
                     bail!("seq {seq} has no logged events, though earlier commands do");
                 }
                 let version = engine.protocol_version();
+                crate::sequencer::legacy::check_activation_ledger(&c.sequenced.cmd, &self.legacy_deposits)?;
                 let events = engine.apply(&c.sequenced).with_context(|| format!("applying seq {seq}"))?;
                 self.genesis.command(&c.sequenced, &events);
                 if engine.protocol_version() != version {
@@ -191,6 +206,12 @@ impl Replay {
                     bail!("events logged at seq {seq} differ from the events replay gives");
                 }
                 self.accounting.apply(&c.sequenced.cmd, &events)?;
+                if !version.supports_deposit_finality()
+                    && let Some(deposit) = LegacyDeposit::from_command(&c.sequenced.cmd, &events)
+                {
+                    self.legacy_deposits.insert(deposit.chain_ref.clone(), deposit);
+                }
+                self.legacy_approvals.observe(engine, &c.sequenced, &events, c.events.is_some());
                 self.approved = events
                     .into_iter()
                     .filter_map(|e| match e {
@@ -224,12 +245,14 @@ impl Replay {
                         .position(|value| *value == (seq, w.account, w.amount, w.nonce))
                         .context("deferred withdrawal was not approved")?;
                     self.deferred.remove(at);
+                    self.legacy_approvals.signed(w.account, w.amount, w.nonce);
                     return Ok(());
                 }
                 if self.approved.front() != Some(&(w.account, w.amount, w.nonce)) {
                     bail!("withdrawal {} nonce {} was not approved at seq {:?}", w.account, w.nonce, engine.last_seq());
                 }
                 self.approved.pop_front();
+                self.legacy_approvals.signed(w.account, w.amount, w.nonce);
             }
             LogEntry::Checkpoint(cp) => {
                 if cp.deferred_withdrawals {
@@ -264,7 +287,7 @@ impl Replay {
                     && (!parent.has_checkpoint || cp.seq > parent.seq)
                 {
                     ensure!(cp.parent == Some(parent), "outstanding checkpoint has a divergent signed parent");
-                    self.recovery_work.push(crate::checkpoints::Work::capture(cp.clone(), self.accounting));
+                    self.recovery_work.push(crate::checkpoints::Work::capture(cp.clone(), self.accounting, engine));
                     self.recovery_parent = Some(crate::log::CheckpointParent {
                         has_checkpoint: true,
                         seq: cp.seq,
@@ -306,6 +329,8 @@ impl Replay {
             last_signed_checkpoint: self.last_signed_checkpoint,
             recovery_work: self.recovery_work,
             recovery_base,
+            legacy_deposits: self.legacy_deposits,
+            legacy_approvals: self.legacy_approvals,
         }
     }
 }

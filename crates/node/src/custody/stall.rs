@@ -29,6 +29,7 @@ struct StallEpisode {
 }
 
 /// Why a poll stopped short.
+#[derive(Debug)]
 pub(super) enum PollError {
     /// The next poll retries.
     Stalled(Stall),
@@ -37,6 +38,7 @@ pub(super) enum PollError {
 }
 
 /// A poll that read nothing it could act on. Nothing is credited or skipped until it clears.
+#[derive(Debug)]
 pub(super) enum Stall {
     /// The chain could not be read.
     Rpc(anyhow::Error),

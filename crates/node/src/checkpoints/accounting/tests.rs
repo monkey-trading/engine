@@ -1,5 +1,7 @@
 use super::*;
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use engine_core::Engine;
 use engine_core::auth::ClientAuth;
 use engine_core::command::{AdminCommand, Sequenced};
@@ -7,6 +9,18 @@ use engine_core::protocol::ProtocolVersion;
 use engine_core::types::AccountId;
 
 use crate::test_support::{TRADER, dev_config};
+mod receipts;
+
+#[derive(serde::Deserialize)]
+struct ReceiptState {
+    #[serde(default)]
+    deposits: BTreeMap<String, engine_core::deposits::RecordedDeposit>,
+}
+
+fn receipt_state(engine: &Engine) -> ReceiptState {
+    serde_json::from_value(serde_json::to_value(engine).expect("engine state serializes"))
+        .expect("receipt state decodes")
+}
 
 #[test]
 fn accounting_matches_cash_and_references_across_credit_acceptance_rules() {
@@ -125,11 +139,54 @@ fn overflow_refuses_the_whole_accounting_batch_without_wrapping() {
     }
 }
 
-/// The former production scans, retained only as an independent state-based test oracle.
+/// Independent full-state scans, including adopted, live and reversed receipt identities.
 pub(crate) fn recompute(engine: &Engine, unpaid: Fixed) -> (Fixed, u64) {
     let liabilities =
         engine.accounts().values().fold(engine.house_cash() + unpaid, |sum, account| sum + account.balance);
-    (liabilities, u64::try_from(engine.credited_refs_with_prefix("0x").count()).unwrap())
+    let state = receipt_state(engine);
+    let historical: BTreeSet<_> = engine.credited_refs_with_prefix("0x").collect();
+    let represented: BTreeSet<_> = state
+        .deposits
+        .values()
+        .map(|record| format!("{}:{}", record.receipt.tx_hash, record.receipt.log_index))
+        .filter(|reference| historical.contains(reference.as_str()))
+        .collect();
+    let live = state
+        .deposits
+        .values()
+        .filter(|record| record.status != engine_core::deposits::DepositStatus::Reversed)
+        .count();
+    let count = |n| u64::try_from(n).expect("state count fits u64");
+    let deposits = count(historical.len())
+        .checked_sub(count(represented.len()))
+        .and_then(|n| n.checked_add(count(live)))
+        .expect("receipt counts are representable");
+    (liabilities, deposits)
+}
+
+/// Canonical coverage is a separate full scan, independent of the production hot index.
+pub(crate) fn recompute_work(engine: &Engine, unpaid: Fixed) -> (Fixed, u64, crate::checkpoints::DepositCoverage) {
+    use crate::checkpoints::DepositCoverage;
+
+    let (liabilities, historical) = recompute(engine, unpaid);
+    if !engine.deposit_finality_enabled() {
+        return (liabilities, historical, DepositCoverage::Historical);
+    }
+    let Some(checkpoint) = engine.custody_checkpoint() else {
+        return (liabilities, historical, DepositCoverage::AwaitingCanonicalScan);
+    };
+    let above = receipt_state(engine)
+        .deposits
+        .values()
+        .filter(|record| {
+            record.status != engine_core::deposits::DepositStatus::Reversed && record.receipt.block > checkpoint.block
+        })
+        .count();
+    let Some(deposits) = checkpoint.deposit_count.checked_add(u64::try_from(above).expect("receipt count fits u64"))
+    else {
+        return (liabilities, historical, DepositCoverage::AwaitingCanonicalScan);
+    };
+    (liabilities, deposits, DepositCoverage::Canonical)
 }
 
 /// Compares every cached quantity with an independently replayed approval total and state scan.

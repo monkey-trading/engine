@@ -111,11 +111,19 @@ pub enum ProtocolVersion {
     /// and finalised before the first command at or after its end, budgets halve every 26,280
     /// periods, and each account's cumulative entitlement is a leaf of the state tree.
     V19,
+    /// Sequencer-confirmed custody receipts are trading collateral; Ethereum finality releases
+    /// withdrawal principal, and canonical reversals remove the credited cash exactly once.
+    V20,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V19;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V20;
+
+    /// Whether this rule set credits exact receipts with withdrawal principal locks.
+    pub fn supports_deposit_finality(self) -> bool {
+        self >= ProtocolVersion::V20
+    }
 
     /// Whether this is `V2`, which engine state leaves out of its encoding.
     pub fn is_v2(&self) -> bool {

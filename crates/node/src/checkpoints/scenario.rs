@@ -285,7 +285,12 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
         domain: Some(domain),
         deferred_withdrawals: true,
     };
-    let work = crate::checkpoints::Work { checkpoint, liabilities: current.balance, deposits: current.deposits };
+    let work = crate::checkpoints::Work {
+        checkpoint,
+        liabilities: current.balance,
+        deposits: current.deposits,
+        coverage: crate::checkpoints::DepositCoverage::Historical,
+    };
     include_checkpoint(&delayed, &work.checkpoint).await;
     assert_eq!(delayed.reconcile(&work).await.unwrap(), (None, false));
     let nonce = provider.request::<_, U64>("eth_getTransactionCount", (checkpoint_relayer, "latest")).await.unwrap();

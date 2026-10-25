@@ -4,6 +4,8 @@ use std::collections::BTreeSet;
 
 use engine_core::Engine;
 use engine_core::command::{AdminCommand, Command, Sequenced};
+use engine_core::deposits::DepositBeneficiary;
+use engine_core::eip712::B256;
 use engine_core::event::{CancelReason, Fill};
 use engine_core::price::SourceQuote;
 use engine_core::types::{AccountId, Millis, Side};
@@ -54,6 +56,88 @@ fn recorded_events_put_no_account_in_any_label_or_value() {
     assert!(!text.contains(&ACCOUNT.to_string()), "{text}");
     assert!(!text.contains("account"), "{text}");
     assert!(!text.contains("0xdead"), "{text}");
+}
+
+#[test]
+fn custody_rejections_precreate_and_count_every_public_reason_exactly_once() {
+    let metrics = Metrics::new();
+    let receipt = every_event()
+        .into_iter()
+        .find_map(|event| match event {
+            Event::CustodyDepositRejected { receipt, .. } => Some(receipt),
+            _ => None,
+        })
+        .expect("custody rejection fixture");
+    let reasons = [
+        DepositReject::ProtocolNotActive,
+        DepositReject::InvalidReceipt,
+        DepositReject::InvalidAmount,
+        DepositReject::ArithmeticOverflow,
+        DepositReject::UnknownReceipt,
+        DepositReject::ConflictingReceipt,
+        DepositReject::SettledReceipt,
+    ];
+    let kinds: BTreeSet<_> = reasons.iter().map(deposit_reject_kind).collect();
+    assert_eq!(kinds, BTreeSet::from(DEPOSIT_REJECT_KINDS));
+    let initial = metrics.encode();
+    for reason in reasons {
+        let kind = deposit_reject_kind(&reason);
+        assert_eq!(serde_json::to_string(&reason).unwrap(), format!("{{\"kind\":\"{kind}\"}}"));
+        let series = format!("engine_rejections_total{{event=\"custody_deposit_rejected\",reason=\"{kind}\"}}");
+        assert!(initial.contains(&format!("{series} 0\n")), "{initial}");
+        let event = Event::CustodyDepositRejected { receipt: receipt.clone(), reason };
+        metrics.record(&event);
+        assert!(metrics.encode().contains(&format!("{series} 1\n")));
+        metrics.record(&event);
+        assert!(metrics.encode().contains(&format!("{series} 2\n")));
+    }
+    assert_eq!(counted(&metrics.encode(), "engine_rejections_total{"), 7, "only the seven custody series moved");
+}
+
+#[test]
+fn custody_receipt_identity_never_expands_rejection_label_cardinality() {
+    let metrics = Metrics::new();
+    let receipt = every_event()
+        .into_iter()
+        .find_map(|event| match event {
+            Event::CustodyDepositRejected { receipt, .. } => Some(receipt),
+            _ => None,
+        })
+        .expect("custody rejection fixture");
+    let labels = |text: &str| -> BTreeSet<String> {
+        text.lines()
+            .filter_map(|line| line.strip_prefix("engine_rejections_total{"))
+            .map(|line| line.split_once('}').unwrap().0.to_owned())
+            .collect()
+    };
+    let initial = labels(&metrics.encode());
+    for byte in 1..=32 {
+        let account = AccountId([byte; 20]);
+        let hash = B256::repeat_byte(byte);
+        let event = Event::CustodyDepositRejected {
+            receipt: engine_core::deposits::DepositReceipt {
+                beneficiary: DepositBeneficiary::Trader { account },
+                tx_hash: hash,
+                log_index: u64::from(byte),
+                ..receipt.clone()
+            },
+            reason: DepositReject::ConflictingReceipt,
+        };
+        metrics.record(&event);
+        let text = metrics.encode();
+        assert!(!text.contains(&account.to_string()), "{text}");
+        assert!(!text.contains(&hash.to_string()), "{text}");
+    }
+    let text = metrics.encode();
+    assert_eq!(labels(&text), initial);
+    assert!(!text.contains("account"), "{text}");
+    assert!(!text.contains("chain_ref"), "{text}");
+    assert!(
+        text.contains(
+            "engine_rejections_total{event=\"custody_deposit_rejected\",reason=\"conflicting_receipt\"} 32\n"
+        )
+    );
+    assert_eq!(counted(&text, "engine_rejections_total{"), 1, "every receipt shares one series");
 }
 
 #[test]
@@ -133,7 +217,10 @@ fn every_rejection_and_delivery_series_starts_at_zero() {
     ] {
         assert!(text.contains(line), "{line}: {text}");
     }
-    assert_eq!(text.matches("engine_rejections_total{").count(), 3 * REJECT_KINDS.len() + 4 + 1);
+    assert_eq!(
+        text.matches("engine_rejections_total{").count(),
+        3 * REJECT_KINDS.len() + DEPOSIT_REJECT_KINDS.len() + 4 + 1
+    );
     assert_eq!(text.matches("engine_alert_deliveries_total{").count(), 2 * 3);
     assert!(text.contains("engine_alert_attempts_failed_total{severity=\"warning\"} 0\n"), "{text}");
 }

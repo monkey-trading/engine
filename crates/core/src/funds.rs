@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use crate::Fixed;
 use crate::account::Position;
 use crate::auth::RequestAuth;
+use crate::deposits::legacy_chain_reference;
 use crate::eip712::withdrawal_hash;
 use crate::engine::Engine;
 use crate::event::{Event, Reject};
@@ -16,10 +17,12 @@ use crate::protocol::ProtocolVersion;
 use crate::types::{AccountId, MarketId};
 
 impl Engine {
-    /// Credits a finalised vault deposit, at most once per chain reference.
+    /// Credits legacy or mock cash once; receipt-finality rules refuse the legacy EVM route.
     pub(crate) fn deposit(&mut self, account: AccountId, amount: Fixed, chain_ref: &str, events: &mut Vec<Event>) {
         let reason = if !amount.is_valid_input() {
             Some(Reject::InvalidAmount)
+        } else if self.deposit_finality_enabled() && legacy_chain_reference(chain_ref).is_some() {
+            Some(Reject::CustodyReceiptRequired)
         } else if self.credited_refs.contains(chain_ref) {
             Some(Reject::DuplicateReference)
         } else {
@@ -49,7 +52,16 @@ impl Engine {
         });
         let available = self.accounts.get(&account).map_or(Fixed::ZERO, |acct| {
             let (equity, margin) = self.equity_and_margin(acct, None);
-            acct.balance.min(equity - margin).max(Fixed::ZERO)
+            let cash = if self.deposit_finality_enabled() {
+                if acct.balance > acct.unfinalised_deposits {
+                    acct.balance - acct.unfinalised_deposits
+                } else {
+                    Fixed::ZERO
+                }
+            } else {
+                acct.balance
+            };
+            cash.min(equity - margin).max(Fixed::ZERO)
         });
         let reason = if let Err(reason) = authorised {
             Some(reason)
@@ -77,8 +89,20 @@ impl Engine {
         let recorded_zero = amount == Fixed::ZERO && self.protocol_version >= ProtocolVersion::V4;
         let reason = if !recorded_zero && !amount.abs().is_valid_input() {
             Some("house capital amount out of range")
+        } else if self.deposit_finality_enabled() && legacy_chain_reference(chain_ref).is_some() {
+            Some("vault capital credits require exact custody receipts")
         } else if self.credited_refs.contains(chain_ref) {
             Some("house capital reference already applied")
+        } else if self.deposit_finality_enabled()
+            && amount.is_negative()
+            && self.unfinalised_house_deposits.is_positive()
+            && self
+                .house_cash
+                .raw()
+                .checked_add(amount.raw())
+                .is_none_or(|cash| cash < self.unfinalised_house_deposits.raw())
+        {
+            Some("house capital move would withdraw unfinalised principal")
         } else if amount.is_negative() && !(self.house_nav() + amount).is_positive() {
             Some("house capital move would leave NAV <= 0")
         } else {
@@ -200,6 +224,27 @@ mod tests {
     use crate::engine::MarketState;
     use crate::market::MarketSpec;
     use crate::types::Side;
+
+    #[test]
+    fn a_house_principal_lock_refuses_an_overflowing_cash_debit_without_mutation() {
+        let cash = Fixed::from_raw(i128::MIN + 1);
+        let mut engine = Engine {
+            protocol_version: ProtocolVersion::LATEST,
+            house_cash: cash,
+            unfinalised_house_deposits: Fixed::ONE,
+            ..Engine::default()
+        };
+        assert!(engine.deposit_finality_enabled(), "V20 activation enables deposit finality");
+        let mut events = Vec::new();
+        engine.house_capital(-Fixed::ONE, "overflowing-house-debit", &mut events);
+        assert_eq!(
+            events,
+            vec![Event::AdminRejected { reason: "house capital move would withdraw unfinalised principal".into() }]
+        );
+        assert_eq!(engine.house_cash, cash);
+        assert_eq!(engine.unfinalised_house_deposits, Fixed::ONE);
+        assert!(!engine.is_credited("overflowing-house-debit"));
+    }
 
     #[test]
     fn financing_whose_notional_times_its_rate_passes_i128_is_charged_exactly() {

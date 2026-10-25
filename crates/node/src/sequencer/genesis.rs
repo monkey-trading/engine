@@ -212,7 +212,7 @@ pub(crate) fn check_genesis(client_auth: &ClientAuth, operator: Operator, genesi
 /// - the engine rejects a command; the error names the genesis entry it comes from
 fn check_genesis_commands(client_auth: &ClientAuth, operator: Operator, genesis: Vec<Command>) -> anyhow::Result<()> {
     let mut engine = Engine::new();
-    let cmds = activation_commands(&engine, client_auth, operator).into_iter().chain(genesis);
+    let cmds = activation_commands(&engine, client_auth, operator, Vec::new()).into_iter().chain(genesis);
     for (seq, cmd) in (0..).zip(cmds) {
         let sequenced = Sequenced { seq, ts: 0, cmd };
         let events = engine.apply(&sequenced).context("checking genesis")?;

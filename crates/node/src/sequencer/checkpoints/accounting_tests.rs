@@ -5,13 +5,15 @@ use std::time::{Duration, Instant};
 
 use engine_core::Fixed;
 use engine_core::command::{Command, OrderKind, OrderRequest};
-use engine_core::event::Event;
+use engine_core::deposits::{CustodyCheckpoint, DepositBeneficiary, DepositReceipt, DepositStatus, DepositUpdate};
+use engine_core::eip712::B256;
+use engine_core::event::{Event, Reject};
 use engine_core::price::SourceQuote;
 use engine_core::types::{AccountId, Millis, Side};
 use tokio::sync::{broadcast, mpsc, watch};
 
 use crate::checkpoints::Work;
-use crate::checkpoints::accounting::tests::{approved, assert_matches, recompute};
+use crate::checkpoints::accounting::tests::{approved, assert_matches, recompute, recompute_work};
 use crate::clock::Clock;
 use crate::clock::test_clock::TestClock;
 use crate::log::{CheckpointParent, Manifest};
@@ -126,7 +128,10 @@ fn gated_live_and_recovered_accounting_matches_cash_through_trading_and_withdraw
     for (actual, expected) in restored.iter().zip(&live) {
         assert_eq!(actual.checkpoint.signature, expected.checkpoint.signature);
         assert_eq!(actual.checkpoint.seq, expected.checkpoint.seq);
-        assert_eq!((actual.liabilities, actual.deposits), (expected.liabilities, expected.deposits));
+        assert_eq!(
+            (actual.liabilities, actual.deposits, actual.coverage),
+            (expected.liabilities, expected.deposits, expected.coverage)
+        );
     }
     recovered.trust(sample_around(clock.as_ref())).unwrap();
     let (events, _) = apply(&mut recovered, &mut queued, &mut unpaid, deposit(7, "0xafter-restart"));
@@ -156,6 +161,11 @@ fn gated_work_capture_scaling() {
     );
 }
 
+#[test]
+fn gated_capture_fixture_uses_current_receipts_and_independently_verified_cash() {
+    capture_population(4);
+}
+
 /// Builds real credited state, then measures the production gate's capture, registry, and send.
 fn capture_population(count: u64) -> (Duration, Duration, Duration) {
     let clock = Arc::new(TestClock::at(START));
@@ -182,21 +192,52 @@ fn capture_population(count: u64) -> (Duration, Duration, Duration) {
     seq.trust(sample_around(clock.as_ref())).unwrap();
     while queued.try_recv().is_ok() {}
     seq.checkpoint_status(seq.last_seq(), true).unwrap();
+    seq.sequence(Command::CustodyFinalised(CustodyCheckpoint {
+        block: 0,
+        block_hash: B256::repeat_byte(1),
+        deposit_count: 0,
+    }))
+    .unwrap()
+    .unwrap();
+    assert_eq!(seq.engine.custody_deposit_coverage(), Some(0));
     for index in 1..=count {
-        let cmd = Command::Deposit {
-            account: account(index),
-            amount: Fixed::from_int(10),
-            chain_ref: format!("0x{index:064x}:0"),
-        };
+        let receipt = population_receipt(index);
+        let cmd = Command::CustodyDeposit(Box::new(DepositUpdate::Credit { receipt: receipt.clone() }));
         let events = seq.sequence(cmd).unwrap().unwrap();
-        assert!(events.iter().any(|event| matches!(event, Event::Deposited { .. })));
+        assert!(events.contains(&Event::CustodyDepositChanged {
+            receipt,
+            status: DepositStatus::Unfinalised,
+            principal_delta: Fixed::from_int(10),
+        }));
         if index.is_multiple_of(1024) {
             seq.flush().unwrap();
         }
     }
+    assert_eq!(seq.engine.accounts()[&account(1)].unfinalised_deposits, Fixed::from_int(10));
+    let withdraw = Command::Withdraw { account: account(1), amount: Fixed::ONE, auth: None };
+    let events = seq.sequence(withdraw.clone()).unwrap().unwrap();
+    assert!(events.iter().any(|event| matches!(event,
+        Event::WithdrawalRejected { reason: Reject::InsufficientFunds { available }, .. }
+        if *available == Fixed::ZERO)));
+    let receipt = population_receipt(1);
+    let observed_at_seq = seq.engine.recorded_deposit(&receipt.reference()).unwrap().updated_at_seq;
+    let events = seq
+        .sequence(Command::CustodyDeposit(Box::new(DepositUpdate::Finalise {
+            receipt: receipt.clone(),
+            observed_at_seq,
+        })))
+        .unwrap()
+        .unwrap();
+    assert!(events.contains(&Event::CustodyDepositChanged {
+        receipt,
+        status: DepositStatus::Finalised,
+        principal_delta: Fixed::ZERO,
+    }));
+    assert_eq!(seq.engine.accounts()[&account(1)].balance, Fixed::from_int(10));
+    assert_eq!(seq.engine.accounts()[&account(1)].unfinalised_deposits, Fixed::ZERO);
+    assert_eq!(seq.engine.custody_deposit_coverage(), Some(count));
     // An approval forces the real gated checkpoint after the entire population has been credited.
-    let events =
-        seq.sequence(Command::Withdraw { account: account(1), amount: Fixed::ONE, auth: None }).unwrap().unwrap();
+    let events = seq.sequence(withdraw).unwrap().unwrap();
     assert_eq!(approved(&events), Fixed::ONE);
     seq.flush().unwrap();
     assert_eq!(seq.engine.accounts().len(), count as usize);
@@ -207,6 +248,8 @@ fn capture_population(count: u64) -> (Duration, Duration, Duration) {
     assert!(queued.try_recv().is_err());
     assert_eq!((forced.liabilities, forced.deposits), expected);
     let cp = forced.checkpoint;
+    let expected_work = recompute_work(&seq.engine, Fixed::ONE);
+    assert_eq!((expected_work.0, expected_work.1), expected);
     let mut samples = Vec::new();
     for index in 0..216 {
         let checkpoint = cp.clone();
@@ -217,10 +260,10 @@ fn capture_population(count: u64) -> (Duration, Duration, Duration) {
             samples.push(elapsed);
         }
         let captured = queued.try_recv().unwrap();
-        assert_eq!((captured.liabilities, captured.deposits), expected);
+        assert_eq!((captured.liabilities, captured.deposits, captured.coverage), expected_work);
         let registered = registry.lock().unwrap();
         let registered = registered.get(&cp.seq).unwrap();
-        assert_eq!((registered.liabilities, registered.deposits), expected);
+        assert_eq!((registered.liabilities, registered.deposits, registered.coverage), expected_work);
     }
     let mut scans = Vec::new();
     for _ in 0..7 {
@@ -239,6 +282,20 @@ fn capture_population(count: u64) -> (Duration, Duration, Duration) {
     (samples[100], replay, scans[3])
 }
 
+/// Creates distinct deterministic receipt inputs for the local population fixture.
+fn population_receipt(index: u64) -> DepositReceipt {
+    DepositReceipt {
+        block: 1,
+        block_hash: B256::repeat_byte(1),
+        tx_hash: format!("0x{index:064x}").parse().unwrap(),
+        log_index: index,
+        transaction_deposit_index: 0,
+        deposit_id: index,
+        beneficiary: DepositBeneficiary::Trader { account: account(index) },
+        amount: Fixed::from_int(10),
+    }
+}
+
 /// Applies one live command and checks its cache, forced checkpoint, and registered work.
 fn apply(
     seq: &mut Sequencer,
@@ -249,14 +306,14 @@ fn apply(
     let events = seq.sequence(cmd).unwrap().expect("trusted stamp");
     *unpaid += approved(&events);
     assert_matches(seq.accounting, &seq.engine, *unpaid);
-    let expected = recompute(&seq.engine, *unpaid);
+    let expected = recompute_work(&seq.engine, *unpaid);
     let mut work = Vec::new();
     while let Ok(captured) = queued.try_recv() {
         assert_eq!(captured.checkpoint.seq, seq.last_seq().unwrap());
-        assert_eq!((captured.liabilities, captured.deposits), expected);
+        assert_eq!((captured.liabilities, captured.deposits, captured.coverage), expected);
         let registry = seq.gate.as_ref().unwrap().registry.as_ref().unwrap().lock().unwrap();
         let registered = registry.get(&captured.checkpoint.seq).unwrap();
-        assert_eq!((registered.liabilities, registered.deposits), expected);
+        assert_eq!((registered.liabilities, registered.deposits, registered.coverage), expected);
         work.push(captured);
     }
     assert_eq!(work.len(), 1, "every applied command forces exactly one checkpoint");

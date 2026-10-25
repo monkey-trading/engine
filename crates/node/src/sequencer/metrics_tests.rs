@@ -8,7 +8,7 @@ use engine_core::types::Side;
 use tokio::sync::oneshot;
 use tokio::time::advance;
 
-use crate::alerts::capture;
+use crate::alerts::{Severity, capture};
 use crate::clock::test_clock::TestClock;
 use crate::log::{Manifest, SegmentedLog};
 use crate::metrics::Metrics;
@@ -43,6 +43,39 @@ async fn sequencing_counts_commands_fills_and_rejections_by_reason_and_times_che
     node.stop().await;
     let checkpointed = Sequencer::read_log(&dir, |_| {}).unwrap().replayed.last_checkpoint_ts.unwrap();
     assert_eq!(metrics.last_checkpoint_seconds.get(), checkpointed as f64 / 1000.0);
+}
+
+#[tokio::test]
+async fn custody_rejections_from_sequencing_are_counted_and_keep_critical_alerts() {
+    let dir = scratch_dir("seq-custody-rejection-metrics");
+    let node =
+        TestSequencer::start_at(&dir, 64, Arc::new(TestClock::default()), genesis_commands(&dev_config().genesis));
+    let mut receipt = crate::test_support::every_event()
+        .into_iter()
+        .find_map(|event| match event {
+            Event::CustodyDepositRejected { receipt, .. } => Some(receipt),
+            _ => None,
+        })
+        .expect("custody rejection fixture");
+    receipt.amount = Fixed::ZERO;
+    let events =
+        node.submit(Command::CustodyDeposit(Box::new(engine_core::deposits::DepositUpdate::Credit { receipt }))).await;
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            Event::CustodyDepositRejected { reason: engine_core::deposits::DepositReject::InvalidAmount, .. }
+        )),
+        "{events:?}"
+    );
+    let text = node.metrics.encode();
+    assert!(
+        text.contains("engine_rejections_total{event=\"custody_deposit_rejected\",reason=\"invalid_amount\"} 1\n"),
+        "{text}"
+    );
+    let lines = capture(|| events.iter().for_each(alert_on));
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(lines[0].severity, Some(Severity::Critical));
+    node.stop().await;
 }
 
 #[test]

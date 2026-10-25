@@ -71,7 +71,12 @@ fn cache_restores_each_outstanding_checkpoint_with_its_original_accounting() {
         assert_eq!(actual.checkpoint, expected.checkpoint);
         assert_eq!((actual.liabilities, actual.deposits), (expected.liabilities, expected.deposits));
     }
-    let restored = ReplayedLog { log: SegmentedLog::open(&dir, |_| Ok(())).unwrap(), replayed, snapshot_seq: None };
+    let restored = ReplayedLog {
+        log: SegmentedLog::open(&dir, |_| Ok(())).unwrap(),
+        replayed,
+        snapshot_seq: None,
+        legacy_authorizations: Default::default(),
+    };
     restored.validate_submission(parent, Some(&expected[0].checkpoint)).unwrap();
     let mut reserved = expected[0].checkpoint.clone();
     reserved.signature.push('0');

@@ -11,6 +11,7 @@ use axum::body::{Body, to_bytes};
 use axum::extract::connect_info::MockConnectInfo;
 use axum::http::Request as HttpRequest;
 use engine_core::command::{AdminCommand, OrderKind};
+use engine_core::deposits::{DepositBeneficiary, DepositReceipt, DepositUpdate};
 use engine_core::eip712::B256;
 use engine_core::emissions::{EmissionSchedule, PERIOD_MS, TokenUnits};
 use engine_core::merkle::RootWork;
@@ -46,6 +47,47 @@ const OLD_LOGS: [&str; 3] = [
     concat!(env!("CARGO_MANIFEST_DIR"), "/tests/reference/v3.jsonl"),
     concat!(env!("CARGO_MANIFEST_DIR"), "/tests/reference/v4.jsonl"),
 ];
+
+#[tokio::test]
+async fn account_view_and_proof_expose_pending_principal_then_finality_releases_only_the_lock() {
+    let node = Node::start("pending-principal").await;
+    assert!(node.state.query(|e| e.deposit_finality_enabled()).await.unwrap());
+    let trader = account(7);
+    node.deposit(trader, "50").await;
+    let receipt = DepositReceipt {
+        block: 1,
+        block_hash: B256::repeat_byte(1),
+        tx_hash: B256::repeat_byte(2),
+        log_index: 0,
+        transaction_deposit_index: 0,
+        deposit_id: 0,
+        beneficiary: DepositBeneficiary::Trader { account: trader },
+        amount: "100".parse().unwrap(),
+    };
+    node.state
+        .submit(Command::CustodyDeposit(Box::new(DepositUpdate::Credit { receipt: receipt.clone() })))
+        .await
+        .unwrap();
+    let (status, view) = node.get(&format!("/v1/accounts/{trader}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(view["balance"], "150");
+    assert_eq!(view["unfinalised_deposits"], "100");
+    node.checkpoint().await;
+    let (_, body) = node.get(&format!("/v1/accounts/{trader}/proof")).await;
+    let proof: AccountProof = serde_json::from_value(body).unwrap();
+    assert_eq!(proof.leaf.unfinalised_deposits, "100".parse().unwrap());
+    assert!(proof.verify(logged_root(&node.entries(), proof.seq)));
+    let reference = receipt.reference();
+    let observed_at_seq =
+        node.state.query(move |e| e.recorded_deposit(&reference).unwrap().updated_at_seq).await.unwrap();
+    node.state
+        .submit(Command::CustodyDeposit(Box::new(DepositUpdate::Finalise { receipt, observed_at_seq })))
+        .await
+        .unwrap();
+    let (_, view) = node.get(&format!("/v1/accounts/{trader}")).await;
+    assert_eq!(view["balance"], "150");
+    assert!(view.get("unfinalised_deposits").is_none());
+}
 
 /// The feature's dev scenario: 100k accounts credited through the dev deposit route, with the work
 /// of a checkpoint over the same number of deposits nearly the same at 1k, 10k, and 100k accounts;

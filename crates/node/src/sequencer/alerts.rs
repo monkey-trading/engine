@@ -3,6 +3,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use engine_core::command::Command;
+use engine_core::deposits::{DepositStatus, DepositUpdate};
 use engine_core::event::Event;
 use engine_core::{Engine, Fixed};
 use tokio::time::Instant;
@@ -159,6 +161,29 @@ fn resolve(condition: &mut Option<bool>, name: &str, benchmark: &str, message: &
     }
 }
 
+/// The reference of the receipt a command reinstated after its reversal, if it did: an exact
+/// reappearance, or a replacement that returns a reversed receipt to the chain.
+pub(super) fn reinstated_receipt(cmd: &Command, events: &[Event]) -> Option<String> {
+    let Command::CustodyDeposit(update) = cmd else { return None };
+    let receipt = match update.as_ref() {
+        DepositUpdate::Reinstate { receipt, .. } => receipt,
+        DepositUpdate::Replace { replacement, replacement_reversed_at_seq: Some(_), .. } => replacement,
+        _ => return None,
+    };
+    events
+        .iter()
+        .any(|event| {
+            matches!(event, Event::CustodyDepositChanged { receipt: changed, status: DepositStatus::Unfinalised, .. }
+                if changed == receipt)
+        })
+        .then(|| receipt.reference())
+}
+
+/// Ends the reversal episode of a reinstated receipt; no other transition can have raised it.
+pub(super) fn resolve_reversal(chain_ref: &str) {
+    info!(alert_resolved = "deposit_reversed", chain_ref, "reversed receipt reinstated on the canonical chain");
+}
+
 /// Raises an alert for an engine event an operator must look at.
 pub(super) fn alert_on(event: &Event) {
     match event {
@@ -166,6 +191,12 @@ pub(super) fn alert_on(event: &Event) {
         // nothing re-examines it.
         Event::DepositRejected { account, amount, chain_ref, reason } => {
             error!(alert = "deposit_rejected", %account, %amount, chain_ref, ?reason, "deposit not credited");
+        }
+        Event::CustodyDepositChanged { receipt, status: engine_core::deposits::DepositStatus::Reversed, .. } => {
+            error!(alert = "deposit_reversed", chain_ref = %receipt.reference(), "quorum proved a credited deposit reversed");
+        }
+        Event::CustodyDepositRejected { receipt, reason } => {
+            error!(alert = "custody_deposit_rejected", chain_ref = %receipt.reference(), ?reason, "custody transition refused");
         }
         Event::PricesRejected { market, reason } => {
             // The reason can carry a per-quote value, so it goes in the message, not the episode key.

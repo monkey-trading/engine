@@ -29,6 +29,9 @@ fn only_a_mock_node_may_run_without_a_critical_route() {
         if cfg.custody.provider == crate::config::CustodyProvider::Evm
             && cfg.tee.provider != crate::config::TeeProvider::Mock
         {
+            let evm = cfg.custody.evm.as_mut().expect("EVM fixture");
+            evm.finality_tag = crate::config::FinalityTag::Latest;
+            evm.withdrawal_finality_tag = crate::config::FinalityTag::Finalized;
             cfg.checkpoints = Some(toml::from_str("rpc_url = 'http://127.0.0.1:8545'\nrelayer = '0x1111111111111111111111111111111111111111'\nretry_interval = '2s'\nrpc_timeout = '10s'").unwrap());
         }
         cfg

@@ -9,8 +9,11 @@ use crate::custody::evm::{Beneficiary, VaultDeposit, VaultIdentity, check_comple
 use crate::custody::sizing::AdaptiveSize;
 use crate::custody::stall::{PollError, Polled, Stall};
 mod alerts;
+mod anvil_finality;
+mod confirmed;
 mod cursor;
 mod fakes;
+mod legacy;
 mod reorg;
 use crate::custody::tests::fakes::*;
 mod quorum;
@@ -337,6 +340,17 @@ async fn deposits_beyond_the_engine_bounds_are_refused_with_an_alert() {
 fn a_deposit_reference_is_the_full_transaction_hash_and_the_log_index() {
     let deposit = VaultDeposit { log_index: 12, ..deposit(5, 1, Beneficiary::Trader(TRADER), USDC) };
     assert_eq!(deposit.chain_ref(), format!("0x{}05:12", "0".repeat(62)));
+}
+
+#[tokio::test]
+async fn a_closed_sequencer_is_fatal_before_any_chain_read_without_eligible_blocks() {
+    let dir = scratch("closed-before-read");
+    let chain = FakeChain::default();
+    let (tx, rx) = mpsc::channel(1);
+    drop(rx);
+    let mut watcher = watcher(&chain, &dir, 10, None);
+    assert!(matches!(watcher.poll(&tx).await, Err(PollError::Fatal(_))));
+    assert_eq!(chain.0.lock().unwrap().polls, 0);
 }
 
 #[tokio::test]

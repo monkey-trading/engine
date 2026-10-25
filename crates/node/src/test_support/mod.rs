@@ -348,7 +348,11 @@ pub fn logged_history(dir: &Path, account: AccountId) -> Vec<HistoryEvent> {
                 HistoryEvent { cursor, ts, event }
             })
         })
-        .filter(|e| serde_json::to_value(&e.event).expect("event encodes")["account"] == account.to_string())
+        .filter(|e| {
+            let json = serde_json::to_value(&e.event).expect("event encodes");
+            json.get("account").or_else(|| json.pointer("/receipt/beneficiary/account"))
+                == Some(&serde_json::Value::String(account.to_string()))
+        })
         .collect();
     events.reverse();
     events

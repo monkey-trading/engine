@@ -4,13 +4,14 @@ use std::time::Instant;
 
 use anyhow::Context;
 use engine_core::Fixed;
+use engine_core::protocol::ProtocolVersion;
 use engine_core::types::AccountId;
 use tokio::sync::mpsc;
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 use crate::checkpoints::Work;
 use crate::log::{Checkpoint, LogEntry};
-use crate::sequencer::{Sequencer, SignedWithdrawal};
+use crate::sequencer::{Sequencer, SignedWithdrawal, legacy};
 
 pub(super) struct Gate {
     sink: mpsc::Sender<Work>,
@@ -68,7 +69,7 @@ impl Sequencer {
             }
         }
         if self.gate.is_some() {
-            self.snapshot_work.push(Work::capture(cp.clone(), self.accounting));
+            self.snapshot_work.push(Work::capture(cp.clone(), self.accounting, &self.engine));
         }
         self.snapshot_signers.insert(AccountId(self.key.address()));
         self.progress.genesis.checkpoint();
@@ -90,7 +91,7 @@ impl Sequencer {
             warn!(alert = "checkpoint_post_failed", "checkpoint worker stopped; durable checkpoint awaits restart");
             return Ok(());
         }
-        let work = Work::capture(checkpoint, self.accounting);
+        let work = Work::capture(checkpoint, self.accounting, &self.engine);
         if let Some(registry) = &gate.registry {
             registry
                 .lock()
@@ -116,16 +117,31 @@ impl Sequencer {
                 Some(crate::snapshot::RecoveryBase::Checkpoint { checkpoint: work.checkpoint.clone() });
             self.snapshot_work.retain(|work| Some(work.checkpoint.seq) > posted);
         }
-        let mut ready = Vec::new();
-        gate.pending.retain(|withdrawal| {
-            if Some(withdrawal.0) <= posted {
-                ready.push(*withdrawal);
-                false
-            } else {
-                true
+        let needs_authorization = ProtocolVersion::LATEST.supports_deposit_finality()
+            && gate.pending.iter().any(|(_, account, _, nonce)| {
+                self.legacy_approvals.contains(*account, *nonce)
+                    && !self.legacy_authorizations.contains_key(&(*account, *nonce))
+            });
+        let authorized = if needs_authorization {
+            Some(self.legacy_approvals.authorize(
+                &self.engine,
+                &self.legacy_deposits,
+                &legacy::FinalityProof::default(),
+            )?)
+        } else {
+            None
+        };
+        let pending = std::mem::take(&mut gate.pending);
+        for (seq, account, amount, nonce) in pending {
+            let release_seq = self.withdrawal_release_seq(account, nonce, seq, authorized.as_ref())?;
+            if release_seq.is_none_or(|required| posted.is_none_or(|posted| posted < required)) {
+                if release_seq.is_none() {
+                    error!(alert = "legacy_withdrawal_unproven", %account, nonce,
+                        "inherited withdrawal lacks canonical finality proof");
+                }
+                self.gate.as_mut().expect("checkpoint gate exists").pending.push((seq, account, amount, nonce));
+                continue;
             }
-        });
-        for (seq, account, amount, nonce) in ready {
             let signature = self.key.sign_withdrawal(self.chain_id, &self.vault.0, account, amount, nonce);
             self.record(LogEntry::Withdrawal(SignedWithdrawal {
                 account,
@@ -136,6 +152,8 @@ impl Sequencer {
                 signature,
                 approved_seq: Some(seq),
             }))?;
+            self.legacy_approvals.signed(account, amount, nonce);
+            self.legacy_authorizations.remove(&(account, nonce));
         }
         Ok(())
     }

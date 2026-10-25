@@ -10,6 +10,7 @@
 //! or closes a position in an open market with a price.
 
 use crate::command::{AdminCommand, AdminRequest};
+use crate::deposits::legacy_chain_reference;
 use crate::engine::{Engine, MarketState};
 use crate::event::{Event, Reject};
 use crate::market::MarketSpec;
@@ -209,7 +210,13 @@ impl Engine {
                 }
                 self.operator = Some(*operator);
             }
-            AdminCommand::ActivateProtocol { version } => {
+            AdminCommand::ActivateProtocol { version } | AdminCommand::ActivateCustodyFinality { version, .. } => {
+                let starts_finality = version.supports_deposit_finality() && !self.deposit_finality_enabled();
+                let migration = matches!(cmd, AdminCommand::ActivateCustodyFinality { .. });
+                let has_legacy = self.credited_refs.iter().any(|r| legacy_chain_reference(r).is_some());
+                if (migration && !starts_finality) || (starts_finality && has_legacy && !migration) {
+                    return Err("custody finality activation requires the verified legacy credit ledger".into());
+                }
                 if *version <= self.protocol_version {
                     return Err(format!("protocol {version:?} is not newer than {:?}", self.protocol_version));
                 }
@@ -228,6 +235,9 @@ impl Engine {
                     && let Some(params) = &self.params
                 {
                     params.check_notional_weighting()?;
+                }
+                if let AdminCommand::ActivateCustodyFinality { legacy_deposits, .. } = cmd {
+                    self.lock_legacy_deposits(legacy_deposits)?;
                 }
                 // Markouts queued before `V11` carry no notional, so they would move no score, and they
                 // are in fill order rather than the due order `V11` keeps.
@@ -255,7 +265,10 @@ impl Engine {
     /// - the emission schedule, which only the operator's signature initialises
     /// - any error case of `admin`
     pub(crate) fn unsigned_admin(&mut self, cmd: &AdminCommand, events: &mut Vec<Event>) -> Result<(), String> {
-        if self.protocol_version >= ProtocolVersion::V8 && cmd.is_operator_command() && !self.credited_refs.is_empty() {
+        if self.protocol_version >= ProtocolVersion::V8
+            && cmd.is_operator_command()
+            && (!self.credited_refs.is_empty() || !self.deposits.is_empty())
+        {
             return Err("from protocol V8 the operator signs this command once funds are credited".into());
         }
         if matches!(cmd, AdminCommand::InitEmissions(_)) {

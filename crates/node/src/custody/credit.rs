@@ -15,7 +15,7 @@ use crate::custody::stall::{PollError, Stall};
 use crate::custody::usdc_to_fixed;
 use crate::sequencer::Request;
 
-/// Sequences one final deposit, unless its reference is already credited. Its span carries the
+/// Sequences one legacy configured-tag deposit, unless already credited. Its span carries the
 /// reference as `id`.
 /// Error cases:
 /// - stalled: the sequencer refused the command's stamp (see `submit`)
@@ -92,7 +92,7 @@ pub(super) async fn moved_credits(
 /// - stalled: the sequencer dropped the reply but still runs, as it does for a command whose stamp
 ///   trusted time refuses; nothing was sequenced, and the next poll retries
 /// - fatal: the sequencer has stopped
-async fn submit(tx: &mpsc::Sender<Request>, cmd: Command) -> Result<Vec<Event>, PollError> {
+pub(super) async fn submit(tx: &mpsc::Sender<Request>, cmd: Command) -> Result<Vec<Event>, PollError> {
     let stopped = || PollError::Fatal(anyhow!("sequencer stopped"));
     let (reply, rx) = oneshot::channel();
     tx.send(Request::Submit { cmd, reply: Some(reply) }).await.map_err(|_| stopped())?;
@@ -117,7 +117,7 @@ pub(super) async fn sync(tx: &mpsc::Sender<Request>) -> anyhow::Result<Option<u6
 /// Reads the engine between sequencer batches.
 /// Error cases:
 /// - the sequencer has stopped
-async fn query<T: Send + 'static>(
+pub(super) async fn query<T: Send + 'static>(
     tx: &mpsc::Sender<Request>,
     read: impl FnOnce(&Engine) -> T + Send + 'static,
 ) -> anyhow::Result<T> {

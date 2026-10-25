@@ -429,7 +429,7 @@ pub(super) async fn quorum(chains: &[FakeChain; 3]) -> Quorum<FakeChain> {
 /// A real watcher and sequencer around quorum reads.
 pub(super) fn watcher(chains: &[FakeChain; 3], dir: &std::path::Path) -> DepositWatcher<Quorum<FakeChain>> {
     let cfg: EvmCustodySection = toml::from_str(&evm_toml(dir, 100)).unwrap();
-    DepositWatcher::start(
+    DepositWatcher::start_legacy(
         Quorum::new(chains.iter().enumerate().map(|(i, c)| (format!("p{i}"), c.clone())).collect()).unwrap(),
         &cfg,
         CHAIN_ID,

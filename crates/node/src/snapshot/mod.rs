@@ -390,6 +390,8 @@ pub(crate) fn read(
     let domain = crate::log::CheckpointDomain { chain_id, vault };
     crate::checkpoints::signature::verify_with_domain(&snapshot.checkpoint, &engine, Some(domain))?;
     snapshot.context.validate(&snapshot.checkpoint, domain)?;
+    engine.restore_indexes();
+    snapshot.context.validate_engine(&snapshot.checkpoint, &engine)?;
     Ok((snapshot, engine))
 }
 

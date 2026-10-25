@@ -37,3 +37,23 @@ fn every_provider_is_checked_and_unknown_keys_and_legacy_single_rpc_are_refused(
     let legacy = text.replace("providers = [", "rpc_url = \"https://rpc.example/key\"\nproviders = [");
     assert!(toml::from_str::<NodeConfig>(&legacy).is_err());
 }
+
+#[test]
+fn production_requires_latest_credit_and_ethereum_finality_for_release() {
+    use crate::config::{FinalityTag, TeeProvider};
+    let text = std::fs::read_to_string(Path::new("../../config/anvil.toml")).unwrap();
+    for tee in [TeeProvider::Mock, TeeProvider::ConfigfsTsm] {
+        for credit in [FinalityTag::Latest, FinalityTag::Safe, FinalityTag::Finalized] {
+            for release in [FinalityTag::Latest, FinalityTag::Safe, FinalityTag::Finalized] {
+                let mut cfg: NodeConfig = toml::from_str(&text).unwrap();
+                cfg.tee.provider = tee;
+                let evm = cfg.custody.evm.as_mut().unwrap();
+                evm.finality_tag = credit;
+                evm.withdrawal_finality_tag = release;
+                let expected =
+                    tee == TeeProvider::Mock || (credit == FinalityTag::Latest && release == FinalityTag::Finalized);
+                assert_eq!(cfg.validate_custody().is_ok(), expected, "{tee:?} {credit:?} {release:?}");
+            }
+        }
+    }
+}

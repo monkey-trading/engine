@@ -30,12 +30,38 @@ pub(crate) struct Work {
     pub checkpoint: Checkpoint,
     pub liabilities: Fixed,
     pub deposits: u64,
+    pub coverage: DepositCoverage,
+}
+
+/// Historical accounting is replayed unchanged; modern count coverage needs sequenced chain proof.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DepositCoverage {
+    Historical,
+    AwaitingCanonicalScan,
+    Canonical,
 }
 
 impl Work {
     /// Captures custody accounting without traversing engine accounts or credited references.
-    pub(crate) fn capture(checkpoint: Checkpoint, accounting: Accounting) -> Self {
-        Self { checkpoint, liabilities: accounting.liabilities, deposits: accounting.deposits }
+    pub(crate) fn capture(checkpoint: Checkpoint, accounting: Accounting, engine: &engine_core::Engine) -> Self {
+        let (deposits, coverage) = if engine.deposit_finality_enabled() {
+            engine
+                .custody_deposit_coverage()
+                .map_or((accounting.deposits, DepositCoverage::AwaitingCanonicalScan), |count| {
+                    (count, DepositCoverage::Canonical)
+                })
+        } else {
+            (accounting.deposits, DepositCoverage::Historical)
+        };
+        Self { checkpoint, liabilities: accounting.liabilities, deposits, coverage }
+    }
+
+    /// Whether this work carries `accounting`'s liabilities and, unless sequenced chain proof
+    /// counted them, its deposits.
+    pub(crate) fn matches_accounting(&self, accounting: Accounting) -> bool {
+        self.liabilities == accounting.liabilities
+            && (self.coverage == DepositCoverage::Canonical || self.deposits == accounting.deposits)
     }
 }
 
@@ -301,6 +327,10 @@ impl<R: CheckpointChain> Poster<R> {
         }
         let work = finalized;
         let cp = &work.checkpoint;
+        if work.coverage == DepositCoverage::AwaitingCanonicalScan {
+            warn!(alert = "collateral_pending_deposits", "withdrawals await sequenced canonical receipt coverage");
+            return Ok((Some(cp.seq), false));
+        }
         let healthy = state.balance == work.liabilities && state.deposits == work.deposits;
         if healthy {
             info!(alert_resolved = "collateral_mismatch", "vault collateral reconciles");

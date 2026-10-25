@@ -124,7 +124,7 @@ async fn serve_node(
         .await
         .inspect_err(|e| error!(alert = "checkpoint_startup_failed", "refusing to serve: {e:#}"))?;
     let mut anchor = None;
-    let (log, history_plan) = read_log_and_history_observe(
+    let (mut log, history_plan) = read_log_and_history_observe(
         &cfg,
         Some(AccountId(key.address())),
         checkpoint_setup.as_ref().map(|setup| setup.parent),
@@ -136,6 +136,9 @@ async fn serve_node(
             }
         },
     )?;
+    log.prove_legacy_withdrawals(&cfg.custody)
+        .await
+        .inspect_err(|e| error!(alert = "legacy_withdrawal_unproven", "refusing writable recovery: {e:#}"))?;
 
     // The API also refuses an emission schedule with another budget than the vault's.
     let emission_budget = match &checkpoint_setup {
