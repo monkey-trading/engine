@@ -237,13 +237,13 @@ impl SegmentedLog {
     /// descriptors, which this recovery matched to the replayed bytes; later ones carry over.
     /// Error cases:
     /// - a reread segment differs from its descriptor, or a proof or prefix check fails
-    /// - a segment file the tip certifies past the recovered log is still on disk
+    /// - a segment file the tip covers past the recovered log is still on disk
     fn rewind(&mut self, read: Arc<dyn CatalogRead>, boundary: &CatalogBoundary, completed: u64) -> anyhow::Result<()> {
         let tip = self.manifest.catalog.take().context("recovery catalog missing")?;
-        // A certified segment whose file is still on disk past the recovered active segment was
-        // never lost. Rewinding over it would raise log_tail_lost for bytes that exist, and the
-        // writer would later refuse to link over the leftover file, stopping the node; reject the
-        // cache so recovery falls back to full replay's directory-wide refusal.
+        // A segment the tip covers whose file is still on disk past the recovered active segment
+        // was never lost. Rewinding over it would raise log_tail_lost for bytes that exist, and
+        // the writer would later refuse to link over the leftover file, stopping the node; reject
+        // the cache so recovery falls back to full replay's directory-wide refusal.
         let active_first = self.open.as_ref().map(|segment| segment.info().first_seq);
         for ordinal in completed..tip.len() {
             let first_seq = tip.at(ordinal)?.info.first_seq;
@@ -254,6 +254,17 @@ impl SegmentedLog {
                     segment_name(first_seq),
                 );
             }
+        }
+        // The tip signs its active segment's first seq too. Only a tip that extends the boundary
+        // names bytes past the rebuild; a tip at the boundary's own version, or the boundary view
+        // when no head verifies, names a segment the rebuild reuses.
+        if tip.certified() != &boundary.catalog && Some(tip.next_seq()) != active_first {
+            let first_seq = tip.next_seq();
+            ensure!(
+                !self.dir.join(segment_name(first_seq)).try_exists()?,
+                "segment {} the catalog tip holds open past the recovered log is still on disk",
+                segment_name(first_seq),
+            );
         }
         let mut completions = Vec::new();
         let mut last = None;

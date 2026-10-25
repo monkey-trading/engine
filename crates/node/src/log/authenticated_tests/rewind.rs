@@ -39,13 +39,15 @@ fn a_tip_past_the_manifest_resumes_the_catalog_from_the_boundary() {
     assert!(view.authority.is_none(), "segments past the live window wait for the post-preflight fold");
 }
 
-/// A segment file the tip certifies past the recovered active segment that is still on disk was
-/// never lost. Recovery rejects the cache so it falls back to full replay's directory-wide
-/// refusal, instead of rewinding and wedging the writer's first rotation on the leftover file. A
-/// certified segment at the active segment's own offset is not past it: recovery resumes from it.
+/// A segment file the tip covers past the recovered active segment that is still on disk was
+/// never lost: a certified completion the manifest no longer lists, or the segment the tip
+/// holds open. Recovery rejects the cache so it falls back to full replay's directory-wide
+/// refusal, instead of rewinding and wedging the writer's first rotation on the leftover file.
+/// A certified segment at the active segment's own offset is not past it: recovery resumes
+/// from it.
 #[test]
 fn a_tip_segment_still_on_disk_past_the_recovered_log_rejects_the_cache() {
-    for kept in 72..76 {
+    for kept in [72, 73, 74, 75, 79] {
         let mut f = fixture(&format!("catalog-rewind-orphan-{kept}"), 1);
         for seq in 0..3 {
             f.writer.append(&command(seq)).expect("initial");
@@ -112,6 +114,30 @@ fn a_rewind_rereads_only_segments_matching_the_tip() {
             assert_eq!(catalog.len(), t.catalog().completed_segments);
         }
     }
+}
+
+/// A rewind that rebuilds on the boundary alone (no continuation head) reuses the segments the
+/// manifest lists, so their files are not leftover: the history-lost rewind refuses nothing
+/// here and keeps every listed segment.
+#[test]
+fn a_boundary_rewind_keeps_the_listed_segments() {
+    let mut f = fixture("catalog-rewind-boundary-only", 1);
+    for seq in 0..3 {
+        f.writer.append(&command(seq)).expect("initial");
+    }
+    let c = boundary(&mut f, 2);
+    for seq in 3..80 {
+        f.writer.append(&command(seq)).expect("suffix");
+    }
+    f.writer.sync().expect("durable");
+    drop(f.writer);
+    let mut log = SegmentedLog::open_suffix(&f.dir, f.read.clone(), &c, None, |_| Ok(())).expect("recovery");
+    assert!(!log.catalog_rewound());
+    log.rewind_catalog(f.read.clone(), &c).expect("the boundary rewind keeps the listed segments");
+    assert!(log.catalog_rewound());
+    let view = log.manifest_view();
+    let catalog = view.catalog.as_ref().expect("recovered catalog");
+    assert_eq!(catalog.len() + log.pending_catalog.len() as u64, 80, "every listed segment");
 }
 
 /// The tip sealed a checkpoint the log lost, and the log then took another checkpoint at its
