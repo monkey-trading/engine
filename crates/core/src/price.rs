@@ -23,6 +23,10 @@ pub enum PriceError {
     Stale { fresh: usize, needed: usize },
     #[error("sources diverge by {divergence_bps}bps")]
     Divergent { divergence_bps: i64 },
+    /// From `V21`, a market priced from futures whose roll-adjusted index is outside the valid input
+    /// range.
+    #[error("roll-adjusted index {mid} out of range")]
+    OutOfRange { mid: Fixed },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,6 +36,10 @@ pub struct SourceQuote {
     /// Venue timestamp of the quote; from `V12`, a stored quote whose venue stamped it ahead of the
     /// sequenced time carries the sequenced time instead.
     pub ts: Millis,
+    /// From `V21`, the futures contract quoted, for a market priced from futures. Left out of the
+    /// encoding when there is none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,7 +92,9 @@ mod tests {
 
     fn quotes(qs: &[(&str, &str, Millis)]) -> BTreeMap<String, SourceQuote> {
         qs.iter()
-            .map(|(s, m, ts)| (s.to_string(), SourceQuote { source: s.to_string(), mid: m.parse().unwrap(), ts: *ts }))
+            .map(|(s, m, ts)| {
+                (s.to_string(), SourceQuote { source: s.to_string(), mid: m.parse().unwrap(), ts: *ts, contract: None })
+            })
             .collect()
     }
 

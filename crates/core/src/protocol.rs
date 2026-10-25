@@ -114,11 +114,20 @@ pub enum ProtocolVersion {
     /// Sequencer-confirmed custody receipts are trading collateral; Ethereum finality releases
     /// withdrawal principal, and canonical reversals remove the credited cash exactly once.
     V20,
+    /// A quote is stored only if its market stays open from the quote's stamp to the sequenced time,
+    /// quotes held from before a closure are dropped at the first command after it, and activation
+    /// drops held quotes that could not count under these rules, so the first index after an open
+    /// comes from quotes stamped after it. A listing may name futures contracts in roll order: its
+    /// index is the front contract's median plus a roll adjustment; the next contract's quotes are
+    /// taken too, with the gap between the two medians recorded whenever both have an index, and
+    /// once the next contract's roll time has passed the market rolls at the first command where
+    /// it has an index and a gap is recorded, the adjustment taking the gap.
+    V21,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V20;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V21;
 
     /// Whether this rule set credits exact receipts with withdrawal principal locks.
     pub fn supports_deposit_finality(self) -> bool {

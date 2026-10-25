@@ -366,6 +366,7 @@ pub fn account_of(event: &Event) -> Option<AccountId> {
         | Event::BenchmarkRateUndated { .. }
         | Event::MarketOpened { .. }
         | Event::MarketClosed { .. }
+        | Event::MarketRolled { .. }
         | Event::StressChanged { .. }
         | Event::PricesRejected { .. }
         | Event::AdminApplied

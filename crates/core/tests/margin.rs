@@ -284,7 +284,7 @@ fn liquidations(events: &[Event]) -> Vec<(MarketId, Fixed)> {
 
 /// Two venues quoting `mid` for `market`, stamped `lead_ms` after `now`.
 fn quotes_ahead(market: MarketId, mid: &str, now: Millis, lead_ms: Millis) -> Command {
-    let quote = |source: &str| SourceQuote { source: source.into(), mid: f(mid), ts: now + lead_ms };
+    let quote = |source: &str| SourceQuote { source: source.into(), mid: f(mid), ts: now + lead_ms, contract: None };
     Command::Prices { market, quotes: vec![quote("venue0"), quote("venue1")] }
 }
 

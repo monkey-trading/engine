@@ -34,8 +34,8 @@ async fn empty_windows_reach_confirmed_collateral_while_finality_is_frozen() {
     node.submit(Command::Prices {
         market: 1,
         quotes: vec![
-            SourceQuote { source: "a".into(), mid: usdc("100"), ts: now },
-            SourceQuote { source: "b".into(), mid: usdc("100"), ts: now },
+            SourceQuote { source: "a".into(), mid: usdc("100"), ts: now, contract: None },
+            SourceQuote { source: "b".into(), mid: usdc("100"), ts: now, contract: None },
         ],
     })
     .await;

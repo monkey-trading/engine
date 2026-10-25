@@ -11,7 +11,8 @@ an index: load only the rule whose hint matches the current action.
 
 - **crates/core/** — `engine-core`: the protocol state machine. Covers pricing against the index,
   size and stress spreads, margin and close-out, the profit fee, overnight financing, trading
-  sessions, dated benchmark histories (`benchmark.rs`, with calendar-change regressions in
+  sessions (from `V21` no quote stamped outside a market's hours prices it), markets priced from
+  roll-adjusted front futures contracts (`futures.rs`), dated benchmark histories (`benchmark.rs`, with calendar-change regressions in
   `tests/benchmark_retention.rs`), house exposure caps, toxicity scoring, signed client requests (EIP-712, per-account
   nonces, and expiries), USD settlement of markets quoted in other currencies, admin commands signed
   by the operator key the log records, MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
@@ -42,7 +43,9 @@ an index: load only the rule whose hint matches the current action.
   against the vault's finalized commitment before history writes, plus authenticated withdrawal
   completion replay,
   price feeds: live crypto
-  venue WebSockets (`feeds/`, one adapter per venue) and a mock, Prometheus metrics on an operator
+  venue WebSockets and RWA market-data vendors (`feeds/`, one adapter per venue: Massive and
+  TraderMade over WebSocket, Databento's live gateway over TCP, with API keys read from the
+  environment variables the config names) and a mock, Prometheus metrics on an operator
   listener, and alert routing to webhooks with a bounded durable outbox outside the public log. Its
   `production` cargo feature refuses mock TEE, custody, and feed providers at config load; release
   images build with it.
@@ -83,9 +86,10 @@ an index: load only the rule whose hint matches the current action.
   a node whose TEE is not the mock refuses them
   as its operator key, and a dev config or script that adds such a key lists it there.
   `production-genesis.toml` is the production `[genesis]` section alone: the launch markets with
-  their venue calendars, each calendar's sources and unpublished gaps, their quote currencies, and
-  the launch margins and fees; a deployment's node sections complete it into a config. Every
-  section rejects unknown keys.
+  their venue calendars, each calendar's sources and unpublished gaps, their quote currencies, the
+  futures contracts the index and commodity markets roll through with the roll rules, and the
+  launch margins and fees; a deployment's node sections complete it into a config. Every section
+  rejects unknown keys.
 - **image/** — the reproducible confidential VM image for AMD SEV-SNP: `Dockerfile` (static
   `engine`, kernel, busybox initramfs, OVMF, and the launch measurement, every input pinned),
   `init`, `kernel.config`, the `sev-snp-measure` pins, `apt.conf` (the Debian snapshot's apt
@@ -105,9 +109,10 @@ an index: load only the rule whose hint matches the current action.
   kill/restart scenario; `dev-monkey-emissions.sh`, the MONKEY emissions scenario on Anvil;
   `dev-snapshot-restart.sh`, the checkpoint snapshot restart and fallback scenario;
   `dev-deposit-finality.sh`, the sequencer confirmation and Ethereum finality scenario on the
-  vault's Anvil fixture; and `build-image.sh` and `check-image.sh`, which build the enclave image
-  from a commit and boot it under QEMU without SEV-SNP, and `check-image-retry.sh`, which checks
-  the image build's download retries.
+  vault's Anvil fixture; `dev-rwa-feeds.sh`, the RWA price feeds dev scenario against local
+  stand-ins for the market-data vendors; and `build-image.sh` and `check-image.sh`, which build the
+  enclave image from a commit and boot it under QEMU without SEV-SNP, and `check-image-retry.sh`,
+  which checks the image build's download retries.
 - **ops/** — operator assets: `grafana/engine-node.json`, the node's Grafana dashboard, and
   `prometheus/engine-node-rules.yml`, the alerting rules for a down node or failing alert pages.
 - **.github/workflows/** — `ci.yaml`: fmt, the file line cap, clippy, tests (and the node's
@@ -115,9 +120,9 @@ an index: load only the rule whose hint matches the current action.
   the unchanged-reference-log check, `cargo-deny`, the contracts' `forge fmt --check` / build /
   test, the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
   deposit finality scenarios, the metrics and alert routing dev scenario, the alert outbox
-  kill/restart scenario, the snapshot restart scenario, and the enclave image (`image` checks its
-  download retries, builds it twice, and boots it under QEMU, `image-compare` fails if the builds
-  differ), on every push to `main` and every PR.
+  kill/restart scenario, the snapshot restart scenario, the RWA price feeds dev scenario, and the
+  enclave image (`image` checks its download retries, builds it twice, and boots it under QEMU,
+  `image-compare` fails if the builds differ), on every push to `main` and every PR.
   On a PR, the first job, `changes`, sorts the changed files into the Rust, contracts, scenario,
   and image areas from an explicit path list, and each job runs only when its area changed:
   `agents/`, `research/`, the root `README.md`, `SECURITY.md`, `AGENTS.md`, and `CLAUDE.md`, and
@@ -182,6 +187,9 @@ Run from the repo root:
   `jq`; runs a dev node with `[snapshots]` on private temporary data and public Roughtime servers)
 - Deposit finality dev scenario: `./scripts/dev-deposit-finality.sh` (same Anvil/Foundry requirements
   as the vault scenario; exercises sequencer/core withdrawal approval eligibility while #23 owns payout)
+- RWA price feeds dev scenario: `./scripts/dev-rwa-feeds.sh` (loopback Massive, TraderMade, and
+  Databento stand-ins price FX, index, commodity, and share markets across a market open and a
+  futures roll, then the log replays; no vendor account or key)
 - Vault deposit dev scenario: `./scripts/dev-vault-deposits.sh` (starts Anvil, deploys the vault
   and a mock USDC, runs a node on `config/anvil.toml`, and checks each deposit credits once;
   `RPC_QUORUM_SCENARIO=1` also injects a fictional deposit, stops providers and checks recovery;

@@ -25,7 +25,8 @@ async fn sequencing_counts_commands_fills_and_rejections_by_reason_and_times_che
     let node = TestSequencer::start_at(&dir, 64, clock.clone(), genesis_commands(&dev_config().genesis));
     let genesis_commands = node.metrics.commands.get();
     let ts = clock.now_ms();
-    let quotes = ["a", "b", "c"].map(|v| SourceQuote { source: v.into(), mid: Fixed::from_int(100_000), ts });
+    let quotes =
+        ["a", "b", "c"].map(|v| SourceQuote { source: v.into(), mid: Fixed::from_int(100_000), ts, contract: None });
     node.submit(Command::Prices { market: 1, quotes: quotes.to_vec() }).await;
     node.submit(deposit(1_000, "dep-1")).await;
     let filled = node.submit(buy("0.01")).await;

@@ -13,6 +13,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::types::Millis;
 
 const MINUTES_PER_DAY: u32 = 24 * 60;
+const MS_PER_MINUTE: Millis = 60_000;
 const DAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -129,6 +130,28 @@ impl Schedule {
                     || (regular_open(windows, closed_dates, local) && !closures.iter().any(|p| p.contains(local)))
             }
         }
+    }
+
+    /// Whether the venue is open at every instant from `from` to `to`, inclusive. Openness changes
+    /// only at a minute boundary, where weekly windows and closed dates turn, or at a dated period's
+    /// start or end, so checking the two ends and each such instant between them checks them all.
+    /// Each minute between them costs a check, so callers bound the span.
+    pub fn open_throughout(&self, from: Millis, to: Millis) -> bool {
+        let Schedule::Weekly { tz, closures, special_sessions, .. } = self else { return true };
+        if from > to || !self.is_open(from) || !self.is_open(to) {
+            return false;
+        }
+        let minutes = (from.div_euclid(MS_PER_MINUTE) + 1..=to.div_euclid(MS_PER_MINUTE)).map(|m| m * MS_PER_MINUTE);
+        let local =
+            |ts: Millis| DateTime::<Utc>::from_timestamp_millis(ts).map(|utc| utc.with_timezone(tz).naive_local());
+        let (Some(first), Some(last)) = (local(from), local(to)) else { return false };
+        let edges = closures
+            .iter()
+            .chain(special_sessions)
+            .flat_map(|p| [p.from, p.to])
+            .filter(|edge| first < *edge && *edge <= last)
+            .filter_map(|edge| tz.from_local_datetime(&edge).earliest().map(|at| at.timestamp_millis()));
+        minutes.chain(edges).all(|at| self.is_open(at))
     }
 
     /// Whether the schedule lists any dated closure or special session.
@@ -394,6 +417,21 @@ mod tests {
     }
 
     #[test]
+    fn open_throughout_sees_every_closure_between_two_open_instants() {
+        let s = us_equities_with(vec![period("2026-11-27 13:00", "2026-11-27 13:00:30")], vec![]);
+        assert!(s.open_throughout(ny_ms(2026, 10, 20, 9, 30), ny_ms(2026, 10, 20, 15, 59)));
+        // Across the close, a night and the next open; across a 30-second halt; and backwards.
+        assert!(!s.open_throughout(ny_ms(2026, 10, 20, 15, 59), ny_ms(2026, 10, 21, 9, 31)));
+        assert!(!s.open_throughout(ny_ms(2026, 11, 27, 12, 59), ny_ms(2026, 11, 27, 13, 1)));
+        assert!(!s.open_throughout(ny_ms(2026, 10, 20, 15, 0), ny_ms(2026, 10, 20, 14, 0)));
+        assert!(Schedule::AlwaysOpen.open_throughout(0, i64::MAX / 2));
+        // A special session on a Saturday is open throughout, and not past its end.
+        let s = us_equities_with(vec![], vec![period("2026-10-24 10:00", "2026-10-24 12:00")]);
+        assert!(s.open_throughout(ny_ms(2026, 10, 24, 10, 0), ny_ms(2026, 10, 24, 11, 59)));
+        assert!(!s.open_throughout(ny_ms(2026, 10, 24, 11, 59), ny_ms(2026, 10, 24, 12, 1)));
+    }
+
+    #[test]
     fn week_time_round_trips() {
         let t: WeekTime = "Sun 17:05".parse().unwrap();
         assert_eq!(t.to_string(), "Sun 17:05");
@@ -403,9 +441,13 @@ mod tests {
 
     // ── Helpers ──
 
-    /// A local `"YYYY-MM-DD HH:MM"` period.
+    /// A local `"YYYY-MM-DD HH:MM[:SS]"` period.
     fn period(from: &str, to: &str) -> Period {
-        let at = |s| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M").unwrap();
+        let at = |s: &str| {
+            NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+                .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M"))
+                .unwrap()
+        };
         Period { from: at(from), to: at(to) }
     }
 

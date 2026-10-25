@@ -4,10 +4,10 @@ use std::collections::BTreeMap;
 
 use engine_core::Fixed;
 use engine_core::price::SourceQuote;
-use engine_core::types::{MarketId, Millis};
+use engine_core::types::Millis;
 
 use crate::config::Venue;
-use crate::feeds::venue::Book;
+use crate::feeds::venue::{Book, Instrument};
 
 /// The furthest a venue time may lead the host clock and still be clock skew. Beyond it the
 /// message is corrupt, such as a time in the wrong unit, so it is refused, and the Coinbase and
@@ -16,20 +16,20 @@ use crate::feeds::venue::Book;
 /// corrupt change in a kept book.
 const MAX_PLAUSIBLE_LEAD_MS: Millis = 24 * 60 * 60 * 1_000;
 
-/// The venue's mid for one book and the market it prices, refusing a book no working venue
-/// could show at host time `now`.
+/// The venue's mid for one book, as a quote for the instrument its symbol names, with the symbol,
+/// refusing a book no working venue could show at host time `now`.
 /// Error cases:
 /// - the symbol is not one this connection subscribed to
 /// - the bid or ask is outside the valid input range, or the book is crossed or locked
 /// - the timestamp is implausible (see `check_time`)
 pub(in crate::feeds) fn to_quote(
     venue: Venue,
-    markets: &BTreeMap<String, MarketId>,
+    instruments: &BTreeMap<String, Instrument>,
     book: Book,
     now: Millis,
-) -> Result<(MarketId, SourceQuote), String> {
+) -> Result<(String, SourceQuote), String> {
     let Book { symbol, bid, ask, ts } = book;
-    let market = *markets.get(&symbol).ok_or_else(|| format!("unsubscribed symbol {symbol}"))?;
+    let instrument = instruments.get(&symbol).ok_or_else(|| format!("unsubscribed symbol {symbol}"))?;
     if !bid.is_valid_input() || !ask.is_valid_input() {
         return Err(format!("{symbol} bid {bid} or ask {ask} out of range"));
     }
@@ -37,7 +37,9 @@ pub(in crate::feeds) fn to_quote(
         return Err(format!("{symbol} book crossed: bid {bid}, ask {ask}"));
     }
     check_time(&symbol, ts, now)?;
-    Ok((market, SourceQuote { source: venue.name().to_owned(), mid: (bid + ask).div_int(2), ts }))
+    let mid = (bid + ask).div_int(2);
+    let quote = SourceQuote { source: venue.name().to_owned(), mid, ts, contract: instrument.contract.clone() };
+    Ok((symbol, quote))
 }
 
 /// Refuses a top-of-book size no working venue could show.

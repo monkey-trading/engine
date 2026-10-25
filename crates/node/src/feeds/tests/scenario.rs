@@ -4,6 +4,7 @@
 //! `no_price`.
 
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -20,7 +21,7 @@ use tokio::time::{Instant, interval, sleep, timeout, timeout_at};
 
 use crate::admin::sign;
 use crate::clock::now_ms;
-use crate::config::Venue;
+use crate::config::{Genesis, Venue};
 use crate::feeds::tests::fake::{
     WAIT, accept, bitstamp_book, coinbase_levels, fast, kraken_book, listen, next_alert, send, spawn_feed_into, stream,
 };
@@ -38,10 +39,12 @@ const ETH: (&str, &str, &str) = ("2377", "2377.1", "2377.05");
 const MAX_AGE_MS: Millis = 1_000;
 
 /// A sequencer under the dev genesis, and a feed of its stream.
-struct Node {
-    tx: mpsc::Sender<Request>,
-    stream: broadcast::Receiver<Arc<StreamMsg>>,
-    account: AccountId,
+pub(super) struct Node {
+    pub(super) tx: mpsc::Sender<Request>,
+    pub(super) stream: broadcast::Receiver<Arc<StreamMsg>>,
+    pub(super) account: AccountId,
+    /// Where the sequencer writes its log.
+    pub(super) dir: PathBuf,
 }
 
 #[tokio::test]
@@ -129,6 +132,12 @@ impl Node {
         for market in cfg.genesis.markets.iter_mut().filter(|market| [1, 2].contains(&market.id)) {
             market.price_rules.max_age_ms = MAX_AGE_MS;
         }
+        Node::boot(name, &cfg.genesis).await
+    }
+
+    /// Boots a fresh log as the node does, records client auth and activates the latest protocol,
+    /// then sequences `genesis` and runs the sequencer.
+    pub(super) async fn boot(name: &str, genesis: &Genesis) -> Self {
         let dir = scratch_dir(&format!("feeds-{name}"));
         let (stream_tx, stream) = broadcast::channel(65_536);
         let (withdrawals_tx, _) = mpsc::unbounded_channel();
@@ -144,17 +153,17 @@ impl Node {
         let mut seq = Sequencer::recover(seq_cfg, Arc::new(EnclaveKey::generate()), stream_tx, withdrawals_tx)
             .expect("fresh sequencer");
         seq.activate_protocol().expect("protocol activation");
-        seq.genesis(&cfg.genesis).expect("genesis");
+        seq.genesis(genesis).expect("genesis");
         // Trusted time admits stamps on the system clock, so the queued genesis goes in now.
         seq.trust(trusted_now()).expect("genesis");
         let (tx, rx) = mpsc::channel(65_536);
         tokio::spawn(seq.run(rx));
         let account = "0x00000000000000000000000000000000000000a1".parse().expect("account");
-        Node { tx, stream, account }
+        Node { tx, stream, account, dir }
     }
 
     /// Waits until the engine has sequenced a quote from every `(market, source)` pair.
-    async fn wait_for_quotes(&mut self, expected: &[(MarketId, &str)]) {
+    pub(super) async fn wait_for_quotes(&mut self, expected: &[(MarketId, &str)]) {
         let mut missing: BTreeSet<(MarketId, String)> =
             expected.iter().map(|(market, source)| (*market, (*source).to_owned())).collect();
         let arrivals = async {
@@ -183,7 +192,7 @@ impl Node {
     }
 
     /// Credits the test account.
-    async fn deposit(&self) {
+    pub(super) async fn deposit(&self) {
         let cmd =
             Command::Deposit { account: self.account, amount: "100000".parse().unwrap(), chain_ref: "dev-1".into() };
         let events = self.submit(cmd).await;
@@ -191,7 +200,7 @@ impl Node {
     }
 
     /// A small market buy quoted at `mid`, and the events it produced.
-    async fn buy(&self, market: MarketId, mid: &str) -> Vec<Event> {
+    pub(super) async fn buy(&self, market: MarketId, mid: &str) -> Vec<Event> {
         let kind = OrderKind::Market { quoted: mid.parse().unwrap(), max_slippage_bps: None };
         let qty = "0.001".parse().unwrap();
         let order = OrderRequest {
@@ -209,7 +218,7 @@ impl Node {
 
     /// Counts the price commands for `market` the engine applies over `window`, after letting
     /// those already sent drain through.
-    async fn prices_within(&mut self, market: MarketId, window: Duration) -> usize {
+    pub(super) async fn prices_within(&mut self, market: MarketId, window: Duration) -> usize {
         sleep(Duration::from_millis(100)).await;
         while !matches!(self.stream.try_recv(), Err(TryRecvError::Empty | TryRecvError::Closed)) {}
         let deadline = Instant::now() + window;
@@ -225,7 +234,7 @@ impl Node {
     }
 
     /// Sequences `cmd` and returns its events.
-    async fn submit(&self, cmd: Command) -> Vec<Event> {
+    pub(super) async fn submit(&self, cmd: Command) -> Vec<Event> {
         let (reply, events) = oneshot::channel();
         self.tx.send(Request::Submit { cmd, reply: Some(reply) }).await.expect("sequencer up");
         timeout(WAIT, events).await.expect("reply in time").expect("reply")
@@ -269,6 +278,9 @@ async fn start_venue(node: &Node, venue: Venue, serve: fn(TcpListener) -> JoinHa
         Venue::Bitstamp => [(1, "btcusd"), (2, "ethusd")],
         Venue::Coinbase => [(1, "BTC-USD"), (2, "ETH-USD")],
         Venue::Kraken => [(1, "BTC/USD"), (2, "ETH/USD")],
+        Venue::Massive | Venue::Tradermade | Venue::Databento => {
+            unreachable!("only the crypto venues price BTC and ETH")
+        }
     };
     let (listener, url) = listen().await;
     let server = serve(listener);

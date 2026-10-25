@@ -100,7 +100,7 @@ endpoint = "{publisher}/estr"
                 market: 1,
                 quotes: ["venue-a", "venue-b"]
                     .into_iter()
-                    .map(|source| SourceQuote { source: source.into(), mid: fixed("100000"), ts: COLD })
+                    .map(|source| SourceQuote { source: source.into(), mid: fixed("100000"), ts: COLD, contract: None })
                     .collect(),
             })
             .await;

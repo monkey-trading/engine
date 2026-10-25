@@ -1,8 +1,11 @@
-//! One venue's WebSocket feed. A task connects, subscribes, and sequences the venue's top-of-book
-//! mids as `Command::Prices`, each stamped with the venue's own timestamp. It returns only when the
+//! One venue's live feed. A task connects, subscribes, and sequences the venue's top-of-book mids
+//! as `Command::Prices`, each stamped with the venue's own timestamp. It returns only when the
 //! sequencer has gone away: a failed connection is retried inside the task with backoff, and while
 //! it is down the venue's last quotes age out in the engine, which prices from the other venues.
+//! A quote stamped while its market's schedule is closed is held back, since the engine refuses it,
+//! and a symbol whose market is closed is not counted as silent.
 
+mod alerts;
 mod confirm;
 use confirm::Confirmation;
 mod quotes;
@@ -10,43 +13,43 @@ use quotes::Pending;
 mod setup;
 use setup::next_attempt;
 pub use setup::tls_config;
+mod transport;
+use transport::{Incoming, Link};
 mod validation;
 pub(super) use validation::{check_size, check_time, to_quote};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::future::pending;
-use std::mem::take;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, anyhow, bail};
 use engine_core::Fixed;
 use engine_core::command::Command;
+use engine_core::session::Schedule;
 use engine_core::types::{MarketId, Millis};
-use futures_util::{SinkExt, StreamExt};
+use futures_util::StreamExt;
 use rustls::ClientConfig;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Instant, MissedTickBehavior, interval_at, sleep, timeout};
-use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{Connector, connect_async_tls_with_config};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::clock::now_ms;
-use crate::config::{Venue, VenueConnection, VenuesSection};
-use crate::feeds::{bitstamp, coinbase, kraken};
+use crate::config::{ApiKey, Venue, VenueConnection, VenuesSection};
+use crate::feeds::{bitstamp, coinbase, databento, kraken, massive, tradermade};
 use crate::sequencer::Request;
 use crate::throttle::Throttle;
 
-/// How much of a refused message its log line keeps.
-const EXCERPT_CHARS: usize = 200;
-
-/// A venue's protocol on one connection: its subscribe messages, and a reader that keeps any
-/// state the venue's messages build on, such as an order book.
+/// A venue's protocol on one connection: its opening messages, and a reader that keeps any state
+/// the venue's messages build on, such as an order book or a login handshake.
 enum Adapter {
     Bitstamp,
     Coinbase(coinbase::Books),
     Kraken(kraken::Books),
+    Massive(massive::Session),
+    Tradermade(tradermade::Session),
+    Databento(databento::Session),
 }
 
 /// Why an adapter refused a message.
@@ -65,6 +68,9 @@ pub(super) enum Frame {
     Books(Vec<Book>),
     /// An acknowledgement, heartbeat, or status message: nothing to price.
     Control,
+    /// Messages the venue's protocol needs sent back, such as the subscription once a login is
+    /// accepted.
+    Reply(Vec<String>),
     /// The venue asked for a reconnect, so this connection ends.
     Reconnect,
 }
@@ -82,7 +88,7 @@ pub(super) struct Book {
 /// may be and still count as the venue quoting.
 #[derive(Debug, Clone, Copy)]
 pub struct Timing {
-    /// The most often one market's latest quote is sequenced.
+    /// The most often one symbol's latest quote is sequenced.
     pub interval: Duration,
     pub timeout: Duration,
     pub reconnect_min: Duration,
@@ -90,11 +96,20 @@ pub struct Timing {
     pub stale_after: Duration,
 }
 
+/// What a venue symbol quotes: a market, and for a market priced from futures, one contract.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct Instrument {
+    pub market: MarketId,
+    pub contract: Option<String>,
+}
+
 /// One venue's feed task and the alert state that outlives each connection.
 struct VenueFeed {
     conn: VenueConnection,
-    /// The connection's symbols, mapped to the markets they price.
-    markets: BTreeMap<String, MarketId>,
+    /// The vendor's API key, for a venue whose feed needs one.
+    api_key: Option<ApiKey>,
+    /// The connection's symbols, mapped to what they quote.
+    instruments: BTreeMap<String, Instrument>,
     timing: Timing,
     tls: Arc<ClientConfig>,
     tx: mpsc::Sender<Request>,
@@ -102,18 +117,26 @@ struct VenueFeed {
     down: bool,
     /// Whether the current connection has sequenced a fresh quote.
     quoted: bool,
-    /// When each market last had a fresh quote sequenced, counted from the task's start or the
-    /// venue's last recovery, and kept across routine reconnects.
-    last_quote: BTreeMap<MarketId, Instant>,
-    /// Markets alerted as silent that have not quoted since.
-    silent: BTreeSet<MarketId>,
-    /// Markets the current connection has sequenced quotes for that no confirmation covers yet.
-    unconfirmed: BTreeSet<MarketId>,
-    /// The one confirmation awaited, and the markets it covers (see `confirm`).
-    confirming: Option<(oneshot::Receiver<Confirmation>, BTreeSet<MarketId>)>,
-    /// Markets the engine did not list at the last confirmation: their quotes are held back, not
-    /// sequenced for the engine to refuse, and they are not counted as silent.
-    unlisted: BTreeSet<MarketId>,
+    /// When each symbol last had a fresh quote sequenced, counted from the task's start, the
+    /// venue's last recovery, or the last time the engine took no quote for it, and kept across
+    /// routine reconnects.
+    last_quote: BTreeMap<String, Instant>,
+    /// Symbols alerted as silent that have not quoted since.
+    silent: BTreeSet<String>,
+    /// Symbols the current connection has sequenced quotes for since its last confirmation.
+    unconfirmed: BTreeSet<String>,
+    /// The one confirmation awaited (see `confirm`).
+    confirming: Option<oneshot::Receiver<Confirmation>>,
+    /// Symbols the last confirmation found the engine could never take quotes for, by the alert
+    /// raised for them: their market unlisted, or their contract not named by its listing. Their
+    /// quotes are held back, not sequenced for the engine to refuse, and they are not counted as
+    /// silent.
+    held_back: BTreeMap<&'static str, BTreeSet<String>>,
+    /// Symbols for a contract the market does not take now, one it has rolled off or one beyond the
+    /// next: held back like `held_back`, without an alert.
+    idle: BTreeSet<String>,
+    /// Each market's trading hours, as the engine last confirmed them.
+    schedules: Arc<BTreeMap<MarketId, Schedule>>,
     refusals: Throttle,
     clock_alerts: Throttle,
 }
@@ -132,21 +155,33 @@ impl Timing {
 }
 
 impl Adapter {
-    /// A fresh adapter for a new connection to `venue`, subscribed to `symbols`.
-    fn new(venue: Venue, symbols: &[&str]) -> Self {
-        match venue {
+    /// A fresh adapter for a new connection on `conn`, authenticating with `api_key` where the
+    /// venue needs one, and subscribed to `symbols`.
+    fn new(conn: &VenueConnection, api_key: Option<&ApiKey>, symbols: &[&str]) -> Self {
+        let key = api_key.map(ApiKey::expose).unwrap_or_default();
+        match conn.venue {
             Venue::Bitstamp => Adapter::Bitstamp,
             Venue::Coinbase => Adapter::Coinbase(coinbase::Books::new(symbols)),
             Venue::Kraken => Adapter::Kraken(kraken::Books::new(symbols)),
+            Venue::Massive => Adapter::Massive(massive::Session::new(&conn.url, key, symbols)),
+            Venue::Tradermade => Adapter::Tradermade(tradermade::Session::new(key, symbols)),
+            Venue::Databento => {
+                let dataset = conn.dataset.as_deref().unwrap_or_default();
+                Adapter::Databento(databento::Session::new(key, dataset, symbols))
+            }
         }
     }
 
-    /// The text messages that subscribe a new connection to `symbols`.
-    fn subscriptions(&self, symbols: &[&str]) -> Vec<String> {
+    /// The text messages a new connection opens with: its subscriptions, or the login that leads
+    /// to them.
+    fn opening(&self, symbols: &[&str]) -> Vec<String> {
         match self {
             Adapter::Bitstamp => bitstamp::subscriptions(symbols),
             Adapter::Coinbase(_) => coinbase::subscriptions(symbols),
             Adapter::Kraken(_) => kraken::subscriptions(symbols),
+            Adapter::Massive(session) => session.opening(),
+            Adapter::Tradermade(session) => session.opening(),
+            Adapter::Databento(_) => Vec::new(),
         }
     }
 
@@ -166,20 +201,34 @@ impl Adapter {
             Adapter::Bitstamp => bitstamp::parse(text).map_err(Refusal::Message),
             Adapter::Coinbase(books) => books.read(text, now),
             Adapter::Kraken(books) => books.read(text, now),
+            Adapter::Massive(session) => session.read(text),
+            Adapter::Tradermade(session) => session.read(text),
+            Adapter::Databento(session) => session.read(text),
         }
     }
 }
 
 impl VenueFeed {
-    /// A feed for `conn`, with no outage, refusal, or silence on record, and every market's
+    /// A feed for `conn`, with no outage, refusal, or silence on record, and every symbol's
     /// silence counted from now.
-    fn new(conn: VenueConnection, timing: Timing, tls: Arc<ClientConfig>, tx: mpsc::Sender<Request>) -> Self {
-        let markets: BTreeMap<String, MarketId> = conn.symbols.iter().map(|s| (s.symbol.clone(), s.market)).collect();
+    fn new(
+        conn: VenueConnection,
+        api_key: Option<ApiKey>,
+        timing: Timing,
+        tls: Arc<ClientConfig>,
+        tx: mpsc::Sender<Request>,
+    ) -> Self {
+        let instruments: BTreeMap<String, Instrument> = conn
+            .symbols
+            .iter()
+            .map(|s| (s.symbol.clone(), Instrument { market: s.market, contract: s.contract.clone() }))
+            .collect();
         let started = Instant::now();
-        let last_quote = markets.values().map(|market| (*market, started)).collect();
+        let last_quote = instruments.keys().map(|symbol| (symbol.clone(), started)).collect();
         VenueFeed {
             conn,
-            markets,
+            api_key,
+            instruments,
             timing,
             tls,
             tx,
@@ -189,7 +238,9 @@ impl VenueFeed {
             silent: BTreeSet::new(),
             unconfirmed: BTreeSet::new(),
             confirming: None,
-            unlisted: BTreeSet::new(),
+            held_back: BTreeMap::new(),
+            idle: BTreeSet::new(),
+            schedules: Arc::default(),
             refusals: Throttle::default(),
             clock_alerts: Throttle::default(),
         }
@@ -215,50 +266,50 @@ impl VenueFeed {
         }
     }
 
-    /// One connection: connect, subscribe, then read messages and sequence one quote per market
-    /// every `timing.interval`, the newest the host clock has reached (see `Pending`). Once the
-    /// sequencer has applied it, the venue counts as quoting that market while the quote the engine
-    /// holds from it is no older than `timing.stale_after` or the market's `max_age_ms` (see
-    /// `confirm`).
+    /// One connection: connect, send the opening messages, then read messages and sequence one
+    /// quote per symbol every `timing.interval`, the newest the host clock has reached (see
+    /// `Pending`). Once the sequencer has applied it, the venue counts as quoting that symbol while
+    /// the quote the engine holds from it is no older than `timing.stale_after` or the market's
+    /// `max_age_ms` (see `confirm`).
     /// Error cases:
-    /// - connecting or subscribing fails or takes longer than `timing.timeout`
-    /// - the connection sequences no fresh quote within `timing.timeout`, or the venue closes it
-    ///   or asks for a reconnect
+    /// - connecting or sending the opening messages fails or takes longer than `timing.timeout`
+    /// - the connection sequences no fresh quote within `timing.timeout` while a market it quotes
+    ///   is open, or the venue closes it or asks for a reconnect
     /// - a symbol goes silent, so the connection is replaced to resubscribe it
     /// - the connection fails, or the sequencer has gone away
     async fn relay(&mut self) -> anyhow::Result<Infallible> {
-        let connector = Some(Connector::Rustls(self.tls.clone()));
-        let connect = connect_async_tls_with_config(self.conn.url.as_str(), None, false, connector);
-        let (ws, _) = timeout(self.timing.timeout, connect).await.context("connect timed out")?.context("connect")?;
-        let (mut sink, mut stream) = ws.split();
-        let symbols: Vec<&str> = self.markets.keys().map(String::as_str).collect();
-        let mut adapter = Adapter::new(self.conn.venue, &symbols);
-        let subscribe = async {
-            for text in adapter.subscriptions(&symbols) {
-                sink.send(Message::text(text)).await?;
-            }
-            anyhow::Ok(())
-        };
-        timeout(self.timing.timeout, subscribe).await.context("subscribe timed out")?.context("subscribe")?;
-        info!(venue = self.conn.venue.name(), "venue subscribed");
-        let subscribed = Instant::now();
+        let connect = transport::connect(&self.conn, self.tls.clone());
+        let mut link = timeout(self.timing.timeout, connect).await.context("connect timed out")?.context("connect")?;
+        let symbols: Vec<&str> = self.instruments.keys().map(String::as_str).collect();
+        let mut adapter = Adapter::new(&self.conn, self.api_key.as_ref(), &symbols);
+        let opening = adapter.opening(&symbols);
+        timeout(self.timing.timeout, link.send_all(opening))
+            .await
+            .context("subscribe timed out")?
+            .context("subscribe")?;
+        info!(venue = self.conn.venue.name(), feed = self.conn.url.as_str(), "venue connected");
+        let mut waiting_since = Instant::now();
+        // Ask at once, so the first quotes are judged against the markets' hours.
+        if self.confirming.is_none() {
+            self.confirming = Some(self.confirm().await?);
+        }
 
-        let mut buffered: BTreeMap<MarketId, Pending> = BTreeMap::new();
-        let mut flush = interval_at(subscribed + self.timing.interval, self.timing.interval);
+        let mut buffered: BTreeMap<String, Pending> = BTreeMap::new();
+        let mut flush = interval_at(Instant::now() + self.timing.interval, self.timing.interval);
         flush.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
             tokio::select! {
-                message = stream.next() => {
+                message = link.stream.next() => {
                     match message.context("connection closed")?.context("read")? {
-                        Message::Text(text) => self.receive(&mut adapter, text.as_str(), &mut buffered)?,
-                        Message::Binary(_) => self.refuse("binary message", ""),
-                        Message::Close(frame) => bail!("closed by the venue: {frame:?}"),
-                        Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {}
+                        Incoming::Text(text) => self.receive(&mut adapter, &mut link, &text, &mut buffered).await?,
+                        Incoming::Binary => self.refuse("binary message", ""),
+                        Incoming::Closed(reason) => bail!("closed by the venue: {reason}"),
+                        Incoming::Other => {}
                     }
                 }
                 answer = async {
                     match &mut self.confirming {
-                        Some((reply, _)) => reply.await,
+                        Some(reply) => reply.await,
                         None => pending().await,
                     }
                 } => {
@@ -266,27 +317,17 @@ impl VenueFeed {
                     self.confirmed(answer.map_err(|_| anyhow!("sequencer gone"))?);
                 }
                 _ = flush.tick() => {
-                    let now = now_ms();
-                    for (market, quotes) in &mut buffered {
-                        let Some(quote) = quotes.take(now) else { continue };
-                        if self.unlisted.contains(market) {
-                            continue;
-                        }
-                        self.unconfirmed.insert(*market);
-                        let cmd = Command::Prices { market: *market, quotes: vec![quote] };
-                        let request = Request::Submit { cmd, reply: None };
-                        self.tx.send(request).await.map_err(|_| anyhow!("sequencer gone"))?;
-                    }
-                    if self.confirming.is_none() && !self.unconfirmed.is_empty() {
-                        let markets = take(&mut self.unconfirmed);
-                        self.confirming = Some((self.confirm(markets.clone()).await?, markets));
-                    }
+                    self.flush(&mut buffered).await?;
                     if self.check_silent() {
                         bail!("resubscribing after a symbol went silent");
                     }
+                    // The count waits while no market the connection quotes is open.
+                    if !self.expects_quotes(now_ms()) {
+                        waiting_since = Instant::now();
+                    }
                     // Covers a connection that stays open but carries nothing usable: silent,
                     // heartbeats only, or every symbol refused, even while the venue is down.
-                    if !self.quoted && subscribed.elapsed() >= self.timing.timeout {
+                    if !self.quoted && waiting_since.elapsed() >= self.timing.timeout {
                         bail!("no fresh quote for {:?}", self.timing.timeout);
                     }
                 }
@@ -294,20 +335,57 @@ impl VenueFeed {
         }
     }
 
-    /// Reads one text message into `buffered`, refusing what does not parse or check.
+    /// Sequences the newest quote each symbol has reached, unless the engine would refuse it: its
+    /// market unlisted, its contract not taken, or stamped or sent while its market is closed. Then
+    /// asks for a confirmation if none is awaited (see `confirm`).
+    /// Error cases:
+    /// - the sequencer has gone away
+    async fn flush(&mut self, buffered: &mut BTreeMap<String, Pending>) -> anyhow::Result<()> {
+        let now = now_ms();
+        for (symbol, quotes) in buffered.iter_mut() {
+            let Some(quote) = quotes.take(now) else { continue };
+            let market = self.instruments[symbol].market;
+            if self.is_held(symbol) {
+                continue;
+            }
+            // The engine needs the market open from the venue stamp to the sequencer's stamp, which
+            // may come up to an interval after this one.
+            if !self.in_session(market, quote.ts, now) {
+                let (venue, feed) = (self.conn.venue.name(), self.conn.url.as_str());
+                debug!(venue, feed, symbol, market, "quote from outside one open session held back");
+                continue;
+            }
+            self.unconfirmed.insert(symbol.clone());
+            let cmd = Command::Prices { market, quotes: vec![quote] };
+            self.tx.send(Request::Submit { cmd, reply: None }).await.map_err(|_| anyhow!("sequencer gone"))?;
+        }
+        if self.confirming.is_none() {
+            self.unconfirmed.clear();
+            self.confirming = Some(self.confirm().await?);
+        }
+        Ok(())
+    }
+
+    /// Reads one text message into `buffered`, refusing what does not parse or check, and sends
+    /// any reply the venue's protocol asks for.
     /// Error cases:
     /// - the venue asked for a reconnect, or the adapter's state no longer matches the venue's,
     ///   including a refused book from an adapter that keeps state
-    fn receive(
+    /// - a reply cannot be sent
+    async fn receive(
         &mut self,
         adapter: &mut Adapter,
+        link: &mut Link,
         text: &str,
-        buffered: &mut BTreeMap<MarketId, Pending>,
+        buffered: &mut BTreeMap<String, Pending>,
     ) -> anyhow::Result<()> {
         let now = now_ms();
         let books = match adapter.read(text, now) {
             Ok(Frame::Books(books)) => books,
             Ok(Frame::Control) => return Ok(()),
+            Ok(Frame::Reply(messages)) => {
+                return timeout(self.timing.timeout, link.send_all(messages)).await.context("reply timed out")?;
+            }
             Ok(Frame::Reconnect) => bail!("the venue asked for a reconnect"),
             Err(Refusal::Message(reason)) => {
                 self.refuse(&reason, text);
@@ -319,9 +397,10 @@ impl VenueFeed {
             }
         };
         for book in books {
-            match to_quote(self.conn.venue, &self.markets, book, now) {
-                Ok((market, quote)) => {
-                    if let Err(lead_ms) = buffered.entry(market).or_default().add(quote, now) {
+            match to_quote(self.conn.venue, &self.instruments, book, now) {
+                Ok((symbol, quote)) => {
+                    let market = self.instruments[&symbol].market;
+                    if let Err(lead_ms) = buffered.entry(symbol).or_default().add(quote, now) {
                         self.clock_ahead(market, lead_ms);
                     }
                 }
@@ -335,116 +414,58 @@ impl VenueFeed {
         Ok(())
     }
 
-    /// Records a fresh quote sequenced for `market`, ending any outage or silence it was in. A
-    /// recovery restarts every market's silence count, since the outage alert covered the gap.
-    fn delivered(&mut self, market: MarketId) {
-        let venue = self.conn.venue.name();
-        let now = Instant::now();
-        self.quoted = true;
-        if self.down {
-            self.down = false;
-            self.last_quote.values_mut().for_each(|at| *at = now);
-            info!(alert_resolved = "venue_feed_down", venue, "venue feed recovered");
-        }
-        self.last_quote.insert(market, now);
-        if self.silent.remove(&market) {
-            let symbol = self.symbol_of(market);
-            info!(alert_resolved = "venue_symbol_silent", venue, symbol, market, "venue symbol quoting again");
-        }
+    /// Whether the engine's last confirmed hours have `market` closed at `ts`. A market whose
+    /// hours are not known yet counts as open, and the engine refuses a quote outside them.
+    fn closed(&self, market: MarketId, ts: Millis) -> bool {
+        self.schedules.get(&market).is_some_and(|schedule| !schedule.is_open(ts))
     }
 
-    /// The venue's symbol for `market`, as its alerts and their resolves carry it.
-    fn symbol_of(&self, market: MarketId) -> Option<&String> {
-        self.markets.iter().find(|(_, listed)| **listed == market).map(|(symbol, _)| symbol)
+    /// Whether the engine's last confirmed hours keep `market` open from a quote's stamp `ts` to an
+    /// interval after host time `now`, by when the sequencer stamps a quote sent now. A span longer
+    /// than `timing.stale_after` holds only a quote too old to count, so only its two ends are
+    /// checked.
+    fn in_session(&self, market: MarketId, ts: Millis, now: Millis) -> bool {
+        let Some(schedule) = self.schedules.get(&market) else { return true };
+        let interval = Millis::try_from(self.timing.interval.as_millis()).unwrap_or(Millis::MAX);
+        let stale_after = Millis::try_from(self.timing.stale_after.as_millis()).unwrap_or(Millis::MAX);
+        let (first, last) = (ts.min(now), now.saturating_add(interval));
+        if last.saturating_sub(first) > stale_after.saturating_add(interval) {
+            return schedule.is_open(first) && schedule.is_open(last);
+        }
+        schedule.open_throughout(first, last)
     }
 
-    /// Alerts once for each symbol that has gone `timing.timeout` without a fresh quote sequenced,
-    /// across reconnects: one the venue accepted but never publishes, or whose quotes arrive stale
-    /// or too far ahead of the host clock, or reach the engine late. An outage already alerted
-    /// stands for every symbol.
-    /// Returns whether a symbol went silent on this check, so the connection is replaced once to
-    /// subscribe it afresh; a symbol already silent does not trigger another.
-    fn check_silent(&mut self) -> bool {
-        if self.down {
-            return false;
-        }
-        let venue = self.conn.venue.name();
-        let now = Instant::now();
-        let mut newly_silent = false;
-        for (symbol, market) in self.markets.iter().filter(|(_, market)| !self.unlisted.contains(market)) {
-            let quiet = self.last_quote.get(market).is_some_and(|at| now.duration_since(*at) >= self.timing.timeout);
-            if quiet && self.silent.insert(*market) {
-                warn!(
-                    alert = "venue_symbol_silent",
-                    venue, symbol, market, "no fresh quote for {:?}", self.timing.timeout
-                );
-                newly_silent = true;
-            }
-        }
-        newly_silent
+    /// Every symbol held back from the engine: unlisted, unnamed, or idle.
+    fn held(&self) -> BTreeSet<String> {
+        self.held_back.values().flatten().chain(&self.idle).cloned().collect()
     }
 
-    /// Alerts, at most once per `REALERT_AFTER`, that a quote for `market` is dated `lead_ms` ahead
-    /// of the host clock, past the `MAX_QUOTE_LEAD_MS` the engine accepts, so it was dropped: the
-    /// venue's clock or the host's is wrong.
-    ///
-    /// TODO: the sequencer stamps with the untrusted host clock. One set back by more than
-    /// `MAX_QUOTE_LEAD_MS` drops every quote, and the engine keeps pricing from the quotes it
-    /// holds, judged against a sequenced time that a stalled host clock also stalls; the trusted
-    /// time bound closes this.
-    fn clock_ahead(&mut self, market: MarketId, lead_ms: Millis) {
-        if let Some(suppressed) = self.clock_alerts.ready(Instant::now()) {
-            let venue = self.conn.venue.name();
-            // The lead and the count change while the clock stays wrong, so they are not alert fields.
-            warn!(
-                alert = "venue_clock_ahead",
-                venue,
-                market,
-                "venue time {lead_ms}ms ahead of the host clock ({suppressed} more since the last alert)"
-            );
-        }
+    /// Whether `symbol` is held back from the engine (see `held`).
+    fn is_held(&self, symbol: &str) -> bool {
+        self.idle.contains(symbol) || self.held_back.values().any(|held| held.contains(symbol))
     }
 
-    /// Logs a refused message, alerting at most once per `REALERT_AFTER`.
-    fn refuse(&mut self, reason: &str, text: &str) {
-        let venue = self.conn.venue.name();
-        let Some(suppressed) = self.refusals.ready(Instant::now()) else {
-            debug!(venue, reason, "venue message refused");
-            return;
-        };
-        let excerpt: String = text.chars().take(EXCERPT_CHARS).collect();
-        // The reason and excerpt differ from message to message, so the venue alone is the key.
-        warn!(
-            alert = "venue_message_refused",
-            venue, "venue message refused ({suppressed} more since the last alert): {reason}: {excerpt}"
-        );
-    }
-
-    /// Logs a lost connection. A connection that sequenced fresh quotes is a routine drop; one that
-    /// sequenced none starts an outage, alerted once until a fresh quote ends it.
-    fn dropped(&mut self, error: &anyhow::Error, retry_in: Duration) {
-        let venue = self.conn.venue.name();
-        if self.quoted {
-            info!(venue, ?retry_in, "venue feed dropped: {error:#}");
-        } else if !self.down {
-            self.down = true;
-            warn!(alert = "venue_feed_down", venue, "venue feed down, retrying in {retry_in:?}: {error:#}");
-        } else {
-            debug!(venue, ?retry_in, "venue still down: {error:#}");
-        }
+    /// Whether any symbol should be quoting at host time `now`: one the engine takes, whose market
+    /// is open.
+    fn expects_quotes(&self, now: Millis) -> bool {
+        self.instruments
+            .iter()
+            .any(|(symbol, instrument)| !self.idle.contains(symbol) && !self.closed(instrument.market, now))
     }
 }
 
-/// Streams one venue's quotes into the sequencer until the sequencer goes away.
+/// Streams one venue's quotes into the sequencer until the sequencer goes away, authenticating
+/// with `api_key` where the venue needs one.
 /// Error cases:
 /// - the sequencer has gone away
 pub async fn run(
     conn: VenueConnection,
+    api_key: Option<ApiKey>,
     timing: Timing,
     tls: Arc<ClientConfig>,
     tx: mpsc::Sender<Request>,
 ) -> anyhow::Result<()> {
-    VenueFeed::new(conn, timing, tls, tx).run().await
+    VenueFeed::new(conn, api_key, timing, tls, tx).run().await
 }
 
 #[cfg(test)]

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
 use crate::fixed::Rounding;
+use crate::futures::{FuturesContract, validate_contracts};
 use crate::session::Schedule;
 use crate::types::{AssetClass, MarketId};
 
@@ -58,6 +59,11 @@ pub struct MarketSpec {
     /// negative house NAV is. Zero means none, and is left out of the encoding.
     #[serde(default, skip_serializing_if = "Fixed::is_zero")]
     pub house_cap_floor: Fixed,
+    /// From protocol `V21`, the futures contracts the market prices from, in roll order, with its
+    /// index roll-adjusted across them (`futures`). Empty for a market priced from spot quotes, and
+    /// left out of the encoding then.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub contracts: Vec<FuturesContract>,
 }
 
 /// The currency a market's prices are quoted in. Any other than USD names the FX market whose index
@@ -116,6 +122,7 @@ impl MarketSpec {
     /// - a slippage bound outside 0..=10000 bps, or a house cap outside 1..=100000 bps
     /// - a financing markup outside ±10000 bps, or a day basis other than 360 or 365
     /// - a minimum order notional or a house cap floor below zero or above `Fixed::MAX_INPUT`
+    /// - futures contracts that are unnamed, named twice, or out of roll order
     pub fn validate(&self) -> Result<(), String> {
         if self.symbol.is_empty() {
             return Err("symbol is empty".into());
@@ -147,7 +154,7 @@ impl MarketSpec {
         if self.house_cap_floor.is_negative() || self.house_cap_floor > Fixed::MAX_INPUT {
             return Err("house_cap_floor out of range".into());
         }
-        Ok(())
+        validate_contracts(&self.contracts)
     }
 
     /// Margin required for a position of `notional` (either sign), each band's charge rounded as

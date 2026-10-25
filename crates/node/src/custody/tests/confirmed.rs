@@ -43,8 +43,8 @@ async fn scripted_confirmation_finality_scenario() {
     node.submit(Command::Prices {
         market: 1,
         quotes: vec![
-            SourceQuote { source: "a".into(), mid: usdc("100"), ts: now },
-            SourceQuote { source: "b".into(), mid: usdc("100"), ts: now },
+            SourceQuote { source: "a".into(), mid: usdc("100"), ts: now, contract: None },
+            SourceQuote { source: "b".into(), mid: usdc("100"), ts: now, contract: None },
         ],
     })
     .await;

@@ -93,6 +93,15 @@ this crate and reproduce the signed state roots exactly.
   cancelled; budgets halve, rounded down, every 26,280 periods (182.5 days); the first command at or
   after a period's end finalises it before its own effects; and each account's cumulative
   entitlement is a state tree leaf with a proof the vault checks a claim against
+- From protocol `V21`, no quote from outside a market's hours prices it: a quote is refused unless
+  the market stays open from its stamp to its sequencing, quotes held from before a closure are
+  dropped at the first command after it, and activation drops held quotes that could not count, so
+  the first index after an open comes from quotes stamped after it
+- From protocol `V21`, markets priced from front futures contracts: a listing names its contracts in
+  roll order, the index is the front contract's median plus a roll adjustment, the gap between the
+  front and next contracts is recorded whenever both have an index, and once the next contract's
+  roll time has passed the market rolls onto it at the first command where it has an index, the
+  adjustment taking the recorded gap, even after the front contract has stopped quoting
 
 ## Repository Structure
 
@@ -134,6 +143,8 @@ this crate and reproduce the signed state roots exactly.
 - `src/market.rs` — market listings, tier tables, and quote currencies with their USD conversion
 - `src/params.rs` — protocol parameters, stress levels, toxicity, and the rollover clock
 - `src/price.rs` — venue quotes and the reference index
+- `src/futures.rs` — markets priced from futures: the contracts a listing names, which quotes the
+  market takes, the roll-adjusted index, and the roll
 - `src/session.rs` — weekly trading windows, holidays, dated closures such as early closes, and
   special sessions
 - `src/account.rs` — accounts, netted positions, and resting orders
@@ -144,8 +155,9 @@ this crate and reproduce the signed state roots exactly.
   `tests/common/`; `tests/operator.rs` covers signed
   admin commands and every-market reduce-only, `tests/toxicity.rs` toxicity scoring, and
   `tests/quote_timing.rs` indices that change without a price update and venue quotes stamped ahead,
-  `tests/stress.rs` stress levels from `V13`, and `tests/stress_activation.rs` the activation of
-  `V13` over earlier divergence triggers and move references
+  `tests/stress.rs` stress levels from `V13`, `tests/stress_activation.rs` the activation of
+  `V13` over earlier divergence triggers and move references, `tests/quote_hours.rs` quotes from
+  outside a market's hours from `V21`, and `tests/futures.rs` markets priced from futures
 - `tests/reference/` — one reference log per protocol version: each line is a sequenced command and
   the state root after it
 - `tests/reference_logs.rs` — replays every reference log and fails at the first seq whose root
@@ -172,9 +184,8 @@ this crate and reproduce the signed state roots exactly.
   signed initialisation; and the schedule's arithmetic with the first halving
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
-  (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), its
-  `V15`, `V16`, and `V17` parts (`v15.rs`, `v16.rs`, `v17.rs`), and its `V18`, `V19` and `V20` parts
-  (`v18.rs`, `v19.rs`, `v20.rs`)
+  (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
+  `V15` to `V21` parts (`v15.rs` to `v21.rs`)
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
 
@@ -292,7 +303,9 @@ log is `v16.jsonl`. `V17` keeps a market's move window across a halt; its log is
 `V18` adds dated benchmark snapshots and per-date catch-up. Its reference-log session is in
 `examples/reference_log/v18.rs`. `V19` adds MONKEY emissions (`examples/reference_log/v19.rs`).
 `V20` adds receipt-based custody principal locks, finality, reversal and reinclusion moves, with its
-reference session in `examples/reference_log/v20.rs`.
+reference session in `examples/reference_log/v20.rs`. `V21` holds each quote to one open session
+and prices markets from roll-adjusted futures contracts; its session is in
+`examples/reference_log/v21.rs`.
 For each later version:
 
 1. Add the version in code as `src/protocol.rs` lists, then extend the session in

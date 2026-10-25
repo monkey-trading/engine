@@ -343,7 +343,12 @@ impl Scenario {
     async fn losses(&self, trades: &[(AccountId, &str)], from: &str, to: &str) {
         for (mid, side) in [(from, Side::Buy), (to, Side::Sell)] {
             let ts = self.clock.now_ms();
-            let quotes = ["a", "b"].map(|source| SourceQuote { source: source.into(), mid: mid.parse().unwrap(), ts });
+            let quotes = ["a", "b"].map(|source| SourceQuote {
+                source: source.into(),
+                mid: mid.parse().unwrap(),
+                ts,
+                contract: None,
+            });
             self.submit(Command::Prices { market: 1, quotes: quotes.to_vec() }).await;
             for (account, qty) in trades {
                 let order = OrderRequest {

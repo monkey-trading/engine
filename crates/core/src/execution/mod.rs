@@ -18,7 +18,6 @@ use crate::engine::{Engine, Markout};
 use crate::event::{CancelReason, Event, Fill, Reject};
 use crate::fixed::Rounding;
 use crate::market::staircase;
-use crate::price::compute_index;
 use crate::protocol::ProtocolVersion;
 use crate::types::{AccountId, MarketId, OrderId, Side};
 
@@ -199,7 +198,7 @@ impl Engine {
         if !market.open || self.live_fx(market_id).is_err() {
             return None;
         }
-        compute_index(&market.quotes, &market.spec.price_rules, self.now).ok().map(|index| index.mid)
+        market.index(self.now).ok().map(|index| index.mid)
     }
 
     /// Fills one resting order if `mid` has reached its trigger. A limit the spread keeps out of
@@ -256,9 +255,7 @@ impl Engine {
         if !market.open {
             return Err(Reject::MarketClosed);
         }
-        let mid = compute_index(&market.quotes, &market.spec.price_rules, self.now)
-            .map_err(|error| Reject::NoPrice { error })?
-            .mid;
+        let mid = market.index(self.now).map_err(|error| Reject::NoPrice { error })?.mid;
         let fx = self.live_fx(exec.market)?;
         let currency = market.spec.quote_currency;
         let usd = |amount, rounding| currency.to_usd(amount, fx, rounding);

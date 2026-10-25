@@ -26,7 +26,7 @@ pub fn at_a_million_nav(h: &mut Harness) {
 
 /// A venue quote.
 pub fn quote(source: &str, mid: &str, ts: Millis) -> SourceQuote {
-    SourceQuote { source: source.into(), mid: f(mid), ts }
+    SourceQuote { source: source.into(), mid: f(mid), ts, contract: None }
 }
 
 /// A `V13` harness with one stress level, raised only by a divergence of `share` of the bound and

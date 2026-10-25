@@ -103,12 +103,20 @@ pub enum Event {
     MarketClosed {
         market: MarketId,
     },
+    /// From `V21`, a market priced from futures moved onto `contract`; `adjustment` is what its index
+    /// now adds to that contract's median, so the index did not move at the roll.
+    MarketRolled {
+        market: MarketId,
+        contract: String,
+        adjustment: Fixed,
+    },
     StressChanged {
         market: MarketId,
         level: usize,
     },
-    /// A price update the engine ignored: an unknown market, a malformed venue quote, or a quote
-    /// stamped more than `MAX_QUOTE_LEAD_MS` after the sequenced time.
+    /// A price update the engine ignored: an unknown market, a malformed venue quote, a quote
+    /// stamped more than `MAX_QUOTE_LEAD_MS` after the sequenced time, a quote for a futures contract
+    /// the market does not take, or, from `V21`, a quote stamped while the market is closed.
     PricesRejected {
         market: MarketId,
         reason: String,

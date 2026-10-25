@@ -5,14 +5,13 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use anyhow::{Context, bail, ensure};
-use tokio_tungstenite::tungstenite::http::Uri;
 use tracing::level_filters::LevelFilter;
 use tracing::subscriber::with_default;
 use tracing::{Level, enabled};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, registry};
 
-use crate::config::{AuthMode, CustodyProvider, FeedProvider, NodeConfig, TeeProvider, VenuesSection};
+use crate::config::{AuthMode, CustodyProvider, FeedProvider, NodeConfig, TeeProvider};
 use crate::sequencer::genesis::check_genesis;
 use crate::trusted_time::NO_SAMPLE_GRACE;
 
@@ -150,42 +149,6 @@ impl NodeConfig {
         }
         // Genesis is all or nothing, so a command the engine would refuse fails the load.
         check_genesis(&self.client_auth()?, self.operator()?, &self.genesis)
-    }
-}
-
-impl VenuesSection {
-    /// Checks the values that would otherwise fail silently: a venue quoting twice under one
-    /// source name, a symbol that could mean two markets, or a feed the host could forge.
-    /// Error cases:
-    /// - `timeout`, `reconnect_min`, or `stale_after` is zero, or `reconnect_min` exceeds
-    ///   `reconnect_max`
-    /// - no connections, a venue listed twice, or a connection with no symbols
-    /// - a URL that does not parse as `wss://` with a host on the venue's own domain
-    /// - a market or symbol listed twice on one connection
-    fn validate(&self) -> anyhow::Result<()> {
-        ensure!(
-            !self.timeout.is_zero() && !self.reconnect_min.is_zero() && !self.stale_after.is_zero(),
-            "timeout, reconnect_min, and stale_after must be non-zero"
-        );
-        ensure!(self.reconnect_min <= self.reconnect_max, "reconnect_min exceeds reconnect_max");
-        ensure!(!self.connections.is_empty(), "no connections");
-        let mut venues = BTreeSet::new();
-        for conn in &self.connections {
-            let name = conn.venue.name();
-            ensure!(venues.insert(conn.venue), "{name} is listed twice");
-            let uri: Uri = conn.url.parse().with_context(|| format!("{name} url"))?;
-            ensure!(uri.scheme_str() == Some("wss"), "{name} url must be wss://");
-            let domain = conn.venue.domain();
-            ensure!(uri.host().is_some_and(|host| conn.venue.serves(host)), "{name} url must be on {domain}");
-            ensure!(!conn.symbols.is_empty(), "{name} has no symbols");
-            let mut markets = BTreeSet::new();
-            let mut symbols = BTreeSet::new();
-            for s in &conn.symbols {
-                ensure!(markets.insert(s.market), "{name} lists market {} twice", s.market);
-                ensure!(symbols.insert(s.symbol.as_str()), "{name} lists symbol {} twice", s.symbol);
-            }
-        }
-        Ok(())
     }
 }
 

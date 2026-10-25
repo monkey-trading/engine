@@ -2,9 +2,13 @@
 //! reconnect.
 
 pub(super) mod fake;
+mod hours;
 mod late;
 mod mock;
+mod rwa;
+pub(super) mod rwa_support;
 mod scenario;
+mod vendors;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -22,7 +26,7 @@ use crate::feeds::tests::fake::{
     WAIT, accept, bitstamp_book, coinbase_levels, fast, kraken_book, listen, next_alert, next_prices, quote, send,
     spawn_feed, stream,
 };
-use crate::feeds::venue::{Book, Timing, to_quote};
+use crate::feeds::venue::{Book, Instrument, Timing, to_quote};
 use crate::feeds::{bitstamp, kraken};
 use crate::test_support::{Alert, capture_alerts};
 
@@ -421,7 +425,7 @@ async fn the_feed_stops_when_the_sequencer_goes_away() {
 fn books_no_working_venue_could_show_are_refused() {
     const NOW: i64 = 1_792_489_875_714;
     const DAY: i64 = 24 * 60 * 60 * 1_000;
-    let markets = BTreeMap::from([("BTC/USD".to_owned(), 1)]);
+    let markets = BTreeMap::from([("BTC/USD".to_owned(), Instrument { market: 1, contract: None })]);
     let book = |symbol: &str, bid: &str, ask: &str, ts| Book {
         symbol: symbol.into(),
         bid: bid.parse().unwrap(),
@@ -444,5 +448,5 @@ fn books_no_working_venue_could_show_are_refused() {
     // A time up to a day ahead is a clock error, not a corrupt one, and passes; the mid truncates
     // toward zero at the ninth decimal.
     let accepted = to_quote(Venue::Kraken, &markets, book("BTC/USD", "100", "100.000000001", NOW + DAY), NOW);
-    assert_eq!(accepted, Ok((1, quote(Venue::Kraken, "100", NOW + DAY))));
+    assert_eq!(accepted, Ok(("BTC/USD".to_owned(), quote(Venue::Kraken, "100", NOW + DAY))));
 }

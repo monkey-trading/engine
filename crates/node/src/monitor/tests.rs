@@ -2,8 +2,11 @@ use super::*;
 
 use std::path::Path;
 
+use chrono::DateTime;
 use engine_core::command::{AdminCommand, Command, OrderKind, OrderRequest, Sequenced};
 use engine_core::event::Event;
+use engine_core::futures::FuturesContract;
+use engine_core::market::MarketSpec;
 use engine_core::price::SourceQuote;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{AccountId, Side};
@@ -140,6 +143,42 @@ fn a_stalled_sequencer_alerts_once_after_the_threshold_and_resolves_when_it_answ
     let [resolve] = check(true, 31).try_into().unwrap();
     assert_eq!((resolve.key(), resolve.severity), (alert.key(), None));
     assert!(check(true, 32).is_empty());
+}
+
+#[test]
+fn a_futures_market_on_its_last_listed_contract_warns_once_until_a_next_is_listed() {
+    let mut last = LastContract::default();
+    let on = |contract: Option<&str>| {
+        let market = MarketSample { last_contract: contract.map(Into::into), ..market_sample(20, true, Ok(())) };
+        sample(vec![market])
+    };
+    let mut check = |sample: Sample| capture(|| last.check(&sample));
+    assert!(check(on(None)).is_empty());
+    let [alert] = check(on(Some("ESH8"))).try_into().unwrap();
+    assert_eq!((alert.key(), alert.severity), ("futures_last_contract{market=20}".to_owned(), Some(Severity::Warning)));
+    assert!(check(on(Some("ESH8"))).is_empty());
+    let [resolve] = check(on(None)).try_into().unwrap();
+    assert_eq!((resolve.key(), resolve.severity), (alert.key(), None));
+}
+
+#[test]
+fn a_sample_names_a_futures_markets_contract_only_while_it_is_the_last_listed() {
+    let mut cfg = dev_config();
+    let us500 = cfg.genesis.markets.iter().find(|m| m.id == 20).expect("US 500").clone();
+    let es = |name: &str, from: Millis| FuturesContract {
+        contract: name.into(),
+        from: DateTime::from_timestamp_millis(from).expect("in range"),
+    };
+    let day = 86_400_000;
+    let last = es("ESZ6", T0 - day);
+    let with_next = vec![last.clone(), es("ESH7", T0 + day)];
+    for (id, contracts) in [(70, vec![last]), (71, with_next)] {
+        cfg.genesis.markets.push(MarketSpec { id, symbol: format!("ES{id}"), contracts, ..us500.clone() });
+    }
+    let engine = engine_of(&cfg);
+    assert_eq!(market(&engine, 70).last_contract.as_deref(), Some("ESZ6"));
+    assert_eq!(market(&engine, 71).last_contract, None);
+    assert_eq!(market(&engine, 20).last_contract, None);
 }
 
 /// The engine keeps every source it has heard from, and none it has not, so quote times come from
@@ -328,8 +367,15 @@ const T0: Millis = 1_792_504_800_000;
 /// An engine after the dev config's protocol activation and genesis, as a node sequences them, at
 /// `T0`.
 fn dev_engine() -> Engine {
-    let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/dev.toml"));
-    let cfg = NodeConfig::load(path).unwrap();
+    engine_of(&dev_config())
+}
+
+fn dev_config() -> NodeConfig {
+    NodeConfig::load(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/dev.toml"))).unwrap()
+}
+
+/// An engine after `cfg`'s protocol activation and genesis, as a node sequences them, at `T0`.
+fn engine_of(cfg: &NodeConfig) -> Engine {
     let activation = [
         AdminCommand::SetClientAuth(cfg.client_auth().unwrap()),
         AdminCommand::SetOperator(cfg.operator().unwrap()),
@@ -350,14 +396,19 @@ fn sequence(engine: &mut Engine, ts: Millis, cmd: Command) -> Vec<Event> {
 fn prices(market: MarketId, quotes: &[(&str, Millis)]) -> Command {
     let quotes = quotes
         .iter()
-        .map(|(source, ts)| SourceQuote { source: (*source).to_owned(), mid: Fixed::from_int(100_000), ts: *ts })
+        .map(|(source, ts)| SourceQuote {
+            source: (*source).to_owned(),
+            mid: Fixed::from_int(100_000),
+            ts: *ts,
+            contract: None,
+        })
         .collect();
     Command::Prices { market, quotes }
 }
 
 /// Quotes at `mid` from two sources, stamped `ts`.
 fn prices_at(market: MarketId, mid: &str, ts: Millis) -> Command {
-    let quote = |source: &str| SourceQuote { source: source.to_owned(), mid: mid.parse().unwrap(), ts };
+    let quote = |source: &str| SourceQuote { source: source.to_owned(), mid: mid.parse().unwrap(), ts, contract: None };
     Command::Prices { market, quotes: vec![quote("venue-a"), quote("venue-b")] }
 }
 
@@ -391,7 +442,15 @@ fn market(engine: &Engine, id: MarketId) -> MarketSample {
 
 fn market_sample(id: MarketId, open: bool, price: Result<(), PriceError>) -> MarketSample {
     let price = price.map_err(Unpriced::Index);
-    MarketSample { id, symbol: format!("M{id}"), open, price, house_net_exposure: Fixed::ZERO, quotes: Vec::new() }
+    MarketSample {
+        id,
+        symbol: format!("M{id}"),
+        open,
+        price,
+        house_net_exposure: Fixed::ZERO,
+        quotes: Vec::new(),
+        last_contract: None,
+    }
 }
 
 fn sample(markets: Vec<MarketSample>) -> Sample {

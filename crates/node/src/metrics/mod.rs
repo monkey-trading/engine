@@ -49,7 +49,8 @@ const REJECT_KINDS: [&str; 20] = [
     "expiry_too_far",
 ];
 /// Every reason a price rejection can have; see `prices_reject_reason`.
-const PRICES_REJECT_REASONS: [&str; 4] = ["unknown_market", "malformed_quote", "quote_ahead", "other"];
+const PRICES_REJECT_REASONS: [&str; 6] =
+    ["unknown_market", "malformed_quote", "quote_ahead", "market_closed", "contract_not_taken", "other"];
 /// Every custody receipt rejection reason; see `deposit_reject_kind`.
 const DEPOSIT_REJECT_KINDS: [&str; 7] = [
     "protocol_not_active",
@@ -321,6 +322,10 @@ fn prices_reject_reason(reason: &str) -> &'static str {
         "malformed_quote"
     } else if reason.ends_with("ahead of the sequenced time") {
         "quote_ahead"
+    } else if reason.ends_with("outside one open session") {
+        "market_closed"
+    } else if reason.ends_with("which the market does not take") {
+        "contract_not_taken"
     } else {
         "other"
     }

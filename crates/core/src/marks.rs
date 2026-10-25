@@ -5,7 +5,7 @@ use crate::Fixed;
 use crate::engine::Engine;
 use crate::event::Event;
 use crate::market::QuoteCurrency;
-use crate::price::{Index, MAX_QUOTE_LEAD_MS, SourceQuote, compute_index};
+use crate::price::{Index, MAX_QUOTE_LEAD_MS, SourceQuote};
 use crate::protocol::ProtocolVersion;
 use crate::types::MarketId;
 
@@ -18,9 +18,14 @@ impl Engine {
         }
     }
 
-    /// Stores venue quotes, refusing one by one the malformed ones and those stamped more than
-    /// `MAX_QUOTE_LEAD_MS` after the sequenced time. From `V12`, a quote stamped ahead is stored as
-    /// stamped at the sequenced time. Returns whether the market is listed.
+    /// Stores venue quotes, refusing one by one the malformed ones, those stamped more than
+    /// `MAX_QUOTE_LEAD_MS` after the sequenced time, and those for a futures contract the market
+    /// does not take (`MarketState::quotes_for`); a quote for the contract the market has just
+    /// rolled off is dropped without a rejection, as feeds send it until they learn of the roll.
+    /// From `V12`, a quote stamped ahead is stored as stamped at the sequenced time. From `V21`, a
+    /// quote is refused unless its market stays open from its venue stamp to the sequenced time
+    /// (`MarketState::in_session`), so no quote from outside the session it prices ever counts.
+    /// Returns whether the market is listed.
     pub(crate) fn store_quotes(
         &mut self,
         market_id: MarketId,
@@ -29,6 +34,7 @@ impl Engine {
     ) -> bool {
         let now = self.now;
         let v12 = self.protocol_version >= ProtocolVersion::V12;
+        let v21 = self.protocol_version >= ProtocolVersion::V21;
         let Some(market) = self.markets.get_mut(&market_id) else {
             events.push(Event::PricesRejected { market: market_id, reason: "unknown market".into() });
             return false;
@@ -45,13 +51,28 @@ impl Engine {
                 events.push(Event::PricesRejected { market: market_id, reason });
                 continue;
             }
+            if v21 && !market.in_session(quote.ts, now) {
+                let reason = format!("quote from {} stamped or sequenced outside one open session", quote.source);
+                events.push(Event::PricesRejected { market: market_id, reason });
+                continue;
+            }
             // From `V12`, a quote stamped ahead counts from the sequenced time it arrived by, so a
             // venue whose clock leads still counts.
             let quote = SourceQuote { ts: if v12 { quote.ts.min(now) } else { quote.ts }, ..quote.clone() };
+            if market.rolled_off(quote.contract.as_deref()) {
+                continue;
+            }
+            let Some(held) = market.quotes_for_mut(quote.contract.as_deref()) else {
+                let contract = quote.contract.as_deref().unwrap_or("none");
+                let reason =
+                    format!("quote from {} for contract {contract}, which the market does not take", quote.source);
+                events.push(Event::PricesRejected { market: market_id, reason });
+                continue;
+            };
             // A stored quote stamped after the sequenced time does not count yet, so it never holds
             // back a replacement.
-            if market.quotes.get(&quote.source).is_none_or(|old| quote.ts >= old.ts || old.ts > now) {
-                market.quotes.insert(quote.source.clone(), quote);
+            if held.get(&quote.source).is_none_or(|old| quote.ts >= old.ts || old.ts > now) {
+                held.insert(quote.source.clone(), quote);
             }
         }
         true
@@ -65,7 +86,7 @@ impl Engine {
         if !market.open || self.params.is_none() {
             return;
         }
-        let Ok(index) = compute_index(&market.quotes, &market.spec.price_rules, self.now) else { return };
+        let Ok(index) = market.index(self.now) else { return };
         self.process_indices(&[(market_id, index)], events);
     }
 
@@ -73,10 +94,14 @@ impl Engine {
     /// processes each market whose index differs from the one it was last processed at, as when it
     /// opens, a quote ages out, its FX market gains or loses a price, or its listing or the
     /// parameters change, and `priced`, whose quotes a price command has just stored or whose
-    /// listing others convert at, whenever it has an index, as a price update does. Its cost per
-    /// command grows with the listed markets, which only operator commands add.
+    /// listing others convert at, whenever it has an index, as a price update does. From `V21`,
+    /// markets priced from futures roll first where a roll is due. Its cost per command grows with
+    /// the listed markets, which only operator commands add.
     pub(crate) fn advance_markets(&mut self, priced: Option<MarketId>, events: &mut Vec<Event>) {
         self.refresh_all_sessions(events);
+        if self.protocol_version >= ProtocolVersion::V21 {
+            self.roll_futures(events);
+        }
         let ids: Vec<MarketId> = self.markets.keys().copied().collect();
         let changed: Vec<(MarketId, Index)> = ids
             .into_iter()
@@ -103,7 +128,7 @@ impl Engine {
         if !market.open || self.params.is_none() {
             return None;
         }
-        let index = compute_index(&market.quotes, &market.spec.price_rules, self.now).ok()?;
+        let index = market.index(self.now).ok()?;
         let currency = market.spec.quote_currency;
         let fx_priced = if currency.fx_market() == Some(market_id) {
             currency.converts_at(index.mid)

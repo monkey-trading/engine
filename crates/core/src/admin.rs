@@ -13,6 +13,7 @@ use crate::command::{AdminCommand, AdminRequest};
 use crate::deposits::legacy_chain_reference;
 use crate::engine::{Engine, MarketState};
 use crate::event::{Event, Reject};
+use crate::futures::FuturesState;
 use crate::market::MarketSpec;
 use crate::params::{DEFAULT_MAX_RESTING_ORDERS, MAX_BENCHMARK_BPS};
 use crate::protocol::ProtocolVersion;
@@ -34,8 +35,9 @@ impl Engine {
     ///   market can never reach, or with a resting-order cap other than the default before `V14`
     /// - `UpsertMarket` with a spec that fails `MarketSpec::validate` or `check_quote_currency`, with
     ///   dated closures or special sessions before `V4`, from `V13` with a bound no divergence share
-    ///   in force can be reached at, or from `V14`, once any benchmark has a rate, that lists a
-    ///   market, or moves one, onto a benchmark with none
+    ///   in force can be reached at, from `V14`, once any benchmark has a rate, that lists a
+    ///   market, or moves one, onto a benchmark with none, with futures contracts before `V21`, or
+    ///   that `MarketState::relisted` refuses for a listed market
     /// - `SetBenchmarkRate` outside ±10000 bps a year
     /// - `SetStressFloor` before parameters are set, at a level that does not exist, or for an
     ///   unknown market
@@ -103,6 +105,9 @@ impl Engine {
                 if spec.schedule.has_exceptions() && self.protocol_version < ProtocolVersion::V4 {
                     return Err(format!("dated closures and special sessions need protocol {:?}", ProtocolVersion::V4));
                 }
+                if !spec.contracts.is_empty() && self.protocol_version < ProtocolVersion::V21 {
+                    return Err(format!("futures contracts need protocol {:?}", ProtocolVersion::V21));
+                }
                 self.check_quote_currency(spec)?;
                 if let Some(params) = self.params.as_ref().filter(|_| self.protocol_version >= ProtocolVersion::V13) {
                     params.check_divergence_reachable(spec)?;
@@ -124,6 +129,10 @@ impl Engine {
                 }
                 let currency_changed =
                     self.markets.get(&spec.id).is_some_and(|market| market.spec.quote_currency != spec.quote_currency);
+                let futures = match self.markets.get(&spec.id) {
+                    Some(market) => market.relisted(spec)?,
+                    None => FuturesState::listed(spec, self.now),
+                };
                 match self.markets.get_mut(&spec.id) {
                     Some(market) => {
                         // An FX mark belongs to the currency it was taken for.
@@ -131,9 +140,10 @@ impl Engine {
                             market.fx_mark = None;
                         }
                         market.spec = spec.clone();
+                        market.futures = futures;
                     }
                     None => {
-                        self.markets.insert(spec.id, MarketState::new(spec.clone()));
+                        self.markets.insert(spec.id, MarketState { futures, ..MarketState::new(spec.clone()) });
                     }
                 }
                 self.refresh_session(spec.id, events);
@@ -243,6 +253,14 @@ impl Engine {
                 // are in fill order rather than the due order `V11` keeps.
                 if self.protocol_version < ProtocolVersion::V11 && *version >= ProtocolVersion::V11 {
                     while self.pop_markout().is_some() {}
+                }
+                // Quotes stored under earlier rules may come from outside the session open now.
+                if self.protocol_version < ProtocolVersion::V21 && *version >= ProtocolVersion::V21 {
+                    let now = self.now;
+                    let ids: Vec<MarketId> = self.markets.keys().copied().collect();
+                    for market_id in ids {
+                        self.markets.get_mut(&market_id).expect("listed").retain_session_quotes(now);
+                    }
                 }
                 if self.protocol_version < ProtocolVersion::V13 && *version >= ProtocolVersion::V13 {
                     let widest = self.markets.values().map(|market| market.spec.price_rules.max_divergence_bps).max();

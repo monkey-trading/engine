@@ -357,7 +357,7 @@ impl Node {
         let deposit = serde_json::json!({ "account": account_of(client), "amount": "100000" });
         assert_eq!(self.post("/v1/dev/deposit", deposit).await.0, StatusCode::OK);
         let quotes = ["a", "b"]
-            .map(|venue| SourceQuote { source: venue.into(), mid: "100000".parse().unwrap(), ts: NOW })
+            .map(|venue| SourceQuote { source: venue.into(), mid: "100000".parse().unwrap(), ts: NOW, contract: None })
             .to_vec();
         self.state.submit(Command::Prices { market: 1, quotes }).await.expect("the sequencer is running");
     }

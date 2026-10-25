@@ -13,7 +13,6 @@ use crate::engine::{Engine, MarketState};
 use crate::event::Event;
 use crate::fixed::Rounding;
 use crate::params::{StressLevel, StressTrigger};
-use crate::price::compute_index;
 use crate::protocol::ProtocolVersion;
 use crate::types::{MarketId, Millis};
 
@@ -105,7 +104,7 @@ impl Engine {
         if !market.open {
             return;
         }
-        let Ok(index) = compute_index(&market.quotes, &market.spec.price_rules, now) else { return };
+        let Ok(index) = market.index(now) else { return };
         // A fill converts at the live FX index, so the reading does too.
         let Ok(fx) = self.live_fx(market_id) else { return };
         let Some(params) = self.params.as_ref() else { return };
