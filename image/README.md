@@ -38,8 +38,8 @@ Every input is pinned in the [Dockerfile](Dockerfile): base images by digest, De
 snapshot date, the kernel tarball and the Rust musl standard library by SHA-256, edk2 by commit,
 Rust crates by `Cargo.lock` (`--locked`), and `sev-snp-measure` with its dependencies by hash in
 [requirements.txt](requirements.txt). CI (`.github/workflows/ci.yaml`) builds the image twice on
-separate runners for every push to `main` and every pull request, and fails if the two
-`SHA256SUMS` differ.
+separate runners for every push to `main` and every pull request that changes its inputs, and
+fails if the two `SHA256SUMS` differ.
 
 ## Production builds
 

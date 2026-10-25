@@ -56,8 +56,8 @@ marked ready, may not.
   are filed as `bug` issues — and on which commit the PR is marked ready. Low and Nit findings,
   and Mediums filed as issues, remain unfixed after the last round, and a mechanical rebase onto
   `main` after it needs no new round.
-- **Local checks** for the affected crates passed, per git-workflow; the full CI runs
-  on the PR.
+- **Local checks** for the affected crates passed, per git-workflow; CI runs every job
+  the PR's paths affect.
 
 ## Title
 

@@ -18,7 +18,64 @@ permissions:
   contents: read
 
 jobs:
+  # Sorts a PR's changed files into areas; every other job runs only when its area is true. A push,
+  # a manual run, a failed diff, a workflow change, and any path not listed set every area true, so
+  # only the listed paths can skip a job. Each path lists the area of every job that reads it.
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      rust: ${{ steps.classify.outputs.rust }}
+      contracts: ${{ steps.classify.outputs.contracts }}
+      scenarios: ${{ steps.classify.outputs.scenarios }}
+      image: ${{ steps.classify.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Classify changed files
+        id: classify
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          all="rust contracts scenarios image"
+          areas=$all
+          # --no-renames lists both sides of a move.
+          if [[ "$EVENT" == pull_request ]] && files=$(git diff --name-only --no-renames "$BASE...$HEAD"); then
+            echo "$files"
+            areas=
+            while IFS= read -r file; do
+              case "$file" in
+                # Read by no build, test, scenario, or image.
+                agents/* | AGENTS.md | CLAUDE.md | README.md | SECURITY.md | research/* | image/README.md \
+                  | crates/core/README.md | crates/node/README.md) ;;
+                # The image embeds config/test-keys.toml and boots on config/dev.toml.
+                crates/* | Cargo.toml | Cargo.lock | config/dev.toml | config/test-keys.toml)
+                  areas+=" rust scenarios image" ;;
+                # Read by the node's tests, which the checkpoint scenario also compiles.
+                config/anvil.toml | config/benchmark-publishers.toml | config/production-genesis.toml | ops/*)
+                  areas+=" rust scenarios" ;;
+                rustfmt.toml | deny.toml | scripts/check-file-loc.sh | scripts/check-reference-logs.sh)
+                  areas+=" rust" ;;
+                # The deposit and checkpoint scenarios deploy the vault.
+                contracts/*) areas+=" contracts scenarios" ;;
+                scripts/dev-*) areas+=" scenarios" ;;
+                image/* | scripts/build-image.sh | scripts/check-image.sh) areas+=" image" ;;
+                *) areas=$all ;;
+              esac
+            done <<< "$files"
+          fi
+          for area in $all; do
+            [[ " $areas " == *" $area "* ]] && value=true || value=false
+            echo "$area=$value" | tee -a "$GITHUB_OUTPUT"
+          done
+
   fmt:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -32,6 +89,8 @@ jobs:
         run: cargo fmt --all -- --check
 
   file-loc:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -42,6 +101,8 @@ jobs:
         run: ./scripts/check-file-loc.sh
 
   clippy:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -56,6 +117,8 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   test:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -77,6 +140,8 @@ jobs:
   # OS calls, and macOS runs on the same two architectures.
   reference-logs:
     name: reference-logs (ubuntu-24.04-arm)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     steps:
@@ -92,6 +157,8 @@ jobs:
         run: cargo test -p engine-core --locked --test invariants
 
   reference-logs-frozen:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -109,6 +176,8 @@ jobs:
         run: ./scripts/check-reference-logs.sh "$BASE"
 
   cargo-deny:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -120,6 +189,8 @@ jobs:
           command: check
 
   contracts:
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
@@ -143,6 +214,8 @@ jobs:
         run: forge test
 
   dev-vault-deposits:
+    needs: changes
+    if: needs.changes.outputs.scenarios == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -167,6 +240,8 @@ jobs:
         run: ./scripts/dev-checkpoints.sh
 
   dev-metrics-alerts:
+    needs: changes
+    if: needs.changes.outputs.scenarios == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -179,6 +254,8 @@ jobs:
         run: ./scripts/dev-metrics-alerts.sh
 
   dev-alert-outbox:
+    needs: changes
+    if: needs.changes.outputs.scenarios == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -195,6 +272,8 @@ jobs:
   # hash. `image-compare` fails if the two builds differ by a single byte.
   image:
     name: image (${{ matrix.run }})
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -227,7 +306,8 @@ jobs:
         run: ./scripts/check-image.sh out/image-dev
 
   image-compare:
-    needs: image
+    needs: [changes, image]
+    if: needs.changes.outputs.image == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -242,16 +322,24 @@ jobs:
           cat image-first/SHA256SUMS image-first/measurement.json
 
   # The single check to require in branch rules. It runs even when a job it needs fails or is
-  # skipped, and passes only if every one of them succeeded. Add every new job to `needs`.
+  # skipped, and passes only if every one of them succeeded or was skipped while `changes` set its
+  # area false. Add every new job to `needs`, and a gated one to `$area` below.
   ci-passed:
     if: always()
-    needs: [fmt, file-loc, clippy, test, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, dev-metrics-alerts, dev-alert-outbox, image, image-compare]
+    needs: [changes, fmt, file-loc, clippy, test, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, dev-metrics-alerts, dev-alert-outbox, image, image-compare]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require every job to succeed
+      - name: Require every job to succeed, or to skip because its area did not change
         env:
-          RESULTS: ${{ toJSON(needs.*.result) }}
+          NEEDS: ${{ toJSON(needs) }}
         run: |
-          echo "$RESULTS"
-          echo "$RESULTS" | jq -e 'length > 0 and all(. == "success")'
+          echo "$NEEDS"
+          echo "$NEEDS" | jq -e '
+            .changes.outputs as $run
+            | {fmt: "rust", "file-loc": "rust", clippy: "rust", test: "rust", "reference-logs": "rust",
+               "reference-logs-frozen": "rust", "cargo-deny": "rust", contracts: "contracts",
+               "dev-vault-deposits": "scenarios", "dev-metrics-alerts": "scenarios",
+               "dev-alert-outbox": "scenarios", image: "image", "image-compare": "image"} as $area
+            | all(to_entries[]; .value.result == "success"
+                or .value.result == "skipped" and $run[$area[.key] // ""] == "false")'

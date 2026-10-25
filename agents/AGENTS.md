@@ -101,9 +101,15 @@ an index: load only the rule whose hint matches the current action.
   test, the vault deposit and RPC quorum dev scenario, the metrics and alert routing dev scenario,
   the alert outbox kill/restart scenario, and the enclave image (`image` builds it twice and boots
   it under QEMU, `image-compare` fails if the builds differ), on every push to `main` and every PR.
+  On a PR, the first job, `changes`, sorts the changed files into the Rust, contracts, scenario,
+  and image areas from an explicit path list, and each job runs only when its area changed:
+  `agents/`, `research/`, the root `README.md`, `SECURITY.md`, `AGENTS.md`, and `CLAUDE.md`, and
+  the `README.md` of `image/` and of each crate change none. A push to `main`, a manual run, a
+  workflow change, a failed diff, or any path the list does not name runs every job.
   Actions are pinned by commit SHA. `ci-passed` is the one CI check branch rules require: it passes
-  only when every other job succeeded, so each new job must be added to its `needs`. The test job
-  also checks command latency budgets against 100k-account fixtures.
+  only when every other job succeeded or was skipped because its area did not change, so each new
+  job must be added to its `needs` and its area map, and every path it reads to `changes`. The test
+  job also checks command latency budgets against 100k-account fixtures.
 - **agents/** — this index, `rules/`, and `skills/` (incl. `skills/vendor/` pull-on-demand
   packs); root `AGENTS.md` / `CLAUDE.md` symlink to `agents/AGENTS.md`.
 - **Cargo.toml** — workspace manifest, shared dependencies, and the Cargo profiles (release keeps
@@ -217,7 +223,7 @@ self-review, opening the PR, and reviewing — not only at the end.
 - [rules/code-comments.md](rules/code-comments.md) — terse, self-documenting comments; load before writing comments / docs.
 - [rules/keep-agents-index-in-sync.md](rules/keep-agents-index-in-sync.md) — keep the nearest `AGENTS.md` in sync (structure, commands, conventions) with any change in a dir it documents; load before changing such a dir.
 - [rules/no-deploy.md](rules/no-deploy.md) — never deploy, sequence admin commands into a live engine, or mutate any environment, contract, or key without explicit per-action approval; load before any deploy / admin command / contract call / secret write.
-- [rules/git-workflow.md](rules/git-workflow.md) — branch naming (`{gh user}/<slug>[-gh<issue>]`), a new branch starting with no fix notes, commit approval and `[scopes] Subject` format, no AI signatures, local checks scoped to the affected crates (full CI runs on the PR, never publishing steps), force-push with lease; load before creating a branch, committing, pushing, or opening a PR.
+- [rules/git-workflow.md](rules/git-workflow.md) — branch naming (`{gh user}/<slug>[-gh<issue>]`), a new branch starting with no fix notes, commit approval and `[scopes] Subject` format, no AI signatures, local checks scoped to the affected crates (PR CI runs every job its paths affect, never publishing steps), force-push with lease; load before creating a branch, committing, pushing, or opening a PR.
 
 ### Skills
 
