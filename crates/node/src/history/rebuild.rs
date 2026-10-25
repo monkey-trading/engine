@@ -79,7 +79,7 @@ mod tests {
         let events = engine.apply(&first).unwrap();
         let root = engine.state_root();
         let entries = vec![
-            LogEntry::Command(CommandEntry { sequenced: first, events: Some(events) }),
+            LogEntry::Command(CommandEntry { seal: None, sequenced: first, events: Some(events) }),
             LogEntry::Checkpoint(Checkpoint {
                 seq: 0,
                 root: format!("0x{}", hex::encode(root)),
@@ -90,6 +90,7 @@ mod tests {
                 deferred_withdrawals: false,
             }),
             LogEntry::Command(CommandEntry {
+                seal: None,
                 sequenced: Sequenced { seq: 1, ts: 1, cmd: Command::Tick },
                 events: Some(Vec::new()),
             }),

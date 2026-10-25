@@ -1,9 +1,15 @@
 //! The reference session's helpers: requests it sends and how it reads events back.
 
+use std::fs::OpenOptions;
+use std::io::{BufWriter, ErrorKind, Write};
+use std::path::Path;
+
+use anyhow::anyhow;
 use engine_core::command::{OrderKind, OrderRequest};
 use engine_core::event::Event;
 use engine_core::types::{AccountId, MarketId, OrderId, Side};
 
+use crate::common::reference::ReferenceEntry;
 use crate::common::{BTC, f};
 
 /// A reduce-only market order quoted at `quoted`.
@@ -53,4 +59,24 @@ pub(super) fn event_kind(event: &Event) -> String {
         Some(reason) => format!("{kind}:{reason}"),
         None => kind,
     }
+}
+
+/// Writes `entries` as JSON lines to a new file at `path`.
+/// Error cases:
+/// - a file already at `path`, which a committed reference log never overwrites
+/// - the file cannot be written
+pub(super) fn write_entries(path: &Path, entries: &[ReferenceEntry]) -> anyhow::Result<()> {
+    let file = OpenOptions::new().write(true).create_new(true).open(path).map_err(|e| match e.kind() {
+        ErrorKind::AlreadyExists => {
+            anyhow!("{} exists; a committed reference log is never regenerated", path.display())
+        }
+        _ => anyhow!(e).context(format!("creating {}", path.display())),
+    })?;
+    let mut out = BufWriter::new(file);
+    for entry in entries {
+        serde_json::to_writer(&mut out, entry)?;
+        out.write_all(b"\n")?;
+    }
+    out.flush()?;
+    Ok(())
 }

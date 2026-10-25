@@ -7,6 +7,7 @@ mod archive;
 mod benchmark_schedule;
 mod history;
 mod stream;
+mod withdrawal_queue;
 pub(crate) use stream::{Feed, MAX_BACKFILLS};
 
 use std::collections::BTreeMap;
@@ -83,6 +84,8 @@ pub struct ApiState {
     /// Mock custody credits dev deposits and pays withdrawals by logging them; EVM custody does
     /// neither until it pays withdrawals on-chain.
     pub mock_custody: bool,
+    /// Mock payouts or EVM custody with the finalized checkpoint gate configured.
+    pub payouts_enabled: bool,
     /// The clock a signed request's expiry is checked against; the node gives the sequencer the same
     /// one to stamp commands with.
     pub clock: fn() -> Millis,
@@ -293,7 +296,8 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/accounts/{address}/emissions", get(emissions))
         .route("/v1/orders", post(place_order))
         .route("/v1/orders/cancel", post(cancel_order))
-        .route("/v1/withdrawals", post(withdraw))
+        .route("/v1/withdrawals", get(withdrawal_queue::queue).post(withdraw))
+        .route("/v1/accounts/{address}/withdrawals", get(withdrawal_queue::account))
         .route("/v1/admin", post(admin::admin))
         .route("/v1/dev/deposit", post(dev_deposit))
         .route("/v1/stream", get(stream::stream))
@@ -450,12 +454,12 @@ async fn cancel_order(State(s): State<ApiState>, Json(b): Json<CancelRequest>) -
 
 /// Requests a withdrawal; an approval is signed and streamed.
 /// Error cases:
-/// - custody cannot pay withdrawals out yet (EVM custody)
+/// - custody has no finalized checkpoint service
 /// - the request is not authorised for its account
 /// - the sequencer has stopped, or sequencing is halted
 async fn withdraw(State(s): State<ApiState>, Json(b): Json<WithdrawalRequest>) -> ApiResult<Vec<Event>> {
-    if !s.mock_custody {
-        return Err(ApiError::NotImplemented("on-chain withdrawal payouts are not implemented yet"));
+    if !s.payouts_enabled {
+        return Err(ApiError::NotImplemented("withdrawals require the finalized checkpoint service"));
     }
     let auth = s
         .authorise(b.account, b.auth, |domain, auth| {

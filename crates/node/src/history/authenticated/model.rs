@@ -189,6 +189,8 @@ pub(super) fn event_kind(event: &Event) -> Result<u8> {
         Event::EmissionAllocated { .. } => "emission_allocated",
         Event::CustodyDepositChanged { .. } => "custody_deposit_changed",
         Event::CustodyDepositRejected { .. } => "custody_deposit_rejected",
+        Event::WithdrawalQueued { .. } => "withdrawal_queued",
+        Event::WithdrawalQueueUpdated { .. } => "withdrawal_queue_updated",
         // Listed, not matched by a wildcard, so a new event does not compile until it is classified.
         Event::HouseCapitalMoved { .. }
         | Event::BenchmarkRateMissing { .. }

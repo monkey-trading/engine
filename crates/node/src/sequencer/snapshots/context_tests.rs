@@ -98,7 +98,7 @@ fn cache_context_requires_work_and_all_accounting_fields() {
     let mut engine = engine_core::Engine::new();
     let sequenced = engine_core::command::Sequenced { seq: 0, ts: 0, cmd: engine_core::command::Command::Tick };
     let events = engine.apply(&sequenced).unwrap();
-    let command = crate::log::CommandEntry { sequenced, events: Some(events) };
+    let command = crate::log::CommandEntry { seal: None, sequenced, events: Some(events) };
     let command_prefix = crate::log::extend_command_prefix([0; 32], crate::log::command_digest(&command).unwrap());
     let root = engine.state_root();
     let cp = crate::log::Checkpoint {

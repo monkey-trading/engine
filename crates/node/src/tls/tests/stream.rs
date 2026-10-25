@@ -108,6 +108,7 @@ async fn assert_stream_ends(ws: &mut WebSocketStream<ClientTls<TcpStream>>) {
 
 /// A tick command at `seq`, as the stream sends it.
 fn tick(seq: u64) -> Arc<StreamMsg> {
-    let tick = CommandEntry { sequenced: Sequenced { seq, ts: 0, cmd: Command::Tick }, events: Some(Vec::new()) };
+    let tick =
+        CommandEntry { seal: None, sequenced: Sequenced { seq, ts: 0, cmd: Command::Tick }, events: Some(Vec::new()) };
     Arc::new(StreamMsg::new(Offset::start_of(seq), LogEntry::Command(tick)))
 }

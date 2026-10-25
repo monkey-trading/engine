@@ -184,7 +184,11 @@ fn first_private_stage_failure_can_replace_an_owner_held_uncertified_generation(
     let old_head = index.head();
     let private =
         history.store.update(&old_head.root, vec![(b"private-stage".to_vec(), Some(b"unacknowledged".to_vec()))])?;
-    let tick = CommandEntry { sequenced: Sequenced { seq: 0, ts: 0, cmd: Command::Tick }, events: Some(Vec::new()) };
+    let tick = CommandEntry {
+        seal: None,
+        sequenced: Sequenced { seq: 0, ts: 0, cmd: Command::Tick },
+        events: Some(Vec::new()),
+    };
     assert!(index.ingest(tick).is_err(), "an unacknowledged native version requires fresh repair");
     assert!(index.requires_rebuild());
     assert_eq!(index.head(), old_head, "private failure must leave the complete public head unchanged");

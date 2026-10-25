@@ -29,6 +29,7 @@ sol! {
     function approve(address spender, uint256 amount) external returns (bool);
     function depositToHouse(uint256 amount) external returns (uint256);
     function transfer(address to, uint256 amount) external returns (bool);
+    function bookSurplus() external returns (uint256);
 }
 
 pub(super) struct Anvil(pub Child);
@@ -66,8 +67,15 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     let checkpoint_relayer = accounts[9];
     let key = Arc::new(EnclaveKey::generate());
     let token = deploy(&provider, relayer, "MockUSDC.sol/MockUSDC.json", &[]).await;
+    let governance = deploy(
+        &provider,
+        relayer,
+        "TimelockController.sol/TimelockController.json",
+        &(U256::from(1), vec![relayer], vec![Address::ZERO], Address::ZERO).abi_encode_params(),
+    )
+    .await;
     // The MONKEY period budget, 1 MONKEY, is a development value, not an approved production parameter.
-    let args = (token, Address::from(key.address()), U256::from(10).pow(U256::from(18))).abi_encode();
+    let args = (token, Address::from(key.address()), governance, U256::from(10).pow(U256::from(18))).abi_encode();
     let vault = deploy(&provider, relayer, "Vault.sol/Vault.json", &args).await;
     let domain = CheckpointDomain { chain_id: 31337, vault: AccountId(vault.into()) };
     let section: CheckpointSection = toml::from_str(&format!(
@@ -82,7 +90,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
         domain,
         signer: AccountId(key.address()),
         retry: section.retry_interval,
-        pending_deposits_critical_after: Duration::from_secs(1),
+        pending_deposits_critical_after: Duration::from_secs(10),
     };
     make_poster().startup(None).await.unwrap();
 
@@ -187,6 +195,32 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     .unwrap();
     replay_path(&dir).expect("every checkpoint signature verifies");
 
+    // USDC sent to the vault outside a deposit raises a Warning but keeps withdrawals running, and
+    // anyone can book it as house capital.
+    let sequenced = || Command::Withdraw { account: AccountId(relayer.into()), amount: Fixed::from_int(1), auth: None };
+    send(&provider, relayer, token, mintCall { to: vault, amount: U256::from(10_000_000) }.abi_encode()).await;
+    timeout(Duration::from_secs(10), async {
+        while !std::iter::from_fn(|| alerts.try_recv().ok())
+            .any(|alert| alert["alert"] == "collateral_surplus" && alert["level"] == "WARN")
+        {
+            sleep(Duration::from_millis(40)).await;
+        }
+    })
+    .await
+    .unwrap();
+    // A sequenced request, though the engine rejects it for want of cash, means custody is healthy.
+    assert!(submit(&tx, sequenced()).await.is_some(), "an unbooked surplus keeps withdrawals running");
+    send(&provider, relayer, vault, bookSurplusCall {}.abi_encode()).await;
+    timeout(Duration::from_secs(10), async {
+        while house(&tx).await != Fixed::from_int(110) || submit(&tx, sequenced()).await.is_none() {
+            submit(&tx, Command::Tick).await;
+            sleep(Duration::from_millis(40)).await;
+        }
+    })
+    .await
+    .unwrap();
+    while alerts.try_recv().is_ok() {}
+
     // Anvil impersonation is confined to this local test; no production token has this cheat.
     let client = reqwest::Client::new();
     for (method, params) in [
@@ -269,6 +303,8 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
             .unwrap(),
         ..make_poster()
     };
+    // Refill the shortfall, so only the confirmation policy gates this release.
+    send(&provider, relayer, token, mintCall { to: vault, amount: U256::from(1_000_000) }.abi_encode()).await;
     local_rpc(&url, "anvil_mine", serde_json::json!(["0x3"])).await;
     let saved = local_rpc(&url, "evm_snapshot", serde_json::json!([])).await;
     let current = delayed.chain.state(View::Latest).await.unwrap();
@@ -287,8 +323,9 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     };
     let work = crate::checkpoints::Work {
         checkpoint,
-        liabilities: current.balance,
+        liabilities: current.deposited,
         deposits: current.deposits,
+        authorized: Fixed::ZERO,
         coverage: crate::checkpoints::DepositCoverage::Historical,
     };
     include_checkpoint(&delayed, &work.checkpoint).await;
@@ -335,12 +372,12 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
 
 pub(super) async fn deploy(provider: &RpcClient, from: Address, artifact: &str, args: &[u8]) -> Address {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/out");
-    let artifact: serde_json::Value =
+    let compiled: serde_json::Value =
         serde_json::from_slice(&std::fs::read(root.join(artifact)).expect("forge build first")).unwrap();
-    let mut input = hex::decode(artifact["bytecode"]["object"].as_str().unwrap().trim_start_matches("0x")).unwrap();
+    let mut input = hex::decode(compiled["bytecode"]["object"].as_str().unwrap().trim_start_matches("0x")).unwrap();
     input.extend_from_slice(args);
     let receipt = transact(provider, TransactionRequest::default().from(from).input(input.into())).await;
-    assert!(receipt.status(), "deployment reverted");
+    assert!(receipt.status(), "{artifact} deployment reverted");
     receipt.contract_address.unwrap()
 }
 

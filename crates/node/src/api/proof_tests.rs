@@ -265,6 +265,7 @@ impl Node {
             auth: ClientAuth::Unsigned,
             operator: dev_config().operator().unwrap(),
             mock_custody: true,
+            payouts_enabled: true,
             clock: || NOW,
             log_dir: dir.clone(),
             manifest,

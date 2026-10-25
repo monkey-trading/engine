@@ -46,7 +46,7 @@ fn fixture(name: &str, retention_ms: Millis) -> (Index, PathBuf) {
 
 /// Constructs the verified-input boundary's sequenced fixture.
 fn command(seq: u64, ts: Millis, events: Option<Vec<Event>>) -> CommandEntry {
-    CommandEntry { sequenced: Sequenced { seq, ts, cmd: Command::Tick }, events }
+    CommandEntry { seal: None, sequenced: Sequenced { seq, ts, cmd: Command::Tick }, events }
 }
 
 /// Constructs a small typed account event with a distinct amount.

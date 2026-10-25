@@ -59,7 +59,10 @@ async fn dev_scenario_authenticated_history_and_paired_restart_preserve_all_publ
     drop(reader);
     let segments = Manifest::load(&cfg.node.log_dir).unwrap().segments.len();
     let node = Node::start_resuming(cfg, clock, genesis).await.unwrap();
-    assert!(node.snapshot_seq.is_some(), "restart must use a paired cache");
+    assert!(
+        node.snapshot_seq.is_none(),
+        "a V22 withdrawal approval refuses snapshot recovery: payout delivery order is not cached, so the full log replays"
+    );
     for n in 0..5 {
         node.submit(deposit(1, &format!("whole37-rotate-{n}"))).await;
     }

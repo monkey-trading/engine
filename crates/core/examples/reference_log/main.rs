@@ -19,10 +19,9 @@ mod v18;
 mod v19;
 mod v20;
 mod v21;
+mod v22;
 
 use std::collections::BTreeMap;
-use std::fs::OpenOptions;
-use std::io::{BufWriter, ErrorKind, Write};
 use std::path::PathBuf;
 
 use anyhow::anyhow;
@@ -41,7 +40,7 @@ use engine_core::price::{MAX_QUOTE_LEAD_MS, SourceQuote};
 use engine_core::protocol::ProtocolVersion;
 use engine_core::session::{Period, Schedule};
 use engine_core::types::{AssetClass, MarketId, Side};
-use helpers::{accepted, event_kind, reducing, small_buy};
+use helpers::{accepted, event_kind, reducing, small_buy, write_entries};
 
 /// A market the session lists with two margin bands.
 const SOL: MarketId = 10;
@@ -67,19 +66,7 @@ fn main() -> anyhow::Result<()> {
         }
         entries.push(ReferenceEntry { sequenced, root: root_hex(engine.state_root()) });
     }
-
-    let file = OpenOptions::new().write(true).create_new(true).open(&path).map_err(|e| match e.kind() {
-        ErrorKind::AlreadyExists => {
-            anyhow!("{} exists; a committed reference log is never regenerated", path.display())
-        }
-        _ => anyhow!(e).context(format!("creating {}", path.display())),
-    })?;
-    let mut out = BufWriter::new(file);
-    for entry in &entries {
-        serde_json::to_writer(&mut out, entry)?;
-        out.write_all(b"\n")?;
-    }
-    out.flush()?;
+    write_entries(&path, &entries)?;
     println!("wrote {} commands to {}", entries.len(), path.display());
     tally.iter().for_each(|(kind, count)| println!("{count:>5} {kind}"));
     Ok(())
@@ -102,8 +89,9 @@ fn main() -> anyhow::Result<()> {
 /// stress that follows its inputs (`stress.rs`), and, under `V14`, the part in `v14.rs`, and, under `V15`, the part in
 /// `v15.rs`. Then, under `V16`, a lowered toxicity memory clamps the history a score weighs (`v16.rs`), under `V17`,
 /// the move window survives a halt (`v17.rs`), under `V18`, dated benchmark rates (`v18.rs`), under `V19`, MONKEY
-/// emissions (`v19.rs`), under `V20`, custody receipt finality, reversal and reinclusion (`v20.rs`), and under `V21`,
-/// quote hours and futures (`v21.rs`). Every client request is signed by its account's key unless a comment says not.
+/// emissions (`v19.rs`), under `V20`, custody receipt finality, reversal and reinclusion (`v20.rs`), under `V21`, quote
+/// hours and futures (`v21.rs`), and under `V22`, FIFO withdrawals (`v22.rs`). Every client request is signed by its
+/// account's key unless a comment says not.
 fn session() -> Vec<Sequenced> {
     let mut h = Harness::signed();
     let (a, b, c, d, t, e) = (h.signer(1), h.signer(2), h.signer(3), h.signer(4), h.signer(5), h.signer(6));
@@ -496,5 +484,6 @@ fn session() -> Vec<Sequenced> {
     v19::session(&mut h);
     v20::session(&mut h);
     v21::session(&mut h, a);
+    v22::session(&mut h);
     h.log
 }

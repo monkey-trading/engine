@@ -418,3 +418,6 @@ pub(super) fn command_seq(entry: &LogEntry) -> Option<u64> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod durability_tests;

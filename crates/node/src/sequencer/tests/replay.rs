@@ -4,7 +4,11 @@ use super::*;
 use crate::log::Checkpoint;
 
 fn tick(seq: u64) -> LogEntry {
-    LogEntry::Command(CommandEntry { sequenced: Sequenced { seq, ts: 0, cmd: Command::Tick }, events: None })
+    LogEntry::Command(CommandEntry {
+        seal: None,
+        sequenced: Sequenced { seq, ts: 0, cmd: Command::Tick },
+        events: None,
+    })
 }
 
 fn checkpoint(seq: u64, root: String) -> LogEntry {
@@ -60,7 +64,7 @@ fn replay_accepts_a_log_written_before_events_and_withdrawals_were_logged() {
         .map(|(seq, cmd)| {
             let sequenced = Sequenced { seq: seq as u64, ts: 0, cmd };
             engine.apply(&sequenced).unwrap();
-            LogEntry::Command(CommandEntry { sequenced, events: None })
+            LogEntry::Command(CommandEntry { seal: None, sequenced, events: None })
         })
         .collect();
     entries.push(checkpoint(1, format!("0x{}", hex::encode(engine.state_root()))));

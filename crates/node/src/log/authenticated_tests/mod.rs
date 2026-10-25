@@ -56,6 +56,7 @@ pub(crate) fn fixture(label: &str, segment_commands: u64) -> Fixture {
 /// A deterministic sequenced command with event logging enabled.
 pub(crate) fn command(seq: u64) -> LogEntry {
     LogEntry::Command(CommandEntry {
+        seal: None,
         sequenced: Sequenced { seq, ts: seq as i64, cmd: Command::Tick },
         events: Some(Vec::new()),
     })

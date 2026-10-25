@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Runs the checkpoint scenario against an isolated Anvil: posting, strict replay, edited-signature
-# refusal, startup truncation refusal, and withdrawal pause while a collateral shortfall persists.
+# refusal, startup truncation refusal, and withdrawal pause while a direct transfer stays unbooked
+# or a collateral shortfall persists.
 # Needs Python3, Anvil, Forge, Cargo, and installed Soldeer dependencies. No external RPC or keys are used.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"

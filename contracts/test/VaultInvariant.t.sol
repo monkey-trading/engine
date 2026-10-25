@@ -2,6 +2,7 @@
 pragma solidity 0.8.36;
 
 import {Test, Vm} from "forge-std/Test.sol";
+import {GovernanceTest} from "./helpers/GovernanceTest.sol";
 
 import {Vault} from "../src/Vault.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
@@ -50,14 +51,15 @@ contract VaultHandler is Test {
     }
 }
 
-contract VaultInvariantTest is Test {
+contract VaultInvariantTest is GovernanceTest {
     MockUSDC internal usdc;
     Vault internal vault;
     VaultHandler internal handler;
 
     function setUp() public {
+        governance = _deployGovernance();
         usdc = new MockUSDC();
-        vault = new Vault(usdc, address(0x1234), 1e18);
+        vault = new Vault(usdc, address(0x1234), governance, 1e18);
         handler = new VaultHandler(usdc, vault);
         targetContract(address(handler));
     }
@@ -70,5 +72,13 @@ contract VaultInvariantTest is Test {
     /// @notice The deposit counter matches the deposits made, so ids have no gaps.
     function invariant_DepositCountMatchesDepositsMade() public view {
         assertEq(vault.depositCount(), handler.depositsMade());
+    }
+
+    /// @notice The running deposit total is the reported deposits, through the latest deposit too.
+    function invariant_DepositTotalsMatchTheReportedDeposits() public view {
+        assertEq(vault.totalDeposited(), handler.amountReported());
+        if (handler.depositsMade() > 0) {
+            assertEq(vault.depositedThrough(handler.depositsMade() - 1), vault.totalDeposited());
+        }
     }
 }

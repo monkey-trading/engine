@@ -162,7 +162,8 @@ async fn the_index_follows_the_log_and_resumes_after_a_restart() {
     let reader = Reader::new(file(&index), ready());
     let first = every_page(&reader, TRADER, None, 1).await;
     assert_eq!(first, logged_history(&dir, TRADER));
-    assert_eq!(first.len(), 2);
+    // The deposit, then the withdrawal's reservation, approval, and queue update.
+    assert_eq!(first.len(), 4);
 
     let last = last_command_seq(&dir);
     let node = TestSequencer::start(&dir, 1024);
@@ -173,8 +174,8 @@ async fn the_index_follows_the_log_and_resumes_after_a_restart() {
     history.finish().await.unwrap();
     let second = every_page(&reader, TRADER, None, 1).await;
     assert_eq!(second, logged_history(&dir, TRADER));
-    assert_eq!(second.len(), 3);
-    assert_eq!(second[1..], first[..]);
+    assert_eq!(second.len(), 7);
+    assert_eq!(second[3..], first[..]);
 }
 
 #[tokio::test]
@@ -234,6 +235,7 @@ async fn a_dropped_backfill_keeps_its_permit_until_its_read_ends() {
     let mut writer = SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(4, tx).unwrap();
     writer
         .append(&LogEntry::Command(CommandEntry {
+            seal: None,
             sequenced: Sequenced { seq: 0, ts: 0, cmd: Command::Tick },
             events: Some(Vec::new()),
         }))
@@ -303,7 +305,7 @@ fn deposit_log(dir: &Path, count: u64) -> Vec<LogEntry> {
     let entries: Vec<LogEntry> = (0..count)
         .map(|seq| {
             let sequenced = Sequenced { seq, ts: Millis::try_from(seq).unwrap() * 1_000, cmd: Command::Tick };
-            LogEntry::Command(CommandEntry { sequenced, events: events() })
+            LogEntry::Command(CommandEntry { seal: None, sequenced, events: events() })
         })
         .collect();
     let mut log = SegmentedLog::open(dir, |_| Ok(()))
@@ -331,7 +333,7 @@ fn append_deposits(dir: &Path, amount: i64, count: u64) {
         let ts = Millis::try_from(seq).unwrap() * 1_000 + 500;
         let events = Some(vec![Event::Deposited { account: A, amount: Fixed::from_int(amount) }]);
         let sequenced = Sequenced { seq, ts, cmd: Command::Tick };
-        writer.append(&LogEntry::Command(CommandEntry { sequenced, events })).unwrap();
+        writer.append(&LogEntry::Command(CommandEntry { seal: None, sequenced, events })).unwrap();
     }
     writer.flush().unwrap();
 }
@@ -360,7 +362,10 @@ fn at(seq: u64, index: u32) -> Offset {
 /// A command message at `seq`, stamped `ts`, that produced `events`.
 fn command(seq: u64, ts: Millis, events: Vec<Event>) -> Arc<StreamMsg> {
     let sequenced = Sequenced { seq, ts, cmd: Command::Tick };
-    Arc::new(StreamMsg::new(Offset::start_of(seq), LogEntry::Command(CommandEntry { sequenced, events: Some(events) })))
+    Arc::new(StreamMsg::new(
+        Offset::start_of(seq),
+        LogEntry::Command(CommandEntry { seal: None, sequenced, events: Some(events) }),
+    ))
 }
 
 /// Commands with events for `A` at 10:0, 10:2, 11:1, and 13:0, and for `B` at 10:1.

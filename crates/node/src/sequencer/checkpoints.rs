@@ -7,7 +7,7 @@ use engine_core::Fixed;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::AccountId;
 use tokio::sync::mpsc;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::checkpoints::Work;
 use crate::log::{Checkpoint, LogEntry};
@@ -20,12 +20,32 @@ pub(super) struct Gate {
     pub healthy: bool,
     pub recovery: Vec<Work>,
     pub pending: Vec<(u64, AccountId, Fixed, u64)>,
+    pub payouts: crate::sequencer::payouts::Payouts,
+    pub approvals: Option<crate::checkpoints::ApprovalRegistry>,
+    pub unproved: std::collections::BTreeSet<(AccountId, u64)>,
+    pub unregistered: std::collections::BTreeSet<(AccountId, u64)>,
+    pub schedule: crate::sequencer::payout_schedule::Schedule,
+    /// Whether a checkpoint is being deferred because the posting queue is full.
+    pub backlogged: bool,
 }
 
 impl Gate {
     /// Starts paused until the first reconciliation succeeds.
     pub fn new(sink: mpsc::Sender<Work>, parent: crate::log::CheckpointParent) -> Self {
-        Self { sink, registry: None, parent, healthy: false, recovery: Vec::new(), pending: Vec::new() }
+        Self {
+            sink,
+            registry: None,
+            parent,
+            healthy: false,
+            recovery: Vec::new(),
+            pending: Vec::new(),
+            payouts: Default::default(),
+            approvals: None,
+            unproved: Default::default(),
+            unregistered: Default::default(),
+            schedule: Default::default(),
+            backlogged: false,
+        }
     }
 }
 
@@ -42,6 +62,17 @@ impl Sequencer {
     pub(super) fn checkpoint(&mut self) -> anyhow::Result<()> {
         let seq = self.engine.last_seq().context("checkpoint before any command")?;
         if self.gate.as_ref().is_some_and(|gate| gate.parent.has_checkpoint && gate.parent.seq == seq) {
+            return Ok(());
+        }
+        // The worker finalizes one checkpoint at a time, so a full queue defers the next checkpoint
+        // instead of stopping the sequencer; unproved approvals wait for the next one that fits.
+        if let Some(gate) = &mut self.gate
+            && !gate.sink.is_closed()
+            && gate.sink.capacity() == 0
+        {
+            if !std::mem::replace(&mut gate.backlogged, true) {
+                warn!(alert = "checkpoint_backlog", seq, "checkpoint deferred: the posting queue is full");
+            }
             return Ok(());
         }
         let (started, root) = (Instant::now(), self.engine.state_root());
@@ -61,11 +92,17 @@ impl Sequencer {
             deferred_withdrawals: self.gate.is_some(),
         };
         self.record(LogEntry::Checkpoint(cp.clone()))?;
+        self.command_link = crate::log::command_seal::checkpoint_link(&cp)?;
+        self.capture_payout_proofs();
         if self.gate.is_some() {
             self.log.sync_unpublished()?;
+            self.register_payouts()?;
             self.queue_checkpoint(cp.clone())?;
             if let Some(gate) = &mut self.gate {
                 gate.parent = crate::log::CheckpointParent { has_checkpoint: true, seq, root: root.into() };
+                if std::mem::take(&mut gate.backlogged) {
+                    info!(alert_resolved = "checkpoint_backlog", seq, "checkpoint posting queue has room again");
+                }
             }
         }
         if self.gate.is_some() {
@@ -151,6 +188,7 @@ impl Sequencer {
                 vault: self.vault,
                 signature,
                 approved_seq: Some(seq),
+                authorization: None,
             }))?;
             self.legacy_approvals.signed(account, amount, nonce);
             self.legacy_authorizations.remove(&(account, nonce));

@@ -89,6 +89,7 @@ fn head_preflight_is_readonly_and_other_publication_groups_are_preserved() {
 /// The source carries no account events; the real engine and index still consume every command.
 fn tick(seq: u64) -> CommandEntry {
     CommandEntry {
+        seal: None,
         sequenced: Sequenced { seq, ts: i64::try_from(seq).unwrap(), cmd: Command::Tick },
         events: Some(Vec::new()),
     }

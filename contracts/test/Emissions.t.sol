@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity 0.8.36;
 
-import {Test} from "forge-std/Test.sol";
+import {GovernanceTest} from "./helpers/GovernanceTest.sol";
 import {IERC20} from "@openzeppelin-contracts/token/ERC20/IERC20.sol";
 import {ERC20Capped} from "@openzeppelin-contracts/token/ERC20/extensions/ERC20Capped.sol";
 
@@ -10,7 +10,7 @@ import {Vault} from "../src/Vault.sol";
 
 /// MONKEY claims against posted checkpoint roots. `crates/core/tests/fixtures/emissions.json` holds
 /// entitlement proofs the engine produced; `emissions_fixture.rs` checks them on the Rust side.
-contract EmissionsTest is Test {
+contract EmissionsTest is GovernanceTest {
     uint256 private constant KEY = 0x1234;
     uint256 private constant BUDGET = 1_000_000;
     uint8 private constant ENTITLEMENT_LEAF = 8;
@@ -28,7 +28,8 @@ contract EmissionsTest is Test {
     }
 
     function setUp() public {
-        vault = new Vault(IERC20(address(1)), vm.addr(KEY), BUDGET);
+        governance = _deployGovernance();
+        vault = new Vault(IERC20(address(1)), vm.addr(KEY), governance, BUDGET);
         monkey = vault.monkey();
         fixture = vm.readFile(string.concat(vm.projectRoot(), "/../crates/core/tests/fixtures/emissions.json"));
     }
@@ -45,12 +46,12 @@ contract EmissionsTest is Test {
 
     function testRefusesABudgetOutsideTheEngineRange() public {
         vm.expectRevert(abi.encodeWithSelector(Vault.InvalidPeriodBudget.selector, 0));
-        new Vault(IERC20(address(1)), vm.addr(KEY), 0);
+        new Vault(IERC20(address(1)), vm.addr(KEY), governance, 0);
         uint256 max = vault.MAX_PERIOD_BUDGET();
         assertEq(max, type(uint128).max / (2 * 26_280));
         vm.expectRevert(abi.encodeWithSelector(Vault.InvalidPeriodBudget.selector, max + 1));
-        new Vault(IERC20(address(1)), vm.addr(KEY), max + 1);
-        assertEq(new Vault(IERC20(address(1)), vm.addr(KEY), max).monkey().cap(), 2 * 26_280 * max);
+        new Vault(IERC20(address(1)), vm.addr(KEY), governance, max + 1);
+        assertEq(new Vault(IERC20(address(1)), vm.addr(KEY), governance, max).monkey().cap(), 2 * 26_280 * max);
     }
 
     function testEngineProofMintsOnceToTheAccountWhoeverRelays() public {

@@ -17,6 +17,7 @@ use crate::tee::EnclaveKey;
 use crate::test_support::scratch_dir;
 
 mod fakes;
+mod lifecycle;
 mod nonce_progress;
 use crate::checkpoints::rpc::submission::tests::fakes::Server;
 
@@ -51,6 +52,7 @@ async fn long_pending_survives_restart_without_another_send_or_finality_release(
         checkpoint: cp.clone(),
         liabilities: Fixed::ZERO,
         deposits: 0,
+        authorized: Fixed::ZERO,
         coverage: crate::checkpoints::DepositCoverage::Historical,
     };
     assert!(poster.reconcile(&work).await.is_err(), "pending is not canonical inclusion");

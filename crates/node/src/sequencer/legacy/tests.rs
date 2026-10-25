@@ -205,6 +205,7 @@ fn provenance_is_removed_only_by_the_authenticated_matching_signature_not_by_a_c
         vault: domain.vault,
         approved_seq: Some(2),
         signature: key.sign_withdrawal(domain.chain_id, &domain.vault.0, TRADER, Fixed::from_int(50), 1),
+        authorization: None,
     };
     let mut invalid = signed.clone();
     invalid.approved_seq = Some(1);
@@ -270,7 +271,7 @@ fn history(mock: i64) -> (Engine, BTreeMap<String, LegacyDeposit>, Vec<LogEntry>
 fn apply(engine: &mut Engine, commands: &mut Vec<LogEntry>, cmd: Command) -> Vec<Event> {
     let sequenced = Sequenced { seq: engine.last_seq().map_or(0, |seq| seq + 1), ts: 1, cmd };
     let events = engine.apply(&sequenced).unwrap();
-    commands.push(LogEntry::Command(CommandEntry { sequenced, events: Some(events.clone()) }));
+    commands.push(LogEntry::Command(CommandEntry { seal: None, sequenced, events: Some(events.clone()) }));
     events
 }
 

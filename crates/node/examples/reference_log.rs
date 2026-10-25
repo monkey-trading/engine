@@ -1,8 +1,9 @@
 //! Writes the node's reference log for a protocol version from engine-core's: each command with the
-//! events it produced, a withdrawal entry for each approved withdrawal, and a checkpoint every ten
-//! commands and after the last. Run it once per protocol version and commit the output; it refuses
-//! to overwrite a log that already exists. Protocol fixtures use placeholder enclave signatures for
-//! root/event replay; the strict CLI verifier requires real signatures.
+//! events it produced, a withdrawal entry for each withdrawal approved before `V22`, and a checkpoint
+//! every ten commands and after the last. A `V22` payout stays unsigned: its typed authorization
+//! needs a checkpoint the vault accepted. Run it once per protocol version and commit the output; it
+//! refuses to overwrite a log that already exists. Protocol fixtures use placeholder enclave
+//! signatures for root/event replay; the strict CLI verifier requires real signatures.
 //!
 //! `cargo run -p engine-node --example reference_log -- crates/core/tests/reference/v<N>.jsonl
 //! crates/node/tests/reference/v<N>.jsonl`
@@ -48,11 +49,15 @@ fn main() -> anyhow::Result<()> {
         let approved: Vec<_> = events
             .iter()
             .filter_map(|event| match event {
-                Event::WithdrawalApproved { account, amount, nonce } => Some((*account, *amount, *nonce)),
+                Event::WithdrawalApproved { account, amount, nonce }
+                    if engine.withdrawal_approval(*account, *nonce).is_none() =>
+                {
+                    Some((*account, *amount, *nonce))
+                }
                 _ => None,
             })
             .collect();
-        write(&mut writer, &LogEntry::Command(CommandEntry { sequenced, events: Some(events) }))?;
+        write(&mut writer, &LogEntry::Command(CommandEntry { seal: None, sequenced, events: Some(events) }))?;
         for (account, amount, nonce) in approved {
             let (chain_id, vault, signature) = (31337, AccountId([0; 20]), "0x".to_owned());
             write(
@@ -65,6 +70,7 @@ fn main() -> anyhow::Result<()> {
                     vault,
                     signature,
                     approved_seq: None,
+                    authorization: None,
                 }),
             )?;
         }

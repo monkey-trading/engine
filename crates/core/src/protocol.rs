@@ -123,11 +123,16 @@ pub enum ProtocolVersion {
     /// once the next contract's roll time has passed the market rolls at the first command where
     /// it has an index and a gap is recorded, the adjustment taking the gap.
     V21,
+    /// A withdrawal reserves whole USDC from trading cash in a public FIFO queue, and the queue
+    /// approves its head, partly when physical cash is short, as an immutable payout with its own
+    /// nonce. Activation sets payout capacity to the conserved cash less principal awaiting
+    /// finality, which joins it when its receipt finalises.
+    V22,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V21;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V22;
 
     /// Whether this rule set credits exact receipts with withdrawal principal locks.
     pub fn supports_deposit_finality(self) -> bool {

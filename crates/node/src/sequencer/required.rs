@@ -87,6 +87,43 @@ impl Sequencer {
         self.sequence_required("protocol activation", cmds)
     }
 
+    /// As `activate_protocol`, activating `version` instead of the latest, for tests of earlier rules.
+    /// Error cases:
+    /// - the engine rejects any of them
+    /// - the log cannot be written
+    #[cfg(test)]
+    pub(crate) fn activate_protocol_at(&mut self, version: ProtocolVersion) -> anyhow::Result<()> {
+        let current = self.engine.protocol_version();
+        let legacy = self.legacy_deposits.values().cloned().collect();
+        let mut cmds = activation_commands(&self.engine, &self.client_auth, self.operator, legacy);
+        let activates = |cmd: &Command| {
+            matches!(
+                cmd,
+                Command::Admin(AdminCommand::ActivateProtocol { .. } | AdminCommand::ActivateCustodyFinality { .. })
+            )
+        };
+        cmds.retain(|cmd| !activates(cmd) || current < version);
+        for cmd in &mut cmds {
+            if let Command::Admin(admin) = cmd
+                && activates(&Command::Admin(admin.clone()))
+            {
+                let legacy_deposits = match admin {
+                    AdminCommand::ActivateCustodyFinality { legacy_deposits, .. } => std::mem::take(legacy_deposits),
+                    _ => Vec::new(),
+                };
+                *admin = if version.supports_deposit_finality() && !self.engine.deposit_finality_enabled() {
+                    AdminCommand::ActivateCustodyFinality { version, legacy_deposits }
+                } else {
+                    AdminCommand::ActivateProtocol { version }
+                };
+            }
+        }
+        if cmds.is_empty() {
+            return Ok(());
+        }
+        self.sequence_required("protocol activation", cmds)
+    }
+
     /// Gives parameters the log set before `V11`, which do not weigh toxicity markouts by notional,
     /// the config's `weighting`, ahead of `activate_protocol`: `V11` refuses to activate over
     /// parameters without it. The command is the node's own, so the engine takes it unsigned however

@@ -1,4 +1,5 @@
-//! V20 receipt lifecycle, collateral and withdrawal eligibility through Engine::apply.
+//! V20 receipt lifecycle, collateral and withdrawal eligibility through Engine::apply, under V20's
+//! immediate withdrawal approvals; V22's queue is in `withdrawal_finality.rs`.
 
 mod common;
 
@@ -196,7 +197,7 @@ fn a_reincluded_deposit_keeps_a_solvent_position_open_and_an_unpaired_orphan_sti
 #[test]
 fn a_reversal_shortfall_the_house_writes_off_is_subtracted_from_emission_weight() {
     let mut h = Harness::emitting(1_000_000);
-    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::LATEST });
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V20 });
     assert!(h.engine.deposit_finality_enabled() && h.engine.emissions().is_some());
     let account = acct(1);
     let deposit = receipt(1, account, "100");
@@ -306,11 +307,11 @@ fn legacy_upgrade_records_pending_principal_before_withdrawals_and_releases_only
     }
     assert_eq!(historical.state_root(), historical_root);
     assert!(
-        h.cmd(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::LATEST }))
+        h.cmd(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V20 }))
             .iter()
             .any(|event| matches!(event, Event::AdminRejected { .. }))
     );
-    h.admin(AdminCommand::ActivateCustodyFinality { version: ProtocolVersion::LATEST, legacy_deposits: vec![legacy] });
+    h.admin(AdminCommand::ActivateCustodyFinality { version: ProtocolVersion::V20, legacy_deposits: vec![legacy] });
     let raw = receipt(99, account, "100");
     let raw_ref = format!("{}:{}", raw.tx_hash, raw.log_index);
     assert!(
@@ -427,8 +428,8 @@ fn harness(zero_house: bool) -> Harness {
     } else {
         Harness::v17()
     };
-    if h.engine.protocol_version() < ProtocolVersion::LATEST {
-        h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::LATEST });
+    if h.engine.protocol_version() < ProtocolVersion::V20 {
+        h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V20 });
     }
     assert!(h.engine.deposit_finality_enabled(), "V20 activation enables deposit finality");
     h

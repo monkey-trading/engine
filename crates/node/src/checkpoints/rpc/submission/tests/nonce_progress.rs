@@ -434,6 +434,7 @@ fn work(checkpoint: Checkpoint) -> Work {
         checkpoint,
         liabilities: Fixed::ZERO,
         deposits: 0,
+        authorized: Fixed::ZERO,
         coverage: crate::checkpoints::DepositCoverage::Historical,
     }
 }
@@ -443,6 +444,8 @@ fn public_finality_and_drop(server: &Server, checkpoint: &Checkpoint) {
     let mut state = server.state.lock().unwrap();
     state.latest = Some(checkpoint.clone());
     state.finalized = Some(checkpoint.clone());
+    // A finalized checkpoint stays in the vault's accepted history after its successors.
+    state.accepted.insert(checkpoint.seq, (checkpoint.clone(), 1));
     state.pending_nonce = state.latest_nonce;
     state.known = false;
 }

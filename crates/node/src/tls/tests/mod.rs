@@ -343,6 +343,7 @@ impl TestNode {
             operator: dev_config().operator().unwrap(),
             clock: now_ms,
             mock_custody: true,
+            payouts_enabled: true,
             log_dir: PathBuf::new(),
             manifest: watch::channel(Manifest::default()).1,
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),

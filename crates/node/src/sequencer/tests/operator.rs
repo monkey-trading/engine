@@ -68,7 +68,16 @@ fn a_log_claiming_an_unsigned_operator_command_applied_after_funds_does_not_repl
         LogEntry::Command(c) if c.sequenced.cmd == every_market => Some(c),
         _ => None,
     });
-    forged.expect("the command is logged").events = Some(vec![Event::AdminApplied]);
+    let forged = forged.expect("the command is logged");
+    forged.events = Some(vec![Event::AdminApplied]);
+    let err = replay(&entries).err().unwrap();
+    assert!(format!("{err:#}").contains("invalid command origin signature"), "{err:#}");
+    // Without its seal, as in a historical entry, replay still refuses the rewritten events.
+    let unsealed = entries.iter_mut().find_map(|entry| match entry {
+        LogEntry::Command(c) if c.sequenced.cmd == every_market => Some(c),
+        _ => None,
+    });
+    unsealed.expect("the command is logged").seal = None;
     let err = replay(&entries).err().unwrap();
     assert!(format!("{err:#}").contains("differ from the events replay gives"), "{err:#}");
 }

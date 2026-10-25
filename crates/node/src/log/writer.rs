@@ -184,13 +184,14 @@ impl LogWriter {
         Ok(())
     }
 
-    /// Flushes, which syncs the open segment's data, then forces the directory entry naming it to
-    /// storage, so its entries survive a host kill or a power loss as well as a process crash.
+    /// Syncs the open segment's data, then forces the directory entry naming it to storage, so its
+    /// entries survive a host kill or a power loss as well as a process crash, and only then
+    /// publishes them as flushed: a signature the stream can read is already durable.
     /// Error cases:
     /// - the write or either sync fails
     pub fn sync(&mut self) -> anyhow::Result<()> {
-        self.flush()?;
-        self.dir_handle.sync_all().with_context(|| format!("syncing {}", self.dir.display()))
+        self.sync_unpublished()?;
+        self.flush()
     }
 
     /// Starts the segment for `first_seq`, first syncing and listing the current one, if any. The

@@ -37,13 +37,16 @@ async fn newer_work_cannot_lend_receipt_coverage_to_an_older_finalized_checkpoin
         checkpoint: Some((6, second.checkpoint.root.clone())),
         balance: second.liabilities,
         deposits: second.deposits,
+        deposited: second.liabilities,
     };
+    *poster.chain.through.lock().unwrap() = vec![first.liabilities, second.liabilities];
     let finalized = Arc::new(Mutex::new(VaultState {
         height: 1,
         signer: poster.signer,
         checkpoint: Some((5, first.checkpoint.root.clone())),
         balance: first.liabilities,
         deposits: first.deposits,
+        deposited: first.liabilities,
     }));
     poster.chain.finalized = Some(finalized.clone());
     assert_eq!(poster.reconcile_known(&second, &[&first, &second]).await.unwrap(), (Some(5), false));

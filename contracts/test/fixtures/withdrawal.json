@@ -1,0 +1,34 @@
+{
+  "description": "Local interoperability vector, test signer key 0x1234; not a protocol reference log. Generated with cast ABI/EIP712/secp256k1 primitives.",
+  "chainId": 31337,
+  "verifyingContract": "0x1111111111111111111111111111111111111111",
+  "domainName": "EngineWithdrawal",
+  "domainVersion": "1",
+  "typeString": "Withdrawal(address account,uint256 amount,uint64 nonce,uint64 approvedSeq,uint64 signerEpoch,uint64 issuedAt,uint64 expiresAt)",
+  "typeHash": "0xb56e60421e4538674b2bfecdb669e9a4b8556307d62e6953a00600955a64ebd7",
+  "withdrawal": {
+    "account": "0x2222222222222222222222222222222222222222",
+    "amount": 123456789,
+    "nonce": 7,
+    "approvedSeq": 891,
+    "signerEpoch": 1,
+    "issuedAt": 1800000000,
+    "expiresAt": 1800086400
+  },
+  "checkpointSeq": 901,
+  "approvalKey": "0xea38c888a9f71fc81ff615958908bfe46333303975b19f992dbb7b51595f3f1d",
+  "valueHash": "0x4b5d607d5bff82599efd727b08edc97fa4367ab515025bc769acfbf77020f1c9",
+  "leafHash": "0x68706417945a35a23591b86046d95e28a420151a44769053e8103d21600886da",
+  "siblings": [
+    "0x9f236b21d24463627efdc0e095fc50ecffe6a4adeb1f491304e842a427487a4f",
+    "0x40d2e0d4b3863e4b7abee8ad15b9ce55b7adc5a39197911432905dd9e7f3d9e6",
+    "0x111d586e30ffcd008b63af4dd6ba94386110b792c04bb89e1e7cb676c87f8d5f",
+    "0x7c5e9202f9c229b3ad2b8cc53ddd8bf4193859d2e82e6fd3ce02625b6b502b45"
+  ],
+  "root": "0x4ba373e4b6066bf6eb49abaff92faa4baccaacef9f2334d23ef9289acf131039",
+  "domainSeparator": "0x2c5899254f8e9f038020d9fcc20e5c7265170d2c9b10ce2f2767283300b9d7c0",
+  "structHash": "0x39b213fcf9e384671cdf14706439db475f7b13d4e59c2c2fd0da6af9814bac56",
+  "digest": "0xc24811cf3581bdc144ddb0529ad303a899aa927a65e2461e08efa82506b8a241",
+  "signer": "0xCf03Dd0a894Ef79CB5b601A43C4b25E3Ae4c67eD",
+  "signature": "0xeccaf6791f39dd9b5f76fe84d295ff28205a4c0ab32a10bdd0f7aa771c00c7641d87c853b53f14c7685a3de47b80a0ad96a288c4d924a45c68db1cda4f6e61551c"
+}

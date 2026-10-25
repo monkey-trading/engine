@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity 0.8.36;
 
-import {Test} from "forge-std/Test.sol";
+import {GovernanceTest} from "./helpers/GovernanceTest.sol";
 import {IERC20} from "@openzeppelin-contracts/token/ERC20/IERC20.sol";
 import {IERC20Errors} from "@openzeppelin-contracts/interfaces/draft-IERC6093.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin-contracts/utils/ReentrancyGuardTransient.sol";
@@ -12,7 +12,7 @@ import {MockUSDC} from "./mocks/MockUSDC.sol";
 import {MockWallet} from "./mocks/MockWallet.sol";
 import {ReentrantToken} from "./mocks/ReentrantToken.sol";
 
-contract VaultTest is Test {
+contract VaultTest is GovernanceTest {
     uint256 internal constant ONE_USDC = 1e6;
 
     MockUSDC internal usdc;
@@ -22,8 +22,9 @@ contract VaultTest is Test {
     address internal funder = makeAddr("funder");
 
     function setUp() public {
+        governance = _deployGovernance();
         usdc = new MockUSDC();
-        vault = new Vault(usdc, address(0x1234), 1e18);
+        vault = new Vault(usdc, address(0x1234), governance, 1e18);
         min = vault.MIN_DEPOSIT();
     }
 
@@ -107,6 +108,78 @@ contract VaultTest is Test {
         assertEq(vault.depositCount(), 3);
     }
 
+    function test_DepositTotalsRunAcrossEveryEntryPoint() public {
+        _fund(trader, min);
+        _fund(funder, 5 * min);
+
+        vm.prank(trader);
+        vault.deposit(min);
+        vm.prank(funder);
+        vault.depositToHouse(2 * min);
+        vm.prank(funder);
+        vault.depositFor(trader, 3 * min);
+
+        assertEq(vault.totalDeposited(), 6 * min);
+        assertEq(vault.depositedThrough(0), min);
+        assertEq(vault.depositedThrough(1), 3 * min);
+        assertEq(vault.depositedThrough(2), 6 * min);
+        assertEq(vault.depositedThrough(3), 0);
+    }
+
+    function test_BookSurplusRecordsADirectTransferAsAHouseDeposit() public {
+        _fund(trader, min);
+        vm.prank(trader);
+        vault.deposit(min);
+        usdc.mint(address(vault), 15 * ONE_USDC);
+
+        vm.expectEmit(address(vault));
+        emit Vault.HouseDeposited(1, funder, 15 * ONE_USDC);
+        vm.prank(funder);
+        assertEq(vault.bookSurplus(), 1);
+
+        assertEq(vault.depositCount(), 2);
+        assertEq(vault.totalDeposited(), min + 15 * ONE_USDC);
+        assertEq(vault.depositedThrough(1), min + 15 * ONE_USDC);
+        assertEq(usdc.balanceOf(address(vault)), vault.totalDeposited());
+        vm.expectRevert(abi.encodeWithSelector(Vault.NoSurplus.selector, 0));
+        vault.bookSurplus();
+    }
+
+    function test_RevertWhen_SurplusIsBelowMinDeposit() public {
+        vm.expectRevert(abi.encodeWithSelector(Vault.NoSurplus.selector, 0));
+        vault.bookSurplus();
+        usdc.mint(address(vault), min - 1);
+        vm.expectRevert(abi.encodeWithSelector(Vault.NoSurplus.selector, min - 1));
+        vault.bookSurplus();
+        assertEq(vault.depositCount(), 0);
+
+        usdc.mint(address(vault), 1);
+        vm.expectEmit(address(vault));
+        emit Vault.HouseDeposited(0, address(this), min);
+        vault.bookSurplus();
+        assertEq(vault.totalDeposited(), min);
+    }
+
+    function test_BookSurplusTakesAtMostMaxDepositPerCall() public {
+        uint256 max = vault.MAX_DEPOSIT();
+        usdc.mint(address(vault), max + min);
+
+        vault.bookSurplus();
+        assertEq(vault.depositedThrough(0), max);
+        vault.bookSurplus();
+        assertEq(vault.depositedThrough(1), max + min);
+        assertEq(vault.totalDeposited(), usdc.balanceOf(address(vault)));
+    }
+
+    function test_RevertWhen_BookSurplusWhileDepositsArePaused() public {
+        usdc.mint(address(vault), min);
+        _govern(address(vault), abi.encodeCall(Vault.setPauses, (true, false)));
+
+        vm.expectRevert(Vault.DepositsPaused.selector);
+        vault.bookSurplus();
+        assertEq(vault.depositCount(), 0);
+    }
+
     function test_TheMinimumIsTenUsdc() public view {
         assertEq(vault.MIN_DEPOSIT(), 10 * ONE_USDC);
     }
@@ -172,12 +245,12 @@ contract VaultTest is Test {
 
     function test_RevertWhen_TokenIsZeroAddress() public {
         vm.expectRevert(Vault.ZeroAddress.selector);
-        new Vault(IERC20(address(0)), address(0x1234), 1e18);
+        new Vault(IERC20(address(0)), address(0x1234), governance, 1e18);
     }
 
     function test_FeeOnTransferTokenCreditsOnlyWhatArrived() public {
         FeeOnTransferToken token = new FeeOnTransferToken();
-        Vault feeVault = new Vault(token, address(0x1234), 1e18);
+        Vault feeVault = new Vault(token, address(0x1234), governance, 1e18);
         token.mint(trader, 100 * ONE_USDC);
         vm.prank(trader);
         token.approve(address(feeVault), 100 * ONE_USDC);
@@ -188,6 +261,8 @@ contract VaultTest is Test {
         feeVault.deposit(100 * ONE_USDC);
 
         assertEq(token.balanceOf(address(feeVault)), 99 * ONE_USDC);
+        assertEq(feeVault.totalDeposited(), 99 * ONE_USDC);
+        assertEq(feeVault.depositedThrough(0), 99 * ONE_USDC);
     }
 
     function test_RevertWhen_TokenReentersAnyEntryPoint() public {
@@ -195,7 +270,7 @@ contract VaultTest is Test {
             [ReentrantToken.Entry.Deposit, ReentrantToken.Entry.DepositFor, ReentrantToken.Entry.DepositToHouse];
         for (uint256 i = 0; i < entries.length; i++) {
             ReentrantToken token = new ReentrantToken();
-            Vault target = new Vault(token, address(0x1234), 1e18);
+            Vault target = new Vault(token, address(0x1234), governance, 1e18);
             token.mint(trader, min);
             vm.prank(trader);
             token.approve(address(target), min);

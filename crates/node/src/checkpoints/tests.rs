@@ -14,6 +14,8 @@ use crate::sequencer::{Request, replay};
 use crate::tee::EnclaveKey;
 mod receipts;
 
+mod collateral;
+
 /// Corrupts a hex signature without the fixed-byte no-op case.
 pub(super) fn tamper_signature(signature: &mut String) {
     let original = signature.clone();
@@ -37,12 +39,29 @@ struct Chain {
     finalized: Option<Arc<Mutex<VaultState>>>,
     fails: Arc<Mutex<usize>>,
     posts: Arc<Mutex<usize>>,
+    /// The vault's running deposit total after each deposit, in deposit order.
+    through: Arc<Mutex<Vec<Fixed>>>,
+}
+
+impl Chain {
+    /// Records a vault deposit that the ledger has not credited.
+    fn deposit(&self, amount: Fixed) {
+        let mut state = self.state.lock().unwrap();
+        state.deposits += 1;
+        state.deposited += amount;
+        state.balance += amount;
+        self.through.lock().unwrap().push(state.deposited);
+    }
 }
 
 impl CheckpointChain for Chain {
     async fn state(&self, view: View) -> anyhow::Result<VaultState> {
         let state = if view == View::Finalized { self.finalized.as_ref().unwrap_or(&self.state) } else { &self.state };
         Ok(state.lock().unwrap().clone())
+    }
+    async fn deposited_through(&self, at: &crate::checkpoints::Observation, count: u64) -> anyhow::Result<Fixed> {
+        anyhow::ensure!(count > 0 && count <= at.state.deposits, "deposit total is outside the observed deposits");
+        Ok(self.through.lock().unwrap()[usize::try_from(count - 1)?])
     }
     async fn post(&self, cp: &Checkpoint) -> anyhow::Result<()> {
         let mut fails = self.fails.lock().unwrap();
@@ -64,7 +83,7 @@ fn strict_replay_rejects_missing_forged_domain_and_signer_signatures() {
     let events = engine.apply(&command).unwrap();
     let cp = checkpoint(&key, 0, engine.state_root());
     let entries = [
-        LogEntry::Command(CommandEntry { sequenced: command, events: Some(events) }),
+        LogEntry::Command(CommandEntry { seal: None, sequenced: command, events: Some(events) }),
         LogEntry::Checkpoint(cp.clone()),
     ];
     replay(&entries).unwrap();
@@ -118,9 +137,9 @@ async fn failed_post_is_retried_and_never_releases_a_signature_early() {
     let (tx, mut rx) = mpsc::channel(4);
     work_tx.send(work).await.unwrap();
     let task = tokio::spawn(poster.run(work_rx, tx));
-    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { posted: None, healthy: false })));
+    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { posted: None, healthy: false, .. })));
     assert!(chain.state.lock().unwrap().checkpoint.is_none());
-    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { posted: Some(5), healthy: true })));
+    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { posted: Some(5), healthy: true, .. })));
     assert_eq!(*chain.posts.lock().unwrap(), 1);
     drop(work_tx);
     task.await.unwrap().unwrap();
@@ -154,23 +173,6 @@ async fn stale_parent_fails_closed_before_posting_a_divergent_higher_sequence() 
     assert_eq!(*poster.chain.posts.lock().unwrap(), 0);
 }
 
-#[tokio::test(start_paused = true)]
-async fn uncredited_deposit_mismatch_escalates_after_catch_up_deadline() {
-    let (_guard, mut alerts) = crate::test_support::capture_alerts();
-    let (poster, work) = poster();
-    poster.chain.state.lock().unwrap().deposits += 1;
-    let (work_tx, work_rx) = mpsc::channel(4);
-    let (tx, mut rx) = mpsc::channel(4);
-    work_tx.send(work).await.unwrap();
-    let task = tokio::spawn(poster.run(work_rx, tx));
-    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { healthy: false, .. })));
-    tokio::time::advance(Duration::from_secs(2)).await;
-    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { healthy: false, .. })));
-    assert!(std::iter::from_fn(|| alerts.try_recv().ok()).any(|alert| alert["alert"] == "collateral_mismatch"));
-    drop(work_tx);
-    task.await.unwrap().unwrap();
-}
-
 #[tokio::test]
 async fn latest_inclusion_never_authorizes_release_and_waiting_finality_does_not_repost() {
     let (mut poster, work) = poster();
@@ -202,31 +204,23 @@ async fn a_provisional_then_orphaned_approval_never_releases_a_signature() {
     let mut seq =
         crate::sequencer::Sequencer::recover(cfg, key.clone(), tokio::sync::broadcast::channel(1024).0, signed_tx)
             .unwrap();
-    seq.activate_protocol().unwrap();
+    // Before V22, an approval is signed once its checkpoint is posted and reconciled.
+    seq.activate_protocol_at(engine_core::protocol::ProtocolVersion::V18).unwrap();
     seq.genesis(&crate::test_support::dev_config().genesis).unwrap();
     seq.trust(crate::test_support::trusted_now()).unwrap();
     while work_rx.try_recv().is_ok() {}
     let posted = seq.last_seq();
     let (tx, rx) = mpsc::channel(64);
     let task = tokio::spawn(seq.run(rx));
-    tx.send(Request::CheckpointStatus { posted, healthy: true }).await.unwrap();
-    submit(
-        &tx,
-        Command::CustodyFinalised(engine_core::deposits::CustodyCheckpoint {
-            block: 0,
-            block_hash: engine_core::eip712::B256::repeat_byte(1),
-            deposit_count: 0,
-        }),
-    )
-    .await;
-    submit(&tx, crate::test_support::deposit(100, "finality-deposit")).await;
+    tx.send(Request::CheckpointStatus { posted, healthy: true, lifecycle: None }).await.unwrap();
+    submit(&tx, crate::test_support::deposit(100, "0xfinality-deposit")).await;
     submit(&tx, crate::test_support::withdraw(40)).await;
     let mut work = None;
     while let Ok(queued) = work_rx.try_recv() {
         work = Some(queued);
     }
     let work = work.unwrap();
-    assert_eq!(work.coverage, crate::checkpoints::DepositCoverage::Canonical);
+    assert_eq!(work.deposits, 1, "the vault credit is the checkpoint's one deposit");
     let parent = work.checkpoint.parent.unwrap();
     let state = VaultState {
         height: 0,
@@ -234,6 +228,7 @@ async fn a_provisional_then_orphaned_approval_never_releases_a_signature() {
         checkpoint: Some((parent.seq, parent.root.to_string())),
         balance: work.liabilities,
         deposits: work.deposits,
+        deposited: work.liabilities,
     };
     let finalized = Arc::new(Mutex::new(state.clone()));
     let chain = Chain {
@@ -241,6 +236,7 @@ async fn a_provisional_then_orphaned_approval_never_releases_a_signature() {
         finalized: Some(finalized.clone()),
         fails: Arc::new(Mutex::new(0)),
         posts: Arc::new(Mutex::new(0)),
+        through: Arc::new(Mutex::new(vec![work.liabilities])),
     };
     let poster = Poster {
         registry: None,
@@ -256,13 +252,13 @@ async fn a_provisional_then_orphaned_approval_never_releases_a_signature() {
         }
         let (posted, healthy) = poster.reconcile(&work).await.unwrap();
         assert_eq!((posted, healthy), (None, false));
-        tx.send(Request::CheckpointStatus { posted, healthy }).await.unwrap();
+        tx.send(Request::CheckpointStatus { posted, healthy, lifecycle: None }).await.unwrap();
         sync(&tx).await;
         assert!(signed_rx.try_recv().is_err(), "unfinalized or orphaned inclusion cannot release an approval");
     }
     *finalized.lock().unwrap() = poster.chain.state.lock().unwrap().clone();
     let (posted, healthy) = poster.reconcile(&work).await.unwrap();
-    tx.send(Request::CheckpointStatus { posted, healthy }).await.unwrap();
+    tx.send(Request::CheckpointStatus { posted, healthy, lifecycle: None }).await.unwrap();
     sync(&tx).await;
     let released = signed_rx.try_recv().expect("finalized healthy approval releases");
     assert_eq!(released.approved_seq, Some(work.checkpoint.seq));
@@ -303,6 +299,7 @@ fn poster() -> (Poster<Chain>, Work) {
         checkpoint: checkpoint.clone(),
         liabilities: Fixed::from_int(100),
         deposits: 1,
+        authorized: Fixed::ZERO,
         coverage: crate::checkpoints::DepositCoverage::Historical,
     };
     let chain = Chain {
@@ -312,10 +309,12 @@ fn poster() -> (Poster<Chain>, Work) {
             checkpoint: None,
             balance: work.liabilities,
             deposits: work.deposits,
+            deposited: work.liabilities,
         })),
         finalized: None,
         fails: Arc::new(Mutex::new(0)),
         posts: Arc::new(Mutex::new(0)),
+        through: Arc::new(Mutex::new(vec![work.liabilities])),
     };
     (
         Poster {
@@ -365,9 +364,8 @@ async fn public_relayer_advanced_prefix_reconciles_against_its_own_accounting() 
         let mut state = poster.chain.state.lock().unwrap();
         state.signer = poster.signer;
         state.checkpoint = Some((second.checkpoint.seq, second.checkpoint.root.clone()));
-        state.balance = second.liabilities;
-        state.deposits = second.deposits;
     }
+    poster.chain.deposit(Fixed::from_int(10));
     assert_eq!(poster.reconcile_known(&first, &[&first, &second]).await.unwrap(), (Some(second.checkpoint.seq), true));
     assert_eq!(*poster.chain.posts.lock().unwrap(), 0);
     // A backend which still sees the predecessor is retried, without treating it as a fork.
@@ -405,15 +403,17 @@ async fn publicly_relayed_work_beyond_the_full_worker_queue_is_recognized() {
         let mut state = poster.chain.state.lock().unwrap();
         state.signer = poster.signer;
         state.checkpoint = Some((advanced.checkpoint.seq, advanced.checkpoint.root.clone()));
+        // The fixture's later credits carry no vault deposit; the vault holds them in its first.
         state.balance = advanced.liabilities;
-        state.deposits = advanced.deposits;
+        state.deposited = advanced.liabilities;
+        *poster.chain.through.lock().unwrap() = vec![advanced.liabilities];
     }
     let (sink, input) = mpsc::channel(64);
     sink.send(advanced.clone()).await.unwrap();
     let (tx, mut status) = mpsc::channel(8);
     let task = tokio::spawn(poster.run_with_recovery(input, tx, chain));
     assert!(
-        matches!(status.recv().await, Some(Request::CheckpointStatus {posted: Some(seq), healthy: true}) if seq == advanced.checkpoint.seq)
+        matches!(status.recv().await, Some(Request::CheckpointStatus {posted: Some(seq), healthy: true, ..}) if seq == advanced.checkpoint.seq)
     );
     assert_eq!(registry.lock().unwrap().len(), 1, "finalized covered prefix retires from the registry");
     drop(sink);

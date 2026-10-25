@@ -38,6 +38,7 @@ fn accounting_agrees_with_full_recomputation_for_every_immutable_historical_fixt
 fn replay_refuses_forged_events_before_updating_accounting() {
     let mut replay = Replay::default();
     let entry = LogEntry::Command(crate::log::CommandEntry {
+        seal: None,
         sequenced: engine_core::command::Sequenced {
             seq: 0,
             ts: 0,

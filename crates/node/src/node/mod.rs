@@ -28,6 +28,7 @@ use crate::feeds;
 use crate::feeds::venue::{self, Timing};
 use crate::history::HistoryPlan;
 mod preflight;
+mod signer_history;
 use crate::limits::{ApiLimits, run_retain};
 use crate::log::Manifest;
 use crate::metrics::Metrics;
@@ -125,10 +126,14 @@ async fn serve_node(
         .await
         .inspect_err(|e| error!(alert = "checkpoint_startup_failed", "refusing to serve: {e:#}"))?;
     let mut anchor = None;
-    let (mut log, history_plan) = read_log_and_history_observe(
+    let authorities = signer_history::load(checkpoint_setup.as_ref(), &cfg.node.log_dir)
+        .await
+        .inspect_err(|e| error!(alert = "checkpoint_startup_failed", "refusing to serve: {e:#}"))?;
+    let (mut log, history_plan) = read_log_and_history_authorities(
         &cfg,
         Some(AccountId(key.address())),
         checkpoint_setup.as_ref().map(|setup| setup.parent),
+        authorities,
         |entry| {
             if let crate::log::LogEntry::Checkpoint(cp) = entry
                 && checkpoint_setup.as_ref().and_then(|setup| setup.posted_seq) == Some(cp.seq)
@@ -160,6 +165,7 @@ async fn serve_node(
         manifest: manifest_tx,
         checkpoint_every: cfg.node.checkpoint_every,
         checkpoint_registry: checkpoint_setup.as_ref().and_then(|setup| setup.poster.registry.clone()),
+        approval_registry: checkpoint_setup.as_ref().map(|setup| setup.approvals.clone()),
         checkpoint_parent: checkpoint_setup.as_ref().map(|setup| setup.parent).unwrap_or_default(),
         checkpoints: checkpoint_setup.as_ref().map(|setup| setup.tx.clone()),
         chain_id: cfg.custody.chain_id,
@@ -174,7 +180,11 @@ async fn serve_node(
     };
     let custody = Custody::connect(&cfg.custody, log.last_seq())
         .inspect_err(|e| error!(alert = "custody_connect_failed", "refusing to serve: {e:#}"))?;
-    authorize(checkpoint_setup.as_ref().map(|setup| (&setup.poster, anchor.as_ref())), Some((&log, &seq_cfg))).await?;
+    authorize(
+        checkpoint_setup.as_ref().map(|setup| (&setup.poster, anchor.as_ref())),
+        Some((&log, &seq_cfg, AccountId(key.address()))),
+    )
+    .await?;
     let (log, mut history) = history_plan
         .finish_with_log(log, key.clone())
         .inspect_err(|e| error!(alert = "history_recovery_failed", "refusing to serve: {e:#}"))?;
@@ -204,9 +214,9 @@ async fn serve_node(
     let mut tasks: JoinSet<TaskResult> = JoinSet::new();
     if let Some(setup) = checkpoint_setup {
         let checkpoint_tx = tx.clone();
-        tasks.spawn(
-            async move { ("checkpoints", setup.poster.run_with_recovery(setup.rx, checkpoint_tx, recovery).await) },
-        );
+        tasks.spawn(async move {
+            ("checkpoints", setup.poster.run_with_approvals(setup.rx, checkpoint_tx, recovery, setup.approvals).await)
+        });
     }
 
     let tick = cfg.node.tick;
@@ -282,6 +292,7 @@ async fn serve_node(
         auth: client_auth,
         operator,
         mock_custody,
+        payouts_enabled: mock_custody || cfg.checkpoints.is_some(),
         clock: now_ms,
         log_dir: cfg.node.log_dir.clone(),
         manifest: manifest_rx,
@@ -374,24 +385,40 @@ fn read_log_and_history(cfg: &NodeConfig) -> anyhow::Result<(ReplayedLog, crate:
 /// Replays and checks history while exposing the same entries for the on-chain anchor check.
 /// Error cases:
 /// - the log or history index cannot be read or verified
+#[cfg(test)]
 fn read_log_and_history_observe(
     cfg: &NodeConfig,
     signer: Option<AccountId>,
     parent: Option<crate::log::CheckpointParent>,
     mut observe: impl FnMut(&crate::log::LogEntry),
 ) -> anyhow::Result<(ReplayedLog, HistoryPlan)> {
+    read_log_and_history_authorities(cfg, signer, parent, Default::default(), &mut observe)
+}
+
+/// Replays with independently finalized historical signer evidence before any persisted mutation,
+/// from a verified snapshot when snapshots are configured.
+/// Error cases:
+/// - history, log, or authenticated signer history fails validation
+fn read_log_and_history_authorities(
+    cfg: &NodeConfig,
+    signer: Option<AccountId>,
+    parent: Option<crate::log::CheckpointParent>,
+    authorities: crate::checkpoints::SignerHistory,
+    mut observe: impl FnMut(&crate::log::LogEntry),
+) -> anyhow::Result<(ReplayedLog, HistoryPlan)> {
     if cfg.snapshots.is_some() {
-        let (log, plan) = Sequencer::read_paired_log(cfg, signer, parent, observe)
+        let (log, plan) = Sequencer::read_paired_log(cfg, signer, parent, authorities, observe)
             .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
         return Ok((log, HistoryPlan::authenticated(plan)?));
     }
     let history_failed = |e: &anyhow::Error| error!(alert = "history_recovery_failed", "refusing to serve: {e:#}");
     let mut check = HistoryPlan::open(&cfg.history).inspect_err(history_failed)?;
-    let log = Sequencer::read_log_for_recovery(
+    let log = Sequencer::read_log_with_authorities(
         &cfg.node.log_dir,
         Some(crate::log::CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? }),
         signer,
         parent,
+        authorities,
         |entry| {
             check.observe(entry);
             observe(entry);

@@ -6,14 +6,22 @@
 
 pub(crate) mod history_rebuild;
 pub(crate) mod legacy;
+mod origin;
 mod recovery;
 mod replay;
+pub(crate) use replay::replay_path_with_authorities;
 pub use replay::{Replayed, replay, replay_path, replay_path_in_domain, replay_path_with_trust, replay_with_signer};
 mod checkpoints;
 use checkpoints::Gate;
 mod messages;
 pub use messages::{Query, Request, SignedWithdrawal, StreamBody, StreamMsg};
 mod benchmark_schedule;
+mod payout_schedule;
+#[cfg(test)]
+mod payout_tests;
+mod payouts;
+#[cfg(test)]
+mod withdrawal_scenario;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -55,6 +63,7 @@ pub struct Sequencer {
     engine: Engine,
     log: LogWriter,
     key: Arc<EnclaveKey>,
+    command_link: engine_core::eip712::B256,
     checkpoint_every: u64,
     next_seq: u64,
     last_ts: Millis,
@@ -115,6 +124,7 @@ pub struct SequencerConfig<'a> {
     /// Where the sequencer records its metrics.
     pub metrics: Arc<Metrics>,
     pub(crate) checkpoint_registry: Option<crate::checkpoints::Registry>,
+    pub(crate) approval_registry: Option<crate::checkpoints::ApprovalRegistry>,
     pub(crate) checkpoint_parent: crate::log::CheckpointParent,
     pub(crate) checkpoints: Option<mpsc::Sender<crate::checkpoints::Work>>,
     /// The commands the config's genesis sequences, which the genesis the log ran must match (see
@@ -164,7 +174,12 @@ impl Sequencer {
                     Request::TimeSample(sample) => self.take_sample(sample)?,
                     Request::Sync(reply) => syncs.push(reply),
                     Request::WatchBenchmarkSchedule(reply) => benchmark_watches.push(reply),
-                    Request::CheckpointStatus { posted, healthy } => self.checkpoint_status(posted, healthy)?,
+                    Request::CheckpointStatus { posted, healthy, lifecycle } => {
+                        self.checkpoint_status(posted, healthy)?;
+                        if let Some(evidence) = lifecycle {
+                            self.release_payouts(&evidence)?;
+                        }
+                    }
                 }
                 if taken < MAX_BATCH {
                     next = rx.try_recv().ok();
@@ -315,6 +330,8 @@ impl Sequencer {
         legacy::check_activation_ledger(&sequenced.cmd, &self.legacy_deposits)?;
         let version = self.engine.protocol_version();
         let events = self.engine.apply(&sequenced).context("sequencer produced an invalid sequence")?;
+        #[cfg(test)]
+        withdrawal_scenario::before_approval_log(&sequenced, &events)?;
         self.accounting.apply(&sequenced.cmd, &events)?;
         self.progress.genesis.command(&sequenced, &events);
         if self.engine.protocol_version() != version {
@@ -329,21 +346,34 @@ impl Sequencer {
         let reinstated = reinstated_receipt(&sequenced.cmd, &events);
         self.next_seq += 1;
         self.last_ts = ts;
-        let entry = CommandEntry { sequenced, events: Some(events.clone()) };
+        let mut entry = CommandEntry { sequenced, events: Some(events.clone()), seal: None };
+        let link = crate::log::command_seal::command_link(self.command_link, &entry)?;
+        let domain = crate::log::CheckpointDomain { chain_id: self.chain_id, vault: self.vault };
+        entry.seal = Some(self.key.seal_command(domain, link));
         self.command_prefix =
             crate::log::extend_command_prefix(self.command_prefix, crate::log::command_digest(&entry)?);
         self.record(LogEntry::Command(entry))?;
+        self.command_link = link;
         if let Some(previous) = previous_schedule.filter(|_| events.contains(&Event::AdminApplied)) {
             self.note_benchmark_schedule(previous);
         }
         self.metrics.commands.inc();
 
-        for event in &events {
+        for (event_index, event) in events.iter().enumerate() {
             alert_on(event);
             self.benchmark_alerts.note(event);
             self.metrics.record(event);
             if let Event::WithdrawalApproved { account, amount, nonce } = event {
-                if let Some(gate) = &mut self.gate {
+                if let Some(approval) = self.engine.withdrawal_approval(*account, *nonce).copied() {
+                    if let Some(gate) = &mut self.gate {
+                        gate.payouts.insert((*account, *nonce), payouts::Payout::new(approval, event_index));
+                        gate.schedule.insert((approval.approved_seq, event_index), (*account, *nonce));
+                        gate.unproved.insert((*account, *nonce));
+                        gate.unregistered.insert((*account, *nonce));
+                    } else {
+                        self.sign_mock_payout(approval)?;
+                    }
+                } else if let Some(gate) = &mut self.gate {
                     gate.pending.push((
                         self.engine.last_seq().expect("applied command has a seq"),
                         *account,
@@ -362,10 +392,10 @@ impl Sequencer {
             self.benchmark_alerts.retain_listed(&self.engine, &previous);
         }
         self.deficit.note(self.engine.house_nav());
-        if self.next_seq.is_multiple_of(self.checkpoint_every)
-            || self.gate.as_ref().is_some_and(|gate| {
-                gate.pending.last().is_some_and(|w| w.0 == self.engine.last_seq().expect("applied command has a seq"))
-            })
+        if self.last_checkpoint != self.engine.last_seq()
+            && (self.next_seq.is_multiple_of(self.checkpoint_every)
+                || (self.gate.is_some()
+                    && events.iter().any(|event| matches!(event, Event::WithdrawalApproved { .. }))))
         {
             self.checkpoint()?;
         }
@@ -390,6 +420,7 @@ impl Sequencer {
             error!(alert = "legacy_withdrawal_unproven", %account, nonce, "inherited withdrawal lacks canonical finality proof");
             bail!("inherited withdrawal lacks canonical finality proof");
         }
+        self.log.sync()?;
         let signature = self.key.sign_withdrawal(self.chain_id, &self.vault.0, account, amount, nonce);
         info!(%account, nonce, "withdrawal signed");
         self.record(LogEntry::Withdrawal(SignedWithdrawal {
@@ -400,6 +431,7 @@ impl Sequencer {
             vault: self.vault,
             signature,
             approved_seq: None,
+            authorization: None,
         }))?;
         self.legacy_approvals.signed(account, amount, nonce);
         self.legacy_authorizations.remove(&(account, nonce));
@@ -411,7 +443,11 @@ impl Sequencer {
     /// Error cases:
     /// - the log cannot be written
     fn flush(&mut self) -> anyhow::Result<()> {
-        self.log.flush()?;
+        if self.outbox.iter().any(|msg| matches!(msg.body, StreamBody::Withdrawal(_))) {
+            self.log.sync()?;
+        } else {
+            self.log.flush()?;
+        }
         if std::mem::take(&mut self.benchmark_schedule_dirty) {
             self.benchmark_schedule.send_replace(BenchmarkSchedule::from_engine(&self.engine));
         }

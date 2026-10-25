@@ -38,7 +38,7 @@ fn a_command_entry_from_before_events_were_logged_still_parses() {
     let line = r#"{"entry":"command","seq":0,"ts":5,"cmd":{"type":"tick"}}"#;
     let entry: LogEntry = serde_json::from_str(line).unwrap();
     let sequenced = Sequenced { seq: 0, ts: 5, cmd: Command::Tick };
-    assert_eq!(entry, LogEntry::Command(CommandEntry { sequenced, events: None }));
+    assert_eq!(entry, LogEntry::Command(CommandEntry { seal: None, sequenced, events: None }));
     assert_eq!(serde_json::to_string(&entry).unwrap(), line);
 }
 
@@ -46,6 +46,7 @@ fn a_command_entry_from_before_events_were_logged_still_parses() {
 fn a_command_entry_carries_its_events_through_the_file_format() {
     let events = vec![Event::Deposited { account: AccountId([1; 20]), amount: Fixed::from_int(5) }];
     let entry = LogEntry::Command(CommandEntry {
+        seal: None,
         sequenced: Sequenced { seq: 1, ts: 5, cmd: Command::Tick },
         events: Some(events),
     });
@@ -57,6 +58,7 @@ fn a_command_entry_carries_its_events_through_the_file_format() {
 #[test]
 fn every_event_and_rejection_reason_survives_the_file_format() {
     let entry = LogEntry::Command(CommandEntry {
+        seal: None,
         sequenced: Sequenced { seq: 1, ts: 5, cmd: Command::Tick },
         events: Some(every_event()),
     });
@@ -366,6 +368,7 @@ fn a_log_file_is_handed_on_a_line_at_a_time() {
 
 fn cmd(seq: u64) -> LogEntry {
     LogEntry::Command(CommandEntry {
+        seal: None,
         sequenced: Sequenced { seq, ts: seq as i64 * 10, cmd: Command::Tick },
         events: Some(Vec::new()),
     })
@@ -380,6 +383,7 @@ fn withdrawal(nonce: u64) -> LogEntry {
         vault: AccountId([2; 20]),
         signature: "0x01".into(),
         approved_seq: None,
+        authorization: None,
     })
 }
 

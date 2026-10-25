@@ -229,6 +229,7 @@ fn seqs(reader: &mut LogReader) -> Vec<u64> {
 fn large(seq: u64) -> LogEntry {
     let deposit = Event::Deposited { account: AccountId([1; 20]), amount: Fixed::from_int(5) };
     LogEntry::Command(CommandEntry {
+        seal: None,
         sequenced: Sequenced { seq, ts: seq as i64 * 10, cmd: Command::Tick },
         events: Some(vec![deposit; 200]),
     })

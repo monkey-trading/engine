@@ -36,7 +36,7 @@ async fn one_withdrawal_puts_command_withdrawal_and_checkpoint_at_one_seq() {
             StreamBody::Checkpoint(_) => (m.offset.index, "checkpoint"),
         })
         .collect();
-    assert_eq!(kinds, [(0, "command"), (1, "withdrawal"), (2, "checkpoint")]);
+    assert_eq!(kinds, [(0, "command"), (1, "checkpoint"), (2, "withdrawal")]);
     // The stream and the log carry the same messages at the same offsets.
     let published: Vec<_> = at_seq.iter().map(|m| serde_json::to_string(&**m).unwrap()).collect();
     let logged = log_messages(&dir, Offset::start_of(0));
@@ -63,7 +63,7 @@ fn custody_gets_a_withdrawal_when_its_batch_is_flushed_not_when_it_is_signed() {
 #[tokio::test]
 async fn replay_refuses_logged_events_or_withdrawals_that_replay_does_not_produce() {
     let dir = scratch_dir("seq-tamper");
-    let node = TestSequencer::start(&dir, 16);
+    let node = TestSequencer::start_v18(&dir, 16);
     node.submit(deposit(100, "dep-1")).await;
     node.submit(withdraw(40)).await;
     node.stop().await;
@@ -77,6 +77,12 @@ async fn replay_refuses_logged_events_or_withdrawals_that_replay_does_not_produc
         .unwrap();
     if let LogEntry::Command(c) = &mut altered[deposit_at] {
         c.events = Some(Vec::new());
+    }
+    let err = replay(&altered).err().unwrap();
+    assert!(format!("{err:#}").contains("invalid command origin signature"), "{err:#}");
+    // Without its seal, as in a historical entry, replay still compares the logged events.
+    if let LogEntry::Command(c) = &mut altered[deposit_at] {
+        c.seal = None;
     }
     let err = replay(&altered).err().unwrap();
     assert!(format!("{err:#}").contains("events logged at seq"), "{err:#}");
@@ -119,7 +125,7 @@ async fn a_restarted_sequencer_continues_the_log_offsets_and_segments() {
 #[tokio::test]
 async fn replay_refuses_an_approved_withdrawal_whose_signed_entry_is_missing() {
     let dir = scratch_dir("seq-missing-withdrawal");
-    let node = TestSequencer::start(&dir, 16);
+    let node = TestSequencer::start_v18(&dir, 16);
     node.submit(deposit(100, "dep-1")).await;
     node.submit(withdraw(40)).await;
     node.submit(Command::Tick).await;
@@ -134,7 +140,7 @@ async fn replay_refuses_an_approved_withdrawal_whose_signed_entry_is_missing() {
 #[tokio::test]
 async fn a_restart_signs_a_withdrawal_the_log_ends_before_and_hands_it_to_custody() {
     let dir = scratch_dir("seq-resign");
-    let mut node = TestSequencer::start(&dir, 16);
+    let mut node = TestSequencer::start_v18(&dir, 16);
     node.submit(deposit(100, "dep-1")).await;
     node.submit(withdraw(40)).await;
     assert_eq!(node.withdrawals.try_recv().unwrap().nonce, 1);
@@ -147,7 +153,7 @@ async fn a_restart_signs_a_withdrawal_the_log_ends_before_and_hands_it_to_custod
     let approved = (TRADER, Fixed::from_int(40), 1);
     assert_eq!(replay(&log_entries(&dir)).unwrap().unsigned, [approved]);
 
-    let mut node = TestSequencer::start(&dir, 16);
+    let mut node = TestSequencer::start_v18(&dir, 16);
     let signed = node.withdrawals.try_recv().unwrap();
     assert_eq!((signed.account, signed.amount, signed.nonce), approved);
     node.stop().await;
@@ -172,7 +178,7 @@ async fn replay_refuses_a_command_without_logged_events_after_ones_with_them() {
 #[tokio::test]
 async fn replay_refuses_a_checkpoint_after_an_approval_whose_signed_entry_is_missing() {
     let dir = scratch_dir("seq-missing-withdrawal-checkpoint");
-    let node = TestSequencer::start(&dir, 16);
+    let node = TestSequencer::start_v18(&dir, 16);
     node.submit(deposit(100, "dep-1")).await;
     node.tick_to_checkpoint().await;
     node.submit(withdraw(40)).await;
@@ -384,6 +390,7 @@ fn recovery_and_engine_replay_replay_the_log_as_they_read_it() {
     let dir = scratch_dir("seq-replay-streams");
     let command = |seq, events| {
         LogEntry::Command(CommandEntry {
+            seal: None,
             sequenced: Sequenced { seq, ts: 0, cmd: Command::Tick },
             events: Some(events),
         })

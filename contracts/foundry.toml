@@ -7,8 +7,11 @@ libs = ["dependencies"]
 solc_version = "0.8.36"
 # Arbitrum One supports Cancun (transient storage, used by the reentrancy guard).
 evm_version = "cancun"
-# Emission tests read the engine's entitlement proof vectors.
-fs_permissions = [{ access = "read", path = "../crates/core/tests/fixtures" }]
+# Tests read the withdrawal vector and the engine's entitlement proof vectors.
+fs_permissions = [
+    { access = "read", path = "./test/fixtures" },
+    { access = "read", path = "../crates/core/tests/fixtures" },
+]
 remappings = [
     "@openzeppelin-contracts/=dependencies/@openzeppelin-contracts-5.7.0/",
     "forge-std/=dependencies/forge-std-1.17.0/src/",

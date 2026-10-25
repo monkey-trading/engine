@@ -24,7 +24,8 @@ fn only_a_reconciled_posted_prefix_releases_signatures_and_recovery_keeps_the_ga
         ..sequencer_config(&dir, watch::channel(Manifest::default()).0)
     };
     let mut seq = Sequencer::recover(cfg, key.clone(), stream.clone(), withdrawals.clone()).unwrap();
-    seq.activate_protocol().unwrap();
+    // Before V22, an approval is signed once its checkpoint is posted and reconciled.
+    seq.activate_protocol_at(engine_core::protocol::ProtocolVersion::V18).unwrap();
     seq.genesis(&dev_config().genesis).unwrap();
     seq.trust(trusted_now()).unwrap();
     while queued.try_recv().is_ok() {}
@@ -86,7 +87,7 @@ fn recovering_a_completed_archive_waits_for_a_command_before_appending_a_checkpo
     let root = engine.state_root();
     let mut log =
         SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(1, watch::channel(Manifest::default()).0).unwrap();
-    log.append(&LogEntry::Command(CommandEntry { sequenced: command, events: Some(events) })).unwrap();
+    log.append(&LogEntry::Command(CommandEntry { seal: None, sequenced: command, events: Some(events) })).unwrap();
     log.append(&LogEntry::Checkpoint(Checkpoint {
         parent: None,
         seq: 0,
@@ -98,6 +99,7 @@ fn recovering_a_completed_archive_waits_for_a_command_before_appending_a_checkpo
     }))
     .unwrap();
     log.append(&LogEntry::Command(CommandEntry {
+        seal: None,
         sequenced: Sequenced { seq: 1, ts: 0, cmd: Command::Tick },
         events: Some(Vec::new()),
     }))

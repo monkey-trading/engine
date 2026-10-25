@@ -238,7 +238,7 @@ pub(super) fn fixture(label: &str) -> (SnapshotSection, EnclaveKey, Snapshot) {
     let mut engine = Engine::new();
     let sequenced = Sequenced { seq: 0, ts: 0, cmd: Command::Tick };
     let events = engine.apply(&sequenced).unwrap();
-    let command = crate::log::CommandEntry { sequenced, events: Some(events) };
+    let command = crate::log::CommandEntry { seal: None, sequenced, events: Some(events) };
     let command_prefix = crate::log::extend_command_prefix([0; 32], crate::log::command_digest(&command).unwrap());
     let root = engine.state_root();
     let vault = AccountId([0; 20]);

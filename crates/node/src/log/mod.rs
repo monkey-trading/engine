@@ -5,6 +5,8 @@
 //! [`Offset`].
 
 mod append_integrity;
+pub(crate) mod command_seal;
+pub use command_seal::CommandSeal;
 mod checked;
 mod commitment;
 pub(crate) use commitment::{command_digest, extend_command_prefix};
@@ -60,6 +62,9 @@ pub struct CommandEntry {
     /// `None` only in entries written before events were logged.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub events: Option<Vec<Event>>,
+    /// Missing only in historical entries; an uncovered missing seal refuses recovery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seal: Option<CommandSeal>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

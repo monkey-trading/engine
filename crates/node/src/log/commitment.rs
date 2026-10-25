@@ -48,8 +48,11 @@ mod tests {
 
     #[test]
     fn streaming_identity_preserves_canonical_bytes_and_covers_all_logged_events() {
-        let mut command =
-            CommandEntry { sequenced: Sequenced { seq: 0, ts: 0, cmd: Command::Tick }, events: Some(Vec::new()) };
+        let mut command = CommandEntry {
+            seal: None,
+            sequenced: Sequenced { seq: 0, ts: 0, cmd: Command::Tick },
+            events: Some(Vec::new()),
+        };
         let mut expected = Sha256::new();
         expected.update(b"engine.log.command.v1");
         expected.update(serde_json::to_vec(&command).unwrap());

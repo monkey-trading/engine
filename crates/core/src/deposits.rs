@@ -411,6 +411,10 @@ impl Engine {
         };
         assert!(*locked >= receipt.amount, "a live receipt's principal is locked");
         *locked -= receipt.amount;
+        // Final principal is physical payout capacity from V22; a reversal never released it.
+        if let Some(cash) = &mut self.withdrawal_cash {
+            *cash += receipt.amount;
+        }
     }
 
     /// Records a lifecycle transition and its exact receipt in both state and events.

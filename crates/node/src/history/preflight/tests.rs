@@ -32,7 +32,7 @@ fn valid_history_resumes_without_alert_or_byte_changes_for_absent_empty_and_comm
         for seq in 0..2 {
             let sequenced = Sequenced { seq, ts: i64::try_from(seq).unwrap(), cmd: Command::Tick };
             let events = engine.apply(&sequenced).unwrap();
-            let entry = CommandEntry { sequenced, events: Some(events) };
+            let entry = CommandEntry { seal: None, sequenced, events: Some(events) };
             writer
                 .as_mut()
                 .unwrap()

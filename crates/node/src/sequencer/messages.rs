@@ -31,6 +31,7 @@ pub enum Request {
     CheckpointStatus {
         posted: Option<u64>,
         healthy: bool,
+        lifecycle: Option<crate::checkpoints::LifecycleEvidence>,
     },
 }
 
@@ -53,6 +54,7 @@ pub enum StreamBody {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SignedWithdrawal {
     pub account: AccountId,
     pub amount: Fixed,
@@ -62,6 +64,8 @@ pub struct SignedWithdrawal {
     pub signature: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approved_seq: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorization: Option<crate::withdrawals::Authorization>,
 }
 
 impl StreamMsg {

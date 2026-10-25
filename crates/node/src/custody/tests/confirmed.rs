@@ -75,7 +75,11 @@ async fn scripted_confirmation_finality_scenario() {
     );
     assert_eq!(
         node.submit(withdraw("50")).await,
-        vec![Event::WithdrawalApproved { account: TRADER, amount: usdc("50"), nonce: 1 }]
+        vec![
+            Event::WithdrawalQueued { account: TRADER, amount: usdc("50"), requested_seq: 13 },
+            Event::WithdrawalApproved { account: TRADER, amount: usdc("50"), nonce: 1 },
+            Event::WithdrawalQueueUpdated { account: TRADER, requested_seq: 13, remaining: usdc("0") },
+        ]
     );
     set_release(&chains, Some(10));
     watcher.poll(&node.tx).await.unwrap();
