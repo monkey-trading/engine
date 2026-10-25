@@ -41,6 +41,7 @@ prometheus-client.workspace = true
 rand.workspace = true
 rcgen.workspace = true
 reqwest.workspace = true
+ring.workspace = true
 rusqlite.workspace = true
 rustls.workspace = true
 rustls-webpki.workspace = true
@@ -58,6 +59,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 webpki-root-certs.workspace = true
 webpki-roots.workspace = true
+x509-parser.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nix.workspace = true

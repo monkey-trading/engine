@@ -93,7 +93,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 
 ## Repository Structure
 
-- `src/main.rs` — the `engine` binary: `run`, `replay`, and `admin`
+- `src/main.rs` — the `engine` binary: `run`, `replay`, `verify-attestation`, and `admin`
 - `src/lib.rs` — module index
 - `src/admin/mod.rs` — `engine admin`: the operator key, the commands it signs, and submission
 - `src/admin/benchmark_feed.rs` — the separate signed publisher worker and rollover scheduling
@@ -264,6 +264,16 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   interested subscriber, so no callsite can be cached uninteresting and a collector never
   silently misses an alert or line
 - `src/tee.rs` — the enclave key, signatures, the attestation bundle, and attestation providers
+- `src/verify/mod.rs` — attestation verification against a release manifest: the quote, its
+  certificate chain, the report data's bundle binding, and the checkpoint-signer check
+- `src/verify/report.rs` — the SEV-SNP attestation report layout, parsing, and signature
+  verification
+- `src/verify/chain.rs` — the VCEK chain up to the pinned vendor roots and the key-distribution
+  service client that issues it
+- `src/verify/release.rs` — the release manifest of launch digest, policy, minimum TCB, and
+  configuration hashes
+- `src/verify/roots/` — the vendor root certificates compiled into the verifier
+- `src/verify/tests.rs` — verification tests and the loopback dev scenario
 - `src/trusted_time/mod.rs` — the trusted time task: queries the Roughtime servers, backs off
   failing ones, and turns agreeing replies into a sample
 - `src/trusted_time/gate.rs` — the sequencer's check of each stamp against the latest sample

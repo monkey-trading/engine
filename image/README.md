@@ -97,8 +97,8 @@ reserved as zero. The bundle is 105 bytes:
 | 41..73 | SHA-256 of the config file, the value `sha256sum config.toml` prints |
 | 73..105 | SHA-256 of the API's TLS certificate's DER SubjectPublicKeyInfo, which clients pin |
 
-On SEV-SNP the quote is the raw attestation report. A verifier accepts it only when all of these
-hold:
+On SEV-SNP the quote is the raw attestation report. `engine verify-attestation --attestation
+<v1/attestation JSON> --release <release manifest>` accepts it only when all of these hold:
 
 - its signature verifies against the VCEK certificate chain from AMD's key distribution service up
   to AMD's root key; without this, the fields below prove nothing;
@@ -110,7 +110,12 @@ hold:
 - the report data at `0x50` is the SHA-256 of the served bundle followed by 32 zero bytes, and the
   bundle names a config file the release lists.
 
-The attestation verifier (#27) will implement these checks; the commands below only read the fields.
+The verifier checks the report signature against the VCEK, fetched from the vendor's
+key-distribution service by the chip id and reported TCB the quote carries, and the VCEK's chain
+against the vendor roots pinned in the binary. A mock quote never verifies. `engine replay
+--attestation <JSON> --release <manifest>` runs the same verification and requires every
+checkpoint signer to be the enclave address the report data binds; the commands below only read
+the fields.
 
 ## Boot on an SEV-SNP host
 
@@ -163,9 +168,28 @@ kernel only in an SEV-SNP launch (under plain QEMU it finds no bootable option),
    the CI run's.
 3. Hash every config file the release runs with: `sha256sum <config>.toml`.
 4. Create the GitHub release for the tag with `vmlinuz`, `initramfs.cpio.gz`, `OVMF.fd`,
-   `measurement.json`, `SHA256SUMS`, and each config file, listed with its SHA-256. A verifier
-   checks a node's quote against the release's launch digest, its policy, and one of its config
-   hashes, and reads that config to see what the node runs with.
+   `measurement.json`, `SHA256SUMS`, and each config file, listed with its SHA-256, plus a
+   `release.toml` manifest tying them together for `engine verify-attestation`:
+
+   ```toml
+   name = "v0.1.0" # the release this manifest verifies
+   launch_digest = "0x…"        # measurement.json's launch_digest
+   policy = "0x30000"           # measurement.json's policy
+
+   [minimum_tcb] # the lowest reported TCB a quote from this release is accepted at
+   boot_loader = 0
+   tee = 0
+   snp = 8
+   microcode = 115
+
+   [config_hashes] # every configuration file the release runs with
+   "node.toml" = "0x…"
+   ```
+
+   A verifier checks a node's quote against the release's launch digest, its policy, one of its
+   config hashes, and reads that config to see what the node runs with. A processor name the
+   key-distribution service knows (the CPU generation's codename, for example `Milan`, `Genoa`,
+   or `Turin`) passes as `--processor`.
 
 The attestation binds every byte of the config file, so a verifier can check the hash only against
 a copy it can read. A credential in the file, such as an API key in a `custody.evm.providers`

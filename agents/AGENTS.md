@@ -40,7 +40,11 @@ an index: load only the rule whose hint matches the current action.
   packed proof storage (`authenticated/`), dense account-history lists (`history/authenticated/`),
   and authenticated segment metadata (`log/catalog.rs`),
   TEE attestation (configfs-tsm for TDX and SEV-SNP; the report data is the hash of a bundle of the
-  enclave address, the config file's SHA-256, and the TLS key's hash), the trusted time check against
+  enclave address, the config file's SHA-256, and the TLS key's hash), attestation verification
+  (`verify/`: `engine verify-attestation` checks an SEV-SNP quote's certificate chain against vendor
+  roots pinned in the binary, and its launch measurement, guest policy, reported TCB, and
+  configuration against a release manifest; `engine replay --attestation` requires every checkpoint
+  signer to have passed it; a mock quote never verifies), the trusted time check against
   Roughtime servers, the custody adapter (mock, or EVM vault deposits over alloy), checkpoint posting
   and collateral reconciliation (`checkpoints/`), with strict signature replay and startup checks
   against the vault's finalized commitment before history writes, plus authenticated withdrawal
@@ -124,9 +128,11 @@ an index: load only the rule whose hint matches the current action.
   `dev-deposit-finality.sh`, the sequencer confirmation and Ethereum finality scenario on the
   vault's Anvil fixture; `dev-rwa-feeds.sh`, the RWA price feeds dev scenario against local
   stand-ins for the market-data vendors; `dev-withdrawals.sh`, the actual Anvil/TLS withdrawal,
-  pre-log crash, unpaid redelivery, and FIFO liquidity scenario; and `build-image.sh` and
-  `check-image.sh`, which build the enclave image from a commit and boot it under QEMU without
-  SEV-SNP, and `check-image-retry.sh`, which checks the image build's download retries.
+  pre-log crash, unpaid redelivery, and FIFO liquidity scenario; `dev-attestation-verifier.sh`,
+  the attestation verifier dev scenario against a loopback key-distribution stand-in, with no
+  hardware or vendor access; and `build-image.sh` and `check-image.sh`, which build the
+  enclave image from a commit and boot it under QEMU without SEV-SNP, and `check-image-retry.sh`,
+  which checks the image build's download retries.
 - **ops/** — operator assets: `grafana/engine-node.json`, the node's Grafana dashboard, and
   `prometheus/engine-node-rules.yml`, the alerting rules for a down node or failing alert pages.
 - **.github/workflows/** — `ci.yaml`: fmt, the file line cap, clippy, tests (and the node's
@@ -195,7 +201,13 @@ Run from the repo root:
 - Metrics and alert routing dev scenario: `./scripts/dev-metrics-alerts.sh` (needs `python3`,
   `curl`, and `jq`)
 - Verify a published log: `cargo run -p engine-node -- replay --log <path>`, where `<path>` is a
-  log directory, a downloaded archive, or a single log file
+  log directory, a downloaded archive, or a single log file; `--attestation <attestation.json>
+  --release <release.toml>` additionally verifies an attestation against the release manifest and
+  requires every checkpoint signer to be the enclave address it names
+- Verify an enclave's attestation: `cargo run -p engine-node -- verify-attestation
+  --attestation <attestation.json> --release <release.toml>`; the quote's certificate chain must
+  reach a vendor root pinned in the binary, and the measurement, policy, reported TCB, and
+  configuration must match the release; a mock quote never verifies
 - Contracts, from `contracts/`: `forge soldeer install` (once, fetches the pinned dependencies),
   then `forge fmt --check`, `forge build`, and `forge test`
 - Alert outbox kill/restart dev scenario: `./scripts/dev-alert-outbox.sh` (needs `python3`,
@@ -207,6 +219,10 @@ Run from the repo root:
 - RWA price feeds dev scenario: `./scripts/dev-rwa-feeds.sh` (loopback Massive, TraderMade, and
   Databento stand-ins price FX, index, commodity, and share markets across a market open and a
   futures roll, then the log replays; no vendor account or key)
+- Attestation verifier dev scenario: `./scripts/dev-attestation-verifier.sh` (a loopback
+  key-distribution stand-in issues a test certificate chain; a test-signed SEV-SNP report verifies
+  against a release manifest and names the release, while a mock quote, an unlisted configuration,
+  an altered measurement, and an unattested checkpoint signer fail; needs only Cargo)
 - Vault deposit dev scenario: `./scripts/dev-vault-deposits.sh` (starts Anvil, deploys the vault
   and a mock USDC, runs a node on `config/anvil.toml`, and checks each deposit credits once;
   `RPC_QUORUM_SCENARIO=1` also injects a fictional deposit, stops providers and checks recovery;

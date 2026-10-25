@@ -83,10 +83,12 @@ configuration uses hardware attestation, on-chain custody, live prices, and sign
 Requests are signed, and the node refuses unsigned ones unless both the enclave and custody are
 mocks, and a production build of the node refuses every mock provider. The other three are not
 finished: the node builds into a reproducible SEV-SNP image and requests an attestation report
-through configfs-tsm, but booting that image on SEV-SNP hardware and a verifier for its quotes are
-still being built, as are live prices and the separate signed benchmark publisher worker. On-chain
-custody credits vault deposits and pays signed withdrawals, exercised on a local chain; production
-deployment remains out of scope for the development scenarios.
+through configfs-tsm, and `engine verify-attestation` verifies a quote's certificate chain,
+measurement, policy, and configuration against a release, but booting that image on SEV-SNP
+hardware and the verifier against a hardware quote are still being validated, as are live prices
+and the separate signed benchmark publisher worker. On-chain custody credits vault deposits and
+pays signed withdrawals, exercised on a local chain; production deployment remains out of scope
+for the development scenarios.
 
 Out of scope are volumetric denial of service, meaning attacks that work only by flooding the API or
 the network with traffic; social engineering of anyone involved with the project; reorganisations of

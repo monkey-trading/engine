@@ -44,6 +44,9 @@ rand = "0.8"
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
 # HTTPS for alert webhooks. TLS is configured in code: rustls on ring with the compiled-in Mozilla roots.
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
+# P-384 ECDSA over the attestation report. The workspace already builds ring as rustls's only
+# crypto provider, so no new backend enters the tree.
+ring = { version = "0.17", default-features = false, features = ["std"] }
 rusqlite = { version = "0.40", default-features = false, features = ["bundled", "limits"] }
 # TLS for the API, venue feeds, and alert webhooks with ring as the only crypto provider, so no
 # OpenSSL or aws-lc build.
@@ -67,6 +70,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 webpki-root-certs = "1"
 webpki-roots = "1"
+# X.509 parsing for the attestation certificate chain; already in the tree via rcgen.
+x509-parser = { version = "0.18", features = ["verify"] }
 
 [profile.release]
 opt-level = 3

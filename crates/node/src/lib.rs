@@ -40,3 +40,8 @@ mod throttle;
 mod tls;
 mod trusted_time;
 mod withdrawals;
+mod verify;
+pub use verify::{
+    KDS_BASE_URL, Options as VerifyOptions, ReleaseManifest, VerifiedAttestation, ensure_signers_verified,
+    load_attestation, verify_attestation,
+};

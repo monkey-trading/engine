@@ -1987,6 +1987,7 @@ dependencies = [
  "rand 0.8.8",
  "rcgen",
  "reqwest",
+ "ring",
  "rusqlite",
  "rustls",
  "rustls-webpki",
@@ -2005,6 +2006,7 @@ dependencies = [
  "tracing-subscriber",
  "webpki-root-certs",
  "webpki-roots",
+ "x509-parser",
 ]
 
 [[package]]
