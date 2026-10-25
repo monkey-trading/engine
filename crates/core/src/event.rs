@@ -7,6 +7,7 @@ use crate::corporate::CorporateAction;
 use crate::deposits::{DepositReceipt, DepositReject, DepositStatus};
 use crate::emissions::TokenUnits;
 use crate::price::PriceError;
+use crate::staking::UsdcUnits;
 use crate::types::{AccountId, MarketId, Millis, OrderId, Side};
 
 /// Engine outputs. Clients and the custody layer act on events; they never
@@ -230,7 +231,7 @@ pub enum Event {
     DistributionAllocated {
         account: AccountId,
         epoch: u64,
-        amount: crate::staking::UsdcUnits,
+        amount: UsdcUnits,
     },
     /// From `V25`, a closed distribution epoch: the NAV and floor it measured, the excess above the
     /// floor in whole USDC base units, and what stakers were allocated of it. House cash fell by
@@ -239,8 +240,8 @@ pub enum Event {
         epoch: u64,
         nav: Fixed,
         floor: Fixed,
-        excess: crate::staking::UsdcUnits,
-        allocated: crate::staking::UsdcUnits,
+        excess: UsdcUnits,
+        allocated: UsdcUnits,
     },
     /// From `V25`, the distribution epochs from `first` to `last` whose end no command witnessed;
     /// they distribute nothing, and the house keeps what they would have paid.

@@ -62,6 +62,7 @@ use crate::futures::FuturesState;
 use crate::market::{MarketSpec, QuoteCurrency};
 use crate::merkle::keccak;
 use crate::price::{Index, SourceQuote};
+use crate::staking::UsdcUnits;
 use crate::types::{AccountId, MarketId, Millis, OrderId};
 
 /// The kind byte that starts each key.
@@ -400,7 +401,7 @@ pub fn distribution_key(account: AccountId) -> B256 {
 }
 
 /// The value hash of a distribution leaf.
-pub fn distribution_hash(entitled: crate::staking::UsdcUnits) -> B256 {
+pub fn distribution_hash(entitled: UsdcUnits) -> B256 {
     keccak(&[&U256::from(entitled.0).abi_encode()])
 }
 

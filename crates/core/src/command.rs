@@ -10,7 +10,7 @@ use crate::auth::{ClientAuth, Operator, RequestAuth};
 use crate::benchmark::BenchmarkBatch;
 use crate::corporate::CorporateAction;
 use crate::deposits::{CustodyCheckpoint, DepositUpdate, LegacyDeposit};
-use crate::emissions::EmissionSchedule;
+use crate::emissions::{EmissionSchedule, TokenUnits};
 use crate::market::MarketSpec;
 use crate::params::{NotionalWeighting, ProtocolParams};
 use crate::price::SourceQuote;
@@ -70,7 +70,7 @@ pub enum Command {
     /// staked for `account`, credited once under `chain_ref`.
     Stake {
         account: AccountId,
-        amount: crate::emissions::TokenUnits,
+        amount: TokenUnits,
         chain_ref: String,
     },
     /// From `V25`, a staking contract's `UnstakeCompleted` event, which fires only once the
@@ -78,7 +78,7 @@ pub enum Command {
     /// once under `chain_ref`.
     Unstake {
         account: AccountId,
-        amount: crate::emissions::TokenUnits,
+        amount: TokenUnits,
         chain_ref: String,
     },
 }
