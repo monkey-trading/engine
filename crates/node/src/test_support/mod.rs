@@ -10,9 +10,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-mod events;
-pub use events::every_event;
-
 use engine_core::auth::ClientAuth;
 use engine_core::command::Command;
 use engine_core::event::Event;

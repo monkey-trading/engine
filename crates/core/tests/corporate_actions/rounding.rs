@@ -1,6 +1,7 @@
 use engine_core::Fixed;
 use engine_core::account::Position;
 use engine_core::command::{AdminCommand, OrderKind};
+use engine_core::emissions::{EmissionSchedule, TokenUnits};
 use engine_core::event::{CancelReason, Event, Reject};
 use engine_core::fixed::Rounding;
 use engine_core::protocol::ProtocolVersion;
@@ -102,6 +103,21 @@ fn rounded_off_position_fractions_settle_at_the_post_split_mark_and_dust_orders_
     assert!(!h.engine.markets()[&AAPL].resting.contains_key(&dust));
     assert_aggregates(&h);
     h.assert_conserved(Fixed::ZERO);
+}
+
+#[test]
+fn cash_in_lieu_counts_as_realised_pnl_toward_emission_weight() {
+    let mut h = held("2", "4");
+    let emissions = EmissionSchedule { start_ms: h.ts, period_budget: TokenUnits(1_000_000) };
+    h.operator_admin(AdminCommand::InitEmissions(emissions));
+    h.price(AAPL, "80.5");
+    accepted(&schedule(&mut h, split("reverse", 1, 3)));
+    let events = tick(&mut h, open());
+    assert!(events.iter().any(|e| matches!(e, Event::CorporateCashInLieu { .. })), "{events:?}");
+    // The opening tick finalised every earlier period first, so only the split's settlements remain.
+    let realised: Vec<_> =
+        h.engine.period_results().iter().map(|(account, result)| (*account, result.realised)).collect();
+    assert_eq!(realised, [(acct(1), f("0.000000001")), (acct(2), f("-0.000000001"))]);
 }
 
 #[test]

@@ -168,6 +168,8 @@ impl Engine {
                 self.record_order(account, order_id);
             }
             if let Some(amount) = in_lieu {
+                // Realised P&L on the position, like a fill's, so it counts toward emission weight.
+                self.record_period_result(account, amount, Fixed::ZERO);
                 events.push(Event::CorporateCashInLieu {
                     id: action.id.clone(),
                     market: action.market,

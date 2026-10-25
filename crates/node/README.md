@@ -1120,8 +1120,9 @@ side that never executes sooner than the client asked (a buy limit and a sell st
 limit and a buy stop up), and marks, quotes, indices, stress references and markout prices toward
 zero. Quantities round toward zero. The fraction rounded off a position is closed at the post-split
 mark: its PnL against the rounded entry, rounded down and converted at the recorded FX valuation
-mark, moves between the account and the house as `corporate_cash_in_lieu`, with no profit fee. A
-resting order whose quantity or price rounds to zero, or whose quantity would exceed the
+mark, moves between the account and the house as `corporate_cash_in_lieu`, with no profit fee; like
+a fill's realised P&L, it counts toward the account's MONKEY emission weight, which dividends do
+not. A resting order whose quantity or price rounds to zero, or whose quantity would exceed the
 1,000,000,000 input bound, is cancelled with reason `split`. An account the split leaves flat writes
 off any negative balance against the house, as a close-out does. Pending dividend instructions keep
 their signed amounts, and USD risk limits and historical fill notionals keep their values. Stored
