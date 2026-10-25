@@ -184,7 +184,7 @@ mod tests {
 
     fn price(engine: &mut Engine, mid: i64) {
         let quotes = ["a", "b", "c"]
-            .map(|source| SourceQuote { source: source.into(), mid: Fixed::from_int(mid), ts: NOW })
+            .map(|source| SourceQuote { source: source.into(), mid: Fixed::from_int(mid), ts: NOW, contract: None })
             .to_vec();
         apply(engine, Command::Prices { market: 1, quotes });
     }
