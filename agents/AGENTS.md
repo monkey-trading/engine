@@ -60,7 +60,8 @@ an index: load only the rule whose hint matches the current action.
   section is protocol: it is sequenced into the log as admin commands on first boot, all or
   nothing, and credits house capital from config only under mock custody. Loading refuses a genesis
   value the engine would reject or an entry listed twice, and recovery refuses a log whose genesis
-  did not apply in full or is not the config's. `node.auth`, with `custody.chain_id` and
+  did not apply in full or is not the config's, and one whose genesis no current config can give,
+  which needs a fresh log. `node.auth`, with `custody.chain_id` and
   `custody.vault` under `eip712`, and `operator.public_key`, with the same chain id and vault, are
   recorded in the log when it first activates the protocol versions that need them, so changing
   either needs a fresh log.

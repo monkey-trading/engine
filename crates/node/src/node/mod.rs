@@ -72,8 +72,8 @@ pub(crate) async fn run_with_cpu(cfg: NodeConfig, telemetry: Telemetry, cpu: Opt
 /// - `feeds.provider = "venues"` without `[feeds.venues]`, or the TLS config cannot be built
 /// - generating the TLS key, attesting the keys, opening the history index (or a fresh one in place
 ///   of an index the log does not match), recovering the log (including a log that records another
-///   client auth or operator, or whose genesis did not apply in full), connecting custody, or
-///   binding a listener fails
+///   client auth or operator, or whose genesis did not apply in full, is not the config's, or is one
+///   no current config can give), connecting custody, or binding a listener fails
 /// - the engine would reject a genesis command
 /// - any supervised task stops or panics, or the sequencer cannot drain in time
 async fn serve_node(

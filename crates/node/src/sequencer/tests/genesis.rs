@@ -7,6 +7,7 @@ use super::*;
 use engine_core::params::NotionalWeighting;
 
 use crate::config::{CustodyProvider, Genesis, NodeConfig};
+use crate::sequencer::fixture_tests::{geneses_no_config_can_name, old_genesis_log};
 use crate::test_support::ANVIL_CONFIG;
 
 #[test]
@@ -275,4 +276,22 @@ fn a_genesis_set_before_divergence_shares_resumes_under_the_shares_a_config_load
     }
     let err = recover_with(&dir, &signed(31_337), other).err().unwrap();
     assert!(format!("{err:#}").contains("differs from the config's [genesis]"), "{err:#}");
+}
+
+#[test]
+fn a_genesis_no_current_config_can_name_is_refused_and_a_fresh_log_advised() {
+    // An older protocol applied each genesis, and config load under the latest refuses it, so no
+    // config can name it: recovery refuses whatever genesis the config gives, and writes nothing.
+    for (shape, version, genesis, reason) in geneses_no_config_can_name() {
+        let dir = scratch_dir(&format!("genesis-unnameable-{shape}"));
+        old_genesis_log(&dir, &signed(31_337), version, genesis);
+        let written = log_entries(&dir);
+        for config in [finished_genesis(&written), genesis_commands(&dev_config().genesis)] {
+            let err = format!("{:#}", recover_with(&dir, &signed(31_337), config).err().unwrap());
+            assert!(err.contains("no current config can name this log's genesis"), "{shape}: {err}");
+            assert!(err.contains(reason) && err.contains("a fresh log is needed"), "{shape}: {err}");
+            assert!(!err.contains("started with"), "{shape}: {err}");
+        }
+        assert_eq!(log_entries(&dir), written, "{shape}: recovery wrote nothing");
+    }
 }

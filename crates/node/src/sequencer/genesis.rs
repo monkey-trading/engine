@@ -1,7 +1,8 @@
 //! Genesis: the `[genesis]` config as the commands that open a log, the check that the engine
 //! accepts every one of them before any is written, and how far a replayed log got through them.
 //! Genesis is all or nothing: recovery refuses a log that started genesis without reaching the
-//! checkpoint after its house capital credit, and one whose genesis is not the config's.
+//! checkpoint after its house capital credit, one whose genesis no config loaded today can give, and
+//! one whose genesis is not the config's.
 
 use anyhow::{Context, bail};
 use engine_core::Engine;
@@ -9,16 +10,20 @@ use engine_core::auth::{ClientAuth, Operator};
 use engine_core::command::{AdminCommand, Command, Sequenced};
 use engine_core::event::Event;
 use engine_core::params::NotionalWeighting;
+use engine_core::protocol::ProtocolVersion;
 
 use crate::config::Genesis;
 use crate::sequencer::required::activation_commands;
 
 /// The custody reference genesis credits house capital under, as its last command.
-pub(super) const GENESIS_REF: &str = "genesis";
+pub(crate) const GENESIS_REF: &str = "genesis";
 /// What an operator does about a log whose genesis did not apply in full, when nothing follows it.
 const FRESH_LOG: &str = "with the node stopped, remove node.log_dir and history.dir to start a fresh log";
 /// What an operator does when commands follow such a genesis: they may hold client funds.
 const KEEP_LOG: &str = "commands follow genesis in the log, so keep it for an operator to examine";
+/// How an operator replaces a log no config can resume when commands follow its genesis.
+const MOVE_LOG: &str = "commands follow genesis in the log, so with the node stopped, move node.log_dir and \
+                        history.dir aside for an operator to examine, and start a fresh log";
 
 /// How far a replayed log got through genesis. Genesis starts at the first command `genesis_commands`
 /// gives, ends with its house capital credit, and closes at the next checkpoint. It applies in full
@@ -98,10 +103,18 @@ impl GenesisProgress {
     /// the config hash the node attests names the genesis its engine runs under. The log's genesis is
     /// compared in the form a config gives it under the latest protocol (see `restated`): parameters
     /// set before `V11` take the config's toxicity notional weighting, or, once the node has carried
-    /// one into the log, that one.
+    /// one into the log, that one. A genesis that form leaves one config load refuses, under rules
+    /// newer than the log, is refused first: no config can name it, so the log needs replacing.
     /// Error cases:
+    /// - genesis started, and config load under `client_auth` and `operator` would refuse it (see
+    ///   `check_genesis`)
     /// - genesis started, and its commands differ from `genesis`
-    pub fn ensure_matches(&self, genesis: &[Command]) -> anyhow::Result<()> {
+    pub fn ensure_matches(
+        &self,
+        genesis: &[Command],
+        client_auth: &ClientAuth,
+        operator: Operator,
+    ) -> anyhow::Result<()> {
         if self.started.is_none() {
             return Ok(());
         }
@@ -110,6 +123,15 @@ impl GenesisProgress {
             _ => None,
         };
         let ran = self.restated(self.carried.or(config_weighting));
+        if let Err(refused) = check_genesis_commands(client_auth, operator, ran.clone()) {
+            let replace = if self.followed { MOVE_LOG } else { FRESH_LOG };
+            bail!(
+                "no current config can name this log's genesis: config load under protocol {:?} refuses it \
+                 ({refused:#}), so the node cannot attest the genesis it runs under; a fresh log is needed: \
+                 {replace}",
+                ProtocolVersion::LATEST
+            );
+        }
         if ran == genesis {
             return Ok(());
         }
@@ -127,10 +149,10 @@ impl GenesisProgress {
         self.restated(weighting)
     }
 
-    /// The genesis the log ran, in the form a config loads under the latest protocol: parameters set
-    /// before `V11` without a toxicity notional weighting take `weighting`, and absolute divergence
-    /// triggers set before `V13`, which a config can no longer give, become shares of the widest
-    /// divergence bound among the genesis markets, as `V13`'s activation turns them.
+    /// The genesis the log ran, in the form a config gives it under the latest protocol: parameters
+    /// set before `V11` without a toxicity notional weighting take `weighting`, and absolute
+    /// divergence triggers set before `V13`, which a config can no longer give, become shares of the
+    /// widest divergence bound among the genesis markets.
     fn restated(&self, weighting: Option<NotionalWeighting>) -> Vec<Command> {
         let mut genesis = self.commands.clone();
         let widest = genesis
@@ -181,8 +203,15 @@ fn is_genesis_credit(cmd: &Command) -> bool {
 /// Error cases:
 /// - the engine rejects a command; the error names the genesis entry it comes from
 pub(crate) fn check_genesis(client_auth: &ClientAuth, operator: Operator, genesis: &Genesis) -> anyhow::Result<()> {
+    check_genesis_commands(client_auth, operator, genesis_commands(genesis))
+}
+
+/// As `check_genesis`, for the commands a genesis sequences.
+/// Error cases:
+/// - the engine rejects a command; the error names the genesis entry it comes from
+fn check_genesis_commands(client_auth: &ClientAuth, operator: Operator, genesis: Vec<Command>) -> anyhow::Result<()> {
     let mut engine = Engine::new();
-    let cmds = activation_commands(&engine, client_auth, operator).into_iter().chain(genesis_commands(genesis));
+    let cmds = activation_commands(&engine, client_auth, operator).into_iter().chain(genesis);
     for (seq, cmd) in (0..).zip(cmds) {
         let sequenced = Sequenced { seq, ts: 0, cmd };
         let events = engine.apply(&sequenced).context("checking genesis")?;
@@ -194,7 +223,7 @@ pub(crate) fn check_genesis(client_auth: &ClientAuth, operator: Operator, genesi
 }
 
 /// The reason the engine gave for rejecting an admin or house capital command, if it did.
-pub(super) fn rejection(events: &[Event]) -> Option<&str> {
+pub(crate) fn rejection(events: &[Event]) -> Option<&str> {
     events.iter().find_map(|e| match e {
         Event::AdminRejected { reason } => Some(reason.as_str()),
         _ => None,

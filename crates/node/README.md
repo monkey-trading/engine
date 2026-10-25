@@ -16,7 +16,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   client sees their effect
 - Genesis all or nothing: the engine checks every genesis command at config load and again before
   any is written, and recovery refuses a log whose genesis stopped short of its closing checkpoint
-  or is not the config's
+  or is not the config's, and one whose genesis no current config can give (rules newer than the
+  log refuse it at load), which needs a fresh log
 - Signed checkpoints and withdrawals, bound to the chain id and vault, from an attested key
 - Strict checkpoint signature verification in replay and recovery, with explicit domains for early logs
 - Optional checkpoint relaying, signed-parent vault commitments, startup rollback checks, and collateral
@@ -88,7 +89,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/checkpoints.rs` — checkpoint creation, custody reconciliation, and signature release
 - `src/sequencer/checkpoints/accounting_tests.rs` — live/recovery accounting oracles and gated 100k-account capture scaling
 - `src/sequencer/checkpoint_tests.rs` — confirmed-prefix signature gating and restart tests
-- `src/sequencer/fixture_tests.rs` — test-only signing of copies of placeholder protocol fixtures
+- `src/sequencer/fixture_tests.rs` — test-only signing of copies of placeholder protocol fixtures,
+  and logs whose genesis an older protocol applied but no current config can give
 - `src/sequencer/recovery.rs` — pure recovery validation and exact authenticated checkpoint-tail restoration
 - `src/sequencer/replay.rs` — log replay, which recovery and `engine replay` share
 - `src/sequencer/required.rs` — client auth, the operator, protocol activation, and genesis, which
@@ -107,7 +109,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/tests/benchmarks.rs` — publisher startup prerequisites and legacy-log refusal
 - `src/sequencer/tests/benchmark_recovery.rs` — publisher synchronization after trusted-time halts
 - `src/sequencer/tests/genesis.rs` — genesis tests: a rejected genesis writes nothing, and a log
-  whose genesis did not apply in full, or is not the config's, is refused at recovery
+  whose genesis did not apply in full, is not the config's, or is one no current config can give,
+  is refused at recovery
 - `src/sequencer/tests/operator.rs` — recovery, activation, and replay with the operator the log
   records
 - `src/sequencer/batch_tests.rs` — batching: a batch ends after `MAX_BATCH` requests of any kind
