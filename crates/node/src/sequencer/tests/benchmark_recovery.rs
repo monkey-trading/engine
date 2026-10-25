@@ -219,7 +219,7 @@ fn benchmark_recovery_v17_activation_can_precede_the_snapshot_without_charging()
     seq.wait_for_benchmarks().unwrap();
     seq.activate_protocol().unwrap();
     seq.trust(trusted(clock.as_ref())).unwrap();
-    assert_eq!(seq.engine.protocol_version(), ProtocolVersion::V18);
+    assert_eq!(seq.engine.protocol_version(), ProtocolVersion::LATEST);
     assert_eq!(seq.engine.next_rollover(), before, "activation must not perform catch-up");
     assert!(seq.required.is_empty(), "activation is not deadlocked behind publisher synchronization");
     assert!(seq.sequence(Command::Tick).unwrap().is_none());
@@ -325,7 +325,7 @@ impl Fixture {
         seq.genesis(&genesis).unwrap();
         assert!(commands(&log_entries(&dir)).is_empty(), "bootstrap waits for authenticated time");
         seq.trust(trusted(clock.as_ref())).unwrap();
-        assert_eq!(seq.engine.protocol_version(), ProtocolVersion::V18);
+        assert_eq!(seq.engine.protocol_version(), ProtocolVersion::LATEST);
         assert!(!seq.needs_genesis(), "publisher gate must allow cold genesis");
         let mut f = Self { dir, seq, clock };
         let initial = if retained { vec![("2026-10-19", "0.01")] } else { vec![] };

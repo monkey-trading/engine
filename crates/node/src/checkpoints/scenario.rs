@@ -31,7 +31,7 @@ sol! {
     function transfer(address to, uint256 amount) external returns (bool);
 }
 
-struct Anvil(Child);
+pub(super) struct Anvil(pub Child);
 impl Drop for Anvil {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -66,8 +66,9 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     let checkpoint_relayer = accounts[9];
     let key = Arc::new(EnclaveKey::generate());
     let token = deploy(&provider, relayer, "MockUSDC.sol/MockUSDC.json", &[]).await;
-    let vault =
-        deploy(&provider, relayer, "Vault.sol/Vault.json", &(token, Address::from(key.address())).abi_encode()).await;
+    // The MONKEY period budget, 1 MONKEY, is a development value, not an approved production parameter.
+    let args = (token, Address::from(key.address()), U256::from(10).pow(U256::from(18))).abi_encode();
+    let vault = deploy(&provider, relayer, "Vault.sol/Vault.json", &args).await;
     let domain = CheckpointDomain { chain_id: 31337, vault: AccountId(vault.into()) };
     let section: CheckpointSection = toml::from_str(&format!(
         "rpc_url = {url:?}\nrelayer = '{checkpoint_relayer:#x}'\nretry_interval = '40ms'\nrpc_timeout = '2s'"
@@ -327,7 +328,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     assert!(replay_path(&tampered).is_err(), "edited signature fails replay");
 }
 
-async fn deploy(provider: &RpcClient, from: Address, artifact: &str, args: &[u8]) -> Address {
+pub(super) async fn deploy(provider: &RpcClient, from: Address, artifact: &str, args: &[u8]) -> Address {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/out");
     let artifact: serde_json::Value =
         serde_json::from_slice(&std::fs::read(root.join(artifact)).expect("forge build first")).unwrap();
@@ -338,13 +339,13 @@ async fn deploy(provider: &RpcClient, from: Address, artifact: &str, args: &[u8]
     receipt.contract_address.unwrap()
 }
 
-async fn send(provider: &RpcClient, from: Address, to: Address, input: Vec<u8>) {
+pub(super) async fn send(provider: &RpcClient, from: Address, to: Address, input: Vec<u8>) {
     let receipt = transact(provider, TransactionRequest::default().from(from).to(to).input(input.into())).await;
     assert!(receipt.status());
 }
 
 /// Sends through Anvil's unlocked account and polls its receipt under the scenario deadline.
-async fn transact(provider: &RpcClient, transaction: TransactionRequest) -> TransactionReceipt {
+pub(super) async fn transact(provider: &RpcClient, transaction: TransactionRequest) -> TransactionReceipt {
     let hash: B256 = provider.request("eth_sendTransaction", (transaction,)).await.unwrap();
     timeout(Duration::from_secs(5), async {
         loop {

@@ -37,7 +37,7 @@ use crate::log::{CommandEntry, LogEntry, Offset};
 use crate::sequencer::StreamBody;
 
 /// The `type` of every event that names an account: what the `kind` filter accepts.
-pub const KINDS: [&str; 11] = [
+pub const KINDS: [&str; 12] = [
     "deposited",
     "deposit_rejected",
     "withdrawal_approved",
@@ -49,6 +49,7 @@ pub const KINDS: [&str; 11] = [
     "close_out",
     "bad_debt",
     "financing",
+    "emission_allocated",
 ];
 /// The SQLite file of the index, in `history.dir`; SQLite keeps its `-wal` and `-shm` files beside it.
 pub const INDEX_FILE: &str = "history.sqlite";
@@ -247,7 +248,8 @@ pub fn account_of(event: &Event) -> Option<AccountId> {
         | Event::OrderCancelled { account, .. }
         | Event::CloseOut { account, .. }
         | Event::BadDebt { account, .. }
-        | Event::Financing { account, .. } => Some(*account),
+        | Event::Financing { account, .. }
+        | Event::EmissionAllocated { account, .. } => Some(*account),
         Event::Fill(fill) => Some(fill.account),
         Event::HouseCapitalMoved { .. }
         | Event::BenchmarkRateMissing { .. }
@@ -258,7 +260,9 @@ pub fn account_of(event: &Event) -> Option<AccountId> {
         | Event::StressChanged { .. }
         | Event::PricesRejected { .. }
         | Event::AdminApplied
-        | Event::AdminRejected { .. } => None,
+        | Event::AdminRejected { .. }
+        | Event::EmissionPeriodClosed { .. }
+        | Event::EmissionPeriodsCancelled { .. } => None,
     }
 }
 

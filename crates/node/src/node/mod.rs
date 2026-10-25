@@ -36,7 +36,7 @@ use crate::tee::{AttestationBundle, Attestor, ConfigfsTsm, EnclaveKey, MockAttes
 use crate::telemetry::Telemetry;
 use crate::tls::{TlsIdentity, serve};
 use crate::{metrics, monitor, trusted_time};
-use preflight::finish_preflight;
+use preflight::{emission_preflight, finish_preflight};
 
 /// How long the sequencer gets to drain and checkpoint after a shutdown signal.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
@@ -75,6 +75,8 @@ pub(crate) async fn run_with_cpu(cfg: NodeConfig, telemetry: Telemetry, cpu: Opt
 ///   client auth or operator, or whose genesis did not apply in full, is not the config's, or is one
 ///   no current config can give), connecting custody, or binding a listener fails
 /// - the engine would reject a genesis command
+/// - with checkpoints configured, the vault's MONKEY cap cannot be read, or it was derived from
+///   another emission period budget than the one the log records
 /// - any supervised task stops or panics, or the sequencer cannot drain in time
 async fn serve_node(
     cfg: NodeConfig,
@@ -134,6 +136,12 @@ async fn serve_node(
             }
         },
     )?;
+
+    // The API also refuses an emission schedule with another budget than the vault's.
+    let emission_budget = match &checkpoint_setup {
+        Some(setup) => Some(emission_preflight(&setup.poster, log.emissions()).await?),
+        None => None,
+    };
 
     let vault: AccountId = cfg.custody.vault.parse().context("custody.vault")?;
     let client_auth = cfg.client_auth()?;
@@ -269,6 +277,7 @@ async fn serve_node(
         backfills,
         limits: limits.clone(),
         history: history_reader,
+        emission_budget,
     });
     info!(listen = %cfg.node.listen, "api up over TLS");
     let (api, retained) = (cfg.api, limits.clone());

@@ -120,11 +120,28 @@ fn each_action_builds_its_admin_command() {
             vec!["set-benchmark-rate", "SOFR", "-25"],
             AdminCommand::SetBenchmarkRate { benchmark: "SOFR".into(), annual_bps: -25 },
         ),
+        (
+            vec!["init-emissions", "--start", "2027-01-01T00:00:00Z", "--period-budget", "1000000000000000000000"],
+            AdminCommand::InitEmissions(EmissionSchedule {
+                start_ms: 1_798_761_600_000,
+                period_budget: TokenUnits(1_000_000_000_000_000_000_000),
+            }),
+        ),
     ];
     for (args, expected) in cases {
         assert_eq!(action(&args).command().unwrap(), expected, "{args:?}");
     }
     assert!(Cli::try_parse_from(["engine", "--pin", ZERO_PIN, "set-reduce-only", "on"]).is_err());
+    // Both emission values are required, and a budget is base units in decimal digits.
+    for args in [
+        vec!["init-emissions", "--start", "2027-01-01T00:00:00Z"],
+        vec!["init-emissions", "--period-budget", "1"],
+        vec!["init-emissions", "--start", "2027-01-01", "--period-budget", "1"],
+        vec!["init-emissions", "--start", "2027-01-01T00:00:00Z", "--period-budget", "1.5"],
+    ] {
+        let argv = ["engine", "--pin", ZERO_PIN].into_iter().chain(args.iter().copied());
+        assert!(Cli::try_parse_from(argv).is_err(), "{args:?}");
+    }
 }
 
 #[test]

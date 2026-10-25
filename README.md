@@ -9,9 +9,10 @@ house, in turn, is issued to the people who trade with it.
 
 > **Pre-launch.** The engine runs end to end on a single machine, with a mock enclave, mock
 > custody, and simulated prices, or live crypto prices from three venues; vault deposits also run
-> against a local chain. Signed checkpoint posting and rollback checks also run against Anvil.
-> On-chain withdrawals, hardware attestation, live prices for other asset classes, and the house
-> equity token are under construction. Nothing here holds real funds.
+> against a local chain. Signed checkpoint posting and rollback checks also run against Anvil, as
+> do MONKEY emissions and claims; MONKEY's production budget and start are still to be set.
+> On-chain withdrawals, MONKEY staking, hardware attestation, and live prices for other asset
+> classes are under construction. Nothing here holds real funds.
 
 ## How it works
 
@@ -58,7 +59,10 @@ Collateral is USDC, held in a vault contract on Arbitrum One. The chain safeguar
 executes trades. A deposit is credited once the L2 batch holding it is posted to Ethereum
 ([#22](https://github.com/0xjevons/monkeytrading/issues/22)); withdrawals are being built in
 [#23](https://github.com/0xjevons/monkeytrading/issues/23). Ownership of the house is represented
-by the MONKEY token, minted to traders on their losing trades
+by the MONKEY token, earned on losing trades: every ten minutes a fixed budget is shared among the
+accounts in proportion to their net realised losses, less any debt the house wrote off, and the
+budget halves every 182.5 days. An account claims what it earned from the vault, against the
+engine's latest posted checkpoint, and no entitlement mints twice
 ([#36](https://github.com/0xjevons/monkeytrading/issues/36)). Holders who stake it share, in USDC,
 the house's net asset value above a reserve floor
 ([#50](https://github.com/0xjevons/monkeytrading/issues/50)).

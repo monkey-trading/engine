@@ -59,13 +59,15 @@ If you are unsure whether something you plan to do is covered, ask us before you
 The policy covers the code in this repository and what is built from it: `engine-core`, the
 deterministic state machine that applies the trading rules; `engine-node`, which sequences commands
 into it, publishes the log and its signed checkpoints, and serves the public REST and WebSocket API;
-the custody vault contract that will hold collateral on Arbitrum One; and the enclave image the node
-runs in, together with the attestation that vouches for it. The vault contract takes deposits but
-cannot pay anything out yet, and is in scope as published here; the enclave image, built from
-`image`, is in scope as published here too. A trading account must be able to sign requests with its
-own key, since the engine accepts no contract signatures: a contract wallet funds a key that signs
-for it through the vault's `depositFor`, and a balance credited to a contract account can be
-recovered only through the exit (#48), so a report of that alone is not a new finding.
+the custody vault contract that will hold collateral on Arbitrum One, with the MONKEY token it
+deploys and alone mints against posted checkpoints; and the enclave image the node runs in, together
+with the attestation that vouches for it. The vault contract takes deposits and mints MONKEY
+entitlements but cannot pay out collateral yet, and is in scope as published here; the enclave
+image, built from `image`, is in scope as published here too. A trading account must be able to
+sign requests with its own key, since the engine accepts no contract signatures: a contract wallet
+funds a key that signs for it through the vault's `depositFor`, and a balance credited to a
+contract account can be recovered only through the exit (#48), so a report of that alone is not a
+new finding.
 
 The findings that matter most let someone take funds they are not owed, fill an order at a price the
 rules do not allow, make the state the node reports differ from the state its published log replays

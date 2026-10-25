@@ -12,10 +12,12 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, bail};
+use chrono::{DateTime, Utc};
 use clap::{ArgAction, Args, Subcommand};
 use engine_core::auth::{MAX_EXPIRY_AHEAD_MS, Operator, RequestAuth};
 use engine_core::command::{AdminCommand, AdminRequest};
 use engine_core::eip712;
+use engine_core::emissions::{EmissionSchedule, TokenUnits};
 use engine_core::event::Event;
 use engine_core::market::MarketSpec;
 use engine_core::params::ProtocolParams;
@@ -97,6 +99,16 @@ pub enum AdminAction {
         #[arg(short, long)]
         market: Option<MarketId>,
     },
+    /// Record the MONKEY emission schedule, which a log takes once: period 0 starts at `--start`,
+    /// no earlier than the node sequences the command, with `--period-budget` base units.
+    InitEmissions {
+        /// When period 0 starts, in RFC 3339 (`2027-01-01T00:00:00Z`).
+        #[arg(long)]
+        start: DateTime<Utc>,
+        /// Period 0's budget in MONKEY base units (18 decimals); budgets halve every 182.5 days.
+        #[arg(long)]
+        period_budget: TokenUnits,
+    },
 }
 
 /// A node's API: its `https://host:port` URL, and the hash its TLS key must have.
@@ -165,6 +177,9 @@ impl AdminAction {
             AdminAction::SyncBenchmarks { .. } => bail!("publisher sync is asynchronous"),
             AdminAction::SetStressFloor { level, market } => AdminCommand::SetStressFloor { market, level },
             AdminAction::SetReduceOnly { reduce_only, market } => AdminCommand::SetReduceOnly { market, reduce_only },
+            AdminAction::InitEmissions { start, period_budget } => {
+                AdminCommand::InitEmissions(EmissionSchedule { start_ms: start.timestamp_millis(), period_budget })
+            }
         })
     }
 }

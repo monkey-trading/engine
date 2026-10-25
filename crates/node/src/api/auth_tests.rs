@@ -340,6 +340,7 @@ impl Node {
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
             limits: Arc::new(ApiLimits::with_quota(&dev_config().api, hourly, DefaultClock::default())),
             history: Reader::new(dir.join(INDEX_FILE), watch::channel(true).1),
+            emission_budget: None,
         };
         let app = router(state.clone()).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9))));
         Node { app, state, dir, withdrawals }

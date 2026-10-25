@@ -139,6 +139,7 @@ fn state() -> (ApiState, mpsc::Receiver<Request>) {
         backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
         limits: Arc::new(ApiLimits::new(&cfg.api)),
         history: Reader::new(PathBuf::new(), watch::channel(true).1),
+        emission_budget: None,
     };
     (state, requests)
 }

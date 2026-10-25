@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
+use crate::emissions::TokenUnits;
 use crate::price::PriceError;
 use crate::types::{AccountId, MarketId, Millis, OrderId, Side};
 
@@ -104,6 +105,29 @@ pub enum Event {
     AdminApplied,
     AdminRejected {
         reason: String,
+    },
+    /// From `V19`, an account's share of a finalised emission period: `weight` is its eligible
+    /// realised loss in USD, and `amount` the base units added to its entitlement.
+    EmissionAllocated {
+        account: AccountId,
+        period: u64,
+        weight: Fixed,
+        amount: TokenUnits,
+    },
+    /// From `V19`, a finalised emission period: its budget, what accounts were allocated, and the
+    /// remainder, cancelled for good.
+    EmissionPeriodClosed {
+        period: u64,
+        budget: TokenUnits,
+        allocated: TokenUnits,
+        cancelled: TokenUnits,
+    },
+    /// From `V19`, the periods from `first` to `last` that no command fell in, whose budgets are
+    /// cancelled for good.
+    EmissionPeriodsCancelled {
+        first: u64,
+        last: u64,
+        cancelled: TokenUnits,
     },
 }
 

@@ -106,11 +106,16 @@ pub enum ProtocolVersion {
     V17,
     /// Dated benchmark histories select each rollover's rate by its local date, including catch-up.
     V18,
+    /// MONKEY emissions (`emissions`): once the operator's signed initialisation records a start and
+    /// a budget, every ten-minute period's budget is shared pro rata by its eligible realised losses
+    /// and finalised before the first command at or after its end, budgets halve every 26,280
+    /// periods, and each account's cumulative entitlement is a leaf of the state tree.
+    V19,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V18;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V19;
 
     /// Whether this is `V2`, which engine state leaves out of its encoding.
     pub fn is_v2(&self) -> bool {

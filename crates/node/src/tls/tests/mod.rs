@@ -348,6 +348,7 @@ impl TestNode {
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
             limits: limits.clone(),
             history: Reader::new(PathBuf::new(), watch::channel(true).1),
+            emission_budget: None,
         };
         let server = tokio::spawn(serve(listener, tls.config, router(state), limits, api));
         Self { port, attestation, stream, server, sequencer }

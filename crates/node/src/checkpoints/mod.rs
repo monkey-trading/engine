@@ -1,6 +1,7 @@
 //! On-chain checkpoint commitments, replay protection, and collateral reconciliation.
 
 pub(crate) mod accounting;
+pub(crate) mod emission_budget;
 mod rpc;
 pub(crate) mod setup;
 pub(crate) mod signature;
@@ -12,6 +13,7 @@ use std::time::Duration;
 
 use anyhow::{Context, ensure};
 use engine_core::Fixed;
+use engine_core::emissions::TokenUnits;
 use tokio::sync::mpsc;
 use tokio::time::{MissedTickBehavior, interval};
 use tracing::{Instrument, error, info, warn};
@@ -72,6 +74,14 @@ pub(crate) trait CheckpointChain: Send + Sync {
     /// Error cases:
     /// - submission fails, times out, or reverts
     async fn post(&self, checkpoint: &Checkpoint) -> anyhow::Result<()>;
+
+    /// The emission period budget the vault's MONKEY cap was derived from.
+    /// Error cases:
+    /// - the chain cannot be read, the vault has no MONKEY token, or its cap gives no period budget;
+    ///   a chain that reads no cap at all
+    async fn emission_budget(&self) -> anyhow::Result<TokenUnits> {
+        anyhow::bail!("this checkpoint chain reads no MONKEY cap")
+    }
 }
 
 #[derive(Debug)]
@@ -309,6 +319,8 @@ impl<R: CheckpointChain> Poster<R> {
     }
 }
 
+#[cfg(test)]
+mod emissions_scenario;
 #[cfg(test)]
 mod scenario;
 #[cfg(test)]

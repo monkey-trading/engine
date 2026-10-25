@@ -47,6 +47,11 @@
 //! - From `V17`, reopening a market keeps its trailing move window: prices observed within the
 //!   window before a halt still count after the reopening, so a move across a halt shorter than
 //!   the window raises fast-move stress as it would without the halt.
+//! - From `V19`, once the operator's signed initialisation records a start and a budget, MONKEY
+//!   emissions share each ten-minute period's fixed budget pro rata by the accounts' net realised
+//!   trading losses, less debt written off, halve the budget every 182.5 days, cancel what no
+//!   account is allocated, and keep each account's cumulative entitlement in the state tree for the
+//!   vault to mint against.
 
 pub mod account;
 mod admin;
@@ -55,6 +60,7 @@ pub mod benchmark;
 mod closeout;
 pub mod command;
 pub mod eip712;
+pub mod emissions;
 pub mod engine;
 pub use engine::{Engine, SequenceError};
 pub mod event;

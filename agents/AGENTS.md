@@ -14,8 +14,10 @@ an index: load only the rule whose hint matches the current action.
   sessions, dated benchmark histories (`benchmark.rs`, with calendar-change regressions in
   `tests/benchmark_retention.rs`), house exposure caps, toxicity scoring, signed client requests (EIP-712, per-account
   nonces, and expiries), USD settlement of markets quoted in other currencies, admin commands signed
-  by the operator key the log records, protocol versions, and the state tree (a keccak-256 sparse
-  Merkle tree over the state, with account proofs, in `merkle/`). It does no IO and uses no clocks,
+  by the operator key the log records, MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
+  shared by net realised losses, halvings, and cumulative entitlements), protocol versions, and the
+  state tree (a keccak-256 sparse Merkle tree over the state, with account and entitlement proofs, in
+  `merkle/`). It does no IO and uses no clocks,
   randomness, or floats. `impl Engine` is split by area (`engine.rs`, `marks.rs`, `execution/`,
   `markouts.rs`, `closeout.rs`, `funds.rs`, `admin.rs`, `stress.rs`, `auth.rs`). Unit tests sit
   inline; protocol tests are in `tests/` by area, with the shared harness in `tests/common/`.
@@ -25,7 +27,7 @@ an index: load only the rule whose hint matches the current action.
 - **crates/node/** — `engine-node`, binary `engine` (`main.rs` over `lib.rs`). Contains the
   sequencer, the public log with signed checkpoints (segmented, with a public archive), `engine
   replay`, `engine admin` (the operator's signing client), the REST API with the operator's admin
-  route and account proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
+  route, account proofs, and MONKEY entitlement proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
   with rate limits and connection caps), the account history index (SQLite, derived from the log),
   dated benchmark ingestion (`benchmarks/` and the separate `admin/benchmark_feed.rs` signing worker
   with bounded durable schedule watches in `admin/benchmark_watch.rs` and `api/benchmark_schedule.rs`),
@@ -53,6 +55,9 @@ an index: load only the rule whose hint matches the current action.
   `soldeer.lock` and installed into the gitignored `dependencies/`; there are no git submodules.
   The vault stores increasing state checkpoints whose signed parents match its latest commitment,
   authorized by its immutable enclave signer; the constructor requires that attestation-verified signer as its second argument.
+  Its third argument, the engine's initial MONKEY emission period budget, caps `src/MonkeyToken.sol`, the
+  ERC-20 the vault deploys and alone mints: `claimEmissions` mints an account's entitlement, proven
+  against the latest posted root, less what it already claimed.
 - **config/** — node configs. `dev.toml` runs the TEE, custody and feeds as mocks on one machine,
   and checks the clock against public Roughtime servers, citing each server's key source;
   `feeds.provider = "venues"` prices its crypto markets from live venues instead, leaving the others
@@ -91,16 +96,18 @@ an index: load only the rule whose hint matches the current action.
   `dev-vault-deposits.sh`, the vault deposit and RPC quorum dev scenarios on Anvil, with
   `dev-rpc-proxy.py` providing three local fault-injection endpoints; `dev-metrics-alerts.sh`,
   the metrics and alert routing dev scenario; `dev-alert-outbox.sh`, the isolated alert retry
-  kill/restart scenario; and `build-image.sh` and `check-image.sh`, which build the enclave image
-  from a commit and boot it under QEMU without SEV-SNP.
+  kill/restart scenario; `dev-monkey-emissions.sh`, the MONKEY emissions scenario on Anvil; and
+  `build-image.sh` and `check-image.sh`, which build the enclave image from a commit and boot it
+  under QEMU without SEV-SNP.
 - **ops/** — operator assets: `grafana/engine-node.json`, the node's Grafana dashboard, and
   `prometheus/engine-node-rules.yml`, the alerting rules for a down node or failing alert pages.
 - **.github/workflows/** — `ci.yaml`: fmt, the file line cap, clippy, tests (and the node's
   production-build tests), the reference-log replay and invariant tests on x86_64 and aarch64 Linux,
   the unchanged-reference-log check, `cargo-deny`, the contracts' `forge fmt --check` / build /
-  test, the vault deposit and RPC quorum dev scenario, the metrics and alert routing dev scenario,
-  the alert outbox kill/restart scenario, and the enclave image (`image` builds it twice and boots
-  it under QEMU, `image-compare` fails if the builds differ), on every push to `main` and every PR.
+  test, the vault deposit and RPC quorum dev scenario with the checkpoint and MONKEY emissions
+  scenarios, the metrics and alert routing dev scenario, the alert outbox kill/restart scenario,
+  and the enclave image (`image` builds it twice and boots it under QEMU, `image-compare` fails if
+  the builds differ), on every push to `main` and every PR.
   On a PR, the first job, `changes`, sorts the changed files into the Rust, contracts, scenario,
   and image areas from an explicit path list, and each job runs only when its area changed:
   `agents/`, `research/`, the root `README.md`, `SECURITY.md`, `AGENTS.md`, and `CLAUDE.md`, and
@@ -165,6 +172,9 @@ Run from the repo root:
   and a mock USDC, runs a node on `config/anvil.toml`, and checks each deposit credits once;
   `RPC_QUORUM_SCENARIO=1` also injects a fictional deposit, stops providers and checks recovery;
   needs `python3`)
+- MONKEY emissions dev scenario: `./scripts/dev-monkey-emissions.sh` (starts Anvil, deploys the
+  vault and its token, and drives allocation, halving, a restart, and claims through the real
+  sequencer, API, and checkpoint worker; needs Anvil, Forge, and installed Soldeer dependencies)
 - Sign and submit an admin command as the operator: `cargo run -p engine-node -- admin --pin <the
   TLS key hash in the node's attested bundle> <command>`, with the key from `--key-file`,
   `OPERATOR_KEY_FILE`, or `OPERATOR_KEY`; `config/dev.toml` names the public key of the local test

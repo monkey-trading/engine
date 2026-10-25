@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::Fixed;
 use crate::auth::{ClientAuth, Operator, RequestAuth};
 use crate::benchmark::BenchmarkBatch;
+use crate::emissions::EmissionSchedule;
 use crate::market::MarketSpec;
 use crate::params::{NotionalWeighting, ProtocolParams};
 use crate::price::SourceQuote;
@@ -116,6 +117,9 @@ pub enum AdminCommand {
     ActivateProtocol {
         version: ProtocolVersion,
     },
+    /// From `V19`, records the MONKEY emission schedule: when period 0 starts, no earlier than this
+    /// command, and its budget. A log records it once, and only signed by the operator.
+    InitEmissions(EmissionSchedule),
 }
 
 /// An admin command with the operator's signature, nonce, and expiry, as `engine admin` signs and
@@ -181,7 +185,8 @@ impl AdminCommand {
     }
 
     /// Whether the operator may sign this command: listings, parameters, benchmark rates, stress
-    /// floors, and reduce-only. The node alone sequences the others, from its config and build.
+    /// floors, reduce-only, and the emission schedule. The node alone sequences the others, from its
+    /// config and build.
     pub fn is_operator_command(&self) -> bool {
         match self {
             AdminCommand::SetParams(_)
@@ -189,7 +194,8 @@ impl AdminCommand {
             | AdminCommand::SetBenchmarkRate { .. }
             | AdminCommand::SetBenchmarkRates(_)
             | AdminCommand::SetStressFloor { .. }
-            | AdminCommand::SetReduceOnly { .. } => true,
+            | AdminCommand::SetReduceOnly { .. }
+            | AdminCommand::InitEmissions(_) => true,
             AdminCommand::SetClientAuth(_)
             | AdminCommand::SetOperator(_)
             | AdminCommand::SetToxicityNotional(_)

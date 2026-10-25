@@ -9,7 +9,7 @@ contract CheckpointsTest is Test {
     uint256 private constant KEY = 0x1234;
 
     function setUp() public {
-        vault = new Vault(IERC20(address(1)), vm.addr(KEY));
+        vault = new Vault(IERC20(address(1)), vm.addr(KEY), 1e18);
     }
 
     function testFuzzOnlyIncreasingSignedCheckpoints(uint64 seq, bytes32 root) public {
@@ -63,7 +63,7 @@ contract CheckpointsTest is Test {
 
     function testRefusesAnotherVaultOrChain() public {
         bytes memory signature = sign(vault, 2, bytes32(uint256(7)), false, 0, 0, KEY);
-        Vault other = new Vault(IERC20(address(1)), vm.addr(KEY));
+        Vault other = new Vault(IERC20(address(1)), vm.addr(KEY), 1e18);
         vm.expectRevert(Vault.InvalidCheckpointSigner.selector);
         other.postCheckpoint(2, bytes32(uint256(7)), false, 0, 0, signature);
         vm.chainId(block.chainid + 1);
@@ -73,10 +73,10 @@ contract CheckpointsTest is Test {
 
     function testRefusesZeroSignerAndUnsupportedChain() public {
         vm.expectRevert(Vault.ZeroAddress.selector);
-        new Vault(IERC20(address(1)), address(0));
+        new Vault(IERC20(address(1)), address(0), 1e18);
         vm.chainId(uint256(type(uint64).max) + 1);
         vm.expectRevert(Vault.UnsupportedChain.selector);
-        new Vault(IERC20(address(1)), address(2));
+        new Vault(IERC20(address(1)), address(2), 1e18);
     }
 
     function testRejectsMissingSignature() public {

@@ -3,10 +3,11 @@
 //! Every admin action is a sequenced command, so the public log shows each parameter change, each
 //! listing, and each stress override. From `V8` the operator signs its commands (listings,
 //! parameters, benchmark rates, stress floors, and reduce-only) once anything is credited, and the
-//! log carries each signature; client auth, the operator, and protocol activation stay commands
-//! only the node sequences. The operator can raise a market's stress level but never
-//! push it below what the automatic triggers set, and from `V8` neither a reduce-only mode nor a
-//! spread stops a trade that reduces or closes a position in an open market with a price.
+//! log carries each signature; from `V19` the emission schedule applies only signed, credited or
+//! not. Client auth, the operator, and protocol activation stay commands only the node sequences.
+//! The operator can raise a market's stress level but never push it below what the automatic
+//! triggers set, and from `V8` neither a reduce-only mode nor a spread stops a trade that reduces
+//! or closes a position in an open market with a price.
 
 use crate::command::{AdminCommand, AdminRequest};
 use crate::engine::{Engine, MarketState};
@@ -46,6 +47,8 @@ impl Engine {
     ///   they fail `ProtocolParams::check_notional_weighting`
     /// - `SetToxicityNotional` before parameters are set, over parameters that already weigh markouts
     ///   by notional, or with weighting that fails `NotionalWeighting::validate`
+    /// - `InitEmissions` before `V19`, once emissions are initialised, or with a schedule that starts
+    ///   before the sequenced time or has a budget out of range
     pub(crate) fn admin(&mut self, cmd: &AdminCommand, events: &mut Vec<Event>) -> Result<(), String> {
         match cmd {
             AdminCommand::SetParams(params) => {
@@ -239,6 +242,7 @@ impl Engine {
                 }
                 self.protocol_version = *version;
             }
+            AdminCommand::InitEmissions(schedule) => self.init_emissions(schedule)?,
         }
         Ok(())
     }
@@ -248,10 +252,14 @@ impl Engine {
     /// capital last.
     /// Error cases:
     /// - from `V8`, an operator command once any deposit or house capital is credited
+    /// - the emission schedule, which only the operator's signature initialises
     /// - any error case of `admin`
     pub(crate) fn unsigned_admin(&mut self, cmd: &AdminCommand, events: &mut Vec<Event>) -> Result<(), String> {
         if self.protocol_version >= ProtocolVersion::V8 && cmd.is_operator_command() && !self.credited_refs.is_empty() {
             return Err("from protocol V8 the operator signs this command once funds are credited".into());
+        }
+        if matches!(cmd, AdminCommand::InitEmissions(_)) {
+            return Err("the operator signs the emission schedule".into());
         }
         self.admin(cmd, events)
     }

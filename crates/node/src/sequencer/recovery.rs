@@ -9,6 +9,11 @@ impl ReplayedLog {
         self.replayed.engine.last_seq()
     }
 
+    /// The emission schedule and progress the replayed log records, if it initialised emissions.
+    pub(crate) fn emissions(&self) -> Option<&engine_core::emissions::Emissions> {
+        self.replayed.engine.emissions()
+    }
+
     /// Requires a live reserved signature to occur in the same authenticated durable tail.
     /// Error cases:
     /// - a reserved checkpoint conflicts with the anchor or is absent from outstanding work

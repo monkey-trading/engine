@@ -67,6 +67,40 @@ fn command_latency() {
     }
 }
 
+#[test]
+#[ignore = "100k-account benchmark: run in an isolated CPU window"]
+fn period_finalisation_latency() {
+    // Every account lost in the open emission period, so the tick at its end allocates to each.
+    let count = 100_000;
+    let mut h = Harness::emitting(1_000_000_000_000_000_000_000);
+    h.deposit(acct(1), "1000");
+    let mut state = serde_json::to_value(&h.engine).expect("fixture encoding");
+    let template = state["accounts"].as_object().unwrap().values().next().unwrap().clone();
+    let (mut accounts, mut results) = (serde_json::Map::new(), serde_json::Map::new());
+    for index in 0..count {
+        let mut address = [0; 20];
+        address[12..].copy_from_slice(&(index as u64 + 1).to_be_bytes());
+        let key = serde_json::to_value(AccountId(address)).unwrap().as_str().unwrap().to_owned();
+        accounts.insert(key.clone(), template.clone());
+        results.insert(key, json!({ "realised": f(&format!("-{}", index % 997 + 1)), "written_off": "0" }));
+    }
+    state["accounts"] = accounts.into();
+    state["period_results"] = results.into();
+    let mut engine: Engine = serde_json::from_value(state).expect("benchmark fixture");
+    let end = engine.emissions().unwrap().schedule.period_end(0);
+    // Rebuild the transient indexes inside period 0, outside the timed finalisation.
+    apply(&mut engine, end - 1, Command::Tick);
+    let began = Instant::now();
+    apply(&mut engine, end, Command::Tick);
+    let elapsed = began.elapsed().as_micros();
+    println!("LATENCY period_finalisation accounts={count} us={elapsed}");
+    assert!(elapsed <= 500_000, "finalising {count} accounts took {elapsed}us");
+    assert!(engine.period_results().is_empty());
+    let emissions = engine.emissions().unwrap();
+    assert_eq!(emissions.entitled.0 + emissions.cancelled.0, emissions.schedule.budget(0));
+    assert!(emissions.entitled.0 > 0);
+}
+
 fn apply(engine: &mut Engine, ts: i64, cmd: Command) {
     let seq = engine.last_seq().map_or(0, |seq| seq + 1);
     engine.apply(&Sequenced { seq, ts, cmd }).expect("valid benchmark sequence");
