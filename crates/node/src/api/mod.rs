@@ -25,9 +25,10 @@ use engine_core::account::{Position, RestingOrder};
 use engine_core::auth::{ClientAuth, Operator, RequestAuth};
 use engine_core::command::{CancelRequest, Command, OrderRequest, WithdrawalRequest};
 use engine_core::eip712::{B256, Eip712Domain, cancel_hash, order_hash, withdrawal_hash};
+use engine_core::emissions::TokenUnits;
 use engine_core::event::{Event, Reject};
 use engine_core::market::MarketSpec;
-use engine_core::merkle::AccountProof;
+use engine_core::merkle::{AccountProof, EntitlementProof};
 use engine_core::types::{AccountId, MarketId, Millis, OrderId};
 use engine_core::{Engine, Fixed};
 use serde::{Deserialize, Serialize};
@@ -92,6 +93,9 @@ pub struct ApiState {
     pub backfills: Arc<Semaphore>,
     pub limits: Arc<ApiLimits>,
     pub history: Reader,
+    /// The emission period budget the configured vault's MONKEY cap was derived from, which an
+    /// emission schedule must match; `None` when the node reads no vault, as under mock custody.
+    pub emission_budget: Option<TokenUnits>,
 }
 
 #[derive(Serialize)]
@@ -282,6 +286,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/accounts/{address}/nonce", get(nonce))
         .route("/v1/accounts/{address}/history", get(history::history))
         .route("/v1/accounts/{address}/proof", get(proof))
+        .route("/v1/accounts/{address}/emissions", get(emissions))
         .route("/v1/orders", post(place_order))
         .route("/v1/orders/cancel", post(cancel_order))
         .route("/v1/withdrawals", post(withdraw))
@@ -397,6 +402,20 @@ async fn proof(State(s): State<ApiState>, Path(address): Path<String>) -> ApiRes
     let id: AccountId = address.parse().map_err(|e| ApiError::BadRequest(format!("{e}")))?;
     Span::current().record("id", display(id));
     let proof = s.query(move |e| e.account_proof(id)).await?;
+    proof.map(Json).ok_or(ApiError::NotFound)
+}
+
+/// The proof of the account's cumulative MONKEY entitlement against the state root of the last
+/// checkpoint, as the vault's `claimEmissions` takes it. The vault checks it against its latest
+/// posted root, so a claim waits until the vault's `latestSeq` is the proof's `seq`.
+/// Error cases:
+/// - the address is malformed
+/// - no checkpoint holds an entitlement for the account
+/// - the sequencer has stopped
+async fn emissions(State(s): State<ApiState>, Path(address): Path<String>) -> ApiResult<EntitlementProof> {
+    let id: AccountId = address.parse().map_err(|e| ApiError::BadRequest(format!("{e}")))?;
+    Span::current().record("id", display(id));
+    let proof = s.query(move |e| e.entitlement_proof(id)).await?;
     proof.map(Json).ok_or(ApiError::NotFound)
 }
 

@@ -54,6 +54,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   the operator's signature, next nonce, and an unexpired expiry
 - Proofs of an account's balance and positions, and of its positions' marks, against the last
   checkpoint's state root, from protocol `V9`
+- MONKEY emissions from protocol `V23`: `engine admin init-emissions` records the schedule once,
+  and `GET /v1/accounts/{address}/emissions` serves an account's cumulative entitlement with its proof
+  against the last checkpoint's root, for the vault's `claimEmissions`; with `[checkpoints]`, the
+  node reads the period budget the vault's MONKEY cap was derived from, refuses a schedule with any
+  other, and refuses to start on a log that records one
 - Supervised tasks: any task stopping stops the node, and SIGTERM drains to a final checkpoint
 - Live crypto prices from Coinbase, Kraken, and Bitstamp over WebSocket: one supervised task per
   venue, quotes stamped with the venue's own time, and reconnects with backoff
@@ -144,8 +149,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/auth_tests.rs` — signed-request API tests: signatures, nonces, expiries, refused
   accounts, and racing requests
 - `src/api/history.rs` — the account history route: its parameters and limits
-- `src/api/proof_tests.rs` — account proof API tests, including the state tree dev scenario: 100k
-  accounts, checkpoint work, a proof checked against its logged root, and older logs replayed
+- `src/api/proof_tests.rs` — account proof and emission entitlement API tests, including the state
+  tree dev scenario: 100k accounts, checkpoint work, a proof checked against its logged root, and
+  older logs replayed
 - `src/api/tests.rs` — API tests, including the dev scenarios of the resumable stream and archive,
   and of account history, and `Retry-After`
 - `src/history/mod.rs` — the history index: which events name an account, the startup check
@@ -159,7 +165,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/history/tests/rebuild.rs` — power losses and other damage: an index left behind the log
   resumes, and one ahead of it, contradicting it, damaged, or pruned under another retention is
   rebuilt
-- `src/test_support.rs` — the shared test harness, including the capture of alerts and their levels
+- `src/test_support/mod.rs` — the shared test harness, including the capture of alerts and their levels
+- `src/test_support/events.rs` — one sample of every engine event
 - `src/test_tracing.rs` — the tracing setup the test collectors share: one process-wide
   interested subscriber, so no callsite can be cached uninteresting and a collector never
   silently misses an alert or line
@@ -213,6 +220,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/setup.rs` — finalized chain anchor lookup and pending-inclusion startup wait
 - `src/checkpoints/tests.rs` — signature mutations, rollback, retry, and reconciliation tests
 - `src/checkpoints/scenario.rs` — isolated Anvil posting, tampering, truncation, shortfall, and reorg checks
+- `src/checkpoints/emission_budget.rs` — the vault's MONKEY cap against the emission period budget
+- `src/checkpoints/emissions_scenario.rs` — the MONKEY emissions dev scenario on isolated Anvil: pro-rata
+  allocation, cancelled periods, a restart across finalisation, the first halving, and claims that mint
+  each entitlement once against the posted root
 - `src/history/preflight.rs` — immutable history planning before authorized SQLite mutation
 - `src/history/preflight/tests.rs` — private WAL resume and malformed geometry byte-preservation regressions
 - `src/node/tests/custody_preflight.rs` — local custody refusal preserves log/history across image states
@@ -333,6 +344,9 @@ cargo run -p engine-node -- admin --pin $PIN set-stress-floor 1 --market 1
 cargo run -p engine-node -- admin --pin $PIN set-benchmark-rate SOFR 430
 cargo run -p engine-node -- admin --pin $PIN upsert-market market.toml        # no table header
 cargo run -p engine-node -- admin --pin $PIN set-params params.toml           # no table header
+# Once per log, from protocol V23: when emission period 0 starts (not before the command is
+# sequenced) and its budget in MONKEY base units. Production values need the owner's approval.
+cargo run -p engine-node -- admin --pin $PIN init-emissions --start 2027-01-01T00:00:00Z --period-budget <units>
 
 # Download the archive: the manifest, then each segment it lists (`--retry` waits out a 429)
 curl -kf --retry 5 --create-dirs -o archive/manifest.jsonl https://127.0.0.1:8080/v1/archive/manifest.jsonl
@@ -350,6 +364,8 @@ RPC_QUORUM_SCENARIO=1 ./scripts/dev-vault-deposits.sh
 
 # A production binary, which refuses mock providers (release images build it in image/)
 cargo build --release -p engine-node --features production
+# Run the MONKEY emissions scenario on isolated Anvil: allocation, halving, restart, and claims
+./scripts/dev-monkey-emissions.sh
 ```
 
 EVM custody requires at least three entries in `custody.evm.providers`, each with a unique
@@ -474,7 +490,7 @@ outside its threat model.
 Endpoints: `GET /v1/health`, `GET /v1/attestation`, `GET /v1/markets`, `GET /v1/house`,
 `GET /v1/accounts/{address}`, `GET /v1/accounts/{address}/nonce`,
 `GET /v1/accounts/{address}/history`, `GET /v1/accounts/{address}/proof`,
-`POST /v1/orders`, `POST /v1/orders/cancel`,
+`GET /v1/accounts/{address}/emissions`, `POST /v1/orders`, `POST /v1/orders/cancel`,
 `POST /v1/withdrawals` (mock custody only until withdrawals are paid on-chain), `POST /v1/admin`
 (the operator's), `POST /v1/dev/deposit` (mock custody only), `GET /v1/stream` (WebSocket), and
 `GET /v1/archive/{file}` (`manifest.jsonl` or a segment it lists).
@@ -556,8 +572,8 @@ produced it and its index among that command's events; then `ts`, the command's 
 the event's own fields. `?before=<cursor>` and `?after=<cursor>` bound the page, both exclusive.
 Passing a page's `next` as `before` gives the next, older page, until `next` is null. `?kind=` takes
 one event `type`: `deposited`, `deposit_rejected`, `withdrawal_approved`, `withdrawal_rejected`,
-`order_accepted`, `order_rejected`, `order_cancelled`, `fill`, `close_out`, `bad_debt`, or
-`financing`. `?limit=` is 1 to 200, 50 by default. A page is one search of a SQLite index that reads
+`order_accepted`, `order_rejected`, `order_cancelled`, `fill`, `close_out`, `bad_debt`,
+`financing`, or `emission_allocated`. `?limit=` is 1 to 200, 50 by default. A page is one search of a SQLite index that reads
 at most `limit + 1` entries, and at most 16 pages are read at once. Until the index has taken every
 command the log held when the node started, the route answers 503 (`history is catching up with the
 log`). History is public, like the log.

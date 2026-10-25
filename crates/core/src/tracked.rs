@@ -88,6 +88,12 @@ impl<K: Ord + Clone, V> TrackedMap<K, V> {
         self.map.is_empty()
     }
 
+    /// Removes and returns every entry, recording every key.
+    pub fn take_all(&mut self) -> BTreeMap<K, V> {
+        self.touched.extend(self.map.keys().cloned());
+        std::mem::take(&mut self.map)
+    }
+
     /// The keys recorded since the last call, clearing the record.
     pub(crate) fn take_touched(&mut self) -> BTreeSet<K> {
         std::mem::take(&mut self.touched)
@@ -122,6 +128,9 @@ mod tests {
         assert_eq!(map.get(&2), Some(&1));
         assert!(map.take_touched().is_empty());
         map.iter_mut().for_each(|(_, value)| *value += 1);
+        assert_eq!(map.take_touched(), BTreeSet::from([1, 2]));
+        assert_eq!(map.take_all(), BTreeMap::from([(1, 11), (2, 2)]));
+        assert!(map.is_empty());
         assert_eq!(map.take_touched(), BTreeSet::from([1, 2]));
 
         let mut set: TrackedSet<String> = TrackedSet::default();

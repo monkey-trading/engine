@@ -57,7 +57,7 @@ contract VaultInvariantTest is Test {
 
     function setUp() public {
         usdc = new MockUSDC();
-        vault = new Vault(usdc, address(0x1234));
+        vault = new Vault(usdc, address(0x1234), 1e18);
         handler = new VaultHandler(usdc, vault);
         targetContract(address(handler));
     }

@@ -6,6 +6,7 @@
 
 mod client;
 pub use client::*;
+pub mod emissions;
 pub mod reference;
 pub mod stress;
 mod versions;

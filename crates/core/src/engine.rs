@@ -16,6 +16,7 @@ use crate::account::{Account, Position};
 use crate::auth::{ClientAuth, Operator};
 use crate::benchmark::BenchmarkHistory;
 use crate::command::{AdminCommand, Command, Sequenced};
+use crate::emissions::{Emissions, PeriodResult, TokenUnits};
 use crate::event::{Event, Reject};
 use crate::fixed::Rounding;
 use crate::market::MarketSpec;
@@ -78,6 +79,15 @@ pub struct Engine {
     /// Dated annual rates from V18; omitted while empty to preserve older roots.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) benchmark_history: BenchmarkHistory,
+    /// MONKEY emissions from `V23`, once the operator's signed initialisation records the schedule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) emissions: Option<Emissions>,
+    /// Each account's realised trading result in the open emission period, until it is finalised.
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) period_results: TrackedMap<AccountId, PeriodResult>,
+    /// Each account's cumulative MONKEY entitlement.
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) entitlements: TrackedMap<AccountId, TokenUnits>,
     // Not state and not encoded; an engine rebuilt without them hashes every leaf at its first root.
     /// Markouts, positions, and resting orders changed since the last state root.
     #[serde(skip)]
@@ -183,6 +193,10 @@ impl Engine {
         self.now = sequenced.ts;
 
         let mut events = Vec::new();
+        // From `V23`, a period the sequenced time has passed is final before anything this command
+        // does, so every effect of the command, market processing and rollovers included, belongs to
+        // the next period.
+        self.finalise_emissions(&mut events);
         // From `V12`, a price command's quotes are stored first, then every market is brought to the
         // sequenced time, so no fill or check, a rollover's included, acts on an index the market
         // does not have at that time, or before it is processed.

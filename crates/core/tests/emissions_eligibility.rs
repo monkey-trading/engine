@@ -1,0 +1,162 @@
+//! Which losses earn MONKEY from `V23`, through `Engine::apply`: netting within a period, fees and
+//! financing left out, liquidations counted less written-off debt, negative cash at the cutoff, and
+//! the signed one-time initialisation that starts the clock.
+
+mod common;
+
+use common::emissions::{allocations, funded, next_period, round_trip, schedule};
+use common::events::fills;
+use common::{BTC, ETH, Harness, acct, f};
+use engine_core::Fixed;
+use engine_core::command::{AdminCommand, Command};
+use engine_core::emissions::{EmissionSchedule, MAX_PERIOD_BUDGET, PERIOD_MS, TokenUnits};
+use engine_core::event::Event;
+use engine_core::protocol::ProtocolVersion;
+use engine_core::types::Side;
+
+const BUDGET: u128 = 1_000_000;
+
+#[test]
+fn a_win_offsets_a_loss_in_the_same_period_before_the_profit_fee() {
+    let mut h = Harness::emitting(BUDGET);
+    let [a, b] = funded(&mut h);
+    round_trip(&mut h, &[(a, "1")], "100000", "99900");
+    round_trip(&mut h, &[(a, "1")], "100000", "100080");
+    round_trip(&mut h, &[(b, "0.6")], "100000", "99900");
+    let result = h.engine.period_results()[&a];
+    assert_eq!((result.realised, result.written_off), (f("-20"), Fixed::ZERO));
+    // The 8 of profit fee a paid on its win does not count as loss: a's weight is 20, not 28.
+    assert_eq!(allocations(&next_period(&mut h)), [(a, 0, f("20"), 250_000), (b, 0, f("60"), 750_000)]);
+}
+
+#[test]
+fn financing_paid_in_a_period_adds_no_weight() {
+    let mut h = Harness::emitting(BUDGET);
+    h.operator_admin(AdminCommand::SetBenchmarkRate { benchmark: "SOFR".into(), annual_bps: 500 });
+    let [a, b] = funded(&mut h);
+    h.price(BTC, "100000");
+    assert_eq!(fills(&h.market_order(a, BTC, Side::Buy, "1", "100000")).len(), 1);
+    h.advance_to(h.engine.next_rollover().unwrap());
+    let events = h.cmd(Command::Tick);
+    assert!(events.iter().any(|e| matches!(e, Event::Financing { account, .. } if *account == a)), "{events:?}");
+    // Closed at its entry price, the position realises nothing: the financing it paid is no loss.
+    round_trip(&mut h, &[(b, "1")], "100000", "99900");
+    h.price(BTC, "100000");
+    assert_eq!(fills(&h.market_order(a, BTC, Side::Sell, "1", "100000")).len(), 1);
+    assert!(!h.engine.period_results().contains_key(&a));
+    assert_eq!(allocations(&next_period(&mut h)).into_iter().map(|(account, ..)| account).collect::<Vec<_>>(), [b]);
+}
+
+#[test]
+fn a_liquidation_counts_less_the_debt_the_house_writes_off() {
+    let mut h = Harness::emitting(BUDGET);
+    let a = acct(1);
+    h.deposit(a, "10001");
+    h.price(BTC, "100000");
+    assert_eq!(fills(&h.market_order(a, BTC, Side::Buy, "1", "100000")).len(), 1);
+    let events = h.price(BTC, "85000");
+    let liquidation = fills(&events).into_iter().find(|fill| fill.liquidation).expect("a close-out fill").clone();
+    let written_off = events
+        .iter()
+        .find_map(|e| match e {
+            Event::BadDebt { account, amount } if *account == a => Some(*amount),
+            _ => None,
+        })
+        .expect("the loss passes the balance");
+    let result = h.engine.period_results()[&a];
+    assert_eq!((result.realised, result.written_off), (liquidation.realised_pnl, written_off));
+    // The weight is the loss the account funded: its deposit, whatever the close-out's spread.
+    assert_eq!(allocations(&next_period(&mut h)), [(a, 0, f("10001"), BUDGET)]);
+}
+
+#[test]
+fn negative_cash_at_the_cutoff_earns_nothing_for_that_period_and_nothing_later() {
+    let mut h = Harness::emitting(BUDGET);
+    let (a, b) = (acct(1), acct(2));
+    h.deposit(a, "12000");
+    h.deposit(b, "1000000");
+    h.price(ETH, "4000");
+    assert_eq!(fills(&h.market_order(a, ETH, Side::Buy, "10", "4000")).len(), 1);
+    h.price(ETH, "6000");
+    h.price(BTC, "100000");
+    assert_eq!(fills(&h.market_order(a, BTC, Side::Buy, "1", "100000")).len(), 1);
+    // Selling BTC 15% down realises more than a's cash while its ETH gain keeps it above close-out.
+    h.price(BTC, "85000");
+    assert_eq!(fills(&h.market_order(a, BTC, Side::Sell, "1", "85000")).len(), 1);
+    round_trip(&mut h, &[(b, "1")], "85000", "84900");
+    assert!(h.balance(a).is_negative() && h.engine.period_results()[&a].realised < f("-15000"));
+    let paid: Vec<_> =
+        allocations(&next_period(&mut h)).into_iter().map(|(account, .., amount)| (account, amount)).collect();
+    assert_eq!(paid, [(b, BUDGET)], "a's larger loss is left out");
+    assert!(!h.engine.period_results().contains_key(&a), "the excluded loss is not carried forward");
+
+    // Its cash recovers in the next period, but that period's gain earns nothing and period 0 stays
+    // unpaid.
+    h.price(ETH, "6000");
+    assert_eq!(fills(&h.market_order(a, ETH, Side::Sell, "10", "6000")).len(), 1);
+    assert!(h.balance(a).is_positive());
+    assert!(allocations(&next_period(&mut h)).is_empty());
+    assert_eq!(h.engine.entitlement(a), TokenUnits(0));
+    // A later loss weighs only itself.
+    round_trip(&mut h, &[(a, "1")], "84900", "84800");
+    assert_eq!(allocations(&next_period(&mut h)), [(a, 2, f("100"), BUDGET)]);
+}
+
+#[test]
+fn the_schedule_is_initialised_once_by_the_operator_and_never_backdated() {
+    let mut h = Harness::v17();
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V18 });
+    let now = h.ts;
+    let init = |start_ms, budget| {
+        AdminCommand::InitEmissions(EmissionSchedule { start_ms, period_budget: TokenUnits(budget) })
+    };
+    let refused = |h: &mut Harness, command: AdminCommand, why: &str| {
+        let events = h.operate(command);
+        assert!(
+            events.iter().any(|e| matches!(e, Event::AdminRejected { reason } if reason.contains(why))),
+            "{why}: {events:?}"
+        );
+    };
+    refused(&mut h, init(now, BUDGET), "V23");
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V23 });
+    // Once anything is credited only the operator's signature initialises it.
+    let events = h.cmd(Command::Admin(init(now, BUDGET)));
+    assert!(events.iter().any(|e| matches!(e, Event::AdminRejected { reason } if reason.contains("operator signs"))));
+    refused(&mut h, init(now - 1, BUDGET), "before the sequenced time");
+    refused(&mut h, init(now, 0), "outside 1 to");
+    refused(&mut h, init(now, MAX_PERIOD_BUDGET + 1), "outside 1 to");
+    assert_eq!(h.engine.emissions(), None);
+
+    let start = now + PERIOD_MS;
+    h.operator_admin(init(start, MAX_PERIOD_BUDGET));
+    refused(&mut h, init(start, BUDGET), "already initialised");
+    assert_eq!(h.engine.emissions().unwrap().schedule.period_budget, TokenUnits(MAX_PERIOD_BUDGET));
+
+    // Losses before the start earn nothing; from the start they count.
+    let [a] = funded(&mut h);
+    round_trip(&mut h, &[(a, "1")], "100000", "99900");
+    assert!(h.engine.period_results().is_empty());
+    h.advance_to(start);
+    round_trip(&mut h, &[(a, "1")], "100000", "99900");
+    assert_eq!(h.engine.period_results()[&a].realised, f("-100"));
+    assert_eq!(schedule(&h).start_ms, start);
+}
+
+#[test]
+fn the_schedule_is_initialised_only_signed_even_before_any_credit() {
+    // No house capital, so nothing is credited and other operator commands may still go unsigned.
+    let mut h = Harness::zero_house(ProtocolVersion::V7);
+    h.admin(AdminCommand::SetOperator(common::operator()));
+    for version in [ProtocolVersion::V18, ProtocolVersion::V23] {
+        h.admin(AdminCommand::ActivateProtocol { version });
+    }
+    let schedule = EmissionSchedule { start_ms: h.ts, period_budget: TokenUnits(BUDGET) };
+    let events = h.cmd(Command::Admin(AdminCommand::InitEmissions(schedule)));
+    assert!(
+        events.iter().any(|e| matches!(e, Event::AdminRejected { reason } if reason.contains("operator signs"))),
+        "{events:?}"
+    );
+    assert_eq!(h.engine.emissions(), None);
+    h.operator_admin(AdminCommand::InitEmissions(schedule));
+    assert_eq!(h.engine.emissions().unwrap().schedule, schedule);
+}

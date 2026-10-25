@@ -1,6 +1,6 @@
-//! The account proof route, and the state tree's dev scenario: accounts credited through the API,
-//! checkpoint work that stays flat as they grow, a proof that verifies against the logged root, and
-//! logs written before the state tree that still replay.
+//! The account proof and emission entitlement routes, and the state tree's dev scenario: accounts
+//! credited through the API, checkpoint work that stays flat as they grow, a proof that verifies
+//! against the logged root, and logs written before the state tree that still replay.
 
 use super::*;
 use std::net::SocketAddr;
@@ -10,8 +10,9 @@ use std::path::PathBuf;
 use axum::body::{Body, to_bytes};
 use axum::extract::connect_info::MockConnectInfo;
 use axum::http::Request as HttpRequest;
-use engine_core::command::OrderKind;
+use engine_core::command::{AdminCommand, OrderKind};
 use engine_core::eip712::B256;
+use engine_core::emissions::{EmissionSchedule, PERIOD_MS, TokenUnits};
 use engine_core::merkle::RootWork;
 use engine_core::price::SourceQuote;
 use engine_core::protocol::ProtocolVersion;
@@ -21,6 +22,7 @@ use governor::clock::DefaultClock;
 use serde_json::Value;
 use tower::ServiceExt;
 
+use crate::clock::Clock;
 use crate::clock::test_clock::TestClock;
 use crate::config::RateLimit;
 use crate::history::INDEX_FILE;
@@ -133,14 +135,53 @@ async fn an_account_is_provable_from_the_first_checkpoint_that_holds_it() {
     assert_eq!(node.get(&format!("/v1/accounts/{}/proof", account(2))).await.0, StatusCode::NOT_FOUND);
 }
 
+#[tokio::test]
+async fn an_entitlement_is_provable_from_the_first_checkpoint_after_its_period() {
+    let node = Node::start("emissions-route").await;
+    let schedule = EmissionSchedule { start_ms: NOW, period_budget: TokenUnits(1_000) };
+    let (status, events) = node.post("/v1/admin", node.signed(AdminCommand::InitEmissions(schedule))).await;
+    assert_eq!((status, events.as_array().unwrap().last()), (StatusCode::OK, Some(&json!({"type": "admin_applied"}))));
+    let trader = account(1);
+    node.deposit(trader, "100000").await;
+    for (side, mid) in [(Side::Buy, "100000"), (Side::Sell, "99000")] {
+        node.price_btc(mid).await;
+        let order = OrderRequest {
+            account: trader,
+            client_id: 1,
+            market: 1,
+            side,
+            qty: "0.01".parse().unwrap(),
+            kind: OrderKind::Market { quoted: mid.parse().unwrap(), max_slippage_bps: None },
+            reduce_only: false,
+            auth: None,
+        };
+        assert_eq!(node.post("/v1/orders", serde_json::to_value(order).unwrap()).await.0, StatusCode::OK);
+    }
+    node.checkpoint().await;
+    // The loss earns nothing until its period is final and a checkpoint holds the allocation.
+    assert_eq!(node.get(&format!("/v1/accounts/{trader}/emissions")).await.0, StatusCode::NOT_FOUND);
+    node.advance(Duration::from_millis(PERIOD_MS as u64)).await;
+    // The first command after the period's end finalises it.
+    node.state.submit(Command::Tick).await.expect("the sequencer is running");
+    node.checkpoint().await;
+    let (status, body) = node.get(&format!("/v1/accounts/{trader}/emissions")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let proof: EntitlementProof = serde_json::from_value(body).unwrap();
+    assert_eq!(proof.entitled, TokenUnits(1_000));
+    assert!(proof.verify(logged_root(&node.entries(), proof.seq)));
+    assert_eq!(node.get("/v1/accounts/0x12/emissions").await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(node.get(&format!("/v1/accounts/{}/emissions", account(2))).await.0, StatusCode::NOT_FOUND);
+}
+
 // ── Helpers ──
 
 /// A node on a fresh log under the latest protocol version with the dev genesis, serving the API
-/// in process.
+/// in process, stamping commands on a clock that moves only when the test moves it.
 struct Node {
     app: Router,
     state: ApiState,
     dir: PathBuf,
+    stamps: Arc<TestClock>,
 }
 
 impl Node {
@@ -188,9 +229,25 @@ impl Node {
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
             limits: Arc::new(ApiLimits::with_quota(&dev_config().api, unlimited, DefaultClock::default())),
             history: Reader::new(dir.join(INDEX_FILE), watch::channel(true).1),
+            emission_budget: None,
         };
         let app = router(state.clone()).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9))));
-        Node { app, state, dir }
+        Node { app, state, dir, stamps }
+    }
+
+    /// Moves the clock and trusted time forward by `by`.
+    async fn advance(&self, by: Duration) {
+        self.stamps.advance(by);
+        let sample = sample_around(self.stamps.as_ref());
+        self.state.tx.send(sequencer::Request::TimeSample(sample)).await.expect("the sequencer is running");
+    }
+
+    /// `command` signed by the dev operator key with the operator's next nonce, as `engine admin`
+    /// posts it.
+    fn signed(&self, command: AdminCommand) -> Value {
+        let key = k256::ecdsa::SigningKey::from_slice(&[0x42; 32]).unwrap();
+        let operator = dev_config().operator().unwrap();
+        serde_json::to_value(crate::admin::sign(&key, &operator, command, 0, NOW + 60_000)).unwrap()
     }
 
     /// Credits `account` with `amount` through the dev deposit route.
@@ -200,10 +257,11 @@ impl Node {
         assert_eq!(status, StatusCode::OK, "{events}");
     }
 
-    /// Prices BTC at `mid` from two venues.
+    /// Prices BTC at `mid` from two venues, stamped now.
     async fn price_btc(&self, mid: &str) {
+        let ts = self.stamps.now_ms();
         let quotes =
-            ["a", "b"].map(|venue| SourceQuote { source: venue.into(), mid: mid.parse().unwrap(), ts: NOW }).to_vec();
+            ["a", "b"].map(|venue| SourceQuote { source: venue.into(), mid: mid.parse().unwrap(), ts }).to_vec();
         self.state.submit(Command::Prices { market: 1, quotes }).await.expect("the sequencer is running");
     }
 

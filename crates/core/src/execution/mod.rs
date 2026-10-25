@@ -360,7 +360,8 @@ impl Engine {
     }
 
     /// Books a priced fill: the position, the market aggregates, realised PnL in USD (rounded down)
-    /// and the profit fee against house cash, and a markout to score the flow later.
+    /// and the profit fee against house cash, the PnL in the account's emission period result, and a
+    /// markout to score the flow later.
     fn book(&mut self, exec: &Exec, priced: Priced) -> Fill {
         let params = self.params.as_ref().expect("callers check params are set");
         let fee_bps = params.profit_fee_bps;
@@ -385,6 +386,7 @@ impl Engine {
         self.house_cash -= realised_pnl - fee;
 
         self.record_position(exec.account, exec.market);
+        self.record_period_result(exec.account, realised_pnl, Fixed::ZERO);
         if !exec.liquidation {
             let quote = self.markets[&exec.market].spec.quote_currency;
             let notional = quote.to_usd(priced.qty.mul(priced.price), priced.fx, Rounding::Down);

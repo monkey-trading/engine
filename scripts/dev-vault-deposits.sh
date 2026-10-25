@@ -137,7 +137,8 @@ cd "$root/contracts"
 # `--constructor-args` takes every argument after it, so the contract and its arguments go last.
 create() { forge create --rpc-url "$rpc" --private-key "$deployer_key" --broadcast --json "$@" | jq -r '.deployedTo'; }
 usdc="$(create test/mocks/MockUSDC.sol:MockUSDC)"
-vault="$(create src/Vault.sol:Vault --constructor-args "$usdc" "$trader")"
+# The MONKEY period budget, 1 MONKEY, is a development value, not an approved production parameter.
+vault="$(create src/Vault.sol:Vault --constructor-args "$usdc" "$trader" 1000000000000000000)"
 cd "$root"
 grep -qi "vault = \"$vault\"" config/anvil.toml || fail "vault deployed at $vault, not the address config/anvil.toml names"
 grep -qi "usdc = \"$usdc\"" config/anvil.toml || fail "USDC deployed at $usdc, not the address config/anvil.toml names"

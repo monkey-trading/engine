@@ -52,6 +52,8 @@ jobs:
                 # Read by no build, test, scenario, or image.
                 agents/* | AGENTS.md | CLAUDE.md | README.md | SECURITY.md | research/* | image/README.md \
                   | crates/core/README.md | crates/node/README.md) ;;
+                # The contracts' emission tests read the engine's entitlement proof vectors.
+                crates/core/tests/fixtures/emissions.json) areas+=" rust scenarios image contracts" ;;
                 # The image embeds config/test-keys.toml and boots on config/dev.toml.
                 crates/* | Cargo.toml | Cargo.lock | config/dev.toml | config/test-keys.toml)
                   areas+=" rust scenarios image" ;;
@@ -238,6 +240,8 @@ jobs:
         run: ./scripts/dev-vault-deposits.sh
       - name: Run the checkpoint dev scenario
         run: ./scripts/dev-checkpoints.sh
+      - name: Run the MONKEY emissions dev scenario
+        run: ./scripts/dev-monkey-emissions.sh
 
   dev-metrics-alerts:
     needs: changes

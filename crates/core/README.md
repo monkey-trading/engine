@@ -85,6 +85,14 @@ this crate and reproduce the signed state roots exactly.
 - From protocol `V18`, dated decimal benchmark histories select each missed rollover's rate by its
   local date; observations older than five weekdays still apply and produce a stale status. Retained
   history covers unpaid rollovers and legal timezone/hour changes, including earlier local dates
+- From protocol `V23`, MONKEY emissions: once the operator's signed initialisation records a start
+  no earlier than itself and a period budget, each ten-minute period's budget is shared pro rata by
+  the accounts' net realised trading losses there (liquidations included, the profit fee and
+  financing not), less debt the house wrote off, leaving out any account with negative cash at the
+  cutoff; shares round down to base units and the rest, with every empty period's budget, is
+  cancelled; budgets halve, rounded down, every 26,280 periods (182.5 days); the first command at or
+  after a period's end finalises it before its own effects; and each account's cumulative
+  entitlement is a state tree leaf with a proof the vault checks a claim against
 
 ## Repository Structure
 
@@ -100,6 +108,8 @@ this crate and reproduce the signed state roots exactly.
 - `src/benchmark.rs` — dated publisher snapshots, effective-date lookup, staleness, and retention
 - `src/funds.rs` — deposits, withdrawals, house capital, and overnight financing
 - `src/admin.rs` — operator commands and signed admin commands
+- `src/emissions.rs` — MONKEY emissions: the schedule, period results, finalisation, and
+  entitlements
 - `src/stress.rs` — stress levels: the automatic triggers, the move window, and the floors
 - `src/auth.rs` — client auth, the operator record, request signatures and nonces, and the checks
   every client request and signed admin command pass
@@ -108,9 +118,9 @@ this crate and reproduce the signed state roots exactly.
 - `src/protocol.rs` — protocol versions, and how to add one
 - `src/merkle/mod.rs` — the state tree's layout and the sparse Merkle tree
 - `src/merkle/leaf.rs` — each leaf's key and value hash, and the account and market leaves
-- `src/merkle/proof.rs` — account and market proofs, and how to check them
+- `src/merkle/proof.rs` — account, market, and entitlement proofs, and how to check them
 - `src/merkle/state.rs` — the engine's state tree: what each root rehashes, the remaining-state
-  leaf, and account proofs
+  leaf, and account and entitlement proofs
 - `src/merkle/tests.rs` — tree, proof, and work tests, and the layout fixture
 - `src/tracked.rs` — maps and sets that record what changed since the last root
 - `src/fixed/` — `Fixed`, the 9-decimal fixed-point type used for all money (`mod.rs`), and its
@@ -146,10 +156,16 @@ this crate and reproduce the signed state roots exactly.
   signatures
 - `tests/fixtures/merkle.json` — state tree vectors computed with Foundry's `cast`: keys, leaf ABI
   encodings and value hashes, a root, and proofs
+- `tests/fixtures/emissions.json` — entitlement proofs the engine produced, which the vault's
+  Foundry tests claim with and `tests/emissions_fixture.rs` checks
+- `tests/emissions.rs`, `tests/emissions_eligibility.rs`, `tests/emissions_schedule.rs` — MONKEY
+  emissions from `V23`: allocation, rounding, cancellation, and finality; which losses count and the
+  signed initialisation; and the schedule's arithmetic with the first halving
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
-  (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15`, `V16`, and `V17` parts (`v15.rs`, `v16.rs`, `v17.rs`)
+  (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), its
+  `V15`, `V16`, and `V17` parts (`v15.rs`, `v16.rs`, `v17.rs`), and its `V18` and `V23` parts
+  (`v18.rs`, `v23.rs`)
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
 
@@ -308,6 +324,7 @@ command-processing regression guards, not an end-to-end service latency promise.
 | Every account holds the repriced market | 100,000 | 250 ms |
 | Dormant resting orders in the repriced market | 100,000 | 200 us |
 | Daily rollover with financing on every position | 100,000 | 500 ms |
+| Finalising a MONKEY emission period in which every account lost (one sample) | 100,000 | 500 ms |
 
 A concentrated price update still visits every holder, and a rollover still finances and checks
 all positions. Triggered orders still require work per candidate, including orders retained when
@@ -324,6 +341,9 @@ compilation disabled, and two build jobs on a Mac17,9 with 15 logical CPUs and 2
 | Concentrated 100k | 22,631 / 23,597 | 20,554 / 24,040 |
 | Dormant resting 100k | 12,656 / 16,346 | <1 / <1 |
 | Financed rollover 100k | 33,341 / 37,129 | 32,669 / 34,991 |
+
+Finalising a MONKEY emission period in which 100,000 accounts lost measured 35 ms, as one sample on
+25 October 2026 on the same machine, with other workspace builds running.
 
 The baseline is main commit `e4b4f5cf79816f1167fb4c0e17dcd2ff0024cdb0`, with the same benchmark
 source copied into its test directory. Measurements ran sequentially with competing workspace

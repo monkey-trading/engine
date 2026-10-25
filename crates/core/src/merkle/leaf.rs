@@ -19,6 +19,11 @@
 //! - **Request nonce:** `keccak256(abi.encode(uint64 nonce))`, the account's next nonce.
 //! - **Credited reference:** `keccak256(bytes(reference))`.
 //! - **Markout:** the keccak-256 of its JSON encoding.
+//! - **Emission entitlement:** `keccak256(abi.encode(uint256 entitled))`, the account's cumulative
+//!   MONKEY entitlement in base units, from `V23`; the vault checks claims against this leaf.
+//! - **Emission period result:** `keccak256(abi.encode(int128 realised, int128 writtenOff))`, the
+//!   account's realised PnL and written-off debt in the open emission period, from `V23`, until the
+//!   period is finalised.
 //! - **Remaining state:** the keccak-256 of the JSON encoding of every engine field no other leaf
 //!   holds (`state.rs`).
 //!
@@ -44,6 +49,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
 use crate::account::{Account, Position, RestingOrder};
+use crate::emissions::{PeriodResult, TokenUnits};
 use crate::engine::{MarketState, Markout, StressState};
 use crate::market::{MarketSpec, QuoteCurrency};
 use crate::merkle::keccak;
@@ -59,6 +65,8 @@ const CREDITED_REF: u8 = 4;
 const MARKOUT: u8 = 5;
 const RESTING_ORDER: u8 = 6;
 const POSITION: u8 = 7;
+const ENTITLEMENT: u8 = 8;
+const PERIOD_RESULT: u8 = 9;
 
 /// The structs whose ABI encodings account, position, and market leaves hash.
 mod typed {
@@ -308,6 +316,28 @@ pub(crate) fn credited_ref_hash(chain_ref: &str) -> B256 {
 /// The value hash of a markout's leaf.
 pub(crate) fn markout_hash(markout: &Markout) -> B256 {
     json_hash(markout)
+}
+
+/// The key of `account`'s emission entitlement leaf.
+pub fn entitlement_key(account: AccountId) -> B256 {
+    keccak(&[&[ENTITLEMENT], &account.0])
+}
+
+/// The value hash of an emission entitlement leaf.
+pub fn entitlement_hash(entitled: TokenUnits) -> B256 {
+    keccak(&[&alloy_primitives::U256::from(entitled.0).abi_encode()])
+}
+
+/// The key of `account`'s emission period result leaf.
+pub(crate) fn period_result_key(account: AccountId) -> B256 {
+    keccak(&[&[PERIOD_RESULT], &account.0])
+}
+
+/// The value hash of an emission period result leaf.
+pub(crate) fn period_result_hash(result: &PeriodResult) -> B256 {
+    // Every field is named, so a field added to `PeriodResult` fails to compile until the leaf holds it.
+    let PeriodResult { realised, written_off } = result;
+    keccak(&[&(realised.raw(), written_off.raw()).abi_encode()])
 }
 
 /// keccak-256 of `value`'s JSON encoding.

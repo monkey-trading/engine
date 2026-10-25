@@ -3,6 +3,7 @@
 use engine_core::Fixed;
 use engine_core::auth::ClientAuth;
 use engine_core::command::AdminCommand;
+use engine_core::emissions::{EmissionSchedule, TokenUnits};
 use engine_core::protocol::ProtocolVersion;
 
 use crate::common::{Harness, operator};
@@ -134,6 +135,17 @@ impl Harness {
     pub fn v17() -> Self {
         let mut h = Harness::v16();
         h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V17 });
+        h
+    }
+
+    /// `v17`, then `V18` and `V23`, with an emission schedule the operator signs that starts now
+    /// with `period_budget` base units a period.
+    pub fn emitting(period_budget: u128) -> Self {
+        let mut h = Harness::v17();
+        h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V18 });
+        h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V23 });
+        let schedule = EmissionSchedule { start_ms: h.ts, period_budget: TokenUnits(period_budget) };
+        h.operator_admin(AdminCommand::InitEmissions(schedule));
         h
     }
 }

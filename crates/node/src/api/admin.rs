@@ -3,12 +3,13 @@
 
 use axum::Json;
 use axum::extract::State;
-use engine_core::command::{AdminRequest, Command};
+use engine_core::command::{AdminCommand, AdminRequest, Command};
 use engine_core::event::Event;
 use tracing::field::display;
 use tracing::{Span, debug, info};
 
 use crate::api::{ApiError, ApiResult, ApiState};
+use crate::checkpoints::emission_budget::check_budget;
 
 /// Sequences an admin command the operator signed and returns the events it produced, ending in
 /// `admin_applied` or `admin_rejected`. A request stays out of the log unless the operator may send
@@ -19,6 +20,8 @@ use crate::api::{ApiError, ApiResult, ApiState};
 /// Error cases:
 /// - a command only the node sequences: client auth, the operator, or a protocol activation
 /// - a signature that is not the operator's over this command, nonce, and expiry
+/// - an emission schedule whose period budget is not the one the configured vault's MONKEY cap was
+///   derived from
 /// - a nonce other than the operator's next
 /// - an expiry already past
 /// - the sequencer has stopped
@@ -32,6 +35,12 @@ pub(super) async fn admin(State(s): State<ApiState>, Json(req): Json<AdminReques
     if operator.check(&req.command, &req.auth).is_err() {
         debug!("admin request refused: invalid signature");
         return Err(ApiError::Unauthorized("invalid signature"));
+    }
+    if let (AdminCommand::InitEmissions(schedule), Some(vault)) = (&req.command, s.emission_budget)
+        && let Err(reason) = check_budget(vault, schedule.period_budget)
+    {
+        debug!("admin request refused: {reason}");
+        return Err(ApiError::BadRequest(reason));
     }
     let (next, last_sequenced) = s.query(move |e| (e.next_request_nonce(operator.address), e.now())).await?;
     s.check_fresh(&req.auth, next, last_sequenced)?;

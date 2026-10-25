@@ -13,8 +13,10 @@ use alloy::sol;
 use alloy::sol_types::SolCall;
 use alloy::transports::http::reqwest::{Certificate, Client, Url};
 use anyhow::{Context, anyhow, ensure};
+use engine_core::emissions::TokenUnits;
 use tokio::time::timeout;
 
+use crate::checkpoints::emission_budget::budget_from_cap;
 use crate::checkpoints::{CheckpointChain, VaultState, View};
 use crate::config::{CheckpointSection, FinalityTag};
 use crate::custody::usdc_to_fixed;
@@ -31,6 +33,8 @@ sol! {
     function depositCount() external view returns (uint256);
     function usdc() external view returns (address);
     function balanceOf(address account) external view returns (uint256);
+    function monkey() external view returns (address);
+    function cap() external view returns (uint256);
     function postCheckpoint(uint64 seq, bytes32 root, bool hasParent, uint64 parentSeq, bytes32 parentRoot, bytes signature) external;
 }
 
@@ -121,6 +125,19 @@ impl CheckpointRpc {
 }
 
 impl CheckpointChain for CheckpointRpc {
+    /// The emission period budget the vault's MONKEY cap was derived from. Both are immutable, so
+    /// the latest block serves.
+    /// Error cases:
+    /// - transport, timeout, EVM, or decoding errors, as from a vault with no MONKEY token
+    /// - a cap that no period budget the engine accepts gives (see `budget_from_cap`)
+    async fn emission_budget(&self) -> anyhow::Result<TokenUnits> {
+        let at = BlockId::Number(BlockNumberOrTag::Latest);
+        let vault = Address::from(self.domain.vault.0);
+        let monkey = monkeyCall::abi_decode_returns(&self.call(vault, monkeyCall {}.abi_encode(), at).await?)?;
+        let cap = capCall::abi_decode_returns(&self.call(monkey, capCall {}.abi_encode(), at).await?)?;
+        budget_from_cap(cap)
+    }
+
     fn reserved_checkpoint(&self) -> anyhow::Result<Option<Checkpoint>> {
         Ok(self.submissions.read()?.map(|reservation| reservation.checkpoint))
     }

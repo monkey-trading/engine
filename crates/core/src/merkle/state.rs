@@ -1,5 +1,5 @@
 //! The engine's state tree: which leaves each root rehashes, the leaf of the engine's remaining
-//! state, and account proofs.
+//! state, and account and entitlement proofs.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -11,17 +11,20 @@ use crate::Fixed;
 use crate::account::Position;
 use crate::auth::{ClientAuth, Operator};
 use crate::benchmark::BenchmarkHistory;
+use crate::emissions::{Emissions, TokenUnits};
 use crate::engine::{Engine, Markout};
 use crate::merkle::{
-    AccountLeaf, AccountProof, MarketLeaf, MarketProof, PositionProof, SparseMerkleTree, account_key,
-    credited_ref_hash, credited_ref_key, globals_key, json_hash, market_key, markout_hash, markout_key, order_hash,
-    order_key, position_hash, position_key, request_nonce_hash, request_nonce_key,
+    AccountLeaf, AccountProof, EntitlementProof, MarketLeaf, MarketProof, PositionProof, SparseMerkleTree, account_key,
+    credited_ref_hash, credited_ref_key, entitlement_hash, entitlement_key, globals_key, json_hash, market_key,
+    markout_hash, markout_key, order_hash, order_key, period_result_hash, period_result_key, position_hash,
+    position_key, request_nonce_hash, request_nonce_key,
 };
 use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
 use crate::types::{AccountId, MarketId, Millis, OrderId};
 
-/// The state tree as of the last root, with the account, position, and market leaves proofs need.
+/// The state tree as of the last root, with the account, position, market, and entitlement leaves
+/// proofs need.
 #[derive(Debug, Default)]
 pub(crate) struct StateTree {
     tree: SparseMerkleTree,
@@ -30,6 +33,7 @@ pub(crate) struct StateTree {
     accounts: BTreeMap<AccountId, AccountLeaf>,
     positions: BTreeMap<(AccountId, MarketId), Position>,
     markets: BTreeMap<MarketId, MarketLeaf>,
+    entitlements: BTreeMap<AccountId, TokenUnits>,
     work: RootWork,
 }
 
@@ -58,6 +62,8 @@ struct Touched {
     markets: BTreeSet<MarketId>,
     nonces: BTreeSet<AccountId>,
     refs: BTreeSet<String>,
+    period_results: BTreeSet<AccountId>,
+    entitlements: BTreeSet<AccountId>,
     changed: Changed,
 }
 
@@ -79,6 +85,8 @@ struct Globals<'a> {
     markout_base: u64,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     benchmark_history: &'a BenchmarkHistory,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    emissions: &'a Option<Emissions>,
 }
 
 impl Engine {
@@ -100,11 +108,18 @@ impl Engine {
     /// yet, as on `V9`'s first root, every leaf is hashed.
     pub(crate) fn merkle_root(&mut self) -> B256 {
         let touched = self.take_touched();
-        let Touched { accounts, markets, nonces, refs, changed: Changed { markouts, positions, orders } } =
-            match &self.tree {
-                Some(_) => touched,
-                None => self.every_key(),
-            };
+        let Touched {
+            accounts,
+            markets,
+            nonces,
+            refs,
+            period_results,
+            entitlements,
+            changed: Changed { markouts, positions, orders },
+        } = match &self.tree {
+            Some(_) => touched,
+            None => self.every_key(),
+        };
         let mut changes = BTreeMap::from([(globals_key(), Some(json_hash(&self.globals())))]);
         let account_leaves: Vec<(AccountId, Option<AccountLeaf>)> =
             accounts.into_iter().map(|id| (id, self.accounts.get(&id).map(AccountLeaf::of))).collect();
@@ -140,6 +155,16 @@ impl Engine {
             let order = self.accounts.get(&id).and_then(|acct| acct.orders.get(&order_id));
             (order_key(order_id), order.map(|order| order_hash(id, order)))
         }));
+        changes.extend(
+            period_results
+                .into_iter()
+                .map(|id| (period_result_key(id), self.period_results.get(&id).map(period_result_hash))),
+        );
+        let entitlement_leaves: Vec<(AccountId, Option<TokenUnits>)> =
+            entitlements.into_iter().map(|id| (id, self.entitlements.get(&id).copied())).collect();
+        changes.extend(
+            entitlement_leaves.iter().map(|(id, entitled)| (entitlement_key(*id), entitled.map(entitlement_hash))),
+        );
 
         // A seq has been applied: `V9` takes effect through a sequenced `ActivateProtocol`.
         let seq = self.last_seq.expect("a state root under V9 follows a command");
@@ -162,6 +187,12 @@ impl Engine {
             match pos {
                 Some(pos) => state.positions.insert(id, pos),
                 None => state.positions.remove(&id),
+            };
+        }
+        for (id, entitled) in entitlement_leaves {
+            match entitled {
+                Some(entitled) => state.entitlements.insert(id, entitled),
+                None => state.entitlements.remove(&id),
             };
         }
         state.root = state.tree.root();
@@ -196,6 +227,16 @@ impl Engine {
             .unzip();
         let siblings = proof(account_key(account));
         Some(AccountProof { seq: state.seq, root: state.root, account, leaf, siblings, positions, markets })
+    }
+
+    /// The proof of `account`'s cumulative MONKEY entitlement against the last state root computed.
+    /// `None` before the first root under `V9`, or for an account that root holds no entitlement for.
+    pub fn entitlement_proof(&self, account: AccountId) -> Option<EntitlementProof> {
+        let state = self.tree.as_ref()?;
+        let entitled = *state.entitlements.get(&account)?;
+        let siblings =
+            state.tree.proof(entitlement_key(account)).expect("every entitlement kept for proofs is in the tree");
+        Some(EntitlementProof { seq: state.seq, root: state.root, account, entitled, siblings })
     }
 
     /// What the last state root hashed, or `None` before the first root under `V9`.
@@ -265,6 +306,8 @@ impl Engine {
             markets: self.markets.take_touched(),
             nonces: self.request_nonces.take_touched(),
             refs: self.credited_refs.take_touched(),
+            period_results: self.period_results.take_touched(),
+            entitlements: self.entitlements.take_touched(),
             changed: std::mem::take(&mut self.changed),
         }
     }
@@ -277,6 +320,8 @@ impl Engine {
             markets: self.markets.keys().copied().collect(),
             nonces: self.request_nonces.keys().copied().collect(),
             refs: self.credited_refs.iter().cloned().collect(),
+            period_results: self.period_results.keys().copied().collect(),
+            entitlements: self.entitlements.keys().copied().collect(),
             changed: Changed {
                 markouts: (self.markout_base..).take(self.markouts.len()).collect(),
                 positions: accounts()
@@ -310,6 +355,9 @@ impl Engine {
             global_reduce_only,
             markout_base,
             benchmark_history,
+            emissions,
+            period_results: _,
+            entitlements: _,
             changed: _,
             tree: _,
             hot_indexes: _,
@@ -329,6 +377,7 @@ impl Engine {
             global_reduce_only: *global_reduce_only,
             markout_base: *markout_base,
             benchmark_history,
+            emissions,
         }
     }
 }

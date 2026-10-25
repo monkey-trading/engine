@@ -323,6 +323,7 @@ async fn serve_with(node: &TestSequencer, dir: &Path, manifest: watch::Receiver<
         backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
         limits: Arc::new(ApiLimits::new(&dev_config().api)),
         history: Reader::new(dir.join(INDEX_FILE), watch::channel(true).1),
+        emission_budget: None,
     })
     .await
 }
@@ -346,6 +347,7 @@ async fn serve_history(history: Reader) -> SocketAddr {
         backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
         limits: Arc::new(ApiLimits::new(&api)),
         history,
+        emission_budget: None,
     })
     .await
 }
@@ -449,6 +451,7 @@ fn api_state(mock_custody: bool) -> (ApiState, mpsc::Receiver<sequencer::Request
         backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
         limits: Arc::new(ApiLimits::new(&dev_config().api)),
         history: Reader::new(PathBuf::new(), watch::channel(true).1),
+        emission_budget: None,
     };
     (state, rx)
 }
