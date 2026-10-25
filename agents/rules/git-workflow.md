@@ -50,8 +50,8 @@ Load on request before creating a branch, committing, pushing, or opening or upd
 
 ## Local checks before push
 
-Before a push that opens or updates a PR, check only what the change affects. GitHub runs the full
-CI on the PR.
+Before a push that opens or updates a PR, check only what the change affects. On the PR, CI runs
+every job the changed paths can affect, and skips the rest; a push to `main` runs every job.
 
 - Take the validation commands of the `.github/workflows/` jobs the changed paths trigger — format
   check, build or lint, and the tests covering the change — and run them scoped to the affected
@@ -60,8 +60,8 @@ CI on the PR.
   `./scripts/check-file-loc.sh`, `cargo clippy --workspace --all-targets -- -D warnings`,
   `cargo test -p <crate>` for each affected crate, `./scripts/check-reference-logs.sh` when
   `crates/core/tests/reference/` changes, and `cargo deny check` when dependencies change.
-- A push to a draft PR may carry failing or skipped checks when the PR says which; every CI
-  check passes before the PR is marked ready.
+- A push to a draft PR may carry failing or skipped checks when the PR says which; `ci-passed`
+  passes before the PR is marked ready.
 - When the change touches a shared or public surface, add its direct consumers, since a check
   scoped to one crate never builds them: a change to `engine-core`'s public API also checks
   `engine-node`.
@@ -70,7 +70,8 @@ CI on the PR.
   deploys, cache or artifact uploads, or repository writes.
 - [context-discipline](context-discipline.md) counts a request to open or update the PR as
   approval for these checks; keep their output out of the prompt as it says.
-- After the push, the PR's CI is the full check: read its result before asking for review.
+- After the push, the PR's CI is the full check of the changed paths: read its result before
+  asking for review.
 
 ## Push
 
