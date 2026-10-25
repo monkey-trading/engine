@@ -28,6 +28,15 @@ tick = "250ms"
 # stopped), from which the node rebuilds the history index.
 auth = "none"
 
+# Recovery caches are optional. Pin an enclave address only after verifying its attestation.
+# Only caches the current attested key signed are used; a start under a new key fails closed until
+# the key persists across restarts. Empty pins use full replay.
+# [snapshots]
+# dir = "data/dev/snapshots"
+# retain = 3
+# max_bytes = 67108864
+# trusted_signers = []
+
 # Limits on the public API, served over TLS with a key generated in the enclave. A client is its
 # socket peer IP (an IPv6 client by its /64); forwarding headers are ignored.
 [api]

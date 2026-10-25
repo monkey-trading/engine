@@ -1,79 +1,59 @@
-//! Reads the log from any offset, across segments, while the sequencer appends to it. Only whole
-//! lines are read, and only entries the writer has flushed are yielded: anything later is left for
-//! a later call.
+//! Lazy authenticated backfill across completed segments and committed active prefixes.
 
-use std::fs::File;
-use std::io::{BufRead, BufReader, Seek, SeekFrom};
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, ensure};
 use tokio::sync::watch;
 
-use crate::log::checked::{self, CheckedChunks, ChunkHashes};
-use crate::log::segments::list_segments;
-use crate::log::{LogEntry, MANIFEST, Manifest, Offset, offset_of};
+use crate::log::checked::{self, CheckedChunks, ChunkHashes, Progress};
+use crate::log::{LogEntry, Manifest, Offset, SegmentInfo, offset_of, parse_line};
 
-/// Entries of the log at or after a starting offset, in order.
+/// Entries at or after an inclusive offset, bounded by the writer's flush frontier.
 pub struct LogReader {
     dir: PathBuf,
     from: Offset,
-    /// The writer's manifest: completed segments are checked against it, and nothing after its
-    /// `flushed` offset is yielded.
     manifest: watch::Receiver<Manifest>,
-    /// Segment files by first seq, as last listed.
-    segments: Vec<(u64, PathBuf)>,
-    /// The segment being read, by index into `segments`.
-    segment: Option<(usize, OpenSegment)>,
+    segment: Option<OpenSegment>,
     last: Option<Offset>,
-    /// An entry read past the writer's last flush, yielded once the writer has flushed it.
     held: Option<(Offset, LogEntry)>,
 }
 
 struct OpenSegment {
+    ordinal: u64,
     first_seq: u64,
-    path: PathBuf,
-    /// The segment's contents from `consumed` on; `None` until read, and after `release`.
-    lines: Option<Box<dyn BufRead + Send>>,
-    /// Chunk hashes, once a listed segment has matched its listing.
-    checked: Option<ChunkHashes>,
-    /// Bytes of whole lines read so far.
     consumed: u64,
-    /// Bytes of a line not yet fully written.
-    line: Vec<u8>,
-    /// A later segment was listed before this one was last read to its end, so it gets no more
-    /// appends.
+    lines: Option<Box<dyn BufRead + Send>>,
+    limit: u64,
     complete: bool,
-    /// An entry has been read, so the segment's first entry has been checked.
     started: bool,
+    expected_last: Option<Offset>,
+    /// The last descriptor checked (and whether it was complete), its chunk hashes, and the hash
+    /// state that lets a longer prefix of the same file be checked from where that check ended.
+    verified: Option<(SegmentInfo, bool, ChunkHashes, Progress)>,
 }
 
 impl LogReader {
-    /// A reader for the log in `dir` that yields entries at or after `from`, starting in the
-    /// segment that holds `from.seq`, and checks completed segments against `manifest`.
+    /// Resolves the starting segment from authenticated point probes, without directory listing.
     /// Error cases:
-    /// - the directory cannot be listed, or segments exist but none holds `from.seq`
+    /// - a required catalog proof or starting descriptor is unavailable or invalid
     pub fn open(dir: &Path, from: Offset, manifest: watch::Receiver<Manifest>) -> anyhow::Result<Self> {
-        let segments = list_segments(dir)?;
-        let (segment, last, held) = (None, None, None);
-        let mut reader = Self { dir: dir.to_owned(), from, manifest, segments, segment, last, held };
+        let mut reader = Self { dir: dir.to_owned(), from, manifest, segment: None, last: None, held: None };
         reader.open_start()?;
         Ok(reader)
     }
 
-    /// Closes the reader's segment file. The next read opens it again where this one stopped, and
-    /// checks each chunk it reads once the manifest lists the segment.
+    /// Releases the open file and chunk buffer; the next call checks each chunk it rereads against
+    /// the hashes kept from the segment's last check.
     pub fn release(&mut self) {
-        if let Some((_, segment)) = &mut self.segment {
+        if let Some(segment) = &mut self.segment {
             segment.lines = None;
-            segment.line.clear();
         }
     }
 
-    /// The next entry at or after `from`, with its offset, or `None` once every entry the writer
-    /// has flushed has been read: a line on disk may belong to a batch that is not yet durable. A
-    /// later call picks up whatever has been flushed since.
+    /// Returns the next authenticated entry, or None once the published flush frontier is reached.
     /// Error cases:
-    /// - as `read_next`
+    /// - disk bytes, required proofs, framing, or contiguous command seqs fail verification
     pub fn next_entry(&mut self) -> anyhow::Result<Option<(Offset, LogEntry)>> {
         let next = match self.held.take() {
             Some(held) => held,
@@ -89,151 +69,175 @@ impl LogReader {
         Ok(None)
     }
 
-    /// The next entry at or after `from` on disk, with its offset, or `None` once every whole line
-    /// on disk has been read.
+    /// Decodes bytes exclusively from checked private chunk buffers. The published view is cloned
+    /// only to open a segment or to handle its end; a legacy view lists every completed segment.
     /// Error cases:
-    /// - a segment cannot be listed, opened, or read, or holds a line that is not a valid entry
-    /// - a completed segment differs from its listing, or ends mid-line
-    /// - a segment does not start with a command
+    /// - catalog membership, exact bytes, framing, or offset continuity is invalid
     fn read_next(&mut self) -> anyhow::Result<Option<(Offset, LogEntry)>> {
         loop {
-            let Some((i, segment)) = self.segment.as_mut() else {
-                // The log was empty when last listed.
-                self.segments = list_segments(&self.dir)?;
+            if self.segment.is_none() {
                 self.open_start()?;
                 if self.segment.is_none() {
                     return Ok(None);
                 }
-                continue;
-            };
-            if segment.lines.is_none() {
-                segment.lines = Some(segment_lines(&self.manifest, segment)?);
             }
-            if let Some(entry) = segment.read_entry()? {
+            self.manifest.borrow().ensure_verified()?;
+            let segment = self.segment.as_mut().expect("segment opened above");
+            if segment.lines.is_none() {
+                let view = self.manifest.borrow().clone();
+                let Some((info, complete, expected_last)) = descriptor(&view, segment)? else {
+                    return Ok(None);
+                };
+                ensure!(segment.consumed <= info.bytes, "flushed prefix shrank");
+                let path = self.dir.join(&info.file);
+                let hashes = match segment.verified.take() {
+                    Some((known, was_complete, hashes, progress)) if known == info && was_complete == complete => {
+                        segment.verified = Some((known, was_complete, hashes.clone(), progress));
+                        hashes
+                    }
+                    known => {
+                        let progress =
+                            known.and_then(|(known, _, _, progress)| (known.file == info.file).then_some(progress));
+                        let (hashes, progress) = checked::extend(&path, &info, complete, progress)?;
+                        segment.verified = Some((info.clone(), complete, hashes.clone(), progress));
+                        hashes
+                    }
+                };
+                segment.lines = Some(Box::new(BufReader::new(CheckedChunks::open(&path, hashes, segment.consumed)?)));
+                segment.limit = info.bytes;
+                segment.complete = complete;
+                segment.expected_last = expected_last;
+            }
+            let mut line = Vec::new();
+            let n = segment.lines.as_mut().expect("checked reader opened above").read_until(b'\n', &mut line)?;
+            if n > 0 {
+                ensure!(line.ends_with(b"\n"), "committed log prefix ends mid-line");
+                segment.consumed = segment.consumed.checked_add(n as u64).context("segment byte overflow")?;
+                ensure!(segment.consumed <= segment.limit, "reader exceeded committed prefix");
+                let Some(entry) = parse_line(0, &line)? else {
+                    continue;
+                };
                 if !segment.started {
                     ensure!(
-                        matches!(entry, LogEntry::Command(_)),
-                        "{} does not start with a command",
-                        segment.path.display()
+                        matches!(&entry, LogEntry::Command(c) if c.sequenced.seq == segment.first_seq),
+                        "segment does not start with its named command"
                     );
                     segment.started = true;
                 }
-                // A missing segment, or lines removed from one, shows up as a gap in the seqs.
                 if let (LogEntry::Command(c), Some(prev)) = (&entry, self.last) {
-                    let seq = c.sequenced.seq;
                     ensure!(
-                        prev.seq.checked_add(1) == Some(seq),
-                        "{}: seq {seq} follows seq {}",
-                        segment.path.display(),
+                        prev.seq.checked_add(1) == Some(c.sequenced.seq),
+                        "seq {} follows seq {}",
+                        c.sequenced.seq,
                         prev.seq
                     );
                 }
-                let offset = offset_of(self.last, &entry).with_context(|| segment.path.display().to_string())?;
+                if !matches!(&entry, LogEntry::Command(_)) {
+                    ensure!(self.last.is_some_and(|last| last.index < u32::MAX), "log offset index overflow");
+                }
+                let offset = offset_of(self.last, &entry)?;
+                if let LogEntry::Checkpoint(c) = &entry {
+                    ensure!(c.seq == offset.seq, "checkpoint seq does not match framing");
+                }
                 self.last = Some(offset);
                 if offset >= self.from {
                     return Ok(Some((offset, entry)));
                 }
                 continue;
             }
-            let i = *i;
-            if !segment.complete {
-                // The writer creates a segment only after the one before it is written in full, so
-                // once a later one is listed, one more pass over this one reaches its true end.
-                self.segments = list_segments(&self.dir)?;
-                if i + 1 >= self.segments.len() {
-                    return Ok(None);
-                }
-                segment.complete = true;
-                continue;
+            ensure!(segment.consumed == segment.limit, "truncated committed prefix");
+            let view = self.manifest.borrow().clone();
+            if let Some(expected) = segment.expected_last {
+                ensure!(self.last == Some(expected), "active prefix offset mismatch");
             }
-            ensure!(segment.line.is_empty(), "{} ends mid-line", segment.path.display());
-            // Release this segment before the next is read into memory.
-            self.segment = None;
-            self.segment = Some((i + 1, self.open_segment(i + 1)));
+            let ordinal = segment.ordinal;
+            // A rotation can complete this segment while its old active-prefix reader is open.
+            if ordinal < view.completed_len() {
+                let completed = view.completed_at(ordinal)?;
+                ensure!(completed.first_seq == segment.first_seq, "catalog segment identity changed");
+                if completed.bytes > segment.consumed || !segment.complete {
+                    segment.lines = None;
+                    continue;
+                }
+                ensure!(
+                    self.last.is_some_and(|last| last.seq == completed.last_seq),
+                    "completed segment last seq mismatch"
+                );
+                let next = ordinal.checked_add(1).context("catalog ordinal overflow")?;
+                if next < view.completed_len() {
+                    let info = view.completed_at(next)?;
+                    self.segment = Some(OpenSegment::new(next, info.first_seq));
+                    continue;
+                }
+                if let Some(active) = view.active_prefix()? {
+                    self.segment = Some(OpenSegment::new(next, active.info.first_seq));
+                    continue;
+                }
+                // Retain the completed ordinal so a later call can advance after publication.
+                return Ok(None);
+            }
+            if let Some(active) = view.active_prefix()? {
+                ensure!(
+                    active.info.first_seq == segment.first_seq && active.info.bytes >= segment.consumed,
+                    "active prefix replaced"
+                );
+                if active.info.bytes > segment.consumed {
+                    segment.lines = None;
+                    continue;
+                }
+            }
+            return Ok(None);
         }
     }
 
-    /// Opens the segment that holds `from.seq`, once the log has any segment.
+    /// Resolves only the requested completed range or the writer's exact active descriptor.
     /// Error cases:
-    /// - segments exist but none holds `from.seq`, so the start of the log is missing
+    /// - membership, required range, or active identity fails verification
     fn open_start(&mut self) -> anyhow::Result<()> {
-        let Some(i) = self.segments.iter().rposition(|(first, _)| *first <= self.from.seq) else {
-            ensure!(self.segments.is_empty(), "no segment in {} holds seq {}", self.dir.display(), self.from.seq);
-            return Ok(());
-        };
-        self.segment = Some((i, self.open_segment(i)));
+        let view = self.manifest.borrow().clone();
+        view.ensure_verified()?;
+        if let Some((ordinal, info)) = view.containing(self.from.seq)? {
+            self.segment = Some(OpenSegment::new(ordinal, info.first_seq));
+        } else if let Some(active) = view.active_prefix()? {
+            ensure!(self.from.seq >= active.info.first_seq, "no segment holds requested seq");
+            self.segment = Some(OpenSegment::new(view.completed_len(), active.info.first_seq));
+        }
         Ok(())
-    }
-
-    /// Segment `i`, to be read from its start.
-    fn open_segment(&self, i: usize) -> OpenSegment {
-        let (first_seq, path) = &self.segments[i];
-        let complete = i + 1 < self.segments.len();
-        let (lines, checked, consumed, line, started) = (None, None, 0, Vec::new(), false);
-        OpenSegment { first_seq: *first_seq, path: path.clone(), lines, checked, consumed, line, complete, started }
     }
 }
 
 impl OpenSegment {
-    /// The entry on the next whole line, skipping blank ones, or `None` if no further line is
-    /// fully written yet.
-    /// Error cases:
-    /// - the file cannot be read, or the line is not a valid entry
-    fn read_entry(&mut self) -> anyhow::Result<Option<LogEntry>> {
-        let lines = self.lines.as_mut().expect("a segment's contents are opened before it is read");
-        loop {
-            lines.read_until(b'\n', &mut self.line).with_context(|| format!("reading {}", self.path.display()))?;
-            if self.line.last() != Some(&b'\n') {
-                return Ok(None);
-            }
-            let line = std::mem::take(&mut self.line);
-            self.consumed += line.len() as u64;
-            if !line.trim_ascii().is_empty() {
-                let entry =
-                    serde_json::from_slice(&line).with_context(|| format!("entry in {}", self.path.display()))?;
-                return Ok(Some(entry));
-            }
+    /// Begins a segment whose identity came from a trusted view.
+    fn new(ordinal: u64, first_seq: u64) -> Self {
+        Self {
+            ordinal,
+            first_seq,
+            consumed: 0,
+            lines: None,
+            limit: 0,
+            complete: false,
+            started: false,
+            expected_last: None,
+            verified: None,
         }
     }
 }
 
-/// The contents of `segment` from where its last read stopped. A segment the manifest lists is
-/// checked against its listing in one pass the first time it is read, and each chunk after that
-/// as it is read, since the host can rewrite files on disk.
+/// Resolves a descriptor from the pinned view, with no filesystem discovery or unsigned fallback.
 /// Error cases:
-/// - the file cannot be opened, read, or positioned
-/// - a listed segment differs from its listing
-/// - an unlisted segment does not start right after the last listed one
-fn segment_lines(
-    manifest: &watch::Receiver<Manifest>,
-    segment: &mut OpenSegment,
-) -> anyhow::Result<Box<dyn BufRead + Send>> {
-    let path = &segment.path;
-    if segment.checked.is_none() {
-        let (listed, unlisted_from) = {
-            let manifest = manifest.borrow();
-            let unlisted_from = manifest.segments.last().map_or(0, |last| last.last_seq + 1);
-            (manifest.get(segment.first_seq).cloned(), unlisted_from)
-        };
-        match listed {
-            Some(listed) => segment.checked = Some(checked::check(path, &listed)?),
-            None => {
-                ensure!(
-                    segment.first_seq == unlisted_from,
-                    "{} is not in {MANIFEST}, and does not start right after the last segment it lists",
-                    path.display()
-                );
-                // TODO: the segment still being written is read from host disk unchecked, to the
-                // end of the batch even if it completes meanwhile. Check it against the writer's
-                // running hash, or serve it from enclave memory, before relying on backfill for
-                // integrity; until then, replay against the signed checkpoints is the check.
-                let mut file = File::open(path).with_context(|| format!("opening {}", path.display()))?;
-                let at = SeekFrom::Start(segment.consumed);
-                file.seek(at).with_context(|| format!("seeking in {}", path.display()))?;
-                return Ok(Box::new(BufReader::new(file)));
-            }
-        }
+/// - a required catalog leaf or active descriptor is invalid
+fn descriptor(view: &Manifest, segment: &OpenSegment) -> anyhow::Result<Option<(SegmentInfo, bool, Option<Offset>)>> {
+    if segment.ordinal < view.completed_len() {
+        let info = view.completed_at(segment.ordinal)?;
+        ensure!(info.first_seq == segment.first_seq, "catalog segment changed");
+        Ok(Some((info, true, None)))
+    } else {
+        ensure!(segment.ordinal == view.completed_len(), "catalog ordinal gap");
+        view.active_prefix()?
+            .map(|active| {
+                ensure!(active.info.first_seq == segment.first_seq, "active segment changed");
+                Ok((active.info, false, Some(active.last)))
+            })
+            .transpose()
     }
-    let chunks = segment.checked.clone().expect("a listed segment's chunks are checked above");
-    Ok(Box::new(BufReader::new(CheckedChunks::open(path, chunks, segment.consumed)?)))
 }

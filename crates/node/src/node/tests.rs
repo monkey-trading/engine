@@ -169,6 +169,19 @@ async fn index_ahead_of_log(name: &str) -> (PathBuf, PathBuf) {
     (kept, index)
 }
 
+/// Legacy history takes no captures and resumes from its own cursor, so shutdown stops it at once
+/// instead of waiting out the drain grace.
+#[tokio::test]
+async fn shutdown_stops_legacy_history_without_waiting_for_it() {
+    let mut history = tokio::task::JoinSet::new();
+    let handle = history.spawn(std::future::pending::<anyhow::Result<()>>());
+    tokio::time::timeout(std::time::Duration::from_millis(500), finish_history(history, None))
+        .await
+        .expect("no drain grace for legacy history");
+    tokio::task::yield_now().await;
+    assert!(handle.is_finished(), "legacy history is aborted");
+}
+
 /// Every file in `dir` and its bytes.
 fn files(dir: &Path) -> BTreeMap<String, Vec<u8>> {
     let names = fs::read_dir(dir).unwrap().map(|file| file.unwrap().file_name().into_string().unwrap());

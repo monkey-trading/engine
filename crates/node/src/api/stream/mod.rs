@@ -53,6 +53,8 @@ pub(crate) struct Feed {
     backfills: Arc<Semaphore>,
     /// The lowest offset not yet yielded; `None` until a live-only feed yields its first message.
     next: Option<Offset>,
+    /// Reading authenticated completed descriptors or the writer-committed active prefix.
+    /// The compatible Manifest watch carries a lazy catalog, never a hydrated historical Vec.
     /// Reading from disk until it reaches what has been written.
     catching_up: bool,
     reader: Option<LogReader>,

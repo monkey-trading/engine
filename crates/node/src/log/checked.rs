@@ -1,24 +1,23 @@
-//! Reads a completed segment in fixed-size chunks, each checked against the hash taken when the
-//! whole file was first checked against its manifest listing. A reader that stops and resumes then
-//! needs neither the whole segment in memory nor another pass over it.
+//! Checks the bytes actually returned to decoders, including bounded active-file prefixes.
 
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{Context, ensure};
+use anyhow::{Context, bail, ensure};
 use sha2::{Digest, Sha256};
 
 use crate::log::{MANIFEST, SegmentInfo};
 
-/// Bytes per chunk; small under test, so tests cross chunk boundaries.
 const CHUNK_BYTES: usize = if cfg!(test) { 64 } else { 1 << 20 };
 
-/// The SHA-256 of each chunk of a segment that matched its listing.
-pub(super) type ChunkHashes = Arc<[[u8; 32]]>;
+#[derive(Clone)]
+pub(super) struct ChunkHashes {
+    hashes: Arc<[[u8; 32]]>,
+    bytes: u64,
+}
 
-/// A completed segment's bytes from some position on, each chunk checked as it is loaded.
 pub(super) struct CheckedChunks {
     file: File,
     chunks: ChunkHashes,
@@ -28,10 +27,13 @@ pub(super) struct CheckedChunks {
 }
 
 impl Read for CheckedChunks {
-    /// Bytes from the current chunk, loading and checking the next one when it runs out.
+    /// Returns only bytes checked in the current chunk's private buffer.
     /// Error cases:
-    /// - the next chunk cannot be read, or differs from its hash
+    /// - a needed chunk is missing or differs from its commitment
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        if out.is_empty() {
+            return Ok(0);
+        }
         if self.pos == self.buf.len() {
             self.load()?;
         }
@@ -43,77 +45,119 @@ impl Read for CheckedChunks {
 }
 
 impl CheckedChunks {
-    /// The segment at `path`, whose chunks hash to `chunks`, from byte `position` on.
+    /// Reopens a checked prefix and authenticates its chunk before exposing any bytes.
     /// Error cases:
-    /// - the file cannot be opened or positioned, or the chunk holding `position` differs
+    /// - position is outside the prefix, IO fails, or the requested chunk changed
     pub(super) fn open(path: &Path, chunks: ChunkHashes, position: u64) -> anyhow::Result<Self> {
+        ensure!(position <= chunks.bytes, "position outside checked prefix");
         let first = position / CHUNK_BYTES as u64;
         let mut file = File::open(path).with_context(|| format!("opening {}", path.display()))?;
-        file.seek(SeekFrom::Start(first * CHUNK_BYTES as u64))
-            .with_context(|| format!("seeking in {}", path.display()))?;
+        file.seek(SeekFrom::Start(first * CHUNK_BYTES as u64))?;
         let next_chunk = usize::try_from(first).context("segment position")?;
         let mut reader = Self { file, chunks, next_chunk, buf: Vec::new(), pos: 0 };
-        reader.load().with_context(|| format!("reading {}", path.display()))?;
+        reader.load()?;
         reader.pos = (position % CHUNK_BYTES as u64) as usize;
+        ensure!(reader.pos <= reader.buf.len(), "checked prefix position");
         Ok(reader)
     }
 
-    /// Loads and checks the next chunk; leaves `buf` empty past the last one.
+    /// Verifies exactly the committed bytes in the next chunk, ignoring unflushed suffix bytes.
     /// Error cases:
-    /// - the file cannot be read, or the chunk's bytes differ from its hash
+    /// - reading fails, a committed byte is missing, or a digest differs
     fn load(&mut self) -> io::Result<()> {
         self.buf.clear();
         self.pos = 0;
-        let Some(expected) = self.chunks.get(self.next_chunk) else {
+        let Some(expected) = self.chunks.hashes.get(self.next_chunk) else {
             return Ok(());
         };
-        self.buf.resize(CHUNK_BYTES, 0);
-        let n = read_full(&mut self.file, &mut self.buf)?;
-        self.buf.truncate(n);
+        let start = self.next_chunk as u64 * CHUNK_BYTES as u64;
+        let want = (self.chunks.bytes - start).min(CHUNK_BYTES as u64) as usize;
+        self.buf.resize(want, 0);
+        self.file.read_exact(&mut self.buf)?;
         if <[u8; 32]>::from(Sha256::digest(&self.buf)) != *expected {
-            let msg = format!("chunk {} does not match its listing in {MANIFEST}", self.next_chunk);
-            return Err(io::Error::new(io::ErrorKind::InvalidData, msg));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("chunk {} does not match its listing in {MANIFEST} or its flushed prefix", self.next_chunk),
+            ));
         }
         self.next_chunk += 1;
         Ok(())
     }
 }
 
-/// Checks the segment at `path` against `listed` in one pass, and returns each chunk's hash.
-/// Error cases:
-/// - the file cannot be opened or read
-/// - its size or SHA-256 differs from `listed`
-pub(super) fn check(path: &Path, listed: &SegmentInfo) -> anyhow::Result<ChunkHashes> {
-    let mut file = File::open(path).with_context(|| format!("opening {}", path.display()))?;
-    let (mut whole, mut chunks, mut bytes) = (Sha256::new(), Vec::new(), 0u64);
-    let mut buf = vec![0; CHUNK_BYTES];
-    loop {
-        let n = read_full(&mut file, &mut buf).with_context(|| format!("reading {}", path.display()))?;
-        if n == 0 {
-            break;
-        }
-        whole.update(&buf[..n]);
-        chunks.push(Sha256::digest(&buf[..n]).into());
-        bytes += n as u64;
-    }
-    ensure!(
-        bytes == listed.bytes && hex::encode(whole.finalize()) == listed.sha256,
-        "{} does not match its listing in {MANIFEST}",
-        path.display()
-    );
-    Ok(chunks.into())
+/// Hash state after the whole chunks of a checked prefix, so a check of a longer prefix of the same
+/// file hashes only the bytes after them.
+#[derive(Clone, Default)]
+pub(super) struct Progress {
+    whole: Sha256,
+    hashes: Vec<[u8; 32]>,
 }
 
-/// Fills `buf` from `file`, short only at the end of the file.
+impl Progress {
+    fn bytes(&self) -> u64 {
+        self.hashes.len() as u64 * CHUNK_BYTES as u64
+    }
+}
+
+/// Checks a complete immutable segment, including its exact file length.
 /// Error cases:
-/// - the file cannot be read
-fn read_full(file: &mut File, buf: &mut [u8]) -> io::Result<usize> {
-    let mut filled = 0;
-    while filled < buf.len() {
-        match file.read(&mut buf[filled..])? {
-            0 => break,
-            n => filled += n,
+/// - bytes, digest, length, or IO differ from its authenticated descriptor
+pub(super) fn check(path: &Path, listed: &SegmentInfo) -> anyhow::Result<ChunkHashes> {
+    Ok(extend(path, listed, true, None)?.0)
+}
+
+/// Checks a writer-committed prefix; subsequent unchecked/unflushed bytes carry no authority.
+/// Error cases:
+/// - a committed byte is missing, the digest differs, or IO fails
+#[cfg(test)]
+pub(super) fn check_prefix(path: &Path, prefix: &SegmentInfo) -> anyhow::Result<ChunkHashes> {
+    Ok(extend(path, prefix, false, None)?.0)
+}
+
+/// Checks `listed` as `check` (`complete`) or `check_prefix` does, hashing from the end of `known`:
+/// the progress of an earlier check of the same file at a shorter or equal length. The earlier
+/// bytes are not re-read; each chunk read later is still checked against its hash.
+/// Error cases:
+/// - reading fails, a prefix is truncated, or the descriptor does not match
+pub(super) fn extend(
+    path: &Path,
+    listed: &SegmentInfo,
+    complete: bool,
+    known: Option<Progress>,
+) -> anyhow::Result<(ChunkHashes, Progress)> {
+    let mut file = File::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let mut progress = known.filter(|known| known.bytes() <= listed.bytes).unwrap_or_default();
+    let (mut whole, mut tail, mut bytes) = (progress.whole.clone(), None, progress.bytes());
+    file.seek(SeekFrom::Start(bytes))?;
+    let mut buf = vec![0; CHUNK_BYTES].into_boxed_slice();
+    while bytes < listed.bytes {
+        let want = (listed.bytes - bytes).min(CHUNK_BYTES as u64) as usize;
+        match file.read_exact(&mut buf[..want]) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                bail!("{} does not match its listing in {MANIFEST} or its flushed prefix (shorter)", path.display())
+            }
+            Err(e) => return Err(e).with_context(|| format!("reading checked prefix {}", path.display())),
+        }
+        whole.update(&buf[..want]);
+        let hash = Sha256::digest(&buf[..want]).into();
+        bytes += want as u64;
+        if want == CHUNK_BYTES {
+            progress.hashes.push(hash);
+            progress.whole = whole.clone();
+        } else {
+            tail = Some(hash);
         }
     }
-    Ok(filled)
+    if complete {
+        let mut extra = [0];
+        ensure!(file.read(&mut extra)? == 0, "{} does not match its listing in {MANIFEST} (length)", path.display());
+    }
+    ensure!(
+        hex::encode(whole.finalize()) == listed.sha256,
+        "{} does not match its listing in {MANIFEST} or its flushed prefix",
+        path.display()
+    );
+    let hashes = progress.hashes.iter().copied().chain(tail).collect();
+    Ok((ChunkHashes { hashes, bytes }, progress))
 }

@@ -11,6 +11,43 @@ fn the_writer_refuses_another_schema_version() {
     assert!(format!("{err:#}").contains("history schema 1, not 2"), "{err:#}");
 }
 
+/// Missing secondary-index entries cannot make retained events disappear from successful pages.
+#[tokio::test]
+async fn history_rebuilds_when_a_secondary_index_omits_events() {
+    for index_name in ["events_by_account", "events_by_account_kind", "events_by_ts"] {
+        let (dir, index) = (scratch_dir("history-index-omission"), index_dir("index-omission"));
+        indexed_log(&dir, &index, 1).await;
+        let path = file(&index);
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").unwrap();
+        let root: u32 = conn
+            .query_row("SELECT rootpage FROM sqlite_schema WHERE name = ?1", [index_name], |row| row.get(0))
+            .unwrap();
+        let page_size: u32 = conn.pragma_query_value(None, "page_size", |row| row.get(0)).unwrap();
+        drop(conn);
+        let mut bytes = fs::read(&path).unwrap();
+        let page = ((root - 1) * page_size) as usize;
+        assert_eq!(bytes[page], 10, "fixture index fits on a leaf page");
+        bytes[page + 1..page + page_size as usize].fill(0);
+        bytes[page + 5..page + 7].copy_from_slice(&(page_size as u16).to_be_bytes());
+        fs::write(&path, bytes).unwrap();
+        let conn = Connection::open(&path).unwrap();
+        let cursor_integrity: String =
+            conn.query_row("PRAGMA integrity_check(progress)", [], |row| row.get(0)).unwrap();
+        assert_eq!(cursor_integrity, "ok");
+        let retained: u32 =
+            conn.query_row("SELECT count(event) FROM events NOT INDEXED", [], |row| row.get(0)).unwrap();
+        assert!(retained > 0, "event data remains intact");
+        drop(conn);
+        let cfg = HistorySection { dir: index, retention: RETENTION };
+        let mut history = open_history(&cfg, &dir).unwrap();
+        assert_eq!(history.resume_at(), Offset::start_of(0), "{index_name} must trigger rebuilding");
+        history.catch_up_to(Some(last_command_seq(&dir)));
+        let query = PageQuery { account: TRADER, kind: None, before: None, after: None, limit: 200 };
+        assert!(history.reader().page(query).await.unwrap().is_none(), "rebuild is unavailable until caught up");
+    }
+}
+
 /// Pages wait until the index has taken every command the log held when it started: a rebuild over
 /// a logged history and a restart behind the log answer `None` until then, while a restart with
 /// nothing left to take serves at once.
@@ -85,9 +122,9 @@ async fn readers_wait_for_a_tip_the_index_has_not_taken() {
     // (tip, readers let in at once)
     for (tip, at_once) in [(Some(next - 1), true), (Some(next), false), (Some(next + 1), false)] {
         let mut history = open_history(&cfg, &dir).unwrap();
-        assert_eq!(history.resume_at, Offset::start_of(next));
+        assert_eq!(history.resume_at(), Offset::start_of(next));
         history.catch_up_to(tip);
-        assert_eq!(*history.ready.borrow(), at_once, "tip {tip:?}");
+        assert_eq!(history.is_ready(), at_once, "tip {tip:?}");
     }
     // A fresh index on an empty log has nothing to take.
     let mut fresh = HistoryCheck::open(&HistorySection { dir: index_dir("tip-fresh"), retention: RETENTION })
@@ -95,7 +132,7 @@ async fn readers_wait_for_a_tip_the_index_has_not_taken() {
         .finish()
         .unwrap();
     fresh.catch_up_to(None);
-    assert!(*fresh.ready.borrow());
+    assert!(fresh.is_ready());
 }
 
 /// An index reopened under another retention serves what a fresh index built under that retention
@@ -141,6 +178,7 @@ async fn a_history_failure_names_its_cause() {
     assert!(format!("{err:#}").contains(&format!("removing {}", cfg.dir.join(INDEX_FILE).display())), "{err:#}");
 
     indexed_log(&dir, &index, 1).await;
+    let trusted = published_manifest(&dir);
     let manifest = Manifest::load(&dir).unwrap();
     let first = &manifest.segments[0];
     OpenOptions::new().append(true).open(dir.join(&first.file)).unwrap().write_all(b"\n").unwrap();
@@ -150,7 +188,7 @@ async fn a_history_failure_names_its_cause() {
     let (live, subscriber) = broadcast::channel(1);
     drop(live);
     let backfills = Arc::new(Semaphore::new(MAX_BACKFILLS));
-    let feed = Feed::new(subscriber, dir.clone(), published_manifest(&dir), backfills, Some(history.resume_at()));
+    let feed = Feed::new(subscriber, dir.clone(), trusted, backfills, Some(history.resume_at()));
     let err = timeout(Duration::from_secs(10), history.run(feed)).await.unwrap().expect_err("the feed fails");
     assert!(format!("{err:#}").contains("does not match its listing"), "{err:#}");
 }

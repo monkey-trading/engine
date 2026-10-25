@@ -252,6 +252,7 @@ pub fn sequencer_config(dir: &Path, manifest: watch::Sender<Manifest>) -> Sequen
         checkpoint_registry: None,
         checkpoint_parent: Default::default(),
         checkpoints: None,
+        history_sealing: None,
         chain_id: 31337,
         vault: AccountId([0; 20]),
         clock: Arc::new(SystemClock),
@@ -292,11 +293,8 @@ pub fn log_messages(dir: &Path, from: Offset) -> Vec<String> {
         .collect()
 }
 
-/// The manifest on disk, as a writer that has flushed everything on disk publishes it.
-pub fn published_manifest(dir: &Path) -> watch::Receiver<Manifest> {
-    let flushed = Some(Offset { seq: u64::MAX, index: u32::MAX });
-    watch::channel(Manifest { flushed, ..Manifest::load(dir).expect("manifest loads") }).1
-}
+mod log_view;
+pub use log_view::published_manifest;
 
 /// Every entry of the log in `dir`, read as recovery reads it.
 pub fn log_entries(dir: &Path) -> Vec<LogEntry> {

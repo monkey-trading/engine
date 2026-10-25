@@ -3,6 +3,18 @@
 version = 4
 
 [[package]]
+name = "ahash"
+version = "0.8.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a15f179cd60c4584b8a8c596927aadc462e27f2ca70c04e0071964a73ba7a75"
+dependencies = [
+ "cfg-if",
+ "once_cell",
+ "version_check",
+ "zerocopy",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -59,7 +71,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "thiserror",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -116,7 +128,7 @@ dependencies = [
  "alloy-rlp",
  "crc",
  "serde",
- "thiserror",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -141,7 +153,7 @@ dependencies = [
  "alloy-rlp",
  "borsh",
  "serde",
- "thiserror",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -155,7 +167,7 @@ dependencies = [
  "borsh",
  "once_cell",
  "serde",
- "thiserror",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -168,7 +180,7 @@ dependencies = [
  "alloy-rlp",
  "borsh",
  "serde",
- "thiserror",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -233,7 +245,7 @@ dependencies = [
  "http",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -354,7 +366,7 @@ dependencies = [
  "itertools 0.13.0",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -453,7 +465,7 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.21",
  "tokio",
  "tower",
  "tracing",
@@ -489,7 +501,7 @@ dependencies = [
  "nybbles",
  "serde",
  "smallvec",
- "thiserror",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -851,7 +863,7 @@ dependencies = [
  "nom",
  "num-traits",
  "rusticata-macros",
- "thiserror",
+ "thiserror 2.0.21",
  "time",
 ]
 
@@ -1498,16 +1510,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ctutils"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38d28fb6aa7dd680b3ffd1a3e64e115c177bdba63c0ae7f9cd48129ff05c4fa0"
-dependencies = [
- "cmov",
- "subtle",
-]
-
-[[package]]
 name = "csv"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1526,6 +1528,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "704a3c26996a80471189265814dbc2c257598b96b8a7feae2d31ace646bb9782"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "ctutils"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38d28fb6aa7dd680b3ffd1a3e64e115c177bdba63c0ae7f9cd48129ff05c4fa0"
+dependencies = [
+ "cmov",
+ "subtle",
 ]
 
 [[package]]
@@ -1672,7 +1684,7 @@ version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "71958f69fb2de856c5dd51ac9377e986ca1aa5919f931bf5395a807277f889a0"
 dependencies = [
- "thiserror",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1941,7 +1953,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha3 0.10.9",
- "thiserror",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1968,6 +1980,7 @@ dependencies = [
  "humantime-serde",
  "hyper",
  "hyper-util",
+ "jmt",
  "k256 0.14.0",
  "nix",
  "prometheus-client",
@@ -2348,6 +2361,15 @@ name = "hashbrown"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
+
+[[package]]
+name = "hashbrown"
+version = "0.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "43a3c133739dddd0d2990f9a4bdf8eb4b21ef50e4851ca85ab661199821d510e"
+dependencies = [
+ "ahash",
+]
 
 [[package]]
 name = "hashbrown"
@@ -2830,6 +2852,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "jmt"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b37ade62ca224945201e0c6d65e7a389ada90217895f7aa281470212ce4dddb0"
+dependencies = [
+ "anyhow",
+ "borsh",
+ "digest 0.10.7",
+ "hashbrown 0.13.2",
+ "hex",
+ "itertools 0.10.5",
+ "mirai-annotations",
+ "num-derive",
+ "num-traits",
+ "serde",
+ "sha2 0.10.9",
+ "thiserror 1.0.69",
+ "tracing",
+]
+
+[[package]]
 name = "jni"
 version = "0.22.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2841,7 +2884,7 @@ dependencies = [
  "jni-sys",
  "log",
  "simd_cesu8",
- "thiserror",
+ "thiserror 2.0.21",
  "walkdir",
  "windows-link",
 ]
@@ -3084,6 +3127,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "mirai-annotations"
+version = "1.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9be0862c1b3f26a88803c4a49de6889c10e608b3ee9344e6ef5b45fb37ad3d1"
+
+[[package]]
 name = "nix"
 version = "0.31.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3135,6 +3184,17 @@ name = "num-conv"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "521739c6d2bac4aa25192232afe6841231376b2b26d4d9fae5ecf8ca5772e441"
+
+[[package]]
+name = "num-derive"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "876a53fff98e03a936a674b29568b0e605f06b29372c2489ff4de23f1949743d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
 
 [[package]]
 name = "num-integer"
@@ -3524,7 +3584,7 @@ dependencies = [
  "rustc-hash",
  "rustls",
  "socket2",
- "thiserror",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
  "web-time",
@@ -3547,7 +3607,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "slab",
- "thiserror",
+ "thiserror 2.0.21",
  "tinyvec",
  "tracing",
  "web-time",
@@ -4594,11 +4654,31 @@ checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
 name = "thiserror"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
+dependencies = [
+ "thiserror-impl 1.0.69",
+]
+
+[[package]]
+name = "thiserror"
 version = "2.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09e52cb86a36cede5cb101bf8908837b3e4c6e5e59fe7fd85c23fb56200d189e"
 dependencies = [
- "thiserror-impl",
+ "thiserror-impl 2.0.21",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -4953,7 +5033,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "sha1",
- "thiserror",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -5410,7 +5490,7 @@ dependencies = [
  "oid-registry",
  "ring",
  "rusticata-macros",
- "thiserror",
+ "thiserror 2.0.21",
  "time",
 ]
 

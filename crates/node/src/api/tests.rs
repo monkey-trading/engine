@@ -72,7 +72,7 @@ async fn dev_scenario_resume_between_messages_of_one_seq_and_replay_the_archive(
     fs::write(archive.join(MANIFEST), &body).unwrap();
     let manifest = Manifest::load(&archive).unwrap();
     assert!(manifest.segments.len() >= 3, "{manifest:?}");
-    for listed in &manifest.segments {
+    for listed in manifest.segments.iter() {
         let (status, segment) = get(addr, &format!("/v1/archive/{}", listed.file)).await;
         assert_eq!(status, 200);
         fs::write(archive.join(&listed.file), segment).unwrap();
@@ -109,7 +109,7 @@ async fn the_archive_serves_the_enclave_manifest_and_completed_segments_only() {
     let open_segment = fs::read_dir(&dir)
         .unwrap()
         .map(|e| e.unwrap().file_name().into_string().unwrap())
-        .find(|name| segment_seq(name).is_some_and(|seq| manifest.get(seq).is_none()))
+        .find(|name| segment_seq(name).is_some_and(|seq| manifest.lookup(seq).expect("trusted lookup").is_none()))
         .unwrap();
     for path in
         [format!("/v1/archive/{open_segment}"), "/v1/archive/nothing.jsonl".into(), "/v1/archive/%2Fetc%2Fhosts".into()]
@@ -324,6 +324,7 @@ async fn serve_with(node: &TestSequencer, dir: &Path, manifest: watch::Receiver<
         limits: Arc::new(ApiLimits::new(&dev_config().api)),
         history: Reader::new(dir.join(INDEX_FILE), watch::channel(true).1),
         emission_budget: None,
+        listing: Default::default(),
     })
     .await
 }
@@ -348,6 +349,7 @@ async fn serve_history(history: Reader) -> SocketAddr {
         limits: Arc::new(ApiLimits::new(&api)),
         history,
         emission_budget: None,
+        listing: Default::default(),
     })
     .await
 }
@@ -452,6 +454,7 @@ fn api_state(mock_custody: bool) -> (ApiState, mpsc::Receiver<sequencer::Request
         limits: Arc::new(ApiLimits::new(&dev_config().api)),
         history: Reader::new(PathBuf::new(), watch::channel(true).1),
         emission_budget: None,
+        listing: Default::default(),
     };
     (state, rx)
 }
@@ -459,3 +462,5 @@ fn api_state(mock_custody: bool) -> (ApiState, mpsc::Receiver<sequencer::Request
 fn body() -> AmountBody {
     AmountBody { account: AccountId([0xaa; 20]), amount: Fixed::from_int(5) }
 }
+
+mod catalog_archive;

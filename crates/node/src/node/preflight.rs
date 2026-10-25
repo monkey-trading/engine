@@ -5,6 +5,7 @@ use tracing::error;
 
 use crate::checkpoints::emission_budget::check_recorded;
 use crate::checkpoints::{CheckpointChain, Poster};
+#[cfg(test)]
 use crate::history::{History, HistoryPlan};
 use crate::log::Checkpoint;
 
@@ -31,11 +32,23 @@ pub(super) async fn emission_preflight<R: CheckpointChain>(
 /// Authorizes opening or repairing history only after custody rollback and signer checks.
 /// Error cases:
 /// - anchor, signer, or authorized history recovery fails
+#[cfg(test)]
 pub(super) async fn finish_preflight<R: CheckpointChain>(
     plan: HistoryPlan,
     checkpoint: Option<(&Poster<R>, Option<&Checkpoint>)>,
     recovery: Option<(&crate::sequencer::ReplayedLog, &crate::sequencer::SequencerConfig<'_>)>,
 ) -> anyhow::Result<History> {
+    authorize(checkpoint, recovery).await?;
+    plan.finish().inspect_err(|e| error!(alert = "history_recovery_failed", "refusing to serve: {e:#}"))
+}
+
+/// Finishes all independent recovery checks before any history, catalog or append mutation.
+/// Error cases:
+/// - pure recovery, reserved-work or independently finalized anchor validation fails
+pub(super) async fn authorize<R: CheckpointChain>(
+    checkpoint: Option<(&Poster<R>, Option<&Checkpoint>)>,
+    recovery: Option<(&crate::sequencer::ReplayedLog, &crate::sequencer::SequencerConfig<'_>)>,
+) -> anyhow::Result<()> {
     if let Some((log, cfg)) = recovery {
         log.validate_recovery(cfg)
             .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
@@ -54,7 +67,7 @@ pub(super) async fn finish_preflight<R: CheckpointChain>(
             .await
             .inspect_err(|e| error!(alert = "checkpoint_startup_failed", "refusing to serve: {e:#}"))?;
     }
-    plan.finish().inspect_err(|e| error!(alert = "history_recovery_failed", "refusing to serve: {e:#}"))
+    Ok(())
 }
 
 #[cfg(test)]

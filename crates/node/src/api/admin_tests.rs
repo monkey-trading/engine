@@ -292,6 +292,7 @@ impl Node {
             limits: Arc::new(ApiLimits::new(&dev_config().api)),
             history: Reader::new(PathBuf::new(), watch::channel(true).1),
             emission_budget: None,
+            listing: Default::default(),
         };
         Node { state, dir, tls }
     }

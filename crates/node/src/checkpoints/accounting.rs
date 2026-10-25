@@ -4,10 +4,12 @@ use anyhow::Context;
 use engine_core::Fixed;
 use engine_core::command::Command;
 use engine_core::event::Event;
+use serde::{Deserialize, Serialize};
 use tracing::error;
 
 /// Cash plus unpaid approvals equals cumulative deposits and signed house-capital amounts.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Accounting {
     pub(super) liabilities: Fixed,
     pub(super) deposits: u64,

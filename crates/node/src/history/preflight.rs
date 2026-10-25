@@ -17,6 +17,7 @@ pub(crate) struct HistoryPlan {
     retention_ms: engine_core::types::Millis,
     progress: anyhow::Result<Option<CommandEntry>>,
     found: Option<bool>,
+    authenticated: Option<crate::history::startup::Plan>,
 }
 
 impl HistoryPlan {
@@ -74,7 +75,34 @@ impl HistoryPlan {
                 })
                 .transpose()
         })();
-        Ok(Self { dir: cfg.dir.clone(), retention_ms, progress, found: None })
+        Ok(Self { dir: cfg.dir.clone(), retention_ms, progress, found: None, authenticated: None })
+    }
+
+    /// Keeps paired recovery entirely separate from the legacy eager SQL integrity scan.
+    /// Error cases:
+    /// - configured retention is invalid
+    pub(crate) fn authenticated(plan: crate::history::startup::Plan) -> anyhow::Result<Self> {
+        Ok(Self {
+            dir: plan.history.dir.clone(),
+            retention_ms: plan.history.retention_ms()?,
+            progress: Ok(None),
+            found: None,
+            authenticated: Some(plan),
+        })
+    }
+
+    /// Finishes only after Node's independent preflight has authorized all persisted mutations.
+    /// Error cases:
+    /// - authorized legacy recovery or authenticated generation/catalog activation fails
+    pub(crate) fn finish_with_log(
+        mut self,
+        log: crate::sequencer::ReplayedLog,
+        key: std::sync::Arc<crate::tee::EnclaveKey>,
+    ) -> anyhow::Result<(crate::sequencer::ReplayedLog, History)> {
+        match self.authenticated.take() {
+            Some(plan) => plan.activate(log, key),
+            None => Ok((log, self.finish()?)),
+        }
     }
 
     /// Matches progress against the same authenticated stream that recovers the engine.
@@ -90,6 +118,7 @@ impl HistoryPlan {
     /// Error cases:
     /// - SQLite open or authorized repair fails
     pub fn finish(self) -> anyhow::Result<History> {
+        ensure!(self.authenticated.is_none(), "paired history requires authorized log-bound activation");
         let mut check = HistoryCheck::open(&HistorySection {
             dir: self.dir,
             retention: std::time::Duration::from_millis(u64::try_from(self.retention_ms)?),

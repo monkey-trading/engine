@@ -368,6 +368,7 @@ impl Node {
             limits: Arc::new(ApiLimits::new(&dev_config().api)),
             history: Reader::new(PathBuf::new(), watch::channel(true).1),
             emission_budget: None,
+            listing: Default::default(),
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("https://{}", listener.local_addr().unwrap());
