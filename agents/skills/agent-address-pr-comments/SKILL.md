@@ -267,5 +267,7 @@ and report the failure.
 - Never approve, request changes, or resolve a thread — the reviewer resolves their own threads.
 - Never widen the PR's scope without asking.
 - Never print or persist secrets.
-- Never create, edit, or close a GitHub issue without the user's explicit approval.
+- Never create, edit, or close a GitHub issue without the user's explicit approval, except the
+  `bug` issues [the review loop](../agent-code-review/SKILL.md#the-review-loop) files for Mediums
+  from round 3 on.
 - No AI signature in commits, replies, or the PR description.

@@ -203,22 +203,26 @@ accepted Critical, High, and Medium finding is fixed by class before the next ro
   it. After it, change no code, fix no Lows or Nits, and run no further rounds. Mark the PR ready
   on exactly the commit that round reviewed, once `ci-passed` is green on it; the remaining Lows
   and Nits go in the report to the owner, not into new commits.
-- **A later code change reopens the loop.** Any code change after the clean round or the owner's
-  downgrade — a fix for a failed check or dev scenario, a fix for a review comment on a ready PR, a
+- **A later code change reopens the loop.** Any code change after the round that ended
+  the loop — a fix for a failed check or dev scenario, a fix for a review comment on a ready PR, a
   change the user asks for, or a rebase that changes behaviour — moves the PR back to draft and
   reopens the loop. A mechanical rebase onto `main` does not; the rebased commit stands in for the
   reviewed one.
 - **Critical and High have no round cap.** Keep fixing and re-reviewing until a round accepts none.
-- **Mediums get at most three rounds.** If any round numbered 3 or later — including one in a
-  reopened loop — ends with no Critical or High but with Mediums remaining, stop. Report the
-  remaining Mediums to the owner, each with its title, `file:line`, and scenario, and ask for
-  consent to downgrade them to Low. With that consent, record each downgraded finding in the fix
-  notes, after the round log, with its title, `file:line`, scenario, and the round it was
-  downgraded in; mark the PR ready on that round's commit with no further code changes; and list
-  the downgraded findings in the report to the owner. Without it, wait for the owner's direction.
-- **A downgrade stays while the finding does.** A later round that finds a recorded downgraded
-  finding again, with the same scenario and no greater impact, grades it Low and does not raise it
-  as Medium again. When a later change widens its scenario or raises its impact, the round grades
+- **From round 3, Mediums go to bug issues.** A round numbered 3 or later — including one in a
+  reopened loop — that accepts Mediums but no Critical or High ends the loop as a clean round
+  does, and its Mediums are not fixed in the PR. The agent that owns the PR files each as its own
+  GitHub issue labelled `bug`, to be fixed soon after in a small PR of its own. This rule approves
+  filing them, so they need no per-issue yes from the user, as an exception to the issue-write
+  rules of agent-create-pr, agent-build-feature, and agent-address-pr-comments. Each issue body is
+  a one-line summary, then `**Where:**` with the `file:line` and
+  `Found by review round <N> of #<PR>.`, then `**Scenario:**` and `**Expected:**`. Record each in
+  the fix notes, after the round log, with its title, `file:line`, scenario, and issue number. Then
+  mark the PR ready on exactly the commit that round reviewed, once `ci-passed` is green on it,
+  and list the issues in the report to the owner.
+- **A filed Medium stays with its issue.** A later round that finds a recorded filed Medium again,
+  with the same scenario and no greater impact, notes its existing issue in its report instead of
+  raising it again. When a later change widens its scenario or raises its impact, the round grades
   it afresh by the severity guide.
 
 ## Non-negotiable rules

@@ -6,7 +6,7 @@ description: >
   (parallel subagents allowed), self-reviews it with agent-code-review, runs its dev scenario on
   the branch before the PR is marked ready, and opens the PR through agent-create-pr ending
   `Closes #<feature>`, so the merge closes the issue. Deploys and issue writes need the user's
-  approval.
+  approval, except the `bug` issues the review loop files for Mediums from round 3 on.
 ---
 
 # agent-build-feature
@@ -87,6 +87,8 @@ a bug fix or a refactor that is not a feature goes straight through
 
 - One feature never spans several pushed branches or PRs.
 - Never build part of a feature that is not ready.
-- Never write to a GitHub issue without the user's yes to the exact text. The one exception is the
-  merge closing the feature issue through `Closes #<feature>`.
+- Never write to a GitHub issue without the user's yes to the exact text. The exceptions are the
+  merge closing the feature issue through `Closes #<feature>`, and the `bug` issues
+  [the review loop](../agent-code-review/SKILL.md#the-review-loop) files for Mediums from round 3
+  on.
 - Never deploy or change an environment without explicit per-action approval.
