@@ -29,13 +29,17 @@ an index: load only the rule whose hint matches the current action.
   with rate limits and connection caps), the account history index (SQLite, derived from the log),
   dated benchmark ingestion (`benchmarks/` and the separate `admin/benchmark_feed.rs` signing worker
   with bounded durable schedule watches in `admin/benchmark_watch.rs` and `api/benchmark_schedule.rs`),
-  TEE attestation (configfs-tsm for TDX and SEV-SNP), the trusted time check against Roughtime
-  servers, the custody adapter (mock, or EVM vault deposits over alloy), checkpoint posting and collateral
-  reconciliation (`checkpoints/`), with strict signature replay and startup checks against the
-  vault's finalized commitment before history writes, plus authenticated withdrawal completion replay,
+  TEE attestation (configfs-tsm for TDX and SEV-SNP; the report data is the hash of a bundle of the
+  enclave address, the config file's SHA-256, and the TLS key's hash), the trusted time check against
+  Roughtime servers, the custody adapter (mock, or EVM vault deposits over alloy), checkpoint posting
+  and collateral reconciliation (`checkpoints/`), with strict signature replay and startup checks
+  against the vault's finalized commitment before history writes, plus authenticated withdrawal
+  completion replay,
   price feeds: live crypto
   venue WebSockets (`feeds/`, one adapter per venue) and a mock, Prometheus metrics on an operator
-  listener, and alert routing to webhooks with a bounded durable outbox outside the public log.
+  listener, and alert routing to webhooks with a bounded durable outbox outside the public log. Its
+  `production` cargo feature refuses mock TEE, custody, and feed providers at config load; release
+  images build with it.
   `sequencer/alerts/` tests benchmark retirement, scalar fallback, and webhook recovery;
   `api/benchmark_tests/retention.rs` checks failed publisher refreshes across restart/calendar changes;
   `api/benchmark_tests/schedule.rs` checks changed schedules and in-flight worker nonce fencing. `tests/reference/` holds the node-format reference log
@@ -56,9 +60,11 @@ an index: load only the rule whose hint matches the current action.
   section is protocol: it is sequenced into the log as admin commands on first boot, all or
   nothing, and credits house capital from config only under mock custody. Loading refuses a genesis
   value the engine would reject or an entry listed twice, and recovery refuses a log whose genesis
-  did not apply in full. `node.auth`, with `custody.chain_id` and `custody.vault` under `eip712`, and
-  `operator.public_key`, with the same chain id and vault, are recorded in the log when it first
-  activates the protocol versions that need them, so changing either needs a fresh log.
+  did not apply in full or is not the config's, and one whose genesis no current config can give,
+  which needs a fresh log. `node.auth`, with `custody.chain_id` and
+  `custody.vault` under `eip712`, and `operator.public_key`, with the same chain id and vault, are
+  recorded in the log when it first activates the protocol versions that need them, so changing
+  either needs a fresh log.
   `benchmark-publishers.toml` supplies the optional benchmark section with official publisher endpoints;
   a separate `engine admin ... sync-benchmarks --watch` worker signs daily snapshots and releases
   synchronization before startup catch-up and after trusted-time halts spanning unpaid rollovers.
@@ -70,6 +76,10 @@ an index: load only the rule whose hint matches the current action.
   their venue calendars, each calendar's sources and unpublished gaps, their quote currencies, and
   the launch margins and fees; a deployment's node sections complete it into a config. Every
   section rejects unknown keys.
+- **image/** — the reproducible confidential VM image for AMD SEV-SNP: `Dockerfile` (static
+  `engine`, kernel, busybox initramfs, OVMF, and the launch measurement, every input pinned),
+  `init`, `kernel.config`, and the `sev-snp-measure` pins. Its `README.md` covers the build, what
+  the guest exposes, the attestation layout, booting on a host, and the release steps.
 - **research/** — studies that set protocol parameters from data, outside the build and CI.
   `cap-calibration/` calibrates the house exposure-cap floors by Monte Carlo (#111): scripts that
   fetch and derive its public data (raw pulls in gitignored `data/raw/`, the derived dataset in
@@ -81,17 +91,19 @@ an index: load only the rule whose hint matches the current action.
   `dev-vault-deposits.sh`, the vault deposit and RPC quorum dev scenarios on Anvil, with
   `dev-rpc-proxy.py` providing three local fault-injection endpoints; `dev-metrics-alerts.sh`,
   the metrics and alert routing dev scenario; `dev-alert-outbox.sh`, the isolated alert retry
-  kill/restart scenario.
+  kill/restart scenario; and `build-image.sh` and `check-image.sh`, which build the enclave image
+  from a commit and boot it under QEMU without SEV-SNP.
 - **ops/** — operator assets: `grafana/engine-node.json`, the node's Grafana dashboard, and
   `prometheus/engine-node-rules.yml`, the alerting rules for a down node or failing alert pages.
-- **.github/workflows/** — `ci.yaml`: fmt, the file line cap, clippy, tests, the reference-log
-  replay and invariant tests on x86_64 and aarch64 Linux, the unchanged-reference-log check,
-  `cargo-deny`, the contracts' `forge fmt --check` / build / test, the vault deposit and RPC quorum
-  dev scenario, the metrics and alert routing dev scenario, and the alert outbox kill/restart
-  scenario, on every push to `main` and every PR. Actions are
-  pinned by commit SHA. `ci-passed` is the one CI check branch rules require: it passes only when
-  every other job succeeded, so each new job must be added to its `needs`. The test job also checks
-  command latency budgets against 100k-account fixtures.
+- **.github/workflows/** — `ci.yaml`: fmt, the file line cap, clippy, tests (and the node's
+  production-build tests), the reference-log replay and invariant tests on x86_64 and aarch64 Linux,
+  the unchanged-reference-log check, `cargo-deny`, the contracts' `forge fmt --check` / build /
+  test, the vault deposit and RPC quorum dev scenario, the metrics and alert routing dev scenario,
+  the alert outbox kill/restart scenario, and the enclave image (`image` builds it twice and boots
+  it under QEMU, `image-compare` fails if the builds differ), on every push to `main` and every PR.
+  Actions are pinned by commit SHA. `ci-passed` is the one CI check branch rules require: it passes
+  only when every other job succeeded, so each new job must be added to its `needs`. The test job
+  also checks command latency budgets against 100k-account fixtures.
 - **agents/** — this index, `rules/`, and `skills/` (incl. `skills/vendor/` pull-on-demand
   packs); root `AGENTS.md` / `CLAUDE.md` symlink to `agents/AGENTS.md`.
 - **Cargo.toml** — workspace manifest, shared dependencies, and the Cargo profiles (release keeps
@@ -111,7 +123,8 @@ an index: load only the rule whose hint matches the current action.
 Run from the repo root:
 
 - Build: `cargo build`
-- Test one crate: `cargo test -p engine-core` or `cargo test -p engine-node`
+- Test one crate: `cargo test -p engine-core` or `cargo test -p engine-node`; the node's
+  production build: `cargo test -p engine-node --features production --lib production_build`
 - Lint: `cargo clippy --workspace --all-targets -- -D warnings`
 - Format check: `cargo fmt --all -- --check`
 - File line cap: `./scripts/check-file-loc.sh`
@@ -147,13 +160,15 @@ Run from the repo root:
   `RPC_QUORUM_SCENARIO=1` also injects a fictional deposit, stops providers and checks recovery;
   needs `python3`)
 - Sign and submit an admin command as the operator: `cargo run -p engine-node -- admin --pin <the
-  node's attested tls_public_key_sha256> <command>`, with the key from `--key-file`,
+  TLS key hash in the node's attested bundle> <command>`, with the key from `--key-file`,
   `OPERATOR_KEY_FILE`, or `OPERATOR_KEY`; `config/dev.toml` names the public key of the local test
   key `0x4242…42`. Against anything but a local dev node, [no-deploy](rules/no-deploy.md) applies
 - Cap calibration, from a virtualenv outside the repo with
   `research/cap-calibration/requirements.txt`: `python -I research/cap-calibration/run.py <command>`
   (`all` re-runs the simulations and report from the committed data), and its tests with
   `python -I -m pytest research/cap-calibration/tests`
+- Build the enclave image: `scripts/build-image.sh [--variant production|dev] <out-dir>` (Docker,
+  slow; see `image/README.md`), then `scripts/check-image.sh <out-dir>` to boot it under QEMU
 
 ## Repo facts
 

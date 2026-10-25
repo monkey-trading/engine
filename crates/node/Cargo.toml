@@ -10,6 +10,10 @@ repository.workspace = true
 name = "engine"
 path = "src/main.rs"
 
+[features]
+# Refuses mock TEE, custody, and feed providers at config load. Release images build with it.
+production = []
+
 [dependencies]
 engine-core.workspace = true
 

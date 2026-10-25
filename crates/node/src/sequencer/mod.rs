@@ -1,7 +1,8 @@
 //! The sequencer owns the engine. Commands arrive over one channel, get a seq and a timestamp, and
 //! are applied in order; each then goes into the log with the events it produced. Nothing is
-//! acknowledged or published until its log entry is flushed. One task, no locks, and no queue
-//! beyond the channel: a fill costs about one engine step plus a buffered write.
+//! acknowledged or published until its log entry is written and synced to storage. One task, no
+//! locks, and no queue beyond the channel: a fill costs about one engine step plus a buffered
+//! write, and each batch of fills one data sync.
 
 mod recovery;
 mod replay;
@@ -94,6 +95,9 @@ pub struct SequencerConfig<'a> {
     pub(crate) checkpoint_registry: Option<crate::checkpoints::Registry>,
     pub(crate) checkpoint_parent: crate::log::CheckpointParent,
     pub(crate) checkpoints: Option<mpsc::Sender<crate::checkpoints::Work>>,
+    /// The commands the config's genesis sequences, which the genesis the log ran must match (see
+    /// `GenesisProgress::ensure_matches`).
+    pub genesis: Vec<Command>,
 }
 
 /// A log read from disk and replayed, before anything is written to it.
@@ -104,9 +108,10 @@ pub struct ReplayedLog {
 
 impl Sequencer {
     /// Sequences requests until every sender is gone, then writes a final checkpoint. Each batch,
-    /// of at most `MAX_BATCH` requests, is flushed before its replies, stream messages, and queries
-    /// go out, and synced to storage first when it carries a sync request. A command trusted time
-    /// refuses is dropped with its reply, which the API answers as unavailable.
+    /// of at most `MAX_BATCH` requests, is written and its data synced before its replies, stream
+    /// messages, and queries go out; one that carries a sync request also syncs the directory entry
+    /// naming its segment. A command trusted time refuses is dropped with its reply, which the API
+    /// answers as unavailable.
     /// Error cases:
     /// - the log cannot be written or synced; the node must stop rather than acknowledge
     ///   undurable commands

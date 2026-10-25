@@ -416,7 +416,8 @@ impl Fixture {
 }
 
 fn recover_clock(dir: &Path, clock: Arc<TestClock>) -> Sequencer {
-    let cfg = SequencerConfig { clock, ..sequencer_config(dir, watch::channel(Manifest::default()).0) };
+    let genesis = finished_genesis(&log_entries(dir));
+    let cfg = SequencerConfig { clock, genesis, ..sequencer_config(dir, watch::channel(Manifest::default()).0) };
     Sequencer::recover(cfg, Arc::new(EnclaveKey::test_key()), broadcast::channel(16).0, mpsc::unbounded_channel().0)
         .unwrap()
 }

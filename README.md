@@ -96,11 +96,14 @@ clock, so the node checks that clock against signed time from several independen
 has arrived, and stops sequencing while the clock is further from the time the servers agree on
 than a set bound, or once a minute has passed without signed time.
 
-The enclave also attests to the key it signs with, and to the key its API serves TLS with: both are
-generated inside the enclave, so client connections end where the host cannot read them. The local
-node uses a mock attestation, labelled as such; attestation on AMD SEV-SNP hardware, and a verifier
-for it, are being built in
-[#26](https://github.com/0xjevons/monkeytrading/issues/26) and
+The enclave also attests to the key it signs with, to the key its API serves TLS with, and to the
+SHA-256 of the config file it runs with. Both keys are generated inside the enclave, so client
+connections end where the host cannot read them. One hash in the attestation's report data commits
+to all three: the hash of a bundle the node serves beside the quote. The local node uses a mock
+attestation, labelled as such. The confidential VM image for AMD SEV-SNP builds reproducibly from
+[`image`](image), so anyone can rebuild a release and compare its launch measurement; booting it on
+SEV-SNP hardware is being validated in [#108](https://github.com/0xjevons/monkeytrading/issues/108),
+and a verifier for its quotes is being built in
 [#27](https://github.com/0xjevons/monkeytrading/issues/27).
 
 ## Running it locally
@@ -112,7 +115,8 @@ self-signed, so the examples below pass `curl -k`. Set `feeds.provider = "venues
 config to price BTC-USD and ETH-USD from Coinbase, Kraken, and Bitstamp instead; the other markets
 then have no price, so their orders get `no_price`. The node checks its clock against public
 Roughtime servers over UDP: it starts sequencing once they answer, and stops a minute after it
-loses them.
+loses them. A log is tied to the `[genesis]` it was started with: after editing that section, delete
+`data/dev/log` before starting the node again, or it refuses to resume.
 
 ```bash
 cargo test --workspace
@@ -135,13 +139,24 @@ curl -sk "$API/v1/accounts/$ACCOUNT/history?limit=10"
 ```
 
 `-k` only skips the CA check that a self-signed certificate cannot pass. What makes a connection
-trustworthy is pinning the attested key: bytes 32..64 of the attestation's `report_data` are the
-SHA-256 of the certificate's public key (its DER SubjectPublicKeyInfo), which is the form
-`curl --pinnedpubkey` checks. Against a real enclave, verify the quote before trusting the bytes:
+trustworthy is pinning the attested key. The attestation serves a `bundle` whose SHA-256 is the
+first 32 bytes of its `report_data`; the rest of the report data is zero. The bundle is the tag
+`engine.attestation.v1`, then the enclave's 20-byte address, the config file's SHA-256, and the
+SHA-256 of the certificate's public key (its DER SubjectPublicKeyInfo), the form
+`curl --pinnedpubkey` checks. Check that the bundle matches the report data before pinning its key,
+and against a real enclave, verify the quote first:
 
 ```bash
-PIN=$(curl -sk $API/v1/attestation | jq -r '.report_data[66:]' | xxd -r -p | base64)
-curl -s --insecure --pinnedpubkey "sha256//$PIN" $API/v1/health
+ATT=$(curl -sk $API/v1/attestation)
+BUNDLE=$(jq -r '.bundle[2:]' <<< "$ATT")
+EXPECTED="$(xxd -r -p <<< "$BUNDLE" | sha256sum | cut -c1-64)$(printf %064d 0)"
+if [ "$EXPECTED" = "$(jq -r '.report_data[2:]' <<< "$ATT")" ]; then
+  PIN=${BUNDLE: -64}
+  curl -s --insecure --pinnedpubkey "sha256//$(xxd -r -p <<< "$PIN" | base64)" $API/v1/health
+else
+  unset PIN
+  echo "the bundle does not match the report data" >&2
+fi
 ```
 
 The node's metrics are at `localhost:9464/metrics` in Prometheus format, and
@@ -166,11 +181,10 @@ setting in the log, so changing it later needs a fresh log: with the node stoppe
 one. The node's full API is described in [`crates/node/README.md`](crates/node/README.md).
 
 As the operator, `engine admin` signs a command and submits it over TLS pinned to the node's
-attested key. The local configuration names the public key of a test key, so on a local node this
-stops new risk in every market:
+attested key, the `PIN` the bundle check above sets. The local configuration names the public key
+of a test key, so on a local node this stops new risk in every market:
 
 ```bash
-PIN=$(curl -sk https://127.0.0.1:8080/v1/attestation | jq -r .tls_public_key_sha256)
 OPERATOR_KEY=0x4242424242424242424242424242424242424242424242424242424242424242 \
   cargo run -p engine-node -- admin --pin $PIN set-reduce-only true
 ```
@@ -182,7 +196,8 @@ state machine: it performs no input or output, and uses neither clocks, randomne
 floating-point arithmetic. [`crates/node`](crates/node) (`engine-node`, binary `engine`) runs it,
 sequencing commands, writing and streaming the log, signing checkpoints, serving the API, and
 connecting to custody and price feeds. Node configuration lives in [`config`](config), operator
-assets such as the Grafana dashboard in [`ops`](ops), and each crate's README describes its files.
+assets such as the Grafana dashboard in [`ops`](ops), the confidential VM image is built from
+[`image`](image), and each crate's README describes its files.
 [`contracts`](contracts) is a Foundry project holding the custody vault, and
 [`scripts/dev-vault-deposits.sh`](scripts/dev-vault-deposits.sh) runs a node against it on a local
 Anvil chain through three local RPC proxies. `RPC_QUORUM_SCENARIO=1` adds fabricated-deposit,
@@ -192,9 +207,11 @@ provider-outage and quorum-recovery checks; production requires independent prov
 
 Work is tracked in GitHub issues, and pull requests against `main` are welcome. CI checks
 formatting, file length, lints, tests, and dependency advisories and licences, replays the
-committed reference logs on x86_64 and aarch64 Linux, and checks the contracts' formatting, build,
-and tests and the vault deposit scenario; run the same checks locally before opening a pull
-request. The code's conventions are documented in [`agents/AGENTS.md`](agents/AGENTS.md).
+committed reference logs on x86_64 and aarch64 Linux, checks the contracts' formatting, build, and
+tests and the vault deposit scenario, and builds the enclave image twice to check that it
+reproduces. Run the same checks locally before opening a pull request; the image build is slow, and
+matters when the change touches the node or `image`. The code's conventions are documented in
+[`agents/AGENTS.md`](agents/AGENTS.md).
 
 ## Security
 

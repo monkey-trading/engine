@@ -10,6 +10,8 @@ fn an_existing_log_without_notional_weighting_is_refused_the_latest_version() {
     let dir = scratch_dir("activation-v1-unweighted");
     fs::create_dir_all(&dir).unwrap();
     crate::sequencer::fixture_tests::copy_fixture(V1_DEV, dir.join("00000000000000000000.jsonl"));
+    let genesis = finished_genesis(&log_entries(&dir));
+    let recover = |dir: &Path, auth: &ClientAuth| recover_with(dir, auth, genesis.clone()).unwrap();
     let err = recover(&dir, &signed(31_337)).activate_protocol().unwrap_err();
     assert!(format!("{err:#}").contains("toxicity needs notional weighting"), "{err:#}");
     // Once its parameters have the weighting, a restart carries nothing more.
@@ -44,6 +46,7 @@ fn a_funded_log_under_the_operator_takes_the_weighting_unsigned_and_activates_th
         vault: operator.vault,
         chain_id: operator.chain_id,
         clock: stamps.clone(),
+        genesis: finished_genesis(&log_entries(&dir)),
         ..sequencer_config(&dir, manifest)
     };
     let mut seq =

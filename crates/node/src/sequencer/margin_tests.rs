@@ -12,6 +12,7 @@ use engine_core::types::{MarketId, Side};
 use tracing_subscriber::fmt::MakeWriter;
 
 use crate::clock::test_clock::TestClock;
+use crate::config::Genesis;
 use crate::test_support::{TRADER, deposit, dev_config, log_entries, sample_around, scratch_dir, sequencer_config};
 
 const BTC: MarketId = 1;
@@ -38,7 +39,7 @@ fn dev_scenario_financing_closes_out_and_a_stale_market_counts_at_its_last_mark(
     };
 
     let dir = scratch_dir("margin-dev-scenario");
-    let (mut seq, _withdrawals) = recover_at(&dir, clock.clone());
+    let (mut seq, _withdrawals) = recover_at(&dir, clock.clone(), &genesis);
     seq.activate_protocol().unwrap();
     seq.genesis(&genesis).unwrap();
     seq.trust(sample_around(clock.as_ref())).unwrap();
@@ -93,7 +94,7 @@ fn a_house_with_no_capital_opens_trading_and_alerts_on_a_deficit() {
     let mut genesis = dev_config().genesis;
     genesis.house_capital = Fixed::ZERO;
     let dir = scratch_dir("zero-capital-house");
-    let (mut seq, _withdrawals) = recover_at(&dir, clock.clone());
+    let (mut seq, _withdrawals) = recover_at(&dir, clock.clone(), &genesis);
     seq.activate_protocol().unwrap();
     seq.genesis(&genesis).unwrap();
     seq.trust(sample_around(clock.as_ref())).unwrap();
@@ -118,20 +119,24 @@ fn a_house_with_no_capital_opens_trading_and_alerts_on_a_deficit() {
     seq.flush().unwrap();
     drop(seq);
 
-    let ((seq, _withdrawals), logs) = captured(|| recover_at(&dir, clock.clone()));
+    let ((seq, _withdrawals), logs) = captured(|| recover_at(&dir, clock.clone(), &genesis));
     assert!(!seq.needs_genesis());
     assert_eq!(logs.matches(r#"alert="house_deficit""#).count(), 1, "{logs}");
 }
 
 // ── Helpers ──
 
-/// A sequencer recovered from the log in `dir`, stamping commands with `clock`, and what custody
-/// would receive from it.
-fn recover_at(dir: &Path, clock: Arc<TestClock>) -> (Sequencer, mpsc::UnboundedReceiver<SignedWithdrawal>) {
+/// A sequencer recovered from the log in `dir` under `genesis`, stamping commands with `clock`, and
+/// what custody would receive from it.
+fn recover_at(
+    dir: &Path,
+    clock: Arc<TestClock>,
+    genesis: &Genesis,
+) -> (Sequencer, mpsc::UnboundedReceiver<SignedWithdrawal>) {
     let (stream, _) = broadcast::channel(16);
     let (withdrawals_tx, withdrawals) = mpsc::unbounded_channel();
     let (manifest, _) = watch::channel(Manifest::default());
-    let cfg = SequencerConfig { clock, ..sequencer_config(dir, manifest) };
+    let cfg = SequencerConfig { clock, genesis: genesis_commands(genesis), ..sequencer_config(dir, manifest) };
     (Sequencer::recover(cfg, Arc::new(EnclaveKey::test_key()), stream, withdrawals_tx).unwrap(), withdrawals)
 }
 

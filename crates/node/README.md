@@ -12,14 +12,20 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 
 - Dated publisher ingestion with a separate signing worker, startup synchronization, and per-date
   rollover catch-up under V18
-- Single-owner sequencer on a dedicated OS thread: commands are logged and flushed before any client sees their effect
+- Single-owner sequencer on a dedicated OS thread: commands are logged and synced to disk before any
+  client sees their effect
 - Genesis all or nothing: the engine checks every genesis command at config load and again before
   any is written, and recovery refuses a log whose genesis stopped short of its closing checkpoint
+  or is not the config's, and one whose genesis no current config can give (rules newer than the
+  log refuse it at load), which needs a fresh log
 - Signed checkpoints and withdrawals, bound to the chain id and vault, from an attested key
 - Strict checkpoint signature verification in replay and recovery, with explicit domains for early logs
 - Optional checkpoint relaying, signed-parent vault commitments, startup rollback checks, and collateral
   reconciliation that pauses withdrawal signatures while trading continues
-- Attestation through Linux configfs-tsm, covering TDX and SEV-SNP, or a clearly marked mock
+- Attestation through Linux configfs-tsm, covering TDX and SEV-SNP, or a clearly marked mock: the
+  report data is the SHA-256 of a served bundle of the enclave address, the config file's SHA-256,
+  and the TLS key's hash
+- A `production` cargo feature that refuses mock TEE, custody, and feed providers at config load
 - Trusted time: every stamp is checked against signed Roughtime readings that independent servers
   agree on, and nothing, genesis included, is stamped before the first; sequencing halts with a
   Critical alert when the host clock is beyond the drift bound, or 60 seconds after the last
@@ -83,13 +89,14 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/checkpoints.rs` — checkpoint creation, custody reconciliation, and signature release
 - `src/sequencer/checkpoints/accounting_tests.rs` — live/recovery accounting oracles and gated 100k-account capture scaling
 - `src/sequencer/checkpoint_tests.rs` — confirmed-prefix signature gating and restart tests
-- `src/sequencer/fixture_tests.rs` — test-only signing of copies of placeholder protocol fixtures
+- `src/sequencer/fixture_tests.rs` — test-only signing of copies of placeholder protocol fixtures,
+  and logs whose genesis an older protocol applied but no current config can give
 - `src/sequencer/recovery.rs` — pure recovery validation and exact authenticated checkpoint-tail restoration
 - `src/sequencer/replay.rs` — log replay, which recovery and `engine replay` share
 - `src/sequencer/required.rs` — client auth, the operator, protocol activation, and genesis, which
   wait for trusted time
 - `src/sequencer/genesis.rs` — the genesis commands, the check that the engine accepts every one
-  before any is written, and how far a replayed log got through genesis
+  before any is written, and how far a replayed log got through genesis and which genesis it ran
 - `src/sequencer/alerts.rs` — the alerts the sequencer raises: engine rejections an operator must
   look at, benchmarks with no rate, and house NAV below zero
 - `src/sequencer/alerts/retirement_tests.rs` — benchmark retirement, catalogue changes, and resolution state
@@ -102,7 +109,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/tests/benchmarks.rs` — publisher startup prerequisites and legacy-log refusal
 - `src/sequencer/tests/benchmark_recovery.rs` — publisher synchronization after trusted-time halts
 - `src/sequencer/tests/genesis.rs` — genesis tests: a rejected genesis writes nothing, and a log
-  whose genesis did not apply in full is refused at recovery
+  whose genesis did not apply in full, is not the config's, or is one no current config can give,
+  is refused at recovery
 - `src/sequencer/tests/operator.rs` — recovery, activation, and replay with the operator the log
   records
 - `src/sequencer/batch_tests.rs` — batching: a batch ends after `MAX_BATCH` requests of any kind
@@ -155,7 +163,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/test_tracing.rs` — the tracing setup the test collectors share: one process-wide
   interested subscriber, so no callsite can be cached uninteresting and a collector never
   silently misses an alert or line
-- `src/tee.rs` — the enclave key, signatures, and attestation providers
+- `src/tee.rs` — the enclave key, signatures, the attestation bundle, and attestation providers
 - `src/trusted_time/mod.rs` — the trusted time task: queries the Roughtime servers, backs off
   failing ones, and turns agreeing replies into a sample
 - `src/trusted_time/gate.rs` — the sequencer's check of each stamp against the latest sample
@@ -172,7 +180,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/tls/tests/mod.rs` — the API end to end over TLS: key pinning, limits, caps, and the harness
 - `src/tls/tests/stream.rs` — the stream end to end over TLS: the subscriber and message caps
 - `src/limits.rs` — request rate limits, connection caps, and the stream subscriber cap
-- `src/config/mod.rs` — the node config schema and loading
+- `src/config/mod.rs` — the node config schema, loading, and the config file's hash
 - `src/config/benchmarks.rs` — publisher endpoints, cadence, timeout, and catalogue coverage
 - `src/config/checkpoints.rs` — checkpoint relayer config and validation
 - `src/config/custody.rs` — the `[custody.evm]` section, independent RPC providers, redacted
@@ -182,9 +190,12 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/config/tests.rs` — config loading and validation tests
 - `src/config/mock_key_tests.rs` — published mock-only signer opt-in and hardware refusal regressions
 - `src/config/custody_tests.rs` — independent provider configuration checks
+- `src/config/production_tests.rs` — the config file's hash, and a production build's refusal of
+  mock providers
 - `src/config/telemetry_tests.rs` — metrics and alert config tests: the Critical route, the dev
   config's telemetry, and webhook URLs
-- `src/config/validation.rs` — the checks a parsed config must also pass
+- `src/config/validation.rs` — the checks a parsed config must also pass, and the production
+  build's refusal of mocks
 - `src/config/test_keys.rs` — the published test keys from `config/test-keys.toml`, which a node
   with real attestation refuses, and their tests
 - `src/checkpoints/mod.rs` — posting, retry, signed-parent commitment checks, and collateral reconciliation
@@ -288,11 +299,20 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 # Run a local node with mock TEE, custody, and feeds (API on https://127.0.0.1:8080)
 cargo run -p engine-node -- run --config config/dev.toml
 
-# Call it pinned to the attested TLS key: report data bytes 32..64 are the SHA-256 of the
-# certificate's DER SubjectPublicKeyInfo
+# Call it pinned to the attested TLS key: check that the served bundle hashes to report data bytes
+# 0..32 and the rest is zero, then pin bundle bytes 73..105, the SHA-256 of the certificate's DER
+# SubjectPublicKeyInfo
 API=https://127.0.0.1:8080
-PIN=$(curl -sk $API/v1/attestation | jq -r '.report_data[66:]' | xxd -r -p | base64)
-curl -s --insecure --pinnedpubkey "sha256//$PIN" $API/v1/health
+ATT=$(curl -sk $API/v1/attestation)
+BUNDLE=$(jq -r '.bundle[2:]' <<< "$ATT")
+EXPECTED="$(xxd -r -p <<< "$BUNDLE" | sha256sum | cut -c1-64)$(printf %064d 0)"
+if [ "$EXPECTED" = "$(jq -r '.report_data[2:]' <<< "$ATT")" ]; then
+  PIN=${BUNDLE: -64}
+  curl -s --insecure --pinnedpubkey "sha256//$(xxd -r -p <<< "$PIN" | base64)" $API/v1/health
+else
+  unset PIN
+  echo "the bundle does not match the report data" >&2
+fi
 
 # Price BTC-USD and ETH-USD from live venues instead, leaving the other markets unpriced: set
 # feeds.provider = "venues" in a copy
@@ -301,12 +321,12 @@ cargo run -p engine-node -- run --config <copy of config/dev.toml>
 # Verify a node's log directory, a downloaded archive, or a single log file
 cargo run -p engine-node -- replay --log data/dev/log
 
-# Sign and submit admin commands as the operator, over TLS pinned to the attested key (hex). The key
-# is read from --key-file, OPERATOR_KEY_FILE, or OPERATOR_KEY; config/dev.toml names the public key
-# of the local test key 0x4242…42 (32 bytes of 0x42). A market or parameters file holds the keys of a
-# [[genesis.markets]] entry or of [genesis.params] at its top level, without the table header.
+# Sign and submit admin commands as the operator, over TLS pinned to the attested key: the PIN (hex)
+# the bundle check above sets. The key is read from --key-file, OPERATOR_KEY_FILE, or OPERATOR_KEY;
+# config/dev.toml names the public key of the local test key 0x4242…42 (32 bytes of 0x42). A market
+# or parameters file holds the keys of a [[genesis.markets]] entry or of [genesis.params] at its top
+# level, without the table header.
 export OPERATOR_KEY=0x4242424242424242424242424242424242424242424242424242424242424242
-PIN=$(curl -sk $API/v1/attestation | jq -r .tls_public_key_sha256)
 cargo run -p engine-node -- admin --pin $PIN set-reduce-only true             # every market
 cargo run -p engine-node -- admin --pin $PIN set-reduce-only false --market 2
 cargo run -p engine-node -- admin --pin $PIN set-stress-floor 1 --market 1
@@ -327,6 +347,9 @@ RPC_QUORUM_SCENARIO=1 ./scripts/dev-vault-deposits.sh
 
 # Run checkpoint posting, tampered replay, truncation, and shortfall checks on isolated Anvil
 ./scripts/dev-checkpoints.sh
+
+# A production binary, which refuses mock providers (release images build it in image/)
+cargo build --release -p engine-node --features production
 ```
 
 EVM custody requires at least three entries in `custody.evm.providers`, each with a unique
@@ -461,6 +484,21 @@ gets 503. A connection over a connection cap or over its client's connection rat
 its TLS handshake. A client is its socket peer IP, with IPv6 counted by its /64; forwarding headers
 are ignored.
 
+`GET /v1/attestation` returns `provider`, `enclave_address`, `config_sha256`,
+`tls_public_key_sha256`, `bundle`, `report_data`, and `quote`, each byte string as `0x` hex. The
+quote binds the 64 bytes of `report_data`: bytes 0..32 are the SHA-256 of `bundle`, and bytes 32..64
+are reserved as zero. The bundle is 105 bytes, every field at a fixed width:
+
+| Bytes | Content |
+| --- | --- |
+| 0..21 | the ASCII domain tag `engine.attestation.v1`, which names this layout; a new one takes a new tag |
+| 21..41 | the enclave signing key's address |
+| 41..73 | the SHA-256 of the config file, the value `sha256sum` prints for it |
+| 73..105 | the SHA-256 of the TLS certificate's DER SubjectPublicKeyInfo |
+
+A verifier checks the quote, recomputes the SHA-256 of `bundle` and compares it with report data
+bytes 0..32, and then reads the fields from the bundle.
+
 `/v1/stream` is live from now by default. `?from=<seq>` starts at the first message of `seq`
 (`from=0` is the whole log), and `?after=<seq>:<index>` resumes after the `offset` of the last
 message received. Each message carries its `offset`: the command of a seq is index 0, then its
@@ -552,24 +590,25 @@ and the custody chain id and vault, refuses a key that is not the operator's, ta
 next nonce from `GET /v1/accounts/{operator address}/nonce`, and posts
 `{ "command": <admin command>, "auth": { "nonce", "expires_at", "signature" } }` to
 `POST /v1/admin` on `--node` (default `https://127.0.0.1:8080`). It connects over TLS 1.3 only when
-the node's certificate key hashes to `--pin`, the attestation's `tls_public_key_sha256`, so a client
-that has checked the quote reaches the attested enclave. The signature is EIP-712 over the
-command's JSON, its nonce, and an expiry two and a half minutes ahead, under the same domain as
-client requests. It prints the signed request and the events the engine produced, and fails when
-the engine answers `admin_rejected`. The node refuses a command only it sequences (client auth, the
-operator, protocol activation) with 400, a signature that is not the operator's with 401, an
-expired request with 400, and a nonce other than the operator's next with 409, and none of these
-reaches the log. The operator may list a market or replace its spec and calendar, replace the
-protocol parameters, set a benchmark rate, set a stress floor, which raises a market's stress level
-but never lowers it below the automatic one, and make one market or every market reduce-only, where
-new risk is refused and trades that reduce or close a position still fill. The engine also refuses
-parameters whose stress and toxicity spreads would price a closing trade at the price itself. Once
-any deposit or house capital is credited, the engine refuses an unsigned operator command, so only
-genesis, which credits its house capital last, runs unsigned. The first start under protocol `V8`
-records `operator.public_key`, with the custody chain id and vault, in the log; changing it needs a
-fresh log, and `engine replay` prints the operator a log records. A node whose `tee.provider` is not
-`mock` refuses to start with an operator key that `config/test-keys.toml` lists, in either SEC1
-encoding: the repository publishes those keys' private keys for local nodes.
+the node's certificate key hashes to `--pin`, the TLS key hash in the attestation's bundle, so a
+client that has checked the bundle against the quote's report data reaches the attested enclave. The
+signature is EIP-712 over the command's JSON, its nonce, and an expiry two and a half minutes ahead,
+under the same domain as client requests. It prints the signed request and the events the engine
+produced, and fails when the engine answers `admin_rejected`. The node refuses a command only it
+sequences (client auth, the operator, protocol activation) with 400, a signature that is not the
+operator's with 401, an expired request with 400, and a nonce other than the operator's next with
+409, and none of these reaches the log. The operator may list a market or replace its spec and
+calendar, replace the protocol parameters, set a benchmark rate, set a stress floor, which raises a
+market's stress level but never lowers it below the automatic one, and make one market or every
+market reduce-only, where new risk is refused and trades that reduce or close a position still fill.
+The engine also refuses parameters whose stress and toxicity spreads would price a closing trade at
+the price itself. Once any deposit or house capital is credited, the engine refuses an unsigned
+operator command, so only genesis, which credits its house capital last, runs unsigned. The first
+start under protocol `V8` records `operator.public_key`, with the custody chain id and vault, in the
+log; changing it needs a fresh log, and `engine replay` prints the operator a log records. A node
+whose `tee.provider` is not `mock` refuses to start with an operator key that
+`config/test-keys.toml` lists, in either SEC1 encoding: the repository publishes those keys' private
+keys for local nodes.
 
 `/v1/accounts/{address}/proof` returns, against the state root of the last checkpoint, whose `seq`
 and `root` it names: the account's leaf (balance, withdrawal nonce, toxicity score with, from `V11`,
@@ -747,6 +786,9 @@ cargo test -p engine-node trusted_time::tests::scenario
 
 # Dev scenario: a mock feed stops, the market goes stale, and a local webhook gets one page
 ./scripts/dev-metrics-alerts.sh
+
+# The production build's tests: it refuses the dev config the other tests load
+cargo test -p engine-node --features production --lib production_build
 ```
 
 ## Authors

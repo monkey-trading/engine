@@ -404,7 +404,8 @@ fn retirement_recover_at(log_dir: &Path, at: i64) -> anyhow::Result<Sequencer> {
     let (stream, _) = broadcast::channel(16);
     let (manifest, _) = watch::channel(Manifest::default());
     let (withdrawals, _) = mpsc::unbounded_channel();
-    let cfg = SequencerConfig { clock: clock.clone(), ..sequencer_config(log_dir, manifest) };
+    let genesis = crate::sequencer::fixture_tests::finished_genesis(&log_entries(log_dir));
+    let cfg = SequencerConfig { clock: clock.clone(), genesis, ..sequencer_config(log_dir, manifest) };
     let mut seq = Sequencer::recover(cfg, Arc::new(EnclaveKey::test_key()), stream, withdrawals)?;
     seq.trust(sample_around(clock.as_ref()))?;
     Ok(seq)

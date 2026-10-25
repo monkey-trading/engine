@@ -29,7 +29,7 @@ use crate::history::Reader;
 use crate::limits::ApiLimits;
 use crate::log::LogEntry;
 use crate::sequencer::{Sequencer, SequencerConfig, replay};
-use crate::tee::{EnclaveKey, MockAttestor, attest_key};
+use crate::tee::{AttestationBundle, EnclaveKey, MockAttestor, attest_bundle};
 use crate::test_support::{DEV_CONFIG, dev_config, log_entries, sample_around, scratch_dir, sequencer_config};
 use crate::tls::{TlsIdentity, serve};
 
@@ -255,10 +255,15 @@ impl Node {
         let (tx, rx) = mpsc::channel(1024);
         tokio::spawn(seq.run(rx));
         let tls = TlsIdentity::generate().unwrap();
+        let bundle = AttestationBundle {
+            enclave_address: key.address(),
+            config_sha256: [0; 32],
+            tls_public_key_sha256: tls.public_key_sha256,
+        };
         let state = ApiState {
             tx,
             stream,
-            attestation: Arc::new(attest_key(&MockAttestor, &key, &tls.public_key_sha256).unwrap()),
+            attestation: Arc::new(attest_bundle(&MockAttestor, &bundle).unwrap()),
             auth: ClientAuth::Unsigned,
             operator,
             mock_custody: true,

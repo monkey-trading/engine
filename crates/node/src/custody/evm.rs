@@ -183,9 +183,9 @@ impl<V: VaultReader> DepositWatcher<V> {
     ///   endpoint's chain or token, or the vault's count, contradicts the config or the cursor
     /// - fatal: the sequencer has stopped, or the cursor cannot be stored
     pub(super) async fn poll(&mut self, tx: &mpsc::Sender<Request>) -> Result<Polled, PollError> {
-        // TODO: the vault, its token, the finality tag, the confirmations, and the start block all
-        // come from the host-supplied config; binding the config into the attestation report will
-        // bound them.
+        // The vault, its token, the finality tag, the confirmations, and the start block all come
+        // from the host-supplied config, whose SHA-256 the attestation binds, so a verifier checks
+        // them against a published copy.
         let identity = self.vault.identity().await.map_err(PollError::rpc)?;
         let expected = VaultIdentity { chain_id: self.cursor.chain_id, token: Some(self.usdc) };
         if identity != expected {

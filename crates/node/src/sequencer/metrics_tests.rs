@@ -13,7 +13,7 @@ use crate::clock::test_clock::TestClock;
 use crate::log::{Manifest, SegmentedLog};
 use crate::metrics::Metrics;
 use crate::test_support::{
-    SEGMENT_COMMANDS, TRADER, TestSequencer, deposit, sample_around, scratch_dir, sequencer_config,
+    SEGMENT_COMMANDS, TRADER, TestSequencer, deposit, dev_config, sample_around, scratch_dir, sequencer_config,
 };
 use crate::throttle::REALERT_AFTER;
 
@@ -22,7 +22,7 @@ async fn sequencing_counts_commands_fills_and_rejections_by_reason_and_times_che
     let dir = scratch_dir("seq-metrics");
     // A clock that stands still, so the quotes stay fresh however slowly the commands go through.
     let clock = Arc::new(TestClock::default());
-    let node = TestSequencer::start_at(&dir, 64, clock.clone());
+    let node = TestSequencer::start_at(&dir, 64, clock.clone(), genesis_commands(&dev_config().genesis));
     let genesis_commands = node.metrics.commands.get();
     let ts = clock.now_ms();
     let quotes = ["a", "b", "c"].map(|v| SourceQuote { source: v.into(), mid: Fixed::from_int(100_000), ts });

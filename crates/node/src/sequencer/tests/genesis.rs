@@ -1,9 +1,13 @@
 //! Genesis is all or nothing: a genesis the engine would reject writes nothing, and recovery refuses
-//! a log whose genesis did not reach the checkpoint after its house capital credit.
+//! a log whose genesis did not reach the checkpoint after its house capital credit, or is not the
+//! config's.
 
 use super::*;
 
+use engine_core::params::NotionalWeighting;
+
 use crate::config::{CustodyProvider, Genesis, NodeConfig};
+use crate::sequencer::fixture_tests::{geneses_no_config_can_name, old_genesis_log};
 use crate::test_support::ANVIL_CONFIG;
 
 #[test]
@@ -179,4 +183,115 @@ fn a_required_command_the_engine_rejects_stops_the_sequencer_at_the_first_sample
     assert!(!matches!(written.last(), Some(LogEntry::Checkpoint(_))), "{written:?}");
     let err = try_recover(&dir, &signed(31_337)).0.err().expect("refused");
     assert!(format!("{err:#}").contains("the engine rejected seq"), "{err:#}");
+}
+
+#[test]
+fn a_restart_under_another_genesis_refuses_to_start_and_writes_nothing() {
+    let dir = scratch_dir("genesis-mismatch");
+    let genesis = dev_config().genesis;
+    let mut seq = recover(&dir, &signed(31_337));
+    seq.activate_protocol().unwrap();
+    seq.genesis(&genesis).unwrap();
+    drop(seq);
+    let written = log_entries(&dir);
+
+    // The genesis it ran restarts; any edit to the config's genesis is refused.
+    assert!(!recover(&dir, &signed(31_337)).needs_genesis());
+    let edits = [
+        ("house capital", (|g: &mut Genesis| g.house_capital += Fixed::ONE) as fn(&mut Genesis)),
+        ("benchmark rate", |g| g.benchmarks[0].annual_bps += 1),
+        ("one more market", |g| g.markets.push(g.markets[0].clone())),
+        ("one market fewer", |g| drop(g.markets.pop())),
+    ];
+    for (what, edit) in edits {
+        let mut other = dev_config().genesis;
+        edit(&mut other);
+        let err = recover_with(&dir, &signed(31_337), genesis_commands(&other)).err().unwrap();
+        assert!(format!("{err:#}").contains("differs from the config's [genesis]"), "{what}: {err:#}");
+    }
+    assert_eq!(log_entries(&dir), written);
+}
+
+#[test]
+fn a_genesis_set_before_the_notional_weighting_takes_the_one_the_node_carried() {
+    // A log from before `V11`, whose genesis parameters have no weighting, resumes under a config
+    // that adds one; once the node has carried it into the log, a config naming another is refused.
+    let dir = scratch_dir("genesis-carried-notional");
+    fs::create_dir_all(&dir).unwrap();
+    crate::sequencer::fixture_tests::copy_fixture(V1_DEV, dir.join("00000000000000000000.jsonl"));
+    let config = finished_genesis(&log_entries(&dir));
+    let Some(Command::Admin(AdminCommand::SetParams(params))) = config.first() else {
+        panic!("genesis sets parameters")
+    };
+    let weighting = params.toxicity.notional.expect("the config adds a weighting");
+    recover_with(&dir, &signed(31_337), config.clone()).unwrap().carry_toxicity_notional(weighting).unwrap();
+    recover_with(&dir, &signed(31_337), config.clone()).unwrap();
+
+    let mut other = config;
+    if let Some(Command::Admin(AdminCommand::SetParams(params))) = other.first_mut() {
+        params.toxicity.notional = Some(NotionalWeighting { prior: weighting.memory, ..weighting });
+    }
+    let err = recover_with(&dir, &signed(31_337), other).err().unwrap();
+    assert!(format!("{err:#}").contains("differs from the config's [genesis]"), "{err:#}");
+}
+
+#[test]
+fn a_genesis_set_before_divergence_shares_resumes_under_the_shares_a_config_loads() {
+    // A log from before `V13` set absolute divergence triggers, which no config loaded under the
+    // latest protocol can give: its genesis compares as the shares `V13`'s activation turns them
+    // into, and a config giving other shares is refused.
+    let dir = scratch_dir("genesis-divergence-shares");
+    fs::create_dir_all(&dir).unwrap();
+    crate::sequencer::fixture_tests::copy_fixture(V1_DEV, dir.join("00000000000000000000.jsonl"));
+    let logged = log_entries(&dir);
+    let ran = commands(&logged)
+        .into_iter()
+        .find_map(|cmd| match cmd {
+            Command::Admin(AdminCommand::SetParams(params)) => Some(params),
+            _ => None,
+        })
+        .expect("genesis sets parameters");
+    let err = ran.validate_for(ProtocolVersion::LATEST).unwrap_err();
+    assert!(err.contains("divergence_share_bps"), "{err}");
+
+    let config = finished_genesis(&logged);
+    let Some(Command::Admin(AdminCommand::SetParams(params))) = config.first() else {
+        panic!("genesis sets parameters")
+    };
+    params.validate_for(ProtocolVersion::LATEST).unwrap();
+    // 15 and 20 bps of the genesis markets' widest bound, 25 bps.
+    let shares: Vec<_> =
+        params.stress_levels.iter().filter_map(|level| level.trigger.as_ref()?.divergence_share_bps).collect();
+    assert_eq!(shares, [6_000, 8_000]);
+    recover_with(&dir, &signed(31_337), config.clone()).unwrap();
+
+    let mut other = config;
+    if let Some(Command::Admin(AdminCommand::SetParams(params))) = other.first_mut() {
+        let share = params
+            .stress_levels
+            .iter_mut()
+            .find_map(|level| level.trigger.as_mut()?.divergence_share_bps.as_mut())
+            .expect("a divergence share");
+        *share += 1;
+    }
+    let err = recover_with(&dir, &signed(31_337), other).err().unwrap();
+    assert!(format!("{err:#}").contains("differs from the config's [genesis]"), "{err:#}");
+}
+
+#[test]
+fn a_genesis_no_current_config_can_name_is_refused_and_a_fresh_log_advised() {
+    // An older protocol applied each genesis, and config load under the latest refuses it, so no
+    // config can name it: recovery refuses whatever genesis the config gives, and writes nothing.
+    for (shape, version, genesis, reason) in geneses_no_config_can_name() {
+        let dir = scratch_dir(&format!("genesis-unnameable-{shape}"));
+        old_genesis_log(&dir, &signed(31_337), version, genesis);
+        let written = log_entries(&dir);
+        for config in [finished_genesis(&written), genesis_commands(&dev_config().genesis)] {
+            let err = format!("{:#}", recover_with(&dir, &signed(31_337), config).err().unwrap());
+            assert!(err.contains("no current config can name this log's genesis"), "{shape}: {err}");
+            assert!(err.contains(reason) && err.contains("a fresh log is needed"), "{shape}: {err}");
+            assert!(!err.contains("started with"), "{shape}: {err}");
+        }
+        assert_eq!(log_entries(&dir), written, "{shape}: recovery wrote nothing");
+    }
 }

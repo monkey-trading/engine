@@ -14,7 +14,7 @@ use crate::clock::test_clock::TestClock;
 use crate::log::Manifest;
 use crate::sequencer::Sequencer;
 use crate::tee::EnclaveKey;
-use crate::test_support::{dev_config, sample_around, scratch_dir, sequencer_config};
+use crate::test_support::{dev_config, log_entries, sample_around, scratch_dir, sequencer_config};
 use crate::trusted_time::tests::logs::Logs;
 
 const START: i64 = 1_792_504_800_000;
@@ -211,8 +211,9 @@ fn fixture(name: &str) -> (Sequencer, PathBuf) {
 
 fn recover_at(dir: &Path, at: i64) -> Sequencer {
     let clock = Arc::new(TestClock::at(at));
-    let cfg =
-        crate::sequencer::SequencerConfig { clock, ..sequencer_config(dir, watch::channel(Manifest::default()).0) };
+    let genesis = crate::sequencer::fixture_tests::finished_genesis(&log_entries(dir));
+    let manifest = watch::channel(Manifest::default()).0;
+    let cfg = crate::sequencer::SequencerConfig { clock, genesis, ..sequencer_config(dir, manifest) };
     Sequencer::recover(cfg, Arc::new(EnclaveKey::test_key()), broadcast::channel(16).0, mpsc::unbounded_channel().0)
         .unwrap()
 }

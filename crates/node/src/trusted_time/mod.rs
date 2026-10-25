@@ -9,8 +9,8 @@
 //! the sample spans those instants, and counts only if it is no wider than the drift bound. The
 //! sequencer checks every stamp against the latest sample through `TimeGate`.
 //!
-//! TODO: the servers and their keys come from the config file, on host storage; they are trusted
-//! only once the attestation binds the config's hash (#26).
+//! The servers and their keys come from the config file, on host storage; the attestation binds that
+//! file's SHA-256, so a verifier checks them against a published copy.
 //!
 //! Servers are queried concurrently over UDP, each with its own random nonce; the node does not
 //! chain requests into malfeasance reports (RFC 10049 §8.2), since agreement is all it needs.

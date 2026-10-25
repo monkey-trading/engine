@@ -1,13 +1,14 @@
 //! Enclave identity and remote attestation.
 //!
 //! At boot a hardware enclave generates a secp256k1 key that never leaves it. Mock configurations
-//! can explicitly select a published development key; hardware configurations refuse that option. It puts the key's EVM
-//! address in the attestation report data, so a hardware quote proves "this address belongs to an
-//! enclave running this measurement". The vault contract and anyone reading the log trust
-//! signatures from that address and nothing else. The report data also carries the hash of the
-//! API's TLS public key (see `tls`), so the same quote proves which key terminates client
-//! connections. Every signed digest carries a domain tag, the chain id and vault it is meant for,
-//! and a sequence number or nonce, so no signature can be replayed in another context.
+//! can explicitly select a published development key; hardware configurations refuse that option.
+//! The attestation report data carries the SHA-256 of an attestation bundle: the key's EVM address,
+//! the SHA-256 of the config file, and the hash of the API's TLS public key (see `tls`). So a
+//! hardware quote proves "this address belongs to an enclave running this measurement with this
+//! config, and this key terminates its client connections". The vault contract and anyone reading
+//! the log trust signatures from that address and nothing else. Every signed digest carries a
+//! domain tag, the chain id and vault it is meant for, and a sequence number or nonce, so no
+//! signature can be replayed in another context.
 
 use std::path::PathBuf;
 
@@ -18,7 +19,12 @@ use engine_core::types::AccountId;
 use k256::ecdsa::SigningKey;
 use k256::elliptic_curve::Generate;
 use serde::Serialize;
+use sha2::{Digest as _, Sha256};
 use sha3::{Digest, Keccak256};
+
+/// The attestation bundle's domain tag, which names its layout version; a new layout takes a new
+/// tag.
+const BUNDLE_TAG: &[u8] = b"engine.attestation.v1";
 
 /// A source of hardware attestation quotes over caller-chosen report data.
 pub trait Attestor: Send + Sync {
@@ -33,12 +39,29 @@ pub struct EnclaveKey {
     key: SigningKey,
 }
 
+/// What an attestation vouches for. Its encoding is the domain tag followed by each field, at fixed
+/// widths and in this order; report data bytes 0..32 are the SHA-256 of that encoding, and bytes
+/// 32..64 are reserved as zero.
+pub struct AttestationBundle {
+    /// The enclave signing key's EVM address.
+    pub enclave_address: [u8; 20],
+    /// SHA-256 of the config file the node loaded.
+    pub config_sha256: [u8; 32],
+    /// SHA-256 of the API certificate's DER SubjectPublicKeyInfo.
+    pub tls_public_key_sha256: [u8; 32],
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct Attestation {
     pub provider: String,
     pub enclave_address: String,
+    /// SHA-256 of the config file the node loaded, hex.
+    pub config_sha256: String,
     /// SHA-256 of the API certificate's DER SubjectPublicKeyInfo, hex.
     pub tls_public_key_sha256: String,
+    /// The bundle's encoding, hex: a verifier checks that its SHA-256 is report data bytes 0..32
+    /// and reads the fields above from it.
+    pub bundle: String,
     pub report_data: String,
     /// Hardware quote (TDX quote or SEV-SNP report), hex.
     pub quote: String,
@@ -169,23 +192,33 @@ impl EnclaveKey {
     }
 }
 
-/// Attests the enclave key and the API's TLS key. The report data is the enclave address in bytes
-/// 0..20, zeros in 20..32, and the TLS public key hash in 32..64.
+impl AttestationBundle {
+    /// The bundle's bytes: `BUNDLE_TAG`, the enclave address, the config hash, and the TLS key hash.
+    pub fn encode(&self) -> Vec<u8> {
+        [BUNDLE_TAG, &self.enclave_address[..], &self.config_sha256[..], &self.tls_public_key_sha256[..]].concat()
+    }
+
+    /// The 64 bytes a quote binds: the SHA-256 of the encoding, then 32 reserved zero bytes.
+    pub fn report_data(&self) -> [u8; 64] {
+        let mut report_data = [0u8; 64];
+        report_data[..32].copy_from_slice(&Sha256::digest(self.encode()));
+        report_data
+    }
+}
+
+/// Attests `bundle`: the quote binds its report data, and the attestation serves the bundle so a
+/// verifier can recompute it.
 /// Error cases:
 /// - the attestor cannot produce a quote
-pub fn attest_key(
-    attestor: &dyn Attestor,
-    key: &EnclaveKey,
-    tls_public_key_sha256: &[u8; 32],
-) -> anyhow::Result<Attestation> {
-    let mut report_data = [0u8; 64];
-    report_data[..20].copy_from_slice(&key.address());
-    report_data[32..].copy_from_slice(tls_public_key_sha256);
+pub fn attest_bundle(attestor: &dyn Attestor, bundle: &AttestationBundle) -> anyhow::Result<Attestation> {
+    let report_data = bundle.report_data();
     let (provider, quote) = attestor.attest(report_data)?;
     Ok(Attestation {
         provider,
-        enclave_address: key.address_hex(),
-        tls_public_key_sha256: format!("0x{}", hex::encode(tls_public_key_sha256)),
+        enclave_address: format!("0x{}", hex::encode(bundle.enclave_address)),
+        config_sha256: format!("0x{}", hex::encode(bundle.config_sha256)),
+        tls_public_key_sha256: format!("0x{}", hex::encode(bundle.tls_public_key_sha256)),
+        bundle: format!("0x{}", hex::encode(bundle.encode())),
         report_data: format!("0x{}", hex::encode(report_data)),
         quote: format!("0x{}", hex::encode(quote)),
     })
@@ -274,18 +307,62 @@ mod tests {
     }
 
     #[test]
-    fn mock_attestation_binds_the_enclave_address_and_tls_key() {
-        let key = EnclaveKey::generate();
-        let tls_key_hash = [0xab; 32];
-        let att = attest_key(&MockAttestor, &key, &tls_key_hash).unwrap();
+    fn a_verifier_recomputes_the_report_data_from_the_served_bundle() {
+        let bundle = bundle(EnclaveKey::generate().address(), [0xc1; 32], [0x7e; 32]);
+        let att = attest_bundle(&MockAttestor, &bundle).unwrap();
         assert_eq!(att.provider, "mock");
-        assert_eq!(att.tls_public_key_sha256, format!("0x{}", hex::encode(tls_key_hash)));
 
-        let report_data = hex::decode(att.report_data.trim_start_matches("0x")).unwrap();
-        assert_eq!(report_data[..20], key.address());
-        assert_eq!(report_data[20..32], [0u8; 12]);
-        assert_eq!(report_data[32..], tls_key_hash);
-        // The mock quote echoes the report data it was asked to bind.
+        // What a verifier does: hash the served bundle, compare it with the report data, then read
+        // each field from the bundle at its documented offset.
+        let served = unhex(&att.bundle);
+        let report_data = unhex(&att.report_data);
+        assert_eq!(report_data[..32], Sha256::digest(&served)[..]);
+        assert_eq!(report_data[32..], [0u8; 32]);
+        assert_eq!(served.len(), 105);
+        assert_eq!(&served[..21], b"engine.attestation.v1");
+        assert_eq!(served[21..41], bundle.enclave_address);
+        assert_eq!(served[41..73], bundle.config_sha256);
+        assert_eq!(served[73..105], bundle.tls_public_key_sha256);
+        // The served fields are the bundle's, and the mock quote echoes the report data it binds.
+        assert_eq!(unhex(&att.enclave_address), bundle.enclave_address);
+        assert_eq!(unhex(&att.config_sha256), bundle.config_sha256);
+        assert_eq!(unhex(&att.tls_public_key_sha256), bundle.tls_public_key_sha256);
         assert!(att.quote.ends_with(&hex::encode(&report_data)));
+    }
+
+    #[test]
+    fn changing_any_bundle_field_changes_the_report_data() {
+        let (address, config, tls) = ([0x11; 20], [0x22; 32], [0x33; 32]);
+        let base = bundle(address, config, tls).report_data();
+        let mut flipped_address = address;
+        flipped_address[19] ^= 1;
+        let mut flipped_config = config;
+        flipped_config[0] ^= 1;
+        let mut flipped_tls = tls;
+        flipped_tls[31] ^= 1;
+        for (what, other) in [
+            ("address", bundle(flipped_address, config, tls)),
+            ("config hash", bundle(address, flipped_config, tls)),
+            ("TLS key hash", bundle(address, config, flipped_tls)),
+            // The fields keep their places: swapping the two hashes is another bundle.
+            ("field order", bundle(address, tls, config)),
+        ] {
+            assert_ne!(other.report_data(), base, "a changed {what} left the report data unchanged");
+            assert_eq!(other.report_data()[32..], [0u8; 32]);
+        }
+    }
+
+    // ── Helpers ──
+
+    fn bundle(
+        enclave_address: [u8; 20],
+        config_sha256: [u8; 32],
+        tls_public_key_sha256: [u8; 32],
+    ) -> AttestationBundle {
+        AttestationBundle { enclave_address, config_sha256, tls_public_key_sha256 }
+    }
+
+    fn unhex(hex: &str) -> Vec<u8> {
+        hex::decode(hex.trim_start_matches("0x")).unwrap()
     }
 }

@@ -17,6 +17,24 @@ use crate::sequencer::genesis::check_genesis;
 use crate::trusted_time::NO_SAMPLE_GRACE;
 
 impl NodeConfig {
+    /// Refuses every mock provider when `production` is set, whatever else the config says.
+    /// Error cases:
+    /// - `production` is set and `tee.provider`, `custody.provider`, or `feeds.provider` is `mock`
+    pub(super) fn refuse_mocks(&self, production: bool) -> anyhow::Result<()> {
+        let mocks: Vec<&str> = [
+            ("tee.provider", self.tee.provider == TeeProvider::Mock),
+            ("custody.provider", self.custody.provider == CustodyProvider::Mock),
+            ("feeds.provider", self.feeds.provider == FeedProvider::Mock),
+        ]
+        .into_iter()
+        .filter_map(|(key, is_mock)| is_mock.then_some(key))
+        .collect();
+        if production && !mocks.is_empty() {
+            bail!("a production build refuses mock providers: {} set to \"mock\"", mocks.join(", "));
+        }
+        Ok(())
+    }
+
     /// Checks values that parse but would fail silently or at the wrong moment.
     /// Error cases:
     /// - `logging.level` is not a valid filter directive, or one that disables the node's errors

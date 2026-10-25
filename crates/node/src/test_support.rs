@@ -33,7 +33,7 @@ use crate::config::{HistorySection, NodeConfig};
 use crate::history::{History, HistoryCheck, HistoryEvent, Reader};
 use crate::log::{self, LogEntry, LogReader, Manifest, Offset, SegmentedLog};
 use crate::metrics::Metrics;
-use crate::sequencer::{Request, Sequencer, SequencerConfig, SignedWithdrawal, StreamMsg};
+use crate::sequencer::{Request, Sequencer, SequencerConfig, SignedWithdrawal, StreamMsg, genesis_commands};
 use crate::tee::EnclaveKey;
 pub use crate::test_tracing::keep_callsites_interested;
 use crate::trusted_time::Sample;
@@ -66,18 +66,18 @@ impl TestSequencer {
     /// activates the latest protocol, sequences the dev genesis if the log lacks it, and runs it.
     /// The stream channel holds `stream_capacity` messages.
     pub fn start(dir: &Path, stream_capacity: usize) -> Self {
-        Self::start_at(dir, stream_capacity, Arc::new(SystemClock))
+        Self::start_at(dir, stream_capacity, Arc::new(SystemClock), genesis_commands(&dev_config().genesis))
     }
 
-    /// As `start`, stamping commands on `clock`, which trusted time admits.
-    pub fn start_at(dir: &Path, stream_capacity: usize, clock: Arc<dyn Clock>) -> Self {
+    /// As `start`, stamping commands on `clock`, which trusted time admits, on a log whose genesis is
+    /// `genesis`, as the config gives it.
+    pub fn start_at(dir: &Path, stream_capacity: usize, clock: Arc<dyn Clock>, genesis: Vec<Command>) -> Self {
         let (stream, _) = broadcast::channel(stream_capacity);
         let (withdrawals_tx, withdrawals) = mpsc::unbounded_channel();
         let (manifest_tx, manifest) = watch::channel(Manifest::default());
         let key = Arc::new(EnclaveKey::test_key());
-        let metrics = Arc::new(Metrics::new());
-        let cfg =
-            SequencerConfig { clock: clock.clone(), metrics: metrics.clone(), ..sequencer_config(dir, manifest_tx) };
+        let cfg = SequencerConfig { clock: clock.clone(), genesis, ..sequencer_config(dir, manifest_tx) };
+        let metrics = cfg.metrics.clone();
         let mut seq = Sequencer::recover(cfg, key, stream.clone(), withdrawals_tx).expect("sequencer recovers");
         // As the node does, parameters an older log set take the config's notional weighting first.
         let weighting = dev_config().genesis.params.toxicity.notional.expect("the dev config weighs by notional");
@@ -257,6 +257,7 @@ pub fn sequencer_config(dir: &Path, manifest: watch::Sender<Manifest>) -> Sequen
         client_auth: ClientAuth::Unsigned,
         operator: dev_config().operator().expect("the dev operator parses"),
         metrics: Arc::new(Metrics::new()),
+        genesis: genesis_commands(&dev_config().genesis),
     }
 }
 

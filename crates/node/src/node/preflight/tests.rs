@@ -342,3 +342,29 @@ async fn reserved_signature_missing_from_recovered_log_refuses_before_history_mu
     assert_eq!(files(&root), before);
     drop(db);
 }
+
+#[tokio::test]
+async fn a_genesis_no_current_config_can_name_raises_critical_and_preserves_bytes() {
+    use crate::sequencer::fixture_tests::{geneses_no_config_can_name, old_genesis_log};
+    for (shape, version, genesis, reason) in geneses_no_config_can_name() {
+        let root = scratch_dir(&format!("preflight-unnameable-{shape}"));
+        let mut cfg = dev_config();
+        cfg.node.log_dir = root.join("log");
+        cfg.history.dir = root.join("history");
+        old_genesis_log(&cfg.node.log_dir, &cfg.client_auth().unwrap(), version, genesis);
+        let (_guard, mut alerts) = crate::test_support::capture_alerts();
+        let before = files(&root);
+        let signer = Some(AccountId(EnclaveKey::test_key().address()));
+        let (log, plan) = crate::node::read_log_and_history_observe(&cfg, signer, None, |_| {}).unwrap();
+        let seq_cfg = crate::test_support::sequencer_config(
+            &cfg.node.log_dir,
+            tokio::sync::watch::channel(crate::log::Manifest::default()).0,
+        );
+        let error = finish_preflight::<Chain>(plan, None, Some((&log, &seq_cfg))).await.err().unwrap();
+        let error = format!("{error:#}");
+        assert!(error.contains("no current config can name") && error.contains(reason), "{shape}: {error}");
+        assert_eq!(files(&root), before, "{shape}");
+        let alert = alerts.try_recv().expect("recovery refusal raises Critical");
+        assert_eq!((alert["alert"].as_str(), alert["level"].as_str()), ("log_recovery_failed", "ERROR"));
+    }
+}

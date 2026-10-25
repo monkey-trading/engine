@@ -1,5 +1,7 @@
 /target
 /data
+# Enclave image builds (scripts/build-image.sh)
+/out
 
 # Claude Code local project dir
 .claude/

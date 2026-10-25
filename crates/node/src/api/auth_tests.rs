@@ -24,7 +24,7 @@ use crate::config::RateLimit;
 use crate::history::INDEX_FILE;
 use crate::log::LogEntry;
 use crate::sequencer::{Sequencer, SequencerConfig, SignedWithdrawal, replay};
-use crate::tee::{EnclaveKey, MockAttestor, attest_key};
+use crate::tee::{AttestationBundle, EnclaveKey, MockAttestor, attest_bundle};
 use crate::test_support::{dev_config, log_entries, sample_around, scratch_dir, sequencer_config};
 
 const VECTORS: &str = include_str!("../../../core/tests/fixtures/eip712.json");
@@ -314,7 +314,17 @@ impl Node {
         seq.trust(sample_around(stamps.as_ref())).unwrap();
         let (tx, rx) = mpsc::channel(1024);
         tokio::spawn(seq.run(rx));
-        let attestation = Arc::new(attest_key(&MockAttestor, &key, &[0; 32]).unwrap());
+        let attestation = Arc::new(
+            attest_bundle(
+                &MockAttestor,
+                &AttestationBundle {
+                    enclave_address: key.address(),
+                    config_sha256: [0; 32],
+                    tls_public_key_sha256: [0; 32],
+                },
+            )
+            .unwrap(),
+        );
         // The dev limits, on buckets that refill once an hour, so no test depends on its speed.
         let hourly = |rate: RateLimit| Quota::with_period(Duration::from_secs(3600)).unwrap().allow_burst(rate.burst);
         let state = ApiState {

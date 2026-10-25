@@ -27,7 +27,7 @@ use crate::history::INDEX_FILE;
 use crate::log::LogEntry;
 use crate::sequencer::fixture_tests::replay_trusted as replay;
 use crate::sequencer::{Sequencer, SequencerConfig};
-use crate::tee::{EnclaveKey, MockAttestor, attest_key};
+use crate::tee::{AttestationBundle, EnclaveKey, MockAttestor, attest_bundle};
 use crate::test_support::{dev_config, log_entries, sample_around, scratch_dir, sequencer_config};
 
 /// Commands between checkpoints.
@@ -170,10 +170,15 @@ impl Node {
         tokio::spawn(seq.run(rx));
         // The scenario credits 100k accounts from one client, so no request is rate limited.
         let unlimited = |_: RateLimit| Quota::per_second(NonZeroU32::MAX);
+        let bundle = AttestationBundle {
+            enclave_address: key.address(),
+            config_sha256: [0; 32],
+            tls_public_key_sha256: [0; 32],
+        };
         let state = ApiState {
             tx,
             stream,
-            attestation: Arc::new(attest_key(&MockAttestor, &key, &[0; 32]).unwrap()),
+            attestation: Arc::new(attest_bundle(&MockAttestor, &bundle).unwrap()),
             auth: ClientAuth::Unsigned,
             operator: dev_config().operator().unwrap(),
             mock_custody: true,

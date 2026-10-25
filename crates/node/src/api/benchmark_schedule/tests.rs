@@ -17,7 +17,7 @@ use crate::clock::now_ms;
 use crate::history::Reader;
 use crate::limits::ApiLimits;
 use crate::log::Manifest;
-use crate::tee::{EnclaveKey, MockAttestor, attest_key};
+use crate::tee::{AttestationBundle, EnclaveKey, MockAttestor, attest_bundle};
 use crate::test_support::{dev_config, scratch_dir};
 
 #[tokio::test]
@@ -121,10 +121,15 @@ fn state() -> (ApiState, mpsc::Receiver<Request>) {
     let (tx, requests) = mpsc::channel(1);
     let mut cfg = dev_config();
     cfg.api.max_subscribers = NonZeroUsize::new(1).unwrap();
+    let bundle = AttestationBundle {
+        enclave_address: EnclaveKey::test_key().address(),
+        config_sha256: [0; 32],
+        tls_public_key_sha256: [0; 32],
+    };
     let state = ApiState {
         tx,
         stream: tokio::sync::broadcast::channel(1).0,
-        attestation: Arc::new(attest_key(&MockAttestor, &EnclaveKey::test_key(), &[0; 32]).unwrap()),
+        attestation: Arc::new(attest_bundle(&MockAttestor, &bundle).unwrap()),
         auth: ClientAuth::Unsigned,
         operator: cfg.operator().unwrap(),
         mock_custody: true,
