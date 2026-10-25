@@ -8,11 +8,13 @@ use engine_core::deposits::DepositBeneficiary;
 use engine_core::eip712::B256;
 use engine_core::event::{CancelReason, Fill};
 use engine_core::price::SourceQuote;
+use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{AccountId, Millis, Side};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::NodeConfig;
+use crate::sequencer::genesis_commands;
 use crate::test_support::every_event;
 
 #[test]
@@ -185,11 +187,15 @@ fn to_f64_keeps_the_decimal_value() {
 #[test]
 fn price_rejections_count_by_the_reason_the_engine_gives() {
     let mut engine = dev_engine();
-    let quote = |mid: &str, ts| SourceQuote { source: "venue-a".into(), mid: mid.parse().unwrap(), ts };
+    let quote = |mid: &str, ts| SourceQuote { source: "venue-a".into(), mid: mid.parse().unwrap(), ts, contract: None };
+    let for_contract = SourceQuote { contract: Some("BTCZ6".into()), ..quote("100", T0) };
     let commands = [
         Command::Prices { market: 99, quotes: vec![quote("100", T0)] },
         Command::Prices { market: 1, quotes: vec![quote("0", T0)] },
         Command::Prices { market: 1, quotes: vec![quote("100", T0 + 5_000)] },
+        // Stamped at 05:00 in New York, before Apple's open.
+        Command::Prices { market: 40, quotes: vec![quote("230", T0 - 5 * 3_600_000)] },
+        Command::Prices { market: 1, quotes: vec![for_contract] },
     ];
     let metrics = Metrics::new();
     for cmd in commands {
@@ -197,7 +203,7 @@ fn price_rejections_count_by_the_reason_the_engine_gives() {
         engine.apply(&Sequenced { seq, ts: T0, cmd }).unwrap().iter().for_each(|event| metrics.record(event));
     }
     let text = metrics.encode();
-    for reason in ["unknown_market", "malformed_quote", "quote_ahead"] {
+    for reason in ["unknown_market", "malformed_quote", "quote_ahead", "market_closed", "contract_not_taken"] {
         let line = format!("engine_rejections_total{{event=\"prices_rejected\",reason=\"{reason}\"}} 1\n");
         assert!(text.contains(&line), "{text}");
     }
@@ -219,7 +225,7 @@ fn every_rejection_and_delivery_series_starts_at_zero() {
     }
     assert_eq!(
         text.matches("engine_rejections_total{").count(),
-        3 * REJECT_KINDS.len() + DEPOSIT_REJECT_KINDS.len() + 4 + 1
+        3 * REJECT_KINDS.len() + DEPOSIT_REJECT_KINDS.len() + PRICES_REJECT_REASONS.len() + 1
     );
     assert_eq!(text.matches("engine_alert_deliveries_total{").count(), 2 * 3);
     assert!(text.contains("engine_alert_attempts_failed_total{severity=\"warning\"} 0\n"), "{text}");
@@ -285,11 +291,18 @@ fn counted(text: &str, prefix: &str) -> usize {
 }
 
 /// An engine after the dev config's genesis, at `T0`.
+/// An engine after the dev config's protocol activation and genesis, as a node sequences them, at
+/// `T0`.
 fn dev_engine() -> Engine {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/dev.toml");
-    let genesis = NodeConfig::load(std::path::Path::new(path)).unwrap().genesis;
-    let mut commands = vec![Command::Admin(AdminCommand::SetParams(genesis.params))];
-    commands.extend(genesis.markets.into_iter().map(|spec| Command::Admin(AdminCommand::UpsertMarket(spec))));
+    let cfg = NodeConfig::load(std::path::Path::new(path)).unwrap();
+    let activation = [
+        AdminCommand::SetClientAuth(cfg.client_auth().unwrap()),
+        AdminCommand::SetOperator(cfg.operator().unwrap()),
+        AdminCommand::ActivateProtocol { version: ProtocolVersion::LATEST },
+    ];
+    let commands: Vec<Command> =
+        activation.into_iter().map(Command::Admin).chain(genesis_commands(&cfg.genesis)).collect();
     let mut engine = Engine::new();
     for (seq, cmd) in commands.into_iter().enumerate() {
         engine.apply(&Sequenced { seq: seq as u64, ts: T0, cmd }).unwrap();

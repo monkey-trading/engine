@@ -10,9 +10,11 @@ house, in turn, is issued to the people who trade with it.
 > **Pre-launch.** The engine runs end to end on a single machine, with a mock enclave, mock
 > custody, and simulated prices, or live crypto prices from three venues; vault deposits also run
 > against a local chain. Signed checkpoint posting and rollback checks also run against Anvil, as
-> do MONKEY emissions and claims; MONKEY's production budget and start are still to be set.
-> On-chain withdrawals, MONKEY staking, hardware attestation, and live prices for other asset
-> classes are under construction. Nothing here holds real funds.
+> do MONKEY emissions and claims; MONKEY's production budget and start are still to be set. FX,
+> index, commodity, and share prices from two market-data vendors each run against local stand-ins
+> for those vendors; live vendor feeds wait on credentials and redistribution licences.
+> On-chain withdrawals, MONKEY staking, and hardware attestation are under construction. Nothing
+> here holds real funds.
 
 ## How it works
 
@@ -50,7 +52,9 @@ quote grows too old, after each day's financing, and after a change to a margin 
 close-out level. A market with no fresh price allows no dealing at all, while accounts
 holding it trade other markets and withdraw against its last price. Markets in real-world assets
 keep their exchange's hours, holidays, and early closes, and orders resting while a market is
-closed fill at the first price after it opens, gap and all. The house limits its own risk by
+closed fill at the first price after it opens, gap and all; no quote from outside a market's hours
+ever prices it. Indices and commodities price from their front futures contract, and when one
+contract rolls to the next the price takes the gap between them, so it does not jump. The house limits its own risk by
 capping its net exposure in each market, and the sum of those exposures across markets, at the
 larger of a fraction of its net asset value and a fixed dollar floor, so trading can start from a
 house with no capital and carries on while the house is in deficit.

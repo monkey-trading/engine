@@ -48,7 +48,7 @@ pub(crate) enum Action {
     HouseCapital { amount: Fixed, chain_ref: u32 },
     Order(Order),
     Cancel { account: AccountId, order_id: u64 },
-    Admin(AdminCommand),
+    Admin(Box<AdminCommand>),
 }
 
 /// An order before its size and price are resolved.
@@ -120,6 +120,7 @@ pub(crate) fn command(action: &Action, engine: &Engine, now: Millis) -> Command 
                         Stamp::Age(ms) => now - ms,
                         Stamp::Exact(ts) => ts,
                     },
+                    contract: None,
                 })
                 .collect();
             Command::Prices { market: *market, quotes }
@@ -164,7 +165,7 @@ pub(crate) fn command(action: &Action, engine: &Engine, now: Millis) -> Command 
         }
         Action::Admin(cmd) if engine.protocol_version() >= ProtocolVersion::V8 => {
             // From V13 a divergence trigger is a share of each market's bound.
-            let cmd = match cmd {
+            let cmd = match cmd.as_ref() {
                 AdminCommand::SetParams(params) if engine.protocol_version() >= ProtocolVersion::V13 => {
                     AdminCommand::SetParams(with_divergence_shares(params.clone()))
                 }
@@ -173,7 +174,7 @@ pub(crate) fn command(action: &Action, engine: &Engine, now: Millis) -> Command 
             let operator = Client { expires_at: now + 60_000, ..Client::operator() };
             operator.admin(engine.next_request_nonce(operator.account), cmd)
         }
-        Action::Admin(cmd) => Command::Admin(cmd.clone()),
+        Action::Admin(cmd) => Command::Admin(cmd.as_ref().clone()),
     }
 }
 
@@ -228,7 +229,7 @@ fn action() -> impl Strategy<Value = Action> {
         1 => (signed_amount(), chain_ref()).prop_map(|(amount, chain_ref)| Action::HouseCapital { amount, chain_ref }),
         10 => order().prop_map(Action::Order),
         1 => (account(), 0u64..40).prop_map(|(account, order_id)| Action::Cancel { account, order_id }),
-        2 => admin().prop_map(Action::Admin),
+        2 => admin().prop_map(|cmd| Action::Admin(Box::new(cmd))),
     ]
 }
 

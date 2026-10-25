@@ -1,5 +1,7 @@
 use super::*;
 
+use engine_core::types::MarketId;
+
 use crate::test_support::{ANVIL_CONFIG as ANVIL, DEV_CONFIG as DEV, own_operator_key};
 
 use crate::config::telemetry_tests::CRITICAL_ROUTE;
@@ -422,7 +424,11 @@ fn venue_settings_that_would_fail_silently_are_refused() {
         ("non-zero", |v| v.stale_after = Duration::ZERO),
         ("exceeds reconnect_max", |v| v.reconnect_max = v.reconnect_min / 2),
         ("no connections", |v| v.connections.clear()),
-        ("coinbase is listed twice", |v| v.connections.push(v.connections[0].clone())),
+        ("coinbase lists market 1 twice", |v| {
+            let mut again = v.connections[0].clone();
+            again.url.push_str("/again");
+            v.connections.push(again)
+        }),
         ("must be wss://", |v| v.connections[0].url = "ws://advanced-trade-ws.coinbase.com".into()),
         ("must be on coinbase.com", |v| v.connections[0].url = "wss://ws.kraken.com/v2".into()),
         ("must be on coinbase.com", |v| v.connections[0].url = "wss://coinbase.com.example.net".into()),

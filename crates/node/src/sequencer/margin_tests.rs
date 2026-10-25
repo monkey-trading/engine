@@ -187,7 +187,8 @@ fn fixed(s: &str) -> Fixed {
 
 /// Two venues quoting `mid` for `market`, stamped `ts`.
 fn prices(market: MarketId, mid: &str, ts: Millis) -> Command {
-    let quotes = ["venue-a", "venue-b"].map(|source| SourceQuote { source: source.into(), mid: fixed(mid), ts });
+    let quotes =
+        ["venue-a", "venue-b"].map(|source| SourceQuote { source: source.into(), mid: fixed(mid), ts, contract: None });
     Command::Prices { market, quotes: quotes.to_vec() }
 }
 

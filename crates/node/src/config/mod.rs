@@ -20,7 +20,7 @@ use engine_core::auth::{ClientAuth, Operator};
 use engine_core::eip712;
 use engine_core::market::MarketSpec;
 use engine_core::params::ProtocolParams;
-use engine_core::types::{AccountId, MarketId, Millis};
+use engine_core::types::{AccountId, Millis};
 use k256::ecdsa;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
@@ -30,6 +30,8 @@ mod benchmarks;
 pub use benchmarks::{BenchmarkSection, BenchmarkSource, Publisher};
 mod custody;
 pub use custody::{EvmCustodySection, FinalityTag, RpcProviderSection, SecretUrl};
+mod feeds;
+pub use feeds::*;
 mod checkpoints;
 pub use checkpoints::CheckpointSection;
 mod telemetry;
@@ -69,24 +71,6 @@ pub enum CustodyProvider {
     /// Credits canonical vault deposits from an EVM chain. Withdrawals are refused until they are
     /// paid on-chain.
     Evm,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FeedProvider {
-    /// A random walk quoted by three fake venues. Local development only.
-    Mock,
-    /// Live venue WebSockets from `[feeds.venues]`, one supervised task per connection.
-    Venues,
-}
-
-/// A venue whose public WebSocket feed the node reads. Its name is the quote source in the log.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Venue {
-    Bitstamp,
-    Coinbase,
-    Kraken,
 }
 
 #[derive(Debug, Deserialize)]
@@ -213,73 +197,6 @@ pub struct CustodySection {
     pub evm: Option<EvmCustodySection>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FeedsSection {
-    pub provider: FeedProvider,
-    /// The mock feed's tick, and the most often a venue feed sequences one market's latest quote.
-    #[serde(with = "humantime_serde")]
-    pub interval: Duration,
-    /// Starting mids for the mock feed, by market id.
-    #[serde(default)]
-    pub mock_mids: Vec<MockMid>,
-    /// Required when `provider = "venues"`; validated whenever present.
-    pub venues: Option<VenuesSection>,
-}
-
-/// Live venue feeds.
-///
-/// This file comes from host storage, so the host chooses the venues and the symbol each market
-/// reads; the attestation binds the file's SHA-256, so a verifier checks that choice against a
-/// published copy of the config.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct VenuesSection {
-    /// Deadline to connect and subscribe, and the longest a connection, or one of its symbols, may
-    /// go without a fresh quote before the connection is replaced and the gap alerted.
-    #[serde(with = "humantime_serde")]
-    pub timeout: Duration,
-    /// The first reconnect delay; it doubles after each attempt that sequences no fresh quote.
-    #[serde(with = "humantime_serde")]
-    pub reconnect_min: Duration,
-    #[serde(with = "humantime_serde")]
-    pub reconnect_max: Duration,
-    /// A quote older than this, or than its market's `max_age_ms` in the engine, once sequenced
-    /// does not count as its venue quoting: it ends no outage or silence.
-    #[serde(with = "humantime_serde")]
-    pub stale_after: Duration,
-    pub connections: Vec<VenueConnection>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct VenueConnection {
-    pub venue: Venue,
-    /// The venue's public endpoint: `wss://` on the venue's own domain. The host controls the
-    /// network, so plaintext would let it forge prices, and TLS alone proves only the server's
-    /// name, not that it is the venue the quotes are labelled with.
-    pub url: String,
-    pub symbols: Vec<VenueSymbol>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct VenueSymbol {
-    pub market: MarketId,
-    /// The venue's own name for the market's instrument, e.g. `BTC-USD`.
-    pub symbol: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MockMid {
-    pub market: u32,
-    pub mid: Fixed,
-    /// Stops quoting this market this long after boot, so its price goes stale.
-    #[serde(default, with = "humantime_serde")]
-    pub stop_after: Option<Duration>,
-}
-
 /// Trusted time: the Roughtime servers the host clock is checked against.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -349,31 +266,6 @@ pub struct Genesis {
 pub struct Benchmark {
     pub name: String,
     pub annual_bps: i64,
-}
-
-impl Venue {
-    /// The source name this venue's quotes carry.
-    pub fn name(self) -> &'static str {
-        match self {
-            Venue::Bitstamp => "bitstamp",
-            Venue::Coinbase => "coinbase",
-            Venue::Kraken => "kraken",
-        }
-    }
-
-    /// The domain this venue's endpoints are served under.
-    fn domain(self) -> &'static str {
-        match self {
-            Venue::Bitstamp => "bitstamp.net",
-            Venue::Coinbase => "coinbase.com",
-            Venue::Kraken => "kraken.com",
-        }
-    }
-
-    /// Whether `host` is the venue's domain or one of its subdomains.
-    fn serves(self, host: &str) -> bool {
-        host.strip_suffix(self.domain()).is_some_and(|prefix| prefix.is_empty() || prefix.ends_with('.'))
-    }
 }
 
 impl NodeConfig {
@@ -482,6 +374,8 @@ mod validation;
 
 #[cfg(test)]
 mod custody_tests;
+#[cfg(test)]
+mod feeds_tests;
 #[cfg(test)]
 mod production_tests;
 #[cfg(test)]

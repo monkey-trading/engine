@@ -41,8 +41,10 @@ async fn a_connection_that_ends_before_its_quote_is_confirmed_still_counts_as_qu
     let _feed = spawn_feed_into(tx, Venue::Kraken, &url, &[(1, "BTC/USD")], fast(WAIT));
     let (mut ws, _) = accept(&listener).await;
 
-    // The venue quotes once and drops the connection as soon as the feed asks for confirmation.
+    // The venue quotes once and drops the connection as soon as the feed asks for its
+    // confirmation, behind the market hours the feed asks for when it connects.
     send(&mut ws, &[kraken_book("BTC/USD", "100", "101", now_ms())]).await;
+    wait_for(&mut arrivals, Arrival::Prices(1)).await;
     wait_for(&mut arrivals, Arrival::Query).await;
     drop(ws);
 
@@ -59,9 +61,11 @@ async fn a_quote_sequenced_while_a_confirmation_is_awaited_is_settled_when_the_c
     let _feed = spawn_feed_into(tx, Venue::Kraken, &url, &[(1, "BTC/USD"), (2, "ETH/USD")], fast(WAIT));
     let (mut ws, _) = accept(&listener).await;
 
-    // A stale BTC quote is confirmed first, and while that answer is awaited a fresh ETH quote is
-    // sequenced; the connection then drops, so only the last confirmation can count ETH.
+    // A stale BTC quote is confirmed first, behind the market hours the feed asks for when it
+    // connects, and while that answer is awaited a fresh ETH quote is sequenced; the connection
+    // then drops, so only the last confirmation can count ETH.
     send(&mut ws, &[kraken_book("BTC/USD", "100", "101", now_ms() - 60_000)]).await;
+    wait_for(&mut arrivals, Arrival::Prices(1)).await;
     wait_for(&mut arrivals, Arrival::Query).await;
     send(&mut ws, &[kraken_book("ETH/USD", "10", "11", now_ms())]).await;
     wait_for(&mut arrivals, Arrival::Prices(2)).await;

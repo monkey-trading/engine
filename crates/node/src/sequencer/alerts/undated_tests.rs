@@ -182,7 +182,12 @@ fn signed_calendar_fallback(log_dir: &Path, restart: bool) -> anyhow::Result<(u6
             market: 1,
             quotes: ["venue-a", "venue-b"]
                 .into_iter()
-                .map(|source| SourceQuote { source: source.into(), mid: Fixed::from_int(100_000), ts: start })
+                .map(|source| SourceQuote {
+                    source: source.into(),
+                    mid: Fixed::from_int(100_000),
+                    ts: start,
+                    contract: None,
+                })
                 .collect(),
         },
     )?;

@@ -18,6 +18,7 @@ mod v17;
 mod v18;
 mod v19;
 mod v20;
+mod v21;
 
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
@@ -29,7 +30,7 @@ use chrono::NaiveDate;
 use common::reference::{ReferenceEntry, root_hex};
 use common::{
     AAPL, BTC, Client, DE40, ETH, EURUSD, Harness, OPERATOR_SEED, UNLISTED, USDJPY, acct, de40, f, market, ny,
-    operator, params, us_equities,
+    operator, params, quote, us_equities,
 };
 use engine_core::Engine;
 use engine_core::auth::MAX_EXPIRY_AHEAD_MS;
@@ -101,8 +102,8 @@ fn main() -> anyhow::Result<()> {
 /// stress that follows its inputs (`stress.rs`), and, under `V14`, the part in `v14.rs`, and, under `V15`, the part in
 /// `v15.rs`. Then, under `V16`, a lowered toxicity memory clamps the history a score weighs (`v16.rs`), under `V17`,
 /// the move window survives a halt (`v17.rs`), under `V18`, dated benchmark rates (`v18.rs`), under `V19`, MONKEY
-/// emissions (`v19.rs`), and under `V20`, custody receipt finality, reversal and reinclusion (`v20.rs`). Every client
-/// request is signed by its account's key unless the comment says otherwise.
+/// emissions (`v19.rs`), under `V20`, custody receipt finality, reversal and reinclusion (`v20.rs`), and under `V21`,
+/// quote hours and futures (`v21.rs`). Every client request is signed by its account's key unless a comment says not.
 fn session() -> Vec<Sequenced> {
     let mut h = Harness::signed();
     let (a, b, c, d, t, e) = (h.signer(1), h.signer(2), h.signer(3), h.signer(4), h.signer(5), h.signer(6));
@@ -128,7 +129,7 @@ fn session() -> Vec<Sequenced> {
     h.quotes(ETH, &["3000.5", "3000.7"]);
     h.price(AAPL, "230.25");
     h.price(UNLISTED, "1");
-    let malformed = SourceQuote { source: "venue0".into(), mid: f("-1"), ts: h.ts };
+    let malformed = SourceQuote { source: "venue0".into(), mid: f("-1"), ts: h.ts, contract: None };
     h.cmd(Command::Prices { market: BTC, quotes: vec![malformed] });
 
     // Market orders: fills, a slippage decline, a client-tightened bound, and refusals.
@@ -276,7 +277,7 @@ fn session() -> Vec<Sequenced> {
     // refused and leaves the venue's stale quote in place, and the first venue's next quote, stamped
     // earlier than its kept one, replaces it and prices the market.
     let ts = h.ts;
-    let ahead = |source: &str, lead_ms| SourceQuote { source: source.into(), mid: f("80000"), ts: ts + lead_ms };
+    let ahead = |source: &str, lead_ms| quote(source, "80000", ts + lead_ms);
     h.cmd(Command::Prices {
         market: BTC,
         quotes: vec![ahead("venue0", MAX_QUOTE_LEAD_MS), ahead("venue1", MAX_QUOTE_LEAD_MS + 1)],
@@ -494,5 +495,6 @@ fn session() -> Vec<Sequenced> {
     v18::session(&mut h);
     v19::session(&mut h);
     v20::session(&mut h);
+    v21::session(&mut h, a);
     h.log
 }

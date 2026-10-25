@@ -69,7 +69,8 @@ pub(crate) async fn run_with_cpu(cfg: NodeConfig, telemetry: Telemetry, cpu: Opt
 /// Runs every task but alert routing, which it supervises.
 /// Error cases:
 /// - operator rotation is enabled
-/// - `feeds.provider = "venues"` without `[feeds.venues]`, or the TLS config cannot be built
+/// - `feeds.provider = "venues"` without `[feeds.venues]`, an API key variable a venue connection
+///   names is unset, or the TLS config cannot be built
 /// - generating the TLS key, attesting the keys, opening the history index (or a fresh one in place
 ///   of an index the log does not match), recovering the log (including a log that records another
 ///   client auth or operator, or whose genesis did not apply in full, is not the config's, or is one
@@ -229,8 +230,9 @@ async fn serve_node(
             let tls = venue::tls_config()?;
             for conn in venues.connections {
                 let (name, tls, feed_tx) = (conn.venue.name(), tls.clone(), tx.clone());
+                let api_key = conn.api_key(|var| std::env::var(var).ok())?;
                 info!(venue = name, url = %conn.url, symbols = conn.symbols.len(), "starting venue feed");
-                tasks.spawn(async move { (name, venue::run(conn, timing, tls, feed_tx).await) });
+                tasks.spawn(async move { (name, venue::run(conn, api_key, timing, tls, feed_tx).await) });
             }
         }
     }

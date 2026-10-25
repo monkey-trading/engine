@@ -204,7 +204,7 @@ impl Harness {
         let quotes = mids
             .iter()
             .enumerate()
-            .map(|(i, mid)| SourceQuote { source: format!("venue{i}"), mid: f(mid), ts: self.ts })
+            .map(|(i, mid)| SourceQuote { source: format!("venue{i}"), mid: f(mid), ts: self.ts, contract: None })
             .collect();
         self.cmd(Command::Prices { market, quotes })
     }
@@ -281,7 +281,7 @@ pub fn f(s: &str) -> Fixed {
 
 /// A quote from `source` at `mid`, stamped `ts`.
 pub fn quote(source: &str, mid: &str, ts: Millis) -> SourceQuote {
-    SourceQuote { source: source.into(), mid: f(mid), ts }
+    SourceQuote { source: source.into(), mid: f(mid), ts, contract: None }
 }
 
 /// A distinct account per `n`.
@@ -345,6 +345,7 @@ pub fn market(id: MarketId, symbol: &str, class: AssetClass, schedule: Schedule,
         house_cap_bps: 5_000,
         min_order_notional: Fixed::ZERO,
         house_cap_floor: Fixed::ZERO,
+        contracts: vec![],
     }
 }
 

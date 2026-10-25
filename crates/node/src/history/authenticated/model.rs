@@ -196,6 +196,7 @@ pub(super) fn event_kind(event: &Event) -> Result<u8> {
         | Event::BenchmarkRateUndated { .. }
         | Event::MarketOpened { .. }
         | Event::MarketClosed { .. }
+        | Event::MarketRolled { .. }
         | Event::StressChanged { .. }
         | Event::PricesRejected { .. }
         | Event::AdminApplied

@@ -148,4 +148,14 @@ impl Harness {
         h.operator_admin(AdminCommand::InitEmissions(schedule));
         h
     }
+
+    /// `v17`, then `V18`'s dated benchmark rates, `V19`, `V20`, and `V21`, which refuses quotes
+    /// stamped outside a market's hours and prices markets from roll-adjusted futures contracts.
+    pub fn v21() -> Self {
+        let mut h = Harness::v17();
+        for version in [ProtocolVersion::V18, ProtocolVersion::V19, ProtocolVersion::V20, ProtocolVersion::V21] {
+            h.admin(AdminCommand::ActivateProtocol { version });
+        }
+        h
+    }
 }

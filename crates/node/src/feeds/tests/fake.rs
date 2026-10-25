@@ -164,9 +164,14 @@ pub fn spawn_feed_into(
     symbols: &[(MarketId, &str)],
     timing: Timing,
 ) -> JoinHandle<anyhow::Result<()>> {
-    let symbols = symbols.iter().map(|(market, symbol)| VenueSymbol { market: *market, symbol: (*symbol).into() });
-    let conn = VenueConnection { venue, url: url.to_owned(), symbols: symbols.collect() };
-    tokio::spawn(venue::run(conn, timing, venue::tls_config().expect("tls config"), tx))
+    let symbols = symbols.iter().map(|(market, symbol)| VenueSymbol {
+        market: *market,
+        symbol: (*symbol).into(),
+        contract: None,
+    });
+    let conn =
+        VenueConnection { venue, url: url.to_owned(), api_key_env: None, dataset: None, symbols: symbols.collect() };
+    tokio::spawn(venue::run(conn, None, timing, venue::tls_config().expect("tls config"), tx))
 }
 
 /// The next price command the feed sequences, failing the test after `WAIT`.
@@ -179,7 +184,7 @@ pub async fn next_prices(rx: &mut mpsc::Receiver<Request>) -> (MarketId, Vec<Sou
 
 /// The quote a venue's top of book becomes.
 pub fn quote(venue: Venue, mid: &str, ts: Millis) -> SourceQuote {
-    SourceQuote { source: venue.name().into(), mid: mid.parse().expect("mid"), ts }
+    SourceQuote { source: venue.name().into(), mid: mid.parse().expect("mid"), ts, contract: None }
 }
 
 /// RFC 3339 with microseconds, as Coinbase and Kraken write times.

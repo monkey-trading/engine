@@ -4,7 +4,8 @@
 //! a configured feed prices that has gone without a usable price for `alerts.no_price_after`. Each
 //! market no configured feed prices is named once, in its own `market_unfed` Warning, and never
 //! pages. A sequencer that answers no sample for that long raises `sequencer_stalled`, since no
-//! market can be priced meanwhile. It reads the engine's state, not the feeds, so any feed that
+//! market can be priced meanwhile. A market priced from futures that prices from the last contract
+//! its listing names raises `futures_last_contract`. It reads the engine's state, not the feeds, so any feed that
 //! sequences `Command::Prices` is covered.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -15,7 +16,7 @@ use std::time::Duration;
 use anyhow::anyhow;
 use engine_core::event::Reject;
 use engine_core::fixed::Rounding;
-use engine_core::price::{PriceError, compute_index};
+use engine_core::price::PriceError;
 use engine_core::types::{MarketId, Millis};
 use engine_core::{Engine, Fixed};
 use tokio::sync::{mpsc, oneshot};
@@ -47,6 +48,9 @@ pub struct MarketSample {
     pub house_net_exposure: Fixed,
     /// Venue and timestamp of the newest quote held from each venue.
     pub quotes: Vec<(String, Millis)>,
+    /// For a market priced from futures that prices from the last contract its listing names, that
+    /// contract: it can roll nowhere once the contract expires.
+    pub last_contract: Option<String>,
 }
 
 /// Why the engine could not price a trade in a market: its own index, or, for a market quoted in
@@ -67,6 +71,12 @@ pub struct NoPrice {
     named: BTreeSet<MarketId>,
 }
 
+/// Markets priced from futures alerted as pricing from the last contract their listing names.
+#[derive(Default)]
+pub struct LastContract {
+    alerted: BTreeSet<MarketId>,
+}
+
 /// Since when the sequencer has answered no sample, and whether the alert has fired.
 #[derive(Default)]
 pub struct Stall {
@@ -85,13 +95,19 @@ impl Sample {
                 symbol: market.spec.symbol.clone(),
                 open: market.open,
                 // The checks a fill makes: the market's own index, then its FX index.
-                price: compute_index(&market.quotes, &market.spec.price_rules, now)
+                price: market
+                    .index(now)
                     .map_err(Unpriced::Index)
                     .and_then(|_| engine.live_fx(*id).map(|_| ()).map_err(Unpriced::Fx)),
                 house_net_exposure: market
                     .mark
                     .map_or(Fixed::ZERO, |mark| market.usd_at_mark(-market.client_qty.mul(mark), Rounding::Up)),
                 quotes: market.quotes.values().map(|quote| (quote.source.clone(), quote.ts)).collect(),
+                last_contract: market
+                    .futures
+                    .as_ref()
+                    .filter(|_| market.next_contract().is_none())
+                    .map(|futures| futures.contract.clone()),
             })
             .collect();
         Sample { house_nav: engine.house_nav(), house_gross_exposure: engine.house_gross_exposure(), markets }
@@ -184,6 +200,36 @@ impl NoPrice {
     }
 }
 
+impl LastContract {
+    /// Warns once for each market priced from futures that prices from the last contract its
+    /// listing names, so the operator lists the next before it expires: a market whose front stops
+    /// quoting with no gap to its next recorded can never roll. Resolves once a next contract is
+    /// listed.
+    pub fn check(&mut self, sample: &Sample) {
+        for market in &sample.markets {
+            match &market.last_contract {
+                Some(contract) if self.alerted.insert(market.id) => {
+                    warn!(
+                        alert = "futures_last_contract",
+                        market = market.id,
+                        "{} prices from {contract}, the last contract its listing names: list the next before it expires",
+                        market.symbol
+                    );
+                }
+                None if self.alerted.remove(&market.id) => {
+                    info!(
+                        alert_resolved = "futures_last_contract",
+                        market = market.id,
+                        "{} lists a next contract",
+                        market.symbol
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 impl Stall {
     /// Fires `sequencer_stalled` once samples have gone unanswered for `after`, and resolves it at
     /// the next answer.
@@ -216,6 +262,7 @@ pub async fn run(
     let mut every = interval(SAMPLE_EVERY);
     every.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let (mut no_price, mut stall) = (NoPrice::new(sources.keys().copied().collect()), Stall::default());
+    let mut last_contract = LastContract::default();
     loop {
         every.tick().await;
         metrics.queue_depth.set(queue_depth(&tx));
@@ -236,6 +283,7 @@ pub async fn run(
         stall.check(true, Instant::now(), no_price_after);
         sample.record(&metrics, &sources, started_ms);
         no_price.check(&sample, Instant::now(), no_price_after);
+        last_contract.check(&sample);
     }
 }
 

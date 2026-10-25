@@ -71,7 +71,9 @@ async fn anvil_confirmation_finality_scenario() {
     let now = node.read(|e| e.now()).await;
     node.submit(Command::Prices {
         market: 1,
-        quotes: ["a", "b"].map(|source| SourceQuote { source: source.into(), mid: usdc("100"), ts: now }).to_vec(),
+        quotes: ["a", "b"]
+            .map(|source| SourceQuote { source: source.into(), mid: usdc("100"), ts: now, contract: None })
+            .to_vec(),
     })
     .await;
     let mut order = OrderRequest {

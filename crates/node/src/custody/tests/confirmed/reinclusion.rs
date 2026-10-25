@@ -122,7 +122,7 @@ async fn price(node: &Node, mid: &str) {
     let mid = usdc(mid);
     node.submit(Command::Prices {
         market: 1,
-        quotes: ["a", "b"].map(|source| SourceQuote { source: source.into(), mid, ts: now }).to_vec(),
+        quotes: ["a", "b"].map(|source| SourceQuote { source: source.into(), mid, ts: now, contract: None }).to_vec(),
     })
     .await;
 }

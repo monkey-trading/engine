@@ -20,6 +20,7 @@ pub fn every_event() -> Vec<Event> {
         Reject::ReduceOnly,
         Reject::NoPrice { error: PriceError::Stale { fresh: 1, needed: 2 } },
         Reject::NoPrice { error: PriceError::Divergent { divergence_bps: 30 } },
+        Reject::NoPrice { error: PriceError::OutOfRange { mid: -amount } },
         Reject::NoFxPrice { fx_market: 10 },
         Reject::Slippage { quoted: amount, live: amount, slippage_bps: 5 },
         Reject::InsufficientMargin { equity: amount, required: amount },
@@ -122,6 +123,7 @@ pub fn every_event() -> Vec<Event> {
         },
         Event::MarketOpened { market },
         Event::MarketClosed { market },
+        Event::MarketRolled { market, contract: "ESH7".into(), adjustment: -amount },
         Event::StressChanged { market, level: 2 },
         Event::PricesRejected { market, reason: "stale quote".into() },
         Event::AdminApplied,
@@ -156,6 +158,7 @@ pub fn every_event() -> Vec<Event> {
             | Event::BenchmarkRateUndated { .. }
             | Event::MarketOpened { .. }
             | Event::MarketClosed { .. }
+            | Event::MarketRolled { .. }
             | Event::StressChanged { .. }
             | Event::PricesRejected { .. }
             | Event::AdminApplied

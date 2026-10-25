@@ -52,6 +52,10 @@
 //!   trading losses, less debt written off, halve the budget every 182.5 days, cancel what no
 //!   account is allocated, and keep each account's cumulative entitlement in the state tree for the
 //!   vault to mint against.
+//! - From `V21`, a quote prices a market only from within one open session: it is refused unless
+//!   the market stays open from its stamp to its sequencing, and dropped after any closure; a market
+//!   may price from futures contracts, its index the front contract's median plus a roll adjustment
+//!   that takes the gap between the contracts at each roll.
 
 pub mod account;
 mod admin;
@@ -69,6 +73,7 @@ mod execution;
 pub mod fixed;
 pub use fixed::Fixed;
 mod funds;
+pub mod futures;
 mod hot_indexes;
 pub mod market;
 mod markouts;

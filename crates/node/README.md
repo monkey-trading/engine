@@ -63,9 +63,15 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   other, and refuses to start on a log that records one
 - Supervised tasks: any task stopping stops the node, and SIGTERM drains to a final checkpoint
 - Live crypto prices from Coinbase, Kraken, and Bitstamp over WebSocket: one supervised task per
-  venue, quotes stamped with the venue's own time, and reconnects with backoff
-- Alerts for refused venue messages (at most one a minute per venue, counting the rest), venue
-  outages, symbols with no fresh quote, and venue times well ahead of the host clock
+  venue connection, quotes stamped with the venue's own time, and reconnects with backoff
+- Live FX, index and commodity futures, and US share prices from market-data vendors, two per
+  market: Massive (FX, futures, and stocks feeds) and TraderMade over WebSocket with their API
+  keys, and Databento's live gateway over TCP with challenge-response authentication; quotes for
+  a futures contract carry its name, and a feed holds back quotes stamped or sent while their
+  market is closed and quotes for a contract the market does not take
+- Alerts for refused venue messages (at most one a minute per venue, counting the rest, with any API
+  key redacted), venue outages, symbols with no fresh quote while their market is open, and venue
+  times well ahead of the host clock
 - A `house_deficit` alert when house NAV falls below zero, at most one a minute while it keeps
   crossing zero
 - EVM custody: a strict majority of at least three RPC providers admits each deposit; from V20,
@@ -252,6 +258,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/config/mod.rs` — the node config schema, loading, and the config file's hash
 - `src/config/benchmarks.rs` — publisher endpoints, cadence, timeout, and catalogue coverage
 - `src/config/checkpoints.rs` — checkpoint relayer config and validation
+- `src/config/feeds.rs` — the `[feeds]` section: the mock feed, the venues and vendors with their
+  redacted API keys, and the checks on their endpoints, credentials, and symbols
+- `src/config/feeds_tests.rs` — vendor connection config tests
 - `src/config/custody.rs` — the `[custody.evm]` section, independent RPC providers, redacted
   URLs, and custody checks
 - `src/config/telemetry.rs` — the metrics listener and alert webhook config, and the redacting
@@ -338,10 +347,16 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/tests/anvil_finality.rs` — Anvil receipts through RPC quorum, watcher and sequencer approvals
 - `src/custody/tests/reorg.rs` — reorgs and forked answers against the proven chain
 - `src/feeds/mod.rs` — the feed index and the mock feed
-- `src/feeds/venue/mod.rs` — the venue task: connect, subscribe, sequence quotes, alert, reconnect
+- `src/feeds/venue/mod.rs` — the venue task: connect, subscribe, sequence quotes, reconnect, and
+  hold back quotes the engine would refuse
+- `src/feeds/venue/alerts.rs` — the venue task's alerts: outages, silent symbols, a clock ahead of
+  the host's, and refused messages
+- `src/feeds/venue/transport.rs` — a connection's messages over a WebSocket, or in lines over TCP
 - `src/feeds/venue/validation.rs` — the checks every venue's books pass before they are sequenced
-- `src/feeds/venue/confirm.rs` — confirming with the engine which markets the venue is quoting,
-  holding back markets it does not list, and settling a dropped connection's last quotes
+- `src/feeds/venue/confirm.rs` — confirming every symbol with the engine each tick: which the
+  venue is quoting, which markets it does not list, which contracts the listing does not name or
+  the market does not take, and changed market hours; and settling a dropped connection's last
+  quotes
 - `src/feeds/venue/quotes.rs` — the quotes held between ticks until the host clock reaches them,
   and the rule that decides whether the quote the engine holds counts as the venue quoting
 - `src/feeds/venue/setup.rs` — the TLS client config and reconnect backoff every connection shares
@@ -349,6 +364,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   paused time, held quotes against the engine's rule, kept books for unsubscribed symbols, the
   freshness rule, and backoff
 - `src/feeds/coinbase.rs`, `src/feeds/bitstamp.rs` — venue adapters
+- `src/feeds/massive.rs`, `src/feeds/tradermade.rs` — the Massive and TraderMade adapters: login,
+  subscription, and quotes; Massive's tests are in `src/feeds/massive/tests.rs`
+- `src/feeds/databento.rs` — the Databento adapter: the gateway's challenge-response handshake,
+  symbol mappings, and top-of-book records; its tests are in `src/feeds/databento/tests.rs`
 - `src/feeds/kraken/mod.rs` — the Kraken adapter: a kept order book verified against Kraken's
   checksum; `src/feeds/kraken/tests.rs` replays recorded book messages against it
 - `src/feeds/tests/mod.rs` — venue tasks against loopback venues: what they sequence, refuse,
@@ -358,7 +377,15 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/feeds/tests/late.rs` — venue tasks against a sequencer that answers late: when a quote
   counts as the venue quoting, and how a connection's last quotes are settled after it ends
 - `src/feeds/tests/mock.rs` — the mock feed stopping one market at its `stop_after`
-- `src/feeds/tests/scenario.rs` — the dev scenario through the sequencer and engine
+- `src/feeds/tests/scenario.rs` — the crypto feeds' dev scenario through the sequencer and engine
+- `src/feeds/tests/rwa.rs` — the RWA price feeds' dev scenario: loopback vendors price FX, index,
+  commodity, and share markets through the sequencer, across a market open and a futures roll,
+  and the log replays
+- `src/feeds/tests/vendors.rs` — loopback Massive, TraderMade, and Databento vendors
+- `src/feeds/tests/hours.rs` — quotes held back while a market is closed and for a contract the
+  market does not take, without silence alerts
+- `src/feeds/tests/rwa_support.rs` — schedules open around the clock, signed relistings, and a
+  record of every applied command, for the RWA feed tests
 - `src/throttle.rs` — holds a repeating alert to one a minute, counting the ones it held back
 - `src/clock.rs` — the wall and monotonic clocks the sequencer stamps and checks with
 - `src/metrics/mod.rs` — the metrics registry, event counting, and the `/metrics` route
@@ -381,9 +408,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `tests/reference/` — one node-format reference log per protocol version, never regenerated
 - `tests/replay.rs` — replays a log the node wrote before protocol versions, kept in
   `tests/fixtures/`, and checks that `engine replay` fails on a log it cannot verify
-- `tests/production_genesis.rs` — loads `config/production-genesis.toml` as a dev node's genesis,
+- `tests/production_genesis/` — loads `config/production-genesis.toml` as a dev node's genesis,
   checks the launch values and quote currencies, and steps it through weeks with holidays and early
-  closes
+  closes (`main.rs`); checks each market reaches every divergence stress level (`divergence.rs`);
+  and recomputes each futures market's roll times from its exchange's calendar and rolls the engine
+  through them (`futures.rs`)
 
 ## Usage
 
@@ -970,6 +999,29 @@ unless it is HTTP to a loopback address, and the node refuses to start when a na
 unset. A node whose TEE or custody provider is not `mock` refuses to start without
 `[alerts.critical]`, since its Critical alerts would otherwise page no one.
 
+Vendor API keys are credentials too: each `[[feeds.venues.connections]]` entry for Massive,
+TraderMade, or Databento names the environment variable that holds its key (`api_key_env`), and a
+node with `feeds.provider = "venues"` refuses to start while a named variable is unset or empty.
+A Massive connection names one of its `/forex`, `/futures`, or `/stocks` feeds; a Databento one
+names its live gateway as `tcp://<gateway>.lsg.databento.com:13000` and the `dataset` it serves; a
+symbol for a market priced from futures names the `contract` it quotes, one listed in the market's
+`contracts`, and the feed sends quotes for each contract the market takes now:
+
+```toml
+[[feeds.venues.connections]]
+venue = "massive"
+url = "wss://socket.massive.com/futures"
+api_key_env = "MASSIVE_API_KEY"
+symbols = [{ market = 20, symbol = "ESZ6", contract = "ESZ6" }, { market = 20, symbol = "ESH7", contract = "ESH7" }]
+
+[[feeds.venues.connections]]
+venue = "databento"
+url = "tcp://glbx-mdp3.lsg.databento.com:13000"
+api_key_env = "DATABENTO_API_KEY"
+dataset = "GLBX.MDP3"
+symbols = [{ market = 20, symbol = "ESZ6", contract = "ESZ6" }, { market = 20, symbol = "ESH7", contract = "ESH7" }]
+```
+
 ### Dated benchmark worker
 
 Append `config/benchmark-publishers.toml` to a complete node config to enable publisher ingestion.
@@ -1055,6 +1107,10 @@ cargo test -p engine-node trusted_time::tests::scenario
 
 # The production build's tests: it refuses the dev config the other tests load
 cargo test -p engine-node --features production --lib production_build
+
+# Dev scenario: loopback market-data vendors price FX, index and commodity futures, and a share,
+# two vendors each, across a market open and a futures roll, and the log replays
+./scripts/dev-rwa-feeds.sh
 ```
 
 ## Authors

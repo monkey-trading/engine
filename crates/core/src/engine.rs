@@ -20,10 +20,11 @@ use crate::deposits::{CustodyCheckpoint, LegacyDeposit, RecordedDeposit};
 use crate::emissions::{Emissions, PeriodResult, TokenUnits};
 use crate::event::{Event, Reject};
 use crate::fixed::Rounding;
+use crate::futures::FuturesState;
 use crate::market::MarketSpec;
 use crate::merkle::state::{Changed, StateTree, is_zero};
 use crate::params::ProtocolParams;
-use crate::price::{Index, SourceQuote, compute_index};
+use crate::price::{Index, SourceQuote};
 use crate::protocol::ProtocolVersion;
 pub use crate::stress::{MoveBucket, StressState};
 use crate::tracked::{TrackedMap, TrackedSet};
@@ -141,6 +142,10 @@ pub struct MarketState {
     /// Left out of the encoding while `None`, so roots before `V12` do not change.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub processed_index: Option<Index>,
+    /// From `V21`, where a market priced from futures stands in its roll order. `None` for any other
+    /// market, and left out of the encoding then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub futures: Option<FuturesState>,
 }
 
 /// A fill waiting to be marked against the index once its horizon has passed.
@@ -172,6 +177,7 @@ impl MarketState {
             stress: StressState::default(),
             resting: BTreeMap::new(),
             processed_index: None,
+            futures: None,
         }
     }
 
@@ -206,6 +212,7 @@ impl Engine {
         }
         self.ensure_hot_indexes();
         self.last_seq = Some(sequenced.seq);
+        let last_now = self.now;
         self.now = sequenced.ts;
 
         let mut events = Vec::new();
@@ -224,6 +231,9 @@ impl Engine {
                 }
                 _ => None,
             };
+            if self.protocol_version >= ProtocolVersion::V21 {
+                self.drop_quotes_across_closures(last_now);
+            }
             self.advance_markets(priced, &mut events);
         }
         let benchmark_batch = self.protocol_version >= ProtocolVersion::V18 && sequenced.cmd.is_benchmark_batch();
@@ -416,9 +426,29 @@ impl Engine {
         if !fx.spec.schedule.is_open(self.now) || market.fx_mark.is_none() {
             return Err(no_price);
         }
-        match compute_index(&fx.quotes, &fx.spec.price_rules, self.now) {
+        match fx.index(self.now) {
             Ok(index) if currency.converts_at(index.mid) => Ok(Some(index.mid)),
             _ => Err(no_price),
+        }
+    }
+
+    /// From `V21`, drops the quotes each market holds from before `last_now`, the previous command's
+    /// time, wherever the market was not open throughout since: a close between two commands,
+    /// observed or not, leaves no quote from before it, so the first index after an open comes from
+    /// quotes stamped after it. Quotes stored by this command passed `MarketState::in_session`, so
+    /// none of them predates the closure.
+    fn drop_quotes_across_closures(&mut self, last_now: Millis) {
+        let now = self.now;
+        let ids: Vec<MarketId> = self
+            .markets
+            .iter()
+            .filter(|(_, market)| {
+                market.holds_quotes_to(last_now) && !market.spec.schedule.open_throughout(last_now, now)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for market_id in ids {
+            self.markets.get_mut(&market_id).expect("listed").drop_quotes_to(last_now);
         }
     }
 

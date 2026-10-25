@@ -12,10 +12,11 @@
 //!   market's first price; `quoteCurrency` 0 for USD, 1 for EUR, 2 for GBP, and 3 for JPY, with
 //!   `fxMarket` the market whose index converts it to USD (0 for USD); `fxMarked` false and
 //!   `fxMark` 0 until that index has priced it; and `stateHash` the keccak-256 of the JSON encoding
-//!   of its spec, venue quotes, open and reduce-only flags, stress state, and, from `V12`, the index
-//!   it was last processed at. A market's index of
-//!   resting orders is left out: the order leaves hold those orders. An amount in a EUR or GBP
-//!   market is `fxMark` times as many USD, and one in a JPY market `1 / fxMark` times as many.
+//!   of its spec, venue quotes, open and reduce-only flags, stress state, from `V12` the index it
+//!   was last processed at, and from `V21`, for a market priced from futures, its roll state. A
+//!   market's index of resting orders is left out: the order leaves hold those orders. An amount in
+//!   a EUR or GBP market is `fxMark` times as many USD, and one in a JPY market `1 / fxMark` times
+//!   as many.
 //! - **Resting order:** the keccak-256 of the JSON encoding of `{ "account", "order" }`.
 //! - **Request nonce:** `keccak256(abi.encode(uint64 nonce))`, the account's next nonce.
 //! - **Custody receipt / transaction-local index:** the keccak-256 of the record's JSON encoding.
@@ -55,6 +56,7 @@ use crate::Fixed;
 use crate::account::{Account, Position, RestingOrder};
 use crate::emissions::{PeriodResult, TokenUnits};
 use crate::engine::{MarketState, Markout, StressState};
+use crate::futures::FuturesState;
 use crate::market::{MarketSpec, QuoteCurrency};
 use crate::merkle::keccak;
 use crate::price::{Index, SourceQuote};
@@ -141,7 +143,8 @@ pub struct MarketLeaf {
     pub client_qty: Fixed,
     pub client_cost: Fixed,
     /// keccak-256 of the JSON encoding of the market's spec, venue quotes, open and reduce-only
-    /// flags, stress state, and, from `V12`, the index it was last processed at.
+    /// flags, stress state, from `V12` the index it was last processed at, and from `V21` any roll
+    /// state.
     pub state_hash: B256,
 }
 
@@ -156,6 +159,9 @@ struct MarketRest<'a> {
     /// Left out while `None`, as it is before `V12`, so earlier roots stand.
     #[serde(skip_serializing_if = "Option::is_none")]
     processed_index: &'a Option<Index>,
+    /// Left out while `None`, as it is for every market before `V21`, so earlier roots stand.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    futures: &'a Option<FuturesState>,
 }
 
 /// What a resting order's leaf covers.
@@ -232,8 +238,10 @@ impl MarketLeaf {
             stress,
             resting: _,
             processed_index,
+            futures,
         } = market;
-        let rest = MarketRest { spec, quotes, open: *open, reduce_only: *reduce_only, stress, processed_index };
+        let rest =
+            MarketRest { spec, quotes, open: *open, reduce_only: *reduce_only, stress, processed_index, futures };
         MarketLeaf {
             mark: *mark,
             quote_currency: spec.quote_currency,

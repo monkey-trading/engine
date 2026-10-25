@@ -88,7 +88,7 @@ impl DevNode {
     fn price(&mut self, market: MarketId, mid: &str) {
         let quotes = ["mock-a", "mock-b", "mock-c"]
             .into_iter()
-            .map(|source| SourceQuote { source: source.into(), mid: f(mid), ts: self.ts })
+            .map(|source| SourceQuote { source: source.into(), mid: f(mid), ts: self.ts, contract: None })
             .collect();
         self.apply(Command::Prices { market, quotes });
     }

@@ -303,8 +303,9 @@ impl Node {
     /// Prices BTC at `mid` from two venues, stamped now.
     async fn price_btc(&self, mid: &str) {
         let ts = self.stamps.now_ms();
-        let quotes =
-            ["a", "b"].map(|venue| SourceQuote { source: venue.into(), mid: mid.parse().unwrap(), ts }).to_vec();
+        let quotes = ["a", "b"]
+            .map(|venue| SourceQuote { source: venue.into(), mid: mid.parse().unwrap(), ts, contract: None })
+            .to_vec();
         self.state.submit(Command::Prices { market: 1, quotes }).await.expect("the sequencer is running");
     }
 

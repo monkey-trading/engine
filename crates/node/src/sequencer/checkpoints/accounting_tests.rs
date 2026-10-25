@@ -331,7 +331,7 @@ fn prices(market: u32, mid: &str, ts: Millis) -> Command {
     Command::Prices {
         market,
         quotes: ["venue-a", "venue-b"]
-            .map(|source| SourceQuote { source: source.into(), mid: mid.parse().unwrap(), ts })
+            .map(|source| SourceQuote { source: source.into(), mid: mid.parse().unwrap(), ts, contract: None })
             .to_vec(),
     }
 }

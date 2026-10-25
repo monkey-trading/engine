@@ -344,7 +344,7 @@ impl Fixture {
             market: 1,
             quotes: ["venue-a", "venue-b"]
                 .into_iter()
-                .map(|source| SourceQuote { source: source.into(), mid: fixed("100000"), ts: at })
+                .map(|source| SourceQuote { source: source.into(), mid: fixed("100000"), ts: at, contract: None })
                 .collect(),
         });
         let events = f.submit(Command::PlaceOrder(OrderRequest {

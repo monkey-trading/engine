@@ -41,6 +41,7 @@ fn command_latency() {
                             source: format!("venue{venue}"),
                             mid: f(if sample % 2 == 0 { "100.0001" } else { "100" }),
                             ts,
+                            contract: None,
                         })
                         .collect(),
                 }

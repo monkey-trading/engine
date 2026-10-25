@@ -26,6 +26,32 @@
 #   their venues (quote_currency). Their profit and loss accrues in that
 #   currency and converts to USD at the engine's own USD-JPY, EUR-USD and
 #   GBP-USD prices, which are listed before them.
+# - Futures (#32): from protocol V21 the index and commodity markets (ids
+#   20-25 and 30-33) price from their front futures contract. The index is
+#   the front contract's median plus the sum of every roll's gap (additive
+#   adjustment). Each listing's `contracts` names its contracts in roll order,
+#   with the time the index rolls onto each, through early 2028; a relisting
+#   adds the next before the last becomes the front. A contract's name is its
+#   exchange root and month code: CME ES, NQ, YM, NIY, GC, SI and CL, Eurex
+#   FDAX, and ICE Z (FTSE 100) and BRN (Brent). The roll rules, decided by
+#   the owner on 2026-10-25, follow exchange conventions:
+#   - Index futures roll 8 calendar days before quarterly expiry, at 14:30
+#     UTC on the Thursday before the third Friday of March, June, September
+#     and December. Japan 225 prices from CME's yen Nikkei (NIY), which
+#     expires a week earlier, when Osaka sets its final settlement on the
+#     second Friday, so it rolls on the Thursday before that, at 01:00 UTC in
+#     Osaka's day session.
+#   - Gold and silver roll 2 business days before first notice, the last
+#     business day of the month before delivery, at 14:30 UTC, between active
+#     months only: gold's Feb, Apr, Jun, Aug, Oct and Dec, silver's Mar, May,
+#     Jul, Sep and Dec.
+#   - WTI and Brent roll 2 business days before last trade, every month, at
+#     14:30 UTC. WTI's last trade is 3 business days before the 25th of the
+#     month before delivery, or 4 when the 25th is not a business day. Brent's
+#     is ICE's published one:
+#     https://www.ice.com/products/219/Brent-Crude-Futures/expiry
+#   Business days are the exchange's: CME's exclude US holidays, and ICE
+#   Futures Europe's exclude UK bank holidays and 24 and 31 December.
 # - Benchmark rates are supplied by the separate signed publisher worker (#33).
 #   Complete the node config with config/benchmark-publishers.toml and run the worker
 #   before serving. With no rate, a market accrues no financing and raises a Critical alert.
@@ -362,6 +388,14 @@ margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100
 spread_tiers = [{ up_to = "5000000", bps = 0 }, { up_to = "25000000", bps = 1 }, { bps = 4 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
+contracts = [
+  { contract = "ESZ6", from = "2026-09-10T14:30:00Z" },
+  { contract = "ESH7", from = "2026-12-10T14:30:00Z" },
+  { contract = "ESM7", from = "2027-03-11T14:30:00Z" },
+  { contract = "ESU7", from = "2027-06-10T14:30:00Z" },
+  { contract = "ESZ7", from = "2027-09-09T14:30:00Z" },
+  { contract = "ESH8", from = "2027-12-09T14:30:00Z" },
+]
 
 # CME Globex equity index futures, Chicago time. Halt times are unverified: see the header.
 [genesis.markets.schedule]
@@ -401,6 +435,14 @@ margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100
 spread_tiers = [{ up_to = "5000000", bps = 0 }, { up_to = "25000000", bps = 1 }, { bps = 4 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
+contracts = [
+  { contract = "NQZ6", from = "2026-09-10T14:30:00Z" },
+  { contract = "NQH7", from = "2026-12-10T14:30:00Z" },
+  { contract = "NQM7", from = "2027-03-11T14:30:00Z" },
+  { contract = "NQU7", from = "2027-06-10T14:30:00Z" },
+  { contract = "NQZ7", from = "2027-09-09T14:30:00Z" },
+  { contract = "NQH8", from = "2027-12-09T14:30:00Z" },
+]
 
 # CME Globex equity index futures, Chicago time. Halt times are unverified: see the header.
 [genesis.markets.schedule]
@@ -440,6 +482,14 @@ margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100
 spread_tiers = [{ up_to = "5000000", bps = 0 }, { up_to = "25000000", bps = 1 }, { bps = 4 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
+contracts = [
+  { contract = "YMZ6", from = "2026-09-10T14:30:00Z" },
+  { contract = "YMH7", from = "2026-12-10T14:30:00Z" },
+  { contract = "YMM7", from = "2027-03-11T14:30:00Z" },
+  { contract = "YMU7", from = "2027-06-10T14:30:00Z" },
+  { contract = "YMZ7", from = "2027-09-09T14:30:00Z" },
+  { contract = "YMH8", from = "2027-12-09T14:30:00Z" },
+]
 
 # CME Globex equity index futures, Chicago time. Halt times are unverified: see the header.
 [genesis.markets.schedule]
@@ -480,6 +530,14 @@ margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100
 spread_tiers = [{ up_to = "5000000", bps = 0 }, { up_to = "25000000", bps = 1 }, { bps = 4 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 financing = { benchmark = "ESTR", markup_bps = 250, day_basis = 360 }
+contracts = [
+  { contract = "FDAXZ6", from = "2026-09-10T14:30:00Z" },
+  { contract = "FDAXH7", from = "2026-12-10T14:30:00Z" },
+  { contract = "FDAXM7", from = "2027-03-11T14:30:00Z" },
+  { contract = "FDAXU7", from = "2027-06-10T14:30:00Z" },
+  { contract = "FDAXZ7", from = "2027-09-09T14:30:00Z" },
+  { contract = "FDAXH8", from = "2027-12-09T14:30:00Z" },
+]
 
 # Eurex DAX Futures, Berlin time, with the winter 01:10 open as special sessions: see the header.
 [genesis.markets.schedule]
@@ -664,6 +722,14 @@ margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100
 spread_tiers = [{ up_to = "5000000", bps = 0 }, { up_to = "25000000", bps = 1 }, { bps = 4 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 financing = { benchmark = "SONIA", markup_bps = 250, day_basis = 365 }
+contracts = [
+  { contract = "ZZ6", from = "2026-09-10T14:30:00Z" },
+  { contract = "ZH7", from = "2026-12-10T14:30:00Z" },
+  { contract = "ZM7", from = "2027-03-11T14:30:00Z" },
+  { contract = "ZU7", from = "2027-06-10T14:30:00Z" },
+  { contract = "ZZ7", from = "2027-09-09T14:30:00Z" },
+  { contract = "ZH8", from = "2027-12-09T14:30:00Z" },
+]
 
 # ICE Futures Europe FTSE 100 Index Future, London time.
 [genesis.markets.schedule]
@@ -706,6 +772,14 @@ margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100
 spread_tiers = [{ up_to = "5000000", bps = 0 }, { up_to = "25000000", bps = 1 }, { bps = 4 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 financing = { benchmark = "TONA", markup_bps = 250, day_basis = 365 }
+contracts = [
+  { contract = "NIYZ6", from = "2026-09-03T01:00:00Z" },
+  { contract = "NIYH7", from = "2026-12-03T01:00:00Z" },
+  { contract = "NIYM7", from = "2027-03-04T01:00:00Z" },
+  { contract = "NIYU7", from = "2027-06-03T01:00:00Z" },
+  { contract = "NIYZ7", from = "2027-09-02T01:00:00Z" },
+  { contract = "NIYH8", from = "2027-12-02T01:00:00Z" },
+]
 
 # Osaka Exchange Nikkei 225 Futures, Tokyo time. UNVERIFIED: see the header.
 [genesis.markets.schedule]
@@ -742,6 +816,17 @@ margin_tiers = [{ up_to = "2000000", bps = 100 }, { bps = 500 }]
 spread_tiers = [{ up_to = "2000000", bps = 0 }, { up_to = "10000000", bps = 2 }, { bps = 6 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
+contracts = [
+  { contract = "GCZ6", from = "2026-09-28T14:30:00Z" },
+  { contract = "GCG7", from = "2026-11-25T14:30:00Z" },
+  { contract = "GCJ7", from = "2027-01-27T14:30:00Z" },
+  { contract = "GCM7", from = "2027-03-29T14:30:00Z" },
+  { contract = "GCQ7", from = "2027-05-26T14:30:00Z" },
+  { contract = "GCV7", from = "2027-07-28T14:30:00Z" },
+  { contract = "GCZ7", from = "2027-09-28T14:30:00Z" },
+  { contract = "GCG8", from = "2027-11-26T14:30:00Z" },
+  { contract = "GCJ8", from = "2028-01-27T14:30:00Z" },
+]
 
 # CME Globex metals and energy futures, Chicago time. Halt times are unverified: see the header.
 [genesis.markets.schedule]
@@ -781,6 +866,16 @@ margin_tiers = [{ up_to = "2000000", bps = 100 }, { bps = 500 }]
 spread_tiers = [{ up_to = "2000000", bps = 0 }, { up_to = "10000000", bps = 2 }, { bps = 6 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
+contracts = [
+  { contract = "SIZ6", from = "2026-08-27T14:30:00Z" },
+  { contract = "SIH7", from = "2026-11-25T14:30:00Z" },
+  { contract = "SIK7", from = "2027-02-24T14:30:00Z" },
+  { contract = "SIN7", from = "2027-04-28T14:30:00Z" },
+  { contract = "SIU7", from = "2027-06-28T14:30:00Z" },
+  { contract = "SIZ7", from = "2027-08-27T14:30:00Z" },
+  { contract = "SIH8", from = "2027-11-26T14:30:00Z" },
+  { contract = "SIK8", from = "2028-02-25T14:30:00Z" },
+]
 
 # CME Globex metals and energy futures, Chicago time. Halt times are unverified: see the header.
 [genesis.markets.schedule]
@@ -820,6 +915,24 @@ margin_tiers = [{ up_to = "2000000", bps = 100 }, { bps = 500 }]
 spread_tiers = [{ up_to = "2000000", bps = 0 }, { up_to = "10000000", bps = 2 }, { bps = 6 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
+contracts = [
+  { contract = "CLZ6", from = "2026-10-16T14:30:00Z" },
+  { contract = "CLF7", from = "2026-11-18T14:30:00Z" },
+  { contract = "CLG7", from = "2026-12-17T14:30:00Z" },
+  { contract = "CLH7", from = "2027-01-15T14:30:00Z" },
+  { contract = "CLJ7", from = "2027-02-18T14:30:00Z" },
+  { contract = "CLK7", from = "2027-03-18T14:30:00Z" },
+  { contract = "CLM7", from = "2027-04-16T14:30:00Z" },
+  { contract = "CLN7", from = "2027-05-18T14:30:00Z" },
+  { contract = "CLQ7", from = "2027-06-17T14:30:00Z" },
+  { contract = "CLU7", from = "2027-07-16T14:30:00Z" },
+  { contract = "CLV7", from = "2027-08-18T14:30:00Z" },
+  { contract = "CLX7", from = "2027-09-17T14:30:00Z" },
+  { contract = "CLZ7", from = "2027-10-18T14:30:00Z" },
+  { contract = "CLF8", from = "2027-11-17T14:30:00Z" },
+  { contract = "CLG8", from = "2027-12-16T14:30:00Z" },
+  { contract = "CLH8", from = "2028-01-18T14:30:00Z" },
+]
 
 # CME Globex metals and energy futures, Chicago time. Halt times are unverified: see the header.
 [genesis.markets.schedule]
@@ -859,6 +972,25 @@ margin_tiers = [{ up_to = "2000000", bps = 100 }, { bps = 500 }]
 spread_tiers = [{ up_to = "2000000", bps = 0 }, { up_to = "10000000", bps = 2 }, { bps = 6 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
+contracts = [
+  { contract = "BRNZ6", from = "2026-09-28T14:30:00Z" },
+  { contract = "BRNF7", from = "2026-10-28T14:30:00Z" },
+  { contract = "BRNG7", from = "2026-11-26T14:30:00Z" },
+  { contract = "BRNH7", from = "2026-12-23T14:30:00Z" },
+  { contract = "BRNJ7", from = "2027-01-27T14:30:00Z" },
+  { contract = "BRNK7", from = "2027-02-24T14:30:00Z" },
+  { contract = "BRNM7", from = "2027-03-25T14:30:00Z" },
+  { contract = "BRNN7", from = "2027-04-28T14:30:00Z" },
+  { contract = "BRNQ7", from = "2027-05-26T14:30:00Z" },
+  { contract = "BRNU7", from = "2027-06-28T14:30:00Z" },
+  { contract = "BRNV7", from = "2027-07-28T14:30:00Z" },
+  { contract = "BRNX7", from = "2027-08-26T14:30:00Z" },
+  { contract = "BRNZ7", from = "2027-09-28T14:30:00Z" },
+  { contract = "BRNF8", from = "2027-10-27T14:30:00Z" },
+  { contract = "BRNG8", from = "2027-11-26T14:30:00Z" },
+  { contract = "BRNH8", from = "2027-12-23T14:30:00Z" },
+  { contract = "BRNJ8", from = "2028-01-27T14:30:00Z" },
+]
 
 # ICE Futures Europe Brent, fixed in New York time: see the header.
 [genesis.markets.schedule]
