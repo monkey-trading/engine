@@ -27,9 +27,6 @@ async fn dev_scenario_restart_stays_bounded_as_the_log_grows_and_skips_a_corrupt
     for target in [200, 2_000] {
         let node = Node::start(cfg).await.unwrap();
         while submitted < target {
-            if submitted % 200 == 0 {
-                node.refresh_time().await;
-            }
             node.submit(deposit(1, &format!("restart-{submitted}"))).await;
             submitted += 1;
         }

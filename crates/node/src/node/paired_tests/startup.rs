@@ -53,7 +53,8 @@ async fn corrupt_latest_pair_falls_back_and_all_pairs_missing_rebuilds_exact_log
     for n in 0..25 {
         node.submit(deposit(1, &format!("fallback-{n}"))).await;
     }
-    // No capture is in flight at shutdown, so the final checkpoint is cached too.
+    // No capture is in flight at shutdown, so the final checkpoint is cached and an earlier pair
+    // exists to fall back to.
     node.history_caught_up().await;
     let (cfg, reader) = node.stop().await;
     drop(reader);
@@ -201,10 +202,7 @@ async fn history_retirement_keeps_pace_while_every_checkpoint_is_captured() {
     cfg.node.checkpoint_every = 50;
     let node = Node::start(cfg).await.unwrap();
     // One history commit, and so one retirement receipt, per command.
-    for n in 0..1_100 {
-        if n % 100 == 0 {
-            node.refresh_time().await;
-        }
+    for _ in 0..1_100 {
         node.submit(Command::Tick).await;
         node.history_caught_up().await;
     }

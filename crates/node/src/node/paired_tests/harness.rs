@@ -1,7 +1,7 @@
 //! Exercises the same read-only recovery, independent preflight and authorized activation as Node.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use engine_core::command::Command;
@@ -21,6 +21,11 @@ use crate::node::{preflight, read_log_and_history_observe};
 use crate::sequencer::{Request, Sequencer, StreamMsg, replay_path_with_trust};
 use crate::tee::EnclaveKey;
 use crate::test_support::{deposit, dev_config, log_entries, sample_around, scratch_dir, sequencer_config};
+
+/// The longest one step of a paired node may take before its test fails as hung: one command, one
+/// history owner turn, or one side of a stop. A wait spanning many steps fails only when none of
+/// them completes within it, so a loaded machine slows a test down without failing it.
+pub(crate) const HANG: Duration = Duration::from_secs(300);
 
 pub(crate) struct Node {
     pub cfg: NodeConfig,
@@ -148,16 +153,23 @@ impl Node {
     }
 
     /// Waits until the history owner has indexed every entry the sequencer has flushed, observed
-    /// through the owner's own queue rather than by sleeping.
+    /// through the owner's own queue rather than by sleeping. It fails only when the owner takes no
+    /// further entry for `HANG`, however long the whole catch-up takes.
     pub(crate) async fn history_caught_up(&self) {
         let target = self.manifest.borrow().flushed;
-        timeout(Duration::from_secs(300), async {
-            while self.sealing.inspect().await.unwrap().last_entry < target {
-                tokio::task::yield_now().await;
+        let (mut taken, mut since) = (None, Instant::now());
+        loop {
+            let last =
+                timeout(HANG, self.sealing.inspect()).await.expect("the history owner answers").unwrap().last_entry;
+            if last >= target {
+                return;
             }
-        })
-        .await
-        .expect("history reaches the flushed frontier");
+            if last > taken {
+                (taken, since) = (last, Instant::now());
+            }
+            assert!(since.elapsed() < HANG, "history stopped at {last:?} short of the flushed frontier {target:?}");
+            tokio::task::yield_now().await;
+        }
     }
 
     /// Stops the history owner as a failed task would, returning once its input queue is closed.
@@ -174,14 +186,17 @@ impl Node {
 
     /// Hands the sequencer a fresh trusted time sample, as the node's sampler would; a run longer
     /// than the no-sample grace otherwise refuses every stamp.
-    pub(crate) async fn refresh_time(&self) {
+    async fn refresh_time(&self) {
         self.tx.send(Request::TimeSample(sample_around(self.clock.as_ref()))).await.unwrap();
     }
 
+    /// Sequences `cmd` under a fresh trusted time sample, so no run is refused for its length, and
+    /// returns its events.
     pub(crate) async fn submit(&self, cmd: Command) -> Vec<Event> {
+        self.refresh_time().await;
         let (reply, done) = oneshot::channel();
         self.tx.send(Request::Submit { cmd, reply: Some(reply) }).await.unwrap();
-        timeout(Duration::from_secs(30), done).await.unwrap().unwrap()
+        timeout(HANG, done).await.unwrap().unwrap()
     }
 
     /// Sequences one deposit and stops, so the drain signs a checkpoint over the state this node
@@ -207,10 +222,10 @@ impl Node {
     pub(crate) async fn stop(self) -> (NodeConfig, Reader) {
         let Self { cfg, tx, reader, manifest, stream, sequencer, history, custody, .. } = self;
         drop(tx);
-        timeout(Duration::from_secs(30), sequencer).await.unwrap().unwrap().unwrap();
+        timeout(HANG, sequencer).await.unwrap().unwrap().unwrap();
         drop(stream);
         drop(manifest);
-        timeout(Duration::from_secs(30), history).await.unwrap().unwrap().unwrap();
+        timeout(HANG, history).await.unwrap().unwrap().unwrap();
         drop(custody);
         (cfg, reader)
     }

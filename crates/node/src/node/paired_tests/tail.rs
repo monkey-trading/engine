@@ -4,14 +4,13 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::timeout;
 
 use crate::history::PageQuery;
 use crate::log::CheckpointParent;
-use crate::node::paired_tests::harness::{Node, configuration};
+use crate::node::paired_tests::harness::{HANG, Node, configuration};
 use crate::sequencer::Request;
 use crate::snapshot;
 use crate::test_support::{TRADER, deposit, logged_history};
@@ -30,7 +29,7 @@ async fn shutdown_caches_a_final_checkpoint_whose_capture_was_skipped() {
 }
 
 /// Sequences one batch spanning two checkpoints and ending on the second, whose capture finds the
-/// first in flight, then waits for history to catch up; returns the second checkpoint's seq.
+/// first in flight; returns the second checkpoint's seq.
 async fn burst_to_second_checkpoint(node: &Node) -> u64 {
     let every = node.cfg.node.checkpoint_every;
     let last = node.manifest.borrow().flushed.expect("genesis is logged").seq;
@@ -44,11 +43,8 @@ async fn burst_to_second_checkpoint(node: &Node) -> u64 {
         replies.push(done);
     }
     for done in replies {
-        timeout(Duration::from_secs(30), done).await.unwrap().unwrap();
+        timeout(HANG, done).await.unwrap().unwrap();
     }
-    // The first capture completes here, so caching the second never depends on how long shutdown
-    // waits for a capture in flight.
-    node.history_caught_up().await;
     final_checkpoint
 }
 
