@@ -332,3 +332,4 @@ and dormant-order scans. They need verification on the PR's Linux runner before 
 When sharing a Cargo target across worktrees, ensure each crate actually recompiles from the
 intended source: touching `crates/core/src/lib.rs` before each build avoids stale mtime-based
 fingerprints. Verify the compile path in the build log.
+
