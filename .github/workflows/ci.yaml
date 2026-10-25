@@ -50,12 +50,14 @@ jobs:
             while IFS= read -r file; do
               case "$file" in
                 # Read by no build, test, scenario, or image.
-                agents/* | AGENTS.md | CLAUDE.md | README.md | SECURITY.md | image/README.md | research/*) ;;
+                agents/* | AGENTS.md | CLAUDE.md | README.md | SECURITY.md | research/* | image/README.md \
+                  | crates/core/README.md | crates/node/README.md) ;;
                 # The image embeds config/test-keys.toml and boots on config/dev.toml.
                 crates/* | Cargo.toml | Cargo.lock | config/dev.toml | config/test-keys.toml)
                   areas+=" rust scenarios image" ;;
                 # Read by the node's tests, which the checkpoint scenario also compiles.
-                config/* | ops/*) areas+=" rust scenarios" ;;
+                config/anvil.toml | config/benchmark-publishers.toml | config/production-genesis.toml | ops/*)
+                  areas+=" rust scenarios" ;;
                 rustfmt.toml | deny.toml | scripts/check-file-loc.sh | scripts/check-reference-logs.sh)
                   areas+=" rust" ;;
                 # The deposit and checkpoint scenarios deploy the vault.
