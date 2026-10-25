@@ -222,6 +222,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   and the checks on what it reads
 - `src/api/mod.rs` — REST routes, request signature checks, and the request span
 - `src/api/admin.rs` — the operator's admin route, checked before it is sequenced
+- `src/api/distributions.rs` — an account's cumulative USDC distribution with its proof against the
+  last checkpoint's root, for the vault's `claimDistribution`
 - `src/api/benchmark_schedule.rs` — capped, bounded watches of the durable rollover schedule
 - `src/api/benchmark_tests.rs` — deterministic publisher/TLS/API restart and financing dev scenario
 - `src/api/benchmark_tests/recovery.rs` — publisher retries during an in-process trusted-time halt
