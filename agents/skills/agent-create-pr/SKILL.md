@@ -52,9 +52,10 @@ marked ready, may not.
   mode at level `medium` or higher on the final diff, so Claude and Codex reviewers cross-validated
   each other. Fix every accepted Critical, High, and Medium finding by class and run it again;
   [The review loop](../agent-code-review/SKILL.md#the-review-loop) says when the rounds end — a
-  clean round, or the owner's consent to downgrade Mediums from round 3 on — and on which commit
-  the PR is marked ready. Low and Nit findings remain unfixed after the last round, and a
-  mechanical rebase onto `main` after it needs no new round.
+  clean round, or a round from 3 on that accepts Mediums but no Critical or High, whose Mediums
+  are filed as `bug` issues — and on which commit the PR is marked ready. Low and Nit findings,
+  and Mediums filed as issues, remain unfixed after the last round, and a mechanical rebase onto
+  `main` after it needs no new round.
 - **Local checks** for the affected crates passed, per git-workflow; the full CI runs
   on the PR.
 
@@ -145,8 +146,10 @@ If GitHub or git refuses any step, the session reports why and stops.
 - Never open from an unpushed or stale branch.
 - Never open a PR whose issue has an open blocker without the user's explicit yes.
 - Issues are read-only here: never create, edit, or close an issue without the user's explicit
-  approval. The one exception is GitHub closing, on merge, each issue the body ends with
-  `Closes #<n>`.
+  approval. The exceptions are GitHub closing, on merge, each issue the body ends with
+  `Closes #<n>`, and the `bug` issues
+  [the review loop](../agent-code-review/SKILL.md#the-review-loop) files for Mediums from round 3
+  on.
 - No AI signatures anywhere — title, body, or commits.
 - Never approve or dismiss reviews. Post `merge-approved` and merge only as
   [Merging](#merging) describes.
