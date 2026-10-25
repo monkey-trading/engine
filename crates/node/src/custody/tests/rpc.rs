@@ -13,7 +13,7 @@ use tokio::task::JoinHandle;
 
 use crate::config::EvmCustodySection;
 use crate::custody::evm::{Beneficiary, BlockRef, VaultReader};
-use crate::custody::rpc::{Deposited, HouseDeposited, VaultRpc, decode_count, depositCountCall};
+use crate::custody::rpc::{Deposited, HouseDeposited, VaultRpc, decode_count, depositCountCall, legacy};
 use crate::custody::tests::fakes::{VAULT, evm_toml};
 
 #[test]
@@ -21,21 +21,49 @@ fn vault_logs_decode_into_deposits_with_their_position() {
     let rpc = rpc_at("http://127.0.0.1:1");
     let trader = Address::repeat_byte(0xaa);
     let deposit = rpc
-        .decode(&log(Deposited { id: U256::from(3), account: trader, amount: U256::from(5) }.encode_log_data()))
+        .decode(&log(
+            Deposited { id: U256::from(3), account: trader, from: trader, amount: U256::from(5) }.encode_log_data()
+        ))
         .unwrap();
     assert_eq!((deposit.block, deposit.block_hash, deposit.log_index, deposit.id), (7, B256::repeat_byte(7), 2, 3));
     assert_eq!((deposit.beneficiary, deposit.units), (Beneficiary::Trader(AccountId(trader.into())), U256::from(5)));
+    assert_eq!(deposit.payer, Some(AccountId(trader.into())));
     let house = rpc
         .decode(&log(HouseDeposited { id: U256::from(4), from: trader, amount: U256::from(9) }.encode_log_data()))
         .unwrap();
     assert_eq!((house.beneficiary, house.id), (Beneficiary::House, 4));
+    assert_eq!(house.payer, Some(AccountId(trader.into())));
+}
+
+#[test]
+fn a_named_beneficiary_does_not_replace_the_actual_payer_and_legacy_payers_stay_unknown() {
+    let rpc = rpc_at("http://127.0.0.1:1");
+    let trader = Address::repeat_byte(0xaa);
+    let funder = Address::repeat_byte(0xbb);
+    let current = rpc
+        .decode(&log(
+            Deposited { id: U256::from(3), account: trader, from: funder, amount: U256::from(5) }.encode_log_data()
+        ))
+        .unwrap();
+    assert_eq!(current.beneficiary, Beneficiary::Trader(AccountId(trader.into())));
+    assert_eq!(current.payer, Some(AccountId(funder.into())));
+    let legacy = rpc
+        .decode(&log(legacy::Deposited { id: U256::from(3), account: trader, amount: U256::from(5) }.encode_log_data()))
+        .unwrap();
+    assert_eq!(legacy.beneficiary, current.beneficiary);
+    assert_eq!(legacy.payer, None);
 }
 
 #[test]
 fn logs_that_are_not_final_vault_deposits_are_refused() {
     let rpc = rpc_at("http://127.0.0.1:1");
-    let data =
-        Deposited { id: U256::from(3), account: Address::repeat_byte(0xaa), amount: U256::from(5) }.encode_log_data();
+    let data = Deposited {
+        id: U256::from(3),
+        account: Address::repeat_byte(0xaa),
+        from: Address::repeat_byte(0xbb),
+        amount: U256::from(5),
+    }
+    .encode_log_data();
     let good = log(data.clone());
     let refused = [
         Log { removed: true, ..good.clone() },
@@ -45,7 +73,13 @@ fn logs_that_are_not_final_vault_deposits_are_refused() {
         Log { transaction_hash: None, ..good.clone() },
         Log { log_index: None, ..good.clone() },
         log(LogData::new_unchecked(vec![B256::repeat_byte(9)], data.data.clone())),
-        log(Deposited { id: U256::MAX, account: Address::repeat_byte(0xaa), amount: U256::from(5) }.encode_log_data()),
+        log(Deposited {
+            id: U256::MAX,
+            account: Address::repeat_byte(0xaa),
+            from: Address::repeat_byte(0xbb),
+            amount: U256::from(5),
+        }
+        .encode_log_data()),
     ];
     for (i, bad) in refused.iter().enumerate() {
         assert!(rpc.decode(bad).is_err(), "case {i} decoded");
@@ -362,7 +396,7 @@ async fn rpc_wire_keeps_tags_batches_filters_quantities_and_canonical_hash_calls
         json!([compact("eth_getBlockByNumber", json!(["0x9", false]))]),
         compact(
             "eth_getLogs",
-            json!([{"address":VAULT,"fromBlock":"0x6","toBlock":"0x7","topics":[[Deposited::SIGNATURE_HASH,HouseDeposited::SIGNATURE_HASH]]}]),
+            json!([{"address":VAULT,"fromBlock":"0x6","toBlock":"0x7","topics":[[Deposited::SIGNATURE_HASH,HouseDeposited::SIGNATURE_HASH,legacy::Deposited::SIGNATURE_HASH]]}]),
         ),
         compact(
             "eth_call",
@@ -378,8 +412,9 @@ async fn rpc_wire_keeps_tags_batches_filters_quantities_and_canonical_hash_calls
     let expected = canonicalize(expected);
     assert_eq!(canonicalize(observed.clone()), expected);
     for (alternatives, matches) in [
-        (json!([Deposited::SIGNATURE_HASH, HouseDeposited::SIGNATURE_HASH]), true),
-        (json!([HouseDeposited::SIGNATURE_HASH, Deposited::SIGNATURE_HASH]), true),
+        (json!([Deposited::SIGNATURE_HASH, HouseDeposited::SIGNATURE_HASH, legacy::Deposited::SIGNATURE_HASH]), true),
+        (json!([legacy::Deposited::SIGNATURE_HASH, HouseDeposited::SIGNATURE_HASH, Deposited::SIGNATURE_HASH]), true),
+        (json!([Deposited::SIGNATURE_HASH, HouseDeposited::SIGNATURE_HASH]), false),
         (json!([Deposited::SIGNATURE_HASH]), false),
         (json!([Deposited::SIGNATURE_HASH, Deposited::SIGNATURE_HASH]), false),
         (json!([Deposited::SIGNATURE_HASH, HouseDeposited::SIGNATURE_HASH, Deposited::SIGNATURE_HASH]), false),

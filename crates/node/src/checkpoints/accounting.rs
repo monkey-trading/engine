@@ -2,18 +2,25 @@
 
 use anyhow::{Context, ensure};
 use engine_core::Fixed;
+use engine_core::access::{AccessDeposit, AccessReject};
 use engine_core::command::Command;
 use engine_core::deposits::{DepositStatus, DepositUpdate};
 use engine_core::event::Event;
 use serde::{Deserialize, Serialize};
 use tracing::error;
 
-/// Cash plus unpaid approvals equals cumulative deposits and signed house-capital amounts.
+/// Cash, unpaid approvals, pending and held collateral equal processed custody funding.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Accounting {
     pub(super) liabilities: Fixed,
     pub(super) deposits: u64,
+    /// Absent from snapshots taken before access screening, when no collateral could be held.
+    #[serde(default)]
+    pub(super) held: Fixed,
+    /// Absent from snapshots taken before access screening, when no deposit could be pending.
+    #[serde(default)]
+    pub(super) pending: Fixed,
     unpaid: Fixed,
 }
 
@@ -38,12 +45,44 @@ impl Accounting {
     /// Error cases:
     /// - an aggregate cannot represent the computed output
     fn updated(mut self, command: &Command, events: &[Event]) -> anyhow::Result<Self> {
+        let retry = matches!(command, Command::RetryDepositScreening { .. });
         for event in events {
             match event {
-                Event::Deposited { amount, .. } | Event::HouseCapitalMoved { amount, .. } => {
+                Event::DepositPending { amount, reason, .. } if !retry && *reason != AccessReject::DepositPending => {
+                    self.pending = Fixed::from_raw(
+                        self.pending.raw().checked_add(amount.raw()).context("pending collateral overflow")?,
+                    );
                     self.liabilities = Fixed::from_raw(
                         self.liabilities.raw().checked_add(amount.raw()).context("checkpoint liabilities overflow")?,
                     );
+                }
+                Event::DepositHeld { amount, reason, .. }
+                    if !matches!(reason, AccessReject::DepositHeld | AccessReject::ProtocolInactive) =>
+                {
+                    self.held =
+                        Fixed::from_raw(self.held.raw().checked_add(amount.raw()).context("held collateral overflow")?);
+                    if retry {
+                        self.pending_resolved(*amount)?;
+                    } else {
+                        self.liabilities = Fixed::from_raw(
+                            self.liabilities
+                                .raw()
+                                .checked_add(amount.raw())
+                                .context("checkpoint liabilities overflow")?,
+                        );
+                    }
+                }
+                Event::Deposited { amount, .. } | Event::HouseCapitalMoved { amount, .. } => {
+                    if retry {
+                        self.pending_resolved(*amount)?;
+                    } else {
+                        self.liabilities = Fixed::from_raw(
+                            self.liabilities
+                                .raw()
+                                .checked_add(amount.raw())
+                                .context("checkpoint liabilities overflow")?,
+                        );
+                    }
                 }
                 Event::WithdrawalApproved { amount, .. } => {
                     self.unpaid = Fixed::from_raw(
@@ -96,17 +135,52 @@ impl Accounting {
                 }
                 _ => {}
             }
-            if evm_credit(command, event) {
+            if evm_disposition(command, event) {
                 self.deposits = self.deposits.checked_add(1).context("checkpoint deposit count overflow")?;
             }
         }
         Ok(self)
     }
+
+    /// Removes an existing uncredited reserve after a terminal screening decision.
+    /// Error cases:
+    /// - the emitted amount exceeds the pending reserve
+    fn pending_resolved(&mut self, amount: Fixed) -> anyhow::Result<()> {
+        self.pending = Fixed::from_raw(
+            self.pending
+                .raw()
+                .checked_sub(amount.raw())
+                .filter(|remaining| *remaining >= 0)
+                .context("pending collateral underflow")?,
+        );
+        Ok(())
+    }
 }
 
-/// A reference counts only when this command produced its matching successful credit.
-fn evm_credit(command: &Command, event: &Event) -> bool {
+/// A final vault deposit counts only on its first credited, pending or held disposition.
+fn evm_disposition(command: &Command, event: &Event) -> bool {
     match (command, event) {
+        (Command::AccessDeposit { deposit, .. }, Event::Deposited { account, amount }) => {
+            deposit.chain_ref.starts_with("0x") && deposit.account == Some(*account) && deposit.amount == *amount
+        }
+        (Command::AccessDeposit { deposit, .. }, Event::HouseCapitalMoved { amount, .. }) => {
+            deposit.chain_ref.starts_with("0x") && deposit.account.is_none() && deposit.amount == *amount
+        }
+        (
+            Command::AccessDeposit { deposit: AccessDeposit { chain_ref, amount, .. }, .. }
+            | Command::Deposit { chain_ref, amount, .. }
+            | Command::HouseCapital { chain_ref, amount },
+            Event::DepositPending { chain_ref: disposed, amount: disposed_amount, reason, .. }
+            | Event::DepositHeld { chain_ref: disposed, amount: disposed_amount, reason, .. },
+        ) => {
+            chain_ref.starts_with("0x")
+                && chain_ref == disposed
+                && amount == disposed_amount
+                && !matches!(
+                    reason,
+                    AccessReject::DepositPending | AccessReject::DepositHeld | AccessReject::ProtocolInactive
+                )
+        }
         (Command::Deposit { account, amount, chain_ref }, Event::Deposited { account: credited, amount: moved }) => {
             chain_ref.starts_with("0x") && account == credited && amount == moved
         }
@@ -117,5 +191,7 @@ fn evm_credit(command: &Command, event: &Event) -> bool {
     }
 }
 
+#[cfg(test)]
+mod access_tests;
 #[cfg(test)]
 pub(crate) mod tests;

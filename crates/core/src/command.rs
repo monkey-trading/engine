@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
+use crate::access::{AccessDeposit, AccessEvidence, AccessPolicy, EligibilityRequest};
 use crate::auth::{ClientAuth, Operator, RequestAuth};
 use crate::benchmark::BenchmarkBatch;
 use crate::corporate::CorporateAction;
@@ -20,6 +21,33 @@ use crate::types::{AccountId, MarketId, Millis, OrderId, Side};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Command {
+    /// The account's signed professional or eligible-client declaration, from V21, with the API's
+    /// actual screening input.
+    AttestEligibility {
+        request: EligibilityRequest,
+        evidence: AccessEvidence,
+    },
+    /// An authenticated order with the API's actual screening input.
+    AccessOrder {
+        request: OrderRequest,
+        evidence: AccessEvidence,
+    },
+    /// An authenticated withdrawal with the API's actual screening input.
+    AccessWithdraw {
+        request: WithdrawalRequest,
+        evidence: AccessEvidence,
+        payout_available: bool,
+    },
+    /// Retries the screening of a pending deposit; held and credited references refuse it.
+    RetryDepositScreening {
+        chain_ref: String,
+        evidence: AccessEvidence,
+    },
+    /// A final custody deposit, including its funding address and screening input.
+    AccessDeposit {
+        deposit: AccessDeposit,
+        evidence: AccessEvidence,
+    },
     /// Venue quotes from the feed handlers.
     Prices {
         market: MarketId,
@@ -97,6 +125,8 @@ pub enum AdminCommand {
     },
     /// An immutable corporate instruction, submitted before the previous venue close.
     ScheduleCorporateAction(CorporateAction),
+    /// Records the access source and freshness bound once, before any screened action can pass.
+    SetAccessPolicy(AccessPolicy),
     SetParams(ProtocolParams),
     /// Lists a new market or replaces an existing market's spec.
     UpsertMarket(MarketSpec),
@@ -211,6 +241,7 @@ impl AdminCommand {
             | AdminCommand::InitEmissions(_) => true,
             AdminCommand::ScheduleCorporateAction(_) => true,
             AdminCommand::SetClientAuth(_)
+            | AdminCommand::SetAccessPolicy(_)
             | AdminCommand::SetOperator(_)
             | AdminCommand::SetToxicityNotional(_)
             | AdminCommand::ActivateCustodyFinality { .. }

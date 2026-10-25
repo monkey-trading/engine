@@ -73,6 +73,11 @@ impl ReplayedLog {
         if let Some(recorded) = engine.operator().filter(|recorded| **recorded != cfg.operator) {
             bail!("the log records operator {recorded:?}, but the config gives {:?}", cfg.operator);
         }
+        if let Some(recorded) = engine.access_policy()
+            && cfg.access_policy.as_ref() != Some(recorded)
+        {
+            bail!("the configured access policy differs from the public log");
+        }
         genesis.ensure_closed()?;
         // So is one naming another genesis: the node would attest rules its engine does not run.
         genesis.ensure_matches(&cfg.genesis, &cfg.client_auth, cfg.operator)?;
@@ -235,6 +240,8 @@ impl Sequencer {
         if let Some(ts) = last_checkpoint_ts {
             cfg.metrics.last_checkpoint_seconds.set(ts as f64 / 1000.0);
         }
+        cfg.metrics.access_pending_deposits.set(engine.pending_deposits().len() as i64);
+        let access_alerts = AccessAlerts::recovered(!engine.pending_deposits().is_empty());
         let benchmark_schedule = watch::channel(BenchmarkSchedule::from_engine(&engine)).0;
         let mut sequencer = Self {
             legacy_deposits,
@@ -257,8 +264,10 @@ impl Sequencer {
             clock: cfg.clock,
             required: Vec::new(),
             client_auth: cfg.client_auth,
+            access_policy: cfg.access_policy,
             deficit: DeficitAlert::default(),
             benchmark_alerts: BenchmarkAlerts::default(),
+            access_alerts,
             operator: cfg.operator,
             metrics: cfg.metrics,
             gate: cfg.checkpoints.map(|sink| {

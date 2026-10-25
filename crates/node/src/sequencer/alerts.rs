@@ -190,6 +190,14 @@ pub(super) fn alert_on(event: &Event) {
         Event::CorporateActionFailed { id: action, market, reason, .. } => {
             error!(alert = "corporate_action_failed", action, market, "corporate action failed: {reason}");
         }
+        Event::DepositHeld { chain_ref, reason, .. } => {
+            error!(
+                alert = "access_deposit_held",
+                chain_ref,
+                ?reason,
+                "collateral held uncredited; operator handling required"
+            );
+        }
         // A finalised deposit the engine will not credit leaves user funds in the vault and
         // nothing re-examines it.
         Event::DepositRejected { account, amount, chain_ref, reason } => {

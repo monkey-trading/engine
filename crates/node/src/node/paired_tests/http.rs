@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use engine_core::auth::ClientAuth;
+use engine_core::protocol::ProtocolVersion;
 use serde_json::Value;
 use tokio::net::TcpListener;
 use tokio::sync::{Semaphore, broadcast, mpsc, oneshot, watch};
@@ -58,6 +59,8 @@ impl Http {
             history,
             emission_budget: None,
             listing: Default::default(),
+            protocol: ProtocolVersion::LATEST,
+            access: None,
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

@@ -1,4 +1,4 @@
-//! API tests for signed client requests: signatures, nonces, expiries, and the account trust path.
+//! V19 API tests for signed client requests: signatures, nonces, expiries, and the account trust path.
 
 use super::*;
 use std::net::SocketAddr;
@@ -9,8 +9,11 @@ use axum::body::{Body, to_bytes};
 use axum::extract::connect_info::MockConnectInfo;
 use axum::http::Request as HttpRequest;
 use engine_core::auth::MAX_EXPIRY_AHEAD_MS;
-use engine_core::command::OrderKind;
+use engine_core::auth::RequestAuth;
+use engine_core::command::{CancelRequest, Command, OrderKind, OrderRequest, WithdrawalRequest};
 use engine_core::eip712;
+use engine_core::eip712::{Eip712Domain, cancel_hash, order_hash, withdrawal_hash};
+use engine_core::event::{Event, Reject};
 use engine_core::price::SourceQuote;
 use engine_core::types::{Millis, Side};
 use governor::Quota;
@@ -313,7 +316,7 @@ impl Node {
             ..sequencer_config(&dir, manifest_tx)
         };
         let mut seq = Sequencer::recover(cfg, key.clone(), stream.clone(), withdrawals_tx).unwrap();
-        seq.activate_protocol().unwrap();
+        seq.activate_legacy_protocol().unwrap();
         seq.genesis(&dev_config().genesis).unwrap();
         // Trusted time agrees with the fixed clock, so the queued activation and genesis go in now.
         seq.trust(sample_around(stamps.as_ref())).unwrap();
@@ -333,6 +336,8 @@ impl Node {
         // The dev limits, on buckets that refill once an hour, so no test depends on its speed.
         let hourly = |rate: RateLimit| Quota::with_period(Duration::from_secs(3600)).unwrap().allow_burst(rate.burst);
         let state = ApiState {
+            protocol: engine_core::protocol::ProtocolVersion::V19,
+            access: None,
             tx,
             stream,
             attestation,

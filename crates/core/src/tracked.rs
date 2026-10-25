@@ -140,9 +140,14 @@ mod tests {
         assert!(map.take_touched().is_empty());
         map.iter_mut().for_each(|(_, value)| *value += 1);
         assert_eq!(map.take_touched(), BTreeSet::from([1, 2]));
-        assert_eq!(map.take_all(), BTreeMap::from([(1, 11), (2, 2)]));
+        assert_eq!(map.remove(&1), Some(11));
+        assert_eq!(map.remove(&3), None);
+        assert_eq!(*map, BTreeMap::from([(2, 2)]));
+        assert_eq!(map.take_touched(), BTreeSet::from([1, 3]));
+        assert!(map.take_touched().is_empty());
+        assert_eq!(map.take_all(), BTreeMap::from([(2, 2)]));
         assert!(map.is_empty());
-        assert_eq!(map.take_touched(), BTreeSet::from([1, 2]));
+        assert_eq!(map.take_touched(), BTreeSet::from([2]));
 
         let mut set: TrackedSet<String> = TrackedSet::default();
         assert!(set.insert("a".into()));

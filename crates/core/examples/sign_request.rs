@@ -16,12 +16,21 @@
 
 use alloy_primitives::hex;
 use anyhow::{Context, anyhow, bail};
+use engine_core::access::EligibilityClass;
 use engine_core::auth::RequestAuth;
 use engine_core::command::{CancelRequest, OrderRequest, WithdrawalRequest};
-use engine_core::eip712::{self, cancel_hash, order_hash, withdrawal_hash};
-use engine_core::types::Millis;
+use engine_core::eip712::{self, cancel_hash, eligibility_hash, order_hash, withdrawal_hash};
+use engine_core::types::{AccountId, Millis};
 use k256::ecdsa::SigningKey;
+use serde::Deserialize;
 use serde_json::Value;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EligibilityBody {
+    account: AccountId,
+    class: EligibilityClass,
+}
 
 /// Prints the signed body.
 /// Error cases:
@@ -44,6 +53,10 @@ fn main() -> anyhow::Result<()> {
     let expires_at: Millis = expires_at.parse().context("expires at")?;
     let mut body: Value = serde_json::from_str(body).context("body")?;
     let hash = match kind.as_str() {
+        "eligibility" => {
+            let declaration: EligibilityBody = serde_json::from_value(body.clone())?;
+            eligibility_hash(&domain, declaration.account, declaration.class, nonce, expires_at)
+        }
         "order" => order_hash(&domain, &serde_json::from_value::<OrderRequest>(body.clone())?, nonce, expires_at),
         "cancel" => {
             let cancel: CancelRequest = serde_json::from_value(body.clone())?;
@@ -53,7 +66,7 @@ fn main() -> anyhow::Result<()> {
             let withdrawal: WithdrawalRequest = serde_json::from_value(body.clone())?;
             withdrawal_hash(&domain, withdrawal.account, withdrawal.amount, nonce, expires_at)
         }
-        other => bail!("unknown request kind {other:?}; expected order, cancel, or withdrawal"),
+        other => bail!("unknown request kind {other:?}; expected order, cancel, withdrawal, or eligibility"),
     };
     body["auth"] = serde_json::to_value(RequestAuth { nonce, expires_at, signature: eip712::sign(&key, &hash) })?;
     println!("{body}");

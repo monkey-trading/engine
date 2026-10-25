@@ -127,6 +127,8 @@ fn state() -> (ApiState, mpsc::Receiver<Request>) {
         tls_public_key_sha256: [0; 32],
     };
     let state = ApiState {
+        protocol: engine_core::protocol::ProtocolVersion::V19,
+        access: None,
         tx,
         stream: tokio::sync::broadcast::channel(1).0,
         attestation: Arc::new(attest_bundle(&MockAttestor, &bundle).unwrap()),

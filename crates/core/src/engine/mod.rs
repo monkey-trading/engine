@@ -18,6 +18,7 @@ use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
+use crate::access::{AccessDeposit, AccessPolicy, EligibilityClass, HeldDeposit};
 use crate::account::{Account, Position};
 use crate::auth::{ClientAuth, Operator};
 use crate::benchmark::BenchmarkHistory;
@@ -129,6 +130,18 @@ pub struct Engine {
     /// Immutable payouts keyed by their account/nonce approval leaf key.
     #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
     pub(crate) withdrawal_approvals: TrackedMap<B256, WithdrawalApproval>,
+    /// The screening source and freshness bound, recorded once from `V24`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) access_policy: Option<AccessPolicy>,
+    /// Each account's recorded eligibility declaration.
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) eligibility: TrackedMap<AccountId, EligibilityClass>,
+    /// Deposits held uncredited for good, by chain reference.
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) held_deposits: TrackedMap<String, HeldDeposit>,
+    /// Deposits awaiting a declaration, a classification or a working source, by chain reference.
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) pending_deposits: TrackedMap<String, AccessDeposit>,
     // Not state and not encoded; an engine rebuilt without them hashes every leaf at its first root.
     /// Markouts, positions, and resting orders changed since the last state root.
     #[serde(skip)]
@@ -249,16 +262,50 @@ impl Engine {
         }
         match &sequenced.cmd {
             _ if early_outcome.is_some() => events.extend(early_outcome),
+            Command::AttestEligibility { request, evidence } => self.attest_eligibility(request, evidence, &mut events),
+            Command::RetryDepositScreening { chain_ref, evidence } => {
+                self.retry_deposit_screening(chain_ref, evidence, &mut events)
+            }
+            Command::AccessOrder { request, evidence } => self.place_order(request, Some(evidence), &mut events),
+            Command::AccessWithdraw { request, evidence, payout_available } => self.withdraw(
+                request.account,
+                request.amount,
+                request.auth.as_ref(),
+                Some((evidence, *payout_available)),
+                &mut events,
+            ),
+            Command::AccessDeposit { deposit, evidence } => self.access_deposit(deposit, Some(evidence), &mut events),
             // From `V12` the quotes are stored and processed above.
             Command::Prices { .. } if v12 => {}
             Command::Prices { market, quotes } => self.on_prices(*market, quotes, &mut events),
             Command::Tick => self.refresh_all_sessions(&mut events),
+            Command::Deposit { account, amount, chain_ref } if self.protocol_version >= ProtocolVersion::V24 => {
+                let deposit = AccessDeposit {
+                    account: Some(*account),
+                    payer: None,
+                    amount: *amount,
+                    chain_ref: chain_ref.clone(),
+                };
+                self.access_deposit(&deposit, None, &mut events);
+            }
             Command::Deposit { account, amount, chain_ref } => self.deposit(*account, *amount, chain_ref, &mut events),
             Command::CustodyFinalised(checkpoint) => self.advance_custody_checkpoint(*checkpoint, &mut events),
             Command::CustodyDeposit(update) => self.update_deposit(update, &mut events),
-            Command::Withdraw { account, amount, auth } => self.withdraw(*account, *amount, auth.as_ref(), &mut events),
+            Command::Withdraw { account, amount, auth } => {
+                self.withdraw(*account, *amount, auth.as_ref(), None, &mut events)
+            }
+            Command::HouseCapital { amount, chain_ref }
+                if self.protocol_version >= ProtocolVersion::V24
+                    && (chain_ref != "genesis"
+                        || self.held_deposits.contains_key(chain_ref)
+                        || self.pending_deposits.contains_key(chain_ref)) =>
+            {
+                let deposit =
+                    AccessDeposit { account: None, payer: None, amount: *amount, chain_ref: chain_ref.clone() };
+                self.access_deposit(&deposit, None, &mut events);
+            }
             Command::HouseCapital { amount, chain_ref } => self.house_capital(*amount, chain_ref, &mut events),
-            Command::PlaceOrder(req) => self.place_order(req, &mut events),
+            Command::PlaceOrder(req) => self.place_order(req, None, &mut events),
             Command::CancelOrder { account, order_id, auth } => {
                 self.cancel_order(*account, *order_id, auth.as_ref(), &mut events)
             }

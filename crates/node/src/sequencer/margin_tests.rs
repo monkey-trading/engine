@@ -13,12 +13,10 @@ use tracing_subscriber::fmt::MakeWriter;
 
 use crate::clock::test_clock::TestClock;
 use crate::config::Genesis;
-use crate::test_support::{TRADER, deposit, dev_config, log_entries, sample_around, scratch_dir, sequencer_config};
+use crate::test_support::{access, dev_config, log_entries, sample_around, scratch_dir, sequencer_config};
 
 const BTC: MarketId = 1;
 const ETH: MarketId = 2;
-/// An account that holds ETH while its quotes go stale.
-const HOLDER: AccountId = AccountId([8; 20]);
 /// Tue 20 Oct 2026 10:00 New York.
 const START: Millis = 1_792_504_800_000;
 
@@ -45,9 +43,9 @@ fn dev_scenario_financing_closes_out_and_a_stale_market_counts_at_its_last_mark(
     seq.trust(sample_around(clock.as_ref())).unwrap();
 
     // 0.1 BTC bought at 100,000 and marked at 94,740: equity 474 against a close-out level of 473.7.
-    sequenced(&mut seq, deposit(1000, "dep-1"));
+    fund(&mut seq, 1, 1000, "dep-1");
     sequenced(&mut seq, prices(BTC, "100000", now()));
-    sequenced(&mut seq, market_order(TRADER, BTC, Side::Buy, "0.1", "100000"));
+    market_order(&mut seq, 1, BTC, Side::Buy, "0.1", "100000");
     sequenced(&mut seq, prices(BTC, "94740", now()));
     // Across the 22:00 London rollover, a day's financing at 900bps a year on 9,474 is 2.336054795,
     // rounded up.
@@ -56,29 +54,34 @@ fn dev_scenario_financing_closes_out_and_a_stale_market_counts_at_its_last_mark(
     move_to(&mut seq, rollover + 100);
     let events = sequenced(&mut seq, Command::Tick);
     let financing = Fixed::from_raw(2_336_054_795);
-    assert!(events.contains(&Event::Financing { account: TRADER, market: BTC, amount: financing }), "{events:?}");
+    assert!(
+        events.contains(&Event::Financing { account: access::account(1), market: BTC, amount: financing }),
+        "{events:?}"
+    );
     let equity = fixed("474") - financing;
-    assert!(events.contains(&Event::CloseOut { account: TRADER, equity, margin: fixed("947.4") }), "{events:?}");
+    assert!(
+        events.contains(&Event::CloseOut { account: access::account(1), equity, margin: fixed("947.4") }),
+        "{events:?}"
+    );
     assert!(events.iter().any(|e| matches!(e, Event::Fill(fill) if fill.liquidation && fill.qty == fixed("0.1"))));
 
     // ETH bought at 4,000 and marked at 3,800, then left without quotes past its 1s age limit.
-    let holder_deposit = Command::Deposit { account: HOLDER, amount: fixed("1000"), chain_ref: "dep-2".into() };
-    sequenced(&mut seq, holder_deposit);
+    fund(&mut seq, 8, 1000, "dep-2");
     sequenced(&mut seq, prices(ETH, "4000", now()));
-    sequenced(&mut seq, market_order(HOLDER, ETH, Side::Buy, "1", "4000"));
+    market_order(&mut seq, 8, ETH, Side::Buy, "1", "4000");
     sequenced(&mut seq, prices(ETH, "3800", now()));
     move_to(&mut seq, rollover + 1_200);
     sequenced(&mut seq, prices(BTC, "94740", now()));
     // Equity 800 against 380 of margin at the last mark leaves 420 free; one base unit more is refused.
-    let events = sequenced(&mut seq, withdrawal(HOLDER, "420.000001"));
+    let events = withdrawal(&mut seq, 8, "420.000000001");
     let refused = Reject::InsufficientFunds { available: fixed("420") };
     assert!(matches!(&events[..], [Event::WithdrawalRejected { reason, .. }] if *reason == refused), "{events:?}");
-    let events = sequenced(&mut seq, withdrawal(HOLDER, "420"));
+    let events = withdrawal(&mut seq, 8, "420");
     assert!(
-        events.contains(&Event::WithdrawalApproved { account: HOLDER, amount: fixed("420"), nonce: 1 }),
+        events.contains(&Event::WithdrawalApproved { account: crate::test_support::access::account(8), amount: fixed("420"), nonce: 1 }),
         "{events:?}"
     );
-    let events = sequenced(&mut seq, market_order(HOLDER, ETH, Side::Sell, "1", "3800"));
+    let events = market_order(&mut seq, 8, ETH, Side::Sell, "1", "3800");
     let stale = Reject::NoPrice { error: PriceError::Stale { fresh: 0, needed: 2 } };
     assert!(matches!(&events[..], [Event::OrderRejected { reason, .. }] if *reason == stale), "{events:?}");
 
@@ -104,10 +107,10 @@ fn a_house_with_no_capital_opens_trading_and_alerts_on_a_deficit() {
     assert!(!seq.needs_genesis());
     assert_eq!(seq.engine.house_nav(), Fixed::ZERO);
 
-    sequenced(&mut seq, deposit(100_000, "dep-1"));
+    fund(&mut seq, 1, 100_000, "dep-1");
     sequenced(&mut seq, prices(BTC, "100000", START));
     // 200,000 of BTC fits its 300,000 floor.
-    let events = sequenced(&mut seq, market_order(TRADER, BTC, Side::Buy, "2", "100000"));
+    let events = market_order(&mut seq, 1, BTC, Side::Buy, "2", "100000");
     assert!(events.iter().any(|e| matches!(e, Event::Fill(_))), "{events:?}");
 
     // At 110,000 the house owes the trader 20,000; 111,000 deepens the deficit, 99,000 ends it, and
@@ -139,7 +142,12 @@ fn recover_at(
     let (stream, _) = broadcast::channel(16);
     let (withdrawals_tx, withdrawals) = mpsc::unbounded_channel();
     let (manifest, _) = watch::channel(Manifest::default());
-    let cfg = SequencerConfig { clock, genesis: genesis_commands(genesis), ..sequencer_config(dir, manifest) };
+    let cfg = SequencerConfig {
+        clock,
+        genesis: genesis_commands(genesis),
+        access_policy: Some(access::policy()),
+        ..sequencer_config(dir, manifest)
+    };
     (Sequencer::recover(cfg, Arc::new(EnclaveKey::test_key()), stream, withdrawals_tx).unwrap(), withdrawals)
 }
 
@@ -195,10 +203,10 @@ fn prices(market: MarketId, mid: &str, ts: Millis) -> Command {
     Command::Prices { market, quotes: quotes.to_vec() }
 }
 
-/// An unsigned market order quoted at `quoted`, with the market's slippage bound.
-fn market_order(account: AccountId, market: MarketId, side: Side, qty: &str, quoted: &str) -> Command {
-    Command::PlaceOrder(OrderRequest {
-        account,
+/// A signed, screened market order under the current protocol.
+fn market_order(seq: &mut Sequencer, seed: u8, market: MarketId, side: Side, qty: &str, quoted: &str) -> Vec<Event> {
+    let request = OrderRequest {
+        account: access::account(seed),
         client_id: 1,
         market,
         side,
@@ -206,10 +214,23 @@ fn market_order(account: AccountId, market: MarketId, side: Side, qty: &str, quo
         kind: OrderKind::Market { quoted: fixed(quoted), max_slippage_bps: None },
         reduce_only: false,
         auth: None,
-    })
+    };
+    let cmd = access::order(&seq.engine, seed, request);
+    sequenced(seq, cmd)
 }
 
-/// An unsigned withdrawal of `amount`.
-fn withdrawal(account: AccountId, amount: &str) -> Command {
-    Command::Withdraw { account, amount: fixed(amount), auth: None }
+/// A signed, screened withdrawal of `amount`.
+fn withdrawal(seq: &mut Sequencer, seed: u8, amount: &str) -> Vec<Event> {
+    let cmd = access::withdrawal(&seq.engine, seed, fixed(amount), true);
+    sequenced(seq, cmd)
+}
+
+/// Declares eligibility before the scenario's first credited deposit.
+fn fund(seq: &mut Sequencer, seed: u8, amount: i64, reference: &str) {
+    let declaration = access::declaration(&seq.engine, seed);
+    assert!(matches!(sequenced(seq, declaration).as_slice(), [Event::EligibilityAttested { .. }]));
+    let account = access::account(seed);
+    let amount = Fixed::from_int(amount);
+    let cmd = access::funding(&seq.engine, Some(account), Some(account), amount, reference);
+    assert_eq!(sequenced(seq, cmd), [Event::Deposited { account, amount }]);
 }

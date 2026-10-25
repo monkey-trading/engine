@@ -18,6 +18,7 @@
 //! resting below the minimum; and under `V16` a history clamped by a lowered memory; so the
 //! checks cannot pass vacuously.
 
+mod access;
 mod charges;
 mod checks;
 #[path = "../common/mod.rs"]

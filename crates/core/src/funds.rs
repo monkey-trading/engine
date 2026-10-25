@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 
 use crate::Fixed;
+use crate::access::AccessEvidence;
 use crate::account::Position;
 use crate::auth::RequestAuth;
 use crate::deposits::legacy_chain_reference;
@@ -50,11 +51,25 @@ impl Engine {
         account: AccountId,
         amount: Fixed,
         auth: Option<&RequestAuth>,
+        access: Option<(&AccessEvidence, bool)>,
         events: &mut Vec<Event>,
     ) {
         let authorised = self.authorise(account, auth, |domain, auth| {
             withdrawal_hash(domain, account, amount, auth.nonce, auth.expires_at)
         });
+        let request_hash = self
+            .access_domain()
+            .zip(auth)
+            .map(|(domain, auth)| withdrawal_hash(&domain, account, amount, auth.nonce, auth.expires_at))
+            .unwrap_or_default();
+        let authorised = authorised
+            .and_then(|()| {
+                self.check_access(Some(account), None, request_hash, access.map(|(evidence, _)| evidence), false, false)
+                    .map_err(|reason| Reject::Access { reason })
+            })
+            .and_then(|()| {
+                if access.is_some_and(|(_, available)| !available) { Err(Reject::PayoutUnavailable) } else { Ok(()) }
+            });
         let available = self.accounts.get(&account).map_or(Fixed::ZERO, |acct| {
             let (equity, margin) = self.equity_and_margin(acct, None);
             let cash = if self.deposit_finality_enabled() {

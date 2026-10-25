@@ -1,6 +1,7 @@
-//! The account proof and emission entitlement routes, and the state tree's dev scenario: accounts
-//! credited through the API, checkpoint work that stays flat as they grow, a proof that verifies
-//! against the logged root, and logs written before the state tree that still replay.
+//! The account proof and emission entitlement routes under the historical V19 rules, and the state
+//! tree's dev scenario: accounts credited through the API, checkpoint work that stays flat as they
+//! grow, a proof that verifies against the logged root, and logs written before the state tree that
+//! still replay.
 
 use super::*;
 use std::net::SocketAddr;
@@ -10,7 +11,7 @@ use std::path::PathBuf;
 use axum::body::{Body, to_bytes};
 use axum::extract::connect_info::MockConnectInfo;
 use axum::http::Request as HttpRequest;
-use engine_core::command::{AdminCommand, OrderKind};
+use engine_core::command::{AdminCommand, Command, OrderKind, OrderRequest};
 use engine_core::deposits::{DepositBeneficiary, DepositReceipt, DepositUpdate};
 use engine_core::eip712::B256;
 use engine_core::emissions::{EmissionSchedule, PERIOD_MS, TokenUnits};
@@ -145,7 +146,7 @@ async fn dev_scenario_checkpoint_work_follows_changes_a_proof_verifies_and_old_l
     let replayed = replay(&entries).unwrap();
     assert_eq!(replayed.engine.account_proof(trader), Some(proof));
     // After the client auth and the operator are recorded.
-    assert_eq!(replayed.activations, [(ProtocolVersion::LATEST, 2)]);
+    assert_eq!(replayed.activations, [(ProtocolVersion::V19, 2)]);
 
     for path in OLD_LOGS {
         let mut replayed = replay(&crate::sequencer::fixture_tests::signed_fixture(path.as_ref()))
@@ -245,7 +246,7 @@ impl Node {
             ..sequencer_config(&dir, manifest_tx)
         };
         let mut seq = Sequencer::recover(cfg, key.clone(), stream.clone(), withdrawals_tx).unwrap();
-        seq.activate_protocol().unwrap();
+        seq.activate_legacy_protocol().unwrap();
         seq.genesis(&dev_config().genesis).unwrap();
         // Trusted time agrees with the fixed clock, so the queued activation and genesis go in now.
         seq.trust(sample_around(stamps.as_ref())).unwrap();
@@ -259,6 +260,8 @@ impl Node {
             tls_public_key_sha256: [0; 32],
         };
         let state = ApiState {
+            protocol: engine_core::protocol::ProtocolVersion::V19,
+            access: None,
             tx,
             stream,
             attestation: Arc::new(attest_bundle(&MockAttestor, &bundle).unwrap()),

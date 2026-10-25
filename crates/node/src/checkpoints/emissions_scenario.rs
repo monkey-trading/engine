@@ -24,6 +24,7 @@ use engine_core::emissions::{EmissionSchedule, Emissions, PERIODS_PER_HALVING, T
 use engine_core::event::Event;
 use engine_core::merkle::EntitlementProof;
 use engine_core::price::SourceQuote;
+use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{AccountId, Millis, Side};
 use governor::Quota;
 use governor::clock::DefaultClock;
@@ -236,7 +237,8 @@ impl Scenario {
     }
 
     /// Recovers the sequencer from the log, as a node boot does: from the vault's posted checkpoint,
-    /// with the dev genesis on a fresh log, the latest protocol, and the unposted checkpoints queued.
+    /// with the dev genesis on a fresh log, the unposted checkpoints queued, and the V19 rules, since
+    /// the scenario's accounts are not keys that could sign the declarations later versions need.
     async fn start_node(&mut self) {
         let poster = Poster {
             chain: CheckpointRpc::new(
@@ -276,7 +278,7 @@ impl Scenario {
             ..sequencer_config(&self.dir, manifest_tx)
         };
         let mut seq = Sequencer::recover(cfg, self.key.clone(), stream.clone(), withdrawals).unwrap();
-        seq.activate_protocol().unwrap();
+        seq.activate_legacy_protocol().unwrap();
         if seq.needs_genesis() {
             seq.genesis(&dev_config().genesis).unwrap();
         }
@@ -292,6 +294,8 @@ impl Scenario {
             tls_public_key_sha256: [0; 32],
         };
         let state = ApiState {
+            protocol: ProtocolVersion::V19,
+            access: None,
             tx,
             stream,
             attestation: Arc::new(attest_bundle(&MockAttestor, &bundle).unwrap()),

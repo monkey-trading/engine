@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use alloy::primitives::{Address, B256, U256};
 use anyhow::bail;
+use engine_core::access::AccessPolicy;
 use engine_core::auth::{ClientAuth, Operator};
 use engine_core::command::{Command, Sequenced};
 use engine_core::types::AccountId;
@@ -25,7 +26,7 @@ use crate::custody::evm::{Beneficiary, BlockRef, DepositWatcher, Finality, Vault
 use crate::log::{LogEntry, Manifest};
 use crate::sequencer::{Request, Sequencer, SequencerConfig, SignedWithdrawal};
 use crate::tee::EnclaveKey;
-use crate::test_support::{log_entries, sequencer_config, trusted_now};
+use crate::test_support::{dev_config, log_entries, sequencer_config, trusted_now};
 
 pub(super) const CHAIN_ID: u64 = 42161;
 pub(super) const VAULT: Address = Address::repeat_byte(0x7a);
@@ -243,23 +244,37 @@ impl FakeChain {
 impl Node {
     /// Recovers the sequencer from the log in `dir/log/` and runs it.
     pub(super) fn start(dir: &Path) -> Self {
-        Self::start_at_protocol(dir, false, CHAIN_ID, TRADER, ClientAuth::Unsigned)
+        Self::start_at_protocol(dir, false, CHAIN_ID, TRADER, ClientAuth::Unsigned, None)
     }
 
-    /// Starts the latest protocol while retaining the real disk-backed sequencer.
+    /// Starts the V20 receipt rules, the last before access screening, while retaining the real
+    /// disk-backed sequencer.
     pub(super) fn start_confirmed(dir: &Path) -> Self {
-        Self::start_at_protocol(dir, true, CHAIN_ID, TRADER, ClientAuth::Unsigned)
+        Self::start_at_protocol(dir, true, CHAIN_ID, TRADER, ClientAuth::Unsigned, None)
     }
 
     /// Uses the Anvil fixture's actual signing domain for approval records.
     pub(super) fn start_evm(dir: &Path, chain_id: u64, vault: AccountId) -> Self {
-        Self::start_at_protocol(dir, true, chain_id, vault, ClientAuth::Eip712 { chain_id, vault })
+        Self::start_at_protocol(dir, true, chain_id, vault, ClientAuth::Eip712 { chain_id, vault }, None)
     }
 
-    fn start_at_protocol(dir: &Path, latest: bool, chain_id: u64, vault: AccountId, client_auth: ClientAuth) -> Self {
+    /// Recovers with the same recorded access authority and freshness bound.
+    pub(super) fn start_with_policy(dir: &Path, access_policy: Option<AccessPolicy>) -> Self {
+        Self::start_at_protocol(dir, false, CHAIN_ID, TRADER, ClientAuth::Unsigned, access_policy)
+    }
+
+    fn start_at_protocol(
+        dir: &Path,
+        finality: bool,
+        chain_id: u64,
+        vault: AccountId,
+        client_auth: ClientAuth,
+        access_policy: Option<AccessPolicy>,
+    ) -> Self {
         let log_dir = dir.join("log");
         let base = sequencer_config(&log_dir, watch::channel(Manifest::default()).0);
         let cfg = SequencerConfig {
+            access_policy,
             segment_commands: 1_000,
             checkpoint_every: 1_000,
             checkpoint_parent: Default::default(),
@@ -267,15 +282,15 @@ impl Node {
             chain_id,
             vault,
             client_auth,
-            operator: engine_core::auth::Operator { chain_id, vault, ..base.operator },
+            operator: Operator { chain_id, vault, ..base.operator },
             ..base
         };
         let (stream, _) = broadcast::channel(1_024);
         let (withdrawals, received_withdrawals) = mpsc::unbounded_channel();
         let operator = cfg.operator;
         let mut seq = Sequencer::recover(cfg, Arc::new(EnclaveKey::test_key()), stream, withdrawals).unwrap();
-        if latest {
-            seq.activate_protocol().unwrap();
+        if finality {
+            seq.activate_legacy_protocol().unwrap();
         }
         seq.trust(trusted_now()).unwrap();
         let (tx, rx) = mpsc::channel(64);
@@ -373,6 +388,11 @@ pub(super) fn refusing_sequencer(answer_syncs: bool, refusals: usize) -> mpsc::S
     tx
 }
 
+/// The dev operator, recorded in the deployment domain the fake node signs checkpoints under.
+pub(super) fn operator() -> Operator {
+    Operator { chain_id: CHAIN_ID, vault: TRADER, ..dev_config().operator().unwrap() }
+}
+
 /// A watcher over `chain` with its cursor in `dir`, after a log ending at `log_seq`.
 pub(super) fn watcher(
     chain: &FakeChain,
@@ -445,7 +465,7 @@ pub(super) fn evm_toml(dir: &Path, max_block_range: u64) -> String {
 pub(super) fn deposit(id: u64, block: u64, beneficiary: Beneficiary, units: u64) -> VaultDeposit {
     let tx_hash = B256::left_padding_from(&id.to_be_bytes());
     let block_hash = canonical_hash(block);
-    VaultDeposit { block, block_hash, tx_hash, log_index: 1, id, beneficiary, units: U256::from(units) }
+    VaultDeposit { block, block_hash, tx_hash, log_index: 1, id, beneficiary, payer: None, units: U256::from(units) }
 }
 
 /// The fake chain's hash for `block` before any reorg.

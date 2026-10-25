@@ -153,7 +153,7 @@ async fn events_older_than_the_retention_leave_the_index() {
 #[tokio::test]
 async fn the_index_follows_the_log_and_resumes_after_a_restart() {
     let (dir, index) = (scratch_dir("history-restart"), index_dir("restart"));
-    let node = TestSequencer::start(&dir, 1024);
+    let node = TestSequencer::start_legacy(&dir, 1024);
     let history = TestHistory::start(&node, &dir, &index).await.unwrap();
     node.submit(deposit(100, "dep-1")).await;
     node.submit(withdraw(40)).await;
@@ -166,7 +166,7 @@ async fn the_index_follows_the_log_and_resumes_after_a_restart() {
     assert_eq!(first.len(), 4);
 
     let last = last_command_seq(&dir);
-    let node = TestSequencer::start(&dir, 1024);
+    let node = TestSequencer::start_legacy(&dir, 1024);
     let history = TestHistory::start(&node, &dir, &index).await.unwrap();
     assert_eq!(history.resume_at, Offset::start_of(last + 1), "the index resumes after the last command it took");
     node.submit(withdraw(10)).await;
@@ -181,7 +181,7 @@ async fn the_index_follows_the_log_and_resumes_after_a_restart() {
 #[tokio::test]
 async fn a_removed_index_is_rebuilt_from_the_log_segments() {
     let (dir, index) = (scratch_dir("history-rebuild"), index_dir("rebuild"));
-    let node = TestSequencer::start(&dir, 1024);
+    let node = TestSequencer::start_legacy(&dir, 1024);
     let history = TestHistory::start(&node, &dir, &index).await.unwrap();
     for n in 0..10 {
         node.submit(deposit(1, &format!("dep-{n}"))).await;
@@ -193,7 +193,7 @@ async fn a_removed_index_is_rebuilt_from_the_log_segments() {
     assert_eq!(served.len(), 10);
 
     fs::remove_dir_all(&index).unwrap();
-    let node = TestSequencer::start(&dir, 1024);
+    let node = TestSequencer::start_legacy(&dir, 1024);
     assert!(node.manifest.borrow().segments.len() > 2, "the log spans several completed segments");
     let history = TestHistory::start(&node, &dir, &index).await.unwrap();
     assert_eq!(history.resume_at, Offset::start_of(0));
@@ -205,7 +205,7 @@ async fn a_removed_index_is_rebuilt_from_the_log_segments() {
 #[tokio::test]
 async fn the_sequencer_runs_on_while_the_index_writer_waits_on_its_file() {
     let (dir, index) = (scratch_dir("history-stall"), index_dir("stall"));
-    let node = TestSequencer::start(&dir, 1024);
+    let node = TestSequencer::start_legacy(&dir, 1024);
     let history = TestHistory::start(&node, &dir, &index).await.unwrap();
     let lock = Connection::open(file(&index)).unwrap();
     lock.execute_batch("BEGIN IMMEDIATE").unwrap();
@@ -396,7 +396,7 @@ fn sample_index(name: &str) -> Reader {
 
 /// Runs a node on `dir` with an index in `index` through `deposits` deposits, then stops both.
 async fn indexed_log(dir: &Path, index: &Path, deposits: usize) {
-    let node = TestSequencer::start(dir, 1024);
+    let node = TestSequencer::start_legacy(dir, 1024);
     let history = TestHistory::start(&node, dir, index).await.unwrap();
     for n in 0..deposits {
         node.submit(deposit(1, &format!("dep-{n}"))).await;

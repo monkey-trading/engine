@@ -1,5 +1,7 @@
 //! Local Anvil scenario over the real sequencer, vault RPC, checkpoint worker, and deposit adapter.
 
+mod source;
+
 use std::path::Path;
 use std::process::{Child, Command as Process, Stdio};
 use std::sync::Arc;
@@ -22,12 +24,15 @@ use crate::custody::Custody;
 use crate::log::{Checkpoint, CheckpointDomain, LogEntry, Manifest};
 use crate::sequencer::{Request, Sequencer, replay_path};
 use crate::tee::EnclaveKey;
-use crate::test_support::{capture_alerts, dev_config, log_entries, scratch_dir, sequencer_config, trusted_now};
+use crate::test_support::{
+    access, capture_alerts, dev_config, log_entries, scratch_dir, sequencer_config, trusted_now,
+};
 
 sol! {
     function mint(address to, uint256 amount) external;
     function approve(address spender, uint256 amount) external returns (bool);
     function depositToHouse(uint256 amount) external returns (uint256);
+    function depositFor(address account, uint256 amount) external returns (uint256);
     function transfer(address to, uint256 amount) external returns (bool);
     function bookSurplus() external returns (uint256);
 }
@@ -136,10 +141,12 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     evm.poll_interval = Duration::from_millis(30);
     evm.cursor_path = dir.join("custody.json");
     cfg.genesis.house_capital = Fixed::ZERO;
+    let (access_client, source_task) = source::start(domain).await;
     let (work_tx, work_rx) = mpsc::channel(64);
     let (stream, _) = broadcast::channel(1024);
     let (withdrawals, _signed) = mpsc::unbounded_channel();
     let seq_cfg = crate::sequencer::SequencerConfig {
+        access_policy: Some(access::policy()),
         checkpoint_parent: Default::default(),
         checkpoints: Some(work_tx),
         vault: domain.vault,
@@ -147,7 +154,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
         ..sequencer_config(&dir, watch::channel(Manifest::default()).0)
     };
     let mut seq = Sequencer::recover(seq_cfg, key.clone(), stream, withdrawals).unwrap();
-    let custody = Custody::connect(&cfg.custody, seq.last_seq()).unwrap();
+    let custody = Custody::connect(&cfg.custody, seq.last_seq()).unwrap().with_access(Some(access_client));
     seq.activate_protocol().unwrap();
     seq.genesis(&cfg.genesis).unwrap();
     seq.trust(trusted_now()).unwrap();
@@ -155,7 +162,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     let sequencer = tokio::spawn(seq.run(rx));
     let poster = tokio::spawn(make_poster().run(work_rx, tx.clone()));
     let custody_task = tokio::spawn(custody.run(_signed, tx.clone()));
-    send(&provider, relayer, token, mintCall { to: relayer, amount: U256::from(100_000_000) }.abi_encode()).await;
+    send(&provider, relayer, token, mintCall { to: relayer, amount: U256::from(110_000_000) }.abi_encode()).await;
     send(&provider, relayer, token, approveCall { spender: vault, amount: U256::MAX }.abi_encode()).await;
     send(&provider, relayer, vault, depositToHouseCall { amount: U256::from(100_000_000) }.abi_encode()).await;
     timeout(Duration::from_secs(10), async {
@@ -170,7 +177,30 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     .await
     .unwrap();
     let (_alert_guard, mut alerts) = capture_alerts();
-    // Flush enough commands to cover the credited deposit, then await its posted root.
+    send(
+        &provider,
+        relayer,
+        vault,
+        depositForCall { account: Address::from(access::account(1).0), amount: U256::from(10_000_000) }.abi_encode(),
+    )
+    .await;
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let (reply, response) = oneshot::channel();
+            tx.send(Request::Query(Box::new(move |engine| {
+                let _ = reply.send(engine.pending_deposits().len());
+            })))
+            .await
+            .unwrap();
+            if response.await.unwrap() == 1 {
+                break;
+            }
+            sleep(Duration::from_millis(30)).await;
+        }
+    })
+    .await
+    .unwrap();
+    // The undeclared account's pending deposit and the credit must reconcile to both real vault deposits.
     for _ in 0..4 {
         submit(&tx, Command::Tick).await;
     }
@@ -193,7 +223,22 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     })
     .await
     .unwrap();
-    replay_path(&dir).expect("every checkpoint signature verifies");
+    let replayed = replay_path(&dir).expect("every checkpoint signature verifies");
+    assert_eq!(replayed.engine.house_cash(), Fixed::from_int(100));
+    assert!(!replayed.engine.accounts().contains_key(&access::account(1)));
+    let pending = replayed.engine.pending_deposits().values().next().unwrap();
+    assert_eq!((pending.account, pending.amount), (Some(access::account(1)), Fixed::from_int(10)));
+    assert!(replayed.engine.held_deposits().is_empty());
+    assert_eq!(
+        (replayed.accounting.pending, replayed.accounting.liabilities, replayed.accounting.deposits),
+        (Fixed::from_int(10), Fixed::from_int(110), 2)
+    );
+    let work = crate::checkpoints::Work {
+        checkpoint: replayed.last_signed_checkpoint.unwrap(),
+        liabilities: replayed.accounting.liabilities,
+        deposits: replayed.accounting.deposits,
+    };
+    assert_eq!(make_poster().reconcile(&work).await.unwrap(), (Some(work.checkpoint.seq), true));
 
     // USDC sent to the vault outside a deposit raises a Warning but keeps withdrawals running, and
     // anyone can book it as house capital.
@@ -248,11 +293,21 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     })
     .await
     .unwrap();
+    let (reply, request) = oneshot::channel();
+    tx.send(Request::Query(Box::new(move |engine| {
+        let _ = reply.send(access::withdrawal(engine, 1, Fixed::ONE, true));
+    })))
+    .await
+    .unwrap();
     assert!(
-        submit(&tx, Command::Withdraw { account: AccountId(relayer.into()), amount: Fixed::from_int(1), auth: None })
-            .await
-            .is_none(),
-        "withdrawals pause"
+        matches!(
+            submit(&tx, request.await.unwrap()).await.unwrap().as_slice(),
+            [engine_core::event::Event::WithdrawalRejected {
+                reason: engine_core::event::Reject::PayoutUnavailable,
+                ..
+            }]
+        ),
+        "signed screened withdrawals pause without an approval"
     );
     assert!(submit(&tx, Command::Tick).await.is_some(), "trading commands continue");
     custody_task.abort();
@@ -261,6 +316,8 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     let _ = poster.await;
     drop(tx);
     sequencer.await.unwrap().unwrap();
+    source_task.abort();
+    let _ = source_task.await;
 
     let entries = log_entries(&dir);
     let state = make_poster().chain.state(View::Latest).await.unwrap();

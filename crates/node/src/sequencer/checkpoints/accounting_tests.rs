@@ -1,3 +1,4 @@
+//! Exact V19 financial vectors and current-version capture over migrated credits plus fresh holds.
 use std::collections::BTreeMap;
 use std::hint::black_box;
 use std::sync::{Arc, Mutex};
@@ -43,7 +44,7 @@ fn gated_live_and_recovered_accounting_matches_cash_through_trading_and_withdraw
     };
     let mut seq =
         Sequencer::recover(cfg(), key.clone(), broadcast::channel(128).0, mpsc::unbounded_channel().0).unwrap();
-    seq.activate_protocol().unwrap();
+    seq.activate_legacy_protocol().unwrap();
     seq.genesis(&genesis).unwrap();
     seq.trust(sample_around(clock.as_ref())).unwrap();
     let mut bootstrap = Vec::new();
@@ -187,7 +188,7 @@ fn capture_population(count: u64) -> (Duration, Duration, Duration) {
         mpsc::unbounded_channel().0,
     )
     .unwrap();
-    seq.activate_protocol().unwrap();
+    seq.activate_legacy_protocol().unwrap();
     seq.genesis(&dev_config().genesis).unwrap();
     seq.trust(sample_around(clock.as_ref())).unwrap();
     while queued.try_recv().is_ok() {}
@@ -239,11 +240,32 @@ fn capture_population(count: u64) -> (Duration, Duration, Duration) {
     // An approval forces the real gated checkpoint after the entire population has been credited.
     let events = seq.sequence(withdraw).unwrap().unwrap();
     assert_eq!(approved(&events), Fixed::ONE);
+    while queued.try_recv().is_ok() {}
+    seq.activate_protocol().unwrap();
+    assert_eq!(seq.engine.protocol_version(), engine_core::protocol::ProtocolVersion::LATEST);
+    while queued.try_recv().is_ok() {}
+    // Fresh V21 raw ingress names no payer, so it leaves one tracked hold per migrated credited account.
+    for index in 1..=count {
+        let events = seq
+            .sequence(Command::Deposit {
+                account: account(index),
+                amount: Fixed::from_int(10),
+                chain_ref: format!("0x{:064x}:0", count + index),
+            })
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            events.as_slice(),
+            [Event::DepositHeld { reason: engine_core::access::AccessReject::PayerMissing, .. }]
+        ));
+    }
+    seq.checkpoint().unwrap();
     seq.flush().unwrap();
     assert_eq!(seq.engine.accounts().len(), count as usize);
+    assert_eq!(seq.engine.held_deposits().len(), count as usize);
     assert_matches(seq.accounting, &seq.engine, Fixed::ONE);
     let expected = recompute(&seq.engine, Fixed::ONE);
-    assert_eq!(expected.1, count);
+    assert_eq!(expected.1, 2 * count);
     let forced = queued.try_recv().unwrap();
     assert!(queued.try_recv().is_err());
     assert_eq!((forced.liabilities, forced.deposits), expected);
@@ -275,7 +297,7 @@ fn capture_population(count: u64) -> (Duration, Duration, Duration) {
     samples.sort_unstable();
     scans.sort_unstable();
     println!(
-        "ACCOUNTING accounts={count} evm_deposits={count} capture_p50={:?} capture_p99={:?} scan_p50={:?}",
+        "ACCOUNTING migrated_accounts={count} current_held_deposits={count} capture_p50={:?} capture_p99={:?} scan_p50={:?}",
         samples[100], samples[198], scans[3]
     );
     let replay = recovery_capture_p50(&log_entries(&dir), expected);

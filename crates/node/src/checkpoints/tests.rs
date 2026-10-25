@@ -1,3 +1,4 @@
+//! Historical V19 withdrawal/storage fixtures; current envelopes are covered by access tests.
 //! Signature, fencing, retry, and collateral regression tests.
 
 use std::sync::{Arc, Mutex};

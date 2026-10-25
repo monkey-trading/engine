@@ -1,9 +1,11 @@
 # Keys this repository publishes for local development. Their private keys are
 # public, so a node whose tee.provider is not "mock" refuses to start with any of
-# them as its operator key. A dev config or script that adds a published key lists
+# them as its operator or access-source key. A dev config or script that adds a published key lists
 # it here too; the node compiles this file in.
 
 operator_public_keys = [
+  # Shared access-source test authority: 32 bytes of 0x77.
+  "0x047962d45b38e8bcf82fa8efa8432a01f20c9a53e24c7d3f11df197cb8e70926da7a3ef3ebafc756dc3b24b75292d4cc5d71b170e97044a9858353443a96baed23",
   # Explicit mock enclave signer: 32 bytes of 0x43 (tee.use_published_mock_key).
   "0x047f31ebc5462c1fdce1b737ecff52d37d75dea43ce11c74d25aa297165faa2007282870f68031e8772062f4f63cd3ecbf834846787f512738ba15664990af4e20",
   # operator.public_key in dev.toml and anvil.toml: the local test key 0x4242…42

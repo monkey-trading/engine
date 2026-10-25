@@ -144,6 +144,7 @@ impl Node {
         let (manifest, _) = watch::channel(Manifest::default());
         // The venues sequence thousands of quotes, so one segment holds the whole test.
         let seq_cfg = SequencerConfig {
+            access_policy: Some(crate::test_support::access::policy()),
             segment_commands: 1_000_000,
             checkpoint_every: 1_000,
             checkpoint_parent: Default::default(),
@@ -158,7 +159,7 @@ impl Node {
         seq.trust(trusted_now()).expect("genesis");
         let (tx, rx) = mpsc::channel(65_536);
         tokio::spawn(seq.run(rx));
-        let account = "0x00000000000000000000000000000000000000a1".parse().expect("account");
+        let account = crate::test_support::access::account(1);
         Node { tx, stream, account, dir }
     }
 
@@ -193,9 +194,19 @@ impl Node {
 
     /// Credits the test account.
     pub(super) async fn deposit(&self) {
-        let cmd =
-            Command::Deposit { account: self.account, amount: "100000".parse().unwrap(), chain_ref: "dev-1".into() };
-        let events = self.submit(cmd).await;
+        let declaration = self.access_command(|engine| crate::test_support::access::declaration(engine, 1)).await;
+        assert!(matches!(declaration.as_slice(), [Event::EligibilityAttested { .. }]));
+        let events = self
+            .access_command(|engine| {
+                crate::test_support::access::funding(
+                    engine,
+                    Some(crate::test_support::access::account(1)),
+                    Some(crate::test_support::access::account(1)),
+                    "100000".parse().unwrap(),
+                    "dev-1",
+                )
+            })
+            .await;
         assert!(events.iter().any(|event| matches!(event, Event::Deposited { .. })), "{events:?}");
     }
 
@@ -213,7 +224,19 @@ impl Node {
             reduce_only: false,
             auth: None,
         };
-        self.submit(Command::PlaceOrder(order)).await
+        self.access_command(move |engine| crate::test_support::access::order(engine, 1, order)).await
+    }
+
+    /// Builds one explicitly requested signed input from the sequencer's recorded domain/nonce.
+    async fn access_command(&self, build: impl FnOnce(&engine_core::Engine) -> Command + Send + 'static) -> Vec<Event> {
+        let (reply, response) = oneshot::channel();
+        self.tx
+            .send(Request::Query(Box::new(move |engine| {
+                let _ = reply.send(build(engine));
+            })))
+            .await
+            .unwrap();
+        self.submit(response.await.unwrap()).await
     }
 
     /// Counts the price commands for `market` the engine applies over `window`, after letting

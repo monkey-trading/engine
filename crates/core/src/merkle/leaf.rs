@@ -78,6 +78,9 @@ const RECEIPT_INDEX: u8 = 11;
 const LEGACY_PRINCIPAL: u8 = 12;
 const CORPORATE_ACTION: u8 = 21;
 const CORPORATE_REFERENCE: u8 = 22;
+const ELIGIBILITY: u8 = 0x20;
+const HELD_DEPOSIT: u8 = 0x21;
+const PENDING_DEPOSIT: u8 = 0x22;
 
 /// The structs whose ABI encodings account, position, and market leaves hash.
 mod typed {
@@ -332,6 +335,21 @@ pub(crate) fn request_nonce_key(account: AccountId) -> B256 {
 /// The key of a credited custody reference's leaf.
 pub(crate) fn credited_ref_key(chain_ref: &str) -> B256 {
     keccak(&[&[CREDITED_REF], chain_ref.as_bytes()])
+}
+
+/// The key of an account's signed eligibility declaration.
+pub(crate) fn eligibility_key(account: AccountId) -> B256 {
+    keccak(&[&[ELIGIBILITY], &account.0])
+}
+
+/// The key of a permanently uncredited custody hold.
+pub(crate) fn held_deposit_key(chain_ref: &str) -> B256 {
+    keccak(&[&[HELD_DEPOSIT], chain_ref.as_bytes()])
+}
+
+/// The key of a deposit awaiting recovery of the screening service.
+pub(crate) fn pending_deposit_key(chain_ref: &str) -> B256 {
+    keccak(&[&[PENDING_DEPOSIT], chain_ref.as_bytes()])
 }
 
 /// The key of the markout at `index`.

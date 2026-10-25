@@ -15,6 +15,7 @@ use engine_core::protocol::ProtocolVersion;
 use engine_core::session::Schedule;
 use engine_node::NodeConfig;
 
+use crate::access;
 use crate::{DEV, production_genesis};
 
 #[test]
@@ -48,13 +49,17 @@ fn divergence_levels(params: &ProtocolParams, markets: &[MarketSpec]) -> Vec<(St
         Command::Admin(AdminCommand::SetClientAuth(ClientAuth::Unsigned)),
         Command::Admin(AdminCommand::SetOperator(operator)),
         Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::LATEST }),
+        Command::Admin(AdminCommand::SetAccessPolicy(access::policy())),
         Command::Admin(AdminCommand::SetParams(params.clone())),
     ];
     let listings = markets.iter().map(|market| {
         Command::Admin(AdminCommand::UpsertMarket(MarketSpec { schedule: Schedule::AlwaysOpen, ..market.clone() }))
     });
-    let capital = Command::HouseCapital { amount: Fixed::from_int(10_000_000), chain_ref: "capital".into() };
-    activation.into_iter().chain(listings).chain([capital]).for_each(|cmd| apply_at_zero(&mut engine, cmd));
+    activation.into_iter().chain(listings).for_each(|cmd| apply_at_zero(&mut engine, cmd));
+    // House funding is screened like any deposit: clear evidence from the funding payer credits it.
+    let capital = access::funding(&engine, None, Some(access::account(1)), Fixed::from_int(10_000_000), "capital");
+    apply_at_zero(&mut engine, capital);
+    assert_eq!(engine.house_cash(), Fixed::from_int(10_000_000));
     // An index of 1 converts every launch currency, so a market quoted in one has a price.
     let center = Fixed::ONE;
     markets
@@ -78,7 +83,7 @@ fn divergence_levels(params: &ProtocolParams, markets: &[MarketSpec]) -> Vec<(St
 }
 
 /// Applies `cmd` as the engine's next seq at time zero; panics if the engine refuses it.
-fn apply_at_zero(engine: &mut Engine, cmd: Command) {
+fn apply_at_zero(engine: &Engine, cmd: Command) {
     let seq = engine.last_seq().map_or(0, |seq| seq + 1);
     let events = engine.apply(&Sequenced { seq, ts: 0, cmd }).unwrap();
     let refused = |e: &Event| matches!(e, Event::AdminRejected { .. } | Event::PricesRejected { .. });

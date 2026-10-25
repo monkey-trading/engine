@@ -1,4 +1,4 @@
-//! Deterministic dev scenario through the real publisher worker, signed admin API, TLS, and log.
+//! V19 deterministic dev scenario through the real publisher worker, signed admin API, TLS, and log.
 
 use super::*;
 use std::fs;
@@ -15,6 +15,7 @@ use engine_core::price::SourceQuote;
 use engine_core::types::Side;
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 use crate::admin::{self, AdminArgs, HexKey, KeyEnv};
@@ -341,7 +342,7 @@ impl Node {
         let operator = cfg.operator;
         let mut seq = Sequencer::recover(cfg, key.clone(), stream.clone(), withdrawals).unwrap();
         seq.wait_for_benchmarks().unwrap();
-        seq.activate_protocol().unwrap();
+        seq.activate_legacy_protocol().unwrap();
         if seq.needs_genesis() {
             seq.genesis(&dev_config().genesis).unwrap();
         }
@@ -355,6 +356,8 @@ impl Node {
             tls_public_key_sha256: tls.public_key_sha256,
         };
         let state = ApiState {
+            protocol: engine_core::protocol::ProtocolVersion::V19,
+            access: None,
             tx: tx.clone(),
             stream,
             attestation: Arc::new(attest_bundle(&MockAttestor, &bundle).unwrap()),

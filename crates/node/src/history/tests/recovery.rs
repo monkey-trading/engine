@@ -58,7 +58,7 @@ async fn pages_wait_until_the_index_has_taken_the_log_it_started_on() {
         [("rebuild", None, 3, false), ("behind", Some(2), 3, false), ("caught-up", Some(2), 0, true)]
     {
         let (dir, index) = (scratch_dir(&format!("history-ready-{case}")), index_dir(&format!("ready-{case}")));
-        let node = TestSequencer::start(&dir, 1024);
+        let node = TestSequencer::start_legacy(&dir, 1024);
         match indexed {
             Some(deposits) => {
                 let history = TestHistory::start(&node, &dir, &index).await.unwrap();
@@ -73,7 +73,7 @@ async fn pages_wait_until_the_index_has_taken_the_log_it_started_on() {
                 drop(Writer::open(&file(&index), ms(RETENTION)).unwrap());
             }
         }
-        let node = TestSequencer::start(&dir, 1024);
+        let node = TestSequencer::start_legacy(&dir, 1024);
         for n in 0..while_down {
             node.submit(deposit(1, &format!("down-{n}"))).await;
         }
@@ -248,7 +248,7 @@ async fn an_unusable_index_fails_with_its_cause() {
 #[tokio::test]
 async fn a_failed_index_write_stops_the_history_task() {
     let (dir, index) = (scratch_dir("history-fail"), index_dir("fail"));
-    let node = TestSequencer::start(&dir, 1024);
+    let node = TestSequencer::start_legacy(&dir, 1024);
     let history = TestHistory::start(&node, &dir, &index).await.unwrap();
     Connection::open(file(&index)).unwrap().execute_batch("DROP TABLE events").unwrap();
     node.submit(deposit(1, "dep-1")).await;

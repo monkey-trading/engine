@@ -147,6 +147,8 @@ this crate and reproduce the signed state roots exactly.
 - `src/emissions.rs` — MONKEY emissions: the schedule, period results, finalisation, and
   entitlements
 - `src/stress.rs` — stress levels: the automatic triggers, the move window, and the floors
+- `src/access/mod.rs` — signed eligibility, source policy and bounded public screening types
+- `src/access/engine.rs` — deterministic screening, declarations and uncredited custody holds
 - `src/auth.rs` — client auth, the operator record, request signatures and nonces, and the checks
   every client request and signed admin command pass
 - `src/eip712.rs` — the EIP-712 domain, the request types clients and the operator sign, and signer
@@ -179,6 +181,15 @@ this crate and reproduce the signed state roots exactly.
   `tests/stress.rs` stress levels from `V13`, `tests/stress_activation.rs` the activation of
   `V13` over earlier divergence triggers and move references, `tests/quote_hours.rs` quotes from
   outside a market's hours from `V21`, and `tests/futures.rs` markets priced from futures
+- `tests/access.rs`, `tests/access/` — signed declarations, source proofs, policy refusals, holds,
+  resting orders covered by their placement screening, replay compatibility, and the `V24`
+  reference session (`examples/reference_log/v24.rs`) with its assertions
+- `tests/access/pending.rs` — durable retry of every curable refusal (source failures, a missing
+  declaration, an unknown classification), exactly-once credit, and terminal sanctioned holds
+- `tests/access/receipts.rs` — access screening of quorum-proven custody receipts: uncredited
+  pending and held receipts stay out of cash and the withdrawal lock through finality, reversal,
+  reinstatement and replacement
+- `tests/fixtures/access-eip712.json` — independent wallet vectors for both declarations and source evidence
 - `tests/reference/` — one reference log per protocol version: each line is a sequenced command and
   the state root after it
 - `tests/corporate_actions.rs` and `tests/corporate_actions/` — signed scheduling, cash, split,
@@ -192,6 +203,7 @@ this crate and reproduce the signed state roots exactly.
 - `tests/invariants/state_root.rs` — incremental roots against a rebuild, with every account's
   proof and entitlement proof checked and every emission budget accounted for, under generated
   sessions
+- `tests/invariants/access.rs` — explicit signing keys and fresh source evidence for current tree sessions
 - `tests/state_root.rs` — the state root from `V9`: its activation, what each root rehashes,
   account proofs, and roots against a rebuild
 - `tests/fixtures/eip712.json` — EIP-712 test vectors: API bodies, wallet typed data, and
@@ -209,6 +221,7 @@ this crate and reproduce the signed state roots exactly.
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
   `V15` to `V23` parts (`v15.rs` to `v23.rs`)
+  `V15` to `V22` and `V24` parts (`v15.rs` to `v22.rs`, `v24.rs`)
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
 
@@ -244,8 +257,15 @@ account's next nonce and an expiry at most five minutes ahead:
 
 ```bash
 SIGNER_KEY=<private key> cargo run -p engine-core --example sign_request -- \
-    <chain id> <vault> <nonce> <expires at> <order|cancel|withdrawal> '<unsigned body>'
+    <chain id> <vault> <nonce> <expires at> <order|cancel|withdrawal|eligibility> '<unsigned body>'
 ```
+
+From V21, client actions and declarations always require signatures, including in development logs that recorded
+unsigned auth. The declaration signs its exact professional or eligible-client statement and, like an
+order or a withdrawal, carries the source's evidence for its account and peer. Source evidence is
+also signed and checked during replay; [the source contract](../../config/access-source.md)
+describes its domain, freshness and subject binding. Existing client request types keep their domain
+version and original encodings.
 
 The operator signs each admin command the same way, as its JSON under the vault's domain, with the
 operator's next nonce; `engine admin`, in `engine-node`, signs and submits it.
@@ -330,6 +350,9 @@ reference session in `examples/reference_log/v20.rs`. `V21` holds each quote to 
 and prices markets from roll-adjusted futures contracts; its session is in
 `examples/reference_log/v21.rs`. `V22` reserves withdrawals in a public FIFO queue paid from
 physical cash; its session is in `examples/reference_log/v22.rs`.
+`V24` adds signed eligibility declarations, screened orders and
+withdrawals, and pending and held custody deposits and receipts. Its reference-log session is in
+`examples/reference_log/v24.rs`.
 For each later version:
 
 1. Add the version in code as `src/protocol.rs` lists, then extend the session in

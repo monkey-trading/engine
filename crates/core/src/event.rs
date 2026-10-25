@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
+use crate::access::{AccessReject, EligibilityClass};
 use crate::corporate::CorporateAction;
 use crate::deposits::{DepositReceipt, DepositReject, DepositStatus};
 use crate::emissions::TokenUnits;
@@ -57,6 +58,31 @@ pub enum Event {
         market: MarketId,
         at: Millis,
         reason: String,
+    },
+    EligibilityAttested {
+        account: AccountId,
+        class: EligibilityClass,
+    },
+    EligibilityRejected {
+        account: AccountId,
+        reason: Reject,
+    },
+    /// Uncredited until a retry finds the account declared, its subjects classified, and the source working.
+    DepositPending {
+        chain_ref: String,
+        account: Option<AccountId>,
+        payer: Option<AccountId>,
+        amount: Fixed,
+        reason: AccessReject,
+    },
+    /// The collateral stays in custody and never enters client balances or house NAV.
+    DepositHeld {
+        chain_ref: String,
+        account: Option<AccountId>,
+        payer: Option<AccountId>,
+        amount: Fixed,
+        reason: AccessReject,
+
     },
     Deposited {
         account: AccountId,
@@ -210,6 +236,11 @@ pub enum Event {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Reject {
+    Access {
+        reason: AccessReject,
+    },
+    /// The node cannot yet pay an on-chain withdrawal; no collateral is debited.
+    PayoutUnavailable,
     UnknownMarket,
     UnknownOrder,
     InvalidOrder {

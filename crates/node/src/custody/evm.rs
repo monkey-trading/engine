@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use alloy::primitives::{Address, B256, U256};
@@ -16,6 +17,7 @@ use tokio::sync::mpsc;
 use tokio::task::spawn_blocking;
 use tracing::{debug, info};
 
+use crate::access::AccessClient;
 use crate::config::EvmCustodySection;
 use crate::custody::chain::{BlockLink, ProvenChain};
 use crate::custody::credit::{credit, moved_credits, sync};
@@ -102,6 +104,8 @@ pub struct VaultDeposit {
     /// The vault's id for it; trader and house deposits share one sequence.
     pub id: u64,
     pub beneficiary: Beneficiary,
+    /// The token transfer's actual funding address; absent in legacy reads.
+    pub payer: Option<AccountId>,
     /// USDC base units the vault received.
     pub units: U256,
 }
@@ -138,6 +142,8 @@ pub struct DepositWatcher<V> {
     pub(super) poll_interval: Duration,
     pub(super) stall_critical_after: Duration,
     watchdog: Watchdog,
+    pub(super) access: Option<Arc<AccessClient>>,
+    pub(super) access_enforced: bool,
 }
 
 impl VaultDeposit {
@@ -181,6 +187,7 @@ impl<V: VaultReader> DepositWatcher<V> {
             confirmed_deposits: ProtocolVersion::LATEST.supports_deposit_finality(),
             confirmed: progress::ConfirmedProgress::default(),
             legacy_unproven: None,
+            access_enforced: ProtocolVersion::LATEST >= ProtocolVersion::V24,
             usdc: cfg.usdc,
             cursor,
             cursor_path: cfg.cursor_path.clone(),
@@ -192,6 +199,7 @@ impl<V: VaultReader> DepositWatcher<V> {
             poll_interval: cfg.poll_interval,
             stall_critical_after: cfg.stall_critical_after,
             watchdog: Watchdog::new(cfg.stall_critical_after, cfg.finality_stalled_after),
+            access: None,
         }
     }
 
@@ -208,6 +216,8 @@ impl<V: VaultReader> DepositWatcher<V> {
     ) -> anyhow::Result<Self> {
         let mut watcher = Self::start(vault, cfg, chain_id, address, seq)?;
         watcher.confirmed_deposits = false;
+        // Historical credit rules predate access screening.
+        watcher.access_enforced = false;
         if let (Some(hash), Some(number)) = (watcher.cursor.last_block_hash, watcher.cursor.next_block.checked_sub(1)) {
             watcher.chain.insert(number, hash);
         }

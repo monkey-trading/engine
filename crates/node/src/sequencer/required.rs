@@ -79,7 +79,12 @@ impl Sequencer {
     /// - the log cannot be written
     pub fn activate_protocol(&mut self) -> anyhow::Result<()> {
         let legacy = self.legacy_deposits.values().cloned().collect();
-        let cmds = activation_commands(&self.engine, &self.client_auth, self.operator, legacy);
+        let mut cmds = activation_commands(&self.engine, &self.client_auth, self.operator, legacy);
+        if self.engine.access_policy().is_none()
+            && let Some(policy) = &self.access_policy
+        {
+            cmds.push(Command::Admin(AdminCommand::SetAccessPolicy(policy.clone())));
+        }
         if cmds.is_empty() {
             return Ok(());
         }
@@ -213,6 +218,17 @@ pub(super) fn activation_commands(
     operator: Operator,
     legacy_deposits: Vec<LegacyDeposit>,
 ) -> Vec<Command> {
+    activation_commands_for(engine, client_auth, operator, ProtocolVersion::LATEST, legacy_deposits)
+}
+
+/// Builds activation for an explicit ruleset; production always selects LATEST.
+fn activation_commands_for(
+    engine: &Engine,
+    client_auth: &ClientAuth,
+    operator: Operator,
+    version: ProtocolVersion,
+    legacy_deposits: Vec<LegacyDeposit>,
+) -> Vec<Command> {
     let mut cmds = Vec::new();
     if engine.client_auth().is_none() {
         cmds.push(Command::Admin(AdminCommand::SetClientAuth(client_auth.clone())));
@@ -220,13 +236,29 @@ pub(super) fn activation_commands(
     if engine.operator().is_none() {
         cmds.push(Command::Admin(AdminCommand::SetOperator(operator)));
     }
-    if engine.protocol_version() < ProtocolVersion::LATEST {
-        let command = if ProtocolVersion::LATEST.supports_deposit_finality() && !engine.deposit_finality_enabled() {
-            AdminCommand::ActivateCustodyFinality { version: ProtocolVersion::LATEST, legacy_deposits }
+    if engine.protocol_version() < version {
+        let command = if version.supports_deposit_finality() && !engine.deposit_finality_enabled() {
+            AdminCommand::ActivateCustodyFinality { version, legacy_deposits }
         } else {
-            AdminCommand::ActivateProtocol { version: ProtocolVersion::LATEST }
+            AdminCommand::ActivateProtocol { version }
         };
         cmds.push(Command::Admin(command));
     }
     cmds
+}
+
+#[cfg(test)]
+impl Sequencer {
+    /// Builds historical unsigned/auth/storage fixtures under their explicit V20 rules.
+    /// Error cases:
+    /// - required historical commands cannot be sequenced or written
+    pub(crate) fn activate_legacy_protocol(&mut self) -> anyhow::Result<()> {
+        let legacy = self.legacy_deposits.values().cloned().collect();
+        let cmds =
+            activation_commands_for(&self.engine, &self.client_auth, self.operator, ProtocolVersion::V20, legacy);
+        if cmds.is_empty() {
+            return Ok(());
+        }
+        self.sequence_required("V20 historical fixture", cmds)
+    }
 }

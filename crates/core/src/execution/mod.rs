@@ -10,6 +10,7 @@
 //! while its FX market has a price, and its realised PnL converts to USD at that FX index.
 
 use crate::Fixed;
+use crate::access::AccessEvidence;
 use crate::account::{Account, RestingOrder};
 use crate::auth::RequestAuth;
 use crate::command::{OrderKind, OrderRequest};
@@ -63,14 +64,30 @@ impl Engine {
     /// Authorises the request, then fills a market order now or rests a limit or stop order,
     /// emitting acceptance or rejection. A resting order is checked against the live price at once:
     /// from `V14` only that order, and before `V14` the market's whole book.
-    pub(crate) fn place_order(&mut self, req: &OrderRequest, events: &mut Vec<Event>) {
+    pub(crate) fn place_order(
+        &mut self,
+        req: &OrderRequest,
+        evidence: Option<&AccessEvidence>,
+        events: &mut Vec<Event>,
+    ) {
         let reject = |reason, events: &mut Vec<Event>| {
             events.push(Event::OrderRejected { account: req.account, client_id: req.client_id, reason })
         };
         let authorised = self.authorise(req.account, req.auth.as_ref(), |domain, auth| {
             order_hash(domain, req, auth.nonce, auth.expires_at)
         });
-        if let Err(reason) = authorised.and_then(|()| self.validate_order(req)) {
+        let request_hash = self
+            .access_domain()
+            .zip(req.auth.as_ref())
+            .map(|(domain, auth)| order_hash(&domain, req, auth.nonce, auth.expires_at))
+            .unwrap_or_default();
+        if let Err(reason) = authorised
+            .and_then(|()| {
+                self.check_access(Some(req.account), None, request_hash, evidence, false, true)
+                    .map_err(|reason| Reject::Access { reason })
+            })
+            .and_then(|()| self.validate_order(req))
+        {
             return reject(reason, events);
         }
         self.refresh_session(req.market, events);

@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
@@ -32,12 +33,12 @@ class Proxy(BaseHTTPRequestHandler):
                         address = filt["address"]
                         if isinstance(address, list):
                             address = address[0]
-                        # Deposited(uint256,address,uint256); the real vault filter supplies its topic.
+                        # The scenario supplies the payer-bearing deposit ABI's exact topic.
                         response["result"].append({
                             "address": address, "blockNumber": height, "blockHash": block["hash"],
                             "transactionHash": "0x" + "fa" * 32, "transactionIndex": "0x0", "logIndex": "0xff",
-                            "removed": False, "topics": [filt["topics"][0][0], "0x" + "0" * 64,
-                                                          "0x" + "0" * 24 + "ab" * 20],
+                            "removed": False, "topics": [os.environ.get("DEV_DEPOSIT_TOPIC", filt["topics"][0][0]), "0x" + "0" * 64,
+                                                          "0x" + "0" * 24 + "ab" * 20, "0x" + "0" * 24 + "cd" * 20],
                             "data": "0x" + f"{50_000_000:064x}",
                         })
             payload = json.dumps(result).encode()

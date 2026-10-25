@@ -102,8 +102,9 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     event SignerChanged(address indexed previousSigner, address indexed signer, uint64 signerEpoch);
     event PausesChanged(bool depositsPaused, bool withdrawalsPaused);
 
-    /// @notice `amount` USDC base units deposited to trader account `account`.
-    event Deposited(uint256 indexed id, address indexed account, uint256 amount);
+    /// @notice `amount` USDC base units deposited to trader account `account` by `from`, the caller
+    /// whose tokens the vault pulled.
+    event Deposited(uint256 indexed id, address indexed account, address indexed from, uint256 amount);
 
     /// @notice `amount` USDC base units added to house capital by `from`.
     event HouseDeposited(uint256 indexed id, address indexed from, uint256 amount);
@@ -347,7 +348,7 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     function _deposit(address account, uint256 amount) private returns (uint256 id) {
         uint256 received = _pull(amount);
         id = _record(received);
-        emit Deposited(id, account, received);
+        emit Deposited(id, account, msg.sender, received);
     }
 
     /// @dev Whether `siblings`, from the root down, lead from the leaf at `key` with `valueHash` to

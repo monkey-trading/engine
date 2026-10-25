@@ -9,21 +9,29 @@ use engine_core::command::{AdminCommand, Command, OrderKind, OrderRequest, Seque
 use engine_core::event::{Event, Fill, Reject};
 use engine_core::price::SourceQuote;
 use engine_core::protocol::ProtocolVersion;
-use engine_core::types::{AccountId, MarketId, Millis, Side};
+use engine_core::types::{MarketId, Millis, Side};
 use engine_core::{Engine, Fixed};
 use engine_node::NodeConfig;
 use engine_node::sequencer::genesis_commands;
 
 const EURUSD: MarketId = 10;
 const DE40: MarketId = 23;
-const TRADER: AccountId = AccountId([7; 20]);
+#[path = "common/access.rs"]
+pub mod access;
 /// Tue 20 Oct 2026 10:00 Berlin: Germany 40 and EUR-USD are both open.
 const START: Millis = 1_792_483_200_000;
 
 #[test]
 fn dev_scenario_germany_40_pnl_moves_with_eur_usd_alone_and_stops_while_eur_usd_is_stale() {
     let mut node = DevNode::genesis();
-    node.apply(Command::Deposit { account: TRADER, amount: f("100000"), chain_ref: "dev:1".into() });
+    let funded = node.apply(access::funding(
+        &node.engine,
+        Some(access::account(1)),
+        Some(access::account(1)),
+        f("100000"),
+        "dev:1",
+    ));
+    assert_eq!(funded, [Event::Deposited { account: access::account(1), amount: f("100000") }]);
     node.price(EURUSD, "1.08");
     node.price(DE40, "23500");
     let fill = node.order(Side::Buy, "2", "23500").expect("the long opens");
@@ -70,11 +78,14 @@ impl DevNode {
             Command::Admin(AdminCommand::SetClientAuth(auth)),
             Command::Admin(AdminCommand::SetOperator(config.operator().expect("the dev config's operator"))),
             Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::LATEST }),
+            Command::Admin(AdminCommand::SetAccessPolicy(access::policy())),
         ];
         for cmd in boot.into_iter().chain(genesis_commands(&config.genesis)) {
             let events = node.apply(cmd);
             assert!(!events.iter().any(|e| matches!(e, Event::AdminRejected { .. })), "{events:?}");
         }
+        let declared = node.apply(access::declaration(&node.engine, 1));
+        assert!(matches!(declared.as_slice(), [Event::EligibilityAttested { .. }]));
         node
     }
 
@@ -97,7 +108,7 @@ impl DevNode {
     fn order(&mut self, side: Side, qty: &str, quoted: &str) -> Result<Fill, Reject> {
         let kind = OrderKind::Market { quoted: f(quoted), max_slippage_bps: None };
         let req = OrderRequest {
-            account: TRADER,
+            account: access::account(1),
             client_id: 1,
             market: DE40,
             side,
@@ -106,7 +117,7 @@ impl DevNode {
             reduce_only: false,
             auth: None,
         };
-        let events = self.apply(Command::PlaceOrder(req));
+        let events = self.apply(access::order(&self.engine, 1, req));
         events
             .into_iter()
             .find_map(|e| match e {
@@ -119,7 +130,7 @@ impl DevNode {
 
     /// The trader's unrealised PnL and margin requirement in USD, as the account API reports them.
     fn pnl_and_margin(&self) -> (Fixed, Fixed) {
-        let acct = &self.engine.accounts()[&TRADER];
+        let acct = &self.engine.accounts()[&access::account(1)];
         let (equity, margin) = self.engine.equity_and_margin(acct, None);
         (equity - acct.balance, margin)
     }
