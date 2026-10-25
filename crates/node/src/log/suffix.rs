@@ -237,8 +237,24 @@ impl SegmentedLog {
     /// descriptors, which this recovery matched to the replayed bytes; later ones carry over.
     /// Error cases:
     /// - a reread segment differs from its descriptor, or a proof or prefix check fails
+    /// - a segment file the tip certifies past the recovered log is still on disk
     fn rewind(&mut self, read: Arc<dyn CatalogRead>, boundary: &CatalogBoundary, completed: u64) -> anyhow::Result<()> {
         let tip = self.manifest.catalog.take().context("recovery catalog missing")?;
+        // A certified segment whose file is still on disk past the recovered active segment was
+        // never lost. Rewinding over it would raise log_tail_lost for bytes that exist, and the
+        // writer would later refuse to link over the leftover file, stopping the node; reject the
+        // cache so recovery falls back to full replay's directory-wide refusal.
+        let active_first = self.open.as_ref().map(|segment| segment.info().first_seq);
+        for ordinal in completed..tip.len() {
+            let first_seq = tip.at(ordinal)?.info.first_seq;
+            if Some(first_seq) != active_first {
+                ensure!(
+                    !self.dir.join(segment_name(first_seq)).try_exists()?,
+                    "segment {} the catalog tip certifies past the recovered log is still on disk",
+                    segment_name(first_seq),
+                );
+            }
+        }
         let mut completions = Vec::new();
         let mut last = None;
         for ordinal in boundary.catalog.completed_segments..completed.min(tip.certified().completed_segments) {

@@ -39,6 +39,47 @@ fn a_tip_past_the_manifest_resumes_the_catalog_from_the_boundary() {
     assert!(view.authority.is_none(), "segments past the live window wait for the post-preflight fold");
 }
 
+/// A segment file the tip certifies past the recovered active segment that is still on disk was
+/// never lost. Recovery rejects the cache so it falls back to full replay's directory-wide
+/// refusal, instead of rewinding and wedging the writer's first rotation on the leftover file. A
+/// certified segment at the active segment's own offset is not past it: recovery resumes from it.
+#[test]
+fn a_tip_segment_still_on_disk_past_the_recovered_log_rejects_the_cache() {
+    for kept in 72..76 {
+        let mut f = fixture(&format!("catalog-rewind-orphan-{kept}"), 1);
+        for seq in 0..3 {
+            f.writer.append(&command(seq)).expect("initial");
+        }
+        let c = boundary(&mut f, 2);
+        for seq in 3..73 {
+            f.writer.append(&command(seq)).expect("kept");
+        }
+        f.writer.sync().expect("kept bytes durable");
+        let kept_files = log_files(&f.dir);
+        for seq in 73..80 {
+            f.writer.append(&command(seq)).expect("lost");
+        }
+        f.writer.sync().expect("lost bytes durable");
+        f.writer.flush_catalog().expect("the tip lists the lost segments");
+        // Keep the bytes of one segment the tip certifies past the synced manifest, as storage
+        // that lost the synced manifest append but kept the segment files would.
+        let orphan = f.dir.join(format!("{kept:020}.jsonl"));
+        let orphan_bytes = fs::read(&orphan).expect("orphan segment");
+        let t = latest(&f.heads);
+        drop(f.writer);
+        restore(&f.dir, &kept_files);
+        fs::write(orphan, orphan_bytes).expect("orphan segment back");
+        let result = SegmentedLog::open_suffix(&f.dir, f.read.clone(), &c, Some(&t), |_| Ok(()));
+        if kept == 72 {
+            let log = result.unwrap_or_else(|error| panic!("kept=72 recovery failed: {error:#}"));
+            assert!(log.catalog_rewound());
+        } else {
+            let error = result.err().unwrap_or_else(|| panic!("kept={kept} unexpectedly recovered"));
+            assert!(format!("{error:#}").contains("still on disk"), "{error:#}");
+        }
+    }
+}
+
 /// A history head can show a lost tail the tip covers past the log's end. The rewind takes the
 /// segments only the tip listed from their files again, accepting only the bytes it replayed.
 #[test]
