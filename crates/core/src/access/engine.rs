@@ -8,6 +8,7 @@ use crate::access::{
     Jurisdiction, MAX_EVIDENCE_LEAD_MS, SourceFailure,
 };
 use crate::auth::ClientAuth;
+use crate::deposits::legacy_chain_reference;
 use crate::eip712::{self, B256, Eip712Domain, deposit_screening_hash, eligibility_hash};
 use crate::engine::Engine;
 use crate::event::{Event, Reject};
@@ -81,22 +82,6 @@ impl Engine {
             })
             .take(limit)
             .collect()
-    }
-
-    /// Pending references sharing a transaction prefix, for finality movement checks.
-    pub fn pending_refs_with_prefix<'a>(&'a self, prefix: &'a str) -> impl Iterator<Item = &'a str> + 'a {
-        self.pending_deposits
-            .range::<str, _>((Bound::Included(prefix), Bound::Unbounded))
-            .map(|(reference, _)| reference.as_str())
-            .take_while(move |reference| reference.starts_with(prefix))
-    }
-
-    /// Held references sharing a transaction prefix, for post-finality movement detection.
-    pub fn held_refs_with_prefix<'a>(&'a self, prefix: &'a str) -> impl Iterator<Item = &'a str> + 'a {
-        self.held_deposits
-            .range::<str, _>((Bound::Included(prefix), Bound::Unbounded))
-            .map(|(reference, _)| reference.as_str())
-            .take_while(move |reference| reference.starts_with(prefix))
     }
 
     /// The recorded deployment domain, including in unsigned development logs.
@@ -249,7 +234,11 @@ impl Engine {
             }
             return;
         }
-        if self.is_credited(&deposit.chain_ref) {
+        // A duplicate, or an EVM reference that receipt finality accepts only as an exact receipt, is
+        // refused as the unscreened routes refuse it.
+        if self.is_credited(&deposit.chain_ref)
+            || (self.deposit_finality_enabled() && legacy_chain_reference(&deposit.chain_ref).is_some())
+        {
             match deposit.account {
                 Some(account) => self.deposit(account, deposit.amount, &deposit.chain_ref, events),
                 None => self.house_capital(deposit.amount, &deposit.chain_ref, events),
@@ -276,6 +265,9 @@ impl Engine {
             events.push(Event::AdminRejected { reason: "deposit is not awaiting screening".into() });
             return;
         };
+        if self.deposits.contains_key(reference) {
+            return self.rescreen_receipt(&deposit, evidence, events);
+        }
         self.screen_deposit(&deposit, Some(evidence), events);
     }
 
@@ -330,7 +322,7 @@ pub(crate) fn access_error(reason: AccessReject) -> Reject {
 }
 
 /// Public evidence preserves the original funding input on every pending refusal.
-fn pending_event(deposit: &AccessDeposit, reason: AccessReject) -> Event {
+pub(super) fn pending_event(deposit: &AccessDeposit, reason: AccessReject) -> Event {
     Event::DepositPending {
         chain_ref: deposit.chain_ref.clone(),
         account: deposit.account,

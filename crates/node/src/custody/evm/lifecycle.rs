@@ -4,14 +4,18 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use alloy::primitives::B256;
 use anyhow::anyhow;
+use engine_core::access::receipt_access_deposit;
 use engine_core::command::Command;
 use engine_core::deposits::{
     CustodyCheckpoint, DepositBeneficiary, DepositReceipt, DepositStatus, DepositUpdate, RecordedDeposit,
 };
+use engine_core::eip712::deposit_screening_hash;
 use engine_core::event::Event;
+use engine_core::types::AccountId;
 use tokio::sync::mpsc;
 use tracing::{Instrument, error, info, info_span};
 
+use crate::access::{ScreeningRequest, screen};
 use crate::custody::credit::{query, submit};
 use crate::custody::evm::{
     Beneficiary, BlockRef, DepositWatcher, VaultDeposit, VaultIdentity, VaultReader, check_complete,
@@ -171,6 +175,13 @@ impl<V: VaultReader> DepositWatcher<V> {
                         self.confirmed.scan.as_mut().expect("scan retained").applied += 1;
                         continue;
                     }
+                    None if self.access_enforced => {
+                        let scan = self.confirmed.scan.as_ref().expect("scan retained");
+                        let payer = scan.payers.get(&receipt.reference()).copied().flatten();
+                        self.sequence_screened(tx, receipt.clone(), payer).await?;
+                        self.confirmed.scan.as_mut().expect("scan retained").applied += 1;
+                        continue;
+                    }
                     None => DepositUpdate::Credit { receipt: receipt.clone() },
                 };
                 sequence_update(tx, update).await?;
@@ -178,6 +189,36 @@ impl<V: VaultReader> DepositWatcher<V> {
             self.confirmed.scan.as_mut().expect("scan retained").applied += 1;
         }
         Ok(())
+    }
+
+    /// Screens a new receipt's beneficiary and vault caller, then sequences it with the evidence;
+    /// the engine credits it, leaves it pending, or holds it uncredited.
+    /// Error cases:
+    /// - the sequencer stops or rejects the receipt
+    async fn sequence_screened(
+        &self,
+        tx: &mpsc::Sender<Request>,
+        receipt: DepositReceipt,
+        payer: Option<AccountId>,
+    ) -> Result<(), PollError> {
+        let deposit = receipt_access_deposit(&receipt, payer);
+        let request = ScreeningRequest {
+            request_hash: deposit_screening_hash(&deposit),
+            account: deposit.account,
+            payer,
+            peer: None,
+        };
+        let evidence = screen(self.access.as_deref(), &request).await;
+        let span = info_span!("deposit", id = %receipt.reference(), deposit_id = receipt.deposit_id);
+        async move {
+            let events = submit(tx, Command::AccessCustodyDeposit { receipt, payer, evidence }).await?;
+            if events.iter().any(|event| matches!(event, Event::CustodyDepositRejected { .. })) {
+                return Err(PollError::inconsistent(anyhow!("sequencer rejected a screened custody receipt")));
+            }
+            Ok(())
+        }
+        .instrument(span)
+        .await
     }
 
     /// Releases proved principal without another cash application, then logs the exact frontier.

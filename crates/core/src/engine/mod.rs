@@ -18,7 +18,7 @@ use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
-use crate::access::{AccessDeposit, AccessPolicy, EligibilityClass, HeldDeposit};
+use crate::access::{AccessDeposit, AccessPolicy, CreditScreening, EligibilityClass, HeldDeposit};
 use crate::account::{Account, Position};
 use crate::auth::{ClientAuth, Operator};
 use crate::benchmark::BenchmarkHistory;
@@ -290,7 +290,10 @@ impl Engine {
             }
             Command::Deposit { account, amount, chain_ref } => self.deposit(*account, *amount, chain_ref, &mut events),
             Command::CustodyFinalised(checkpoint) => self.advance_custody_checkpoint(*checkpoint, &mut events),
-            Command::CustodyDeposit(update) => self.update_deposit(update, &mut events),
+            Command::CustodyDeposit(update) => self.update_deposit(update, CreditScreening::default(), &mut events),
+            Command::AccessCustodyDeposit { receipt, payer, evidence } => {
+                self.access_custody_deposit(receipt, *payer, evidence, &mut events)
+            }
             Command::Withdraw { account, amount, auth } => {
                 self.withdraw(*account, *amount, auth.as_ref(), None, &mut events)
             }

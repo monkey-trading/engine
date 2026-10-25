@@ -249,7 +249,7 @@ async fn configured_confirmation_depth_and_missing_tags_bound_early_credit() {
     let mut cfg: EvmCustodySection = toml::from_str(&evm_toml(&dir, 10)).unwrap();
     cfg.confirmations = 2;
     let quorum = Quorum::new(chains.iter().enumerate().map(|(i, c)| (format!("p{i}"), c.clone())).collect()).unwrap();
-    let mut watcher = DepositWatcher::start(quorum, &cfg, CHAIN_ID, VAULT, None).unwrap();
+    let mut watcher = DepositWatcher::start_unscreened(quorum, &cfg, CHAIN_ID, VAULT, None).unwrap();
     watcher.poll(&node.tx).await.unwrap();
     assert_eq!(node.balance(TRADER).await, None);
     for chain in &chains {
@@ -446,7 +446,7 @@ fn watcher(chains: &[FakeChain; 3], dir: &Path, range: u64, seq: Option<u64>) ->
     let cfg: EvmCustodySection = toml::from_str(&evm_toml(dir, range)).unwrap();
     let quorum =
         Quorum::new(chains.iter().enumerate().map(|(i, chain)| (format!("p{i}"), chain.clone())).collect()).unwrap();
-    DepositWatcher::start(quorum, &cfg, CHAIN_ID, VAULT, seq).unwrap()
+    DepositWatcher::start_unscreened(quorum, &cfg, CHAIN_ID, VAULT, seq).unwrap()
 }
 
 fn confirmed_deposit(id: u64, block: u64, amount: u64) -> VaultDeposit {

@@ -90,6 +90,7 @@ fn baseline() -> Harness {
             receipt: finalised.clone(),
             status: DepositStatus::Unfinalised,
             principal_delta: f("50"),
+            uncredited: None,
         }
     ));
     let observed_at_seq = h.engine.recorded_deposit(&finalised.reference()).unwrap().updated_at_seq;
@@ -97,7 +98,12 @@ fn baseline() -> Harness {
     for receipt in [receipt(2, 10, false, "100"), receipt(3, 11, true, "30")] {
         let amount = receipt.amount;
         assert!(h.cmd(Command::CustodyDeposit(Box::new(DepositUpdate::Credit { receipt: receipt.clone() }))).contains(
-            &Event::CustodyDepositChanged { receipt, status: DepositStatus::Unfinalised, principal_delta: amount }
+            &Event::CustodyDepositChanged {
+                receipt,
+                status: DepositStatus::Unfinalised,
+                principal_delta: amount,
+                uncredited: None,
+            }
         ));
     }
     assert!(h.cmd(Command::CustodyFinalised(checkpoint(6, 6, 1))).is_empty());
@@ -142,6 +148,7 @@ fn settle(engine: &mut Engine, receipt: &DepositReceipt) {
             receipt: receipt.clone(),
             status: DepositStatus::Finalised,
             principal_delta: f("0"),
+            uncredited: None,
         })
     );
     assert_eq!((engine.accounts()[&acct(1)].balance, engine.house_cash()), (before, house_before));

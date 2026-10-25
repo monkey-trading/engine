@@ -4,7 +4,7 @@ use anyhow::{Context, ensure};
 use engine_core::Fixed;
 use engine_core::access::{AccessDeposit, AccessReject};
 use engine_core::command::Command;
-use engine_core::deposits::{DepositStatus, DepositUpdate};
+use engine_core::deposits::{DepositReceipt, DepositStatus, DepositUpdate};
 use engine_core::event::Event;
 use serde::{Deserialize, Serialize};
 use tracing::error;
@@ -46,8 +46,12 @@ impl Accounting {
     /// - an aggregate cannot represent the computed output
     fn updated(mut self, command: &Command, events: &[Event]) -> anyhow::Result<Self> {
         let retry = matches!(command, Command::RetryDepositScreening { .. });
+        // A receipt's reserve follows its lifecycle event; its public pending or held event does not
+        // move it again.
+        let receipt = matches!(command, Command::CustodyDeposit(_) | Command::AccessCustodyDeposit { .. });
         for event in events {
             match event {
+                Event::DepositPending { .. } | Event::DepositHeld { .. } if receipt => {}
                 Event::DepositPending { amount, reason, .. } if !retry && *reason != AccessReject::DepositPending => {
                     self.pending = Fixed::from_raw(
                         self.pending.raw().checked_add(amount.raw()).context("pending collateral overflow")?,
@@ -89,49 +93,8 @@ impl Accounting {
                         self.unpaid.raw().checked_add(amount.raw()).context("checkpoint unpaid approvals overflow")?,
                     );
                 }
-                Event::CustodyDepositChanged { receipt, status, principal_delta } => {
-                    let Command::CustodyDeposit(update) = command else {
-                        anyhow::bail!("custody accounting event has no receipt command");
-                    };
-                    let replacement =
-                        matches!(update.as_ref(), DepositUpdate::Replace { replacement, .. } if replacement == receipt);
-                    ensure!(
-                        update.subject() == receipt || replacement,
-                        "custody accounting receipt differs from command"
-                    );
-                    let valid = match update.as_ref() {
-                        DepositUpdate::Credit { .. } => {
-                            *status == DepositStatus::Unfinalised
-                                && (principal_delta.is_zero() || *principal_delta == receipt.amount)
-                        }
-                        DepositUpdate::Reinstate { .. } => {
-                            *status == DepositStatus::Unfinalised && *principal_delta == receipt.amount
-                        }
-                        DepositUpdate::Finalise { .. } => {
-                            *status == DepositStatus::Finalised && principal_delta.is_zero()
-                        }
-                        DepositUpdate::Reverse { .. } => {
-                            *status == DepositStatus::Reversed && *principal_delta == -receipt.amount
-                        }
-                        DepositUpdate::Replace { .. } if replacement => {
-                            *status == DepositStatus::Unfinalised && *principal_delta == receipt.amount
-                        }
-                        DepositUpdate::Replace { .. } => {
-                            *status == DepositStatus::Reversed && *principal_delta == -receipt.amount
-                        }
-                    };
-                    ensure!(valid, "custody accounting delta differs from receipt transition");
-                    self.liabilities = Fixed::from_raw(
-                        self.liabilities
-                            .raw()
-                            .checked_add(principal_delta.raw())
-                            .context("checkpoint liabilities overflow")?,
-                    );
-                    if principal_delta.is_positive() {
-                        self.deposits = self.deposits.checked_add(1).context("checkpoint deposit count overflow")?;
-                    } else if principal_delta.is_negative() {
-                        self.deposits = self.deposits.checked_sub(1).context("checkpoint deposit count underflow")?;
-                    }
+                Event::CustodyDepositChanged { receipt, status, principal_delta, uncredited } => {
+                    self.receipt_changed(command, receipt, status, *principal_delta, *uncredited)?;
                 }
                 _ => {}
             }
@@ -140,6 +103,77 @@ impl Accounting {
             }
         }
         Ok(self)
+    }
+
+    /// Applies one receipt transition. Credited principal moves liabilities and the vault deposit
+    /// count; an uncredited receipt reserves its principal as pending or held collateral while it is
+    /// live, and a retry that credits it turns the pending reserve into cash.
+    /// Error cases:
+    /// - the event's receipt, status or movement differs from its command's transition
+    /// - an aggregate cannot represent the result
+    fn receipt_changed(
+        &mut self,
+        command: &Command,
+        receipt: &DepositReceipt,
+        status: &DepositStatus,
+        principal_delta: Fixed,
+        uncredited: Option<AccessReject>,
+    ) -> anyhow::Result<()> {
+        if let Command::RetryDepositScreening { chain_ref, .. } = command {
+            ensure!(*chain_ref == receipt.reference(), "custody accounting receipt differs from command");
+            return match uncredited {
+                None if principal_delta == receipt.amount => self.pending_resolved(receipt.amount),
+                // The hold's own event moves the pending reserve.
+                Some(reason) if principal_delta.is_zero() && reason.holds_deposit() => Ok(()),
+                _ => anyhow::bail!("custody accounting delta differs from receipt transition"),
+            };
+        }
+        let update = match command {
+            Command::CustodyDeposit(update) => update.as_ref().clone(),
+            Command::AccessCustodyDeposit { receipt, .. } => DepositUpdate::Credit { receipt: receipt.clone() },
+            _ => anyhow::bail!("custody accounting event has no receipt command"),
+        };
+        let replacement = matches!(&update, DepositUpdate::Replace { replacement, .. } if replacement == receipt);
+        ensure!(update.subject() == receipt || replacement, "custody accounting receipt differs from command");
+        let (expected, credited) = match update {
+            DepositUpdate::Credit { .. } => (DepositStatus::Unfinalised, receipt.amount),
+            DepositUpdate::Reinstate { .. } => (DepositStatus::Unfinalised, receipt.amount),
+            DepositUpdate::Finalise { .. } => (DepositStatus::Finalised, Fixed::ZERO),
+            DepositUpdate::Reverse { .. } => (DepositStatus::Reversed, -receipt.amount),
+            DepositUpdate::Replace { .. } if replacement => (DepositStatus::Unfinalised, receipt.amount),
+            DepositUpdate::Replace { .. } => (DepositStatus::Reversed, -receipt.amount),
+        };
+        let adopted = matches!(update, DepositUpdate::Credit { .. }) && principal_delta.is_zero();
+        let valid = *status == expected
+            && match uncredited {
+                None => principal_delta == credited || adopted,
+                Some(_) => principal_delta.is_zero(),
+            };
+        ensure!(valid, "custody accounting delta differs from receipt transition");
+        // Credited principal moved cash; an uncredited receipt's live principal is reserved instead.
+        let movement = match uncredited {
+            None => principal_delta,
+            Some(reason) => {
+                let reserve = if reason.holds_deposit() { &mut self.held } else { &mut self.pending };
+                *reserve = Fixed::from_raw(
+                    reserve
+                        .raw()
+                        .checked_add(credited.raw())
+                        .filter(|reserved| *reserved >= 0)
+                        .context("uncredited collateral out of range")?,
+                );
+                credited
+            }
+        };
+        self.liabilities = Fixed::from_raw(
+            self.liabilities.raw().checked_add(movement.raw()).context("checkpoint liabilities overflow")?,
+        );
+        if movement.is_positive() {
+            self.deposits = self.deposits.checked_add(1).context("checkpoint deposit count overflow")?;
+        } else if movement.is_negative() {
+            self.deposits = self.deposits.checked_sub(1).context("checkpoint deposit count underflow")?;
+        }
+        Ok(())
     }
 
     /// Removes an existing uncredited reserve after a terminal screening decision.

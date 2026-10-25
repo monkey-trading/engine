@@ -3,6 +3,7 @@
 
 use super::*;
 
+use engine_core::access::AccessPolicy;
 use engine_core::benchmark::{BenchmarkBatch, BenchmarkRate};
 use engine_core::command::{OrderKind, OrderRequest};
 use engine_core::fixed::Rounding;

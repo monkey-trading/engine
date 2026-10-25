@@ -9,6 +9,8 @@ use crate::price::MAX_QUOTE_LEAD_MS;
 use crate::types::{AccountId, Millis};
 
 mod engine;
+mod receipts;
+pub use receipts::receipt_access_deposit;
 
 /// How far ahead of the sequenced time source evidence may be stamped: the host clock that stamps
 /// commands may lag the source's within trusted time's drift, as it may lag a venue's.
@@ -99,6 +101,23 @@ pub enum SourceFailure {
 pub enum AccessEvidence {
     Screened(Screening),
     Failed { reason: SourceFailure },
+}
+
+/// A receipt access screening refused: held for good when the refusal holds deposits, otherwise
+/// pending a retry. Its principal never entered cash or the withdrawal lock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UncreditedReceipt {
+    /// The vault caller that funded the receipt, as the vault event names it.
+    pub payer: Option<AccountId>,
+    pub reason: AccessReject,
+}
+
+/// The funding address and source evidence a `V21` receipt credit is screened with.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct CreditScreening<'a> {
+    pub(crate) payer: Option<AccountId>,
+    pub(crate) evidence: Option<&'a AccessEvidence>,
 }
 
 /// A final deposit screened at the custody boundary, including the actual funding address.

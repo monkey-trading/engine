@@ -233,11 +233,11 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
         (replayed.accounting.pending, replayed.accounting.liabilities, replayed.accounting.deposits),
         (Fixed::from_int(10), Fixed::from_int(110), 2)
     );
-    let work = crate::checkpoints::Work {
-        checkpoint: replayed.last_signed_checkpoint.unwrap(),
-        liabilities: replayed.accounting.liabilities,
-        deposits: replayed.accounting.deposits,
-    };
+    let work = crate::checkpoints::Work::capture(
+        replayed.last_signed_checkpoint.unwrap(),
+        replayed.accounting,
+        &replayed.engine,
+    );
     assert_eq!(make_poster().reconcile(&work).await.unwrap(), (Some(work.checkpoint.seq), true));
 
     // USDC sent to the vault outside a deposit raises a Warning but keeps withdrawals running, and

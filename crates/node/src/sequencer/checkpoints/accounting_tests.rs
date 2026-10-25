@@ -209,6 +209,7 @@ fn capture_population(count: u64) -> (Duration, Duration, Duration) {
             receipt,
             status: DepositStatus::Unfinalised,
             principal_delta: Fixed::from_int(10),
+            uncredited: None,
         }));
         if index.is_multiple_of(1024) {
             seq.flush().unwrap();
@@ -233,6 +234,7 @@ fn capture_population(count: u64) -> (Duration, Duration, Duration) {
         receipt,
         status: DepositStatus::Finalised,
         principal_delta: Fixed::ZERO,
+        uncredited: None,
     }));
     assert_eq!(seq.engine.accounts()[&account(1)].balance, Fixed::from_int(10));
     assert_eq!(seq.engine.accounts()[&account(1)].unfinalised_deposits, Fixed::ZERO);

@@ -203,6 +203,23 @@ impl<V: VaultReader> DepositWatcher<V> {
         }
     }
 
+    /// Exercises the `V20` receipt rules, which credit receipts without access screening, without
+    /// exposing a production mode override.
+    /// Error cases:
+    /// - the cursor cannot be loaded
+    #[cfg(test)]
+    pub(super) fn start_unscreened(
+        vault: V,
+        cfg: &EvmCustodySection,
+        chain_id: u64,
+        address: Address,
+        seq: Option<u64>,
+    ) -> anyhow::Result<Self> {
+        let mut watcher = Self::start(vault, cfg, chain_id, address, seq)?;
+        watcher.access_enforced = false;
+        Ok(watcher)
+    }
+
     /// Exercises historical watcher rules without exposing a production mode override.
     /// Error cases:
     /// - the legacy cursor cannot be loaded

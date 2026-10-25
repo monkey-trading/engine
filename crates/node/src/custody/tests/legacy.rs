@@ -105,7 +105,7 @@ async fn legacy_upgrade_locks_only_real_evm_principal_until_proof_and_ignores_a_
         crediting: None,
     };
     cursor.store(&cfg.cursor_path).unwrap();
-    let mut watcher = DepositWatcher::start(quorum(&chains), &cfg, CHAIN_ID, VAULT, node.last_seq().await).unwrap();
+    let mut watcher = DepositWatcher::start_unscreened(quorum(&chains), &cfg, CHAIN_ID, VAULT, node.last_seq().await).unwrap();
     watcher.poll(&node.tx).await.unwrap();
     assert_eq!(
         (node.balance(TRADER).await, node.read(|e| e.accounts()[&TRADER].unfinalised_deposits).await),
@@ -156,7 +156,7 @@ async fn missing_legacy_identity_keeps_only_its_principal_locked_while_independe
     let node = Node::start_confirmed(&dir);
     let chains = chains(Some(6), Some(known));
     let cfg: EvmCustodySection = toml::from_str(&evm_toml(&dir, 100)).unwrap();
-    let mut watcher = DepositWatcher::start(quorum(&chains), &cfg, CHAIN_ID, VAULT, node.last_seq().await).unwrap();
+    let mut watcher = DepositWatcher::start_unscreened(quorum(&chains), &cfg, CHAIN_ID, VAULT, node.last_seq().await).unwrap();
     watcher.poll(&node.tx).await.unwrap();
     watcher.poll(&node.tx).await.unwrap();
     assert_eq!(node.balance(TRADER).await, Some(usdc("150")));
@@ -194,7 +194,7 @@ async fn an_adopted_legacy_receipt_moves_to_a_moved_index_once_with_critical_and
     let node = Node::start_confirmed(&dir);
     let chains = chains(Some(4), Some(d));
     let cfg: EvmCustodySection = toml::from_str(&evm_toml(&dir, 100)).unwrap();
-    let mut watcher = DepositWatcher::start(quorum(&chains), &cfg, CHAIN_ID, VAULT, node.last_seq().await).unwrap();
+    let mut watcher = DepositWatcher::start_unscreened(quorum(&chains), &cfg, CHAIN_ID, VAULT, node.last_seq().await).unwrap();
     watcher.poll(&node.tx).await.unwrap();
     for chain in &chains {
         let mut state = chain.0.lock().unwrap();
@@ -250,7 +250,7 @@ async fn a_legacy_alert_resolves_once_when_its_receipt_is_adopted_and_credits_re
         (state.head, state.final_block) = (4, Some(4));
     }
     let cfg: EvmCustodySection = toml::from_str(&evm_toml(&dir, 100)).unwrap();
-    let mut watcher = DepositWatcher::start(quorum(&chains), &cfg, CHAIN_ID, VAULT, node.last_seq().await).unwrap();
+    let mut watcher = DepositWatcher::start_unscreened(quorum(&chains), &cfg, CHAIN_ID, VAULT, node.last_seq().await).unwrap();
     watcher.poll(&node.tx).await.unwrap();
     watcher.poll(&node.tx).await.unwrap();
     assert!(logs.count("alert=\"legacy_deposit_unproven\"") >= 1);
@@ -301,7 +301,7 @@ async fn a_moved_index_of_an_unresolved_legacy_credit_is_withheld_with_critical(
     // The legacy transaction is canonical, but at another log index than the credited one.
     let chains = chains(None, Some(VaultDeposit { log_index: 2, ..d.clone() }));
     let cfg: EvmCustodySection = toml::from_str(&evm_toml(&dir, 100)).unwrap();
-    let mut watcher = DepositWatcher::start(quorum(&chains), &cfg, CHAIN_ID, VAULT, node.last_seq().await).unwrap();
+    let mut watcher = DepositWatcher::start_unscreened(quorum(&chains), &cfg, CHAIN_ID, VAULT, node.last_seq().await).unwrap();
     watcher.poll(&node.tx).await.unwrap();
     watcher.poll(&node.tx).await.unwrap();
     assert_eq!(
@@ -329,7 +329,7 @@ async fn an_adopted_legacy_receipt_reincluded_after_the_head_at_another_index_cr
     let node = Node::start_confirmed(&dir);
     let chains = chains(None, Some(d.clone()));
     let cfg: EvmCustodySection = toml::from_str(&evm_toml(&dir, 100)).unwrap();
-    let mut watcher = DepositWatcher::start(quorum(&chains), &cfg, CHAIN_ID, VAULT, node.last_seq().await).unwrap();
+    let mut watcher = DepositWatcher::start_unscreened(quorum(&chains), &cfg, CHAIN_ID, VAULT, node.last_seq().await).unwrap();
     watcher.poll(&node.tx).await.unwrap();
     watcher.poll(&node.tx).await.unwrap();
     assert_eq!(node.read(|e| e.unresolved_legacy_deposit().cloned()).await, None, "the legacy credit is adopted");

@@ -23,6 +23,10 @@ impl AccessAlerts {
             | Event::WithdrawalApproved { .. }
             | Event::Deposited { .. }
             | Event::HouseCapitalMoved { .. } => Some(Ok(())),
+            // A receipt credited on screening; adoption moves no principal and screens nothing.
+            Event::CustodyDepositChanged { uncredited: None, principal_delta, .. } if principal_delta.is_positive() => {
+                Some(Ok(()))
+            }
             Event::DepositHeld { reason, .. } | Event::DepositPending { reason, .. } => source_result(*reason),
             Event::EligibilityRejected { reason, .. }
             | Event::OrderRejected { reason, .. }

@@ -101,6 +101,7 @@ fn deposit() -> VaultDeposit {
         log_index: 3,
         id: 0,
         beneficiary: Beneficiary::Trader(AccountId([1; 20])),
+        payer: None,
         units: U256::from(10_000_000),
     }
 }
@@ -117,6 +118,7 @@ fn plan(
             receipt: receipt.clone(),
             status: DepositStatus::Unfinalised,
             updated_at_seq: 0,
+            uncredited: None,
         })
         .collect();
     reconcile(&recorded, canonical, hashes, at_head)

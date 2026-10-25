@@ -10,7 +10,7 @@ use crate::access::{AccessDeposit, AccessEvidence, AccessPolicy, EligibilityRequ
 use crate::auth::{ClientAuth, Operator, RequestAuth};
 use crate::benchmark::BenchmarkBatch;
 use crate::corporate::CorporateAction;
-use crate::deposits::{CustodyCheckpoint, DepositUpdate, LegacyDeposit};
+use crate::deposits::{CustodyCheckpoint, DepositReceipt, DepositUpdate, LegacyDeposit};
 use crate::emissions::EmissionSchedule;
 use crate::market::MarketSpec;
 use crate::params::{NotionalWeighting, ProtocolParams};
@@ -43,9 +43,16 @@ pub enum Command {
         chain_ref: String,
         evidence: AccessEvidence,
     },
-    /// A final custody deposit, including its funding address and screening input.
+    /// A mock or historical custody deposit, including its funding address and screening input.
     AccessDeposit {
         deposit: AccessDeposit,
+        evidence: AccessEvidence,
+    },
+    /// A new quorum-proven custody receipt with its vault caller and screening input, from `V21`;
+    /// it is credited, left pending, or held uncredited.
+    AccessCustodyDeposit {
+        receipt: DepositReceipt,
+        payer: Option<AccountId>,
         evidence: AccessEvidence,
     },
     /// Venue quotes from the feed handlers.

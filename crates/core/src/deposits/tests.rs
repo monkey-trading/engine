@@ -18,6 +18,7 @@ fn credit_and_finality_change_cash_once_and_release_only_the_matching_principal(
             receipt: first.clone(),
             status: DepositStatus::Unfinalised,
             principal_delta: first.amount,
+            uncredited: None,
         }]
     );
     assert!(apply(&mut e, DepositUpdate::Credit { receipt: first.clone() }).is_empty());
@@ -75,12 +76,14 @@ fn a_canonical_replacement_moves_the_receipt_in_one_step_without_cash_or_close_o
             Event::CustodyDepositChanged {
                 receipt: old.clone(),
                 status: DepositStatus::Reversed,
-                principal_delta: -old.amount
+                principal_delta: -old.amount,
+                uncredited: None,
             },
             Event::CustodyDepositChanged {
                 receipt: moved.clone(),
                 status: DepositStatus::Unfinalised,
                 principal_delta: moved.amount,
+                uncredited: None,
             },
         ],
         "no close-out or write-off runs on a net-zero move"
@@ -418,7 +421,7 @@ fn apply(e: &mut Engine, mut update: DepositUpdate) -> Vec<Event> {
     observe(e, &mut update);
     e.last_seq = Some(e.last_seq.unwrap() + 1);
     let mut events = Vec::new();
-    e.apply_deposit_update(&update, &mut events).unwrap();
+    e.apply_deposit_update(&update, CreditScreening::default(), &mut events).unwrap();
     assert_principal_delta(e, before, &events);
     events
 }
@@ -439,7 +442,7 @@ pub(super) fn assert_principal_delta(e: &Engine, before: Fixed, events: &[Event]
 }
 
 fn reject(e: &mut Engine, update: DepositUpdate) -> DepositReject {
-    e.apply_deposit_update(&update, &mut Vec::new()).unwrap_err()
+    e.apply_deposit_update(&update, CreditScreening::default(), &mut Vec::new()).unwrap_err()
 }
 
 /// Copies the revision a custody reader observed before sequencing its conditional update.

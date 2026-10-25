@@ -97,6 +97,7 @@ pub fn every_event() -> Vec<Event> {
         receipt: receipt.clone(),
         status: DepositStatus::Unfinalised,
         principal_delta: amount,
+        uncredited: None,
     });
     events.push(Event::CustodyDepositRejected { receipt: receipt.clone(), reason: DepositReject::InvalidAmount });
     let house = DepositReceipt { beneficiary: DepositBeneficiary::House, ..receipt };
@@ -104,6 +105,7 @@ pub fn every_event() -> Vec<Event> {
         receipt: house.clone(),
         status: DepositStatus::Unfinalised,
         principal_delta: amount,
+        uncredited: None,
     });
     events.push(Event::CustodyDepositRejected { receipt: house, reason: DepositReject::InvalidAmount });
     events.extend([
