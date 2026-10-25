@@ -603,11 +603,12 @@ required fields are `dir` (a separate cache directory), `retain` (a positive cou
 `max_bytes` (a positive size limit for each signed file), and `trusted_signers` (EVM addresses
 verified through enclave attestation). The dev config has a commented example retaining three caches
 of at most 64 MiB each, with empty signer pins. With empty pins the node writes caches but every
-start replays the whole log and rebuilds history from it. Recovery trusts a cache only when its
-signer is pinned and is the key the node attests now, which also signed every checkpoint the cache
-carries; pin a new address after verifying its attestation. Caches an earlier key signed are never
-used, and until the enclave key persists across restarts a start under a new key fails closed.
-Trust never comes from a cache, its self-reported signer, or a manifest on host storage.
+start skips them with one `info` line, replays the whole log, and rebuilds history from it.
+Recovery trusts a cache only when its signer is pinned and is the key the node attests now, which
+also signed every checkpoint the cache carries; pin a new address after verifying its attestation.
+Caches an earlier key signed are never used, and until the enclave key persists across restarts a
+start under a new key fails closed. Trust never comes from a cache, its self-reported signer, or a
+manifest on host storage.
 
 With `[snapshots]`, account history and the segment catalog live in `dir` as authenticated
 databases (`authenticated-<generation>.sqlite`), sparse Merkle trees (jmt 0.12, SHA-256) whose

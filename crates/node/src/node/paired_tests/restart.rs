@@ -11,6 +11,7 @@ use crate::log::LogEntry;
 use crate::node::paired_tests::harness::{Node, configuration};
 use crate::snapshot;
 use crate::test_support::{TRADER, capture_alerts, deposit, log_entries, logged_history};
+use crate::trusted_time::tests::logs::Logs;
 
 const CHECKPOINT_EVERY: u64 = 100;
 
@@ -66,6 +67,31 @@ async fn dev_scenario_restart_stays_bounded_as_the_log_grows_and_skips_a_corrupt
     assert!(fallback < newest, "recovery skipped the corrupt newest cache");
     assert_complete_history(&node).await;
     node.stop_after_signing("after-fallback").await;
+}
+
+/// With no signer pinned, a restart skips its caches with one plain line rather than a
+/// `snapshot_rejected` Warning per cache, and recovers complete history by full replay.
+#[tokio::test]
+async fn restart_without_signer_pins_skips_every_cache_with_one_line() {
+    let mut cfg = configuration("paired-restart-without-pins");
+    cfg.snapshots.as_mut().unwrap().trusted_signers.clear();
+    let node = Node::start(cfg).await.unwrap();
+    // History catches up after each command, so no capture finds the previous one in flight.
+    for n in 0..9 {
+        node.submit(deposit(1, &format!("unpinned-{n}"))).await;
+        node.history_caught_up().await;
+    }
+    let (cfg, reader) = node.stop().await;
+    drop(reader);
+    let caches = snapshot::candidates_readonly(cfg.snapshots.as_ref().unwrap()).unwrap();
+    assert!(caches.len() > 1, "the unpinned node wrote several caches");
+    let (logs, _guard) = Logs::capture();
+    let node = Node::start(cfg).await.unwrap();
+    assert_eq!(logs.warnings("snapshot_rejected"), 0, "no cache raises a Warning");
+    assert_eq!(logs.count("no snapshot signer is pinned"), 1, "one line names full replay");
+    assert_eq!(node.snapshot_seq, None, "recovery replays the whole log");
+    assert_complete_history(&node).await;
+    node.stop().await;
 }
 
 /// Every retained event for the trader, paged from the restarted node before it takes any command.
