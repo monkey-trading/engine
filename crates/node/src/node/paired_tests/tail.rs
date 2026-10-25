@@ -30,7 +30,7 @@ async fn shutdown_caches_a_final_checkpoint_whose_capture_was_skipped() {
 }
 
 /// Sequences one batch spanning two checkpoints and ending on the second, whose capture finds the
-/// first in flight; returns the second checkpoint's seq.
+/// first in flight, then waits for history to catch up; returns the second checkpoint's seq.
 async fn burst_to_second_checkpoint(node: &Node) -> u64 {
     let every = node.cfg.node.checkpoint_every;
     let last = node.manifest.borrow().flushed.expect("genesis is logged").seq;
@@ -46,6 +46,9 @@ async fn burst_to_second_checkpoint(node: &Node) -> u64 {
     for done in replies {
         timeout(Duration::from_secs(30), done).await.unwrap().unwrap();
     }
+    // The first capture completes here, so caching the second never depends on how long shutdown
+    // waits for a capture in flight.
+    node.history_caught_up().await;
     final_checkpoint
 }
 

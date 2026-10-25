@@ -53,6 +53,8 @@ async fn corrupt_latest_pair_falls_back_and_all_pairs_missing_rebuilds_exact_log
     for n in 0..25 {
         node.submit(deposit(1, &format!("fallback-{n}"))).await;
     }
+    // No capture is in flight at shutdown, so the final checkpoint is cached too.
+    node.history_caught_up().await;
     let (cfg, reader) = node.stop().await;
     drop(reader);
     let caches = cfg.snapshots.as_ref().unwrap();
@@ -175,6 +177,9 @@ async fn catalog_retirement_backlog_stays_bounded_as_checkpoints_accumulate() {
         let (manifest, catalog) = (node.manifest.clone(), node.sealing.catalog_store);
         for n in 0..30 {
             node.submit(deposit(1, &format!("retire-{round}-{n}"))).await;
+            // Retained caches pin catalog versions, so the backlog depends on which checkpoints were
+            // captured. History catches up after each command, so no capture is skipped.
+            node.history_caught_up().await;
         }
         let (next, reader) = node.stop().await;
         drop(reader);
