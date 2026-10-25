@@ -37,9 +37,11 @@ sets `SOURCE_DATE_EPOCH` to the commit time. It writes:
 Every input is pinned in the [Dockerfile](Dockerfile): base images by digest, Debian packages by a
 snapshot date, the kernel tarball and the Rust musl standard library by SHA-256, edk2 by commit,
 Rust crates by `Cargo.lock` (`--locked`), and `sev-snp-measure` with its dependencies by hash in
-[requirements.txt](requirements.txt). CI (`.github/workflows/ci.yaml`) builds the image twice on
-separate runners for every push to `main` and every pull request that changes its inputs, and
-fails if the two `SHA256SUMS` differ.
+[requirements.txt](requirements.txt). The build steps retry each of their downloads from the same
+pinned source, with growing waits, for at least three minutes, so a brief outage of the Debian
+snapshot archive or another source does not fail the build. CI (`.github/workflows/ci.yaml`)
+builds the image twice on separate runners for every push to `main` and every pull request that
+changes its inputs, and fails if the two `SHA256SUMS` differ.
 
 ## Production builds
 

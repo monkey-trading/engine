@@ -4,7 +4,8 @@
 # The enclave image: the engine in a busybox initramfs, a Linux kernel for AMD SEV-SNP guests, the
 # OVMF firmware that boots them, and the SEV-SNP launch measurement of all three. Every input is
 # pinned by digest, checksum, or commit, and every timestamp comes from SOURCE_DATE_EPOCH, so a
-# commit builds to the same bytes on any machine.
+# commit builds to the same bytes on any machine. Every download a build step makes retries a
+# transient failure from the same source, with growing waits, for at least three minutes in all.
 #
 # Build it with scripts/build-image.sh, which feeds in the committed tree and sets
 # SOURCE_DATE_EPOCH to the commit time. The output is vmlinuz, initramfs.cpio.gz, OVMF.fd,
@@ -32,6 +33,9 @@ ARG POLICY=0x30000
 
 # Build tools for the kernel, firmware, and initramfs, from a fixed Debian snapshot. The snapshot
 # archive redirects every download, which apt's HTTP pipelining mismatches, so pipelining is off.
+# apt retries an index or package download that meets a network error or an HTTP 408, 429, or 5xx
+# up to ten times, 1 s doubling to at most 30 s apart: about three minutes. An index still missing
+# after that fails `apt-get update`, rather than letting apt install from the suites it did fetch.
 FROM --platform=linux/amd64 debian:trixie-20261005-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS tools
 ARG DEBIAN_SNAPSHOT
 RUN printf '%s\n' \
@@ -49,8 +53,9 @@ RUN printf '%s\n' \
       > /etc/apt/sources.list.d/debian.sources \
  && printf '%s\n' \
       'Acquire::Check-Valid-Until "false";' \
-      'Acquire::Retries "5";' \
+      'Acquire::Retries "10";' \
       'Acquire::http::Pipeline-Depth "0";' \
+      'APT::Update::Error-Mode "any";' \
       > /etc/apt/apt.conf.d/80snapshot \
  && apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -63,7 +68,7 @@ FROM tools AS rust-std
 ARG RUST_VERSION
 ARG RUST_STD_MUSL_SHA256
 WORKDIR /build
-RUN curl -fsSL --retry 5 --retry-all-errors --connect-timeout 30 --speed-limit 1000 --speed-time 60 \
+RUN curl -fsSL --retry 8 --retry-all-errors --connect-timeout 30 --speed-limit 1000 --speed-time 60 \
       -o rust-std.tar.xz "https://static.rust-lang.org/dist/rust-std-$RUST_VERSION-x86_64-unknown-linux-musl.tar.xz" \
  && echo "$RUST_STD_MUSL_SHA256  rust-std.tar.xz" | sha256sum -c - \
  && tar -xJf rust-std.tar.xz \
@@ -91,7 +96,7 @@ RUN case "$VARIANT" in \
       dev) features="" ;; \
       *) echo "VARIANT must be production or dev, not '$VARIANT'" >&2; exit 1 ;; \
     esac \
- && cargo build --locked --release --target x86_64-unknown-linux-musl -p engine-node --bin engine $features \
+ && cargo build --locked --config net.retry=20 --release --target x86_64-unknown-linux-musl -p engine-node --bin engine $features \
  && cp target/x86_64-unknown-linux-musl/release/engine /engine
 
 # Linux for an SEV-SNP guest: one bzImage, no loadable modules.
@@ -100,7 +105,7 @@ ARG SOURCE_DATE_EPOCH
 ARG KERNEL_VERSION
 ARG KERNEL_SHA256
 WORKDIR /build
-RUN curl -fsSL --retry 5 --retry-all-errors --connect-timeout 30 --speed-limit 1000 --speed-time 60 \
+RUN curl -fsSL --retry 8 --retry-all-errors --connect-timeout 30 --speed-limit 1000 --speed-time 60 \
       -o linux.tar.xz "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$KERNEL_VERSION.tar.xz" \
  && echo "$KERNEL_SHA256  linux.tar.xz" | sha256sum -c - \
  && tar -xJf linux.tar.xz \
@@ -129,12 +134,16 @@ ARG EDK2_COMMIT
 ENV GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=60
 WORKDIR /build/edk2
 RUN git init -q \
- && for attempt in 1 2 3; do \
+ && delay=15 \
+ && for attempt in 1 2 3 4 5; do \
       git fetch -q --depth 1 https://github.com/tianocore/edk2.git "$EDK2_COMMIT" \
       && git checkout -q FETCH_HEAD \
       && git submodule update -q --init --depth 1 --jobs 8 \
       && break; \
-      [ "$attempt" -lt 3 ] || exit 1; \
+      [ "$attempt" -lt 5 ] || exit 1; \
+      echo "edk2 fetch attempt $attempt failed, retrying in ${delay}s" >&2; \
+      sleep "$delay"; \
+      delay=$((delay * 2)); \
     done
 # An empty grub.efi skips building GRUB: the image always boots its kernel directly.
 RUN make -s -C BaseTools -j"$(nproc)" \
@@ -164,7 +173,7 @@ RUN : "${SOURCE_DATE_EPOCH:?SOURCE_DATE_EPOCH must be set}" \
 FROM --platform=linux/amd64 python:3.14.8-slim-trixie@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS measure
 COPY image/requirements.txt /measure/requirements.txt
 RUN pip install --quiet --no-cache-dir --root-user-action=ignore --no-deps --only-binary=:all: \
-      --require-hashes -r /measure/requirements.txt
+      --retries 10 --require-hashes -r /measure/requirements.txt
 WORKDIR /out
 COPY --from=ovmf /OVMF.fd ./OVMF.fd
 COPY --from=kernel /vmlinuz ./vmlinuz
