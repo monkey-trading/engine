@@ -109,9 +109,9 @@ async fn anvil_confirmation_finality_scenario() {
     assert_eq!(
         node.submit(client.withdraw(&node, "50").await).await,
         vec![
-            Event::WithdrawalQueued { account: trader, amount: usdc("50"), requested_seq: 13 },
+            Event::WithdrawalQueued { account: trader, amount: usdc("50"), requested_seq: 15 },
             Event::WithdrawalApproved { account: trader, amount: usdc("50"), nonce: 1 },
-            Event::WithdrawalQueueUpdated { account: trader, requested_seq: 13, remaining: usdc("0") },
+            Event::WithdrawalQueueUpdated { account: trader, requested_seq: 15, remaining: usdc("0") },
         ]
     );
     cast(&rpc, &["rpc", "anvil_mine", "0x4"]).await;
