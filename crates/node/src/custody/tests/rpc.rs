@@ -82,13 +82,16 @@ async fn rpc_errors_never_carry_the_endpoint_url() {
 #[tokio::test]
 async fn a_chain_move_between_the_tag_and_head_reads_is_settled_by_one_re_read() {
     // First pair: the endpoint's tag still names block 8 while a reorg has dropped its head to 7
-    // — the tag was read a moment before the head. The re-read then sees a consistent chain.
-    let (url, safe_calls, latest_calls, server) = scripted_chain(&[8, 7], &[7]).await;
+    // — the tag was read a moment before the head. The re-read then sees a consistent, higher
+    // chain; its head and timestamp, not the first pair's, are the answer.
+    let (url, safe_calls, latest_calls, server) =
+        scripted_chain(&[Some(8), Some(9)], &[Some(7), Some(9)], usize::MAX).await;
     let rpc = rpc_at(&url);
 
     let finality = rpc.finality().await.unwrap();
-    assert_eq!(finality.head, 7);
-    assert_eq!(finality.tagged, Some(BlockRef { number: 7, hash: B256::repeat_byte(7) }));
+    assert_eq!(finality.head, 9);
+    assert_eq!(finality.head_time, 1009);
+    assert_eq!(finality.tagged, Some(BlockRef { number: 9, hash: B256::repeat_byte(9) }));
     assert_eq!(safe_calls.load(Ordering::Relaxed), 2, "the inconsistent pair is re-read once");
     assert_eq!(latest_calls.load(Ordering::Relaxed), 2);
     server.abort();
@@ -98,15 +101,64 @@ async fn a_chain_move_between_the_tag_and_head_reads_is_settled_by_one_re_read()
 #[tokio::test]
 async fn a_pair_that_stays_inconsistent_is_returned_after_one_re_read() {
     // The quorum's contradiction check, not an endless retry, classifies a provider whose tag
-    // keeps sitting above its head.
-    let (url, safe_calls, latest_calls, server) = scripted_chain(&[8], &[7]).await;
+    // keeps sitting above its head; the second pair is returned as read.
+    let (url, safe_calls, latest_calls, server) =
+        scripted_chain(&[Some(8), Some(9)], &[Some(7), Some(8)], usize::MAX).await;
+    let rpc = rpc_at(&url);
+
+    let finality = rpc.finality().await.unwrap();
+    assert_eq!(finality.head, 8);
+    assert_eq!(finality.head_time, 1008);
+    assert_eq!(finality.tagged, Some(BlockRef { number: 9, hash: B256::repeat_byte(9) }));
+    assert_eq!(safe_calls.load(Ordering::Relaxed), 2, "the re-read is bounded at one");
+    assert_eq!(latest_calls.load(Ordering::Relaxed), 2);
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn a_tag_at_the_head_or_missing_needs_no_re_read() {
+    // The boundary the consistency check must hold: a tag at the head (a `<=` a `<` would
+    // re-read every `latest`-tagged poll forever) and no block at the tag yet.
+    for (safe, expected) in [(Some(7), Some(BlockRef { number: 7, hash: B256::repeat_byte(7) })), (None, None)] {
+        let (url, safe_calls, latest_calls, server) = scripted_chain(&[safe], &[Some(7)], usize::MAX).await;
+        let rpc = rpc_at(&url);
+
+        let finality = rpc.finality().await.unwrap();
+        assert_eq!(finality.head, 7);
+        assert_eq!(finality.tagged, expected);
+        assert_eq!(safe_calls.load(Ordering::Relaxed), 1, "a consistent pair is not re-read");
+        assert_eq!(latest_calls.load(Ordering::Relaxed), 1);
+        server.abort();
+        let _ = server.await;
+    }
+}
+
+#[tokio::test]
+async fn a_null_tag_on_the_re_read_is_a_consistent_answer() {
+    // The re-read's tag can also come back empty while the chain has no final block yet.
+    let (url, safe_calls, latest_calls, server) = scripted_chain(&[Some(8), None], &[Some(7)], usize::MAX).await;
     let rpc = rpc_at(&url);
 
     let finality = rpc.finality().await.unwrap();
     assert_eq!(finality.head, 7);
-    assert_eq!(finality.tagged, Some(BlockRef { number: 8, hash: B256::repeat_byte(8) }));
-    assert_eq!(safe_calls.load(Ordering::Relaxed), 2, "the re-read is bounded at one");
+    assert_eq!(finality.tagged, None);
+    assert_eq!(safe_calls.load(Ordering::Relaxed), 2);
     assert_eq!(latest_calls.load(Ordering::Relaxed), 2);
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn a_failed_re_read_propagates_and_stays_bounded() {
+    // The re-read's own transport failure surfaces as the read's error after the one retry.
+    let (url, safe_calls, latest_calls, server) = scripted_chain(&[Some(8), Some(8)], &[Some(7)], 2).await;
+    let rpc = rpc_at(&url);
+
+    let err = format!("{:#}", rpc.finality().await.unwrap_err());
+    assert!(err.contains("eth_getBlockByNumber failed"), "{err}");
+    assert_eq!(safe_calls.load(Ordering::Relaxed), 2);
+    assert_eq!(latest_calls.load(Ordering::Relaxed), 1, "the failing re-read is not retried again");
     server.abort();
     let _ = server.await;
 }
@@ -114,8 +166,14 @@ async fn a_pair_that_stays_inconsistent_is_returned_after_one_re_read() {
 // ── Helpers ──
 
 /// A loopback endpoint whose `eth_getBlockByNumber` answers `safe` and `latest` from their
-/// scripts, repeating each script's last entry once it runs out, and counts requests per tag.
-async fn scripted_chain(safe: &[u64], latest: &[u64]) -> (String, Arc<AtomicUsize>, Arc<AtomicUsize>, JoinHandle<()>) {
+/// scripts, repeating each script's last entry once it runs out; a `None` entry is a null block,
+/// and requests after the `fail_after`th return a JSON-RPC error. Counts requests per tag.
+/// Block `n` carries hash `n` and timestamp `1000 + n`.
+async fn scripted_chain(
+    safe: &[Option<u64>],
+    latest: &[Option<u64>],
+    fail_after: usize,
+) -> (String, Arc<AtomicUsize>, Arc<AtomicUsize>, JoinHandle<()>) {
     use std::collections::VecDeque;
     use std::sync::Mutex;
 
@@ -125,12 +183,12 @@ async fn scripted_chain(safe: &[u64], latest: &[u64]) -> (String, Arc<AtomicUsiz
     use serde_json::{Value, json};
 
     #[derive(Clone)]
-    struct Script(Arc<Mutex<VecDeque<u64>>>);
+    struct Script(Arc<Mutex<VecDeque<Option<u64>>>>);
 
     impl Script {
-        fn next(&self) -> u64 {
+        fn next(&self) -> Option<u64> {
             let mut blocks = self.0.lock().unwrap();
-            let block = *blocks.front().expect("scripted chains repeat their last block");
+            let block = *blocks.front().expect("a scripted chain needs at least one block");
             if blocks.len() > 1 {
                 blocks.pop_front();
             }
@@ -138,37 +196,47 @@ async fn scripted_chain(safe: &[u64], latest: &[u64]) -> (String, Arc<AtomicUsiz
         }
     }
 
-    async fn answer(
-        State((safe, latest, safe_calls, latest_calls)): State<(Script, Script, Arc<AtomicUsize>, Arc<AtomicUsize>)>,
-        Json(request): Json<Value>,
-    ) -> Json<Value> {
-        let number = match request["params"][0].as_str().unwrap() {
-            "safe" => {
-                safe_calls.fetch_add(1, Ordering::Relaxed);
-                safe.next()
-            }
-            "latest" => {
-                latest_calls.fetch_add(1, Ordering::Relaxed);
-                latest.next()
-            }
+    #[derive(Clone)]
+    struct ChainServer {
+        safe: Script,
+        latest: Script,
+        safe_calls: Arc<AtomicUsize>,
+        latest_calls: Arc<AtomicUsize>,
+        fail_after: usize,
+    }
+
+    async fn answer(State(server): State<ChainServer>, Json(request): Json<Value>) -> Json<Value> {
+        let (script, counter) = match request["params"][0].as_str().unwrap() {
+            "safe" => (&server.safe, &server.safe_calls),
+            "latest" => (&server.latest, &server.latest_calls),
             other => panic!("unexpected block tag {other}"),
         };
-        let mut block = Block::<alloy::rpc::types::Transaction>::default();
-        block.header.number = number;
-        block.header.timestamp = 1234;
-        block.header.hash = B256::repeat_byte(number as u8);
-        Json(json!({"jsonrpc":"2.0","id":request["id"],"result":serde_json::to_value(block).unwrap()}))
+        counter.fetch_add(1, Ordering::Relaxed);
+        let count = server.safe_calls.load(Ordering::Relaxed) + server.latest_calls.load(Ordering::Relaxed);
+        if count > server.fail_after {
+            return Json(json!({"jsonrpc":"2.0","id":request["id"],"error":{"code":-32000,"message":"boom"}}));
+        }
+        let number = script.next();
+        let result = number.map(|number| {
+            let mut block = Block::<alloy::rpc::types::Transaction>::default();
+            block.header.number = number;
+            block.header.timestamp = 1000 + number;
+            block.header.hash = B256::repeat_byte(number as u8);
+            serde_json::to_value(block).unwrap()
+        });
+        Json(json!({"jsonrpc":"2.0","id":request["id"],"result":result}))
     }
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
-    let state = (
-        Script(Arc::new(Mutex::new(safe.iter().copied().collect()))),
-        Script(Arc::new(Mutex::new(latest.iter().copied().collect()))),
-        Arc::new(AtomicUsize::new(0)),
-        Arc::new(AtomicUsize::new(0)),
-    );
-    let (safe_calls, latest_calls) = (state.2.clone(), state.3.clone());
+    let state = ChainServer {
+        safe: Script(Arc::new(Mutex::new(safe.iter().copied().collect()))),
+        latest: Script(Arc::new(Mutex::new(latest.iter().copied().collect()))),
+        safe_calls: Arc::new(AtomicUsize::new(0)),
+        latest_calls: Arc::new(AtomicUsize::new(0)),
+        fail_after,
+    };
+    let (safe_calls, latest_calls) = (state.safe_calls.clone(), state.latest_calls.clone());
     let server = tokio::spawn(async move {
         axum::serve(listener, Router::new().route("/", post(answer)).with_state(state)).await.unwrap();
     });

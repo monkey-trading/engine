@@ -133,6 +133,28 @@ async fn finality_unavailable_on_a_majority_waits_and_inconsistent_tags_cannot_v
 }
 
 #[tokio::test]
+async fn a_chain_move_mid_poll_is_settled_by_re_reading_the_pairs() {
+    let chains = chains();
+    let quorum = quorum(&chains).await;
+    for chain in &chains {
+        chain.0.lock().unwrap().head = 6;
+        chain.set_final(Some(5));
+        // Every provider's first header read of the poll lands after the chain move: the block
+        // the pairs named is gone, which contradicts each provider's own tag.
+        chain.0.lock().unwrap().bad_header_reads = vec![0];
+    }
+    let (logs, _guard) = Logs::capture();
+    let f = quorum.finality().await.unwrap();
+    assert_eq!(f.tagged, Some(BlockRef { number: 5, hash: canonical_hash(5) }));
+    assert_eq!(logs.lines_with("alert=\"custody_rpc_quorum_lost\"").len(), 0);
+    assert!(logs.lines_with("alert=\"custody_rpc_provider_failed\"").is_empty());
+    for chain in &chains {
+        // One admission identity read, then one pair read per selection pass: two passes.
+        assert_eq!(chain.0.lock().unwrap().polls, 3);
+    }
+}
+
+#[tokio::test]
 async fn log_absence_needs_a_header_at_the_range_end_and_the_same_block_hash() {
     let chains = chains();
     let quorum = quorum(&chains).await;
