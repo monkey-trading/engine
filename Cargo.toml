@@ -35,6 +35,7 @@ http-body-util = "0.1"
 humantime-serde = "1"
 hyper = { version = "1", features = ["client", "http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
+jmt = { version = "=0.12.0", default-features = false, features = ["std", "sha2"] }
 k256 = { version = "0.14.0", default-features = false, features = ["ecdsa"] }
 nix = { version = "0.31.3", default-features = false, features = ["sched"] }
 prometheus-client = "0.25"
@@ -43,7 +44,7 @@ rand = "0.8"
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
 # HTTPS for alert webhooks. TLS is configured in code: rustls on ring with the compiled-in Mozilla roots.
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
-rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
+rusqlite = { version = "0.40", default-features = false, features = ["bundled", "limits"] }
 # TLS for the API, venue feeds, and alert webhooks with ring as the only crypto provider, so no
 # OpenSSL or aws-lc build.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

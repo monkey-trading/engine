@@ -94,6 +94,11 @@ a node's log directory or the archive the node serves: its completed log segment
 SHA-256 hashes. A stream subscriber can start or resume at any message offset, and gets the log from
 disk and then live, each message once.
 
+Optional `[snapshots]` configuration caches checkpoint state for restart. Recovery authenticates
+each cache against independently pinned attested enclave signers and checks its recomputed root
+against its logged checkpoint before replaying the suffix. Invalid caches warn and fall back to
+an earlier cache or full replay. See [node recovery configuration](crates/node/README.md).
+
 Every command carries the time the sequencer stamped it with. The enclave's host supplies its
 clock, so the node checks that clock against signed time from several independent
 [Roughtime](https://www.rfc-editor.org/rfc/rfc10049) servers. It stamps nothing until signed time

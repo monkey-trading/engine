@@ -140,6 +140,7 @@ fn state() -> (ApiState, mpsc::Receiver<Request>) {
         limits: Arc::new(ApiLimits::new(&cfg.api)),
         history: Reader::new(PathBuf::new(), watch::channel(true).1),
         emission_budget: None,
+        listing: Default::default(),
     };
     (state, requests)
 }

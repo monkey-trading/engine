@@ -36,7 +36,7 @@ use crate::tee::{AttestationBundle, Attestor, ConfigfsTsm, EnclaveKey, MockAttes
 use crate::telemetry::Telemetry;
 use crate::tls::{TlsIdentity, serve};
 use crate::{metrics, monitor, trusted_time};
-use preflight::{emission_preflight, finish_preflight};
+use preflight::{authorize, emission_preflight};
 
 /// How long the sequencer gets to drain and checkpoint after a shutdown signal.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
@@ -150,7 +150,7 @@ async fn serve_node(
     let (withdrawals_tx, withdrawals_rx) = mpsc::unbounded_channel();
     let (manifest_tx, manifest_rx) = watch::channel(Manifest::default());
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-    let seq_cfg = SequencerConfig {
+    let mut seq_cfg = SequencerConfig {
         log_dir: &cfg.node.log_dir,
         segment_commands: cfg.node.segment_commands,
         manifest: manifest_tx,
@@ -166,15 +166,15 @@ async fn serve_node(
         operator,
         metrics: metrics.clone(),
         genesis: genesis_commands(&cfg.genesis),
+        history_sealing: None,
     };
     let custody = Custody::connect(&cfg.custody, log.last_seq())
         .inspect_err(|e| error!(alert = "custody_connect_failed", "refusing to serve: {e:#}"))?;
-    let mut history = finish_preflight(
-        history_plan,
-        checkpoint_setup.as_ref().map(|setup| (&setup.poster, anchor.as_ref())),
-        Some((&log, &seq_cfg)),
-    )
-    .await?;
+    authorize(checkpoint_setup.as_ref().map(|setup| (&setup.poster, anchor.as_ref())), Some((&log, &seq_cfg))).await?;
+    let (log, mut history) = history_plan
+        .finish_with_log(log, key.clone())
+        .inspect_err(|e| error!(alert = "history_recovery_failed", "refusing to serve: {e:#}"))?;
+    seq_cfg.history_sealing = history.sealing();
     let mut seq = Sequencer::recover_from(log, seq_cfg, key.clone(), stream_tx.clone(), withdrawals_tx)
         .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
     if cfg.benchmarks.is_some() {
@@ -249,7 +249,13 @@ async fn serve_node(
         backfills.clone(),
         Some(history.resume_at()),
     );
-    tasks.spawn(async move { ("history", history.run(history_feed).await) });
+    // History runs outside `tasks`: on shutdown it outlives the sequencer, so it can take the final
+    // checkpoint's capture, and stops at the end of the stream. Its own set still aborts it if this
+    // function returns early.
+    let history_stopper = history.stopper();
+    let mut history_task = JoinSet::new();
+    history_task.spawn(history.run(history_feed));
+    let mut history_finished = false;
 
     let monitor_tx = tx.clone();
     let (monitor_metrics, no_price_after) = (metrics.clone(), cfg.alerts.no_price_after);
@@ -278,6 +284,7 @@ async fn serve_node(
         limits: limits.clone(),
         history: history_reader,
         emission_budget,
+        listing: Default::default(),
     });
     info!(listen = %cfg.node.listen, "api up over TLS");
     let (api, retained) = (cfg.api, limits.clone());
@@ -286,12 +293,17 @@ async fn serve_node(
 
     let outcome = tokio::select! {
         joined = tasks.join_next() => Err(stopped_task(joined)),
+        joined = history_task.join_next() => {
+            history_finished = true;
+            Err(stopped_task(joined.map(|joined| joined.map(|result| ("history", result)))))
+        }
         err = routing.stopped() => {
             error!(alert = "task_stopped", "{err:#}");
             Err(err)
         }
         joined = &mut sequencer.outcome => {
             tasks.shutdown().await;
+            history_task.abort_all();
             sequencer_outcome(joined)?;
             bail!("sequencer stopped");
         }
@@ -301,12 +313,49 @@ async fn serve_node(
     tasks.shutdown().await;
     let drained = timeout(SHUTDOWN_GRACE, &mut sequencer.outcome).await.context("sequencer did not drain in time")?;
     sequencer_outcome(drained)?;
+    if !history_finished {
+        finish_history(history_task, history_stopper).await;
+    }
     outcome
 }
 
-/// Reads the log once, a segment at a time: recovery replays that read, and the history index is
-/// checked against it, and rebuilt if it does not match, before recovery writes anything, so no
-/// other copy of the log can come between the check and the replay.
+/// Ends history once the sequencer has drained. Authenticated history takes the rest of the
+/// stream; the legacy index takes no captures and resumes from its own cursor, so it stops at once.
+async fn finish_history(mut history: JoinSet<anyhow::Result<()>>, stopper: Option<crate::history::runtime::Stopper>) {
+    match stopper {
+        Some(stopper) => drain_history(history, stopper).await,
+        None => history.abort_all(),
+    }
+}
+
+/// Lets history take the rest of the stream, including the shutdown checkpoint's capture. A
+/// history still behind after the shutdown grace stops at its next turn boundary, with a Warning,
+/// so no store is left mid-transaction; the next start indexes the rest from the log.
+async fn drain_history(mut history: JoinSet<anyhow::Result<()>>, stopper: crate::history::runtime::Stopper) {
+    let finished = match timeout(SHUTDOWN_GRACE, history.join_next()).await {
+        Ok(finished) => finished,
+        Err(_) => {
+            warn!(alert = "history_drain_timed_out", "history did not finish the stream in time; stopping it");
+            stopper.stop();
+            match timeout(SHUTDOWN_GRACE, history.join_next()).await {
+                Ok(finished) => finished,
+                Err(_) => {
+                    error!(alert = "task_stopped", "history did not stop in time");
+                    history.abort_all();
+                    return;
+                }
+            }
+        }
+    };
+    match finished {
+        None | Some(Ok(Ok(()))) => {}
+        Some(Ok(Err(e))) => error!(alert = "task_stopped", "history failed while draining: {e:#}"),
+        Some(Err(e)) => error!(alert = "task_stopped", "history panicked while draining: {e}"),
+    }
+}
+
+/// Recovers before any append, checking history against that read during full replay or against
+/// its cursor's segment after authenticated snapshot recovery. A mismatched index is rebuilt.
 /// Error cases:
 /// - the history index cannot be opened, nor a fresh one in its place (see `HistoryCheck`)
 /// - the log cannot be read or replayed (see `Sequencer::read_log`)
@@ -314,7 +363,7 @@ async fn serve_node(
 fn read_log_and_history(cfg: &NodeConfig) -> anyhow::Result<(ReplayedLog, crate::history::History)> {
     let (log, plan) =
         read_log_and_history_observe(cfg, Some(AccountId(EnclaveKey::test_key().address())), None, |_| {})?;
-    Ok((log, plan.finish()?))
+    plan.finish_with_log(log, Arc::new(EnclaveKey::test_key()))
 }
 
 /// Replays and checks history while exposing the same entries for the on-chain anchor check.
@@ -326,6 +375,11 @@ fn read_log_and_history_observe(
     parent: Option<crate::log::CheckpointParent>,
     mut observe: impl FnMut(&crate::log::LogEntry),
 ) -> anyhow::Result<(ReplayedLog, HistoryPlan)> {
+    if cfg.snapshots.is_some() {
+        let (log, plan) = Sequencer::read_paired_log(cfg, signer, parent, observe)
+            .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
+        return Ok((log, HistoryPlan::authenticated(plan)?));
+    }
     let history_failed = |e: &anyhow::Error| error!(alert = "history_recovery_failed", "refusing to serve: {e:#}");
     let mut check = HistoryPlan::open(&cfg.history).inspect_err(history_failed)?;
     let log = Sequencer::read_log_for_recovery(
@@ -385,3 +439,6 @@ fn sequencer_outcome(joined: Result<anyhow::Result<()>, tokio::sync::oneshot::er
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) mod paired_tests;

@@ -14,15 +14,18 @@ use engine_core::{Engine, Fixed};
 use crate::checkpoints::accounting::Accounting;
 use crate::log::{self, CheckpointDomain, LogEntry, SegmentedLog};
 use crate::sequencer::GenesisProgress;
+use crate::snapshot::{Progress, RecoveryBase, Snapshot};
 
 /// The result of replaying a log.
 pub struct Replayed {
     pub engine: Engine,
     pub(crate) accounting: Accounting,
     pub commands: u64,
+    pub(crate) command_prefix: [u8; 32],
     pub checkpoints: u64,
     pub(crate) recovery_work: Vec<crate::checkpoints::Work>,
     pub(crate) last_signed_checkpoint: Option<crate::log::Checkpoint>,
+    pub(crate) recovery_base: Option<RecoveryBase>,
     /// Withdrawals the last command approved that the log ends before signing, as a crash between
     /// a command's entry and its withdrawal entry leaves: `(account, amount, nonce)`.
     pub unsigned: Vec<(AccountId, Fixed, u64)>,
@@ -47,9 +50,12 @@ pub struct Replayed {
 pub(super) struct Replay {
     engine: Engine,
     commands: u64,
+    command_prefix: [u8; 32],
     checkpoints: u64,
     last_signed_checkpoint: Option<crate::log::Checkpoint>,
     recovery_parent: Option<crate::log::CheckpointParent>,
+    recovery_origin: Option<crate::log::CheckpointParent>,
+    recovery_anchor: Option<crate::log::Checkpoint>,
     recovery_work: Vec<crate::checkpoints::Work>,
     activations: Vec<(ProtocolVersion, u64)>,
     /// Withdrawals the last command approved that no withdrawal entry has matched yet. Entries
@@ -67,6 +73,18 @@ pub(super) struct Replay {
 }
 
 impl Replay {
+    /// Matches a separately signed complete history head to this actual strict replay prefix.
+    /// Error cases:
+    /// - command, time or canonical command/event prefix differs
+    pub(super) fn verify_history_head(&self, head: &crate::history::authenticated::Head) -> anyhow::Result<()> {
+        ensure!(
+            head.last_seq() == self.engine.last_seq() && head.last_ts() == Some(self.engine.now()),
+            "history head does not match the replay cursor"
+        );
+        ensure!(head.command_prefix == self.command_prefix, "history head does not match the replayed command prefix");
+        Ok(())
+    }
+
     /// Pins the authority supplied independently by custody, retained key, or audit caller.
     pub(super) fn with_trust(domain: Option<CheckpointDomain>, trusted_signer: Option<AccountId>) -> Self {
         Self { domain, trusted_signer, ..Self::default() }
@@ -77,8 +95,72 @@ impl Replay {
         trusted_signer: Option<AccountId>,
         parent: crate::log::CheckpointParent,
     ) -> Self {
-        Self { recovery_parent: Some(parent), ..Self::with_trust(domain, trusted_signer) }
+        Self {
+            recovery_parent: Some(parent),
+            recovery_origin: Some(parent),
+            ..Self::with_trust(domain, trusted_signer)
+        }
     }
+    /// Restores required concrete replay facts with fresh external signer and finality authority.
+    /// Error cases:
+    /// - the cache contradicts its context, deployment, signer, or finalized prefix
+    pub(super) fn from_snapshot(
+        engine: Engine,
+        snapshot: Snapshot,
+        domain: CheckpointDomain,
+        trusted_signer: Option<AccountId>,
+        parent: Option<crate::log::CheckpointParent>,
+    ) -> anyhow::Result<Self> {
+        snapshot.context.validate(&snapshot.checkpoint, domain)?;
+        ensure!(
+            trusted_signer
+                .is_none_or(|signer| { snapshot.context.checkpoint_signers.iter().all(|named| *named == signer) }),
+            "snapshot checkpoint signer differs from trusted recovery authority"
+        );
+        let work = parent.map(|parent| snapshot.context.after_anchor(parent)).transpose()?.unwrap_or_default();
+        let recovery_parent = work
+            .last()
+            .map(|work| crate::log::CheckpointParent {
+                has_checkpoint: true,
+                seq: work.checkpoint.seq,
+                root: work.checkpoint.root.parse().expect("snapshot work is signature checked"),
+            })
+            .or(parent);
+        let recovery_anchor =
+            parent.filter(|parent| parent.has_checkpoint).and_then(|parent| match &snapshot.context.base {
+                RecoveryBase::Checkpoint { checkpoint } if checkpoint.seq == parent.seq => Some(checkpoint.clone()),
+                _ => snapshot
+                    .context
+                    .work
+                    .iter()
+                    .find(|work| work.checkpoint.seq == parent.seq)
+                    .map(|work| work.checkpoint.clone()),
+            });
+        let Snapshot { progress: Progress { genesis, activations, checkpoints }, context, checkpoint, .. } = snapshot;
+        let last_checkpoint_ts = Some(engine.now());
+        Ok(Self {
+            engine,
+            commands: context.commands,
+            command_prefix: context.command_prefix,
+            checkpoints,
+            activations,
+            genesis,
+            last_checkpoint_ts,
+            approved: context.unsigned.into(),
+            logs_events: context.logs_events,
+            accounting: context.accounting,
+            deferred: context.deferred,
+            checkpoint_signers: context.checkpoint_signers,
+            recovery_work: work,
+            recovery_parent,
+            recovery_origin: parent,
+            recovery_anchor,
+            last_signed_checkpoint: Some(checkpoint),
+            domain: Some(domain),
+            trusted_signer,
+        })
+    }
+
     /// Applies the log's next entry.
     /// Error cases:
     /// - a command out of sequence, with time running backwards, or stamped past the range the
@@ -117,6 +199,8 @@ impl Replay {
                     })
                     .collect();
                 self.logs_events = c.events.is_some();
+                self.command_prefix =
+                    crate::log::extend_command_prefix(self.command_prefix, crate::log::command_digest(c)?);
                 self.commands += 1;
             }
             LogEntry::Withdrawal(w) => {
@@ -169,6 +253,11 @@ impl Replay {
                     "checkpoint signer differs from trusted recovery authority"
                 );
                 self.checkpoint_signers.insert(signer);
+                if self.recovery_origin.is_some_and(|parent| {
+                    parent.has_checkpoint && parent.seq == cp.seq && parent.root.to_string() == cp.root
+                }) {
+                    self.recovery_anchor = Some(cp.clone());
+                }
                 self.checkpoints += 1;
                 if let Some(parent) = self.recovery_parent
                     && cp.parent.is_some()
@@ -193,11 +282,17 @@ impl Replay {
 
     /// What the entries applied so far replay to.
     pub(super) fn finish(self) -> Replayed {
+        let recovery_base = match self.recovery_origin {
+            None => Some(RecoveryBase::Ungated),
+            Some(parent) if !parent.has_checkpoint => Some(RecoveryBase::Genesis),
+            Some(_) => self.recovery_anchor.clone().map(|checkpoint| RecoveryBase::Checkpoint { checkpoint }),
+        };
         let unsigned = if self.logs_events { self.approved.into() } else { Vec::new() };
         let (engine, commands, checkpoints, activations, genesis, last_checkpoint_ts) =
             (self.engine, self.commands, self.checkpoints, self.activations, self.genesis, self.last_checkpoint_ts);
         Replayed {
             engine,
+            command_prefix: self.command_prefix,
             accounting: self.accounting,
             commands,
             checkpoints,
@@ -210,6 +305,7 @@ impl Replay {
             checkpoint_signers: self.checkpoint_signers,
             last_signed_checkpoint: self.last_signed_checkpoint,
             recovery_work: self.recovery_work,
+            recovery_base,
         }
     }
 }

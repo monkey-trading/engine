@@ -11,6 +11,7 @@ use tokio::sync::watch;
 use crate::alerts::{Severity, capture};
 use crate::test_support::{every_event, file_entries, log_entries, scratch_dir};
 
+mod durability;
 mod reader;
 
 const SEG_0: &str = "00000000000000000000.jsonl";
@@ -113,78 +114,12 @@ fn segments_start_at_a_command_and_the_manifest_lists_completed_ones() {
     let manifest = Manifest::load(&dir).unwrap();
     let ranges: Vec<_> = manifest.segments.iter().map(|s| (s.file.as_str(), s.first_seq, s.last_seq)).collect();
     assert_eq!(ranges, [(SEG_0, 0, 1), (SEG_2, 2, 3)]);
-    for listed in &manifest.segments {
+    for listed in manifest.segments.iter() {
         let bytes = fs::read(dir.join(&listed.file)).unwrap();
         assert_eq!(listed.bytes, bytes.len() as u64);
         assert_eq!(listed.sha256, hex::encode(Sha256::digest(&bytes)));
     }
     assert_eq!(log_entries(&dir), entries);
-}
-
-#[test]
-fn a_flush_syncs_the_open_segment_only_after_an_append() {
-    // The first segment opens through a link to `/dev/null`, which cannot be synced, so a flush
-    // fails exactly when it syncs.
-    let dir = scratch_dir("flush-sync");
-    let mut writer =
-        SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(10, watch::channel(Manifest::default()).0).unwrap();
-    std::os::unix::fs::symlink("/dev/null", dir.join(format!("{SEG_0}.tmp"))).unwrap();
-    writer.append(&cmd(0)).unwrap();
-    let err = writer.flush().unwrap_err();
-    assert!(format!("{err:#}").contains("syncing log"), "{err:#}");
-
-    // With nothing appended since the last sync, a flush does not sync.
-    writer.unsynced = false;
-    writer.flush().unwrap();
-}
-
-#[test]
-fn a_reopened_segment_is_synced_before_its_entries_count_as_flushed() {
-    // A process that died after writing entries, before syncing them, leaves them in the page cache,
-    // where a power loss drops them. Reopened here through a link to `/dev/null`, the segment cannot
-    // be synced, so a writer that skipped syncing it would start and count them as flushed.
-    let dir = scratch_dir("reopen-unsynced");
-    let mut writer =
-        SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(10, watch::channel(Manifest::default()).0).unwrap();
-    writer.append(&cmd(0)).unwrap();
-    drop(writer);
-    let log = SegmentedLog::open(&dir, |_| Ok(())).unwrap();
-    let segment = dir.join(SEG_0);
-    fs::remove_file(&segment).unwrap();
-    std::os::unix::fs::symlink("/dev/null", &segment).unwrap();
-    let err = log.into_writer(10, watch::channel(Manifest::default()).0).err().unwrap();
-    assert!(format!("{err:#}").contains(&format!("syncing {}", segment.display())), "{err:#}");
-}
-
-#[test]
-fn a_synced_flush_leaves_nothing_to_sync() {
-    let dir = scratch_dir("synced");
-    let mut writer =
-        SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(10, watch::channel(Manifest::default()).0).unwrap();
-    writer.append(&cmd(0)).unwrap();
-    writer.flush().unwrap();
-    assert!(!writer.unsynced);
-}
-
-#[test]
-fn a_reopened_writer_starts_unsynced_until_its_first_sync() {
-    // A segment an earlier process wrote may hold bytes no sync of this writer covers: the reopened
-    // writer starts unsynced, so a flush with no new append still syncs before publishing a cursor.
-    let dir = scratch_dir("reopen-flag");
-    write(&dir, 2, &[cmd(0)]);
-    let mut writer =
-        SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(2, watch::channel(Manifest::default()).0).unwrap();
-    assert!(writer.unsynced, "the reopened open segment may hold unsynced bytes");
-    writer.flush().unwrap();
-    assert!(!writer.unsynced, "the flush with no new append synced the reopened segment");
-
-    // With every segment listed there is no open segment that could hold unsynced bytes.
-    let dir = scratch_dir("reopen-listed");
-    write(&dir, 2, &[cmd(0), cmd(1), cmd(2)]);
-    fs::remove_file(dir.join(SEG_2)).unwrap();
-    let writer =
-        SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(2, watch::channel(Manifest::default()).0).unwrap();
-    assert!(!writer.unsynced);
 }
 
 #[test]
@@ -330,12 +265,14 @@ fn a_segment_that_cannot_be_started_leaves_the_current_one_growing_until_it_can(
     let mut writer = SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(2, manifest).unwrap();
     writer.append(&cmd(0)).unwrap();
     writer.append(&cmd(1)).unwrap();
-    // A directory in the way of the staged file makes creating it fail.
-    let staged = dir.join(format!("{SEG_2}.tmp"));
-    fs::create_dir(&staged).unwrap();
+    // The writer keeps its current descriptor while a host path change blocks new files.
+    let displaced = dir.with_extension("displaced");
+    fs::rename(&dir, &displaced).unwrap();
+    fs::write(&dir, b"not a directory").unwrap();
     let alerts = capture(|| {
         writer.append(&cmd(2)).unwrap();
-        fs::remove_dir(&staged).unwrap();
+        fs::remove_file(&dir).unwrap();
+        fs::rename(&displaced, &dir).unwrap();
         writer.append(&cmd(3)).unwrap();
     });
     writer.flush().unwrap();

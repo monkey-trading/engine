@@ -185,10 +185,20 @@ async fn a_dropped_backfill_keeps_its_permit_until_its_read_ends() {
     let dir = scratch_dir("history-backfill-permit");
     fs::create_dir_all(&dir).unwrap();
     let segment = dir.join("00000000000000000000.jsonl");
+    let (tx, manifest) = watch::channel(Manifest::default());
+    let mut writer = SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(4, tx).unwrap();
+    writer
+        .append(&LogEntry::Command(CommandEntry {
+            sequenced: Sequenced { seq: 0, ts: 0, cmd: Command::Tick },
+            events: Some(Vec::new()),
+        }))
+        .unwrap();
+    writer.flush().unwrap();
+    drop(writer);
+    fs::remove_file(&segment).unwrap();
     assert!(Process::new("mkfifo").arg(&segment).status().unwrap().success());
     let permits = Arc::new(Semaphore::new(MAX_BACKFILLS));
     let (live, subscriber) = broadcast::channel(1);
-    let manifest = watch::channel(Manifest::default()).1;
     let mut feed = Feed::new(subscriber, dir.clone(), manifest, permits.clone(), Some(Offset::start_of(0)));
     let release = || drop(OpenOptions::new().write(true).open(&segment).unwrap());
     assert_a_dropped_read_keeps_its_permit(&permits, feed.next(), release).await;

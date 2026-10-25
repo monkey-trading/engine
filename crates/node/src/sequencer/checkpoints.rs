@@ -61,12 +61,19 @@ impl Sequencer {
         };
         self.record(LogEntry::Checkpoint(cp.clone()))?;
         if self.gate.is_some() {
-            self.log.sync()?;
-            self.queue_checkpoint(cp)?;
+            self.log.sync_unpublished()?;
+            self.queue_checkpoint(cp.clone())?;
             if let Some(gate) = &mut self.gate {
                 gate.parent = crate::log::CheckpointParent { has_checkpoint: true, seq, root: root.into() };
             }
         }
+        if self.gate.is_some() {
+            self.snapshot_work.push(Work::capture(cp.clone(), self.accounting));
+        }
+        self.snapshot_signers.insert(AccountId(self.key.address()));
+        self.progress.genesis.checkpoint();
+        self.progress.checkpoints += 1;
+        self.store_snapshot(cp)?;
         self.last_checkpoint = Some(seq);
         self.metrics.last_checkpoint_seconds.set(self.last_ts as f64 / 1000.0);
         Ok(())
@@ -103,6 +110,11 @@ impl Sequencer {
         gate.healthy = healthy;
         if !healthy {
             return Ok(());
+        }
+        if let Some(work) = self.snapshot_work.iter().find(|work| Some(work.checkpoint.seq) == posted) {
+            self.snapshot_base =
+                Some(crate::snapshot::RecoveryBase::Checkpoint { checkpoint: work.checkpoint.clone() });
+            self.snapshot_work.retain(|work| Some(work.checkpoint.seq) > posted);
         }
         let mut ready = Vec::new();
         gate.pending.retain(|withdrawal| {

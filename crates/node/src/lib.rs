@@ -5,6 +5,7 @@
 pub mod admin;
 mod alerts;
 mod api;
+pub(crate) mod authenticated;
 mod benchmarks;
 mod checkpoints;
 mod clock;
@@ -22,6 +23,7 @@ pub use node::run;
 mod roughtime;
 pub mod sequencer;
 mod sequencer_thread;
+mod snapshot;
 pub use sequencer::{replay, replay_path, replay_path_in_domain, replay_path_with_trust, replay_with_signer};
 pub use sequencer_thread::run_dedicated;
 mod telemetry;

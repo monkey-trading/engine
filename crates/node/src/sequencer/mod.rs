@@ -4,6 +4,7 @@
 //! locks, and no queue beyond the channel: a fill costs about one engine step plus a buffered
 //! write, and each batch of fills one data sync.
 
+pub(crate) mod history_rebuild;
 mod recovery;
 mod replay;
 pub use replay::{Replayed, replay, replay_path, replay_path_in_domain, replay_path_with_trust, replay_with_signer};
@@ -13,6 +14,7 @@ mod messages;
 pub use messages::{Query, Request, SignedWithdrawal, StreamBody, StreamMsg};
 mod benchmark_schedule;
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -32,11 +34,16 @@ use crate::clock::Clock;
 use crate::log::{CommandEntry, LogEntry, LogWriter, Manifest, SegmentedLog};
 use crate::metrics::Metrics;
 use crate::sequencer::alerts::{BenchmarkAlerts, DeficitAlert, alert_on};
+use crate::snapshot::{Progress, RecoveryBase};
 use crate::tee::EnclaveKey;
 use crate::trusted_time::{Sample, TimeGate};
 
 /// Most requests of any kind taken into one batch before it is flushed and answered.
 const MAX_BATCH: usize = 1024;
+
+/// How long the drain waits for an in-flight snapshot capture before its final checkpoint, well
+/// inside the node's ten-second shutdown grace.
+const SHUTDOWN_CAPTURE_WAIT: Duration = Duration::from_secs(5);
 
 pub struct Sequencer {
     engine: Engine,
@@ -72,6 +79,15 @@ pub struct Sequencer {
     benchmark_schedule: watch::Sender<BenchmarkSchedule>,
     benchmark_schedule_dirty: bool,
     benchmark_schedule_pending: bool,
+    sealing: Option<crate::snapshot::sealing::Endpoint>,
+    progress: Progress,
+    command_prefix: [u8; 32],
+    snapshot_base: Option<RecoveryBase>,
+    snapshot_work: Vec<crate::checkpoints::Work>,
+    snapshot_signers: BTreeSet<AccountId>,
+    /// The newest checkpoint, with its recovery facts as they stood then, when its capture was
+    /// skipped because another was in flight.
+    uncaptured: Option<snapshots::Deferred>,
 }
 
 pub struct SequencerConfig<'a> {
@@ -98,12 +114,14 @@ pub struct SequencerConfig<'a> {
     /// The commands the config's genesis sequences, which the genesis the log ran must match (see
     /// `GenesisProgress::ensure_matches`).
     pub genesis: Vec<Command>,
+    pub(crate) history_sealing: Option<crate::snapshot::sealing::Endpoint>,
 }
 
 /// A log read from disk and replayed, before anything is written to it.
 pub struct ReplayedLog {
     log: SegmentedLog,
     replayed: Replayed,
+    snapshot_seq: Option<u64>,
 }
 
 impl Sequencer {
@@ -165,8 +183,25 @@ impl Sequencer {
             }
             queries.drain(..).for_each(|q| q(&self.engine));
         }
-        if self.last_checkpoint != self.engine.last_seq() {
-            self.checkpoint()?;
+        let final_checkpoint = self.last_checkpoint != self.engine.last_seq();
+        if final_checkpoint || self.uncaptured.is_some() {
+            if let Some(endpoint) = self.sealing.clone()
+                && tokio::time::timeout(SHUTDOWN_CAPTURE_WAIT, endpoint.idle()).await.is_err()
+            {
+                warn!(
+                    alert = "snapshot_write_failed",
+                    "the shutdown checkpoint is not cached: a capture is still in flight"
+                );
+            }
+            if final_checkpoint {
+                self.checkpoint()?;
+            } else if let Some(deferred) = self.uncaptured.take() {
+                // The last command's checkpoint found a capture in flight; history accepts a
+                // capture of the checkpoint it has just indexed. Its seal is collected like any
+                // checkpoint's.
+                self.capture(deferred)?;
+                self.maintain_catalog();
+            }
         }
         self.flush()?;
         info!(seq = ?self.engine.last_seq(), "sequencer drained");
@@ -268,11 +303,19 @@ impl Sequencer {
             matches!(&cmd, Command::Admin(_) | Command::SignedAdmin(_)).then(|| BenchmarkAlerts::listed(&self.engine));
         let sequenced = Sequenced { seq: self.next_seq, ts, cmd };
         let _span = info_span!("command", id = sequenced.seq).entered();
+        let version = self.engine.protocol_version();
         let events = self.engine.apply(&sequenced).context("sequencer produced an invalid sequence")?;
         self.accounting.apply(&sequenced.cmd, &events)?;
+        self.progress.genesis.command(&sequenced, &events);
+        if self.engine.protocol_version() != version {
+            self.progress.activations.push((self.engine.protocol_version(), sequenced.seq));
+        }
         self.next_seq += 1;
         self.last_ts = ts;
-        self.record(LogEntry::Command(CommandEntry { sequenced, events: Some(events.clone()) }))?;
+        let entry = CommandEntry { sequenced, events: Some(events.clone()) };
+        self.command_prefix =
+            crate::log::extend_command_prefix(self.command_prefix, crate::log::command_digest(&entry)?);
+        self.record(LogEntry::Command(entry))?;
         if let Some(previous) = previous_schedule.filter(|_| events.contains(&Event::AdminApplied)) {
             self.note_benchmark_schedule(previous);
         }
@@ -359,6 +402,7 @@ impl Sequencer {
 
 mod alerts;
 pub(crate) mod genesis;
+mod snapshots;
 pub use genesis::{GenesisProgress, genesis_commands};
 mod required;
 

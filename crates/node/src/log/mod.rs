@@ -4,7 +4,24 @@
 //! signed by the enclave key. The same entries stream live over `/v1/stream`, each at an
 //! [`Offset`].
 
+mod append_integrity;
 mod checked;
+mod commitment;
+pub(crate) use commitment::{command_digest, extend_command_prefix};
+mod archive;
+pub(crate) use archive::open_segment_archive;
+pub mod catalog;
+pub mod catalog_access;
+mod catalog_commit;
+pub mod catalog_head;
+pub mod catalog_owner;
+mod catalog_prefix;
+pub mod catalog_seal;
+mod view;
+pub use view::{ActivePrefix, ReadAuthority};
+mod suffix;
+mod writer;
+pub use suffix::CatalogBoundary;
 mod reader;
 pub use reader::LogReader;
 mod segments;
@@ -196,3 +213,6 @@ fn parse_line(n: usize, line: &[u8]) -> anyhow::Result<Option<LogEntry>> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) mod authenticated_tests;

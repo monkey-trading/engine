@@ -17,19 +17,25 @@ fn the_reader_starts_at_any_offset_across_segments() {
 }
 
 #[test]
-fn the_reader_leaves_a_line_still_being_written_for_a_later_call() {
+fn the_reader_leaves_uncommitted_lines_for_a_later_writer_flush() {
     let dir = scratch_dir("reader-partial");
-    write(&dir, 4, &[cmd(0)]);
-    let mut reader = LogReader::open(&dir, Offset::start_of(0), published_manifest(&dir)).unwrap();
+    let (manifest_tx, manifest) = watch::channel(Manifest::default());
+    let mut writer = SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(4, manifest_tx).unwrap();
+    writer.append(&cmd(0)).unwrap();
+    writer.flush().unwrap();
+    let path = dir.join(SEG_0);
+    let prefix_len = fs::metadata(&path).unwrap().len();
+    let mut reader = LogReader::open(&dir, Offset::start_of(0), manifest).unwrap();
     assert_eq!(reader.next_entry().unwrap().map(|(o, _)| o), Some(Offset::start_of(0)));
     assert!(reader.next_entry().unwrap().is_none());
-
-    let mut line = serde_json::to_vec(&cmd(1)).unwrap();
-    line.push(b'\n');
-    let (head, tail) = line.split_at(10);
-    append(&dir.join(SEG_0), head);
+    let bytes = line(&cmd(1));
+    append(&path, &bytes[..10]);
     assert!(reader.next_entry().unwrap().is_none());
-    append(&dir.join(SEG_0), tail);
+    append(&path, &bytes[10..]);
+    assert!(reader.next_entry().unwrap().is_none(), "a complete host line is still uncommitted");
+    fs::OpenOptions::new().write(true).open(&path).unwrap().set_len(prefix_len).unwrap();
+    writer.append(&cmd(1)).unwrap();
+    writer.flush().unwrap();
     assert_eq!(reader.next_entry().unwrap(), Some((Offset::start_of(1), cmd(1))));
 }
 
@@ -69,42 +75,41 @@ fn the_reader_refuses_a_completed_segment_that_differs_from_its_listing() {
 #[test]
 fn the_reader_refuses_a_completed_segment_that_ends_mid_line() {
     let dir = scratch_dir("reader-torn");
-    fs::create_dir_all(&dir).unwrap();
-    let mut torn = serde_json::to_vec(&cmd(0)).unwrap();
-    torn.extend(b"\n{\"entry\":");
-    fs::write(dir.join(SEG_0), torn).unwrap();
-    fs::write(dir.join(SEG_2), [serde_json::to_vec(&cmd(2)).unwrap(), b"\n".to_vec()].concat()).unwrap();
-    let mut reader = LogReader::open(&dir, Offset::start_of(0), published_manifest(&dir)).unwrap();
-    assert_eq!(reader.next_entry().unwrap(), Some((Offset::start_of(0), cmd(0))));
-    let err = reader.next_entry().err().unwrap();
-    assert!(format!("{err:#}").contains("ends mid-line"), "{err:#}");
+    write(&dir, 2, &[cmd(0), cmd(1), cmd(2)]);
+    let manifest = published_manifest(&dir);
+    let path = dir.join(SEG_0);
+    let bytes = fs::read(&path).unwrap();
+    fs::write(&path, &bytes[..bytes.len() - 1]).unwrap();
+    let mut reader = LogReader::open(&dir, Offset::start_of(0), manifest).unwrap();
+    assert!(reader.next_entry().is_err(), "no completed bytes before their exact commitment matches");
 }
 
 #[test]
-fn the_reader_refuses_a_seq_gap_or_a_missing_start_of_the_log() {
+fn the_reader_refuses_a_missing_required_segment_or_start_of_the_log() {
     let dir = scratch_dir("reader-gap");
     write(&dir, 2, &[cmd(0), cmd(1), cmd(2), cmd(3), cmd(4), cmd(5)]);
+    let manifest = published_manifest(&dir);
     fs::remove_file(dir.join(SEG_2)).unwrap();
     for from in [Offset::start_of(0), Offset::start_of(2)] {
-        let mut reader = LogReader::open(&dir, from, published_manifest(&dir)).unwrap();
+        let mut reader = LogReader::open(&dir, from, manifest.clone()).unwrap();
         let err = std::iter::from_fn(|| reader.next_entry().transpose()).find_map(Result::err).unwrap();
-        assert!(format!("{err:#}").contains("seq 4 follows seq 1"), "{err:#}");
+        assert!(format!("{err:#}").contains(SEG_2), "{err:#}");
     }
-
     fs::remove_file(dir.join(SEG_0)).unwrap();
-    let err = LogReader::open(&dir, Offset::start_of(0), published_manifest(&dir)).err().unwrap();
-    assert!(format!("{err:#}").contains("holds seq 0"), "{err:#}");
+    let mut reader = LogReader::open(&dir, Offset::start_of(0), manifest).unwrap();
+    let err = reader.next_entry().err().unwrap();
+    assert!(format!("{err:#}").contains(SEG_0), "{err:#}");
 }
 
 #[test]
-fn the_reader_refuses_a_segment_that_does_not_start_with_a_command() {
+fn the_reader_refuses_a_host_rewrite_that_removes_a_segments_first_command() {
     let dir = scratch_dir("reader-headless");
     write(&dir, 2, &[cmd(0), cmd(1), cmd(2)]);
-    let line = |entry: &LogEntry| [serde_json::to_vec(entry).unwrap(), b"\n".to_vec()].concat();
+    let manifest = published_manifest(&dir);
     fs::write(dir.join(SEG_2), [line(&checkpoint(1)), line(&cmd(2))].concat()).unwrap();
-    let mut reader = LogReader::open(&dir, Offset::start_of(0), published_manifest(&dir)).unwrap();
+    let mut reader = LogReader::open(&dir, Offset::start_of(0), manifest).unwrap();
     let err = std::iter::from_fn(|| reader.next_entry().transpose()).find_map(Result::err).unwrap();
-    assert!(format!("{err:#}").contains("does not start with a command"), "{err:#}");
+    assert!(format!("{err:#}").contains("flushed prefix"), "{err:#}");
 }
 
 #[test]
@@ -127,15 +132,58 @@ fn a_released_reader_resumes_where_it_stopped_and_checks_its_segment_again() {
 }
 
 #[test]
-fn the_reader_refuses_an_unlisted_segment_inside_listed_history() {
+fn a_released_reader_hashes_its_segment_once_and_then_checks_only_the_chunks_it_rereads() {
+    let dir = scratch_dir("reader-release-once");
+    write(&dir, 3, &[large(0), large(1), large(2), large(3)]);
+    let path = dir.join(SEG_0);
+    let mut reader = LogReader::open(&dir, Offset::start_of(0), published_manifest(&dir)).unwrap();
+    assert_eq!(reader.next_entry().unwrap().map(|(o, _)| o.seq), Some(0));
+    reader.release();
+    // Hashing the whole segment again would now fail.
+    let text = fs::read_to_string(&path).unwrap();
+    fs::write(&path, text.replacen("\"ts\":0,", "\"ts\":9,", 1)).unwrap();
+    assert_eq!(reader.next_entry().unwrap().map(|(o, _)| o.seq), Some(1));
+    reader.release();
+    let text = fs::read_to_string(&path).unwrap();
+    fs::write(&path, text.replacen("\"ts\":20,", "\"ts\":29,", 1)).unwrap();
+    let err = reader.next_entry().err().unwrap();
+    assert!(format!("{err:#}").contains("does not match its listing"), "{err:#}");
+}
+
+#[test]
+fn a_growing_active_prefix_is_hashed_from_where_its_last_check_ended() {
+    let dir = scratch_dir("reader-prefix-growth");
+    let (manifest_tx, manifest) = watch::channel(Manifest::default());
+    let mut writer = SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(8, manifest_tx).unwrap();
+    writer.append(&large(0)).unwrap();
+    writer.flush().unwrap();
+    let path = dir.join(SEG_0);
+    let mut reader = LogReader::open(&dir, Offset::start_of(0), manifest).unwrap();
+    assert_eq!(seqs(&mut reader), [0]);
+    // Hashing the grown prefix from its first byte would now fail.
+    let text = fs::read_to_string(&path).unwrap();
+    fs::write(&path, text.replacen("\"ts\":0,", "\"ts\":9,", 1)).unwrap();
+    writer.append(&large(1)).unwrap();
+    writer.flush().unwrap();
+    assert_eq!(seqs(&mut reader), [1]);
+    writer.append(&large(2)).unwrap();
+    writer.flush().unwrap();
+    let text = fs::read_to_string(&path).unwrap();
+    fs::write(&path, text.replacen("\"ts\":20,", "\"ts\":29,", 1)).unwrap();
+    let err = reader.next_entry().err().unwrap();
+    assert!(format!("{err:#}").contains("flushed prefix"), "{err:#}");
+}
+
+#[test]
+fn runtime_readers_ignore_unreferenced_files_and_strict_full_audit_rejects_them() {
     let dir = scratch_dir("reader-planted");
     write(&dir, 4, &[cmd(0), cmd(1), cmd(2), cmd(3), cmd(4)]);
-    // The host plants its own copy of seqs 2 and 3 among the completed segments.
-    let line = |entry: &LogEntry| [serde_json::to_vec(entry).unwrap(), b"\n".to_vec()].concat();
+    let manifest = published_manifest(&dir);
     fs::write(dir.join(SEG_2), [line(&cmd(2)), line(&cmd(3))].concat()).unwrap();
-    let mut reader = LogReader::open(&dir, Offset::start_of(2), published_manifest(&dir)).unwrap();
-    let err = reader.next_entry().err().unwrap();
-    assert!(format!("{err:#}").contains("does not start right after the last segment it lists"), "{err:#}");
+    let mut reader = LogReader::open(&dir, Offset::start_of(2), manifest).unwrap();
+    let actual = std::iter::from_fn(|| reader.next_entry().unwrap()).map(|(offset, _)| offset.seq).collect::<Vec<_>>();
+    assert_eq!(actual, [2, 3, 4]);
+    assert!(SegmentedLog::open(&dir, |_| Ok(())).is_err(), "full audit still diagnoses the orphan");
 }
 
 #[test]

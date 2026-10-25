@@ -187,7 +187,7 @@ impl EnclaveKey {
     }
 
     /// 65-byte `r || s || v` with `v` in {27, 28}, as `ecrecover` expects.
-    fn sign_digest(&self, digest: [u8; 32]) -> String {
+    pub(crate) fn sign_digest(&self, digest: [u8; 32]) -> String {
         format!("0x{}", hex::encode(eip712::sign(&self.key, &B256::from(digest))))
     }
 }

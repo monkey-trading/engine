@@ -11,6 +11,7 @@ use engine_core::command::{AdminCommand, Command, Sequenced};
 use engine_core::event::Event;
 use engine_core::params::NotionalWeighting;
 use engine_core::protocol::ProtocolVersion;
+use serde::{Deserialize, Serialize};
 
 use crate::config::Genesis;
 use crate::sequencer::required::activation_commands;
@@ -28,7 +29,7 @@ const MOVE_LOG: &str = "commands follow genesis in the log, so with the node sto
 /// How far a replayed log got through genesis. Genesis starts at the first command `genesis_commands`
 /// gives, ends with its house capital credit, and closes at the next checkpoint. It applies in full
 /// when it closes as one run the engine accepted throughout.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct GenesisProgress {
     started: Option<u64>,
     credited: bool,

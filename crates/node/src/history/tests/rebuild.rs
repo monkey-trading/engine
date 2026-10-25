@@ -201,7 +201,7 @@ async fn an_index_a_power_loss_left_behind_the_log_resumes_without_a_rebuild() {
     for (case, index, retention, resumes) in cases {
         let (_guard, mut alerts) = capture_alerts();
         let mut history = open_history(&HistorySection { dir: index.clone(), retention }, &log).unwrap();
-        assert_eq!(history.resume_at, Offset::start_of(resumes), "{case}");
+        assert_eq!(history.resume_at(), Offset::start_of(resumes), "{case}");
         assert!(discards(&mut alerts).is_empty(), "{case}");
         history.catch_up_to(None);
         follow_to_end(history, &log).await;
@@ -220,7 +220,7 @@ async fn an_index_a_power_loss_left_behind_the_log_resumes_without_a_rebuild() {
 async fn assert_rebuilt(log: &Path, index: &Path, retention: Duration, cause: &str, case: &str) {
     let (_guard, mut alerts) = capture_alerts();
     let mut history = open_history(&HistorySection { dir: index.to_owned(), retention }, log).unwrap();
-    assert_eq!(history.resume_at, Offset::start_of(0), "{case}");
+    assert_eq!(history.resume_at(), Offset::start_of(0), "{case}");
     assert_discarded(&mut alerts, cause, case);
     history.catch_up_to(None);
     follow_to_end(history, log).await;

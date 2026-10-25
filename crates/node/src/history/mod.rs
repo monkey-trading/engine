@@ -1,24 +1,31 @@
-//! Account history: every event that names an account, indexed from the log the sequencer
-//! publishes and served newest first. The index is derived from the log alone, never from engine
-//! state, so it can always be rebuilt from the log's segments. On a restart it resumes after the
-//! last command it took, once that command is found unchanged in the log; an index the log does not
-//! match, one pruned under another retention, or a damaged file is discarded and rebuilt instead. It
-//! serves pages only once it has taken every command the log held at startup. History is public,
-//! like the log it comes from.
+//! Account history derived from verified log events, served newest first with exclusive cursors.
+//! With snapshots enabled, independently signed complete heads authenticate immutable JMT versions.
+//! Dense account/kind ordinals and point proofs establish every returned row and lookahead; exact
+//! update proofs protect untouched siblings. A bad dependent read withholds the generation until
+//! the supervised owner rebuilds a fresh one from the authenticated log.
 //!
-//! TODO: the index sits on host disk, which the host can rewrite between runs and during one. SQLite
-//! reads it in defensive mode and refuses a schema this code did not create, which bounds what a
-//! rewritten file can make it run, but the rows themselves are unchecked. The startup check compares
-//! one command, the last the index has taken, so it rebuilds after a log rolled back, truncated, or
-//! replaced by another, but not after one forged to end with that same command; a host able to forge
-//! the log can rewrite the index anyway. Each event served names its place in the log, where anyone
-//! can check it; keeping the index in enclave memory or on an integrity-protected volume would bound
-//! both.
+//! Authenticated readiness checks fixed metadata, not every unread SQLite page. Unread payload
+//! damage is diagnosed by the first dependent query, which fails before incomplete success. A
+//! legacy index retains its full physical integrity scan; migration never certifies its SQL rows.
+//! A valid paired restart verifies the real suffix without hydrating the historical index/catalog.
+//!
+//! TODO: without snapshots, the legacy SQLite index sits on host disk, which the host can rewrite
+//! between runs and during one. SQLite reads it in defensive mode and refuses a schema this code did
+//! not create, which bounds what a rewritten file can make it run, but the rows themselves are
+//! unchecked. The startup check compares one command, the last the index has taken, so it rebuilds
+//! after a log rolled back, truncated, or replaced by another, but not after one forged to end with
+//! that same command; a host able to forge the log can rewrite the index anyway. Each event served
+//! names its place in the log, where anyone can check it; the authenticated index above bounds both.
 
 mod preflight;
 pub(crate) use preflight::HistoryPlan;
+pub(crate) mod authenticated;
+mod reader;
 mod store;
-pub use store::Reader;
+pub use reader::Reader;
+pub(crate) mod rebuild;
+pub(crate) mod runtime;
+pub(crate) mod startup;
 
 use std::path::PathBuf;
 
@@ -65,6 +72,17 @@ pub struct PageQuery {
     pub limit: usize,
 }
 
+impl PageQuery {
+    /// Rejects caller mistakes before a proof error can mark a healthy generation as damaged.
+    /// Error cases:
+    /// - page size or event-kind filter is outside the existing API contract
+    pub(crate) fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!((1..=200).contains(&self.limit), "history page limit must be 1..=200");
+        anyhow::ensure!(self.kind.as_deref().is_none_or(|kind| KINDS.contains(&kind)), "unknown history event kind");
+        Ok(())
+    }
+}
+
 /// A page of an account's events, newest first.
 #[derive(Debug, PartialEq, Serialize)]
 pub struct Page {
@@ -87,6 +105,15 @@ pub struct HistoryEvent {
 
 /// The index, checked against the log and ready to catch up.
 pub struct History {
+    backend: Backend,
+}
+
+enum Backend {
+    Legacy(LegacyHistory),
+    Authenticated(Box<runtime::Runtime>),
+}
+
+struct LegacyHistory {
     writer: Writer,
     reader: Reader,
     /// Set once the index has taken every command the log held at startup; readers wait for it.
@@ -109,6 +136,71 @@ pub struct HistoryCheck {
 }
 
 impl History {
+    /// Installs the authenticated owner after read-only recovery and external custody preflight.
+    pub(crate) fn authenticated(runtime: runtime::Runtime) -> Self {
+        Self { backend: Backend::Authenticated(Box::new(runtime)) }
+    }
+
+    /// Sets the actual startup command tip that must be indexed before successful queries.
+    pub fn catch_up_to(&mut self, tip: Option<u64>) {
+        match &mut self.backend {
+            Backend::Legacy(history) => history.catch_up_to(tip),
+            Backend::Authenticated(history) => history.catch_up_to(tip),
+        }
+    }
+
+    /// Starts after the indexed command while preserving authenticated physical fences.
+    pub fn resume_at(&self) -> Offset {
+        match &self.backend {
+            Backend::Legacy(history) => history.resume_at(),
+            Backend::Authenticated(history) => history.resume_at(),
+        }
+    }
+
+    /// The same API reader shape serves legacy SQL or proof-verified immutable history.
+    pub fn reader(&self) -> Reader {
+        match &self.backend {
+            Backend::Legacy(history) => history.reader(),
+            Backend::Authenticated(history) => history.reader(),
+        }
+    }
+
+    #[cfg(test)]
+    fn is_ready(&self) -> bool {
+        match &self.backend {
+            Backend::Legacy(history) => *history.ready.borrow(),
+            Backend::Authenticated(history) => history.is_ready(),
+        }
+    }
+
+    /// Connects optional causal checkpoint capture only for the authenticated storage owner.
+    pub(crate) fn sealing(&self) -> Option<crate::snapshot::sealing::Endpoint> {
+        match &self.backend {
+            Backend::Legacy(_) => None,
+            Backend::Authenticated(history) => Some(history.endpoint()),
+        }
+    }
+
+    /// A handle that stops the authenticated owner at a turn boundary; the legacy index has none.
+    pub(crate) fn stopper(&self) -> Option<runtime::Stopper> {
+        match &self.backend {
+            Backend::Legacy(_) => None,
+            Backend::Authenticated(history) => Some(history.stopper()),
+        }
+    }
+
+    /// Runs the supervised history owner and its feed until shutdown.
+    /// Error cases:
+    /// - authenticated source IO, proof, required update, repair or worker supervision fails
+    pub async fn run(self, feed: Feed) -> anyhow::Result<()> {
+        match self.backend {
+            Backend::Legacy(history) => history.run(feed).await,
+            Backend::Authenticated(history) => (*history).run(feed).await,
+        }
+    }
+}
+
+impl LegacyHistory {
     /// Records `tip`, the last command in the log recovery replayed, the same read `HistoryCheck`
     /// saw: readers are let in once the index has taken it, or now when it already has.
     pub fn catch_up_to(&mut self, tip: Option<u64>) {
@@ -232,7 +324,15 @@ impl HistoryCheck {
         };
         info!(dir = %self.dir.display(), from = %resume_at, "history index opened");
         let (ready, ready_rx) = watch::channel(false);
-        Ok(History { writer, reader: Reader::new(path, ready_rx), ready, ready_at: None, resume_at })
+        Ok(History {
+            backend: Backend::Legacy(LegacyHistory {
+                writer,
+                reader: Reader::new(path, ready_rx),
+                ready,
+                ready_at: None,
+                resume_at,
+            }),
+        })
     }
 }
 

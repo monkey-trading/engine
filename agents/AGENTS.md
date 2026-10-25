@@ -31,6 +31,9 @@ an index: load only the rule whose hint matches the current action.
   with rate limits and connection caps), the account history index (SQLite, derived from the log),
   dated benchmark ingestion (`benchmarks/` and the separate `admin/benchmark_feed.rs` signing worker
   with bounded durable schedule watches in `admin/benchmark_watch.rs` and `api/benchmark_schedule.rs`),
+  optional checkpoint snapshots authenticated by pinned attested signers for suffix recovery,
+  packed proof storage (`authenticated/`), dense account-history lists (`history/authenticated/`),
+  and authenticated segment metadata (`log/catalog.rs`),
   TEE attestation (configfs-tsm for TDX and SEV-SNP; the report data is the hash of a bundle of the
   enclave address, the config file's SHA-256, and the TLS key's hash), the trusted time check against
   Roughtime servers, the custody adapter (mock, or EVM vault deposits over alloy), checkpoint posting
@@ -96,7 +99,8 @@ an index: load only the rule whose hint matches the current action.
   `dev-vault-deposits.sh`, the vault deposit and RPC quorum dev scenarios on Anvil, with
   `dev-rpc-proxy.py` providing three local fault-injection endpoints; `dev-metrics-alerts.sh`,
   the metrics and alert routing dev scenario; `dev-alert-outbox.sh`, the isolated alert retry
-  kill/restart scenario; `dev-monkey-emissions.sh`, the MONKEY emissions scenario on Anvil; and
+  kill/restart scenario; `dev-monkey-emissions.sh`, the MONKEY emissions scenario on Anvil;
+  `dev-snapshot-restart.sh`, the checkpoint snapshot restart and fallback scenario; and
   `build-image.sh` and `check-image.sh`, which build the enclave image from a commit and boot it
   under QEMU without SEV-SNP.
 - **ops/** — operator assets: `grafana/engine-node.json`, the node's Grafana dashboard, and
@@ -106,8 +110,8 @@ an index: load only the rule whose hint matches the current action.
   the unchanged-reference-log check, `cargo-deny`, the contracts' `forge fmt --check` / build /
   test, the vault deposit and RPC quorum dev scenario with the checkpoint and MONKEY emissions
   scenarios, the metrics and alert routing dev scenario, the alert outbox kill/restart scenario,
-  and the enclave image (`image` builds it twice and boots it under QEMU, `image-compare` fails if
-  the builds differ), on every push to `main` and every PR.
+  the snapshot restart scenario, and the enclave image (`image` builds it twice and boots it under
+  QEMU, `image-compare` fails if the builds differ), on every push to `main` and every PR.
   On a PR, the first job, `changes`, sorts the changed files into the Rust, contracts, scenario,
   and image areas from an explicit path list, and each job runs only when its area changed:
   `agents/`, `research/`, the root `README.md`, `SECURITY.md`, `AGENTS.md`, and `CLAUDE.md`, and
@@ -168,6 +172,8 @@ Run from the repo root:
   then `forge fmt --check`, `forge build`, and `forge test`
 - Alert outbox kill/restart dev scenario: `./scripts/dev-alert-outbox.sh` (needs `python3`,
   `curl`, and `jq`; uses loopback endpoints and private temporary data)
+- Snapshot restart dev scenario: `./scripts/dev-snapshot-restart.sh` (needs `python3`, `curl`, and
+  `jq`; runs a dev node with `[snapshots]` on private temporary data and public Roughtime servers)
 - Vault deposit dev scenario: `./scripts/dev-vault-deposits.sh` (starts Anvil, deploys the vault
   and a mock USDC, runs a node on `config/anvil.toml`, and checks each deposit credits once;
   `RPC_QUORUM_SCENARIO=1` also injects a fictional deposit, stops providers and checks recovery;

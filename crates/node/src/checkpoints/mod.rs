@@ -14,6 +14,7 @@ use std::time::Duration;
 use anyhow::{Context, ensure};
 use engine_core::Fixed;
 use engine_core::emissions::TokenUnits;
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio::time::{MissedTickBehavior, interval};
 use tracing::{Instrument, error, info, warn};
@@ -23,7 +24,8 @@ use crate::log::{Checkpoint, CheckpointDomain};
 use crate::sequencer::Request;
 
 /// A signed checkpoint and the custody liabilities its replayed state carries.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Work {
     pub checkpoint: Checkpoint,
     pub liabilities: Fixed,

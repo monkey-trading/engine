@@ -93,6 +93,8 @@ pub struct ApiState {
     pub backfills: Arc<Semaphore>,
     pub limits: Arc<ApiLimits>,
     pub history: Reader,
+    /// The archive manifest listing proven so far, extended as segments complete.
+    pub listing: Arc<tokio::sync::Mutex<Option<crate::log::catalog::CatalogListing>>>,
     /// The emission period budget the configured vault's MONKEY cap was derived from, which an
     /// emission schedule must match; `None` when the node reads no vault, as under mock custody.
     pub emission_budget: Option<TokenUnits>,

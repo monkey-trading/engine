@@ -4,6 +4,12 @@ use super::*;
 use crate::sequencer::replay::Replay;
 
 impl ReplayedLog {
+    /// Reports whether actual recovery used a cache, for integrated startup assertions.
+    #[cfg(test)]
+    pub(crate) fn snapshot_sequence(&self) -> Option<u64> {
+        self.snapshot_seq
+    }
+
     /// Last engine command authenticated by the read-only replay.
     pub(crate) fn last_seq(&self) -> Option<u64> {
         self.replayed.engine.last_seq()
@@ -140,7 +146,7 @@ impl Sequencer {
             observe(&entry);
             replay.apply(&entry)
         })?;
-        Ok(ReplayedLog { log, replayed: replay.finish() })
+        Ok(ReplayedLog { log, replayed: replay.finish(), snapshot_seq: None })
     }
 
     /// Recovers the log `read_log` already authenticated.
@@ -157,7 +163,7 @@ impl Sequencer {
         withdrawals: mpsc::UnboundedSender<SignedWithdrawal>,
     ) -> anyhow::Result<Self> {
         log.validate_recovery(&cfg)?;
-        let ReplayedLog { log, replayed } = log;
+        let ReplayedLog { log, replayed, snapshot_seq } = log;
         let Replayed {
             engine,
             commands,
@@ -168,10 +174,15 @@ impl Sequencer {
             last_checkpoint_ts,
             last_signed_checkpoint,
             recovery_work,
+            recovery_base,
+            checkpoint_signers,
+            genesis,
+            activations,
+            command_prefix,
             ..
         } = replayed;
         let checkpoint_unsigned = cfg.checkpoints.is_some() && (!unsigned.is_empty() || !deferred.is_empty());
-        info!(commands, checkpoints, "recovered from log");
+        info!(commands, checkpoints, snapshot_seq, "recovered from log");
         if let Some(ts) = last_checkpoint_ts {
             cfg.metrics.last_checkpoint_seconds.set(ts as f64 / 1000.0);
         }
@@ -209,6 +220,13 @@ impl Sequencer {
             benchmark_schedule,
             benchmark_schedule_dirty: false,
             benchmark_schedule_pending: false,
+            sealing: cfg.history_sealing,
+            progress: Progress { genesis, activations, checkpoints },
+            command_prefix,
+            snapshot_base: recovery_base,
+            snapshot_work: recovery_work.clone(),
+            snapshot_signers: checkpoint_signers,
+            uncaptured: None,
         };
         {
             let _span = info_span!("command", id = sequencer.engine.last_seq()).entered();

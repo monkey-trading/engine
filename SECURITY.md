@@ -111,9 +111,15 @@ view, and a signature's named signer must be checked against a trusted attestati
 authorized signer. Withdrawal completion evidence also requires that independently trusted signer
 and its deployment before replay can clear an approval. Latest transaction inclusion alone never
 authorizes withdrawal release; the configured custody finality tag and confirmation depth apply.
-Hardware EVM custody requires this protection. Some checks are still being built:
-the alert outbox persists pages on host disk, whose schema and rows it checks but whose deletion or
-rollback it cannot detect, and its cross-restart age budget uses an unsealed host clock; the
+Hardware EVM custody requires this protection. Optional recovery snapshots require independently
+provisioned attested signer pins and authenticate the complete snapshot, its deployment, and its
+checkpoint; with them, account history and the segment catalog are read and updated only through
+proofs against roots the node signed. Their signatures establish integrity, not freshness; the same
+independent custody preflight still applies. Full `engine replay` checks skipped historical log
+segments.
+Some checks are still being built: the alert outbox persists pages on host disk, whose schema and
+rows it checks but whose deletion or rollback it cannot detect, and its cross-restart age budget
+uses an unsealed host clock; without snapshots, the
 account history index is read from host disk with only its schema checked, and is matched to the log
 by one command, the newest it has taken, though SQLite reads it in defensive mode and each event it
 serves names its place in the log, where anyone can check it; the sequencer, which bounds its host's

@@ -48,6 +48,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - Account history: every event that names an account, indexed in SQLite from the log and paged
   newest first by a `<seq>:<index>` cursor, with a stated retention; it survives restarts, and
   rebuilds from the log when it is missing, damaged, or does not match the log
+- Optional recovery caches (`[snapshots]`): restart from the newest signed checkpoint cache and the
+  log suffix after it, with history and the segment catalog in proof-checked databases
 - `engine admin` to sign an admin command with the operator's key, read from a file or
   `OPERATOR_KEY`, and submit it over TLS pinned to the node's attested key; the node holds only the
   operator's public key, recorded in the log, and refuses a request before the log unless it carries
@@ -98,6 +100,46 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   and logs whose genesis an older protocol applied but no current config can give
 - `src/sequencer/recovery.rs` — pure recovery validation and exact authenticated checkpoint-tail restoration
 - `src/sequencer/replay.rs` — log replay, which recovery and `engine replay` share
+- `src/sequencer/snapshots.rs` — the checkpoint capture the sequencer hands the history owner
+- `src/sequencer/snapshots/paired_recovery.rs` — paired-cache recovery: cache, history head, and
+  catalog boundary checked together before the suffix replays
+- `src/sequencer/snapshots/context_tests.rs` — exact cached custody work and required context fields
+- `src/sequencer/history_rebuild.rs` — history rebuilt from the log for migration and repair, bound
+  to the replayed command prefix
+- `src/snapshot/mod.rs` — signed snapshot envelopes, size limits, atomic publication, and retention
+- `src/snapshot/tests.rs` — snapshot authentication, deployment binding, retention, and corruption
+- `src/snapshot/context.rs` — required recovery accounting, signed base witnesses, and concrete checkpoint work
+- `src/snapshot/head.rs` — authenticated complete history-head records and bounded metadata publication
+- `src/snapshot/head/tests.rs` — head provenance, replay-prefix matching, and interrupted-publication regressions
+- `src/snapshot/paired.rs` — the record binding one checkpoint's cache, history head, and catalog boundary
+- `src/snapshot/sealing.rs` — the bounded checkpoint capture and its completion on the history owner
+- `src/snapshot/payloads.rs` — authenticated cache payloads reused while their files are unchanged
+- `src/snapshot/pins.rs` — root leases for every version a retained cache or head names
+- `src/snapshot/references.rs` — the verified inventory of retained caches and heads that authorizes
+  generation removal
+- `src/snapshot/lifecycle.rs` — the per-node gate over generation allocation, publication, and pruning
+- `src/snapshot/catalog_heads.rs` — signed catalog-head files, their retention, and their root leases
+- `src/snapshot/generations/` — history and catalog database generations: allocation, the
+  retirement journal (`disk.rs`), removal, and their tests
+- `src/authenticated/` — packed immutable proof storage, checked JMT reads/updates, leases, and reclamation
+- `src/log/catalog.rs` — proof-checked dense segment metadata and exact checkpoint locators
+- `src/log/catalog_access.rs` — read-only proof access to the catalog store
+- `src/log/catalog_commit.rs` — staged catalog writes that become visible in one commit
+- `src/log/catalog_head.rs` — signed catalog heads and their verification
+- `src/log/catalog_owner.rs` — the single catalog writer: commits, maintenance, and head publication
+- `src/log/catalog_prefix.rs` — the running catalog prefix commitment
+- `src/log/catalog_seal.rs` — the exact checkpoint boundary captured for a paired cache
+- `src/log/commitment.rs` — commitments to the complete typed command/event prefix
+- `src/log/suffix.rs` — recovery that replays only the suffix after a catalog-located checkpoint
+- `src/log/writer.rs` — appends, flushes, segment rotation, catalog folds, and catalog collection
+- `src/log/view.rs` — manifest accessors over full listings and the lazy catalog
+- `src/log/archive.rs` — completed-segment bytes for the archive, checked against the catalog
+- `src/log/append_integrity.rs` — reopening the active segment for append only after its prefix rechecks
+- `src/log/authenticated_tests/` — catalog, suffix, continuation, active-segment, stream, and
+  publication tests
+- `src/node/paired_tests/` — paired recovery through node startup: restart and fallback, crash
+  recovery, the restart dev scenario (`restart.rs`), the on-chain anchor preflight (`anchor.rs`),
+  publication faults, public history pages, and the harness
 - `src/sequencer/required.rs` — client auth, the operator, protocol activation, and genesis, which
   wait for trusted time
 - `src/sequencer/genesis.rs` — the genesis commands, the check that the engine accepts every one
@@ -130,6 +172,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   entry the writer has flushed
 - `src/log/checked.rs` — reads a completed segment in chunks checked against its listing
 - `src/log/tests/mod.rs` — log format, segment, and writer tests
+- `src/log/tests/durability.rs` — writer durability and rotation: per-batch sync, reopened segments,
+  staging, and opening the log while a writer rotates
 - `src/log/tests/reader.rs` — reader tests: offsets, following the writer, flushed entries only,
   and the checks on what it reads
 - `src/api/mod.rs` — REST routes, request signature checks, and the request span
@@ -154,10 +198,19 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   older logs replayed
 - `src/api/tests.rs` — API tests, including the dev scenarios of the resumable stream and archive,
   and of account history, and `Retry-After`
+- `src/api/tests/catalog_archive.rs` — archive responses over the lazy catalog
 - `src/history/mod.rs` — the history index: which events name an account, the startup check
   against the log and the rebuild when it fails, and the supervised task that follows the log into
   the index
 - `src/history/store.rs` — the index's SQLite schema, its writer, its page reader, and its discard
+- `src/history/authenticated/` — dense account/kind lists, complete cursor pages, chronological expiry,
+  state proofs, and their tests
+- `src/history/reader.rs` — legacy/authenticated page dispatch, version leases, and corruption-to-repair signals
+- `src/history/reader/tests.rs` — damaged pages withhold the generation; busy storage and bad requests do not
+- `src/history/rebuild.rs` — exact typed-prefix witnesses for log-derived migration and repair
+- `src/history/startup.rs` — the authenticated history plan: read-only until preflight, then activation
+- `src/history/runtime/` — the supervised history owner: indexing, checkpoint sealing, and repair
+  (`mod.rs`), and signed heads, retained-version pins, and collection (`heads.rs`)
 - `src/history/tests/mod.rs` — history index tests: pages, filters, retention, following the log,
   and restarts
 - `src/history/tests/recovery.rs` — startup checks against the log, readiness to serve, and
@@ -167,6 +220,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   rebuilt
 - `src/test_support/mod.rs` — the shared test harness, including the capture of alerts and their levels
 - `src/test_support/events.rs` — one sample of every engine event
+- `src/test_support/log_view.rs` — publishes a log directory's manifest for tests
 - `src/test_tracing.rs` — the tracing setup the test collectors share: one process-wide
   interested subscriber, so no callsite can be cached uninteresting and a collector never
   silently misses an alert or line
@@ -525,21 +579,98 @@ without its `events` key.
 
 The log is a directory (`node.log_dir`) of segment files named for their first seq, plus
 `manifest.jsonl`, which gets one line per completed segment with its seq range, size, and SHA-256.
-The node loads the manifest at recovery, after checking it against the segment files, and then holds
-it in memory, adding each segment it completes. The archive serves that copy, not the file on disk.
+Without snapshots, the node loads the manifest at recovery, after checking it against the segment
+files, and then holds it in memory, adding each segment it completes. With snapshots, an
+authenticated segment catalog takes the manifest's place (see `[snapshots]` below). The archive
+serves that copy, never the file on disk; with the catalog, it keeps the listing it last proved
+and proves only the segments completed since, taking no backfill permit.
 Backfill reads up to 256 messages at a time and keeps them until the subscriber takes them. It
 checks a completed segment against the manifest in one pass the first time it reads from it, then
 checks each chunk it reads, and refuses any other segment the manifest does not list. The segment
-still being written is read from disk unchecked, and replay against the signed checkpoints is the
-check for it. Backfill yields nothing past the last entry the sequencer has flushed, which the
-writer publishes with its manifest after each batch, so no part of a batch still being written
-reaches a subscriber from disk. While it reads a batch, a subscriber holds one of 16 permits and one
+still being written is checked the same way against the length and SHA-256 of the prefix the
+writer last flushed, which it publishes with its manifest after each batch; when that prefix grows,
+or the segment completes, backfill hashes only the bytes after the last whole chunk it checked. Backfill yields nothing
+past that prefix, so no part of a batch still being written reaches a subscriber from disk. While it reads a batch, a subscriber holds one of 16 permits and one
 1 MiB chunk of a segment. If a new segment cannot be created, the current one keeps growing and the
 node warns (`log_rotation_failed`) until it can. A log written as one file before segments existed
 continues as the first segment: move it to `<log_dir>/00000000000000000000.jsonl`. Every segment is
-kept, since recovery replays the log from genesis. It replays as it reads, one segment and one line
-at a time, so its memory does not grow with the log, and replays nothing of a completed segment
-before checking it against the manifest; `engine replay` reads the log the same way.
+kept for audit, fallback recovery, and rebuilding history. Full recovery replays as it reads, one
+segment and one line at a time, and replays nothing of a completed segment before checking it
+against the manifest. `engine replay` always audits the entire log, including with snapshots enabled.
+
+`[snapshots]` is optional; omitting it keeps full replay and the SQLite history index below. Its
+required fields are `dir` (a separate cache directory), `retain` (a positive count of caches),
+`max_bytes` (a positive size limit for each signed file), and `trusted_signers` (EVM addresses
+verified through enclave attestation). The dev config has a commented example retaining three caches
+of at most 64 MiB each, with empty signer pins. With empty pins the node writes caches but every
+start replays the whole log and rebuilds history from it. Recovery trusts a cache only when its
+signer is pinned and is the key the node attests now, which also signed every checkpoint the cache
+carries; pin a new address after verifying its attestation. Caches an earlier key signed are never
+used, and until the enclave key persists across restarts a start under a new key fails closed.
+Trust never comes from a cache, its self-reported signer, or a manifest on host storage.
+
+With `[snapshots]`, account history and the segment catalog live in `dir` as authenticated
+databases (`authenticated-<generation>.sqlite`), sparse Merkle trees (jmt 0.12, SHA-256) whose
+every read and update is checked against a root the node signed, and `history.dir` is unused. The
+catalog commits each completed segment's listing and the exact bytes of each checkpoint entry. At
+each checkpoint the sequencer syncs the log, commits the catalog at that checkpoint and signs its
+new head, and hands the history owner the engine state with the replay facts the checkpoint needs:
+command count and prefix commitment, custody accounting, every outstanding checkpoint with the
+accounting it was signed with, deferred withdrawals, and the finalized base checkpoint. Once the
+history owner has indexed exactly that checkpoint, it signs a history head for it and publishes the
+paired cache under its own deployment-bound signature domain: it syncs a staging file, renames it,
+syncs the directory, and prunes caches beyond `retain`. A capture that finds the history owner busy
+with the previous one is skipped. On shutdown the sequencer waits up to five seconds for an
+in-flight capture before its final checkpoint, and history keeps running until it has taken the
+rest of the stream, so the final checkpoint is cached too. The history owner also signs a head
+after every 1,024 commands it indexes and when it stops, keeping the two newest, and collects
+retired history versions after every 1,024 commands, however often captures sign heads. A
+captured checkpoint costs the sequencer one encode of the engine state, which grows with the
+accounts and positions it holds; the history owner signs and syncs the cache, and holds the cache
+lock, which the sequencer also takes to publish catalog heads, only to rename and prune files.
+
+Recovery reads and writes nothing else until the custody preflight passes. It tries caches newest
+first, checks each signature against the pins, recomputes the state root, checks the checkpoint
+signature, the recovery facts, the history head at the checkpoint, and the catalog's proof of the
+checkpoint's exact bytes, and takes the newest signed history head at or after the checkpoint. It
+then replays every physical entry after those bytes, checks the replayed command prefix against
+the history head, and needs no segment before the checkpoint's. A cache that fails any check emits a
+`snapshot_rejected` Warning and recovery tries the next one; when none passes, it replays the whole
+log and rebuilds history and the catalog from it. The on-chain checkpoint preflight then runs on the
+recovered state exactly as after full replay: signatures establish integrity, not freshness. Only
+after it passes does the node roll back a transaction a kill left in a store's journal, discard
+history and catalog versions committed after their newest signed heads, which a crash before a head
+was signed leaves behind, and reclaim interrupted cache files. Until then recovery reads a store
+with such a journal as the file stands, and every read is still checked against a signed root; a
+kill while SQLite was writing a commit's pages can leave that unreadable, and then recovery replays
+the whole log. A
+failed cache write emits `snapshot_write_failed` and keeps the log usable; a failed log sync stays
+fatal. When the catalog cannot take a completed segment, the node warns once
+(`log_catalog_unavailable`) and keeps rotating, holding up to 64 completed segments in memory; past
+that the active segment grows, and the catalog retries at each checkpoint. A catalog write that
+rolled back leaves the catalog writable; only a commit of uncertain outcome stops it until restart.
+
+A restart from a cache reads the cache, the checkpoint's segment, the suffix after it, and a bounded
+number of proof lookups, so its time follows engine state and the checkpoint interval rather than
+the length of the log or of retained history. History serves once it has indexed what the log
+holds after its newest signed head, which after a clean shutdown is nothing. History indexes only
+entries the log has synced, so a log ending before a signed head means storage lost synced writes or
+the host truncated the log, losing commands the node had acknowledged; recovery then raises a
+Critical `log_tail_lost` alert, resumes history from the cache's own head, discards the later
+versions after the preflight, and indexes the rest of the log again. It resumes from that head too
+when no retained head does. The first start with `[snapshots]` on an existing log replays it in full
+and builds history and the catalog from it once. `engine replay` still audits the whole log, and snapshots
+never permit deleting it.
+
+Run the restart dev scenario with `./scripts/dev-snapshot-restart.sh`. It runs a dev node with
+`[snapshots]` and checkpoints every 100 commands, pins the enclave address the node attests, grows the
+log and history from 400 to 4,000 dev deposits, and stops once history has caught up and restarts
+after each step; then it corrupts the newest cache and restarts again. Each restart must recover from a cache with at most one checkpoint
+interval replayed and serve every deposit as soon as the API answers; the corrupt cache must raise a
+`snapshot_rejected` Warning and fall back to an earlier one; and `engine replay` must verify every
+checkpoint the node wrote. It prints restart times without gating on them.
+`cargo test -p engine-node dev_scenario_restart_stays_bounded -- --nocapture` runs the same scenario
+through the node's startup path in-process.
 
 With `auth = "eip712"`, each order, cancel, and withdrawal body carries
 `"auth": { "nonce": <next nonce>, "expires_at": <ms>, "signature": "0x…" }`: the account's EIP-712
@@ -580,7 +711,8 @@ at most `limit + 1` entries, and at most 16 pages are read at once. Until the in
 command the log held when the node started, the route answers 503 (`history is catching up with the
 log`). History is public, like the log.
 
-The history index is a SQLite file in `history.dir`, derived from the log alone. A supervised task
+Without `[snapshots]`, the history index is a SQLite file in `history.dir`, derived from the log
+alone. A supervised task
 follows the log as a stream subscriber does, from disk and then live, and writes on its own thread,
 so the sequencer never waits for it; once caught up, history trails the log by the commands queued
 for the writer, and reads from disk whatever it falls behind the live log by. Each write stores the
@@ -602,6 +734,16 @@ and views off, its schema untrusted, and cell sizes checked, and every write and
 inside its own transaction, a schema this code did not create. Removing `history.dir` while the node
 is stopped rebuilds the index too. Commands logged before events were recorded add nothing to
 history.
+
+With `[snapshots]`, the same task feeds the authenticated history database instead. The commands it
+has taken are indexed in updates of up to 128 commands with `history.retention` applied, and each
+version is published once complete; a captured checkpoint first indexes every command up to it. A page
+is a binary search over proved dense ranks for the account (and kind), and every row, event, and the
+lookahead behind `next` are proved under the published root, so a missing or altered row fails the
+page instead of shortening it. A page that fails a proof answers 500 (`history_unreadable`), and the
+generation stops serving (503) until the history owner has rebuilt a fresh one from the log; the
+old generation is removed once its readers finish. Busy storage and bad requests do not trigger a
+rebuild.
 
 `engine admin` reads the node config (`--config`, or `CONFIG_PATH`) for the operator's public key
 and the custody chain id and vault, refuses a key that is not the operator's, takes the operator's
