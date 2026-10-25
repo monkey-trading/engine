@@ -156,6 +156,9 @@ this crate and reproduce the signed state roots exactly.
   entitlements
 - `src/staking.rs` — MONKEY staking and USDC distributions: the config, stake and unstake
   mirroring, epoch finalisation, and claimable distributions
+- `src/staking/tests.rs` — staking tests: initialisation and validation, mirror crediting and
+  refusals, epoch closes above and below the floor, rounding, skipped epochs, and the
+  floor-preserving and principal locks
 - `src/stress.rs` — stress levels: the automatic triggers, the move window, and the floors
 - `src/auth.rs` — client auth, the operator record, request signatures and nonces, and the checks
   every client request and signed admin command pass
