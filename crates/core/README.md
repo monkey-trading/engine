@@ -98,15 +98,21 @@ this crate and reproduce the signed state roots exactly.
 
 - `src/lib.rs` — module index and the protocol summary
 - `src/engine.rs` — engine state, command dispatch, sessions, and USD valuation
+- `src/hot_indexes.rs` — derived holder, trigger, pending-receipt and above-frontier coverage indexes, rebuilt after recovery
 - `src/marks.rs` — venue prices, and marking a market and the markets that convert at its index
-- `src/execution/` — order placement, triggers, pricing, risk checks, and booking fills (`mod.rs`),
 - `src/execution/` — order placement, triggers, pricing, risk checks, and booking fills (`mod.rs`),
   the checks an order passes first (`validation.rs`), and unit tests (`tests.rs`)
 - `src/markouts.rs` — each fill's markout, queued and then marked against the index after its
   horizon, and toxicity scores
 - `src/closeout.rs` — account close-out and bad-debt write-off
 - `src/benchmark.rs` — dated publisher snapshots, effective-date lookup, staleness, and retention
-- `src/funds.rs` — deposits, withdrawals, house capital, and overnight financing
+- `src/funds.rs` — legacy and mock deposits, withdrawals, house capital, and overnight financing
+- `src/deposits.rs` — exact custody receipts, sequencer-confirmed principal locks, finality,
+  canonical reversals, and atomic moves of reincluded deposits to their replacement receipts
+- `src/deposits/legacy.rs` — legacy credit provenance, activation principal locks, canonical adoption and exact finality lookup
+- `src/deposits/legacy/tests.rs` — migration, independent release, ambiguous receipts and recovery commitments
+- `src/deposits/tests.rs` — receipt transition, duplicate delivery, arithmetic and recovery tests
+- `src/deposits/tests/coverage.rs` — canonical coverage, partial frontiers and restored index contracts
 - `src/admin.rs` — operator commands and signed admin commands
 - `src/emissions.rs` — MONKEY emissions: the schedule, period results, finalisation, and
   entitlements
@@ -155,6 +161,8 @@ this crate and reproduce the signed state roots exactly.
   account proofs, and roots against a rebuild
 - `tests/fixtures/eip712.json` — EIP-712 test vectors: API bodies, wallet typed data, and
   signatures
+- `tests/deposit_finality.rs` — confirmed collateral, withdrawal headroom, reversal close-out, benchmark-safe activation and replay
+- `tests/deposit_frontier.rs` — sequenced frontier refusals, financial preservation, settlement and replay
 - `tests/fixtures/merkle.json` — state tree vectors computed with Foundry's `cast`: keys, leaf ABI
   encodings and value hashes, a root, and proofs
 - `tests/fixtures/emissions.json` — entitlement proofs the engine produced, which the vault's
@@ -165,8 +173,8 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), its
-  `V15`, `V16`, and `V17` parts (`v15.rs`, `v16.rs`, `v17.rs`), and its `V18` and `V19` parts
-  (`v18.rs`, `v19.rs`)
+  `V15`, `V16`, and `V17` parts (`v15.rs`, `v16.rs`, `v17.rs`), and its `V18`, `V19` and `V20` parts
+  (`v18.rs`, `v19.rs`, `v20.rs`)
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
 
@@ -282,7 +290,8 @@ reduce the account's position in its market skip the minimum-notional check at p
 `v15.jsonl`. `V16` clamps every account's toxicity history when parameters set a lower memory; its
 log is `v16.jsonl`. `V17` keeps a market's move window across a halt; its log is `v17.jsonl`.
 `V18` adds dated benchmark snapshots and per-date catch-up. Its reference-log session is in
-`examples/reference_log/v18.rs`.
+`examples/reference_log/v18.rs`. `V19` adds receipt-based custody principal locks, finality and
+reversal, with its reference session in `examples/reference_log/v19.rs`.
 For each later version:
 
 1. Add the version in code as `src/protocol.rs` lists, then extend the session in

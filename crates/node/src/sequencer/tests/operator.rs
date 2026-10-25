@@ -19,7 +19,10 @@ fn a_v7_log_records_the_operator_and_activates_the_latest_version_at_its_next_se
         cmds[3..],
         [
             Command::Admin(AdminCommand::SetOperator(dev_config().operator().unwrap())),
-            Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::LATEST }),
+            Command::Admin(AdminCommand::ActivateCustodyFinality {
+                version: ProtocolVersion::LATEST,
+                legacy_deposits: vec![],
+            }),
         ]
     );
     let replayed = replay(&written).unwrap();

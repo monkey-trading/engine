@@ -16,6 +16,7 @@ use crate::account::{Account, Position};
 use crate::auth::{ClientAuth, Operator};
 use crate::benchmark::BenchmarkHistory;
 use crate::command::{AdminCommand, Command, Sequenced};
+use crate::deposits::{CustodyCheckpoint, LegacyDeposit, RecordedDeposit};
 use crate::emissions::{Emissions, PeriodResult, TokenUnits};
 use crate::event::{Event, Reject};
 use crate::fixed::Rounding;
@@ -88,6 +89,21 @@ pub struct Engine {
     /// Each account's cumulative MONKEY entitlement.
     #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
     pub(crate) entitlements: TrackedMap<AccountId, TokenUnits>,
+    /// Finalised custody scan progress is sequenced, never recovered from a host cursor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) custody_checkpoint: Option<CustodyCheckpoint>,
+    /// Exact receipts and their lifecycle; each has its own state-tree leaf.
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) deposits: TrackedMap<String, RecordedDeposit>,
+    /// The latest receipt for each transaction-local deposit, for constant-time duplicate checks.
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) deposit_transactions: TrackedMap<String, String>,
+    /// Legacy EVM principal awaiting an exact canonical receipt, already credited in old rules.
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) legacy_deposits: TrackedMap<String, LegacyDeposit>,
+    /// House principal awaiting Ethereum finality.
+    #[serde(default, skip_serializing_if = "Fixed::is_zero")]
+    pub(crate) unfinalised_house_deposits: Fixed,
     // Not state and not encoded; an engine rebuilt without them hashes every leaf at its first root.
     /// Markouts, positions, and resting orders changed since the last state root.
     #[serde(skip)]
@@ -211,8 +227,7 @@ impl Engine {
             self.advance_markets(priced, &mut events);
         }
         let benchmark_batch = self.protocol_version >= ProtocolVersion::V18 && sequenced.cmd.is_benchmark_batch();
-        let activating_dated_rates = matches!(sequenced.cmd,
-            Command::Admin(AdminCommand::ActivateProtocol { version }) if version >= ProtocolVersion::V18);
+        let activating_dated_rates = sequenced.cmd.is_dated_rate_activation();
         if !benchmark_batch && !activating_dated_rates {
             self.run_rollovers(&mut events);
         }
@@ -222,6 +237,8 @@ impl Engine {
             Command::Prices { market, quotes } => self.on_prices(*market, quotes, &mut events),
             Command::Tick => self.refresh_all_sessions(&mut events),
             Command::Deposit { account, amount, chain_ref } => self.deposit(*account, *amount, chain_ref, &mut events),
+            Command::CustodyFinalised(checkpoint) => self.advance_custody_checkpoint(*checkpoint, &mut events),
+            Command::CustodyDeposit(update) => self.update_deposit(update, &mut events),
             Command::Withdraw { account, amount, auth } => self.withdraw(*account, *amount, auth.as_ref(), &mut events),
             Command::HouseCapital { amount, chain_ref } => self.house_capital(*amount, chain_ref, &mut events),
             Command::PlaceOrder(req) => self.place_order(req, &mut events),

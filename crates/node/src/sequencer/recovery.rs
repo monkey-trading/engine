@@ -53,7 +53,17 @@ impl ReplayedLog {
     /// Error cases:
     /// - the deployment, genesis, or required checkpoint service differs from the replayed log
     pub(crate) fn validate_recovery(&self, cfg: &SequencerConfig<'_>) -> anyhow::Result<()> {
-        let Replayed { engine, genesis, deferred, .. } = &self.replayed;
+        let Replayed { engine, genesis, deferred, legacy_deposits, legacy_approvals, .. } = &self.replayed;
+        if ProtocolVersion::LATEST.supports_deposit_finality()
+            && !legacy_approvals.all_authorized(&{
+                let mut authorized =
+                    legacy_approvals.authorize(engine, legacy_deposits, &legacy::FinalityProof::default())?;
+                authorized.extend(self.legacy_authorizations.iter().map(|(key, seq)| (*key, *seq)));
+                authorized
+            })
+        {
+            bail!("legacy withdrawal needs canonical finality proof before writable recovery");
+        }
         // A config naming another client auth or operator, and so another chain, vault, or admin key,
         // is the wrong one for this log: refuse before anything is written or signed under it.
         if let Some(recorded) = engine.client_auth().filter(|recorded| **recorded != cfg.client_auth) {
@@ -146,7 +156,12 @@ impl Sequencer {
             observe(&entry);
             replay.apply(&entry)
         })?;
-        Ok(ReplayedLog { log, replayed: replay.finish(), snapshot_seq: None })
+        Ok(ReplayedLog {
+            log,
+            replayed: replay.finish(),
+            snapshot_seq: None,
+            legacy_authorizations: legacy::Authorizations::new(),
+        })
     }
 
     /// Recovers the log `read_log` already authenticated.
@@ -163,7 +178,7 @@ impl Sequencer {
         withdrawals: mpsc::UnboundedSender<SignedWithdrawal>,
     ) -> anyhow::Result<Self> {
         log.validate_recovery(&cfg)?;
-        let ReplayedLog { log, replayed, snapshot_seq } = log;
+        let ReplayedLog { log, replayed, snapshot_seq, legacy_authorizations } = log;
         let Replayed {
             engine,
             commands,
@@ -179,8 +194,18 @@ impl Sequencer {
             genesis,
             activations,
             command_prefix,
+            legacy_deposits,
+            legacy_approvals,
             ..
         } = replayed;
+        let mut legacy_authorizations = legacy_authorizations;
+        if ProtocolVersion::LATEST.supports_deposit_finality() {
+            for (key, seq) in
+                legacy_approvals.authorize(&engine, &legacy_deposits, &legacy::FinalityProof::default())?
+            {
+                legacy_authorizations.entry(key).or_insert(seq);
+            }
+        }
         let checkpoint_unsigned = cfg.checkpoints.is_some() && (!unsigned.is_empty() || !deferred.is_empty());
         info!(commands, checkpoints, snapshot_seq, "recovered from log");
         if let Some(ts) = last_checkpoint_ts {
@@ -188,6 +213,9 @@ impl Sequencer {
         }
         let benchmark_schedule = watch::channel(BenchmarkSchedule::from_engine(&engine)).0;
         let mut sequencer = Self {
+            legacy_deposits,
+            legacy_approvals,
+            legacy_authorizations,
             next_seq: engine.last_seq().map_or(0, |s| s + 1),
             last_ts: engine.now(),
             last_checkpoint: engine.last_seq(),

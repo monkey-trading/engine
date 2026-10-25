@@ -211,6 +211,10 @@ fn benchmark_recovery_v17_activation_can_precede_the_snapshot_without_charging()
     let mut genesis = dev_config().genesis;
     genesis.markets.retain(|market| market.id == 1);
     seq.genesis(&genesis).unwrap();
+    let reference = format!("{}:0", engine_core::eip712::B256::repeat_byte(17));
+    assert!(seq.sequence(deposit(100, &reference)).unwrap().unwrap().iter().any(|event| {
+        matches!(event, Event::Deposited { account: TRADER, amount } if *amount == Fixed::from_int(100))
+    }));
     seq.flush().unwrap();
     drop(seq);
     clock.advance(Duration::from_millis((FIRST + DAY + 1 - START) as u64));
@@ -220,6 +224,9 @@ fn benchmark_recovery_v17_activation_can_precede_the_snapshot_without_charging()
     seq.activate_protocol().unwrap();
     seq.trust(trusted(clock.as_ref())).unwrap();
     assert_eq!(seq.engine.protocol_version(), ProtocolVersion::LATEST);
+    assert!(seq.engine.deposit_finality_enabled());
+    assert_eq!(seq.engine.accounts()[&TRADER].balance, Fixed::from_int(100));
+    assert_eq!(seq.engine.accounts()[&TRADER].unfinalised_deposits, Fixed::from_int(100));
     assert_eq!(seq.engine.next_rollover(), before, "activation must not perform catch-up");
     assert!(seq.required.is_empty(), "activation is not deadlocked behind publisher synchronization");
     assert!(seq.sequence(Command::Tick).unwrap().is_none());

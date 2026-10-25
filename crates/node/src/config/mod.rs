@@ -66,7 +66,7 @@ pub enum TeeProvider {
 pub enum CustodyProvider {
     /// No chain. Exposes a dev deposit endpoint and logs withdrawals.
     Mock,
-    /// Credits final vault deposits from an EVM chain. Withdrawals are refused until they are
+    /// Credits canonical vault deposits from an EVM chain. Withdrawals are refused until they are
     /// paid on-chain.
     Evm,
 }

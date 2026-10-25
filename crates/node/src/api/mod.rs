@@ -123,6 +123,8 @@ struct HouseView {
 #[derive(Serialize)]
 struct AccountView {
     balance: Fixed,
+    #[serde(skip_serializing_if = "Fixed::is_zero")]
+    unfinalised_deposits: Fixed,
     equity: Fixed,
     margin: Fixed,
     positions: BTreeMap<MarketId, Position>,
@@ -372,6 +374,7 @@ async fn account(State(s): State<ApiState>, Path(address): Path<String>) -> ApiR
             let (equity, margin) = e.equity_and_margin(acct, None);
             Some(AccountView {
                 balance: acct.balance,
+                unfinalised_deposits: acct.unfinalised_deposits,
                 equity,
                 margin,
                 positions: acct.positions.clone(),

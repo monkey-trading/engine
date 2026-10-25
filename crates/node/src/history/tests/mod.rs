@@ -70,13 +70,38 @@ fn account_of_and_kinds_cover_every_event_that_names_an_account() {
     let mut kinds = BTreeSet::new();
     for event in every_event() {
         let json = serde_json::to_value(&event).unwrap();
-        let named = json.get("account").map(|account| account.as_str().unwrap().to_owned());
+        let named = json
+            .get("account")
+            .or_else(|| json.pointer("/receipt/beneficiary/account"))
+            .map(|account| account.as_str().unwrap().to_owned());
         assert_eq!(account_of(&event).map(|account| account.to_string()), named, "{json}");
         if named.is_some() {
             kinds.insert(json["type"].as_str().unwrap().to_owned());
         }
     }
     assert_eq!(kinds, KINDS.iter().map(|kind| kind.to_string()).collect());
+}
+
+#[tokio::test]
+async fn custody_receipts_are_indexed_for_the_trader_and_filtered_by_kind() {
+    let account = AccountId([1; 20]);
+    let events: Vec<_> = every_event()
+        .into_iter()
+        .filter(|event| matches!(event, Event::CustodyDepositChanged { .. } | Event::CustodyDepositRejected { .. }))
+        .collect();
+    let path = file(&index_dir("custody-receipts"));
+    Writer::open(&path, ms(RETENTION)).unwrap().0.write(&[command(10, 1_000, events.clone())]).unwrap();
+    let reader = Reader::new(path, ready());
+    let all = every_page(&reader, account, None, 10).await;
+    assert_eq!(all.len(), 2);
+    for kind in ["custody_deposit_changed", "custody_deposit_rejected"] {
+        let page = every_page(&reader, account, Some(kind), 10).await;
+        let expected: Vec<_> =
+            all.iter().filter(|event| serde_json::to_value(&event.event).unwrap()["type"] == kind).collect();
+        assert_eq!(page.iter().collect::<Vec<_>>(), expected);
+        assert_eq!(page.len(), 1);
+    }
+    assert!(every_page(&reader, AccountId([2; 20]), None, 10).await.is_empty());
 }
 
 #[tokio::test]

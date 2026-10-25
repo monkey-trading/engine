@@ -4,7 +4,8 @@
 //!   counts the account's position leaves; from `V11`, once a markout has scored the account, or its
 //!   score carries a fraction of a bp, `keccak256(abi.encode(AccountLeaf, int128 toxicityFraction,
 //!   int128 toxicityHistory))`, with the fraction above `toxicityBps` and the fill notional of history
-//!   behind the score.
+//!   behind the score; from V19, while principal is unfinalised, the ABI suffix contains all three
+//!   `int128` values: toxicity fraction, toxicity history, and unfinalised principal.
 //! - **Position:** `keccak256(abi.encode(PositionLeaf))`, one per open position, keyed by its
 //!   account and market.
 //! - **Market:** `keccak256(abi.encode(MarketLeaf))`, with `marked` false and `mark` 0 before the
@@ -17,6 +18,9 @@
 //!   market is `fxMark` times as many USD, and one in a JPY market `1 / fxMark` times as many.
 //! - **Resting order:** the keccak-256 of the JSON encoding of `{ "account", "order" }`.
 //! - **Request nonce:** `keccak256(abi.encode(uint64 nonce))`, the account's next nonce.
+//! - **Custody receipt / transaction-local index:** the keccak-256 of the record's JSON encoding.
+//! - **Legacy principal:** the keccak-256 of the `LegacyDeposit` JSON encoding, under the
+//!   kind-12 key made from the historical custody reference's UTF-8 bytes.
 //! - **Credited reference:** `keccak256(bytes(reference))`.
 //! - **Markout:** the keccak-256 of its JSON encoding.
 //! - **Emission entitlement:** `keccak256(abi.encode(uint256 entitled))`, the account's cumulative
@@ -67,6 +71,9 @@ const RESTING_ORDER: u8 = 6;
 const POSITION: u8 = 7;
 const ENTITLEMENT: u8 = 8;
 const PERIOD_RESULT: u8 = 9;
+const RECEIPT: u8 = 10;
+const RECEIPT_INDEX: u8 = 11;
+const LEGACY_PRINCIPAL: u8 = 12;
 
 /// The structs whose ABI encodings account, position, and market leaves hash.
 mod typed {
@@ -104,6 +111,9 @@ mod typed {
 #[serde(deny_unknown_fields)]
 pub struct AccountLeaf {
     pub balance: Fixed,
+    /// Sequencer-confirmed principal excluded from withdrawal cash.
+    #[serde(default, skip_serializing_if = "Fixed::is_zero")]
+    pub unfinalised_deposits: Fixed,
     pub withdrawal_nonce: u64,
     pub toxicity_bps: i64,
     /// How many positions the account holds, each in a leaf of its own.
@@ -161,6 +171,7 @@ impl AccountLeaf {
         // Every field is named, so a field added to `Account` fails to compile until a leaf holds it.
         let Account {
             balance,
+            unfinalised_deposits,
             positions,
             orders: _,
             toxicity_bps,
@@ -170,6 +181,7 @@ impl AccountLeaf {
         } = account;
         AccountLeaf {
             balance: *balance,
+            unfinalised_deposits: *unfinalised_deposits,
             withdrawal_nonce: *withdrawal_nonce,
             toxicity_bps: *toxicity_bps,
             // Positions are keyed by `u32` market ids, so their count fits a `u32`.
@@ -192,6 +204,10 @@ impl AccountLeaf {
             toxicityBps: self.toxicity_bps,
             openPositions: self.open_positions,
         };
+        if !self.unfinalised_deposits.is_zero() {
+            let state = (self.toxicity_fraction.raw(), self.toxicity_history.raw(), self.unfinalised_deposits.raw());
+            return keccak(&[&leaf.abi_encode(), &state.abi_encode()]);
+        }
         if self.toxicity_fraction.is_zero() && self.toxicity_history.is_zero() {
             return keccak(&[&leaf.abi_encode()]);
         }
@@ -344,4 +360,19 @@ pub(crate) fn period_result_hash(result: &PeriodResult) -> B256 {
 pub(crate) fn json_hash(value: &impl Serialize) -> B256 {
     // Engine state is maps, lists, strings, and integers, all of which serde_json encodes.
     keccak(&[&serde_json::to_vec(value).expect("engine state serialises")])
+}
+
+/// The key of an exact custody receipt's lifecycle leaf.
+pub(crate) fn deposit_key(reference: &str) -> B256 {
+    keccak(&[&[RECEIPT], reference.as_bytes()])
+}
+
+/// The key of a transaction-local deposit's current receipt index.
+pub(crate) fn deposit_transaction_key(reference: &str) -> B256 {
+    keccak(&[&[RECEIPT_INDEX], reference.as_bytes()])
+}
+
+/// The key of legacy principal awaiting canonical receipt evidence.
+pub(crate) fn legacy_deposit_key(reference: &str) -> B256 {
+    keccak(&[&[LEGACY_PRINCIPAL], reference.as_bytes()])
 }

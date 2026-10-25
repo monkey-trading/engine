@@ -149,9 +149,60 @@ impl<R: VaultReader + Sync> VaultReader for Quorum<R> {
     /// Error cases:
     /// - no quorum for finality or the block hash at the common height
     async fn finality(&self) -> anyhow::Result<Finality> {
+        self.read_finality(false).await
+    }
+
+    /// The common withdrawal-finality height and its majority hash.
+    async fn withdrawal_finality(&self) -> anyhow::Result<Finality> {
+        self.read_finality(true).await
+    }
+
+    /// Identical ordered headers over the same height range.
+    /// Error cases:
+    /// - no quorum
+    async fn headers(&self, from: u64, to: u64) -> anyhow::Result<Vec<BlockLink>> {
+        let answers = join_all(self.providers.iter().enumerate().map(|(i, (_, r))| async move {
+            self.qualified(i)?;
+            r.headers(from, to).await
+        }))
+        .await;
+        self.vote("headers", answers).map(|v| v.0)
+    }
+
+    /// Identical complete log sets and end-block hashes; a lagging absence cannot vote.
+    /// Error cases:
+    /// - no quorum, or a provider cannot return the range's last block
+    async fn deposits(&self, from: u64, to: u64) -> anyhow::Result<Vec<VaultDeposit>> {
+        let answers = join_all(self.providers.iter().enumerate().map(|(i, (_, r))| async move {
+            self.qualified(i)?;
+            let header = last_header(r.headers(to, to).await?, to)?;
+            Ok((header.hash, r.deposits(from, to).await?))
+        }))
+        .await;
+        self.vote("deposits", answers).map(|v| v.0.1)
+    }
+
+    /// Identical counts at the same canonical block hash.
+    /// Error cases:
+    /// - no quorum
+    async fn deposit_count(&self, at: BlockRef) -> anyhow::Result<u64> {
+        let answers = join_all(self.providers.iter().enumerate().map(|(i, (_, r))| async move {
+            self.qualified(i)?;
+            r.deposit_count(at).await
+        }))
+        .await;
+        self.vote("deposit_count", answers).map(|v| v.0)
+    }
+}
+
+impl<R: VaultReader + Sync> Quorum<R> {
+    /// Selects the highest common tag height, never reducing the fixed provider threshold.
+    /// Error cases:
+    /// - the selected tag or its canonical hash lacks a quorum
+    async fn read_finality(&self, withdrawal: bool) -> anyhow::Result<Finality> {
         let mut answers = join_all(self.providers.iter().enumerate().map(|(i, (_, r))| async move {
             self.qualified(i)?;
-            r.finality().await
+            if withdrawal { r.withdrawal_finality().await } else { r.finality().await }
         }))
         .await;
         // Head diagnostics are independent of how far each provider's finality tag has reached.
@@ -227,49 +278,12 @@ impl<R: VaultReader + Sync> VaultReader for Quorum<R> {
                 }
             }
         }
-        let (tagged, _) = self.vote("finality", votes)?;
+        let (tagged, _) = self.vote(if withdrawal { "withdrawal_finality" } else { "finality" }, votes)?;
         let head = quorum_lower_bound(diagnostics.iter().flatten().map(|d| d.0), self.required);
         let head_time = quorum_lower_bound(diagnostics.iter().flatten().map(|d| d.1), self.required);
         let head_support =
             Some(HeadSupport { required: self.required, heads: diagnostics.iter().map(|d| d.map(|d| d.0)).collect() });
         Ok(Finality { head, head_time, tagged, head_support })
-    }
-
-    /// Identical ordered headers over the same height range.
-    /// Error cases:
-    /// - no quorum
-    async fn headers(&self, from: u64, to: u64) -> anyhow::Result<Vec<BlockLink>> {
-        let answers = join_all(self.providers.iter().enumerate().map(|(i, (_, r))| async move {
-            self.qualified(i)?;
-            r.headers(from, to).await
-        }))
-        .await;
-        self.vote("headers", answers).map(|v| v.0)
-    }
-
-    /// Identical complete log sets and end-block hashes; a lagging absence cannot vote.
-    /// Error cases:
-    /// - no quorum, or a provider cannot return the range's last block
-    async fn deposits(&self, from: u64, to: u64) -> anyhow::Result<Vec<VaultDeposit>> {
-        let answers = join_all(self.providers.iter().enumerate().map(|(i, (_, r))| async move {
-            self.qualified(i)?;
-            let header = last_header(r.headers(to, to).await?, to)?;
-            Ok((header.hash, r.deposits(from, to).await?))
-        }))
-        .await;
-        self.vote("deposits", answers).map(|v| v.0.1)
-    }
-
-    /// Identical counts at the same canonical block hash.
-    /// Error cases:
-    /// - no quorum
-    async fn deposit_count(&self, at: BlockRef) -> anyhow::Result<u64> {
-        let answers = join_all(self.providers.iter().enumerate().map(|(i, (_, r))| async move {
-            self.qualified(i)?;
-            r.deposit_count(at).await
-        }))
-        .await;
-        self.vote("deposit_count", answers).map(|v| v.0)
     }
 }
 

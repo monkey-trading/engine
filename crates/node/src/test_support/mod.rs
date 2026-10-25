@@ -39,6 +39,8 @@ use crate::sequencer::{Request, Sequencer, SequencerConfig, SignedWithdrawal, St
 use crate::tee::EnclaveKey;
 pub use crate::test_tracing::keep_callsites_interested;
 use crate::trusted_time::Sample;
+mod events;
+pub use events::every_event;
 
 pub const DEV_CONFIG: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/dev.toml");
 pub const ANVIL_CONFIG: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/anvil.toml");
@@ -348,7 +350,11 @@ pub fn logged_history(dir: &Path, account: AccountId) -> Vec<HistoryEvent> {
                 HistoryEvent { cursor, ts, event }
             })
         })
-        .filter(|e| serde_json::to_value(&e.event).expect("event encodes")["account"] == account.to_string())
+        .filter(|e| {
+            let json = serde_json::to_value(&e.event).expect("event encodes");
+            json.get("account").or_else(|| json.pointer("/receipt/beneficiary/account"))
+                == Some(&serde_json::Value::String(account.to_string()))
+        })
         .collect();
     events.reverse();
     events

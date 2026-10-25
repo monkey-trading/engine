@@ -26,6 +26,8 @@ pub(super) struct ProvenChain {
     window: BTreeMap<u64, B256>,
     /// The run of an interrupted proof, kept so the next attempt resumes after it.
     interrupted: Option<LinkedRun>,
+    #[cfg(test)]
+    window_peak: usize,
 }
 
 /// Headers a proof has linked upward, each the parent of the next, that have not yet reached the
@@ -81,6 +83,21 @@ impl ProvenChain {
     pub(super) fn keep(&mut self, run: LinkedRun) {
         self.anchors.extend(run.anchors);
         self.window.extend(run.window);
+        #[cfg(test)]
+        {
+            self.window_peak = self.window_peak.max(self.window.len());
+        }
+    }
+
+    /// Discards consumed full headers, preserving canonical anchors and interrupted proofs.
+    pub(super) fn clear_window(&mut self) {
+        self.window.clear();
+    }
+
+    /// The largest retained full-header window during this proof.
+    #[cfg(test)]
+    pub(super) fn window_peak(&self) -> usize {
+        self.window_peak
     }
 
     /// The window's hashes for blocks `from..=to`, when it holds every one of them.
@@ -113,7 +130,7 @@ impl ProvenChain {
 
 impl LinkedRun {
     /// A run whose first header is block `first`, a child of `below` when that is known.
-    fn new(below: Option<(u64, B256)>, first: u64) -> Self {
+    pub(super) fn new(below: Option<(u64, B256)>, first: u64) -> Self {
         LinkedRun { start: (below, first), last: None, anchors: BTreeMap::new(), window: BTreeMap::new() }
     }
 

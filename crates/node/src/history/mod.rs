@@ -44,9 +44,11 @@ use crate::log::{CommandEntry, LogEntry, Offset};
 use crate::sequencer::StreamBody;
 
 /// The `type` of every event that names an account: what the `kind` filter accepts.
-pub const KINDS: [&str; 12] = [
+pub const KINDS: [&str; 14] = [
     "deposited",
     "deposit_rejected",
+    "custody_deposit_changed",
+    "custody_deposit_rejected",
     "withdrawal_approved",
     "withdrawal_rejected",
     "order_accepted",
@@ -350,6 +352,12 @@ pub fn account_of(event: &Event) -> Option<AccountId> {
         | Event::BadDebt { account, .. }
         | Event::Financing { account, .. }
         | Event::EmissionAllocated { account, .. } => Some(*account),
+        Event::CustodyDepositChanged { receipt, .. } | Event::CustodyDepositRejected { receipt, .. } => {
+            match receipt.beneficiary {
+                engine_core::deposits::DepositBeneficiary::Trader { account } => Some(account),
+                engine_core::deposits::DepositBeneficiary::House => None,
+            }
+        }
         Event::Fill(fill) => Some(fill.account),
         Event::HouseCapitalMoved { .. }
         | Event::BenchmarkRateMissing { .. }

@@ -12,6 +12,7 @@ use crate::checkpoints::{CheckpointChain, Poster, VaultState, View, Work, signat
 use crate::log::{Checkpoint, CheckpointDomain, CommandEntry, LogEntry};
 use crate::sequencer::{Request, replay};
 use crate::tee::EnclaveKey;
+mod receipts;
 
 /// Corrupts a hex signature without the fixed-byte no-op case.
 pub(super) fn tamper_signature(signature: &mut String) {
@@ -209,6 +210,15 @@ async fn a_provisional_then_orphaned_approval_never_releases_a_signature() {
     let (tx, rx) = mpsc::channel(64);
     let task = tokio::spawn(seq.run(rx));
     tx.send(Request::CheckpointStatus { posted, healthy: true }).await.unwrap();
+    submit(
+        &tx,
+        Command::CustodyFinalised(engine_core::deposits::CustodyCheckpoint {
+            block: 0,
+            block_hash: engine_core::eip712::B256::repeat_byte(1),
+            deposit_count: 0,
+        }),
+    )
+    .await;
     submit(&tx, crate::test_support::deposit(100, "finality-deposit")).await;
     submit(&tx, crate::test_support::withdraw(40)).await;
     let mut work = None;
@@ -216,6 +226,7 @@ async fn a_provisional_then_orphaned_approval_never_releases_a_signature() {
         work = Some(queued);
     }
     let work = work.unwrap();
+    assert_eq!(work.coverage, crate::checkpoints::DepositCoverage::Canonical);
     let parent = work.checkpoint.parent.unwrap();
     let state = VaultState {
         height: 0,
@@ -288,7 +299,12 @@ fn checkpoint(key: &EnclaveKey, seq: u64, root: [u8; 32]) -> Checkpoint {
 fn poster() -> (Poster<Chain>, Work) {
     let key = EnclaveKey::generate();
     let checkpoint = checkpoint(&key, 5, [3; 32]);
-    let work = Work { checkpoint: checkpoint.clone(), liabilities: Fixed::from_int(100), deposits: 1 };
+    let work = Work {
+        checkpoint: checkpoint.clone(),
+        liabilities: Fixed::from_int(100),
+        deposits: 1,
+        coverage: crate::checkpoints::DepositCoverage::Historical,
+    };
     let chain = Chain {
         state: Arc::new(Mutex::new(VaultState {
             height: 0,

@@ -1,16 +1,19 @@
-//! Derived indexes over positions and resting triggers, excluded from protocol state.
+//! Derived indexes over positions, triggers and custody receipt coverage, excluded from state.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Fixed;
 use crate::account::RestingOrder;
 use crate::command::OrderKind;
+use crate::deposits::DepositStatus;
 use crate::engine::Engine;
 use crate::types::{AccountId, MarketId, OrderId, Side};
 
 #[derive(Debug, Default)]
 pub(crate) struct HotIndexes {
     pub(crate) holders: BTreeMap<MarketId, BTreeSet<AccountId>>,
+    pub(crate) pending_deposits: BTreeSet<String>,
+    pub(crate) receipts_above_frontier: BTreeSet<String>,
     triggers: BTreeMap<MarketId, Triggers>,
 }
 
@@ -21,6 +24,12 @@ struct Triggers {
 }
 
 impl HotIndexes {
+    /// Retires only the newly covered block prefix; later finalised receipts still contribute.
+    pub(crate) fn cover_deposits_through(&mut self, block: u64) {
+        let next = block.checked_add(1).expect("custody frontier excludes the maximum block");
+        self.receipts_above_frontier = self.receipts_above_frontier.split_off(&format!("{next:020}:"));
+    }
+
     /// The triggered subset in the same time priority as the authoritative resting book.
     pub(crate) fn triggered(&self, market: MarketId, mid: Fixed) -> Vec<(OrderId, AccountId)> {
         let Some(book) = self.triggers.get(&market) else { return Vec::new() };
@@ -57,6 +66,14 @@ impl Engine {
             return;
         }
         let mut indexes = HotIndexes::default();
+        indexes.pending_deposits.extend(self.deposits.iter().filter_map(|(reference, recorded)| {
+            (recorded.status == DepositStatus::Unfinalised).then_some(reference.clone())
+        }));
+        indexes.receipts_above_frontier.extend(self.deposits.iter().filter_map(|(reference, recorded)| {
+            (recorded.status != DepositStatus::Reversed
+                && self.custody_checkpoint.is_none_or(|checkpoint| recorded.receipt.block > checkpoint.block))
+            .then_some(reference.clone())
+        }));
         for (account, state) in self.accounts.iter() {
             for market in state.positions.keys() {
                 indexes.holders.entry(*market).or_default().insert(*account);

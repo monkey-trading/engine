@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use alloy::primitives::{Address, B256, U256};
 use anyhow::bail;
+use engine_core::auth::{ClientAuth, Operator};
 use engine_core::command::{Command, Sequenced};
 use engine_core::types::AccountId;
 use engine_core::{Engine, Fixed};
@@ -22,7 +23,7 @@ use crate::custody::chain::BlockLink;
 use crate::custody::cursor::Cursor;
 use crate::custody::evm::{Beneficiary, BlockRef, DepositWatcher, Finality, VaultDeposit, VaultIdentity, VaultReader};
 use crate::log::{LogEntry, Manifest};
-use crate::sequencer::{Request, Sequencer, SequencerConfig};
+use crate::sequencer::{Request, Sequencer, SequencerConfig, SignedWithdrawal};
 use crate::tee::EnclaveKey;
 use crate::test_support::{log_entries, sequencer_config, trusted_now};
 
@@ -55,6 +56,9 @@ pub(super) struct ChainState {
     pub(super) head_time: Option<u64>,
     /// The block the finality tag names; with no confirmations, the final block.
     pub(super) final_block: Option<u64>,
+    /// Independent release tag for confirmed-deposit tests.
+    pub(super) withdrawal_block: Option<u64>,
+    pub(super) withdrawal_failing: bool,
     /// The hash the finality tag reports, when it differs from the chain's.
     pub(super) tag_hash: Option<B256>,
     /// Header reads to fail before they answer again.
@@ -89,7 +93,9 @@ pub(super) struct ChainState {
 /// The sequencer over a log in a test directory.
 pub(super) struct Node {
     pub(super) tx: mpsc::Sender<Request>,
+    pub(super) operator: Operator,
     sequencer: JoinHandle<anyhow::Result<()>>,
+    _withdrawals: mpsc::UnboundedReceiver<SignedWithdrawal>,
 }
 
 /// Log lines captured from this thread's tasks.
@@ -118,6 +124,16 @@ impl VaultReader for FakeChain {
             .final_block
             .map(|number| BlockRef { number, hash: chain.tag_hash.unwrap_or_else(|| chain.hash_at(number)) });
         Ok(Finality { head: chain.head, head_time, tagged, head_support: None })
+    }
+
+    async fn withdrawal_finality(&self) -> anyhow::Result<Finality> {
+        let mut finality = self.finality().await?;
+        let chain = self.0.lock().unwrap();
+        if chain.withdrawal_failing {
+            bail!("withdrawal finality unavailable");
+        }
+        finality.tagged = chain.withdrawal_block.map(|number| BlockRef { number, hash: chain.hash_at(number) });
+        Ok(finality)
     }
 
     async fn headers(&self, from: u64, to: u64) -> anyhow::Result<Vec<BlockLink>> {
@@ -222,22 +238,43 @@ impl FakeChain {
 impl Node {
     /// Recovers the sequencer from the log in `dir/log/` and runs it.
     pub(super) fn start(dir: &Path) -> Self {
+        Self::start_at_protocol(dir, false, CHAIN_ID, TRADER, ClientAuth::Unsigned)
+    }
+
+    /// Starts the latest protocol while retaining the real disk-backed sequencer.
+    pub(super) fn start_confirmed(dir: &Path) -> Self {
+        Self::start_at_protocol(dir, true, CHAIN_ID, TRADER, ClientAuth::Unsigned)
+    }
+
+    /// Uses the Anvil fixture's actual signing domain for approval records.
+    pub(super) fn start_evm(dir: &Path, chain_id: u64, vault: AccountId) -> Self {
+        Self::start_at_protocol(dir, true, chain_id, vault, ClientAuth::Eip712 { chain_id, vault })
+    }
+
+    fn start_at_protocol(dir: &Path, latest: bool, chain_id: u64, vault: AccountId, client_auth: ClientAuth) -> Self {
         let log_dir = dir.join("log");
+        let base = sequencer_config(&log_dir, watch::channel(Manifest::default()).0);
         let cfg = SequencerConfig {
             segment_commands: 1_000,
             checkpoint_every: 1_000,
             checkpoint_parent: Default::default(),
             checkpoints: None,
-            chain_id: CHAIN_ID,
-            vault: TRADER,
-            ..sequencer_config(&log_dir, watch::channel(Manifest::default()).0)
+            chain_id,
+            vault,
+            client_auth,
+            operator: engine_core::auth::Operator { chain_id, vault, ..base.operator },
+            ..base
         };
         let (stream, _) = broadcast::channel(1_024);
-        let (withdrawals, _) = mpsc::unbounded_channel();
+        let (withdrawals, received_withdrawals) = mpsc::unbounded_channel();
+        let operator = cfg.operator;
         let mut seq = Sequencer::recover(cfg, Arc::new(EnclaveKey::test_key()), stream, withdrawals).unwrap();
+        if latest {
+            seq.activate_protocol().unwrap();
+        }
         seq.trust(trusted_now()).unwrap();
         let (tx, rx) = mpsc::channel(64);
-        Node { tx, sequencer: tokio::spawn(seq.run(rx)) }
+        Node { tx, operator, sequencer: tokio::spawn(seq.run(rx)), _withdrawals: received_withdrawals }
     }
 
     /// Drains the sequencer and waits for it to stop.
@@ -351,7 +388,7 @@ pub(super) fn watcher_with_confirmations(
 ) -> DepositWatcher<FakeChain> {
     let toml = evm_toml(dir, max_block_range).replace("confirmations = 0", &format!("confirmations = {confirmations}"));
     let cfg: EvmCustodySection = toml::from_str(&toml).unwrap();
-    DepositWatcher::start(chain.clone(), &cfg, CHAIN_ID, VAULT, log_seq).unwrap()
+    DepositWatcher::start_legacy(chain.clone(), &cfg, CHAIN_ID, VAULT, log_seq).unwrap()
 }
 
 /// The cursor stored in `dir`, read without the checks `Cursor::load` makes.
@@ -370,6 +407,7 @@ pub(super) fn evm_toml(dir: &Path, max_block_range: u64) -> String {
         ]
         usdc = "0xc0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0"
         finality_tag = "safe"
+        withdrawal_finality_tag = "finalized"
         confirmations = 0
         start_block = 0
         max_block_range = {max_block_range}

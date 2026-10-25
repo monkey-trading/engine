@@ -68,8 +68,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   outages, symbols with no fresh quote, and venue times well ahead of the host clock
 - A `house_deficit` alert when house NAV falls below zero, at most one a minute while it keeps
   crossing zero
-- EVM custody: each vault deposit credited once after a strict majority of at least three RPC
-  providers agrees, at a configurable finality tag and confirmations, with a resumable cursor
+- EVM custody: a strict majority of at least three RPC providers admits each deposit; from V19,
+  sequencer confirmation credits trading collateral, Ethereum finality unlocks withdrawal principal,
+  and canonical reversals debit once with a Critical alert
 - Mock custody and a mock price feed for local development
 - Prometheus metrics on a separate operator address, from a registry the node owns, with no
   per-account labels or values
@@ -100,6 +101,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   and logs whose genesis an older protocol applied but no current config can give
 - `src/sequencer/recovery.rs` — pure recovery validation and exact authenticated checkpoint-tail restoration
 - `src/sequencer/replay.rs` — log replay, which recovery and `engine replay` share
+- `src/sequencer/legacy.rs` — verified legacy activation inputs and pre-writer signature eligibility
+- `src/sequencer/legacy/approvals.rs` — authenticated approval prefixes, bounded receipt proofs and per-obligation release authorization
+- `src/sequencer/legacy/approvals/tests.rs` — exact proof retention, terminal/mismatched receipts and uncredited history
+- `src/sequencer/legacy/tests.rs` — ledger tampering, unrelated funds, deferred reservations and historical replay provenance
+- `src/sequencer/legacy/tests/activated.rs` — activated recovery refusal, funding-prefix release and restart/nonce isolation
 - `src/sequencer/snapshots.rs` — the checkpoint capture the sequencer hands the history owner
 - `src/sequencer/snapshots/paired_recovery.rs` — paired-cache recovery: cache, history head, and
   catalog boundary checked together before the suffix replays
@@ -262,6 +268,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/mod.rs` — posting, retry, signed-parent commitment checks, and collateral reconciliation
 - `src/checkpoints/accounting.rs` — bounded custody totals derived from computed engine events
 - `src/checkpoints/accounting/tests.rs` — cash/reference recomputation oracles and arithmetic boundaries
+- `src/checkpoints/accounting/tests/receipts.rs` — receipt cash deltas, adoption, reversals, unpaid approvals and atomic failures
+- `src/checkpoints/tests/receipts.rs` — immutable prefix coverage and refusal of unproved aggregate equality
 - `src/checkpoints/signature.rs` — shared strict checkpoint signature and domain verification
 - `src/checkpoints/rpc.rs` — pinned-block vault reads and transaction relay through a signing RPC
 - `src/checkpoints/rpc/tests.rs` — sampled ancestry and durable relayer request regressions
@@ -290,6 +298,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/mod.rs` — the custody providers (mock and EVM) and the USDC-to-`Fixed` conversion
 - `src/custody/evm.rs` — the deposit watcher: the chain and token check, range reads from blocks
   proven to lead to the tagged final block, the completeness check, and stall alerts
+- `src/custody/evm/lifecycle.rs` — confirmed receipt reconciliation, principal finality and the replayed scan frontier
+- `src/custody/evm/progress.rs` — confirmed header and log windows read one batch per poll, kept
+  across polls while their endpoint stays canonical
+- `src/custody/evm/legacy.rs` — independent canonical finality proof before legacy signature redelivery
+- `src/custody/evm/lifecycle/tests.rs` — reversal, reinclusion, inconsistent receipt and amount boundaries
 - `src/custody/chain.rs` — the chain of block hashes proven to lead to the tagged block, and the
   headers of an interrupted proof, kept apart until it ends there
 - `src/custody/watchdog.rs` — alerts for a stale endpoint head, a final block that stops, and
@@ -311,6 +324,16 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/tests/quorum.rs` — fabrication, disagreement, lag, outages, and quorum recovery
 - `src/custody/tests/quorum_diagnostics.rs` — malformed header exclusion, transport independence, and retained watchdog progress
 - `src/custody/tests/rpc.rs` — the RPC adapter's log decoding, deadlines, and URL scrubbing
+- `src/custody/tests/confirmed.rs` — confirmed collateral and finality over the real quorum and sequencer
+- `src/custody/tests/confirmed/scan.rs` — empty-window progress during finality stalls, canonical hint invalidation and restart
+- `src/custody/tests/confirmed/frozen.rs` — a pending receipt under frozen finality: each window read
+  once across quota failures, lost replies, reorg and restart
+- `src/custody/tests/confirmed/reinclusion.rs` — reincluded deposits move in one step and keep a
+  solvent position open; an orphan with no replacement waits for the eligible head
+- `src/custody/tests/confirmed/episodes.rs` — a reversal alert resolves only when its receipt is reinstated
+- `src/custody/tests/legacy.rs` — legacy tag upgrades, principal eligibility and signature finality proofs
+- `src/custody/tests/legacy/cache.rs` — bounded consumed header retention and unchanged approval/refusal outcomes
+- `src/custody/tests/anvil_finality.rs` — Anvil receipts through RPC quorum, watcher and sequencer approvals
 - `src/custody/tests/reorg.rs` — reorgs and forked answers against the proven chain
 - `src/feeds/mod.rs` — the feed index and the mock feed
 - `src/feeds/venue/mod.rs` — the venue task: connect, subscribe, sequence quotes, alert, reconnect
@@ -443,14 +466,15 @@ raises Critical `custody_rpc_quorum_lost` and pauses crediting while trading con
 retry on the next poll; recovery resolves the matching alerts. Credentials never appear in alerts.
 The local scenario uses three proxies to one Anvil process, for fault injection only; the proxy
 ports default to 18545–18547 and can be overridden with `RPC_A_PORT`, `RPC_B_PORT`, `RPC_C_PORT`.
-`SCENARIO_LOG_DIR` preserves its logs. `config/anvil.toml` expects local endpoints on 8545–8547 when
+`SCENARIO_LOG_DIR` preserves its logs; the finality scenario also preserves its config and public sequencer log. `config/anvil.toml` expects local endpoints on 8545–8547 when
 run directly; the scenario rewrites these to its proxy ports.
 
 On-chain checkpoint posting uses an optional `[checkpoints]` section, required with hardware EVM
 custody. `node.checkpoint_every` sets the periodic frequency; every approved withdrawal also forces
 a checkpoint. Each root is durable locally before the relayer sends it, and the node releases no
 withdrawal signature until its approval is covered by a confirmed on-chain prefix and collateral
-reconciles at custody's configured `finality_tag` minus `confirmations`. Latest inclusion is
+reconciles at custody's `withdrawal_finality_tag`, independently of the early-credit tag and its
+confirmation depth. Latest inclusion is
 tracked separately so delayed finality never causes duplicate submission. Startup waits for a
 pending inclusion to reach that boundary (or disappear in a reorg), bounded by
 `custody.evm.stall_critical_after`, before selecting its rollback anchor. Recovery then restores every outstanding durable signed
@@ -507,9 +531,15 @@ have no on-chain payout path, so reconciliation counts every approval as unpaid.
 must subtract confirmed payouts when that feature is added.
 
 Checkpoint work captures fixed-size node accounting derived from computed engine events during
-live sequencing and authenticated replay. Liabilities equal cumulative successful deposits plus
-positive or negative house-capital moves; approvals transfer cash to unpaid liabilities. Only a
-matching successful credit counts its `0x` reference, including accepted zero-capital moves.
+live sequencing and authenticated replay. Liabilities track net external principal, including locked
+principal and unpaid approvals. Receipt events record their actual principal delta: adoption and
+finality move no cash, a reversal removes principal once, and internal bad-debt absorption adds no
+second debit. Historical accounting retains its matching successful `0x` credit rules, including
+accepted zero-capital moves. Modern Work captures canonical count coverage from the sequenced
+finalised frontier and active receipts above it, in constant time; later commands cannot change
+that prefix. Historical reference tombstones supply no canonical proof. Before a canonical scan
+is sequenced, equal aggregate balance/count cannot make a modern Work healthy. This coverage
+never establishes finality for an unresolved legacy principal lock.
 Accounting overflow refuses further sequencing or replay. This cache adds no trusted metadata:
 future snapshot recovery must rebuild or verify it once against authenticated cash, unpaid
 approvals, and credited references before use, retaining exact outstanding checkpoint accounting
@@ -536,12 +566,73 @@ account must be able to sign requests with its own key, since the engine accepts
 signatures: a contract wallet funds a key that signs for it through `depositFor`, and a balance
 credited to a contract account can be recovered only through the exit (#48).
 
-The adapter trusts a strict majority of the configured independent RPC providers. The chain of
-block hashes up to the agreed finality block and the vault's agreed deposit count further bound
-those answers. A compromised provider cannot fabricate a credited deposit by itself. It takes the
-vault, its token, and the finality tag from the host-supplied config, and keeps its cursor on host storage. Reorganisations
-of Arbitrum One that undo a block after its batch reached Ethereum, the finality it waits for, are
-outside its threat model.
+From V19, production credits trading collateral at `custody.evm.finality_tag = "latest"`,
+minus the configured `confirmations`. It releases that principal for withdrawals at
+`withdrawal_finality_tag = "finalized"`, without a second credit or a second confirmations delay.
+A node with hardware attestation refuses any other tag pair before custody starts. Mock TEE
+configs may choose other tags for dev scenarios. A release tag that stops advancing while quorum heads move is covered by the existing finality-stall watchdog.
+Both tags require the fixed provider majority,
+comparing hashes at a common height; missing quorum releases no principal and credits nothing.
+
+Each exact receipt and its disposition live in the sequenced core state and state tree. An account's
+`unfinalised_deposits` remains trading collateral and is included in its account view and proof;
+the account view omits the field while zero. Withdrawal cash is its balance less that principal,
+limited independently by equity above margin, so unrelated finalised cash remains available subject
+to the existing margin check. Trading losses reduce available cash without reducing the principal
+lock. Finality removes only the matching lock. The finalised scan frontier is also sequenced; the
+host cursor cannot unlock principal or move the V19 scan past an unresolved receipt. The watcher
+fixes its command format from the build's supported protocol before its first poll; activation
+between reading a receipt and submitting it cannot turn that receipt into a legacy unlocked credit.
+Before the first authenticated time sample, neither deposits nor finalised progress can be sequenced.
+
+A quorum-proven canonical orphan emits Critical `deposit_reversed`. When the confirmed scan holds
+the same transaction-local deposit again, with the same beneficiary and amount, in another block,
+one `Replace` transition reverses the old receipt and credits the replacement, including when its
+global log index or vault deposit id changes or it is an earlier reversed receipt returning: cash and
+the principal lock net out and no close-out runs. An orphan with no replacement waits until the scan
+reaches the eligible head, holding the finalised frontier below it, and then debits its principal
+exactly once. A transaction canonical again with other economics is no replacement, so its orphan is
+debited at once. After a debit, the existing balance-change close-out closes executable positions;
+stale positions wait for a valid price. Once flat, a negative account balance is written off against
+house cash through `BadDebt`. A negative house NAV does not halt trading. Accounting-mismatch withdrawal
+gating belongs to #24, and public liquidity FIFO to #49. Exact receipts and conditional transition
+revisions prevent old deliveries from repeating effects across restarts.
+
+The adapter trusts an honest strict majority of independently operated providers. Linked block
+hashes and complete event sets checked against counts at exact block hashes bound the transcript;
+one compromised provider cannot fabricate a credit or reversal. Vault, token and provider configuration
+remain host supplied pending attestation binding. Reorganisations undoing Ethereum-finalised blocks
+remain outside the threat model; the watcher refuses a changed finalised anchor. Earlier protocols
+retain their recorded tag/cursor semantics and do not gain V19 receipt state during historical execution.
+V19 activation carries the successful legacy EVM credits reconstructed from the verified public log;
+both sequencing and replay check that input against the original commands and events. Activation locks
+their principal without moving cash. Normal mock references are excluded, and vault house capital is
+tracked separately. Canonical receipt adoption preserves the lock without another credit; only quorum
+proof at the withdrawal finality tag releases it. Unrelated independently finalised funds retain their
+own eligibility. Neither an old credit, a host cursor nor a new config establishes legacy finality.
+
+If an old receipt is missing or its global log index changed before an exact identity was recorded,
+its original block cannot be reconstructed from the old log. The unresolved principal stays locked
+and raises Critical `legacy_deposit_unproven`; the watcher does not invent an old block or apply an
+extra cash movement. Other transactions may continue. Once an exact receipt has been adopted, its
+reversals use the normal exact-once debit and close-out path. A stranded historical withdrawal that
+would consume unresolved legacy principal, including one deferred behind a checkpoint, requires the
+same independent finality proof before writable recovery or signature redelivery. Missing proof refuses that recovery without appending or
+signing; a later restart retries the proof. Historical approvals, roots and events are preserved.
+
+Each inherited approval retains its actual sequence and post-debit cash from authenticated replay,
+even if it remains unsigned across activation. A reservation already retaining all unresolved principal
+at that prefix keeps its eligibility. Otherwise later independently finalised funding may cover the
+collectively pending debits only at that later prefix: signature release waits for a healthy posted
+checkpoint covering that authorization sequence, while retaining the original approval tuple. Neither
+activation nor a proof for one approval authorizes another. Read-only quorum proof changes no cash,
+core lock or deposit disposition; restart re-establishes delivery authorization before any writer opens.
+
+Run `./scripts/dev-deposit-finality.sh` for the private Anvil scenario. It exercises actual contract
+receipts, the RPC quorum, watcher and durable sequencer, including immediate trading, pre-finality
+approval limited to finalised headroom, approval after finality, and one reorg debit with Critical.
+The EVM HTTP withdrawal route remains disabled until #23; this scenario proves approval eligibility
+at the sequencer/core boundary and does not perform a physical payout or HTTP cash-out.
 
 Endpoints: `GET /v1/health`, `GET /v1/attestation`, `GET /v1/markets`, `GET /v1/house`,
 `GET /v1/accounts/{address}`, `GET /v1/accounts/{address}/nonce`,
@@ -704,9 +795,10 @@ newest first. Each event carries its `cursor`, `<seq>:<index>`, which is the seq
 produced it and its index among that command's events; then `ts`, the command's sequenced time; then
 the event's own fields. `?before=<cursor>` and `?after=<cursor>` bound the page, both exclusive.
 Passing a page's `next` as `before` gives the next, older page, until `next` is null. `?kind=` takes
-one event `type`: `deposited`, `deposit_rejected`, `withdrawal_approved`, `withdrawal_rejected`,
-`order_accepted`, `order_rejected`, `order_cancelled`, `fill`, `close_out`, `bad_debt`,
-`financing`, or `emission_allocated`. `?limit=` is 1 to 200, 50 by default. A page is one search of a SQLite index that reads
+one event `type`: `deposited`, `deposit_rejected`, `custody_deposit_changed`,
+`custody_deposit_rejected`, `withdrawal_approved`, `withdrawal_rejected`, `order_accepted`,
+`order_rejected`, `order_cancelled`, `fill`, `close_out`, `bad_debt`, `financing`, or
+`emission_allocated`. `?limit=` is 1 to 200, 50 by default. A page is one search of a SQLite index that reads
 at most `limit + 1` entries, and at most 16 pages are read at once. Until the index has taken every
 command the log held when the node started, the route answers 503 (`history is catching up with the
 log`). History is public, like the log.

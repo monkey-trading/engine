@@ -1,6 +1,8 @@
 //! One sample of every engine event, for tests that must cover each kind.
 
+use alloy::primitives::B256;
 use engine_core::Fixed;
+use engine_core::deposits::{DepositBeneficiary, DepositReceipt, DepositReject, DepositStatus};
 use engine_core::emissions::TokenUnits;
 use engine_core::event::{CancelReason, Event, Fill, Reject};
 use engine_core::price::PriceError;
@@ -26,6 +28,7 @@ pub fn every_event() -> Vec<Event> {
         Reject::TooManyOrders { max: 100 },
         Reject::InvalidAmount,
         Reject::DuplicateReference,
+        Reject::CustodyReceiptRequired,
         Reject::MissingSignature,
         Reject::InvalidSignature,
         Reject::InvalidNonce { expected: 3 },
@@ -48,6 +51,7 @@ pub fn every_event() -> Vec<Event> {
             | Reject::TooManyOrders { .. }
             | Reject::InvalidAmount
             | Reject::DuplicateReference
+            | Reject::CustodyReceiptRequired
             | Reject::MissingSignature
             | Reject::InvalidSignature
             | Reject::InvalidNonce { .. }
@@ -72,6 +76,29 @@ pub fn every_event() -> Vec<Event> {
     };
     let mut events: Vec<_> =
         reasons.into_iter().map(|reason| Event::OrderRejected { account, client_id: 1, reason }).collect();
+    let receipt = DepositReceipt {
+        block: 1,
+        block_hash: B256::repeat_byte(1),
+        tx_hash: B256::repeat_byte(2),
+        log_index: 0,
+        transaction_deposit_index: 0,
+        deposit_id: 0,
+        beneficiary: DepositBeneficiary::Trader { account },
+        amount,
+    };
+    events.push(Event::CustodyDepositChanged {
+        receipt: receipt.clone(),
+        status: DepositStatus::Unfinalised,
+        principal_delta: amount,
+    });
+    events.push(Event::CustodyDepositRejected { receipt: receipt.clone(), reason: DepositReject::InvalidAmount });
+    let house = DepositReceipt { beneficiary: DepositBeneficiary::House, ..receipt };
+    events.push(Event::CustodyDepositChanged {
+        receipt: house.clone(),
+        status: DepositStatus::Unfinalised,
+        principal_delta: amount,
+    });
+    events.push(Event::CustodyDepositRejected { receipt: house, reason: DepositReject::InvalidAmount });
     events.extend([
         Event::Deposited { account, amount },
         Event::DepositRejected { account, amount, chain_ref: "0xab:1".into(), reason: Reject::DuplicateReference },
@@ -86,6 +113,13 @@ pub fn every_event() -> Vec<Event> {
         Event::BadDebt { account, amount },
         Event::Financing { account, market, amount: -amount },
         Event::BenchmarkRateMissing { benchmark: "SOFR".into(), markets: vec![market] },
+        Event::BenchmarkRateUndated { benchmark: "SOFR".into() },
+        Event::BenchmarkRateObserved {
+            benchmark: "SOFR".into(),
+            effective_date: chrono::NaiveDate::from_ymd_opt(2026, 10, 20).expect("valid fixture date"),
+            rollover_date: chrono::NaiveDate::from_ymd_opt(2026, 10, 20).expect("valid fixture date"),
+            stale: false,
+        },
         Event::MarketOpened { market },
         Event::MarketClosed { market },
         Event::StressChanged { market, level: 2 },
@@ -105,6 +139,8 @@ pub fn every_event() -> Vec<Event> {
         match event {
             Event::Deposited { .. }
             | Event::DepositRejected { .. }
+            | Event::CustodyDepositChanged { .. }
+            | Event::CustodyDepositRejected { .. }
             | Event::WithdrawalApproved { .. }
             | Event::WithdrawalRejected { .. }
             | Event::HouseCapitalMoved { .. }

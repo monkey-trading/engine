@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::Fixed;
 use crate::auth::{ClientAuth, Operator, RequestAuth};
 use crate::benchmark::BenchmarkBatch;
+use crate::deposits::{CustodyCheckpoint, DepositUpdate, LegacyDeposit};
 use crate::emissions::EmissionSchedule;
 use crate::market::MarketSpec;
 use crate::params::{NotionalWeighting, ProtocolParams};
@@ -26,13 +27,17 @@ pub enum Command {
     /// Advances time when nothing else is happening, so session changes and
     /// rollovers fire on schedule.
     Tick,
-    /// Credited once the custody chain finalises a vault deposit. `chain_ref` identifies the
-    /// deposit on-chain (transaction hash and log index) and is credited at most once.
+    /// Legacy or mock credit, at most once per reference. The old configured tag is not a finality
+    /// proof; receipt-finality rules require exact custody receipts for EVM credits.
     Deposit {
         account: AccountId,
         amount: Fixed,
         chain_ref: String,
     },
+    /// A quorum-proven custody receipt transition, from V19.
+    CustodyDeposit(Box<DepositUpdate>),
+    /// Finalised scan progress, recorded after its receipts have settled.
+    CustodyFinalised(CustodyCheckpoint),
     /// A trader asks to withdraw. If approved, the enclave signs a
     /// withdrawal the vault contract will honour.
     Withdraw {
@@ -84,6 +89,11 @@ pub enum OrderKind {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum AdminCommand {
+    /// Node-only activation with legacy EVM credits reconstructed from the verified public log.
+    ActivateCustodyFinality {
+        version: ProtocolVersion,
+        legacy_deposits: Vec<LegacyDeposit>,
+    },
     SetParams(ProtocolParams),
     /// Lists a new market or replaces an existing market's spec.
     UpsertMarket(MarketSpec),
@@ -199,12 +209,20 @@ impl AdminCommand {
             AdminCommand::SetClientAuth(_)
             | AdminCommand::SetOperator(_)
             | AdminCommand::SetToxicityNotional(_)
+            | AdminCommand::ActivateCustodyFinality { .. }
             | AdminCommand::ActivateProtocol { .. } => false,
         }
     }
 }
 
 impl Command {
+    /// Whether this node-only activation must precede dated benchmark catch-up.
+    pub fn is_dated_rate_activation(&self) -> bool {
+        matches!(self,
+            Self::Admin(AdminCommand::ActivateProtocol { version }
+                | AdminCommand::ActivateCustodyFinality { version, .. }) if *version >= ProtocolVersion::V18)
+    }
+
     /// Whether this carries an atomic dated benchmark snapshot, signed or during genesis.
     pub fn is_benchmark_batch(&self) -> bool {
         matches!(self, Self::Admin(AdminCommand::SetBenchmarkRates(_)))

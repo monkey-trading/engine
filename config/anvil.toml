@@ -68,8 +68,10 @@ providers = [
 ]
 usdc = "0x5FbDB2315678afecb367f032d93F642f64180aa3"
 # Anvil started with `--slots-in-an-epoch 1` marks the block below the head safe, so a deposit is
-# final three blocks after it is mined. On Arbitrum One: "safe" and no confirmations.
+# eligible for credit three blocks after it is mined. Production uses latest for credit.
 finality_tag = "safe"
+# Principal unlocks separately at Ethereum finality; mock TEE configs may choose other tags.
+withdrawal_finality_tag = "finalized"
 confirmations = 2
 start_block = 0
 max_block_range = 1000

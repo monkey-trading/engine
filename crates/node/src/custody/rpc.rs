@@ -41,6 +41,7 @@ pub struct VaultRpc {
     url: Url,
     vault: Address,
     finality_tag: BlockNumberOrTag,
+    withdrawal_finality_tag: BlockNumberOrTag,
     rpc_timeout: Duration,
 }
 
@@ -89,25 +90,12 @@ impl VaultReader for VaultRpc {
     /// Error cases:
     /// - a request fails or times out, or the endpoint has no head
     async fn finality(&self) -> anyhow::Result<Finality> {
-        let tagged = self
-            .deadline(
-                "eth_getBlockByNumber",
-                self.client.request::<_, Option<Block>>("eth_getBlockByNumber", (self.finality_tag, false)),
-            )
-            .await?;
-        let head = self
-            .deadline(
-                "eth_getBlockByNumber",
-                self.client.request::<_, Option<Block>>("eth_getBlockByNumber", (BlockNumberOrTag::Latest, false)),
-            )
-            .await?
-            .context("the RPC has no latest block")?;
-        Ok(Finality {
-            head_support: None,
-            head: head.header.number,
-            head_time: head.header.timestamp,
-            tagged: tagged.map(|block| BlockRef { number: block.header.number, hash: block.header.hash }),
-        })
+        self.read_finality(self.finality_tag).await
+    }
+
+    /// The distinct tag that releases principal for withdrawals.
+    async fn withdrawal_finality(&self) -> anyhow::Result<Finality> {
+        self.read_finality(self.withdrawal_finality_tag).await
     }
 
     /// The headers of blocks `from..=to`, read in one JSON-RPC batch.
@@ -161,6 +149,31 @@ impl VaultReader for VaultRpc {
 }
 
 impl VaultRpc {
+    /// Reads a tag and the current head, each under the configured request deadline.
+    /// Error cases:
+    /// - a request fails or the provider has no head
+    async fn read_finality(&self, tag: BlockNumberOrTag) -> anyhow::Result<Finality> {
+        let tagged = self
+            .deadline(
+                "eth_getBlockByNumber",
+                self.client.request::<_, Option<Block>>("eth_getBlockByNumber", (tag, false)),
+            )
+            .await?;
+        let head = self
+            .deadline(
+                "eth_getBlockByNumber",
+                self.client.request::<_, Option<Block>>("eth_getBlockByNumber", (BlockNumberOrTag::Latest, false)),
+            )
+            .await?
+            .context("the RPC has no latest block")?;
+        Ok(Finality {
+            head_support: None,
+            head: head.header.number,
+            head_time: head.header.timestamp,
+            tagged: tagged.map(|block| BlockRef { number: block.header.number, hash: block.header.hash }),
+        })
+    }
+
     /// A client for the configured endpoint that trusts only the compiled-in TLS roots. It sends
     /// nothing until the watcher polls.
     /// Error cases:
@@ -178,6 +191,11 @@ impl VaultRpc {
             client,
             url,
             vault,
+            withdrawal_finality_tag: match cfg.withdrawal_finality_tag {
+                FinalityTag::Latest => BlockNumberOrTag::Latest,
+                FinalityTag::Safe => BlockNumberOrTag::Safe,
+                FinalityTag::Finalized => BlockNumberOrTag::Finalized,
+            },
             finality_tag: match cfg.finality_tag {
                 FinalityTag::Latest => BlockNumberOrTag::Latest,
                 FinalityTag::Safe => BlockNumberOrTag::Safe,

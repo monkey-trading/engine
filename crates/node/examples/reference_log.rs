@@ -1,8 +1,8 @@
 //! Writes the node's reference log for a protocol version from engine-core's: each command with the
 //! events it produced, a withdrawal entry for each approved withdrawal, and a checkpoint every ten
 //! commands and after the last. Run it once per protocol version and commit the output; it refuses
-//! to overwrite a log that already exists. Signatures are placeholders, since replay does not check
-//! them yet.
+//! to overwrite a log that already exists. Protocol fixtures use placeholder enclave signatures for
+//! root/event replay; the strict CLI verifier requires real signatures.
 //!
 //! `cargo run -p engine-node --example reference_log -- crates/core/tests/reference/v<N>.jsonl
 //! crates/node/tests/reference/v<N>.jsonl`

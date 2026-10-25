@@ -19,7 +19,8 @@ an index: load only the rule whose hint matches the current action.
   state tree (a keccak-256 sparse Merkle tree over the state, with account and entitlement proofs, in
   `merkle/`). It does no IO and uses no clocks,
   randomness, or floats. `impl Engine` is split by area (`engine.rs`, `marks.rs`, `execution/`,
-  `markouts.rs`, `closeout.rs`, `funds.rs`, `admin.rs`, `stress.rs`, `auth.rs`). Unit tests sit
+  `markouts.rs`, `closeout.rs`, `funds.rs`, `deposits.rs` with legacy migration in `deposits/`,
+  `admin.rs`, `stress.rs`, `auth.rs`). Unit tests sit
   inline; protocol tests are in `tests/` by area, with the shared harness in `tests/common/`.
   `tests/reference/` holds one reference log per protocol version, written once by
   `examples/reference_log/` and replayed to its roots by `tests/reference_logs.rs`;
@@ -46,6 +47,7 @@ an index: load only the rule whose hint matches the current action.
   `production` cargo feature refuses mock TEE, custody, and feed providers at config load; release
   images build with it.
   `sequencer/alerts/` tests benchmark retirement, scalar fallback, and webhook recovery;
+  `sequencer/legacy/tests/activated.rs` checks custody recovery, approval funding prefixes and restart;
   `api/benchmark_tests/retention.rs` checks failed publisher refreshes across restart/calendar changes;
   `api/benchmark_tests/schedule.rs` checks changed schedules and in-flight worker nonce fencing. `tests/reference/` holds the node-format reference log
   per protocol version, with events, written once by `examples/reference_log.rs`. Its `README.md`
@@ -100,18 +102,20 @@ an index: load only the rule whose hint matches the current action.
   `dev-rpc-proxy.py` providing three local fault-injection endpoints; `dev-metrics-alerts.sh`,
   the metrics and alert routing dev scenario; `dev-alert-outbox.sh`, the isolated alert retry
   kill/restart scenario; `dev-monkey-emissions.sh`, the MONKEY emissions scenario on Anvil;
-  `dev-snapshot-restart.sh`, the checkpoint snapshot restart and fallback scenario; and
-  `build-image.sh` and `check-image.sh`, which build the enclave image from a commit and boot it
-  under QEMU without SEV-SNP.
+  `dev-snapshot-restart.sh`, the checkpoint snapshot restart and fallback scenario;
+  `dev-deposit-finality.sh`, the sequencer confirmation and Ethereum finality scenario on the
+  vault's Anvil fixture; and `build-image.sh` and `check-image.sh`, which build the enclave image
+  from a commit and boot it under QEMU without SEV-SNP.
 - **ops/** — operator assets: `grafana/engine-node.json`, the node's Grafana dashboard, and
   `prometheus/engine-node-rules.yml`, the alerting rules for a down node or failing alert pages.
 - **.github/workflows/** — `ci.yaml`: fmt, the file line cap, clippy, tests (and the node's
   production-build tests), the reference-log replay and invariant tests on x86_64 and aarch64 Linux,
   the unchanged-reference-log check, `cargo-deny`, the contracts' `forge fmt --check` / build /
-  test, the vault deposit and RPC quorum dev scenario with the checkpoint and MONKEY emissions
-  scenarios, the metrics and alert routing dev scenario, the alert outbox kill/restart scenario,
-  the snapshot restart scenario, and the enclave image (`image` builds it twice and boots it under
-  QEMU, `image-compare` fails if the builds differ), on every push to `main` and every PR.
+  test, the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
+  deposit finality scenarios, the metrics and alert routing dev scenario, the alert outbox
+  kill/restart scenario, the snapshot restart scenario, and the enclave image (`image` builds it
+  twice and boots it under QEMU, `image-compare` fails if the builds differ), on every push to
+  `main` and every PR.
   On a PR, the first job, `changes`, sorts the changed files into the Rust, contracts, scenario,
   and image areas from an explicit path list, and each job runs only when its area changed:
   `agents/`, `research/`, the root `README.md`, `SECURITY.md`, `AGENTS.md`, and `CLAUDE.md`, and
@@ -174,6 +178,8 @@ Run from the repo root:
   `curl`, and `jq`; uses loopback endpoints and private temporary data)
 - Snapshot restart dev scenario: `./scripts/dev-snapshot-restart.sh` (needs `python3`, `curl`, and
   `jq`; runs a dev node with `[snapshots]` on private temporary data and public Roughtime servers)
+- Deposit finality dev scenario: `./scripts/dev-deposit-finality.sh` (same Anvil/Foundry requirements
+  as the vault scenario; exercises sequencer/core withdrawal approval eligibility while #23 owns payout)
 - Vault deposit dev scenario: `./scripts/dev-vault-deposits.sh` (starts Anvil, deploys the vault
   and a mock USDC, runs a node on `config/anvil.toml`, and checks each deposit credits once;
   `RPC_QUORUM_SCENARIO=1` also injects a fictional deposit, stops providers and checks recovery;

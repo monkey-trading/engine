@@ -5,6 +5,7 @@ use anyhow::bail;
 use engine_core::Engine;
 use engine_core::auth::{ClientAuth, Operator};
 use engine_core::command::{AdminCommand, Command};
+use engine_core::deposits::LegacyDeposit;
 use engine_core::params::NotionalWeighting;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::Millis;
@@ -77,7 +78,8 @@ impl Sequencer {
     /// - the engine rejects any of them
     /// - the log cannot be written
     pub fn activate_protocol(&mut self) -> anyhow::Result<()> {
-        let cmds = activation_commands(&self.engine, &self.client_auth, self.operator);
+        let legacy = self.legacy_deposits.values().cloned().collect();
+        let cmds = activation_commands(&self.engine, &self.client_auth, self.operator, legacy);
         if cmds.is_empty() {
             return Ok(());
         }
@@ -149,8 +151,7 @@ impl Sequencer {
             info!(what, commands = cmds.len(), "sequencing required commands");
             let mut cmds = cmds.into_iter();
             while let Some(cmd) = cmds.next() {
-                let activation = matches!(&cmd, Command::Admin(AdminCommand::ActivateProtocol { version })
-                    if *version >= ProtocolVersion::V18);
+                let activation = cmd.is_dated_rate_activation();
                 if self.benchmark_sync && self.engine.next_rollover().is_some_and(|next| next <= ts) && !activation {
                     self.required.push((what, std::iter::once(cmd).chain(cmds).collect()));
                     self.required.extend(queued);
@@ -169,7 +170,12 @@ impl Sequencer {
 
 /// The commands that record `client_auth` and `operator` and activate the latest protocol version,
 /// whichever `engine` lacks.
-pub(super) fn activation_commands(engine: &Engine, client_auth: &ClientAuth, operator: Operator) -> Vec<Command> {
+pub(super) fn activation_commands(
+    engine: &Engine,
+    client_auth: &ClientAuth,
+    operator: Operator,
+    legacy_deposits: Vec<LegacyDeposit>,
+) -> Vec<Command> {
     let mut cmds = Vec::new();
     if engine.client_auth().is_none() {
         cmds.push(Command::Admin(AdminCommand::SetClientAuth(client_auth.clone())));
@@ -178,7 +184,12 @@ pub(super) fn activation_commands(engine: &Engine, client_auth: &ClientAuth, ope
         cmds.push(Command::Admin(AdminCommand::SetOperator(operator)));
     }
     if engine.protocol_version() < ProtocolVersion::LATEST {
-        cmds.push(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::LATEST }));
+        let command = if ProtocolVersion::LATEST.supports_deposit_finality() && !engine.deposit_finality_enabled() {
+            AdminCommand::ActivateCustodyFinality { version: ProtocolVersion::LATEST, legacy_deposits }
+        } else {
+            AdminCommand::ActivateProtocol { version: ProtocolVersion::LATEST }
+        };
+        cmds.push(Command::Admin(command));
     }
     cmds
 }

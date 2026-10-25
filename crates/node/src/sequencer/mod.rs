@@ -5,6 +5,7 @@
 //! write, and each batch of fills one data sync.
 
 pub(crate) mod history_rebuild;
+pub(crate) mod legacy;
 mod recovery;
 mod replay;
 pub use replay::{Replayed, replay, replay_path, replay_path_in_domain, replay_path_with_trust, replay_with_signer};
@@ -14,7 +15,7 @@ mod messages;
 pub use messages::{Query, Request, SignedWithdrawal, StreamBody, StreamMsg};
 mod benchmark_schedule;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,7 +23,9 @@ use std::time::Duration;
 use anyhow::{Context, bail};
 use engine_core::auth::{ClientAuth, Operator};
 use engine_core::command::{AdminCommand, Command, Sequenced};
+use engine_core::deposits::LegacyDeposit;
 use engine_core::event::Event;
+use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{AccountId, Millis};
 use engine_core::{Engine, Fixed};
 use tokio::sync::{broadcast, mpsc, watch};
@@ -33,7 +36,7 @@ use crate::checkpoints::accounting::Accounting;
 use crate::clock::Clock;
 use crate::log::{CommandEntry, LogEntry, LogWriter, Manifest, SegmentedLog};
 use crate::metrics::Metrics;
-use crate::sequencer::alerts::{BenchmarkAlerts, DeficitAlert, alert_on};
+use crate::sequencer::alerts::{BenchmarkAlerts, DeficitAlert, alert_on, reinstated_receipt, resolve_reversal};
 use crate::snapshot::{Progress, RecoveryBase};
 use crate::tee::EnclaveKey;
 use crate::trusted_time::{Sample, TimeGate};
@@ -46,6 +49,9 @@ const MAX_BATCH: usize = 1024;
 const SHUTDOWN_CAPTURE_WAIT: Duration = Duration::from_secs(5);
 
 pub struct Sequencer {
+    legacy_deposits: BTreeMap<String, LegacyDeposit>,
+    legacy_approvals: legacy::Approvals,
+    legacy_authorizations: legacy::Authorizations,
     engine: Engine,
     log: LogWriter,
     key: Arc<EnclaveKey>,
@@ -122,6 +128,7 @@ pub struct ReplayedLog {
     log: SegmentedLog,
     replayed: Replayed,
     snapshot_seq: Option<u64>,
+    legacy_authorizations: legacy::Authorizations,
 }
 
 impl Sequencer {
@@ -303,6 +310,7 @@ impl Sequencer {
             matches!(&cmd, Command::Admin(_) | Command::SignedAdmin(_)).then(|| BenchmarkAlerts::listed(&self.engine));
         let sequenced = Sequenced { seq: self.next_seq, ts, cmd };
         let _span = info_span!("command", id = sequenced.seq).entered();
+        legacy::check_activation_ledger(&sequenced.cmd, &self.legacy_deposits)?;
         let version = self.engine.protocol_version();
         let events = self.engine.apply(&sequenced).context("sequencer produced an invalid sequence")?;
         self.accounting.apply(&sequenced.cmd, &events)?;
@@ -310,6 +318,13 @@ impl Sequencer {
         if self.engine.protocol_version() != version {
             self.progress.activations.push((self.engine.protocol_version(), sequenced.seq));
         }
+        if !self.engine.deposit_finality_enabled()
+            && let Some(deposit) = LegacyDeposit::from_command(&sequenced.cmd, &events)
+        {
+            self.legacy_deposits.insert(deposit.chain_ref.clone(), deposit);
+        }
+        self.legacy_approvals.observe(&self.engine, &sequenced, &events, true);
+        let reinstated = reinstated_receipt(&sequenced.cmd, &events);
         self.next_seq += 1;
         self.last_ts = ts;
         let entry = CommandEntry { sequenced, events: Some(events.clone()) };
@@ -338,6 +353,9 @@ impl Sequencer {
                 }
             }
         }
+        if let Some(chain_ref) = reinstated {
+            resolve_reversal(&chain_ref);
+        }
         if let Some(previous) = previous_benchmarks.filter(|_| events.contains(&Event::AdminApplied)) {
             self.benchmark_alerts.retain_listed(&self.engine, &previous);
         }
@@ -365,6 +383,11 @@ impl Sequencer {
     /// Error cases:
     /// - the log cannot be written
     fn sign_withdrawal(&mut self, account: AccountId, amount: Fixed, nonce: u64) -> anyhow::Result<()> {
+        let seq = self.engine.last_seq().context("withdrawal without approval sequence")?;
+        if self.withdrawal_release_seq(account, nonce, seq, None)?.is_none() {
+            error!(alert = "legacy_withdrawal_unproven", %account, nonce, "inherited withdrawal lacks canonical finality proof");
+            bail!("inherited withdrawal lacks canonical finality proof");
+        }
         let signature = self.key.sign_withdrawal(self.chain_id, &self.vault.0, account, amount, nonce);
         info!(%account, nonce, "withdrawal signed");
         self.record(LogEntry::Withdrawal(SignedWithdrawal {
@@ -375,7 +398,10 @@ impl Sequencer {
             vault: self.vault,
             signature,
             approved_seq: None,
-        }))
+        }))?;
+        self.legacy_approvals.signed(account, amount, nonce);
+        self.legacy_authorizations.remove(&(account, nonce));
+        Ok(())
     }
 
     /// Makes buffered log entries durable, then publishes what they produced and hands signed

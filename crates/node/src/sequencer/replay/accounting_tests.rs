@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use crate::checkpoints::accounting::tests::{approved, assert_matches, recompute};
+use crate::checkpoints::accounting::tests::{approved, assert_matches, recompute_work};
 use crate::sequencer::fixture_tests::signed_fixture;
 use crate::tee::EnclaveKey;
 
@@ -66,12 +66,11 @@ pub(in crate::sequencer) fn assert_replay(entries: &[LogEntry]) -> Replayed {
             let events = oracle.apply(&c.sequenced).unwrap();
             unpaid += approved(&events);
         }
-        let (liabilities, deposits) = recompute(&oracle, unpaid);
         assert_matches(replay.accounting, &oracle, unpaid);
         if let LogEntry::Checkpoint(cp) = entry
             && let Some(work) = replay.recovery_work.last().filter(|work| work.checkpoint.seq == cp.seq)
         {
-            assert_eq!((work.liabilities, work.deposits), (liabilities, deposits));
+            assert_eq!((work.liabilities, work.deposits, work.coverage), recompute_work(&oracle, unpaid));
         }
     }
     let replayed = replay.finish();
@@ -95,6 +94,8 @@ pub(in crate::sequencer) fn recovery_capture_p50(entries: &[LogEntry], expected:
         replay.apply(entry).unwrap();
     }
     assert_matches(replay.accounting, &replay.engine, Fixed::ONE);
+    let expected_work = recompute_work(&replay.engine, Fixed::ONE);
+    assert_eq!((expected_work.0, expected_work.1), expected);
     let entry = LogEntry::Checkpoint(checkpoint.clone());
     let mut samples = Vec::new();
     for index in 0..216 {
@@ -109,7 +110,7 @@ pub(in crate::sequencer) fn recovery_capture_p50(entries: &[LogEntry], expected:
         }
         assert_eq!(replay.recovery_work.len(), 1);
         let captured = &replay.recovery_work[0];
-        assert_eq!((captured.liabilities, captured.deposits), expected);
+        assert_eq!((captured.liabilities, captured.deposits, captured.coverage), expected_work);
     }
     samples.sort_unstable();
     println!(

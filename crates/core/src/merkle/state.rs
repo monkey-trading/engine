@@ -11,8 +11,10 @@ use crate::Fixed;
 use crate::account::Position;
 use crate::auth::{ClientAuth, Operator};
 use crate::benchmark::BenchmarkHistory;
+use crate::deposits::CustodyCheckpoint;
 use crate::emissions::{Emissions, TokenUnits};
 use crate::engine::{Engine, Markout};
+use crate::merkle::leaf::{deposit_key, deposit_transaction_key, legacy_deposit_key};
 use crate::merkle::{
     AccountLeaf, AccountProof, EntitlementProof, MarketLeaf, MarketProof, PositionProof, SparseMerkleTree, account_key,
     credited_ref_hash, credited_ref_key, entitlement_hash, entitlement_key, globals_key, json_hash, market_key,
@@ -64,6 +66,9 @@ struct Touched {
     refs: BTreeSet<String>,
     period_results: BTreeSet<AccountId>,
     entitlements: BTreeSet<AccountId>,
+    deposits: BTreeSet<String>,
+    deposit_transactions: BTreeSet<String>,
+    legacy_deposits: BTreeSet<String>,
     changed: Changed,
 }
 
@@ -87,6 +92,10 @@ struct Globals<'a> {
     benchmark_history: &'a BenchmarkHistory,
     #[serde(skip_serializing_if = "Option::is_none")]
     emissions: &'a Option<Emissions>,
+    #[serde(skip_serializing_if = "Fixed::is_zero")]
+    unfinalised_house_deposits: Fixed,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    custody_checkpoint: Option<CustodyCheckpoint>,
 }
 
 impl Engine {
@@ -115,6 +124,9 @@ impl Engine {
             refs,
             period_results,
             entitlements,
+            deposits,
+            deposit_transactions,
+            legacy_deposits,
             changed: Changed { markouts, positions, orders },
         } = match &self.tree {
             Some(_) => touched,
@@ -138,6 +150,17 @@ impl Engine {
         );
         changes.extend(
             refs.iter().map(|r| (credited_ref_key(r), self.credited_refs.contains(r).then(|| credited_ref_hash(r)))),
+        );
+        changes.extend(
+            deposits.iter().map(|reference| (deposit_key(reference), self.deposits.get(reference).map(json_hash))),
+        );
+        changes.extend(deposit_transactions.iter().map(|reference| {
+            (deposit_transaction_key(reference), self.deposit_transactions.get(reference).map(json_hash))
+        }));
+        changes.extend(
+            legacy_deposits
+                .iter()
+                .map(|reference| (legacy_deposit_key(reference), self.legacy_deposits.get(reference).map(json_hash))),
         );
         changes.extend(markouts.into_iter().map(|index| (markout_key(index), self.markout(index).map(markout_hash))));
         let position_leaves: Vec<((AccountId, MarketId), Option<Position>)> = positions
@@ -308,6 +331,9 @@ impl Engine {
             refs: self.credited_refs.take_touched(),
             period_results: self.period_results.take_touched(),
             entitlements: self.entitlements.take_touched(),
+            deposits: self.deposits.take_touched(),
+            deposit_transactions: self.deposit_transactions.take_touched(),
+            legacy_deposits: self.legacy_deposits.take_touched(),
             changed: std::mem::take(&mut self.changed),
         }
     }
@@ -322,6 +348,9 @@ impl Engine {
             refs: self.credited_refs.iter().cloned().collect(),
             period_results: self.period_results.keys().copied().collect(),
             entitlements: self.entitlements.keys().copied().collect(),
+            deposits: self.deposits.keys().cloned().collect(),
+            deposit_transactions: self.deposit_transactions.keys().cloned().collect(),
+            legacy_deposits: self.legacy_deposits.keys().cloned().collect(),
             changed: Changed {
                 markouts: (self.markout_base..).take(self.markouts.len()).collect(),
                 positions: accounts()
@@ -342,6 +371,11 @@ impl Engine {
             house_cash,
             benchmarks,
             credited_refs: _,
+            deposits: _,
+            deposit_transactions: _,
+            legacy_deposits: _,
+            custody_checkpoint,
+            unfinalised_house_deposits,
             global_stress_floor,
             next_order_id,
             next_rollover,
@@ -378,6 +412,8 @@ impl Engine {
             markout_base: *markout_base,
             benchmark_history,
             emissions,
+            unfinalised_house_deposits: *unfinalised_house_deposits,
+            custody_checkpoint: *custody_checkpoint,
         }
     }
 }

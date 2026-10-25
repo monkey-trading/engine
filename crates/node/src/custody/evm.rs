@@ -1,14 +1,7 @@
-//! The deposit watcher: reads the vault's deposit events up to the final block, checks none is
-//! missing, sequences each one the engine has not yet credited, then moves the cursor on.
-//!
-//! A deposit is only ever read once its block is final, so one that a reorg removes or moves is
-//! never seen before it settles. The watcher proves the chain of block hashes from the cursor up
-//! to the block the finality tag reported, and accepts logs and counts only from blocks on it.
-//! Delivery is at least once (a restart re-reads from the cursor); the engine's credited
-//! references make the credit happen once.
-//!
-//! A reorganisation that undoes a block after the finality tag reported it (on Arbitrum One,
-//! after its batch reached Ethereum) is outside the threat model: it may undo a credited deposit.
+//! The vault deposit watcher. Before V19 it credits the configured tag under a resumable host cursor.
+//! V19 reconciles exact sequencer-confirmed receipts, locks their principal until Ethereum
+//! finality, and recovers its finalised frontier from sequenced state (`evm/lifecycle.rs`).
+//! Every chain, event-set and count read passes through the fixed provider quorum.
 
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -17,6 +10,7 @@ use std::time::Duration;
 
 use alloy::primitives::{Address, B256, U256};
 use anyhow::{anyhow, bail};
+use engine_core::protocol::ProtocolVersion;
 use engine_core::types::AccountId;
 use tokio::sync::mpsc;
 use tokio::task::spawn_blocking;
@@ -30,6 +24,9 @@ use crate::custody::sizing::AdaptiveSize;
 use crate::custody::stall::{PollError, Polled, Stall};
 use crate::custody::watchdog::Watchdog;
 use crate::sequencer::Request;
+mod legacy;
+mod lifecycle;
+mod progress;
 
 /// Who a vault deposit credits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,6 +42,11 @@ pub trait VaultReader {
 
     /// The head, and the block the finality tag names.
     fn finality(&self) -> impl Future<Output = anyhow::Result<Finality>> + Send;
+
+    /// The head and the separate withdrawal finality tag.
+    fn withdrawal_finality(&self) -> impl Future<Output = anyhow::Result<Finality>> + Send {
+        self.finality()
+    }
 
     /// The headers of blocks `from..=to`, in order.
     fn headers(&self, from: u64, to: u64) -> impl Future<Output = anyhow::Result<Vec<BlockLink>>> + Send;
@@ -114,6 +116,13 @@ struct RangeRead {
 
 pub struct DepositWatcher<V> {
     vault: V,
+    start_block: u64,
+    /// Fixed before polling, so queued activation cannot change a poll's command format.
+    confirmed_deposits: bool,
+    /// Volatile, canonically anchored evidence; disposition remains in the replayed core.
+    confirmed: progress::ConfirmedProgress,
+    /// The legacy credit `legacy_deposit_unproven` last named, so its episode is resolved once.
+    legacy_unproven: Option<String>,
     /// The token the vault must hold.
     usdc: Address,
     pub(super) cursor: Cursor,
@@ -150,17 +159,28 @@ impl<V: VaultReader> DepositWatcher<V> {
         log_seq: Option<u64>,
     ) -> anyhow::Result<Self> {
         let cursor = Cursor::load(&cfg.cursor_path, chain_id, vault_address, cfg.start_block, log_seq)?;
+        Ok(Self::from_cursor(vault, cfg, cursor))
+    }
+
+    /// Builds the watcher; receipt mode takes no chain evidence from the host cursor.
+    fn from_cursor(vault: V, cfg: &EvmCustodySection, cursor: Cursor) -> Self {
         info!(next_block = cursor.next_block, next_deposit_id = cursor.next_deposit_id, "deposit watcher ready");
         // The proof resumes from the last block read, so a change to it stalls rather than passes.
         let mut chain = ProvenChain::default();
-        if let (Some(hash), Some(last_read)) = (cursor.last_block_hash, cursor.next_block.checked_sub(1)) {
-            chain.insert(last_read, hash);
+        if !ProtocolVersion::LATEST.supports_deposit_finality() {
+            if let (Some(hash), Some(last_read)) = (cursor.last_block_hash, cursor.next_block.checked_sub(1)) {
+                chain.insert(last_read, hash);
+            }
+            if let Some((number, hash)) = cursor.crediting {
+                chain.insert(number, hash);
+            }
         }
-        if let Some((number, hash)) = cursor.crediting {
-            chain.insert(number, hash);
-        }
-        Ok(DepositWatcher {
+        DepositWatcher {
             vault,
+            start_block: cfg.start_block,
+            confirmed_deposits: ProtocolVersion::LATEST.supports_deposit_finality(),
+            confirmed: progress::ConfirmedProgress::default(),
+            legacy_unproven: None,
             usdc: cfg.usdc,
             cursor,
             cursor_path: cfg.cursor_path.clone(),
@@ -172,17 +192,44 @@ impl<V: VaultReader> DepositWatcher<V> {
             poll_interval: cfg.poll_interval,
             stall_critical_after: cfg.stall_critical_after,
             watchdog: Watchdog::new(cfg.stall_critical_after),
-        })
+        }
     }
 
-    /// Credits the deposits in the next final block range and stores the cursor past it, once the
-    /// endpoint has shown it serves the configured chain and vault token. Returns whether the
-    /// watcher has reached the final block.
+    /// Exercises historical watcher rules without exposing a production mode override.
+    /// Error cases:
+    /// - the legacy cursor cannot be loaded
+    #[cfg(test)]
+    pub(super) fn start_legacy(
+        vault: V,
+        cfg: &EvmCustodySection,
+        chain_id: u64,
+        address: Address,
+        seq: Option<u64>,
+    ) -> anyhow::Result<Self> {
+        let mut watcher = Self::start(vault, cfg, chain_id, address, seq)?;
+        watcher.confirmed_deposits = false;
+        if let (Some(hash), Some(number)) = (watcher.cursor.last_block_hash, watcher.cursor.next_block.checked_sub(1)) {
+            watcher.chain.insert(number, hash);
+        }
+        if let Some((number, hash)) = watcher.cursor.crediting {
+            watcher.chain.insert(number, hash);
+        }
+        Ok(watcher)
+    }
+
+    /// Polls the admitted chain under the build's fixed command format, returning whether it has
+    /// reached the eligible block; historical rules store a cursor and confirmed rules log progress.
     /// Error cases:
     /// - stalled: a chain read fails; the answers disagree in a way a retry may settle; or the
     ///   endpoint's chain or token, or the vault's count, contradicts the config or the cursor
     /// - fatal: the sequencer has stopped, or the cursor cannot be stored
     pub(super) async fn poll(&mut self, tx: &mpsc::Sender<Request>) -> Result<Polled, PollError> {
+        if tx.is_closed() {
+            return Err(PollError::Fatal(anyhow!("sequencer stopped")));
+        }
+        if self.confirmed_deposits {
+            return self.poll_confirmed(tx).await;
+        }
         // The vault, its token, the finality tag, the confirmations, and the start block all come
         // from the host-supplied config, whose SHA-256 the attestation binds, so a verifier checks
         // them against a published copy.

@@ -52,6 +52,15 @@ impl Engine {
         self.close_out_where(|acct| !acct.positions.is_empty(), events);
     }
 
+    /// Checks executable positions after a custody reversal, then settles a flat shortfall.
+    pub(crate) fn close_out_after_balance_change(&mut self, account: AccountId, events: &mut Vec<Event>) {
+        if let Some(params) = &self.params {
+            self.close_out(account, params.closeout_level_bps, events);
+        } else {
+            self.settle_bad_debt(account, events);
+        }
+    }
+
     /// Writes off a flat account's negative balance against the house, and from `V19` records the
     /// write-off in the account's emission period result.
     pub(crate) fn settle_bad_debt(&mut self, account: AccountId, events: &mut Vec<Event>) {

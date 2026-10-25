@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
+use crate::deposits::{DepositReceipt, DepositReject, DepositStatus};
 use crate::emissions::TokenUnits;
 use crate::price::PriceError;
 use crate::types::{AccountId, MarketId, Millis, OrderId, Side};
@@ -22,6 +23,16 @@ pub enum Event {
         amount: Fixed,
         chain_ref: String,
         reason: Reject,
+    },
+    CustodyDepositChanged {
+        receipt: DepositReceipt,
+        status: DepositStatus,
+        /// External principal movement; adoption and finality do not move cash again.
+        principal_delta: Fixed,
+    },
+    CustodyDepositRejected {
+        receipt: DepositReceipt,
+        reason: DepositReject,
     },
     WithdrawalApproved {
         account: AccountId,
@@ -173,6 +184,8 @@ pub enum Reject {
     InvalidAmount,
     /// A custody reference that was already credited.
     DuplicateReference,
+    /// EVM credits under receipt finality require an exact custody receipt.
+    CustodyReceiptRequired,
     /// An unsigned request, where the rules in force require a signature.
     MissingSignature,
     /// A signature that is not the account's over this request, or one the rules in force cannot

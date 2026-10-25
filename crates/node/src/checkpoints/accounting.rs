@@ -1,8 +1,9 @@
 //! Fixed-size custody accounting derived from authenticated engine output, never host metadata.
 
-use anyhow::Context;
+use anyhow::{Context, ensure};
 use engine_core::Fixed;
 use engine_core::command::Command;
+use engine_core::deposits::{DepositStatus, DepositUpdate};
 use engine_core::event::Event;
 use serde::{Deserialize, Serialize};
 use tracing::error;
@@ -48,6 +49,50 @@ impl Accounting {
                     self.unpaid = Fixed::from_raw(
                         self.unpaid.raw().checked_add(amount.raw()).context("checkpoint unpaid approvals overflow")?,
                     );
+                }
+                Event::CustodyDepositChanged { receipt, status, principal_delta } => {
+                    let Command::CustodyDeposit(update) = command else {
+                        anyhow::bail!("custody accounting event has no receipt command");
+                    };
+                    let replacement =
+                        matches!(update.as_ref(), DepositUpdate::Replace { replacement, .. } if replacement == receipt);
+                    ensure!(
+                        update.subject() == receipt || replacement,
+                        "custody accounting receipt differs from command"
+                    );
+                    let valid = match update.as_ref() {
+                        DepositUpdate::Credit { .. } => {
+                            *status == DepositStatus::Unfinalised
+                                && (principal_delta.is_zero() || *principal_delta == receipt.amount)
+                        }
+                        DepositUpdate::Reinstate { .. } => {
+                            *status == DepositStatus::Unfinalised && *principal_delta == receipt.amount
+                        }
+                        DepositUpdate::Finalise { .. } => {
+                            *status == DepositStatus::Finalised && principal_delta.is_zero()
+                        }
+                        DepositUpdate::Reverse { .. } => {
+                            *status == DepositStatus::Reversed && *principal_delta == -receipt.amount
+                        }
+                        DepositUpdate::Replace { .. } if replacement => {
+                            *status == DepositStatus::Unfinalised && *principal_delta == receipt.amount
+                        }
+                        DepositUpdate::Replace { .. } => {
+                            *status == DepositStatus::Reversed && *principal_delta == -receipt.amount
+                        }
+                    };
+                    ensure!(valid, "custody accounting delta differs from receipt transition");
+                    self.liabilities = Fixed::from_raw(
+                        self.liabilities
+                            .raw()
+                            .checked_add(principal_delta.raw())
+                            .context("checkpoint liabilities overflow")?,
+                    );
+                    if principal_delta.is_positive() {
+                        self.deposits = self.deposits.checked_add(1).context("checkpoint deposit count overflow")?;
+                    } else if principal_delta.is_negative() {
+                        self.deposits = self.deposits.checked_sub(1).context("checkpoint deposit count underflow")?;
+                    }
                 }
                 _ => {}
             }

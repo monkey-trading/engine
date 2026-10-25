@@ -132,6 +132,7 @@ async fn a_command_only_the_node_sequences_is_refused_before_the_log() {
         AdminCommand::SetClientAuth(ClientAuth::Unsigned),
         AdminCommand::SetOperator(node.state.operator),
         AdminCommand::ActivateProtocol { version: ProtocolVersion::LATEST },
+        AdminCommand::ActivateCustodyFinality { version: ProtocolVersion::LATEST, legacy_deposits: vec![] },
     ];
     let logged = node.entries().len();
     for command in node_only {

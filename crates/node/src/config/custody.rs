@@ -12,7 +12,7 @@ use anyhow::bail;
 use engine_core::Fixed;
 use serde::Deserialize;
 
-use crate::config::{CustodyProvider, NodeConfig};
+use crate::config::{CustodyProvider, NodeConfig, TeeProvider};
 
 /// The block tag whose number marks finality on the custody chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -33,9 +33,11 @@ pub struct EvmCustodySection {
     pub providers: Vec<RpcProviderSection>,
     /// The USDC contract the vault must hold; the watcher checks it on every poll.
     pub usdc: Address,
-    /// A deposit is final once its block is at least `confirmations` below the block this tag
-    /// names: `safe` with no confirmations on Arbitrum One.
+    /// Trading credit follows this tag, less `confirmations`; production requires `latest`.
+    /// Earlier protocols use this tag as the sole final-deposit rule.
     pub finality_tag: FinalityTag,
+    /// Releases confirmed principal at this tag, without another confirmations delay.
+    pub withdrawal_finality_tag: FinalityTag,
     pub confirmations: u64,
     /// The vault's deployment block, where scanning starts when there is no cursor.
     pub start_block: u64,
@@ -103,6 +105,11 @@ impl NodeConfig {
             (CustodyProvider::Evm, None) => bail!("custody.provider = \"evm\" needs a [custody.evm] section"),
             (CustodyProvider::Evm, Some(evm)) => evm,
         };
+        if self.tee.provider != TeeProvider::Mock
+            && (evm.finality_tag != FinalityTag::Latest || evm.withdrawal_finality_tag != FinalityTag::Finalized)
+        {
+            bail!("production custody requires finality_tag = latest and withdrawal_finality_tag = finalized");
+        }
         if evm.providers.len() < 3 {
             bail!("custody.evm.providers requires at least three independent RPC providers");
         }
