@@ -1,14 +1,18 @@
 //! The RPC adapter's own checks: log decoding, the deposit count's return data, deadlines, and
 //! keeping the endpoint URL out of errors.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use alloy::primitives::{Address, B256, Bytes, LogData, U256};
 use alloy::rpc::types::Log;
 use alloy::sol_types::{SolCall, SolEvent};
 use engine_core::types::AccountId;
 use tokio::net::TcpListener;
+use tokio::task::JoinHandle;
 
 use crate::config::EvmCustodySection;
-use crate::custody::evm::{Beneficiary, VaultReader};
+use crate::custody::evm::{Beneficiary, BlockRef, VaultReader};
 use crate::custody::rpc::{Deposited, HouseDeposited, VaultRpc, decode_count, depositCountCall};
 use crate::custody::tests::fakes::{VAULT, evm_toml};
 
@@ -75,7 +79,101 @@ async fn rpc_errors_never_carry_the_endpoint_url() {
     assert!(!err.contains("secret-key") && !err.contains("hunter2"), "{err}");
 }
 
+#[tokio::test]
+async fn a_chain_move_between_the_tag_and_head_reads_is_settled_by_one_re_read() {
+    // First pair: the endpoint's tag still names block 8 while a reorg has dropped its head to 7
+    // — the tag was read a moment before the head. The re-read then sees a consistent chain.
+    let (url, safe_calls, latest_calls, server) = scripted_chain(&[8, 7], &[7]).await;
+    let rpc = rpc_at(&url);
+
+    let finality = rpc.finality().await.unwrap();
+    assert_eq!(finality.head, 7);
+    assert_eq!(finality.tagged, Some(BlockRef { number: 7, hash: B256::repeat_byte(7) }));
+    assert_eq!(safe_calls.load(Ordering::Relaxed), 2, "the inconsistent pair is re-read once");
+    assert_eq!(latest_calls.load(Ordering::Relaxed), 2);
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn a_pair_that_stays_inconsistent_is_returned_after_one_re_read() {
+    // The quorum's contradiction check, not an endless retry, classifies a provider whose tag
+    // keeps sitting above its head.
+    let (url, safe_calls, latest_calls, server) = scripted_chain(&[8], &[7]).await;
+    let rpc = rpc_at(&url);
+
+    let finality = rpc.finality().await.unwrap();
+    assert_eq!(finality.head, 7);
+    assert_eq!(finality.tagged, Some(BlockRef { number: 8, hash: B256::repeat_byte(8) }));
+    assert_eq!(safe_calls.load(Ordering::Relaxed), 2, "the re-read is bounded at one");
+    assert_eq!(latest_calls.load(Ordering::Relaxed), 2);
+    server.abort();
+    let _ = server.await;
+}
+
 // ── Helpers ──
+
+/// A loopback endpoint whose `eth_getBlockByNumber` answers `safe` and `latest` from their
+/// scripts, repeating each script's last entry once it runs out, and counts requests per tag.
+async fn scripted_chain(safe: &[u64], latest: &[u64]) -> (String, Arc<AtomicUsize>, Arc<AtomicUsize>, JoinHandle<()>) {
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+
+    use alloy::rpc::types::Block;
+    use axum::extract::State;
+    use axum::{Json, Router, routing::post};
+    use serde_json::{Value, json};
+
+    #[derive(Clone)]
+    struct Script(Arc<Mutex<VecDeque<u64>>>);
+
+    impl Script {
+        fn next(&self) -> u64 {
+            let mut blocks = self.0.lock().unwrap();
+            let block = *blocks.front().expect("scripted chains repeat their last block");
+            if blocks.len() > 1 {
+                blocks.pop_front();
+            }
+            block
+        }
+    }
+
+    async fn answer(
+        State((safe, latest, safe_calls, latest_calls)): State<(Script, Script, Arc<AtomicUsize>, Arc<AtomicUsize>)>,
+        Json(request): Json<Value>,
+    ) -> Json<Value> {
+        let number = match request["params"][0].as_str().unwrap() {
+            "safe" => {
+                safe_calls.fetch_add(1, Ordering::Relaxed);
+                safe.next()
+            }
+            "latest" => {
+                latest_calls.fetch_add(1, Ordering::Relaxed);
+                latest.next()
+            }
+            other => panic!("unexpected block tag {other}"),
+        };
+        let mut block = Block::<alloy::rpc::types::Transaction>::default();
+        block.header.number = number;
+        block.header.timestamp = 1234;
+        block.header.hash = B256::repeat_byte(number as u8);
+        Json(json!({"jsonrpc":"2.0","id":request["id"],"result":serde_json::to_value(block).unwrap()}))
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let state = (
+        Script(Arc::new(Mutex::new(safe.iter().copied().collect()))),
+        Script(Arc::new(Mutex::new(latest.iter().copied().collect()))),
+        Arc::new(AtomicUsize::new(0)),
+        Arc::new(AtomicUsize::new(0)),
+    );
+    let (safe_calls, latest_calls) = (state.2.clone(), state.3.clone());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, Router::new().route("/", post(answer)).with_state(state)).await.unwrap();
+    });
+    (url, safe_calls, latest_calls, server)
+}
 
 /// A client for `url` with a short deadline.
 fn rpc_at(url: &str) -> VaultRpc {
@@ -150,7 +248,6 @@ async fn rpc_wire_keeps_tags_batches_filters_quantities_and_canonical_hash_calls
     use serde_json::{Value, json};
     use tokio::sync::mpsc;
 
-    use crate::custody::evm::BlockRef;
     use crate::custody::rpc::{InvalidRpcResponse, usdcCall};
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

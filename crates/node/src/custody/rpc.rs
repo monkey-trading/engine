@@ -22,10 +22,15 @@ use alloy::transports::http::reqwest::{Certificate, Client, Url};
 use anyhow::{Context, anyhow, bail};
 use engine_core::types::AccountId;
 use tokio::time::timeout;
+use tracing::debug;
 
 use crate::config::{EvmCustodySection, FinalityTag, SecretUrl};
 use crate::custody::chain::BlockLink;
 use crate::custody::evm::{Beneficiary, BlockRef, Finality, VaultDeposit, VaultIdentity, VaultReader};
+
+/// Reads of the finality tag and the head pair once more after the chain moves between them;
+/// only a pair that stays inconsistent is returned for the quorum's contradiction check.
+const FINALITY_READ_ATTEMPTS: u32 = 2;
 
 // The vault's ABI, as `contracts/src/Vault.sol` declares it.
 sol! {
@@ -149,10 +154,29 @@ impl VaultReader for VaultRpc {
 }
 
 impl VaultRpc {
-    /// Reads a tag and the current head, each under the configured request deadline.
+    /// Reads a tag and the current head, each under the configured request deadline. The two
+    /// are separate requests, and the chain can move between them — a block landing, or a reorg
+    /// or revert dropping the head under a tag read a moment earlier — so a pair whose tag names
+    /// a block above its head is re-read once before it is returned for the quorum's
+    /// contradiction check.
     /// Error cases:
     /// - a request fails or the provider has no head
     async fn read_finality(&self, tag: BlockNumberOrTag) -> anyhow::Result<Finality> {
+        let mut answer = self.read_tag_and_head(tag).await?;
+        for attempt in 2..=FINALITY_READ_ATTEMPTS {
+            if answer.tagged.is_none_or(|tagged| tagged.number <= answer.head) {
+                break;
+            }
+            debug!(attempt = attempt - 1, "finality tag is above the head; the chain moved between the two reads");
+            answer = self.read_tag_and_head(tag).await?;
+        }
+        Ok(answer)
+    }
+
+    /// One tag read followed by one head read, with no consistency requirement between them.
+    /// Error cases:
+    /// - a request fails or the provider has no head
+    async fn read_tag_and_head(&self, tag: BlockNumberOrTag) -> anyhow::Result<Finality> {
         let tagged = self
             .deadline(
                 "eth_getBlockByNumber",
