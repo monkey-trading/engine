@@ -25,23 +25,21 @@ pub async fn archive(State(s): State<ApiState>, Path(file): Path<String>) -> Res
     if file == MANIFEST {
         // One listing at a time, awaited off the blocking pool. The view is read under the lock, so
         // the cached listing only moves forward and each request proves only segments completed
-        // since; it takes no backfill permit.
-        let mut cached = s.listing.lock().await;
+        // since; it takes no backfill permit. The walk holds the lock and caches its own listing, so
+        // a request dropped mid-walk, as when its client disconnects, still leaves it for the next.
+        let mut cached = s.listing.clone().lock_owned().await;
         let view = s.manifest.borrow().clone();
-        let known = cached.clone();
-        let (listing, body) = spawn_blocking(move || {
+        let body = spawn_blocking(move || {
             view.ensure_verified()?;
-            let Some(catalog) = &view.catalog else { return Ok((None, Bytes::from(view.to_jsonl()?))) };
-            let listing = catalog.listing_after(known.as_ref())?;
+            let Some(catalog) = &view.catalog else { return Ok(Bytes::from(view.to_jsonl()?)) };
+            let listing = catalog.listing_after(cached.as_ref())?;
             let body = Bytes::from_owner(listing.bytes.clone());
-            anyhow::Ok((Some(listing), body))
+            *cached = Some(listing);
+            anyhow::Ok(body)
         })
         .await
         .map_err(|e| unreadable(format!("manifest task: {e}")))?
         .map_err(|e| unreadable(format!("manifest: {e:#}")))?;
-        if listing.is_some() {
-            *cached = listing;
-        }
         return Ok(
             ([(CONTENT_TYPE, JSON_LINES.to_owned()), (CONTENT_LENGTH, body.len().to_string())], body).into_response()
         );
