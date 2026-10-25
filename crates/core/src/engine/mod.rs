@@ -1,10 +1,11 @@
 //! The engine state machine: `apply(sequenced command) -> events`.
 //!
 //! Single-threaded and deterministic. Time comes only from the sequencer's stamp. This file holds
-//! the state, dispatch, time, sessions, and USD valuation; venue prices and marks live in
-//! `marks.rs`, funds and financing in `funds.rs`, admin in `admin.rs`, stress levels in
-//! `stress.rs`, client request auth in `auth.rs`, orders and pricing in `execution/`, close-outs in
-//! `closeout.rs`, markouts in `markouts.rs`, and reserved FIFO withdrawals in `withdrawal.rs`.
+//! the state, dispatch, time, sessions, and USD valuation; per-market state lives in `market.rs`,
+//! venue prices and marks in `marks.rs`, funds and financing in `funds.rs`, admin in `admin.rs`,
+//! stress levels in `stress.rs`, client request auth in `auth.rs`, orders and pricing in
+//! `execution/`, close-outs in `closeout.rs`, markouts in `markouts.rs`, and reserved FIFO
+//! withdrawals in `withdrawal.rs`.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::ops::Bound;
@@ -21,11 +22,9 @@ use crate::deposits::{CustodyCheckpoint, LegacyDeposit, RecordedDeposit};
 use crate::emissions::{Emissions, PeriodResult, TokenUnits};
 use crate::event::{Event, Reject};
 use crate::fixed::Rounding;
-use crate::futures::FuturesState;
 use crate::market::MarketSpec;
 use crate::merkle::state::{Changed, StateTree, is_zero};
 use crate::params::ProtocolParams;
-use crate::price::{Index, SourceQuote};
 use crate::protocol::ProtocolVersion;
 pub use crate::stress::{MoveBucket, StressState};
 use crate::tracked::{TrackedMap, TrackedSet};
@@ -131,36 +130,9 @@ pub struct Engine {
     pub(crate) tree: Option<StateTree>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct MarketState {
-    pub spec: MarketSpec,
-    pub quotes: BTreeMap<String, SourceQuote>,
-    pub open: bool,
-    pub reduce_only: bool,
-    /// Last index mid marked while the market and its FX market had a price. Positions are marked
-    /// here, including while the market is closed or its FX market has no price.
-    pub mark: Option<Fixed>,
-    /// Last index of the FX market that could convert this market's quote currency: what its
-    /// positions are valued at in USD. `None` for a USD market, and left out of the encoding then.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fx_mark: Option<Fixed>,
-    /// Sum of client position qty; the house holds the opposite.
-    pub client_qty: Fixed,
-    /// Sum of client `entry * qty`, so unrealised PnL is O(1) per market.
-    pub client_cost: Fixed,
-    pub stress: StressState,
-    /// Resting orders in time priority.
-    pub resting: BTreeMap<OrderId, AccountId>,
-    /// From `V12`, the index the mark, stress, resting orders, and close-outs were last processed
-    /// at, or `None` once the market cannot deal: closed, with no valid index, or with no FX price.
-    /// Left out of the encoding while `None`, so roots before `V12` do not change.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub processed_index: Option<Index>,
-    /// From `V21`, where a market priced from futures stands in its roll order. `None` for any other
-    /// market, and left out of the encoding then.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub futures: Option<FuturesState>,
-}
+mod market;
+
+pub use market::MarketState;
 
 /// A fill waiting to be marked against the index once its horizon has passed.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -174,31 +146,6 @@ pub(crate) struct Markout {
     /// zero, as it is for fills booked before `V11`.
     #[serde(default, skip_serializing_if = "Fixed::is_zero")]
     pub notional: Fixed,
-}
-
-impl MarketState {
-    /// A newly listed market: closed until its first session check, with no price or positions.
-    pub(crate) fn new(spec: MarketSpec) -> Self {
-        MarketState {
-            spec,
-            quotes: BTreeMap::new(),
-            open: false,
-            reduce_only: false,
-            mark: None,
-            fx_mark: None,
-            client_qty: Fixed::ZERO,
-            client_cost: Fixed::ZERO,
-            stress: StressState::default(),
-            resting: BTreeMap::new(),
-            processed_index: None,
-            futures: None,
-        }
-    }
-
-    /// `amount` in this market's quote currency, in USD at its FX mark, rounded as `rounding` says.
-    pub fn usd_at_mark(&self, amount: Fixed, rounding: Rounding) -> Fixed {
-        self.spec.quote_currency.to_usd(amount, self.fx_mark, rounding)
-    }
 }
 
 impl Engine {

@@ -110,7 +110,9 @@ this crate and reproduce the signed state roots exactly.
 ## Repository Structure
 
 - `src/lib.rs` — module index and the protocol summary
-- `src/engine.rs` — engine state, command dispatch, sessions, and USD valuation
+- `src/engine/mod.rs` — engine state, command dispatch, sessions, and USD valuation
+- `src/engine/market.rs` — per-market state: quotes, marks, positions, resting orders, and futures
+  roll position
 - `src/hot_indexes.rs` — derived holder, trigger, pending-receipt and above-frontier coverage indexes, rebuilt after recovery
 - `src/marks.rs` — venue prices, and marking a market and the markets that convert at its index
 - `src/execution/` — order placement, triggers, pricing, risk checks, and booking fills (`mod.rs`),
