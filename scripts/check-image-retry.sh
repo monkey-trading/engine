@@ -31,13 +31,15 @@ fail() {
   failed=1
 }
 
-# A download that fails its first $FAILS calls with exit 7, and a sleep that records its argument.
+# A download whose first $FAILS calls fail, call N with exit 10 + N, and a sleep that records its
+# argument.
 mkdir "$work/bin"
 cat > "$work/bin/download" << 'EOF'
 #!/bin/sh
 printf '%s|' "$@" >> "$WORK/calls"
 echo >> "$WORK/calls"
-[ "$(wc -l < "$WORK/calls")" -gt "$FAILS" ] || exit 7
+call=$(wc -l < "$WORK/calls" | tr -d ' ')
+[ "$call" -gt "$FAILS" ] || exit $((10 + call))
 EOF
 cat > "$work/bin/sleep" << 'EOF'
 #!/bin/sh
@@ -67,7 +69,7 @@ check_retry() {
 check_retry 0 0 1 ""
 check_retry 1 0 2 "15"
 check_retry 4 0 5 "15 30 60 120"
-check_retry 5 7 5 "15 30 60 120"
+check_retry 5 15 5 "15 30 60 120"
 
 # apt against a server that answers every request with a 503 and a body, which apt counts as
 # transient.

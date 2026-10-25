@@ -5,8 +5,8 @@
 # OVMF firmware that boots them, and the SEV-SNP launch measurement of all three. Every input is
 # pinned by digest, checksum, or commit, and every timestamp comes from SOURCE_DATE_EPOCH, so a
 # commit builds to the same bytes on any machine. Every download a build step makes runs under
-# image/retry, which repeats the same pinned download after any failure, up to five times over
-# about four minutes, so a brief outage of a source does not fail the build.
+# image/retry, which runs the same pinned download up to five times, waiting about four minutes in
+# all between attempts, so a brief outage of a source does not fail the build.
 #
 # Build it with scripts/build-image.sh, which feeds in the committed tree and sets
 # SOURCE_DATE_EPOCH to the commit time. The output is vmlinuz, initramfs.cpio.gz, OVMF.fd,
@@ -162,7 +162,8 @@ RUN : "${SOURCE_DATE_EPOCH:?SOURCE_DATE_EPOCH must be set}" \
 FROM --platform=linux/amd64 python:3.14.8-slim-trixie@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS measure
 COPY image/requirements.txt /measure/requirements.txt
 COPY image/retry /usr/local/bin/retry
-# pip's own retries wait as long as a server's Retry-After asks, so only retry repeats it.
+# pip's own retries wait as long as a server's Retry-After asks, up to six hours, so only retry
+# repeats it.
 RUN retry pip install --quiet --no-cache-dir --root-user-action=ignore --no-deps --only-binary=:all: \
       --retries 0 --require-hashes -r /measure/requirements.txt
 WORKDIR /out
