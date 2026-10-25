@@ -131,25 +131,55 @@ async fn failed_captures_are_one_alert_episode_until_a_capture_is_stored_even_ac
     assert_eq!((recovered.severity, recovered.key()), (None, started.key()), "recovery resolves: {restarted:#?}");
 }
 
-/// A capture the sequencer could not hand over or wait for marks the shared alert open, and the next
-/// capture the history owner stores resolves it once.
+/// A capture the sequencer cannot hand to the history owner raises `snapshot_write_failed` on the
+/// shared key and leaves the alert open, so the next capture the history owner stores resolves it.
 #[tokio::test]
-async fn a_capture_the_sequencer_failed_is_resolved_by_the_next_stored_capture() {
+async fn a_capture_the_sequencer_cannot_hand_over_leaves_the_alert_open() {
     let (collector, router) = collect_alerts();
     let node = Node::start(configuration("paired-sequencer-write-alert")).await.unwrap();
     submit_deposits(&node, "stored", 3).await;
     let caches = node.cfg.snapshots.as_ref().unwrap();
     assert!(!snapshot::candidates_readonly(caches).unwrap().is_empty(), "a capture was stored before the failure");
-    // What each sequencer site records alongside its `snapshot_write_failed` Warning.
-    node.sealing.write_failed();
-    submit_deposits(&node, "handed-over", 6).await;
-    node.stop().await;
+    assert!(!node.sealing.write_alert.take(), "the stored capture cleared the shared mark");
+    // A closed history queue refuses the sequencer's hand-over, as a full one does.
+    node.stop_history().await;
+    for n in 0..3 {
+        node.submit(deposit(1, &format!("unhanded-{n}"))).await;
+    }
     drop(collector);
     let lines = write_alert_lines(router);
-    let [started, resolved] = lines.as_slice() else {
-        panic!("one resolve at start, one after the failure: {lines:#?}")
+    let [started, failed @ ..] = lines.as_slice() else { panic!("no snapshot_write_failed line") };
+    assert_eq!(started.severity, None, "the first stored capture after a start resolves: {lines:#?}");
+    assert!(!failed.is_empty(), "the sequencer raised the alert: {lines:#?}");
+    for line in failed {
+        assert_eq!((line.severity, line.key()), (Some(Severity::Warning), started.key()), "{lines:#?}");
+        assert!(line.summary.starts_with("checkpoint remains in log"), "{lines:#?}");
+    }
+    assert!(node.sealing.write_alert.take(), "the next stored capture resolves the sequencer's failure");
+}
+
+/// A shutdown that times out waiting for an in-flight capture raises `snapshot_write_failed` on the
+/// shared key and leaves the alert open, so the next capture the history owner stores resolves it.
+#[tokio::test]
+async fn a_shutdown_that_cannot_wait_for_a_capture_leaves_the_alert_open() {
+    let (collector, router) = collect_alerts();
+    let node = Node::start(configuration("paired-shutdown-write-alert")).await.unwrap();
+    submit_deposits(&node, "stored", 3).await;
+    assert!(!node.sealing.write_alert.take(), "a stored capture cleared the shared mark");
+    let sealing = node.sealing.clone();
+    // Holding the only capture permit stands in for a capture still in flight at shutdown.
+    let in_flight = sealing.try_permit().expect("no capture is in flight");
+    submit_deposits(&node, "uncaptured", 3).await;
+    node.stop().await;
+    drop((in_flight, collector));
+    let lines = write_alert_lines(router);
+    let [started, failed] = lines.as_slice() else {
+        panic!("a start resolve, then the shutdown's failure: {lines:#?}")
     };
-    assert_eq!((started.severity, resolved.severity), (None, None), "{lines:#?}");
+    assert_eq!(started.severity, None, "{lines:#?}");
+    assert_eq!((failed.severity, failed.key()), (Some(Severity::Warning), started.key()), "{lines:#?}");
+    assert!(failed.summary.starts_with("the shutdown checkpoint is not cached"), "{lines:#?}");
+    assert!(sealing.write_alert.take(), "the next stored capture resolves the shutdown's failure");
 }
 
 /// Observes the actual blocking owner after every physical entry in the producer's fixed frontier.

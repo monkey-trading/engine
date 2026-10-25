@@ -20,7 +20,7 @@ use crate::snapshot::head::StoreId;
 use crate::snapshot::lifecycle::Lifecycle;
 use crate::snapshot::{
     pins::Pins,
-    sealing::{Capture, Endpoint},
+    sealing::{Capture, Endpoint, WriteAlert},
 };
 use crate::tee::EnclaveKey;
 
@@ -107,9 +107,8 @@ struct Actor {
     key: Arc<EnclaveKey>,
     pins: Pins,
     pending: Option<Box<Capture>>,
-    /// The sealing endpoint's flag: whether a `snapshot_write_failed` episode may be open, so the
-    /// next stored capture resolves it.
-    write_alert_open: Arc<AtomicBool>,
+    /// Shared with the sealing endpoint: whether a `snapshot_write_failed` episode may be open.
+    write_alert: WriteAlert,
     /// Commands taken this turn and not yet indexed; one batch update indexes them.
     commands: Vec<crate::log::CommandEntry>,
     retained_catalog: BTreeMap<Offset, Arc<crate::log::catalog::LazyCatalogView>>,
@@ -157,7 +156,7 @@ impl Runtime {
                 key,
                 pins,
                 pending: None,
-                write_alert_open: endpoint.write_alert_open(),
+                write_alert: endpoint.write_alert.clone(),
                 commands: Vec::new(),
                 retained_catalog: BTreeMap::new(),
                 last_entry: None,

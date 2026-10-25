@@ -1,7 +1,6 @@
 //! A bounded checkpoint capture waits for the exact history fence on the storage owner's queue.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use anyhow::{Result, ensure};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
@@ -25,12 +24,16 @@ use crate::tee::EnclaveKey;
 pub(crate) struct Endpoint {
     tx: mpsc::Sender<Input>,
     permits: Arc<Semaphore>,
-    /// Whether a `snapshot_write_failed` episode may be open, shared with the history owner, which
-    /// clears it and resolves the alert when it next stores a capture. It starts set, since an
-    /// earlier run may have left an episode open.
-    write_alert_open: Arc<AtomicBool>,
+    pub write_alert: WriteAlert,
     pub catalog_store: StoreId,
 }
+
+/// Whether a `snapshot_write_failed` episode may be open. The sequencer and the history owner both
+/// raise the alert, so each logs it, or its resolve, while holding this mark: a resolve can then
+/// never follow a failure it did not see. It starts open, since an earlier run may have left an
+/// episode open.
+#[derive(Clone)]
+pub(crate) struct WriteAlert(Arc<Mutex<bool>>);
 
 /// All inputs were captured at the same physical checkpoint before that frontier was published.
 pub(crate) struct Capture {
@@ -63,20 +66,15 @@ impl Endpoint {
         Self {
             tx,
             permits: Arc::new(Semaphore::new(1)),
-            write_alert_open: Arc::new(AtomicBool::new(true)),
+            write_alert: WriteAlert(Arc::new(Mutex::new(true))),
             catalog_store,
         }
     }
 
-    /// The flag the history owner clears when it stores a capture.
-    pub(crate) fn write_alert_open(&self) -> Arc<AtomicBool> {
-        self.write_alert_open.clone()
-    }
-
-    /// Records that the sequencer raised `snapshot_write_failed` for a capture it could not hand
-    /// over or wait for, so the next capture the history owner stores resolves it.
-    pub(crate) fn write_failed(&self) {
-        self.write_alert_open.store(true, Ordering::Release);
+    /// Whether the history owner has stopped taking input.
+    #[cfg(test)]
+    pub(crate) fn is_closed(&self) -> bool {
+        self.tx.is_closed()
     }
 
     /// A busy storage owner skips an optional capture without delaying public event publication.
@@ -97,6 +95,34 @@ impl Endpoint {
         self.tx
             .try_send(Input::Seal(Box::new(capture)))
             .map_err(|_| anyhow::anyhow!("optional snapshot queue unavailable"))
+    }
+}
+
+impl WriteAlert {
+    /// Marks the episode open while `raise` logs its `snapshot_write_failed` Warning.
+    pub(crate) fn failed(&self, raise: impl FnOnce()) {
+        let mut open = self.lock();
+        *open = true;
+        raise();
+    }
+
+    /// Takes the mark as a capture starts completing; `stored` resolves only what it took.
+    pub(crate) fn take(&self) -> bool {
+        std::mem::take(&mut *self.lock())
+    }
+
+    /// Resolves the episode that `take` saw open, now that its capture is stored, unless a failure
+    /// was raised since: that one stays open for the next stored capture.
+    pub(crate) fn stored(&self, taken: bool) {
+        let open = self.lock();
+        if taken && !*open {
+            info!(alert_resolved = "snapshot_write_failed", "a checkpoint snapshot is stored");
+        }
+    }
+
+    /// The mark is a plain flag, so a panic while logging leaves nothing half-updated.
+    fn lock(&self) -> MutexGuard<'_, bool> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -166,5 +192,31 @@ impl Capture {
         staged.publish_then(&mut publication, |path| payloads.seed(path, self.snapshot))?;
         info!(seq = prefix.offset.seq, "checkpoint snapshot stored");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tracing::warn;
+
+    use super::WriteAlert;
+    use crate::alerts::capture;
+
+    /// A stored capture resolves the episode open when it started completing, but not a failure
+    /// raised while it completed, such as the shutdown wait's: that one stays open for the next.
+    #[test]
+    fn a_stored_capture_resolves_only_failures_raised_before_its_take() {
+        let alert = WriteAlert(std::sync::Arc::new(std::sync::Mutex::new(true)));
+        let lines = capture(|| {
+            let taken = alert.take();
+            alert.failed(|| warn!(alert = "snapshot_write_failed", "raised while a capture completes"));
+            alert.stored(taken);
+            let taken = alert.take();
+            alert.stored(taken);
+            let taken = alert.take();
+            alert.stored(taken);
+        });
+        let firing: Vec<_> = lines.iter().map(|line| line.severity.is_some()).collect();
+        assert_eq!(firing, [true, false], "one failure, then one resolve by the next stored capture: {lines:#?}");
     }
 }
