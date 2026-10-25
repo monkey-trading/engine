@@ -25,3 +25,8 @@ alloy-dyn-abi.workspace = true
 anyhow.workspace = true
 hex.workspace = true
 proptest.workspace = true
+
+# The reference session's version parts carry tests of their own.
+[[example]]
+name = "reference_log"
+test = true

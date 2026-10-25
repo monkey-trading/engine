@@ -110,12 +110,12 @@ pub enum ProtocolVersion {
     /// a budget, every ten-minute period's budget is shared pro rata by its eligible realised losses
     /// and finalised before the first command at or after its end, budgets halve every 26,280
     /// periods, and each account's cumulative entitlement is a leaf of the state tree.
-    V23,
+    V19,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V23;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V19;
 
     /// Whether this is `V2`, which engine state leaves out of its encoding.
     pub fn is_v2(&self) -> bool {

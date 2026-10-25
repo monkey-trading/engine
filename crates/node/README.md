@@ -54,7 +54,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   the operator's signature, next nonce, and an unexpired expiry
 - Proofs of an account's balance and positions, and of its positions' marks, against the last
   checkpoint's state root, from protocol `V9`
-- MONKEY emissions from protocol `V23`: `engine admin init-emissions` records the schedule once,
+- MONKEY emissions from protocol `V19`: `engine admin init-emissions` records the schedule once,
   and `GET /v1/accounts/{address}/emissions` serves an account's cumulative entitlement with its proof
   against the last checkpoint's root, for the vault's `claimEmissions`; with `[checkpoints]`, the
   node reads the period budget the vault's MONKEY cap was derived from, refuses a schedule with any
@@ -227,7 +227,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/history/preflight.rs` — immutable history planning before authorized SQLite mutation
 - `src/history/preflight/tests.rs` — private WAL resume and malformed geometry byte-preservation regressions
 - `src/node/tests/custody_preflight.rs` — local custody refusal preserves log/history across image states
-- `src/node/preflight.rs` — chain validation before writable history recovery
+- `src/node/preflight.rs` — chain validation before writable history recovery, and the vault's MONKEY
+  cap against the emission budget the log records
+- `src/node/preflight/emission_tests.rs` — refused startup on an unreadable cap or another budget
 - `src/node/preflight/tests.rs` — refused startup preserves history, WAL, and log bytes
 - `src/sequencer/replay/auth_tests.rs` — trusted immediate/deferred completion evidence regressions
 - `src/sequencer/replay/accounting_tests.rs` — historical fixture and outstanding-work accounting oracles
@@ -344,7 +346,7 @@ cargo run -p engine-node -- admin --pin $PIN set-stress-floor 1 --market 1
 cargo run -p engine-node -- admin --pin $PIN set-benchmark-rate SOFR 430
 cargo run -p engine-node -- admin --pin $PIN upsert-market market.toml        # no table header
 cargo run -p engine-node -- admin --pin $PIN set-params params.toml           # no table header
-# Once per log, from protocol V23: when emission period 0 starts (not before the command is
+# Once per log, from protocol V19: when emission period 0 starts (not before the command is
 # sequenced) and its budget in MONKEY base units. Production values need the owner's approval.
 cargo run -p engine-node -- admin --pin $PIN init-emissions --start 2027-01-01T00:00:00Z --period-budget <units>
 
@@ -634,6 +636,14 @@ checkpoint's signed entry, then check the proof with `engine-core`'s `AccountPro
 `verify_proof` example. An account credited since the last checkpoint is not in its root yet, and
 gets 404 until the next one. Each checkpoint logs, at `debug`, how long its root took and how many
 leaves and tree nodes it hashed.
+
+`/v1/accounts/{address}/emissions` returns, from `V19`, the account's cumulative MONKEY entitlement
+against the state root of the last checkpoint: `seq`, `root`, `account`, `entitled` (base units of
+the 18-decimal token, as a decimal string), and `siblings`, from the root down. The vault's
+`claimEmissions` checks the proof against its latest posted root only, so a claim waits until the
+vault's `latestSeq` equals the proof's `seq`, and a proof stops working once a later checkpoint is
+posted; fetch a fresh one then. An account has no entitlement, and gets 404, until the first
+checkpoint after a period in which it was allocated a share.
 
 The operator listener, `metrics.listen` (`127.0.0.1:9464` in `config/dev.toml`), serves
 `GET /metrics` in Prometheus text format. `ops/grafana/engine-node.json` is a Grafana dashboard

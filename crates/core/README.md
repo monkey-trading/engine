@@ -85,7 +85,7 @@ this crate and reproduce the signed state roots exactly.
 - From protocol `V18`, dated decimal benchmark histories select each missed rollover's rate by its
   local date; observations older than five weekdays still apply and produce a stale status. Retained
   history covers unpaid rollovers and legal timezone/hour changes, including earlier local dates
-- From protocol `V23`, MONKEY emissions: once the operator's signed initialisation records a start
+- From protocol `V19`, MONKEY emissions: once the operator's signed initialisation records a start
   no earlier than itself and a period budget, each ten-minute period's budget is shared pro rata by
   the accounts' net realised trading losses there (liquidations included, the profit fee and
   financing not), less debt the house wrote off, leaving out any account with negative cash at the
@@ -149,7 +149,8 @@ this crate and reproduce the signed state roots exactly.
   (`rounding.rs`), spreads and margin against their exact
   amounts (`charges.rs`), and toxicity scores against their markouts (`toxicity.rs`)
 - `tests/invariants/state_root.rs` — incremental roots against a rebuild, with every account's
-  proof checked, under generated sessions
+  proof and entitlement proof checked and every emission budget accounted for, under generated
+  sessions
 - `tests/state_root.rs` — the state root from `V9`: its activation, what each root rehashes,
   account proofs, and roots against a rebuild
 - `tests/fixtures/eip712.json` — EIP-712 test vectors: API bodies, wallet typed data, and
@@ -159,13 +160,13 @@ this crate and reproduce the signed state roots exactly.
 - `tests/fixtures/emissions.json` — entitlement proofs the engine produced, which the vault's
   Foundry tests claim with and `tests/emissions_fixture.rs` checks
 - `tests/emissions.rs`, `tests/emissions_eligibility.rs`, `tests/emissions_schedule.rs` — MONKEY
-  emissions from `V23`: allocation, rounding, cancellation, and finality; which losses count and the
+  emissions from `V19`: allocation, rounding, cancellation, and finality; which losses count and the
   signed initialisation; and the schedule's arithmetic with the first halving
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), its
-  `V15`, `V16`, and `V17` parts (`v15.rs`, `v16.rs`, `v17.rs`), and its `V18` and `V23` parts
-  (`v18.rs`, `v23.rs`)
+  `V15`, `V16`, and `V17` parts (`v15.rs`, `v16.rs`, `v17.rs`), and its `V18` and `V19` parts
+  (`v18.rs`, `v19.rs`)
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
 

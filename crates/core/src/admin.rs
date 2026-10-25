@@ -3,7 +3,7 @@
 //! Every admin action is a sequenced command, so the public log shows each parameter change, each
 //! listing, and each stress override. From `V8` the operator signs its commands (listings,
 //! parameters, benchmark rates, stress floors, and reduce-only) once anything is credited, and the
-//! log carries each signature; from `V23` the emission schedule applies only signed, credited or
+//! log carries each signature; from `V19` the emission schedule applies only signed, credited or
 //! not. Client auth, the operator, and protocol activation stay commands only the node sequences.
 //! The operator can raise a market's stress level but never push it below what the automatic
 //! triggers set, and from `V8` neither a reduce-only mode nor a spread stops a trade that reduces
@@ -47,7 +47,7 @@ impl Engine {
     ///   they fail `ProtocolParams::check_notional_weighting`
     /// - `SetToxicityNotional` before parameters are set, over parameters that already weigh markouts
     ///   by notional, or with weighting that fails `NotionalWeighting::validate`
-    /// - `InitEmissions` before `V23`, once emissions are initialised, or with a schedule that starts
+    /// - `InitEmissions` before `V19`, once emissions are initialised, or with a schedule that starts
     ///   before the sequenced time or has a budget out of range
     pub(crate) fn admin(&mut self, cmd: &AdminCommand, events: &mut Vec<Event>) -> Result<(), String> {
         match cmd {

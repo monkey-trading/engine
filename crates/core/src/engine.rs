@@ -79,7 +79,7 @@ pub struct Engine {
     /// Dated annual rates from V18; omitted while empty to preserve older roots.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) benchmark_history: BenchmarkHistory,
-    /// MONKEY emissions from `V23`, once the operator's signed initialisation records the schedule.
+    /// MONKEY emissions from `V19`, once the operator's signed initialisation records the schedule.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) emissions: Option<Emissions>,
     /// Each account's realised trading result in the open emission period, until it is finalised.
@@ -193,7 +193,7 @@ impl Engine {
         self.now = sequenced.ts;
 
         let mut events = Vec::new();
-        // From `V23`, a period the sequenced time has passed is final before anything this command
+        // From `V19`, a period the sequenced time has passed is final before anything this command
         // does, so every effect of the command, market processing and rollovers included, belongs to
         // the next period.
         self.finalise_emissions(&mut events);

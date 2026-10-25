@@ -138,12 +138,12 @@ impl Harness {
         h
     }
 
-    /// `v17`, then `V18` and `V23`, with an emission schedule the operator signs that starts now
+    /// `v17`, then `V18` and `V19`, with an emission schedule the operator signs that starts now
     /// with `period_budget` base units a period.
     pub fn emitting(period_budget: u128) -> Self {
         let mut h = Harness::v17();
         h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V18 });
-        h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V23 });
+        h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V19 });
         let schedule = EmissionSchedule { start_ms: h.ts, period_budget: TokenUnits(period_budget) };
         h.operator_admin(AdminCommand::InitEmissions(schedule));
         h

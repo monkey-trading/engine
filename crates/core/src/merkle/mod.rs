@@ -9,7 +9,7 @@
 //!   (`uint32`), 3 an account's request nonce (`address`), 4 a credited custody reference (its
 //!   UTF-8 bytes), 5 a pending markout (its `uint64` index; see `Engine::markout_base`), 6 a
 //!   resting order (its `uint64` id), 7 a position (`address` account, `uint32` market), and from
-//!   `V23` 8 an account's emission entitlement (`address`) and 9 its emission period result
+//!   `V19` 8 an account's emission entitlement (`address`) and 9 its emission period result
 //!   (`address`).
 //! - **Paths.** The key's bits, most significant first, are the path from the root: bit `d`,
 //!   `(uint256(key) >> (255 - d)) & 1`, picks the child at depth `d + 1`, 0 left and 1 right.

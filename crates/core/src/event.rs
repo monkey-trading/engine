@@ -106,7 +106,7 @@ pub enum Event {
     AdminRejected {
         reason: String,
     },
-    /// From `V23`, an account's share of a finalised emission period: `weight` is its eligible
+    /// From `V19`, an account's share of a finalised emission period: `weight` is its eligible
     /// realised loss in USD, and `amount` the base units added to its entitlement.
     EmissionAllocated {
         account: AccountId,
@@ -114,7 +114,7 @@ pub enum Event {
         weight: Fixed,
         amount: TokenUnits,
     },
-    /// From `V23`, a finalised emission period: its budget, what accounts were allocated, and the
+    /// From `V19`, a finalised emission period: its budget, what accounts were allocated, and the
     /// remainder, cancelled for good.
     EmissionPeriodClosed {
         period: u64,
@@ -122,7 +122,7 @@ pub enum Event {
         allocated: TokenUnits,
         cancelled: TokenUnits,
     },
-    /// From `V23`, the periods from `first` to `last` that no command fell in, whose budgets are
+    /// From `V19`, the periods from `first` to `last` that no command fell in, whose budgets are
     /// cancelled for good.
     EmissionPeriodsCancelled {
         first: u64,

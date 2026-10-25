@@ -52,7 +52,7 @@ impl Engine {
         self.close_out_where(|acct| !acct.positions.is_empty(), events);
     }
 
-    /// Writes off a flat account's negative balance against the house, and from `V23` records the
+    /// Writes off a flat account's negative balance against the house, and from `V19` records the
     /// write-off in the account's emission period result.
     pub(crate) fn settle_bad_debt(&mut self, account: AccountId, events: &mut Vec<Event>) {
         let Some(acct) = self.accounts.get(&account) else { return };

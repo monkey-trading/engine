@@ -43,7 +43,7 @@ use crate::history::{INDEX_FILE, Reader};
 use crate::limits::ApiLimits;
 use crate::log::{CheckpointDomain, CheckpointParent, Manifest};
 use crate::sequencer::{Request, Sequencer, SequencerConfig, replay_path};
-use crate::tee::{EnclaveKey, MockAttestor, attest_key};
+use crate::tee::{AttestationBundle, EnclaveKey, MockAttestor, attest_bundle};
 use crate::test_support::{dev_config, sample_around, scratch_dir, sequencer_config};
 
 /// Tue 20 Oct 2026 14:00 UTC: where the scenario's clock starts, and period 0 with it.
@@ -279,10 +279,15 @@ impl Scenario {
         let sequencer = tokio::spawn(seq.run(rx));
         let poster = tokio::spawn(poster.run_with_recovery(work_rx, tx.clone(), recovery));
         let unlimited = |_: RateLimit| Quota::per_second(NonZeroU32::MAX);
+        let bundle = AttestationBundle {
+            enclave_address: self.key.address(),
+            config_sha256: [0; 32],
+            tls_public_key_sha256: [0; 32],
+        };
         let state = ApiState {
             tx,
             stream,
-            attestation: Arc::new(attest_key(&MockAttestor, &self.key, &[0; 32]).unwrap()),
+            attestation: Arc::new(attest_bundle(&MockAttestor, &bundle).unwrap()),
             auth: ClientAuth::Unsigned,
             operator: self.operator,
             mock_custody: true,

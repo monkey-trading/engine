@@ -117,7 +117,7 @@ pub enum AdminCommand {
     ActivateProtocol {
         version: ProtocolVersion,
     },
-    /// From `V23`, records the MONKEY emission schedule: when period 0 starts, no earlier than this
+    /// From `V19`, records the MONKEY emission schedule: when period 0 starts, no earlier than this
     /// command, and its budget. A log records it once, and only signed by the operator.
     InitEmissions(EmissionSchedule),
 }

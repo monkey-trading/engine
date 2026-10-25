@@ -20,9 +20,9 @@
 //! - **Credited reference:** `keccak256(bytes(reference))`.
 //! - **Markout:** the keccak-256 of its JSON encoding.
 //! - **Emission entitlement:** `keccak256(abi.encode(uint256 entitled))`, the account's cumulative
-//!   MONKEY entitlement in base units, from `V23`; the vault checks claims against this leaf.
+//!   MONKEY entitlement in base units, from `V19`; the vault checks claims against this leaf.
 //! - **Emission period result:** `keccak256(abi.encode(int128 realised, int128 writtenOff))`, the
-//!   account's realised PnL and written-off debt in the open emission period, from `V23`, until the
+//!   account's realised PnL and written-off debt in the open emission period, from `V19`, until the
 //!   period is finalised.
 //! - **Remaining state:** the keccak-256 of the JSON encoding of every engine field no other leaf
 //!   holds (`state.rs`).
@@ -43,7 +43,7 @@
 
 use std::collections::BTreeMap;
 
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 use alloy_sol_types::SolValue;
 use serde::{Deserialize, Serialize};
 
@@ -325,7 +325,7 @@ pub fn entitlement_key(account: AccountId) -> B256 {
 
 /// The value hash of an emission entitlement leaf.
 pub fn entitlement_hash(entitled: TokenUnits) -> B256 {
-    keccak(&[&alloy_primitives::U256::from(entitled.0).abi_encode()])
+    keccak(&[&U256::from(entitled.0).abi_encode()])
 }
 
 /// The key of `account`'s emission period result leaf.

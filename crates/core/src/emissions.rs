@@ -1,4 +1,4 @@
-//! MONKEY emissions, from protocol `V23`: fixed ten-minute budgets shared pro rata by eligible
+//! MONKEY emissions, from protocol `V19`: fixed ten-minute budgets shared pro rata by eligible
 //! realised losses, halving every 26,280 periods (182.5 days), from the start the operator's signed
 //! initialisation records.
 //!
@@ -204,13 +204,13 @@ impl Engine {
         self.entitlements.get(&account).copied().unwrap_or_default()
     }
 
-    /// Records the schedule, once, under `V23` or later.
+    /// Records the schedule, once, under `V19` or later.
     /// Error cases:
-    /// - before `V23`, or once emissions are initialised
+    /// - before `V19`, or once emissions are initialised
     /// - a schedule that fails its checks at the sequenced time (see `EmissionSchedule::validate`)
     pub(crate) fn init_emissions(&mut self, schedule: &EmissionSchedule) -> Result<(), String> {
-        if self.protocol_version < ProtocolVersion::V23 {
-            return Err(format!("emissions need protocol {:?}", ProtocolVersion::V23));
+        if self.protocol_version < ProtocolVersion::V19 {
+            return Err(format!("emissions need protocol {:?}", ProtocolVersion::V19));
         }
         if self.emissions.is_some() {
             return Err("emissions are already initialised".into());

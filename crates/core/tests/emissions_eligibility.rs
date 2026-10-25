@@ -1,4 +1,4 @@
-//! Which losses earn MONKEY from `V23`, through `Engine::apply`: netting within a period, fees and
+//! Which losses earn MONKEY from `V19`, through `Engine::apply`: netting within a period, fees and
 //! financing left out, liquidations counted less written-off debt, negative cash at the cutoff, and
 //! the signed one-time initialisation that starts the clock.
 
@@ -117,8 +117,8 @@ fn the_schedule_is_initialised_once_by_the_operator_and_never_backdated() {
             "{why}: {events:?}"
         );
     };
-    refused(&mut h, init(now, BUDGET), "V23");
-    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V23 });
+    refused(&mut h, init(now, BUDGET), "V19");
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V19 });
     // Once anything is credited only the operator's signature initialises it.
     let events = h.cmd(Command::Admin(init(now, BUDGET)));
     assert!(events.iter().any(|e| matches!(e, Event::AdminRejected { reason } if reason.contains("operator signs"))));
@@ -147,7 +147,7 @@ fn the_schedule_is_initialised_only_signed_even_before_any_credit() {
     // No house capital, so nothing is credited and other operator commands may still go unsigned.
     let mut h = Harness::zero_house(ProtocolVersion::V7);
     h.admin(AdminCommand::SetOperator(common::operator()));
-    for version in [ProtocolVersion::V18, ProtocolVersion::V23] {
+    for version in [ProtocolVersion::V18, ProtocolVersion::V19] {
         h.admin(AdminCommand::ActivateProtocol { version });
     }
     let schedule = EmissionSchedule { start_ms: h.ts, period_budget: TokenUnits(BUDGET) };

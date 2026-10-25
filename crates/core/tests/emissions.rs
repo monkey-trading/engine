@@ -1,4 +1,4 @@
-//! MONKEY emissions from `V23`, end to end through `Engine::apply`: fixed ten-minute budgets shared
+//! MONKEY emissions from `V19`, end to end through `Engine::apply`: fixed ten-minute budgets shared
 //! pro rata by net realised losses, rounding, cancellation, and finality at period boundaries.
 //! Eligibility details are in `emissions_eligibility.rs`; the schedule's arithmetic in
 //! `emissions_schedule.rs`.
