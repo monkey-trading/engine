@@ -205,6 +205,27 @@ impl Client {
         Ok(())
     }
 
+    /// Waits for every deposit of an account to be final, so payout capacity counts its principal.
+    /// Error cases:
+    /// - the principal stays unfinalised past its deadline
+    pub async fn wait_finalised(&self, user: &User) -> anyhow::Result<()> {
+        timeout(Duration::from_secs(20), async {
+            loop {
+                if let Ok(value) = self.get(&format!("/v1/accounts/{}", user.account)).await {
+                    let unfinalised =
+                        value["unfinalised_deposits"].as_str().and_then(|text| text.parse::<Fixed>().ok());
+                    if unfinalised.is_none() || unfinalised == Some(Fixed::ZERO) {
+                        return;
+                    }
+                }
+                sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .with_context(|| format!("account {} deposits did not finalise", user.account))?;
+        Ok(())
+    }
+
     /// Waits for custody to credit house capital to an exact house cash balance.
     /// Error cases:
     /// - the expected house cash is absent past its deadline

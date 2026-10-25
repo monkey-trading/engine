@@ -147,13 +147,18 @@ pub(super) async fn shortfall_and_fifo() -> anyhow::Result<()> {
     let a = User::new(1)?;
     let b = User::new(2)?;
     let loser = User::new(3)?;
+    node.chain.deposit(node.chain.funder, 10, true).await?;
+    // Payout capacity counts only credited USDC, so the head's partial amount needs this credit.
+    node.client.wait_house_cash("10").await?;
     for user in [&a, &b, &loser] {
         node.chain.deposit(user.address(), 10, false).await?;
         node.client.wait_balance(user, "10").await?;
     }
-    node.chain.deposit(node.chain.funder, 10, true).await?;
-    // Payout capacity counts only credited USDC, so the head's partial amount needs this credit.
-    node.client.wait_house_cash("10").await?;
+    // House principal was deposited first, so it is final once every trader deposit is: capacity
+    // then counts the full collateral the FIFO head is approved against below.
+    for user in [&a, &b, &loser] {
+        node.client.wait_finalised(user).await?;
+    }
     node.client.wait_mark(100).await?;
     filled(&node.client.order(&a, Side::Buy, "1").await?)?;
     filled(&node.client.order(&b, Side::Buy, "1").await?)?;

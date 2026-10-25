@@ -140,15 +140,15 @@ impl Chain {
                 &(chain.token, Address::from(key.address()), timelock, U256::from(10).pow(U256::from(18))).abi_encode(),
             )
             .await?;
-        // The node reads custody at the `safe` tag, which trails the mined head.
+        // The node's custody startup reads at the withdrawal finality tag, which trails `safe`.
         timeout(Duration::from_secs(10), async {
-            while chain.request::<String>("eth_getCode", json!([chain.vault, "safe"])).await? == "0x" {
+            while chain.request::<String>("eth_getCode", json!([chain.vault, "finalized"])).await? == "0x" {
                 sleep(Duration::from_millis(100)).await;
             }
             anyhow::Ok(())
         })
         .await
-        .context("Vault deployment reaching the safe block")??;
+        .context("Vault deployment reaching the finalized block")??;
         Ok(chain)
     }
 
