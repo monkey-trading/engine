@@ -57,8 +57,8 @@ marked ready, may not.
   and Mediums filed as issues, remain unfixed after the last round. A change after it is
   re-checked by its delta, as the review loop says: a mechanical rebase onto `main`, or a
   protocol-version renumber the delta script matches, needs no new round, and any other change
-  gets one round on the residual, or on the full diff when the residual changes behaviour beyond
-  resolving a conflict.
+  gets one round on the residual and the change itself, or on the full diff when either changes
+  behaviour beyond resolving a conflict.
 - **Local checks** for the affected crates passed, per git-workflow; CI runs every job
   the PR's paths affect.
 

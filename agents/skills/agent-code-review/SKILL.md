@@ -1,6 +1,6 @@
 ---
 name: agent-code-review
-description: Review a branch or GitHub PR against the team development checklist, with the current agent by default, or with independent Claude and Codex reviewers for each requested low, medium, or high review level. Writes local Markdown only; to post the findings on a GitHub PR, use agent-review-pr. Also says how any skill fixes an accepted finding — by class, not by instance — and when a PR's review loop ends.
+description: Review a branch or GitHub PR against the team development checklist, with the current agent by default, or with independent Claude and Codex reviewers for each requested low, medium, or high review level. Writes local Markdown only; to post the findings on a GitHub PR, use agent-review-pr. Also says how any skill fixes an accepted finding — by class, not by instance — when a PR's review loop ends, and how a change after it is re-checked.
 ---
 
 # agent-code-review
@@ -51,8 +51,10 @@ ordinary reviews; do not automatically add Pashov agents or duplicate audit pass
   read-only `gh` commands.
 - **Delta scope:** a delta round after the review loop ended ([The review loop](#the-review-loop)):
   the residual [scripts/review-delta.sh](scripts/review-delta.sh) prints, saved as
-  `.residual.diff`, with the full reviewed diff (`<reviewed-base>...<reviewed-head>`) saved as
-  `.branch.diff` for context.
+  `.residual.diff`, and the change itself in context, saved as `.change.diff`, with the full
+  reviewed diff (`<reviewed-base>...<reviewed-head>`) saved as `.reviewed.diff` for context.
+  `scope.md` records both base and head pairs. The round reads source at the new head, and the
+  next re-check starts from its new base and head.
 
 Honor a user-provided base ref, path subset, or commit range exactly. In PR scope, re-check the
 head SHA immediately before the review begins. Use only read-only `gh` commands, and never print or
@@ -196,9 +198,9 @@ recorded invariants add to what it checks and never narrow it.
 
 A PR is marked ready through review rounds, numbered from the first on its branch. Each round runs
 this skill in multi-agent mode at `medium` or higher over the PR's full diff
-([agent-create-pr](../agent-create-pr/SKILL.md#before-a-pr-is-ready-for-review)), or over a
-residual in a delta round, and every accepted Critical, High, and Medium finding is fixed by class
-before the next round.
+([agent-create-pr](../agent-create-pr/SKILL.md#before-a-pr-is-ready-for-review)), or in a delta
+round over the residual and the change itself, and every accepted Critical, High, and Medium
+finding is fixed by class before the next round.
 
 - **The round log is the count.** The branch's fix notes
   ([Fixing an accepted finding](#fixing-an-accepted-finding)) open with a round log: one line per
@@ -216,25 +218,31 @@ before the next round.
   [scripts/review-delta.sh](scripts/review-delta.sh) with the base and head that round reviewed
   (its `scope.md`) and the new ones:
   `<reviewed-base> <reviewed-head> <new-base> <new-head> [OLD=NEW ...]`. It compares the reviewed
-  patch with the new one, each taken against its own base so `main`'s changes drop out, after
-  mapping each renumbered version label back (`V21=V23 v21=v23`) and ignoring reference logs. It
-  exits 0 when the patches match, and otherwise prints the residual and exits 1. Record in the
-  round log which re-check ran (no round, a delta round, or a full-diff round) and the script's
-  exit status.
+  patch with the new one, each taken against its own base so `main`'s changes drop out, and
+  ignores reference logs. For a renumber, the pairs rename in the reviewed patch the PR's version
+  labels (`V21=V23 v21=v23`) and, when `main` has gained versions, its previous latest
+  (`V20=V22 v20=v22`), so a site the renumber missed shows. The script exits 0 when the patches
+  match and 1 with the residual printed; any other exit is a failure to fix before relying on it.
+  Record in the round log which re-check ran (no round, a delta round, or a full-diff round) and
+  the script's exit status.
 - **A renumber the script matches needs no round.** A protocol-version renumber, with the
-  reference logs it generates, needs no review round when the script exits 0 with the renumber's
-  label pairs. The PR still needs its local checks
+  reference logs it generates, needs no review round when the script exits 0 with its label
+  pairs. The renumber changes only labels and reference logs; anything else made with it is
+  another change. The PR still needs its local checks
   ([git-workflow](../../rules/git-workflow.md#local-checks-before-push)) and a green `ci-passed`
   on the new head.
 - **Any other change gets a delta round.** A rebase that resolves conflicts, a fix for a failed
   check or dev scenario, a fix for a review comment on a ready PR, a change the user asks for, or
   any other change to the patch moves the PR back to draft for one delta round: the same reviewer
-  pair, in fresh sessions and cross-validated as usual, reviews the residual the script prints,
-  with the full reviewed diff as context. The round is numbered in the round log, and the rule
-  below for Mediums from round 3 applies to it whatever its number.
-- **A behaviour change needs a full-diff round.** When the residual changes behaviour beyond
-  resolving a conflict, such as a new code path or changed semantics in the feature's own logic,
-  the round reviews the PR's full diff instead.
+  pair, in fresh sessions and cross-validated as usual, reviews the residual the script prints and
+  the change itself in context (the new diff of each file where a rebase resolved a conflict, and
+  each commit the change added), with the full reviewed diff as context. The residual has no
+  context lines, so it cannot show where an unchanged line now sits; the round runs even when the
+  script exits 0. It is numbered in the round log, and the rule below for Mediums from round 3
+  applies to it.
+- **A behaviour change needs a full-diff round.** When the residual or the change itself changes
+  behaviour beyond resolving a conflict, such as a new code path or changed semantics in the
+  feature's own logic, the round reviews the PR's full diff instead.
 - **Critical and High have no round cap.** Keep fixing and re-reviewing until a round accepts none.
 - **From round 3, Mediums go to bug issues.** A round numbered 3 or later — including one in a
   reopened loop — that accepts Mediums but no Critical or High ends the loop as a clean round
