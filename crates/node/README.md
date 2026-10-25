@@ -224,7 +224,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/history/rebuild.rs` — exact typed-prefix witnesses for log-derived migration and repair
 - `src/history/startup.rs` — the authenticated history plan: read-only until preflight, then activation
 - `src/history/runtime/` — the supervised history owner: indexing, checkpoint sealing, and repair
-  (`mod.rs`), and signed heads, retained-version pins, and collection (`heads.rs`)
+  (`mod.rs`), completing a capture into the paired cache (`capture.rs`), and signed heads,
+  retained-version pins, and collection (`heads.rs`)
 - `src/history/tests/mod.rs` — history index tests: pages, filters, retention, following the log,
   and restarts
 - `src/history/tests/recovery.rs` — startup checks against the log, readiness to serve, and
@@ -771,8 +772,10 @@ was signed leaves behind, and reclaim interrupted cache files. Until then recove
 with such a journal as the file stands, and every read is still checked against a signed root; a
 kill while SQLite was writing a commit's pages can leave that unreadable, and then recovery replays
 the whole log. A
-failed cache write emits `snapshot_write_failed` and keeps the log usable; a failed log sync stays
-fatal. When the catalog cannot take a completed segment, the node warns once
+failed cache write emits `snapshot_write_failed` and keeps the log usable. Failures at successive
+checkpoints are one alert episode, which the next cache written resolves. The first cache written
+after each start resolves it too, closing an episode an earlier run left open. A failed log sync
+stays fatal. When the catalog cannot take a completed segment, the node warns once
 (`log_catalog_unavailable`) and keeps rotating, holding up to 64 completed segments in memory; past
 that the active segment grows, and the catalog retries at each checkpoint. A catalog write that
 rolled back leaves the catalog writable; only a commit of uncertain outcome stops it until restart.

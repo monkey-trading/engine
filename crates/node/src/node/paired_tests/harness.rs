@@ -160,6 +160,18 @@ impl Node {
         .expect("history reaches the flushed frontier");
     }
 
+    /// Stops the history owner as a failed task would, returning once its input queue is closed.
+    pub(crate) async fn stop_history(&self) {
+        self.history.abort();
+        timeout(Duration::from_secs(30), async {
+            while !self.sealing.is_closed() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the history owner closes its queue");
+    }
+
     /// Hands the sequencer a fresh trusted time sample, as the node's sampler would; a run longer
     /// than the no-sample grace otherwise refuses every stamp.
     pub(crate) async fn refresh_time(&self) {

@@ -20,10 +20,11 @@ use crate::snapshot::head::StoreId;
 use crate::snapshot::lifecycle::Lifecycle;
 use crate::snapshot::{
     pins::Pins,
-    sealing::{Capture, Endpoint, HistorySeal},
+    sealing::{Capture, Endpoint, WriteAlert},
 };
 use crate::tee::EnclaveKey;
 
+mod capture;
 mod heads;
 
 /// Commands indexed between signed heads outside captured checkpoints and shutdown, and between
@@ -106,6 +107,8 @@ struct Actor {
     key: Arc<EnclaveKey>,
     pins: Pins,
     pending: Option<Box<Capture>>,
+    /// Shared with the sealing endpoint: whether a `snapshot_write_failed` episode may be open.
+    write_alert: WriteAlert,
     /// Commands taken this turn and not yet indexed; one batch update indexes them.
     commands: Vec<crate::log::CommandEntry>,
     retained_catalog: BTreeMap<Offset, Arc<crate::log::catalog::LazyCatalogView>>,
@@ -153,6 +156,7 @@ impl Runtime {
                 key,
                 pins,
                 pending: None,
+                write_alert: endpoint.write_alert.clone(),
                 commands: Vec::new(),
                 retained_catalog: BTreeMap::new(),
                 last_entry: None,
@@ -206,7 +210,14 @@ impl Runtime {
     pub(crate) async fn run(self, mut feed: Feed) -> Result<()> {
         let Self { actor, input, received, mut repair, stopped, .. } = self;
         let guard = Stop { input: input.clone(), stopped: stopped.clone() };
-        let mut written = spawn_blocking(move || actor.run(received));
+        // A test's collector sees the blocking owner's alerts; production logs to the global subscriber.
+        #[cfg(test)]
+        let collector = tracing::dispatcher::get_default(Clone::clone);
+        let mut written = spawn_blocking(move || {
+            #[cfg(test)]
+            let _collector = tracing::dispatcher::set_default(&collector);
+            actor.run(received)
+        });
         let forward = async {
             let mut repair_open = true;
             loop {
@@ -302,7 +313,7 @@ impl Actor {
                     let checkpoint = self.at_checkpoint.clone();
                     self.complete_capture(capture, checkpoint.as_ref());
                 } else if self.last_entry.is_some_and(|last| last > capture.snapshot.offset) {
-                    warn!(alert = "snapshot_write_failed", "optional checkpoint fence was already crossed");
+                    self.capture_failed(capture.snapshot.offset.seq, "optional checkpoint fence was already crossed");
                 } else {
                     self.pending = Some(capture);
                 }
@@ -362,34 +373,6 @@ impl Actor {
             self.complete_capture(capture, checkpoint.as_ref());
         }
         Ok(())
-    }
-
-    /// Publishes the paired cache for a capture whose checkpoint is the last entry taken, `taken`
-    /// when that entry is a checkpoint; any other entry drops the capture.
-    fn complete_capture(&mut self, capture: Box<Capture>, taken: Option<&crate::log::Checkpoint>) {
-        let offset = capture.snapshot.offset;
-        if self.last_entry != Some(offset) || taken != Some(&capture.snapshot.checkpoint) {
-            warn!(alert = "snapshot_write_failed", "history did not observe the exact captured checkpoint");
-            return;
-        }
-        // A rename followed by failed directory sync must not release this version's data.
-        self.retained_catalog.insert(offset, capture.catalog_pin.clone());
-        let mut history = HistorySeal {
-            id: self.current.id,
-            store: &self.current.store,
-            index: &self.current.index,
-            pins: &mut self.pins,
-        };
-        match (*capture).complete(&self.cfg, &mut history, &self.key, &self.lifecycle) {
-            Ok(()) => {
-                // The pair's history certificate is a signed head at this checkpoint.
-                let head = self.current.index.head();
-                self.certified_seq = head.last_seq();
-                self.last_certified = Some(head.root);
-            }
-            Err(error) => warn!(alert = "snapshot_write_failed", seq = offset.seq, "keeping earlier caches: {error:#}"),
-        }
-        self.refresh_pins();
     }
 
     /// Indexes the buffered commands in updates of at most `INDEX_BATCH`, checking for a requested
