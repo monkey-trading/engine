@@ -20,7 +20,7 @@ pub use chain::KDS_BASE_URL;
 mod release;
 pub use release::ReleaseManifest;
 mod report;
-use self::report::SnpReport;
+use self::report::{SnpReport, Tcb};
 #[cfg(test)]
 mod tests;
 
@@ -54,6 +54,20 @@ pub fn load_attestation(path: &Path) -> anyhow::Result<Attestation> {
     serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))
 }
 
+/// Loads the attestation and release manifest files and verifies the attestation against the
+/// release. This is what `engine verify-attestation` runs, so the scenario exercises the same
+/// file-loading path the CLI takes.
+/// Error cases:
+/// - either file cannot be loaded, or verification fails (see `verify_attestation`)
+pub async fn verify_attestation_files(
+    attestation: &Path,
+    release: &Path,
+    options: &Options<'_>,
+) -> anyhow::Result<VerifiedAttestation> {
+    let release = ReleaseManifest::load(release)?;
+    verify_attestation(&load_attestation(attestation)?, &release, options).await
+}
+
 /// Verifies `attestation` against `release` (see the module docs). On success the quote proved
 /// the enclave address runs the named release with a listed configuration.
 /// Error cases:
@@ -77,6 +91,7 @@ pub async fn verify_attestation(
         root,
         &roots(options)?,
     )?;
+    chain.bind_vcek(&report)?;
     report.verify_signature(&chain.vcek_public_key()?)?;
 
     let bundle = crate::tee::AttestationBundle::decode(&unhex(&attestation.bundle)?)
@@ -113,9 +128,9 @@ pub async fn verify_attestation(
         report.policy,
         release.policy
     );
-    let minimum = release.minimum_tcb.into();
+    let minimum: Tcb = release.minimum_tcb.into();
     ensure!(
-        report.reported_tcb >= minimum,
+        report.reported_tcb.meets(minimum),
         "the quote's reported TCB {:?} is below the release minimum {:?}",
         report.reported_tcb,
         minimum

@@ -2,7 +2,8 @@
 //! signs VCEKs, and the vendor root that signs the intermediate. The roots are pinned in the
 //! binary, so nothing fetched to verify a quote enters the trust set. A quote's chain is fetched
 //! from the vendor's key-distribution service by the chip id and reported TCB the quote carries,
-//! which binds the served VCEK to that chip and TCB.
+//! and the VCEK's signed extensions must match the quote's chip id and reported TCB, so a served
+//! VCEK is bound to the chip that produced the report.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,15 +16,30 @@ use rustls::RootCertStore;
 use x509_parser::certificate::X509Certificate;
 use x509_parser::prelude::FromDer;
 
-use super::report::SnpReport;
+use super::report::{SnpReport, Tcb};
 
 /// The vendor's key-distribution service, which issues a chip's VCEK and serves the intermediate
 /// and root certificates.
 pub const KDS_BASE_URL: &str = "https://kdsintf.amd.com";
 
-/// How long one collateral fetch may take, and how often a failed fetch is retried.
+/// How long one collateral fetch may take, how often a transient failure is retried, and the most
+/// bytes an answer may carry.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(15);
 const FETCH_ATTEMPTS: usize = 3;
+const FETCH_BACKOFF: Duration = Duration::from_millis(500);
+const MAX_COLLATERAL_BYTES: usize = 1024 * 1024;
+
+/// The vendor roots compiled into the binary. Rotation adds a file here; it never removes one.
+const VENDOR_ROOT_PEMS: &[&str] =
+    &[include_str!("roots/ark-milan.pem"), include_str!("roots/ark-genoa.pem"), include_str!("roots/ark-turin.pem")];
+
+/// The vendor's extension OIDs signed into every VCEK, binding it to the chip and TCB it serves.
+const OID_STRUCT_VERSION: &str = "1.3.6.1.4.1.3704.1.1";
+const OID_BL_SPL: &str = "1.3.6.1.4.1.3704.1.3.1";
+const OID_TEE_SPL: &str = "1.3.6.1.4.1.3704.1.3.2";
+const OID_SNP_SPL: &str = "1.3.6.1.4.1.3704.1.3.3";
+const OID_UCODE_SPL: &str = "1.3.6.1.4.1.3704.1.3.8";
+const OID_HWID: &str = "1.3.6.1.4.1.3704.1.4";
 
 /// Root certificates the chain is pinned to, by DER bytes. `roots` starts from the vendor roots
 /// compiled into the binary; a caller may add one more, never remove one.
@@ -84,6 +100,44 @@ impl QuoteChain {
         Ok(chain)
     }
 
+    /// Requires the VCEK's signed extensions to bind it to `report`: the struct version must be
+    /// the implemented 0 (Milan, Genoa, Siena), the hardware id to the quote's chip id, and each
+    /// security patch level to the quote's reported TCB. A chain whose VCEK certifies another
+    /// chip or TCB — one a mirror or a `--kds` override could serve from genuine vendor
+    /// certificates — is refused here.
+    /// Error cases:
+    /// - an extension is missing or malformed, carries an unsupported struct version, or
+    ///   disagrees with the report's chip id or reported TCB
+    pub fn bind_vcek(&self, report: &SnpReport<'_>) -> anyhow::Result<()> {
+        let cert = parse_cert(&self.ders[0])?;
+        let extension = |oid: &str| {
+            cert.extensions()
+                .iter()
+                .find(|extension| extension.oid.to_id_string() == oid)
+                .with_context(|| format!("VCEK carries no extension {oid}"))
+        };
+        let integer = |oid: &str, what: &str| -> anyhow::Result<u8> { extension_integer(extension(oid)?, what) };
+        let struct_version = integer(OID_STRUCT_VERSION, "struct version")?;
+        ensure!(
+            struct_version == 0,
+            "unsupported VCEK TCB struct version {struct_version}; only version 0 (Milan, Genoa, Siena) is implemented"
+        );
+        let hwid = extension_hwid(extension(OID_HWID)?)?;
+        ensure!(hwid == report.chip_id, "VCEK hardware id does not match the quote's chip id");
+        let tcb = Tcb {
+            boot_loader: integer(OID_BL_SPL, "boot loader SPL")?,
+            tee: integer(OID_TEE_SPL, "TEE SPL")?,
+            snp: integer(OID_SNP_SPL, "SNP SPL")?,
+            microcode: integer(OID_UCODE_SPL, "microcode SPL")?,
+        };
+        ensure!(
+            tcb == report.reported_tcb,
+            "VCEK TCB {tcb:?} does not match the quote's reported TCB {:?}",
+            report.reported_tcb
+        );
+        Ok(())
+    }
+
     /// The VCEK's public key as its SEC 1 uncompressed point, which the verifier's signature
     /// algorithm parses.
     pub fn vcek_public_key(&self) -> anyhow::Result<Vec<u8>> {
@@ -138,41 +192,64 @@ impl<'a> Collateral<'a> {
             tcb.snp,
             tcb.microcode
         );
-        self.fetch_pem_cert(&url, "VCEK").await
+        self.fetch_cert(&url, "VCEK").await
     }
 
-    /// The intermediate and root certificates for this processor, issuer chain order.
+    /// The intermediate and root certificates for this processor, issuer chain order. The vendor
+    /// serves these as PEM, unlike the VCEK endpoint's DER.
     /// Error cases:
     /// - the service does not answer, or answers without both certificates
     pub async fn issuer_chain(&self) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
         let url = format!("{}/vcek/v1/{}/cert_chain", self.base.trim_end_matches('/'), self.processor);
-        let pem = self.fetch(&url).await?;
-        let certs = pem_certificates(&pem)?;
+        let body = self.fetch(&url).await?;
+        let pem = std::str::from_utf8(&body).context("collateral PEM is not ASCII")?;
+        let certs = pem_certificates(pem)?;
         let [intermediate, root] = certs.as_slice() else {
             bail!("cert chain answered with {} certificates, want 2", certs.len());
         };
         Ok((intermediate.clone(), root.clone()))
     }
 
-    async fn fetch_pem_cert(&self, url: &str, what: &str) -> anyhow::Result<Vec<u8>> {
-        let pem = self.fetch(url).await?;
-        pem_certificates(&pem)?
-            .into_iter()
-            .next()
-            .with_context(|| format!("collateral answered without a {what} certificate"))
+    /// One certificate, accepting the vendor's VCEK endpoint DER or the PEM other endpoints serve.
+    /// Error cases:
+    /// - the service does not answer, or answers without a certificate
+    async fn fetch_cert(&self, url: &str, what: &str) -> anyhow::Result<Vec<u8>> {
+        let body = self.fetch(url).await?;
+        if body.starts_with(b"-----BEGIN") {
+            pem_certificates(std::str::from_utf8(&body).context("collateral PEM is not ASCII")?)?
+                .into_iter()
+                .next()
+                .with_context(|| format!("collateral answered without a {what} certificate"))
+        } else {
+            ensure!(body.len() <= MAX_COLLATERAL_BYTES, "collateral answer is too large");
+            Ok(body)
+        }
     }
 
-    async fn fetch(&self, url: &str) -> anyhow::Result<String> {
+    /// Fetches `url`, retrying a transient failure — a transport error, 429, or 5xx — with a
+    /// short backoff, and refusing a 4xx without another try.
+    /// Error cases:
+    /// - the service keeps failing, or answers 4xx
+    async fn fetch(&self, url: &str) -> anyhow::Result<Vec<u8>> {
         let mut last = None;
-        for _ in 0..FETCH_ATTEMPTS {
+        for attempt in 0..FETCH_ATTEMPTS {
             match self.client.get(url).send().await {
                 Ok(response) => {
-                    if response.status().is_success() {
-                        return response.text().await.context("reading the collateral answer");
+                    let status = response.status();
+                    if status.is_success() {
+                        let body = response.bytes().await.context("reading the collateral answer")?;
+                        ensure!(body.len() <= MAX_COLLATERAL_BYTES, "collateral answer is too large");
+                        return Ok(body.to_vec());
                     }
-                    last = Some(format!("{} answered {}", url, response.status()));
+                    last = Some(format!("{url} answered {status}"));
+                    if !status.is_server_error() && status.as_u16() != 429 {
+                        break;
+                    }
                 }
                 Err(err) => last = Some(format!("fetching {url}: {err}")),
+            }
+            if attempt + 1 < FETCH_ATTEMPTS {
+                tokio::time::sleep(FETCH_BACKOFF).await;
             }
         }
         Err(anyhow::anyhow!(last.expect("at least one attempt")))
@@ -198,16 +275,44 @@ fn parse_pem_cert(pem: &str) -> anyhow::Result<Vec<u8>> {
 /// Error cases:
 /// - a PEM block is malformed
 fn pem_certificates(pem: &str) -> anyhow::Result<Vec<Vec<u8>>> {
-    x509_parser::pem::Pem::iter_from_buffer(pem.as_bytes())
-        .map(|block| {
-            let block = block.map_err(|err| anyhow::anyhow!("malformed PEM: {err}"))?;
-            Ok((block.label, block.contents))
-        })
-        .filter(|block| block.as_ref().is_ok_and(|(label, _)| label == "CERTIFICATE"))
-        .map(|block| block.map(|(_, der)| der))
-        .collect()
+    let mut certs = Vec::new();
+    for block in x509_parser::pem::Pem::iter_from_buffer(pem.as_bytes()) {
+        let block = block.map_err(|err| anyhow::anyhow!("malformed PEM: {err}"))?;
+        if block.label == "CERTIFICATE" {
+            certs.push(block.contents);
+        }
+    }
+    Ok(certs)
 }
 
-/// The vendor roots compiled into the binary. Rotation adds a file here; it never removes one.
-const VENDOR_ROOT_PEMS: &[&str] =
-    &[include_str!("roots/ark-milan.pem"), include_str!("roots/ark-genoa.pem"), include_str!("roots/ark-turin.pem")];
+/// A DER INTEGER extension value as a `u8`.
+/// Error cases:
+/// - the value is not a DER INTEGER or does not fit a `u8`
+fn extension_integer(extension: &x509_parser::extensions::X509Extension<'_>, what: &str) -> anyhow::Result<u8> {
+    let value = extension.value;
+    ensure!(value.first() == Some(&0x02), "VCEK {what} extension is not a DER INTEGER");
+    let len = *value.get(1).context("VCEK {what} extension is truncated")? as usize;
+    let content = value.get(2..2 + len).context("VCEK {what} extension is truncated")?;
+    match content {
+        [byte] => Ok(*byte),
+        [0, byte] => Ok(*byte),
+        _ => bail!("VCEK {what} extension does not fit a u8"),
+    }
+}
+
+/// The hardware id extension value: the vendor signs the 64 bytes with no ASN.1 tag; an OCTET
+/// STRING-wrapped form is accepted in case the vendor adds the tag.
+/// Error cases:
+/// - the value is neither 64 raw bytes nor a DER OCTET STRING holding 64 bytes
+fn extension_hwid(extension: &x509_parser::extensions::X509Extension<'_>) -> anyhow::Result<[u8; 64]> {
+    let value = extension.value;
+    if value.len() == 64 {
+        return value.try_into().context("VCEK hardware id extension is not 64 bytes");
+    }
+    ensure!(value.first() == Some(&0x04), "VCEK hardware id extension is not an OCTET STRING");
+    let len = *value.get(1).context("VCEK hardware id extension is truncated")? as usize;
+    value
+        .get(2..2 + len)
+        .and_then(|bytes| bytes.try_into().ok())
+        .context("VCEK hardware id extension does not hold 64 bytes")
+}

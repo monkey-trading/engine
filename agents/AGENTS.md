@@ -205,9 +205,9 @@ Run from the repo root:
   --release <release.toml>` additionally verifies an attestation against the release manifest and
   requires every checkpoint signer to be the enclave address it names
 - Verify an enclave's attestation: `cargo run -p engine-node -- verify-attestation
-  --attestation <attestation.json> --release <release.toml>`; the quote's certificate chain must
-  reach a vendor root pinned in the binary, and the measurement, policy, reported TCB, and
-  configuration must match the release; a mock quote never verifies
+  --attestation <attestation.json> --release <release.toml> --processor <name>`; the quote's
+  certificate chain must reach a vendor root pinned in the binary, and the measurement, policy,
+  reported TCB, and configuration must match the release; a mock quote never verifies
 - Contracts, from `contracts/`: `forge soldeer install` (once, fetches the pinned dependencies),
   then `forge fmt --check`, `forge build`, and `forge test`
 - Alert outbox kill/restart dev scenario: `./scripts/dev-alert-outbox.sh` (needs `python3`,

@@ -10,9 +10,8 @@ use engine_core::types::AccountId;
 use engine_node::admin::{self, AdminArgs, HexKey, KeyEnv};
 use engine_node::log::CheckpointDomain;
 use engine_node::{
-KDS_BASE_URL, NodeConfig, ReleaseManifest, VerifiedAttestation, VerifyOptions, ensure_signers_verified,
-    init_logging, init_telemetry, load_attestation, replay_path_with_custody, replay_path_with_trust, run_dedicated,
-    verify_attestation,
+KDS_BASE_URL, NodeConfig, VerifiedAttestation, VerifyOptions, ensure_signers_verified, init_logging,
+    init_telemetry, replay_path_with_custody, replay_path_with_trust, run_dedicated, verify_attestation_files,
 };
 
 #[derive(Subcommand)]
@@ -47,7 +46,7 @@ enum Cmd {
         release: Option<PathBuf>,
         /// The vendor processor name for the certificate chain, as the vendor publishes it
         /// (the CPU generation's codename, for example Milan, Genoa, or Turin).
-        #[arg(long, required = false)]
+        #[arg(long, requires = "attestation")]
         processor: Option<String>,
         /// The vendor key-distribution service's base URL; the vendor's service unless overridden.
         #[arg(long, default_value_t = KDS_BASE_URL.to_owned())]
@@ -70,8 +69,8 @@ enum Cmd {
         release: PathBuf,
         /// The vendor processor name for the certificate chain, as the vendor publishes it
         /// (the CPU generation's codename, for example Milan, Genoa, or Turin).
-        #[arg(long, required = false)]
-        processor: Option<String>,
+        #[arg(long)]
+        processor: String,
         /// The vendor key-distribution service's base URL; the vendor's service unless overridden.
         #[arg(long, default_value_t = KDS_BASE_URL.to_owned())]
         kds: String,
@@ -111,6 +110,15 @@ fn main() -> anyhow::Result<()> {
         Cmd::Replay { log: path, chain_id, vault, signer, custody_config, attestation, release, processor, kds, root } => {
             init_logging("info")?;
             let domain = chain_id.zip(vault).map(|(chain_id, vault)| CheckpointDomain { chain_id, vault });
+            // Verify the attestation before replaying: its enclave address is the trusted signer
+            // for withdrawal entries, so a log whose checkpoints and withdrawals the verified
+            // enclave signed replays without a separate `--signer`.
+            let verified = attestation
+                .map(|attestation| {
+                    let release = release.expect("clap requires --release with --attestation");
+                    verify(&attestation, &release, &processor, &kds, root.as_deref())
+                })
+                .transpose()?;
             let mut replayed = if let Some(config) = custody_config {
                 let cfg = NodeConfig::load(&config)?;
                 let signer = signer.ok_or_else(|| anyhow::anyhow!("--custody-config requires --signer"))?;
@@ -119,18 +127,20 @@ fn main() -> anyhow::Result<()> {
                     .build()?
                     .block_on(replay_path_with_custody(&path, &cfg, signer))?
             } else {
-                let replayed = replay_path_with_trust(&path, domain, signer)?;
-                if let Some(signer) = signer {
-                    anyhow::ensure!(
-                        replayed.checkpoint_signers.iter().all(|named| *named == signer),
-                        "checkpoint signer differs from --signer"
-                    );
-                }
-                replayed
+                let trusted = match (signer, verified.as_ref()) {
+                    (Some(signer), Some(verified)) => {
+                        anyhow::ensure!(
+                            signer == verified.enclave_address,
+                            "--signer {signer} differs from the attested enclave address {}",
+                            verified.enclave_address
+                        );
+                        Some(signer)
+                    }
+                    (signer, verified) => signer.or_else(|| verified.map(|verified| verified.enclave_address)),
+                };
+                replay_path_with_trust(&path, domain, trusted)?
             };
-            if let Some(attestation) = attestation {
-                let release = ReleaseManifest::load(&release.expect("clap requires --release with --attestation"))?;
-                let verified = verify(&attestation, &release, &processor, &kds, root.as_deref())?;
+            if let Some(verified) = verified {
                 ensure_signers_verified(&replayed.checkpoint_signers, &verified)?;
                 println!(
                     "attestation verified: release {}, enclave {}, config {}",
@@ -168,8 +178,7 @@ fn main() -> anyhow::Result<()> {
         }
         Cmd::VerifyAttestation { attestation, release, processor, kds, root } => {
             init_logging("info")?;
-            let release = ReleaseManifest::load(&release)?;
-            let verified = verify(&attestation, &release, &processor, &kds, root.as_deref())?;
+            let verified = verify(&attestation, &release, &Some(processor), &kds, root.as_deref())?;
             println!(
                 "verified: release {}, enclave {}, config {}",
                 verified.release_name, verified.enclave_address, verified.config_name
@@ -186,23 +195,23 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
-/// Verifies the attestation file against the release manifest. See `verify_attestation`'s error
-/// cases; the runtime exists for the collateral fetches.
+/// Verifies the attestation file against the release manifest file, on a runtime for the
+/// collateral fetches. See `verify_attestation`'s error cases.
 fn verify(
     attestation: &std::path::Path,
-    release: &ReleaseManifest,
+    release: &std::path::Path,
     processor: &Option<String>,
     kds: &str,
     root: Option<&std::path::Path>,
 ) -> anyhow::Result<VerifiedAttestation> {
-    let processor = processor.as_deref().context("--processor is required to verify a quote")?;
+    let processor = processor.as_deref().context("--processor is required with --attestation")?;
     let root_pem = root.map(std::fs::read_to_string).transpose()?;
     let options = VerifyOptions { processor, kds_base: kds, root_pem: root_pem.as_deref() };
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("building the subcommand runtime")
-        .block_on(verify_attestation(&load_attestation(attestation)?, release, &options))
+        .block_on(verify_attestation_files(attestation, release, &options))
 }
 
 #[cfg(test)]

@@ -2,14 +2,15 @@
 //! configfs-tsm guest reads from `outblob` on SEV-SNP. The layout is the version-2 report the
 //! platform firmware issues; offsets are fixed and little-endian where the field is an integer.
 
-use anyhow::{Context, bail, ensure};
+use anyhow::{Context, ensure};
 
 /// The report size every supported version occupies.
 pub const REPORT_LEN: usize = 0x2A0 + 512;
 
 /// The bytes the report signature covers.
 const SIGNED_LEN: usize = 0x2A0;
-/// Offset of the ECDSA signature block: `R` (72 bytes), `S` (72 bytes), then reserved.
+/// Offset of the ECDSA signature block: `R` (72 bytes), `S` (72 bytes), then reserved. `R` and
+/// `S` carry their 48-byte value little-endian in the first 48 bytes of the field, zero-extended.
 const SIGNATURE_OFFSET: usize = 0x2A0;
 /// The scalar size of the P-384 curve; `R` and `S` hold a value of at most this many bytes.
 const SCALAR_LEN: usize = 48;
@@ -22,13 +23,16 @@ const MEASUREMENT_OFFSET: usize = 0x90;
 const REPORTED_TCB_OFFSET: usize = 0x180;
 const CHIP_ID_OFFSET: usize = 0x1A0;
 
-/// The only report version this parser implements.
-const SUPPORTED_VERSION: u32 = 2;
+/// The report versions this parser implements. Every field the verifier reads sits at the same
+/// offset in each: later versions only append CPUID and firmware-version fields.
+const SUPPORTED_VERSIONS: [u32; 2] = [2, 3];
 /// 1 means ECDSA with the P-384 curve and SHA-384.
 const ECDSA_P384_SHA384: u32 = 1;
 
-/// The security-version levels a TCB value carries, high byte to low.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+/// The security-version levels a TCB value carries, in the packed form's byte order:
+/// `boot_loader` in bits 7:0, `tee` in 15:8, `snp` in 55:48, and `microcode` in 63:56, the two
+/// reserved bytes between `tee` and `snp` ignored.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Tcb {
     pub boot_loader: u8,
     pub tee: u8,
@@ -39,20 +43,29 @@ pub struct Tcb {
 impl Tcb {
     fn from_packed(value: u64) -> Self {
         Self {
-            boot_loader: (value >> 56) as u8,
-            tee: (value >> 48) as u8,
-            snp: (value >> 40) as u8,
-            microcode: (value >> 32) as u8,
+            boot_loader: value as u8,
+            tee: (value >> 8) as u8,
+            snp: (value >> 48) as u8,
+            microcode: (value >> 56) as u8,
         }
     }
 
     /// The packed form the report carries.
     #[cfg(test)]
     pub fn to_packed(self) -> u64 {
-        ((self.boot_loader as u64) << 56)
-            | ((self.tee as u64) << 48)
-            | ((self.snp as u64) << 40)
-            | ((self.microcode as u64) << 32)
+        (self.boot_loader as u64)
+            | ((self.tee as u64) << 8)
+            | ((self.snp as u64) << 48)
+            | ((self.microcode as u64) << 56)
+    }
+
+    /// Whether every component is at or above `minimum`'s; a TCB is a floor per component, not a
+    /// version tuple, so no component may fall below its minimum.
+    pub fn meets(self, minimum: Self) -> bool {
+        self.boot_loader >= minimum.boot_loader
+            && self.tee >= minimum.tee
+            && self.snp >= minimum.snp
+            && self.microcode >= minimum.microcode
     }
 }
 
@@ -87,8 +100,8 @@ impl<'a> SnpReport<'a> {
         );
         let version = le_u32(bytes, VERSION_OFFSET);
         ensure!(
-            version == SUPPORTED_VERSION,
-            "unsupported attestation report version {version}, want {SUPPORTED_VERSION}"
+            SUPPORTED_VERSIONS.contains(&version),
+            "unsupported attestation report version {version}, want one of {SUPPORTED_VERSIONS:?}"
         );
         let algo = le_u32(bytes, SIGNATURE_ALGO_OFFSET);
         ensure!(algo == ECDSA_P384_SHA384, "unsupported report signature algorithm {algo}, want ECDSA P-384/SHA-384");
@@ -128,18 +141,15 @@ fn le_u64(bytes: &[u8], offset: usize) -> u64 {
     u64::from_le_bytes(bytes[offset..offset + 8].try_into().expect("report length checked"))
 }
 
-/// The 48-byte big-endian value in a 72-byte signature field, right-justified with zero padding.
+/// The 48-byte big-endian value ring verifies, from a 72-byte signature field that carries it
+/// little-endian in its first 48 bytes, zero-extended.
 /// Error cases:
-/// - the value takes more than 48 bytes, so it cannot be a P-384 scalar
+/// - the field's zero padding is not zero, so the value is not a zero-extended scalar
 fn scalar(bytes: &[u8], offset: usize) -> anyhow::Result<[u8; SCALAR_LEN]> {
     let field = &bytes[offset..offset + 72];
-    let first_nonzero = field.iter().position(|b| *b != 0).unwrap_or(72);
-    let value = &field[first_nonzero..];
-    if value.len() > SCALAR_LEN {
-        bail!("report signature scalar takes {} bytes, more than a P-384 scalar", value.len());
-    }
-    let mut scalar = [0u8; SCALAR_LEN];
-    scalar[SCALAR_LEN - value.len()..].copy_from_slice(value);
+    ensure!(field[SCALAR_LEN..].iter().all(|b| *b == 0), "report signature scalar's zero padding is not zero");
+    let mut scalar: [u8; SCALAR_LEN] = field[..SCALAR_LEN].try_into().expect("field length fixed");
+    scalar.reverse();
     Ok(scalar)
 }
 
@@ -163,17 +173,40 @@ mod tests {
     #[test]
     fn version_and_signature_algorithm_are_checked() {
         let mut report = vec![0u8; REPORT_LEN];
-        report[SIGNATURE_ALGO_OFFSET..SIGNATURE_ALGO_OFFSET + 4].copy_from_slice(&1u32.to_le_bytes());
-        assert!(SnpReport::parse(&report).is_err());
         report[VERSION_OFFSET..VERSION_OFFSET + 4].copy_from_slice(&2u32.to_le_bytes());
+        assert!(SnpReport::parse(&report).is_err(), "version 2 with no signature algorithm is refused");
+        report[SIGNATURE_ALGO_OFFSET..SIGNATURE_ALGO_OFFSET + 4].copy_from_slice(&2u32.to_le_bytes());
+        assert!(SnpReport::parse(&report).is_err(), "version 2 with a wrong algorithm is refused");
+        report[SIGNATURE_ALGO_OFFSET..SIGNATURE_ALGO_OFFSET + 4].copy_from_slice(&1u32.to_le_bytes());
         SnpReport::parse(&report).expect("version 2 with ECDSA P-384 parses");
+        report[VERSION_OFFSET..VERSION_OFFSET + 4].copy_from_slice(&3u32.to_le_bytes());
+        SnpReport::parse(&report).expect("version 3 keeps every offset this parser reads");
+        report[VERSION_OFFSET..VERSION_OFFSET + 4].copy_from_slice(&4u32.to_le_bytes());
+        assert!(SnpReport::parse(&report).is_err(), "an unknown version is refused");
     }
 
     #[test]
     fn tcb_fields_decode_from_the_packed_u64() {
-        let tcb = Tcb::from_packed((7 << 56) | (6 << 48) | (5 << 40) | (4 << 32));
-        assert_eq!(tcb, Tcb { boot_loader: 7, tee: 6, snp: 5, microcode: 4 });
-        assert!(tcb > Tcb { boot_loader: 7, tee: 6, snp: 5, microcode: 3 });
-        assert!(tcb < Tcb { boot_loader: 7, tee: 6, snp: 6, microcode: 0 });
+        // The wire layout puts boot_loader in byte 0, tee in byte 1, snp in byte 6, and
+        // microcode in byte 7; the bytes between stay reserved.
+        let packed = 0xCD08_0000_0000_0403u64;
+        let tcb = Tcb::from_packed(packed);
+        assert_eq!(tcb, Tcb { boot_loader: 3, tee: 4, snp: 8, microcode: 0xcd });
+        assert_eq!(tcb.to_packed(), packed);
+    }
+
+    #[test]
+    fn a_tcb_meets_a_minimum_only_when_every_component_does() {
+        let minimum = Tcb { boot_loader: 3, tee: 0, snp: 8, microcode: 115 };
+        assert!(Tcb { boot_loader: 3, tee: 0, snp: 8, microcode: 115 }.meets(minimum));
+        assert!(Tcb { boot_loader: 9, tee: 2, snp: 9, microcode: 200 }.meets(minimum));
+        for below in [
+            Tcb { boot_loader: 2, tee: 0, snp: 8, microcode: 115 },
+            Tcb { boot_loader: 3, tee: 0, snp: 7, microcode: 115 },
+            Tcb { boot_loader: 3, tee: 0, snp: 8, microcode: 114 },
+            Tcb { boot_loader: 4, tee: 0, snp: 8, microcode: 114 },
+        ] {
+            assert!(!below.meets(minimum), "a component below its minimum met it: {below:?}");
+        }
     }
 }
