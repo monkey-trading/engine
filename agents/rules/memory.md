@@ -34,3 +34,4 @@ the canonical source rather than copying stale text into another layer.
 
 Why: useful memory is a compact index of decisions and traps that routes agents to truth. Excess or
 misplaced memory competes with repo-owned policy and makes agents slower and less precise.
+
