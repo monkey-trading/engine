@@ -218,7 +218,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/history/rebuild.rs` — exact typed-prefix witnesses for log-derived migration and repair
 - `src/history/startup.rs` — the authenticated history plan: read-only until preflight, then activation
 - `src/history/runtime/` — the supervised history owner: indexing, checkpoint sealing, and repair
-  (`mod.rs`), and signed heads, retained-version pins, and collection (`heads.rs`)
+  (`mod.rs`), completing a capture into the paired cache (`capture.rs`), and signed heads,
+  retained-version pins, and collection (`heads.rs`)
 - `src/history/tests/mod.rs` — history index tests: pages, filters, retention, following the log,
   and restarts
 - `src/history/tests/recovery.rs` — startup checks against the log, readiness to serve, and
