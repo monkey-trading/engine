@@ -95,24 +95,21 @@ impl GenesisProgress {
     }
 
     /// Refuses a log whose genesis is not `genesis`, the commands the config's genesis sequences, so
-    /// the config hash the node attests names the genesis its engine runs under. Parameters genesis
-    /// set before `V11` have no toxicity notional weighting: the config's stands in for it, and once
-    /// the node has carried a weighting into the log, it must be that one.
+    /// the config hash the node attests names the genesis its engine runs under. The log's genesis is
+    /// compared in the form a config gives it under the latest protocol (see `restated`): parameters
+    /// set before `V11` take the config's toxicity notional weighting, or, once the node has carried
+    /// one into the log, that one.
     /// Error cases:
     /// - genesis started, and its commands differ from `genesis`
     pub fn ensure_matches(&self, genesis: &[Command]) -> anyhow::Result<()> {
         if self.started.is_none() {
             return Ok(());
         }
-        let mut ran = self.commands.clone();
-        if let (
-            Some(Command::Admin(AdminCommand::SetParams(logged))),
-            Some(Command::Admin(AdminCommand::SetParams(config))),
-        ) = (ran.first_mut(), genesis.first())
-            && logged.toxicity.notional.is_none()
-        {
-            logged.toxicity.notional = self.carried.or(config.toxicity.notional);
-        }
+        let config_weighting = match genesis.first() {
+            Some(Command::Admin(AdminCommand::SetParams(config))) => config.toxicity.notional,
+            _ => None,
+        };
+        let ran = self.restated(self.carried.or(config_weighting));
         if ran == genesis {
             return Ok(());
         }
@@ -123,13 +120,29 @@ impl GenesisProgress {
         )
     }
 
-    /// The genesis the log ran, as the config of a node that resumes the log gives it: parameters set
-    /// before `V11` take `weighting`, which the node carries into the log.
+    /// The genesis the log ran, as the config of a node that resumes the log gives it (see
+    /// `restated`), with `weighting` the one the node carries into the log.
     #[cfg(test)]
     pub(crate) fn as_config(&self, weighting: Option<NotionalWeighting>) -> Vec<Command> {
+        self.restated(weighting)
+    }
+
+    /// The genesis the log ran, in the form a config loads under the latest protocol: parameters set
+    /// before `V11` without a toxicity notional weighting take `weighting`, and absolute divergence
+    /// triggers set before `V13`, which a config can no longer give, become shares of the widest
+    /// divergence bound among the genesis markets, as `V13`'s activation turns them.
+    fn restated(&self, weighting: Option<NotionalWeighting>) -> Vec<Command> {
         let mut genesis = self.commands.clone();
+        let widest = genesis
+            .iter()
+            .filter_map(|cmd| match cmd {
+                Command::Admin(AdminCommand::UpsertMarket(spec)) => Some(spec.price_rules.max_divergence_bps),
+                _ => None,
+            })
+            .max();
         if let Some(Command::Admin(AdminCommand::SetParams(params))) = genesis.first_mut() {
             params.toxicity.notional = params.toxicity.notional.or(weighting);
+            params.share_divergence_triggers(widest.unwrap_or(0));
         }
         genesis
     }

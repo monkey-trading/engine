@@ -18,11 +18,12 @@ use crate::clock::test_clock::TestClock;
 use crate::config::RateLimit;
 use crate::history::{HistoryEvent, INDEX_FILE, account_of};
 use crate::log::{LogEntry, MANIFEST, Manifest, Offset, SegmentedLog, segment_seq};
+use crate::sequencer::fixture_tests::finished_genesis;
 use crate::sequencer::replay_path_with_trust;
 use crate::tee::{Attestation, AttestationBundle, EnclaveKey, MockAttestor, attest_bundle};
 use crate::test_support::{
-    SEGMENT_COMMANDS, TRADER, TestHistory, TestSequencer, deposit, dev_config, finished_genesis, log_messages,
-    logged_history, scratch_dir, withdraw,
+    SEGMENT_COMMANDS, TRADER, TestHistory, TestSequencer, deposit, dev_config, log_messages, logged_history,
+    scratch_dir, withdraw,
 };
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -168,7 +169,7 @@ async fn dev_scenario_page_account_history_one_event_at_a_time_across_a_restart(
     // The node resumes under the genesis the reference log finished, not the dev config's.
     let genesis = finished_genesis(&reference);
 
-    let node = TestSequencer::resume_at(&dir, 1024, clock.clone(), genesis.clone());
+    let node = TestSequencer::start_at(&dir, 1024, clock.clone(), genesis.clone());
     let history = TestHistory::start(&node, &dir, &index).await.unwrap();
     node.submit(deposit(100, "dep-1")).await;
     node.submit(withdraw(40)).await;
@@ -182,7 +183,7 @@ async fn dev_scenario_page_account_history_one_event_at_a_time_across_a_restart(
     }
 
     let segments = Manifest::load(&dir).unwrap().segments.len();
-    let node = TestSequencer::resume_at(&dir, 1024, clock.clone(), genesis.clone());
+    let node = TestSequencer::start_at(&dir, 1024, clock.clone(), genesis.clone());
     let history = TestHistory::start(&node, &dir, &index).await.unwrap();
     for n in 0..SEGMENT_COMMANDS {
         node.submit(deposit(1, &format!("dep-rotate-{n}"))).await;
@@ -198,7 +199,7 @@ async fn dev_scenario_page_account_history_one_event_at_a_time_across_a_restart(
     assert_eq!(second[&TRADER].len(), first[&TRADER].len() + SEGMENT_COMMANDS as usize);
 
     fs::remove_dir_all(&index).unwrap();
-    let node = TestSequencer::resume_at(&dir, 1024, clock.clone(), genesis.clone());
+    let node = TestSequencer::start_at(&dir, 1024, clock.clone(), genesis.clone());
     let history = TestHistory::start(&node, &dir, &index).await.unwrap();
     node.stop().await;
     history.finish().await.unwrap();

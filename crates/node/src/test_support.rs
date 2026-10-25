@@ -33,7 +33,7 @@ use crate::config::{HistorySection, NodeConfig};
 use crate::history::{History, HistoryCheck, HistoryEvent, Reader};
 use crate::log::{self, LogEntry, LogReader, Manifest, Offset, SegmentedLog};
 use crate::metrics::Metrics;
-use crate::sequencer::{Request, Sequencer, SequencerConfig, SignedWithdrawal, StreamMsg, genesis_commands, replay};
+use crate::sequencer::{Request, Sequencer, SequencerConfig, SignedWithdrawal, StreamMsg, genesis_commands};
 use crate::tee::EnclaveKey;
 pub use crate::test_tracing::keep_callsites_interested;
 use crate::trusted_time::Sample;
@@ -66,24 +66,18 @@ impl TestSequencer {
     /// activates the latest protocol, sequences the dev genesis if the log lacks it, and runs it.
     /// The stream channel holds `stream_capacity` messages.
     pub fn start(dir: &Path, stream_capacity: usize) -> Self {
-        Self::start_at(dir, stream_capacity, Arc::new(SystemClock))
+        Self::start_at(dir, stream_capacity, Arc::new(SystemClock), genesis_commands(&dev_config().genesis))
     }
 
-    /// As `start`, stamping commands on `clock`, which trusted time admits.
-    pub fn start_at(dir: &Path, stream_capacity: usize, clock: Arc<dyn Clock>) -> Self {
-        Self::resume_at(dir, stream_capacity, clock, genesis_commands(&dev_config().genesis))
-    }
-
-    /// As `start_at`, on a log that finished `genesis` rather than the dev config's.
-    pub fn resume_at(dir: &Path, stream_capacity: usize, clock: Arc<dyn Clock>, genesis: Vec<Command>) -> Self {
+    /// As `start`, stamping commands on `clock`, which trusted time admits, on a log whose genesis is
+    /// `genesis`, as the config gives it.
+    pub fn start_at(dir: &Path, stream_capacity: usize, clock: Arc<dyn Clock>, genesis: Vec<Command>) -> Self {
         let (stream, _) = broadcast::channel(stream_capacity);
         let (withdrawals_tx, withdrawals) = mpsc::unbounded_channel();
         let (manifest_tx, manifest) = watch::channel(Manifest::default());
         let key = Arc::new(EnclaveKey::test_key());
-        let metrics = Arc::new(Metrics::new());
-        let mut cfg =
-            SequencerConfig { clock: clock.clone(), metrics: metrics.clone(), ..sequencer_config(dir, manifest_tx) };
-        cfg.genesis = genesis;
+        let cfg = SequencerConfig { clock: clock.clone(), genesis, ..sequencer_config(dir, manifest_tx) };
+        let metrics = cfg.metrics.clone();
         let mut seq = Sequencer::recover(cfg, key, stream.clone(), withdrawals_tx).expect("sequencer recovers");
         // As the node does, parameters an older log set take the config's notional weighting first.
         let weighting = dev_config().genesis.params.toxicity.notional.expect("the dev config weighs by notional");
@@ -239,11 +233,6 @@ pub fn scratch_dir(name: &str) -> PathBuf {
 pub fn own_operator_key() -> String {
     let key = SigningKey::generate();
     format!("0x{}", hex::encode(key.verifying_key().to_sec1_point(false).as_bytes()))
-}
-
-/// The genesis `entries` ran, as a dev node that resumes the log is configured with it.
-pub fn finished_genesis(entries: &[LogEntry]) -> Vec<Command> {
-    replay(entries).expect("the log replays").genesis.as_config(dev_config().genesis.params.toxicity.notional)
 }
 
 /// The committed dev config.

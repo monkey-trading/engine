@@ -217,7 +217,7 @@ fn a_genesis_set_before_the_notional_weighting_takes_the_one_the_node_carried() 
     // that adds one; once the node has carried it into the log, a config naming another is refused.
     let dir = scratch_dir("genesis-carried-notional");
     fs::create_dir_all(&dir).unwrap();
-    fs::copy(V1_DEV, dir.join("00000000000000000000.jsonl")).unwrap();
+    crate::sequencer::fixture_tests::copy_fixture(V1_DEV, dir.join("00000000000000000000.jsonl"));
     let config = finished_genesis(&log_entries(&dir));
     let Some(Command::Admin(AdminCommand::SetParams(params))) = config.first() else {
         panic!("genesis sets parameters")
@@ -229,6 +229,49 @@ fn a_genesis_set_before_the_notional_weighting_takes_the_one_the_node_carried() 
     let mut other = config;
     if let Some(Command::Admin(AdminCommand::SetParams(params))) = other.first_mut() {
         params.toxicity.notional = Some(NotionalWeighting { prior: weighting.memory, ..weighting });
+    }
+    let err = recover_with(&dir, &signed(31_337), other).err().unwrap();
+    assert!(format!("{err:#}").contains("differs from the config's [genesis]"), "{err:#}");
+}
+
+#[test]
+fn a_genesis_set_before_divergence_shares_resumes_under_the_shares_a_config_loads() {
+    // A log from before `V13` set absolute divergence triggers, which no config loaded under the
+    // latest protocol can give: its genesis compares as the shares `V13`'s activation turns them
+    // into, and a config giving other shares is refused.
+    let dir = scratch_dir("genesis-divergence-shares");
+    fs::create_dir_all(&dir).unwrap();
+    crate::sequencer::fixture_tests::copy_fixture(V1_DEV, dir.join("00000000000000000000.jsonl"));
+    let logged = log_entries(&dir);
+    let ran = commands(&logged)
+        .into_iter()
+        .find_map(|cmd| match cmd {
+            Command::Admin(AdminCommand::SetParams(params)) => Some(params),
+            _ => None,
+        })
+        .expect("genesis sets parameters");
+    let err = ran.validate_for(ProtocolVersion::LATEST).unwrap_err();
+    assert!(err.contains("divergence_share_bps"), "{err}");
+
+    let config = finished_genesis(&logged);
+    let Some(Command::Admin(AdminCommand::SetParams(params))) = config.first() else {
+        panic!("genesis sets parameters")
+    };
+    params.validate_for(ProtocolVersion::LATEST).unwrap();
+    // 15 and 20 bps of the genesis markets' widest bound, 25 bps.
+    let shares: Vec<_> =
+        params.stress_levels.iter().filter_map(|level| level.trigger.as_ref()?.divergence_share_bps).collect();
+    assert_eq!(shares, [6_000, 8_000]);
+    recover_with(&dir, &signed(31_337), config.clone()).unwrap();
+
+    let mut other = config;
+    if let Some(Command::Admin(AdminCommand::SetParams(params))) = other.first_mut() {
+        let share = params
+            .stress_levels
+            .iter_mut()
+            .find_map(|level| level.trigger.as_mut()?.divergence_share_bps.as_mut())
+            .expect("a divergence share");
+        *share += 1;
     }
     let err = recover_with(&dir, &signed(31_337), other).err().unwrap();
     assert!(format!("{err:#}").contains("differs from the config's [genesis]"), "{err:#}");

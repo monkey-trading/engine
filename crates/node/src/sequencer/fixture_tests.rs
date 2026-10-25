@@ -77,6 +77,12 @@ pub(crate) fn copy_fixture(source: &str, target: impl AsRef<Path>) {
     std::fs::write(target, text).unwrap();
 }
 
+/// The genesis `entries` ran, as the config of a dev node that resumes the log gives it.
+pub(crate) fn finished_genesis(entries: &[LogEntry]) -> Vec<engine_core::command::Command> {
+    let notional = crate::test_support::dev_config().genesis.params.toxicity.notional;
+    replay_trusted(entries).expect("the log replays").genesis.as_config(notional)
+}
+
 /// Replays harness output against the explicit fixture authority, never a log-named signer.
 pub fn replay_trusted(entries: &[LogEntry]) -> anyhow::Result<crate::sequencer::Replayed> {
     let domain = entries

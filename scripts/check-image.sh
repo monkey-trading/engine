@@ -4,7 +4,8 @@
 # - production: the engine refuses the config's mock providers and the guest powers off;
 # - dev: /v1/attestation serves a bundle that hashes to its report data and names the enclave
 #   address, the config file's SHA-256, and the TLS key, a client pinned to that key connects, and
-#   a boot with the log under / or /dev, not /data, fails on the read-only mount and powers off.
+#   a boot with the log, and the alert outbox that must sit beside it, under / or /dev, not /data,
+#   fails on the read-only mount and powers off.
 # The config comes from this checkout, so check an image built from it: an engine from another
 # commit may not accept this checkout's config/dev.toml. Needs qemu-system-x86_64, mke2fs, curl,
 # jq, xxd, and sha256sum.
@@ -108,12 +109,14 @@ case $variant in
 
     kill "$qemu_pid"
     wait "$qemu_pid" 2> /dev/null || true
-    for log_dir in /log /dev/log; do
-      boot < <(sed "s|^log_dir = .*|log_dir = \"$log_dir\"|" config/dev.toml)
+    # The config refuses an alert outbox that is not beside the log, so it moves with it.
+    for parent in "" /dev; do
+      boot < <(sed -e "s|^log_dir = .*|log_dir = \"$parent/log\"|" \
+        -e "s|^outbox = { dir = \"[^\"]*\"|outbox = { dir = \"$parent/alerts\"|" config/dev.toml)
       await_poweroff
       grep -q 'Read-only file system' "$work/console.log" ||
-        fail "the engine did not fail to create its log in $log_dir"
-      echo "ok: the dev image refuses the log directory $log_dir and powers off"
+        fail "the engine did not fail to write under ${parent:-/}"
+      echo "ok: the dev image refuses a log directory and alert outbox under ${parent:-/} and powers off"
     done
     ;;
   *)

@@ -274,8 +274,9 @@ fn signed_calendar_fallback(log_dir: &Path, restart: bool) -> anyhow::Result<(u6
 }
 
 fn recover(log_dir: &Path, clock: Arc<TestClock>) -> anyhow::Result<Sequencer> {
-    let cfg =
-        SequencerConfig { clock: clock.clone(), ..sequencer_config(log_dir, watch::channel(Manifest::default()).0) };
+    let genesis = crate::sequencer::fixture_tests::finished_genesis(&log_entries(log_dir));
+    let manifest = watch::channel(Manifest::default()).0;
+    let cfg = SequencerConfig { clock: clock.clone(), genesis, ..sequencer_config(log_dir, manifest) };
     let mut seq = Sequencer::recover(
         cfg,
         Arc::new(EnclaveKey::test_key()),

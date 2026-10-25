@@ -1,5 +1,5 @@
 use super::*;
-use crate::sequencer::fixture_tests::replay_trusted as replay;
+use crate::sequencer::fixture_tests::{finished_genesis, replay_trusted as replay};
 use std::fs;
 use std::path::PathBuf;
 
@@ -10,8 +10,8 @@ use engine_core::protocol::ProtocolVersion;
 use crate::clock::test_clock::TestClock;
 use crate::log::{Manifest, Offset, segment_seq};
 use crate::test_support::{
-    SEGMENT_COMMANDS, TRADER, TestSequencer, deposit, dev_config, finished_genesis, log_entries, log_messages,
-    sample_around, scratch_dir, sequencer_config, trusted_now, withdraw,
+    SEGMENT_COMMANDS, TRADER, TestSequencer, deposit, dev_config, log_entries, log_messages, sample_around,
+    scratch_dir, sequencer_config, trusted_now, withdraw,
 };
 use tokio::sync::oneshot;
 

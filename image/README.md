@@ -55,17 +55,17 @@ The engine takes input from the host through five paths:
 - the API port, `node.listen` in the config, served over TLS with a key generated in the enclave;
 - the metrics port, `metrics.listen`, which serves `GET /metrics` over plain HTTP and is reachable
   from the host only when the config puts it on a guest address rather than loopback;
-- its outbound network: venue feeds over TLS, the custody RPC endpoint over HTTPS, alert webhooks,
-  Roughtime replies it verifies under each server's key, and the DNS answers that pick their
-  addresses, from the resolvers DHCP names;
+- its outbound network: venue feeds over TLS, the custody RPC providers and the checkpoint RPC
+  endpoint over HTTPS, alert webhooks, Roughtime replies it verifies under each server's key, and
+  the DNS answers that pick their addresses, from the resolvers DHCP names;
 - the clock, which stamps every sequenced command, bounded by the signed Roughtime readings. The
   guest launches without Secure TSC (`guest_features` is `0x1` in `measurement.json`), so the host
   can still scale the monotonic clock that times those readings and the age of a sample;
 - the data disk, an ext4 filesystem on the first virtio disk, mounted at `/data` with `nosuid`,
   `nodev`, and `noexec`. It holds `config.toml`, read once at boot, the log, the account history
-  index, and the custody deposit cursor, which `node.log_dir`, `history.dir`, and
-  `custody.evm.cursor_path` must name under `/data`: the root filesystem and `/dev` are read-only,
-  so a path outside `/data` fails at boot.
+  index, the alert outbox, and the custody deposit cursor, which `node.log_dir`, `history.dir`,
+  `alerts.outbox.dir`, and `custody.evm.cursor_path` must name under `/data`: the root filesystem
+  and `/dev` are read-only, so a path outside `/data` fails at boot.
 
 The guest kernel also takes input from the host that the launch measurement does not cover, and
 nothing yet bounds what a crafted input can do to it: the ext4 filesystem on the data disk, which
@@ -116,7 +116,8 @@ support, and QEMU 9.1 or later. The launch flags must match `measurement.json`, 
 
 ```bash
 # The data disk: a config whose node.listen is 0.0.0.0:8080, tee.provider is "configfs_tsm", and
-# node.log_dir and history.dir are under /data. The dev variant accepts mock custody and feeds.
+# node.log_dir, history.dir, and alerts.outbox.dir are under /data. The dev variant accepts mock
+# custody and feeds.
 mkdir disk && cp node.toml disk/config.toml
 mke2fs -t ext4 -d disk data.img 1G
 
@@ -143,7 +144,7 @@ jq -r .bundle attestation.json | cut -c3- | xxd -r -p | sha256sum   # report dat
 the image under plain QEMU with `config/dev.toml`, and expects a production image to refuse the
 mock providers and power off, or a dev image to serve an attestation whose bundle hashes to its
 report data and names the config file, to serve TLS under the key the bundle names, and to refuse a
-log directory outside `/data`. It boots QEMU's default firmware: the `AmdSevX64` OVMF loads a
+log directory, with the alert outbox beside it, outside `/data`. It boots QEMU's default firmware: the `AmdSevX64` OVMF loads a
 kernel only in an SEV-SNP launch (under plain QEMU it finds no bootable option), so booting through
 `OVMF.fd` is part of the hardware validation.
 
@@ -163,8 +164,8 @@ kernel only in an SEV-SNP launch (under plain QEMU it finds no bootable option),
    hashes, and reads that config to see what the node runs with.
 
 The attestation binds every byte of the config file, so a verifier can check the hash only against
-a copy it can read. A credential in the file, such as an API key in `custody.evm.rpc_url`, must
-reach the node another way before that config can be published; until then, only whoever holds
+a copy it can read. A credential in the file, such as an API key in a `custody.evm.providers`
+entry's `rpc_url`, must reach the node another way before that config can be published; until then, only whoever holds
 the file can check its hash. The guest's only environment is the measured kernel command line, so
 the webhook URL that `[alerts.critical]` reads from an environment variable has no way in either:
 a config with real attestation needs that route, so it cannot start in the image until secrets
