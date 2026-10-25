@@ -202,11 +202,12 @@ async fn history_retirement_keeps_pace_while_every_checkpoint_is_captured() {
     cfg.node.checkpoint_every = 50;
     let node = Node::start(cfg).await.unwrap();
     // One history commit, and so one retirement receipt, per command.
+    let mut state = None;
     for _ in 0..1_100 {
         node.submit(Command::Tick).await;
-        node.history_caught_up().await;
+        state = Some(node.history_caught_up().await);
     }
-    let backlog = node.sealing.inspect().await.unwrap().pending_receipts;
+    let backlog = state.expect("the loop runs").pending_receipts;
     assert!(backlog < 512, "history must collect while captures sign heads: {backlog} receipts queued");
     node.stop().await;
 }

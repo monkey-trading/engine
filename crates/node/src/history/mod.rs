@@ -23,6 +23,8 @@ pub(crate) mod authenticated;
 mod reader;
 mod store;
 pub use reader::Reader;
+#[cfg(test)]
+pub(crate) use reader::transient;
 pub(crate) mod rebuild;
 pub(crate) mod runtime;
 pub(crate) mod startup;

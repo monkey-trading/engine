@@ -2,6 +2,8 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+#[cfg(test)]
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result, bail, ensure};
@@ -111,6 +113,10 @@ struct Actor {
     write_alert: WriteAlert,
     /// Commands taken this turn and not yet indexed; one batch update indexes them.
     commands: Vec<crate::log::CommandEntry>,
+    /// Shared with the sealing endpoint: how many physical entries this owner has taken, so a test
+    /// can watch progress without joining the owner's queue.
+    #[cfg(test)]
+    taken: Arc<AtomicU64>,
     retained_catalog: BTreeMap<Offset, Arc<crate::log::catalog::LazyCatalogView>>,
     last_entry: Option<Offset>,
     /// The checkpoint at `last_entry`, when the last entry taken is one.
@@ -158,6 +164,8 @@ impl Runtime {
                 pending: None,
                 write_alert: endpoint.write_alert.clone(),
                 commands: Vec::new(),
+                #[cfg(test)]
+                taken: endpoint.taken.clone(),
                 retained_catalog: BTreeMap::new(),
                 last_entry: None,
                 at_checkpoint: None,
@@ -355,6 +363,8 @@ impl Actor {
     /// Error cases:
     /// - verified history ingestion, publication, or feed ordering fails
     fn entry(&mut self, message: Arc<StreamMsg>) -> Result<()> {
+        #[cfg(test)]
+        self.taken.fetch_add(1, Ordering::AcqRel);
         if let StreamBody::Command(command) = &message.body {
             self.commands.push(command.clone());
         }
