@@ -69,6 +69,12 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   against the last checkpoint's root, for the vault's `claimEmissions`; with `[checkpoints]`, the
   node reads the period budget the vault's MONKEY cap was derived from, refuses a schedule with any
   other, and refuses to start on a log that records one
+- MONKEY staking from protocol `V25`: `engine admin init-staking` or a genesis `staking` entry
+  records the liquidity floor, epoch length, start, and unstake cooldown once; each epoch the
+  engine distributes house NAV above the floor to stakers pro-rata, and
+  `GET /v1/accounts/{address}/distributions` serves an account's cumulative USDC distribution with
+  its proof against the last checkpoint's root, for the vault's `claimDistribution`; checkpoint
+  reconciliation counts the USDC the vault has paid in distributions against the ledger
 - Supervised tasks: any task stopping stops the node, and SIGTERM drains to a final checkpoint
 - Live crypto prices from Coinbase, Kraken, and Bitstamp over WebSocket: one supervised task per
   venue connection, quotes stamped with the venue's own time, and reconnects with backoff
@@ -350,6 +356,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/emissions_scenario.rs` — the MONKEY emissions dev scenario on isolated Anvil: pro-rata
   allocation, cancelled periods, a restart across finalisation, the first halving, and claims that mint
   each entitlement once against the posted root
+- `src/checkpoints/staking_scenario.rs` — the MONKEY staking dev scenario on isolated Anvil: staking
+  mirrored from the Staking contract, an epoch above the floor paying pro-rata in USDC against the
+  posted root, an unstake through the cooldown, and an epoch below the floor paying nothing
 - `src/history/preflight.rs` — immutable history planning before authorized SQLite mutation
 - `src/history/preflight/tests.rs` — private WAL resume and malformed geometry byte-preservation regressions
 - `src/node/tests/custody_preflight.rs` — local custody refusal preserves log/history across image states
@@ -517,6 +526,11 @@ cargo run -p engine-node -- admin --pin $PIN set-params params.toml           # 
 cargo run -p engine-node -- admin --pin $PIN init-emissions --start 2027-01-01T00:00:00Z --period-budget <units>
 cargo run -p engine-node -- admin --pin $PIN schedule-corporate-action action.toml  # see the runbook
 
+# Once per log, from protocol V25: when staking epoch 0 starts (not before the command is
+# sequenced), the house NAV liquidity floor, the epoch length, and the unstake cooldown in
+# milliseconds. Production values need the owner's approval.
+cargo run -p engine-node -- admin --pin $PIN init-staking --start 2027-01-01T00:00:00Z --liquidity-floor 10000000 --epoch-ms 3600000 --cooldown-ms 86400000
+
 # Download the archive: the manifest, then each segment it lists (`--retry` waits out a 429)
 curl -kf --retry 5 --create-dirs -o archive/manifest.jsonl https://127.0.0.1:8080/v1/archive/manifest.jsonl
 jq -r '.file' archive/manifest.jsonl |
@@ -535,6 +549,11 @@ RPC_QUORUM_SCENARIO=1 ./scripts/dev-vault-deposits.sh
 cargo build --release -p engine-node --features production
 # Run the MONKEY emissions scenario on isolated Anvil: allocation, halving, restart, and claims
 ./scripts/dev-monkey-emissions.sh
+
+# Run the MONKEY staking scenario on isolated Anvil: staking mirrored from the contract, an epoch
+# above the floor paying pro-rata in USDC, an unstake through the cooldown, and an epoch below the
+# floor paying nothing
+./scripts/dev-monkey-staking.sh
 ```
 
 EVM custody requires at least three entries in `custody.evm.providers`, each with a unique
@@ -1009,6 +1028,12 @@ the 18-decimal token, as a decimal string), and `siblings`, from the root down. 
 vault's `latestSeq` equals the proof's `seq`, and a proof stops working once a later checkpoint is
 posted; fetch a fresh one then. An account has no entitlement, and gets 404, until the first
 checkpoint after a period in which it was allocated a share.
+
+`/v1/accounts/{address}/distributions` returns, from `V25`, the account's cumulative USDC
+distribution the same way (`entitled` in the 6-decimal token's base units). The vault's
+`claimDistribution` pays the USDC the distribution adds to what the account was already paid,
+against its latest posted root. An account has no distribution, and gets 404, until the first
+checkpoint after an epoch in which it was allocated a share.
 
 The operator listener, `metrics.listen` (`127.0.0.1:9464` in `config/dev.toml`), serves
 `GET /metrics` in Prometheus text format. `ops/grafana/engine-node.json` is a Grafana dashboard

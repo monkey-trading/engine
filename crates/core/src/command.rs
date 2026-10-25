@@ -15,6 +15,7 @@ use crate::market::MarketSpec;
 use crate::params::{NotionalWeighting, ProtocolParams};
 use crate::price::SourceQuote;
 use crate::protocol::ProtocolVersion;
+use crate::staking::StakingConfig;
 use crate::types::{AccountId, MarketId, Millis, OrderId, Side};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -65,6 +66,21 @@ pub enum Command {
     /// command is refused once any deposit or house capital is credited. Boxed: admin commands are
     /// rare, and inline this one would grow every command.
     SignedAdmin(Box<AdminRequest>),
+    /// From `V25`, a staking contract's `Staked` event, finalised: `amount` of MONKEY base units
+    /// staked for `account`, credited once under `chain_ref`.
+    Stake {
+        account: AccountId,
+        amount: crate::emissions::TokenUnits,
+        chain_ref: String,
+    },
+    /// From `V25`, a staking contract's `UnstakeCompleted` event, which fires only once the
+    /// unstake cooldown has passed: `amount` of MONKEY base units unstaked for `account`, credited
+    /// once under `chain_ref`.
+    Unstake {
+        account: AccountId,
+        amount: crate::emissions::TokenUnits,
+        chain_ref: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -133,6 +149,10 @@ pub enum AdminCommand {
     /// From `V19`, records the MONKEY emission schedule: when period 0 starts, no earlier than this
     /// command, and its budget. A log records it once, and only signed by the operator.
     InitEmissions(EmissionSchedule),
+    /// From `V25`, records the MONKEY staking config: the liquidity floor, the epoch length, when
+    /// epoch 0 starts, and the unstake cooldown the staking contract enforces. A log records it
+    /// once.
+    InitStaking(StakingConfig),
 }
 
 /// An admin command with the operator's signature, nonce, and expiry, as `engine admin` signs and
@@ -198,8 +218,8 @@ impl AdminCommand {
     }
 
     /// Whether the operator may sign this command: listings, parameters, benchmark rates, stress
-    /// floors, reduce-only, the emission schedule, and corporate actions. The node alone sequences the
-    /// others, from its config and build.
+    /// floors, reduce-only, the emission schedule, corporate actions, and the staking config. The
+    /// node alone sequences the others, from its config and build.
     pub fn is_operator_command(&self) -> bool {
         match self {
             AdminCommand::SetParams(_)
@@ -208,8 +228,9 @@ impl AdminCommand {
             | AdminCommand::SetBenchmarkRates(_)
             | AdminCommand::SetStressFloor { .. }
             | AdminCommand::SetReduceOnly { .. }
-            | AdminCommand::InitEmissions(_) => true,
-            AdminCommand::ScheduleCorporateAction(_) => true,
+            | AdminCommand::InitEmissions(_)
+            | AdminCommand::ScheduleCorporateAction(_)
+            | AdminCommand::InitStaking(_) => true,
             AdminCommand::SetClientAuth(_)
             | AdminCommand::SetOperator(_)
             | AdminCommand::SetToxicityNotional(_)

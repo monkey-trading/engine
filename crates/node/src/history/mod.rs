@@ -362,7 +362,11 @@ pub fn account_of(event: &Event) -> Option<AccountId> {
         | Event::CorporateDividend { account, .. }
         | Event::CorporateCashInLieu { account, .. }
         | Event::Financing { account, .. }
-        | Event::EmissionAllocated { account, .. } => Some(*account),
+        | Event::EmissionAllocated { account, .. }
+        | Event::Staked { account, .. }
+        | Event::Unstaked { account, .. }
+        | Event::StakingRejected { account, .. }
+        | Event::DistributionAllocated { account, .. } => Some(*account),
         Event::CustodyDepositChanged { receipt, .. } | Event::CustodyDepositRejected { receipt, .. } => {
             match receipt.beneficiary {
                 engine_core::deposits::DepositBeneficiary::Trader { account } => Some(account),
@@ -387,7 +391,9 @@ pub fn account_of(event: &Event) -> Option<AccountId> {
         | Event::AdminApplied
         | Event::AdminRejected { .. }
         | Event::EmissionPeriodClosed { .. }
-        | Event::EmissionPeriodsCancelled { .. } => None,
+        | Event::EmissionPeriodsCancelled { .. }
+        | Event::DistributionEpochClosed { .. }
+        | Event::DistributionEpochsSkipped { .. } => None,
     }
 }
 

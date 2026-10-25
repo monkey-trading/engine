@@ -112,6 +112,23 @@ pub enum AdminAction {
         #[arg(long)]
         period_budget: TokenUnits,
     },
+    /// Record the MONKEY staking config, which a log takes once: epoch 0 starts at `--start`, no
+    /// earlier than the node sequences the command, with the house NAV `--liquidity-floor`, epochs
+    /// of `--epoch-ms` milliseconds, and the unstake `--cooldown-ms` the staking contract enforces.
+    InitStaking {
+        /// When epoch 0 starts, in RFC 3339 (`2027-01-01T00:00:00Z`).
+        #[arg(long)]
+        start: DateTime<Utc>,
+        /// House NAV at or below this distributes nothing, in whole units.
+        #[arg(long)]
+        liquidity_floor: engine_core::Fixed,
+        /// One epoch's length in milliseconds.
+        #[arg(long)]
+        epoch_ms: Millis,
+        /// The unstake cooldown the staking contract enforces, in milliseconds.
+        #[arg(long)]
+        cooldown_ms: Millis,
+    },
 }
 
 /// A node's API: its `https://host:port` URL, and the hash its TLS key must have.
@@ -187,6 +204,14 @@ impl AdminAction {
             AdminAction::SetReduceOnly { reduce_only, market } => AdminCommand::SetReduceOnly { market, reduce_only },
             AdminAction::InitEmissions { start, period_budget } => {
                 AdminCommand::InitEmissions(EmissionSchedule { start_ms: start.timestamp_millis(), period_budget })
+            }
+            AdminAction::InitStaking { start, liquidity_floor, epoch_ms, cooldown_ms } => {
+                AdminCommand::InitStaking(engine_core::staking::StakingConfig {
+                    liquidity_floor,
+                    epoch_ms,
+                    start_ms: start.timestamp_millis(),
+                    cooldown_ms,
+                })
             }
         })
     }

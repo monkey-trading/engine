@@ -93,6 +93,14 @@ this crate and reproduce the signed state roots exactly.
   cancelled; budgets halve, rounded down, every 26,280 periods (182.5 days); the first command at or
   after a period's end finalises it before its own effects; and each account's cumulative
   entitlement is a state tree leaf with a proof the vault checks a claim against
+- From protocol `V25`, MONKEY staking and USDC distributions: once the operator's initialisation
+  records a liquidity floor, an epoch length, a start, and the unstake cooldown the staking
+  contract enforces, each epoch the first command at or after its end closes it before its own
+  effects, distributing the house NAV above the floor pro-rata to the staked snapshot in whole USDC
+  base units that reduce house cash (epochs no command witnessed distribute nothing); stake and
+  unstake mirror the staking contract's finalised events, credited once under their chain
+  references; and each account's cumulative distribution is a state tree leaf with a proof the
+  vault pays a claim against
 - From protocol `V21`, no quote from outside a market's hours prices it: a quote is refused unless
   the market stays open from its stamp to its sequencing, quotes held from before a closure are
   dropped at the first command after it, and activation drops held quotes that could not count, so
@@ -146,6 +154,8 @@ this crate and reproduce the signed state roots exactly.
 - `src/admin.rs` — operator commands and signed admin commands
 - `src/emissions.rs` — MONKEY emissions: the schedule, period results, finalisation, and
   entitlements
+- `src/staking.rs` — MONKEY staking and USDC distributions: the config, stake and unstake
+  mirroring, epoch finalisation, and claimable distributions
 - `src/stress.rs` — stress levels: the automatic triggers, the move window, and the floors
 - `src/auth.rs` — client auth, the operator record, request signatures and nonces, and the checks
   every client request and signed admin command pass

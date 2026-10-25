@@ -9,9 +9,10 @@ use serde::{Deserialize, Serialize};
 use crate::account::Position;
 use crate::emissions::TokenUnits;
 use crate::merkle::{
-    AccountLeaf, MarketLeaf, account_key, entitlement_hash, entitlement_key, market_key, position_hash, position_key,
-    verify,
+    AccountLeaf, MarketLeaf, account_key, distribution_hash, distribution_key, entitlement_hash, entitlement_key,
+    market_key, position_hash, position_key, verify,
 };
+use crate::staking::UsdcUnits;
 use crate::types::{AccountId, MarketId};
 
 /// An account's leaf with its proof, the leaf and proof of each of its positions, and those of
@@ -58,6 +59,22 @@ pub struct EntitlementProof {
     pub siblings: Vec<B256>,
 }
 
+/// An account's cumulative USDC distribution with its proof, as the vault's `claimDistribution`
+/// takes it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DistributionProof {
+    /// The seq of the last command applied when the root was computed.
+    pub seq: u64,
+    /// The root the proof was taken against.
+    pub root: B256,
+    pub account: AccountId,
+    /// The account's cumulative distribution in USDC base units.
+    pub entitled: UsdcUnits,
+    /// Sibling hashes from the root down to the distribution's leaf.
+    pub siblings: Vec<B256>,
+}
+
 /// A market's leaf with its proof.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -96,6 +113,14 @@ impl EntitlementProof {
     /// signed checkpoint or the vault, not the root the proof names.
     pub fn verify(&self, root: B256) -> bool {
         verify(root, entitlement_key(self.account), entitlement_hash(self.entitled), &self.siblings)
+    }
+}
+
+impl DistributionProof {
+    /// Whether the account's distribution leaf proves against `root`, which the caller takes from a
+    /// signed checkpoint or the vault, not the root the proof names.
+    pub fn verify(&self, root: B256) -> bool {
+        verify(root, distribution_key(self.account), distribution_hash(self.entitled), &self.siblings)
     }
 }
 

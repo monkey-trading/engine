@@ -229,6 +229,7 @@ async fn a_provisional_then_orphaned_approval_never_releases_a_signature() {
         balance: work.liabilities,
         deposits: work.deposits,
         deposited: work.liabilities,
+        distributions_paid: Fixed::ZERO,
     };
     let finalized = Arc::new(Mutex::new(state.clone()));
     let chain = Chain {
@@ -299,6 +300,7 @@ fn poster() -> (Poster<Chain>, Work) {
         checkpoint: checkpoint.clone(),
         liabilities: Fixed::from_int(100),
         deposits: 1,
+        distributed: Default::default(),
         authorized: Fixed::ZERO,
         coverage: crate::checkpoints::DepositCoverage::Historical,
     };
@@ -310,6 +312,7 @@ fn poster() -> (Poster<Chain>, Work) {
             balance: work.liabilities,
             deposits: work.deposits,
             deposited: work.liabilities,
+            distributions_paid: Fixed::ZERO,
         })),
         finalized: None,
         fails: Arc::new(Mutex::new(0)),

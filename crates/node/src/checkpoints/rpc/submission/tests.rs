@@ -52,6 +52,7 @@ async fn long_pending_survives_restart_without_another_send_or_finality_release(
         checkpoint: cp.clone(),
         liabilities: Fixed::ZERO,
         deposits: 0,
+        distributed: Default::default(),
         authorized: Fixed::ZERO,
         coverage: crate::checkpoints::DepositCoverage::Historical,
     };

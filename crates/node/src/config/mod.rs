@@ -20,6 +20,7 @@ use engine_core::auth::{ClientAuth, Operator};
 use engine_core::eip712;
 use engine_core::market::MarketSpec;
 use engine_core::params::ProtocolParams;
+use engine_core::staking::StakingConfig;
 use engine_core::types::{AccountId, Millis};
 use k256::ecdsa;
 use serde::de::Error;
@@ -259,6 +260,10 @@ pub struct Genesis {
     #[serde(default)]
     pub benchmarks: Vec<Benchmark>,
     pub markets: Vec<MarketSpec>,
+    /// The MONKEY staking config, sequenced before the house capital credit; absent starts the
+    /// log without staking.
+    #[serde(default)]
+    pub staking: Option<StakingConfig>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -36,6 +36,8 @@ pub fn every_event() -> Vec<Event> {
         Reject::InvalidNonce { expected: 3 },
         Reject::Expired { expires_at: 1_000 },
         Reject::ExpiryTooFar { latest: 2_000 },
+        Reject::StakingNotInitialised,
+        Reject::InsufficientStake,
     ];
     for reason in &reasons {
         match reason {
@@ -58,7 +60,9 @@ pub fn every_event() -> Vec<Event> {
             | Reject::InvalidSignature
             | Reject::InvalidNonce { .. }
             | Reject::Expired { .. }
-            | Reject::ExpiryTooFar { .. } => {}
+            | Reject::ExpiryTooFar { .. }
+            | Reject::StakingNotInitialised
+            | Reject::InsufficientStake => {}
         }
     }
     let fill = Fill {
@@ -155,6 +159,23 @@ pub fn every_event() -> Vec<Event> {
             cancelled: TokenUnits(1),
         },
         Event::EmissionPeriodsCancelled { first: 4, last: 9, cancelled: TokenUnits(6_000_006) },
+        Event::Staked { account, amount: TokenUnits(7) },
+        Event::Unstaked { account, amount: TokenUnits(7) },
+        Event::StakingRejected {
+            account,
+            amount: TokenUnits(7),
+            chain_ref: "0xcd:2".into(),
+            reason: Reject::InsufficientStake,
+        },
+        Event::DistributionAllocated { account, epoch: 3, amount: engine_core::UsdcUnits(4_000) },
+        Event::DistributionEpochClosed {
+            epoch: 3,
+            nav: amount,
+            floor: amount,
+            excess: engine_core::UsdcUnits(4_001),
+            allocated: engine_core::UsdcUnits(4_000),
+        },
+        Event::DistributionEpochsSkipped { first: 4, last: 9 },
     ]);
     for event in &events {
         match event {
@@ -193,7 +214,13 @@ pub fn every_event() -> Vec<Event> {
             | Event::AdminRejected { .. }
             | Event::EmissionAllocated { .. }
             | Event::EmissionPeriodClosed { .. }
-            | Event::EmissionPeriodsCancelled { .. } => {}
+            | Event::EmissionPeriodsCancelled { .. }
+            | Event::Staked { .. }
+            | Event::Unstaked { .. }
+            | Event::StakingRejected { .. }
+            | Event::DistributionAllocated { .. }
+            | Event::DistributionEpochClosed { .. }
+            | Event::DistributionEpochsSkipped { .. } => {}
         }
     }
     events

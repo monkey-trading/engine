@@ -157,7 +157,14 @@ impl<R: CheckpointChain> Poster<R> {
         // What the vault's deposits brought in less what it paid out. It may hold more, when USDC
         // arrived outside a deposit, but never less.
         let held = state.deposited.raw().checked_sub(paid.raw()).map(Fixed::from_raw);
-        let covered = held.is_some_and(|held| state.balance >= held);
+        // Distributions leave the vault when stakers claim, but the engine set their backing aside
+        // from house cash when each epoch closed, so what claims have paid explains balance the
+        // deposits do not: the balance plus the distributions paid must cover what the deposits
+        // left behind, and the vault can never have paid more than the engine allocated.
+        let distributed_raw = (work.distributed.0 as i128).saturating_mul(1_000);
+        let overpaid = state.distributions_paid.raw() > distributed_raw;
+        let compensated = state.balance.raw().checked_add(state.distributions_paid.raw()).map(Fixed::from_raw);
+        let covered = held.is_some_and(|held| compensated.is_some_and(|sum| sum >= held));
         // Deposits after the checkpoint's last credit are still in flight, so the ledger is
         // compared with the vault's running total through exactly the deposits it credited.
         let credited = match work.deposits {
@@ -175,11 +182,18 @@ impl<R: CheckpointChain> Poster<R> {
             _ => (id, Instant::now()),
         });
         let overdue = uncredited.filter(|(_, since)| since.elapsed() >= self.pending_deposits_critical_after);
-        let healthy = valid_paid && credited == Some(work.liabilities) && covered && overdue.is_none();
+        let healthy = !overpaid && valid_paid && credited == Some(work.liabilities) && covered && overdue.is_none();
         if healthy {
             info!(alert_resolved = "collateral_mismatch", "vault collateral reconciles");
             info!(alert_resolved = "checkpoint_post_failed", "checkpoint is posted");
             info!(alert_resolved = "collateral_pending_deposits", "vault deposits are covered");
+        } else if overpaid {
+            error!(
+                alert = "collateral_mismatch",
+                distributions_paid = %state.distributions_paid,
+                distributed = %work.distributed,
+                "withdrawals paused: the vault paid more in distributions than the engine allocated"
+            );
         } else if let Some((id, _)) = overdue {
             error!(
                 alert = "collateral_mismatch",
@@ -191,7 +205,7 @@ impl<R: CheckpointChain> Poster<R> {
                 "withdrawals paused: the vault holds less USDC than the ledger requires, or its deposits or payments differ from it"
             );
         }
-        if held.is_some_and(|held| state.balance > held) {
+        if held.is_some_and(|held| compensated.is_some_and(|sum| sum > held)) {
             warn!(
                 alert = "collateral_surplus",
                 "the vault holds USDC no deposit brought in; anyone may book 10 USDC or more of it as house capital with bookSurplus"

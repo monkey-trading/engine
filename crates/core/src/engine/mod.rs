@@ -4,8 +4,8 @@
 //! the state, dispatch, time, sessions, and USD valuation; per-market state lives in `market.rs`,
 //! venue prices and marks in `marks.rs`, funds and financing in `funds.rs`, admin in `admin.rs`,
 //! stress levels in `stress.rs`, client request auth in `auth.rs`, orders and pricing in
-//! `execution/`, close-outs in `closeout.rs`, markouts in `markouts.rs`, and reserved FIFO
-//! withdrawals in `withdrawal.rs`.
+//! `execution/`, close-outs in `closeout.rs`, markouts in `markouts.rs`, reserved FIFO
+//! withdrawals in `withdrawal.rs`, and MONKEY staking and USDC distributions in `staking.rs`.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::ops::Bound;
@@ -31,6 +31,7 @@ use crate::market::MarketSpec;
 use crate::merkle::state::{Changed, StateTree, is_zero};
 use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
+use crate::staking::{Staking, UsdcUnits};
 pub use crate::stress::{MoveBucket, StressState};
 use crate::tracked::{TrackedMap, TrackedSet};
 use crate::types::{AccountId, MAX_STAMP_MS, MarketId, Millis, OrderId, Side};
@@ -129,6 +130,13 @@ pub struct Engine {
     /// Immutable payouts keyed by their account/nonce approval leaf key.
     #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
     pub(crate) withdrawal_approvals: TrackedMap<B256, WithdrawalApproval>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) staking: Option<Staking>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) staked: BTreeMap<AccountId, TokenUnits>,
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) distributions: TrackedMap<AccountId, UsdcUnits>,
+
     // Not state and not encoded; an engine rebuilt without them hashes every leaf at its first root.
     /// Markouts, positions, and resting orders changed since the last state root.
     #[serde(skip)]
@@ -194,6 +202,7 @@ impl Engine {
         // does, so every effect of the command, market processing and rollovers included, belongs to
         // the next period.
         self.finalise_emissions(&mut events);
+        self.finalise_staking(&mut events);
         let corporate = self.protocol_version >= ProtocolVersion::V23;
         let mut corporate_margin = false;
         let mut early_outcome = None;
@@ -270,6 +279,8 @@ impl Engine {
                 Ok(()) => events.push(Event::AdminApplied),
                 Err(reason) => events.push(Event::AdminRejected { reason }),
             },
+            Command::Stake { account, amount, chain_ref } => self.stake(*account, *amount, chain_ref, &mut events),
+            Command::Unstake { account, amount, chain_ref } => self.unstake(*account, *amount, chain_ref, &mut events),
         }
         if !corporate && benchmark_batch && events.contains(&Event::AdminApplied) {
             self.run_rollovers(&mut events);

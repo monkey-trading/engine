@@ -89,6 +89,8 @@ pub mod params;
 pub mod price;
 pub mod protocol;
 pub mod session;
+pub mod staking;
+pub use staking::{Staking, StakingConfig, UsdcUnits};
 mod stress;
 mod tracked;
 pub mod types;

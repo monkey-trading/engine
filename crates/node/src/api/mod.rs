@@ -5,6 +5,7 @@
 mod admin;
 mod archive;
 mod benchmark_schedule;
+mod distributions;
 mod history;
 mod stream;
 mod withdrawal_queue;
@@ -294,6 +295,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/accounts/{address}/history", get(history::history))
         .route("/v1/accounts/{address}/proof", get(proof))
         .route("/v1/accounts/{address}/emissions", get(emissions))
+        .route("/v1/accounts/{address}/distributions", get(distributions::distributions))
         .route("/v1/orders", post(place_order))
         .route("/v1/orders/cancel", post(cancel_order))
         .route("/v1/withdrawals", get(withdrawal_queue::queue).post(withdraw))

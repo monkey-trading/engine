@@ -44,6 +44,7 @@ sol! {
     function checkpointRoots(uint64 seq) external view returns (bytes32);
     function checkpointSignerAt(uint64 seq) external view returns (address);
     function checkpointEpochAt(uint64 seq) external view returns (uint64);
+    function distributionsPaid() external view returns (uint256);
     function usdc() external view returns (address);
     function balanceOf(address account) external view returns (uint256);
     function monkey() external view returns (address);

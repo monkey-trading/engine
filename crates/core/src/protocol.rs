@@ -132,11 +132,19 @@ pub enum ProtocolVersion {
     /// rounding each scaled price and quantity once, before ex-date opening execution, in
     /// chronological order with financing. A failed split blocks its market and its financing.
     V23,
+    /// MONKEY staking and USDC distributions (`staking`): once the operator's initialisation
+    /// records a liquidity floor, an epoch length, and a start, each epoch the house NAV above the
+    /// floor is distributed to stakers pro-rata from the staked snapshot at the epoch's close,
+    /// paid in whole USDC base units that reduce house cash, with each account's cumulative
+    /// distribution a leaf of the state tree the vault pays a claim against. Stake and unstake
+    /// mirror the staking contract's finalised events, each credited once under its chain
+    /// reference.
+    V25,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V23;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V25;
 
     /// Whether this rule set credits exact receipts with withdrawal principal locks.
     pub fn supports_deposit_finality(self) -> bool {

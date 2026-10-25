@@ -17,7 +17,8 @@
 //!   withdrawal (`uint64` request seq). Approval value hashes bind the exact payable fields
 //!   ([`withdrawal_approval_hash`]). From `V23`, kind 21 holds a pending corporate instruction and
 //!   entitlement snapshot, and kind 22 a retained corporate identity (UTF-8 id bytes); their values
-//!   hash the canonical JSON.
+//!   hash the canonical JSON. From `V25`, kind 13 is an account's cumulative USDC distribution
+//!   (`address`).
 //! - **Paths.** The key's bits, most significant first, are the path from the root: bit `d`,
 //!   `(uint256(key) >> (255 - d)) & 1`, picks the child at depth `d + 1`, 0 left and 1 right.
 //! - **Leaves.** `keccak256(abi.encodePacked(bytes1(0x00), key, valueHash))`; each kind's

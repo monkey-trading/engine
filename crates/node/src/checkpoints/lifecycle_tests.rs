@@ -398,6 +398,7 @@ fn fixture() -> (Poster<Chain>, Work) {
         balance: Fixed::from_int(100),
         deposits: 1,
         deposited: Fixed::from_int(100),
+        distributions_paid: engine_core::Fixed::ZERO,
     };
     let lifecycle = LifecycleEvidence {
         height: 8,
@@ -432,6 +433,7 @@ fn fixture() -> (Poster<Chain>, Work) {
         liabilities: Fixed::from_int(100),
         authorized: Fixed::from_int(10),
         deposits: 1,
+        distributed: Default::default(),
         coverage: crate::checkpoints::DepositCoverage::Historical,
     };
     (

@@ -19,6 +19,7 @@ use std::time::Duration;
 use anyhow::{Context, ensure};
 use engine_core::Fixed;
 use engine_core::emissions::TokenUnits;
+use engine_core::staking::UsdcUnits;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio::time::{MissedTickBehavior, interval};
@@ -35,6 +36,11 @@ pub(crate) struct Work {
     pub checkpoint: Checkpoint,
     pub liabilities: Fixed,
     pub deposits: u64,
+    /// USDC base units the engine has allocated to stakers across closed epochs; the vault cannot
+    /// legitimately have paid more than this. Logs written before distributions existed carry no
+    /// value; they had none.
+    #[serde(default)]
+    pub distributed: UsdcUnits,
     pub authorized: Fixed,
     pub coverage: DepositCoverage,
 }
@@ -60,7 +66,15 @@ impl Work {
         } else {
             (accounting.deposits, DepositCoverage::Historical)
         };
-        Self { checkpoint, liabilities: accounting.liabilities, deposits, authorized: accounting.unpaid(), coverage }
+        let distributed = engine.staking().map_or(UsdcUnits(0), |staking| staking.distributed);
+        Self {
+            checkpoint,
+            liabilities: accounting.liabilities,
+            deposits,
+            distributed,
+            authorized: accounting.unpaid(),
+            coverage,
+        }
     }
 
     /// Whether this work carries `accounting`'s liabilities and approvals and, unless sequenced
@@ -85,6 +99,9 @@ pub(crate) struct VaultState {
     pub deposits: u64,
     /// USDC the vault's deposits brought in, house deposits and booked surpluses included.
     pub deposited: Fixed,
+    /// USDC the vault has paid out in staker distributions; the engine's ledger holds the
+    /// liabilities, and this explains what has left the vault since.
+    pub distributions_paid: Fixed,
 }
 
 /// Latest inclusion is progress; only final custody-policy state authorizes signature release.
@@ -337,6 +354,8 @@ mod emissions_scenario;
 mod lifecycle_tests;
 #[cfg(test)]
 mod scenario;
+#[cfg(test)]
+mod staking_scenario;
 #[cfg(test)]
 mod tests;
 

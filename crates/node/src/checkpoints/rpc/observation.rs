@@ -10,9 +10,9 @@ use futures_util::{StreamExt, TryStreamExt, stream};
 
 use crate::checkpoints::rpc::{
     CheckpointRpc, balanceOfCall, checkpointEpochAtCall, checkpointRootsCall, checkpointSignerAtCall,
-    checkpointSignerCall, depositCountCall, depositedThroughCall, hasCheckpointAtCall, hasCheckpointCall,
-    latestRootCall, latestSeqCall, signerAtEpochCall, signerEpochCall, totalDepositedCall, totalWithdrawnCall,
-    usdcCall, usedNoncesCall,
+    checkpointSignerCall, depositCountCall, depositedThroughCall, distributionsPaidCall, hasCheckpointAtCall,
+    hasCheckpointCall, latestRootCall, latestSeqCall, signerAtEpochCall, signerEpochCall, totalDepositedCall,
+    totalWithdrawnCall, usdcCall, usedNoncesCall,
 };
 use crate::checkpoints::{
     APPROVAL_PAGE_SIZE, AcceptedCheckpoint, ApprovalId, ApprovalStatus, LifecycleEvidence, Observation, VaultState,
@@ -81,6 +81,9 @@ impl CheckpointRpc {
             depositCountCall::abi_decode_returns(&self.call(vault, depositCountCall {}.abi_encode(), at).await?)?;
         let deposited =
             totalDepositedCall::abi_decode_returns(&self.call(vault, totalDepositedCall {}.abi_encode(), at).await?)?;
+        let distributions_paid = distributionsPaidCall::abi_decode_returns(
+            &self.call(vault, distributionsPaidCall {}.abi_encode(), at).await?,
+        )?;
         let signer = engine_core::types::AccountId(signer.into());
         let signer_epoch =
             signerEpochCall::abi_decode_returns(&self.call(vault, signerEpochCall {}.abi_encode(), at).await?)?;
@@ -107,6 +110,7 @@ impl CheckpointRpc {
                 balance: usdc_to_fixed(balance).context("vault balance exceeds Fixed")?,
                 deposits: u64::try_from(deposits).context("vault deposit count exceeds u64")?,
                 deposited: usdc_to_fixed(deposited).context("vault deposited total exceeds Fixed")?,
+                distributions_paid: usdc_to_fixed(distributions_paid).context("distributions paid exceed Fixed")?,
             },
             lifecycle: Some(lifecycle),
         })

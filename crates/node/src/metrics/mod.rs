@@ -313,6 +313,8 @@ fn reject_kind(reason: &Reject) -> &'static str {
         Reject::InvalidNonce { .. } => "invalid_nonce",
         Reject::Expired { .. } => "expired",
         Reject::ExpiryTooFar { .. } => "expiry_too_far",
+        Reject::StakingNotInitialised => "staking_not_initialised",
+        Reject::InsufficientStake => "insufficient_stake",
     }
 }
 

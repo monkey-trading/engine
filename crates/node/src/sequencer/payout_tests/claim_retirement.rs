@@ -54,6 +54,7 @@ async fn recovered_claims_retire_without_trusted_time_or_healthy_reconciliation(
         // and its claim is final, so the work is canonical despite the unscanned ledger receipts.
         let work = Work {
             deposits: 1,
+            distributed: Default::default(),
             coverage: crate::checkpoints::DepositCoverage::Canonical,
             ..Work::capture(last.clone(), node.seq.accounting, &node.seq.engine)
         };
@@ -138,6 +139,7 @@ impl ClaimChain {
             balance: self.work.liabilities - lifecycle.total_withdrawn - if healthy { Fixed::ZERO } else { Fixed::ONE },
             deposits: self.work.deposits,
             deposited: self.work.liabilities,
+            distributions_paid: engine_core::Fixed::ZERO,
         };
         Observation { view, state, lifecycle: Some(lifecycle) }
     }

@@ -122,6 +122,7 @@ async fn recover(cfg: &NodeConfig, finalized: &Checkpoint) -> anyhow::Result<Opt
             balance: Fixed::ZERO,
             deposits: 0,
             deposited: Fixed::ZERO,
+            distributions_paid: Fixed::ZERO,
         }),
         domain: CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? },
         signer: AccountId(key.address()),

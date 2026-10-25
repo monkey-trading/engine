@@ -1,7 +1,8 @@
 //! Cash in and out of the engine: deposits, withdrawals, house capital, and overnight financing.
 //!
 //! Cash is conserved: client balances, house cash and V22 pending reservations equal deposits plus
-//! house capital, less approved withdrawals. Internal movements debit one side and credit another.
+//! house capital, less approved withdrawals and, from `V25`, the distributions epochs have
+//! allocated. Internal movements debit one side and credit another.
 
 use std::collections::BTreeMap;
 

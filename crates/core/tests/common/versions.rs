@@ -5,6 +5,8 @@ use engine_core::auth::ClientAuth;
 use engine_core::command::AdminCommand;
 use engine_core::emissions::{EmissionSchedule, TokenUnits};
 use engine_core::protocol::ProtocolVersion;
+use engine_core::staking::StakingConfig;
+use engine_core::types::Millis;
 
 use crate::common::{Harness, operator};
 
@@ -156,6 +158,16 @@ impl Harness {
         for version in [ProtocolVersion::V18, ProtocolVersion::V19, ProtocolVersion::V20, ProtocolVersion::V21] {
             h.admin(AdminCommand::ActivateProtocol { version });
         }
+        h
+    }
+
+    /// `v21`, then `V25`, with a staking config the operator signs that starts now with the given
+    /// liquidity floor, epoch length, and unstake cooldown.
+    pub fn staking(liquidity_floor: Fixed, epoch_ms: Millis, cooldown_ms: Millis) -> Self {
+        let mut h = Harness::v21();
+        h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V25 });
+        let config = StakingConfig { liquidity_floor, epoch_ms, start_ms: h.ts, cooldown_ms };
+        h.operator_admin(AdminCommand::InitStaking(config));
         h
     }
 }

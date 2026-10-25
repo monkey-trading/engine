@@ -16,14 +16,16 @@ use crate::emissions::{Emissions, TokenUnits};
 use crate::engine::{Engine, Markout};
 use crate::merkle::leaf::{deposit_key, deposit_transaction_key, legacy_deposit_key};
 use crate::merkle::{
-    AccountLeaf, AccountProof, EntitlementProof, MarketLeaf, MarketProof, PositionProof, SparseMerkleTree,
-    WithdrawalApprovalProof, account_key, corporate_action_key, corporate_reference_key, credited_ref_hash,
-    credited_ref_key, entitlement_hash, entitlement_key, globals_key, json_hash, market_key, markout_hash, markout_key,
-    order_hash, order_key, period_result_hash, period_result_key, position_hash, position_key, request_nonce_hash,
-    request_nonce_key, withdrawal_approval_hash, withdrawal_approval_key, withdrawal_queue_hash, withdrawal_queue_key,
+    AccountLeaf, AccountProof, DistributionProof, EntitlementProof, MarketLeaf, MarketProof, PositionProof,
+    SparseMerkleTree, WithdrawalApprovalProof, account_key, corporate_action_key, corporate_reference_key,
+    credited_ref_hash, credited_ref_key, distribution_hash, distribution_key, entitlement_hash, entitlement_key,
+    globals_key, json_hash, market_key, markout_hash, markout_key, order_hash, order_key, period_result_hash,
+    period_result_key, position_hash, position_key, request_nonce_hash, request_nonce_key, withdrawal_approval_hash,
+    withdrawal_approval_key, withdrawal_queue_hash, withdrawal_queue_key,
 };
 use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
+use crate::staking::{Staking, UsdcUnits};
 use crate::types::{AccountId, MarketId, Millis, OrderId};
 
 /// The state tree as of the last root, with the account, position, market, and entitlement leaves
@@ -37,6 +39,7 @@ pub(crate) struct StateTree {
     positions: BTreeMap<(AccountId, MarketId), Position>,
     markets: BTreeMap<MarketId, MarketLeaf>,
     entitlements: BTreeMap<AccountId, TokenUnits>,
+    distributions: BTreeMap<AccountId, UsdcUnits>,
     work: RootWork,
 }
 
@@ -67,6 +70,7 @@ struct Touched {
     refs: BTreeSet<String>,
     period_results: BTreeSet<AccountId>,
     entitlements: BTreeSet<AccountId>,
+    distributions: BTreeSet<AccountId>,
     deposits: BTreeSet<String>,
     deposit_transactions: BTreeSet<String>,
     legacy_deposits: BTreeSet<String>,
@@ -105,6 +109,13 @@ struct Globals<'a> {
     withdrawal_cash: Option<Fixed>,
     #[serde(skip_serializing_if = "is_zero")]
     withdrawal_next_ticket: u64,
+    /// From `V25`; omitted until staking is initialised, so earlier roots stand.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    staking: &'a Option<Staking>,
+    /// From `V25`; omitted while empty, so earlier roots stand.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    staked: &'a BTreeMap<AccountId, TokenUnits>,
+
 }
 
 impl Engine {
@@ -133,6 +144,7 @@ impl Engine {
             refs,
             period_results,
             entitlements,
+            distributions,
             deposits,
             deposit_transactions,
             legacy_deposits,
@@ -211,15 +223,10 @@ impl Engine {
         changes.extend(
             entitlement_leaves.iter().map(|(id, entitled)| (entitlement_key(*id), entitled.map(entitlement_hash))),
         );
+        let distribution_leaves: Vec<(AccountId, Option<UsdcUnits>)> =
+            distributions.into_iter().map(|id| (id, self.distributions.get(&id).copied())).collect();
         changes.extend(
-            withdrawal_queue
-                .into_iter()
-                .map(|seq| (withdrawal_queue_key(seq), self.withdrawal_queue.get(&seq).map(withdrawal_queue_hash))),
-        );
-        changes.extend(
-            withdrawal_approvals
-                .into_iter()
-                .map(|key| (key, self.withdrawal_approvals.get(&key).map(withdrawal_approval_hash))),
+            distribution_leaves.iter().map(|(id, entitled)| (distribution_key(*id), entitled.map(distribution_hash))),
         );
 
         // A seq has been applied: `V9` takes effect through a sequenced `ActivateProtocol`.
@@ -249,6 +256,12 @@ impl Engine {
             match entitled {
                 Some(entitled) => state.entitlements.insert(id, entitled),
                 None => state.entitlements.remove(&id),
+            };
+        }
+        for (id, entitled) in distribution_leaves {
+            match entitled {
+                Some(entitled) => state.distributions.insert(id, entitled),
+                None => state.distributions.remove(&id),
             };
         }
         state.root = state.tree.root();
@@ -301,6 +314,18 @@ impl Engine {
         let approval = *self.withdrawal_approval(account, nonce)?;
         let siblings = state.tree.proof(withdrawal_approval_key(account, nonce))?;
         Some(WithdrawalApprovalProof { seq: state.seq, root: state.root, approval, siblings })
+    }
+
+    /// The proof of `account`'s cumulative USDC distribution against the last state root computed,
+    /// as the vault's `claimDistribution` takes it. `None` before the first root under `V9`, or for
+    /// an account that root holds no distribution for.
+    pub fn distribution_proof(&self, account: AccountId) -> Option<DistributionProof> {
+        let state = self.tree.as_ref()?;
+        let entitled = *state.distributions.get(&account)?;
+        let siblings =
+            state.tree.proof(distribution_key(account)).expect("every distribution kept for proofs is in the tree");
+        Some(DistributionProof { seq: state.seq, root: state.root, account, entitled, siblings })
+
     }
 
     /// What the last state root hashed, or `None` before the first root under `V9`.
@@ -377,6 +402,7 @@ impl Engine {
             refs: self.credited_refs.take_touched(),
             period_results: self.period_results.take_touched(),
             entitlements: self.entitlements.take_touched(),
+            distributions: self.distributions.take_touched(),
             deposits: self.deposits.take_touched(),
             deposit_transactions: self.deposit_transactions.take_touched(),
             legacy_deposits: self.legacy_deposits.take_touched(),
@@ -398,6 +424,7 @@ impl Engine {
             refs: self.credited_refs.iter().cloned().collect(),
             period_results: self.period_results.keys().copied().collect(),
             entitlements: self.entitlements.keys().copied().collect(),
+            distributions: self.distributions.keys().copied().collect(),
             deposits: self.deposits.keys().cloned().collect(),
             deposit_transactions: self.deposit_transactions.keys().cloned().collect(),
             legacy_deposits: self.legacy_deposits.keys().cloned().collect(),
@@ -452,6 +479,9 @@ impl Engine {
             withdrawal_approvals: _,
             corporate_actions: _,
             corporate_refs: _,
+            staking,
+            staked,
+            distributions: _,
             changed: _,
             tree: _,
             hot_indexes: _,
@@ -476,6 +506,9 @@ impl Engine {
             custody_checkpoint: *custody_checkpoint,
             withdrawal_cash: *withdrawal_cash,
             withdrawal_next_ticket: *withdrawal_next_ticket,
+            staking,
+            staked,
+
         }
     }
 }

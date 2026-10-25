@@ -20,8 +20,12 @@ import {MonkeyToken} from "./MonkeyToken.sol";
 /// @notice MONKEY emissions: the vault deploys the MONKEY token as its only minter, and mints to an
 /// account what its cumulative entitlement, proven against the latest posted checkpoint root, adds
 /// to what it was already minted.
-/// @dev The attested signer authorizes checkpoints and withdrawals; the deployment's multisig
-/// controls signer rotation and pauses through its timelock. This contract is not upgradeable.
+/// @notice Distributions: each epoch the engine sets aside house NAV above the liquidity floor for
+/// stakers; the vault pays an account the USDC its cumulative distribution, proven against the
+/// latest posted checkpoint root, adds to what it was already paid.
+/// @dev The attested signer authorizes checkpoints, withdrawals, and distribution claims; the
+/// deployment's multisig controls signer rotation and pauses through its timelock. This contract
+/// is not upgradeable.
 contract Vault is ReentrancyGuardTransient, EIP712 {
     using SafeERC20 for IERC20;
 
@@ -60,6 +64,8 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
 
     /// @notice The first byte of a withdrawal approval leaf's key in the engine's state tree.
     uint8 private constant APPROVAL_LEAF = 32;
+    /// @notice The first byte of a distribution leaf's key in the engine's state tree.
+    uint8 private constant DISTRIBUTION_LEAF = 13;
 
     /// @notice The collateral token: USDC, 6 decimals.
     IERC20 public immutable usdc;
@@ -69,6 +75,13 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
 
     /// @notice MONKEY base units minted to each account so far against its entitlement.
     mapping(address account => uint256 claimed) public emissionsClaimed;
+
+    /// @notice USDC base units paid to each account so far against its distribution.
+    mapping(address account => uint256 claimed) public distributionsClaimed;
+
+    /// @notice USDC base units paid out in distributions so far; the node's checkpoint
+    /// reconciliation adds it to the vault's balance against the engine's ledger.
+    uint256 public distributionsPaid;
 
     /// @notice Deposits accepted so far, trader and house alike; the next deposit's id.
     uint256 public depositCount;
@@ -111,6 +124,10 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     /// @notice `amount` MONKEY base units minted to `account`, bringing its total to `entitled`, the
     /// entitlement checkpoint `seq` proves.
     event EmissionsClaimed(address indexed account, uint256 amount, uint256 entitled, uint64 seq);
+
+    /// @notice `amount` USDC base units paid to `account`, bringing its total to `entitled`, the
+    /// distribution checkpoint `seq` proves.
+    event DistributionClaimed(address indexed account, uint256 amount, uint256 entitled, uint64 seq);
 
     error ZeroAddress();
     error InvalidAmount(uint256 amount);
@@ -302,6 +319,28 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
             vaultAfter > vaultBefore || vaultBefore - vaultAfter != amount || accountAfter < accountBefore
                 || accountAfter - accountBefore != amount
         ) revert InexactWithdrawalTransfer();
+    }
+
+    /// @notice Pays `account` the USDC its cumulative distribution `entitled` adds to what it was
+    /// already paid, once `siblings` prove that distribution against the latest posted root. Anyone
+    /// may relay a claim; the USDC always goes to `account`. A proof against an earlier root stops
+    /// working once a later checkpoint is posted; fetch a fresh one.
+    /// @return amount The USDC base units paid.
+    function claimDistribution(address account, uint256 entitled, bytes32[] calldata siblings)
+        external
+        nonReentrant
+        returns (uint256 amount)
+    {
+        if (!hasCheckpoint) revert NoCheckpoint();
+        bytes32 key = keccak256(abi.encodePacked(DISTRIBUTION_LEAF, account));
+        if (!_proves(latestRoot, key, keccak256(abi.encode(entitled)), siblings)) revert InvalidEntitlementProof();
+        uint256 claimed = distributionsClaimed[account];
+        if (entitled <= claimed) revert NothingToClaim(entitled, claimed);
+        amount = entitled - claimed;
+        distributionsClaimed[account] = entitled;
+        distributionsPaid += amount;
+        emit DistributionClaimed(account, amount, entitled, latestSeq);
+        _pay(account, amount);
     }
 
     /// @notice Deposits `amount` USDC base units from the caller into the caller's trading account,
