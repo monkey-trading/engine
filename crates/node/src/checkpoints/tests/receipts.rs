@@ -1,4 +1,4 @@
-//! Captured coverage component contracts; actual V19 Work capture is tested after activation.
+//! Captured coverage component contracts; actual V20 Work capture is tested after activation.
 use super::*;
 use crate::checkpoints::DepositCoverage;
 

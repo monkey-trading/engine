@@ -290,8 +290,9 @@ reduce the account's position in its market skip the minimum-notional check at p
 `v15.jsonl`. `V16` clamps every account's toxicity history when parameters set a lower memory; its
 log is `v16.jsonl`. `V17` keeps a market's move window across a halt; its log is `v17.jsonl`.
 `V18` adds dated benchmark snapshots and per-date catch-up. Its reference-log session is in
-`examples/reference_log/v18.rs`. `V19` adds receipt-based custody principal locks, finality and
-reversal, with its reference session in `examples/reference_log/v19.rs`.
+`examples/reference_log/v18.rs`. `V19` adds MONKEY emissions (`examples/reference_log/v19.rs`).
+`V20` adds receipt-based custody principal locks, finality, reversal and reinclusion moves, with its
+reference session in `examples/reference_log/v20.rs`.
 For each later version:
 
 1. Add the version in code as `src/protocol.rs` lists, then extend the session in

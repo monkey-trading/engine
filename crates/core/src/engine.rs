@@ -15,7 +15,7 @@ use crate::Fixed;
 use crate::account::{Account, Position};
 use crate::auth::{ClientAuth, Operator};
 use crate::benchmark::BenchmarkHistory;
-use crate::command::{AdminCommand, Command, Sequenced};
+use crate::command::{Command, Sequenced};
 use crate::deposits::{CustodyCheckpoint, LegacyDeposit, RecordedDeposit};
 use crate::emissions::{Emissions, PeriodResult, TokenUnits};
 use crate::event::{Event, Reject};

@@ -4,7 +4,7 @@
 //!   counts the account's position leaves; from `V11`, once a markout has scored the account, or its
 //!   score carries a fraction of a bp, `keccak256(abi.encode(AccountLeaf, int128 toxicityFraction,
 //!   int128 toxicityHistory))`, with the fraction above `toxicityBps` and the fill notional of history
-//!   behind the score; from V19, while principal is unfinalised, the ABI suffix contains all three
+//!   behind the score; from V20, while principal is unfinalised, the ABI suffix contains all three
 //!   `int128` values: toxicity fraction, toxicity history, and unfinalised principal.
 //! - **Position:** `keccak256(abi.encode(PositionLeaf))`, one per open position, keyed by its
 //!   account and market.

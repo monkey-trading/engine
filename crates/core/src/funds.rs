@@ -234,7 +234,7 @@ mod tests {
             unfinalised_house_deposits: Fixed::ONE,
             ..Engine::default()
         };
-        assert!(engine.deposit_finality_enabled(), "V19 activation requires actual V18 integration");
+        assert!(engine.deposit_finality_enabled(), "V20 activation enables deposit finality");
         let mut events = Vec::new();
         engine.house_capital(-Fixed::ONE, "overflowing-house-debit", &mut events);
         assert_eq!(

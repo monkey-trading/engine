@@ -1,4 +1,4 @@
-//! Actual V19 recovery and signature-release contracts; chain-proof ingestion is tested in custody.
+//! Actual V20 recovery and signature-release contracts; chain-proof ingestion is tested in custody.
 
 use super::*;
 
@@ -288,7 +288,7 @@ fn scaling_history(dir: &Path, approvals: usize, unrelated: u8) -> (Engine, Vec<
         apply(
             &mut engine,
             &mut entries,
-            Command::Admin(AdminCommand::ActivateCustodyFinality { version: ProtocolVersion::V19, legacy_deposits })
+            Command::Admin(AdminCommand::ActivateCustodyFinality { version: ProtocolVersion::V20, legacy_deposits })
         )
         .contains(&Event::AdminApplied)
     );
@@ -358,7 +358,7 @@ fn activated_history(dir: &Path, later_funding: bool) -> (Engine, Vec<LogEntry>,
             &mut engine,
             &mut entries,
             Command::Admin(AdminCommand::ActivateCustodyFinality {
-                version: ProtocolVersion::V19,
+                version: ProtocolVersion::V20,
                 legacy_deposits: vec![legacy],
             })
         )

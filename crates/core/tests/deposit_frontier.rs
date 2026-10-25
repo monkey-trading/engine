@@ -112,7 +112,7 @@ fn baseline() -> Harness {
 /// Activates the actual released protocol without editing engine fields or historical inputs.
 fn active() -> Harness {
     let mut h = Harness::v17();
-    h.admin(AdminCommand::ActivateCustodyFinality { version: ProtocolVersion::V19, legacy_deposits: Vec::new() });
+    h.admin(AdminCommand::ActivateCustodyFinality { version: ProtocolVersion::V20, legacy_deposits: Vec::new() });
     assert!(h.engine.deposit_finality_enabled());
     h
 }

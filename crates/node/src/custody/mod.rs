@@ -1,6 +1,6 @@
 //! Collateral custody. USDC sits in a vault contract on an EVM L2. The chain handles custody only
 //! and never touches execution:
-//! - deposits: from V19, sequence exact quorum-proven receipts on confirmation, lock principal
+//! - deposits: from V20, sequence exact quorum-proven receipts on confirmation, lock principal
 //!   against withdrawals until Ethereum finality, and reconcile canonical reversals; older logs
 //!   retain their legacy credit commands and cursor semantics;
 //! - withdrawals: the engine approves, the enclave signs, and the vault pays out against the

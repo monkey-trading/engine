@@ -34,7 +34,7 @@ pub enum Command {
         amount: Fixed,
         chain_ref: String,
     },
-    /// A quorum-proven custody receipt transition, from V19.
+    /// A quorum-proven custody receipt transition, from V20.
     CustodyDeposit(Box<DepositUpdate>),
     /// Finalised scan progress, recorded after its receipts have settled.
     CustodyFinalised(CustodyCheckpoint),

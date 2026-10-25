@@ -1,4 +1,4 @@
-//! Receipt-output contracts and a state-based oracle through actual V19 execution.
+//! Receipt-output contracts and a state-based oracle through actual V20 execution.
 use super::*;
 use engine_core::deposits::{DepositBeneficiary, DepositReceipt, DepositStatus, DepositUpdate};
 
@@ -150,7 +150,7 @@ fn state_scan_counts_adoption_orphans_moved_reinclusion_finality_and_reinstateme
         &mut engine,
         &mut accounting,
         Command::Admin(AdminCommand::ActivateCustodyFinality {
-            version: ProtocolVersion::V19,
+            version: ProtocolVersion::V20,
             legacy_deposits: vec![legacy],
         }),
     );

@@ -1,8 +1,9 @@
-//! V19 receipt lifecycle, collateral and withdrawal eligibility through Engine::apply.
+//! V20 receipt lifecycle, collateral and withdrawal eligibility through Engine::apply.
 
 mod common;
 
 use alloy_primitives::B256;
+use common::emissions::{allocations, next_period};
 use common::events::only_fill;
 use common::{BTC, Harness, acct, f};
 use engine_core::command::{AdminCommand, Command};
@@ -193,6 +194,30 @@ fn a_reincluded_deposit_keeps_a_solvent_position_open_and_an_unpaired_orphan_sti
 }
 
 #[test]
+fn a_reversal_shortfall_the_house_writes_off_is_subtracted_from_emission_weight() {
+    let mut h = Harness::emitting(1_000_000);
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::LATEST });
+    assert!(h.engine.deposit_finality_enabled() && h.engine.emissions().is_some());
+    let account = acct(1);
+    let deposit = receipt(1, account, "100");
+    update(&mut h, DepositUpdate::Credit { receipt: deposit.clone() });
+    h.price(BTC, "100");
+    assert_eq!(only_fill(&h.market_order(account, BTC, Side::Buy, "5", "100")).qty, f("5"));
+    price_after_move_window(&mut h, "90");
+    let events = update(&mut h, DepositUpdate::Reverse { receipt: deposit, observed_at_seq: 0 });
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, Event::BadDebt { account: a, amount } if *a == account && *amount == f("50")))
+    );
+    let result = h.engine.period_results()[&account];
+    assert_eq!(result.written_off, f("50"), "the reversal's write-off is recorded against emissions");
+    assert_eq!(result.realised, f("-50"));
+    // The loss the house wrote off earns nothing.
+    assert!(allocations(&next_period(&mut h)).iter().all(|(allocated, ..)| *allocated != account));
+}
+
+#[test]
 fn house_reversal_may_make_nav_negative_without_halting_orders() {
     let mut h = harness(true);
     let account = acct(1);
@@ -263,7 +288,7 @@ fn lifecycle_log_replay_and_serialised_restart_preserve_roots_locks_and_exact_on
 #[test]
 fn legacy_upgrade_records_pending_principal_before_withdrawals_and_releases_only_after_proof() {
     use engine_core::deposits::LegacyDeposit;
-    assert!(ProtocolVersion::LATEST.supports_deposit_finality(), "actual V18/V19 integration remains required");
+    assert!(ProtocolVersion::LATEST.supports_deposit_finality(), "this build activates deposit finality");
     let mut h = Harness::v17();
     let account = acct(1);
     let deposit = receipt(1, account, "100");
@@ -350,7 +375,7 @@ fn custody_activation_waits_for_dated_financing_without_charging_legacy_rates() 
     let rollover = h.engine.next_rollover().expect("genesis schedules financing");
     h.advance_to(rollover + 1);
     let events = h.cmd(Command::Admin(AdminCommand::ActivateCustodyFinality {
-        version: ProtocolVersion::V19,
+        version: ProtocolVersion::V20,
         legacy_deposits: vec![legacy],
     }));
     assert!(events.contains(&Event::AdminApplied), "{events:?}");
@@ -405,7 +430,7 @@ fn harness(zero_house: bool) -> Harness {
     if h.engine.protocol_version() < ProtocolVersion::LATEST {
         h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::LATEST });
     }
-    assert!(h.engine.deposit_finality_enabled(), "V19 activation awaits actual #33 V18 integration");
+    assert!(h.engine.deposit_finality_enabled(), "V20 activation enables deposit finality");
     h
 }
 

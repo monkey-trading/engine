@@ -67,7 +67,7 @@ async fn missing_reorged_or_changed_legacy_receipts_and_no_quorum_cannot_authori
 async fn legacy_upgrade_locks_only_real_evm_principal_until_proof_and_ignores_a_forward_cursor() {
     assert!(
         engine_core::protocol::ProtocolVersion::LATEST.supports_deposit_finality(),
-        "actual V18/V19 integration required"
+        "this build activates deposit finality"
     );
     let dir = scratch("legacy-real-upgrade");
     let node = start_old(&dir).await;
@@ -81,7 +81,7 @@ async fn legacy_upgrade_locks_only_real_evm_principal_until_proof_and_ignores_a_
     node.submit(Command::Deposit { account: TRADER, amount: usdc("50"), chain_ref: "dev:unrelated".into() }).await;
     node.stop().await;
     let node = Node::start_confirmed(&dir);
-    assert!(node.read(|e| e.deposit_finality_enabled()).await, "actual V18/V19 activation is still required");
+    assert!(node.read(|e| e.deposit_finality_enabled()).await, "this build activates deposit finality");
     assert_eq!(node.read(|e| e.accounts()[&TRADER].unfinalised_deposits).await, usdc("100"));
     assert!(
         node.submit(withdraw("51"))
@@ -137,7 +137,7 @@ async fn legacy_upgrade_locks_only_real_evm_principal_until_proof_and_ignores_a_
 async fn missing_legacy_identity_keeps_only_its_principal_locked_while_independent_final_funds_release() {
     assert!(
         engine_core::protocol::ProtocolVersion::LATEST.supports_deposit_finality(),
-        "actual V18/V19 integration required"
+        "this build activates deposit finality"
     );
     let dir = scratch("legacy-missing-identity");
     let node = start_old(&dir).await;
@@ -182,7 +182,7 @@ async fn missing_legacy_identity_keeps_only_its_principal_locked_while_independe
 async fn an_adopted_legacy_receipt_moves_to_a_moved_index_once_with_critical_and_no_extra_cash() {
     assert!(
         engine_core::protocol::ProtocolVersion::LATEST.supports_deposit_finality(),
-        "actual V18/V19 integration required"
+        "this build activates deposit finality"
     );
     let dir = scratch("legacy-adopted-reorg");
     let node = start_old(&dir).await;

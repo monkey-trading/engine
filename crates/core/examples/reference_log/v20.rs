@@ -1,4 +1,4 @@
-//! Receipt principal, finality, reversal and a sequenced canonical frontier under V19.
+//! Receipt principal, finality, reversal and a sequenced canonical frontier under V20.
 
 use std::collections::BTreeMap;
 
@@ -36,7 +36,7 @@ pub(crate) fn session(h: &mut Harness) {
     }
     assert_eq!(replay.state_root(), h.engine.state_root());
     h.admin(AdminCommand::ActivateCustodyFinality {
-        version: ProtocolVersion::V19,
+        version: ProtocolVersion::V20,
         legacy_deposits: legacy.into_values().collect(),
     });
 
@@ -143,12 +143,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn receipt_reference_session_uses_actual_v19_without_writing_a_log() {
+    fn receipt_reference_session_uses_actual_v20_without_writing_a_log() {
         let mut h = Harness::signed();
         h.admin(AdminCommand::SetOperator(crate::common::operator()));
         h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V18 });
         session(&mut h);
-        assert_eq!(h.engine.protocol_version(), ProtocolVersion::V19);
-        assert_eq!(h.engine.custody_deposit_coverage(), Some(1));
+        assert_eq!(h.engine.protocol_version(), ProtocolVersion::V20);
+        assert_eq!(h.engine.custody_deposit_coverage(), Some(2));
     }
 }

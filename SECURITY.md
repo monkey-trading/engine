@@ -138,7 +138,7 @@ serves the intended chain and token; endpoint independence alone cannot establis
 a compromised majority, operator independence is not machine-verifiable, and it takes the vault,
 its token, provider endpoints and finality tag from the
 host-supplied configuration, which only a verifier holding a published copy of it can check against
-the attested config hash. From V19, deposits trade on sequencer confirmation (`latest`, less
+the attested config hash. From V20, deposits trade on sequencer confirmation (`latest`, less
 configured confirmations), while principal can be withdrawn only after Ethereum finality (`finalized`).
 Hardware-TEE validation refuses a different tag pair. Exact receipts, unfinalised principal and
 finalised scan progress are deterministic sequenced state. Legacy EVM credits gain no finality from

@@ -107,7 +107,7 @@ fn writable_recovery_refuses_an_unproven_legacy_signature_without_appending_or_d
     use std::sync::Arc;
     use tokio::sync::{broadcast, mpsc, watch};
 
-    assert!(ProtocolVersion::LATEST.supports_deposit_finality(), "actual V18/V19 integration required");
+    assert!(ProtocolVersion::LATEST.supports_deposit_finality(), "this build activates deposit finality");
     let (mut engine, _, mut entries) = history(25);
     apply(&mut engine, &mut entries, Command::Withdraw { account: TRADER, amount: Fixed::from_int(50), auth: None });
     let dir = scratch_dir("legacy-unsigned-recovery");

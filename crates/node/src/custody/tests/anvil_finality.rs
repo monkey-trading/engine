@@ -36,7 +36,7 @@ async fn anvil_confirmation_finality_scenario() {
     let (logs, _guard) = Logs::capture();
     let dir = Path::new(&path).parent().unwrap();
     let node = Node::start_evm(dir, cfg.custody.chain_id, cfg.custody.vault.parse().unwrap());
-    assert!(node.read(|e| e.deposit_finality_enabled()).await, "V19 requires the actual V18 integration");
+    assert!(node.read(|e| e.deposit_finality_enabled()).await, "this build activates deposit finality");
     let client = Trader {
         account: trader,
         key: signing_key,

@@ -28,7 +28,7 @@ async fn scripted_confirmation_finality_scenario() {
     let dir = scratch("confirmed-scenario");
     let (logs, _guard) = Logs::capture();
     let node = Node::start_confirmed(&dir);
-    assert!(node.read(|e| e.deposit_finality_enabled()).await, "V19 activation requires real V18 integration");
+    assert!(node.read(|e| e.deposit_finality_enabled()).await, "this build activates deposit finality");
     configure_trading(&node).await;
     let chains = chains(10, Some(2));
     let finalised = confirmed_deposit(0, 1, 50);

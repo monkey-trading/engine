@@ -1,5 +1,5 @@
-//! The vault deposit watcher. Before V19 it credits the configured tag under a resumable host cursor.
-//! V19 reconciles exact sequencer-confirmed receipts, locks their principal until Ethereum
+//! The vault deposit watcher. Before V20 it credits the configured tag under a resumable host cursor.
+//! V20 reconciles exact sequencer-confirmed receipts, locks their principal until Ethereum
 //! finality, and recovers its finalised frontier from sequenced state (`evm/lifecycle.rs`).
 //! Every chain, event-set and count read passes through the fixed provider quorum.
 

@@ -84,29 +84,25 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The scripted session under the latest protocol version: client auth and activation, genesis,
-/// then funding, prices, every order kind, signed requests refused for each auth reason, triggers
-/// (one held back by its spread), cancels, reduce-only (one clipped to the position), stress,
-/// toxicity, a position flip, house capital, withdrawals, a session close and gapped open, financing
-/// rollovers over longs and a short, a two-position close-out with bad debt, two-band margin, an
-/// exchange holiday, a zero house capital move, an early close and a special session, admin changes,
-/// venue quotes stamped ahead of the sequenced time, and dust adds to a long and a short held over a
-/// rollover, with a rejection of each kind along the way. Then, under `V6`, close-outs after a
-/// margin-table rise, a close-out level rise, and a rollover's financing, house cap floors at a
-/// drawn-down NAV, and a close-out just after a session close that skips the closed market. Then,
-/// under `V7`, USD settlement of markets quoted in euros and yen. Then, under `V8`, operator commands
-/// signed and refused for each reason, and every market reduce-only. Then, under `V9`, the state
-/// tree: a new account's deposit, resting order and cancel, a dollar round trip, a euro position, and
-/// a marked markout. Then, under `V10`, spreads, a margin requirement, and close-out levels that
-/// round up; and under `V11`, markouts averaged by notional and scored at a valid index. Then, under
-/// `V12`, gapped opens, quotes ageing out, a session close, a leading venue, and an FX index ageing
-/// out, each processed before the next command acts. Then, under `V13`, stress that follows its
-/// inputs (`stress.rs`), and, under `V14`, the part in `v14.rs`, and, under `V15`, the part in
-/// `v15.rs`. Then, under `V16`, a lowered toxicity memory clamps the history a score weighs
-/// (`v16.rs`), under `V17`, the move window survives a halt (`v17.rs`), under `V18`, dated
-/// benchmark rates (`v18.rs`), under `V19`, MONKEY emissions (`v19.rs`), and under `V20`, custody receipt
-/// finality, reversal and reinclusion (`v20.rs`). Every client request
-/// is signed by its account's key unless the comment says otherwise.
+/// The scripted session under the latest protocol version: client auth and activation, genesis, then funding, prices,
+/// every order kind, signed requests refused for each auth reason, triggers (one held back by its spread), cancels,
+/// reduce-only (one clipped to the position), stress, toxicity, a position flip, house capital, withdrawals, a session
+/// close and gapped open, financing rollovers over longs and a short, a two-position close-out with bad debt, two-band
+/// margin, an exchange holiday, a zero house capital move, an early close and a special session, admin changes, venue
+/// quotes stamped ahead of the sequenced time, and dust adds to a long and a short held over a rollover, with a
+/// rejection of each kind along the way. Then, under `V6`, close-outs after a margin-table rise, a close-out level
+/// rise, and a rollover's financing, house cap floors at a drawn-down NAV, and a close-out just after a session close
+/// that skips the closed market. Then, under `V7`, USD settlement of markets quoted in euros and yen. Then, under `V8`,
+/// operator commands signed and refused for each reason, and every market reduce-only. Then, under `V9`, the state
+/// tree: a new account's deposit, resting order and cancel, a dollar round trip, a euro position, and a marked markout.
+/// Then, under `V10`, spreads, a margin requirement, and close-out levels that round up; and under `V11`, markouts
+/// averaged by notional and scored at a valid index. Then, under `V12`, gapped opens, quotes ageing out, a session
+/// close, a leading venue, and an FX index ageing out, each processed before the next command acts. Then, under `V13`,
+/// stress that follows its inputs (`stress.rs`), and, under `V14`, the part in `v14.rs`, and, under `V15`, the part in
+/// `v15.rs`. Then, under `V16`, a lowered toxicity memory clamps the history a score weighs (`v16.rs`), under `V17`,
+/// the move window survives a halt (`v17.rs`), under `V18`, dated benchmark rates (`v18.rs`), under `V19`, MONKEY
+/// emissions (`v19.rs`), and under `V20`, custody receipt finality, reversal and reinclusion (`v20.rs`). Every client
+/// request is signed by its account's key unless the comment says otherwise.
 fn session() -> Vec<Sequenced> {
     let mut h = Harness::signed();
     let (a, b, c, d, t, e) = (h.signer(1), h.signer(2), h.signer(3), h.signer(4), h.signer(5), h.signer(6));

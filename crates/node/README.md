@@ -68,7 +68,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   outages, symbols with no fresh quote, and venue times well ahead of the host clock
 - A `house_deficit` alert when house NAV falls below zero, at most one a minute while it keeps
   crossing zero
-- EVM custody: a strict majority of at least three RPC providers admits each deposit; from V19,
+- EVM custody: a strict majority of at least three RPC providers admits each deposit; from V20,
   sequencer confirmation credits trading collateral, Ethereum finality unlocks withdrawal principal,
   and canonical reversals debit once with a Critical alert
 - Mock custody and a mock price feed for local development
@@ -566,7 +566,7 @@ account must be able to sign requests with its own key, since the engine accepts
 signatures: a contract wallet funds a key that signs for it through `depositFor`, and a balance
 credited to a contract account can be recovered only through the exit (#48).
 
-From V19, production credits trading collateral at `custody.evm.finality_tag = "latest"`,
+From V20, production credits trading collateral at `custody.evm.finality_tag = "latest"`,
 minus the configured `confirmations`. It releases that principal for withdrawals at
 `withdrawal_finality_tag = "finalized"`, without a second credit or a second confirmations delay.
 A node with hardware attestation refuses any other tag pair before custody starts. Mock TEE
@@ -580,7 +580,7 @@ the account view omits the field while zero. Withdrawal cash is its balance less
 limited independently by equity above margin, so unrelated finalised cash remains available subject
 to the existing margin check. Trading losses reduce available cash without reducing the principal
 lock. Finality removes only the matching lock. The finalised scan frontier is also sequenced; the
-host cursor cannot unlock principal or move the V19 scan past an unresolved receipt. The watcher
+host cursor cannot unlock principal or move the V20 scan past an unresolved receipt. The watcher
 fixes its command format from the build's supported protocol before its first poll; activation
 between reading a receipt and submitting it cannot turn that receipt into a legacy unlocked credit.
 Before the first authenticated time sample, neither deposits nor finalised progress can be sequenced.
@@ -603,8 +603,8 @@ hashes and complete event sets checked against counts at exact block hashes boun
 one compromised provider cannot fabricate a credit or reversal. Vault, token and provider configuration
 remain host supplied pending attestation binding. Reorganisations undoing Ethereum-finalised blocks
 remain outside the threat model; the watcher refuses a changed finalised anchor. Earlier protocols
-retain their recorded tag/cursor semantics and do not gain V19 receipt state during historical execution.
-V19 activation carries the successful legacy EVM credits reconstructed from the verified public log;
+retain their recorded tag/cursor semantics and do not gain V20 receipt state during historical execution.
+V20 activation carries the successful legacy EVM credits reconstructed from the verified public log;
 both sequencing and replay check that input against the original commands and events. Activation locks
 their principal without moving cash. Normal mock references are excluded, and vault house capital is
 tracked separately. Canonical receipt adoption preserves the lock without another credit; only quorum
