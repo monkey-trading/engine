@@ -5,6 +5,7 @@ use super::*;
 use axum::body::to_bytes;
 use axum::extract::{Path as FilePath, State};
 use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
+use futures_util::FutureExt;
 
 use crate::log::authenticated_tests::{command, fixture};
 
@@ -131,4 +132,45 @@ async fn an_open_segment_download_holds_no_backfill_permit() {
     assert_eq!(state.backfills.available_permits(), MAX_BACKFILLS, "the unread body holds no permit");
     let expected = fs::read(f.dir.join(&info.file)).expect("original segment");
     assert_eq!(to_bytes(response.into_body(), usize::MAX).await.expect("segment body"), expected);
+}
+
+/// A manifest request dropped mid-walk, as hyper drops one whose client disconnects, still caches
+/// the listing its walk proves, and the next request reuses it instead of walking again.
+#[test]
+fn a_dropped_manifest_request_still_caches_its_listing() {
+    // The only blocking thread is held busy, so the request's walk is still queued when it drops.
+    let runtime =
+        tokio::runtime::Builder::new_current_thread().max_blocking_threads(1).enable_all().build().expect("runtime");
+    runtime.block_on(async {
+        let mut f = fixture("lazy-archive-dropped-manifest", 2);
+        for seq in 0..9 {
+            f.writer.append(&command(seq)).expect("append");
+        }
+        f.writer.sync().expect("sync");
+        let expected = fs::read(f.dir.join(MANIFEST)).expect("canonical writer bytes");
+        let (mut state, _rx) = api_state(true);
+        state.log_dir = f.dir.clone();
+        state.manifest = f.view.clone();
+        let (started, busy) = tokio::sync::oneshot::channel();
+        let (release, gate) = std::sync::mpsc::channel::<()>();
+        let occupier = tokio::task::spawn_blocking(move || {
+            started.send(()).expect("the test waits for the busy thread");
+            gate.recv()
+        });
+        busy.await.expect("the blocking thread is busy");
+        let request = crate::api::archive::archive(State(state.clone()), FilePath(MANIFEST.to_owned()));
+        // Polls the request once, so it starts its walk, then drops it.
+        let waiting = request.now_or_never().is_none();
+        release.send(()).expect("the busy thread waits for release");
+        assert!(waiting, "the request waits on its queued walk");
+        occupier.await.expect("busy thread").expect("released");
+        let cached = state.listing.lock().await.clone().expect("the dropped request's walk is cached");
+        assert_eq!(*cached.bytes, *expected);
+        let response = crate::api::archive::archive(State(state.clone()), FilePath(MANIFEST.to_owned()))
+            .await
+            .expect("manifest response");
+        assert_eq!(to_bytes(response.into_body(), usize::MAX).await.expect("manifest body"), expected);
+        let reused = state.listing.lock().await.clone().expect("cached listing");
+        assert!(Arc::ptr_eq(&reused.bytes, &cached.bytes), "the next request reuses the cached listing");
+    });
 }
