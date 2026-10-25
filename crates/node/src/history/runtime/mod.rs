@@ -107,6 +107,8 @@ struct Actor {
     key: Arc<EnclaveKey>,
     pins: Pins,
     pending: Option<Box<Capture>>,
+    /// Whether a capture failed since the last one stored, whose alert the next stored one resolves.
+    capture_failing: bool,
     /// Commands taken this turn and not yet indexed; one batch update indexes them.
     commands: Vec<crate::log::CommandEntry>,
     retained_catalog: BTreeMap<Offset, Arc<crate::log::catalog::LazyCatalogView>>,
@@ -154,6 +156,7 @@ impl Runtime {
                 key,
                 pins,
                 pending: None,
+                capture_failing: false,
                 commands: Vec::new(),
                 retained_catalog: BTreeMap::new(),
                 last_entry: None,
@@ -207,7 +210,14 @@ impl Runtime {
     pub(crate) async fn run(self, mut feed: Feed) -> Result<()> {
         let Self { actor, input, received, mut repair, stopped, .. } = self;
         let guard = Stop { input: input.clone(), stopped: stopped.clone() };
-        let mut written = spawn_blocking(move || actor.run(received));
+        // A test's collector sees the blocking owner's alerts; production logs to the global subscriber.
+        #[cfg(test)]
+        let collector = tracing::dispatcher::get_default(Clone::clone);
+        let mut written = spawn_blocking(move || {
+            #[cfg(test)]
+            let _collector = tracing::dispatcher::set_default(&collector);
+            actor.run(received)
+        });
         let forward = async {
             let mut repair_open = true;
             loop {
@@ -303,7 +313,7 @@ impl Actor {
                     let checkpoint = self.at_checkpoint.clone();
                     self.complete_capture(capture, checkpoint.as_ref());
                 } else if self.last_entry.is_some_and(|last| last > capture.snapshot.offset) {
-                    warn!(alert = "snapshot_write_failed", "optional checkpoint fence was already crossed");
+                    self.capture_failed(capture.snapshot.offset.seq, "optional checkpoint fence was already crossed");
                 } else {
                     self.pending = Some(capture);
                 }

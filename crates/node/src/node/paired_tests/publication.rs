@@ -1,14 +1,23 @@
-//! Real producer/actor failures must keep publication attempts and protected versions bounded.
+//! Real producer/actor failures must keep publication attempts and protected versions bounded, and
+//! page as one alert episode.
 
+use std::collections::BTreeSet;
 use std::fs;
+use std::sync::Arc;
 use std::time::Duration;
 
 use engine_core::command::Command;
 use tokio::time::timeout;
+use tracing::subscriber::set_default;
+use tracing_subscriber::filter::filter_fn;
+use tracing_subscriber::layer::{Layer, SubscriberExt};
+use tracing_subscriber::registry;
 
+use crate::alerts::{self, Routes, is_alert_callsite};
+use crate::metrics::Metrics;
 use crate::node::paired_tests::harness::{Node, configuration};
 use crate::snapshot::head;
-use crate::test_support::deposit;
+use crate::test_support::{deposit, keep_callsites_interested};
 
 #[tokio::test]
 async fn repeated_history_publication_failures_do_not_accumulate_unpublished_catalog_pins() {
@@ -81,6 +90,40 @@ async fn failed_reference_reconciliation_keeps_old_pins_before_any_gc_or_pointer
     }
     assert!(at_frontier(&node).await.last_entry > failed.last_entry);
     node.stop().await;
+}
+
+/// Failed captures at successive checkpoints are one `snapshot_write_failed` episode, each naming
+/// its checkpoint's seq in the page context, and the first capture stored afterwards resolves it once.
+#[tokio::test]
+async fn failed_captures_across_checkpoints_are_one_alert_episode_until_one_is_stored() {
+    keep_callsites_interested();
+    let (layer, router) = alerts::channel(Routes::default(), Arc::new(Metrics::new()));
+    let _collector = set_default(registry().with(layer.with_filter(filter_fn(is_alert_callsite))));
+    let node = Node::start(configuration("paired-write-alert-episode")).await.unwrap();
+    // A directory under a cache staging name fails the cleanup that precedes every cache write.
+    let blocked_stage = node.cfg.snapshots.as_ref().unwrap().dir.join("99999999999999999999-0000000000.json.tmp");
+    fs::create_dir_all(&blocked_stage).unwrap();
+    // History catches up after each command, so no capture finds the previous one in flight.
+    for n in 0..9 {
+        node.submit(deposit(1, &format!("unstored-{n}"))).await;
+        at_frontier(&node).await;
+    }
+    fs::remove_dir(&blocked_stage).unwrap();
+    for _ in 0..6 {
+        node.submit(Command::Tick).await;
+        at_frontier(&node).await;
+    }
+    node.stop().await;
+    let lines: Vec<_> = router.queued().into_iter().filter(|line| line.name == "snapshot_write_failed").collect();
+    let (firing, resolved): (Vec<_>, Vec<_>) = lines.iter().partition(|line| line.severity.is_some());
+    assert!(firing.len() >= 2, "captures failed at several checkpoints: {lines:#?}");
+    assert!(firing.iter().all(|line| line.key() == firing[0].key()), "one episode key: {lines:#?}");
+    let contexts: BTreeSet<_> = firing.iter().map(|line| line.context.as_str()).collect();
+    assert_eq!(contexts.len(), firing.len(), "each failure names its checkpoint: {lines:#?}");
+    assert!(contexts.iter().all(|context| context.contains("seq=")), "{lines:#?}");
+    assert_eq!(resolved.len(), 1, "the first stored capture resolves the episode once: {lines:#?}");
+    assert_eq!(resolved[0].key(), firing[0].key());
+    assert_eq!(lines.last(), Some(resolved[0]), "the resolve follows every failure: {lines:#?}");
 }
 
 /// Observes the actual blocking owner after every physical entry in the producer's fixed frontier.
