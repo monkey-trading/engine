@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, ensure};
 use engine_core::types::AccountId;
-use tracing::error;
+use tracing::{error, info};
 
 use crate::authenticated::Store;
 use crate::config::{HistorySection, NodeConfig, SnapshotSection};
@@ -33,7 +33,14 @@ impl Sequencer {
     ) -> Result<(ReplayedLog, Plan)> {
         let snapshots = cfg.snapshots.as_ref().context("paired recovery requires snapshots config")?;
         let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
-        match snapshot::candidates_readonly(snapshots) {
+        // No cache can pass without a pin, so none is read and none raises a Warning.
+        let candidates = if snapshots.trusted_signers.is_empty() {
+            info!("no snapshot signer is pinned; recovering by full replay");
+            Ok(Vec::new())
+        } else {
+            snapshot::candidates_readonly(snapshots)
+        };
+        match candidates {
             Ok(paths) => {
                 for path in paths {
                     match candidate(cfg, snapshots, &path, domain, signer, parent, &mut observe) {
