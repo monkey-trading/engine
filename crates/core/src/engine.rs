@@ -4,11 +4,12 @@
 //! the state, dispatch, time, sessions, and USD valuation; venue prices and marks live in
 //! `marks.rs`, funds and financing in `funds.rs`, admin in `admin.rs`, stress levels in
 //! `stress.rs`, client request auth in `auth.rs`, orders and pricing in `execution/`, close-outs in
-//! `closeout.rs`, and markouts in `markouts.rs`.
+//! `closeout.rs`, markouts in `markouts.rs`, and reserved FIFO withdrawals in `withdrawal.rs`.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::ops::Bound;
 
+use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
@@ -29,6 +30,7 @@ use crate::protocol::ProtocolVersion;
 pub use crate::stress::{MoveBucket, StressState};
 use crate::tracked::{TrackedMap, TrackedSet};
 use crate::types::{AccountId, MAX_STAMP_MS, MarketId, Millis, OrderId, Side};
+use crate::withdrawal::{QueuedWithdrawal, WithdrawalApproval};
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum SequenceError {
@@ -105,6 +107,18 @@ pub struct Engine {
     /// House principal awaiting Ethereum finality.
     #[serde(default, skip_serializing_if = "Fixed::is_zero")]
     pub(crate) unfinalised_house_deposits: Fixed,
+    /// Unapproved physical payout capacity from V22; initialized once from conserved cash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) withdrawal_cash: Option<Fixed>,
+    /// FIFO reservations keyed by the sequence that requested them.
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) withdrawal_queue: TrackedMap<u64, QueuedWithdrawal>,
+    /// The next contiguous enqueue ticket; completed requests never reuse their ticket.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub(crate) withdrawal_next_ticket: u64,
+    /// Immutable payouts keyed by their account/nonce approval leaf key.
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) withdrawal_approvals: TrackedMap<B256, WithdrawalApproval>,
     // Not state and not encoded; an engine rebuilt without them hashes every leaf at its first root.
     /// Markouts, positions, and resting orders changed since the last state root.
     #[serde(skip)]
@@ -270,6 +284,9 @@ impl Engine {
         self.refresh_all_stress(&sequenced.cmd, &mut events);
         // After the command, so a price arriving at the horizon is the one marked against.
         self.process_markouts();
+        if self.protocol_version >= ProtocolVersion::V22 {
+            self.process_withdrawal_queue(&mut events);
+        }
         Ok(events)
     }
 

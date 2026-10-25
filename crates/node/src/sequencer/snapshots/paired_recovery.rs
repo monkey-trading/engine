@@ -29,6 +29,7 @@ impl Sequencer {
         cfg: &NodeConfig,
         signer: Option<AccountId>,
         parent: Option<CheckpointParent>,
+        authorities: crate::checkpoints::SignerHistory,
         mut observe: impl FnMut(&LogEntry),
     ) -> Result<(ReplayedLog, Plan)> {
         let snapshots = cfg.snapshots.as_ref().context("paired recovery requires snapshots config")?;
@@ -55,6 +56,8 @@ impl Sequencer {
             || Replay::with_trust(Some(domain), signer),
             |parent| Replay::with_recovery(Some(domain), signer, parent),
         );
+        // A snapshot holds only checkpoints the current key signed; full replay authenticates the rest.
+        replay.set_authorities(authorities)?;
         let mut fingerprint = Fingerprinter::new();
         let log = SegmentedLog::open(&cfg.node.log_dir, |entry| {
             replay.apply(&entry)?;

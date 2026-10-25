@@ -40,6 +40,7 @@ fn fixture(label: &str) -> Fixture {
     ];
     index
         .ingest(CommandEntry {
+            seal: None,
             sequenced: Sequenced { seq: 0, ts: 10, cmd: Command::Tick },
             events: Some(events.clone()),
         })

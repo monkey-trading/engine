@@ -49,6 +49,7 @@ impl Http {
             auth: ClientAuth::Unsigned,
             operator: cfg.operator().unwrap(),
             mock_custody: false,
+            payouts_enabled: false,
             clock: now_ms,
             log_dir: PathBuf::new(),
             manifest: watch::channel(Manifest::default()).1,

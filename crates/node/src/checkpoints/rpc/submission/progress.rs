@@ -7,6 +7,7 @@ use alloy::sol_types::SolCall;
 use anyhow::{Context, ensure};
 use serde::Deserialize;
 
+use crate::checkpoints::View;
 use crate::checkpoints::rpc::submission::Reservation;
 use crate::checkpoints::rpc::submission::posting::checkpoint_input;
 use crate::checkpoints::rpc::{CheckpointRpc, postCheckpointCall};
@@ -95,7 +96,7 @@ impl CheckpointRpc {
             full.transactions.iter().filter(|tx| tx.from == Some(self.relayer) && tx.nonce == Some(reservation.nonce));
         let consumer = matches.next().context("canonical block has no reserved nonce consumer")?;
         ensure!(matches.next().is_none(), "canonical block has duplicate nonce consumers");
-        self.check_obsolete_call(consumer, obsolete)?;
+        self.authenticate_consumer(self.obsolete_call(consumer, obsolete)?, obsolete).await?;
         // An orphaned tag cannot lend its confirmation depth to a replacement by-number block.
         self.nonce_at(block.header.hash).await?;
         ensure!(
@@ -130,10 +131,27 @@ impl CheckpointRpc {
         self.nonce_at(block.header.hash).await
     }
 
-    /// Authenticates a vault call inside a prefix already made obsolete by actual finality.
+    /// Authenticates the consuming checkpoint under its own signer. An earlier checkpoint in the
+    /// obsolete prefix may predate a signer rotation, so its signer comes from the vault's accepted
+    /// history for its seq, never from the obsolete checkpoint.
     /// Error cases:
-    /// - the nonce consumer is a foreign call, unauthorized signature, or non-obsolete checkpoint
-    fn check_obsolete_call(&self, tx: &TransactionRequest, obsolete: &Checkpoint) -> anyhow::Result<()> {
+    /// - the consumer is not the vault's accepted checkpoint at its seq, or its signature is invalid
+    async fn authenticate_consumer(&self, mut consumed: Checkpoint, obsolete: &Checkpoint) -> anyhow::Result<()> {
+        if consumed.seq != obsolete.seq {
+            let at = self.read_observation(View::Finalized, &[]).await?;
+            let accepted = self.read_accepted_checkpoints(&at, &[consumed.seq]).await?;
+            let authority = accepted.first().context("nonce consumer has no accepted checkpoint authority")?;
+            consumed.signer = authority.signer.to_string();
+            authority.verify(&consumed)?;
+            self.submissions()?.authorize(authority.clone())?;
+        }
+        self.submissions()?.validate_checkpoint(&consumed)
+    }
+
+    /// Decodes a vault call inside a prefix already made obsolete by actual finality.
+    /// Error cases:
+    /// - the nonce consumer is a foreign call or a checkpoint outside the obsolete prefix
+    fn obsolete_call(&self, tx: &TransactionRequest, obsolete: &Checkpoint) -> anyhow::Result<Checkpoint> {
         ensure!(
             tx.to == Some(Address::from(self.domain.vault.0).into())
                 && tx.chain_id == Some(self.domain.chain_id)
@@ -156,7 +174,6 @@ impl CheckpointRpc {
             }),
             deferred_withdrawals: obsolete.deferred_withdrawals,
         };
-        self.submissions.validate_checkpoint(&cp)?;
         ensure!(
             cp.seq <= obsolete.seq && (cp.seq != obsolete.seq || cp.root == obsolete.root),
             "reserved nonce consumer is outside the obsolete checkpoint prefix"
@@ -167,6 +184,6 @@ impl CheckpointRpc {
                 "nonce consumer differs from the exact obsolete checkpoint"
             );
         }
-        Ok(())
+        Ok(cp)
     }
 }

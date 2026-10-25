@@ -6,22 +6,25 @@ use std::path::Path;
 use std::time::Duration;
 
 use alloy::eips::{BlockId, BlockNumberOrTag};
-use alloy::primitives::{Address, Bytes, U64};
+use alloy::primitives::{Address, Bytes};
 use alloy::rpc::client::RpcClient;
-use alloy::rpc::types::{Block, TransactionRequest};
+use alloy::rpc::types::TransactionRequest;
 use alloy::sol;
 use alloy::sol_types::SolCall;
 use alloy::transports::http::reqwest::{Certificate, Client, Url};
-use anyhow::{Context, anyhow, ensure};
+use anyhow::{Context, anyhow};
 use engine_core::emissions::TokenUnits;
 use tokio::time::timeout;
 
 use crate::checkpoints::emission_budget::budget_from_cap;
-use crate::checkpoints::{CheckpointChain, VaultState, View};
+use crate::checkpoints::{
+    AcceptedCheckpoint, ApprovalId, ApprovalStatus, CheckpointChain, LifecycleEvidence, Observation, VaultState, View,
+};
 use crate::config::{CheckpointSection, FinalityTag};
-use crate::custody::usdc_to_fixed;
 use crate::log::{Checkpoint, CheckpointDomain};
 
+mod authority;
+mod observation;
 mod submission;
 use crate::checkpoints::rpc::submission::SubmissionStore;
 
@@ -31,6 +34,16 @@ sol! {
     function latestSeq() external view returns (uint64);
     function latestRoot() external view returns (bytes32);
     function depositCount() external view returns (uint256);
+    function signerEpoch() external view returns (uint64);
+    function signerAtEpoch(uint64 epoch) external view returns (address);
+    function totalWithdrawn() external view returns (uint256);
+    function totalDeposited() external view returns (uint256);
+    function depositedThrough(uint256 id) external view returns (uint256);
+    function usedNonces(address account, uint64 nonce) external view returns (bool);
+    function hasCheckpointAt(uint64 seq) external view returns (bool);
+    function checkpointRoots(uint64 seq) external view returns (bytes32);
+    function checkpointSignerAt(uint64 seq) external view returns (address);
+    function checkpointEpochAt(uint64 seq) external view returns (uint64);
     function usdc() external view returns (address);
     function balanceOf(address account) external view returns (uint256);
     function monkey() external view returns (address);
@@ -47,7 +60,7 @@ pub(crate) struct CheckpointRpc {
     timeout: Duration,
     finality_tag: BlockNumberOrTag,
     confirmations: u64,
-    submissions: SubmissionStore,
+    submissions: Option<SubmissionStore>,
 }
 
 impl CheckpointRpc {
@@ -62,6 +75,21 @@ impl CheckpointRpc {
         confirmations: u64,
         log_dir: &Path,
         signer: engine_core::types::AccountId,
+    ) -> anyhow::Result<Self> {
+        let mut client = Self::read_only(cfg, domain, token, finality, confirmations)?;
+        client.submissions = Some(SubmissionStore::pending(log_dir, domain, cfg.relayer, signer)?);
+        Ok(client)
+    }
+
+    /// Builds an audit client without opening or trusting any local posting journal.
+    /// Error cases:
+    /// - URL, certificate, or HTTP client construction fails
+    pub(crate) fn read_only(
+        cfg: &CheckpointSection,
+        domain: CheckpointDomain,
+        token: Address,
+        finality: FinalityTag,
+        confirmations: u64,
     ) -> anyhow::Result<Self> {
         let roots = webpki_root_certs::TLS_SERVER_ROOT_CERTS
             .iter()
@@ -83,8 +111,15 @@ impl CheckpointRpc {
                 FinalityTag::Finalized => BlockNumberOrTag::Finalized,
             },
             confirmations,
-            submissions: SubmissionStore::load(log_dir, domain, cfg.relayer, signer)?,
+            submissions: None,
         })
+    }
+
+    /// Grants posting access only to clients constructed with a durable reservation store.
+    /// Error cases:
+    /// - the client was constructed for read-only audit
+    fn submissions(&self) -> anyhow::Result<&SubmissionStore> {
+        self.submissions.as_ref().context("read-only checkpoint client cannot access posting reservations")
     }
 
     /// Executes a read at one canonical block hash.
@@ -139,70 +174,42 @@ impl CheckpointChain for CheckpointRpc {
     }
 
     fn reserved_checkpoint(&self) -> anyhow::Result<Option<Checkpoint>> {
-        Ok(self.submissions.read()?.map(|reservation| reservation.checkpoint))
+        Ok(self.submissions()?.read()?.map(|reservation| reservation.checkpoint))
     }
 
     /// Reads checkpoint state and collateral from one pinned canonical block.
     /// Error cases:
     /// - the endpoint is on the wrong chain or token, or an RPC/decoding error occurs
     async fn state(&self, view: View) -> anyhow::Result<VaultState> {
-        let chain_id: u64 = self.deadline(self.client.request::<_, U64>("eth_chainId", ())).await?.to();
-        ensure!(chain_id == self.domain.chain_id, "checkpoint endpoint is on another chain");
-        let tag = if view == View::Latest { BlockNumberOrTag::Latest } else { self.finality_tag };
-        let tagged = self
-            .deadline(self.client.request::<_, Option<Block>>("eth_getBlockByNumber", (tag, false)))
-            .await?
-            .context("checkpoint RPC has no finality block")?;
-        // Follow immutable parent hashes from the exact sampled tag. A by-number read could
-        // switch forks between requests and give an unconfirmed replacement the old tag's depth.
-        let mut block = tagged;
-        if view == View::Finalized {
-            ensure!(block.header.number >= self.confirmations, "checkpoint chain has insufficient confirmation depth");
-            for _ in 0..self.confirmations {
-                let parent = self
-                    .deadline(
-                        self.client
-                            .request::<_, Option<Block>>("eth_getBlockByHash", (block.header.parent_hash, false)),
-                    )
-                    .await?
-                    .context("checkpoint confirmation ancestor is missing")?;
-                ensure!(
-                    parent.header.hash == block.header.parent_hash
-                        && parent.header.number.checked_add(1) == Some(block.header.number),
-                    "checkpoint confirmation ancestry is inconsistent"
-                );
-                block = parent;
-            }
-        }
-        let at = BlockId::hash_canonical(block.header.hash);
-        let vault = Address::from(self.domain.vault.0);
-        let token = usdcCall::abi_decode_returns(&self.call(vault, usdcCall {}.abi_encode(), at).await?)?;
-        ensure!(token == self.token, "checkpoint vault holds another token");
-        let signer = checkpointSignerCall::abi_decode_returns(
-            &self.call(vault, checkpointSignerCall {}.abi_encode(), at).await?,
-        )?;
-        let has =
-            hasCheckpointCall::abi_decode_returns(&self.call(vault, hasCheckpointCall {}.abi_encode(), at).await?)?;
-        let checkpoint = if has {
-            let seq = latestSeqCall::abi_decode_returns(&self.call(vault, latestSeqCall {}.abi_encode(), at).await?)?;
-            let root =
-                latestRootCall::abi_decode_returns(&self.call(vault, latestRootCall {}.abi_encode(), at).await?)?;
-            Some((seq, format!("{root:#x}")))
-        } else {
-            None
-        };
-        let balance = balanceOfCall::abi_decode_returns(
-            &self.call(token, balanceOfCall { account: vault }.abi_encode(), at).await?,
-        )?;
-        let deposits =
-            depositCountCall::abi_decode_returns(&self.call(vault, depositCountCall {}.abi_encode(), at).await?)?;
-        Ok(VaultState {
-            height: block.header.number,
-            signer: engine_core::types::AccountId(signer.into()),
-            checkpoint,
-            balance: usdc_to_fixed(balance).context("vault balance exceeds Fixed")?,
-            deposits: u64::try_from(deposits).context("vault deposit count exceeds u64")?,
-        })
+        Ok(self.read_observation(view, &[]).await?.state)
+    }
+
+    async fn observe(&self, view: View, approvals: &[ApprovalId]) -> anyhow::Result<Observation> {
+        self.read_observation(view, approvals).await
+    }
+
+    async fn accepted_checkpoints(
+        &self,
+        at: &Observation,
+        sequences: &[u64],
+    ) -> anyhow::Result<Vec<AcceptedCheckpoint>> {
+        self.read_accepted_checkpoints(at, sequences).await
+    }
+
+    async fn epoch_signers(
+        &self,
+        at: &Observation,
+        epochs: &[u64],
+    ) -> anyhow::Result<Vec<engine_core::types::AccountId>> {
+        self.read_epoch_signers(at, epochs).await
+    }
+
+    async fn deposited_through(&self, at: &Observation, count: u64) -> anyhow::Result<engine_core::Fixed> {
+        self.read_deposited_through(at, count).await
+    }
+
+    async fn claims(&self, at: &LifecycleEvidence, approvals: &[ApprovalId]) -> anyhow::Result<Vec<ApprovalStatus>> {
+        self.read_claims(BlockId::hash_canonical(at.block_hash), approvals).await
     }
 
     /// Relays at a durable explicit nonce; only later canonical state reads confirm inclusion.

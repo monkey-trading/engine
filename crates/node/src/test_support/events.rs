@@ -104,6 +104,8 @@ pub fn every_event() -> Vec<Event> {
         Event::Deposited { account, amount },
         Event::DepositRejected { account, amount, chain_ref: "0xab:1".into(), reason: Reject::DuplicateReference },
         Event::WithdrawalApproved { account, amount, nonce: 1 },
+        Event::WithdrawalQueued { account, amount, requested_seq: 12 },
+        Event::WithdrawalQueueUpdated { account, requested_seq: 12, remaining: amount },
         Event::WithdrawalRejected { account, amount, reason: Reject::InsufficientFunds { available: amount } },
         Event::HouseCapitalMoved { amount, nav: amount },
         Event::OrderAccepted { account, client_id: 1, order_id: 3 },
@@ -144,6 +146,8 @@ pub fn every_event() -> Vec<Event> {
             | Event::CustodyDepositChanged { .. }
             | Event::CustodyDepositRejected { .. }
             | Event::WithdrawalApproved { .. }
+            | Event::WithdrawalQueued { .. }
+            | Event::WithdrawalQueueUpdated { .. }
             | Event::WithdrawalRejected { .. }
             | Event::HouseCapitalMoved { .. }
             | Event::OrderAccepted { .. }

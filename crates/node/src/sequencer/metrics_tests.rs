@@ -91,9 +91,15 @@ fn recovery_sets_the_checkpoint_time_from_the_command_it_covers() {
         .unwrap()
         .into_writer(SEGMENT_COMMANDS, watch::channel(Manifest::default()).0)
         .unwrap();
-    log.append(&LogEntry::Command(CommandEntry { sequenced: first, events: Some(events) })).unwrap();
-    log.append(&checkpoint(0, root)).unwrap();
-    log.append(&LogEntry::Command(CommandEntry { sequenced: second, events: Some(Vec::new()) })).unwrap();
+    log.append(&LogEntry::Command(CommandEntry { seal: None, sequenced: first, events: Some(events) })).unwrap();
+    let checkpoint = checkpoint(0, root);
+    log.append(&checkpoint).unwrap();
+    let LogEntry::Checkpoint(cp) = &checkpoint else { unreachable!() };
+    let mut second = CommandEntry { sequenced: second, events: Some(Vec::new()), seal: None };
+    let previous = crate::log::command_seal::checkpoint_link(cp).unwrap();
+    let link = crate::log::command_seal::command_link(previous, &second).unwrap();
+    second.seal = Some(EnclaveKey::test_key().seal_command(cp.domain.unwrap(), link));
+    log.append(&LogEntry::Command(second)).unwrap();
     log.flush().unwrap();
     drop(log);
 

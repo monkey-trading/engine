@@ -49,7 +49,7 @@ async fn a_feed_resumed_between_two_messages_of_one_seq_starts_at_the_second() {
 
     let expected = log_messages(&dir, after.next());
     let got = take(&mut feed, expected.len()).await;
-    assert!(got[0].starts_with(&format!(r#"{{"offset":"{seq}:1","type":"withdrawal""#)), "{}", got[0]);
+    assert!(got[0].starts_with(&format!(r#"{{"offset":"{seq}:1","type":"checkpoint""#)), "{}", got[0]);
     assert_eq!(got, expected);
     assert_next_is_the_next_command(&node, &mut feed).await;
 }
@@ -95,6 +95,7 @@ async fn a_backfill_stops_at_the_last_flush_while_a_batch_is_written() {
     let mut writer = SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(1024, manifest_tx).unwrap();
     let command = |seq, events| {
         LogEntry::Command(CommandEntry {
+            seal: None,
             sequenced: Sequenced { seq, ts: 0, cmd: Command::Tick },
             events: Some(events),
         })
@@ -168,8 +169,11 @@ async fn a_feed_from_a_seq_refuses_a_live_message_past_that_seq() {
     let mut feed =
         Feed::new(node.stream.subscribe(), dir.clone(), node.manifest.clone(), permits(), Some(Offset::start_of(seq)));
     // As if seq's lines were cut from disk after being published: the next live message is seq + 1.
-    let tick =
-        CommandEntry { sequenced: Sequenced { seq: seq + 1, ts: 0, cmd: Command::Tick }, events: Some(Vec::new()) };
+    let tick = CommandEntry {
+        seal: None,
+        sequenced: Sequenced { seq: seq + 1, ts: 0, cmd: Command::Tick },
+        events: Some(Vec::new()),
+    };
     node.stream.send(Arc::new(StreamMsg::new(Offset::start_of(seq + 1), LogEntry::Command(tick)))).unwrap();
     let answer = timeout(Duration::from_secs(10), feed.next()).await.expect("an answer in time");
     let err = answer.expect_err("the gap is refused");
@@ -388,7 +392,8 @@ fn live_feed(capacity: usize) -> (broadcast::Sender<Arc<StreamMsg>>, Feed) {
 
 /// A tick command at `seq`, as the stream sends it.
 fn tick(seq: u64) -> Arc<StreamMsg> {
-    let tick = CommandEntry { sequenced: Sequenced { seq, ts: 0, cmd: Command::Tick }, events: Some(Vec::new()) };
+    let tick =
+        CommandEntry { seal: None, sequenced: Sequenced { seq, ts: 0, cmd: Command::Tick }, events: Some(Vec::new()) };
     Arc::new(StreamMsg::new(Offset::start_of(seq), LogEntry::Command(tick)))
 }
 

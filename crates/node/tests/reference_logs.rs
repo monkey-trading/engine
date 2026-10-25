@@ -44,10 +44,15 @@ fn every_node_reference_log_replays_with_its_events() {
                     assert!(approved.is_empty());
                     let events = engine.apply(&command.sequenced)?;
                     assert_eq!(command.events.as_ref(), Some(&events), "{}", path.display());
+                    // A V22 payout is signed later, against an accepted checkpoint.
                     approved = events
                         .into_iter()
                         .filter_map(|event| match event {
-                            Event::WithdrawalApproved { account, amount, nonce } => Some((account, amount, nonce)),
+                            Event::WithdrawalApproved { account, amount, nonce }
+                                if engine.withdrawal_approval(account, nonce).is_none() =>
+                            {
+                                Some((account, amount, nonce))
+                            }
                             _ => None,
                         })
                         .collect();

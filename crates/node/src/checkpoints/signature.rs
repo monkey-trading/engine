@@ -92,6 +92,9 @@ pub(crate) fn verify_withdrawal(
 ) -> anyhow::Result<()> {
     let trusted = trusted.context("withdrawal completion requires a trusted signer; supply --signer")?;
     let domain = domain.context("withdrawal completion requires a trusted deployment")?;
+    if w.authorization.is_some() {
+        return crate::withdrawals::verify(w, domain, trusted);
+    }
     ensure!(w.chain_id == domain.chain_id && w.vault == domain.vault, "withdrawal completion domain mismatch");
     let signature: Signature =
         w.signature.parse().context("withdrawal completion signature is missing or malformed")?;

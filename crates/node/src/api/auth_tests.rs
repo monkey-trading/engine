@@ -193,7 +193,11 @@ async fn two_copies_of_a_withdrawal_that_both_pass_the_api_are_paid_once() {
     let withdraw = |auth| Command::Withdraw { account, amount, auth };
     let approved = node.state.submit(withdraw(first)).await.expect("the sequencer is running");
     let refused = node.state.submit(withdraw(second)).await.expect("the sequencer is running");
-    assert!(matches!(&approved[..], [Event::WithdrawalApproved { .. }]), "{approved:?}");
+    assert_eq!(
+        approved.iter().filter(|event| matches!(event, Event::WithdrawalApproved { .. })).count(),
+        1,
+        "{approved:?}"
+    );
     let expected = Reject::InvalidNonce { expected: 1 };
     assert!(matches!(&refused[..], [Event::WithdrawalRejected { reason, .. }] if *reason == expected), "{refused:?}");
     assert!(node.withdrawals.try_recv().is_ok());
@@ -226,7 +230,8 @@ async fn signed_cancels_and_withdrawals_reach_the_engine_and_advance_the_nonce()
     let auth = RequestAuth { nonce: 2, expires_at, signature };
     let withdrawal = serde_json::json!({ "account": account, "amount": amount, "auth": auth });
     let (_, events) = node.post("/v1/withdrawals", withdrawal).await;
-    assert_eq!(events[0]["type"], "withdrawal_approved", "{events}");
+    let kinds: Vec<_> = events.as_array().unwrap().iter().map(|event| event["type"].clone()).collect();
+    assert_eq!(kinds, ["withdrawal_queued", "withdrawal_approved", "withdrawal_queue_updated"], "{events}");
 
     let (status, nonce) = node.get(&format!("/v1/accounts/{account}/nonce")).await;
     assert_eq!((status, nonce), (StatusCode::OK, serde_json::json!({ "next_nonce": 3 })));
@@ -334,6 +339,7 @@ impl Node {
             auth,
             operator: dev_config().operator().unwrap(),
             mock_custody: true,
+            payouts_enabled: true,
             clock,
             log_dir: dir.clone(),
             manifest,

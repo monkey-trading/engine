@@ -10,9 +10,12 @@
 //!   UTF-8 bytes), 5 a pending markout (its `uint64` index; see `Engine::markout_base`), 6 a
 //!   resting order (its `uint64` id), 7 a position (`address` account, `uint32` market), from
 //!   `V19` 8 an account's emission entitlement (`address`) and 9 its emission period result
-//!   (`address`), and from `V20` 10 an exact custody receipt (its UTF-8 reference), 11 a
+//!   (`address`), from `V20` 10 an exact custody receipt (its UTF-8 reference), 11 a
 //!   transaction-local deposit's current receipt index (its UTF-8 transaction reference), and 12
-//!   legacy principal awaiting canonical evidence (its historical custody reference's UTF-8 bytes).
+//!   legacy principal awaiting canonical evidence (its historical custody reference's UTF-8 bytes),
+//!   and from `V22` 32 a withdrawal approval (`address` account, `uint64` nonce) and 33 a queued
+//!   withdrawal (`uint64` request seq). Approval value hashes bind the exact payable fields
+//!   ([`withdrawal_approval_hash`]).
 //! - **Paths.** The key's bits, most significant first, are the path from the root: bit `d`,
 //!   `(uint256(key) >> (255 - d)) & 1`, picks the child at depth `d + 1`, 0 left and 1 right.
 //! - **Leaves.** `keccak256(abi.encodePacked(bytes1(0x00), key, valueHash))`; each kind's
@@ -38,6 +41,8 @@ mod leaf;
 pub use leaf::*;
 mod proof;
 pub use proof::*;
+mod withdrawal;
+pub use withdrawal::*;
 pub(crate) mod state;
 pub use state::RootWork;
 

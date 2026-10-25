@@ -121,7 +121,7 @@ impl Node {
             seq_cfg.checkpoint_parent = parent;
             seq_cfg.checkpoints = Some(work);
         }
-        preflight::authorize::<NoChain>(None, Some((&log, &seq_cfg))).await?;
+        preflight::authorize::<NoChain>(None, Some((&log, &seq_cfg, AccountId(key.address())))).await?;
         let (log, mut history) = plan.finish_with_log(log, key.clone())?;
         let sealing = history.sealing().expect("authenticated history has a seal endpoint");
         seq_cfg.history_sealing = Some(sealing.clone());

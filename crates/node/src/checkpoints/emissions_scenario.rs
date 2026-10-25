@@ -199,7 +199,14 @@ impl Scenario {
         let accounts: Vec<Address> = provider.request("eth_accounts", ()).await.unwrap();
         let key = Arc::new(EnclaveKey::generate());
         let usdc = deploy(&provider, accounts[0], "MockUSDC.sol/MockUSDC.json", &[]).await;
-        let args = (usdc, Address::from(key.address()), U256::from(DEV_PERIOD_BUDGET)).abi_encode();
+        let governance = deploy(
+            &provider,
+            accounts[0],
+            "TimelockController.sol/TimelockController.json",
+            &(U256::from(1), vec![accounts[0]], vec![Address::ZERO], Address::ZERO).abi_encode_params(),
+        )
+        .await;
+        let args = (usdc, Address::from(key.address()), governance, U256::from(DEV_PERIOD_BUDGET)).abi_encode();
         let vault = deploy(&provider, accounts[0], "Vault.sol/Vault.json", &args).await;
         let section: CheckpointSection = toml::from_str(&format!(
             "rpc_url = {url:?}\nrelayer = '{:#x}'\nretry_interval = '40ms'\nrpc_timeout = '2s'",
@@ -291,6 +298,7 @@ impl Scenario {
             auth: ClientAuth::Unsigned,
             operator: self.operator,
             mock_custody: true,
+            payouts_enabled: true,
             clock: || NOW,
             log_dir: self.dir.clone(),
             manifest,

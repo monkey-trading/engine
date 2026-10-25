@@ -16,10 +16,11 @@ use crate::emissions::{Emissions, TokenUnits};
 use crate::engine::{Engine, Markout};
 use crate::merkle::leaf::{deposit_key, deposit_transaction_key, legacy_deposit_key};
 use crate::merkle::{
-    AccountLeaf, AccountProof, EntitlementProof, MarketLeaf, MarketProof, PositionProof, SparseMerkleTree, account_key,
-    credited_ref_hash, credited_ref_key, entitlement_hash, entitlement_key, globals_key, json_hash, market_key,
-    markout_hash, markout_key, order_hash, order_key, period_result_hash, period_result_key, position_hash,
-    position_key, request_nonce_hash, request_nonce_key,
+    AccountLeaf, AccountProof, EntitlementProof, MarketLeaf, MarketProof, PositionProof, SparseMerkleTree,
+    WithdrawalApprovalProof, account_key, credited_ref_hash, credited_ref_key, entitlement_hash, entitlement_key,
+    globals_key, json_hash, market_key, markout_hash, markout_key, order_hash, order_key, period_result_hash,
+    period_result_key, position_hash, position_key, request_nonce_hash, request_nonce_key, withdrawal_approval_hash,
+    withdrawal_approval_key, withdrawal_queue_hash, withdrawal_queue_key,
 };
 use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
@@ -69,6 +70,8 @@ struct Touched {
     deposits: BTreeSet<String>,
     deposit_transactions: BTreeSet<String>,
     legacy_deposits: BTreeSet<String>,
+    withdrawal_queue: BTreeSet<u64>,
+    withdrawal_approvals: BTreeSet<B256>,
     changed: Changed,
 }
 
@@ -96,6 +99,10 @@ struct Globals<'a> {
     unfinalised_house_deposits: Fixed,
     #[serde(skip_serializing_if = "Option::is_none")]
     custody_checkpoint: Option<CustodyCheckpoint>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    withdrawal_cash: Option<Fixed>,
+    #[serde(skip_serializing_if = "is_zero")]
+    withdrawal_next_ticket: u64,
 }
 
 impl Engine {
@@ -127,6 +134,8 @@ impl Engine {
             deposits,
             deposit_transactions,
             legacy_deposits,
+            withdrawal_queue,
+            withdrawal_approvals,
             changed: Changed { markouts, positions, orders },
         } = match &self.tree {
             Some(_) => touched,
@@ -187,6 +196,16 @@ impl Engine {
             entitlements.into_iter().map(|id| (id, self.entitlements.get(&id).copied())).collect();
         changes.extend(
             entitlement_leaves.iter().map(|(id, entitled)| (entitlement_key(*id), entitled.map(entitlement_hash))),
+        );
+        changes.extend(
+            withdrawal_queue
+                .into_iter()
+                .map(|seq| (withdrawal_queue_key(seq), self.withdrawal_queue.get(&seq).map(withdrawal_queue_hash))),
+        );
+        changes.extend(
+            withdrawal_approvals
+                .into_iter()
+                .map(|key| (key, self.withdrawal_approvals.get(&key).map(withdrawal_approval_hash))),
         );
 
         // A seq has been applied: `V9` takes effect through a sequenced `ActivateProtocol`.
@@ -262,6 +281,14 @@ impl Engine {
         Some(EntitlementProof { seq: state.seq, root: state.root, account, entitled, siblings })
     }
 
+    /// Proves the exact immutable payout against the last computed root, or `None` until included.
+    pub fn approval_proof(&self, account: AccountId, nonce: u64) -> Option<WithdrawalApprovalProof> {
+        let state = self.tree.as_ref()?;
+        let approval = *self.withdrawal_approval(account, nonce)?;
+        let siblings = state.tree.proof(withdrawal_approval_key(account, nonce))?;
+        Some(WithdrawalApprovalProof { seq: state.seq, root: state.root, approval, siblings })
+    }
+
     /// What the last state root hashed, or `None` before the first root under `V9`.
     pub fn last_root_work(&self) -> Option<RootWork> {
         self.tree.as_ref().map(|state| state.work)
@@ -334,6 +361,8 @@ impl Engine {
             deposits: self.deposits.take_touched(),
             deposit_transactions: self.deposit_transactions.take_touched(),
             legacy_deposits: self.legacy_deposits.take_touched(),
+            withdrawal_queue: self.withdrawal_queue.take_touched(),
+            withdrawal_approvals: self.withdrawal_approvals.take_touched(),
             changed: std::mem::take(&mut self.changed),
         }
     }
@@ -351,6 +380,8 @@ impl Engine {
             deposits: self.deposits.keys().cloned().collect(),
             deposit_transactions: self.deposit_transactions.keys().cloned().collect(),
             legacy_deposits: self.legacy_deposits.keys().cloned().collect(),
+            withdrawal_queue: self.withdrawal_queue.keys().copied().collect(),
+            withdrawal_approvals: self.withdrawal_approvals.keys().copied().collect(),
             changed: Changed {
                 markouts: (self.markout_base..).take(self.markouts.len()).collect(),
                 positions: accounts()
@@ -392,6 +423,10 @@ impl Engine {
             emissions,
             period_results: _,
             entitlements: _,
+            withdrawal_cash,
+            withdrawal_queue: _,
+            withdrawal_next_ticket,
+            withdrawal_approvals: _,
             changed: _,
             tree: _,
             hot_indexes: _,
@@ -414,11 +449,13 @@ impl Engine {
             emissions,
             unfinalised_house_deposits: *unfinalised_house_deposits,
             custody_checkpoint: *custody_checkpoint,
+            withdrawal_cash: *withdrawal_cash,
+            withdrawal_next_ticket: *withdrawal_next_ticket,
         }
     }
 }
 
-/// Whether a markout index is zero, as it stays before `V9`.
+/// Whether a persisted index is zero, so its default stays out of earlier state encodings.
 pub(crate) fn is_zero(index: &u64) -> bool {
     *index == 0
 }

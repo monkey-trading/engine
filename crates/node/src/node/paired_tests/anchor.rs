@@ -86,7 +86,7 @@ async fn gated_log() -> (NodeConfig, Vec<Checkpoint>, Checkpoint) {
         }
     }
     let base = checkpoints[0].clone();
-    node.tx.send(Request::CheckpointStatus { posted: Some(base.seq), healthy: true }).await.unwrap();
+    node.tx.send(Request::CheckpointStatus { posted: Some(base.seq), healthy: true, lifecycle: None }).await.unwrap();
     for _ in 0..12 {
         node.submit(deposit(1, &format!("anchor-{n}"))).await;
         n += 1;
@@ -121,6 +121,7 @@ async fn recover(cfg: &NodeConfig, finalized: &Checkpoint) -> anyhow::Result<Opt
             checkpoint: Some((finalized.seq, finalized.root.clone())),
             balance: Fixed::ZERO,
             deposits: 0,
+            deposited: Fixed::ZERO,
         }),
         domain: CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? },
         signer: AccountId(key.address()),
@@ -130,7 +131,7 @@ async fn recover(cfg: &NodeConfig, finalized: &Checkpoint) -> anyhow::Result<Opt
     let mut seq_cfg = sequencer_config(&cfg.node.log_dir, watch::channel(Manifest::default()).0);
     seq_cfg.checkpoint_parent = parent;
     seq_cfg.checkpoints = Some(mpsc::channel(1).0);
-    preflight::authorize(Some((&poster, anchor.as_ref())), Some((&log, &seq_cfg))).await?;
+    preflight::authorize(Some((&poster, anchor.as_ref())), Some((&log, &seq_cfg, AccountId(key.address())))).await?;
     Ok(log.snapshot_sequence())
 }
 

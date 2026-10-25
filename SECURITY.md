@@ -61,11 +61,11 @@ deterministic state machine that applies the trading rules; `engine-node`, which
 into it, publishes the log and its signed checkpoints, and serves the public REST and WebSocket API;
 the custody vault contract that will hold collateral on Arbitrum One, with the MONKEY token it
 deploys and alone mints against posted checkpoints; and the enclave image the node runs in, together
-with the attestation that vouches for it. The vault contract takes deposits and mints MONKEY
-entitlements but cannot pay out collateral yet, and is in scope as published here; the enclave
-image, built from `image`, is in scope as published here too. A trading account must be able to
-sign requests with its own key, since the engine accepts no contract signatures: a contract wallet
-funds a key that signs for it through the vault's `depositFor`, and a balance credited to a
+with the attestation that vouches for it. The vault contract takes deposits, pays signed withdrawals
+with approval inclusion proofs, and mints MONKEY entitlements, and is in scope as published here;
+the enclave image, built from `image`, is in scope as published here too. A trading account must be
+able to sign requests with its own key, since the engine accepts no contract signatures: a contract
+wallet funds a key that signs for it through the vault's `depositFor`, and a balance credited to a
 contract account can be recovered only through the exit (#48), so a report of that alone is not a
 new finding.
 
@@ -84,8 +84,9 @@ Requests are signed, and the node refuses unsigned ones unless both the enclave 
 mocks, and a production build of the node refuses every mock provider. The other three are not
 finished: the node builds into a reproducible SEV-SNP image and requests an attestation report
 through configfs-tsm, but booting that image on SEV-SNP hardware and a verifier for its quotes are
-still being built, as are live prices, the separate signed benchmark publisher worker, and on-chain
-custody, which credits vault deposits but does not yet pay withdrawals.
+still being built, as are live prices and the separate signed benchmark publisher worker. On-chain
+custody credits vault deposits and pays signed withdrawals, exercised on a local chain; production
+deployment remains out of scope for the development scenarios.
 
 Out of scope are volumetric denial of service, meaning attacks that work only by flooding the API or
 the network with traffic; social engineering of anyone involved with the project; reorganisations of
@@ -108,10 +109,16 @@ history for writes; checkpoint signatures verify
 against their chain, vault, and named signer. New posts also sign the exact predecessor sequence
 and root, which the vault compares atomically to fence divergent same-key publishers. The checkpoint RPC still supplies the canonical chain
 view, and a signature's named signer must be checked against a trusted attestation or the vault's
-authorized signer. Withdrawal completion evidence also requires that independently trusted signer
-and its deployment before replay can clear an approval. Latest transaction inclusion alone never
-authorizes withdrawal release; checkpoint startup and release use custody's withdrawal finality tag,
-independently of the latest credit tag and its confirmation depth.
+authorized signer. A withdrawal signature never settles its approval: finalized custody nonce-use
+evidence does. Withdrawal completion evidence also requires that independently trusted signer
+and its deployment before replay can clear an approval. Signatures expire after 24 hours and bind
+the current signer epoch; the vault rejects retired epochs immediately. Accepted checkpoint history
+authenticates historical roots; immutable signer-epoch history independently authenticates reissues
+against older roots during recovery and custody-backed replay. The unanchored checkpoint tail still
+requires the current signer. The deployment's multisig proposes changes through its nonzero-delay
+timelock, which alone rotates the signer or changes deposit/withdrawal pauses. Latest transaction
+inclusion alone never authorizes withdrawal release; checkpoint startup and release use custody's
+withdrawal finality tag, independently of the latest credit tag and its confirmation depth.
 Hardware EVM custody requires this protection. Optional recovery snapshots require independently
 provisioned attested signer pins and authenticate the complete snapshot, its deployment, and its
 checkpoint; with them, account history and the segment catalog are read and updated only through
@@ -125,7 +132,10 @@ account history index is read from host disk with only its schema checked, and i
 by one command, the newest it has taken, though SQLite reads it in defensive mode and each event it
 serves names its place in the log, where anyone can check it; the sequencer, which bounds its host's
 clock with signed time, trusts the guest's monotonic clock without yet checking that the host cannot
-scale it; hardware enclave signing keys do not yet survive a restart; the dev configurations explicitly
+scale it; hardware enclave signing keys do not yet survive a restart (#28), so a hardware node cannot
+restart after a crash or a drained shutdown: its vault must name the enclave's key, and the old key's
+commands and checkpoints after the last one the vault accepted cannot be authenticated under a new
+key; the dev configurations explicitly
 use a published mock-only signer, which real attestation refuses; the custody adapter requires a strict
 majority of at least three configured independent RPC providers to agree on deposits, block hashes
 and finality, with reads compared at the same block height and empty log responses requiring the

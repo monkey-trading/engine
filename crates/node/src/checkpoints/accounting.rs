@@ -29,7 +29,7 @@ impl Accounting {
         Ok(())
     }
 
-    /// Funds still owed by custody; signing an approval does not settle its payout.
+    /// Cumulative approvals; authenticated chain payments are subtracted during reconciliation.
     pub(crate) fn unpaid(self) -> Fixed {
         self.unpaid
     }

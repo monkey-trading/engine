@@ -268,6 +268,19 @@ impl Engine {
                         params.share_divergence_triggers(widest.unwrap_or(0));
                     }
                 }
+                // Payout capacity is the conserved cash whose principal is final; locked principal joins
+                // it when its receipt finalises.
+                if self.protocol_version < ProtocolVersion::V22 && *version >= ProtocolVersion::V22 {
+                    let unlocked = |cash: crate::Fixed, locked: crate::Fixed| cash - locked;
+                    self.withdrawal_cash = Some(
+                        unlocked(self.house_cash, self.unfinalised_house_deposits)
+                            + self
+                                .accounts
+                                .values()
+                                .map(|acct| unlocked(acct.balance, acct.unfinalised_deposits))
+                                .sum::<crate::Fixed>(),
+                    );
+                }
                 self.protocol_version = *version;
             }
             AdminCommand::InitEmissions(schedule) => self.init_emissions(schedule)?,

@@ -141,8 +141,9 @@ fn overflow_refuses_the_whole_accounting_batch_without_wrapping() {
 
 /// Independent full-state scans, including adopted, live and reversed receipt identities.
 pub(crate) fn recompute(engine: &Engine, unpaid: Fixed) -> (Fixed, u64) {
+    let reserved = engine.withdrawal_queue().fold(Fixed::ZERO, |sum, request| sum + request.remaining);
     let liabilities =
-        engine.accounts().values().fold(engine.house_cash() + unpaid, |sum, account| sum + account.balance);
+        engine.accounts().values().fold(engine.house_cash() + unpaid + reserved, |sum, account| sum + account.balance);
     let state = receipt_state(engine);
     let historical: BTreeSet<_> = engine.credited_refs_with_prefix("0x").collect();
     let represented: BTreeSet<_> = state

@@ -20,6 +20,14 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   log refuse it at load), which needs a fresh log
 - Signed checkpoints and withdrawals, bound to the chain id and vault, from an attested key
 - Strict checkpoint signature verification in replay and recovery, with explicit domains for early logs
+- Command-origin seals for new entries, checked against the configured deployment and recovery signer;
+  historical unsigned commands require an authorized covering checkpoint before writable recovery. A
+  command after the last authenticated checkpoint that the current enclave key did not seal stops
+  recovery for operator repair. Each hardware enclave start generates a new key, and keys that
+  survive a restart are #28's: until then a hardware node cannot restart, after a crash or a drained
+  shutdown, because the vault's signer must be the enclave's key and the old key's commands and
+  checkpoints after the last one the vault accepted cannot be authenticated under a new key. With a
+  key that survives restarts, a drained shutdown ends the log at a checkpoint and restarts normally
 - Optional checkpoint relaying, signed-parent vault commitments, startup rollback checks, and collateral
   reconciliation that pauses withdrawal signatures while trading continues
 - Attestation through Linux configfs-tsm, covering TDX and SEV-SNP, or a clearly marked mock: the
@@ -96,17 +104,32 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/admin/tests.rs` — `engine admin` tests: key sources, commands, signing, and pins
 - `src/node/mod.rs` — startup, task supervision, and shutdown
 - `src/node/tests.rs` — startup, history recovery, and incomplete-genesis tests
+- `src/node/preflight/tests/origin.rs` — integrity refusal preserves absent, corrupt, and WAL-backed history
 - `src/telemetry.rs` — the log subscriber, which feeds alert lines to the router, and the metrics
   registry, set up before the node runs
 - `src/sequencer/mod.rs` — the sequencer, checkpoints, and metrics
 - `src/sequencer/messages.rs` — sequencer requests, stream messages, and signed withdrawals
 - `src/sequencer/checkpoints.rs` — checkpoint creation, custody reconciliation, and signature release
+- `src/sequencer/payouts.rs` — durable unpaid delivery, finalized claim evidence, expiry, and epoch reissues
+- `src/sequencer/payout_schedule.rs` — complete unpaid approval order and bounded expiry/epoch reissue scheduling
+- `src/sequencer/payout_tests.rs` — release order across claim pages, durability, restart, expiry, and rotation
+- `src/sequencer/payout_tests/` — paginated replacement signature order, paused claim acknowledgement, and sealed approval recovery
+- `src/sequencer/withdrawal_scenario/` — actual Anvil/TLS/stream/custody crash and FIFO scenarios with local signed time
+- `src/withdrawals.rs` — vault EIP-712 digests and exact approval inclusion verification
+- `src/api/withdrawal_queue.rs` — public FIFO pagination and account queue positions
+- `src/node/signer_history.rs` — finalized accepted roots and immutable signer epochs before recovery writes
+- `src/replay_audit.rs` and `src/replay_audit/` — read-only custody-backed historical signer audits and tests
+- `src/log/segments/durability_tests.rs` — failed-fsync stream publication regression
+- `src/test_support/written.rs` — shared in-memory test output capture
 - `src/sequencer/checkpoints/accounting_tests.rs` — live/recovery accounting oracles and gated 100k-account capture scaling
 - `src/sequencer/checkpoint_tests.rs` — confirmed-prefix signature gating and restart tests
 - `src/sequencer/fixture_tests.rs` — test-only signing of copies of placeholder protocol fixtures,
   and logs whose genesis an older protocol applied but no current config can give
 - `src/sequencer/recovery.rs` — pure recovery validation and exact authenticated checkpoint-tail restoration
+- `src/sequencer/origin.rs` — command-origin coverage shared by replay and writable recovery
 - `src/sequencer/replay.rs` — log replay, which recovery and `engine replay` share
+- `src/sequencer/replay/snapshot.rs` — replay restored from a verified state snapshot
+- `src/sequencer/replay/authorities.rs` — accepted historical signers for checkpoints a retired key signed
 - `src/sequencer/legacy.rs` — verified legacy activation inputs and pre-writer signature eligibility
 - `src/sequencer/legacy/approvals.rs` — authenticated approval prefixes, bounded receipt proofs and per-obligation release authorization
 - `src/sequencer/legacy/approvals/tests.rs` — exact proof retention, terminal/mismatched receipts and uncredited history
@@ -180,6 +203,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   mark), and a genesis with no house capital that trades and alerts on a house deficit
 - `src/sequencer/metrics_tests.rs` — the sequencer's metrics and alert-line tests
 - `src/log/mod.rs` — the JSON-lines log format, stream offsets, and the single-file reader
+- `src/log/command_seal.rs` — domain-separated canonical command/event seals and predecessor links
 - `src/log/segments.rs` — segment files, rotation, the manifest, and the recovery read, a segment
   at a time, with its checks
 - `src/log/reader.rs` — reads the log from any offset while it is being written, up to the last
@@ -279,6 +303,13 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   with real attestation refuses, and their tests
 - `src/checkpoints/mod.rs` — posting, retry, signed-parent commitment checks, and collateral reconciliation
 - `src/checkpoints/accounting.rs` — bounded custody totals derived from computed engine events
+- `src/checkpoints/lifecycle.rs` — pinned signer/epoch, cumulative paid amounts, and approval nonce-use evidence
+- `src/checkpoints/history.rs` — accepted history from the finalized anchor, the signed-parent chain, and signer epochs
+- `src/checkpoints/lifecycle_tests.rs` — paid cash reconciliation, bounded claim polling, and rotated authorities
+- `src/checkpoints/reconciliation.rs` — finalized collateral health: shortfalls, deposit totals, payouts, surpluses, and the credit deadline
+- `src/checkpoints/rpc/observation.rs` — same-block balance, epoch, paid total, and bounded claim reads
+- `src/checkpoints/rpc/authority.rs` — accepted historical signer identities for rotated nonce journals
+- `src/checkpoints/rpc/submission/tests/lifecycle.rs` — canonical pinned history and retired journal recovery
 - `src/checkpoints/accounting/tests.rs` — cash/reference recomputation oracles and arithmetic boundaries
 - `src/checkpoints/accounting/tests/receipts.rs` — receipt cash deltas, adoption, reversals, unpaid approvals and atomic failures
 - `src/checkpoints/tests/receipts.rs` — immutable prefix coverage and refusal of unproved aggregate equality
@@ -293,7 +324,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/rpc/submission/tests/nonce_progress.rs` — free, obsolete, and resurfaced nonce regressions
 - `src/checkpoints/setup.rs` — finalized chain anchor lookup and pending-inclusion startup wait
 - `src/checkpoints/tests.rs` — signature mutations, rollback, retry, and reconciliation tests
-- `src/checkpoints/scenario.rs` — isolated Anvil posting, tampering, truncation, shortfall, and reorg checks
+- `src/checkpoints/tests/collateral.rs` — shortfall, ledger-difference, surplus, and uncredited-deposit deadline tests
+- `src/checkpoints/scenario.rs` — isolated Anvil posting, tampering, truncation, surplus booking, shortfall, and reorg checks
 - `src/checkpoints/emission_budget.rs` — the vault's MONKEY cap against the emission period budget
 - `src/checkpoints/emissions_scenario.rs` — the MONKEY emissions dev scenario on isolated Anvil: pro-rata
   allocation, cancelled periods, a restart across finalisation, the first halving, and claims that mint
@@ -501,6 +533,23 @@ ports default to 18545–18547 and can be overridden with `RPC_A_PORT`, `RPC_B_P
 `SCENARIO_LOG_DIR` preserves its logs; the finality scenario also preserves its config and public sequencer log. `config/anvil.toml` expects local endpoints on 8545–8547 when
 run directly; the scenario rewrites these to its proxy ports.
 
+From V22, a withdrawal reserves an accepted request from trading cash, rounding down to
+whole USDC base units and retaining any smaller residual in the account. A public FIFO queue
+approves its head partially when cash is short; each part has its own payout nonce. Trading losses
+trigger another queue pass but do not create vault tokens. New deposits and house capital add
+physical payout capacity. The node signs only after the approval is synced and included in a
+finalized accepted checkpoint; a logged signature remains unpaid until the vault reports its used
+nonce. Expired approvals are reissued with the same nonce and a new 24-hour authorization.
+
+`GET /v1/withdrawals?limit=50&after=<request-seq>` returns `seq`, `queue` and `next`.
+`GET /v1/accounts/<address>/withdrawals` filters the same FIFO and reports each request's global
+one-based `position`. Both endpoints bound their scan to 1–200 requests; an account page may be
+empty and still have `next`, which clients must follow. Queue records include the reserved amount,
+remaining amount and original request sequence; queue changes also appear in the public log and
+account history. `POST /v1/withdrawals` retains the signed client request format. Its later
+`withdrawal` stream message carries the exact approved amount and nonce, signer epoch, issue/expiry
+seconds, accepted checkpoint and approval proof needed by `Vault.withdraw`.
+
 On-chain checkpoint posting uses an optional `[checkpoints]` section, required with hardware EVM
 custody. `node.checkpoint_every` sets the periodic frequency; every approved withdrawal also forces
 a checkpoint. Each root is durable locally before the relayer sends it, and the node releases no
@@ -512,12 +561,21 @@ pending inclusion to reach that boundary (or disappear in a reorg), bounded by
 `custody.evm.stall_critical_after`, before selecting its rollback anchor. Recovery then restores every outstanding durable signed
 checkpoint and its original accounting before signing descendants; an unmined signature remains
 live even when both chain views still show its parent. Permissionless relays matching that local
-chain reconcile the covered prefix, including work beyond the receive queue. The queue is bounded; exhaustion stops the node with the durable log available for
-recovery. Failed posts retry after `retry_interval` and emit `checkpoint_post_failed`. A conflicting
-posted root or signer stops the node with a Critical alert. A collateral mismatch emits Critical
-`collateral_mismatch` and pauses withdrawals; ordinary trading commands continue. Deposits not yet
-credited also defer withdrawal release until a checkpoint includes their credits; a mismatch
-lasting `custody.evm.stall_critical_after` raises a Critical alert.
+chain reconcile the covered prefix, including work beyond the receive queue. The queue is bounded, and
+the worker finalizes one checkpoint at a time; while the queue is full the sequencer defers new
+checkpoints with the Warning `checkpoint_backlog` and keeps sequencing, and approvals wait for the
+next checkpoint that fits. Failed posts retry after `retry_interval` and emit `checkpoint_post_failed`. A conflicting
+posted root or signer stops the node with a Critical alert. Following decision #15 §2, withdrawals
+pause when the vault's USDC is less than the ledger requires, or the vault's deposits or payments
+differ from it: collateral reconciles when the vault's paid total is within the checkpoint's
+approvals, the vault's running deposit total through the checkpoint's last credited deposit equals
+the ledger's credits, and the vault's USDC balance is at least its deposits less its payments.
+Deposits the checkpoint has not yet credited do not pause withdrawals until the first of them stays
+uncredited for `custody.evm.stall_critical_after`. A difference emits Critical
+`collateral_mismatch` and pauses withdrawals; ordinary trading commands continue. USDC sent to the
+vault outside a deposit pauses nothing: it emits the Warning `collateral_surplus` until anyone calls
+the vault's `bookSurplus`, which records it as a house deposit; a surplus below the 10 USDC minimum
+deposit must be topped up first.
 
 ```toml
 [checkpoints]

@@ -39,6 +39,18 @@ pub enum Event {
         amount: Fixed,
         nonce: u64,
     },
+    /// A V22 whole-USDC reservation, in FIFO order, excluded from the account's trading balance.
+    WithdrawalQueued {
+        account: AccountId,
+        amount: Fixed,
+        requested_seq: u64,
+    },
+    /// The reservation left after an approval; zero means this request left the queue.
+    WithdrawalQueueUpdated {
+        account: AccountId,
+        requested_seq: u64,
+        remaining: Fixed,
+    },
     WithdrawalRejected {
         account: AccountId,
         amount: Fixed,

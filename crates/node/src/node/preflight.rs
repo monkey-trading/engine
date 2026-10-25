@@ -36,7 +36,11 @@ pub(super) async fn emission_preflight<R: CheckpointChain>(
 pub(super) async fn finish_preflight<R: CheckpointChain>(
     plan: HistoryPlan,
     checkpoint: Option<(&Poster<R>, Option<&Checkpoint>)>,
-    recovery: Option<(&crate::sequencer::ReplayedLog, &crate::sequencer::SequencerConfig<'_>)>,
+    recovery: Option<(
+        &crate::sequencer::ReplayedLog,
+        &crate::sequencer::SequencerConfig<'_>,
+        engine_core::types::AccountId,
+    )>,
 ) -> anyhow::Result<History> {
     authorize(checkpoint, recovery).await?;
     plan.finish().inspect_err(|e| error!(alert = "history_recovery_failed", "refusing to serve: {e:#}"))
@@ -47,10 +51,14 @@ pub(super) async fn finish_preflight<R: CheckpointChain>(
 /// - pure recovery, reserved-work or independently finalized anchor validation fails
 pub(super) async fn authorize<R: CheckpointChain>(
     checkpoint: Option<(&Poster<R>, Option<&Checkpoint>)>,
-    recovery: Option<(&crate::sequencer::ReplayedLog, &crate::sequencer::SequencerConfig<'_>)>,
+    recovery: Option<(
+        &crate::sequencer::ReplayedLog,
+        &crate::sequencer::SequencerConfig<'_>,
+        engine_core::types::AccountId,
+    )>,
 ) -> anyhow::Result<()> {
-    if let Some((log, cfg)) = recovery {
-        log.validate_recovery(cfg)
+    if let Some((log, cfg, signer)) = recovery {
+        log.validate_recovery(cfg, signer)
             .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
         if let Some((poster, _)) = checkpoint {
             let reserved = poster

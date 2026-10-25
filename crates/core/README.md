@@ -102,6 +102,10 @@ this crate and reproduce the signed state roots exactly.
   front and next contracts is recorded whenever both have an index, and once the next contract's
   roll time has passed the market rolls onto it at the first command where it has an index, the
   adjustment taking the recorded gap, even after the front contract has stopped quoting
+- From protocol `V22`, a withdrawal reserves whole USDC from trading cash in a public FIFO queue,
+  and the queue approves its head, in part when physical cash is short, as an immutable payout with
+  its own nonce. Payout capacity starts at the conserved cash whose principal is final and grows
+  only with final deposit principal and house capital
 
 ## Repository Structure
 
@@ -122,6 +126,13 @@ this crate and reproduce the signed state roots exactly.
 - `src/deposits/legacy/tests.rs` — migration, independent release, ambiguous receipts and recovery commitments
 - `src/deposits/tests.rs` — receipt transition, duplicate delivery, arithmetic and recovery tests
 - `src/deposits/tests/coverage.rs` — canonical coverage, partial frontiers and restored index contracts
+- `src/withdrawal.rs` — V22 FIFO reservations, bounded partial approval, and exact USDC conversion
+- `src/merkle/withdrawal.rs` — payable approval leaves and root inclusion proofs
+- `tests/withdrawal_queue.rs` — reservations, partial FIFO, cash conservation, precision, and stale marks
+- `tests/withdrawal_commitment.rs` — approval ABI, tamper rejection, serialization/replay, and incremental roots
+- `tests/withdrawal_pagination.rs` — bounded scans, global positions, empty account continuations, and restart
+- `tests/withdrawal_finality.rs` — payout capacity that waits for receipt finality and ignores reversals
+- `tests/withdrawals/setup.rs` — shared Engine::apply-driven withdrawal setup
 - `src/admin.rs` — operator commands and signed admin commands
 - `src/emissions.rs` — MONKEY emissions: the schedule, period results, finalisation, and
   entitlements
@@ -185,7 +196,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V21` parts (`v15.rs` to `v21.rs`)
+  `V15` to `V22` parts (`v15.rs` to `v22.rs`)
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
 
@@ -305,7 +316,8 @@ log is `v16.jsonl`. `V17` keeps a market's move window across a halt; its log is
 `V20` adds receipt-based custody principal locks, finality, reversal and reinclusion moves, with its
 reference session in `examples/reference_log/v20.rs`. `V21` holds each quote to one open session
 and prices markets from roll-adjusted futures contracts; its session is in
-`examples/reference_log/v21.rs`.
+`examples/reference_log/v21.rs`. `V22` reserves withdrawals in a public FIFO queue paid from
+physical cash; its session is in `examples/reference_log/v22.rs`.
 For each later version:
 
 1. Add the version in code as `src/protocol.rs` lists, then extend the session in

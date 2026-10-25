@@ -21,7 +21,9 @@ an index: load only the rule whose hint matches the current action.
   `merkle/`). It does no IO and uses no clocks,
   randomness, or floats. `impl Engine` is split by area (`engine.rs`, `marks.rs`, `execution/`,
   `markouts.rs`, `closeout.rs`, `funds.rs`, `deposits.rs` with legacy migration in `deposits/`,
-  `admin.rs`, `stress.rs`, `auth.rs`). Unit tests sit
+  `admin.rs`, `stress.rs`, `auth.rs`). `withdrawal.rs` reserves FIFO requests and creates
+  whole-USDC partial approvals under the V22 rules; `merkle/withdrawal.rs` proves each approval
+  against a root. Unit tests sit
   inline; protocol tests are in `tests/` by area, with the shared harness in `tests/common/`.
   `tests/reference/` holds one reference log per protocol version, written once by
   `examples/reference_log/` and replayed to its roots by `tests/reference_logs.rs`;
@@ -41,7 +43,12 @@ an index: load only the rule whose hint matches the current action.
   Roughtime servers, the custody adapter (mock, or EVM vault deposits over alloy), checkpoint posting
   and collateral reconciliation (`checkpoints/`), with strict signature replay and startup checks
   against the vault's finalized commitment before history writes, plus authenticated withdrawal
-  completion replay,
+  authorization replay, bounded finalized claim polling, immutable signer-epoch history independent
+  of approval-root history, command-origin seals checked before writable recovery
+  (`log/command_seal.rs`, `sequencer/origin.rs`), bounded FIFO reissue scheduling
+  (`sequencer/payout_schedule.rs`), and public queue/account-position reads.
+  Withdrawal authorizations carry EIP-712 data and an approval inclusion proof; custody's used nonce
+  determines payment, and unpaid approvals are reissued after expiry or signer rotation. It also has
   price feeds: live crypto
   venue WebSockets and RWA market-data vendors (`feeds/`, one adapter per venue: Massive and
   TraderMade over WebSocket, Databento's live gateway over TCP, with API keys read from the
@@ -57,15 +64,20 @@ an index: load only the rule whose hint matches the current action.
   lists every file.
 - **contracts/** — Foundry project for the custody vault. `src/Vault.sol` takes USDC deposits of
   10 to 1e9 USDC for the caller's trading account (`deposit`), for a named one (`depositFor`), or
-  for the house, under one deposit id sequence; `test/` holds unit, fuzz, and invariant tests, with
-  mock tokens and a contract wallet in `test/mocks/`.
+  for the house, under one deposit id sequence, and records the running deposit total after each;
+  anyone can book USDC sent outside a deposit as house capital (`bookSurplus`). `test/` holds unit,
+  fuzz, and invariant tests, with mock tokens and a contract wallet in `test/mocks/`.
   Dependencies (forge-std, OpenZeppelin) come from the Soldeer registry, pinned with checksums in
   `soldeer.lock` and installed into the gitignored `dependencies/`; there are no git submodules.
   The vault stores increasing state checkpoints whose signed parents match its latest commitment,
-  authorized by its immutable enclave signer; the constructor requires that attestation-verified signer as its second argument.
-  Its third argument, the engine's initial MONKEY emission period budget, caps `src/MonkeyToken.sol`, the
-  ERC-20 the vault deploys and alone mints: `claimEmissions` mints an account's entitlement, proven
-  against the latest posted root, less what it already claimed.
+  authorized by its attestation-verified enclave signer. Withdrawals require its current signer and
+  epoch, an unused account nonce, a 24-hour authorization, and approval inclusion in an accepted root.
+  The constructor takes the token, the signer, an existing OpenZeppelin timelock with a nonzero
+  delay, and the engine's initial MONKEY emission period budget, which caps `src/MonkeyToken.sol`,
+  the ERC-20 the vault deploys and alone mints: `claimEmissions` mints an account's entitlement,
+  proven against the latest posted root, less what it already claimed. Deployment gives that
+  timelock its multisig proposer. The timelock manages signer rotation and independent
+  deposit/withdrawal pauses.
 - **config/** — node configs. `dev.toml` runs the TEE, custody and feeds as mocks on one machine,
   and checks the clock against public Roughtime servers, citing each server's key source;
   `feeds.provider = "venues"` prices its crypto markets from live venues instead, leaving the others
@@ -110,19 +122,21 @@ an index: load only the rule whose hint matches the current action.
   `dev-snapshot-restart.sh`, the checkpoint snapshot restart and fallback scenario;
   `dev-deposit-finality.sh`, the sequencer confirmation and Ethereum finality scenario on the
   vault's Anvil fixture; `dev-rwa-feeds.sh`, the RWA price feeds dev scenario against local
-  stand-ins for the market-data vendors; and `build-image.sh` and `check-image.sh`, which build the
-  enclave image from a commit and boot it under QEMU without SEV-SNP, and `check-image-retry.sh`,
-  which checks the image build's download retries.
+  stand-ins for the market-data vendors; `dev-withdrawals.sh`, the actual Anvil/TLS withdrawal,
+  pre-log crash, unpaid redelivery, and FIFO liquidity scenario; and `build-image.sh` and
+  `check-image.sh`, which build the enclave image from a commit and boot it under QEMU without
+  SEV-SNP, and `check-image-retry.sh`, which checks the image build's download retries.
 - **ops/** — operator assets: `grafana/engine-node.json`, the node's Grafana dashboard, and
   `prometheus/engine-node-rules.yml`, the alerting rules for a down node or failing alert pages.
 - **.github/workflows/** — `ci.yaml`: fmt, the file line cap, clippy, tests (and the node's
   production-build tests), the reference-log replay and invariant tests on x86_64 and aarch64 Linux,
   the unchanged-reference-log check, `cargo-deny`, the contracts' `forge fmt --check` / build /
   test, the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
-  deposit finality scenarios, the metrics and alert routing dev scenario, the alert outbox
-  kill/restart scenario, the snapshot restart scenario, the RWA price feeds dev scenario, and the
-  enclave image (`image` checks its download retries, builds it twice, and boots it under QEMU,
-  `image-compare` fails if the builds differ), on every push to `main` and every PR.
+  deposit finality scenarios, the signed withdrawal and FIFO dev scenario, the metrics and alert
+  routing dev scenario, the alert outbox kill/restart scenario, the snapshot restart scenario, the
+  RWA price feeds dev scenario, and the enclave image (`image` checks its download retries, builds
+  it twice, and boots it under QEMU, `image-compare` fails if the builds differ), on every push to
+  `main` and every PR.
   On a PR, the first job, `changes`, sorts the changed files into the Rust, contracts, scenario,
   and image areas from an explicit path list, and each job runs only when its area changed:
   `agents/`, `research/`, the root `README.md`, `SECURITY.md`, `AGENTS.md`, and `CLAUDE.md`, and
@@ -197,6 +211,9 @@ Run from the repo root:
 - MONKEY emissions dev scenario: `./scripts/dev-monkey-emissions.sh` (starts Anvil, deploys the
   vault and its token, and drives allocation, halving, a restart, and claims through the real
   sequencer, API, and checkpoint worker; needs Anvil, Forge, and installed Soldeer dependencies)
+- Signed withdrawal and FIFO dev scenario: `./scripts/dev-withdrawals.sh` (needs Anvil, Forge,
+  Cargo and pinned contract dependencies; uses local signed time and price servers, and preserves
+  its child logs under `SCENARIO_LOG_DIR` or a fresh temporary artifact directory)
 - Sign and submit an admin command as the operator: `cargo run -p engine-node -- admin --pin <the
   TLS key hash in the node's attested bundle> <command>`, with the key from `--key-file`,
   `OPERATOR_KEY_FILE`, or `OPERATOR_KEY`; `config/dev.toml` names the public key of the local test

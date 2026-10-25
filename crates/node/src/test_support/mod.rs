@@ -3,9 +3,8 @@
 
 use std::collections::BTreeMap;
 use std::fmt::Debug;
-use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 mod events;
@@ -14,6 +13,7 @@ pub use events::every_event;
 use engine_core::auth::ClientAuth;
 use engine_core::command::Command;
 use engine_core::event::Event;
+use engine_core::protocol::ProtocolVersion;
 use engine_core::types::AccountId;
 use engine_core::{Engine, Fixed};
 use futures_util::FutureExt;
@@ -26,8 +26,10 @@ use tracing::field::{Field, Visit};
 use tracing::subscriber::DefaultGuard;
 use tracing::{Event as LogEvent, Subscriber};
 use tracing_subscriber::Registry;
-use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
+
+mod written;
+pub use written::Written;
 
 use crate::api::{Feed, MAX_BACKFILLS};
 use crate::clock::{Clock, SystemClock};
@@ -74,6 +76,24 @@ impl TestSequencer {
     /// As `start`, stamping commands on `clock`, which trusted time admits, on a log whose genesis is
     /// `genesis`, as the config gives it.
     pub fn start_at(dir: &Path, stream_capacity: usize, clock: Arc<dyn Clock>, genesis: Vec<Command>) -> Self {
+        Self::boot(dir, stream_capacity, clock, genesis, ProtocolVersion::LATEST)
+    }
+
+    /// As `start`, activating `V18`: a version that signs each withdrawal when it is approved, as logs
+    /// written before `V22` do.
+    pub fn start_v18(dir: &Path, stream_capacity: usize) -> Self {
+        let genesis = genesis_commands(&dev_config().genesis);
+        Self::boot(dir, stream_capacity, Arc::new(SystemClock), genesis, ProtocolVersion::V18)
+    }
+
+    /// Boots as the node does, activating `version`.
+    fn boot(
+        dir: &Path,
+        stream_capacity: usize,
+        clock: Arc<dyn Clock>,
+        genesis: Vec<Command>,
+        version: ProtocolVersion,
+    ) -> Self {
         let (stream, _) = broadcast::channel(stream_capacity);
         let (withdrawals_tx, withdrawals) = mpsc::unbounded_channel();
         let (manifest_tx, manifest) = watch::channel(Manifest::default());
@@ -84,7 +104,11 @@ impl TestSequencer {
         // As the node does, parameters an older log set take the config's notional weighting first.
         let weighting = dev_config().genesis.params.toxicity.notional.expect("the dev config weighs by notional");
         seq.carry_toxicity_notional(weighting).expect("toxicity notional");
-        seq.activate_protocol().expect("protocol activation");
+        if version == ProtocolVersion::LATEST {
+            seq.activate_protocol().expect("protocol activation");
+        } else {
+            seq.activate_protocol_at(version).expect("protocol activation");
+        }
         if seq.needs_genesis() {
             seq.genesis(&dev_config().genesis).expect("dev genesis");
         }
@@ -250,6 +274,7 @@ pub fn sequencer_config(dir: &Path, manifest: watch::Sender<Manifest>) -> Sequen
         manifest,
         checkpoint_every: CHECKPOINT_EVERY,
         checkpoint_registry: None,
+        approval_registry: None,
         checkpoint_parent: Default::default(),
         checkpoints: None,
         history_sealing: None,
@@ -356,34 +381,4 @@ pub fn logged_history(dir: &Path, account: AccountId) -> Vec<HistoryEvent> {
         .collect();
     events.reverse();
     events
-}
-
-/// A log writer that keeps what it is given.
-#[derive(Clone, Default)]
-pub struct Written(Arc<Mutex<Vec<u8>>>);
-
-impl io::Write for Written {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-impl<'w> MakeWriter<'w> for Written {
-    type Writer = Written;
-
-    fn make_writer(&'w self) -> Self::Writer {
-        self.clone()
-    }
-}
-
-impl Written {
-    /// Everything written so far.
-    pub fn text(&self) -> String {
-        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
-    }
 }

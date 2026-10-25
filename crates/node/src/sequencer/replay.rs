@@ -15,13 +15,14 @@ use engine_core::{Engine, Fixed};
 use crate::checkpoints::accounting::Accounting;
 use crate::log::{self, CheckpointDomain, LogEntry, SegmentedLog};
 use crate::sequencer::GenesisProgress;
-use crate::snapshot::{Progress, RecoveryBase, Snapshot};
+use crate::snapshot::RecoveryBase;
 
 /// The result of replaying a log.
 pub struct Replayed {
     /// Successful legacy EVM credits, derived from verified commands, never a host cursor.
     pub legacy_deposits: BTreeMap<String, LegacyDeposit>,
     pub(crate) legacy_approvals: crate::sequencer::legacy::Approvals,
+    pub(crate) origin: crate::sequencer::origin::Origin,
     pub engine: Engine,
     pub(crate) accounting: Accounting,
     pub commands: u64,
@@ -41,10 +42,13 @@ pub struct Replayed {
     pub last_checkpoint_ts: Option<Millis>,
     /// Approvals whose custody checkpoints precede their signature release.
     pub deferred: Vec<(u64, AccountId, Fixed, u64)>,
-    /// Approved funds still owed by custody; payout settlement is not implemented yet.
+    /// Cumulative approved amount; the public log alone cannot establish which nonces custody paid.
     pub unpaid: Fixed,
     /// Named checkpoint signers, for comparison with independently trusted attestations.
     pub checkpoint_signers: BTreeSet<AccountId>,
+    pub(crate) payout_proofs: BTreeMap<(AccountId, u64), engine_core::merkle::WithdrawalApprovalProof>,
+    pub(crate) payout_order: BTreeMap<(AccountId, u64), usize>,
+    pub(crate) requires_checkpoint_gate: bool,
 }
 
 /// Re-applies a log entry by entry, as it is read, and checks every checkpoint root, logged event,
@@ -54,6 +58,7 @@ pub struct Replayed {
 pub(super) struct Replay {
     legacy_deposits: BTreeMap<String, LegacyDeposit>,
     legacy_approvals: crate::sequencer::legacy::Approvals,
+    origin: crate::sequencer::origin::Origin,
     engine: Engine,
     commands: u64,
     command_prefix: [u8; 32],
@@ -76,6 +81,13 @@ pub(super) struct Replay {
     domain: Option<CheckpointDomain>,
     trusted_signer: Option<AccountId>,
     checkpoint_signers: BTreeSet<AccountId>,
+    payout_proofs: BTreeMap<(AccountId, u64), engine_core::merkle::WithdrawalApprovalProof>,
+    payout_checkpoints: BTreeMap<u64, engine_core::eip712::B256>,
+    authorities: BTreeMap<u64, crate::checkpoints::AcceptedCheckpoint>,
+    signer_epochs: BTreeMap<u64, AccountId>,
+    unproved: BTreeSet<(AccountId, u64)>,
+    payout_order: BTreeMap<(AccountId, u64), usize>,
+    requires_checkpoint_gate: bool,
 }
 
 impl Replay {
@@ -93,7 +105,12 @@ impl Replay {
 
     /// Pins the authority supplied independently by custody, retained key, or audit caller.
     pub(super) fn with_trust(domain: Option<CheckpointDomain>, trusted_signer: Option<AccountId>) -> Self {
-        Self { domain, trusted_signer, ..Self::default() }
+        Self {
+            domain,
+            trusted_signer,
+            origin: crate::sequencer::origin::Origin::new(domain, trusted_signer),
+            ..Self::default()
+        }
     }
     /// Retains only the authenticated outstanding tail after the independently finalized anchor.
     pub(super) fn with_recovery(
@@ -107,74 +124,6 @@ impl Replay {
             ..Self::with_trust(domain, trusted_signer)
         }
     }
-    /// Restores required concrete replay facts with fresh external signer and finality authority.
-    /// Error cases:
-    /// - the cache contradicts its context, deployment, signer, or finalized prefix
-    pub(super) fn from_snapshot(
-        engine: Engine,
-        snapshot: Snapshot,
-        domain: CheckpointDomain,
-        trusted_signer: Option<AccountId>,
-        parent: Option<crate::log::CheckpointParent>,
-    ) -> anyhow::Result<Self> {
-        snapshot.context.validate(&snapshot.checkpoint, domain)?;
-        snapshot.context.validate_engine(&snapshot.checkpoint, &engine)?;
-        crate::sequencer::legacy::check_snapshot_provenance(
-            &engine,
-            &snapshot.progress.activations,
-            &snapshot.context.deferred,
-        )?;
-        ensure!(
-            trusted_signer
-                .is_none_or(|signer| { snapshot.context.checkpoint_signers.iter().all(|named| *named == signer) }),
-            "snapshot checkpoint signer differs from trusted recovery authority"
-        );
-        let work = parent.map(|parent| snapshot.context.after_anchor(parent)).transpose()?.unwrap_or_default();
-        let recovery_parent = work
-            .last()
-            .map(|work| crate::log::CheckpointParent {
-                has_checkpoint: true,
-                seq: work.checkpoint.seq,
-                root: work.checkpoint.root.parse().expect("snapshot work is signature checked"),
-            })
-            .or(parent);
-        let recovery_anchor =
-            parent.filter(|parent| parent.has_checkpoint).and_then(|parent| match &snapshot.context.base {
-                RecoveryBase::Checkpoint { checkpoint } if checkpoint.seq == parent.seq => Some(checkpoint.clone()),
-                _ => snapshot
-                    .context
-                    .work
-                    .iter()
-                    .find(|work| work.checkpoint.seq == parent.seq)
-                    .map(|work| work.checkpoint.clone()),
-            });
-        let Snapshot { progress: Progress { genesis, activations, checkpoints }, context, checkpoint, .. } = snapshot;
-        let last_checkpoint_ts = Some(engine.now());
-        Ok(Self {
-            legacy_deposits: BTreeMap::new(),
-            legacy_approvals: crate::sequencer::legacy::Approvals::default(),
-            engine,
-            commands: context.commands,
-            command_prefix: context.command_prefix,
-            checkpoints,
-            activations,
-            genesis,
-            last_checkpoint_ts,
-            approved: context.unsigned.into(),
-            logs_events: context.logs_events,
-            accounting: context.accounting,
-            deferred: context.deferred,
-            checkpoint_signers: context.checkpoint_signers,
-            recovery_work: work,
-            recovery_parent,
-            recovery_origin: parent,
-            recovery_anchor,
-            last_signed_checkpoint: Some(checkpoint),
-            domain: Some(domain),
-            trusted_signer,
-        })
-    }
-
     /// Applies the log's next entry.
     /// Error cases:
     /// - a command out of sequence, with time running backwards, or stamped past the range the
@@ -195,6 +144,7 @@ impl Replay {
                 if self.logs_events && c.events.is_none() {
                     bail!("seq {seq} has no logged events, though earlier commands do");
                 }
+                self.origin.command(c)?;
                 let version = engine.protocol_version();
                 crate::sequencer::legacy::check_activation_ledger(&c.sequenced.cmd, &self.legacy_deposits)?;
                 let events = engine.apply(&c.sequenced).with_context(|| format!("applying seq {seq}"))?;
@@ -212,10 +162,22 @@ impl Replay {
                     self.legacy_deposits.insert(deposit.chain_ref.clone(), deposit);
                 }
                 self.legacy_approvals.observe(engine, &c.sequenced, &events, c.events.is_some());
+                for (index, event) in events.iter().enumerate() {
+                    if let Event::WithdrawalApproved { account, nonce, .. } = event
+                        && engine.withdrawal_approval(*account, *nonce).is_some()
+                    {
+                        self.unproved.insert((*account, *nonce));
+                        self.payout_order.insert((*account, *nonce), index);
+                    }
+                }
                 self.approved = events
                     .into_iter()
                     .filter_map(|e| match e {
-                        Event::WithdrawalApproved { account, amount, nonce } => Some((account, amount, nonce)),
+                        Event::WithdrawalApproved { account, amount, nonce }
+                            if engine.withdrawal_approval(account, nonce).is_none() =>
+                        {
+                            Some((account, amount, nonce))
+                        }
                         _ => None,
                     })
                     .collect();
@@ -237,7 +199,41 @@ impl Replay {
                 if let (Some(explicit), Some(recorded)) = (self.domain, recorded) {
                     ensure!(explicit == recorded, "withdrawal trusted deployment differs from recorded deployment");
                 }
-                crate::checkpoints::signature::verify_withdrawal(w, self.domain.or(recorded), self.trusted_signer)?;
+                let authority = if let Some(auth) = &w.authorization {
+                    if self.signer_epochs.is_empty() {
+                        self.trusted_signer
+                    } else {
+                        ensure!(
+                            self.authorities
+                                .get(&auth.checkpoint_seq)
+                                .is_some_and(|accepted| accepted.root == auth.checkpoint_root.to_string()),
+                            "typed payout root was not accepted in the finalized prefix"
+                        );
+                        let signer = self
+                            .signer_epochs
+                            .get(&auth.signer_epoch)
+                            .context("typed payout signer epoch lacks authenticated history")?;
+                        ensure!(*signer == auth.signer, "typed payout signer differs from immutable epoch history");
+                        Some(*signer)
+                    }
+                } else {
+                    self.authorities.range(engine.last_seq().unwrap_or(0)..).next().map(|(_, accepted)| accepted.signer)
+                };
+                let signer = authority.or(self.trusted_signer);
+                crate::checkpoints::signature::verify_withdrawal(w, self.domain.or(recorded), signer)?;
+                if let Some(auth) = &w.authorization {
+                    let approval =
+                        engine.withdrawal_approval(w.account, w.nonce).context("typed payout was never approved")?;
+                    ensure!(
+                        approval.amount == w.amount && Some(approval.approved_seq) == w.approved_seq,
+                        "typed payout differs from its immutable approval"
+                    );
+                    ensure!(
+                        self.payout_checkpoints.get(&auth.checkpoint_seq) == Some(&auth.checkpoint_root),
+                        "typed payout checkpoint is absent from the preceding log"
+                    );
+                    return Ok(());
+                }
                 if let Some(seq) = w.approved_seq {
                     let at = self
                         .deferred
@@ -269,12 +265,22 @@ impl Replay {
                 if root != cp.root {
                     bail!("state root mismatch at seq {}: log says {}, replay gives {root}", cp.seq, cp.root);
                 }
-                crate::checkpoints::signature::verify_with_domain(cp, engine, self.domain)?;
+                let checkpoint_domain = crate::checkpoints::signature::verify_with_domain(cp, engine, self.domain)?;
+                self.requires_checkpoint_gate |= cp.parent.is_some();
+                self.payout_checkpoints.insert(cp.seq, cp.root.parse()?);
+                for (account, nonce) in std::mem::take(&mut self.unproved) {
+                    self.payout_proofs.insert(
+                        (account, nonce),
+                        engine.approval_proof(account, nonce).context("checkpoint lacks approval proof")?,
+                    );
+                }
                 let signer = cp.signer.parse()?;
-                ensure!(
-                    self.trusted_signer.is_none_or(|trusted| trusted == signer),
-                    "checkpoint signer differs from trusted recovery authority"
-                );
+                if self.trusted_signer.is_some_and(|trusted| trusted != signer) {
+                    self.authorities
+                        .get(&cp.seq)
+                        .context("checkpoint signer differs from trusted recovery authority")?
+                        .verify(cp)?;
+                }
                 self.checkpoint_signers.insert(signer);
                 if self.recovery_origin.is_some_and(|parent| {
                     parent.has_checkpoint && parent.seq == cp.seq && parent.root.to_string() == cp.root
@@ -294,6 +300,7 @@ impl Replay {
                         root: cp.root.parse()?,
                     });
                 }
+                self.origin.checkpoint(cp, checkpoint_domain, self.trusted_signer.is_some())?;
                 self.last_signed_checkpoint = Some(cp.clone());
                 self.genesis.checkpoint();
                 // The checkpoint covers the last command applied, whose stamp is the engine's time.
@@ -314,6 +321,7 @@ impl Replay {
         let (engine, commands, checkpoints, activations, genesis, last_checkpoint_ts) =
             (self.engine, self.commands, self.checkpoints, self.activations, self.genesis, self.last_checkpoint_ts);
         Replayed {
+            origin: self.origin,
             engine,
             command_prefix: self.command_prefix,
             accounting: self.accounting,
@@ -326,6 +334,9 @@ impl Replay {
             deferred: self.deferred,
             unpaid: self.accounting.unpaid(),
             checkpoint_signers: self.checkpoint_signers,
+            payout_proofs: self.payout_proofs,
+            payout_order: self.payout_order,
+            requires_checkpoint_gate: self.requires_checkpoint_gate,
             last_signed_checkpoint: self.last_signed_checkpoint,
             recovery_work: self.recovery_work,
             recovery_base,
@@ -355,6 +366,7 @@ pub fn replay_with_signer(
     let mut replay = Replay::with_trust(Some(domain), Some(signer));
     entries.iter().try_for_each(|entry| replay.apply(entry))?;
     let replayed = replay.finish();
+    replayed.origin.require_recovery(domain, signer)?;
     ensure!(
         replayed.checkpoint_signers.iter().all(|named| *named == signer),
         "checkpoint signer differs from trusted signer"
@@ -396,6 +408,7 @@ pub fn replay_path_with_trust(
     }
     let replayed = replay.finish();
     if let Some(signer) = signer {
+        replayed.origin.require_audit(signer)?;
         ensure!(
             replayed.checkpoint_signers.iter().all(|named| *named == signer),
             "checkpoint signer differs from trusted signer"
@@ -403,6 +416,45 @@ pub fn replay_path_with_trust(
     }
     ensure!(replayed.commands > 0, "{} holds no command", path.display());
     ensure!(replayed.checkpoints > 0, "{} holds no checkpoint, so nothing in it is verified", path.display());
+    Ok(replayed)
+}
+
+/// Replays one exact finalized prefix with independently authenticated historical authorities.
+/// Error cases:
+/// - log, root, signature, authority, parent continuity, or finalized anchor validation fails
+pub(crate) fn replay_path_with_authorities(
+    path: &Path,
+    domain: CheckpointDomain,
+    signer: AccountId,
+    parent: crate::log::CheckpointParent,
+    authorities: crate::checkpoints::SignerHistory,
+) -> anyhow::Result<Replayed> {
+    let found = fs::metadata(path).with_context(|| format!("no readable log at {}", path.display()))?;
+    let mut replay = Replay::with_recovery(Some(domain), Some(signer), parent);
+    replay.set_authorities(authorities)?;
+    let mut anchored = !parent.has_checkpoint;
+    let mut visit = |entry: LogEntry| {
+        if let LogEntry::Checkpoint(cp) = &entry
+            && parent.has_checkpoint
+            && cp.seq == parent.seq
+        {
+            ensure!(
+                cp.root.parse::<engine_core::eip712::B256>()? == parent.root,
+                "public log differs from the finalized vault anchor"
+            );
+            anchored = true;
+        }
+        replay.apply(&entry)
+    };
+    if found.is_dir() {
+        SegmentedLog::open(path, &mut visit)?;
+    } else {
+        log::read_file(path, &mut visit)?;
+    }
+    ensure!(anchored, "public log is shorter than or omits the finalized vault anchor");
+    let replayed = replay.finish();
+    replayed.origin.require_recovery(domain, signer)?;
+    ensure!(replayed.commands > 0 && replayed.checkpoints > 0, "public log has no verified command/checkpoint");
     Ok(replayed)
 }
 
@@ -426,3 +478,8 @@ fn ensure_signed(
 pub(super) mod accounting_tests;
 #[cfg(test)]
 mod auth_tests;
+mod authorities;
+mod snapshot;
+
+#[cfg(test)]
+mod origin_tests;

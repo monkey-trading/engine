@@ -69,12 +69,15 @@ fn dev_scenario_financing_closes_out_and_a_stale_market_counts_at_its_last_mark(
     sequenced(&mut seq, prices(ETH, "3800", now()));
     move_to(&mut seq, rollover + 1_200);
     sequenced(&mut seq, prices(BTC, "94740", now()));
-    // Equity 800 against 380 of margin at the last mark leaves 420 free.
-    let events = sequenced(&mut seq, withdrawal(HOLDER, "420.000000001"));
+    // Equity 800 against 380 of margin at the last mark leaves 420 free; one base unit more is refused.
+    let events = sequenced(&mut seq, withdrawal(HOLDER, "420.000001"));
     let refused = Reject::InsufficientFunds { available: fixed("420") };
     assert!(matches!(&events[..], [Event::WithdrawalRejected { reason, .. }] if *reason == refused), "{events:?}");
     let events = sequenced(&mut seq, withdrawal(HOLDER, "420"));
-    assert!(matches!(&events[..], [Event::WithdrawalApproved { .. }]), "{events:?}");
+    assert!(
+        events.contains(&Event::WithdrawalApproved { account: HOLDER, amount: fixed("420"), nonce: 1 }),
+        "{events:?}"
+    );
     let events = sequenced(&mut seq, market_order(HOLDER, ETH, Side::Sell, "1", "3800"));
     let stale = Reject::NoPrice { error: PriceError::Stale { fresh: 0, needed: 2 } };
     assert!(matches!(&events[..], [Event::OrderRejected { reason, .. }] if *reason == stale), "{events:?}");

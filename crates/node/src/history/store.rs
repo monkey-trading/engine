@@ -426,7 +426,7 @@ mod tests {
             let sequenced = Sequenced { seq, ts: 0, cmd: Command::Tick };
             Arc::new(StreamMsg::new(
                 Offset::start_of(seq),
-                LogEntry::Command(CommandEntry { sequenced, events: Some(events) }),
+                LogEntry::Command(CommandEntry { seal: None, sequenced, events: Some(events) }),
             ))
         };
         writer.write(&[deposit(1)]).unwrap();

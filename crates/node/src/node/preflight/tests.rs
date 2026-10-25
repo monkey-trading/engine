@@ -60,6 +60,7 @@ async fn rejected_anchor_and_signer_preserve_missing_corrupt_and_wal_history_byt
                         checkpoint: Some((9, format!("0x{}", "ab".repeat(32)))),
                         balance: Fixed::ZERO,
                         deposits: 0,
+                        deposited: Fixed::ZERO,
                     },
                 },
                 domain: CheckpointDomain { chain_id: 31337, vault: AccountId([0; 20]) },
@@ -125,6 +126,7 @@ async fn replay_valid_truncated_log_cannot_discard_a_newer_valid_history_index()
                 checkpoint: Some((anchor.seq, anchor.root)),
                 balance: Fixed::from_int(100),
                 deposits: 1,
+                deposited: Fixed::from_int(100),
             },
         },
         domain: anchor.domain.unwrap(),
@@ -182,7 +184,11 @@ async fn wrong_recovery_deployment_preserves_history_wal_and_log_bytes() {
         } else {
             seq_cfg.client_auth = engine_core::auth::ClientAuth::Eip712 { chain_id: 1, vault: AccountId([7; 20]) };
         }
-        let error = finish_preflight::<Chain>(plan, None, Some((&log, &seq_cfg))).await.err().unwrap();
+        let error =
+            finish_preflight::<Chain>(plan, None, Some((&log, &seq_cfg, AccountId(EnclaveKey::test_key().address()))))
+                .await
+                .err()
+                .unwrap();
         assert!(error.to_string().contains(if wrong_operator { "operator" } else { "client auth" }));
         assert_eq!(files(&root), before);
         let alert = alerts.try_recv().expect("recovery refusal raises Critical");
@@ -224,7 +230,9 @@ async fn incomplete_genesis_and_missing_checkpoint_service_preserve_history_byte
         // Drive approvals through the public sequencer request path.
         let (tx, rx) = mpsc::channel(64);
         let task = tokio::spawn(seq.run(rx));
-        tx.send(crate::sequencer::Request::CheckpointStatus { posted: None, healthy: true }).await.unwrap();
+        tx.send(crate::sequencer::Request::CheckpointStatus { posted: None, healthy: true, lifecycle: None })
+            .await
+            .unwrap();
         for cmd in [crate::test_support::deposit(100, "preflight-pure"), crate::test_support::withdraw(40)] {
             let (reply, done) = tokio::sync::oneshot::channel();
             tx.send(crate::sequencer::Request::Submit { cmd, reply: Some(reply) }).await.unwrap();
@@ -257,7 +265,11 @@ async fn incomplete_genesis_and_missing_checkpoint_service_preserve_history_byte
         )
         .unwrap();
         let seq_cfg = sequencer_config(&cfg.node.log_dir, watch::channel(Manifest::default()).0);
-        let error = finish_preflight::<Chain>(plan, None, Some((&log, &seq_cfg))).await.err().unwrap();
+        let error =
+            finish_preflight::<Chain>(plan, None, Some((&log, &seq_cfg, AccountId(EnclaveKey::test_key().address()))))
+                .await
+                .err()
+                .unwrap();
         assert!(
             error.to_string().contains(if incomplete_genesis { "genesis" } else { "checkpoint service" }),
             "{error:#}"
@@ -317,6 +329,7 @@ async fn reserved_signature_missing_from_recovered_log_refuses_before_history_mu
                 checkpoint: None,
                 balance: Fixed::ZERO,
                 deposits: 0,
+                deposited: Fixed::ZERO,
             },
             checkpoint,
         },
@@ -335,7 +348,14 @@ async fn reserved_signature_missing_from_recovered_log_refuses_before_history_mu
             tokio::sync::watch::channel(crate::log::Manifest::default()).0,
         )
     };
-    let error = finish_preflight(plan, Some((&poster, None)), Some((&log, &seq_cfg))).await.err().unwrap();
+    let error = finish_preflight(
+        plan,
+        Some((&poster, None)),
+        Some((&log, &seq_cfg, AccountId(EnclaveKey::test_key().address()))),
+    )
+    .await
+    .err()
+    .unwrap();
     assert!(error.to_string().contains("absent"), "{error:#}");
     let alert = alerts.try_recv().expect("reservation refusal raises Critical");
     assert_eq!((alert["alert"].as_str(), alert["level"].as_str()), ("checkpoint_startup_failed", "ERROR"));
@@ -354,13 +374,13 @@ async fn a_genesis_no_current_config_can_name_raises_critical_and_preserves_byte
         old_genesis_log(&cfg.node.log_dir, &cfg.client_auth().unwrap(), version, genesis, Vec::new());
         let (_guard, mut alerts) = crate::test_support::capture_alerts();
         let before = files(&root);
-        let signer = Some(AccountId(EnclaveKey::test_key().address()));
-        let (log, plan) = crate::node::read_log_and_history_observe(&cfg, signer, None, |_| {}).unwrap();
+        let signer = AccountId(EnclaveKey::test_key().address());
+        let (log, plan) = crate::node::read_log_and_history_observe(&cfg, Some(signer), None, |_| {}).unwrap();
         let seq_cfg = crate::test_support::sequencer_config(
             &cfg.node.log_dir,
             tokio::sync::watch::channel(crate::log::Manifest::default()).0,
         );
-        let error = finish_preflight::<Chain>(plan, None, Some((&log, &seq_cfg))).await.err().unwrap();
+        let error = finish_preflight::<Chain>(plan, None, Some((&log, &seq_cfg, signer))).await.err().unwrap();
         let error = format!("{error:#}");
         assert!(error.contains("no current config can name") && error.contains(reason), "{shape}: {error}");
         assert_eq!(files(&root), before, "{shape}");
@@ -368,3 +388,5 @@ async fn a_genesis_no_current_config_can_name_raises_critical_and_preserves_byte
         assert_eq!((alert["alert"].as_str(), alert["level"].as_str()), ("log_recovery_failed", "ERROR"));
     }
 }
+
+mod origin;

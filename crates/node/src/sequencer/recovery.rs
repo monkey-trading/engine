@@ -52,8 +52,9 @@ impl ReplayedLog {
     /// Checks every pure recovery refusal before history repair or opening the log for append.
     /// Error cases:
     /// - the deployment, genesis, or required checkpoint service differs from the replayed log
-    pub(crate) fn validate_recovery(&self, cfg: &SequencerConfig<'_>) -> anyhow::Result<()> {
-        let Replayed { engine, genesis, deferred, legacy_deposits, legacy_approvals, .. } = &self.replayed;
+    pub(crate) fn validate_recovery(&self, cfg: &SequencerConfig<'_>, signer: AccountId) -> anyhow::Result<()> {
+        let Replayed { engine, genesis, deferred, requires_checkpoint_gate, legacy_deposits, legacy_approvals, .. } =
+            &self.replayed;
         if ProtocolVersion::LATEST.supports_deposit_finality()
             && !legacy_approvals.all_authorized(&{
                 let mut authorized =
@@ -75,10 +76,13 @@ impl ReplayedLog {
         genesis.ensure_closed()?;
         // So is one naming another genesis: the node would attest rules its engine does not run.
         genesis.ensure_matches(&cfg.genesis, &cfg.client_auth, cfg.operator)?;
-        if !deferred.is_empty() && cfg.checkpoints.is_none() {
+        if (*requires_checkpoint_gate || !deferred.is_empty()) && cfg.checkpoints.is_none() {
             bail!("checkpoint-gated withdrawals require the checkpoint service");
         }
-        Ok(())
+        // Last, so a log refused for its deployment or genesis says so.
+        self.replayed
+            .origin
+            .require_recovery(crate::log::CheckpointDomain { chain_id: cfg.chain_id, vault: cfg.vault }, signer)
     }
 }
 
@@ -150,8 +154,23 @@ impl Sequencer {
         parent: Option<crate::log::CheckpointParent>,
         mut observe: impl FnMut(&LogEntry),
     ) -> anyhow::Result<ReplayedLog> {
+        Self::read_log_with_authorities(dir, domain, signer, parent, Default::default(), &mut observe)
+    }
+
+    /// Replays accepted history while requiring the current signer for the unanchored tail.
+    /// Error cases:
+    /// - trusted history is inconsistent, or ordinary replay/recovery validation fails
+    pub(crate) fn read_log_with_authorities(
+        dir: &Path,
+        domain: Option<crate::log::CheckpointDomain>,
+        signer: Option<AccountId>,
+        parent: Option<crate::log::CheckpointParent>,
+        authorities: crate::checkpoints::SignerHistory,
+        mut observe: impl FnMut(&LogEntry),
+    ) -> anyhow::Result<ReplayedLog> {
         let mut replay = parent
             .map_or_else(|| Replay::with_trust(domain, signer), |parent| Replay::with_recovery(domain, signer, parent));
+        replay.set_authorities(authorities)?;
         let log = SegmentedLog::open(dir, |entry| {
             observe(&entry);
             replay.apply(&entry)
@@ -177,9 +196,10 @@ impl Sequencer {
         stream: broadcast::Sender<Arc<StreamMsg>>,
         withdrawals: mpsc::UnboundedSender<SignedWithdrawal>,
     ) -> anyhow::Result<Self> {
-        log.validate_recovery(&cfg)?;
+        log.validate_recovery(&cfg, AccountId(key.address()))?;
         let ReplayedLog { log, replayed, snapshot_seq, legacy_authorizations } = log;
         let Replayed {
+            origin,
             engine,
             commands,
             checkpoints,
@@ -196,6 +216,8 @@ impl Sequencer {
             command_prefix,
             legacy_deposits,
             legacy_approvals,
+            payout_proofs,
+            payout_order,
             ..
         } = replayed;
         let mut legacy_authorizations = legacy_authorizations;
@@ -206,7 +228,8 @@ impl Sequencer {
                 legacy_authorizations.entry(key).or_insert(seq);
             }
         }
-        let checkpoint_unsigned = cfg.checkpoints.is_some() && (!unsigned.is_empty() || !deferred.is_empty());
+        let checkpoint_unsigned = cfg.checkpoints.is_some()
+            && (!unsigned.is_empty() || !deferred.is_empty() || engine.withdrawal_approvals().next().is_some());
         info!(commands, checkpoints, snapshot_seq, "recovered from log");
         if let Some(ts) = last_checkpoint_ts {
             cfg.metrics.last_checkpoint_seconds.set(ts as f64 / 1000.0);
@@ -222,6 +245,7 @@ impl Sequencer {
             engine,
             log: log.into_writer(cfg.segment_commands.max(1), cfg.manifest)?,
             key,
+            command_link: origin.link,
             checkpoint_every: cfg.checkpoint_every.max(1),
             chain_id: cfg.chain_id,
             vault: cfg.vault,
@@ -239,6 +263,7 @@ impl Sequencer {
             gate: cfg.checkpoints.map(|sink| {
                 let mut gate = Gate::new(sink, cfg.checkpoint_parent);
                 gate.registry = cfg.checkpoint_registry;
+                gate.approvals = cfg.approval_registry;
                 gate
             }),
             accounting,
@@ -271,7 +296,20 @@ impl Sequencer {
         }
         if let Some(gate) = &mut sequencer.gate {
             gate.pending.extend(deferred);
+            for approval in sequencer.engine.withdrawal_approvals() {
+                let key = (approval.account, approval.nonce);
+                let index = *payout_order.get(&key).context("immutable approval lacks its validated event order")?;
+                let mut payout = crate::sequencer::payouts::Payout::new(*approval, index);
+                payout.proof = payout_proofs.get(&key).cloned();
+                if payout.proof.is_none() {
+                    gate.unproved.insert(key);
+                }
+                gate.unregistered.insert(key);
+                gate.schedule.insert(payout.order, key);
+                gate.payouts.insert(key, payout);
+            }
         }
+        sequencer.register_payouts()?;
         if let Some(gate) = &mut sequencer.gate {
             // Resume every durable signature before extending the chain. In particular an
             // unmined child remains a live commitment even while latest equals finalized.
