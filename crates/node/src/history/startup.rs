@@ -14,6 +14,7 @@ use crate::history::authenticated::{Head, Index};
 use crate::history::rebuild::ReplayFingerprint;
 use crate::history::runtime::{self, Replacement};
 use crate::log::CheckpointDomain;
+use crate::log::catalog::CatalogRoot;
 use crate::log::catalog_access::{CatalogRead, StoreCatalogRead};
 use crate::log::catalog_head::VerifiedCatalogHead;
 use crate::log::catalog_head::{CatalogDomain, CatalogHeadAuthority};
@@ -22,7 +23,7 @@ use crate::sequencer::ReplayedLog;
 use crate::snapshot::generations::Allocate;
 use crate::snapshot::head::StoreId;
 use crate::snapshot::lifecycle::Lifecycle;
-use crate::snapshot::{catalog_heads, pins::Pins};
+use crate::snapshot::{Prune, catalog_heads, pins::Pins};
 use crate::tee::EnclaveKey;
 
 pub(crate) struct Plan {
@@ -41,8 +42,16 @@ pub(crate) enum Source {
 }
 
 pub(crate) enum Catalog {
-    Complete { id: StoreId, store: Store, head: Box<VerifiedCatalogHead> },
+    Complete { id: StoreId, store: Store, resume: Resume },
     Rebuild,
+}
+
+/// Where a complete catalog generation resumes writing.
+pub(crate) enum Resume {
+    /// The newest signed head; the replayed log holds everything it covers.
+    Tip(Box<VerifiedCatalogHead>),
+    /// The paired cache's own boundary, when no head verifies or the log lost a tail a head covered.
+    Boundary(CatalogRoot),
 }
 
 impl Plan {
@@ -74,6 +83,15 @@ impl Plan {
                 alert = "snapshot_cleanup_failed",
                 "interrupted cache publications remain until the next write: {error:#}"
             );
+        }
+        if let Catalog::Complete { id, resume: Resume::Boundary(boundary), .. } = &self.catalog {
+            // Heads past the boundary name versions the catalog discards below. They go oldest first
+            // and before history discards anything, so after a crash part way the next start still
+            // sees the lost tail in the newest of them or in history's heads.
+            let mut publication = lifecycle.publication()?;
+            for path in catalog_heads::after(&producer, *id, boundary.root.version)? {
+                publication.remove(&path)?;
+            }
         }
         let mut allocated = if matches!(self.source, Source::Rebuild { .. }) {
             Some(
@@ -115,8 +133,8 @@ impl Plan {
                 Replacement { id: generation.id, store: generation.store, index }
             }
         };
-        let (catalog_id, catalog_store, tip) = match self.catalog {
-            Catalog::Complete { id, store, head } => (id, store, Some(*head)),
+        let (catalog_id, catalog_store, resume) = match self.catalog {
+            Catalog::Complete { id, store, resume } => (id, store, Some(resume)),
             Catalog::Rebuild => {
                 let generation = allocated
                     .as_mut()
@@ -146,11 +164,16 @@ impl Plan {
             Arc::new(move |root| probe.ensure_current(root)),
         ));
         catalog_store.enable_writes()?;
-        let owner = match tip {
-            Some(tip) => {
+        let owner = match resume {
+            Some(Resume::Tip(tip)) => {
                 // Versions committed after the newest signed tip were never acknowledged.
                 catalog_store.discard_after(&tip.catalog().root)?;
-                CatalogOwner::resume(Arc::new(catalog_store), read, tip, authority)?
+                CatalogOwner::resume(Arc::new(catalog_store), read, *tip, authority)?
+            }
+            Some(Resume::Boundary(boundary)) => {
+                // Later versions hold what the log lost, or no head names them.
+                catalog_store.discard_after(&boundary.root)?;
+                CatalogOwner::resume_at_boundary(Arc::new(catalog_store), read, boundary, authority)?
             }
             None => CatalogOwner::create(
                 Arc::new(catalog_store),

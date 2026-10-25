@@ -54,6 +54,23 @@ impl CatalogOwner {
         Ok(Self { store, read, current, authority, stable, pending: None, failed: false })
     }
 
+    /// Binds a paired cache's boundary root, which that cache's signature authenticates, to writable
+    /// ownership after #24 preflight. The caller has removed the heads past it and discarded the
+    /// versions they named; the next fold signs the next head.
+    /// Error cases:
+    /// - a later version remains, or the root proof fails
+    pub fn resume_at_boundary(
+        store: Arc<Store>,
+        read: Arc<dyn CatalogRead>,
+        boundary: CatalogRoot,
+        authority: CatalogHeadAuthority,
+    ) -> anyhow::Result<Self> {
+        read.ensure_current(&boundary.root)?;
+        let current = boundary.root.clone();
+        let stable = LazyCatalogView::open(read.clone(), boundary)?;
+        Ok(Self { store, read, current, authority, stable, pending: None, failed: false })
+    }
+
     /// Returns the independently provisioned deployment identity.
     pub fn domain(&self) -> &crate::log::catalog_head::CatalogDomain {
         self.authority.domain()

@@ -12,7 +12,7 @@ use crate::authenticated::Store;
 use crate::config::{HistorySection, NodeConfig, SnapshotSection};
 use crate::history::authenticated::Index;
 use crate::history::rebuild::Fingerprinter;
-use crate::history::startup::{Catalog, Plan, Source};
+use crate::history::startup::{Catalog, Plan, Resume, Source};
 use crate::log::catalog_access::{CatalogRead, StoreCatalogRead};
 use crate::log::{CheckpointDomain, CheckpointParent, LogEntry, SegmentedLog};
 use crate::sequencer::replay::Replay;
@@ -124,36 +124,47 @@ fn candidate(
         Arc::new(catalog_store.clone()),
         Arc::new(move |root| probe.ensure_current(root)),
     ));
-    let log = SegmentedLog::open_suffix(&cfg.node.log_dir, read, &boundary, Some(&catalog_tip), |entry| {
-        replay.apply(&entry)?;
-        if let (LogEntry::Command(command), Some((history_h, _))) = (&entry, &history_h)
-            && Some(command.sequenced.seq) == h_seq
-        {
-            replay.verify_history_head(&history_h.head)?;
-            matched_h = true;
-        }
-        Ok(())
-    })?;
+    let mut log =
+        SegmentedLog::open_suffix(&cfg.node.log_dir, read.clone(), &boundary, catalog_tip.as_ref(), |entry| {
+            replay.apply(&entry)?;
+            if let (LogEntry::Command(command), Some((history_h, _))) = (&entry, &history_h)
+                && Some(command.sequenced.seq) == h_seq
+            {
+                replay.verify_history_head(&history_h.head)?;
+                matched_h = true;
+            }
+            Ok(())
+        })?;
     let replayed = replay.finish();
+    // A signed history head the replay never reached, or a catalog tip covering what the log no
+    // longer holds, proves the node took commands the log lost. Both take only synced entries, so
+    // storage lost them or the host truncated the log. The tip may cover the lost tail even when
+    // only history shows it, so the catalog resumes from C whenever either does.
+    let history_lost = history_h.is_some() && !matched_h;
+    if history_lost {
+        log.rewind_catalog(read, &boundary)?;
+    }
+    if log.catalog_rewound() {
+        error!(
+            alert = "log_tail_lost",
+            log_seq = ?replayed.engine.last_seq(),
+            "the log ends before commands signed heads cover (history head at {:?}); acknowledged commands are lost",
+            h_seq.filter(|_| history_lost)
+        );
+    }
     // History resumes from the pair's own head at C, which matches the replay by construction,
     // when no retained head resumes or the log ends before the newest one; activation discards the
-    // later versions and history indexes the rest of the log again.
+    // later versions and history indexes the rest of the log again. The catalog does the same.
     let (history_id, history_store, history_head) = match history_h {
         Some((history_h, history_store)) if matched_h => (history_h.store, history_store, history_h.head),
-        unmatched => {
-            if let Some(head_seq) = unmatched.and(h_seq) {
-                // A signed head proves history indexed commands the log no longer holds. History
-                // takes only synced entries, so storage lost them or the host truncated the log.
-                error!(
-                    alert = "log_tail_lost",
-                    head_seq,
-                    log_seq = ?replayed.engine.last_seq(),
-                    "the log ends before commands history indexed and signed; acknowledged commands are lost"
-                );
-            }
+        _ => {
             ensure!(history_c.store != catalog_id, "paired history head shares the catalog generation");
             (history_c.store, store_c, history_c.head)
         }
+    };
+    let resume = match catalog_tip {
+        Some(tip) if !log.catalog_rewound() => Resume::Tip(Box::new(tip)),
+        _ => Resume::Boundary(boundary.catalog.clone()),
     };
     // The finalized witness can precede C; it is concrete signed context, not a digest surrogate.
     if let Some(RecoveryBase::Checkpoint { checkpoint }) = &replayed.recovery_base {
@@ -165,7 +176,7 @@ fn candidate(
         domain,
         signer,
         Source::Complete { id: history_id, store: history_store, head: history_head },
-        Catalog::Complete { id: catalog_id, store: catalog_store, head: Box::new(catalog_tip) },
+        Catalog::Complete { id: catalog_id, store: catalog_store, resume },
     );
     Ok((ReplayedLog { log, replayed, snapshot_seq: Some(at.seq), legacy_authorizations: Default::default() }, plan))
 }

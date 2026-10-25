@@ -64,6 +64,8 @@ pub struct SegmentedLog {
     pub(super) pending_catalog: Vec<Completion>,
     pub(super) catalog_owner: Option<CatalogOwner>,
     pub(super) catalog_domain: Option<CatalogDomain>,
+    /// Recovery resumed the catalog from a cache's boundary, past which the log lost a tail.
+    pub(super) catalog_rewound: bool,
 }
 
 /// Appends entries to the segment directory, buffered until `flush`.
@@ -219,6 +221,7 @@ impl SegmentedLog {
             pending_catalog: Vec::new(),
             catalog_owner: None,
             catalog_domain: None,
+            catalog_rewound: false,
         })
     }
 
