@@ -29,6 +29,7 @@ jobs:
       contracts: ${{ steps.classify.outputs.contracts }}
       scenarios: ${{ steps.classify.outputs.scenarios }}
       image: ${{ steps.classify.outputs.image }}
+      agent_scripts: ${{ steps.classify.outputs.agent_scripts }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -41,7 +42,7 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          all="rust contracts scenarios image"
+          all="rust contracts scenarios image agent_scripts"
           areas=$all
           # --no-renames lists both sides of a move.
           if [[ "$EVENT" == pull_request ]] && files=$(git diff --name-only --no-renames "$BASE...$HEAD"); then
@@ -49,6 +50,8 @@ jobs:
             areas=
             while IFS= read -r file; do
               case "$file" in
+                # The review-delta helper and its test.
+                agents/skills/agent-code-review/scripts/*) areas+=" agent_scripts" ;;
                 # Read by no build, test, scenario, or image.
                 agents/* | AGENTS.md | CLAUDE.md | README.md | SECURITY.md | research/* | image/README.md \
                   | crates/core/README.md | crates/node/README.md) ;;
@@ -362,12 +365,24 @@ jobs:
           diff image-first/SHA256SUMS image-second/SHA256SUMS
           cat image-first/SHA256SUMS image-first/measurement.json
 
+  review-delta:
+    needs: changes
+    if: needs.changes.outputs.agent_scripts == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test the review-delta helper
+        run: ./agents/skills/agent-code-review/scripts/review-delta-test.sh
+
   # The single check to require in branch rules. It runs even when a job it needs fails or is
   # skipped, and passes only if every one of them succeeded or was skipped while `changes` set its
   # area false. Add every new job to `needs`, and a gated one to `$area` below.
   ci-passed:
     if: always()
-    needs: [changes, fmt, file-loc, clippy, test, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, dev-metrics-alerts, dev-alert-outbox, dev-snapshot-restart, dev-rwa-feeds, image, image-compare]
+    needs: [changes, fmt, file-loc, clippy, test, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, dev-metrics-alerts, dev-alert-outbox, dev-snapshot-restart, dev-rwa-feeds, image, image-compare, review-delta]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -383,6 +398,6 @@ jobs:
                "dev-vault-deposits": "scenarios", "dev-metrics-alerts": "scenarios",
                "dev-alert-outbox": "scenarios", "dev-snapshot-restart": "scenarios",
                "dev-rwa-feeds": "scenarios", image: "image",
-               "image-compare": "image"} as $area
+               "image-compare": "image", "review-delta": "agent_scripts"} as $area
             | all(to_entries[]; .value.result == "success"
                 or .value.result == "skipped" and $run[$area[.key] // ""] == "false")'

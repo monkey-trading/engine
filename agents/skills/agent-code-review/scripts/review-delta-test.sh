@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Checks review-delta.sh on a scratch repository shaped like the engine's: a renumber after main
-# gains a version, a site the renumber missed, a line moved between methods, binary fixtures, and
-# failures. Prints one line per case and exits 1 if any case fails.
+# gains a version, a site the renumber missed, a line moved between methods, binary fixtures (also
+# under a text conversion), bad arguments, and failures. Prints one line per case and exits 1 if
+# any case fails.
 set -euo pipefail
 script="$(cd "$(dirname "$0")" && pwd)/review-delta.sh"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
@@ -76,6 +77,11 @@ grep -q '^++.*ProtocolVersion::V21 {$' missed-renumber-site.out ||
 check line-moved-between-methods 1 "$base" "$reviewed" "$base" "$moved"
 check binary-changed 1 "$base" "$blob_a" "$base" "$blob_b"
 check binary-same 0 "$base" "$blob_a" "$main" "$blob_a_on_main"
+# A text conversion that renders both blobs alike must not hide the change.
+echo '*.bin diff=alike' > .git/info/attributes
+git config diff.alike.textconv "sh -c 'echo alike'"
+check binary-changed-under-textconv 1 "$base" "$blob_a" "$base" "$blob_b"
 check bad-ref 3 "$base" no-such-ref "$base" "$reviewed"
 check bad-pair 2 "$base" "$reviewed" "$base" "$reviewed" V2.1=V3
+check non-label-pair 2 "$base" "$reviewed" "$base" "$reviewed" settle=settle_financing
 exit "$failed"

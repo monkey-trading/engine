@@ -213,10 +213,10 @@ finding is fixed by class before the next round.
   re-check below, once `ci-passed` is green on it; the remaining Lows and Nits go in the report to
   the owner, not into new commits.
 - **A later change is re-checked by its delta.** A mechanical rebase onto `main`, one that
-  resolves no conflict, needs no re-check; the rebased commit stands in for the reviewed one. After
-  any other change following the round that ended the loop, run
-  [scripts/review-delta.sh](scripts/review-delta.sh) with the base and head that round reviewed
-  (its `scope.md`) and the new ones:
+  resolves no conflict and leaves the PR's behaviour unchanged, needs no re-check; the rebased
+  commit stands in for the reviewed one. After any other change following the round that ended
+  the loop, run [scripts/review-delta.sh](scripts/review-delta.sh) with the base and head that
+  round reviewed (its `scope.md`) and the new ones:
   `<reviewed-base> <reviewed-head> <new-base> <new-head> [OLD=NEW ...]`. It compares the reviewed
   patch with the new one, each taken against its own base so `main`'s changes drop out, and
   ignores reference logs. For a renumber, the pairs rename in the reviewed patch the PR's version
@@ -227,22 +227,25 @@ finding is fixed by class before the next round.
   the script's exit status.
 - **A renumber the script matches needs no round.** A protocol-version renumber, with the
   reference logs it generates, needs no review round when the script exits 0 with its label
-  pairs. The renumber changes only labels and reference logs; anything else made with it is
-  another change. The PR still needs its local checks
+  pairs. The renumber, and the rebase it comes with, change only labels and reference logs and
+  resolve conflicts only where versions are listed: the version enum, `LATEST`, and the lists of
+  versions and reference logs. Anything else, such as a conflict resolved in the feature's code,
+  makes it another change. The PR still needs its local checks
   ([git-workflow](../../rules/git-workflow.md#local-checks-before-push)) and a green `ci-passed`
   on the new head.
-- **Any other change gets a delta round.** A rebase that resolves conflicts, a fix for a failed
-  check or dev scenario, a fix for a review comment on a ready PR, a change the user asks for, or
-  any other change to the patch moves the PR back to draft for one delta round: the same reviewer
-  pair, in fresh sessions and cross-validated as usual, reviews the residual the script prints and
-  the change itself in context (the new diff of each file where a rebase resolved a conflict, and
-  each commit the change added), with the full reviewed diff as context. The residual has no
-  context lines, so it cannot show where an unchanged line now sits; the round runs even when the
-  script exits 0. It is numbered in the round log, and the rule below for Mediums from round 3
-  applies to it.
+- **Any other change gets a delta round.** A rebase that resolves conflicts or changes the PR's
+  behaviour, a fix for a failed check or dev scenario, a fix for a review comment on a ready PR, a
+  change the user asks for, or any other change to the patch moves the PR back to draft and
+  reopens the loop for one delta round: the same reviewer pair, in fresh sessions and
+  cross-validated as usual, reviews the residual the script prints and the change itself in
+  context (the new diff of each file where a rebase resolved a conflict, and each commit the
+  change added), with the full reviewed diff as context. The residual has no context lines, so it
+  cannot show where an unchanged line now sits; the round runs even when the script exits 0. It
+  is numbered in the round log, and the rule below for Mediums from round 3 applies to it.
 - **A behaviour change needs a full-diff round.** When the residual or the change itself changes
-  behaviour beyond resolving a conflict, such as a new code path or changed semantics in the
-  feature's own logic, the round reviews the PR's full diff instead.
+  behaviour beyond resolving a conflict, such as a new code path, changed semantics in the
+  feature's own logic, or a rebase whose `main` changes alter what the PR does, the round reviews
+  the PR's full diff instead.
 - **Critical and High have no round cap.** Keep fixing and re-reviewing until a round accepts none.
 - **From round 3, Mediums go to bug issues.** A round numbered 3 or later — including one in a
   reopened loop — that accepts Mediums but no Critical or High ends the loop as a clean round

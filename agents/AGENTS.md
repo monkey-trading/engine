@@ -135,14 +135,16 @@ an index: load only the rule whose hint matches the current action.
   test, the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
   deposit finality scenarios, the signed withdrawal and FIFO dev scenario, the metrics and alert
   routing dev scenario, the alert outbox kill/restart scenario, the snapshot restart scenario, the
-  RWA price feeds dev scenario, and the enclave image (`image` checks its download retries, builds
-  it twice, and boots it under QEMU, `image-compare` fails if the builds differ), on every push to
-  `main` and every PR.
+  RWA price feeds dev scenario, the review-delta helper's test, and the enclave image (`image`
+  checks its download retries, builds it twice, and boots it under QEMU, `image-compare` fails if
+  the builds differ), on every push to `main` and every PR.
   On a PR, the first job, `changes`, sorts the changed files into the Rust, contracts, scenario,
-  and image areas from an explicit path list, and each job runs only when its area changed:
-  `agents/`, `research/`, the root `README.md`, `SECURITY.md`, `AGENTS.md`, and `CLAUDE.md`, and
-  the `README.md` of `image/` and of each crate change none. A push to `main`, a manual run, a
-  workflow change, a failed diff, or any path the list does not name runs every job.
+  image, and agent-script areas from an explicit path list, and each job runs only when its area
+  changed: `agents/` (but for the review-delta helper in
+  `agents/skills/agent-code-review/scripts/`), `research/`, the root `README.md`, `SECURITY.md`,
+  `AGENTS.md`, and `CLAUDE.md`, and the `README.md` of `image/` and of each crate change none. A
+  push to `main`, a manual run, a workflow change, a failed diff, or any path the list does not
+  name runs every job.
   Actions are pinned by commit SHA. `ci-passed` is the one CI check branch rules require: it passes
   only when every other job succeeded or was skipped because its area did not change, so each new
   job must be added to its `needs` and its area map, and every path it reads to `changes`. The test

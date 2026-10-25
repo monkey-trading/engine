@@ -66,8 +66,8 @@ a bug fix or a refactor that is not a feature goes straight through
 - Rebase the branch onto `main` and run the dev scenario in dev on that build: a local node built
   from the branch, or a hosted dev environment once one exists, deployed only on the user's
   explicit approval ([no-deploy](../../rules/no-deploy.md)). Show the user the result. A
-  mechanical rebase needs no new review round; one that resolves conflicts is re-checked by its
-  delta ([the review loop](../agent-code-review/SKILL.md#the-review-loop)).
+  mechanical rebase needs no new review round; one that resolves conflicts or changes behaviour
+  is re-checked by its delta ([the review loop](../agent-code-review/SKILL.md#the-review-loop)).
 - The scenario's scripted check passes in CI.
 - Put what promotion needs in the PR body: config, secrets, genesis or parameter changes, contract
   deployments, deploy ordering, rollback.
