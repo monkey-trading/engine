@@ -60,6 +60,12 @@ impl HotIndexes {
 }
 
 impl Engine {
+    /// Rebuilds the derived indexes a deserialized engine lacks, as its next command would, for a
+    /// reader that uses restored state before applying anything.
+    pub fn restore_indexes(&mut self) {
+        self.ensure_hot_indexes();
+    }
+
     /// Restores transient indexes from authoritative state once after construction or recovery.
     pub(crate) fn ensure_hot_indexes(&mut self) {
         if self.hot_indexes.is_some() {

@@ -130,3 +130,5 @@ impl Sequencer {
 
 #[cfg(test)]
 mod context_tests;
+#[cfg(test)]
+mod custody_tests;

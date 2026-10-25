@@ -110,6 +110,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/snapshots/paired_recovery.rs` — paired-cache recovery: cache, history head, and
   catalog boundary checked together before the suffix replays
 - `src/sequencer/snapshots/context_tests.rs` — exact cached custody work and required context fields
+- `src/sequencer/snapshots/custody_tests.rs` — cached canonical deposit coverage and refused legacy provenance
 - `src/sequencer/history_rebuild.rs` — history rebuilt from the log for migration and repair, bound
   to the replayed command prefix
 - `src/snapshot/mod.rs` — signed snapshot envelopes, size limits, atomic publication, and retention
@@ -145,7 +146,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   publication tests
 - `src/node/paired_tests/` — paired recovery through node startup: restart and fallback, crash
   recovery, the restart dev scenario (`restart.rs`), the on-chain anchor preflight (`anchor.rs`),
-  publication faults, public history pages, and the harness
+  custody receipts and their history across a cache restart (`custody.rs`), publication faults,
+  public history pages, and the harness
 - `src/sequencer/required.rs` — client auth, the operator, protocol activation, and genesis, which
   wait for trusted time
 - `src/sequencer/genesis.rs` — the genesis commands, the check that the engine accepts every one
@@ -727,7 +729,11 @@ checkpoint's exact bytes, and takes the newest signed history head at or after t
 then replays every physical entry after those bytes, checks the replayed command prefix against
 the history head, and needs no segment before the checkpoint's. A cache that fails any check emits a
 `snapshot_rejected` Warning and recovery tries the next one; when none passes, it replays the whole
-log and rebuilds history and the catalog from it. The on-chain checkpoint preflight then runs on the
+log and rebuilds history and the catalog from it. A cache carries no legacy deposit ledger or
+inherited approval provenance, which only full replay derives from verified commands, so recovery
+refuses a cache from before custody finality activated, or one still owing a withdrawal approved
+before then. Reading a cache rebuilds the engine's derived indexes, and each checkpoint's cached
+canonical deposit coverage must match the engine's. The on-chain checkpoint preflight then runs on the
 recovered state exactly as after full replay: signatures establish integrity, not freshness. Only
 after it passes does the node roll back a transaction a kill left in a store's journal, discard
 history and catalog versions committed after their newest signed heads, which a crash before a head

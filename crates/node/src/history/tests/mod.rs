@@ -82,6 +82,26 @@ fn account_of_and_kinds_cover_every_event_that_names_an_account() {
     assert_eq!(kinds, KINDS.iter().map(|kind| kind.to_string()).collect());
 }
 
+/// Authenticated history stores a kind's position as its tag, so a released kind never moves.
+#[test]
+fn released_kinds_keep_their_authenticated_storage_tags() {
+    let released = [
+        "deposited",
+        "deposit_rejected",
+        "withdrawal_approved",
+        "withdrawal_rejected",
+        "order_accepted",
+        "order_rejected",
+        "order_cancelled",
+        "fill",
+        "close_out",
+        "bad_debt",
+        "financing",
+        "emission_allocated",
+    ];
+    assert_eq!(KINDS[..released.len()], released);
+}
+
 #[tokio::test]
 async fn custody_receipts_are_indexed_for_the_trader_and_filtered_by_kind() {
     let account = AccountId([1; 20]);

@@ -69,7 +69,7 @@ impl Sequencer {
             }
         }
         if self.gate.is_some() {
-            self.snapshot_work.push(Work::capture(cp.clone(), self.accounting));
+            self.snapshot_work.push(Work::capture(cp.clone(), self.accounting, &self.engine));
         }
         self.snapshot_signers.insert(AccountId(self.key.address()));
         self.progress.genesis.checkpoint();

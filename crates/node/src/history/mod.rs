@@ -43,12 +43,11 @@ use crate::history::store::{Writer, discard};
 use crate::log::{CommandEntry, LogEntry, Offset};
 use crate::sequencer::StreamBody;
 
-/// The `type` of every event that names an account: what the `kind` filter accepts.
+/// The `type` of every event that names an account: what the `kind` filter accepts. A kind's
+/// position is its authenticated history storage tag, so new kinds are only ever appended.
 pub const KINDS: [&str; 14] = [
     "deposited",
     "deposit_rejected",
-    "custody_deposit_changed",
-    "custody_deposit_rejected",
     "withdrawal_approved",
     "withdrawal_rejected",
     "order_accepted",
@@ -59,6 +58,8 @@ pub const KINDS: [&str; 14] = [
     "bad_debt",
     "financing",
     "emission_allocated",
+    "custody_deposit_changed",
+    "custody_deposit_rejected",
 ];
 /// The SQLite file of the index, in `history.dir`; SQLite keeps its `-wal` and `-shm` files beside it.
 pub const INDEX_FILE: &str = "history.sqlite";

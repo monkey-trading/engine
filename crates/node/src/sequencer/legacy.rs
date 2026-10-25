@@ -7,6 +7,7 @@ use engine_core::command::{AdminCommand, Command};
 use engine_core::deposits::LegacyDeposit;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::AccountId;
+use engine_core::{Engine, Fixed};
 
 use crate::config::{CustodyProvider, CustodySection};
 use crate::custody;
@@ -28,6 +29,25 @@ pub(super) fn check_activation_ledger(
             "legacy custody activation differs from the verified credit ledger"
         );
     }
+    Ok(())
+}
+
+/// A cache carries neither the legacy credit ledger nor inherited approval provenance; only full
+/// replay derives them from verified commands, so a cache that would need them is refused and
+/// recovery replays the whole log instead.
+/// Error cases:
+/// - the cached engine predates custody finality, or owes an approval made before it activated
+pub(super) fn check_snapshot_provenance(
+    engine: &Engine,
+    activations: &[(ProtocolVersion, u64)],
+    deferred: &[(u64, AccountId, Fixed, u64)],
+) -> anyhow::Result<()> {
+    ensure!(engine.deposit_finality_enabled(), "snapshot predates custody finality; legacy credits need full replay");
+    let activated = activations.iter().find(|(version, _)| version.supports_deposit_finality()).map(|(_, seq)| *seq);
+    ensure!(
+        deferred.iter().all(|(seq, ..)| activated.is_some_and(|activated| *seq >= activated)),
+        "snapshot owes a withdrawal approved before custody finality; its provenance needs full replay"
+    );
     Ok(())
 }
 

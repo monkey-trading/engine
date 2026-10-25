@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 
 use anyhow::{Context as _, ensure};
-use engine_core::Fixed;
 use engine_core::types::AccountId;
+use engine_core::{Engine, Fixed};
 use serde::{Deserialize, Serialize};
 
 use crate::checkpoints::Work;
@@ -91,11 +91,7 @@ impl RecoveryContext {
         if checkpoint.parent.is_some() {
             let last = self.work.last().context("snapshot is missing concrete checkpoint work")?;
             ensure!(last.checkpoint == *checkpoint, "snapshot work does not reach its checkpoint");
-            let expected = Work::capture(checkpoint.clone(), self.accounting);
-            ensure!(
-                last.liabilities == expected.liabilities && last.deposits == expected.deposits,
-                "snapshot checkpoint accounting mismatch"
-            );
+            ensure!(last.matches_accounting(self.accounting), "snapshot checkpoint accounting mismatch");
         } else {
             ensure!(
                 matches!(self.base, RecoveryBase::Ungated) && self.work.is_empty(),
@@ -106,6 +102,21 @@ impl RecoveryContext {
         ensure!(
             self.deferred.iter().all(|(seq, _, _, _)| *seq <= checkpoint.seq),
             "snapshot approval extends beyond engine state"
+        );
+        Ok(())
+    }
+
+    /// Recomputes the checkpoint's custody work from the engine it was captured with, including
+    /// canonical receipt coverage, which accounting alone does not determine.
+    /// Error cases:
+    /// - the cached work differs from the work the engine gives
+    pub(crate) fn validate_engine(&self, checkpoint: &Checkpoint, engine: &Engine) -> anyhow::Result<()> {
+        let Some(last) = self.work.last().filter(|_| checkpoint.parent.is_some()) else { return Ok(()) };
+        let expected = Work::capture(checkpoint.clone(), self.accounting, engine);
+        ensure!(
+            (last.liabilities, last.deposits, last.coverage)
+                == (expected.liabilities, expected.deposits, expected.coverage),
+            "snapshot checkpoint accounting mismatch"
         );
         Ok(())
     }

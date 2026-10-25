@@ -187,6 +187,8 @@ pub(super) fn event_kind(event: &Event) -> Result<u8> {
         Event::BadDebt { .. } => "bad_debt",
         Event::Financing { .. } => "financing",
         Event::EmissionAllocated { .. } => "emission_allocated",
+        Event::CustodyDepositChanged { .. } => "custody_deposit_changed",
+        Event::CustodyDepositRejected { .. } => "custody_deposit_rejected",
         // Listed, not matched by a wildcard, so a new event does not compile until it is classified.
         Event::HouseCapitalMoved { .. }
         | Event::BenchmarkRateMissing { .. }

@@ -34,7 +34,8 @@ pub(crate) struct Work {
 }
 
 /// Historical accounting is replayed unchanged; modern count coverage needs sequenced chain proof.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum DepositCoverage {
     Historical,
     AwaitingCanonicalScan,
@@ -54,6 +55,13 @@ impl Work {
             (accounting.deposits, DepositCoverage::Historical)
         };
         Self { checkpoint, liabilities: accounting.liabilities, deposits, coverage }
+    }
+
+    /// Whether this work carries `accounting`'s liabilities and, unless sequenced chain proof
+    /// counted them, its deposits.
+    pub(crate) fn matches_accounting(&self, accounting: Accounting) -> bool {
+        self.liabilities == accounting.liabilities
+            && (self.coverage == DepositCoverage::Canonical || self.deposits == accounting.deposits)
     }
 }
 

@@ -118,6 +118,12 @@ impl Replay {
         parent: Option<crate::log::CheckpointParent>,
     ) -> anyhow::Result<Self> {
         snapshot.context.validate(&snapshot.checkpoint, domain)?;
+        snapshot.context.validate_engine(&snapshot.checkpoint, &engine)?;
+        crate::sequencer::legacy::check_snapshot_provenance(
+            &engine,
+            &snapshot.progress.activations,
+            &snapshot.context.deferred,
+        )?;
         ensure!(
             trusted_signer
                 .is_none_or(|signer| { snapshot.context.checkpoint_signers.iter().all(|named| *named == signer) }),
@@ -145,6 +151,8 @@ impl Replay {
         let Snapshot { progress: Progress { genesis, activations, checkpoints }, context, checkpoint, .. } = snapshot;
         let last_checkpoint_ts = Some(engine.now());
         Ok(Self {
+            legacy_deposits: BTreeMap::new(),
+            legacy_approvals: crate::sequencer::legacy::Approvals::default(),
             engine,
             commands: context.commands,
             command_prefix: context.command_prefix,
