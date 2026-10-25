@@ -351,7 +351,7 @@ async fn a_genesis_no_current_config_can_name_raises_critical_and_preserves_byte
         let mut cfg = dev_config();
         cfg.node.log_dir = root.join("log");
         cfg.history.dir = root.join("history");
-        old_genesis_log(&cfg.node.log_dir, &cfg.client_auth().unwrap(), version, genesis);
+        old_genesis_log(&cfg.node.log_dir, &cfg.client_auth().unwrap(), version, genesis, Vec::new());
         let (_guard, mut alerts) = crate::test_support::capture_alerts();
         let before = files(&root);
         let signer = Some(AccountId(EnclaveKey::test_key().address()));

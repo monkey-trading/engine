@@ -282,16 +282,25 @@ fn a_genesis_set_before_divergence_shares_resumes_under_the_shares_a_config_load
 fn a_genesis_no_current_config_can_name_is_refused_and_a_fresh_log_advised() {
     // An older protocol applied each genesis, and config load under the latest refuses it, so no
     // config can name it: recovery refuses whatever genesis the config gives, and writes nothing.
+    // A log that ends at genesis can be removed; once a command follows genesis, the log may hold
+    // client funds, so the advice is to move it aside, never to remove it.
+    let logs = [
+        ("genesis-only", Vec::new(), "remove node.log_dir", "history.dir aside"),
+        ("followed", vec![deposit(100, "dep-1")], "move node.log_dir and history.dir aside", "remove node.log_dir"),
+    ];
     for (shape, version, genesis, reason) in geneses_no_config_can_name() {
-        let dir = scratch_dir(&format!("genesis-unnameable-{shape}"));
-        old_genesis_log(&dir, &signed(31_337), version, genesis);
-        let written = log_entries(&dir);
-        for config in [finished_genesis(&written), genesis_commands(&dev_config().genesis)] {
-            let err = format!("{:#}", recover_with(&dir, &signed(31_337), config).err().unwrap());
-            assert!(err.contains("no current config can name this log's genesis"), "{shape}: {err}");
-            assert!(err.contains(reason) && err.contains("a fresh log is needed"), "{shape}: {err}");
-            assert!(!err.contains("started with"), "{shape}: {err}");
+        for (log, after, advice, other_advice) in &logs {
+            let dir = scratch_dir(&format!("genesis-unnameable-{shape}-{log}"));
+            old_genesis_log(&dir, &signed(31_337), version, genesis.clone(), after.clone());
+            let written = log_entries(&dir);
+            for config in [finished_genesis(&written), genesis_commands(&dev_config().genesis)] {
+                let err = format!("{:#}", recover_with(&dir, &signed(31_337), config).err().unwrap());
+                assert!(err.contains("no current config can name this log's genesis"), "{shape}, {log}: {err}");
+                assert!(err.contains(reason) && err.contains("a fresh log is needed"), "{shape}, {log}: {err}");
+                assert!(err.contains(advice) && !err.contains(other_advice), "{shape}, {log}: {err}");
+                assert!(!err.contains("started with"), "{shape}, {log}: {err}");
+            }
+            assert_eq!(log_entries(&dir), written, "{shape}, {log}: recovery wrote nothing");
         }
-        assert_eq!(log_entries(&dir), written, "{shape}: recovery wrote nothing");
     }
 }

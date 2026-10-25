@@ -141,9 +141,15 @@ pub(crate) fn geneses_no_config_can_name() -> Vec<(&'static str, ProtocolVersion
 }
 
 /// Writes to `dir` a log that recorded `client_auth` and the dev operator, activated `version`, ran
-/// `genesis`, and closed it with a checkpoint, as a node of that version did. Panics if that version
-/// rejects a command.
-pub(crate) fn old_genesis_log(dir: &Path, client_auth: &ClientAuth, version: ProtocolVersion, genesis: Vec<Command>) {
+/// `genesis`, and closed it with a checkpoint, then sequenced `after`, if any, and closed it with another,
+/// as a node of that version did. Panics if that version rejects a command.
+pub(crate) fn old_genesis_log(
+    dir: &Path,
+    client_auth: &ClientAuth,
+    version: ProtocolVersion,
+    genesis: Vec<Command>,
+    after: Vec<Command>,
+) {
     let manifest = watch::channel(Manifest::default()).0;
     let cfg =
         SequencerConfig { client_auth: client_auth.clone(), genesis: Vec::new(), ..sequencer_config(dir, manifest) };
@@ -155,10 +161,13 @@ pub(crate) fn old_genesis_log(dir: &Path, client_auth: &ClientAuth, version: Pro
         AdminCommand::SetOperator(seq.operator),
         AdminCommand::ActivateProtocol { version },
     ];
-    for cmd in setup.map(Command::Admin).into_iter().chain(genesis) {
-        let events = seq.stamp(ts, cmd).unwrap();
-        assert_eq!(rejection(&events), None, "{version:?} applies every command");
+    let opening = setup.map(Command::Admin).into_iter().chain(genesis).collect();
+    for commands in [opening, after].into_iter().filter(|commands: &Vec<Command>| !commands.is_empty()) {
+        for cmd in commands {
+            let events = seq.stamp(ts, cmd).unwrap();
+            assert_eq!(rejection(&events), None, "{version:?} applies every command");
+        }
+        seq.checkpoint().unwrap();
     }
-    seq.checkpoint().unwrap();
     seq.flush().unwrap();
 }
