@@ -12,7 +12,7 @@ use engine_core::command::{AdminCommand, Command};
 use engine_core::emissions::{EmissionSchedule, MAX_PERIOD_BUDGET, PERIOD_MS, TokenUnits};
 use engine_core::event::Event;
 use engine_core::protocol::ProtocolVersion;
-use engine_core::types::Side;
+use engine_core::types::{MAX_STAMP_MS, Side};
 
 const BUDGET: u128 = 1_000_000;
 
@@ -123,6 +123,7 @@ fn the_schedule_is_initialised_once_by_the_operator_and_never_backdated() {
     let events = h.cmd(Command::Admin(init(now, BUDGET)));
     assert!(events.iter().any(|e| matches!(e, Event::AdminRejected { reason } if reason.contains("operator signs"))));
     refused(&mut h, init(now - 1, BUDGET), "before the sequenced time");
+    refused(&mut h, init(MAX_STAMP_MS + 1, BUDGET), "past the latest stamp");
     refused(&mut h, init(now, 0), "outside 1 to");
     refused(&mut h, init(now, MAX_PERIOD_BUDGET + 1), "outside 1 to");
     assert_eq!(h.engine.emissions(), None);
