@@ -107,8 +107,9 @@ struct Actor {
     key: Arc<EnclaveKey>,
     pins: Pins,
     pending: Option<Box<Capture>>,
-    /// Whether a capture failed since the last one stored, whose alert the next stored one resolves.
-    capture_failing: bool,
+    /// The sealing endpoint's flag: whether a `snapshot_write_failed` episode may be open, so the
+    /// next stored capture resolves it.
+    write_alert_open: Arc<AtomicBool>,
     /// Commands taken this turn and not yet indexed; one batch update indexes them.
     commands: Vec<crate::log::CommandEntry>,
     retained_catalog: BTreeMap<Offset, Arc<crate::log::catalog::LazyCatalogView>>,
@@ -156,7 +157,7 @@ impl Runtime {
                 key,
                 pins,
                 pending: None,
-                capture_failing: false,
+                write_alert_open: endpoint.write_alert_open(),
                 commands: Vec::new(),
                 retained_catalog: BTreeMap::new(),
                 last_entry: None,

@@ -78,6 +78,7 @@ impl Sequencer {
             })
         })();
         if let Err(reason) = prepared {
+            endpoint.write_failed();
             warn!(alert = "snapshot_write_failed", "checkpoint remains in log: {reason:#}");
         }
         Ok(())

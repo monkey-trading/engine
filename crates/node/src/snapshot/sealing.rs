@@ -1,6 +1,7 @@
 //! A bounded checkpoint capture waits for the exact history fence on the storage owner's queue.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Result, ensure};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
@@ -24,6 +25,10 @@ use crate::tee::EnclaveKey;
 pub(crate) struct Endpoint {
     tx: mpsc::Sender<Input>,
     permits: Arc<Semaphore>,
+    /// Whether a `snapshot_write_failed` episode may be open, shared with the history owner, which
+    /// clears it and resolves the alert when it next stores a capture. It starts set, since an
+    /// earlier run may have left an episode open.
+    write_alert_open: Arc<AtomicBool>,
     pub catalog_store: StoreId,
 }
 
@@ -55,7 +60,23 @@ impl Endpoint {
 
     /// Connects the sequencer directly to the same bounded queue used by the history feed.
     pub(crate) fn new(tx: mpsc::Sender<Input>, catalog_store: StoreId) -> Self {
-        Self { tx, permits: Arc::new(Semaphore::new(1)), catalog_store }
+        Self {
+            tx,
+            permits: Arc::new(Semaphore::new(1)),
+            write_alert_open: Arc::new(AtomicBool::new(true)),
+            catalog_store,
+        }
+    }
+
+    /// The flag the history owner clears when it stores a capture.
+    pub(crate) fn write_alert_open(&self) -> Arc<AtomicBool> {
+        self.write_alert_open.clone()
+    }
+
+    /// Records that the sequencer raised `snapshot_write_failed` for a capture it could not hand
+    /// over or wait for, so the next capture the history owner stores resolves it.
+    pub(crate) fn write_failed(&self) {
+        self.write_alert_open.store(true, Ordering::Release);
     }
 
     /// A busy storage owner skips an optional capture without delaying public event publication.

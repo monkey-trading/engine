@@ -195,6 +195,7 @@ impl Sequencer {
             if let Some(endpoint) = self.sealing.clone()
                 && tokio::time::timeout(SHUTDOWN_CAPTURE_WAIT, endpoint.idle()).await.is_err()
             {
+                endpoint.write_failed();
                 warn!(
                     alert = "snapshot_write_failed",
                     "the shutdown checkpoint is not cached: a capture is still in flight"

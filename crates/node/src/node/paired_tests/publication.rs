@@ -8,15 +8,15 @@ use std::time::Duration;
 
 use engine_core::command::Command;
 use tokio::time::timeout;
-use tracing::subscriber::set_default;
+use tracing::subscriber::{DefaultGuard, set_default};
 use tracing_subscriber::filter::filter_fn;
 use tracing_subscriber::layer::{Layer, SubscriberExt};
 use tracing_subscriber::registry;
 
-use crate::alerts::{self, Routes, is_alert_callsite};
+use crate::alerts::{self, AlertLine, Router, Routes, Severity, is_alert_callsite};
 use crate::metrics::Metrics;
 use crate::node::paired_tests::harness::{Node, configuration};
-use crate::snapshot::head;
+use crate::snapshot::{self, head};
 use crate::test_support::{deposit, keep_callsites_interested};
 
 #[tokio::test]
@@ -92,38 +92,64 @@ async fn failed_reference_reconciliation_keeps_old_pins_before_any_gc_or_pointer
     node.stop().await;
 }
 
-/// Failed captures at successive checkpoints are one `snapshot_write_failed` episode, each naming
-/// its checkpoint's seq in the page context, and the first capture stored afterwards resolves it once.
+/// Failed captures at successive checkpoints are one `snapshot_write_failed` episode, each naming its
+/// checkpoint's seq in the page context. The first capture stored after a start or after failures
+/// resolves it once, so an episode that a stopped run left open closes after the restart.
 #[tokio::test]
-async fn failed_captures_across_checkpoints_are_one_alert_episode_until_one_is_stored() {
-    keep_callsites_interested();
-    let (layer, router) = alerts::channel(Routes::default(), Arc::new(Metrics::new()));
-    let _collector = set_default(registry().with(layer.with_filter(filter_fn(is_alert_callsite))));
-    let node = Node::start(configuration("paired-write-alert-episode")).await.unwrap();
+async fn failed_captures_are_one_alert_episode_until_a_capture_is_stored_even_across_restart() {
+    let cfg = configuration("paired-write-alert-episode");
     // A directory under a cache staging name fails the cleanup that precedes every cache write.
-    let blocked_stage = node.cfg.snapshots.as_ref().unwrap().dir.join("99999999999999999999-0000000000.json.tmp");
+    let blocked_stage = cfg.snapshots.as_ref().unwrap().dir.join("99999999999999999999-0000000000.json.tmp");
+    let (collector, router) = collect_alerts();
+    let node = Node::start(cfg).await.unwrap();
+    submit_deposits(&node, "stored", 3).await;
+    let caches = node.cfg.snapshots.as_ref().unwrap();
+    assert!(!snapshot::candidates_readonly(caches).unwrap().is_empty(), "a capture was stored before the fault");
     fs::create_dir_all(&blocked_stage).unwrap();
-    // History catches up after each command, so no capture finds the previous one in flight.
-    for n in 0..9 {
-        node.submit(deposit(1, &format!("unstored-{n}"))).await;
-        at_frontier(&node).await;
-    }
+    submit_deposits(&node, "unstored", 9).await;
+    let (cfg, reader) = node.stop().await;
+    drop((reader, collector));
+    let stopped = write_alert_lines(router);
+    let [started, failed @ ..] = stopped.as_slice() else { panic!("no snapshot_write_failed line") };
+    assert_eq!(started.severity, None, "the first stored capture after a start resolves: {stopped:#?}");
+    assert_one_episode(failed, &started.key(), &stopped);
+
     fs::remove_dir(&blocked_stage).unwrap();
-    for _ in 0..6 {
-        node.submit(Command::Tick).await;
-        at_frontier(&node).await;
-    }
+    let (collector, router) = collect_alerts();
+    let node = Node::start(cfg).await.unwrap();
+    submit_deposits(&node, "restarted", 6).await;
+    fs::create_dir_all(&blocked_stage).unwrap();
+    submit_deposits(&node, "unstored-again", 9).await;
+    fs::remove_dir(&blocked_stage).unwrap();
+    submit_deposits(&node, "recovered", 6).await;
     node.stop().await;
-    let lines: Vec<_> = router.queued().into_iter().filter(|line| line.name == "snapshot_write_failed").collect();
-    let (firing, resolved): (Vec<_>, Vec<_>) = lines.iter().partition(|line| line.severity.is_some());
-    assert!(firing.len() >= 2, "captures failed at several checkpoints: {lines:#?}");
-    assert!(firing.iter().all(|line| line.key() == firing[0].key()), "one episode key: {lines:#?}");
-    let contexts: BTreeSet<_> = firing.iter().map(|line| line.context.as_str()).collect();
-    assert_eq!(contexts.len(), firing.len(), "each failure names its checkpoint: {lines:#?}");
-    assert!(contexts.iter().all(|context| context.contains("seq=")), "{lines:#?}");
-    assert_eq!(resolved.len(), 1, "the first stored capture resolves the episode once: {lines:#?}");
-    assert_eq!(resolved[0].key(), firing[0].key());
-    assert_eq!(lines.last(), Some(resolved[0]), "the resolve follows every failure: {lines:#?}");
+    drop(collector);
+    let restarted = write_alert_lines(router);
+    let [reopened, failed @ .., recovered] = restarted.as_slice() else { panic!("{restarted:#?}") };
+    assert_eq!((reopened.severity, reopened.key()), (None, started.key()), "the restart resolves: {restarted:#?}");
+    assert_one_episode(failed, &started.key(), &restarted);
+    assert_eq!((recovered.severity, recovered.key()), (None, started.key()), "recovery resolves: {restarted:#?}");
+}
+
+/// A capture the sequencer could not hand over or wait for marks the shared alert open, and the next
+/// capture the history owner stores resolves it once.
+#[tokio::test]
+async fn a_capture_the_sequencer_failed_is_resolved_by_the_next_stored_capture() {
+    let (collector, router) = collect_alerts();
+    let node = Node::start(configuration("paired-sequencer-write-alert")).await.unwrap();
+    submit_deposits(&node, "stored", 3).await;
+    let caches = node.cfg.snapshots.as_ref().unwrap();
+    assert!(!snapshot::candidates_readonly(caches).unwrap().is_empty(), "a capture was stored before the failure");
+    // What each sequencer site records alongside its `snapshot_write_failed` Warning.
+    node.sealing.write_failed();
+    submit_deposits(&node, "handed-over", 6).await;
+    node.stop().await;
+    drop(collector);
+    let lines = write_alert_lines(router);
+    let [started, resolved] = lines.as_slice() else {
+        panic!("one resolve at start, one after the failure: {lines:#?}")
+    };
+    assert_eq!((started.severity, resolved.severity), (None, None), "{lines:#?}");
 }
 
 /// Observes the actual blocking owner after every physical entry in the producer's fixed frontier.
@@ -140,4 +166,36 @@ async fn at_frontier(node: &Node) -> crate::history::runtime::TestState {
     })
     .await
     .expect("supervised history owner reaches the actual published frontier")
+}
+
+/// Collects alert lines through the node's alert layer, the history owner's included, until the
+/// guard drops.
+fn collect_alerts() -> (DefaultGuard, Router) {
+    keep_callsites_interested();
+    let (layer, router) = alerts::channel(Routes::default(), Arc::new(Metrics::new()));
+    (set_default(registry().with(layer.with_filter(filter_fn(is_alert_callsite)))), router)
+}
+
+/// The `snapshot_write_failed` lines `router` received, in order.
+fn write_alert_lines(router: Router) -> Vec<AlertLine> {
+    router.queued().into_iter().filter(|line| line.name == "snapshot_write_failed").collect()
+}
+
+/// Asserts that `failed` are Warnings at two or more distinct checkpoints, all keyed `key`.
+fn assert_one_episode(failed: &[AlertLine], key: &str, lines: &[AlertLine]) {
+    assert!(failed.len() >= 2, "captures failed at several checkpoints: {lines:#?}");
+    assert!(failed.iter().all(|line| line.severity == Some(Severity::Warning)), "{lines:#?}");
+    assert!(failed.iter().all(|line| line.key() == key), "one episode key: {lines:#?}");
+    let contexts: BTreeSet<_> = failed.iter().map(|line| line.context.as_str()).collect();
+    assert_eq!(contexts.len(), failed.len(), "each failure names its checkpoint: {lines:#?}");
+    assert!(contexts.iter().all(|context| context.starts_with("capture{seq=")), "{lines:#?}");
+}
+
+/// Submits `count` deposits, waiting for history after each, so no capture finds the previous one
+/// still in flight.
+async fn submit_deposits(node: &Node, label: &str, count: usize) {
+    for n in 0..count {
+        node.submit(deposit(1, &format!("{label}-{n}"))).await;
+        at_frontier(node).await;
+    }
 }

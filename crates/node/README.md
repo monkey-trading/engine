@@ -742,9 +742,10 @@ was signed leaves behind, and reclaim interrupted cache files. Until then recove
 with such a journal as the file stands, and every read is still checked against a signed root; a
 kill while SQLite was writing a commit's pages can leave that unreadable, and then recovery replays
 the whole log. A
-failed cache write emits `snapshot_write_failed` and keeps the log usable. The history owner's
-failures at successive checkpoints are one alert episode, which the next cache it writes resolves. A
-failed log sync stays fatal. When the catalog cannot take a completed segment, the node warns once
+failed cache write emits `snapshot_write_failed` and keeps the log usable. Failures at successive
+checkpoints are one alert episode, which the next cache written resolves. The first cache written
+after each start resolves it too, closing an episode an earlier run left open. A failed log sync
+stays fatal. When the catalog cannot take a completed segment, the node warns once
 (`log_catalog_unavailable`) and keeps rotating, holding up to 64 completed segments in memory; past
 that the active segment grows, and the catalog retries at each checkpoint. A catalog write that
 rolled back leaves the catalog writable; only a commit of uncertain outcome stops it until restart.

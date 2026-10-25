@@ -1,8 +1,9 @@
 //! Completing a checkpoint capture into the paired cache, and the alert its failures raise.
 
 use std::fmt::Display;
+use std::sync::atomic::Ordering;
 
-use tracing::{info, info_span, warn};
+use tracing::{info, warn, warn_span};
 
 use crate::history::runtime::Actor;
 use crate::snapshot::sealing::{Capture, HistorySeal};
@@ -18,6 +19,9 @@ impl Actor {
         }
         // A rename followed by failed directory sync must not release this version's data.
         self.retained_catalog.insert(offset, capture.catalog_pin.clone());
+        // Taken while this capture holds the sequencer's only capture permit, so a sequencer failure
+        // can only follow the take, and stays set for the next stored capture.
+        let resolves = self.write_alert_open.swap(false, Ordering::AcqRel);
         let mut history = HistorySeal {
             id: self.current.id,
             store: &self.current.store,
@@ -30,8 +34,8 @@ impl Actor {
                 let head = self.current.index.head();
                 self.certified_seq = head.last_seq();
                 self.last_certified = Some(head.root);
-                if std::mem::take(&mut self.capture_failing) {
-                    info!(alert_resolved = "snapshot_write_failed", "a checkpoint snapshot is stored again");
+                if resolves {
+                    info!(alert_resolved = "snapshot_write_failed", "a checkpoint snapshot is stored");
                 }
             }
             Err(error) => self.capture_failed(offset.seq, format_args!("keeping earlier caches: {error:#}")),
@@ -42,8 +46,8 @@ impl Actor {
     /// Raises `snapshot_write_failed` for the capture of the checkpoint at `seq`, which the next
     /// stored capture resolves. The seq is span context, not an event field, because alert fields
     /// key episodes: failures at successive checkpoints stay one episode.
-    pub(super) fn capture_failed(&mut self, seq: u64, reason: impl Display) {
-        self.capture_failing = true;
-        info_span!("capture", seq).in_scope(|| warn!(alert = "snapshot_write_failed", "{reason}"));
+    pub(super) fn capture_failed(&self, seq: u64, reason: impl Display) {
+        self.write_alert_open.store(true, Ordering::Release);
+        warn_span!("capture", seq).in_scope(|| warn!(alert = "snapshot_write_failed", "{reason}"));
     }
 }
