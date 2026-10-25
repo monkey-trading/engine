@@ -54,8 +54,11 @@ marked ready, may not.
   [The review loop](../agent-code-review/SKILL.md#the-review-loop) says when the rounds end — a
   clean round, or a round from 3 on that accepts Mediums but no Critical or High, whose Mediums
   are filed as `bug` issues — and on which commit the PR is marked ready. Low and Nit findings,
-  and Mediums filed as issues, remain unfixed after the last round, and a mechanical rebase onto
-  `main` after it needs no new round.
+  and Mediums filed as issues, remain unfixed after the last round. A change after it is
+  re-checked by its delta, as the review loop says: a mechanical rebase onto `main`, or a
+  protocol-version renumber the delta script matches, needs no new round, and any other change
+  gets one round on the residual, or on the full diff when the residual changes behaviour beyond
+  resolving a conflict.
 - **Local checks** for the affected crates passed, per git-workflow; CI runs every job
   the PR's paths affect.
 

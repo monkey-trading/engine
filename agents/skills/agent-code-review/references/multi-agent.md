@@ -55,7 +55,9 @@ report.
 
 Launch every reviewer in a **fresh** [ask-agent](../../ask-agent/SKILL.md)
 session concurrently after saving `.branch.diff` or `.pr.diff`. Give each
-reviewer only that captured diff. Do not provide a session ID,
+reviewer only that captured diff; a delta round ([the review
+loop](../SKILL.md#the-review-loop)) gives it `.residual.diff` to review and
+`.branch.diff` as context. Do not provide a session ID,
 current-conversation context, or another agent's output. Each requested level
 launches two independent review processes: one Claude and one Codex. Save each
 response as `initial-<reviewer>.md`. Name each `<reviewer>`

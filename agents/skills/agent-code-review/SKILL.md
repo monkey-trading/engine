@@ -6,7 +6,8 @@ description: Review a branch or GitHub PR against the team development checklist
 # agent-code-review
 
 Load on request for a local, single-agent, or multi-agent code review of the current branch or a
-GitHub PR, before fixing an accepted finding, and to decide whether a PR's review loop has ended.
+GitHub PR, before fixing an accepted finding, to decide whether a PR's review loop has ended, and
+to re-check a change made after it ended.
 This skill creates local Markdown only: it never posts review comments or applies a
 suggested fix. To draft the findings as comments on a GitHub PR, use
 [agent-review-pr](../agent-review-pr/SKILL.md), which runs this skill.
@@ -48,6 +49,10 @@ ordinary reviews; do not automatically add Pashov agents or duplicate audit pass
 - **Branch scope (default):** `git diff <base>...HEAD`; `<base>` defaults to `origin/main`.
 - **PR scope:** an explicit PR number or URL. Save its metadata, diff, and file list once with
   read-only `gh` commands.
+- **Delta scope:** a delta round after the review loop ended ([The review loop](#the-review-loop)):
+  the residual [scripts/review-delta.sh](scripts/review-delta.sh) prints, saved as
+  `.residual.diff`, with the full reviewed diff (`<reviewed-base>...<reviewed-head>`) saved as
+  `.branch.diff` for context.
 
 Honor a user-provided base ref, path subset, or commit range exactly. In PR scope, re-check the
 head SHA immediately before the review begins. Use only read-only `gh` commands, and never print or
@@ -184,15 +189,16 @@ fixes its class, not only the cited instance:
    branch writes them; a subagent returns its invariant and sites to that agent. A new branch
    starts with none ([git-workflow](../../rules/git-workflow.md#branches)).
 
-Every round still reviews the full diff; the recorded invariants add to what it checks and never
-narrow it.
+Every round but a delta round ([The review loop](#the-review-loop)) reviews the full diff; the
+recorded invariants add to what it checks and never narrow it.
 
 ## The review loop
 
 A PR is marked ready through review rounds, numbered from the first on its branch. Each round runs
 this skill in multi-agent mode at `medium` or higher over the PR's full diff
-([agent-create-pr](../agent-create-pr/SKILL.md#before-a-pr-is-ready-for-review)), and every
-accepted Critical, High, and Medium finding is fixed by class before the next round.
+([agent-create-pr](../agent-create-pr/SKILL.md#before-a-pr-is-ready-for-review)), or over a
+residual in a delta round, and every accepted Critical, High, and Medium finding is fixed by class
+before the next round.
 
 - **The round log is the count.** The branch's fix notes
   ([Fixing an accepted finding](#fixing-an-accepted-finding)) open with a round log: one line per
@@ -201,13 +207,34 @@ accepted Critical, High, and Medium finding is fixed by class before the next ro
   Medium cap from it.
 - **A clean round ends the loop.** A round that accepts no Critical, High, or Medium finding ends
   it. After it, change no code, fix no Lows or Nits, and run no further rounds. Mark the PR ready
-  on exactly the commit that round reviewed, once `ci-passed` is green on it; the remaining Lows
-  and Nits go in the report to the owner, not into new commits.
-- **A later code change reopens the loop.** Any code change after the round that ended
-  the loop — a fix for a failed check or dev scenario, a fix for a review comment on a ready PR, a
-  change the user asks for, or a rebase that changes behaviour — moves the PR back to draft and
-  reopens the loop. A mechanical rebase onto `main` does not; the rebased commit stands in for the
-  reviewed one.
+  on exactly the commit that round reviewed, or on a later one that needs no round under the
+  re-check below, once `ci-passed` is green on it; the remaining Lows and Nits go in the report to
+  the owner, not into new commits.
+- **A later change is re-checked by its delta.** A mechanical rebase onto `main`, one that
+  resolves no conflict, needs no re-check; the rebased commit stands in for the reviewed one. After
+  any other change following the round that ended the loop, run
+  [scripts/review-delta.sh](scripts/review-delta.sh) with the base and head that round reviewed
+  (its `scope.md`) and the new ones:
+  `<reviewed-base> <reviewed-head> <new-base> <new-head> [OLD=NEW ...]`. It compares the reviewed
+  patch with the new one, each taken against its own base so `main`'s changes drop out, after
+  mapping each renumbered version label back (`V21=V23 v21=v23`) and ignoring reference logs. It
+  exits 0 when the patches match, and otherwise prints the residual and exits 1. Record in the
+  round log which re-check ran (no round, a delta round, or a full-diff round) and the script's
+  exit status.
+- **A renumber the script matches needs no round.** A protocol-version renumber, with the
+  reference logs it generates, needs no review round when the script exits 0 with the renumber's
+  label pairs. The PR still needs its local checks
+  ([git-workflow](../../rules/git-workflow.md#local-checks-before-push)) and a green `ci-passed`
+  on the new head.
+- **Any other change gets a delta round.** A rebase that resolves conflicts, a fix for a failed
+  check or dev scenario, a fix for a review comment on a ready PR, a change the user asks for, or
+  any other change to the patch moves the PR back to draft for one delta round: the same reviewer
+  pair, in fresh sessions and cross-validated as usual, reviews the residual the script prints,
+  with the full reviewed diff as context. The round is numbered in the round log, and the rule
+  below for Mediums from round 3 applies to it whatever its number.
+- **A behaviour change needs a full-diff round.** When the residual changes behaviour beyond
+  resolving a conflict, such as a new code path or changed semantics in the feature's own logic,
+  the round reviews the PR's full diff instead.
 - **Critical and High have no round cap.** Keep fixing and re-reviewing until a round accepts none.
 - **From round 3, Mediums go to bug issues.** A round numbered 3 or later — including one in a
   reopened loop — that accepts Mediums but no Critical or High ends the loop as a clean round
@@ -218,8 +245,9 @@ accepted Critical, High, and Medium finding is fixed by class before the next ro
   a one-line summary, then `**Where:**` with the `file:line` and
   `Found by review round <N> of #<PR>.`, then `**Scenario:**` and `**Expected:**`. Record each in
   the fix notes, after the round log, with its title, `file:line`, scenario, and issue number. Then
-  mark the PR ready on exactly the commit that round reviewed, once `ci-passed` is green on it,
-  and list the issues in the report to the owner.
+  mark the PR ready on exactly the commit that round reviewed, or on a later one that needs no
+  round under the re-check above, once `ci-passed` is green on it, and list the issues in the
+  report to the owner.
 - **A filed Medium stays with its issue.** A later round that finds a recorded filed Medium again,
   with the same scenario and no greater impact, notes its existing issue in its report instead of
   raising it again. When a later change widens its scenario or raises its impact, the round grades
