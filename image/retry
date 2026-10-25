@@ -1,0 +1,20 @@
+#!/bin/sh
+# Runs a download command of the image build until it succeeds, at most five times, waiting 15, 30,
+# 60, then 120 seconds between attempts whatever the server asks. Every attempt runs the same
+# command, so it fetches from the same pinned source, and the command checks what it fetched.
+#
+# Usage: retry <command> [<argument>...]
+
+attempt=1
+delay=15
+while :; do
+  "$@" && exit 0
+  status=$?
+  [ "$attempt" -lt 5 ] || break
+  echo "retry: attempt $attempt of 5 failed with exit $status, retrying in ${delay}s: $*" >&2
+  sleep "$delay"
+  attempt=$((attempt + 1))
+  delay=$((delay * 2))
+done
+echo "retry: all 5 attempts failed, the last with exit $status: $*" >&2
+exit "$status"

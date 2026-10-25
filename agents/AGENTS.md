@@ -88,8 +88,9 @@ an index: load only the rule whose hint matches the current action.
   section rejects unknown keys.
 - **image/** — the reproducible confidential VM image for AMD SEV-SNP: `Dockerfile` (static
   `engine`, kernel, busybox initramfs, OVMF, and the launch measurement, every input pinned),
-  `init`, `kernel.config`, and the `sev-snp-measure` pins. Its `README.md` covers the build, what
-  the guest exposes, the attestation layout, booting on a host, and the release steps.
+  `init`, `kernel.config`, the `sev-snp-measure` pins, `apt.conf` (the Debian snapshot's apt
+  settings), and `retry`, which repeats each download after a failure. Its `README.md` covers the
+  build, what the guest exposes, the attestation layout, booting on a host, and the release steps.
 - **research/** — studies that set protocol parameters from data, outside the build and CI.
   `cap-calibration/` calibrates the house exposure-cap floors by Monte Carlo (#111): scripts that
   fetch and derive its public data (raw pulls in gitignored `data/raw/`, the derived dataset in
@@ -105,7 +106,8 @@ an index: load only the rule whose hint matches the current action.
   `dev-snapshot-restart.sh`, the checkpoint snapshot restart and fallback scenario;
   `dev-deposit-finality.sh`, the sequencer confirmation and Ethereum finality scenario on the
   vault's Anvil fixture; and `build-image.sh` and `check-image.sh`, which build the enclave image
-  from a commit and boot it under QEMU without SEV-SNP.
+  from a commit and boot it under QEMU without SEV-SNP, and `check-image-retry.sh`, which checks
+  the image build's download retries.
 - **ops/** — operator assets: `grafana/engine-node.json`, the node's Grafana dashboard, and
   `prometheus/engine-node-rules.yml`, the alerting rules for a down node or failing alert pages.
 - **.github/workflows/** — `ci.yaml`: fmt, the file line cap, clippy, tests (and the node's
@@ -113,9 +115,9 @@ an index: load only the rule whose hint matches the current action.
   the unchanged-reference-log check, `cargo-deny`, the contracts' `forge fmt --check` / build /
   test, the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
   deposit finality scenarios, the metrics and alert routing dev scenario, the alert outbox
-  kill/restart scenario, the snapshot restart scenario, and the enclave image (`image` builds it
-  twice and boots it under QEMU, `image-compare` fails if the builds differ), on every push to
-  `main` and every PR.
+  kill/restart scenario, the snapshot restart scenario, and the enclave image (`image` checks its
+  download retries, builds it twice, and boots it under QEMU, `image-compare` fails if the builds
+  differ), on every push to `main` and every PR.
   On a PR, the first job, `changes`, sorts the changed files into the Rust, contracts, scenario,
   and image areas from an explicit path list, and each job runs only when its area changed:
   `agents/`, `research/`, the root `README.md`, `SECURITY.md`, `AGENTS.md`, and `CLAUDE.md`, and
@@ -196,7 +198,9 @@ Run from the repo root:
   (`all` re-runs the simulations and report from the committed data), and its tests with
   `python -I -m pytest research/cap-calibration/tests`
 - Build the enclave image: `scripts/build-image.sh [--variant production|dev] <out-dir>` (Docker,
-  slow; see `image/README.md`), then `scripts/check-image.sh <out-dir>` to boot it under QEMU
+  slow; see `image/README.md`), then `scripts/check-image.sh <out-dir>` to boot it under QEMU;
+  `scripts/check-image-retry.sh` checks the build's download retries without building (needs
+  Docker and `python3`)
 
 ## Repo facts
 

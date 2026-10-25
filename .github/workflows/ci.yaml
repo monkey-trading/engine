@@ -65,7 +65,8 @@ jobs:
                 # The deposit and checkpoint scenarios deploy the vault.
                 contracts/*) areas+=" contracts scenarios" ;;
                 scripts/dev-*) areas+=" scenarios" ;;
-                image/* | scripts/build-image.sh | scripts/check-image.sh) areas+=" image" ;;
+                image/* | scripts/build-image.sh | scripts/check-image.sh | scripts/check-image-retry.sh)
+                  areas+=" image" ;;
                 *) areas=$all ;;
               esac
             done <<< "$files"
@@ -289,7 +290,8 @@ jobs:
 
   # Builds the enclave image twice on separate runners with no shared cache, then boots it under
   # QEMU: the production image must refuse mock providers, and the dev image must attest its config
-  # hash. `image-compare` fails if the two builds differ by a single byte.
+  # hash. `image-compare` fails if the two builds differ by a single byte. The first run also checks
+  # the build's download retries.
   image:
     name: image (${{ matrix.run }})
     needs: changes
@@ -304,6 +306,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check the build's download retries
+        if: matrix.run == 'first'
+        run: ./scripts/check-image-retry.sh
       - name: Build the image
         run: ./scripts/build-image.sh out/image
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
