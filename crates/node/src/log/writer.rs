@@ -204,8 +204,9 @@ impl LogWriter {
     /// - the current segment cannot be flushed or synced, or its listing cannot be stored
     /// - the new segment cannot be exclusively linked into place
     fn start_segment(&mut self, first_seq: u64) -> anyhow::Result<()> {
-        let view = self.manifest.borrow().clone();
-        if let Some(catalog) = &view.catalog {
+        // Only the catalog: holding the published segment list here would make listing below copy it.
+        let catalog = self.manifest.borrow().catalog.clone();
+        if let Some(catalog) = &catalog {
             let full = catalog.live_full();
             if full && self.catalog_failing && self.open.is_some() {
                 // A full live catalog retries in the next checkpoint's maintenance, not per command.
