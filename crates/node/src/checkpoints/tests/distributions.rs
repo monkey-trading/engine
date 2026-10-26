@@ -6,9 +6,10 @@ use std::time::Duration;
 use engine_core::Fixed;
 use engine_core::types::AccountId;
 use tokio::sync::mpsc;
+use tokio::time::timeout;
 
 use super::poster;
-use crate::checkpoints::Work;
+use crate::checkpoints::{Health, Work};
 use crate::log::Checkpoint;
 use crate::sequencer::Request;
 
@@ -30,12 +31,12 @@ async fn paid_distributions_compensate_the_pending_deposit_classification() {
     let (tx, mut rx) = mpsc::channel(4);
     work_tx.send(work).await.unwrap();
     let task = tokio::spawn(poster.run(work_rx, tx));
-    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { healthy: true, .. })));
+    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { health: Health::Healthy, .. })));
     let before: Vec<_> = std::iter::from_fn(|| alerts.try_recv().ok()).collect();
     assert!(!before.iter().any(|alert| alert["alert"] == "collateral_mismatch"), "{before:?}");
     // The deposit never credits: past the catch-up deadline the escalation pauses payouts.
     tokio::time::advance(Duration::from_secs(2)).await;
-    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { healthy: false, .. })));
+    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { health: Health::Diverged, .. })));
     assert!(std::iter::from_fn(|| alerts.try_recv().ok()).any(|alert| alert["alert"] == "collateral_mismatch"));
     drop(work_tx);
     task.await.unwrap().unwrap();
@@ -56,7 +57,7 @@ async fn paid_distributions_reconcile_healthy_when_the_balance_compensates() {
     let (tx, mut rx) = mpsc::channel(4);
     work_tx.send(work).await.unwrap();
     let task = tokio::spawn(poster.run(work_rx, tx));
-    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { healthy: true, .. })));
+    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { health: Health::Healthy, .. })));
     drop(work_tx);
     task.await.unwrap().unwrap();
 }
@@ -78,9 +79,15 @@ async fn distributions_paid_past_the_engines_allocation_is_a_mismatch() {
     let (tx, mut rx) = mpsc::channel(4);
     work_tx.send(work).await.unwrap();
     let task = tokio::spawn(poster.run(work_rx, tx));
-    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { healthy: false, .. })));
+    assert!(matches!(
+        rx.recv().await,
+        Some(Request::CheckpointStatus { health: Health::Pending | Health::Diverged, .. })
+    ));
     tokio::time::advance(Duration::from_secs(2)).await;
-    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { healthy: false, .. })));
+    assert!(matches!(
+        rx.recv().await,
+        Some(Request::CheckpointStatus { health: Health::Pending | Health::Diverged, .. })
+    ));
     assert!(std::iter::from_fn(|| alerts.try_recv().ok()).any(|alert| alert["alert"] == "collateral_mismatch"));
     // A diverged verdict withholds every later checkpoint: only the first post went out.
     let parent = crate::log::CheckpointParent { has_checkpoint: true, seq: 5, root: [3; 32].into() };
@@ -104,6 +111,68 @@ async fn distributions_paid_past_the_engines_allocation_is_a_mismatch() {
     work_tx.send(second).await.unwrap();
     tokio::time::advance(Duration::from_secs(2)).await;
     assert_eq!(*posts.lock().unwrap(), 1, "no checkpoint posts while reconciliation is diverged");
+    drop(work_tx);
+    task.await.unwrap().unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_repaired_vault_clears_the_withholding_on_the_next_retry() {
+    let (_guard, _alerts) = crate::test_support::capture_alerts();
+    let (poster, mut work, key) = poster();
+    let posts = poster.chain.posts.clone();
+    let chain_state = poster.chain.state.clone();
+    // The vault overpaid its distributions: the first checkpoint posts, the verdict is Diverged,
+    // and a signed successor waits behind it.
+    work.distributed = engine_core::UsdcUnits(40_000_000);
+    {
+        let mut state = poster.chain.state.lock().unwrap();
+        state.distributions_paid = Fixed::from_int(50);
+        state.balance = work.liabilities - Fixed::from_int(50);
+    }
+    let parent = crate::log::CheckpointParent { has_checkpoint: true, seq: 5, root: [3; 32].into() };
+    let domain = crate::log::CheckpointDomain { chain_id: 31337, vault: AccountId([7; 20]) };
+    let successor = Work {
+        checkpoint: Checkpoint {
+            parent: Some(parent),
+            seq: 6,
+            root: format!("0x{}", hex::encode([4; 32])),
+            signer: key.address_hex(),
+            signature: key.sign_checkpoint_v2(domain.chain_id, &domain.vault.0, 6, &[4; 32], parent),
+            domain: Some(domain),
+            deferred_withdrawals: true,
+        },
+        liabilities: Fixed::from_int(100),
+        deposits: 1,
+        distributed: engine_core::UsdcUnits(40_000_000),
+        authorized: Fixed::ZERO,
+        coverage: crate::checkpoints::DepositCoverage::Historical,
+    };
+    let (work_tx, work_rx) = mpsc::channel(4);
+    let (tx, mut rx) = mpsc::channel(8);
+    work_tx.send(work).await.unwrap();
+    work_tx.send(successor).await.unwrap();
+    let task = tokio::spawn(poster.run(work_rx, tx));
+    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { health: Health::Diverged, .. })));
+    // The operator repairs the vault: paid distributions no longer exceed the allocation, and the
+    // compensated balance returns to the ledger. Withholding is read-only, so the next retry of
+    // the successor reconciles and posts it.
+    {
+        let mut state = chain_state.lock().unwrap();
+        state.distributions_paid = Fixed::from_int(40);
+        state.balance = Fixed::from_int(60);
+    }
+    let mut saw_healthy = false;
+    for _ in 0..8 {
+        tokio::time::advance(Duration::from_millis(100)).await;
+        if let Ok(Some(Request::CheckpointStatus { posted: Some(6), health: Health::Healthy, .. })) =
+            timeout(Duration::from_millis(50), rx.recv()).await
+        {
+            saw_healthy = true;
+            break;
+        }
+    }
+    assert!(saw_healthy, "the repaired vault reconciles and the successor posts");
+    assert_eq!(*posts.lock().unwrap(), 2);
     drop(work_tx);
     task.await.unwrap().unwrap();
 }

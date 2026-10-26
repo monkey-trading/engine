@@ -43,7 +43,7 @@ fn cache_restores_each_outstanding_checkpoint_with_its_original_accounting() {
     seq.trust(sample_around(clock.as_ref())).unwrap();
     while queued.try_recv().is_ok() {}
     let base = seq.last_seq().unwrap();
-    seq.checkpoint_status(Some(base), true).unwrap();
+    seq.checkpoint_status(Some(base), crate::checkpoints::Health::Healthy).unwrap();
     let parent = seq.snapshot_base.as_ref().unwrap().parent().unwrap();
     let mut expected = Vec::new();
     for (amount, reference) in [(7, "0xfirst"), (13, "0xsecond")] {

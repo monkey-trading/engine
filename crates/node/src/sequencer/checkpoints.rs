@@ -17,7 +17,9 @@ pub(super) struct Gate {
     sink: mpsc::Sender<Work>,
     pub registry: Option<crate::checkpoints::Registry>,
     pub parent: crate::log::CheckpointParent,
-    pub healthy: bool,
+    /// The latest collateral reconciliation verdict. Starts paused (Pending) until the first
+    /// reconciliation succeeds.
+    pub health: crate::checkpoints::Health,
     pub recovery: Vec<Work>,
     pub pending: Vec<(u64, AccountId, Fixed, u64)>,
     pub payouts: crate::sequencer::payouts::Payouts,
@@ -36,7 +38,7 @@ impl Gate {
             sink,
             registry: None,
             parent,
-            healthy: false,
+            health: crate::checkpoints::Health::Pending,
             recovery: Vec::new(),
             pending: Vec::new(),
             payouts: Default::default(),
@@ -62,6 +64,16 @@ impl Sequencer {
     pub(super) fn checkpoint(&mut self) -> anyhow::Result<()> {
         let seq = self.engine.last_seq().context("checkpoint before any command")?;
         if self.gate.as_ref().is_some_and(|gate| gate.parent.has_checkpoint && gate.parent.seq == seq) {
+            return Ok(());
+        }
+        if self.gate.as_ref().is_some_and(|gate| matches!(gate.health, crate::checkpoints::Health::Diverged)) {
+            // A signed checkpoint is public: anyone may relay it to the vault, and its root makes
+            // new distributions claimable. While collateral reconciliation is diverged, no new
+            // root may exist for a claim or a relay to reach.
+            warn!(
+                alert = "checkpoint_withheld",
+                seq, "no checkpoint signed while collateral reconciliation is diverged"
+            );
             return Ok(());
         }
         // The worker finalizes one checkpoint at a time, so a full queue defers the next checkpoint
@@ -143,10 +155,14 @@ impl Sequencer {
     /// Releases only approvals covered by the confirmed prefix, and only after reconciliation.
     /// Error cases:
     /// - the log cannot be written
-    pub(super) fn checkpoint_status(&mut self, posted: Option<u64>, healthy: bool) -> anyhow::Result<()> {
+    pub(super) fn checkpoint_status(
+        &mut self,
+        posted: Option<u64>,
+        health: crate::checkpoints::Health,
+    ) -> anyhow::Result<()> {
         let Some(gate) = &mut self.gate else { return Ok(()) };
-        gate.healthy = healthy;
-        if !healthy {
+        gate.health = health;
+        if !matches!(health, crate::checkpoints::Health::Healthy) {
             return Ok(());
         }
         if let Some(work) = self.snapshot_work.iter().find(|work| Some(work.checkpoint.seq) == posted) {

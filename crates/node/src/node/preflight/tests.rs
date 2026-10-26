@@ -7,7 +7,7 @@ use std::time::Duration;
 use engine_core::Fixed;
 use engine_core::types::AccountId;
 
-use crate::checkpoints::{CheckpointChain, Poster, VaultState, View};
+use crate::checkpoints::{CheckpointChain, Health, Poster, VaultState, View};
 use crate::history::HistoryPlan;
 use crate::log::CheckpointDomain;
 use crate::node::preflight::finish_preflight;
@@ -232,9 +232,13 @@ async fn incomplete_genesis_and_missing_checkpoint_service_preserve_history_byte
         // Drive approvals through the public sequencer request path.
         let (tx, rx) = mpsc::channel(64);
         let task = tokio::spawn(seq.run(rx));
-        tx.send(crate::sequencer::Request::CheckpointStatus { posted: None, healthy: true, lifecycle: None })
-            .await
-            .unwrap();
+        tx.send(crate::sequencer::Request::CheckpointStatus {
+            posted: None,
+            health: Health::Healthy,
+            lifecycle: None,
+        })
+        .await
+        .unwrap();
         for cmd in [crate::test_support::deposit(100, "preflight-pure"), crate::test_support::withdraw(40)] {
             let (reply, done) = tokio::sync::oneshot::channel();
             tx.send(crate::sequencer::Request::Submit { cmd, reply: Some(reply) }).await.unwrap();

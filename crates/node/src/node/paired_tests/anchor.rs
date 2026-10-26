@@ -11,7 +11,7 @@ use engine_core::Fixed;
 use engine_core::types::AccountId;
 use tokio::sync::{mpsc, watch};
 
-use crate::checkpoints::{CheckpointChain, Poster, VaultState, View};
+use crate::checkpoints::{CheckpointChain, Health, Poster, VaultState, View};
 use crate::config::NodeConfig;
 use crate::log::{Checkpoint, CheckpointDomain, CheckpointParent, LogEntry, Manifest};
 use crate::node::paired_tests::harness::{Node, configuration};
@@ -86,7 +86,10 @@ async fn gated_log() -> (NodeConfig, Vec<Checkpoint>, Checkpoint) {
         }
     }
     let base = checkpoints[0].clone();
-    node.tx.send(Request::CheckpointStatus { posted: Some(base.seq), healthy: true, lifecycle: None }).await.unwrap();
+    node.tx
+        .send(Request::CheckpointStatus { posted: Some(base.seq), health: Health::Healthy, lifecycle: None })
+        .await
+        .unwrap();
     for _ in 0..12 {
         node.submit(deposit(1, &format!("anchor-{n}"))).await;
         n += 1;

@@ -30,7 +30,7 @@ pub enum Request {
     /// Custody confirmation; affects signature release, never deterministic protocol state.
     CheckpointStatus {
         posted: Option<u64>,
-        healthy: bool,
+        health: crate::checkpoints::Health,
         lifecycle: Option<crate::checkpoints::LifecycleEvidence>,
     },
 }

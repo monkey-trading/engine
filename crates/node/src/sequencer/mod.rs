@@ -174,8 +174,8 @@ impl Sequencer {
                     Request::TimeSample(sample) => self.take_sample(sample)?,
                     Request::Sync(reply) => syncs.push(reply),
                     Request::WatchBenchmarkSchedule(reply) => benchmark_watches.push(reply),
-                    Request::CheckpointStatus { posted, healthy, lifecycle } => {
-                        self.checkpoint_status(posted, healthy)?;
+                    Request::CheckpointStatus { posted, health, lifecycle } => {
+                        self.checkpoint_status(posted, health)?;
                         if let Some(evidence) = lifecycle {
                             self.release_payouts(&evidence)?;
                         }
@@ -243,7 +243,9 @@ impl Sequencer {
             return Ok(None);
         };
         self.sequence_queued(ts)?;
-        if matches!(cmd, Command::Withdraw { .. }) && self.gate.as_ref().is_some_and(|gate| !gate.healthy) {
+        if matches!(cmd, Command::Withdraw { .. })
+            && self.gate.as_ref().is_some_and(|gate| !matches!(gate.health, crate::checkpoints::Health::Healthy))
+        {
             warn!(alert = "withdrawals_paused", "withdrawal refused until custody reconciles");
             return Ok(None);
         }

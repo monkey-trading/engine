@@ -40,7 +40,7 @@ fn durable_sealed_approval_recovers_before_checkpoint_and_retains_release_gates(
     let evidence = node.evidence(&checkpoint);
     recovered.release_payouts(&evidence).unwrap();
     assert!(signed.try_recv().is_err(), "unreconciled custody cannot release a recovered approval");
-    recovered.checkpoint_status(Some(checkpoint.seq), true).unwrap();
+    recovered.checkpoint_status(Some(checkpoint.seq), crate::checkpoints::Health::Healthy).unwrap();
     let mut not_included = evidence.clone();
     not_included.checkpoint_seq = Some(checkpoint.seq - 1);
     recovered.release_payouts(&not_included).unwrap();

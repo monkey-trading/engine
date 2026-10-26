@@ -86,7 +86,7 @@ fn later_final_funding_releases_only_its_covered_prefix_and_restart_preserves_ne
     );
     assert_eq!(seq.last_seq(), before, "initial reconciliation blocks admission");
     seq.checkpoint().unwrap();
-    seq.checkpoint_status(Some(original_seq), true).unwrap();
+    seq.checkpoint_status(Some(original_seq), crate::checkpoints::Health::Healthy).unwrap();
     seq.flush().unwrap();
     assert!(received.try_recv().is_err(), "the original checkpoint cannot cover later funding");
     let events =
@@ -101,11 +101,15 @@ fn later_final_funding_releases_only_its_covered_prefix_and_restart_preserves_ne
     assert!(new_seq > funding_seq);
 
     for (posted, healthy) in [(funding_seq - 1, true), (funding_seq, false)] {
-        seq.checkpoint_status(Some(posted), healthy).unwrap();
+        seq.checkpoint_status(
+            Some(posted),
+            if healthy { crate::checkpoints::Health::Healthy } else { crate::checkpoints::Health::Pending },
+        )
+        .unwrap();
         seq.flush().unwrap();
         assert!(received.try_recv().is_err());
     }
-    seq.checkpoint_status(Some(funding_seq), true).unwrap();
+    seq.checkpoint_status(Some(funding_seq), crate::checkpoints::Health::Healthy).unwrap();
     seq.flush().unwrap();
     let old = received.try_recv().expect("old reservation covered at its actual funding prefix");
     assert_eq!(
@@ -113,7 +117,7 @@ fn later_final_funding_releases_only_its_covered_prefix_and_restart_preserves_ne
         (TRADER, Fixed::from_int(50), 1, Some(original_seq))
     );
     assert!(received.try_recv().is_err(), "a new approval cannot borrow the older proof prefix");
-    seq.checkpoint_status(Some(funding_seq), true).unwrap();
+    seq.checkpoint_status(Some(funding_seq), crate::checkpoints::Health::Healthy).unwrap();
     seq.flush().unwrap();
     assert!(received.try_recv().is_err());
     assert_eq!(seq.engine.accounts()[&TRADER].balance, Fixed::from_int(100));
@@ -130,17 +134,17 @@ fn later_final_funding_releases_only_its_covered_prefix_and_restart_preserves_ne
     )
     .unwrap();
     assert!(!seq.legacy_approvals.contains(TRADER, 1));
-    seq.checkpoint_status(Some(funding_seq), true).unwrap();
+    seq.checkpoint_status(Some(funding_seq), crate::checkpoints::Health::Healthy).unwrap();
     seq.flush().unwrap();
     assert!(received.try_recv().is_err());
-    seq.checkpoint_status(Some(new_seq), true).unwrap();
+    seq.checkpoint_status(Some(new_seq), crate::checkpoints::Health::Healthy).unwrap();
     seq.flush().unwrap();
     let new = received.try_recv().expect("new approval waits for its own checkpoint");
     assert_eq!(
         (new.account, new.amount, new.nonce, new.approved_seq),
         (TRADER, Fixed::from_int(175), 2, Some(new_seq))
     );
-    seq.checkpoint_status(Some(new_seq), true).unwrap();
+    seq.checkpoint_status(Some(new_seq), crate::checkpoints::Health::Healthy).unwrap();
     seq.flush().unwrap();
     assert!(received.try_recv().is_err());
     assert_eq!(seq.engine.accounts()[&TRADER].balance, Fixed::from_int(100));
@@ -188,7 +192,11 @@ fn checkpoint_release_reuses_proven_prefixes_and_batches_uncached_approval_work(
         let calls = seq.legacy_approvals.authorization_passes();
         let below = expected[0].0 - 1;
         for healthy in [false, true, true] {
-            seq.checkpoint_status(Some(below), healthy).unwrap();
+            seq.checkpoint_status(
+                Some(below),
+                if healthy { crate::checkpoints::Health::Healthy } else { crate::checkpoints::Health::Pending },
+            )
+            .unwrap();
             seq.flush().unwrap();
             assert!(received.try_recv().is_err());
             assert_eq!(seq.gate.as_ref().unwrap().pending, expected);
@@ -197,14 +205,14 @@ fn checkpoint_release_reuses_proven_prefixes_and_batches_uncached_approval_work(
 
         // Losing the derived cache cannot authorize an unproved reservation or cause per-key scans.
         seq.legacy_authorizations.clear();
-        seq.checkpoint_status(Some(posted), true).unwrap();
+        seq.checkpoint_status(Some(posted), crate::checkpoints::Health::Healthy).unwrap();
         seq.flush().unwrap();
         assert!(received.try_recv().is_err());
         assert_eq!(seq.gate.as_ref().unwrap().pending, expected);
         assert_eq!(seq.legacy_approvals.authorization_passes(), calls + 1, "one empty authorization batch");
 
         seq.legacy_authorizations = authenticated;
-        seq.checkpoint_status(Some(posted), true).unwrap();
+        seq.checkpoint_status(Some(posted), crate::checkpoints::Health::Healthy).unwrap();
         seq.flush().unwrap();
         let mut released = Vec::new();
         while let Ok(signed) = received.try_recv() {
@@ -213,7 +221,7 @@ fn checkpoint_release_reuses_proven_prefixes_and_batches_uncached_approval_work(
         assert_eq!(released, expected);
         assert!(seq.gate.as_ref().unwrap().pending.is_empty());
         assert_eq!(seq.legacy_approvals.authorization_passes(), calls + 1);
-        seq.checkpoint_status(Some(posted), true).unwrap();
+        seq.checkpoint_status(Some(posted), crate::checkpoints::Health::Healthy).unwrap();
         seq.flush().unwrap();
         assert!(received.try_recv().is_err());
         assert_eq!(seq.legacy_approvals.authorization_passes(), calls + 1, "an empty pass does no authorization work");

@@ -45,7 +45,12 @@ async fn recovered_claims_retire_without_trusted_time_or_healthy_reconciliation(
         };
         let (withdrawals, mut signed) = mpsc::unbounded_channel();
         let mut recovered = Sequencer::recover_from(log, cfg, key, broadcast::channel(128).0, withdrawals).unwrap();
-        recovered.checkpoint_status(Some(last.seq), unavailable_time).unwrap();
+        recovered
+            .checkpoint_status(
+                Some(last.seq),
+                if unavailable_time { crate::checkpoints::Health::Pending } else { crate::checkpoints::Health::Healthy },
+            )
+            .unwrap();
         if !unavailable_time {
             recovered.trust(sample_around(node.clock.as_ref())).unwrap();
         }

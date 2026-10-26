@@ -238,21 +238,21 @@ async fn registry_polling_repeats_claims_until_sequencer_acknowledgement() {
     work_tx.send(work).await.unwrap();
     let task = tokio::spawn(poster.run_with_approvals(work_rx, status_tx, Vec::new(), approvals.clone()));
     let first = match status_rx.recv().await.unwrap() {
-        Request::CheckpointStatus { healthy: true, lifecycle: Some(evidence), .. } => evidence,
+        Request::CheckpointStatus { health: Health::Healthy, lifecycle: Some(evidence), .. } => evidence,
         _ => panic!("missing finalized lifecycle evidence"),
     };
     assert_eq!(first.approvals.len(), APPROVAL_PAGE_SIZE);
     assert!(first.approvals.iter().any(|status| status.approval == paid && status.claimed));
     assert!(approvals.lock().unwrap().contains_key(&(paid.account, paid.nonce)));
     let second = match status_rx.recv().await.unwrap() {
-        Request::CheckpointStatus { healthy: true, lifecycle: Some(evidence), .. } => evidence,
+        Request::CheckpointStatus { health: Health::Healthy, lifecycle: Some(evidence), .. } => evidence,
         _ => panic!("missing second lifecycle page"),
     };
     assert_eq!(second.approvals.len(), 3);
     assert_eq!(second.approvals[0].approval.nonce, APPROVAL_PAGE_SIZE as u64);
     assert_eq!(approvals.lock().unwrap().len(), APPROVAL_PAGE_SIZE + 3);
     let third = match status_rx.recv().await.unwrap() {
-        Request::CheckpointStatus { healthy: true, lifecycle: Some(evidence), .. } => evidence,
+        Request::CheckpointStatus { health: Health::Healthy, lifecycle: Some(evidence), .. } => evidence,
         _ => panic!("missing wrapped lifecycle page"),
     };
     assert_eq!(third.approvals.len(), APPROVAL_PAGE_SIZE);
@@ -373,7 +373,7 @@ fn registry(count: usize) -> crate::checkpoints::ApprovalRegistry {
 /// The next status's healthy finalized evidence.
 async fn evidence(rx: &mut mpsc::Receiver<Request>) -> LifecycleEvidence {
     match rx.recv().await.unwrap() {
-        Request::CheckpointStatus { healthy: true, lifecycle: Some(evidence), .. } => evidence,
+        Request::CheckpointStatus { health: Health::Healthy, lifecycle: Some(evidence), .. } => evidence,
         _ => panic!("missing healthy finalized lifecycle evidence"),
     }
 }

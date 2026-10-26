@@ -123,6 +123,24 @@ pub(crate) enum Health {
     Diverged,
 }
 
+/// Compares a finalized vault state with the ledger `work` carries. The ledger's liabilities are
+/// the cumulative credits; distributions reduce house cash in the engine before the vault pays
+/// them, so the vault's balance plus what its claims have paid out must equal the ledger, and
+/// what it has paid cannot exceed what the engine allocated. Pending is routine catch-up:
+/// deposits the vault counts ahead of the ledger, with the compensated collateral still at or
+/// above it. Diverged is the ledger and the vault disagreeing.
+fn health_of(state: &VaultState, work: &Work) -> Health {
+    let compensated = state.balance.raw().checked_add(state.distributions_paid.raw()).map(Fixed::from_raw);
+    let overpaid = state.distributions_paid.raw() > (work.distributed.0 * 1_000) as i128;
+    if !overpaid && compensated.is_some_and(|sum| sum == work.liabilities) && state.deposits == work.deposits {
+        Health::Healthy
+    } else if !overpaid && state.deposits > work.deposits && compensated.is_some_and(|sum| sum >= work.liabilities) {
+        Health::Pending
+    } else {
+        Health::Diverged
+    }
+}
+
 /// Chain access, kept separate from the authorized enclave signer lifecycle.
 pub(crate) trait CheckpointChain: Send + Sync {
     /// Reads the authenticated crash-recovery reservation without persisted mutation.
@@ -339,7 +357,7 @@ impl<R: CheckpointChain> Poster<R> {
                         approval_cursor = page.last().map(|approval| (approval.account, approval.nonce));
                     }
                     let evidence = lifecycle.clone();
-                    tx.send(Request::CheckpointStatus { posted, healthy, lifecycle }).await.map_err(|_| anyhow::anyhow!("sequencer stopped"))?;
+                    tx.send(Request::CheckpointStatus { posted, health, lifecycle }).await.map_err(|_| anyhow::anyhow!("sequencer stopped"))?;
                     if let Some(evidence) = &evidence {
                         approval_cursor = self.sweep(evidence, &approvals, approval_cursor, (posted, healthy), &tx)
                             .instrument(span.clone()).await?;
@@ -412,7 +430,7 @@ impl<R: CheckpointChain> Poster<R> {
             };
             cursor = page.last().map(|approval| (approval.account, approval.nonce));
             let lifecycle = Some(LifecycleEvidence { approvals: statuses, ..evidence.clone() });
-            tx.send(Request::CheckpointStatus { posted, healthy, lifecycle })
+            tx.send(Request::CheckpointStatus { posted, health: crate::checkpoints::Health::Healthy, lifecycle })
                 .await
                 .map_err(|_| anyhow::anyhow!("sequencer stopped"))?;
         }
