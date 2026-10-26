@@ -366,11 +366,20 @@ pub(crate) fn check_revocation(crl: &[u8], chain: &QuoteChain) -> anyhow::Result
         ensure!(now <= next, "revocation list is expired");
     }
     let serials = chain.revoked_serials()?;
-    let revoked = crl.iter_revoked_certificates().find(|entry| serials.contains(&entry.raw_serial().to_vec()));
+    let revoked = crl.iter_revoked_certificates().find(|entry| {
+        serials.iter().any(|serial| trim_leading_zeros(serial) == trim_leading_zeros(entry.raw_serial()))
+    });
     if let Some(entry) = revoked {
         bail!("certificate 0x{} is revoked", entry.raw_serial_as_string());
     }
     Ok(())
+}
+
+/// A serial's bytes without leading zeros, so a parsed certificate serial and a CRL entry's raw
+/// DER content (which sign-pads positive values with the high bit set) compare as integers.
+fn trim_leading_zeros(bytes: &[u8]) -> &[u8] {
+    let first_nonzero = bytes.iter().position(|byte| *byte != 0).unwrap_or(bytes.len());
+    &bytes[first_nonzero..]
 }
 
 /// Parses the first PEM certificate in `pem` to DER.

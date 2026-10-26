@@ -22,8 +22,9 @@ pub(super) struct TestChain {
     pub(super) ark_key: KeyPair,
 }
 
-/// The VCEK's serial in every fixture chain, so a revocation list can name it.
-pub(super) const VCEK_SERIAL: u64 = 0xA11CE;
+/// The VCEK's serial in every fixture chain, so a revocation list can name it. The high bit of
+/// the first significant byte is set, so DER encodings of the serial carry a sign-padding zero.
+pub(super) const VCEK_SERIAL: u64 = 0x8A11CE;
 
 pub(super) const PROCESSOR: &str = "TestProc";
 pub(super) const POLICY: u64 = 0x30000;
@@ -56,6 +57,10 @@ pub(super) struct Variants<'a> {
     pub(super) ask_signer: Option<&'a KeyPair>,
     /// Wraps the hardware id extension in an OCTET STRING, the tagged form the vendor may adopt.
     pub(super) tagged_hwid: bool,
+    /// Issues the VCEK already expired, for the validity-window test.
+    pub(super) expired_vcek: bool,
+    /// Issues the VCEK with a not-before in the future, for the validity-window test.
+    pub(super) not_yet_valid_vcek: bool,
 }
 
 /// A chain with the given variations from the vendor shape, for the negative tests.
@@ -74,6 +79,12 @@ pub(super) fn test_chain_with(chip_id: [u8; 64], tcb: Tcb, variants: Variants<'_
     let vcek_key = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384).unwrap();
     let mut vcek_params = CertificateParams::new(Vec::new()).unwrap();
     vcek_params.serial_number = Some(SerialNumber::from(VCEK_SERIAL));
+    if variants.expired_vcek {
+        vcek_params.not_after = rcgen::date_time_ymd(2020, 1, 1);
+    }
+    if variants.not_yet_valid_vcek {
+        vcek_params.not_before = rcgen::date_time_ymd(2030, 1, 1);
+    }
     vcek_params.distinguished_name.push(DnType::CommonName, "VCEK-Test");
     vcek_params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
     vcek_params.custom_extensions = vcek_extensions(chip_id, tcb, variants.struct_version, variants.tagged_hwid);
@@ -108,28 +119,40 @@ pub(super) fn vcek_extensions(
     ]
 }
 
-/// A revocation list issued by the fixture root, revoking `revoked_serials`, in the PEM the
-/// vendor serves it as.
-pub(super) fn crl(chain: &TestChain, revoked_serials: &[u64]) -> String {
+/// A CRL revoking `revoked_serials` in the vendor's usual form.
+pub(super) fn crl_revoking(chain: &TestChain, revoked_serials: &[SerialNumber]) -> String {
+    crl_signed(chain, revoked_serials, (2024, 1, 1), (2049, 1, 1), None)
+}
+
+/// A revocation list with the given window and signer, in PEM. `signer` keeps the fixture
+/// root's issuer name while signing with another key, so only the signature differs.
+pub(super) fn crl_signed(
+    chain: &TestChain,
+    revoked_serials: &[SerialNumber],
+    from: (i32, u8, u8),
+    to: (i32, u8, u8),
+    signer: Option<&KeyPair>,
+) -> String {
     use rcgen::{CertificateRevocationListParams, RevokedCertParams};
     let revoked = revoked_serials
         .iter()
         .map(|serial| RevokedCertParams {
-            serial_number: SerialNumber::from(*serial),
+            serial_number: serial.clone(),
             revocation_time: rcgen::date_time_ymd(2024, 1, 1),
             reason_code: None,
             invalidity_date: None,
         })
         .collect();
     let params = CertificateRevocationListParams {
-        this_update: rcgen::date_time_ymd(2024, 1, 1),
-        next_update: rcgen::date_time_ymd(2049, 1, 1),
+        this_update: rcgen::date_time_ymd(from.0, from.1, from.2),
+        next_update: rcgen::date_time_ymd(to.0, to.1, to.2),
         crl_number: SerialNumber::from(1),
         issuing_distribution_point: None,
         revoked_certs: revoked,
         key_identifier_method: chain.ark_params.key_identifier_method.clone(),
     };
-    let crl = params.signed_by(&Issuer::from_params(&chain.ark_params, &chain.ark_key)).unwrap();
+    let signer = signer.unwrap_or(&chain.ark_key);
+    let crl = params.signed_by(&Issuer::from_params(&chain.ark_params, signer)).unwrap();
     pem_wrap(crl.der().as_ref(), "X509 CRL")
 }
 

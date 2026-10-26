@@ -7,11 +7,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use axum::Router;
 use axum::extract::Path;
 use axum::routing::get;
+use futures_util::StreamExt as _;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
 use super::super::Options;
-use super::fixtures::{PROCESSOR, TestChain, crl, pem};
+use rcgen::SerialNumber;
+
+use super::fixtures::{PROCESSOR, TestChain, pem};
 
 /// A key-distribution service stand-in with the vendor endpoints' shapes: the VCEK endpoint
 /// answers for any chip and TCB (so the verifier itself must bind the certificate's signed
@@ -29,9 +32,9 @@ pub(super) async fn kds_stub(chain: &TestChain) -> KdsStub {
 }
 
 /// The stand-in with a PEM-encoded VCEK or a revocation list that revokes `revoked`.
-pub(super) async fn kds_stub_with(chain: &TestChain, vcek_pem: bool, revoked: &[u64]) -> KdsStub {
+pub(super) async fn kds_stub_with(chain: &TestChain, vcek_pem: bool, revoked: &[SerialNumber]) -> KdsStub {
     let vcek = if vcek_pem { pem(&chain.vcek).into_bytes() } else { chain.vcek.der().to_vec() };
-    let crl = crl(chain, revoked);
+    let crl = super::fixtures::crl_revoking(chain, revoked);
     let app = Router::new()
         .route("/vcek/v1/{processor}/cert_chain", {
             let ark = pem(&chain.ark);
@@ -88,6 +91,26 @@ pub(super) async fn status_stub(status: axum::http::StatusCode, failures: usize,
             async move {
                 let attempt = counted.fetch_add(1, Ordering::SeqCst);
                 if attempt < failures { (status, String::new()) } else { (axum::http::StatusCode::OK, body) }
+            }
+        }),
+    );
+    let stub = serve(app).await;
+    KdsStub { base: stub.base, attempts, _task: stub._task }
+}
+
+/// A stand-in whose one route answers a 4 MiB chunked body with no `Content-Length`, counted.
+pub(super) async fn streamed_oversized_stub() -> KdsStub {
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let counted = attempts.clone();
+    let app = Router::new().route(
+        "/vcek/v1/{processor}/cert_chain",
+        get(move |_path: Path<String>| {
+            let counted = counted.clone();
+            async move {
+                counted.fetch_add(1, Ordering::SeqCst);
+                let chunk = "x".repeat(64 * 1024);
+                let stream = futures_util::stream::repeat(Ok::<_, std::convert::Infallible>(chunk)).take(64);
+                axum::body::Body::from_stream(stream)
             }
         }),
     );

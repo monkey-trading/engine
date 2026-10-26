@@ -12,9 +12,9 @@ use std::collections::BTreeSet;
 use std::sync::atomic::Ordering;
 
 use anyhow::Context as _;
-use rcgen::KeyPair;
+use rcgen::{KeyPair, SerialNumber};
 
-use super::chain::{Collateral, check_signed_by};
+use super::chain::{Collateral, QuoteChain, Roots, check_revocation, check_signed_by};
 use super::report::Tcb;
 use super::{
     Options, VerifiedAttestation, ensure_signers_verified, reconcile_signer, verify_attestation,
@@ -22,7 +22,7 @@ use super::{
 };
 use crate::tee::{Attestation, AttestationBundle};
 use fixtures::*;
-use stub::{kds_stub, kds_stub_with, options, status_stub};
+use stub::{kds_stub, kds_stub_with, options, status_stub, streamed_oversized_stub};
 
 #[tokio::test]
 async fn a_release_quote_verifies_and_names_the_release() {
@@ -228,6 +228,19 @@ async fn a_vcek_with_an_unsupported_struct_version_fails_verification() {
 }
 
 #[tokio::test]
+async fn an_expired_vcek_fails_verification() {
+    let enclave = enclave();
+    let chain = test_chain_with(enclave.chip_id, REPORTED_TCB, Variants { expired_vcek: true, ..Variants::default() });
+    let stub = kds_stub(&chain).await;
+    let attestation = attestation(
+        &enclave.bundle,
+        &forged_report(&chain, LAUNCH_DIGEST, enclave.bundle.report_data(), enclave.chip_id),
+    );
+
+    assert!(verify_attestation(&attestation, &release(), &options(&stub, &pem(&chain.ark))).await.is_err());
+}
+
+#[tokio::test]
 async fn a_vcek_with_a_tagged_hardware_id_verifies() {
     let enclave = enclave();
     let chain = test_chain_with(enclave.chip_id, REPORTED_TCB, Variants { tagged_hwid: true, ..Variants::default() });
@@ -251,9 +264,62 @@ async fn a_pem_vcek_answer_verifies() {
 #[tokio::test]
 async fn a_revoked_vcek_fails_verification() {
     let (chain, _enclave, attestation) = fixtures();
-    let stub = kds_stub_with(&chain, false, &[VCEK_SERIAL]).await;
+    // The CRL entry carries the serial with DER sign padding, as a vendor's list would.
+    let padded = SerialNumber::from_slice(&[0x00, 0x8A, 0x11, 0xCE]);
+    let stub = kds_stub_with(&chain, false, std::slice::from_ref(&padded)).await;
 
     assert!(verify_attestation(&attestation, &release(), &options(&stub, &pem(&chain.ark))).await.is_err());
+}
+
+#[tokio::test]
+async fn a_not_yet_valid_vcek_fails_verification() {
+    let enclave = enclave();
+    let chain =
+        test_chain_with(enclave.chip_id, REPORTED_TCB, Variants { not_yet_valid_vcek: true, ..Variants::default() });
+    let stub = kds_stub(&chain).await;
+    let attestation = attestation(
+        &enclave.bundle,
+        &forged_report(&chain, LAUNCH_DIGEST, enclave.bundle.report_data(), enclave.chip_id),
+    );
+
+    assert!(verify_attestation(&attestation, &release(), &options(&stub, &pem(&chain.ark))).await.is_err());
+}
+
+#[test]
+fn the_revocation_list_must_be_fresh_issued_by_the_root_and_signed_by_it() {
+    let (chain, _enclave, _attestation) = fixtures();
+    let mut roots = Roots::vendor();
+    roots.add_pem(&pem(&chain.ark)).unwrap();
+    let quote =
+        QuoteChain::verify(chain.vcek.der().to_vec(), chain.ask.der().to_vec(), chain.ark.der().to_vec(), &roots)
+            .unwrap();
+    let crl_der = |crl: String| {
+        let mut blocks = x509_parser::pem::Pem::iter_from_buffer(crl.as_bytes());
+        blocks.next().unwrap().unwrap().contents
+    };
+
+    // An expired list and a not-yet-valid list are both refused.
+    let expired = crl_signed(&chain, &[], (2024, 1, 1), (2025, 1, 1), None);
+    assert!(check_revocation(&crl_der(expired), &quote).is_err());
+    let early = crl_signed(&chain, &[], (2030, 1, 1), (2049, 1, 1), None);
+    assert!(check_revocation(&crl_der(early), &quote).is_err());
+
+    // A list signed by a key that is not the root's is refused, as is one issued by another name.
+    let other = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384).unwrap();
+    let wrong_key = crl_signed(&chain, &[], (2024, 1, 1), (2049, 1, 1), Some(&other));
+    assert!(check_revocation(&crl_der(wrong_key), &quote).is_err());
+    let other_params = ca_params("Other-Root");
+    let foreign = rcgen::CertificateRevocationListParams {
+        this_update: rcgen::date_time_ymd(2024, 1, 1),
+        next_update: rcgen::date_time_ymd(2049, 1, 1),
+        crl_number: SerialNumber::from(1),
+        issuing_distribution_point: None,
+        revoked_certs: Vec::new(),
+        key_identifier_method: other_params.key_identifier_method.clone(),
+    }
+    .signed_by(&rcgen::Issuer::from_params(&other_params, &other))
+    .unwrap();
+    assert!(check_revocation(foreign.der().as_ref(), &quote).is_err());
 }
 
 #[test]
@@ -339,10 +405,19 @@ async fn collateral_fetches_retry_transient_failures_and_stop_at_a_persistent_on
 
 #[tokio::test]
 async fn collateral_fetches_refuse_an_oversized_body() {
+    // A body with a Content-Length over the cap is refused at the headers.
     let oversized = status_stub(axum::http::StatusCode::OK, 0, "x".repeat(2 * 1024 * 1024)).await;
     let collateral = Collateral::new(&oversized.base, PROCESSOR).unwrap();
-    collateral.issuer_chain().await.expect_err("an oversized body must fail");
+    let err = collateral.issuer_chain().await.expect_err("an oversized body must fail");
+    assert!(err.to_string().contains("oversized"), "the size limit must refuse, not the PEM parse: {err:#}");
     assert_eq!(oversized.attempts.load(Ordering::SeqCst), 1);
+
+    // A chunked body with no Content-Length is refused while streaming.
+    let streamed = streamed_oversized_stub().await;
+    let collateral = Collateral::new(&streamed.base, PROCESSOR).unwrap();
+    let err = collateral.issuer_chain().await.expect_err("an oversized stream must fail");
+    assert!(err.to_string().contains("oversized"), "the size limit must refuse, not the PEM parse: {err:#}");
+    assert_eq!(streamed.attempts.load(Ordering::SeqCst), 1);
 }
 /// The dev scenario: a release quote passes verification and names the release; a mock quote, an
 /// unlisted configuration, an altered measurement, and an unattested checkpoint signer fail. Runs
