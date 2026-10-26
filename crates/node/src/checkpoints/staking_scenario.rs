@@ -69,7 +69,7 @@ async fn dev_scenario_staking_pays_stakers_above_the_floor_and_nothing_below_it(
     let (status, events) = s.post("/v1/admin", s.signed(AdminCommand::InitEmissions(schedule))).await;
     assert_eq!((status, events.as_array().unwrap().last()), (StatusCode::OK, Some(&json!({"type": "admin_applied"}))));
     for staker in s.stakers {
-        let (status, body) = s.post("/v1/dev/deposit", json!({ "account": staker.0, "amount": "1000000" })).await;
+        let (status, body) = s.post("/v1/dev/deposit", json!({ "account": staker, "amount": "1000000" })).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         s.deposits += Fixed::from_int(1_000_000);
         // The vault backs each dev deposit too, so its balance plus paid distributions always
@@ -264,6 +264,8 @@ impl Scenario {
         let response = self.node().app.clone().oneshot(request).await.unwrap();
         let status = response.status();
         let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        (status, serde_json::from_slice(&bytes).unwrap())
+        let body = serde_json::from_slice(&bytes)
+            .unwrap_or_else(|error| panic!("{status}: body {:?}: {error}", String::from_utf8_lossy(&bytes)));
+        (status, body)
     }
 }
