@@ -49,6 +49,7 @@ fail() {
 scan_dockerfile() {
   python3 -I - "$1" << 'EOF'
 import re
+import shlex
 import sys
 
 path = sys.argv[1]
@@ -114,21 +115,14 @@ def shell_segments(shell):
     return segments
 
 
-env_assignment = re.compile(
-    r"^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|\"[^\"]*\"|\S*)\s+"
-)
-# `env` runs the command that follows it; its own options and assignments come first, so it is
-# stripped like the bare assignments above, consuming tokens until a known tool name appears.
-env_command = re.compile(
-    r"^env(?:(?!\s+(?:apt-get|curl|git|cargo|pip)\b)\s+\S+)*\s+"
-)
-# Options that take a separate value, per tool, so an option's value is never mistaken for the
+# Options that take a value, per tool, so an option's value is never mistaken for the
 # subcommand and the subcommand is never mistaken for an option's value.
 VALUE_OPTIONS = {
     "apt-get": {"-o", "--option", "-c", "--config-file", "-t", "--target-release",
                 "-a", "--host-architecture"},
     "git": {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path",
             "--config-env"},
+    "submodule": {"-j", "--jobs", "--depth", "--reference"},
     "cargo": {"--manifest-path", "--config", "-Z", "--target", "--target-dir",
               "--features", "--package"},
     "pip": {"-i", "--index-url", "--extra-index-url", "-f", "--find-links", "-r",
@@ -137,20 +131,67 @@ VALUE_OPTIONS = {
             "--python", "--platform", "--python-version", "--implementation", "--abi",
             "--only-binary", "--no-binary", "--retries", "--timeout", "--trusted-host"},
 }
+# `env` runs the command that follows it; these are its own value-taking options.
+ENV_VALUE_OPTIONS = {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}
+ENV_FLAGS = {"-i", "--ignore-environment", "-v", "--debug", "--help", "--version"}
+
+
+def strip_env(tokens):
+    # Leading NAME=value assignments and `env` commands (with their own options and
+    # assignments) do not change which command a segment runs; strip them, stopping at its
+    # first executable token so a `retry` or a benign command there is preserved.
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", token):
+            i += 1
+            continue
+        if token != "env":
+            break
+        i += 1
+        while i < len(tokens):
+            option = tokens[i]
+            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", option):
+                i += 1
+            elif option in ENV_FLAGS:
+                i += 1
+            elif option == "--":
+                i += 1
+                break
+            elif option.split("=", 1)[0] in ENV_VALUE_OPTIONS:
+                i += 1
+                if "=" not in option and i < len(tokens):
+                    i += 1
+            elif option in ("-u", "-C", "-S"):
+                i += 2 if i + 1 < len(tokens) else 1
+            else:
+                break
+    return tokens[i:]
 
 
 def skip_options(tokens, i, tool):
+    value_options = VALUE_OPTIONS[tool]
+    short_values = {name[1] for name in value_options if len(name) == 2}
     while i < len(tokens):
         token = tokens[i]
         if token == "--":
             return i + 1
         if not token.startswith("-") or token == "-":
             break
-        name = token.split("=", 1)[0] if token.startswith("--") else token[:2]
-        joined = "=" in token or (not token.startswith("--") and len(token) > 2)
-        i += 1
-        if name in VALUE_OPTIONS[tool] and not joined and i < len(tokens):
+        if token.startswith("--"):
             i += 1
+            if token.split("=", 1)[0] in value_options and "=" not in token \
+                    and i < len(tokens):
+                i += 1
+            continue
+        # A short-option cluster: walk it, and let a value-taking option consume the rest of
+        # the token as its value or the next token as a separate value.
+        i += 1
+        for position, letter in enumerate(token[1:], 1):
+            if letter in short_values:
+                if position == len(token) - 1 and i < len(tokens):
+                    i += 1
+                break
     return i
 
 
@@ -176,7 +217,7 @@ def is_download(tokens):
     # `git submodule update`, with submodule's own options before `update`.
     if tokens[i] != "submodule":
         return False
-    j = skip_options(tokens, i + 1, "git")
+    j = skip_options(tokens, i + 1, "submodule")
     return j < len(tokens) and tokens[j] == "update"
 
 
@@ -193,18 +234,16 @@ for start, instruction in logical:
     if not run:
         continue
     for segment in shell_segments(run.group(1)):
-        command = segment.strip()
-        while True:
-            stripped_env = env_assignment.sub("", command)
-            if not stripped_env:
-                break
-            stripped_env = env_command.sub("", stripped_env)
-            if stripped_env == command:
-                break
-            command = stripped_env
-        if is_download(command.split()):
+        # Tokenize with shell quoting rules so a quoted value with whitespace stays one token;
+        # an unbalanced quote cannot build, so fall back to a plain split for it.
+        try:
+            tokens = shlex.split(segment, posix=True)
+        except ValueError:
+            tokens = segment.split()
+        tokens = strip_env(tokens)
+        if is_download(tokens):
             violations.append(f"line {start}: {segment.strip()!r} runs a download without retry")
-        elif is_unfrozen_build(command.split()):
+        elif is_unfrozen_build(tokens):
             violations.append(f"line {start}: {segment.strip()!r} builds without --frozen")
 
 for violation in violations:
@@ -251,6 +290,27 @@ if scan_out="$(scan_dockerfile "$work/Dockerfile.git-options")"; then
 else
   echo "ok: the Dockerfile scan catches a git fetch behind value-taking options ($scan_out)"
 fi
+sed 's/retry git fetch -q --depth 1/git -c "http.extraHeader=X-Build: image" fetch -q --depth 1/' \
+  image/Dockerfile > "$work/Dockerfile.quoted-option"
+if scan_out="$(scan_dockerfile "$work/Dockerfile.quoted-option")"; then
+  fail "the Dockerfile scan missed a download behind a quoted option value"
+else
+  echo "ok: the Dockerfile scan catches a git fetch behind a quoted option value ($scan_out)"
+fi
+sed 's/retry apt-get update/apt-get -qo Acquire::Retries=0 update/' \
+  image/Dockerfile > "$work/Dockerfile.short-cluster"
+if scan_out="$(scan_dockerfile "$work/Dockerfile.short-cluster")"; then
+  fail "the Dockerfile scan missed a download behind a short-option cluster"
+else
+  echo "ok: the Dockerfile scan catches an apt-get update behind a short-option cluster ($scan_out)"
+fi
+sed 's/retry git submodule update/git submodule --jobs 4 update/' \
+  image/Dockerfile > "$work/Dockerfile.submodule-options"
+if scan_out="$(scan_dockerfile "$work/Dockerfile.submodule-options")"; then
+  fail "the Dockerfile scan missed a download behind submodule options"
+else
+  echo "ok: the Dockerfile scan catches a submodule update behind its own options ($scan_out)"
+fi
 sed 's/retry pip install --quiet/env PIP_NO_CACHE_DIR=1 pip install --quiet/' \
   image/Dockerfile > "$work/Dockerfile.env-command"
 if scan_out="$(scan_dockerfile "$work/Dockerfile.env-command")"; then
@@ -276,7 +336,8 @@ else
   echo "ok: the Dockerfile scan catches an apt-get update behind a quoted separator ($scan_out)"
 fi
 
-# Benign commands whose arguments merely name a download subcommand must not be flagged.
+# Benign commands whose arguments merely name a download subcommand must not be flagged, and
+# neither must a download wrapped in `retry` behind an `env`.
 cat > "$work/Dockerfile.benign" << 'BENIGN'
 RUN git checkout fetch
 RUN git -C /build checkout -q FETCH_HEAD
@@ -285,6 +346,8 @@ RUN apt-get clean
 RUN cargo build --frozen --release
 RUN echo apt-get update
 RUN retry curl -fsSL https://example.invalid/pinned.tar.xz -o pinned.tar.xz
+RUN env -i retry curl -fsSL https://example.invalid/pinned.tar.xz -o pinned.tar.xz
+RUN env -i echo curl
 BENIGN
 if scan_out="$(scan_dockerfile "$work/Dockerfile.benign")"; then
   echo "ok: benign commands are not flagged"
