@@ -4,8 +4,9 @@
 #   cargo fetch, and pip install as `retry <command>`, and cargo build with --frozen, so a later
 #   edit that drops the retry or the freeze fails this check instead of the image job on the next
 #   source outage; mutation checks confirm the scan catches a dropped retry or --frozen, a
-#   download hidden behind an environment assignment (bare or via `env`) or its command options,
-#   even options taking a separate value, and one hidden behind a comment inside a continuation;
+#   download hidden behind an environment assignment or an `env` command, even with their own
+#   options, or behind the download command's options before its subcommand, and one hidden
+#   behind a comment inside a continuation;
 # - image/retry runs the same command after each failure, at most five times, waiting 15, 30, 60,
 #   then 120 seconds, and returns the last failure's exit status;
 # - apt with image/apt.conf, in the Dockerfile's pinned Debian image, retries an index that keeps
@@ -40,10 +41,11 @@ fail() {
 # Scans a Dockerfile and fails on any apt-get update|install, curl, git fetch, git submodule
 # update, cargo fetch, or pip install not run as `retry <command>`, and on a cargo build without
 # --frozen. Continuation lines are joined into their instruction (BuildKit strips comment lines
-# even inside a continuation, so the scan does too), which is then split into the shell segments a
-# RUN runs; leading environment assignments, an `env` command, and the command's own options
-# before its subcommand — even options taking a separate value — do not hide a download, so only
-# the command that starts a segment, once normalized, is judged.
+# even inside a continuation, so the scan does too), which is then split into the shell segments
+# a RUN runs, without splitting inside quotes; leading environment assignments and an `env`
+# command do not hide a download, and each tool's own options may precede its subcommand,
+# including options that take a separate value, so only the command that starts a segment, once
+# normalized, is judged.
 scan_dockerfile() {
   python3 -I - "$1" << 'EOF'
 import re
@@ -70,22 +72,119 @@ for number, line in enumerate(physical, 1):
     logical.append((start, buffer))
     buffer = ""
 
+
+def shell_segments(shell):
+    # The operators a RUN chains commands with, split outside quotes so a quoted value is not
+    # broken apart (a backslash only escapes inside double quotes).
+    segments = []
+    current = []
+    quote = None
+    i = 0
+    while i < len(shell):
+        ch = shell[i]
+        if quote:
+            current.append(ch)
+            if ch == "\\" and quote == '"' and i + 1 < len(shell):
+                current.append(shell[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in "'\"":
+            quote = ch
+            current.append(ch)
+            i += 1
+            continue
+        if ch == "\\" and i + 1 < len(shell):
+            current.append(ch)
+            current.append(shell[i + 1])
+            i += 2
+            continue
+        pair = shell[i : i + 2]
+        if pair in ("&&", "||") or ch in ";|":
+            segments.append("".join(current))
+            current = []
+            i += 2 if pair in ("&&", "||") else 1
+            continue
+        current.append(ch)
+        i += 1
+    segments.append("".join(current))
+    return segments
+
+
 env_assignment = re.compile(
     r"^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|\"[^\"]*\"|\S*)\s+"
 )
-# After environment assignments are stripped, the download a segment starts with, allowing the
-# command's own options before its subcommand, including options that take a separate value
-# (a token that is neither an option nor the subcommand is an option's value, so scanning for
-# the subcommand without a fixed position finds it).
-download = re.compile(
-    r"^(?:apt-get(?:(?!\s+(?:update|install)\b)\s+\S+)*\s+(?:update|install)"
-    r"|curl\b"
-    r"|git(?:(?!\s+submodule\b)\s+\S+)*\s+submodule(?:(?!\s+update\b)\s+\S+)*\s+update"
-    r"|git(?:(?!\s+fetch\b)\s+\S+)*\s+fetch"
-    r"|cargo(?:(?!\s+fetch\b)\s+\S+)*\s+fetch"
-    r"|pip(?:(?!\s+install\b)\s+\S+)*\s+install)\b"
+# `env` runs the command that follows it; its own options and assignments come first, so it is
+# stripped like the bare assignments above, consuming tokens until a known tool name appears.
+env_command = re.compile(
+    r"^env(?:(?!\s+(?:apt-get|curl|git|cargo|pip)\b)\s+\S+)*\s+"
 )
-build = re.compile(r"^cargo(?:(?!\s+build\b)\s+\S+)*\s+build\b")
+# Options that take a separate value, per tool, so an option's value is never mistaken for the
+# subcommand and the subcommand is never mistaken for an option's value.
+VALUE_OPTIONS = {
+    "apt-get": {"-o", "--option", "-c", "--config-file", "-t", "--target-release",
+                "-a", "--host-architecture"},
+    "git": {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path",
+            "--config-env"},
+    "cargo": {"--manifest-path", "--config", "-Z", "--target", "--target-dir",
+              "--features", "--package"},
+    "pip": {"-i", "--index-url", "--extra-index-url", "-f", "--find-links", "-r",
+            "--requirement", "-c", "--constraint", "-t", "--target", "--prefix",
+            "--root", "--src", "--build", "--proxy", "--cert", "--client-cert",
+            "--python", "--platform", "--python-version", "--implementation", "--abi",
+            "--only-binary", "--no-binary", "--retries", "--timeout", "--trusted-host"},
+}
+
+
+def skip_options(tokens, i, tool):
+    while i < len(tokens):
+        token = tokens[i]
+        if token == "--":
+            return i + 1
+        if not token.startswith("-") or token == "-":
+            break
+        name = token.split("=", 1)[0] if token.startswith("--") else token[:2]
+        joined = "=" in token or (not token.startswith("--") and len(token) > 2)
+        i += 1
+        if name in VALUE_OPTIONS[tool] and not joined and i < len(tokens):
+            i += 1
+    return i
+
+
+def is_download(tokens):
+    if not tokens:
+        return False
+    tool = tokens[0]
+    if tool == "curl":
+        return True
+    if tool not in ("apt-get", "git", "cargo", "pip"):
+        return False
+    i = skip_options(tokens, 1, tool)
+    if i >= len(tokens):
+        return False
+    if tool == "apt-get":
+        return tokens[i] in ("update", "install")
+    if tool == "pip":
+        return tokens[i] == "install"
+    if tool == "cargo":
+        return tokens[i] == "fetch"
+    if tokens[i] == "fetch":
+        return True
+    # `git submodule update`, with submodule's own options before `update`.
+    if tokens[i] != "submodule":
+        return False
+    j = skip_options(tokens, i + 1, "git")
+    return j < len(tokens) and tokens[j] == "update"
+
+
+def is_unfrozen_build(tokens):
+    if not tokens or tokens[0] != "cargo":
+        return False
+    i = skip_options(tokens, 1, "cargo")
+    return i < len(tokens) and tokens[i] == "build" and "--frozen" not in tokens
 
 violations = []
 for start, instruction in logical:
@@ -93,21 +192,19 @@ for start, instruction in logical:
     run = re.match(r"^RUN\s+(?:--[a-z-]+(?:=\S+)?\s+)*(.*)$", instruction, re.IGNORECASE)
     if not run:
         continue
-    for segment in re.split(r"&&|\|\||;|\|", run.group(1)):
+    for segment in shell_segments(run.group(1)):
         command = segment.strip()
         while True:
             stripped_env = env_assignment.sub("", command)
-            # `env` runs the command that follows it, with its own assignments.
             if not stripped_env:
                 break
-            if re.match(r"^env\s+", stripped_env):
-                stripped_env = re.sub(r"^env\s+", "", stripped_env, count=1)
+            stripped_env = env_command.sub("", stripped_env)
             if stripped_env == command:
                 break
             command = stripped_env
-        if download.match(command):
+        if is_download(command.split()):
             violations.append(f"line {start}: {segment.strip()!r} runs a download without retry")
-        elif build.match(command) and "--frozen" not in command.split():
+        elif is_unfrozen_build(command.split()):
             violations.append(f"line {start}: {segment.strip()!r} builds without --frozen")
 
 for violation in violations:
@@ -160,6 +257,39 @@ if scan_out="$(scan_dockerfile "$work/Dockerfile.env-command")"; then
   fail "the Dockerfile scan missed a download behind an env command"
 else
   echo "ok: the Dockerfile scan catches a pip install behind an env command ($scan_out)"
+fi
+sed 's/&& retry apt-get update/\&\& env -i apt-get update/' \
+  image/Dockerfile > "$work/Dockerfile.env-options"
+if scan_out="$(scan_dockerfile "$work/Dockerfile.env-options")"; then
+  fail "the Dockerfile scan missed a download behind env options"
+else
+  echo "ok: the Dockerfile scan catches an apt-get update behind env options ($scan_out)"
+fi
+
+# A separator inside a quoted assignment value must not split the segment there and hide the
+# download that follows the assignment.
+sed "s/retry apt-get update/LABEL='a;b' apt-get update/" \
+  image/Dockerfile > "$work/Dockerfile.quoted-separator"
+if scan_out="$(scan_dockerfile "$work/Dockerfile.quoted-separator")"; then
+  fail "the Dockerfile scan missed a download behind a quoted separator"
+else
+  echo "ok: the Dockerfile scan catches an apt-get update behind a quoted separator ($scan_out)"
+fi
+
+# Benign commands whose arguments merely name a download subcommand must not be flagged.
+cat > "$work/Dockerfile.benign" << 'BENIGN'
+RUN git checkout fetch
+RUN git -C /build checkout -q FETCH_HEAD
+RUN apt-get moo
+RUN apt-get clean
+RUN cargo build --frozen --release
+RUN echo apt-get update
+RUN retry curl -fsSL https://example.invalid/pinned.tar.xz -o pinned.tar.xz
+BENIGN
+if scan_out="$(scan_dockerfile "$work/Dockerfile.benign")"; then
+  echo "ok: benign commands are not flagged"
+else
+  fail "the Dockerfile scan flagged a benign command: $scan_out"
 fi
 
 # BuildKit strips comment lines even inside a continuation, so a comment there cannot be used to
