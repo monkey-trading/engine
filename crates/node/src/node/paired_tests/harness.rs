@@ -167,7 +167,7 @@ impl Node {
         loop {
             let state = match timeout(HANG, self.sealing.inspect()).await {
                 Ok(Ok(state)) => Some(state),
-                Ok(Err(error)) => panic!("the history owner answers: {error:#}"),
+                Ok(Err(error)) => panic!("expected the history owner's inspected state, got an error: {error:#}"),
                 Err(_) => None,
             };
             let seen = self.sealing.taken.load(Ordering::Acquire);
