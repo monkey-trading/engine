@@ -396,6 +396,21 @@ pub(super) fn watcher_with_confirmations(
     DepositWatcher::start_legacy(chain.clone(), &cfg, CHAIN_ID, VAULT, log_seq).unwrap()
 }
 
+/// A watcher whose release-tag budget differs from the batch-posting budget, through the
+/// configuration wiring production uses.
+pub(super) fn watcher_with_finality_budget(
+    chain: &FakeChain,
+    dir: &Path,
+    max_block_range: u64,
+    log_seq: Option<u64>,
+    finality_stalled_after: &str,
+) -> DepositWatcher<FakeChain> {
+    let toml = evm_toml(dir, max_block_range)
+        .replace("finality_stalled_after = \"1s\"", &format!("finality_stalled_after = \"{finality_stalled_after}\""));
+    let cfg: EvmCustodySection = toml::from_str(&toml).unwrap();
+    DepositWatcher::start_legacy(chain.clone(), &cfg, CHAIN_ID, VAULT, log_seq).unwrap()
+}
+
 /// The cursor stored in `dir`, read without the checks `Cursor::load` makes.
 pub(super) fn stored_cursor(dir: &Path) -> Cursor {
     serde_json::from_str(&std::fs::read_to_string(dir.join("cursor.json")).unwrap()).unwrap()

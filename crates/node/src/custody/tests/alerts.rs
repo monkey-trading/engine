@@ -20,7 +20,7 @@ use crate::custody::evm::{Beneficiary, VaultDeposit, VaultIdentity};
 use crate::custody::stall::Polled;
 use crate::custody::tests::fakes::{
     FakeChain, Logs, Node, TRADER, USDC, USDC_TOKEN, deposit, refusing_sequencer, scratch, stored_cursor, usdc,
-    wait_for_polls, watcher,
+    wait_for_polls, watcher, watcher_with_finality_budget,
 };
 use crate::custody::watchdog::Watchdog;
 use crate::metrics::Metrics;
@@ -220,6 +220,27 @@ async fn a_finality_tag_slower_than_the_batch_budget_gets_its_own_budget() {
     let stalled = logs.lines_with("alert=\"custody_finality_stalled\"");
     assert_eq!(stalled.len(), 1, "{stalled:?}");
     assert!(stalled[0].contains("ERROR"), "{stalled:?}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_configured_watcher_gives_a_slow_release_tag_its_own_budget() {
+    let (logs, _guard) = Logs::capture();
+    let dir = scratch("wired-finality-budget");
+    let (chain, node) = (FakeChain::default(), Node::start(&dir));
+    chain.set_final(Some(5));
+    chain.0.lock().unwrap().head = 8;
+    // Through the configuration wiring: batch posting lands every second, the release tag
+    // follows an hour behind. The head moves on for half a minute while the final block stays
+    // at 5 — far past the batch budget, well within the release tag's — and the wired watcher
+    // must not page.
+    let run = tokio::spawn(watcher_with_finality_budget(&chain, &dir, 1_000, None, "1h").run(node.tx.clone()));
+
+    for _ in 0..15 {
+        chain.0.lock().unwrap().head += 1;
+        sleep(Duration::from_secs(2)).await;
+    }
+    assert_eq!(logs.count("alert=\"custody_finality_stalled\""), 0);
+    run.abort();
 }
 
 #[tokio::test]
