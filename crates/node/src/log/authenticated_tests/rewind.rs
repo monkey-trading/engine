@@ -82,6 +82,41 @@ fn a_tip_segment_still_on_disk_past_the_recovered_log_rejects_the_cache() {
     }
 }
 
+/// The tip can name nothing past the recovered log — it sealed before the lost append, and the
+/// recovered log lists every segment it covers — while storage that kept the file the recovered
+/// log's next command would rotate into, but lost the manifest's listing of the segment before
+/// it, still holds bytes the rewind would declare lost. Recovery rejects the cache so it falls
+/// back to full replay's directory-wide refusal, instead of rewinding and wedging the writer's
+/// first rotation into the leftover file.
+#[test]
+fn a_next_command_segment_still_on_disk_rejects_the_history_lost_rewind() {
+    let mut f = fixture("catalog-rewind-next-leftover", 1);
+    for seq in 0..3 {
+        f.writer.append(&command(seq)).expect("initial");
+    }
+    let c = boundary(&mut f, 2);
+    for seq in 3..9 {
+        f.writer.append(&command(seq)).expect("before the tip");
+    }
+    f.writer.flush_catalog().expect("the tip seals before the lost append");
+    let t = latest(&f.heads);
+    for seq in 9..11 {
+        f.writer.append(&command(seq)).expect("after the tip");
+    }
+    f.writer.sync().expect("durable");
+    drop(f.writer);
+    // Storage loses only the manifest's last line, the listing of segment 9, keeping its file
+    // and the file the next command starts.
+    let path = f.dir.join(MANIFEST);
+    let manifest = fs::read_to_string(&path).expect("manifest");
+    let cut = manifest.trim_end_matches('\n').rfind('\n').map_or(0, |i| i + 1);
+    fs::write(&path, &manifest[..cut]).expect("manifest loses its last line");
+    let mut log = SegmentedLog::open_suffix(&f.dir, f.read.clone(), &c, Some(&t), |_| Ok(())).expect("recovery");
+    assert!(!log.catalog_rewound(), "the recovered log lists every segment the tip covers");
+    let error = log.rewind_catalog(f.read.clone(), &c).expect_err("the leftover next segment refuses the rewind");
+    assert!(format!("{error:#}").contains("still on disk"), "{error:#}");
+}
+
 /// A history head can show a lost tail the tip covers past the log's end. The rewind takes the
 /// segments only the tip listed from their files again, accepting only the bytes it replayed.
 #[test]
