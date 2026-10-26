@@ -307,6 +307,20 @@ jobs:
       - name: Run the RWA price feeds dev scenario
         run: ./scripts/dev-rwa-feeds.sh
 
+  dev-attestation-verifier:
+    needs: changes
+    if: needs.changes.outputs.scenarios == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Run the attestation verifier dev scenario
+        run: ./scripts/dev-attestation-verifier.sh
+
   # Builds the enclave image twice on separate runners with no shared cache, then boots it under
   # QEMU: the production image must refuse mock providers, and the dev image must attest its config
   # hash. `image-compare` fails if the two builds differ by a single byte. The first run also checks
@@ -382,7 +396,7 @@ jobs:
   # area false. Add every new job to `needs`, and a gated one to `$area` below.
   ci-passed:
     if: always()
-    needs: [changes, fmt, file-loc, clippy, test, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, dev-metrics-alerts, dev-alert-outbox, dev-snapshot-restart, dev-rwa-feeds, image, image-compare, review-delta]
+    needs: [changes, fmt, file-loc, clippy, test, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, dev-metrics-alerts, dev-alert-outbox, dev-snapshot-restart, dev-rwa-feeds, dev-attestation-verifier, image, image-compare, review-delta]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -397,7 +411,7 @@ jobs:
                "reference-logs-frozen": "rust", "cargo-deny": "rust", contracts: "contracts",
                "dev-vault-deposits": "scenarios", "dev-metrics-alerts": "scenarios",
                "dev-alert-outbox": "scenarios", "dev-snapshot-restart": "scenarios",
-               "dev-rwa-feeds": "scenarios", image: "image",
+               "dev-rwa-feeds": "scenarios", "dev-attestation-verifier": "scenarios", image: "image",
                "image-compare": "image", "review-delta": "agent_scripts"} as $area
             | all(to_entries[]; .value.result == "success"
                 or .value.result == "skipped" and $run[$area[.key] // ""] == "false")'

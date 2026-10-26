@@ -51,7 +51,7 @@ pub struct AttestationBundle {
     pub tls_public_key_sha256: [u8; 32],
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, serde::Deserialize, Serialize)]
 pub struct Attestation {
     pub provider: String,
     pub enclave_address: String,
@@ -210,6 +210,21 @@ impl AttestationBundle {
     /// The bundle's bytes: `BUNDLE_TAG`, the enclave address, the config hash, and the TLS key hash.
     pub fn encode(&self) -> Vec<u8> {
         [BUNDLE_TAG, &self.enclave_address[..], &self.config_sha256[..], &self.tls_public_key_sha256[..]].concat()
+    }
+
+    /// Parses `bytes` as an encoded bundle; `None` when the bytes are not one.
+    pub fn decode(bytes: &[u8]) -> Option<Self> {
+        let rest = bytes.strip_prefix(BUNDLE_TAG)?;
+        let (enclave_address, rest) = rest.split_at_checked(20)?;
+        let (config_sha256, tls_public_key_sha256) = rest.split_at_checked(32)?;
+        if tls_public_key_sha256.len() != 32 {
+            return None;
+        }
+        Some(Self {
+            enclave_address: enclave_address.try_into().ok()?,
+            config_sha256: config_sha256.try_into().ok()?,
+            tls_public_key_sha256: tls_public_key_sha256.try_into().ok()?,
+        })
     }
 
     /// The 64 bytes a quote binds: the SHA-256 of the encoding, then 32 reserved zero bytes.
