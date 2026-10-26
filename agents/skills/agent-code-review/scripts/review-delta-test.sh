@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Checks review-delta.sh on a scratch repository shaped like the engine's: a renumber after main
-# gains a version, a site the renumber missed, a line moved between methods, binary fixtures (also
-# under a text conversion), bad arguments, and failures. Prints one line per case and exits 1 if
-# any case fails.
+# gains a version and extends the shared all-version prose list, a site the renumber missed, a
+# line moved between methods, binary fixtures (also under a text conversion), bad arguments, and
+# failures. Prints one line per case and exits 1 if any case fails.
 set -euo pipefail
 script="$(cd "$(dirname "$0")" && pwd)/review-delta.sh"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
@@ -43,14 +43,21 @@ engine() { # the method that settles financing
 log() { # version contents
   mkdir -p crates/core/tests/reference && echo "$2" > "crates/core/tests/reference/$1.jsonl"
 }
+notes() { # the shared all-version prose list, like the README bullets and doc comments
+  mkdir -p crates/core && printf '# core\n- the parts: %s\n' "$1" > crates/core/README.md
+}
 commit() { git add -A && git commit -qm "$1" && git rev-parse HEAD; }
 from() { git checkout -q --detach "$1"; }
 
+notes "stress in \`stress.rs\` from \`V13\`, custody finality in \`v20.rs\` from \`V20\`"
 protocol "V19 V20" V20 ""; engine none; base=$(commit base)
+notes "stress in \`stress.rs\` from \`V13\`, custody finality in \`v20.rs\` from \`V20\`, quote hours in \`v21.rs\` from \`V21\`"
 protocol "V19 V20 V21" V21 V21; engine rollover; log v21 '{"pr":1}'; reviewed=$(commit reviewed)
 engine close; moved=$(commit moved)
 from "$reviewed"; log v21 '{"pr":2}'; logs_only=$(commit logs-only)
-from "$base"; protocol "V19 V20 V21" V21 ""; log v21 '{"main":1}'; main=$(commit main)
+from "$base"; notes "stress in \`stress.rs\` from \`V13\`, custody finality in \`v20.rs\` from \`V20\`, custody receipt in \`v21.rs\` from \`V21\`"
+protocol "V19 V20 V21" V21 ""; log v21 '{"main":1}'; main=$(commit main)
+notes "stress in \`stress.rs\` from \`V13\`, custody finality in \`v20.rs\` from \`V20\`, custody receipt in \`v21.rs\` from \`V21\`, quote hours in \`v22.rs\` from \`V22\`"
 protocol "V19 V20 V21 V22" V22 V22; engine rollover; log v22 '{"pr":3}'
 renumbered=$(commit renumber)
 protocol "V19 V20 V21 V22" V22 V21; missed=$(commit missed-site)
