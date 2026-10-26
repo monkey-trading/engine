@@ -235,10 +235,13 @@ finding is fixed by class before the next round.
   the script's exit status.
 - **A renumber the script matches needs no round.** A protocol-version renumber, with the
   reference logs it generates, needs no review round when the script exits 0 with its label
-  pairs. The renumber, and the rebase it comes with, change only labels and reference logs and
-  resolve conflicts only where versions are listed: the version enum, `LATEST`, and the lists of
-  versions and reference logs. Anything else, such as a conflict resolved in the feature's code,
-  makes it another change. The PR still needs its local checks
+  pairs and `main`'s changes between the two bases leave what the PR does unchanged. A renumber
+  ships with a rebase onto a `main` that may just have merged another version whose rules then
+  run with this PR's; that is a behaviour change, and the full-diff rule below takes precedence
+  over this grant. The renumber, and the rebase it comes with, change only labels and reference
+  logs and resolve conflicts only where versions are listed: the version enum, `LATEST`, and
+  the lists of versions and reference logs. Anything else, such as a conflict resolved in the
+  feature's code, makes it another change. The PR still needs its local checks
   ([git-workflow](../../rules/git-workflow.md#local-checks-before-push)) and a green `ci-passed`
   on the new head.
 - **Any other change gets a delta round.** A rebase that resolves conflicts or changes the PR's

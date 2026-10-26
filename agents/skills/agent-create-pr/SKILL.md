@@ -56,7 +56,10 @@ marked ready, may not.
   are filed as `bug` issues — and on which commit the PR is marked ready. Low and Nit findings,
   and Mediums filed as issues, remain unfixed after the last round. A change after it is
   re-checked by its delta, as the review loop says: a mechanical rebase onto `main`, or a
-  protocol-version renumber the delta script matches, needs no new round, and any other change
+  protocol-version renumber the delta script matches, needs no new round when `main`'s changes
+  between the two bases leave what the PR does unchanged — a renumber ships with a rebase onto
+  a `main` that may just have gained a version, and when that alters what the PR does the
+  full-diff round applies instead — and any other change
   gets one round on the residual and the change itself, or on the full diff when either changes
   behaviour beyond resolving a conflict.
 - **Local checks** for the affected crates passed, per git-workflow; CI runs every job
