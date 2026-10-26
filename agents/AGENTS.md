@@ -22,9 +22,11 @@ an index: load only the rule whose hint matches the current action.
   randomness, or floats. `impl Engine` is split by area (`engine/mod.rs` for state and dispatch
   with per-market state in `engine/market.rs`, `marks.rs`, `execution/`,
   `markouts.rs`, `closeout.rs`, `funds.rs`, `deposits.rs` with legacy migration in `deposits/`,
+  `corporate/` for dividend/split instructions, captures and ex-date adjustments,
   `admin.rs`, `stress.rs`, `auth.rs`). `withdrawal.rs` reserves FIFO requests and creates
   whole-USDC partial approvals under the V22 rules; `merkle/withdrawal.rs` proves each approval
-  against a root. Unit tests sit
+  against a root. `tests/corporate_actions/` exercises cash, calendars, splits and replay. Unit
+  tests sit
   inline; protocol tests are in `tests/` by area, with the shared harness in `tests/common/`.
   `tests/reference/` holds one reference log per protocol version, written once by
   `examples/reference_log/` and replayed to its roots by `tests/reference_logs.rs`;
@@ -119,6 +121,7 @@ an index: load only the rule whose hint matches the current action.
   gives the method, sources, results, and how to re-run. Research may name the platforms whose
   public data it studies, inside `research/` and its PR only.
 - **scripts/** — `check-file-loc.sh`, the 500-line cap per Rust file, opted in per crate;
+  `dev-corporate-actions.sh`, the signed localhost TLS/API dividend, split and restart scenario;
   `check-reference-logs.sh`, which fails a branch that changes a committed reference log;
   `dev-vault-deposits.sh`, the vault deposit and RPC quorum dev scenarios on Anvil, with
   `dev-rpc-proxy.py` providing three local fault-injection endpoints; `dev-metrics-alerts.sh`,
@@ -154,7 +157,8 @@ an index: load only the rule whose hint matches the current action.
   Actions are pinned by commit SHA. `ci-passed` is the one CI check branch rules require: it passes
   only when every other job succeeded or was skipped because its area did not change, so each new
   job must be added to its `needs` and its area map, and every path it reads to `changes`. The test
-  job also checks command latency budgets against 100k-account fixtures.
+  job also runs the corporate-action dev scenario and checks command latency budgets against
+  100k-account fixtures.
 - **agents/** — this index, `rules/`, and `skills/` (incl. `skills/vendor/` pull-on-demand
   packs); root `AGENTS.md` / `CLAUDE.md` symlink to `agents/AGENTS.md`.
 - **Cargo.toml** — workspace manifest, shared dependencies, and the Cargo profiles (release keeps
@@ -223,6 +227,8 @@ Run from the repo root:
   key-distribution stand-in issues a test certificate chain; a test-signed SEV-SNP report verifies
   against a release manifest and names the release, while a mock quote, an unlisted configuration,
   an altered measurement, and an unattested checkpoint signer fail; needs only Cargo)
+- Corporate-action dev scenario: `./scripts/dev-corporate-actions.sh` (runs the isolated signed
+  operator/TLS/API scenario with deterministic venue time, restart and public replay)
 - Vault deposit dev scenario: `./scripts/dev-vault-deposits.sh` (starts Anvil, deploys the vault
   and a mock USDC, runs a node on `config/anvil.toml`, and checks each deposit credits once;
   `RPC_QUORUM_SCENARIO=1` also injects a fictional deposit, stops providers and checks recovery;

@@ -8,7 +8,7 @@ use crate::futures::FuturesState;
 use crate::market::MarketSpec;
 use crate::price::{Index, SourceQuote};
 use crate::stress::StressState;
-use crate::types::{AccountId, OrderId};
+use crate::types::{AccountId, Millis, OrderId};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MarketState {
@@ -39,6 +39,12 @@ pub struct MarketState {
     /// market, and left out of the encoding then.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub futures: Option<FuturesState>,
+    /// A failed action prevents dealing on books that need operator intervention.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub corporate_action_blocked: bool,
+    /// Quotes stamped before the most recent split are in the previous share units.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_split_at: Option<Millis>,
 }
 
 impl MarketState {
@@ -57,6 +63,8 @@ impl MarketState {
             resting: BTreeMap::new(),
             processed_index: None,
             futures: None,
+            corporate_action_blocked: false,
+            last_split_at: None,
         }
     }
 

@@ -17,10 +17,10 @@ use crate::engine::{Engine, Markout};
 use crate::merkle::leaf::{deposit_key, deposit_transaction_key, legacy_deposit_key};
 use crate::merkle::{
     AccountLeaf, AccountProof, EntitlementProof, MarketLeaf, MarketProof, PositionProof, SparseMerkleTree,
-    WithdrawalApprovalProof, account_key, credited_ref_hash, credited_ref_key, entitlement_hash, entitlement_key,
-    globals_key, json_hash, market_key, markout_hash, markout_key, order_hash, order_key, period_result_hash,
-    period_result_key, position_hash, position_key, request_nonce_hash, request_nonce_key, withdrawal_approval_hash,
-    withdrawal_approval_key, withdrawal_queue_hash, withdrawal_queue_key,
+    WithdrawalApprovalProof, account_key, corporate_action_key, corporate_reference_key, credited_ref_hash,
+    credited_ref_key, entitlement_hash, entitlement_key, globals_key, json_hash, market_key, markout_hash, markout_key,
+    order_hash, order_key, period_result_hash, period_result_key, position_hash, position_key, request_nonce_hash,
+    request_nonce_key, withdrawal_approval_hash, withdrawal_approval_key, withdrawal_queue_hash, withdrawal_queue_key,
 };
 use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
@@ -72,6 +72,8 @@ struct Touched {
     legacy_deposits: BTreeSet<String>,
     withdrawal_queue: BTreeSet<u64>,
     withdrawal_approvals: BTreeSet<B256>,
+    corporate_actions: BTreeSet<String>,
+    corporate_refs: BTreeSet<String>,
     changed: Changed,
 }
 
@@ -136,12 +138,24 @@ impl Engine {
             legacy_deposits,
             withdrawal_queue,
             withdrawal_approvals,
+            corporate_actions,
+            corporate_refs,
             changed: Changed { markouts, positions, orders },
         } = match &self.tree {
             Some(_) => touched,
             None => self.every_key(),
         };
         let mut changes = BTreeMap::from([(globals_key(), Some(json_hash(&self.globals())))]);
+        changes.extend(
+            corporate_actions
+                .iter()
+                .map(|id| (corporate_action_key(id), self.corporate_actions.get(id).map(json_hash))),
+        );
+        changes.extend(
+            corporate_refs
+                .iter()
+                .map(|id| (corporate_reference_key(id), self.corporate_refs.contains(id).then(|| json_hash(id)))),
+        );
         let account_leaves: Vec<(AccountId, Option<AccountLeaf>)> =
             accounts.into_iter().map(|id| (id, self.accounts.get(&id).map(AccountLeaf::of))).collect();
         let market_leaves: Vec<(MarketId, Option<MarketLeaf>)> =
@@ -305,6 +319,11 @@ impl Engine {
         self.changed.orders.insert((account, order_id));
     }
 
+    /// Records a split-normalized pending markout for its committed leaf.
+    pub(crate) fn record_markout_change(&mut self, offset: usize) {
+        self.changed.markouts.insert(self.markout_base + offset as u64);
+    }
+
     /// Queues a markout, recording its index for the state root.
     pub(crate) fn queue_markout(&mut self, markout: Markout) {
         self.markouts.push_back(markout);
@@ -363,6 +382,8 @@ impl Engine {
             legacy_deposits: self.legacy_deposits.take_touched(),
             withdrawal_queue: self.withdrawal_queue.take_touched(),
             withdrawal_approvals: self.withdrawal_approvals.take_touched(),
+            corporate_actions: self.corporate_actions.take_touched(),
+            corporate_refs: self.corporate_refs.take_touched(),
             changed: std::mem::take(&mut self.changed),
         }
     }
@@ -382,6 +403,8 @@ impl Engine {
             legacy_deposits: self.legacy_deposits.keys().cloned().collect(),
             withdrawal_queue: self.withdrawal_queue.keys().copied().collect(),
             withdrawal_approvals: self.withdrawal_approvals.keys().copied().collect(),
+            corporate_actions: self.corporate_actions.keys().cloned().collect(),
+            corporate_refs: self.corporate_refs.iter().cloned().collect(),
             changed: Changed {
                 markouts: (self.markout_base..).take(self.markouts.len()).collect(),
                 positions: accounts()
@@ -427,6 +450,8 @@ impl Engine {
             withdrawal_queue: _,
             withdrawal_next_ticket,
             withdrawal_approvals: _,
+            corporate_actions: _,
+            corporate_refs: _,
             changed: _,
             tree: _,
             hot_indexes: _,

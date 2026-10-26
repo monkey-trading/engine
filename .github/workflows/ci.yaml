@@ -67,6 +67,8 @@ jobs:
                   areas+=" rust" ;;
                 # The deposit and checkpoint scenarios deploy the vault.
                 contracts/*) areas+=" contracts scenarios" ;;
+                # The test job runs the corporate-action scenario.
+                scripts/dev-corporate-actions.sh) areas+=" rust" ;;
                 scripts/dev-*) areas+=" scenarios" ;;
                 image/* | scripts/build-image.sh | scripts/check-image.sh | scripts/check-image-retry.sh)
                   areas+=" image" ;;
@@ -135,6 +137,8 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Test
         run: cargo test --workspace --locked
+      - name: Run the signed corporate-action dev scenario
+        run: ./scripts/dev-corporate-actions.sh
       - name: Check sequencer command latency at 100k accounts
         run: cargo test -p engine-core --test hot_path_benchmark --locked -- --ignored --nocapture
       - name: Test the node's production build

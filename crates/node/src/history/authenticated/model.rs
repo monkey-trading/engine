@@ -191,8 +191,15 @@ pub(super) fn event_kind(event: &Event) -> Result<u8> {
         Event::CustodyDepositRejected { .. } => "custody_deposit_rejected",
         Event::WithdrawalQueued { .. } => "withdrawal_queued",
         Event::WithdrawalQueueUpdated { .. } => "withdrawal_queue_updated",
+        Event::CorporateDividend { .. } => "corporate_dividend",
+        Event::CorporateCashInLieu { .. } => "corporate_cash_in_lieu",
         // Listed, not matched by a wildcard, so a new event does not compile until it is classified.
         Event::HouseCapitalMoved { .. }
+        | Event::CorporateActionScheduled { .. }
+        | Event::CorporateEntitlementsCaptured { .. }
+        | Event::CorporateSplit { .. }
+        | Event::CorporateActionApplied { .. }
+        | Event::CorporateActionFailed { .. }
         | Event::BenchmarkRateMissing { .. }
         | Event::BenchmarkRateObserved { .. }
         | Event::BenchmarkRateUndated { .. }

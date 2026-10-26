@@ -12,6 +12,16 @@ fn f(s: &str) -> Fixed {
 }
 
 #[test]
+fn checked_product_quotients_reject_zero_and_overflow_and_preserve_signed_rounding() {
+    let maximum = Fixed::from_raw(i128::MAX);
+    assert_eq!(maximum.checked_mul_div(maximum, maximum, Rounding::Down), Some(maximum));
+    assert_eq!(maximum.checked_mul_div(f("2"), Fixed::ONE, Rounding::Down), None);
+    assert_eq!(Fixed::ONE.checked_mul_div(Fixed::ONE, Fixed::ZERO, Rounding::Down), None);
+    assert_eq!(f("-0.5").checked_mul_div(f("0.000000001"), Fixed::ONE, Rounding::Down), Some(f("-0.000000001")));
+    assert_eq!(f("-0.5").checked_mul_div(f("0.000000001"), Fixed::ONE, Rounding::Up), Some(Fixed::ZERO));
+}
+
+#[test]
 fn directed_rounding_brackets_the_exact_result_for_either_sign() {
     // 0.000000003 * 1.5 = 0.0000000045, and 1 / 3 = 0.333..., each of either sign.
     let cases = [

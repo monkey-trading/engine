@@ -52,8 +52,12 @@ impl Engine {
     ///   by notional, or with weighting that fails `NotionalWeighting::validate`
     /// - `InitEmissions` before `V19`, once emissions are initialised, or with a schedule that starts
     ///   before the sequenced time or has a budget out of range
+    /// - `ScheduleCorporateAction` with any error case of `Engine::schedule_corporate_action`
+    /// - `UpsertMarket` changing the calendar, asset class, quote currency or symbol of a market
+    ///   with a pending corporate action
     pub(crate) fn admin(&mut self, cmd: &AdminCommand, events: &mut Vec<Event>) -> Result<(), String> {
         match cmd {
+            AdminCommand::ScheduleCorporateAction(action) => self.schedule_corporate_action(action, events)?,
             AdminCommand::SetParams(params) => {
                 params.validate_for(self.protocol_version)?;
                 if self.protocol_version >= ProtocolVersion::V8 {
@@ -102,6 +106,7 @@ impl Engine {
             }
             AdminCommand::UpsertMarket(spec) => {
                 spec.validate()?;
+                self.check_corporate_listing(spec)?;
                 if spec.schedule.has_exceptions() && self.protocol_version < ProtocolVersion::V4 {
                     return Err(format!("dated closures and special sessions need protocol {:?}", ProtocolVersion::V4));
                 }
@@ -292,10 +297,14 @@ impl Engine {
     /// notional weighting, and protocol activation at any time, and genesis, which credits its house
     /// capital last.
     /// Error cases:
+    /// - a corporate instruction, which only the signed operator channel accepts
     /// - from `V8`, an operator command once any deposit or house capital is credited
     /// - the emission schedule, which only the operator's signature initialises
     /// - any error case of `admin`
     pub(crate) fn unsigned_admin(&mut self, cmd: &AdminCommand, events: &mut Vec<Event>) -> Result<(), String> {
+        if matches!(cmd, AdminCommand::ScheduleCorporateAction(_)) {
+            return Err("corporate instructions require the signed operator channel".into());
+        }
         if self.protocol_version >= ProtocolVersion::V8
             && cmd.is_operator_command()
             && (!self.credited_refs.is_empty() || !self.deposits.is_empty())

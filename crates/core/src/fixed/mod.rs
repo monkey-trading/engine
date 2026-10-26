@@ -239,6 +239,14 @@ impl Fixed {
         Fixed(in_range(mul_div_raw(self.0, num.0, den.0, rounding)))
     }
 
+    /// A checked exact-product quotient; `None` for a zero divisor or an unrepresentable result.
+    pub fn checked_mul_div(self, num: Fixed, den: Fixed, rounding: Rounding) -> Option<Fixed> {
+        if den.is_zero() {
+            return None;
+        }
+        mul_div_raw(self.0, num.0, den.0, rounding).map(Fixed)
+    }
+
     /// `bps` basis points of this value, truncated toward zero.
     pub fn mul_bps(self, bps: i64) -> Fixed {
         self.mul_bps_rounded(bps, Rounding::TowardZero)

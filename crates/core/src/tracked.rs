@@ -59,6 +59,12 @@ impl<T: Ord> Deref for TrackedSet<T> {
 }
 
 impl<K: Ord + Clone, V> TrackedMap<K, V> {
+    /// Removes an entry and records its key for deleting the committed leaf.
+    pub fn remove(&mut self, key: &K) -> Option<V> {
+        self.touched.insert(key.clone());
+        self.map.remove(key)
+    }
+
     /// The entry at `key` for change, recording `key` whether or not it is present.
     pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
         self.touched.insert(key.clone());
@@ -75,12 +81,6 @@ impl<K: Ord + Clone, V> TrackedMap<K, V> {
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
         self.touched.insert(key.clone());
         self.map.insert(key, value)
-    }
-
-    /// Removes an entry, recording the leaf that must disappear from the state tree.
-    pub fn remove(&mut self, key: &K) -> Option<V> {
-        self.touched.insert(key.clone());
-        self.map.remove(key)
     }
 
     /// Every entry for change, recording every key; for maps that stay small, such as markets.
@@ -107,6 +107,11 @@ impl<K: Ord + Clone, V> TrackedMap<K, V> {
 }
 
 impl<T: Ord + Clone> TrackedSet<T> {
+    /// Whether the set is empty, for omitting inactive protocol state from serialization.
+    pub fn is_empty(&self) -> bool {
+        self.set.is_empty()
+    }
+
     /// Inserts `value`, recording it; returns whether it was new.
     pub fn insert(&mut self, value: T) -> bool {
         self.touched.insert(value.clone());

@@ -106,6 +106,10 @@ this crate and reproduce the signed state roots exactly.
   and the queue approves its head, in part when physical cash is short, as an immutable payout with
   its own nonce. Payout capacity starts at the conserved cash whose principal is final and grows
   only with final deposit principal and house capital
+- From protocol `V23`, signed corporate instructions capture prior-close stock/index entitlements,
+  apply long-net/short-gross cash at the ex-date opening, and scale every split quantity/price
+  atomically, rounding once and settling rounded-off fractions in cash, with chronological
+  financing catch-up
 
 ## Repository Structure
 
@@ -115,6 +119,10 @@ this crate and reproduce the signed state roots exactly.
   roll position
 - `src/hot_indexes.rs` — derived holder, trigger, pending-receipt and above-frontier coverage indexes, rebuilt after recovery
 - `src/marks.rs` — venue prices, and marking a market and the markets that convert at its index
+- `src/corporate/` — authenticated instruction types and scheduling (`mod.rs`), actual venue
+  boundary validation (`calendar.rs`), checked dividend cash transfers and recorded-FX
+  conversion (`cash.rs`), atomic split scaling with rounding and cash in lieu (`split.rs`), and
+  chronological financing/action catch-up (`timeline.rs`)
 - `src/execution/` — order placement, triggers, pricing, risk checks, and booking fills (`mod.rs`),
   the checks an order passes first (`validation.rs`), and unit tests (`tests.rs`)
 - `src/markouts.rs` — each fill's markout, queued and then marked against the index after its
@@ -173,6 +181,8 @@ this crate and reproduce the signed state roots exactly.
   outside a market's hours from `V21`, and `tests/futures.rs` markets priced from futures
 - `tests/reference/` — one reference log per protocol version: each line is a sequenced command and
   the state root after it
+- `tests/corporate_actions.rs` and `tests/corporate_actions/` — signed scheduling, cash, split,
+  calendar, missed rollover, restart and replay tests, with shared fixtures in `support.rs`
 - `tests/reference_logs.rs` — replays every reference log and fails at the first seq whose root
   differs
 - `tests/invariants/` — property tests over generated sessions (`main.rs`), the session generator
@@ -198,7 +208,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V22` parts (`v15.rs` to `v22.rs`)
+  `V15` to `V23` parts (`v15.rs` to `v23.rs`)
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
 

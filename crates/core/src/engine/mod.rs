@@ -21,7 +21,8 @@ use crate::Fixed;
 use crate::account::{Account, Position};
 use crate::auth::{ClientAuth, Operator};
 use crate::benchmark::BenchmarkHistory;
-use crate::command::{Command, Sequenced};
+use crate::command::{AdminCommand, Command, Sequenced};
+use crate::corporate::CorporateEntitlement;
 use crate::deposits::{CustodyCheckpoint, LegacyDeposit, RecordedDeposit};
 use crate::emissions::{Emissions, PeriodResult, TokenUnits};
 use crate::event::{Event, Reject};
@@ -95,6 +96,12 @@ pub struct Engine {
     /// Each account's cumulative MONKEY entitlement.
     #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
     pub(crate) entitlements: TrackedMap<AccountId, TokenUnits>,
+    /// Pending instructions, including captured previous-close quantities and failed instructions.
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) corporate_actions: TrackedMap<String, CorporateEntitlement>,
+    /// Accepted corporate identities, retained after completion to reject redelivery.
+    #[serde(default, skip_serializing_if = "TrackedSet::is_empty")]
+    pub(crate) corporate_refs: TrackedSet<String>,
     /// Finalised custody scan progress is sequenced, never recovered from a host cursor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) custody_checkpoint: Option<CustodyCheckpoint>,
@@ -177,10 +184,43 @@ impl Engine {
         self.now = sequenced.ts;
 
         let mut events = Vec::new();
+        // From `V21`, a quote held across a closure could never count under the hours rules, so it
+        // drops before anything this command does: catch-up at an intermediate boundary, a close-out
+        // check, or an early outcome for a rejected batch or activation must never act on it.
+        if self.protocol_version >= ProtocolVersion::V21 {
+            self.drop_quotes_across_closures(last_now);
+        }
         // From `V19`, a period the sequenced time has passed is final before anything this command
         // does, so every effect of the command, market processing and rollovers included, belongs to
         // the next period.
         self.finalise_emissions(&mut events);
+        let corporate = self.protocol_version >= ProtocolVersion::V23;
+        let mut corporate_margin = false;
+        let mut early_outcome = None;
+        if corporate {
+            let activation = matches!(sequenced.cmd, Command::Admin(AdminCommand::ActivateProtocol { .. }));
+            // Install authenticated dated history before catch-up, without letting today's
+            // incoming quote price any earlier rollover or corporate boundary.
+            if sequenced.cmd.is_benchmark_batch() || activation {
+                let result = match &sequenced.cmd {
+                    Command::Admin(cmd) => self.unsigned_admin(cmd, &mut events),
+                    Command::SignedAdmin(req) => self.signed_admin(req, &mut events),
+                    _ => unreachable!("benchmark batches and activations are admin commands"),
+                };
+                early_outcome = Some(match result {
+                    Ok(()) => Event::AdminApplied,
+                    Err(reason) => Event::AdminRejected { reason },
+                });
+            }
+            // An activation, like a rejected benchmark batch, leaves every missed rollover and due
+            // corporate boundary to the next admitted command, which the node holds until the
+            // dated snapshot is in.
+            if activation || matches!(early_outcome, Some(Event::AdminRejected { .. })) {
+                events.extend(early_outcome);
+                return Ok(events);
+            }
+            corporate_margin = self.run_corporate_timeline(last_now, sequenced.ts, &mut events);
+        }
         // From `V12`, a price command's quotes are stored first, then every market is brought to the
         // sequenced time, so no fill or check, a rollover's included, acts on an index the market
         // does not have at that time, or before it is processed.
@@ -192,17 +232,23 @@ impl Engine {
                 }
                 _ => None,
             };
-            if self.protocol_version >= ProtocolVersion::V21 {
-                self.drop_quotes_across_closures(last_now);
-            }
             self.advance_markets(priced, &mut events);
+        }
+        if corporate {
+            if corporate_margin {
+                self.check_all_closeouts(&mut events);
+            }
+            if self.next_rollover == Some(self.now) {
+                self.run_one_rollover(&mut events);
+            }
         }
         let benchmark_batch = self.protocol_version >= ProtocolVersion::V18 && sequenced.cmd.is_benchmark_batch();
         let activating_dated_rates = sequenced.cmd.is_dated_rate_activation();
-        if !benchmark_batch && !activating_dated_rates {
+        if !corporate && !benchmark_batch && !activating_dated_rates {
             self.run_rollovers(&mut events);
         }
         match &sequenced.cmd {
+            _ if early_outcome.is_some() => events.extend(early_outcome),
             // From `V12` the quotes are stored and processed above.
             Command::Prices { .. } if v12 => {}
             Command::Prices { market, quotes } => self.on_prices(*market, quotes, &mut events),
@@ -225,7 +271,7 @@ impl Engine {
                 Err(reason) => events.push(Event::AdminRejected { reason }),
             },
         }
-        if benchmark_batch && events.contains(&Event::AdminApplied) {
+        if !corporate && benchmark_batch && events.contains(&Event::AdminApplied) {
             self.run_rollovers(&mut events);
         }
         self.refresh_all_stress(&sequenced.cmd, &mut events);
@@ -422,7 +468,7 @@ impl Engine {
     pub(crate) fn refresh_session(&mut self, market_id: MarketId, events: &mut Vec<Event>) {
         let now = self.now;
         let Some(market) = self.markets.get(&market_id) else { return };
-        let open = market.spec.schedule.is_open(now);
+        let open = market.spec.schedule.is_open(now) && !market.corporate_action_blocked;
         if open == market.open {
             return;
         }

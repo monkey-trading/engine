@@ -212,7 +212,7 @@ impl Metrics {
             .flat_map(|event| REJECT_KINDS.map(|reason| (*event, reason)))
             .chain(DEPOSIT_REJECT_KINDS.map(|reason| ("custody_deposit_rejected", reason)))
             .chain(PRICES_REJECT_REASONS.map(|reason| ("prices_rejected", reason)))
-            .chain([("admin_rejected", "other")]);
+            .chain([("admin_rejected", "other"), ("corporate_action_failed", "other")]);
         rejections.for_each(|(event, reason)| {
             let _ = metrics.rejections.get_or_create(&RejectionLabels { event, reason });
         });
@@ -250,6 +250,9 @@ impl Metrics {
             }
             Event::AdminRejected { .. } => {
                 rejection("admin_rejected", "other");
+            }
+            Event::CorporateActionFailed { .. } => {
+                rejection("corporate_action_failed", "other");
             }
             _ => {}
         }

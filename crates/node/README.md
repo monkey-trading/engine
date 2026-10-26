@@ -224,6 +224,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/benchmark_tests/schedule/reconnect.rs` — watch-only transport failure during a publisher fetch
 - `src/api/admin_tests.rs` — admin route tests, and the operator channel dev scenario through
   `engine admin`
+- `src/api/admin_tests/corporate.rs` — signed corporate-action TLS/API dev scenario, including
+  prior-close holdings, a dividend followed by a split, restart and public-log replay
 - `src/api/stream/mod.rs` — the WebSocket stream: backfill from disk, then live, under the
   subscriber cap, reading what the subscriber sends
 - `src/api/stream/tests.rs` — feed, backfill, and subscriber tests
@@ -257,7 +259,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/history/tests/rebuild.rs` — power losses and other damage: an index left behind the log
   resumes, and one ahead of it, contradicting it, damaged, or pruned under another retention is
   rebuilt
-- `src/test_support/mod.rs` — the shared test harness, including the capture of alerts and their levels
+- `src/test_support/mod.rs` — the shared test harness, including the capture of alerts and their
+  levels
 - `src/test_support/events.rs` — one sample of every engine event
 - `src/test_support/log_view.rs` — publishes a log directory's manifest for tests
 - `src/test_tracing.rs` — the tracing setup the test collectors share: one process-wide
@@ -392,7 +395,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/tests/legacy/cache.rs` — bounded consumed header retention and unchanged approval/refusal outcomes
 - `src/custody/tests/anvil_finality.rs` — Anvil receipts through RPC quorum, watcher and sequencer approvals
 - `src/custody/tests/reorg.rs` — reorgs and forked answers against the proven chain
-- `src/feeds/mod.rs` — the feed index and the mock feed
+- `src/feeds/mod.rs` — the feed index and the mock feed, whose walks follow scheduled splits into
+  the new share units
 - `src/feeds/venue/mod.rs` — the venue task: connect, subscribe, sequence quotes, reconnect, and
   hold back quotes the engine would refuse
 - `src/feeds/venue/alerts.rs` — the venue task's alerts: outages, silent symbols, a clock ahead of
@@ -422,7 +426,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   what the feed sequences, and the wait for the next alert
 - `src/feeds/tests/late.rs` — venue tasks against a sequencer that answers late: when a quote
   counts as the venue quoting, and how a connection's last quotes are settled after it ends
-- `src/feeds/tests/mock.rs` — the mock feed stopping one market at its `stop_after`
+- `src/feeds/tests/mock.rs` — the mock feed stopping one market at its `stop_after` and skipping
+  one the engine has closed, and its walks rescaling at a split's opening and restarting from a
+  split market's mark
 - `src/feeds/tests/scenario.rs` — the crypto feeds' dev scenario through the sequencer and engine
 - `src/feeds/tests/rwa.rs` — the RWA price feeds' dev scenario: loopback vendors price FX, index,
   commodity, and share markets through the sequencer, across a market open and a futures roll,
@@ -503,6 +509,7 @@ cargo run -p engine-node -- admin --pin $PIN set-params params.toml           # 
 # Once per log, from protocol V19: when emission period 0 starts (not before the command is
 # sequenced) and its budget in MONKEY base units. Production values need the owner's approval.
 cargo run -p engine-node -- admin --pin $PIN init-emissions --start 2027-01-01T00:00:00Z --period-budget <units>
+cargo run -p engine-node -- admin --pin $PIN schedule-corporate-action action.toml  # see the runbook
 
 # Download the archive: the manifest, then each segment it lists (`--retry` waits out a 429)
 curl -kf --retry 5 --create-dirs -o archive/manifest.jsonl https://127.0.0.1:8080/v1/archive/manifest.jsonl
@@ -914,11 +921,12 @@ the event's own fields. `?before=<cursor>` and `?after=<cursor>` bound the page,
 Passing a page's `next` as `before` gives the next, older page, until `next` is null. `?kind=` takes
 one event `type`: `deposited`, `deposit_rejected`, `custody_deposit_changed`,
 `custody_deposit_rejected`, `withdrawal_approved`, `withdrawal_rejected`, `order_accepted`,
-`order_rejected`, `order_cancelled`, `fill`, `close_out`, `bad_debt`, `financing`, or
-`emission_allocated`. `?limit=` is 1 to 200, 50 by default. A page is one search of a SQLite index that reads
-at most `limit + 1` entries, and at most 16 pages are read at once. Until the index has taken every
-command the log held when the node started, the route answers 503 (`history is catching up with the
-log`). History is public, like the log.
+`order_rejected`, `order_cancelled`, `fill`, `close_out`, `bad_debt`, `financing`,
+`emission_allocated`, `withdrawal_queued`, `withdrawal_queue_updated`, `corporate_dividend`, or
+`corporate_cash_in_lieu`. `?limit=` is 1 to 200, 50 by default. A page is one search of a SQLite
+index that reads at most `limit + 1` entries, and at most 16 pages are read at once. Until the index
+has taken every command the log held when the node started, the route answers 503 (`history is
+catching up with the log`). History is public, like the log.
 
 Without `[snapshots]`, the history index is a SQLite file in `history.dir`, derived from the log
 alone. A supervised task
@@ -1067,6 +1075,90 @@ bound a hostile host. Across restarts, retention uses host wall time; a backward
 future-dated rows, but trusted time is not sealed with the outbox. The webhook URL remains a
 host-supplied credential, and HTTP client logs stay at `warn` regardless of `logging.level`.
 
+### Corporate actions operator runbook
+
+Protocol V23 accepts single-stock dividends and splits, and index dividend points, through
+`engine admin schedule-corporate-action <file.toml>`. The client signs the complete instruction,
+nonce and expiry through the existing pinned TLS operator channel. The public log records that signature,
+`admin_applied` or `admin_rejected`, and the eventual application events. A future authenticated
+feed can submit the same core instruction types; feed integration is separate.
+
+Prepare one instruction per market, opening and adjustment kind. Its required fields are `id` (a
+unique immutable identity), `market`, `previous_close` and `ex_open` (UTC epoch milliseconds), and
+`[adjustment]`. Both boundaries must match the listed venue calendar, including holidays, special
+sessions and DST; `previous_close` must be the close immediately before `ex_open`. Submit strictly
+before that close. Submission at the close or later is rejected because the engine cannot infer
+historical holdings. A pending action locks its market's calendar, symbol, asset class and quote
+currency; margin and spread changes remain available.
+
+For a dividend, `[adjustment]` contains `kind = "dividend"`, `gross_per_unit` in quote currency per
+share or index unit held at `previous_close` (so a dividend going ex after a split is entered per
+post-split share), and the required `withholding_rate`, a decimal fraction from `"0"` to `"1"`,
+inclusive. The operator supplies the applicable rate on every signed instruction; the engine has no
+default tax rate. Long quantities receive the net amount; short quantities pay the gross. For an
+equity split it contains `kind = "split"`, `new_units` and `old_units`, positive unequal integers
+such as 4 and 1 for a four-for-one split. ETFs, bonds, currencies, commodities and crypto do not
+receive these adjustments, and indices do not split through this command.
+
+The engine captures quantities before any command at the previous-close timestamp, retains them
+across restart, and applies the action before any opening fill or margin check. Cash credits round
+down and debits round up at each step. Non-USD amounts convert at the market's recorded FX valuation
+mark, including a stale mark, using the same policy as financing valuation; an absent or unusable
+mark fails explicitly. Cash transfers have exactly opposite house offsets. Cash adjustments and
+missed financing rollovers run in chronological order. At one timestamp, captures precede opening
+adjustments; dividends pay the captured pre-split holdings first, then splits apply, each in
+market/id order. An incoming opening quote is stored in the adjusted units before execution and
+margin checks; a coincident rollover follows that processing. A protocol activation, like a rejected
+benchmark batch, runs no catch-up: missed rollovers and due openings wait for the next admitted
+command.
+
+Splits scale live positions and entry prices, resting orders, stored source quotes, marks and
+processed indices, aggregates, stress price references and pending markouts, preflighting every
+value and cash transfer before changing the books. Each scaled price rounds once at nine decimals:
+an entry against its holder (up for a long, down for a short), a resting limit or stop price to the
+side that never executes sooner than the client asked (a buy limit and a sell stop down, a sell
+limit and a buy stop up), and marks, quotes, indices, stress references and markout prices toward
+zero. Quantities round toward zero. The fraction rounded off a position is closed at the post-split
+mark: its PnL against the rounded entry, rounded down and converted at the recorded FX valuation
+mark, moves between the account and the house as `corporate_cash_in_lieu`, with no profit fee; like
+a fill's realised P&L, it counts toward the account's MONKEY emission weight, which dividends do
+not. A resting order whose quantity or price rounds to zero, or whose quantity would exceed the
+1,000,000,000 input bound, is cancelled with reason `split`. An account the split leaves flat writes
+off any negative balance against the house, as a close-out does. Pending dividend instructions keep
+their signed amounts, and USD risk limits and historical fill notionals keep their values. Stored
+scaled quotes retain their original ages; an incoming quote stamped before the most recent split is
+rejected. Quotes received between a scheduled split's previous close and opening are rejected
+because a venue may already publish the new share units during that closure. Quotes timestamped
+across a future split boundary are also rejected. The first quote at the opening uses the new units;
+a failed split refuses further quotes while its market stays blocked.
+
+Check `corporate_action_scheduled` and the matching `admin_applied` after submission, then
+`corporate_entitlements_captured` at the cutoff and `corporate_action_applied` at the opening.
+Dividend events identify each account's signed USD movement and FX mark; split events identify the
+ratio, followed by each account's cash in lieu and each cancelled order. Replaying the log verifies
+these events and their state roots. Reusing an accepted id or submitting a second action of the same
+kind at that market opening is rejected. An accepted instruction cannot be cancelled or replaced.
+
+A failed action emits `corporate_action_failed` and a Critical `corporate_action_failed` alert, and
+commits no partial economic mutation. A split fails when a market price or entry rounds to zero, a
+scaled value overflows, a position quantity would exceed the 1,000,000,000 input bound, or a
+rounded-off fraction has no mark or usable FX valuation to settle at. Its market then stops dealing,
+including closing trades whose share units would be ambiguous, refuses quotes and further actions,
+keeps its listing locked, and stops accruing financing. Nothing in this protocol unblocks it; an
+operator repair command is a follow-up. A dividend fails without a usable FX valuation mark or on an
+unrepresentable transfer: it pays nothing, and the market keeps dealing. Other markets retain their
+normal rules. A refused or replayed operator request consumes no extra entitlement.
+
+Run `./scripts/dev-corporate-actions.sh` for the isolated local scenario. It uses the published mock
+operator key, an in-process sequencer with controlled trusted time and a loopback TLS API: long and
+short positions plus a resting order, a signed dividend, a signed four-for-one split, a market order
+before a new quote, shutdown/recovery and public replay. Its withholding input is synthetic test
+data. The CI test job runs this script. V23 activation requires the preceding V19, V20, V21 and V22
+implementations and their immutable reference logs; rollback after activation requires a build that
+understands V23 or a fresh log. On a node run from `config/dev.toml`, the mock feed rescales each
+market's walk by the split ratio for quotes stamped at or after a scheduled split's opening, and a
+restarted feed walks a market that has split from its current mark.
+
 ## Configuration
 
 `CONFIG_PATH`: path to the node config file, used when `run` or `admin` is given no config flag.
@@ -1193,6 +1285,8 @@ cargo test -p engine-node --features production --lib production_build
 # Dev scenario: loopback market-data vendors price FX, index and commodity futures, and a share,
 # two vendors each, across a market open and a futures roll, and the log replays
 ./scripts/dev-rwa-feeds.sh
+# Dev scenario: a signed dividend and four-for-one split through the TLS API, restart and replay
+./scripts/dev-corporate-actions.sh
 ```
 
 ## Authors

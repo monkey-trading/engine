@@ -16,6 +16,7 @@ use chrono::{DateTime, Utc};
 use clap::{ArgAction, Args, Subcommand};
 use engine_core::auth::{MAX_EXPIRY_AHEAD_MS, Operator, RequestAuth};
 use engine_core::command::{AdminCommand, AdminRequest};
+use engine_core::corporate::CorporateAction;
 use engine_core::eip712;
 use engine_core::emissions::{EmissionSchedule, TokenUnits};
 use engine_core::event::Event;
@@ -68,6 +69,8 @@ pub struct AdminArgs {
 /// The admin commands the operator may send.
 #[derive(Subcommand)]
 pub enum AdminAction {
+    /// Schedule a corporate action from TOML, before its previous-close cutoff.
+    ScheduleCorporateAction { file: PathBuf },
     /// List a market, or replace a listed market's spec and calendar, from a TOML market spec.
     UpsertMarket { file: PathBuf },
     /// Replace the protocol parameters from a TOML file.
@@ -155,6 +158,11 @@ impl AdminAction {
     /// - a spec or parameters file cannot be read, does not parse, or fails validation
     fn command(self) -> anyhow::Result<AdminCommand> {
         Ok(match self {
+            AdminAction::ScheduleCorporateAction { file } => {
+                let action: CorporateAction = read_toml(&file)?;
+                action.validate().map_err(anyhow::Error::msg)?;
+                AdminCommand::ScheduleCorporateAction(action)
+            }
             AdminAction::UpsertMarket { file } => {
                 let spec: MarketSpec = read_toml(&file)?;
                 spec.validate().map_err(anyhow::Error::msg).with_context(|| file.display().to_string())?;
