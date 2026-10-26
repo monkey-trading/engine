@@ -39,13 +39,29 @@ fn a_reopened_segment_is_synced_before_its_entries_count_as_flushed() {
         SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(10, watch::channel(Manifest::default()).0).unwrap();
     assert!(writer.unsynced, "the reopened segment counts as unsynced");
     drop(writer);
-    // Reopened through a link to `/dev/null`, the segment can be neither verified nor synced, and
-    // the writer does not start.
+    // Reopened through a link to `/dev/null`, a segment holding entries fails the recovered-append
+    // length check before any sync, and the writer does not start.
     let log = SegmentedLog::open(&dir, |_| Ok(())).unwrap();
     let segment = dir.join(SEG_0);
     fs::remove_file(&segment).unwrap();
     std::os::unix::fs::symlink("/dev/null", &segment).unwrap();
-    assert!(log.into_writer(10, watch::channel(Manifest::default()).0).is_err());
+    let error = log.into_writer(10, watch::channel(Manifest::default()).0).err().expect("the writer does not start");
+    assert!(format!("{error:#}").contains("length changed before append"), "{error:#}");
+}
+
+#[test]
+fn a_reopened_segment_that_cannot_be_synced_does_not_start_the_writer() {
+    // An empty open segment matches `/dev/null` in length and hash, so reopening it reaches the
+    // sync itself: a character device takes the open but cannot satisfy it. Deleting the
+    // reopened-segment sync starts this writer, and the test fails.
+    let dir = scratch_dir("reopen-empty-null");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join(SEG_0), b"").unwrap();
+    let log = SegmentedLog::open(&dir, |_| Ok(())).unwrap();
+    fs::remove_file(dir.join(SEG_0)).unwrap();
+    std::os::unix::fs::symlink("/dev/null", dir.join(SEG_0)).unwrap();
+    let error = log.into_writer(10, watch::channel(Manifest::default()).0).err().expect("the writer does not start");
+    assert!(format!("{error:#}").contains("syncing"), "{error:#}");
 }
 
 #[test]
