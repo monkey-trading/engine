@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # Checks the enclave image build's download retries without building the image:
+# - image/Dockerfile runs every apt-get update|install, curl, git fetch, git submodule update,
+#   cargo fetch, and pip install as `retry <command>`, and cargo build with --frozen, so a later
+#   edit that drops the retry or the freeze fails this check instead of the image job on the next
+#   source outage; a mutation check confirms the scan catches both;
 # - image/retry runs the same command after each failure, at most five times, waiting 15, 30, 60,
 #   then 120 seconds, and returns the last failure's exit status;
 # - apt with image/apt.conf, in the Dockerfile's pinned Debian image, retries an index that keeps
@@ -30,6 +34,78 @@ fail() {
   echo "FAIL: $*" >&2
   failed=1
 }
+
+# Scans a Dockerfile and fails on any apt-get update|install, curl, git fetch, git submodule
+# update, cargo fetch, or pip install not run as `retry <command>`, and on a cargo build without
+# --frozen. Continuation lines are joined into their instruction, which is then split into the
+# shell segments a RUN runs, so only the command that starts a segment is judged.
+scan_dockerfile() {
+  python3 -I - "$1" << 'EOF'
+import re
+import sys
+
+path = sys.argv[1]
+physical = open(path, encoding="utf-8").read().splitlines()
+
+logical = []
+buffer = ""
+start = 0
+for number, line in enumerate(physical, 1):
+    stripped = line.strip()
+    if not buffer:
+        if not stripped or stripped.startswith("#"):
+            continue
+        start = number
+    if stripped.endswith("\\"):
+        buffer += stripped[:-1] + " "
+        continue
+    buffer += stripped
+    logical.append((start, buffer))
+    buffer = ""
+
+download = re.compile(
+    r"^(?:apt-get\s+(?:update|install)|curl|git\s+fetch|git\s+submodule\s+update|cargo\s+fetch|pip\s+install)\b"
+)
+build = re.compile(r"^cargo\s+build\b")
+
+violations = []
+for start, instruction in logical:
+    run = re.match(r"^RUN\s+(?:--[a-z-]+(?:=\S+)?\s+)*(.*)$", instruction)
+    if not run:
+        continue
+    for segment in re.split(r"&&|\|\||;|\|", run.group(1)):
+        command = segment.strip()
+        if download.match(command):
+            violations.append(f"line {start}: {command!r} runs a download without retry")
+        elif build.match(command) and "--frozen" not in command.split():
+            violations.append(f"line {start}: {command!r} builds without --frozen")
+
+for violation in violations:
+    print(violation)
+sys.exit(1 if violations else 0)
+EOF
+}
+
+if ! scan_out="$(scan_dockerfile image/Dockerfile)"; then
+  echo "FAIL: image/Dockerfile has a download outside image/retry or an unfrozen cargo build:" >&2
+  echo "$scan_out" >&2
+  exit 1
+fi
+echo "ok: every image/Dockerfile download runs under retry and cargo build is --frozen"
+
+# Mutation check: the scan must catch a later edit that drops a retry or the --frozen.
+sed 's/retry apt-get update/apt-get update/' image/Dockerfile > "$work/Dockerfile.no-retry"
+if scan_out="$(scan_dockerfile "$work/Dockerfile.no-retry")"; then
+  fail "the Dockerfile scan missed a download with retry removed"
+else
+  echo "ok: the Dockerfile scan catches a removed retry ($scan_out)"
+fi
+sed 's/cargo build --frozen/cargo build/' image/Dockerfile > "$work/Dockerfile.no-frozen"
+if scan_out="$(scan_dockerfile "$work/Dockerfile.no-frozen")"; then
+  fail "the Dockerfile scan missed a cargo build without --frozen"
+else
+  echo "ok: the Dockerfile scan catches a dropped --frozen ($scan_out)"
+fi
 
 # A download whose first $FAILS calls fail, call N with exit 10 + N, and a sleep that records its
 # argument.
