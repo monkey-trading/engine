@@ -11,6 +11,44 @@ use crate::common::*;
 use crate::support::*;
 
 #[test]
+fn quotes_held_across_a_closure_cannot_back_an_intermediate_opening_liquidation() {
+    let mut h = held("0", "10");
+    accepted(&schedule(&mut h, dividend("jump", AAPL, "1000", "0")));
+    // One command jumps across the closure and the ex-open boundary. The debit applies at the
+    // intermediate opening, but the pre-close quotes dropped at this command, so no close-out can
+    // fill against a quote the hours rules already excluded.
+    let events = tick(&mut h, open() + 1);
+    assert!(events.iter().any(|e| matches!(e, Event::CorporateDividend { .. })), "{events:?}");
+    assert!(!events.iter().any(|e| matches!(e, Event::CloseOut { .. })), "{events:?}");
+    assert!(h.engine.markets()[&AAPL].quotes.is_empty(), "the held quotes drop at the jumping command");
+    let events = h.price(AAPL, "80");
+    assert!(
+        events.iter().any(|e| matches!(e, Event::CloseOut { account, .. } if *account == acct(2))),
+        "the first post-open quote closes the under-margined short: {events:?}"
+    );
+}
+
+#[test]
+fn a_rejected_benchmark_batch_crossing_a_closure_still_drops_held_quotes() {
+    let mut h = held("2", "0");
+    accepted(&schedule(&mut h, split("pending", 4, 1)));
+    tick(&mut h, close() - 1);
+    h.advance_to(open() + 1);
+    let events = h.operate(AdminCommand::SetBenchmarkRates(BenchmarkBatch {
+        as_of: "1900-01-01".parse().unwrap(),
+        checked: ["SOFR".into()].into_iter().collect(),
+        rates: vec![],
+    }));
+    assert!(events.iter().any(|e| matches!(e, Event::AdminRejected { .. })), "{events:?}");
+    assert!(!events.iter().any(|e| matches!(e, Event::Fill(_) | Event::CloseOut { .. })), "{events:?}");
+    assert!(
+        h.engine.markets()[&AAPL].quotes.is_empty(),
+        "the held quotes drop at the rejected batch's command, not at a later one"
+    );
+    assert!(h.engine.corporate_actions().contains_key("pending"));
+}
+
+#[test]
 fn missed_rollovers_and_actions_run_in_chronological_economic_order() {
     let mut h = held("2", "0");
     let mut spec = h.engine.markets()[&AAPL].spec.clone();

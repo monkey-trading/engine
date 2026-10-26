@@ -184,6 +184,12 @@ impl Engine {
         self.now = sequenced.ts;
 
         let mut events = Vec::new();
+        // From `V21`, a quote held across a closure could never count under the hours rules, so it
+        // drops before anything this command does: catch-up at an intermediate boundary, a close-out
+        // check, or an early outcome for a rejected batch or activation must never act on it.
+        if self.protocol_version >= ProtocolVersion::V21 {
+            self.drop_quotes_across_closures(last_now);
+        }
         // From `V19`, a period the sequenced time has passed is final before anything this command
         // does, so every effect of the command, market processing and rollovers included, belongs to
         // the next period.
@@ -226,9 +232,6 @@ impl Engine {
                 }
                 _ => None,
             };
-            if self.protocol_version >= ProtocolVersion::V21 {
-                self.drop_quotes_across_closures(last_now);
-            }
             self.advance_markets(priced, &mut events);
         }
         if corporate {

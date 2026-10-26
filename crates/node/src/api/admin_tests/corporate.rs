@@ -151,6 +151,17 @@ async fn corporate_actions_dev_scenario_signed_dividend_split_restart_and_replay
     assert_eq!(after.markets()[&STOCK].client_cost, before.markets()[&STOCK].client_cost);
     let cash = |engine: &Engine| engine.accounts().values().map(|a| a.balance).sum::<Fixed>() + engine.house_cash();
     assert_eq!(cash(&initial), cash(&after));
+    // The split's closure dropped the pre-split quotes, so the post-split order prices from a fresh
+    // opening quote rather than a stale one.
+    let quotes = ["a", "b"]
+        .map(|source| SourceQuote {
+            source: source.into(),
+            mid: Fixed::from_int(20),
+            ts: NOW + 240_000,
+            contract: None,
+        })
+        .to_vec();
+    node.state.submit(Command::Prices { market: STOCK, quotes }).await.unwrap();
     let (_, events) =
         node.post("/v1/orders", order(TRADER, "buy", "1", serde_json::json!({"kind":"market", "quoted":"20"}))).await;
     let fill = events
@@ -158,7 +169,7 @@ async fn corporate_actions_dev_scenario_signed_dividend_split_restart_and_replay
         .unwrap()
         .iter()
         .find(|e| e["type"] == "fill")
-        .expect("the adjusted stored quote is still fresh");
+        .expect("the fresh opening quote fills the post-split order");
     assert_eq!(fill["price"], "20", "a market order before a new quote cannot fill at 80");
     assert_eq!(fill["position"], "9");
     let entries = node.entries();
