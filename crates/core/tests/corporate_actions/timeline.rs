@@ -80,13 +80,19 @@ fn missed_rollovers_and_actions_run_in_chronological_economic_order() {
 }
 
 #[test]
-fn cash_closeouts_precede_later_missed_rollovers_in_a_single_timestamp_jump() {
+fn cash_closeouts_wait_for_the_first_post_open_quote_in_a_timestamp_jump() {
     let mut h = held("0", "10");
     let mut spec = h.engine.markets()[&AAPL].spec.clone();
     spec.financing.markup_bps = 3650;
     h.operator_admin(AdminCommand::UpsertMarket(spec));
     accepted(&schedule(&mut h, dividend("debit", AAPL, "1000", "0")));
-    let events = tick(&mut h, ny(2026, 10, 23, 10, 0));
+    // The jump crosses the closure and the ex-open boundary, so the held quotes drop at this
+    // command and the debit cannot close the short until a tradeable index exists; the first
+    // post-open quote is that index.
+    let at = ny(2026, 10, 23, 10, 0);
+    h.advance_to(at);
+    let quotes = vec![quote("opening-a", "80", at), quote("opening-b", "80", at)];
+    let events = h.cmd(Command::Prices { market: AAPL, quotes });
     let economic: Vec<_> = events
         .iter()
         .filter_map(|e| match e {
@@ -99,7 +105,7 @@ fn cash_closeouts_precede_later_missed_rollovers_in_a_single_timestamp_jump() {
             _ => None,
         })
         .collect();
-    assert_eq!(economic, ["financing", "dividend", "closeout"]);
+    assert_eq!(economic, ["financing", "dividend", "financing", "financing", "closeout"]);
     assert!(h.engine.accounts()[&acct(2)].positions.is_empty());
     h.assert_conserved(Fixed::ZERO);
 }
