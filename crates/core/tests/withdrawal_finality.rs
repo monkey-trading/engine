@@ -8,7 +8,7 @@ mod setup;
 use alloy_primitives::B256;
 use common::{Harness, acct, f};
 use engine_core::command::{AdminCommand, Command};
-use engine_core::deposits::{DepositBeneficiary, DepositReceipt, DepositUpdate};
+use engine_core::deposits::{DepositBeneficiary, DepositReceipt, DepositUpdate, LegacyDeposit};
 use engine_core::event::Event;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::AccountId;
@@ -49,6 +49,48 @@ fn activation_leaves_principal_awaiting_finality_out_of_payout_capacity() {
     assert_eq!(h.engine.withdrawal_cash(), Some(f("110")), "house capital and final deposits only");
     update(&mut h, DepositUpdate::Finalise { receipt: pending, observed_at_seq: 0 });
     assert_eq!(h.engine.withdrawal_cash(), Some(f("310")));
+}
+
+#[test]
+fn v22_activation_excludes_an_unfinalised_house_receipt_until_finality() {
+    let mut h = predecessor();
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V20 });
+    let pending = house_receipt(1, "70");
+    update(&mut h, DepositUpdate::Credit { receipt: pending.clone() });
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V22 });
+    assert_eq!(h.engine.withdrawal_cash(), Some(f("10")), "an unfinalised house receipt is not payout capacity");
+    update(&mut h, DepositUpdate::Finalise { receipt: pending, observed_at_seq: 0 });
+    assert_eq!(h.engine.withdrawal_cash(), Some(f("80")), "finality releases exactly the house receipt");
+}
+
+#[test]
+fn v22_activation_locks_legacy_credits_in_the_same_command_until_adopted_receipts_finalise() {
+    let mut h = predecessor();
+    let (trader, house) = (receipt(1, acct(1), "100"), house_receipt(2, "40"));
+    let legacy = |receipt: &DepositReceipt| LegacyDeposit {
+        chain_ref: format!("{}:{}", receipt.tx_hash, receipt.log_index),
+        beneficiary: receipt.beneficiary,
+        amount: receipt.amount,
+    };
+    h.cmd(Command::Deposit { account: acct(1), amount: trader.amount, chain_ref: legacy(&trader).chain_ref });
+    h.cmd(Command::HouseCapital { amount: house.amount, chain_ref: legacy(&house).chain_ref });
+    h.admin(AdminCommand::ActivateCustodyFinality {
+        version: ProtocolVersion::V22,
+        legacy_deposits: vec![legacy(&trader), legacy(&house)],
+    });
+    assert_eq!(h.engine.withdrawal_cash(), Some(f("10")), "legacy principal locked by this command pays nothing");
+    update(&mut h, DepositUpdate::Credit { receipt: trader.clone() });
+    assert_eq!(h.engine.withdrawal_cash(), Some(f("10")), "adoption moves no cash and releases no principal");
+    update(&mut h, DepositUpdate::Finalise { receipt: trader, observed_at_seq: 0 });
+    assert_eq!(h.engine.withdrawal_cash(), Some(f("110")));
+    update(&mut h, DepositUpdate::Credit { receipt: house.clone() });
+    assert_eq!(h.engine.withdrawal_cash(), Some(f("110")), "the house credit still waits for its receipt");
+    update(&mut h, DepositUpdate::Finalise { receipt: house, observed_at_seq: 0 });
+    assert_eq!(h.engine.withdrawal_cash(), Some(f("150")), "each finalised credit releases exactly its principal");
+}
+
+fn house_receipt(id: u64, amount: &str) -> DepositReceipt {
+    DepositReceipt { beneficiary: DepositBeneficiary::House, ..receipt(id, acct(1), amount) }
 }
 
 fn receipt(id: u64, account: AccountId, amount: &str) -> DepositReceipt {
