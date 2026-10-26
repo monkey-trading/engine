@@ -165,6 +165,13 @@ impl Sequencer {
     /// - the proof is absent or logging/signing fails
     pub(super) fn sign_mock_payout(&mut self, approval: WithdrawalApproval) -> anyhow::Result<()> {
         self.checkpoint()?;
+        self.sign_mock_authorization(approval)
+    }
+
+    /// Signs and logs the typed mock payout once a checkpoint covering the approval is durable.
+    /// Error cases:
+    /// - the proof is absent or logging/signing fails
+    pub(super) fn sign_mock_authorization(&mut self, approval: WithdrawalApproval) -> anyhow::Result<()> {
         let proof =
             self.engine.approval_proof(approval.account, approval.nonce).context("mock approval proof absent")?;
         self.log.sync()?;

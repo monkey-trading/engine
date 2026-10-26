@@ -216,6 +216,7 @@ impl Sequencer {
             command_prefix,
             legacy_deposits,
             legacy_approvals,
+            unreleased,
             payout_proofs,
             payout_order,
             ..
@@ -292,6 +293,25 @@ impl Sequencer {
                 gate.pending.push((sequencer.engine.last_seq().expect("approval has a seq"), account, amount, nonce));
             } else {
                 sequencer.sign_withdrawal(account, amount, nonce)?;
+            }
+        }
+        if sequencer.gate.is_none() {
+            // A gated node re-signs durable approvals through the checkpoint worker; without a
+            // gate, custody is the mock and takes the typed payout directly. The crash this
+            // recovery serves can sit between the approval's checkpoint sync and its signature
+            // sync, so that checkpoint may already be durable: write one only when the log lacks
+            // it at this seq.
+            let mut approval_checkpointed = last_signed_checkpoint
+                .as_ref()
+                .is_some_and(|cp| Some(cp.seq) == sequencer.engine.last_seq());
+            for approval in unreleased {
+                let _span = info_span!("command", id = sequencer.engine.last_seq()).entered();
+                warn!(account = %approval.account, nonce = approval.nonce, "the log ends before this approved withdrawal was signed");
+                if !approval_checkpointed {
+                    sequencer.checkpoint()?;
+                    approval_checkpointed = true;
+                }
+                sequencer.sign_mock_authorization(approval)?;
             }
         }
         if let Some(gate) = &mut sequencer.gate {

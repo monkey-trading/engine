@@ -34,6 +34,10 @@ pub struct Replayed {
     /// Withdrawals the last command approved that the log ends before signing, as a crash between
     /// a command's entry and its withdrawal entry leaves: `(account, amount, nonce)`.
     pub unsigned: Vec<(AccountId, Fixed, u64)>,
+    /// Durable approvals the engine holds that no withdrawal entry has signed, as a crash between
+    /// an approval's checkpoint sync and its signature sync leaves. Only a no-gate node can leave
+    /// these: a gated node signs through the checkpoint worker instead.
+    pub unreleased: Vec<engine_core::withdrawal::WithdrawalApproval>,
     /// Each protocol version the log activated, with the seq it took effect at.
     pub activations: Vec<(ProtocolVersion, u64)>,
     /// How far the log got through genesis.
@@ -88,6 +92,9 @@ pub(super) struct Replay {
     unproved: BTreeSet<(AccountId, u64)>,
     payout_order: BTreeMap<(AccountId, u64), usize>,
     requires_checkpoint_gate: bool,
+    /// Every approval a withdrawal entry has signed, so `finish` can report durable approvals the
+    /// log ends before signing.
+    signed: BTreeSet<(AccountId, u64)>,
 }
 
 impl Replay {
@@ -232,6 +239,7 @@ impl Replay {
                         self.payout_checkpoints.get(&auth.checkpoint_seq) == Some(&auth.checkpoint_root),
                         "typed payout checkpoint is absent from the preceding log"
                     );
+                    self.signed.insert((w.account, w.nonce));
                     return Ok(());
                 }
                 if let Some(seq) = w.approved_seq {
@@ -242,6 +250,7 @@ impl Replay {
                         .context("deferred withdrawal was not approved")?;
                     self.deferred.remove(at);
                     self.legacy_approvals.signed(w.account, w.amount, w.nonce);
+                    self.signed.insert((w.account, w.nonce));
                     return Ok(());
                 }
                 if self.approved.front() != Some(&(w.account, w.amount, w.nonce)) {
@@ -249,6 +258,7 @@ impl Replay {
                 }
                 self.approved.pop_front();
                 self.legacy_approvals.signed(w.account, w.amount, w.nonce);
+                self.signed.insert((w.account, w.nonce));
             }
             LogEntry::Checkpoint(cp) => {
                 if cp.deferred_withdrawals {
@@ -318,6 +328,12 @@ impl Replay {
             Some(_) => self.recovery_anchor.clone().map(|checkpoint| RecoveryBase::Checkpoint { checkpoint }),
         };
         let unsigned = if self.logs_events { self.approved.into() } else { Vec::new() };
+        let unreleased = self
+            .engine
+            .withdrawal_approvals()
+            .filter(|approval| !self.signed.contains(&(approval.account, approval.nonce)))
+            .copied()
+            .collect();
         let (engine, commands, checkpoints, activations, genesis, last_checkpoint_ts) =
             (self.engine, self.commands, self.checkpoints, self.activations, self.genesis, self.last_checkpoint_ts);
         Replayed {
@@ -328,6 +344,7 @@ impl Replay {
             commands,
             checkpoints,
             unsigned,
+            unreleased,
             activations,
             genesis,
             last_checkpoint_ts,
