@@ -74,20 +74,17 @@ fn replay_accepts_a_log_written_before_events_and_withdrawals_were_logged() {
     assert!(replayed.unsigned.is_empty());
 }
 
-#[tokio::test]
-async fn a_restart_resigns_a_mock_withdrawal_the_log_ends_before_its_authorization() {
-    let dir = scratch_dir("seq-mock-resign");
+/// Both kill shapes leave the approval unsigned: the process died after the checkpoint sync and
+/// before the authorization sync, or before the checkpoint itself was durable.
+async fn a_restart_resigns_a_mock_withdrawal_the_log_ends_before(cut: fn(&str) -> usize, name: &str) {
+    let dir = scratch_dir(name);
     let node = TestSequencer::start(&dir, 16);
     node.submit(deposit(100, "dep-1")).await;
     node.submit(withdraw(40)).await;
     node.stop().await;
-    // As if the process died after sign_mock_payout made the approval's checkpoint durable and
-    // before the authorization entry synced: drop the withdrawal entry that follows it.
     let segment = last_segment(&dir);
     let text = fs::read_to_string(&segment).unwrap();
-    let withdrawal = text.rfind(r#""entry":"withdrawal""#).unwrap();
-    let cut = text[..withdrawal].rfind('\n').map(|at| at + 1).unwrap();
-    fs::write(&segment, &text[..cut]).unwrap();
+    fs::write(&segment, &text[..cut(&text)]).unwrap();
     let replayed = replay(&log_entries(&dir)).unwrap();
     assert_eq!(
         replayed
@@ -107,5 +104,35 @@ async fn a_restart_resigns_a_mock_withdrawal_the_log_ends_before_its_authorizati
     assert_eq!((signed.account, signed.amount, signed.nonce), (TRADER, Fixed::from_int(40), 1));
     assert!(signed.authorization.is_some(), "the re-signed mock payout carries its authorization");
     node.stop().await;
-    assert!(replay(&log_entries(&dir)).unwrap().unreleased.is_empty());
+    // Recovery re-signed against a covering checkpoint, and the durable entry replays cleanly: a
+    // restart neither refuses the log nor hands custody a duplicate payout.
+    let replayed = replay(&log_entries(&dir)).unwrap();
+    assert!(replayed.unreleased.is_empty());
+    let mut node = TestSequencer::start(&dir, 16);
+    assert!(node.withdrawals.try_recv().is_err(), "recovery does not re-sign a payout custody already took");
+    node.stop().await;
+}
+
+#[tokio::test]
+async fn a_restart_resigns_a_mock_withdrawal_the_log_ends_before_its_authorization() {
+    a_restart_resigns_a_mock_withdrawal_the_log_ends_before(
+        |text| {
+            let withdrawal = text.rfind(r#""entry":"withdrawal""#).unwrap();
+            text[..withdrawal].rfind('\n').map(|at| at + 1).unwrap()
+        },
+        "seq-mock-resign",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_restart_writes_the_missing_checkpoint_before_resigning_a_mock_withdrawal() {
+    a_restart_resigns_a_mock_withdrawal_the_log_ends_before(
+        |text| {
+            let command = text.find(r#""cmd":{"type":"withdraw""#).unwrap();
+            command + text[command..].find('\n').unwrap() + 1
+        },
+        "seq-mock-resign-no-checkpoint",
+    )
+    .await;
 }
