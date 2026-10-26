@@ -70,7 +70,8 @@ build = re.compile(r"^cargo\s+build\b")
 
 violations = []
 for start, instruction in logical:
-    run = re.match(r"^RUN\s+(?:--[a-z-]+(?:=\S+)?\s+)*(.*)$", instruction)
+    # Instruction keywords are case-insensitive in a Dockerfile.
+    run = re.match(r"^RUN\s+(?:--[a-z-]+(?:=\S+)?\s+)*(.*)$", instruction, re.IGNORECASE)
     if not run:
         continue
     for segment in re.split(r"&&|\|\||;|\|", run.group(1)):
