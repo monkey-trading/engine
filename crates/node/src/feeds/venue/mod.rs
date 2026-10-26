@@ -2,6 +2,8 @@
 //! as `Command::Prices`, each stamped with the venue's own timestamp. It returns only when the
 //! sequencer has gone away: a failed connection is retried inside the task with backoff, and while
 //! it is down the venue's last quotes age out in the engine, which prices from the other venues.
+//! A connection that stays quiet for the read deadline — a stalled login, a dead connection — is
+//! failed and retried the same way, even while every market is closed.
 //! A quote stamped while its market's schedule is closed is held back, since the engine refuses it,
 //! and a symbol whose market is closed is not counted as silent.
 
@@ -32,7 +34,7 @@ use engine_core::types::{MarketId, Millis};
 use futures_util::StreamExt;
 use rustls::ClientConfig;
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::{Instant, MissedTickBehavior, interval_at, sleep, timeout};
+use tokio::time::{Instant, MissedTickBehavior, interval_at, sleep, timeout, timeout_at};
 use tracing::{debug, info};
 
 use crate::clock::now_ms;
@@ -90,6 +92,8 @@ pub(super) struct Book {
 pub struct Timing {
     /// The most often one symbol's latest quote is sequenced.
     pub interval: Duration,
+    /// The deadline for a read: the login, the subscription, and each message after, whatever its
+    /// market's hours.
     pub timeout: Duration,
     pub reconnect_min: Duration,
     pub reconnect_max: Duration,
@@ -270,9 +274,12 @@ impl VenueFeed {
     /// quote per symbol every `timing.interval`, the newest the host clock has reached (see
     /// `Pending`). Once the sequencer has applied it, the venue counts as quoting that symbol while
     /// the quote the engine holds from it is no older than `timing.stale_after` or the market's
-    /// `max_age_ms` (see `confirm`).
+    /// `max_age_ms` (see `confirm`). Every read has `timing.timeout` to produce a message, whether
+    /// or not any market is open, so a stalled login or a dead connection is replaced instead of
+    /// hanging unseen through a closure.
     /// Error cases:
     /// - connecting or sending the opening messages fails or takes longer than `timing.timeout`
+    /// - no message arrives within `timing.timeout`, whatever its market's hours
     /// - the connection sequences no fresh quote within `timing.timeout` while a market it quotes
     ///   is open, or the venue closes it or asks for a reconnect
     /// - a symbol goes silent, so the connection is replaced to resubscribe it
@@ -297,10 +304,17 @@ impl VenueFeed {
         let mut buffered: BTreeMap<String, Pending> = BTreeMap::new();
         let mut flush = interval_at(Instant::now() + self.timing.interval, self.timing.interval);
         flush.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        // The one deadline every read is judged against, whatever its market's hours: the login,
+        // the subscription, and each message after must arrive within it, and any message met
+        // sets the next. It outlives each select below, which the flush arm would otherwise
+        // restart it past.
+        let mut read_deadline = Instant::now() + self.timing.timeout;
         loop {
             tokio::select! {
-                message = link.stream.next() => {
-                    match message.context("connection closed")?.context("read")? {
+                message = timeout_at(read_deadline, link.stream.next()) => {
+                    let message = message.context("read timed out")?.context("connection closed")?.context("read")?;
+                    read_deadline = Instant::now() + self.timing.timeout;
+                    match message {
                         Incoming::Text(text) => self.receive(&mut adapter, &mut link, &text, &mut buffered).await?,
                         Incoming::Binary => self.refuse("binary message", ""),
                         Incoming::Closed(reason) => bail!("closed by the venue: {reason}"),

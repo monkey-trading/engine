@@ -17,7 +17,7 @@ use tokio::time::timeout;
 
 use crate::clock::now_ms;
 use crate::config::{Genesis, Venue, VenueConnection, VenueSymbol};
-use crate::feeds::tests::fake::{WAIT, accept, bitstamp_book, fast, kraken_book, listen, stream};
+use crate::feeds::tests::fake::{WAIT, accept, bitstamp_book, fast, kraken_book, listen, next_alert, stream};
 use crate::feeds::tests::rwa_support::{around_the_clock, commands, events_of, listing, priced, wait_for};
 use crate::feeds::tests::scenario::Node;
 use crate::feeds::venue::{self, tls_config};
@@ -51,6 +51,49 @@ async fn quotes_stamped_while_a_market_is_closed_are_held_back_without_a_silence
     assert!(first >= open_at, "priced at {first}, before the open at {open_at}");
     assert!(events_of(&applied).iter().all(|e| !matches!(e, Event::PricesRejected { .. })));
     assert_no_feed_alert(&mut alerts);
+}
+
+#[tokio::test]
+async fn a_stalled_login_while_every_market_is_closed_alerts_and_reconnects() {
+    let (_guard, mut alerts) = capture_alerts();
+    let start = now_ms();
+    let closed = MarketSpec { schedule: around_the_clock(Some((start - 60_000, start + LATER_MS))), ..listing(AAPL) };
+    let node = Node::boot("stalled", &genesis(vec![closed])).await;
+    let applied = node.record();
+    let (listener, url) = listen().await;
+    start_feed(&node, Venue::Tradermade, &[(AAPL, "AAPL", None)], &url);
+
+    // The feed logs in; the vendor completes the handshake and then answers nothing, with Apple
+    // closed for the whole test.
+    let (_held, login) = accept(&listener).await;
+    assert_eq!(login, r#"{"action":"login","fmt":"JSON","key":""}"#);
+
+    // The stall still alerts as an outage and the feed reconnects: the read deadline ignores
+    // market hours, so nothing reaches the engine either way.
+    let alert = next_alert(&mut alerts).await;
+    assert_eq!((alert["alert"].as_str(), alert["venue"].as_str()), ("venue_feed_down", "tradermade"));
+    assert!(priced(&applied, AAPL).is_empty());
+    let (_retry, _) = timeout(WAIT, accept(&listener)).await.expect("no retry in time");
+}
+
+#[tokio::test]
+async fn a_live_connection_is_kept_by_its_traffic_while_every_market_is_closed() {
+    let (_guard, mut alerts) = capture_alerts();
+    let start = now_ms();
+    let closed = MarketSpec { schedule: around_the_clock(Some((start - 60_000, start + LATER_MS))), ..listing(AAPL) };
+    let node = Node::boot("heartbeat", &genesis(vec![closed])).await;
+    let (listener, url) = listen().await;
+    start_feed(&node, Venue::Kraken, &[(AAPL, "AAPL", None)], &url);
+
+    // The venue answers the subscription with heartbeats only, well inside the read deadline,
+    // while Apple is closed for the whole test.
+    let (ws, _) = accept(&listener).await;
+    stream(ws, || vec![r#"{"channel":"heartbeat"}"#.to_owned()]);
+
+    // The traffic keeps the connection: no outage, no silence, no reconnect over several windows.
+    tokio::time::sleep(TIMEOUT * 3).await;
+    assert_no_feed_alert(&mut alerts);
+    assert!(timeout(Duration::from_millis(100), listener.accept()).await.is_err(), "reconnected despite traffic");
 }
 
 #[tokio::test]
