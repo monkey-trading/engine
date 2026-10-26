@@ -97,8 +97,8 @@ impl Engine {
         action: &CorporateAction,
         events: &mut Vec<Event>,
     ) -> Result<(), String> {
-        if self.protocol_version < ProtocolVersion::V21 {
-            return Err("corporate actions need protocol V21".into());
+        if self.protocol_version < ProtocolVersion::V23 {
+            return Err("corporate actions need protocol V23".into());
         }
         action.validate()?;
         if self.params.is_none() {

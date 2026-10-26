@@ -56,7 +56,7 @@ pub(crate) fn session(h: &mut Harness) {
     }
     h.order(long, stock, Side::Buy, "1", OrderKind::Limit { price: f("64") });
     let dividend = CorporateAction {
-        id: "v21-dividend".into(),
+        id: "v23-dividend".into(),
         market: stock,
         previous_close: start + 60_000,
         ex_open: start + 120_000,
@@ -66,7 +66,7 @@ pub(crate) fn session(h: &mut Harness) {
     let duplicate = h.operate(AdminCommand::ScheduleCorporateAction(dividend));
     assert!(duplicate.iter().any(|e| matches!(e, Event::AdminRejected { reason } if reason.contains("duplicate"))));
     h.operator_admin(AdminCommand::ScheduleCorporateAction(CorporateAction {
-        id: "v21-split".into(),
+        id: "v23-split".into(),
         market: stock,
         previous_close: start + 180_000,
         ex_open: start + 240_000,
@@ -93,7 +93,7 @@ pub(crate) fn session(h: &mut Harness) {
     h.order(long, stock, Side::Buy, "0.000000001", OrderKind::Limit { price: f("16") });
     h.price(stock, "21");
     h.operator_admin(AdminCommand::ScheduleCorporateAction(CorporateAction {
-        id: "v21-reverse".into(),
+        id: "v23-reverse".into(),
         market: stock,
         previous_close: start + 300_000,
         ex_open: start + 360_000,
@@ -111,7 +111,7 @@ pub(crate) fn session(h: &mut Harness) {
     h.price(stock, "0.000000003");
     let held = h.engine.accounts()[&long].position(stock);
     h.operator_admin(AdminCommand::ScheduleCorporateAction(CorporateAction {
-        id: "v21-zero-price".into(),
+        id: "v23-zero-price".into(),
         market: stock,
         previous_close: start + 420_000,
         ex_open: start + 480_000,

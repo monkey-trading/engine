@@ -6,7 +6,7 @@
 //!   sequenced time. A command stamped exactly at a boundary belongs to the later period.
 //! - **Weight.** An account's weight in a period is its net realised trading loss there, the sum of
 //!   its fills' `realised_pnl` (liquidations included, the profit fee and financing not) and, from
-//!   `V21`, of the cash in lieu splits realise on its positions (dividends not), less the debt the
+//!   `V23`, of the cash in lieu splits realise on its positions (dividends not), less the debt the
 //!   house wrote off for it there. A weight that is not positive counts as zero, and so
 //!   does any weight of an account whose cash is negative at the period's cutoff, with no later
 //!   backfill.
@@ -75,7 +75,7 @@ pub struct Emissions {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PeriodResult {
     /// The sum of its fills' realised PnL in USD, liquidations included, before the profit fee, and
-    /// from `V21` of the cash in lieu its positions' splits realise.
+    /// from `V23` of the cash in lieu its positions' splits realise.
     pub realised: Fixed,
     /// The debt the house wrote off for it.
     pub written_off: Fixed,

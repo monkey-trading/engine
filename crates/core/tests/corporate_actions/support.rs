@@ -10,12 +10,16 @@ use crate::common::*;
 
 pub fn fixture() -> Harness {
     let mut h = Harness::v17();
-    h.admin(AdminCommand::ActivateProtocol { version: engine_core::protocol::ProtocolVersion::V18 });
-    // Source-only V21 development precedes predecessor integration and activation. A serialized
-    // test state exercises the new rules without publishing an activation or reference fixture.
-    let mut state = serde_json::to_value(&h.engine).unwrap();
-    state["protocol_version"] = serde_json::json!("v21");
-    h.engine = serde_json::from_value(state).unwrap();
+    for version in [
+        engine_core::protocol::ProtocolVersion::V18,
+        engine_core::protocol::ProtocolVersion::V19,
+        engine_core::protocol::ProtocolVersion::V20,
+        engine_core::protocol::ProtocolVersion::V21,
+        engine_core::protocol::ProtocolVersion::V22,
+        engine_core::protocol::ProtocolVersion::V23,
+    ] {
+        h.admin(AdminCommand::ActivateProtocol { version });
+    }
     let mut params = h.engine.params().unwrap().clone();
     params.stress_levels.truncate(1);
     params.toxicity.tiers.clear();

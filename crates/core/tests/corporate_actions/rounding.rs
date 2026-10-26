@@ -51,8 +51,8 @@ fn inexact_splits_round_each_price_once_against_the_holder_or_toward_zero() {
         assert_eq!(position.qty, original.qty.mul_int(2));
         let against_holder = if original.qty.is_positive() { Rounding::Up } else { Rounding::Down };
         assert_eq!(position.entry, original.entry.checked_mul_div(Fixed::ONE, f("2"), against_holder).unwrap());
-        let now = position.unrealised(f("40"), ProtocolVersion::V21);
-        let then = original.unrealised(mark, ProtocolVersion::V21);
+        let now = position.unrealised(f("40"), ProtocolVersion::V23);
+        let then = original.unrealised(mark, ProtocolVersion::V23);
         assert!((now - then).abs() <= position.qty.abs().mul(f("0.000000002")), "{now} against {then}");
     }
     let orders: Vec<_> =

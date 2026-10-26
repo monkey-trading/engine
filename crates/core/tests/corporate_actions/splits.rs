@@ -57,8 +57,10 @@ fn four_for_one_preserves_value_pnl_cash_aggregates_limits_markouts_and_stress_r
         });
     assert_eq!(legacy, Some((legacy_at, f("24"), f("24"))));
     assert_eq!(market.mark, Some(f("24")));
-    assert_eq!(market.processed_index.unwrap().mid, f("24"));
-    assert!(market.quotes.values().all(|quote| quote.mid == f("24")));
+    // The split's brief closure drops the pre-close quotes at the opening, so no scaled quote or
+    // processed index survives; the marks, positions and stress leaves above record the scaling.
+    assert_eq!(market.processed_index, None);
+    assert!(market.quotes.is_empty());
     assert_eq!(market.client_qty, before.client_qty.mul_int(4));
     assert_eq!(market.client_cost, before.client_cost);
     assert_eq!(market.spec, before.spec, "USD bounds and notional tiers do not scale as shares");
@@ -69,8 +71,8 @@ fn four_for_one_preserves_value_pnl_cash_aggregates_limits_markouts_and_stress_r
         assert_eq!(position.entry, original.entry.div_int(4));
         assert_eq!(position.qty.mul(market.mark.unwrap()), original.qty.mul(before.mark.unwrap()));
         assert_eq!(
-            position.unrealised(market.mark.unwrap(), ProtocolVersion::V21),
-            original.unrealised(before.mark.unwrap(), ProtocolVersion::V21)
+            position.unrealised(market.mark.unwrap(), ProtocolVersion::V23),
+            original.unrealised(before.mark.unwrap(), ProtocolVersion::V23)
         );
     }
     let now = serde_json::to_value(&h.engine).unwrap();
@@ -82,6 +84,7 @@ fn four_for_one_preserves_value_pnl_cash_aggregates_limits_markouts_and_stress_r
         assert_eq!(serde_json::from_value::<Fixed>(adjusted["price"].clone()).unwrap(), price.div_int(4));
     }
     h.assert_conserved(Fixed::ZERO);
+    h.price(AAPL, "24");
     assert_fill(&h.market_order(acct(1), AAPL, Side::Buy, "1", "24"));
     assert_eq!(h.engine.accounts()[&acct(1)].position(AAPL).qty, f("9"));
 }
@@ -121,6 +124,7 @@ fn old_timestamped_quotes_are_rejected_and_no_new_quote_order_uses_adjusted_unit
     let events = h.cmd(Command::Prices { market: AAPL, quotes: vec![quote("late-old", "80", pre_split)] });
     assert!(events.iter().any(|e| matches!(e, Event::PricesRejected { reason, .. } if reason.contains("predates"))));
     assert!(!h.engine.markets()[&AAPL].quotes.contains_key("late-old"));
+    h.price(AAPL, "20");
     let events = h.market_order(acct(1), AAPL, Side::Buy, "1", "20");
     let fill = events
         .iter()
@@ -182,20 +186,22 @@ fn quotes_during_the_pending_split_closure_cannot_be_scaled_twice_at_open() {
             .any(|e| matches!(e, Event::PricesRejected { reason, .. } if reason.contains("pending split closure"))),
         "{events:?}"
     );
-    assert!(h.engine.markets()[&AAPL].quotes.values().all(|q| q.mid == f("80")));
+    // The pre-close quotes drop at this first command after the closure, and the refused quote
+    // stores nothing.
+    assert!(h.engine.markets()[&AAPL].quotes.is_empty());
     tick(&mut h, open());
+    h.price(AAPL, "20");
     let events = h.market_order(acct(1), AAPL, Side::Buy, "1", "20");
     assert!(events.iter().any(|e| matches!(e, Event::Fill(fill) if fill.price == f("20"))), "{events:?}");
     assert_eq!(h.engine.accounts()[&acct(1)].position(AAPL).qty, f("9"));
 }
 
 #[test]
-fn a_failed_split_preserves_source_quotes_even_when_the_opening_command_is_a_new_quote() {
+fn a_failed_split_refuses_the_opening_quote_and_commits_nothing() {
     let mut h = held("2", "0");
     // Scaled four-for-one, this price rounds to zero, so the split fails.
     h.price(AAPL, "0.000000003");
     accepted(&schedule(&mut h, split("zero-price-opening", 4, 1)));
-    let old_quotes = h.engine.markets()[&AAPL].quotes.clone();
     let position = h.engine.accounts()[&acct(1)].position(AAPL);
     h.advance_to(open());
     let events = h.price(AAPL, "20");
@@ -205,7 +211,9 @@ fn a_failed_split_preserves_source_quotes_even_when_the_opening_command_is_a_new
         "{events:?}"
     );
     assert!(!events.iter().any(|e| matches!(e, Event::Fill(_))));
-    assert_eq!(h.engine.markets()[&AAPL].quotes, old_quotes);
+    // The refused opening quote stores nothing; the pre-close quotes dropped across the closure
+    // at this first command after it, and the failed split commits nothing.
+    assert!(h.engine.markets()[&AAPL].quotes.is_empty());
     assert_eq!(h.engine.accounts()[&acct(1)].position(AAPL), position);
 }
 
@@ -245,9 +253,12 @@ fn a_split_failing_on_a_later_account_commits_nothing_for_earlier_ones_or_the_ma
     assert_eq!((books(&h, acct(1)), books(&h, acct(2))), (first, second));
     let after = &h.engine.markets()[&AAPL];
     assert_eq!(
-        (after.mark, &after.quotes, after.client_qty, after.client_cost, after.last_split_at),
-        (market.mark, &market.quotes, market.client_qty, market.client_cost, market.last_split_at)
+        (after.mark, after.client_qty, after.client_cost, after.last_split_at),
+        (market.mark, market.client_qty, market.client_cost, market.last_split_at)
     );
+    // The failed split commits nothing, so it cannot scale the pre-close quotes; V21 drops them
+    // across the closure at this opening command.
+    assert!(after.quotes.is_empty());
     assert_eq!(serde_json::to_value(&after.stress).unwrap(), serde_json::to_value(&market.stress).unwrap());
     assert_eq!(h.engine.house_cash(), house);
 }
@@ -356,8 +367,8 @@ fn foreign_currency_split_preserves_fx_marks_and_usd_value_and_pnl() {
     );
     assert_eq!(h.equity_and_margin(acct(1)).0, equity);
     assert_eq!(
-        position.unrealised(after.mark.unwrap(), ProtocolVersion::V21),
-        old.unrealised(before.mark.unwrap(), ProtocolVersion::V21)
+        position.unrealised(after.mark.unwrap(), ProtocolVersion::V23),
+        old.unrealised(before.mark.unwrap(), ProtocolVersion::V23)
     );
     h.assert_conserved(Fixed::ZERO);
 }
@@ -387,10 +398,11 @@ fn reverse_split_preserves_internal_prices_above_the_external_input_bound() {
     assert_eq!((position.qty, position.entry), (f("0.25"), f("4000000000")));
     assert_eq!(h.engine.markets()[&AAPL].mark, Some(f("400000000")));
     assert_eq!(
-        position.unrealised(f("400000000"), ProtocolVersion::V21),
-        before.unrealised(f("100000000"), ProtocolVersion::V21)
+        position.unrealised(f("400000000"), ProtocolVersion::V23),
+        before.unrealised(f("100000000"), ProtocolVersion::V23)
     );
     assert_eq!(h.equity_and_margin(acct(1)), equity);
+    h.price(AAPL, "400000000");
     let events = h.market_order(acct(1), AAPL, Side::Sell, "0.25", "400000000");
     assert_fill(&events);
     assert!(h.engine.accounts()[&acct(1)].position(AAPL).qty.is_zero());

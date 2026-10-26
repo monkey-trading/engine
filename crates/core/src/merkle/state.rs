@@ -18,10 +18,9 @@ use crate::merkle::leaf::{deposit_key, deposit_transaction_key, legacy_deposit_k
 use crate::merkle::{
     AccountLeaf, AccountProof, EntitlementProof, MarketLeaf, MarketProof, PositionProof, SparseMerkleTree,
     WithdrawalApprovalProof, account_key, corporate_action_key, corporate_reference_key, credited_ref_hash,
-    credited_ref_key, entitlement_hash, entitlement_key, globals_key, json_hash, market_key, markout_hash,
-    markout_key, order_hash, order_key, period_result_hash, period_result_key, position_hash, position_key,
-    request_nonce_hash, request_nonce_key, withdrawal_approval_hash, withdrawal_approval_key, withdrawal_queue_hash,
-    withdrawal_queue_key,
+    credited_ref_key, entitlement_hash, entitlement_key, globals_key, json_hash, market_key, markout_hash, markout_key,
+    order_hash, order_key, period_result_hash, period_result_key, position_hash, position_key, request_nonce_hash,
+    request_nonce_key, withdrawal_approval_hash, withdrawal_approval_key, withdrawal_queue_hash, withdrawal_queue_key,
 };
 use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;

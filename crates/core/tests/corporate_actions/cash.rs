@@ -154,7 +154,7 @@ fn a_dividend_failing_on_a_later_account_credits_no_earlier_one() {
 }
 
 #[test]
-fn dividend_debit_checks_margin_and_closes_losing_tradeable_positions_immediately() {
+fn dividend_debit_checks_margin_and_closes_losing_tradeable_positions_at_the_opening_quote() {
     let mut h = held("0", "10");
     // A late pre-close deposit is irrelevant to eligibility; the short debit itself takes the
     // account below close-out even though no quote arrives at application.
@@ -163,12 +163,14 @@ fn dividend_debit_checks_margin_and_closes_losing_tradeable_positions_immediatel
     h.price(AAPL, "84");
     let events = tick(&mut h, open());
     assert_eq!(payment(&events, 2), f("-10000"));
-    let adjustment = events.iter().position(|e| matches!(e, Event::CorporateDividend { .. })).unwrap();
-    let closeout = events
-        .iter()
-        .position(|e| matches!(e, Event::CloseOut { account, .. } if *account == acct(2)))
-        .expect("debit triggers closeout");
-    assert!(adjustment < closeout);
+    // The opening has no tradeable index until its first quote, so the close-out waits for that
+    // quote rather than filling at a level the market cannot trade at now.
+    assert!(!events.iter().any(|e| matches!(e, Event::CloseOut { .. })), "{events:?}");
+    let events = h.price(AAPL, "84");
+    assert!(
+        events.iter().any(|e| matches!(e, Event::CloseOut { account, .. } if *account == acct(2))),
+        "the opening quote closes the under-margined short: {events:?}"
+    );
     assert!(h.engine.accounts()[&acct(2)].position(AAPL).qty.is_zero());
     h.assert_conserved(Fixed::ZERO);
 }

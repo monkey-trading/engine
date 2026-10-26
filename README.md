@@ -38,7 +38,7 @@ or minus a markup. Under V18, a separate operator worker fetches dated rates fro
 publishers. After downtime, each missed rollover uses the rate effective on its local date. The
 worker setup and stale-rate policy are in [engine-node](crates/node/README.md#dated-benchmark-worker).
 
-From V21, signed operator instructions schedule stock dividends and splits, and index dividend
+From V23, signed operator instructions schedule stock dividends and splits, and index dividend
 points, before the previous venue close. The engine captures those holdings and applies the
 adjustment at the ex-date open, before opening fills. Long dividends receive the signed input's
 net amount, shorts pay gross, and splits adjust positions, resting orders and stored prices

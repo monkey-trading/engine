@@ -244,7 +244,6 @@ impl MarketLeaf {
             stress,
             resting: _,
             processed_index,
-            processed_index,
             futures,
             corporate_action_blocked,
             last_split_at,

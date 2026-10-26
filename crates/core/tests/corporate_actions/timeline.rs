@@ -1,3 +1,4 @@
+use engine_core::Engine;
 use engine_core::Fixed;
 use engine_core::benchmark::BenchmarkBatch;
 use engine_core::command::{AdminCommand, Command};
@@ -74,8 +75,15 @@ fn captured_previous_close_quantity_survives_an_opening_fill_and_serialized_rest
         let before = h.engine.state_root();
         h.engine = restored(&h.engine);
         assert_eq!(h.engine.state_root(), before);
+        // A resting order placed while the venue is closed meets the opening quote in one command:
+        // the captured pre-close quantities pay out before any opening fill.
+        if h.ts < close() {
+            h.advance_to(close());
+        }
+        let events = h.order(acct(1), AAPL, Side::Buy, "1", engine_core::command::OrderKind::Limit { price: f("80") });
+        assert!(events.iter().any(|e| matches!(e, Event::OrderAccepted { .. })), "{events:?}");
         h.advance_to(open());
-        let events = h.market_order(acct(1), AAPL, Side::Buy, "1", "80");
+        let events = h.price(AAPL, "80");
         assert_eq!(payment(&events, 1), f("6"));
         assert_eq!(payment(&events, 2), f("-12"));
         assert_fill(&events);
@@ -172,7 +180,9 @@ fn rejected_benchmark_refresh_cannot_run_opening_fills_ahead_of_a_due_split() {
     assert!(!events.iter().any(|e| matches!(e, Event::Fill(_) | Event::CorporateSplit { .. })), "{events:?}");
     assert_eq!(h.engine.accounts()[&acct(1)].position(AAPL).qty, f("2"));
     assert!(h.engine.corporate_actions().contains_key("pending"));
-    let events = h.cmd(Command::Tick);
+    // The next admitted command is the opening quote: it applies the pending split before its own
+    // opening fill, which the rejected batch deferred.
+    let events = h.price(AAPL, "20");
     let split = events.iter().position(|e| matches!(e, Event::CorporateSplit { .. })).unwrap();
     let fill = events.iter().position(|e| matches!(e, Event::Fill(_))).unwrap();
     assert!(split < fill);
@@ -194,12 +204,40 @@ fn direct_opening_tick_and_timestamp_jump_fill_the_same_resting_close_before_liq
         .expect("closing order can rest while the venue is closed");
     let mut direct = restored(&h.engine);
     let mut jumped = restored(&h.engine);
-    let command =
-        |at| engine_core::command::Sequenced { seq: h.engine.last_seq().unwrap() + 1, ts: at, cmd: Command::Tick };
-    for (engine, at) in [(&mut direct, open()), (&mut jumped, open() + 1)] {
-        let events = engine.apply(&command(at)).unwrap();
-        assert!(!events.iter().any(|e| matches!(e, Event::CloseOut { .. })), "{events:?}");
-        assert!(events.iter().any(|e| matches!(e, Event::Fill(fill) if fill.order_id == order)), "{events:?}");
+    // Under V21 the opening itself carries no quotes (the closure dropped them), so the fill waits
+    // for the first quote after it in both legs and lands at the same instant.
+    let tick_at = |engine: &mut Engine| {
+        let at = open();
+        engine
+            .apply(&engine_core::command::Sequenced { seq: engine.last_seq().unwrap() + 1, ts: at, cmd: Command::Tick })
+            .unwrap()
+    };
+    let quote_at = |engine: &mut Engine, at| {
+        let quotes = vec![quote("opening-a", "80", at), quote("opening-b", "80", at)];
+        engine
+            .apply(&engine_core::command::Sequenced {
+                seq: engine.last_seq().unwrap() + 1,
+                ts: at,
+                cmd: Command::Prices { market: AAPL, quotes },
+            })
+            .unwrap()
+    };
+    // Direct: a tick at the open applies the dividend at the boundary; the next command's quote fills.
+    let events = tick_at(&mut direct);
+    assert!(events.iter().any(|e| matches!(e, Event::CorporateDividend { .. })), "{events:?}");
+    assert!(!events.iter().any(|e| matches!(e, Event::CloseOut { .. })), "{events:?}");
+    let events = quote_at(&mut direct, open() + 1);
+    assert!(!events.iter().any(|e| matches!(e, Event::CloseOut { .. })), "{events:?}");
+    assert!(events.iter().any(|e| matches!(e, Event::Fill(fill) if fill.order_id == order)), "{events:?}");
+    // Jump: one command crosses the open; the dividend applies at the intermediate boundary before
+    // the quote's own fill, with the same outcome.
+    let events = quote_at(&mut jumped, open() + 1);
+    assert!(!events.iter().any(|e| matches!(e, Event::CloseOut { .. })), "{events:?}");
+    assert!(events.iter().any(|e| matches!(e, Event::Fill(fill) if fill.order_id == order)), "{events:?}");
+    let adjustment = events.iter().position(|e| matches!(e, Event::CorporateDividend { .. })).unwrap();
+    let fill = events.iter().position(|e| matches!(e, Event::Fill(_))).unwrap();
+    assert!(adjustment < fill);
+    for engine in [&direct, &jumped] {
         assert!(engine.accounts()[&acct(2)].positions.is_empty());
         assert_eq!(engine.accounts()[&acct(2)].balance, Fixed::ZERO);
     }
@@ -218,8 +256,8 @@ fn protocol_activation_leaves_missed_rollovers_and_due_openings_to_the_next_comm
     accepted(&schedule(&mut h, split("pending", 4, 1)));
     let rollover = h.engine.next_rollover();
     h.advance_to(open());
-    // Under V21 the activation is refused as not newer; either way it runs no catch-up.
-    let events = h.cmd(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V21 }));
+    // Under V23 the activation is refused as not newer; either way it runs no catch-up.
+    let events = h.cmd(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V23 }));
     assert!(events.iter().any(|e| matches!(e, Event::AdminRejected { .. })), "{events:?}");
     assert!(
         !events.iter().any(|e| matches!(e, Event::Financing { .. } | Event::CorporateSplit { .. } | Event::Fill(_))),

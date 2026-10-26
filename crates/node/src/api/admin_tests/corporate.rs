@@ -83,8 +83,9 @@ async fn corporate_actions_dev_scenario_signed_dividend_split_restart_and_replay
             node.post("/v1/dev/deposit", serde_json::json!({ "account": account, "amount": "10000" })).await;
         assert_eq!(status, StatusCode::OK);
     }
-    let quotes =
-        ["a", "b"].map(|source| SourceQuote { source: source.into(), mid: Fixed::from_int(80), ts: NOW }).to_vec();
+    let quotes = ["a", "b"]
+        .map(|source| SourceQuote { source: source.into(), mid: Fixed::from_int(80), ts: NOW, contract: None })
+        .to_vec();
     node.state.submit(Command::Prices { market: STOCK, quotes }).await.unwrap();
     for (account, side, qty) in [(TRADER, "buy", "2"), (SHORT, "sell", "3")] {
         let (_, events) = node
@@ -139,8 +140,8 @@ async fn corporate_actions_dev_scenario_signed_dividend_split_restart_and_replay
             old.qty.mul(before.markets()[&STOCK].mark.unwrap())
         );
         assert_eq!(
-            current.unrealised(after.markets()[&STOCK].mark.unwrap(), ProtocolVersion::V21),
-            old.unrealised(before.markets()[&STOCK].mark.unwrap(), ProtocolVersion::V21)
+            current.unrealised(after.markets()[&STOCK].mark.unwrap(), ProtocolVersion::V23),
+            old.unrealised(before.markets()[&STOCK].mark.unwrap(), ProtocolVersion::V23)
         );
     }
     let trader: AccountId = TRADER.parse().unwrap();

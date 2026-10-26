@@ -1077,7 +1077,7 @@ host-supplied credential, and HTTP client logs stay at `warn` regardless of `log
 
 ### Corporate actions operator runbook
 
-Protocol V21 accepts single-stock dividends and splits, and index dividend points, through
+Protocol V23 accepts single-stock dividends and splits, and index dividend points, through
 `engine admin schedule-corporate-action <file.toml>`. The client signs the complete instruction,
 nonce and expiry through the existing pinned TLS operator channel. The public log records that signature,
 `admin_applied` or `admin_rejected`, and the eventual application events. A future authenticated
@@ -1153,9 +1153,9 @@ Run `./scripts/dev-corporate-actions.sh` for the isolated local scenario. It use
 operator key, an in-process sequencer with controlled trusted time and a loopback TLS API: long and
 short positions plus a resting order, a signed dividend, a signed four-for-one split, a market order
 before a new quote, shutdown/recovery and public replay. Its withholding input is synthetic test
-data. The CI test job runs this script. V21 activation requires the preceding V19 and V20
+data. The CI test job runs this script. V23 activation requires the preceding V19, V20, V21 and V22
 implementations and their immutable reference logs; rollback after activation requires a build that
-understands V21 or a fresh log. On a node run from `config/dev.toml`, the mock feed rescales each
+understands V23 or a fresh log. On a node run from `config/dev.toml`, the mock feed rescales each
 market's walk by the split ratio for quotes stamped at or after a scheduled split's opening, and a
 restarted feed walks a market that has split from its current mark.
 
