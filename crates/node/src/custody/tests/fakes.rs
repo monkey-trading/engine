@@ -419,6 +419,7 @@ pub(super) fn evm_toml(dir: &Path, max_block_range: u64) -> String {
         poll_interval = "10ms"
         rpc_timeout = "1s"
         stall_critical_after = "1s"
+        finality_stalled_after = "1s"
         cursor_path = "{}"
         "#,
         dir.join("cursor.json").display()

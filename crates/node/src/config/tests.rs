@@ -337,6 +337,10 @@ fn the_custody_section_must_match_its_provider() {
     let mock_with_section = anvil.replace("provider = \"evm\"", "provider = \"mock\"");
     assert_validation_fails(&mock_with_section, "[custody.evm] is set");
     assert_validation_fails(&anvil.replace("max_block_range = 1000", "max_block_range = 0"), "must be non-zero");
+    assert_validation_fails(
+        &anvil.replace("finality_stalled_after = \"5m\"", "finality_stalled_after = \"0s\""),
+        "custody.evm.finality_stalled_after must be non-zero",
+    );
     assert_validation_fails(&anvil.replace("http://127.0.0.1:8545", "not a url"), "custody.evm.providers.rpc_url");
 }
 

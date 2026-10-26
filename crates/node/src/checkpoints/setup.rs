@@ -46,7 +46,7 @@ pub(crate) async fn connect(cfg: &NodeConfig, key: &Arc<EnclaveKey>) -> anyhow::
     )?;
     // A restart must not sign from a finalized parent while its own latest inclusion is pending.
     // Await that boundary without opening persisted state; an orphaned inclusion may disappear.
-    let state = tokio::time::timeout(evm.stall_critical_after, async {
+    let state = tokio::time::timeout(evm.finality_stalled_after, async {
         loop {
             let latest = chain.observe(View::Latest, &[]).await?;
             let finalized = chain.observe(View::Finalized, &[]).await?;
@@ -66,7 +66,7 @@ pub(crate) async fn connect(cfg: &NodeConfig, key: &Arc<EnclaveKey>) -> anyhow::
         }
     })
     .await
-    .context("checkpoint startup awaits custody finality beyond its stall deadline")??;
+    .context("checkpoint startup awaits custody finality beyond its finality budget")??;
     chain.authenticate_reservation(&state).await?;
     let parent = match &state.state.checkpoint {
         Some((seq, root)) => crate::log::CheckpointParent { has_checkpoint: true, seq: *seq, root: root.parse()? },

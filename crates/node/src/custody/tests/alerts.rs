@@ -64,7 +64,7 @@ async fn custody_alerts_keep_one_key_per_subject_and_resolve_under_it() {
 
     // The watchdogs: reads trailing the final block, a head a day old, and a final block that stays
     // put while the head moves on, each past the budget and then cleared.
-    let mut watchdog = Watchdog::new(Duration::from_secs(1));
+    let mut watchdog = Watchdog::new(Duration::from_secs(1), Duration::from_secs(1));
     let now_s = || u64::try_from(now_ms()).unwrap() / 1_000;
     watchdog.observe_read(false, 5, 9);
     advance(Duration::from_secs(1)).await;
@@ -199,6 +199,27 @@ async fn a_final_block_that_stops_while_the_head_moves_raises_one_critical_alert
     wait_for_polls(&chain, polls + 2).await;
     assert_eq!(logs.count("the final block is advancing again"), 1);
     run.abort();
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_finality_tag_slower_than_the_batch_budget_gets_its_own_budget() {
+    let (logs, _guard) = Logs::capture();
+    // Batch posting lands every second, but the release (`finalized`) tag follows an hour
+    // behind: far longer than the batch-posting budget, well within its own.
+    let mut watchdog = Watchdog::new(Duration::from_secs(1), Duration::from_secs(3_600));
+    let now_s = || u64::try_from(now_ms()).unwrap() / 1_000;
+    watchdog.observe(10, now_s(), Some(9), None);
+    for head in 11..20 {
+        watchdog.observe(head, now_s(), Some(9), None);
+        advance(Duration::from_secs(2)).await;
+    }
+    assert_eq!(logs.count("alert=\"custody_finality_stalled\""), 0);
+    // Past the finality budget the alert fires, once.
+    advance(Duration::from_secs(3_600)).await;
+    watchdog.observe(20, now_s(), Some(9), None);
+    let stalled = logs.lines_with("alert=\"custody_finality_stalled\"");
+    assert_eq!(stalled.len(), 1, "{stalled:?}");
+    assert!(stalled[0].contains("ERROR"), "{stalled:?}");
 }
 
 #[tokio::test]
