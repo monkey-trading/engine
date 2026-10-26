@@ -1,6 +1,7 @@
 use super::*;
 use std::fs;
 use std::io::Write as _;
+use std::sync::Arc;
 
 use engine_core::Fixed;
 use engine_core::command::Command;
@@ -287,6 +288,21 @@ fn a_segment_that_cannot_be_started_leaves_the_current_one_growing_until_it_can(
     assert_eq!(file_entries(&dir.join("00000000000000000003.jsonl")), [cmd(3)]);
     let ranges: Vec<_> = Manifest::load(&dir).unwrap().segments.iter().map(|s| (s.first_seq, s.last_seq)).collect();
     assert_eq!(ranges, [(0, 2)]);
+}
+
+#[test]
+fn rotation_lists_a_completed_segment_without_copying_the_published_list() {
+    // A copy of the list would make each rotation cost grow with the number of completed segments.
+    let dir = scratch_dir("rotation-shared-list");
+    let (sender, published) = watch::channel(Manifest::default());
+    let mut writer = SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(1, sender).unwrap();
+    writer.append(&cmd(0)).unwrap();
+    writer.append(&cmd(1)).unwrap();
+    let listed = Arc::as_ptr(&published.borrow().segments);
+    writer.append(&cmd(2)).unwrap();
+    let after = published.borrow();
+    assert_eq!(after.segments.iter().map(|s| s.first_seq).collect::<Vec<_>>(), [0, 1]);
+    assert_eq!(Arc::as_ptr(&after.segments), listed, "rotation copied the completed-segment list");
 }
 
 #[test]
