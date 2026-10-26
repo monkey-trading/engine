@@ -202,8 +202,8 @@ Run from the repo root:
   `curl`, and `jq`)
 - Verify a published log: `cargo run -p engine-node -- replay --log <path>`, where `<path>` is a
   log directory, a downloaded archive, or a single log file; `--attestation <attestation.json>
-  --release <release.toml>` additionally verifies an attestation against the release manifest and
-  requires every checkpoint signer to be the enclave address it names
+  --release <release.toml> --processor <name>` additionally verifies an attestation against
+  the release manifest and requires every checkpoint signer to be the enclave address it names
 - Verify an enclave's attestation: `cargo run -p engine-node -- verify-attestation
   --attestation <attestation.json> --release <release.toml> --processor <name>`; the quote's
   certificate chain must reach a vendor root pinned in the binary, and the measurement, policy,

@@ -10,7 +10,7 @@ use engine_core::types::AccountId;
 use engine_node::admin::{self, AdminArgs, HexKey, KeyEnv};
 use engine_node::log::CheckpointDomain;
 use engine_node::{
-KDS_BASE_URL, NodeConfig, VerifiedAttestation, VerifyOptions, ensure_signers_verified, init_logging,
+    KDS_BASE_URL, NodeConfig, VerifiedAttestation, VerifyOptions, ensure_signers_verified, init_logging,
     init_telemetry, replay_path_with_custody, replay_path_with_trust, run_dedicated, verify_attestation_files,
 };
 
@@ -45,7 +45,7 @@ enum Cmd {
         #[arg(long)]
         release: Option<PathBuf>,
         /// The vendor processor name for the certificate chain, as the vendor publishes it
-        /// (the CPU generation's codename, for example Milan, Genoa, or Turin).
+        /// (the CPU generation's codename, for example Milan or Genoa; Turin is not supported yet).
         #[arg(long, requires = "attestation")]
         processor: Option<String>,
         /// The vendor key-distribution service's base URL; the vendor's service unless overridden.
@@ -68,7 +68,7 @@ enum Cmd {
         #[arg(short, long)]
         release: PathBuf,
         /// The vendor processor name for the certificate chain, as the vendor publishes it
-        /// (the CPU generation's codename, for example Milan, Genoa, or Turin).
+        /// (the CPU generation's codename, for example Milan or Genoa; Turin is not supported yet).
         #[arg(long)]
         processor: String,
         /// The vendor key-distribution service's base URL; the vendor's service unless overridden.
@@ -107,7 +107,18 @@ fn main() -> anyhow::Result<()> {
             let telemetry = init_telemetry(&cfg, |var| std::env::var(var).ok())?;
             run_dedicated(cfg, telemetry)
         }
-        Cmd::Replay { log: path, chain_id, vault, signer, custody_config, attestation, release, processor, kds, root } => {
+        Cmd::Replay {
+            log: path,
+            chain_id,
+            vault,
+            signer,
+            custody_config,
+            attestation,
+            release,
+            processor,
+            kds,
+            root,
+        } => {
             init_logging("info")?;
             let domain = chain_id.zip(vault).map(|(chain_id, vault)| CheckpointDomain { chain_id, vault });
             // Verify the attestation before replaying: its enclave address is the trusted signer
@@ -127,17 +138,7 @@ fn main() -> anyhow::Result<()> {
                     .build()?
                     .block_on(replay_path_with_custody(&path, &cfg, signer))?
             } else {
-                let trusted = match (signer, verified.as_ref()) {
-                    (Some(signer), Some(verified)) => {
-                        anyhow::ensure!(
-                            signer == verified.enclave_address,
-                            "--signer {signer} differs from the attested enclave address {}",
-                            verified.enclave_address
-                        );
-                        Some(signer)
-                    }
-                    (signer, verified) => signer.or_else(|| verified.map(|verified| verified.enclave_address)),
-                };
+                let trusted = engine_node::reconcile_signer(signer, verified.as_ref())?;
                 replay_path_with_trust(&path, domain, trusted)?
             };
             if let Some(verified) = verified {
@@ -276,5 +277,4 @@ mod replay_cli_tests {
         .unwrap();
         assert!(matches!(cli.cmd, Cmd::Replay { custody_config: None, chain_id: Some(31337), signer: Some(_), .. }));
     }
-
 }

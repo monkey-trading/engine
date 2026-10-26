@@ -92,6 +92,8 @@ pub async fn verify_attestation(
         &roots(options)?,
     )?;
     chain.bind_vcek(&report)?;
+    let crl = collateral.crl().await.context("fetching the certificate revocation list")?;
+    chain::check_revocation(&crl, &chain)?;
     report.verify_signature(&chain.vcek_public_key()?)?;
 
     let bundle = crate::tee::AttestationBundle::decode(&unhex(&attestation.bundle)?)
@@ -146,12 +148,33 @@ pub async fn verify_attestation(
     })
 }
 
-/// Requires every checkpoint `signer` to be the enclave address `verified` attested, so a log
+/// Reconciles an explicitly pinned signer with a verified attestation for replay: the verified
+/// enclave address becomes the trusted signer, and an explicit pin must match it.
+/// Error cases:
+/// - `signer` and `verified` disagree
+pub fn reconcile_signer(
+    signer: Option<AccountId>,
+    verified: Option<&VerifiedAttestation>,
+) -> anyhow::Result<Option<AccountId>> {
+    match (signer, verified) {
+        (Some(signer), Some(verified)) => {
+            ensure!(
+                signer == verified.enclave_address,
+                "--signer {signer} differs from the attested enclave address {}",
+                verified.enclave_address
+            );
+            Ok(Some(signer))
+        }
+        (signer, verified) => Ok(signer.or_else(|| verified.map(|verified| verified.enclave_address))),
+    }
+}
+
+/// Requires every checkpoint `signers` to be the enclave address `verified` attested, so a log
 /// whose checkpoints any other key signed does not pass.
 /// Error cases:
 /// - a checkpoint signer differs from the verified enclave address
-pub fn ensure_signers_verified(signer: &BTreeSet<AccountId>, verified: &VerifiedAttestation) -> anyhow::Result<()> {
-    for signer in signer {
+pub fn ensure_signers_verified(signers: &BTreeSet<AccountId>, verified: &VerifiedAttestation) -> anyhow::Result<()> {
+    for signer in signers {
         ensure!(
             *signer == verified.enclave_address,
             "checkpoint signer {signer} did not pass attestation verification ({} attests {})",

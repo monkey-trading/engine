@@ -1,5 +1,5 @@
-//! The key-distribution service stand-ins: one shaped like the vendor's endpoints, one that
-//! fails a counted number of times for the retry tests.
+//! The key-distribution service stand-ins: one shaped like the vendor's endpoints, and counted
+//! failure variants for the retry tests.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -11,13 +11,13 @@ use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
 use super::super::Options;
-use super::fixtures::{PROCESSOR, TestChain, pem};
+use super::fixtures::{PROCESSOR, TestChain, crl, pem};
 
 /// A key-distribution service stand-in with the vendor endpoints' shapes: the VCEK endpoint
-/// answers DER for any chip and TCB, like a mirror would, so the verifier's own extension
-/// binding is what refuses a mismatched certificate; the issuer chain answers PEM, and only for
-/// the fixture's processor. `failures` counts 500 answers before `body` succeeds on one route,
-/// for the retry tests.
+/// answers for any chip and TCB (so the verifier itself must bind the certificate's signed
+/// extensions to the quote), the issuer chain and revocation list answer PEM, and all only for
+/// the fixture's processor. `attempts` counts answers on the counting stand-ins, for the retry
+/// tests.
 pub(super) struct KdsStub {
     pub(super) base: String,
     pub(super) attempts: Arc<AtomicUsize>,
@@ -25,6 +25,13 @@ pub(super) struct KdsStub {
 }
 
 pub(super) async fn kds_stub(chain: &TestChain) -> KdsStub {
+    kds_stub_with(chain, false, &[]).await
+}
+
+/// The stand-in with a PEM-encoded VCEK or a revocation list that revokes `revoked`.
+pub(super) async fn kds_stub_with(chain: &TestChain, vcek_pem: bool, revoked: &[u64]) -> KdsStub {
+    let vcek = if vcek_pem { pem(&chain.vcek).into_bytes() } else { chain.vcek.der().to_vec() };
+    let crl = crl(chain, revoked);
     let app = Router::new()
         .route("/vcek/v1/{processor}/cert_chain", {
             let ark = pem(&chain.ark);
@@ -40,8 +47,20 @@ pub(super) async fn kds_stub(chain: &TestChain) -> KdsStub {
                 }
             })
         })
+        .route("/vcek/v1/{processor}/crl", {
+            let crl = crl.clone();
+            get(move |Path(processor): Path<String>| {
+                let crl = crl.clone();
+                async move {
+                    if processor != PROCESSOR {
+                        return (axum::http::StatusCode::NOT_FOUND, String::new());
+                    }
+                    (axum::http::StatusCode::OK, crl)
+                }
+            })
+        })
         .route("/vcek/v1/{processor}/{hwid}", {
-            let vcek = chain.vcek.der().to_vec();
+            let vcek = vcek.clone();
             get(move |Path((processor, _hwid)): Path<(String, String)>| {
                 let vcek = vcek.clone();
                 async move {
@@ -57,8 +76,8 @@ pub(super) async fn kds_stub(chain: &TestChain) -> KdsStub {
     serve(app).await
 }
 
-/// A stand-in whose one route fails with 500 `failures` times, counted, before answering `body`.
-pub(super) async fn flaky_stub(failures: usize, body: String) -> KdsStub {
+/// A stand-in whose one route answers `status` `failures` times, counted, then `body`.
+pub(super) async fn status_stub(status: axum::http::StatusCode, failures: usize, body: String) -> KdsStub {
     let attempts = Arc::new(AtomicUsize::new(0));
     let counted = attempts.clone();
     let app = Router::new().route(
@@ -68,11 +87,7 @@ pub(super) async fn flaky_stub(failures: usize, body: String) -> KdsStub {
             let body = body.clone();
             async move {
                 let attempt = counted.fetch_add(1, Ordering::SeqCst);
-                if attempt < failures {
-                    (axum::http::StatusCode::INTERNAL_SERVER_ERROR, String::new())
-                } else {
-                    (axum::http::StatusCode::OK, body)
-                }
+                if attempt < failures { (status, String::new()) } else { (axum::http::StatusCode::OK, body) }
             }
         }),
     );

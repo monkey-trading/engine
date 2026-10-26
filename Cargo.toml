@@ -43,7 +43,7 @@ proptest = { version = "1.12", default-features = false, features = ["std"] }
 rand = "0.8"
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
 # HTTPS for alert webhooks. TLS is configured in code: rustls on ring with the compiled-in Mozilla roots.
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider", "stream"] }
 # P-384 ECDSA over the attestation report. The workspace already builds ring as rustls's only
 # crypto provider, so no new backend enters the tree.
 ring = { version = "0.17", default-features = false, features = ["std"] }

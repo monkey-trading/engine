@@ -1,6 +1,7 @@
 //! Parsing and signature verification of an AMD SEV-SNP attestation report, the raw report a
-//! configfs-tsm guest reads from `outblob` on SEV-SNP. The layout is the version-2 report the
-//! platform firmware issues; offsets are fixed and little-endian where the field is an integer.
+//! configfs-tsm guest reads from `outblob` on SEV-SNP. The layout is the version-2 and
+//! version-3 report the platform firmware issues, which share every offset this verifier reads;
+//! offsets are fixed and little-endian where the field is an integer.
 
 use anyhow::{Context, ensure};
 

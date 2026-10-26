@@ -12,14 +12,17 @@ use std::collections::BTreeSet;
 use std::sync::atomic::Ordering;
 
 use anyhow::Context as _;
-use rcgen::{CertificateParams, Issuer, KeyPair};
+use rcgen::KeyPair;
 
-use super::chain::Collateral;
+use super::chain::{Collateral, check_signed_by};
 use super::report::Tcb;
-use super::{Options, VerifiedAttestation, ensure_signers_verified, verify_attestation, verify_attestation_files};
+use super::{
+    Options, VerifiedAttestation, ensure_signers_verified, reconcile_signer, verify_attestation,
+    verify_attestation_files,
+};
 use crate::tee::{Attestation, AttestationBundle};
 use fixtures::*;
-use stub::{flaky_stub, kds_stub, options};
+use stub::{kds_stub, kds_stub_with, options, status_stub};
 
 #[tokio::test]
 async fn a_release_quote_verifies_and_names_the_release() {
@@ -56,27 +59,41 @@ async fn a_chain_not_reaching_a_root_never_verifies() {
 #[tokio::test]
 async fn a_chain_with_a_corrupted_certificate_signature_never_verifies() {
     let enclave = enclave();
-    // The VCEK names the ASK as its issuer but is signed with the ARK's key, so issuer names
-    // match and only the signature check can refuse it.
-    let ark_key = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384).unwrap();
-    let ark_params = ca_params("ARK-Test");
-    let ark = ark_params.self_signed(&ark_key).unwrap();
-    let ask_key = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384).unwrap();
-    let ask_params = ca_params("ASK-Test");
-    let ask = ask_params.signed_by(&ask_key, &Issuer::from_params(&ark_params, &ark_key)).unwrap();
-    let vcek_key = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384).unwrap();
-    let vcek_params = CertificateParams::new(Vec::new()).unwrap();
-    let vcek = vcek_params.signed_by(&vcek_key, &Issuer::from_params(&ask_params, &ark_key)).unwrap();
-    let chain = TestChain { ark, ask, vcek, vcek_key };
-
+    // The VCEK keeps the intermediate's issuer name and full extension set but is signed with a
+    // key that is not the intermediate's, so only the certificate signature check can refuse it.
+    let attacker_key = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384).unwrap();
+    let chain = test_chain_with(
+        enclave.chip_id,
+        REPORTED_TCB,
+        Variants { vcek_signer: Some(&attacker_key), ..Variants::default() },
+    );
     let stub = kds_stub(&chain).await;
     let attestation = attestation(
         &enclave.bundle,
         &forged_report(&chain, LAUNCH_DIGEST, enclave.bundle.report_data(), enclave.chip_id),
     );
+
     assert!(verify_attestation(&attestation, &release(), &options(&stub, &pem(&chain.ark))).await.is_err());
 }
 
+#[tokio::test]
+async fn a_chain_with_a_corrupted_intermediate_signature_never_verifies() {
+    let enclave = enclave();
+    // The intermediate keeps the root's issuer name but is signed with another key.
+    let attacker_key = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384).unwrap();
+    let chain = test_chain_with(
+        enclave.chip_id,
+        REPORTED_TCB,
+        Variants { ask_signer: Some(&attacker_key), ..Variants::default() },
+    );
+    let stub = kds_stub(&chain).await;
+    let attestation = attestation(
+        &enclave.bundle,
+        &forged_report(&chain, LAUNCH_DIGEST, enclave.bundle.report_data(), enclave.chip_id),
+    );
+
+    assert!(verify_attestation(&attestation, &release(), &options(&stub, &pem(&chain.ark))).await.is_err());
+}
 #[tokio::test]
 async fn an_altered_configuration_fails_verification() {
     let (chain, enclave, _) = fixtures();
@@ -98,12 +115,15 @@ async fn an_altered_measurement_policy_or_tcb_fails_verification() {
         ("measurement", [0x1e; 48], POLICY, (3, 0, 8, 115)),
         ("policy", LAUNCH_DIGEST, POLICY + 1, (3, 0, 8, 115)),
         ("minimum TCB", LAUNCH_DIGEST, POLICY, (5, 0, 8, 115)),
+        ("minimum TCB on tee", LAUNCH_DIGEST, POLICY, (3, 1, 8, 115)),
         ("minimum TCB with a higher earlier component", LAUNCH_DIGEST, POLICY, (3, 0, 9, 215)),
+        ("minimum TCB with a higher boot loader only", LAUNCH_DIGEST, POLICY, (3, 0, 8, 206)),
     ] {
         let mut release = release();
         release.launch_digest = measurement;
         release.policy = policy;
         release.minimum_tcb.boot_loader = minimum_tcb.0;
+        release.minimum_tcb.tee = minimum_tcb.1;
         release.minimum_tcb.snp = minimum_tcb.2;
         release.minimum_tcb.microcode = minimum_tcb.3;
 
@@ -154,9 +174,10 @@ async fn a_quote_whose_report_data_differs_from_the_served_one_fails_verificatio
 async fn a_corrupted_report_signature_never_verifies() {
     let (chain, enclave, _) = fixtures();
     let stub = kds_stub(&chain).await;
-    // Flip a byte the signature covers, after signing; nothing else is inconsistent yet.
+    // Corrupt one byte of the signature itself; the signed content stays consistent, so only
+    // the signature check can refuse this.
     let mut report = forged_report(&chain, LAUNCH_DIGEST, enclave.bundle.report_data(), enclave.chip_id);
-    report[0x50] ^= 1;
+    report[0x2A0] ^= 1;
     let attestation = attestation(&enclave.bundle, &report);
 
     assert!(verify_attestation(&attestation, &release(), &options(&stub, &pem(&chain.ark))).await.is_err());
@@ -193,6 +214,90 @@ async fn a_vcek_for_another_tcb_fails_verification() {
     assert!(verify_attestation(&attestation, &release(), &options(&stub, &pem(&chain.ark))).await.is_err());
 }
 
+#[tokio::test]
+async fn a_vcek_with_an_unsupported_struct_version_fails_verification() {
+    let enclave = enclave();
+    let chain = test_chain_with(enclave.chip_id, REPORTED_TCB, Variants { struct_version: 1, ..Variants::default() });
+    let stub = kds_stub(&chain).await;
+    let attestation = attestation(
+        &enclave.bundle,
+        &forged_report(&chain, LAUNCH_DIGEST, enclave.bundle.report_data(), enclave.chip_id),
+    );
+
+    assert!(verify_attestation(&attestation, &release(), &options(&stub, &pem(&chain.ark))).await.is_err());
+}
+
+#[tokio::test]
+async fn a_vcek_with_a_tagged_hardware_id_verifies() {
+    let enclave = enclave();
+    let chain = test_chain_with(enclave.chip_id, REPORTED_TCB, Variants { tagged_hwid: true, ..Variants::default() });
+    let stub = kds_stub(&chain).await;
+    let attestation = attestation(
+        &enclave.bundle,
+        &forged_report(&chain, LAUNCH_DIGEST, enclave.bundle.report_data(), enclave.chip_id),
+    );
+
+    assert!(verify_attestation(&attestation, &release(), &options(&stub, &pem(&chain.ark))).await.is_ok());
+}
+
+#[tokio::test]
+async fn a_pem_vcek_answer_verifies() {
+    let (chain, _enclave, attestation) = fixtures();
+    let stub = kds_stub_with(&chain, true, &[]).await;
+
+    assert!(verify_attestation(&attestation, &release(), &options(&stub, &pem(&chain.ark))).await.is_ok());
+}
+
+#[tokio::test]
+async fn a_revoked_vcek_fails_verification() {
+    let (chain, _enclave, attestation) = fixtures();
+    let stub = kds_stub_with(&chain, false, &[VCEK_SERIAL]).await;
+
+    assert!(verify_attestation(&attestation, &release(), &options(&stub, &pem(&chain.ark))).await.is_err());
+}
+
+#[test]
+fn the_pinned_vendor_intermediates_verify_against_their_roots() {
+    // The vendor's real ASK certificates are RSA-4096 and sign with RSASSA-PSS/SHA-384, the
+    // path the fixture chain cannot build; this is that path with the vendor's own keys.
+    for (ask, root) in [
+        (include_str!("ask-milan.pem"), include_str!("../roots/ark-milan.pem")),
+        (include_str!("ask-genoa.pem"), include_str!("../roots/ark-genoa.pem")),
+        (include_str!("ask-turin.pem"), include_str!("../roots/ark-turin.pem")),
+    ] {
+        let ask = pem_certificates_for_test(ask);
+        let root = pem_certificates_for_test(root);
+        check_signed_by(&ask, &root).expect("the vendor intermediate verifies against its root");
+        check_signed_by(&root, &ask).expect_err("the root does not verify against the intermediate");
+    }
+}
+
+fn pem_certificates_for_test(pem: &str) -> Vec<u8> {
+    let mut blocks = x509_parser::pem::Pem::iter_from_buffer(pem.as_bytes());
+    blocks.next().unwrap().unwrap().contents
+}
+
+#[test]
+fn the_signer_reconciliation_feeds_the_attested_address_and_rejects_a_mismatch() {
+    let enclave = enclave();
+    let address = engine_core::types::AccountId(enclave.bundle.enclave_address);
+    let verified = VerifiedAttestation {
+        release_name: "test-release-v1".into(),
+        enclave_address: address,
+        config_name: "node.toml".into(),
+    };
+
+    assert_eq!(
+        reconcile_signer(None, Some(&verified)).unwrap(),
+        Some(address),
+        "the attested address becomes the trusted signer"
+    );
+    assert_eq!(reconcile_signer(Some(address), Some(&verified)).unwrap(), Some(address), "a matching pin stands");
+    assert!(reconcile_signer(Some(engine_core::types::AccountId([0x42; 20])), Some(&verified)).is_err());
+    assert_eq!(reconcile_signer(Some(address), None).unwrap(), Some(address));
+    assert_eq!(reconcile_signer(None, None).unwrap(), None);
+}
+
 #[test]
 fn signers_pass_only_when_they_match_the_verified_enclave_address() {
     let enclave = enclave();
@@ -214,18 +319,31 @@ async fn collateral_fetches_retry_transient_failures_and_stop_at_a_persistent_on
     // Fail twice, then answer with a valid issuer chain: the fetch succeeds on the third attempt.
     let (chain, _enclave, _attestation) = fixtures();
     let pem_chain = format!("{}{}", pem(&chain.ask), pem(&chain.ark));
-    let recovering = flaky_stub(2, pem_chain.clone()).await;
+    let recovering = status_stub(axum::http::StatusCode::INTERNAL_SERVER_ERROR, 2, pem_chain.clone()).await;
     let collateral = Collateral::new(&recovering.base, PROCESSOR).unwrap();
     collateral.issuer_chain().await.expect("the third attempt succeeds");
     assert_eq!(recovering.attempts.load(Ordering::SeqCst), 3);
 
     // Fail always: the fetch gives up after exactly the attempt limit.
-    let failing = flaky_stub(usize::MAX, pem_chain).await;
+    let failing = status_stub(axum::http::StatusCode::INTERNAL_SERVER_ERROR, usize::MAX, pem_chain.clone()).await;
     let collateral = Collateral::new(&failing.base, PROCESSOR).unwrap();
     collateral.issuer_chain().await.expect_err("a persistent failure must fail");
     assert_eq!(failing.attempts.load(Ordering::SeqCst), 3);
+
+    // A 4xx is refused without another try.
+    let refused = status_stub(axum::http::StatusCode::NOT_FOUND, usize::MAX, pem_chain).await;
+    let collateral = Collateral::new(&refused.base, PROCESSOR).unwrap();
+    collateral.issuer_chain().await.expect_err("a 404 must fail");
+    assert_eq!(refused.attempts.load(Ordering::SeqCst), 1);
 }
 
+#[tokio::test]
+async fn collateral_fetches_refuse_an_oversized_body() {
+    let oversized = status_stub(axum::http::StatusCode::OK, 0, "x".repeat(2 * 1024 * 1024)).await;
+    let collateral = Collateral::new(&oversized.base, PROCESSOR).unwrap();
+    collateral.issuer_chain().await.expect_err("an oversized body must fail");
+    assert_eq!(oversized.attempts.load(Ordering::SeqCst), 1);
+}
 /// The dev scenario: a release quote passes verification and names the release; a mock quote, an
 /// unlisted configuration, an altered measurement, and an unattested checkpoint signer fail. Runs
 /// without hardware or vendor access; `scripts/dev-attestation-verifier.sh` runs it, and CI runs

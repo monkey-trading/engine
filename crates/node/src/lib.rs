@@ -39,9 +39,9 @@ mod test_tracing;
 mod throttle;
 mod tls;
 mod trusted_time;
-mod withdrawals;
 mod verify;
+mod withdrawals;
 pub use verify::{
     KDS_BASE_URL, Options as VerifyOptions, ReleaseManifest, VerifiedAttestation, ensure_signers_verified,
-    load_attestation, verify_attestation, verify_attestation_files,
+    load_attestation, reconcile_signer, verify_attestation, verify_attestation_files,
 };

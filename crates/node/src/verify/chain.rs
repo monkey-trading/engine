@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, bail, ensure};
+use futures_util::StreamExt as _;
 use reqwest::Client;
 use reqwest::redirect::Policy;
 use rustls::ClientConfig;
@@ -87,17 +88,29 @@ impl QuoteChain {
         ensure!(roots.contains(&root), "chain root is not a pinned vendor root");
         let chain = Self { ders: vec![vcek, intermediate, root] };
         for (child, parent) in [(0, 1), (1, 2)] {
-            let child = parse_cert(&chain.ders[child])?;
-            let parent = parse_cert(&chain.ders[parent])?;
+            check_signed_by(&chain.ders[child], &chain.ders[parent])?;
+            // The pinned root is trusted by byte equality, not by its clock window; the two
+            // certificates it vouches for must be within theirs. The verifier runs outside the
+            // enclave, so its clock is the reference for this check.
+            let cert = parse_cert(&chain.ders[child])?;
             ensure!(
-                child.tbs_certificate.issuer() == parent.tbs_certificate.subject(),
-                "certificate issuer does not match its parent's subject"
+                cert.validity().is_valid_at(x509_parser::time::ASN1Time::now()),
+                "certificate {} is outside its validity period",
+                subject_name(&cert)
             );
-            child
-                .verify_signature(Some(parent.public_key()))
-                .map_err(|_| anyhow::anyhow!("certificate signature does not verify against its parent"))?;
         }
         Ok(chain)
+    }
+
+    /// The certificates whose serials a revocation list must not contain — the VCEK and the
+    /// intermediate — as big-endian serial bytes.
+    pub(crate) fn revoked_serials(&self) -> anyhow::Result<Vec<Vec<u8>>> {
+        (0..=1).map(|index| Ok(parse_cert(&self.ders[index])?.serial.to_bytes_be())).collect()
+    }
+
+    /// The root certificate the chain is pinned to, DER bytes.
+    pub(crate) fn root_der(&self) -> &[u8] {
+        &self.ders[2]
     }
 
     /// Requires the VCEK's signed extensions to bind it to `report`: the struct version must be
@@ -221,39 +234,89 @@ impl<'a> Collateral<'a> {
                 .next()
                 .with_context(|| format!("collateral answered without a {what} certificate"))
         } else {
-            ensure!(body.len() <= MAX_COLLATERAL_BYTES, "collateral answer is too large");
             Ok(body)
         }
     }
 
-    /// Fetches `url`, retrying a transient failure — a transport error, 429, or 5xx — with a
-    /// short backoff, and refusing a 4xx without another try.
+    /// The processor's certificate revocation list as DER, decoding the PEM the vendor serves
+    /// it as.
     /// Error cases:
-    /// - the service keeps failing, or answers 4xx
+    /// - the service does not answer, or answers without a list
+    pub async fn crl(&self) -> anyhow::Result<Vec<u8>> {
+        let url = format!("{}/vcek/v1/{}/crl", self.base.trim_end_matches('/'), self.processor);
+        let body = self.fetch(&url).await?;
+        if body.starts_with(b"-----BEGIN") {
+            let mut blocks = x509_parser::pem::Pem::iter_from_buffer(&body);
+            let block = blocks
+                .next()
+                .context("collateral answered without a revocation list")?
+                .map_err(|err| anyhow::anyhow!("malformed PEM: {err}"))?;
+            return Ok(block.contents);
+        }
+        Ok(body)
+    }
+
+    /// Fetches `url`, retrying a transient failure — a transport or body-read error, 429, or 5xx
+    /// — with a short backoff, and refusing a 4xx without another try. The body is read in
+    /// bounded chunks, never buffered past `MAX_COLLATERAL_BYTES`.
+    /// Error cases:
+    /// - the service keeps failing, answers 4xx, or sends an oversized body
     async fn fetch(&self, url: &str) -> anyhow::Result<Vec<u8>> {
         let mut last = None;
         for attempt in 0..FETCH_ATTEMPTS {
-            match self.client.get(url).send().await {
-                Ok(response) => {
-                    let status = response.status();
-                    if status.is_success() {
-                        let body = response.bytes().await.context("reading the collateral answer")?;
-                        ensure!(body.len() <= MAX_COLLATERAL_BYTES, "collateral answer is too large");
-                        return Ok(body.to_vec());
-                    }
-                    last = Some(format!("{url} answered {status}"));
-                    if !status.is_server_error() && status.as_u16() != 429 {
-                        break;
+            match self.attempt(url).await {
+                Ok(body) => return Ok(body),
+                Err(FetchError::Transient(message)) => {
+                    last = Some(message);
+                    if attempt + 1 < FETCH_ATTEMPTS {
+                        tokio::time::sleep(FETCH_BACKOFF).await;
                     }
                 }
-                Err(err) => last = Some(format!("fetching {url}: {err}")),
-            }
-            if attempt + 1 < FETCH_ATTEMPTS {
-                tokio::time::sleep(FETCH_BACKOFF).await;
+                Err(FetchError::Refused(message)) => return Err(anyhow::anyhow!(message)),
             }
         }
         Err(anyhow::anyhow!(last.expect("at least one attempt")))
     }
+
+    /// One fetch attempt.
+    /// Error cases:
+    /// - `Transient`: a transport or body-read error, 429, or 5xx, worth another attempt
+    /// - `Refused`: a 4xx or an oversized body, not worth one
+    async fn attempt(&self, url: &str) -> Result<Vec<u8>, FetchError> {
+        let response =
+            self.client.get(url).send().await.map_err(|err| FetchError::Transient(format!("fetching {url}: {err}")))?;
+        let status = response.status();
+        if !status.is_success() {
+            let message = format!("{url} answered {status}");
+            return Err(if status.is_server_error() || status.as_u16() == 429 {
+                FetchError::Transient(message)
+            } else {
+                FetchError::Refused(message)
+            });
+        }
+        if let Some(length) = response.content_length()
+            && length as usize > MAX_COLLATERAL_BYTES
+        {
+            return Err(FetchError::Refused(format!("{url} answered with an oversized body")));
+        }
+        let mut stream = response.bytes_stream();
+        let mut body = Vec::new();
+        while let Some(chunk) =
+            stream.next().await.transpose().map_err(|err| FetchError::Transient(format!("reading {url}: {err}")))?
+        {
+            body.extend_from_slice(&chunk);
+            if body.len() > MAX_COLLATERAL_BYTES {
+                return Err(FetchError::Refused(format!("{url} answered with an oversized body")));
+            }
+        }
+        Ok(body)
+    }
+}
+
+/// How an attempt failed: worth retrying, or not.
+enum FetchError {
+    Transient(String),
+    Refused(String),
 }
 
 /// Parses a DER certificate.
@@ -262,6 +325,52 @@ impl<'a> Collateral<'a> {
 fn parse_cert(der: &[u8]) -> anyhow::Result<X509Certificate<'_>> {
     let (_, cert) = X509Certificate::from_der(der).map_err(|err| anyhow::anyhow!("parsing a certificate: {err:?}"))?;
     Ok(cert)
+}
+
+/// Checks a child certificate's issuer name and signature against its parent.
+/// Error cases:
+/// - a certificate does not parse, the issuer name does not match the parent's subject, or the
+///   signature does not verify
+pub(crate) fn check_signed_by(child: &[u8], parent: &[u8]) -> anyhow::Result<()> {
+    let child_cert = parse_cert(child)?;
+    let parent_cert = parse_cert(parent)?;
+    ensure!(
+        child_cert.tbs_certificate.issuer() == parent_cert.tbs_certificate.subject(),
+        "certificate issuer does not match its parent's subject"
+    );
+    child_cert
+        .verify_signature(Some(parent_cert.public_key()))
+        .map_err(|err| anyhow::anyhow!("certificate signature does not verify against its parent: {err:?}"))
+}
+
+/// A certificate's subject as a one-line name, for errors.
+fn subject_name(cert: &X509Certificate<'_>) -> String {
+    cert.subject().to_string()
+}
+
+/// Checks `crl`, the processor's certificate revocation list, against the pinned root and the
+/// chain's certificates: the CRL must be the root's, signed by it, unexpired, and list none of
+/// the chain's serials.
+/// Error cases:
+/// - the CRL does not parse or verify against the root, is expired, or revokes a chain certificate
+pub(crate) fn check_revocation(crl: &[u8], chain: &QuoteChain) -> anyhow::Result<()> {
+    let (_, crl) = x509_parser::revocation_list::CertificateRevocationList::from_der(crl)
+        .map_err(|err| anyhow::anyhow!("parsing the certificate revocation list: {err:?}"))?;
+    let root = parse_cert(chain.root_der())?;
+    ensure!(crl.issuer() == root.subject(), "revocation list issuer is not the chain's root");
+    crl.verify_signature(root.public_key())
+        .map_err(|err| anyhow::anyhow!("revocation list signature does not verify against the root: {err:?}"))?;
+    let now = x509_parser::time::ASN1Time::now();
+    ensure!(crl.last_update() <= now, "revocation list is not yet valid");
+    if let Some(next) = crl.next_update() {
+        ensure!(now <= next, "revocation list is expired");
+    }
+    let serials = chain.revoked_serials()?;
+    let revoked = crl.iter_revoked_certificates().find(|entry| serials.contains(&entry.raw_serial().to_vec()));
+    if let Some(entry) = revoked {
+        bail!("certificate 0x{} is revoked", entry.raw_serial_as_string());
+    }
+    Ok(())
 }
 
 /// Parses the first PEM certificate in `pem` to DER.
@@ -291,8 +400,8 @@ fn pem_certificates(pem: &str) -> anyhow::Result<Vec<Vec<u8>>> {
 fn extension_integer(extension: &x509_parser::extensions::X509Extension<'_>, what: &str) -> anyhow::Result<u8> {
     let value = extension.value;
     ensure!(value.first() == Some(&0x02), "VCEK {what} extension is not a DER INTEGER");
-    let len = *value.get(1).context("VCEK {what} extension is truncated")? as usize;
-    let content = value.get(2..2 + len).context("VCEK {what} extension is truncated")?;
+    let len = *value.get(1).with_context(|| format!("VCEK {what} extension is truncated"))? as usize;
+    let content = value.get(2..2 + len).with_context(|| format!("VCEK {what} extension is truncated"))?;
     match content {
         [byte] => Ok(*byte),
         [0, byte] => Ok(*byte),

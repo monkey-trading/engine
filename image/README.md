@@ -98,7 +98,8 @@ reserved as zero. The bundle is 105 bytes:
 | 73..105 | SHA-256 of the API's TLS certificate's DER SubjectPublicKeyInfo, which clients pin |
 
 On SEV-SNP the quote is the raw attestation report. `engine verify-attestation --attestation
-<v1/attestation JSON> --release <release manifest>` accepts it only when all of these hold:
+<v1/attestation JSON> --release <release manifest> --processor <name>` accepts it only when all
+of these hold:
 
 - its signature verifies against the VCEK certificate chain from AMD's key distribution service up
   to AMD's root key; without this, the fields below prove nothing;
@@ -113,7 +114,7 @@ On SEV-SNP the quote is the raw attestation report. `engine verify-attestation -
 The verifier checks the report signature against the VCEK, fetched from the vendor's
 key-distribution service by the chip id and reported TCB the quote carries, and the VCEK's chain
 against the vendor roots pinned in the binary. A mock quote never verifies. `engine replay
---attestation <JSON> --release <manifest>` runs the same verification and requires every
+--attestation <JSON> --release <manifest> --processor <name>` runs the same verification and requires every
 checkpoint signer to be the enclave address the report data binds; the commands below only read
 the fields.
 

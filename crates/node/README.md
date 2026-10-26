@@ -273,7 +273,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/verify/release.rs` — the release manifest of launch digest, policy, minimum TCB, and
   configuration hashes
 - `src/verify/roots/` — the vendor root certificates compiled into the verifier
-- `src/verify/tests.rs` — verification tests and the loopback dev scenario
+- `src/verify/tests/mod.rs` — verification tests and the loopback dev scenario
+- `src/verify/tests/fixtures.rs` — the stand-in vendor chain, forged reports, and the release
+  manifest
+- `src/verify/tests/stub.rs` — the key-distribution service stand-ins
 - `src/trusted_time/mod.rs` — the trusted time task: queries the Roughtime servers, backs off
   failing ones, and turns agreeing replies into a sample
 - `src/trusted_time/gate.rs` — the sequencer's check of each stamp against the latest sample
