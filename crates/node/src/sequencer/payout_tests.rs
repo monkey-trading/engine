@@ -293,7 +293,7 @@ impl Node {
         seq.activate_protocol().unwrap();
         seq.genesis(&dev_config().genesis).unwrap();
         seq.trust(sample_around(clock.as_ref())).unwrap();
-        assert_eq!(seq.engine.protocol_version(), ProtocolVersion::V22);
+        assert_eq!(seq.engine.protocol_version(), ProtocolVersion::V23);
         seq.checkpoint_status(seq.last_seq(), true).unwrap();
         Self { seq, clock, dir, work, _queued: queued, signed }
     }

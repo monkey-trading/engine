@@ -385,7 +385,7 @@ fn entries(dir: &Path) -> anyhow::Result<Vec<LogEntry>> {
 
 /// Replays actual persisted roots, events and authorizations under the independently known signer.
 /// Error cases:
-/// - full replay fails or the log does not end under V22
+/// - full replay fails or the log does not end under V23
 fn replay(node: &Node) -> anyhow::Result<()> {
     let replayed = replay_path_with_trust(
         &node.dir.join("log"),
@@ -393,8 +393,8 @@ fn replay(node: &Node) -> anyhow::Result<()> {
         Some(node.chain.signer),
     )?;
     ensure!(
-        replayed.engine.protocol_version() == engine_core::protocol::ProtocolVersion::V22,
-        "node boot did not activate V22"
+        replayed.engine.protocol_version() == engine_core::protocol::ProtocolVersion::V23,
+        "node boot did not activate V23"
     );
     Ok(())
 }
