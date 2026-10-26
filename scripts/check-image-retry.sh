@@ -146,8 +146,9 @@ def split_words(value):
 
 def env_operands(tokens):
     # Returns the operand list env runs: its options and assignments are consumed, stopping at
-    # the first operand so a `retry` or a benign command there is preserved. A split-string
-    # value is word-split into the command env runs, followed by any remaining operands.
+    # the first operand so a `retry` or a benign command there is preserved. A split string is
+    # word-split back into env's own arguments — env parses options from the expansion too, so
+    # parsing resumes on it, with any operands after the option appended.
     i = 0
     while i < len(tokens):
         option = tokens[i]
@@ -162,7 +163,10 @@ def env_operands(tokens):
             name, _, attached = option.partition("=")
             if name == "--split-string":
                 value = attached if attached else tokens[i + 1] if i + 1 < len(tokens) else ""
-                return split_words(value) + tokens[i + (1 if attached else 2):]
+                step = 1 if attached else 2
+                tokens = split_words(value) + tokens[i + step:]
+                i = 0
+                continue
             if name in ("--unset", "--chdir"):
                 i += 1 if attached else 2 if i + 1 < len(tokens) else 1
                 continue
@@ -184,7 +188,9 @@ def env_operands(tokens):
         if letter == "S":
             value = attached if attached else tokens[i + 1] if i + 1 < len(tokens) else ""
             step = 1 if attached else 2
-            return split_words(value) + tokens[i + step:]
+            tokens = split_words(value) + tokens[i + step:]
+            i = 0
+            continue
         i += 1 if attached else 2 if i + 1 < len(tokens) else 1
     return tokens[i:]
 
@@ -363,6 +369,15 @@ if scan_out="$(scan_dockerfile "$work/Dockerfile.split-string")"; then
 else
   echo "ok: the Dockerfile scan catches an apt-get update behind a split string ($scan_out)"
 fi
+# env parses options from the split string's words too, so an option inside the string cannot
+# hide the download behind it.
+sed "s/&& retry apt-get update/\&\& env -S '-i apt-get update'/" \
+  image/Dockerfile > "$work/Dockerfile.split-options"
+if scan_out="$(scan_dockerfile "$work/Dockerfile.split-options")"; then
+  fail "the Dockerfile scan missed a download behind an option inside a split string"
+else
+  echo "ok: the Dockerfile scan catches an apt-get update behind an option inside a split string ($scan_out)"
+fi
 sed 's/&& retry apt-get update/\&\& env -i apt-get update/' \
   image/Dockerfile > "$work/Dockerfile.env-options"
 if scan_out="$(scan_dockerfile "$work/Dockerfile.env-options")"; then
@@ -395,6 +410,7 @@ RUN env -i retry curl -fsSL https://example.invalid/pinned.tar.xz -o pinned.tar.
 RUN env -i echo curl
 RUN env -uHTTP_PROXY echo curl
 RUN env -S 'retry curl -fsSL https://example.invalid/pinned.tar.xz -o pinned.tar.xz'
+RUN env -S '-i retry curl -fsSL https://example.invalid/pinned.tar.xz -o pinned.tar.xz'
 BENIGN
 if scan_out="$(scan_dockerfile "$work/Dockerfile.benign")"; then
   echo "ok: benign commands are not flagged"
