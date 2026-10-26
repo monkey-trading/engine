@@ -131,42 +131,73 @@ VALUE_OPTIONS = {
             "--python", "--platform", "--python-version", "--implementation", "--abi",
             "--only-binary", "--no-binary", "--retries", "--timeout", "--trusted-host"},
 }
-# `env` runs the command that follows it; these are its own value-taking options.
-ENV_VALUE_OPTIONS = {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}
-ENV_FLAGS = {"-i", "--ignore-environment", "-v", "--debug", "--help", "--version"}
+# `env` runs the command that follows it; its own flags, value-taking options (attached,
+# separate, or `--opt=value` values), and assignments come first.
+ENV_SHORT_VALUES = {"u", "C", "S"}
+ENV_SHORT_FLAGS = {"i", "v"}
+
+
+def split_words(value):
+    try:
+        return shlex.split(value, posix=True)
+    except ValueError:
+        return value.split()
+
+
+def env_operands(tokens):
+    # Returns the operand list env runs: its options and assignments are consumed, stopping at
+    # the first operand so a `retry` or a benign command there is preserved. A split-string
+    # value is word-split into the command env runs, followed by any remaining operands.
+    i = 0
+    while i < len(tokens):
+        option = tokens[i]
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", option):
+            i += 1
+            continue
+        if option == "--":
+            return tokens[i + 1:]
+        if not option.startswith("-") or option == "-":
+            return tokens[i:]
+        if option.startswith("--"):
+            name, _, attached = option.partition("=")
+            if name == "--split-string":
+                value = attached if attached else tokens[i + 1] if i + 1 < len(tokens) else ""
+                return split_words(value) + tokens[i + (1 if attached else 2):]
+            if name in ("--unset", "--chdir"):
+                i += 1 if attached else 2 if i + 1 < len(tokens) else 1
+                continue
+            if name in ("--ignore-environment", "--debug", "--help", "--version"):
+                i += 1
+                continue
+            return tokens[i:]
+        cluster = option[1:]
+        position = 0
+        while position < len(cluster) and cluster[position] in ENV_SHORT_FLAGS:
+            position += 1
+        if position == len(cluster):
+            i += 1
+            continue
+        letter = cluster[position]
+        if letter not in ENV_SHORT_VALUES:
+            return tokens[i:]
+        attached = cluster[position + 1:]
+        if letter == "S":
+            value = attached if attached else tokens[i + 1] if i + 1 < len(tokens) else ""
+            step = 1 if attached else 2
+            return split_words(value) + tokens[i + step:]
+        i += 1 if attached else 2 if i + 1 < len(tokens) else 1
+    return tokens[i:]
 
 
 def strip_env(tokens):
-    # Leading NAME=value assignments and `env` commands (with their own options and
-    # assignments) do not change which command a segment runs; strip them, stopping at its
-    # first executable token so a `retry` or a benign command there is preserved.
-    i = 0
-    while i < len(tokens):
-        token = tokens[i]
-        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", token):
-            i += 1
-            continue
-        if token != "env":
-            break
-        i += 1
-        while i < len(tokens):
-            option = tokens[i]
-            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", option):
-                i += 1
-            elif option in ENV_FLAGS:
-                i += 1
-            elif option == "--":
-                i += 1
-                break
-            elif option.split("=", 1)[0] in ENV_VALUE_OPTIONS:
-                i += 1
-                if "=" not in option and i < len(tokens):
-                    i += 1
-            elif option in ("-u", "-C", "-S"):
-                i += 2 if i + 1 < len(tokens) else 1
-            else:
-                break
-    return tokens[i:]
+    # Leading NAME=value assignments and `env` commands do not change which command a segment
+    # runs; strip them (recursively, since a split string may carry its own) and judge the rest.
+    while tokens and (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]) or tokens[0] == "env"):
+        if tokens[0] == "env":
+            tokens = env_operands(tokens[1:])
+        else:
+            tokens = tokens[1:]
+    return tokens
 
 
 def skip_options(tokens, i, tool):
@@ -318,6 +349,20 @@ if scan_out="$(scan_dockerfile "$work/Dockerfile.env-command")"; then
 else
   echo "ok: the Dockerfile scan catches a pip install behind an env command ($scan_out)"
 fi
+sed 's/retry pip install --quiet/env -uHTTP_PROXY pip install --quiet/' \
+  image/Dockerfile > "$work/Dockerfile.env-attached"
+if scan_out="$(scan_dockerfile "$work/Dockerfile.env-attached")"; then
+  fail "the Dockerfile scan missed a download behind an env option with an attached value"
+else
+  echo "ok: the Dockerfile scan catches a pip install behind an attached env option ($scan_out)"
+fi
+sed "s/&& retry apt-get update/\&\& env -S 'apt-get update'/" \
+  image/Dockerfile > "$work/Dockerfile.split-string"
+if scan_out="$(scan_dockerfile "$work/Dockerfile.split-string")"; then
+  fail "the Dockerfile scan missed a download behind a split string"
+else
+  echo "ok: the Dockerfile scan catches an apt-get update behind a split string ($scan_out)"
+fi
 sed 's/&& retry apt-get update/\&\& env -i apt-get update/' \
   image/Dockerfile > "$work/Dockerfile.env-options"
 if scan_out="$(scan_dockerfile "$work/Dockerfile.env-options")"; then
@@ -348,6 +393,8 @@ RUN echo apt-get update
 RUN retry curl -fsSL https://example.invalid/pinned.tar.xz -o pinned.tar.xz
 RUN env -i retry curl -fsSL https://example.invalid/pinned.tar.xz -o pinned.tar.xz
 RUN env -i echo curl
+RUN env -uHTTP_PROXY echo curl
+RUN env -S 'retry curl -fsSL https://example.invalid/pinned.tar.xz -o pinned.tar.xz'
 BENIGN
 if scan_out="$(scan_dockerfile "$work/Dockerfile.benign")"; then
   echo "ok: benign commands are not flagged"
