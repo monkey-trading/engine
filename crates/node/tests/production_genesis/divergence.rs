@@ -83,7 +83,7 @@ fn divergence_levels(params: &ProtocolParams, markets: &[MarketSpec]) -> Vec<(St
 }
 
 /// Applies `cmd` as the engine's next seq at time zero; panics if the engine refuses it.
-fn apply_at_zero(engine: &Engine, cmd: Command) {
+fn apply_at_zero(engine: &mut Engine, cmd: Command) {
     let seq = engine.last_seq().map_or(0, |seq| seq + 1);
     let events = engine.apply(&Sequenced { seq, ts: 0, cmd }).unwrap();
     let refused = |e: &Event| matches!(e, Event::AdminRejected { .. } | Event::PricesRejected { .. });

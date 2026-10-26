@@ -119,7 +119,6 @@ impl TestSequencer {
         } else {
             seq.activate_protocol_at(version).expect("protocol activation");
         }
-        }
         if seq.needs_genesis() {
             seq.genesis(&dev_config().genesis).expect("dev genesis");
         }

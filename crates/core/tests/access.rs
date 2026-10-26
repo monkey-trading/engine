@@ -11,8 +11,8 @@ mod pending;
 mod policy;
 #[path = "access/receipts.rs"]
 mod receipts;
-// The V21 reference-log session, so its assertions and test run with every test pass.
-#[path = "../examples/reference_log/v21.rs"]
+// The V24 reference-log session, so its assertions and test run with every test pass.
+#[path = "../examples/reference_log/v24.rs"]
 mod reference_session;
 #[path = "access/support.rs"]
 mod support;

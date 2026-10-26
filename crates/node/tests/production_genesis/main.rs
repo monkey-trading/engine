@@ -4,7 +4,7 @@
 //! closes. `divergence` checks the stress levels each market reaches, and `futures` the contracts
 //! the index and commodity markets roll through.
 
-#[path = "common/access.rs"]
+#[path = "../common/access.rs"]
 pub mod access;
 mod divergence;
 mod futures;

@@ -407,6 +407,11 @@ fn signed(screening: Screening) -> Screening {
     signed_by(&source_key(), screening)
 }
 
+/// The deterministic screening authority the access fixtures share with the dev config.
+fn source_key() -> SigningKey {
+    SigningKey::from_slice(&[0x77; 32]).unwrap()
+}
+
 /// `screening` signed by `key` under the operator's domain.
 fn signed_by(key: &SigningKey, mut screening: Screening) -> Screening {
     let operator = operator();

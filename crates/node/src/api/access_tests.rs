@@ -323,6 +323,7 @@ impl Node {
             auth: ClientAuth::Unsigned,
             operator,
             mock_custody,
+            payouts_enabled: true,
             clock: || NOW,
             log_dir: dir.clone(),
             manifest,
@@ -337,7 +338,7 @@ impl Node {
             if trusted { ProtocolVersion::V24 } else { ProtocolVersion::V2 }
         );
         let quotes = ["a", "b"]
-            .map(|source| SourceQuote { source: source.into(), mid: Fixed::from_int(100000), ts: NOW })
+            .map(|source| SourceQuote { source: source.into(), mid: Fixed::from_int(100000), ts: NOW, contract: None })
             .to_vec();
         if trusted {
             state.submit(Command::Prices { market: 1, quotes }).await.unwrap();
