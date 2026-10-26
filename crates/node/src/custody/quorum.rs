@@ -197,14 +197,44 @@ impl<R: VaultReader + Sync> VaultReader for Quorum<R> {
 
 impl<R: VaultReader + Sync> Quorum<R> {
     /// Selects the highest common tag height, never reducing the fixed provider threshold.
+    /// A chain move can split one poll's reads — a revert or reorg between the pair reads and
+    /// the common height's header reads leaves every provider contradicting itself — so when no
+    /// common height wins on evidence like that, the pairs are read once more and the selection
+    /// runs again; a provider that still contradicts itself fails on the second pass as before.
     /// Error cases:
     /// - the selected tag or its canonical hash lacks a quorum
     async fn read_finality(&self, withdrawal: bool) -> anyhow::Result<Finality> {
-        let mut answers = join_all(self.providers.iter().enumerate().map(|(i, (_, r))| async move {
+        let answers = self.read_finality_pairs(withdrawal).await;
+        let (mut votes, mut diagnostics, split) = self.vote_at_common_height(answers).await;
+        if majority(&votes, self.required).is_none() && split {
+            let answers = self.read_finality_pairs(withdrawal).await;
+            (votes, diagnostics, _) = self.vote_at_common_height(answers).await;
+        }
+        let (tagged, _) = self.vote(if withdrawal { "withdrawal_finality" } else { "finality" }, votes)?;
+        let head = quorum_lower_bound(diagnostics.iter().flatten().map(|d| d.0), self.required);
+        let head_time = quorum_lower_bound(diagnostics.iter().flatten().map(|d| d.1), self.required);
+        let head_support =
+            Some(HeadSupport { required: self.required, heads: diagnostics.iter().map(|d| d.map(|d| d.0)).collect() });
+        Ok(Finality { head, head_time, tagged, head_support })
+    }
+
+    /// One fresh finality pair per provider.
+    async fn read_finality_pairs(&self, withdrawal: bool) -> Vec<anyhow::Result<Finality>> {
+        join_all(self.providers.iter().enumerate().map(|(i, (_, r))| async move {
             self.qualified(i)?;
             if withdrawal { r.withdrawal_finality().await } else { r.finality().await }
         }))
-        .await;
+        .await
+    }
+
+    /// Votes the providers' pairs at the highest common tag heights; a provider whose own
+    /// evidence disagrees with itself is excluded from lower candidates. Returns the votes, the
+    /// head diagnostics of providers whose evidence stayed consistent, and whether any provider
+    /// was contradicted — the signature of the poll's reads straddling a chain move.
+    async fn vote_at_common_height(
+        &self,
+        mut answers: Vec<anyhow::Result<Finality>>,
+    ) -> (Vec<anyhow::Result<Option<BlockRef>>>, Vec<Option<(u64, u64)>>, bool) {
         // Head diagnostics are independent of how far each provider's finality tag has reached.
         let mut diagnostics: Vec<_> = answers
             .iter()
@@ -225,6 +255,7 @@ impl<R: VaultReader + Sync> Quorum<R> {
             candidates.push(None);
         }
         let mut votes = Vec::new();
+        let mut split = false;
         for common in candidates {
             let results = join_all(self.providers.iter().zip(&answers).map(|((_, reader), answer)| async move {
                 let mut contradicted = false;
@@ -260,6 +291,7 @@ impl<R: VaultReader + Sync> Quorum<R> {
             for (diagnostic, (_, contradicted)) in diagnostics.iter_mut().zip(&results) {
                 if *contradicted {
                     *diagnostic = None;
+                    split = true;
                 }
             }
             votes = results.into_iter().map(|(vote, _)| vote).collect();
@@ -278,12 +310,7 @@ impl<R: VaultReader + Sync> Quorum<R> {
                 }
             }
         }
-        let (tagged, _) = self.vote(if withdrawal { "withdrawal_finality" } else { "finality" }, votes)?;
-        let head = quorum_lower_bound(diagnostics.iter().flatten().map(|d| d.0), self.required);
-        let head_time = quorum_lower_bound(diagnostics.iter().flatten().map(|d| d.1), self.required);
-        let head_support =
-            Some(HeadSupport { required: self.required, heads: diagnostics.iter().map(|d| d.map(|d| d.0)).collect() });
-        Ok(Finality { head, head_time, tagged, head_support })
+        (votes, diagnostics, split)
     }
 }
 

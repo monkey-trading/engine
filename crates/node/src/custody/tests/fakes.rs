@@ -68,6 +68,8 @@ pub(super) struct ChainState {
     pub(super) header_batch_cap: Option<u64>,
     /// Header reads to fail, by their order among all header reads.
     pub(super) fail_header_reads: Vec<u32>,
+    /// Header reads to answer as a missing block, by their order among all header reads.
+    pub(super) bad_header_reads: Vec<u32>,
     pub(super) header_calls: u32,
     /// Header ranges answered.
     pub(super) header_reads: Vec<(u64, u64)>,
@@ -148,6 +150,9 @@ impl VaultReader for FakeChain {
         if chain.header_failures > 0 || chain.fail_header_reads.contains(&call) || over_cap {
             chain.header_failures = chain.header_failures.saturating_sub(1);
             bail!("rate limited");
+        }
+        if chain.bad_header_reads.contains(&call) {
+            return crate::custody::rpc::decode_header(None, from).map(|header| vec![header]);
         }
         chain.header_reads.push((from, to));
         let parent = |number: u64| match number {
