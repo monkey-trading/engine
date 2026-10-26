@@ -58,6 +58,10 @@ impl Sequencer {
     /// - the authoritative log cannot be synced
     pub(super) fn capture(&mut self, deferred: Deferred) -> anyhow::Result<()> {
         let Some(endpoint) = self.sealing.clone() else { return Ok(()) };
+        if self.engine.withdrawal_approvals().next().is_some() {
+            self.uncaptured = None;
+            return Ok(());
+        }
         let Some(permit) = endpoint.try_permit() else {
             // Shutdown captures it after all if no later checkpoint follows.
             self.uncaptured = Some(deferred);
