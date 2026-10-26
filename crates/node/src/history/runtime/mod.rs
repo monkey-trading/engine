@@ -2,8 +2,6 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-#[cfg(test)]
-use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result, bail, ensure};
@@ -116,7 +114,7 @@ struct Actor {
     /// Shared with the sealing endpoint: how many physical entries this owner has taken, so a test
     /// can watch progress without joining the owner's queue.
     #[cfg(test)]
-    taken: Arc<AtomicU64>,
+    taken: Arc<std::sync::atomic::AtomicU64>,
     retained_catalog: BTreeMap<Offset, Arc<crate::log::catalog::LazyCatalogView>>,
     last_entry: Option<Offset>,
     /// The checkpoint at `last_entry`, when the last entry taken is one.

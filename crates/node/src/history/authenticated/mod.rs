@@ -1,8 +1,6 @@
 //! Account history at a complete authenticated command prefix; private staged roots are never heads.
 
 mod state;
-#[cfg(test)]
-use state::CommandId;
 pub use state::Head;
 mod blobs;
 mod ingest;
