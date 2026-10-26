@@ -53,6 +53,9 @@ async fn corrupt_latest_pair_falls_back_and_all_pairs_missing_rebuilds_exact_log
     for n in 0..25 {
         node.submit(deposit(1, &format!("fallback-{n}"))).await;
     }
+    // No capture is in flight at shutdown, so the final checkpoint is cached and an earlier pair
+    // exists to fall back to.
+    node.history_caught_up().await;
     let (cfg, reader) = node.stop().await;
     drop(reader);
     let caches = cfg.snapshots.as_ref().unwrap();
@@ -175,6 +178,9 @@ async fn catalog_retirement_backlog_stays_bounded_as_checkpoints_accumulate() {
         let (manifest, catalog) = (node.manifest.clone(), node.sealing.catalog_store);
         for n in 0..30 {
             node.submit(deposit(1, &format!("retire-{round}-{n}"))).await;
+            // Retained caches pin catalog versions, so the backlog depends on which checkpoints were
+            // captured. History catches up after each command, so no capture is skipped.
+            node.history_caught_up().await;
         }
         let (next, reader) = node.stop().await;
         drop(reader);
@@ -196,14 +202,12 @@ async fn history_retirement_keeps_pace_while_every_checkpoint_is_captured() {
     cfg.node.checkpoint_every = 50;
     let node = Node::start(cfg).await.unwrap();
     // One history commit, and so one retirement receipt, per command.
-    for n in 0..1_100 {
-        if n % 100 == 0 {
-            node.refresh_time().await;
-        }
+    let mut state = None;
+    for _ in 0..1_100 {
         node.submit(Command::Tick).await;
-        node.history_caught_up().await;
+        state = Some(node.history_caught_up().await);
     }
-    let backlog = node.sealing.inspect().await.unwrap().pending_receipts;
+    let backlog = state.expect("the loop runs").pending_receipts;
     assert!(backlog < 512, "history must collect while captures sign heads: {backlog} receipts queued");
     node.stop().await;
 }

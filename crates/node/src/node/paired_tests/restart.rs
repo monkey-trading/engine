@@ -5,10 +5,12 @@
 use std::fs;
 use std::time::Instant;
 
+use tokio::time::timeout;
+
 use crate::config::NodeConfig;
-use crate::history::PageQuery;
-use crate::log::LogEntry;
-use crate::node::paired_tests::harness::{Node, configuration};
+use crate::history::{Page, PageQuery, transient};
+use crate::log::{LogEntry, Offset};
+use crate::node::paired_tests::harness::{HANG, Node, configuration};
 use crate::snapshot;
 use crate::test_support::{TRADER, capture_alerts, deposit, log_entries, logged_history};
 use crate::trusted_time::tests::logs::Logs;
@@ -27,11 +29,14 @@ async fn dev_scenario_restart_stays_bounded_as_the_log_grows_and_skips_a_corrupt
     for target in [200, 2_000] {
         let node = Node::start(cfg).await.unwrap();
         while submitted < target {
-            if submitted % 200 == 0 {
-                node.refresh_time().await;
-            }
             node.submit(deposit(1, &format!("restart-{submitted}"))).await;
             submitted += 1;
+            if submitted % CHECKPOINT_EVERY == 0 {
+                // Thousands of entries queued ahead of the owner make one turn index a whole queue
+                // batch, and one turn is the step history_caught_up waits on; staying within one
+                // checkpoint interval keeps every turn short, however long the catch-up takes.
+                node.history_caught_up().await;
+            }
         }
         // A burst can outrun history; the scenario restarts a node that has caught up.
         node.history_caught_up().await;
@@ -100,8 +105,7 @@ async fn assert_complete_history(node: &Node) {
     let mut served = Vec::new();
     let mut before = None;
     loop {
-        let query = PageQuery { account: TRADER, kind: None, before, after: None, limit: 200 };
-        let page = node.reader.page(query).await.unwrap().expect("history serves at once after a paired restart");
+        let page = page(node, before).await;
         served.extend(page.events);
         before = page.next;
         if before.is_none() {
@@ -109,6 +113,26 @@ async fn assert_complete_history(node: &Node) {
         }
     }
     assert_eq!(served, expected, "every retained event survives the restart exactly once");
+}
+
+/// One page, retrying while the index writer's commit outlasts the reader's busy timeout; a page
+/// read fails only when no attempt answers for `HANG`. Other errors mean a damaged index, which
+/// repair must not let this test pass off.
+async fn page(node: &Node, before: Option<Offset>) -> Page {
+    let started = Instant::now();
+    loop {
+        let query = PageQuery { account: TRADER, kind: None, before, after: None, limit: 200 };
+        match timeout(HANG, node.reader.page(query)).await {
+            Ok(Ok(Some(page))) => return page,
+            Ok(Ok(None)) => panic!("history serves at once after a paired restart"),
+            Ok(Err(error)) if transient(&error) => {
+                assert!(started.elapsed() < HANG, "history stops answering pages: {error:#}");
+                tokio::task::yield_now().await;
+            }
+            Ok(Err(error)) => panic!("history page fails: {error:#}"),
+            Err(_) => assert!(started.elapsed() < HANG, "a history page stays pending past {HANG:?}"),
+        }
+    }
 }
 
 /// The seq of the last command in the log.

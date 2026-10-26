@@ -155,7 +155,7 @@ impl AuthenticatedReader {
 /// Lock contention, or a file the process cannot open or memory it cannot get, in SQLite or for a
 /// returned value, does not establish
 /// corrupt data, and a rebuild would not fix it; none triggers a full verified rebuild.
-fn transient(error: &anyhow::Error) -> bool {
+pub(crate) fn transient(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| {
         cause.downcast_ref::<std::collections::TryReserveError>().is_some()
             || matches!(cause.downcast_ref::<rusqlite::Error>(), Some(rusqlite::Error::SqliteFailure(error, _))

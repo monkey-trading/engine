@@ -4,10 +4,8 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::sync::Arc;
-use std::time::Duration;
 
 use engine_core::command::Command;
-use tokio::time::timeout;
 use tracing::subscriber::{DefaultGuard, set_default};
 use tracing_subscriber::filter::filter_fn;
 use tracing_subscriber::layer::{Layer, SubscriberExt};
@@ -184,18 +182,7 @@ async fn a_shutdown_that_cannot_wait_for_a_capture_leaves_the_alert_open() {
 
 /// Observes the actual blocking owner after every physical entry in the producer's fixed frontier.
 async fn at_frontier(node: &Node) -> crate::history::runtime::TestState {
-    let target = node.manifest.borrow().flushed;
-    timeout(Duration::from_secs(30), async {
-        loop {
-            let state = node.sealing.inspect().await.unwrap();
-            if state.last_entry >= target {
-                return state;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("supervised history owner reaches the actual published frontier")
+    node.history_caught_up().await
 }
 
 /// Collects alert lines through the node's alert layer, the history owner's included, until the

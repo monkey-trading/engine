@@ -5,17 +5,18 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::atomic::Ordering;
+use std::time::Instant;
 
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::timeout;
 
 use crate::history::PageQuery;
 use crate::log::CheckpointParent;
-use crate::node::paired_tests::harness::{Node, configuration};
+use crate::node::paired_tests::harness::{HANG, Node, configuration};
 use crate::sequencer::Request;
 use crate::snapshot;
-use crate::test_support::{TRADER, deposit, logged_history};
+use crate::test_support::{TRADER, capture_alerts, deposit, logged_history};
 
 /// A batch spanning two checkpoints captures only the first, since the second finds it in flight.
 /// When the batch ends on that second checkpoint, shutdown still caches it.
@@ -30,14 +31,62 @@ async fn shutdown_caches_a_final_checkpoint_whose_capture_was_skipped() {
     assert_eq!(seq_of(&newest), final_checkpoint, "the final checkpoint is cached");
 }
 
+/// Shutdown waits at most SHUTDOWN_CAPTURE_WAIT for a checkpoint capture still in flight; when the
+/// capture cannot complete in that bound it warns and the skipped final checkpoint stays uncached.
+/// The test holds the capture permit itself for the whole stop, so the capture stays in flight
+/// whatever the history owner's speed and no scheduling order can change the outcome.
+#[tokio::test]
+async fn shutdown_warns_and_skips_the_final_checkpoint_when_its_capture_stays_in_flight() {
+    let node = Node::start(configuration("paired-shutdown-capture-times-out")).await.unwrap();
+    node.history_caught_up().await;
+    let final_checkpoint = burst_to_second_checkpoint(&node).await;
+    let _in_flight = node.sealing.try_permit().expect("history completed the first capture");
+    let (_guard, mut alerts) = capture_alerts();
+    let (cfg, reader) = node.stop().await;
+    drop(reader);
+    let alert = alerts.try_recv().expect("a capture still in flight when the wait ends warns");
+    assert_eq!((alert["alert"].as_str(), alert["level"].as_str()), ("snapshot_write_failed", "WARN"));
+    let newest = snapshot::candidates_readonly(cfg.snapshots.as_ref().unwrap()).unwrap().remove(0);
+    assert_ne!(seq_of(&newest), final_checkpoint, "the final checkpoint whose capture stayed in flight is not cached");
+}
+
+/// Shutdown waits for a capture still in flight; once the capture completes the wait resolves and
+/// the skipped final checkpoint is cached. The test holds the capture permit itself and releases
+/// it only once shutdown waits, so the wait's success is covered whatever the history owner's
+/// speed.
+#[tokio::test]
+async fn shutdown_waits_for_a_capture_in_flight_and_caches_the_final_checkpoint() {
+    let node = Node::start(configuration("paired-shutdown-capture-in-flight")).await.unwrap();
+    node.history_caught_up().await;
+    let final_checkpoint = burst_to_second_checkpoint(&node).await;
+    let sealing = node.sealing.clone();
+    let in_flight = sealing.try_permit().expect("history completed the first capture");
+    let (_guard, mut alerts) = capture_alerts();
+    let stopped = tokio::spawn(async move { node.stop().await });
+    let started = Instant::now();
+    while sealing.waiting.load(Ordering::Acquire) == 0 {
+        assert!(started.elapsed() < HANG, "shutdown never waits for the in-flight capture");
+        tokio::task::yield_now().await;
+    }
+    drop(in_flight);
+    let (cfg, reader) = stopped.await.unwrap();
+    drop(reader);
+    assert!(alerts.try_recv().is_err(), "no warning: the wait ends once the capture completes");
+    let newest = snapshot::candidates_readonly(cfg.snapshots.as_ref().unwrap()).unwrap().remove(0);
+    assert_eq!(seq_of(&newest), final_checkpoint, "the final checkpoint is cached once the wait resolves");
+}
+
 /// Sequences one batch spanning two checkpoints and ending on the second, whose capture finds the
-/// first in flight; returns the second checkpoint's seq.
+/// first in flight, then waits for history to catch up, so that capture is done before shutdown;
+/// returns the second checkpoint's seq.
 async fn burst_to_second_checkpoint(node: &Node) -> u64 {
     let every = node.cfg.node.checkpoint_every;
     let last = node.manifest.borrow().flushed.expect("genesis is logged").seq;
     let first = (last + 1..).find(|seq| (seq + 1) % every == 0).unwrap();
     let final_checkpoint = first + every;
-    // Queued before the sequencer runs, so they form one batch.
+    // A fresh time sample and the commands are queued before the sequencer runs, so they form one
+    // batch.
+    node.refresh_time().await;
     let mut replies = Vec::new();
     for n in last + 1..=final_checkpoint {
         let (reply, done) = oneshot::channel();
@@ -45,8 +94,9 @@ async fn burst_to_second_checkpoint(node: &Node) -> u64 {
         replies.push(done);
     }
     for done in replies {
-        timeout(Duration::from_secs(30), done).await.unwrap().unwrap();
+        timeout(HANG, done).await.unwrap().unwrap();
     }
+    node.history_caught_up().await;
     final_checkpoint
 }
 

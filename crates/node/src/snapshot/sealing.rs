@@ -1,5 +1,7 @@
 //! A bounded checkpoint capture waits for the exact history fence on the storage owner's queue.
 
+#[cfg(test)]
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use anyhow::{Result, ensure};
@@ -25,6 +27,12 @@ pub(crate) struct Endpoint {
     tx: mpsc::Sender<Input>,
     permits: Arc<Semaphore>,
     pub write_alert: WriteAlert,
+    /// Entries the owner has taken, read by tests without joining the owner's queue.
+    #[cfg(test)]
+    pub(crate) taken: Arc<AtomicU64>,
+    /// How many calls currently wait for no capture to be in flight.
+    #[cfg(test)]
+    pub(crate) waiting: Arc<AtomicUsize>,
     pub catalog_store: StoreId,
 }
 
@@ -67,6 +75,10 @@ impl Endpoint {
             tx,
             permits: Arc::new(Semaphore::new(1)),
             write_alert: WriteAlert(Arc::new(Mutex::new(true))),
+            #[cfg(test)]
+            taken: Arc::new(AtomicU64::new(0)),
+            #[cfg(test)]
+            waiting: Arc::new(AtomicUsize::new(0)),
             catalog_store,
         }
     }
@@ -84,8 +96,12 @@ impl Endpoint {
 
     /// Resolves once no capture is in flight, so the shutdown checkpoint can be captured too.
     pub(crate) async fn idle(&self) {
+        #[cfg(test)]
+        self.waiting.fetch_add(1, Ordering::SeqCst);
         // The semaphore is never closed, so acquiring only waits.
         let _ = self.permits.acquire().await;
+        #[cfg(test)]
+        self.waiting.fetch_sub(1, Ordering::SeqCst);
     }
 
     /// Queues control before the checkpoint's flush frontier or events are published.
