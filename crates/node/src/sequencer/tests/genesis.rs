@@ -72,6 +72,29 @@ fn a_genesis_entry_of_any_kind_the_engine_would_reject_queues_and_writes_nothing
 }
 
 #[test]
+fn a_genesis_staking_start_stale_by_admission_is_stamped_refused_and_recovery_refuses() {
+    // Config load's genesis check stamps at zero, so a staking start only milliseconds old passes
+    // it; admission stamps trusted time, and the refusal is stamped and stops the sequencer, so
+    // recovery names the seq the engine rejected.
+    let dir = scratch_dir("genesis-staking-stale-start");
+    let mut genesis = dev_config().genesis;
+    genesis.staking = Some(engine_core::staking::StakingConfig {
+        liquidity_floor: Fixed::from_int(1),
+        epoch_ms: 60_000,
+        start_ms: crate::clock::now_ms() - 3_600_000,
+        cooldown_ms: 86_400_000,
+    });
+    let mut seq = try_recover(&dir, &signed(31_337)).0.unwrap();
+    seq.activate_protocol().unwrap();
+    seq.genesis(&genesis).unwrap();
+    let err = seq.trust(trusted_now()).unwrap_err();
+    assert!(format!("{err:#}").contains("genesis: rejected: staking start"), "{err:#}");
+    drop(seq);
+    let err = try_recover(&dir, &signed(31_337)).0.err().expect("refused");
+    assert!(format!("{err:#}").contains("the engine rejected seq"), "{err:#}");
+}
+
+#[test]
 fn a_genesis_cut_short_is_refused_at_recovery_and_nothing_is_written() {
     // Under mock custody with house capital, and under EVM custody with none, a log cut anywhere
     // between its first genesis command and the checkpoint after the credit is refused; one holding

@@ -244,7 +244,8 @@ pub enum Event {
         allocated: UsdcUnits,
     },
     /// From `V25`, the distribution epochs from `first` to `last` whose end no command witnessed;
-    /// they distribute nothing, and the house keeps what they would have paid.
+    /// they allocate nothing themselves, and the close that witnesses the range's end distributes
+    /// the whole excess then, to whoever is staked at that moment.
     DistributionEpochsSkipped {
         first: u64,
         last: u64,

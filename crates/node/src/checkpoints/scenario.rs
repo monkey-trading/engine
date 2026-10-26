@@ -325,9 +325,9 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
         checkpoint,
         liabilities: current.deposited,
         deposits: current.deposits,
-        distributed: Default::default(),
         authorized: Fixed::ZERO,
         coverage: crate::checkpoints::DepositCoverage::Historical,
+        distributed: engine_core::UsdcUnits(0),
     };
     include_checkpoint(&delayed, &work.checkpoint).await;
     assert_eq!(delayed.reconcile(&work).await.unwrap(), (None, false));

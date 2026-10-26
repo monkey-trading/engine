@@ -215,6 +215,9 @@ this crate and reproduce the signed state roots exactly.
 - `tests/emissions.rs`, `tests/emissions_eligibility.rs`, `tests/emissions_schedule.rs` — MONKEY
   emissions from `V19`: allocation, rounding, cancellation, and finality; which losses count and the
   signed initialisation; and the schedule's arithmetic with the first halving
+- `tests/staking.rs` — MONKEY staking and USDC distributions from `V25`: stake and unstake
+  mirroring, epoch closes above and below the liquidity floor, pro-rata rounding, skipped epochs,
+  and distribution proofs
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its

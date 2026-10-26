@@ -47,7 +47,7 @@ use crate::sequencer::StreamBody;
 
 /// The `type` of every event that names an account: what the `kind` filter accepts. A kind's
 /// position is its authenticated history storage tag, so new kinds are only ever appended.
-pub const KINDS: [&str; 18] = [
+pub const KINDS: [&str; 22] = [
     "deposited",
     "deposit_rejected",
     "withdrawal_approved",

@@ -20,8 +20,8 @@ use crate::merkle::{
     SparseMerkleTree, WithdrawalApprovalProof, account_key, corporate_action_key, corporate_reference_key,
     credited_ref_hash, credited_ref_key, distribution_hash, distribution_key, entitlement_hash, entitlement_key,
     globals_key, json_hash, market_key, markout_hash, markout_key, order_hash, order_key, period_result_hash,
-    period_result_key, position_hash, position_key, request_nonce_hash, request_nonce_key, withdrawal_approval_hash,
-    withdrawal_approval_key, withdrawal_queue_hash, withdrawal_queue_key,
+    period_result_key, position_hash, position_key, request_nonce_hash, request_nonce_key, staked_hash, staked_key,
+    withdrawal_approval_hash, withdrawal_approval_key, withdrawal_queue_hash, withdrawal_queue_key,
 };
 use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
@@ -70,6 +70,7 @@ struct Touched {
     refs: BTreeSet<String>,
     period_results: BTreeSet<AccountId>,
     entitlements: BTreeSet<AccountId>,
+    staked: BTreeSet<AccountId>,
     distributions: BTreeSet<AccountId>,
     deposits: BTreeSet<String>,
     deposit_transactions: BTreeSet<String>,
@@ -112,9 +113,6 @@ struct Globals<'a> {
     /// From `V25`; omitted until staking is initialised, so earlier roots stand.
     #[serde(skip_serializing_if = "Option::is_none")]
     staking: &'a Option<Staking>,
-    /// From `V25`; omitted while empty, so earlier roots stand.
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    staked: &'a BTreeMap<AccountId, TokenUnits>,
 
 }
 
@@ -144,6 +142,7 @@ impl Engine {
             refs,
             period_results,
             entitlements,
+            staked,
             distributions,
             deposits,
             deposit_transactions,
@@ -228,6 +227,17 @@ impl Engine {
         changes.extend(
             distribution_leaves.iter().map(|(id, entitled)| (distribution_key(*id), entitled.map(distribution_hash))),
         );
+        changes.extend(
+            withdrawal_queue
+                .into_iter()
+                .map(|seq| (withdrawal_queue_key(seq), self.withdrawal_queue.get(&seq).map(withdrawal_queue_hash))),
+        );
+        changes.extend(
+            withdrawal_approvals
+                .into_iter()
+                .map(|key| (key, self.withdrawal_approvals.get(&key).map(withdrawal_approval_hash))),
+        );
+        changes.extend(staked.into_iter().map(|id| (staked_key(id), self.staked.get(&id).map(|s| staked_hash(*s)))));
 
         // A seq has been applied: `V9` takes effect through a sequenced `ActivateProtocol`.
         let seq = self.last_seq.expect("a state root under V9 follows a command");
@@ -325,8 +335,8 @@ impl Engine {
         let siblings =
             state.tree.proof(distribution_key(account)).expect("every distribution kept for proofs is in the tree");
         Some(DistributionProof { seq: state.seq, root: state.root, account, entitled, siblings })
-
     }
+
 
     /// What the last state root hashed, or `None` before the first root under `V9`.
     pub fn last_root_work(&self) -> Option<RootWork> {
@@ -402,6 +412,7 @@ impl Engine {
             refs: self.credited_refs.take_touched(),
             period_results: self.period_results.take_touched(),
             entitlements: self.entitlements.take_touched(),
+            staked: self.staked.take_touched(),
             distributions: self.distributions.take_touched(),
             deposits: self.deposits.take_touched(),
             deposit_transactions: self.deposit_transactions.take_touched(),
@@ -424,6 +435,7 @@ impl Engine {
             refs: self.credited_refs.iter().cloned().collect(),
             period_results: self.period_results.keys().copied().collect(),
             entitlements: self.entitlements.keys().copied().collect(),
+            staked: self.staked.keys().copied().collect(),
             distributions: self.distributions.keys().copied().collect(),
             deposits: self.deposits.keys().cloned().collect(),
             deposit_transactions: self.deposit_transactions.keys().cloned().collect(),
@@ -480,7 +492,7 @@ impl Engine {
             corporate_actions: _,
             corporate_refs: _,
             staking,
-            staked,
+            staked: _,
             distributions: _,
             changed: _,
             tree: _,
@@ -507,7 +519,6 @@ impl Engine {
             withdrawal_cash: *withdrawal_cash,
             withdrawal_next_ticket: *withdrawal_next_ticket,
             staking,
-            staked,
 
         }
     }

@@ -36,7 +36,7 @@ an index: load only the rule whose hint matches the current action.
 - **crates/node/** — `engine-node`, binary `engine` (`main.rs` over `lib.rs`). Contains the
   sequencer, the public log with signed checkpoints (segmented, with a public archive), `engine
   replay`, `engine admin` (the operator's signing client), the REST API with the operator's admin
-  route, account proofs, and MONKEY entitlement proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
+  route, account proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
   with rate limits and connection caps), the account history index (SQLite, derived from the log),
   dated benchmark ingestion (`benchmarks/` and the separate `admin/benchmark_feed.rs` signing worker
   with bounded durable schedule watches in `admin/benchmark_watch.rs` and `api/benchmark_schedule.rs`),

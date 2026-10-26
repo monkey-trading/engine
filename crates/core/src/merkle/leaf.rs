@@ -28,6 +28,8 @@
 //!   MONKEY entitlement in base units, from `V19`; the vault checks claims against this leaf.
 //! - **Distribution:** `keccak256(abi.encode(uint256 entitled))`, the account's cumulative USDC
 //!   distribution in base units, from `V25`; the vault checks claims against this leaf.
+//! - **Staked balance:** `keccak256(abi.encode(uint256 staked))`, the account's staked MONKEY in
+//!   base units, from `V25`, mirroring the staking contract's finalised events.
 //! - **Emission period result:** `keccak256(abi.encode(int128 realised, int128 writtenOff))`, the
 //!   account's realised PnL and written-off debt in the open emission period, from `V19`, until the
 //!   period is finalised.
@@ -80,6 +82,7 @@ const RECEIPT: u8 = 10;
 const RECEIPT_INDEX: u8 = 11;
 const LEGACY_PRINCIPAL: u8 = 12;
 const DISTRIBUTION: u8 = 13;
+const STAKED: u8 = 14;
 const CORPORATE_ACTION: u8 = 21;
 const CORPORATE_REFERENCE: u8 = 22;
 
@@ -403,6 +406,16 @@ pub fn distribution_key(account: AccountId) -> B256 {
 /// The value hash of a distribution leaf.
 pub fn distribution_hash(entitled: UsdcUnits) -> B256 {
     keccak(&[&U256::from(entitled.0).abi_encode()])
+}
+
+/// The key of `account`'s staked-balance leaf.
+pub(crate) fn staked_key(account: AccountId) -> B256 {
+    keccak(&[&[STAKED], &account.0])
+}
+
+/// The value hash of a staked-balance leaf.
+pub(crate) fn staked_hash(staked: TokenUnits) -> B256 {
+    keccak(&[&U256::from(staked.0).abi_encode()])
 }
 
 /// keccak-256 of `value`'s JSON encoding.

@@ -226,7 +226,7 @@ fn every_rejection_and_delivery_series_starts_at_zero() {
     }
     assert_eq!(
         text.matches("engine_rejections_total{").count(),
-        3 * REJECT_KINDS.len() + DEPOSIT_REJECT_KINDS.len() + PRICES_REJECT_REASONS.len() + 2
+        4 * REJECT_KINDS.len() + DEPOSIT_REJECT_KINDS.len() + PRICES_REJECT_REASONS.len() + 2
     );
     assert_eq!(text.matches("engine_alert_deliveries_total{").count(), 2 * 3);
     assert!(text.contains("engine_alert_attempts_failed_total{severity=\"warning\"} 0\n"), "{text}");

@@ -434,9 +434,9 @@ fn work(checkpoint: Checkpoint) -> Work {
         checkpoint,
         liabilities: Fixed::ZERO,
         deposits: 0,
-        distributed: Default::default(),
         authorized: Fixed::ZERO,
         coverage: crate::checkpoints::DepositCoverage::Historical,
+        distributed: engine_core::UsdcUnits(0),
     }
 }
 

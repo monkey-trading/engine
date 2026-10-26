@@ -173,6 +173,59 @@ async fn stale_parent_fails_closed_before_posting_a_divergent_higher_sequence() 
     assert_eq!(*poster.chain.posts.lock().unwrap(), 0);
 }
 
+#[tokio::test(start_paused = true)]
+async fn paid_distributions_compensate_the_pending_deposit_classification() {
+    let (_guard, mut alerts) = crate::test_support::capture_alerts();
+    let (poster, mut work) = poster();
+    // Stakers have claimed 40 of the 100 the ledger credits, and the vault counts one deposit the
+    // checkpoint has not credited yet: the compensated balance is back at the ledger, so the
+    // in-flight deposit keeps payouts running instead of reading as a collateral mismatch.
+    work.distributed = engine_core::UsdcUnits(40_000_000);
+    {
+        let mut state = poster.chain.state.lock().unwrap();
+        state.distributions_paid = Fixed::from_int(40);
+        state.balance = work.liabilities - Fixed::from_int(40);
+        state.deposits += 1;
+    }
+    let (work_tx, work_rx) = mpsc::channel(4);
+    let (tx, mut rx) = mpsc::channel(4);
+    work_tx.send(work).await.unwrap();
+    let task = tokio::spawn(poster.run(work_rx, tx));
+    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { healthy: true, .. })));
+    let before: Vec<_> = std::iter::from_fn(|| alerts.try_recv().ok()).collect();
+    assert!(!before.iter().any(|alert| alert["alert"] == "collateral_mismatch"), "{before:?}");
+    // The deposit never credits: past the catch-up deadline the escalation pauses payouts.
+    tokio::time::advance(Duration::from_secs(2)).await;
+    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { healthy: false, .. })));
+    assert!(std::iter::from_fn(|| alerts.try_recv().ok()).any(|alert| alert["alert"] == "collateral_mismatch"));
+    drop(work_tx);
+    task.await.unwrap().unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn distributions_paid_past_the_engines_allocation_is_a_mismatch() {
+    let (_guard, mut alerts) = crate::test_support::capture_alerts();
+    let (poster, mut work) = poster();
+    // The vault has paid 50 USDC in distributions but the engine allocated only 40: the balance
+    // still compensates to the ledger, and the overpayment alone is the mismatch.
+    work.distributed = engine_core::UsdcUnits(40_000_000);
+    {
+        let mut state = poster.chain.state.lock().unwrap();
+        state.distributions_paid = Fixed::from_int(50);
+        state.balance = work.liabilities - Fixed::from_int(50);
+    }
+    let (work_tx, work_rx) = mpsc::channel(4);
+    let (tx, mut rx) = mpsc::channel(4);
+    work_tx.send(work).await.unwrap();
+    let task = tokio::spawn(poster.run(work_rx, tx));
+    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { healthy: false, .. })));
+    tokio::time::advance(Duration::from_secs(2)).await;
+    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { healthy: false, .. })));
+    assert!(std::iter::from_fn(|| alerts.try_recv().ok()).any(|alert| alert["alert"] == "collateral_mismatch"));
+    drop(work_tx);
+    task.await.unwrap().unwrap();
+}
+
 #[tokio::test]
 async fn latest_inclusion_never_authorizes_release_and_waiting_finality_does_not_repost() {
     let (mut poster, work) = poster();
@@ -300,9 +353,9 @@ fn poster() -> (Poster<Chain>, Work) {
         checkpoint: checkpoint.clone(),
         liabilities: Fixed::from_int(100),
         deposits: 1,
-        distributed: Default::default(),
         authorized: Fixed::ZERO,
         coverage: crate::checkpoints::DepositCoverage::Historical,
+        distributed: engine_core::UsdcUnits(0),
     };
     let chain = Chain {
         state: Arc::new(Mutex::new(VaultState {

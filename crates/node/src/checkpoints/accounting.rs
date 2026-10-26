@@ -8,7 +8,9 @@ use engine_core::event::Event;
 use serde::{Deserialize, Serialize};
 use tracing::error;
 
-/// Cash plus unpaid approvals equals cumulative deposits and signed house-capital amounts.
+/// Cash plus unpaid approvals equals cumulative deposits and signed house-capital amounts, less
+/// the distributions epochs have allocated: allocations move value from house cash to stakers'
+/// claimable distributions without touching the custody credits.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Accounting {

@@ -10,8 +10,9 @@ import {ReentrancyGuardTransient} from "@openzeppelin-contracts/utils/Reentrancy
 /// each epoch the engine distributes house NAV above its liquidity floor to stakers pro-rata from
 /// the staked snapshot, paid in USDC by the vault against a checkpoint proof. This contract is
 /// custody only: it holds MONKEY, enforces the unstake cooldown, and emits the events the engine
-/// mirrors — `UnstakeCompleted` fires only once the cooldown has passed, so stake an epoch-end
-/// snapshot sees persists through the cooldown: stake cannot jump out just after a snapshot.
+/// mirrors. `UnstakeCompleted` fires only once the cooldown has passed, and the engine keeps the
+/// stake through the cooldown and the snapshot, so exiting stake keeps earning until its mirror
+/// lands: the cooldown is the lock-up that prices jumping in just before a snapshot.
 /// @dev Not upgradeable. One pending unstake per account; a further `startUnstake` adds to it and
 /// restarts its cooldown.
 contract Staking is ReentrancyGuardTransient {

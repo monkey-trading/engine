@@ -132,8 +132,8 @@ pub struct Engine {
     pub(crate) withdrawal_approvals: TrackedMap<B256, WithdrawalApproval>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) staking: Option<Staking>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub(crate) staked: BTreeMap<AccountId, TokenUnits>,
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) staked: TrackedMap<AccountId, TokenUnits>,
     #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
     pub(crate) distributions: TrackedMap<AccountId, UsdcUnits>,
 

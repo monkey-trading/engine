@@ -52,9 +52,9 @@ async fn long_pending_survives_restart_without_another_send_or_finality_release(
         checkpoint: cp.clone(),
         liabilities: Fixed::ZERO,
         deposits: 0,
-        distributed: Default::default(),
         authorized: Fixed::ZERO,
         coverage: crate::checkpoints::DepositCoverage::Historical,
+        distributed: engine_core::UsdcUnits(0),
     };
     assert!(poster.reconcile(&work).await.is_err(), "pending is not canonical inclusion");
     server.state.lock().unwrap().latest = Some(cp.clone());

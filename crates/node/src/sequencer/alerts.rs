@@ -201,6 +201,11 @@ pub(super) fn alert_on(event: &Event) {
         Event::CustodyDepositRejected { receipt, reason } => {
             error!(alert = "custody_deposit_rejected", chain_ref = %receipt.reference(), ?reason, "custody transition refused");
         }
+        // A finalised staking event the engine will not mirror leaves the engine's stake diverged
+        // from the contract, and nothing re-examines it.
+        Event::StakingRejected { account, amount, chain_ref, reason } => {
+            error!(alert = "staking_rejected", %account, %amount, chain_ref, ?reason, "staking event not mirrored");
+        }
         Event::PricesRejected { market, reason } => {
             // The reason can carry a per-quote value, so it goes in the message, not the episode key.
             warn!(alert = "prices_rejected", market, "price update refused: {reason}");

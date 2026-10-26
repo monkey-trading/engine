@@ -361,6 +361,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/staking_scenario.rs` — the MONKEY staking dev scenario on isolated Anvil: staking
   mirrored from the Staking contract, an epoch above the floor paying pro-rata in USDC against the
   posted root, an unstake through the cooldown, and an epoch below the floor paying nothing
+- `src/checkpoints/staking_scenario/scenario.rs` — the scenario's chain, deployments, and node,
+  which it stops and restarts across an epoch boundary
+- `src/checkpoints/staking_scenario/claims.rs` — the scenario's on-chain steps: entitlement and
+  distribution claims against posted roots, event mirroring, and balance reads
 - `src/history/preflight.rs` — immutable history planning before authorized SQLite mutation
 - `src/history/preflight/tests.rs` — private WAL resume and malformed geometry byte-preservation regressions
 - `src/node/tests/custody_preflight.rs` — local custody refusal preserves log/history across image states
