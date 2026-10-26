@@ -260,66 +260,39 @@ impl Engine {
         if !corporate && !benchmark_batch && !activating_dated_rates {
             self.run_rollovers(&mut events);
         }
-        match &sequenced.cmd {
-            _ if early_outcome.is_some() => events.extend(early_outcome),
-            Command::AttestEligibility { request, evidence } => self.attest_eligibility(request, evidence, &mut events),
-            Command::RetryDepositScreening { chain_ref, evidence } => {
-                self.retry_deposit_screening(chain_ref, evidence, &mut events)
+        if self.access_dispatch(&sequenced.cmd, &mut events) {
+            // The access-screened commands and the V24 raw-funding wraps are handled.
+        } else {
+            match &sequenced.cmd {
+                _ if early_outcome.is_some() => events.extend(early_outcome),
+                // From `V12` the quotes are stored and processed above.
+                Command::Prices { .. } if v12 => {}
+                Command::Prices { market, quotes } => self.on_prices(*market, quotes, &mut events),
+                Command::Tick => self.refresh_all_sessions(&mut events),
+                Command::Deposit { account, amount, chain_ref } => {
+                    self.deposit(*account, *amount, chain_ref, &mut events)
+                }
+                Command::CustodyFinalised(checkpoint) => self.advance_custody_checkpoint(*checkpoint, &mut events),
+                Command::CustodyDeposit(update) => self.update_deposit(update, CreditScreening::default(), &mut events),
+                Command::Withdraw { account, amount, auth } => {
+                    self.withdraw(*account, *amount, auth.as_ref(), None, &mut events)
+                }
+                Command::HouseCapital { amount, chain_ref } => self.house_capital(*amount, chain_ref, &mut events),
+                Command::PlaceOrder(req) => self.place_order(req, None, &mut events),
+                Command::CancelOrder { account, order_id, auth } => {
+                    self.cancel_order(*account, *order_id, auth.as_ref(), &mut events)
+                }
+                Command::Admin(cmd) => match self.unsigned_admin(cmd, &mut events) {
+                    Ok(()) => events.push(Event::AdminApplied),
+                    Err(reason) => events.push(Event::AdminRejected { reason }),
+                },
+                Command::SignedAdmin(req) => match self.signed_admin(req, &mut events) {
+                    Ok(()) => events.push(Event::AdminApplied),
+                    Err(reason) => events.push(Event::AdminRejected { reason }),
+                },
+                // The access variants always dispatch to `access_dispatch` first.
+                _ => unreachable!("access command dispatched above"),
             }
-            Command::AccessOrder { request, evidence } => self.place_order(request, Some(evidence), &mut events),
-            Command::AccessWithdraw { request, evidence, payout_available } => self.withdraw(
-                request.account,
-                request.amount,
-                request.auth.as_ref(),
-                Some((evidence, *payout_available)),
-                &mut events,
-            ),
-            Command::AccessDeposit { deposit, evidence } => self.access_deposit(deposit, Some(evidence), &mut events),
-            // From `V12` the quotes are stored and processed above.
-            Command::Prices { .. } if v12 => {}
-            Command::Prices { market, quotes } => self.on_prices(*market, quotes, &mut events),
-            Command::Tick => self.refresh_all_sessions(&mut events),
-            Command::Deposit { account, amount, chain_ref } if self.protocol_version >= ProtocolVersion::V24 => {
-                let deposit = AccessDeposit {
-                    account: Some(*account),
-                    payer: None,
-                    amount: *amount,
-                    chain_ref: chain_ref.clone(),
-                };
-                self.access_deposit(&deposit, None, &mut events);
-            }
-            Command::Deposit { account, amount, chain_ref } => self.deposit(*account, *amount, chain_ref, &mut events),
-            Command::CustodyFinalised(checkpoint) => self.advance_custody_checkpoint(*checkpoint, &mut events),
-            Command::CustodyDeposit(update) => self.update_deposit(update, CreditScreening::default(), &mut events),
-            Command::AccessCustodyDeposit { receipt, payer, evidence } => {
-                self.access_custody_deposit(receipt, *payer, evidence, &mut events)
-            }
-            Command::Withdraw { account, amount, auth } => {
-                self.withdraw(*account, *amount, auth.as_ref(), None, &mut events)
-            }
-            Command::HouseCapital { amount, chain_ref }
-                if self.protocol_version >= ProtocolVersion::V24
-                    && (chain_ref != "genesis"
-                        || self.held_deposits.contains_key(chain_ref)
-                        || self.pending_deposits.contains_key(chain_ref)) =>
-            {
-                let deposit =
-                    AccessDeposit { account: None, payer: None, amount: *amount, chain_ref: chain_ref.clone() };
-                self.access_deposit(&deposit, None, &mut events);
-            }
-            Command::HouseCapital { amount, chain_ref } => self.house_capital(*amount, chain_ref, &mut events),
-            Command::PlaceOrder(req) => self.place_order(req, None, &mut events),
-            Command::CancelOrder { account, order_id, auth } => {
-                self.cancel_order(*account, *order_id, auth.as_ref(), &mut events)
-            }
-            Command::Admin(cmd) => match self.unsigned_admin(cmd, &mut events) {
-                Ok(()) => events.push(Event::AdminApplied),
-                Err(reason) => events.push(Event::AdminRejected { reason }),
-            },
-            Command::SignedAdmin(req) => match self.signed_admin(req, &mut events) {
-                Ok(()) => events.push(Event::AdminApplied),
-                Err(reason) => events.push(Event::AdminRejected { reason }),
-            },
         }
         if !corporate && benchmark_batch && events.contains(&Event::AdminApplied) {
             self.run_rollovers(&mut events);

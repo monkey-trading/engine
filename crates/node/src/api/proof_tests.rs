@@ -146,7 +146,7 @@ async fn dev_scenario_checkpoint_work_follows_changes_a_proof_verifies_and_old_l
     let replayed = replay(&entries).unwrap();
     assert_eq!(replayed.engine.account_proof(trader), Some(proof));
     // After the client auth and the operator are recorded.
-    assert_eq!(replayed.activations, [(ProtocolVersion::V19, 2)]);
+    assert_eq!(replayed.activations, [(ProtocolVersion::V22, 2)]);
 
     for path in OLD_LOGS {
         let mut replayed = replay(&crate::sequencer::fixture_tests::signed_fixture(path.as_ref()))
@@ -260,7 +260,7 @@ impl Node {
             tls_public_key_sha256: [0; 32],
         };
         let state = ApiState {
-            protocol: engine_core::protocol::ProtocolVersion::V19,
+            protocol: engine_core::protocol::ProtocolVersion::V22,
             access: None,
             tx,
             stream,

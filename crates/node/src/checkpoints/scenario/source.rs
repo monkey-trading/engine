@@ -42,3 +42,38 @@ pub(super) async fn start(domain: CheckpointDomain) -> (Arc<crate::access::Acces
     });
     (Arc::new(crate::access::AccessClient::new(&cfg).unwrap()), task)
 }
+
+/// Polls the sequencer until exactly `count` deposits wait pending, as the deposit adapter's
+/// screening of an undeclared beneficiary leaves them.
+pub(super) async fn await_pending(tx: &tokio::sync::mpsc::Sender<crate::sequencer::Request>, count: usize) {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let (reply, response) = tokio::sync::oneshot::channel();
+            tx.send(crate::sequencer::Request::Query(Box::new(move |engine| {
+                let _ = reply.send(engine.pending_deposits().len());
+            })))
+            .await
+            .unwrap();
+            if response.await.unwrap() == count {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
+/// The undeclared account's pending deposit and the credit reconcile to both real vault deposits.
+pub(super) fn assert_pending_reconciliation(replayed: &crate::sequencer::Replayed) {
+    use engine_core::Fixed;
+    assert_eq!(replayed.engine.house_cash(), Fixed::from_int(100));
+    assert!(!replayed.engine.accounts().contains_key(&access::account(1)));
+    let pending = replayed.engine.pending_deposits().values().next().unwrap();
+    assert_eq!((pending.account, pending.amount), (Some(access::account(1)), Fixed::from_int(10)));
+    assert!(replayed.engine.held_deposits().is_empty());
+    assert_eq!(
+        (replayed.accounting.pending, replayed.accounting.liabilities, replayed.accounting.deposits),
+        (Fixed::from_int(10), Fixed::from_int(110), 2)
+    );
+}

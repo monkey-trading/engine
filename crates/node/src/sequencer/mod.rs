@@ -248,15 +248,8 @@ impl Sequencer {
             return Ok(None);
         };
         self.sequence_queued(ts)?;
-        if matches!(cmd, Command::Withdraw { .. } | Command::AccessWithdraw { .. })
-            && self.gate.as_ref().is_some_and(|gate| !gate.healthy)
-        {
-            warn!(alert = "withdrawals_paused", "withdrawal refused until custody reconciles");
-            if let Command::AccessWithdraw { payout_available, .. } = &mut cmd {
-                *payout_available = false;
-            } else {
-                return Ok(None);
-            }
+        if !access::gate_withdrawal(&mut cmd, self.gate.as_ref().map(|gate| gate.healthy)) {
+            return Ok(None);
         }
         if self.benchmark_sync && !matches!(&cmd, Command::SignedAdmin(req) if req.command.is_benchmark_snapshot()) {
             return Ok(None);
@@ -349,15 +342,7 @@ impl Sequencer {
         let events = self.engine.apply(&sequenced).context("sequencer produced an invalid sequence")?;
         #[cfg(test)]
         withdrawal_scenario::before_approval_log(&sequenced, &events)?;
-        let access = matches!(
-            &sequenced.cmd,
-            Command::AttestEligibility { .. }
-                | Command::AccessOrder { .. }
-                | Command::AccessWithdraw { .. }
-                | Command::AccessDeposit { .. }
-                | Command::AccessCustodyDeposit { .. }
-                | Command::RetryDepositScreening { .. }
-        );
+        let access = access::is_access_command(&sequenced.cmd);
         self.accounting.apply(&sequenced.cmd, &events)?;
         self.progress.genesis.command(&sequenced, &events);
         if self.engine.protocol_version() != version {

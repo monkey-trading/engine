@@ -356,7 +356,7 @@ impl Node {
             tls_public_key_sha256: tls.public_key_sha256,
         };
         let state = ApiState {
-            protocol: engine_core::protocol::ProtocolVersion::V19,
+            protocol: engine_core::protocol::ProtocolVersion::V22,
             access: None,
             tx: tx.clone(),
             stream,

@@ -249,16 +249,16 @@ fn activation_commands_for(
 
 #[cfg(test)]
 impl Sequencer {
-    /// Builds historical unsigned/auth/storage fixtures under their explicit V20 rules.
+    /// Builds historical unsigned/auth/storage fixtures under the V22 rules, the last before access screening.
     /// Error cases:
     /// - required historical commands cannot be sequenced or written
     pub(crate) fn activate_legacy_protocol(&mut self) -> anyhow::Result<()> {
         let legacy = self.legacy_deposits.values().cloned().collect();
         let cmds =
-            activation_commands_for(&self.engine, &self.client_auth, self.operator, ProtocolVersion::V20, legacy);
+            activation_commands_for(&self.engine, &self.client_auth, self.operator, ProtocolVersion::V22, legacy);
         if cmds.is_empty() {
             return Ok(());
         }
-        self.sequence_required("V20 historical fixture", cmds)
+        self.sequence_required("V22 historical fixture", cmds)
     }
 }

@@ -1,6 +1,7 @@
 //! Access-source alert episodes from authenticated engine decisions.
 
 use engine_core::access::AccessReject;
+use engine_core::command::Command;
 use engine_core::event::{Event, Reject};
 use tracing::{info, warn};
 
@@ -52,6 +53,36 @@ impl AccessAlerts {
             }
             _ => {}
         }
+    }
+}
+
+/// Whether `cmd` is one of the access-screened commands, whose refusals feed the source episode.
+pub(super) fn is_access_command(cmd: &Command) -> bool {
+    matches!(
+        cmd,
+        Command::AttestEligibility { .. }
+            | Command::AccessOrder { .. }
+            | Command::AccessWithdraw { .. }
+            | Command::AccessDeposit { .. }
+            | Command::AccessCustodyDeposit { .. }
+            | Command::RetryDepositScreening { .. }
+    )
+}
+
+/// Whether an unhealthy custody gate admits `cmd`, forcing a wrapped access withdrawal to record
+/// its refusal durably without debiting collateral while any other withdrawal waits. A node with
+/// no gate admits every command.
+pub(super) fn gate_withdrawal(cmd: &mut Command, gate_healthy: Option<bool>) -> bool {
+    if gate_healthy != Some(false) || !matches!(cmd, Command::Withdraw { .. } | Command::AccessWithdraw { .. }) {
+        return true;
+    }
+    warn!(alert = "withdrawals_paused", "withdrawal refused until custody reconciles");
+    match cmd {
+        Command::AccessWithdraw { payout_available, .. } => {
+            *payout_available = false;
+            true
+        }
+        _ => false,
     }
 }
 

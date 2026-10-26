@@ -8,6 +8,7 @@ use crate::access::{
     Jurisdiction, MAX_EVIDENCE_LEAD_MS, SourceFailure,
 };
 use crate::auth::ClientAuth;
+use crate::command::Command;
 use crate::deposits::legacy_chain_reference;
 use crate::eip712::{self, B256, Eip712Domain, deposit_screening_hash, eligibility_hash};
 use crate::engine::Engine;
@@ -16,6 +17,50 @@ use crate::protocol::ProtocolVersion;
 use crate::types::AccountId;
 
 impl Engine {
+    /// Dispatches the access-screened commands and, from `V24`, wraps raw funding ingress without
+    /// a payer as payer-less access deposits. Returns false for every other command.
+    pub(crate) fn access_dispatch(&mut self, cmd: &Command, events: &mut Vec<Event>) -> bool {
+        match cmd {
+            Command::AttestEligibility { request, evidence } => self.attest_eligibility(request, evidence, events),
+            Command::RetryDepositScreening { chain_ref, evidence } => {
+                self.retry_deposit_screening(chain_ref, evidence, events)
+            }
+            Command::AccessOrder { request, evidence } => self.place_order(request, Some(evidence), events),
+            Command::AccessWithdraw { request, evidence, payout_available } => self.withdraw(
+                request.account,
+                request.amount,
+                request.auth.as_ref(),
+                Some((evidence, *payout_available)),
+                events,
+            ),
+            Command::AccessDeposit { deposit, evidence } => self.access_deposit(deposit, Some(evidence), events),
+            Command::AccessCustodyDeposit { receipt, payer, evidence } => {
+                self.access_custody_deposit(receipt, *payer, evidence, events)
+            }
+            Command::Deposit { account, amount, chain_ref } if self.protocol_version >= ProtocolVersion::V24 => {
+                let deposit = AccessDeposit {
+                    account: Some(*account),
+                    payer: None,
+                    amount: *amount,
+                    chain_ref: chain_ref.clone(),
+                };
+                self.access_deposit(&deposit, None, events);
+            }
+            Command::HouseCapital { amount, chain_ref }
+                if self.protocol_version >= ProtocolVersion::V24
+                    && (chain_ref != "genesis"
+                        || self.held_deposits.contains_key(chain_ref)
+                        || self.pending_deposits.contains_key(chain_ref)) =>
+            {
+                let deposit =
+                    AccessDeposit { account: None, payer: None, amount: *amount, chain_ref: chain_ref.clone() };
+                self.access_deposit(&deposit, None, events);
+            }
+            _ => return false,
+        }
+        true
+    }
+
     /// The access source and freshness bound the public log records.
     pub fn access_policy(&self) -> Option<&AccessPolicy> {
         self.access_policy.as_ref()

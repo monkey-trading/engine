@@ -184,22 +184,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
         depositForCall { account: Address::from(access::account(1).0), amount: U256::from(10_000_000) }.abi_encode(),
     )
     .await;
-    timeout(Duration::from_secs(10), async {
-        loop {
-            let (reply, response) = oneshot::channel();
-            tx.send(Request::Query(Box::new(move |engine| {
-                let _ = reply.send(engine.pending_deposits().len());
-            })))
-            .await
-            .unwrap();
-            if response.await.unwrap() == 1 {
-                break;
-            }
-            sleep(Duration::from_millis(30)).await;
-        }
-    })
-    .await
-    .unwrap();
+    source::await_pending(&tx, 1).await;
     // The undeclared account's pending deposit and the credit must reconcile to both real vault deposits.
     for _ in 0..4 {
         submit(&tx, Command::Tick).await;
@@ -224,15 +209,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     .await
     .unwrap();
     let replayed = replay_path(&dir).expect("every checkpoint signature verifies");
-    assert_eq!(replayed.engine.house_cash(), Fixed::from_int(100));
-    assert!(!replayed.engine.accounts().contains_key(&access::account(1)));
-    let pending = replayed.engine.pending_deposits().values().next().unwrap();
-    assert_eq!((pending.account, pending.amount), (Some(access::account(1)), Fixed::from_int(10)));
-    assert!(replayed.engine.held_deposits().is_empty());
-    assert_eq!(
-        (replayed.accounting.pending, replayed.accounting.liabilities, replayed.accounting.deposits),
-        (Fixed::from_int(10), Fixed::from_int(110), 2)
-    );
+    source::assert_pending_reconciliation(&replayed);
     let work = crate::checkpoints::Work::capture(
         replayed.last_signed_checkpoint.unwrap(),
         replayed.accounting,

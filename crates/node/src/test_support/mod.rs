@@ -93,7 +93,7 @@ impl TestSequencer {
 
     /// Historical V20 fixture on a controlled clock, on a log whose genesis is `genesis`.
     pub fn start_legacy_at(dir: &Path, stream_capacity: usize, clock: Arc<dyn Clock>, genesis: Vec<Command>) -> Self {
-        Self::boot(dir, stream_capacity, clock, genesis, ProtocolVersion::V20)
+        Self::boot(dir, stream_capacity, clock, genesis, ProtocolVersion::V22)
     }
 
     /// Boots as the node does, activating `version`.
