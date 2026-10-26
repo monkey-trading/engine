@@ -13,8 +13,10 @@
 # version labels are also ignored: every version PR extends the same all-version prose
 # lists (README bullets, doc comments) that main extends with its own version, and no
 # label pairing reconciles a shared list line, at the cost that a substantive change
-# on such a line is ignored too. The comparison keys each hunk to its file and the
-# nearest preceding Rust item line, so a line moved within one item does not show;
+# on such a line is ignored too. `--no-relative` pins the diff against an inherited
+# diff.relative, which could otherwise shrink both patches to the caller's directory
+# and compare unequal patches as equal. The comparison keys each hunk to its file and
+# the nearest preceding Rust item line, so a line moved within one item does not show;
 # the residual's hunk headers name the file.
 #
 # Exit 0 with no output: the patches match. Exit 1: the residual is printed.
@@ -31,8 +33,8 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 echo '*.rs diff=rust' > "$tmp/attributes"
 
 patch() { # base head out
-  git -c core.attributesFile="$tmp/attributes" diff --no-color --no-ext-diff --no-textconv \
-    --no-renames --binary -U0 "$1...$2" -- ':(top)' \
+  git -c core.attributesFile="$tmp/attributes" diff --no-relative --no-color --no-ext-diff \
+    --no-textconv --no-renames --binary -U0 "$1...$2" -- ':(top)' \
     ':(top,exclude,glob)crates/*/tests/reference/*.jsonl' |
     sed -E -e '/^index /d' -e 's/^@@ [^@]* @@/@@/' \
       -e '/^--- /b' -e '/^[+][+][+] /b' -e '/^[-+]/!b' \
