@@ -1,7 +1,8 @@
 //! The newest caches and heads around the end of the log: a final checkpoint whose capture was
-//! skipped, a log tail lost after history signed a head there, and no retained head that resumes.
+//! skipped, a log tail lost after history or the catalog signed heads there, and no retained head
+//! that resumes.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -49,12 +50,14 @@ async fn burst_to_second_checkpoint(node: &Node) -> u64 {
     final_checkpoint
 }
 
-/// The log ends before a signed history head when storage loses synced writes or the host truncates
-/// it. Restart still uses the cache, alerts, and resumes history from the cache's own head.
+/// The host truncates the active segment between two captured checkpoints; every cache and signed
+/// head stays. History and the catalog signed only synced entries past the log's end, so restart
+/// uses the older cache, alerts, and resumes both from it: the checkpoint sequenced again where the
+/// lost one stood is cached, and so is the segment it completes.
 #[tokio::test]
-async fn restart_after_the_log_lost_its_tail_resumes_history_from_the_cache_head() {
+async fn restart_after_the_log_lost_its_active_tail_resumes_history_and_the_catalog_from_the_cache() {
     let mut cfg = configuration("paired-lost-tail");
-    cfg.node.segment_commands = 1_000;
+    cfg.node.segment_commands = 40;
     cfg.snapshots.as_mut().unwrap().retain = 16.try_into().unwrap();
     let node = Node::start(cfg).await.unwrap();
     for n in 0..6 {
@@ -62,13 +65,7 @@ async fn restart_after_the_log_lost_its_tail_resumes_history_from_the_cache_head
     }
     let (cfg, reader) = node.stop().await;
     drop(reader);
-    let dir = cfg.snapshots.as_ref().unwrap().dir.clone();
-    let segment = cfg.node.log_dir.join("00000000000000000000.jsonl");
-    let synced = fs::read(&segment).unwrap();
-    let kept: BTreeSet<PathBuf> =
-        snapshot::candidates_readonly(cfg.snapshots.as_ref().unwrap()).unwrap().into_iter().collect();
-    let catalog_heads: Vec<(PathBuf, Vec<u8>)> =
-        catalog_head_files(&dir).into_iter().map(|path| (path.clone(), fs::read(path).unwrap())).collect();
+    let synced = files(&cfg.node.log_dir);
 
     let node = Node::start(cfg).await.unwrap();
     for n in 0..6 {
@@ -76,30 +73,119 @@ async fn restart_after_the_log_lost_its_tail_resumes_history_from_the_cache_head
     }
     let (cfg, reader) = node.stop().await;
     drop(reader);
-    // The loss keeps the log, caches, and catalog heads from before the second run.
-    fs::write(&segment, &synced).unwrap();
-    for path in snapshot::candidates_readonly(cfg.snapshots.as_ref().unwrap()).unwrap() {
-        if !kept.contains(&path) {
-            fs::remove_file(path).unwrap();
-        }
+    let manifest = cfg.node.log_dir.join(crate::log::MANIFEST);
+    assert_eq!(fs::read(&manifest).ok(), synced.get(&manifest).cloned(), "the lost entries stay in one segment");
+    restore(&cfg.node.log_dir, &synced);
+    resume_past_lost_tail(cfg).await;
+}
+
+/// The host truncates the log back across a completed segment the catalog tip certified, and
+/// storage also lost the history heads signed since: the catalog tip alone shows the loss.
+#[tokio::test]
+async fn restart_after_the_log_lost_a_completed_segment_resumes_from_the_cache() {
+    let mut cfg = configuration("paired-lost-segment");
+    cfg.node.segment_commands = 40;
+    cfg.snapshots.as_mut().unwrap().retain = 16.try_into().unwrap();
+    let node = Node::start(cfg).await.unwrap();
+    for n in 0..6 {
+        node.submit(deposit(2, &format!("kept-{n}"))).await;
     }
-    for path in catalog_head_files(&dir) {
+    let (cfg, reader) = node.stop().await;
+    drop(reader);
+    let caches = cfg.snapshots.as_ref().unwrap().dir.clone();
+    let synced = files(&cfg.node.log_dir);
+    let heads: BTreeMap<PathBuf, Vec<u8>> = files(&caches)
+        .into_iter()
+        .filter(|(path, _)| path.file_name().unwrap().to_str().unwrap().starts_with("history-head-"))
+        .collect();
+
+    let node = Node::start(cfg).await.unwrap();
+    let completed = completed_up_to(&node);
+    let mut n = 0;
+    while completed_up_to(&node) == completed {
+        node.submit(deposit(2, &format!("lost-{n}"))).await;
+        n += 1;
+    }
+    let (cfg, reader) = node.stop().await;
+    drop(reader);
+    let tip: serde_json::Value = serde_json::from_slice(
+        files(&caches)
+            .iter()
+            .filter(|(path, _)| path.file_name().unwrap().to_str().unwrap().starts_with("catalog-head-"))
+            .map(|(_, bytes)| bytes)
+            .next_back()
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(tip["body"]["catalog"]["next_seq"].as_u64().unwrap() > completed, "the tip certifies the lost segment");
+    restore(&cfg.node.log_dir, &synced);
+    for path in snapshot::head::candidates_readonly(cfg.snapshots.as_ref().unwrap()).unwrap() {
         fs::remove_file(path).unwrap();
     }
-    for (path, bytes) in &catalog_heads {
+    for (path, bytes) in &heads {
         fs::write(path, bytes).unwrap();
     }
+    resume_past_lost_tail(cfg).await;
+}
 
+/// Restarts on a log that lost its tail: recovery uses an older cache and alerts. The node then
+/// sequences until the segment holding the newest lost checkpoint completes, and must cache past it
+/// and restart from that cache.
+async fn resume_past_lost_tail(cfg: crate::config::NodeConfig) {
+    let lost = seq_of(&snapshot::candidates_readonly(cfg.snapshots.as_ref().unwrap()).unwrap()[0]);
     let (_guard, mut alerts) = crate::test_support::capture_alerts();
     let node = Node::start(cfg).await.unwrap();
-    assert!(node.snapshot_seq.is_some(), "a head past the log must not force full replay");
-    let lost = std::iter::from_fn(|| alerts.try_recv().ok())
+    assert!(node.snapshot_seq.is_some_and(|seq| seq < lost), "a signed head past the log must not force full replay");
+    let alert = std::iter::from_fn(|| alerts.try_recv().ok())
         .find(|alert| alert["alert"] == "log_tail_lost")
         .expect("the lost tail raises an alert");
-    assert_eq!(lost["level"], "ERROR");
+    assert_eq!(alert["level"], "ERROR");
+    // Before the node writes anything, no signed catalog head past the rewound catalog remains to
+    // name a discarded version, so a restart still uses a cache.
+    let (cfg, reader) = node.stop().await;
+    drop(reader);
+    let node = Node::start(cfg).await.unwrap();
+    assert!(node.snapshot_seq.is_some(), "a restart right after the rewind uses a cache");
+    let mut n = 0;
+    while completed_up_to(&node) <= lost {
+        node.submit(deposit(1, &format!("again-{n}"))).await;
+        n += 1;
+    }
+    let completed = completed_up_to(&node);
+    let (cfg, reader) = node.stop().await;
+    drop(reader);
+    let newest = seq_of(&snapshot::candidates_readonly(cfg.snapshots.as_ref().unwrap()).unwrap()[0]);
+    assert!(newest >= completed, "the node caches past the segment that held the lost checkpoint");
+
+    let node = Node::start(cfg).await.unwrap();
+    assert_eq!(node.snapshot_seq, Some(newest), "restart uses the newest cache");
     let (cfg, reader) = node.stop_after_signing("after-lost-tail").await;
     let query = PageQuery { account: TRADER, kind: None, before: None, after: None, limit: 200 };
     assert_eq!(reader.page(query).await.unwrap().unwrap().events, logged_history(&cfg.node.log_dir, TRADER));
+}
+
+/// The first seq after the completed segments the node's catalog holds.
+fn completed_up_to(node: &Node) -> u64 {
+    node.manifest.borrow().catalog.as_ref().expect("an authenticated catalog").next_seq()
+}
+
+/// Every file in `dir` with its bytes.
+fn files(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .map(|path| (path.clone(), fs::read(path).unwrap()))
+        .collect()
+}
+
+/// Puts `dir` back to `kept`, as storage that lost synced writes or a host truncating it would.
+fn restore(dir: &Path, kept: &BTreeMap<PathBuf, Vec<u8>>) {
+    for path in files(dir).into_keys().filter(|path| !kept.contains_key(path)) {
+        fs::remove_file(path).unwrap();
+    }
+    for (path, bytes) in kept {
+        fs::write(path, bytes).unwrap();
+    }
 }
 
 /// With no retained history head that resumes, the cache's own head carries history.
@@ -119,6 +205,36 @@ async fn restart_without_a_resumable_history_head_uses_the_cache_head() {
     let (cfg, reader) = node.stop_after_signing("after-headless-restart").await;
     let query = PageQuery { account: TRADER, kind: None, before: None, after: None, limit: 200 };
     assert_eq!(reader.page(query).await.unwrap().unwrap().events, logged_history(&cfg.node.log_dir, TRADER));
+}
+
+/// With no catalog head that verifies, the cache's own boundary carries the catalog: restart keeps
+/// the generation, discards its later versions, and caches again.
+#[tokio::test]
+async fn restart_without_a_verified_catalog_head_resumes_the_catalog_from_the_cache() {
+    let node = Node::start(configuration("paired-no-catalog-head")).await.unwrap();
+    let catalog = node.sealing.catalog_store;
+    for n in 0..7 {
+        node.submit(deposit(2, &format!("tipless-{n}"))).await;
+    }
+    let (cfg, reader) = node.stop().await;
+    drop(reader);
+    let caches = cfg.snapshots.as_ref().unwrap().dir.clone();
+    for path in files(&caches).into_keys() {
+        if path.file_name().unwrap().to_str().unwrap().starts_with("catalog-head-") {
+            fs::remove_file(path).unwrap();
+        }
+    }
+    let node = Node::start(cfg).await.unwrap();
+    assert!(node.snapshot_seq.is_some(), "missing catalog heads must not force full replay");
+    assert_eq!(node.sealing.catalog_store, catalog, "the catalog generation resumed instead of being rebuilt");
+    let (cfg, reader) = node.stop_after_signing("after-tipless-restart").await;
+    let query = PageQuery { account: TRADER, kind: None, before: None, after: None, limit: 200 };
+    assert_eq!(reader.page(query).await.unwrap().unwrap().events, logged_history(&cfg.node.log_dir, TRADER));
+    drop(reader);
+    let newest = seq_of(&snapshot::candidates_readonly(cfg.snapshots.as_ref().unwrap()).unwrap()[0]);
+    let node = Node::start(cfg).await.unwrap();
+    assert_eq!(node.snapshot_seq, Some(newest), "the resumed catalog caches again");
+    node.stop().await;
 }
 
 /// The chain can finalize a checkpoint after its capture was skipped and before shutdown; the
@@ -147,19 +263,6 @@ async fn shutdown_caches_a_skipped_checkpoint_the_chain_finalized_meanwhile() {
     drop(reader);
     let newest = snapshot::candidates_readonly(cfg.snapshots.as_ref().unwrap()).unwrap().remove(0);
     assert_eq!(seq_of(&newest), final_checkpoint, "the final checkpoint is cached");
-}
-
-/// The signed catalog heads in a cache directory.
-fn catalog_head_files(dir: &Path) -> Vec<PathBuf> {
-    fs::read_dir(dir)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("catalog-head-") && name.ends_with(".json"))
-        })
-        .collect()
 }
 
 /// The checkpoint seq a cache file is named for.

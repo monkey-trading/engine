@@ -841,12 +841,19 @@ rolled back leaves the catalog writable; only a commit of uncertain outcome stop
 A restart from a cache reads the cache, the checkpoint's segment, the suffix after it, and a bounded
 number of proof lookups, so its time follows engine state and the checkpoint interval rather than
 the length of the log or of retained history. History serves once it has indexed what the log
-holds after its newest signed head, which after a clean shutdown is nothing. History indexes only
-entries the log has synced, so a log ending before a signed head means storage lost synced writes or
-the host truncated the log, losing commands the node had acknowledged; recovery then raises a
-Critical `log_tail_lost` alert, resumes history from the cache's own head, discards the later
-versions after the preflight, and indexes the rest of the log again. It resumes from that head too
-when no retained head does. The first start with `[snapshots]` on an existing log replays it in full
+holds after its newest signed head, which after a clean shutdown is nothing. History and the
+catalog take only entries the log has synced, so a log ending before a signed history head, or
+short of segments the newest catalog head lists, means storage lost synced writes or the host
+truncated the log, losing commands the node had acknowledged. Recovery then raises a Critical
+`log_tail_lost` alert and resumes history and the catalog from the cache's own heads; after the
+preflight it removes the catalog heads past the cache, discards the later versions of both, and
+indexes and catalogs the rest of the log again. Each also resumes from the cache's head when no
+retained head of its own verifies. A catalog head can also record checkpoints past the log's end in
+the segment still being written, which recovery sees only through a history head that reaches
+them. Without one, the checkpoint written again at such an offset fails to cache
+(`snapshot_write_failed`), and once its segment completes the catalog takes no more segments
+(`log_catalog_unavailable`); the next start finds the catalog holding another checkpoint there,
+rejects every cache, and replays the whole log. The first start with `[snapshots]` on an existing log replays it in full
 and builds history and the catalog from it once. `engine replay` still audits the whole log, and snapshots
 never permit deleting it.
 

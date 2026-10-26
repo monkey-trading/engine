@@ -116,7 +116,7 @@ async fn restart_after_an_unsigned_catalog_version_resumes_from_the_newest_signe
     let caches = cfg.snapshots.as_ref().unwrap();
     let vault: engine_core::types::AccountId = cfg.custody.vault.parse().unwrap();
     let domain = CatalogDomain { chain_id: cfg.custody.chain_id, vault: vault.0, log_id: catalog.catalog_namespace() };
-    let tip = snapshot::catalog_heads::read_latest(caches, catalog, &domain).unwrap();
+    let tip = snapshot::catalog_heads::read_latest(caches, catalog, &domain).unwrap().unwrap();
     let store = Store::open_existing(catalog.path(&caches.dir)).unwrap();
     store.enable_writes().unwrap();
     store.update(&tip.catalog().root, vec![(b"crash".to_vec(), Some(b"unsigned".to_vec()))]).unwrap();

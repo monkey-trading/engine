@@ -23,6 +23,7 @@ mod catalog;
 mod continuation;
 mod head_support;
 mod publication;
+mod rewind;
 mod stream;
 
 pub(crate) struct Fixture {

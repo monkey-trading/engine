@@ -135,18 +135,33 @@ impl CatalogHeadPublication for Publication {
     }
 }
 
-/// Uses independent restart pins and the generation identity authenticated by the paired cache.
+/// Uses independent restart pins and the generation identity authenticated by the paired cache;
+/// `None` when no head verifies, each rejected one with a Warning.
 /// Error cases:
-/// - every compatible catalog head is missing, malformed, untrusted or unavailable
-pub(crate) fn read_latest(cfg: &SnapshotSection, id: StoreId, domain: &CatalogDomain) -> Result<VerifiedCatalogHead> {
+/// - the cache directory cannot be listed
+pub(crate) fn read_latest(
+    cfg: &SnapshotSection,
+    id: StoreId,
+    domain: &CatalogDomain,
+) -> Result<Option<VerifiedCatalogHead>> {
     let trust = trust(cfg, domain.clone());
     for path in candidates(cfg, id)? {
         match read_one(cfg, id, &trust, &path) {
-            Ok(head) => return Ok(head),
+            Ok(head) => return Ok(Some(head)),
             Err(error) => crate::snapshot::rejected(&path, &error),
         }
     }
-    anyhow::bail!("no independently verified catalog head")
+    Ok(None)
+}
+
+/// The generation's head files numbered after `version`, verified or not, oldest first.
+/// Error cases:
+/// - the cache directory cannot be listed
+pub(crate) fn after(cfg: &SnapshotSection, id: StoreId, version: Option<u64>) -> Result<Vec<PathBuf>> {
+    let mut paths = candidates(cfg, id)?;
+    paths.retain(|path| nonce(path) > version);
+    paths.reverse();
+    Ok(paths)
 }
 
 /// Enumerates only configured metadata slots, never nodes, history rows or segment ordinals.
@@ -266,6 +281,11 @@ fn candidates(cfg: &SnapshotSection, id: StoreId) -> Result<Vec<PathBuf>> {
     }
     paths.sort_unstable_by(|left, right| right.cmp(left));
     Ok(paths)
+}
+
+/// The nonce a head file is named for.
+fn nonce(path: &Path) -> Option<u64> {
+    path.file_name()?.to_str()?.strip_suffix(".json")?.rsplit('-').next()?.parse().ok()
 }
 
 fn name(id: StoreId, nonce: u64) -> String {

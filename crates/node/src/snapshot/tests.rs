@@ -101,6 +101,22 @@ fn startup_reclaims_catalog_head_staging_files_of_every_generation() {
     assert!(kept.iter().all(|path| path.exists()), "published heads and unrecognized files stay");
 }
 
+/// A rewound catalog removes its generation's heads past the boundary oldest first, so the newest
+/// one goes last; another generation's heads and staging files stay.
+#[test]
+fn catalog_heads_past_a_version_list_oldest_first_for_their_generation_only() {
+    let (cfg, _, _) = fixture("snapshot-catalog-heads-after");
+    fs::create_dir_all(&cfg.dir).unwrap();
+    let head = |id: u8, nonce: u64| format!("catalog-head-{}-{nonce:020}.json", hex::encode([id; 32]));
+    for name in [head(1, 3), head(1, 12), head(1, 5), head(1, 7), head(2, 9), format!("{}.tmp", head(1, 13))] {
+        fs::write(cfg.dir.join(name), b"bytes").unwrap();
+    }
+    let after = |version| catalog_heads::after(&cfg, head::StoreId([1; 32]), version).unwrap();
+    assert_eq!(after(Some(5)), [cfg.dir.join(head(1, 7)), cfg.dir.join(head(1, 12))]);
+    assert_eq!(after(None).len(), 4, "a boundary without a version keeps none of its generation's heads");
+    assert!(after(Some(12)).is_empty());
+}
+
 #[test]
 fn partial_write_and_sync_failures_release_staging_allocation() {
     let (cfg, _, snapshot) = fixture("snapshot-failed-io");

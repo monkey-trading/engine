@@ -36,6 +36,8 @@ pub struct CatalogBoundary {
 impl SegmentedLog {
     /// Replays every physical entry after the exact checkpoint, never filtering by claimed seq.
     /// Unreferenced files are ignored here; strict full audit retains directory-wide diagnosis.
+    /// The catalog resumes from the boundary instead of the continuation when the manifest no
+    /// longer lists every segment that head covers (`catalog_rewound`).
     /// Error cases:
     /// - catalog proofs, checkpoint bytes/framing, prefix hash, or suffix bytes are invalid
     /// - a suffix descriptor is discontinuous or replay rejects any physical entry
@@ -154,6 +156,9 @@ impl SegmentedLog {
                 ensure!(ordinal == catalog.len() + pending_catalog.len() as u64, "pending suffix ordinal gap");
                 pending_catalog.push(Completion { dense, checkpoints: segment.checkpoints.into() });
             } else {
+                // The continuation's active segment completes first; only it can hold this segment's
+                // checkpoints, and the live view holds no completion yet.
+                same_checkpoints(&catalog, &segment.checkpoints)?;
                 ensure!(ordinal == catalog.len(), "new suffix ordinal gap");
                 catalog = catalog.append(listed, segment.checkpoints.into())?;
                 ensure!(catalog.prefix() == previous_prefix, "new suffix prefix mismatch");
@@ -170,7 +175,6 @@ impl SegmentedLog {
                 );
             }
         }
-        ensure!(ordinal >= tip_count, "manifest omits a certified continuation segment");
         let active_path = dir.join(segment_name(expected_first));
         let open = if boundary_pending || active_path.try_exists()? {
             Some(recover_segment(
@@ -185,11 +189,7 @@ impl SegmentedLog {
             None
         };
         if let Some(segment) = &open {
-            for locator in &segment.checkpoints {
-                if let Some(known) = catalog.checkpoint(locator.offset)? {
-                    ensure!(known == *locator, "active checkpoint differs from indexed continuation");
-                }
-            }
+            same_checkpoints(&catalog, &segment.checkpoints)?;
         }
         let active =
             open.as_ref().filter(|s| s.bytes > 0).and_then(|s| last.map(|last| ActivePrefix { info: s.info(), last }));
@@ -198,7 +198,7 @@ impl SegmentedLog {
         let authority = pending_catalog.is_empty().then_some(ReadAuthority(()));
         let manifest =
             Manifest { segments: Arc::default(), catalog: Some(Arc::new(catalog)), active, authority, flushed: last };
-        Ok(Self {
+        let mut log = Self {
             dir: dir.to_owned(),
             last,
             manifest,
@@ -207,7 +207,91 @@ impl SegmentedLog {
             pending_catalog,
             catalog_owner: None,
             catalog_domain: Some(boundary.domain.clone()),
-        })
+            catalog_rewound: false,
+        };
+        // The writer lists and syncs a segment before its catalog takes it, so storage lost synced
+        // writes or the host truncated the log.
+        if ordinal < tip_count {
+            log.rewind(read, boundary, ordinal)?;
+        }
+        Ok(log)
+    }
+
+    /// Whether the catalog resumes from the boundary because the log lost a tail a signed head covered.
+    pub fn catalog_rewound(&self) -> bool {
+        self.catalog_rewound
+    }
+
+    /// Resumes the catalog from the boundary rather than its continuation, for a log that lost a tail
+    /// the continuation may cover beyond the log's end, which a later signed history head shows.
+    /// Error cases:
+    /// - as `rewind`
+    pub fn rewind_catalog(&mut self, read: Arc<dyn CatalogRead>, boundary: &CatalogBoundary) -> anyhow::Result<()> {
+        let catalog = self.manifest.catalog.as_ref().context("recovery catalog missing")?;
+        let completed = catalog.len() + self.pending_catalog.len() as u64;
+        self.rewind(read, boundary, completed)
+    }
+
+    /// Rebuilds the recovery catalog on the boundary from the first `completed` segments the log
+    /// lists. Those only the continuation covered are read again and checked against its
+    /// descriptors, which this recovery matched to the replayed bytes; later ones carry over.
+    /// Error cases:
+    /// - a reread segment differs from its descriptor, or a proof or prefix check fails
+    /// - a segment file the tip covers past the recovered log is still on disk
+    fn rewind(&mut self, read: Arc<dyn CatalogRead>, boundary: &CatalogBoundary, completed: u64) -> anyhow::Result<()> {
+        let tip = self.manifest.catalog.take().context("recovery catalog missing")?;
+        // A segment the tip covers whose file is still on disk past the recovered active segment
+        // was never lost. Rewinding over it would raise log_tail_lost for bytes that exist, and
+        // the writer would later refuse to link over the leftover file, stopping the node; reject
+        // the cache so recovery falls back to full replay's directory-wide refusal.
+        let active_first = self.open.as_ref().map(|segment| segment.info().first_seq);
+        for ordinal in completed..tip.len() {
+            let first_seq = tip.at(ordinal)?.info.first_seq;
+            if Some(first_seq) != active_first {
+                ensure!(
+                    !self.dir.join(segment_name(first_seq)).try_exists()?,
+                    "segment {} the catalog tip certifies past the recovered log is still on disk",
+                    segment_name(first_seq),
+                );
+            }
+        }
+        // The tip signs its active segment's first seq too. Only a tip that extends the boundary
+        // names bytes past the rebuild; a tip at the boundary's own version, or the boundary view
+        // when no head verifies, names a segment the rebuild reuses. The signed position, not the
+        // recovery view's next_seq: the view's live completions are segments the manifest listed,
+        // not bytes the tip holds open. Past the recovered segments its file is a leftover the
+        // writer would refuse to link over; at or before them the file is recovery's own.
+        if tip.certified() != &boundary.catalog && tip.certified().completed_segments > completed {
+            let first_seq = tip.certified().next_seq;
+            ensure!(
+                !self.dir.join(segment_name(first_seq)).try_exists()?,
+                "segment {} the catalog tip holds open past the recovered log is still on disk",
+                segment_name(first_seq),
+            );
+        }
+        let mut completions = Vec::new();
+        let mut last = None;
+        for ordinal in boundary.catalog.completed_segments..completed.min(tip.certified().completed_segments) {
+            let dense = tip.at(ordinal)?;
+            let info = &dense.info;
+            let segment = recover_segment(&self.dir, info.first_seq, Some(info), None, &mut last, &mut |_| Ok(()))?;
+            completions.push(Completion { dense, checkpoints: segment.checkpoints.into() });
+        }
+        completions.extend(tip.delta.iter().cloned());
+        completions.append(&mut self.pending_catalog);
+        let mut catalog = LazyCatalogView::open(read, boundary.catalog.clone())?;
+        for completion in completions {
+            if catalog.live_full() || !self.pending_catalog.is_empty() {
+                self.pending_catalog.push(completion);
+            } else {
+                catalog = catalog.append(completion.dense.info.clone(), completion.checkpoints.clone())?;
+                ensure!(catalog.prefix() == completion.dense.prefix, "rewound suffix prefix mismatch");
+            }
+        }
+        self.manifest.catalog = Some(Arc::new(catalog));
+        self.manifest.authority = self.pending_catalog.is_empty().then_some(ReadAuthority(()));
+        self.catalog_rewound = true;
+        Ok(())
     }
 
     /// Exposes replay commitments; a large suffix remains unavailable until into_writer prepares it.
@@ -287,6 +371,18 @@ impl SegmentedLog {
         self.manifest.segments = Arc::default();
         Ok(self)
     }
+}
+
+/// Requires the catalog to hold no other checkpoint at an offset where the log holds one of these.
+/// Error cases:
+/// - a membership proof fails, or the catalog holds another checkpoint at one of the offsets
+fn same_checkpoints(catalog: &LazyCatalogView, locators: &[CheckpointLocator]) -> anyhow::Result<()> {
+    for locator in locators {
+        if let Some(known) = catalog.checkpoint(locator.offset)? {
+            ensure!(known == *locator, "suffix checkpoint differs from indexed continuation");
+        }
+    }
+    Ok(())
 }
 
 /// Decodes one physical segment and hashes exactly those bytes; the boundary prefix is withheld.
