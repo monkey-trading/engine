@@ -88,9 +88,15 @@ impl<V: VaultReader> DepositWatcher<V> {
             return Ok(self.behind(from, eligible));
         }
         let to = self.confirmed.scan.as_ref().expect("scan retained").end.expect("a complete window exists").number;
+        // A lagging quorum tag drops the eligible block below the proven scan end or an already
+        // credited receipt; the scan is ahead, so this waits out the tag without arming the lag
+        // watchdog, and the poll loop sleeps its normal interval.
+        if to > eligible || pending.iter().any(|record| record.receipt.block > eligible) {
+            return Ok(Polled::Waiting);
+        }
         // Even a replacement moved to an earlier block waits for all inherited pending
         // identities to be covered. An older quorum head proves no absence above itself.
-        if to > eligible || pending.iter().any(|record| record.receipt.block > to) {
+        if pending.iter().any(|record| record.receipt.block > to) {
             return Ok(self.behind(from, eligible));
         }
         for recorded in &pending {

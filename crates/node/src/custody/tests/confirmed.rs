@@ -22,6 +22,7 @@ mod episodes;
 mod frozen;
 mod reinclusion;
 mod scan;
+mod tag_lag;
 
 #[tokio::test]
 async fn scripted_confirmation_finality_scenario() {
