@@ -238,6 +238,7 @@ impl SegmentedLog {
     /// Error cases:
     /// - a reread segment differs from its descriptor, or a proof or prefix check fails
     /// - a segment file the tip covers past the recovered log is still on disk
+    /// - the segment file the recovered log's next command would rotate into is still on disk
     fn rewind(&mut self, read: Arc<dyn CatalogRead>, boundary: &CatalogBoundary, completed: u64) -> anyhow::Result<()> {
         let tip = self.manifest.catalog.take().context("recovery catalog missing")?;
         // A segment the tip covers whose file is still on disk past the recovered active segment
@@ -268,6 +269,22 @@ impl SegmentedLog {
                 "segment {} the catalog tip holds open past the recovered log is still on disk",
                 segment_name(first_seq),
             );
+        }
+        // The tip can name nothing past the recovered log and still the file the recovered log's
+        // next command would rotate into be on disk: storage kept the file but lost the manifest's
+        // listing of the segment before it. Rewinding would raise log_tail_lost for bytes that
+        // exist, and the writer would later refuse to link over the leftover file, stopping the
+        // node. The active segment's own file, named for the next seq when the log ends at a
+        // segment boundary, is recovery's, not a leftover.
+        if let Some(last) = self.last {
+            let next = last.seq.checked_add(1).context("recovered log seq overflow")?;
+            if Some(next) != active_first {
+                ensure!(
+                    !self.dir.join(segment_name(next)).try_exists()?,
+                    "segment {} the recovered log's next command would rotate into is still on disk",
+                    segment_name(next),
+                );
+            }
         }
         let mut completions = Vec::new();
         let mut last = None;
