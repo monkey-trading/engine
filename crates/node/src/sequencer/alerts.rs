@@ -242,6 +242,19 @@ mod tests {
         assert_eq!(logs.critical("corporate_action_failed"), 1);
         assert_eq!(logs.count("action=\"split-input\""), 1);
     }
+
+    #[test]
+    fn a_refused_staking_mirror_raises_a_critical_alert() {
+        let (logs, _guard) = Logs::capture();
+        alert_on(&Event::StakingRejected {
+            account: engine_core::types::AccountId([1; 20]),
+            amount: engine_core::emissions::TokenUnits(5),
+            chain_ref: "0xstake:0".into(),
+            reason: engine_core::event::Reject::InsufficientStake,
+        });
+        assert_eq!(logs.critical("staking_rejected"), 1);
+        assert_eq!(logs.count("chain_ref=\"0xstake:0\""), 1);
+    }
 }
 
 #[cfg(test)]

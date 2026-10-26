@@ -114,8 +114,8 @@ impl RecoveryContext {
         let Some(last) = self.work.last().filter(|_| checkpoint.parent.is_some()) else { return Ok(()) };
         let expected = Work::capture(checkpoint.clone(), self.accounting, engine);
         ensure!(
-            (last.liabilities, last.deposits, last.coverage)
-                == (expected.liabilities, expected.deposits, expected.coverage),
+            (last.liabilities, last.deposits, last.distributed, last.coverage)
+                == (expected.liabilities, expected.deposits, expected.distributed, expected.coverage),
             "snapshot checkpoint accounting mismatch"
         );
         Ok(())

@@ -21,10 +21,10 @@ async fn rejected_submission_public_finality_and_successor_reuse_survive_restart
             state.reject_send = false;
             state.latest = Some(a.checkpoint.clone());
         }
-        assert_eq!(worker.reconcile(&a).await.unwrap(), (None, false));
+        assert_eq!(worker.reconcile(&a).await.unwrap(), (None, Health::Pending));
         assert_eq!(server.state.lock().unwrap().sent.len(), 1, "latest A suppresses another send");
         server.state.lock().unwrap().finalized = Some(a.checkpoint.clone());
-        assert_eq!(worker.reconcile(&a).await.unwrap(), (Some(10), true));
+        assert_eq!(worker.reconcile(&a).await.unwrap(), (Some(10), Health::Healthy));
         if restart {
             worker = poster(&server, &dir);
         }
@@ -40,9 +40,9 @@ async fn rejected_submission_public_finality_and_successor_reuse_survive_restart
         server.state.lock().unwrap().latest = Some(b.checkpoint.clone());
         worker.chain.post(&b.checkpoint).await.unwrap();
         assert_eq!(read_record(&dir), record, "latest inclusion is progress without journal retirement");
-        assert_eq!(worker.reconcile_known(&b, &[&a, &b]).await.unwrap(), (Some(10), true));
+        assert_eq!(worker.reconcile_known(&b, &[&a, &b]).await.unwrap(), (Some(10), Health::Healthy));
         server.state.lock().unwrap().finalized = Some(b.checkpoint.clone());
-        assert_eq!(worker.reconcile_known(&b, &[&a, &b]).await.unwrap(), (Some(11), true));
+        assert_eq!(worker.reconcile_known(&b, &[&a, &b]).await.unwrap(), (Some(11), Health::Healthy));
         assert_eq!(server.state.lock().unwrap().sent.len(), 2);
     }
 }
@@ -61,7 +61,7 @@ async fn resurfaced_obsolete_transaction_consuming_reused_nonce_recovers_exact_s
             assert!(worker.reconcile(&a).await.is_err());
             assert_eq!(read_record(&dir)["transaction_hash"].is_null(), lost_response);
             public_finality_and_drop(&server, &a.checkpoint);
-            assert_eq!(worker.reconcile(&a).await.unwrap(), (Some(10), true));
+            assert_eq!(worker.reconcile(&a).await.unwrap(), (Some(10), Health::Healthy));
             if restart {
                 worker = poster(&server, &dir);
             }
@@ -94,9 +94,9 @@ async fn resurfaced_obsolete_transaction_consuming_reused_nonce_recovers_exact_s
             }
             assert_eq!(server.state.lock().unwrap().sent.len(), 3, "pending B never gets a third nonce");
             server.state.lock().unwrap().latest = Some(b.checkpoint.clone());
-            assert_eq!(worker.reconcile_known(&b, &[&a, &b]).await.unwrap(), (Some(10), true));
+            assert_eq!(worker.reconcile_known(&b, &[&a, &b]).await.unwrap(), (Some(10), Health::Healthy));
             server.state.lock().unwrap().finalized = Some(b.checkpoint.clone());
-            assert_eq!(worker.reconcile_known(&b, &[&a, &b]).await.unwrap(), (Some(11), true));
+            assert_eq!(worker.reconcile_known(&b, &[&a, &b]).await.unwrap(), (Some(11), Health::Healthy));
         }
     }
 }
@@ -157,9 +157,9 @@ async fn obsolete_consumption_before_successor_acceptance_recovers_after_restart
     assert_eq!(read_record(&dir)["nonce"], 8);
     assert_eq!(server.state.lock().unwrap().sent.len(), 3);
     server.state.lock().unwrap().latest = Some(b.checkpoint.clone());
-    assert_eq!(worker.reconcile_known(&b, &[&a, &b]).await.unwrap(), (Some(10), true));
+    assert_eq!(worker.reconcile_known(&b, &[&a, &b]).await.unwrap(), (Some(10), Health::Healthy));
     server.state.lock().unwrap().finalized = Some(b.checkpoint.clone());
-    assert_eq!(worker.reconcile_known(&b, &[&a, &b]).await.unwrap(), (Some(11), true));
+    assert_eq!(worker.reconcile_known(&b, &[&a, &b]).await.unwrap(), (Some(11), Health::Healthy));
 }
 
 #[tokio::test]

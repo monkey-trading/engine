@@ -111,6 +111,18 @@ pub(crate) enum View {
     Finalized,
 }
 
+/// How the vault's collateral compared with the checkpoint's ledger.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Health {
+    /// Balance plus paid distributions equals the ledger and the deposit counts match.
+    Healthy,
+    /// Routine catch-up: the vault counts deposits the ledger has not credited yet, with the
+    /// compensated collateral still at or above the ledger.
+    Pending,
+    /// The ledger and the vault disagree; withdrawals pause and no further checkpoint posts.
+    Diverged,
+}
+
 /// Chain access, kept separate from the authorized enclave signer lifecycle.
 pub(crate) trait CheckpointChain: Send + Sync {
     /// Reads the authenticated crash-recovery reservation without persisted mutation.
@@ -311,7 +323,7 @@ impl<R: CheckpointChain> Poster<R> {
                         finalized_seq = tracing::field::Empty);
                     let page = approval_page(&approvals, approval_cursor)?;
                     let result = self.reconcile_lifecycle(work, &known, &page, &mut uncredited).instrument(span.clone()).await;
-                    let (posted, healthy, lifecycle) = match result {
+                    let (posted, health, lifecycle) = match result {
                         Ok(status) => status,
                         Err(error) => {
                             if error.is::<Conflict>() {
@@ -319,9 +331,10 @@ impl<R: CheckpointChain> Poster<R> {
                                 return Err(error);
                             }
                             span.in_scope(|| warn!(alert = "checkpoint_post_failed", "checkpoint remains queued: {error:#}"));
-                            (None, false, None)
+                            (None, Health::Pending, None)
                         }
                     };
+                    let healthy = matches!(health, Health::Healthy);
                     if lifecycle.is_some() {
                         approval_cursor = page.last().map(|approval| (approval.account, approval.nonce));
                     }

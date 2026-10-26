@@ -142,7 +142,8 @@ async fn dev_scenario_staking_pays_stakers_above_the_floor_and_nothing_below_it(
     // 6. Epoch 1: the house loses more than it earns, so NAV ends below the floor and nothing is
     //    distributed.
     s.losses(&[(s.stakers[0], "1")], "100000", "99600").await;
-    s.wins(&[(s.stakers[1], "1")], "100000", "100900").await;
+    // A winning short sells high and buys back low; the house pays the 900 win.
+    s.wins(&[(s.stakers[1], "1")], "100900", "100000").await;
     assert!(s.house_nav().await < FLOOR);
     let events = s.next_epoch().await;
     assert!(events.iter().any(|e| matches!(e, Event::DistributionEpochClosed { epoch: 1, allocated, .. }

@@ -10,15 +10,15 @@
 //!   sequenced time. The first command at or after an epoch's end closes it, before anything else
 //!   the command does, exactly as emission periods finalise; epochs no command witnessed are
 //!   skipped and distribute nothing.
-//! - **Distribution.** At an epoch's close, the excess is `min(NAV, house cash less unfinalised
-//!   house principal) − floor`: the floor stays as house liquidity and principal still waiting for
-//!   Ethereum finality stays locked, exactly as `house_capital` guards it, and unrealised NAV
-//!   above house cash is not paid. Below one USDC base unit, when no account is staked, or at or
-//!   below the floor, nothing distributes. Each staker receives `floor(excess · stake / total
-//!   stake)` in USDC base units, so every allocation is a whole USDC unit the vault pays exactly;
-//!   the remainder is the house's. House cash falls by the allocated total. Each account's
-//!   cumulative distribution is a leaf of its own in the state tree, which the vault checks a
-//!   claim against.
+//! - **Distribution.** At an epoch's close, the excess is `min(NAV, house cash less every
+//!   unfinalised deposit) − floor`: the floor stays as house liquidity and principal still waiting
+//!   for Ethereum finality — the house's and each client's — stays locked, exactly as
+//!   `house_capital` and a reversal take it back, and unrealised NAV above that cash is not paid.
+//!   Below one USDC base unit, when no account is staked, or at or below the floor, nothing
+//!   distributes. Each staker receives `floor(excess · stake / total stake)` in USDC base units, so
+//!   every allocation is a whole USDC unit the vault pays exactly; the remainder is the house's.
+//!   House cash falls by the allocated total. Each account's cumulative distribution is a leaf of
+//!   its own in the state tree, which the vault checks a claim against.
 //! - **Reconciliation.** Allocations reduce house cash before any USDC leaves the vault; the
 //!   vault's cumulative `distributionsPaid` explains the difference at the next checkpoint.
 
@@ -248,11 +248,18 @@ impl Engine {
         }
 
         let nav = self.house_nav();
-        // The floor stays as house liquidity and unfinalised house principal stays locked, exactly
-        // as `house_capital` guards it: only NAV the house actually holds above the floor, in cash
-        // finalised on chain, distributes. NAV can exceed house cash while clients' open positions
-        // sit underwater, and that unrealised excess is not paid out.
-        let available = Fixed::from_raw(self.house_cash.raw().saturating_sub(self.unfinalised_house_deposits.raw()));
+        // The floor stays as house liquidity, and every principal still able to reverse stays
+        // locked, exactly as `house_capital` and a reversal take it back: the house's unfinalised
+        // deposits and each client's, whose realised gains are therefore not distributed until the
+        // deposit finalises. NAV can exceed that cash while clients' open positions sit
+        // underwater; the unrealised excess is not paid either.
+        let unfinalised: Fixed = self.accounts.values().map(|acct| acct.unfinalised_deposits).sum();
+        let available = Fixed::from_raw(
+            self.house_cash
+                .raw()
+                .saturating_sub(self.unfinalised_house_deposits.raw())
+                .saturating_sub(unfinalised.raw()),
+        );
         let excess = (nav.min(available) - config.liquidity_floor).max(Fixed::ZERO);
         let usdc_excess = if excess.is_positive() { (excess.raw() / USDC_SCALE) as u128 } else { 0 };
         let mut allocated = 0u128;

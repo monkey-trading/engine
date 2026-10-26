@@ -221,3 +221,26 @@ fn a_stake_sum_past_u128_is_refused_without_mutation() {
     assert_eq!(engine.staked(account), TokenUnits(u128::MAX - 1));
     assert!(!engine.is_credited("0xmax:1"));
 }
+
+#[test]
+fn gains_on_unfinalised_trader_deposits_stay_undistributed() {
+    let mut engine = engine(1_000);
+    engine.init_staking(&config(1_000)).unwrap();
+    engine.house_cash = Fixed::from_int(1_000);
+    engine.staked.insert(AccountId([1; 20]), TokenUnits(1));
+    // A trader holds an unfinalised deposit whose principal can still reverse; its realised gains
+    // in house cash are not distributable until the deposit finalises.
+    let account = crate::account::Account {
+        balance: Fixed::from_int(500),
+        unfinalised_deposits: Fixed::from_int(900),
+        ..Default::default()
+    };
+    engine.accounts.insert(AccountId([2; 20]), account);
+    let mut events = Vec::new();
+    engine.now = config(1_000).epoch_end(0);
+    engine.finalise_staking(&mut events);
+    assert_eq!(engine.distribution(AccountId([1; 20])), UsdcUnits(0));
+    assert_eq!(engine.house_cash, Fixed::from_int(1_000));
+    assert!(events.iter().any(|e| matches!(e, Event::DistributionEpochClosed { excess, allocated, .. }
+        if *excess == UsdcUnits(0) && *allocated == UsdcUnits(0))));
+}

@@ -137,7 +137,12 @@ impl Scenario {
             section,
             domain: CheckpointDomain { chain_id: 31337, vault: AccountId(vault.into()) },
             genesis,
-            operator: dev_config().operator().unwrap(),
+            operator: {
+                // The operator signs under the deployed vault's domain, as the log records it.
+                let mut cfg = dev_config();
+                cfg.custody.vault = format!("{vault:#x}");
+                cfg.operator().unwrap()
+            },
             deposits: Fixed::ZERO,
             node: None,
         };

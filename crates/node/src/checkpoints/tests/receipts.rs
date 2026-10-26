@@ -1,19 +1,19 @@
 //! Captured coverage component contracts; actual V20 Work capture is tested after activation.
 use super::*;
-use crate::checkpoints::DepositCoverage;
+use crate::checkpoints::{DepositCoverage, Health};
 
 #[tokio::test]
 async fn equal_balance_and_count_cannot_prove_an_unscanned_receipt_prefix() {
-    let (poster, mut work) = poster();
+    let (poster, mut work, _key) = poster();
     work.coverage = DepositCoverage::AwaitingCanonicalScan;
-    assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(work.checkpoint.seq), false));
+    assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(work.checkpoint.seq), Health::Pending));
     assert_eq!(*poster.chain.posts.lock().unwrap(), 1);
     assert_eq!(work.coverage, DepositCoverage::AwaitingCanonicalScan);
 }
 
 #[tokio::test]
 async fn newer_work_cannot_lend_receipt_coverage_to_an_older_finalized_checkpoint() {
-    let (mut poster, mut first) = poster();
+    let (mut poster, mut first, _key) = poster();
     let key = EnclaveKey::test_key();
     first.checkpoint = checkpoint(&key, 5, [3; 32]);
     first.coverage = DepositCoverage::AwaitingCanonicalScan;
@@ -51,9 +51,9 @@ async fn newer_work_cannot_lend_receipt_coverage_to_an_older_finalized_checkpoin
         distributions_paid: Fixed::ZERO,
     }));
     poster.chain.finalized = Some(finalized.clone());
-    assert_eq!(poster.reconcile_known(&second, &[&first, &second]).await.unwrap(), (Some(5), false));
+    assert_eq!(poster.reconcile_known(&second, &[&first, &second]).await.unwrap(), (Some(5), Health::Pending));
     assert_eq!(first.coverage, DepositCoverage::AwaitingCanonicalScan);
     *finalized.lock().unwrap() = poster.chain.state.lock().unwrap().clone();
-    assert_eq!(poster.reconcile_known(&second, &[&first, &second]).await.unwrap(), (Some(6), true));
+    assert_eq!(poster.reconcile_known(&second, &[&first, &second]).await.unwrap(), (Some(6), Health::Healthy));
     assert_eq!(*poster.chain.posts.lock().unwrap(), 0, "known public relay must not repost either prefix");
 }

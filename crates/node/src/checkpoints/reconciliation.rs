@@ -6,19 +6,42 @@ use tokio::time::Instant;
 use tracing::{error, info, warn};
 
 use crate::checkpoints::{
-    ApprovalId, CheckpointChain, Conflict, DepositCoverage, LifecycleEvidence, Poster, View, Work, signature,
+    ApprovalId, CheckpointChain, Conflict, DepositCoverage, Health, LifecycleEvidence, Poster, VaultState, View, Work,
+    signature,
 };
 
 /// The first vault deposit the finalized checkpoint has not credited, and since when it has been
 /// seen so.
 pub(super) type Uncredited = Option<(u64, Instant)>;
 
+/// How the finalized vault state compares with the ledger `work` carries. The ledger's
+/// liabilities are the cumulative credits; distributions reduce house cash in the engine before
+/// the vault pays them, so the vault's balance plus what its claims have paid must cover what the
+/// deposits left behind, and what it has paid cannot exceed what the engine allocated. A vault
+/// counting deposits the checkpoint has not credited yet is routine catch-up, not divergence; the
+/// caller applies the catch-up deadline.
+fn verdict(state: &VaultState, paid: Fixed, credited: Option<Fixed>, work: &Work) -> Health {
+    let distributed_raw = (work.distributed.0 as i128).saturating_mul(1_000);
+    let overpaid = state.distributions_paid.raw() > distributed_raw;
+    let valid_paid = paid >= Fixed::ZERO && paid <= work.authorized;
+    let compensated = state.balance.raw().checked_add(state.distributions_paid.raw()).map(Fixed::from_raw);
+    let held = state.deposited.raw().checked_sub(paid.raw()).map(Fixed::from_raw);
+    let covered = held.is_some_and(|held| compensated.is_some_and(|sum| sum >= held));
+    if overpaid || !valid_paid || !covered || credited != Some(work.liabilities) {
+        Health::Diverged
+    } else if state.deposits > work.deposits {
+        Health::Pending
+    } else {
+        Health::Healthy
+    }
+}
+
 impl<R: CheckpointChain> Poster<R> {
     /// Verifies/extends the commitment and compares collateral to the checkpoint's ledger.
     /// Error cases:
     /// - the chain read or post fails, or a signer/root conflicts with the local log
     #[cfg(test)]
-    pub(super) async fn reconcile(&self, work: &Work) -> anyhow::Result<(Option<u64>, bool)> {
+    pub(super) async fn reconcile(&self, work: &Work) -> anyhow::Result<(Option<u64>, Health)> {
         self.reconcile_known(work, &[work]).await
     }
 
@@ -26,9 +49,33 @@ impl<R: CheckpointChain> Poster<R> {
     /// Error cases:
     /// - unavailable/lagging views, unknown progress, or a proved conflicting local commitment
     #[cfg(test)]
-    pub(super) async fn reconcile_known(&self, work: &Work, known: &[&Work]) -> anyhow::Result<(Option<u64>, bool)> {
-        let (posted, healthy, _) = self.reconcile_lifecycle(work, known, &[], &mut None).await?;
-        Ok((posted, healthy))
+    pub(super) async fn reconcile_known(&self, work: &Work, known: &[&Work]) -> anyhow::Result<(Option<u64>, Health)> {
+        let (posted, health, _) = self.reconcile_lifecycle(work, known, &[], &mut None).await?;
+        Ok((posted, health))
+    }
+
+    /// Whether posting `work` must wait: the finalized vault state diverges from the ledger the
+    /// finalized checkpoint carries. Read-only, so a withheld worker keeps reconciling and clears
+    /// the moment collateral is restored, and a restarted worker — which remembers nothing —
+    /// still refuses to extend the commitment into a proved shortfall. When the finalized
+    /// checkpoint's work has not reached this worker, or its coverage still awaits the canonical
+    /// scan, there is no verdict to act on and posting proceeds as before.
+    async fn withholds(&self, known: &[&Work]) -> anyhow::Result<bool> {
+        let observation = self.chain.observe(View::Finalized, &[]).await?;
+        observation.validate(&[])?;
+        let state = observation.state.clone();
+        let Some((seq, root)) = &state.checkpoint else { return Ok(false) };
+        let Some(work) = known.iter().copied().find(|work| work.checkpoint.seq == *seq) else { return Ok(false) };
+        if work.checkpoint.root != *root || work.coverage == DepositCoverage::AwaitingCanonicalScan {
+            return Ok(false);
+        }
+        let paid = observation.lifecycle.as_ref().map_or(Fixed::ZERO, |evidence| evidence.total_withdrawn);
+        let credited = match work.deposits {
+            0 => Some(Fixed::ZERO),
+            count if count <= state.deposits => Some(self.chain.deposited_through(&observation, count).await?),
+            _ => None,
+        };
+        Ok(matches!(verdict(&state, paid, credited, work), Health::Diverged))
     }
 
     /// Returns release evidence only from the finalized collateral observation. `uncredited` carries
@@ -41,7 +88,7 @@ impl<R: CheckpointChain> Poster<R> {
         known: &[&Work],
         approvals: &[ApprovalId],
         uncredited: &mut Uncredited,
-    ) -> anyhow::Result<(Option<u64>, bool, Option<LifecycleEvidence>)> {
+    ) -> anyhow::Result<(Option<u64>, Health, Option<LifecycleEvidence>)> {
         let mut work = work;
         let mut observation = self.chain.observe(View::Latest, &[]).await?;
         observation.validate(&[])?;
@@ -100,15 +147,26 @@ impl<R: CheckpointChain> Poster<R> {
                     );
                     return Err(Conflict("signed parent differs from the latest vault checkpoint").into());
                 }
-                self.chain.post(cp).await?;
-                // A submitted transaction is not a commitment. Verify inclusion before release.
-                observation = self.chain.observe(View::Latest, &[]).await?;
-                observation.validate(&[])?;
-                state = observation.state.clone();
-                ensure!(
-                    state.checkpoint == Some((cp.seq, cp.root.clone())) && state.signer == self.signer,
-                    "checkpoint transaction is not included in the authorized vault"
-                );
+                if self.withholds(known).await? {
+                    // The finalized vault diverges from the ledger: a new root would let
+                    // distribution claims drain a vault the ledger says is short. Skip the post;
+                    // the finalized read below still returns the verdict, so a repaired vault
+                    // clears this on the next retry.
+                    warn!(
+                        alert = "checkpoint_withheld",
+                        "checkpoint not posted while collateral reconciliation is diverged"
+                    );
+                } else {
+                    self.chain.post(cp).await?;
+                    // A submitted transaction is not a commitment. Verify inclusion before release.
+                    observation = self.chain.observe(View::Latest, &[]).await?;
+                    observation.validate(&[])?;
+                    state = observation.state.clone();
+                    ensure!(
+                        state.checkpoint == Some((cp.seq, cp.root.clone())) && state.signer == self.signer,
+                        "checkpoint transaction is not included in the authorized vault"
+                    );
+                }
             }
         }
         // Latest inclusion prevents duplicate submission, but is revocable by a shallow reorg.
@@ -127,9 +185,9 @@ impl<R: CheckpointChain> Poster<R> {
         if let (Some(latest), Some(finalized)) = (&observation.lifecycle, &finalized_observation.lifecycle) {
             ensure!(latest.signer_epoch == finalized.signer_epoch, "signer epoch is not finalized");
         }
-        let Some((seq, root)) = &state.checkpoint else { return Ok((None, false, None)) };
+        let Some((seq, root)) = &state.checkpoint else { return Ok((None, Health::Pending, None)) };
         if *seq < known.iter().map(|work| work.checkpoint.seq).min().unwrap_or(cp.seq) {
-            return Ok((None, false, None));
+            return Ok((None, Health::Pending, None));
         }
         let finalized = known
             .iter()
@@ -150,21 +208,11 @@ impl<R: CheckpointChain> Poster<R> {
             .map_err(|_| Conflict("finalized checkpoint signer conflicts with accepted history"))?;
         if work.coverage == DepositCoverage::AwaitingCanonicalScan {
             warn!(alert = "collateral_pending_deposits", "withdrawals await sequenced canonical receipt coverage");
-            return Ok((Some(cp.seq), false, finalized_observation.lifecycle));
+            return Ok((Some(cp.seq), Health::Pending, finalized_observation.lifecycle));
         }
         let paid = finalized_observation.lifecycle.as_ref().map_or(Fixed::ZERO, |evidence| evidence.total_withdrawn);
-        let valid_paid = paid >= Fixed::ZERO && paid <= work.authorized;
-        // What the vault's deposits brought in less what it paid out. It may hold more, when USDC
-        // arrived outside a deposit, but never less.
-        let held = state.deposited.raw().checked_sub(paid.raw()).map(Fixed::from_raw);
-        // Distributions leave the vault when stakers claim, but the engine set their backing aside
-        // from house cash when each epoch closed, so what claims have paid explains balance the
-        // deposits do not: the balance plus the distributions paid must cover what the deposits
-        // left behind, and the vault can never have paid more than the engine allocated.
         let distributed_raw = (work.distributed.0 as i128).saturating_mul(1_000);
         let overpaid = state.distributions_paid.raw() > distributed_raw;
-        let compensated = state.balance.raw().checked_add(state.distributions_paid.raw()).map(Fixed::from_raw);
-        let covered = held.is_some_and(|held| compensated.is_some_and(|sum| sum >= held));
         // Deposits after the checkpoint's last credit are still in flight, so the ledger is
         // compared with the vault's running total through exactly the deposits it credited.
         let credited = match work.deposits {
@@ -182,8 +230,15 @@ impl<R: CheckpointChain> Poster<R> {
             _ => (id, Instant::now()),
         });
         let overdue = uncredited.filter(|(_, since)| since.elapsed() >= self.pending_deposits_critical_after);
-        let healthy = !overpaid && valid_paid && credited == Some(work.liabilities) && covered && overdue.is_none();
-        if healthy {
+        // Within the catch-up deadline an uncredited deposit keeps payouts running; past it, or on
+        // any ledger disagreement, the verdict is Diverged.
+        let health = match verdict(state, paid, credited, work) {
+            Health::Diverged => Health::Diverged,
+            Health::Pending if overdue.is_some() => Health::Diverged,
+            Health::Pending => Health::Healthy,
+            Health::Healthy => Health::Healthy,
+        };
+        if health == Health::Healthy {
             info!(alert_resolved = "collateral_mismatch", "vault collateral reconciles");
             info!(alert_resolved = "checkpoint_post_failed", "checkpoint is posted");
             info!(alert_resolved = "collateral_pending_deposits", "vault deposits are covered");
@@ -202,17 +257,21 @@ impl<R: CheckpointChain> Poster<R> {
         } else {
             error!(
                 alert = "collateral_mismatch",
+                distributions_paid = %state.distributions_paid,
+                distributed = %work.distributed,
                 "withdrawals paused: the vault holds less USDC than the ledger requires, or its deposits or payments differ from it"
             );
         }
+        let compensated = state.balance.raw().checked_add(state.distributions_paid.raw()).map(Fixed::from_raw);
+        let held = state.deposited.raw().checked_sub(paid.raw()).map(Fixed::from_raw);
         if held.is_some_and(|held| compensated.is_some_and(|sum| sum > held)) {
             warn!(
                 alert = "collateral_surplus",
                 "the vault holds USDC no deposit brought in; anyone may book 10 USDC or more of it as house capital with bookSurplus"
             );
-        } else if covered {
+        } else if health == Health::Healthy {
             info!(alert_resolved = "collateral_surplus", "the vault holds no unbooked USDC");
         }
-        Ok((Some(cp.seq), healthy, finalized_observation.lifecycle))
+        Ok((Some(cp.seq), health, finalized_observation.lifecycle))
     }
 }

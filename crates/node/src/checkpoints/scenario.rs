@@ -1,5 +1,6 @@
 //! Local Anvil scenario over the real sequencer, vault RPC, checkpoint worker, and deposit adapter.
 
+use crate::checkpoints::Health;
 use std::path::Path;
 use std::process::{Child, Command as Process, Stdio};
 use std::sync::Arc;
@@ -330,9 +331,9 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
         distributed: engine_core::UsdcUnits(0),
     };
     include_checkpoint(&delayed, &work.checkpoint).await;
-    assert_eq!(delayed.reconcile(&work).await.unwrap(), (None, false));
+    assert_eq!(delayed.reconcile(&work).await.unwrap(), (None, Health::Pending));
     let nonce = provider.request::<_, U64>("eth_getTransactionCount", (checkpoint_relayer, "latest")).await.unwrap();
-    assert_eq!(delayed.reconcile(&work).await.unwrap(), (None, false));
+    assert_eq!(delayed.reconcile(&work).await.unwrap(), (None, Health::Pending));
     assert_eq!(
         provider.request::<_, U64>("eth_getTransactionCount", (checkpoint_relayer, "latest")).await.unwrap(),
         nonce,
@@ -351,11 +352,11 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     include_checkpoint(&delayed, &work.checkpoint).await;
     assert_eq!(
         delayed.reconcile(&work).await.unwrap(),
-        (None, false),
+        (None, Health::Pending),
         "re-inclusion still cannot release before finality"
     );
     local_rpc(&url, "anvil_mine", serde_json::json!(["0x2"])).await;
-    assert_eq!(delayed.reconcile(&work).await.unwrap(), (Some(seq), true), "release follows confirmation depth");
+    assert_eq!(delayed.reconcile(&work).await.unwrap(), (Some(seq), Health::Healthy), "release follows confirmation depth");
 
     let mut forged = entries;
     let cp = forged

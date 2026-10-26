@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use alloy::primitives::B256;
+use crate::checkpoints::Health;
 use engine_core::Fixed;
 use engine_core::types::AccountId;
 use tokio::sync::mpsc;
@@ -101,16 +102,16 @@ impl CheckpointChain for Chain {
 #[tokio::test]
 async fn payouts_reconcile_but_arbitrary_burns_never_heal_as_payments() {
     let (poster, work) = fixture();
-    assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(5), true));
+    assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(5), Health::Healthy));
     {
         let mut at = poster.chain.finalized.lock().unwrap();
         at.state.balance -= Fixed::from_int(3);
     }
-    assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(5), false), "a burn is not a payment");
+    assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(5), Health::Diverged), "a burn is not a payment");
     poster.chain.finalized.lock().unwrap().lifecycle.as_mut().unwrap().total_withdrawn = Fixed::from_int(3);
     assert_eq!(
         poster.reconcile(&work).await.unwrap(),
-        (Some(5), true),
+        (Some(5), Health::Healthy),
         "authenticated payments reduce expected custody"
     );
     {
@@ -119,7 +120,7 @@ async fn payouts_reconcile_but_arbitrary_burns_never_heal_as_payments() {
     }
     assert_eq!(
         poster.reconcile(&work).await.unwrap(),
-        (Some(5), false),
+        (Some(5), Health::Diverged),
         "a burn in addition to real payments stays a mismatch"
     );
 }
@@ -133,7 +134,7 @@ async fn paid_total_cannot_exceed_checkpoint_authorized_approvals_even_when_bala
             at.state.balance = work.liabilities - paid;
             at.lifecycle.as_mut().unwrap().total_withdrawn = paid;
         }
-        assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(5), false), "invalid paid boundary {paid}");
+        assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(5), Health::Diverged), "invalid paid boundary {paid}");
     }
 }
 
@@ -142,8 +143,8 @@ async fn latest_payment_and_nonce_use_never_replace_finalized_evidence() {
     let (poster, work) = fixture();
     let approval = approval(1);
     poster.chain.latest.lock().unwrap().lifecycle.as_mut().unwrap().total_withdrawn = Fixed::from_int(4);
-    let (_, healthy, lifecycle) = poster.reconcile_lifecycle(&work, &[&work], &[approval], &mut None).await.unwrap();
-    assert!(healthy);
+    let (_, health, lifecycle) = poster.reconcile_lifecycle(&work, &[&work], &[approval], &mut None).await.unwrap();
+    assert_eq!(health, Health::Healthy);
     let lifecycle = lifecycle.unwrap();
     assert_eq!(lifecycle.block_hash, B256::repeat_byte(1), "the first finalized block, not the latest");
     assert_eq!(lifecycle.total_withdrawn, Fixed::ZERO);
@@ -189,7 +190,7 @@ async fn rotated_signer_can_recover_an_accepted_old_anchor_without_authorizing_u
         lifecycle.signer_epoch = 2;
     }
     poster.startup(Some(&work.checkpoint)).await.unwrap();
-    assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(5), true));
+    assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(5), Health::Healthy));
     let mut forged = work.checkpoint.clone();
     forged.signer = format!("{new}");
     assert!(poster.startup(Some(&forged)).await.is_err(), "self-named signer is insufficient");
@@ -206,7 +207,7 @@ async fn finalized_rollback_and_competing_fork_never_supply_lifecycle_evidence()
     poster.chain.finalized.lock().unwrap().lifecycle.as_mut().unwrap().checkpoint_root = None;
     assert_eq!(
         poster.reconcile_lifecycle(&work, &[&work], &[approval(1)], &mut None).await.unwrap(),
-        (None, false, None)
+        (None, Health::Pending, None)
     );
     let mut fork = poster.chain.latest.lock().unwrap().clone();
     fork.state.checkpoint.as_mut().unwrap().1 = format!("0x{}", "ff".repeat(32));

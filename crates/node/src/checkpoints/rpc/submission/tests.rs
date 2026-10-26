@@ -9,6 +9,8 @@ use engine_core::Fixed;
 use engine_core::types::AccountId;
 use serde_json::{Value, json};
 
+use crate::checkpoints::Health;
+
 use crate::checkpoints::rpc::submission::SubmissionStore;
 use crate::checkpoints::{CheckpointChain, CheckpointRpc, Poster, Work};
 use crate::config::{CheckpointSection, FinalityTag};
@@ -58,9 +60,9 @@ async fn long_pending_survives_restart_without_another_send_or_finality_release(
     };
     assert!(poster.reconcile(&work).await.is_err(), "pending is not canonical inclusion");
     server.state.lock().unwrap().latest = Some(cp.clone());
-    assert_eq!(poster.reconcile(&work).await.unwrap(), (None, false), "latest inclusion cannot release withdrawals");
+    assert_eq!(poster.reconcile(&work).await.unwrap(), (None, Health::Pending), "latest inclusion cannot release withdrawals");
     server.state.lock().unwrap().finalized = Some(cp);
-    assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(10), true));
+    assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(10), Health::Healthy));
     assert_eq!(server.state.lock().unwrap().sent.len(), 1);
 }
 
