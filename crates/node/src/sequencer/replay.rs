@@ -34,9 +34,8 @@ pub struct Replayed {
     /// Withdrawals the last command approved that the log ends before signing, as a crash between
     /// a command's entry and its withdrawal entry leaves: `(account, amount, nonce)`.
     pub unsigned: Vec<(AccountId, Fixed, u64)>,
-    /// Durable approvals the engine holds that no withdrawal entry has signed, as a crash between
-    /// an approval's checkpoint sync and its signature sync leaves. Only a no-gate node can leave
-    /// these: a gated node signs through the checkpoint worker instead.
+    /// Durable approvals the engine holds that no withdrawal entry has signed. Only a no-gate node
+    /// leaves these: a crash can sit between the approval's checkpoint sync and its signature sync.
     pub unreleased: Vec<engine_core::withdrawal::WithdrawalApproval>,
     /// Each protocol version the log activated, with the seq it took effect at.
     pub activations: Vec<(ProtocolVersion, u64)>,
@@ -92,8 +91,7 @@ pub(super) struct Replay {
     unproved: BTreeSet<(AccountId, u64)>,
     payout_order: BTreeMap<(AccountId, u64), usize>,
     requires_checkpoint_gate: bool,
-    /// Every approval a withdrawal entry has signed, so `finish` can report durable approvals the
-    /// log ends before signing.
+    /// Approvals a withdrawal entry signed, for `finish` to report the durable ones it lacks.
     signed: BTreeSet<(AccountId, u64)>,
 }
 

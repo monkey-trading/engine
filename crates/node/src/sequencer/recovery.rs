@@ -301,9 +301,8 @@ impl Sequencer {
             // recovery serves can sit between the approval's checkpoint sync and its signature
             // sync, so that checkpoint may already be durable: write one only when the log lacks
             // it at this seq.
-            let mut approval_checkpointed = last_signed_checkpoint
-                .as_ref()
-                .is_some_and(|cp| Some(cp.seq) == sequencer.engine.last_seq());
+            let mut approval_checkpointed =
+                last_signed_checkpoint.as_ref().is_some_and(|cp| Some(cp.seq) == sequencer.engine.last_seq());
             for approval in unreleased {
                 let _span = info_span!("command", id = sequencer.engine.last_seq()).entered();
                 warn!(account = %approval.account, nonce = approval.nonce, "the log ends before this approved withdrawal was signed");

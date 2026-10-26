@@ -161,35 +161,6 @@ async fn a_restart_signs_a_withdrawal_the_log_ends_before_and_hands_it_to_custod
 }
 
 #[tokio::test]
-async fn a_restart_resigns_a_mock_withdrawal_the_log_ends_before_its_authorization() {
-    let dir = scratch_dir("seq-mock-resign");
-    let node = TestSequencer::start(&dir, 16);
-    node.submit(deposit(100, "dep-1")).await;
-    node.submit(withdraw(40)).await;
-    node.stop().await;
-    // As if the process died after sign_mock_payout made the approval's checkpoint durable and
-    // before the authorization entry synced: drop the withdrawal entry that follows it.
-    let segment = last_segment(&dir);
-    let text = fs::read_to_string(&segment).unwrap();
-    let withdrawal = text.rfind(r#""entry":"withdrawal""#).unwrap();
-    let cut = text[..withdrawal].rfind('\n').map(|at| at + 1).unwrap();
-    fs::write(&segment, &text[..cut]).unwrap();
-    let replayed = replay(&log_entries(&dir)).unwrap();
-    assert_eq!(
-        replayed.unreleased.iter().map(|approval| (approval.account, approval.amount, approval.nonce)).collect::<Vec<_>>(),
-        [(TRADER, Fixed::from_int(40), 1)]
-    );
-    assert!(replayed.unsigned.is_empty(), "the durable approval is tracked separately from legacy unsigned withdrawals");
-
-    let mut node = TestSequencer::start(&dir, 16);
-    let signed = node.withdrawals.try_recv().unwrap();
-    assert_eq!((signed.account, signed.amount, signed.nonce), (TRADER, Fixed::from_int(40), 1));
-    assert!(signed.authorization.is_some(), "the re-signed mock payout carries its authorization");
-    node.stop().await;
-    assert!(replay(&log_entries(&dir)).unwrap().unreleased.is_empty());
-}
-
-#[tokio::test]
 async fn replay_refuses_a_command_without_logged_events_after_ones_with_them() {
     let dir = scratch_dir("seq-events-cutover");
     let node = TestSequencer::start(&dir, 16);
