@@ -3,7 +3,9 @@
 # - image/Dockerfile runs every apt-get update|install, curl, git fetch, git submodule update,
 #   cargo fetch, and pip install as `retry <command>`, and cargo build with --frozen, so a later
 #   edit that drops the retry or the freeze fails this check instead of the image job on the next
-#   source outage; a mutation check confirms the scan catches both;
+#   source outage; mutation checks confirm the scan catches a dropped retry or --frozen, a
+#   download hidden behind an environment assignment (bare or via `env`) or its command options,
+#   even options taking a separate value, and one hidden behind a comment inside a continuation;
 # - image/retry runs the same command after each failure, at most five times, waiting 15, 30, 60,
 #   then 120 seconds, and returns the last failure's exit status;
 # - apt with image/apt.conf, in the Dockerfile's pinned Debian image, retries an index that keeps
@@ -37,8 +39,11 @@ fail() {
 
 # Scans a Dockerfile and fails on any apt-get update|install, curl, git fetch, git submodule
 # update, cargo fetch, or pip install not run as `retry <command>`, and on a cargo build without
-# --frozen. Continuation lines are joined into their instruction, which is then split into the
-# shell segments a RUN runs, so only the command that starts a segment is judged.
+# --frozen. Continuation lines are joined into their instruction (BuildKit strips comment lines
+# even inside a continuation, so the scan does too), which is then split into the shell segments a
+# RUN runs; leading environment assignments, an `env` command, and the command's own options
+# before its subcommand — even options taking a separate value — do not hide a download, so only
+# the command that starts a segment, once normalized, is judged.
 scan_dockerfile() {
   python3 -I - "$1" << 'EOF'
 import re
@@ -52,8 +57,10 @@ buffer = ""
 start = 0
 for number, line in enumerate(physical, 1):
     stripped = line.strip()
+    if stripped.startswith("#"):
+        continue
     if not buffer:
-        if not stripped or stripped.startswith("#"):
+        if not stripped:
             continue
         start = number
     if stripped.endswith("\\"):
@@ -63,10 +70,22 @@ for number, line in enumerate(physical, 1):
     logical.append((start, buffer))
     buffer = ""
 
-download = re.compile(
-    r"^(?:apt-get\s+(?:update|install)|curl|git\s+fetch|git\s+submodule\s+update|cargo\s+fetch|pip\s+install)\b"
+env_assignment = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|\"[^\"]*\"|\S*)\s+"
 )
-build = re.compile(r"^cargo\s+build\b")
+# After environment assignments are stripped, the download a segment starts with, allowing the
+# command's own options before its subcommand, including options that take a separate value
+# (a token that is neither an option nor the subcommand is an option's value, so scanning for
+# the subcommand without a fixed position finds it).
+download = re.compile(
+    r"^(?:apt-get(?:(?!\s+(?:update|install)\b)\s+\S+)*\s+(?:update|install)"
+    r"|curl\b"
+    r"|git(?:(?!\s+submodule\b)\s+\S+)*\s+submodule(?:(?!\s+update\b)\s+\S+)*\s+update"
+    r"|git(?:(?!\s+fetch\b)\s+\S+)*\s+fetch"
+    r"|cargo(?:(?!\s+fetch\b)\s+\S+)*\s+fetch"
+    r"|pip(?:(?!\s+install\b)\s+\S+)*\s+install)\b"
+)
+build = re.compile(r"^cargo(?:(?!\s+build\b)\s+\S+)*\s+build\b")
 
 violations = []
 for start, instruction in logical:
@@ -76,10 +95,20 @@ for start, instruction in logical:
         continue
     for segment in re.split(r"&&|\|\||;|\|", run.group(1)):
         command = segment.strip()
+        while True:
+            stripped_env = env_assignment.sub("", command)
+            # `env` runs the command that follows it, with its own assignments.
+            if not stripped_env:
+                break
+            if re.match(r"^env\s+", stripped_env):
+                stripped_env = re.sub(r"^env\s+", "", stripped_env, count=1)
+            if stripped_env == command:
+                break
+            command = stripped_env
         if download.match(command):
-            violations.append(f"line {start}: {command!r} runs a download without retry")
+            violations.append(f"line {start}: {segment.strip()!r} runs a download without retry")
         elif build.match(command) and "--frozen" not in command.split():
-            violations.append(f"line {start}: {command!r} builds without --frozen")
+            violations.append(f"line {start}: {segment.strip()!r} builds without --frozen")
 
 for violation in violations:
     print(violation)
@@ -106,6 +135,50 @@ if scan_out="$(scan_dockerfile "$work/Dockerfile.no-frozen")"; then
   fail "the Dockerfile scan missed a cargo build without --frozen"
 else
   echo "ok: the Dockerfile scan catches a dropped --frozen ($scan_out)"
+fi
+
+# The scan must also catch a download disguised so it no longer starts a segment with the
+# command: an environment assignment or `env` in front of it, or its options moved before its
+# subcommand.
+sed 's/retry apt-get install -y --no-install-recommends/DEBIAN_FRONTEND=noninteractive apt-get -y install --no-install-recommends/' \
+  image/Dockerfile > "$work/Dockerfile.shuffled"
+if scan_out="$(scan_dockerfile "$work/Dockerfile.shuffled")"; then
+  fail "the Dockerfile scan missed a download behind an environment assignment and moved options"
+else
+  echo "ok: the Dockerfile scan catches a disguised apt-get install ($scan_out)"
+fi
+sed 's/retry git fetch -q --depth 1/git -C \/build -c protocol.version=2 fetch -q --depth 1/' \
+  image/Dockerfile > "$work/Dockerfile.git-options"
+if scan_out="$(scan_dockerfile "$work/Dockerfile.git-options")"; then
+  fail "the Dockerfile scan missed a download behind options taking a separate value"
+else
+  echo "ok: the Dockerfile scan catches a git fetch behind value-taking options ($scan_out)"
+fi
+sed 's/retry pip install --quiet/env PIP_NO_CACHE_DIR=1 pip install --quiet/' \
+  image/Dockerfile > "$work/Dockerfile.env-command"
+if scan_out="$(scan_dockerfile "$work/Dockerfile.env-command")"; then
+  fail "the Dockerfile scan missed a download behind an env command"
+else
+  echo "ok: the Dockerfile scan catches a pip install behind an env command ($scan_out)"
+fi
+
+# BuildKit strips comment lines even inside a continuation, so a comment there cannot be used to
+# split the scan's instruction early and hide a download; drop the retry from the apt install that
+# follows an inserted comment and the scan must still catch it.
+awk '
+  /^ && retry apt-get install -y --no-install-recommends/ {
+    if (!done) {
+      print "# a comment inside the continuation"
+      done = 1
+    }
+    sub(/retry apt-get install/, "apt-get install")
+  }
+  { print }
+' image/Dockerfile > "$work/Dockerfile.comment"
+if scan_out="$(scan_dockerfile "$work/Dockerfile.comment")"; then
+  fail "the Dockerfile scan missed a download behind a comment in a continuation"
+else
+  echo "ok: the Dockerfile scan catches a download behind a continuation comment ($scan_out)"
 fi
 
 # A download whose first $FAILS calls fail, call N with exit 10 + N, and a sleep that records its
