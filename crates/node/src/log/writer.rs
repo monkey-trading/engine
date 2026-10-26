@@ -61,6 +61,10 @@ impl LogWriter {
             output.flush().context("flushing unpublished checkpoint")?;
             output.get_ref().sync_data().context("syncing unpublished checkpoint")?;
             self.unsynced = false;
+            #[cfg(test)]
+            {
+                self.syncs += 1;
+            }
         }
         self.dir_handle.sync_all().context("syncing unpublished checkpoint directory")
     }
@@ -170,6 +174,10 @@ impl LogWriter {
             out.flush().context("flushing log")?;
             out.get_ref().sync_data().context("syncing log")?;
             self.unsynced = false;
+            #[cfg(test)]
+            {
+                self.syncs += 1;
+            }
         }
         let last = self.last;
         let active = self
@@ -192,6 +200,12 @@ impl LogWriter {
     pub fn sync(&mut self) -> anyhow::Result<()> {
         self.sync_unpublished()?;
         self.flush()
+    }
+
+    /// How many times the open segment's bytes reached storage; tests bound sync budgets with it.
+    #[cfg(test)]
+    pub(crate) fn sync_count(&self) -> usize {
+        self.syncs
     }
 
     /// Starts the segment for `first_seq`, first syncing and listing the current one, if any. The

@@ -90,6 +90,9 @@ pub struct LogWriter {
     /// The catalog could not take a completed segment; its warning has been raised once.
     pub(super) catalog_failing: bool,
     pub(super) catalog_owner: Option<CatalogOwner>,
+    /// File syncs since the writer opened, for sync-budget assertions in tests.
+    #[cfg(test)]
+    pub(super) syncs: usize,
 }
 
 /// What the manifest needs to know about a segment, kept up to date as it is written.
@@ -292,6 +295,8 @@ impl SegmentedLog {
             unsynced,
             catalog_failing: false,
             catalog_owner: self.catalog_owner,
+            #[cfg(test)]
+            syncs: 0,
         })
     }
 }

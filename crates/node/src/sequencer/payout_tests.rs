@@ -23,6 +23,55 @@ use crate::test_support::{
 };
 
 #[test]
+fn a_release_batch_syncs_the_log_once() {
+    let mut node = Node::new("payout-batch-sync");
+    // Several unpaid approvals, each with its own approval checkpoint, released together.
+    let accounts = [AccountId([1; 20]), AccountId([2; 20]), AccountId([3; 20]), AccountId([4; 20])];
+    let mut observed = Vec::new();
+    for (i, account) in accounts.iter().enumerate() {
+        node.seq
+            .sequence(Command::Deposit {
+                account: *account,
+                amount: Fixed::from_int(100),
+                chain_ref: format!("batch-dep-{i}"),
+            })
+            .unwrap()
+            .unwrap();
+        let events = node
+            .seq
+            .sequence(Command::Withdraw { account: *account, amount: Fixed::from_int(10), auth: None })
+            .unwrap()
+            .unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, Event::WithdrawalApproved { account: a, nonce: 1, .. } if a == account))
+        );
+        let cp = node.last_checkpoint();
+        observed.push(ApprovalStatus {
+            approval: ApprovalId { account: *account, nonce: 1, approved_seq: cp.seq },
+            claimed: false,
+        });
+    }
+    let last = node.last_checkpoint();
+    node.seq.checkpoint_status(Some(last.seq), true).unwrap();
+    let mut evidence = node.evidence(&last);
+    evidence.approvals = observed;
+    let before = node.seq.log.sync_count();
+    node.seq.release_payouts(&evidence).unwrap();
+    assert_eq!(
+        node.seq.log.sync_count() - before,
+        1,
+        "one log sync covers the whole released batch, however many authorizations it holds"
+    );
+    node.seq.flush().unwrap();
+    for account in accounts {
+        assert_eq!(node.signed.try_recv().unwrap().account, account);
+    }
+    assert!(node.signed.try_recv().is_err());
+}
+
+#[test]
 fn typed_payout_waits_for_finalized_unpaid_evidence_and_publishes_only_after_sync() {
     let mut node = Node::new("payout-durable");
     let cp = node.approve();
@@ -302,8 +351,11 @@ impl Node {
         self.seq.sequence(deposit(100, "payout-test-deposit")).unwrap().unwrap();
         let events = self.seq.sequence(withdraw(40)).unwrap().unwrap();
         assert!(events.contains(&Event::WithdrawalApproved { account: TRADER, amount: Fixed::from_int(40), nonce: 1 }));
-        let entries = log_entries(&self.dir);
-        entries
+        self.last_checkpoint()
+    }
+
+    fn last_checkpoint(&self) -> Checkpoint {
+        log_entries(&self.dir)
             .into_iter()
             .rev()
             .find_map(|entry| match entry {
