@@ -12,6 +12,7 @@ use alloy::primitives::B256;
 use axum::extract::State;
 use axum::routing::post;
 use axum::{Json, Router};
+use engine_core::Fixed;
 use engine_core::access::{
     AccessEvidence, AccessPolicy, AccessReject, EligibilityClass, EligibilityRequest, Jurisdiction, SanctionsStatus,
     Screening,
@@ -21,7 +22,6 @@ use engine_core::command::{AdminCommand, Command};
 use engine_core::eip712::{self, Signature};
 use engine_core::event::Event;
 use engine_core::protocol::ProtocolVersion;
-use engine_core::Fixed;
 use engine_core::types::AccountId;
 use k256::ecdsa::SigningKey;
 use serde_json::Value;
@@ -34,9 +34,7 @@ use crate::config::{AccessSection, EvmCustodySection};
 use crate::custody::evm::{Beneficiary, DepositWatcher, VaultDeposit};
 use crate::custody::quorum::Quorum;
 use crate::custody::stall::Polled;
-use crate::custody::tests::fakes::{
-    CHAIN_ID, FakeChain, Node, USDC, VAULT, deposit, evm_toml, operator, scratch,
-};
+use crate::custody::tests::fakes::{CHAIN_ID, FakeChain, Node, USDC, VAULT, deposit, evm_toml, operator, scratch};
 use crate::log::LogEntry;
 use crate::test_support::log_entries;
 
@@ -358,7 +356,11 @@ fn funding(id: u64, beneficiary: Beneficiary, payer: AccountId) -> VaultDeposit 
 }
 
 /// The production receipt watcher, which screens every new receipt with its own source capacity.
-fn screened_watcher(chains: &[FakeChain; 3], dir: &Path, client: &Arc<AccessClient>) -> DepositWatcher<Quorum<FakeChain>> {
+fn screened_watcher(
+    chains: &[FakeChain; 3],
+    dir: &Path,
+    client: &Arc<AccessClient>,
+) -> DepositWatcher<Quorum<FakeChain>> {
     let cfg: EvmCustodySection = toml::from_str(&evm_toml(dir, 100)).unwrap();
     let quorum =
         Quorum::new(chains.iter().enumerate().map(|(i, chain)| (format!("p{i}"), chain.clone())).collect()).unwrap();

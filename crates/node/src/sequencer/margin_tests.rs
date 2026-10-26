@@ -78,7 +78,11 @@ fn dev_scenario_financing_closes_out_and_a_stale_market_counts_at_its_last_mark(
     assert!(matches!(&events[..], [Event::WithdrawalRejected { reason, .. }] if *reason == refused), "{events:?}");
     let events = withdrawal(&mut seq, 8, "420");
     assert!(
-        events.contains(&Event::WithdrawalApproved { account: crate::test_support::access::account(8), amount: fixed("420"), nonce: 1 }),
+        events.contains(&Event::WithdrawalApproved {
+            account: crate::test_support::access::account(8),
+            amount: fixed("420"),
+            nonce: 1
+        }),
         "{events:?}"
     );
     let events = market_order(&mut seq, 8, ETH, Side::Sell, "1", "3800");

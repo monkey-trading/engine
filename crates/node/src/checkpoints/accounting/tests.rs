@@ -173,10 +173,20 @@ pub(crate) fn recompute(engine: &Engine, unpaid: Fixed) -> (Fixed, u64) {
         .values()
         .filter(|record| record.status != engine_core::deposits::DepositStatus::Reversed)
         .count();
+    // Uncredited references count at their first held or pending disposition, as the cached count
+    // does; a reference is never both credited and held or pending.
+    let uncredited: BTreeSet<_> = engine
+        .held_deposits()
+        .keys()
+        .chain(engine.pending_deposits().keys())
+        .map(String::as_str)
+        .filter(|reference| reference.starts_with("0x"))
+        .collect();
     let count = |n| u64::try_from(n).expect("state count fits u64");
     let deposits = count(historical.len())
         .checked_sub(count(represented.len()))
         .and_then(|n| n.checked_add(count(live)))
+        .and_then(|n| n.checked_add(count(uncredited.len())))
         .expect("receipt counts are representable");
     (liabilities, deposits)
 }

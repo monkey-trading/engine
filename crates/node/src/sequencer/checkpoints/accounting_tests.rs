@@ -246,13 +246,15 @@ fn capture_population(count: u64) -> (Duration, Duration, Duration) {
     seq.activate_protocol().unwrap();
     assert_eq!(seq.engine.protocol_version(), engine_core::protocol::ProtocolVersion::LATEST);
     while queued.try_recv().is_ok() {}
-    // Fresh V21 raw ingress names no payer, so it leaves one tracked hold per migrated credited account.
+    // Fresh V24 raw ingress names no payer, so it leaves one tracked hold per migrated credited
+    // account. Vault-spelling references are refused as legacy receipts instead, so these use a
+    // non-receipt spelling that reaches screening.
     for index in 1..=count {
         let events = seq
             .sequence(Command::Deposit {
                 account: account(index),
                 amount: Fixed::from_int(10),
-                chain_ref: format!("0x{:064x}:0", count + index),
+                chain_ref: format!("0xraw-hold:{index}"),
             })
             .unwrap()
             .unwrap();
@@ -270,10 +272,13 @@ fn capture_population(count: u64) -> (Duration, Duration, Duration) {
     assert_eq!(expected.1, 2 * count);
     let forced = queued.try_recv().unwrap();
     assert!(queued.try_recv().is_err());
-    assert_eq!((forced.liabilities, forced.deposits), expected);
+    // The captured count is the canonical vault one: the raw holds never reached the vault, so the
+    // chain proof counts only the credited receipts while liabilities carry the held reserves.
+    assert!(forced.matches_accounting(seq.accounting));
+    assert_eq!((forced.liabilities, forced.deposits), (expected.0, count));
     let cp = forced.checkpoint;
     let expected_work = recompute_work(&seq.engine, Fixed::ONE);
-    assert_eq!((expected_work.0, expected_work.1), expected);
+    assert_eq!((expected_work.0, expected_work.1), (expected.0, count));
     let mut samples = Vec::new();
     for index in 0..216 {
         let checkpoint = cp.clone();
@@ -302,7 +307,7 @@ fn capture_population(count: u64) -> (Duration, Duration, Duration) {
         "ACCOUNTING migrated_accounts={count} current_held_deposits={count} capture_p50={:?} capture_p99={:?} scan_p50={:?}",
         samples[100], samples[198], scans[3]
     );
-    let replay = recovery_capture_p50(&log_entries(&dir), expected);
+    let replay = recovery_capture_p50(&log_entries(&dir), (expected.0, count));
     (samples[100], replay, scans[3])
 }
 

@@ -74,9 +74,18 @@ fn invalid_receipt_output_and_count_or_cash_overflow_publish_no_partial_batch() 
         replacement: moved.clone(),
         replacement_reversed_at_seq: None,
     };
-    let moved_reversed =
-        Event::CustodyDepositChanged { receipt: moved, status: DepositStatus::Reversed, principal_delta: -Fixed::ONE, uncredited: None };
-    let ordinary = Accounting { liabilities: Fixed::from_int(100), deposits: 1, unpaid: Fixed::from_int(5), ..Accounting::default() };
+    let moved_reversed = Event::CustodyDepositChanged {
+        receipt: moved,
+        status: DepositStatus::Reversed,
+        principal_delta: -Fixed::ONE,
+        uncredited: None,
+    };
+    let ordinary = Accounting {
+        liabilities: Fixed::from_int(100),
+        deposits: 1,
+        unpaid: Fixed::from_int(5),
+        ..Accounting::default()
+    };
     let cases = [
         (ordinary, Command::CustodyDeposit(Box::new(replace.clone())), moved_reversed),
         (ordinary, Command::CustodyDeposit(Box::new(replace)), changed(&credit, DepositStatus::Unfinalised, 1)),
@@ -266,5 +275,10 @@ fn receipt(id: u64, beneficiary: DepositBeneficiary, amount: i64) -> DepositRece
 }
 
 fn changed(update: &DepositUpdate, status: DepositStatus, delta: i64) -> Event {
-    Event::CustodyDepositChanged { receipt: update.subject().clone(), status, principal_delta: Fixed::from_int(delta), uncredited: None }
+    Event::CustodyDepositChanged {
+        receipt: update.subject().clone(),
+        status,
+        principal_delta: Fixed::from_int(delta),
+        uncredited: None,
+    }
 }

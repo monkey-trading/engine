@@ -52,6 +52,18 @@ pub(crate) fn session(h: &mut Harness) {
         [Event::EligibilityRejected { reason: Reject::InvalidSignature, .. }]
     ));
 
+    // The V22 session pays the house's capital out, leaving NAV negative and both caps at their
+    // zero floors, so restock the house before any screened order can fill.
+    let capital = AccessDeposit {
+        account: None,
+        payer: Some(v.account),
+        amount: f("2000000"),
+        chain_ref: "0xaccess:capital".into(),
+    };
+    let evidence = s.deposit_evidence(h, &capital, SanctionsStatus::Clear);
+    let events = h.cmd(Command::AccessDeposit { deposit: capital, evidence });
+    assert!(matches!(events[..], [Event::HouseCapitalMoved { .. }]));
+
     // Deposits: clear funding credits; a sanctioned payer is held, and a held reference stays held
     // when redelivered clear; a payer-less deposit is held; clear house funding credits; an
     // unclassified payer leaves a deposit pending; and an undeclared beneficiary's deposit waits
@@ -120,7 +132,15 @@ pub(crate) fn session(h: &mut Harness) {
     // Withdrawals: approved with a payout path, refused without one, and refused for a sanctioned
     // account; then a resting order cancels without screening.
     let v = Client { expires_at: h.ts + 60_000, ..v };
-    assert!(matches!(s.withdraw(h, &v, true, clear)[..], [Event::WithdrawalApproved { .. }]));
+    let events = s.withdraw(h, &v, true, clear);
+    assert!(
+        matches!(
+            &events[..],
+            [Event::WithdrawalQueued { .. }, Event::WithdrawalApproved { .. }, Event::WithdrawalQueueUpdated { remaining, .. }]
+            if remaining.is_zero()
+        ),
+        "{events:?}"
+    );
     assert!(matches!(
         s.withdraw(h, &v, false, clear)[..],
         [Event::WithdrawalRejected { reason: Reject::PayoutUnavailable, .. }]

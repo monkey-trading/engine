@@ -55,7 +55,11 @@ async fn changed_or_removed_recorded_access_policy_preserves_history_wal_and_pub
             tokio::sync::watch::channel(crate::log::Manifest::default()).0,
         );
         seq_cfg.access_policy = changed;
-        let error = finish_preflight::<Chain>(plan, None, Some((&log, &seq_cfg, AccountId(EnclaveKey::test_key().address())))).await.err().unwrap();
+        let error =
+            finish_preflight::<Chain>(plan, None, Some((&log, &seq_cfg, AccountId(EnclaveKey::test_key().address()))))
+                .await
+                .err()
+                .unwrap();
         assert!(error.to_string().contains("access policy"), "{error:#}");
         assert_eq!(files(&root), before);
     }
