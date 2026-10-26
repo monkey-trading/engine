@@ -202,6 +202,14 @@ this skill in multi-agent mode at `medium` or higher over the PR's full diff
 round over the residual and the change itself, and every accepted Critical, High, and Medium
 finding is fixed by class before the next round.
 
+- **A bug fix gets a single-agent check.** A PR that closes an issue labelled `bug` does not run
+  the multi-agent loop. The owning agent reviews its own full diff once in current-agent mode
+  against the development checklist and the severity guide, fixes every accepted finding by class
+  (there is no multi-agent round, so the round-3 Medium deferral does not apply — Mediums from
+  this check are fixed in the PR too), and records one round-log row naming the single-agent
+  check, its findings, and its fixes. A later change is still re-checked by its delta below. The
+  PR is marked ready once `ci-passed` is green on the head, as after a clean round. Feature PRs
+  and protocol-version PRs always run the full loop.
 - **The round log is the count.** The branch's fix notes
   ([Fixing an accepted finding](#fixing-an-accepted-finding)) open with a round log: one line per
   round with its number, the commit it reviewed, and its accepted counts by severity. A session
