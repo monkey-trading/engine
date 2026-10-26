@@ -86,6 +86,8 @@ pub(crate) fn session(h: &mut Harness) {
     assert_eq!(h.engine.accounts()[&long].position(stock).qty, f("8"));
     let order = h.engine.accounts()[&long].orders.values().find(|o| o.market == stock).unwrap();
     assert_eq!((order.qty, order.kind), (f("4"), OrderKind::Limit { price: f("16") }));
+    // The split's closure dropped the pre-split quotes, so the opening trades price from a fresh quote.
+    h.price(stock, "20");
     let events = h.market_order(long, stock, Side::Buy, "1", "20");
     assert!(events.iter().any(|e| matches!(e, Event::Fill(fill) if fill.price == f("20"))), "{events:?}");
     let events = h.market_order(long, stock, Side::Buy, "0.5", "20");
