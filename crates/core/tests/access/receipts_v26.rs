@@ -130,6 +130,87 @@ fn activation_keeps_consistent_legacy_held_receipts_uncredited() {
     assert!(!h.engine.accounts().contains_key(&client.account));
 }
 
+#[test]
+fn an_unchanged_authenticated_payer_keeps_a_solvent_position_open_during_a_source_outage() {
+    let (mut h, client) = setup();
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V26 });
+    attest(&mut h, &client);
+    let original = receipt(1, Some(client.account), "100");
+    credit(&mut h, &original, Some(client.account), SanctionsStatus::Clear);
+    let request =
+        order(&h, &client, engine_core::command::OrderKind::Market { quoted: f("100"), max_slippage_bps: None });
+    let evidence = order_evidence(&h, &request);
+    let events = h.cmd(Command::AccessOrder { request, evidence });
+    assert!(events.iter().any(|event| matches!(event, Event::Fill(_))), "{events:?}");
+    let position = h.engine.accounts()[&client.account].position(crate::common::BTC);
+    assert_ne!(position.qty, f("0"));
+    let moved = DepositReceipt { block: 110, block_hash: B256::repeat_byte(0x77), ..original.clone() };
+    let observed_at_seq = h.engine.recorded_deposit(&original.reference()).unwrap().updated_at_seq;
+    let update = DepositUpdate::Replace {
+        receipt: original.clone(),
+        observed_at_seq,
+        replacement: moved.clone(),
+        replacement_reversed_at_seq: None,
+    };
+    let evidence = AccessEvidence::Failed { reason: SourceFailure::Unavailable };
+    let events =
+        h.cmd(Command::AccessCustodyReplacement { update: Box::new(update), payer: Some(client.account), evidence });
+    assert_eq!(h.engine.accounts()[&client.account].position(crate::common::BTC), position);
+    assert_eq!(h.engine.accounts()[&client.account].balance, f("100"));
+    assert_eq!(h.engine.accounts()[&client.account].unfinalised_deposits, f("100"));
+    assert!(h.engine.recorded_deposit(&moved.reference()).unwrap().uncredited.is_none());
+    assert!(h.engine.pending_deposits().is_empty() && h.engine.held_deposits().is_empty());
+    assert!(!events.iter().any(|event| matches!(event, Event::CloseOut { .. })), "{events:?}");
+    assert_root_matches_rebuild(&mut h.engine);
+}
+
+#[test]
+fn changed_or_legacy_unknown_payers_cannot_keep_a_credit_during_a_source_outage() {
+    for legacy in [false, true] {
+        let (mut h, client) = setup();
+        if !legacy {
+            h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V26 });
+        }
+        attest(&mut h, &client);
+        let original = receipt(1, Some(client.account), "100");
+        credit(&mut h, &original, Some(client.account), SanctionsStatus::Clear);
+        if legacy {
+            h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V26 });
+        }
+        let moved = DepositReceipt { block: 110, block_hash: B256::repeat_byte(0x77), ..original.clone() };
+        let observed_at_seq = h.engine.recorded_deposit(&original.reference()).unwrap().updated_at_seq;
+        let update = DepositUpdate::Replace {
+            receipt: original.clone(),
+            observed_at_seq,
+            replacement: moved.clone(),
+            replacement_reversed_at_seq: None,
+        };
+        let payer = Some(if legacy { client.account } else { AccountId([0x5a; 20]) });
+        let evidence = AccessEvidence::Failed { reason: SourceFailure::Unavailable };
+        h.cmd(Command::AccessCustodyReplacement { update: Box::new(update), payer, evidence });
+        assert_eq!(h.engine.accounts()[&client.account].balance, f("0"));
+        assert_eq!(
+            h.engine.recorded_deposit(&moved.reference()).unwrap().uncredited.unwrap().reason,
+            AccessReject::SourceUnavailable
+        );
+        assert!(h.engine.pending_deposits().contains_key(&moved.reference()));
+        assert_root_matches_rebuild(&mut h.engine);
+    }
+}
+
+#[test]
+fn a_verified_terminal_refusal_dominates_an_unchanged_authenticated_payer() {
+    let (mut h, client) = setup();
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V26 });
+    attest(&mut h, &client);
+    let original = receipt(1, Some(client.account), "100");
+    credit(&mut h, &original, Some(client.account), SanctionsStatus::Clear);
+    let moved = DepositReceipt { block: 110, block_hash: B256::repeat_byte(0x77), ..original.clone() };
+    replace(&mut h, &original, &moved, Some(client.account), SanctionsStatus::Sanctioned);
+    assert_eq!(h.engine.accounts()[&client.account].balance, f("0"));
+    assert_eq!(h.engine.held_deposits()[&moved.reference()].reason, AccessReject::PayerSanctioned);
+}
+
 fn replace(
     h: &mut Harness,
     original: &DepositReceipt,

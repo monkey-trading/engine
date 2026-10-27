@@ -395,6 +395,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   errors scrubbed of the endpoint URL
 - `src/custody/cursor.rs` — the deposit cursor kept between restarts
 - `src/custody/tests/access.rs` — payer sanctions and holds across restart, cursor loss and source recovery
+- `src/custody/tests/access/replacements.rs` — canonical payer screening across startup activation and retry
 - `src/sequencer/access_tests.rs` — current access refusals, reconciliation admission and recovered signature release
 - `src/sequencer/access.rs` — access-source failure and recovery alert episodes
 - `src/custody/tests/mod.rs` — deposit watcher tests against a fake chain and a real sequencer

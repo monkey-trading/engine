@@ -77,7 +77,8 @@ impl Engine {
         Ok(())
     }
 
-    /// Replaces a receipt only with the canonical payer's disposition, without transient cash removal.
+    /// Replaces a receipt without transient cash removal; an authenticated unchanged payer retains
+    /// its credit on curable source failures, while terminal refusals still dominate.
     /// Error cases:
     /// - the change in credited principal cannot be represented
     fn replace_screened_deposit(
@@ -88,7 +89,12 @@ impl Engine {
         screening: CreditScreening<'_>,
         events: &mut Vec<Event>,
     ) -> Result<(), DepositReject> {
-        let new = self.terminal_receipt_hold(replacement).or_else(|| self.receipt_refusal(replacement, screening));
+        let known_payer = self.deposits.get(&orphan.reference()).and_then(|recorded| recorded.payer);
+        let retained_credit = old.is_none() && known_payer.is_some() && known_payer == screening.payer;
+        let new = self.terminal_receipt_hold(replacement).or_else(|| {
+            self.receipt_refusal(replacement, screening)
+                .filter(|refused| !retained_credit || refused.reason.holds_deposit())
+        });
         if old.is_none() != new.is_none() {
             self.move_deposit_cash(replacement, new.is_none(), true)?;
         }

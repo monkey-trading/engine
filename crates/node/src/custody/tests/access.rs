@@ -39,53 +39,6 @@ use crate::log::LogEntry;
 use crate::test_support::log_entries;
 
 #[tokio::test]
-async fn a_reorg_that_changes_the_internal_payer_screens_the_canonical_replacement() {
-    let dir = scratch("access-replacement-payer");
-    let (config, clear, calls, source_task) = source(answer).await;
-    clear.store(true, Ordering::SeqCst);
-    let client = Arc::new(AccessClient::new(&config).unwrap());
-    let node = Node::start_with_policy(&dir, Some(config.policy()));
-    activate(&node, config.policy()).await;
-    node.submit(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V26 })).await;
-    let trader = eip712::address(client_key().verifying_key());
-    attest(&node, trader).await;
-    let chains = chains(10);
-    let original = funding(0, Beneficiary::Trader(trader), AccountId([0xaa; 20]));
-    add(&chains, &original);
-    let mut watch = screened_watcher(&chains, &dir, &client);
-    assert!(matches!(watch.poll(&node.tx).await, Ok(Polled::Read { caught_up: true })));
-    assert_eq!(node.balance(trader).await, Some(Fixed::from_int(50)));
-    clear.store(false, Ordering::SeqCst);
-    let moved = VaultDeposit {
-        block: 4,
-        block_hash: B256::repeat_byte(0x84),
-        payer: Some(AccountId([0xbb; 20])),
-        ..original.clone()
-    };
-    for chain in &chains {
-        chain.remove(&original);
-        chain.add(moved.clone());
-        chain.0.lock().unwrap().forks.extend((1..=10).map(|height| (height, B256::repeat_byte(0x80 + height as u8))));
-    }
-    let mut result = Ok(Polled::Waiting);
-    for _ in 0..20 {
-        result = watch.poll(&node.tx).await;
-        assert!(result.is_ok(), "{result:?}");
-        if matches!(result, Ok(Polled::Read { caught_up: true })) {
-            break;
-        }
-    }
-    assert!(matches!(result, Ok(Polled::Read { caught_up: true })), "{result:?}");
-    assert_eq!(node.balance(trader).await, Some(Fixed::ZERO));
-    assert_eq!(held_reasons(&node).await, [AccessReject::PayerSanctioned]);
-    assert_eq!(calls.load(Ordering::SeqCst), 2, "canonical replacement gets independent screening");
-    node.stop().await;
-    assert!(log_entries(&dir.join("log")).iter().any(|entry| matches!(entry, LogEntry::Command(command) if matches!(command.sequenced.cmd, Command::AccessCustodyReplacement { payer: Some(payer), .. } if payer == AccountId([0xbb; 20])))));
-    source_task.abort();
-    let _ = source_task.await;
-}
-
-#[tokio::test]
 async fn a_sanctioned_payer_receipt_is_held_uncredited_through_restart_and_a_later_clear_source() {
     for house in [false, true] {
         let dir = scratch(if house { "access-house-hold" } else { "access-trader-hold" });
@@ -468,3 +421,6 @@ fn signed_by(key: &SigningKey, mut screening: Screening) -> Screening {
         eip712::sign(key, &eip712::screening_hash(&eip712::domain(operator.chain_id, operator.vault), &screening));
     screening
 }
+
+#[path = "access/replacements.rs"]
+mod replacements;
