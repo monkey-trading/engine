@@ -5,8 +5,6 @@ use tracing::error;
 
 use crate::checkpoints::emission_budget::check_recorded;
 use crate::checkpoints::{CheckpointChain, Poster};
-#[cfg(test)]
-use crate::history::{History, HistoryPlan};
 use crate::log::Checkpoint;
 
 /// Reads the emission period budget the vault's MONKEY cap was derived from, and refuses a log that
@@ -34,14 +32,14 @@ pub(super) async fn emission_preflight<R: CheckpointChain>(
 /// - anchor, signer, or authorized history recovery fails
 #[cfg(test)]
 pub(super) async fn finish_preflight<R: CheckpointChain>(
-    plan: HistoryPlan,
+    plan: crate::history::HistoryPlan,
     checkpoint: Option<(&Poster<R>, Option<&Checkpoint>)>,
     recovery: Option<(
         &crate::sequencer::ReplayedLog,
         &crate::sequencer::SequencerConfig<'_>,
         engine_core::types::AccountId,
     )>,
-) -> anyhow::Result<History> {
+) -> anyhow::Result<crate::history::History> {
     authorize(checkpoint, recovery).await?;
     plan.finish().inspect_err(|e| error!(alert = "history_recovery_failed", "refusing to serve: {e:#}"))
 }

@@ -11,8 +11,8 @@ use std::thread;
 use anyhow::Result;
 
 use super::{A, command, deposit, expected, query};
-use crate::history::authenticated::state::{STATE_KEY, State};
-use crate::history::authenticated::{CommandId, Index};
+use crate::history::authenticated::Index;
+use crate::history::authenticated::state::{CommandId, STATE_KEY, State};
 use crate::snapshot::generations::{Allocate, Manager, VerifiedReferences};
 use crate::snapshot::head::StoreId;
 use crate::snapshot::pins::Pins;
