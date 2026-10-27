@@ -123,6 +123,7 @@ this crate and reproduce the signed state roots exactly.
 
 - `src/lib.rs` — module index and the protocol summary
 - `src/engine/mod.rs` — engine state, command dispatch, sessions, and USD valuation
+- `src/engine/house.rs` — house NAV, gross exposure, and the caps set from them
 - `src/engine/market.rs` — per-market state: quotes, marks, positions, resting orders, and futures
   roll position
 - `src/hot_indexes.rs` — derived holder, trigger, pending-receipt and above-frontier coverage indexes, rebuilt after recovery
@@ -172,7 +173,9 @@ this crate and reproduce the signed state roots exactly.
 - `src/merkle/leaf.rs` — each leaf's key and value hash, and the account and market leaves
 - `src/merkle/proof.rs` — account, market, and entitlement proofs, and how to check them
 - `src/merkle/state.rs` — the engine's state tree: what each root rehashes, the remaining-state
-  leaf, and account and entitlement proofs
+  leaf, and distribution proofs
+- `src/merkle/state/touched.rs` — tracked changes and complete leaf-key enumeration
+- `src/merkle/proofs.rs` — account, entitlement, and withdrawal-approval proofs
 - `src/merkle/tests.rs` — tree, proof, and work tests, and the layout fixture
 - `src/tracked.rs` — maps and sets that record what changed since the last root
 - `src/fixed/` — `Fixed`, the 9-decimal fixed-point type used for all money (`mod.rs`), and its

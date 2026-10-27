@@ -13,7 +13,6 @@ use crate::deposits::legacy_chain_reference;
 use crate::eip712::{self, B256, Eip712Domain, deposit_screening_hash, eligibility_hash};
 use crate::engine::Engine;
 use crate::event::{Event, Reject};
-use crate::protocol::ProtocolVersion;
 use crate::types::AccountId;
 
 impl Engine {

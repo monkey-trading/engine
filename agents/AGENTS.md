@@ -23,7 +23,7 @@ an index: load only the rule whose hint matches the current action.
   state tree (a keccak-256 sparse Merkle tree over the state, with account and entitlement proofs, in
   `merkle/`). It does no IO and uses no clocks,
   randomness, or floats. `impl Engine` is split by area (`engine/mod.rs` for state and dispatch
-  with per-market state in `engine/market.rs`, `marks.rs`, `execution/`,
+  with house NAV and exposure caps in `engine/house.rs`, per-market state in `engine/market.rs`, `marks.rs`, `execution/`,
   `markouts.rs`, `closeout.rs`, `funds.rs`, `deposits.rs` with legacy migration and screened canonical replacements in `deposits/`,
   `corporate/` for dividend/split instructions, captures and ex-date adjustments,
   `admin.rs`, `stress.rs`, `auth.rs`). `withdrawal.rs` reserves FIFO requests and creates
