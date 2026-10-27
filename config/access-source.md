@@ -1,6 +1,6 @@
 # Access source and eligibility
 
-From V21, a trading account signs a professional or eligible-client declaration before the engine
+From V24, a trading account signs a professional or eligible-client declaration before the engine
 credits its first deposit or accepts an order. A new account deposits first: the deposit waits
 pending until the account records a declaration, then credits. Declarations, orders and withdrawals
 require fresh screening of the account and of the client's peer. US and sanctioned jurisdictions,
@@ -94,7 +94,7 @@ POST `/v1/eligibility` with `account`, `class` (`professional` or `eligible_clie
 `auth`. The exact signed statement is respectively “I attest that I am a professional client.” or
 “I attest that I am an eligible client.” It adds no further qualification claims. Use the existing
 recorded EIP-712 deployment domain, account nonce and expiry; declarations require signatures even
-in development logs that recorded unsigned client auth. From V21, other client actions also require
+in development logs that recorded unsigned client auth. From V24, other client actions also require
 signatures. Cancellation remains available without a geography restriction.
 
 `engine-core`'s `sign_request` example accepts `eligibility` with the unsigned JSON body. Read the next
@@ -117,7 +117,7 @@ account action. A never-credited account may sign only a declaration, and only o
 pending; its other requests, and a declaration without one, are refused with 403 before the log. An otherwise allowed EVM withdrawal receives `payout_unavailable` until on-chain
 payouts exist; no collateral is debited. An unhealthy reconciliation guard also prevents approval.
 Screening at placement covers a resting limit or stop order until it fills or is cancelled; it is
-not screened again when it triggers. Orders resting from before V21 were admitted under the rules in
+not screened again when it triggers. Orders resting from before V24 were admitted under the rules in
 force when they were placed and are settled the same way. Liquidation and client cancellation remain
 available.
 
@@ -126,7 +126,7 @@ available.
 A sanctioned payer cannot fund an innocent beneficiary through `depositFor`, or fund the house.
 The vault's payer-bearing `Deposited` event authenticates its caller, including contract wallets;
 the outer transaction sender is not used. Legacy trader deposit events name no payer, so they cannot
-be screened and are held under V21 (`payer_missing`). The same custody reference cannot be both
+be screened and are held under V24 (`payer_missing`). The same custody reference cannot be both
 credited and held.
 
 Only a confirmed sanction of the account or payer, or a missing payer, holds a deposit for good. Every
@@ -177,12 +177,12 @@ classifications, production source credentials, and verified data freshness are 
 Supply those inputs through the signed interface; the committed fixtures contain synthetic local policy.
 Handle sanctioned collateral only as counsel directs.
 
-Deploy a vault emitting the payer-bearing event before accepting new trader funding under V21.
+Deploy a vault emitting the payer-bearing event before accepting new trader funding under V24.
 The vault is immutable; an existing deployment continues emitting legacy events. Changing the vault
 or chain changes the recorded signature domain and requires a fresh log and an explicitly planned
 custody transition. This feature performs no deployment, migration, release or refund.
 
-V21 activates at a recorded sequence on the first boot of a V21 build. Earlier commands retain
+V24 activates at a recorded sequence on the first boot of a V24 build. Earlier commands retain
 their earlier roots and events, and all historical reference logs stay byte-for-byte unchanged.
-A build predating V21 cannot replay an activated log; rollback requires an approved log and custody
+A build predating V24 cannot replay an activated log; rollback requires an approved log and custody
 plan, not regeneration of reference fixtures or deletion of funded history.

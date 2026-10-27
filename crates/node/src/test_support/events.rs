@@ -2,8 +2,8 @@
 
 use alloy::primitives::B256;
 use engine_core::Fixed;
-use engine_core::corporate::{Adjustment, CorporateAction};
 use engine_core::access::{AccessReject, EligibilityClass};
+use engine_core::corporate::{Adjustment, CorporateAction};
 use engine_core::deposits::{DepositBeneficiary, DepositReceipt, DepositReject, DepositStatus};
 use engine_core::emissions::TokenUnits;
 use engine_core::event::{CancelReason, Event, Fill, Reject};

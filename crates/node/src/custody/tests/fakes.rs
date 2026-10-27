@@ -247,8 +247,8 @@ impl Node {
         Self::start_at_protocol(dir, false, CHAIN_ID, TRADER, ClientAuth::Unsigned, None)
     }
 
-    /// Starts the V20 receipt rules, the last before access screening, while retaining the real
-    /// disk-backed sequencer.
+    /// Starts the confirmed-receipt rules at V23, the last version before access screening, while
+    /// retaining the real disk-backed sequencer.
     pub(super) fn start_confirmed(dir: &Path) -> Self {
         Self::start_at_protocol(dir, true, CHAIN_ID, TRADER, ClientAuth::Unsigned, None)
     }

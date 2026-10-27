@@ -207,7 +207,7 @@ fn a_declaration_is_required_before_the_first_order_and_legacy_commands_cannot_s
 }
 
 #[test]
-fn placement_screening_covers_resting_orders_for_life_including_orders_resting_from_before_v21() {
+fn placement_screening_covers_resting_orders_for_life_including_orders_resting_from_before_v24() {
     // An order resting from before V24, placed under the unsigned rules in force then.
     let mut h = Harness::v8(ClientAuth::Unsigned);
     h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V18 });

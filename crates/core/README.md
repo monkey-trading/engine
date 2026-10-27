@@ -260,7 +260,7 @@ SIGNER_KEY=<private key> cargo run -p engine-core --example sign_request -- \
     <chain id> <vault> <nonce> <expires at> <order|cancel|withdrawal|eligibility> '<unsigned body>'
 ```
 
-From V21, client actions and declarations always require signatures, including in development logs that recorded
+From V24, client actions and declarations always require signatures, including in development logs that recorded
 unsigned auth. The declaration signs its exact professional or eligible-client statement and, like an
 order or a withdrawal, carries the source's evidence for its account and peer. Source evidence is
 also signed and checked during replay; [the source contract](../../config/access-source.md)

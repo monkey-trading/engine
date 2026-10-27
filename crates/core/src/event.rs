@@ -82,7 +82,6 @@ pub enum Event {
         payer: Option<AccountId>,
         amount: Fixed,
         reason: AccessReject,
-
     },
     Deposited {
         account: AccountId,
@@ -100,7 +99,7 @@ pub enum Event {
         status: DepositStatus,
         /// External principal movement; adoption and finality do not move cash again.
         principal_delta: Fixed,
-        /// From `V21`, the access refusal that keeps the receipt's principal out of cash.
+        /// From `V24`, the access refusal that keeps the receipt's principal out of cash.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         uncredited: Option<AccessReject>,
     },

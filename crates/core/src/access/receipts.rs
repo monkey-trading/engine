@@ -1,4 +1,4 @@
-//! Access screening of quorum-proven custody receipts from `V21`. A refused receipt stays in the
+//! Access screening of quorum-proven custody receipts from `V24`. A refused receipt stays in the
 //! receipt lifecycle, finalised, reversed, reinstated and replaced like any other, but its principal
 //! never enters cash or the withdrawal lock: it is held for good, or pending until a retry credits
 //! it, locked until finality while the receipt is still unfinalised.
@@ -37,7 +37,7 @@ impl Engine {
         evidence: &AccessEvidence,
         events: &mut Vec<Event>,
     ) {
-        if self.protocol_version < ProtocolVersion::V21 {
+        if self.protocol_version < ProtocolVersion::V24 {
             events.push(Event::CustodyDepositRejected {
                 receipt: receipt.clone(),
                 reason: DepositReject::ProtocolNotActive,
@@ -48,14 +48,14 @@ impl Engine {
         self.update_deposit(&update, CreditScreening { payer, evidence: Some(evidence) }, events);
     }
 
-    /// The refusal that keeps a new receipt uncredited, from `V21`; a receipt sequenced without
+    /// The refusal that keeps a new receipt uncredited, from `V24`; a receipt sequenced without
     /// screening has no payer or evidence to pass.
     pub(crate) fn receipt_refusal(
         &self,
         receipt: &DepositReceipt,
         screening: CreditScreening<'_>,
     ) -> Option<UncreditedReceipt> {
-        if self.protocol_version < ProtocolVersion::V21 {
+        if self.protocol_version < ProtocolVersion::V24 {
             return None;
         }
         let deposit = receipt_access_deposit(receipt, screening.payer);

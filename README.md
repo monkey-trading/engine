@@ -154,7 +154,7 @@ curl -sk $API/v1/health
 curl -sk $API/v1/markets
 ```
 
-From V21, funding and trading require a configured access source and the account's signed
+From V24, funding and trading require a configured access source and the account's signed
 eligibility declaration, including with mock custody. The default config leaves screening
 unconfigured and those actions closed. With Foundry's `anvil`, `forge` and `cast`, install the
 pinned contract dependencies and run the complete local funding and trading scenario:

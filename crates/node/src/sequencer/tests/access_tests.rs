@@ -10,6 +10,7 @@ use engine_core::event::{Event, Reject};
 use engine_core::types::AccountId;
 use tokio::sync::{broadcast, mpsc, watch};
 
+use crate::checkpoints::{ApprovalId, ApprovalStatus, LifecycleEvidence};
 use crate::clock::test_clock::TestClock;
 use crate::log::{LogEntry, Manifest};
 use crate::sequencer::Sequencer;
@@ -83,7 +84,18 @@ fn access_withdrawals_record_refusals_and_recover_only_checkpoint_confirmed_appr
     seq.checkpoint_status(seq.last_seq(), true).unwrap();
     let command = crate::test_support::access::withdrawal(&seq.engine, 1, Fixed::ONE, true);
     let events = seq.sequence(command).unwrap().unwrap();
-    assert!(matches!(events.as_slice(), [Event::WithdrawalApproved { amount, .. }] if *amount == Fixed::ONE));
+    // From V22 a withdrawal reserves its payout in the public queue before its approval.
+    assert!(
+        matches!(
+            events.as_slice(),
+            [
+                Event::WithdrawalQueued { amount, .. },
+                Event::WithdrawalApproved { amount: approved, nonce: 1, .. },
+                Event::WithdrawalQueueUpdated { remaining, .. },
+            ] if *amount == Fixed::ONE && *approved == Fixed::ONE && *remaining == Fixed::ZERO
+        ),
+        "{events:?}"
+    );
     let approval = seq.last_seq().unwrap();
     assert_eq!(seq.engine.accounts()[&account].balance, Fixed::from_int(99));
     crate::checkpoints::accounting::tests::assert_matches(seq.accounting, &seq.engine, Fixed::ONE);
@@ -92,17 +104,46 @@ fn access_withdrawals_record_refusals_and_recover_only_checkpoint_confirmed_appr
     drop(seq);
     let mut recovered =
         Sequencer::recover(config(), Arc::new(EnclaveKey::test_key()), broadcast::channel(128).0, withdrawals).unwrap();
-    assert_eq!(recovered.gate.as_ref().unwrap().pending.len(), 1);
+    recovered.trust(sample_around(clock.as_ref())).unwrap();
+    assert_eq!(recovered.gate.as_ref().unwrap().payouts.len(), 1);
     crate::checkpoints::accounting::tests::assert_matches(recovered.accounting, &recovered.engine, Fixed::ONE);
-    for (posted, healthy) in [(Some(approval), false), (Some(approval - 1), true)] {
-        recovered.checkpoint_status(posted, healthy).unwrap();
-        assert!(signed.try_recv().is_err());
-    }
+    let checkpoint = log_entries(&dir)
+        .into_iter()
+        .rev()
+        .find_map(|entry| match entry {
+            LogEntry::Checkpoint(cp) => Some(cp),
+            _ => None,
+        })
+        .unwrap();
+    let evidence = |checkpoint_seq: u64| LifecycleEvidence {
+        height: 10,
+        block_hash: eip712::B256::from([1; 32]),
+        signer: AccountId(EnclaveKey::test_key().address()),
+        signer_epoch: 1,
+        total_withdrawn: Fixed::ZERO,
+        checkpoint_seq: Some(checkpoint_seq),
+        checkpoint_root: Some(checkpoint.root.clone()),
+        approvals: vec![ApprovalStatus {
+            approval: ApprovalId { account, nonce: 1, approved_seq: approval },
+            claimed: false,
+        }],
+    };
+    // Unhealthy books cannot authorize signing, and a healthy checkpoint behind the approval cannot
+    // either.
+    recovered.checkpoint_status(Some(approval), false).unwrap();
+    recovered.release_payouts(&evidence(approval)).unwrap();
+    assert!(signed.try_recv().is_err());
     recovered.checkpoint_status(Some(approval), true).unwrap();
+    recovered.release_payouts(&evidence(approval - 1)).unwrap();
+    assert!(signed.try_recv().is_err());
+    // Healthy books at the covering checkpoint release the payout, durable before custody sees it.
+    recovered.release_payouts(&evidence(approval)).unwrap();
+    assert!(signed.try_recv().is_err(), "custody cannot see an unflushed outbox");
     recovered.flush().unwrap();
     let released = signed.try_recv().unwrap();
     assert_eq!((released.account, released.amount, released.approved_seq), (account, Fixed::ONE, Some(approval)));
-    recovered.checkpoint_status(Some(approval), true).unwrap();
+    recovered.release_payouts(&evidence(approval)).unwrap();
+    recovered.flush().unwrap();
     assert!(signed.try_recv().is_err(), "the same confirmed prefix never releases twice");
     let replayed = crate::sequencer::replay_with_signer(
         &log_entries(&dir),

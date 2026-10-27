@@ -113,7 +113,7 @@ pub struct UncreditedReceipt {
     pub reason: AccessReject,
 }
 
-/// The funding address and source evidence a `V21` receipt credit is screened with.
+/// The funding address and source evidence a `V24` receipt credit is screened with.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct CreditScreening<'a> {
     pub(crate) payer: Option<AccountId>,

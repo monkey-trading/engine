@@ -364,7 +364,7 @@ const ACCOUNT: AccountId = AccountId([0xaa; 20]);
 /// Tue 20 Oct 2026 14:00 UTC.
 const T0: Millis = 1_792_504_800_000;
 
-/// Historical V22 market/metrics fixtures, stamped at `T0`.
+/// Historical V23 market/metrics fixtures, stamped at `T0`.
 fn dev_engine() -> Engine {
     engine_of(&dev_config())
 }
@@ -378,7 +378,7 @@ fn engine_of(cfg: &NodeConfig) -> Engine {
     let activation = [
         AdminCommand::SetClientAuth(cfg.client_auth().unwrap()),
         AdminCommand::SetOperator(cfg.operator().unwrap()),
-        AdminCommand::ActivateProtocol { version: ProtocolVersion::V22 },
+        AdminCommand::ActivateProtocol { version: ProtocolVersion::V23 },
     ];
     let mut engine = Engine::new();
     for cmd in activation.into_iter().map(Command::Admin).chain(genesis_commands(&cfg.genesis)) {

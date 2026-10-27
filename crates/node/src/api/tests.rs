@@ -312,7 +312,7 @@ fn mock_attestation() -> Arc<Attestation> {
 /// Serves the API for `node`, with `dir` as its log directory and `manifest` as the writer's.
 async fn serve_with(node: &TestSequencer, dir: &Path, manifest: watch::Receiver<Manifest>) -> SocketAddr {
     serve_state(ApiState {
-        protocol: engine_core::protocol::ProtocolVersion::V22,
+        protocol: engine_core::protocol::ProtocolVersion::V23,
         access: None,
         tx: node.tx.clone(),
         stream: node.stream.clone(),
@@ -340,7 +340,7 @@ async fn serve_history(history: Reader) -> SocketAddr {
     let ample = NonZeroU32::new(1_000_000).unwrap();
     api.per_ip = RateLimit { per_second: ample, burst: ample };
     serve_state(ApiState {
-        protocol: engine_core::protocol::ProtocolVersion::V22,
+        protocol: engine_core::protocol::ProtocolVersion::V23,
         access: None,
         tx: mpsc::channel(1).0,
         stream: broadcast::channel(1).0,
@@ -448,7 +448,7 @@ pub(super) fn api_state(mock_custody: bool) -> (ApiState, mpsc::Receiver<sequenc
     let (stream, _) = broadcast::channel(1);
     let (_, manifest) = watch::channel(Manifest::default());
     let state = ApiState {
-        protocol: engine_core::protocol::ProtocolVersion::V22,
+        protocol: engine_core::protocol::ProtocolVersion::V23,
         access: None,
         tx,
         stream,

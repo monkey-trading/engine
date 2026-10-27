@@ -21,7 +21,7 @@ use crate::types::{AccountId, MarketId, Millis, OrderId, Side};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Command {
-    /// The account's signed professional or eligible-client declaration, from V21, with the API's
+    /// The account's signed professional or eligible-client declaration, from V24, with the API's
     /// actual screening input.
     AttestEligibility {
         request: EligibilityRequest,
@@ -48,7 +48,7 @@ pub enum Command {
         deposit: AccessDeposit,
         evidence: AccessEvidence,
     },
-    /// A new quorum-proven custody receipt with its vault caller and screening input, from `V21`;
+    /// A new quorum-proven custody receipt with its vault caller and screening input, from `V24`;
     /// it is credited, left pending, or held uncredited.
     AccessCustodyDeposit {
         receipt: DepositReceipt,

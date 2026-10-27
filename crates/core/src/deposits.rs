@@ -60,7 +60,7 @@ pub struct RecordedDeposit {
     pub receipt: DepositReceipt,
     pub status: DepositStatus,
     pub updated_at_seq: u64,
-    /// From `V21`, why access screening keeps the receipt's principal out of cash. It survives a
+    /// From `V24`, why access screening keeps the receipt's principal out of cash. It survives a
     /// reversal, so a reinstatement or replacement keeps the receipt uncredited.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uncredited: Option<UncreditedReceipt>,
@@ -209,7 +209,7 @@ impl Engine {
     }
 
     /// Applies an admitted custody observation, emitting a rejection for inconsistent input. From
-    /// `V21` a new receipt is credited only on `screening` that passes the access rules.
+    /// `V24` a new receipt is credited only on `screening` that passes the access rules.
     pub(crate) fn update_deposit(
         &mut self,
         update: &DepositUpdate,

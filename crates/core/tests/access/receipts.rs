@@ -1,4 +1,4 @@
-//! Custody receipts keep both rules from `V21`: access screening decides whether a receipt's
+//! Custody receipts keep both rules from `V24`: access screening decides whether a receipt's
 //! principal enters cash at all, and receipt finality decides when credited principal is released.
 
 use alloy_primitives::B256;

@@ -127,7 +127,7 @@ fn state() -> (ApiState, mpsc::Receiver<Request>) {
         tls_public_key_sha256: [0; 32],
     };
     let state = ApiState {
-        protocol: engine_core::protocol::ProtocolVersion::V22,
+        protocol: engine_core::protocol::ProtocolVersion::V23,
         access: None,
         tx,
         stream: tokio::sync::broadcast::channel(1).0,

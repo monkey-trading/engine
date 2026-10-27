@@ -86,14 +86,14 @@ impl TestSequencer {
         Self::boot(dir, stream_capacity, Arc::new(SystemClock), genesis, ProtocolVersion::V18)
     }
 
-    /// Boots an explicit V20 fixture for historical unsigned/admission/storage assertions.
+    /// Boots an explicit V23 fixture for historical unsigned/admission/storage assertions, the last before access screening.
     pub fn start_legacy(dir: &Path, stream_capacity: usize) -> Self {
         Self::start_legacy_at(dir, stream_capacity, Arc::new(SystemClock), genesis_commands(&dev_config().genesis))
     }
 
-    /// Historical V20 fixture on a controlled clock, on a log whose genesis is `genesis`.
+    /// Historical V23 fixture on a controlled clock, on a log whose genesis is `genesis`.
     pub fn start_legacy_at(dir: &Path, stream_capacity: usize, clock: Arc<dyn Clock>, genesis: Vec<Command>) -> Self {
-        Self::boot(dir, stream_capacity, clock, genesis, ProtocolVersion::V22)
+        Self::boot(dir, stream_capacity, clock, genesis, ProtocolVersion::V23)
     }
 
     /// Boots as the node does, activating `version`.

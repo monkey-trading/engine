@@ -370,7 +370,6 @@ impl Sequencer {
         }
         self.metrics.commands.inc();
         self.metrics.access_pending_deposits.set(self.engine.pending_deposits().len() as i64);
-
         for (event_index, event) in events.iter().enumerate() {
             if access {
                 self.access_alerts.note(event);
@@ -494,8 +493,6 @@ mod metrics_tests;
 #[cfg(test)]
 mod tests;
 
-#[cfg(test)]
-mod access_tests;
 #[cfg(test)]
 mod checkpoint_tests;
 #[cfg(test)]

@@ -43,6 +43,7 @@ mod leaf;
 pub use leaf::*;
 mod proof;
 pub use proof::*;
+mod proofs;
 mod withdrawal;
 pub use withdrawal::*;
 pub(crate) mod state;

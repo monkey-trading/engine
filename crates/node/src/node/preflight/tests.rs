@@ -314,7 +314,24 @@ async fn incomplete_genesis_and_missing_checkpoint_service_preserve_history_byte
             let cmd = snapshot.await.unwrap();
             let (reply, done) = tokio::sync::oneshot::channel();
             tx.send(crate::sequencer::Request::Submit { cmd, reply: Some(reply) }).await.unwrap();
-            assert_eq!(done.await.unwrap(), [expected]);
+            let events = done.await.unwrap();
+            if matches!(expected, engine_core::event::Event::WithdrawalApproved { .. }) {
+                // From V22 a withdrawal reserves its payout in the public queue before approval.
+                let approved = Fixed::from_int(40);
+                assert!(
+                    matches!(
+                        events.as_slice(),
+                        [
+                            engine_core::event::Event::WithdrawalQueued { account: queued, amount, .. },
+                            engine_core::event::Event::WithdrawalApproved { account: paid, amount: paid_amount, nonce: 1 },
+                            engine_core::event::Event::WithdrawalQueueUpdated { .. },
+                        ] if *queued == account && *amount == approved && *paid == account && *paid_amount == approved
+                    ),
+                    "{events:?}"
+                );
+            } else {
+                assert_eq!(events, [expected]);
+            }
         }
         drop(tx);
         task.await.unwrap().unwrap();

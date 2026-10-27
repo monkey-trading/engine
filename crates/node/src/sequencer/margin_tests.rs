@@ -72,8 +72,9 @@ fn dev_scenario_financing_closes_out_and_a_stale_market_counts_at_its_last_mark(
     sequenced(&mut seq, prices(ETH, "3800", now()));
     move_to(&mut seq, rollover + 1_200);
     sequenced(&mut seq, prices(BTC, "94740", now()));
-    // Equity 800 against 380 of margin at the last mark leaves 420 free; one base unit more is refused.
-    let events = withdrawal(&mut seq, 8, "420.000000001");
+    // Equity 800 against 380 of margin at the last mark leaves 420 free; past whole-USDC dust, a
+    // request above it is refused.
+    let events = withdrawal(&mut seq, 8, "420.000001");
     let refused = Reject::InsufficientFunds { available: fixed("420") };
     assert!(matches!(&events[..], [Event::WithdrawalRejected { reason, .. }] if *reason == refused), "{events:?}");
     let events = withdrawal(&mut seq, 8, "420");

@@ -336,7 +336,7 @@ impl TestNode {
         let hourly = |rate: RateLimit| Quota::with_period(Duration::from_secs(3600)).unwrap().allow_burst(rate.burst);
         let limits = Arc::new(ApiLimits::with_quota(&api, hourly, DefaultClock::default()));
         let state = ApiState {
-            protocol: engine_core::protocol::ProtocolVersion::V22,
+            protocol: engine_core::protocol::ProtocolVersion::V23,
             access: None,
             tx,
             stream: stream.clone(),

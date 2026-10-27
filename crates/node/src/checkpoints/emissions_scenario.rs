@@ -235,7 +235,7 @@ impl Scenario {
     }
 
     /// Recovers the sequencer from the log, as a node boot does: from the vault's posted checkpoint,
-    /// with the dev genesis on a fresh log, the V19 rules its unsigned accounts need, and the unposted checkpoints queued.
+    /// with the dev genesis on a fresh log, the V23 rules its unsigned accounts need, and the unposted checkpoints queued.
     async fn start_node(&mut self) {
         let poster = Poster {
             chain: CheckpointRpc::new(
@@ -291,7 +291,7 @@ impl Scenario {
             tls_public_key_sha256: [0; 32],
         };
         let state = ApiState {
-            protocol: engine_core::protocol::ProtocolVersion::V22,
+            protocol: engine_core::protocol::ProtocolVersion::V23,
             access: None,
             tx,
             stream,

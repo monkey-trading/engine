@@ -10,7 +10,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 
 ## Features
 
-- Signed eligibility and fail-closed API/custody screening from V21, with public refusal reasons
+- Signed eligibility and fail-closed API/custody screening from V24, with public refusal reasons
   and reserved, uncredited sanctioned deposits
 - Dated publisher ingestion with a separate signing worker, startup synchronization, and per-date
   rollover catch-up under V18
@@ -42,7 +42,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   sample, and resumes once a sample is within the bound
 - REST API for orders, cancels, withdrawals, and reads, plus a WebSocket stream of the log
 - Orders, cancels, and withdrawals signed by the account (EIP-712), checked before they are
-  sequenced; before V21, `auth = "none"` trusts the account field with mock TEE and custody; V21
+  sequenced; before V24, `auth = "none"` trusts the account field with mock TEE and custody; V24
   client actions and eligibility declarations require signatures in every mode
 - The latest protocol version and the client auth activated at boot, at the log's next seq, after
   giving parameters a log set before `V11` the config's toxicity notional weighting
@@ -916,20 +916,20 @@ checkpoint the node wrote. It prints restart times without gating on them.
 `cargo test -p engine-node dev_scenario_restart_stays_bounded -- --nocapture` runs the same scenario
 through the node's startup path in-process.
 
-From V21, every client action requires a signature, including logs that recorded development
+From V24, every client action requires a signature, including logs that recorded development
 `auth = "none"`. Earlier versions require it under `auth = "eip712"`. Each order, cancel, and
 withdrawal body carries
 `"auth": { "nonce": <next nonce>, "expires_at": <ms>, "signature": "0x…" }`: the account's EIP-712
 signature under the domain of `custody.vault` on `custody.chain_id` (see `engine-core`'s
 `sign_request` example). `expires_at` is the latest time, in milliseconds since the Unix epoch, at
 which the request itself is accepted; a limit or stop order it places rests until it fills or is
-cancelled, and from V21 its screening at placement covers it for that whole time. A
+cancelled, and from V24 its screening at placement covers it for that whole time. A
 missing or invalid signature is refused with 401, an expired request with 400, a signed request
 other than a declaration from an account that has never been credited with 403, and a nonce other
 than the account's next with 409 and the `expected` nonce; none of these reaches the log. A request
 refused with 403 or 409 uses no nonce, so it stays valid until its `expires_at`: resubmit that same
 request once its nonce is next, or let it expire before signing different content at that nonce.
-From V21, a never-credited account may sign only a declaration, admitted once a deposit for it is
+From V24, a never-credited account may sign only a declaration, admitted once a deposit for it is
 pending and within its client's share of a budget all clients share; its other signed requests, and a
 declaration without a pending deposit, get 403. The API screens a declaration like an order, and
 the engine records it only on verified, allowed and clear evidence; a refused declaration is in the

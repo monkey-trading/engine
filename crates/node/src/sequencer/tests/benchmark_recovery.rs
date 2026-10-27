@@ -347,7 +347,7 @@ impl Fixture {
         seq.genesis(&genesis).unwrap();
         assert!(commands(&log_entries(&dir)).is_empty(), "bootstrap waits for authenticated time");
         seq.trust(trusted(clock.as_ref())).unwrap();
-        assert_eq!(seq.engine.protocol_version(), ProtocolVersion::V22);
+        assert_eq!(seq.engine.protocol_version(), ProtocolVersion::V23);
         assert!(!seq.needs_genesis(), "publisher gate must allow cold genesis");
         let mut f = Self { dir, seq, clock };
         let initial = if retained { vec![("2026-10-19", "0.01")] } else { vec![] };

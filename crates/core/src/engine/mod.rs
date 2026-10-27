@@ -1,7 +1,8 @@
 //! The engine state machine: `apply(sequenced command) -> events`.
 //!
 //! Single-threaded and deterministic. Time comes only from the sequencer's stamp. This file holds
-//! the state, dispatch, time, sessions, and USD valuation; per-market state lives in `market.rs`,
+//! the state, dispatch, time, sessions, and USD valuation; house NAV and the exposure caps set
+//! from it live in `house.rs`; per-market state lives in `market.rs`,
 //! venue prices and marks in `marks.rs`, funds and financing in `funds.rs`, admin in `admin.rs`,
 //! stress levels in `stress.rs`, client request auth in `auth.rs`, orders and pricing in
 //! `execution/`, close-outs in `closeout.rs`, markouts in `markouts.rs`, and reserved FIFO
@@ -10,6 +11,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::ops::Bound;
 
+mod house;
 mod market;
 
 pub use market::MarketState;
@@ -28,7 +30,6 @@ use crate::deposits::{CustodyCheckpoint, LegacyDeposit, RecordedDeposit};
 use crate::emissions::{Emissions, PeriodResult, TokenUnits};
 use crate::event::{Event, Reject};
 use crate::fixed::Rounding;
-use crate::market::MarketSpec;
 use crate::merkle::state::{Changed, StateTree, is_zero};
 use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
@@ -368,47 +369,6 @@ impl Engine {
         self.credited_refs.range::<str, _>(from).map(String::as_str).take_while(move |r| r.starts_with(prefix))
     }
 
-    /// House cash, before clients' unrealised PnL.
-    pub fn house_cash(&self) -> Fixed {
-        self.house_cash
-    }
-
-    /// House cash minus clients' unrealised PnL at current marks, in USD. Clients' PnL rounds up, so
-    /// NAV, and every cap set from it, rounds down.
-    pub fn house_nav(&self) -> Fixed {
-        let client_upnl: Fixed = self
-            .markets
-            .values()
-            .filter_map(|market| {
-                let upnl = |mark: Fixed| mark.mul(market.client_qty) - market.client_cost;
-                market.mark.map(|mark| market.usd_at_mark(upnl(mark), Rounding::Up))
-            })
-            .sum();
-        self.house_cash - client_upnl
-    }
-
-    /// Sum over markets of the house's absolute net notional, in USD, each rounded up.
-    pub fn house_gross_exposure(&self) -> Fixed {
-        self.markets
-            .values()
-            .filter_map(|market| {
-                market.mark.map(|mark| market.usd_at_mark(market.client_qty.abs().mul(mark), Rounding::Up))
-            })
-            .sum()
-    }
-
-    /// The cap on the house's absolute net notional in `spec`'s market at house NAV `nav`: its share
-    /// of NAV, or from `V6` the larger of that and the market's floor.
-    pub(crate) fn market_cap(&self, spec: &MarketSpec, nav: Fixed) -> Fixed {
-        self.floored(nav.mul_bps(spec.house_cap_bps), spec.house_cap_floor)
-    }
-
-    /// The cap on the house's gross exposure across markets at house NAV `nav`: its share of NAV,
-    /// or from `V6` the larger of that and the total floor.
-    pub(crate) fn total_cap(&self, params: &ProtocolParams, nav: Fixed) -> Fixed {
-        self.floored(nav.mul_bps(params.house_total_cap_bps), params.house_total_cap_floor)
-    }
-
     /// (equity, margin requirement) in USD at current marks, optionally overriding one market's mark
     /// and FX index.
     pub fn equity_and_margin(
@@ -506,11 +466,6 @@ impl Engine {
         } else {
             events.push(Event::MarketClosed { market: market_id });
         }
-    }
-
-    /// `share`, or from `V6` the larger of `share` and `floor`.
-    fn floored(&self, share: Fixed, floor: Fixed) -> Fixed {
-        if self.protocol_version >= ProtocolVersion::V6 { share.max(floor) } else { share }
     }
 
     /// Refreshes every market's session, so opens and closes fire even without price traffic.

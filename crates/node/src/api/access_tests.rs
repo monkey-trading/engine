@@ -44,7 +44,7 @@ const NOW: i64 = 1_792_504_800_000;
 const VAULT: AccountId = AccountId([0xaa; 20]);
 
 #[tokio::test]
-async fn a_v21_build_refuses_unsigned_claimants_while_activation_waits_for_trusted_time() {
+async fn a_v24_build_refuses_unsigned_claimants_while_activation_waits_for_trusted_time() {
     let node = Node::start_with_time("startup-auth", true, false).await;
     let mut request = order(&key(1), 0);
     request.as_object_mut().unwrap().remove("auth");
@@ -155,7 +155,8 @@ async fn an_allowed_mock_withdrawal_is_debited_signed_and_strictly_replayed_from
     let account = eip712::address(client.verifying_key());
     node.onboard(&client).await;
     let approved = node.post("/v1/withdrawals", withdrawal(&client, 1)).await.1;
-    assert_eq!(approved[0]["type"], "withdrawal_approved");
+    assert_eq!(approved[0]["type"], "withdrawal_queued");
+    assert_eq!(approved[1]["type"], "withdrawal_approved");
     let signed = node.withdrawals.try_recv().unwrap();
     assert_eq!((signed.account, signed.amount, signed.chain_id, signed.vault), (account, Fixed::ONE, 31_337, VAULT));
     let replayed = replay_with_signer(
@@ -323,7 +324,7 @@ impl Node {
             auth: ClientAuth::Unsigned,
             operator,
             mock_custody,
-            payouts_enabled: true,
+            payouts_enabled: mock_custody,
             clock: || NOW,
             log_dir: dir.clone(),
             manifest,

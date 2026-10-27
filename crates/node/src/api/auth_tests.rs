@@ -336,7 +336,7 @@ impl Node {
         // The dev limits, on buckets that refill once an hour, so no test depends on its speed.
         let hourly = |rate: RateLimit| Quota::with_period(Duration::from_secs(3600)).unwrap().allow_burst(rate.burst);
         let state = ApiState {
-            protocol: engine_core::protocol::ProtocolVersion::V22,
+            protocol: engine_core::protocol::ProtocolVersion::V23,
             access: None,
             tx,
             stream,

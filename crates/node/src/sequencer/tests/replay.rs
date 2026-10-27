@@ -78,7 +78,7 @@ fn replay_accepts_a_log_written_before_events_and_withdrawals_were_logged() {
 /// before the authorization sync, or before the checkpoint itself was durable.
 async fn a_restart_resigns_a_mock_withdrawal_the_log_ends_before(cut: fn(&str) -> usize, name: &str) {
     let dir = scratch_dir(name);
-    let node = TestSequencer::start(&dir, 16);
+    let node = TestSequencer::start_legacy(&dir, 16);
     node.submit(deposit(100, "dep-1")).await;
     node.submit(withdraw(40)).await;
     node.stop().await;
@@ -99,7 +99,7 @@ async fn a_restart_resigns_a_mock_withdrawal_the_log_ends_before(cut: fn(&str) -
         "the durable approval is tracked separately from legacy unsigned withdrawals"
     );
 
-    let mut node = TestSequencer::start(&dir, 16);
+    let mut node = TestSequencer::start_legacy(&dir, 16);
     let signed = node.withdrawals.try_recv().unwrap();
     assert_eq!((signed.account, signed.amount, signed.nonce), (TRADER, Fixed::from_int(40), 1));
     assert!(signed.authorization.is_some(), "the re-signed mock payout carries its authorization");
@@ -108,7 +108,7 @@ async fn a_restart_resigns_a_mock_withdrawal_the_log_ends_before(cut: fn(&str) -
     // restart neither refuses the log nor hands custody a duplicate payout.
     let replayed = replay(&log_entries(&dir)).unwrap();
     assert!(replayed.unreleased.is_empty());
-    let mut node = TestSequencer::start(&dir, 16);
+    let mut node = TestSequencer::start_legacy(&dir, 16);
     assert!(node.withdrawals.try_recv().is_err(), "recovery does not re-sign a payout custody already took");
     node.stop().await;
 }
