@@ -72,6 +72,8 @@ pub(super) struct Node {
     pub(super) state: ApiState,
     sequencer: JoinHandle<anyhow::Result<()>>,
     poster: JoinHandle<anyhow::Result<()>>,
+    status: JoinHandle<()>,
+    pub(super) reconciled: watch::Receiver<bool>,
 }
 
 impl Scenario {
@@ -219,7 +221,21 @@ impl Scenario {
         let recovery = seq.take_recovery_checkpoints();
         let (tx, rx) = mpsc::channel(1024);
         let sequencer = tokio::spawn(seq.run(rx));
-        let poster = tokio::spawn(poster.run_with_recovery(work_rx, tx.clone(), recovery));
+        let (status_tx, mut status_rx) = mpsc::channel(64);
+        let (observed, reconciled) = watch::channel(false);
+        let sequencer_tx = tx.clone();
+        let status = tokio::spawn(async move {
+            while let Some(message) = status_rx.recv().await {
+                let checked = matches!(&message, crate::sequencer::Request::CheckpointStatus { health: Some(_), .. });
+                if sequencer_tx.send(message).await.is_err() {
+                    break;
+                }
+                if checked {
+                    observed.send_replace(true);
+                }
+            }
+        });
+        let poster = tokio::spawn(poster.run_with_recovery(work_rx, status_tx, recovery));
         let unlimited = |_: RateLimit| Quota::per_second(NonZeroU32::MAX);
         let bundle = AttestationBundle {
             enclave_address: self.key.address(),
@@ -246,15 +262,17 @@ impl Scenario {
             listing: Default::default(),
         };
         let app = router(state.clone()).layer(Extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9)))));
-        self.node = Some(Node { app, state, sequencer, poster });
+        self.node = Some(Node { app, state, sequencer, poster, status, reconciled });
     }
 
     /// Stops the checkpoint worker and the sequencer, which drains and writes a final checkpoint.
     pub(super) async fn stop(&mut self) {
-        let Node { app, state, sequencer, poster } = self.node.take().expect("the node is running");
+        let Node { app, state, sequencer, poster, status, reconciled } = self.node.take().expect("the node is running");
         poster.abort();
         let _ = poster.await;
-        drop((app, state));
+        status.abort();
+        let _ = status.await;
+        drop((app, state, reconciled));
         sequencer.await.unwrap().unwrap();
     }
 

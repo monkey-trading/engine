@@ -257,6 +257,12 @@ impl Scenario {
 
     /// Ticks until a checkpoint follows the last command, then waits for the vault to post it.
     async fn checkpoint_posted(&self) {
+        // A recovered node waits for real collateral validation before signing another root.
+        let mut reconciled = self.node().reconciled.clone();
+        timeout(std::time::Duration::from_secs(20), reconciled.wait_for(|checked| *checked))
+            .await
+            .expect("collateral reconciliation completes")
+            .expect("the checkpoint worker remains available");
         while (self.query(|e| e.last_seq().unwrap()).await + 1) % CHECKPOINT_EVERY != 0 {
             self.submit(Command::Tick).await;
         }
