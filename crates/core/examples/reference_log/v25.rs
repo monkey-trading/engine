@@ -42,7 +42,12 @@ pub(crate) fn session(h: &mut Harness) {
         ),
         "{staked:?}"
     );
-    let repeat = h.cmd(Command::Stake { account: staker, amount: TokenUnits(1_000), block: 25_000_001, chain_ref: "0xstake:25:0".into() });
+    let repeat = h.cmd(Command::Stake {
+        account: staker,
+        amount: TokenUnits(1_000),
+        block: 25_000_001,
+        chain_ref: "0xstake:25:0".into(),
+    });
     assert!(
         repeat.iter().any(|e| matches!(e, Event::StakingRejected { reason: Reject::DuplicateReference, .. })),
         "{repeat:?}"
@@ -60,7 +65,12 @@ pub(crate) fn session(h: &mut Harness) {
         "{unstaked:?}"
     );
     // An unstake above the stake is refused without mutating it.
-    let over = h.cmd(Command::Unstake { account: staker, amount: TokenUnits(601), block: 25_000_003, chain_ref: "0xunstake:25:1".into() });
+    let over = h.cmd(Command::Unstake {
+        account: staker,
+        amount: TokenUnits(601),
+        block: 25_000_003,
+        chain_ref: "0xunstake:25:1".into(),
+    });
     assert!(
         over.iter().any(|e| matches!(e, Event::StakingRejected { reason: Reject::InsufficientStake, .. })),
         "{over:?}"

@@ -174,7 +174,12 @@ impl<V: VaultReader> DepositWatcher<V> {
         self.prove_window(from, to, true).await
     }
 
-    async fn prove_window(&mut self, from: u64, to: u64, staking: bool) -> Result<Option<BTreeMap<u64, B256>>, PollError> {
+    async fn prove_window(
+        &mut self,
+        from: u64,
+        to: u64,
+        staking: bool,
+    ) -> Result<Option<BTreeMap<u64, B256>>, PollError> {
         if let Some(hashes) = self.chain.window(from, to) {
             self.chain.insert(to, hashes[&to]);
             return Ok(Some(hashes));
@@ -195,7 +200,8 @@ impl<V: VaultReader> DepositWatcher<V> {
         // run below is the same one initialized above.
         let links = self.headers(next, end).await?;
         let slot = if staking { &mut self.confirmed.staking_window } else { &mut self.confirmed.window };
-        let run = &mut slot.as_mut().expect("window retained").run;        if let Err(cause) = run.extend(end, &links, |_| false, |_| true) {
+        let run = &mut slot.as_mut().expect("window retained").run;
+        if let Err(cause) = run.extend(end, &links, |_| false, |_| true) {
             *slot = None;
             return Err(PollError::unsettled(cause));
         }

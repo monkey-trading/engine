@@ -108,13 +108,8 @@ impl Scenario {
             governance_args.extend_from_slice(&U256::from(1).to_be_bytes::<32>());
             governance_args.extend_from_slice(accounts[0].into_word().as_slice());
         }
-        let governance = deploy(
-            &provider,
-            accounts[0],
-            "TimelockController.sol/TimelockController.json",
-            &governance_args,
-        )
-        .await;
+        let governance =
+            deploy(&provider, accounts[0], "TimelockController.sol/TimelockController.json", &governance_args).await;
         let args = (usdc, Address::from(key.address()), governance, U256::from(DEV_PERIOD_BUDGET)).abi_encode();
         let vault = deploy(&provider, accounts[0], "Vault.sol/Vault.json", &args).await;
         let monkey = {

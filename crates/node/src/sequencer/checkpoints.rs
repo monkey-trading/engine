@@ -75,10 +75,7 @@ impl Sequencer {
             // distributions claimable. While collateral reconciliation is diverged, no new root
             // may exist for a claim or a relay to reach. The poster's read-only withhold covers
             // divergence it observes after a restart, before any verdict reaches this gate.
-            warn!(
-                alert = "checkpoint_withheld",
-                seq, "no checkpoint signed: collateral reconciliation is diverged"
-            );
+            warn!(alert = "checkpoint_withheld", seq, "no checkpoint signed: collateral reconciliation is diverged");
             return Ok(());
         }
         // The worker finalizes one checkpoint at a time, so a full queue defers the next checkpoint

@@ -311,7 +311,11 @@ async fn shutdown_caches_a_skipped_checkpoint_the_chain_finalized_meanwhile() {
     node.history_caught_up().await;
     let final_checkpoint = burst_to_second_checkpoint(&node).await;
     node.tx
-        .send(Request::CheckpointStatus { posted: Some(final_checkpoint), health: Some(Health::Healthy), lifecycle: None })
+        .send(Request::CheckpointStatus {
+            posted: Some(final_checkpoint),
+            health: Some(Health::Healthy),
+            lifecycle: None,
+        })
         .await
         .unwrap();
     let (cfg, reader) = node.stop().await;

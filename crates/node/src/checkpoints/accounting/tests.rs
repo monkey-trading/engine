@@ -157,11 +157,7 @@ fn overflow_refuses_the_whole_accounting_batch_without_wrapping() {
         (
             Accounting { liabilities: Fixed::ONE, deposits: 2, unpaid: Fixed::ZERO },
             Command::Tick,
-            vec![Event::DistributionAllocated {
-                account: TRADER,
-                epoch: 0,
-                amount: UsdcUnits(u128::MAX),
-            }],
+            vec![Event::DistributionAllocated { account: TRADER, epoch: 0, amount: UsdcUnits(u128::MAX) }],
             "checkpoint distribution overflow",
         ),
     ];
