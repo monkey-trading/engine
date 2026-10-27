@@ -13,7 +13,7 @@ use crate::sequencer::replay::Replay;
 use crate::sequencer::{ReplayedLog, Sequencer, SequencerConfig};
 use crate::snapshot::{self, Snapshot};
 use crate::tee::EnclaveKey;
-use crate::test_support::{deposit, dev_config, sample_around, scratch_dir, sequencer_config};
+use crate::test_support::{dev_config, sample_around, scratch_dir, sequencer_config};
 
 /// A cache captured at a checkpoint restores each outstanding checkpoint's work with the accounting
 /// it was signed with, under a freshly supplied finalized anchor, and a cache missing that work
@@ -38,16 +38,33 @@ fn cache_restores_each_outstanding_checkpoint_with_its_original_accounting() {
     };
     let domain = CheckpointDomain { chain_id: cfg.chain_id, vault: cfg.vault };
     let mut seq = Sequencer::recover(cfg, key.clone(), broadcast::channel(32).0, mpsc::unbounded_channel().0).unwrap();
-    seq.activate_protocol().unwrap();
+    seq.activate_legacy_protocol().unwrap();
     seq.genesis(&dev_config().genesis).unwrap();
     seq.trust(sample_around(clock.as_ref())).unwrap();
+    seq.sequence(crate::test_support::empty_custody_frontier()).unwrap();
     while queued.try_recv().is_ok() {}
     let base = seq.last_seq().unwrap();
     seq.checkpoint_status(Some(base), Some(crate::checkpoints::Health::Healthy)).unwrap();
     let parent = seq.snapshot_base.as_ref().unwrap().parent().unwrap();
     let mut expected = Vec::new();
-    for (amount, reference) in [(7, "0xfirst"), (13, "0xsecond")] {
-        seq.stamp(seq.last_ts, deposit(amount, reference)).unwrap();
+    for amount in [7, 13] {
+        let receipt = engine_core::deposits::DepositReceipt {
+            block: 1,
+            block_hash: engine_core::eip712::B256::repeat_byte(1),
+            tx_hash: engine_core::eip712::B256::repeat_byte(amount as u8),
+            log_index: 0,
+            transaction_deposit_index: 0,
+            deposit_id: expected.len() as u64,
+            beneficiary: engine_core::deposits::DepositBeneficiary::House,
+            amount: Fixed::from_int(amount),
+        };
+        seq.stamp(
+            seq.last_ts,
+            engine_core::command::Command::CustodyDeposit(Box::new(engine_core::deposits::DepositUpdate::Credit {
+                receipt,
+            })),
+        )
+        .unwrap();
         expected.push(queued.try_recv().unwrap());
     }
     let offset = seq.outbox.last().unwrap().offset;

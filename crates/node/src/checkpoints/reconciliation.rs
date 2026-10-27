@@ -6,8 +6,7 @@ use tokio::time::Instant;
 use tracing::{error, info, warn};
 
 use crate::checkpoints::{
-    ApprovalId, CheckpointChain, Conflict, DepositCoverage, Health, LifecycleEvidence, Poster, VaultState, View, Work,
-    signature,
+    ApprovalId, CheckpointChain, Conflict, Health, LifecycleEvidence, Poster, VaultState, View, Work, signature,
 };
 
 /// The first vault deposit the finalized checkpoint has not credited, and since when it has been
@@ -66,7 +65,7 @@ impl<R: CheckpointChain> Poster<R> {
         let state = observation.state.clone();
         let Some((seq, root)) = &state.checkpoint else { return Ok(false) };
         let Some(work) = known.iter().copied().find(|work| work.checkpoint.seq == *seq) else { return Ok(false) };
-        if work.checkpoint.root != *root || work.coverage == DepositCoverage::AwaitingCanonicalScan {
+        if work.checkpoint.root != *root || !work.has_proven_prefix() {
             return Ok(false);
         }
         let paid = observation.lifecycle.as_ref().map_or(Fixed::ZERO, |evidence| evidence.total_withdrawn);
@@ -206,9 +205,9 @@ impl<R: CheckpointChain> Poster<R> {
         authorities[0]
             .verify(cp)
             .map_err(|_| Conflict("finalized checkpoint signer conflicts with accepted history"))?;
-        // This immutable checkpoint has no proven deposit prefix; it cannot validate collateral
-        // or release a recovered signing hold. Prelaunch legacy logs need a proven recovery base.
-        if work.coverage == DepositCoverage::AwaitingCanonicalScan {
+        // The empty bootstrap ledger proves prefix zero without a scan. Every other unscanned
+        // prefix remains unknown; a newer checkpoint cannot lend it canonical receipt coverage.
+        if !work.has_proven_prefix() {
             warn!(alert = "collateral_pending_deposits", "withdrawals await sequenced canonical receipt coverage");
             return Ok((Some(cp.seq), Health::Unvalidated, finalized_observation.lifecycle));
         }

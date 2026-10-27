@@ -8,7 +8,7 @@ use crate::log::Checkpoint;
 use crate::sequencer::Request;
 
 #[derive(Clone, Copy, Debug)]
-enum Comparison {
+pub(super) enum Comparison {
     MissingFinalized,
     OlderFinalized,
     UnprovenCoverage,
@@ -94,7 +94,7 @@ fn bootstrap(name: &str) -> (Sequencer, mpsc::Receiver<Work>, Work) {
     (seq, queued, last.expect("bootstrap signs before its first comparison because no finalized anchor exists"))
 }
 
-async fn worker_status(mut work: Work, comparison: Comparison) -> (Option<u64>, Option<Health>) {
+pub(super) async fn worker_status(mut work: Work, comparison: Comparison) -> (Option<u64>, Option<Health>) {
     let domain = work.checkpoint.domain.unwrap();
     let signer = work.checkpoint.signer.parse().unwrap();
     let mut latest = VaultState {

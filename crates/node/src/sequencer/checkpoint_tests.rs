@@ -142,6 +142,7 @@ fn gated_checkpoints_sign_the_previous_queued_root_and_coalesce_duplicate_reques
     seq.activate_legacy_protocol().unwrap();
     seq.genesis(&dev_config().genesis).unwrap();
     seq.trust(trusted_now()).unwrap();
+    seq.sequence(crate::test_support::empty_custody_frontier()).unwrap();
     seq.checkpoint().unwrap();
     seq.checkpoint().unwrap();
     let mut prior: Option<crate::log::Checkpoint> = None;
@@ -182,6 +183,7 @@ fn restart_resumes_exact_unmined_chain_and_original_checkpoint_accounting() {
     seq.activate_legacy_protocol().unwrap();
     seq.genesis(&dev_config().genesis).unwrap();
     seq.trust(trusted_now()).unwrap();
+    seq.sequence(crate::test_support::empty_custody_frontier()).unwrap();
     let mut prior = Vec::new();
     while let Ok(work) = queued.try_recv() {
         prior.push(work);
@@ -252,6 +254,7 @@ fn no_checkpoint_is_signed_while_collateral_is_diverged_and_signing_resumes_when
     seq.activate_protocol().unwrap();
     seq.genesis(&dev_config().genesis).unwrap();
     seq.trust(trusted_now()).unwrap();
+    seq.sequence(crate::test_support::empty_custody_frontier()).unwrap();
     while queued.try_recv().is_ok() {}
     let checkpoints = |dir: &std::path::Path| {
         log_entries(dir).iter().filter(|entry| matches!(entry, LogEntry::Checkpoint(_))).count()
@@ -309,6 +312,7 @@ fn a_recovered_finalized_anchor_is_reconciled_before_any_new_signature() {
     seq.activate_protocol().unwrap();
     seq.genesis(&dev_config().genesis).unwrap();
     seq.trust(trusted_now()).unwrap();
+    seq.sequence(crate::test_support::empty_custody_frontier()).unwrap();
     let mut anchor = None;
     while let Ok(work) = queued.try_recv() {
         anchor = Some(work);
@@ -342,3 +346,5 @@ fn a_recovered_finalized_anchor_is_reconciled_before_any_new_signature() {
 }
 
 mod unvalidated;
+
+mod bootstrap;

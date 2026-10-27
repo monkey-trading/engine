@@ -349,6 +349,8 @@ impl Node {
         seq.activate_legacy_protocol().unwrap();
         seq.genesis(&dev_config().genesis).unwrap();
         seq.trust(sample_around(clock.as_ref())).unwrap();
+        seq.sequence(crate::test_support::empty_custody_frontier()).unwrap();
+        seq.checkpoint().unwrap();
         assert_eq!(seq.engine.protocol_version(), ProtocolVersion::V23);
         seq.checkpoint_status(seq.last_seq(), Some(crate::checkpoints::Health::Healthy)).unwrap();
         Self { seq, clock, dir, work, _queued: queued, signed }

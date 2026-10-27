@@ -296,6 +296,7 @@ async fn shutdown_caches_a_skipped_checkpoint_the_chain_finalized_meanwhile() {
     let (work, mut sent) = mpsc::channel(1024);
     let node =
         Node::start_gated(configuration("paired-skipped-finalized"), CheckpointParent::default(), work).await.unwrap();
+    node.submit(crate::test_support::empty_custody_frontier()).await;
     let mut n = 0;
     let base = loop {
         node.submit(deposit(1, &format!("gated-{n}"))).await;

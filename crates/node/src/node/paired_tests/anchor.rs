@@ -76,6 +76,7 @@ async fn gated_log() -> (NodeConfig, Vec<Checkpoint>, Checkpoint) {
     cfg.node.checkpoint_every = 2;
     let (work, mut sent) = mpsc::channel(1024);
     let node = Node::start_gated(cfg, CheckpointParent::default(), work).await.unwrap();
+    node.submit(crate::test_support::empty_custody_frontier()).await;
     let mut checkpoints = Vec::new();
     let mut n = 0;
     while checkpoints.is_empty() {

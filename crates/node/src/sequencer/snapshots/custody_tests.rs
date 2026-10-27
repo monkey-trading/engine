@@ -141,6 +141,7 @@ fn a_cache_holding_a_v22_approval_refuses_snapshot_recovery() {
     seq.activate_legacy_protocol().unwrap();
     seq.genesis(&dev_config().genesis).unwrap();
     seq.trust(sample_around(clock.as_ref())).unwrap();
+    seq.sequence(crate::test_support::empty_custody_frontier()).unwrap();
     while queued.try_recv().is_ok() {}
     seq.checkpoint_status(seq.last_seq(), Some(crate::checkpoints::Health::Healthy)).unwrap();
     let parent = seq.snapshot_base.as_ref().unwrap().parent().unwrap();

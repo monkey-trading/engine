@@ -85,6 +85,10 @@ impl Sequencer {
             warn!(alert = "checkpoint_withheld", seq, "no checkpoint signed: collateral is unvalidated or diverged");
             return Ok(());
         }
+        if self.gate.is_some() && !Work::can_capture(self.accounting, &self.engine) {
+            warn!(alert = "checkpoint_withheld", seq, "no checkpoint signed: custody prefix awaits canonical scan");
+            return Ok(());
+        }
         // The worker finalizes one checkpoint at a time, so a full queue defers the next checkpoint
         // instead of stopping the sequencer; unproved approvals wait for the next one that fits.
         if let Some(gate) = &mut self.gate

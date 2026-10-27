@@ -47,6 +47,7 @@ fn gated_live_and_recovered_accounting_matches_cash_through_trading_and_withdraw
     seq.activate_legacy_protocol().unwrap();
     seq.genesis(&genesis).unwrap();
     seq.trust(sample_around(clock.as_ref())).unwrap();
+    seq.sequence(crate::test_support::empty_custody_frontier()).unwrap();
     let mut bootstrap = Vec::new();
     while let Ok(work) = queued.try_recv() {
         bootstrap.push(work);

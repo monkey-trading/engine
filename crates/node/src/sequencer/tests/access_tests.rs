@@ -37,6 +37,7 @@ fn access_withdrawals_record_refusals_and_recover_only_checkpoint_confirmed_appr
     seq.activate_protocol().unwrap();
     seq.genesis(&dev_config().genesis).unwrap();
     seq.trust(sample_around(clock.as_ref())).unwrap();
+    seq.sequence(crate::test_support::empty_custody_frontier()).unwrap();
     let account = access::account(1);
     let declaration = access::declaration(&seq.engine, 1);
     let declared = seq.sequence(declaration).unwrap().unwrap();

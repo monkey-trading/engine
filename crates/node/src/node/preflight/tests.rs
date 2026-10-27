@@ -253,7 +253,6 @@ async fn incomplete_genesis_and_missing_checkpoint_service_preserve_history_byte
     use crate::sequencer::{Sequencer, SequencerConfig};
     use crate::test_support::{access, sequencer_config, trusted_now};
     use tokio::sync::{broadcast, mpsc, watch};
-
     for incomplete_genesis in [false, true] {
         let (_guard, mut alerts) = crate::test_support::capture_alerts();
         let root = scratch_dir(&format!("preflight-pure-genesis-{incomplete_genesis}"));
@@ -281,6 +280,9 @@ async fn incomplete_genesis_and_missing_checkpoint_service_preserve_history_byte
         while queued.try_recv().is_ok() {}
         let (tx, rx) = mpsc::channel(64);
         let task = tokio::spawn(seq.run(rx));
+        tx.send(crate::sequencer::Request::Submit { cmd: crate::test_support::empty_custody_frontier(), reply: None })
+            .await
+            .unwrap();
         tx.send(crate::sequencer::Request::CheckpointStatus {
             posted: None,
             health: Some(Health::Healthy),
@@ -341,6 +343,7 @@ async fn incomplete_genesis_and_missing_checkpoint_service_preserve_history_byte
         }
         drop(tx);
         task.await.unwrap().unwrap();
+        while alerts.try_recv().is_ok() {}
         if incomplete_genesis {
             let mut entries = crate::test_support::log_entries(&cfg.node.log_dir);
             let first = entries.iter().position(|entry| matches!(entry, LogEntry::Command(command) if matches!(command.sequenced.cmd, engine_core::command::Command::Admin(engine_core::command::AdminCommand::SetParams(_))))).unwrap();

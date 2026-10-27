@@ -77,6 +77,29 @@ impl Work {
         }
     }
 
+    /// Whether signing now can produce work with a provable credited prefix.
+    pub(crate) fn can_capture(accounting: Accounting, engine: &engine_core::Engine) -> bool {
+        !engine.deposit_finality_enabled()
+            || engine.custody_deposit_coverage().is_some()
+            || Self::empty_prefix(
+                accounting.deposits,
+                accounting.liabilities,
+                accounting.unpaid(),
+                engine.staking().map_or(UsdcUnits(0), |staking| staking.distributed),
+            )
+    }
+
+    /// No allocated custody liability can depend on the identity of a receipt in an empty prefix.
+    fn empty_prefix(deposits: u64, liabilities: Fixed, authorized: Fixed, distributed: UsdcUnits) -> bool {
+        deposits == 0 && liabilities == Fixed::ZERO && authorized == Fixed::ZERO && distributed == UsdcUnits(0)
+    }
+
+    /// An empty ledger has the exact empty credited prefix independently of a custody scan.
+    pub(crate) fn has_proven_prefix(&self) -> bool {
+        self.coverage != DepositCoverage::AwaitingCanonicalScan
+            || Self::empty_prefix(self.deposits, self.liabilities, self.authorized, self.distributed)
+    }
+
     /// Whether this work carries `accounting`'s liabilities and approvals and, unless sequenced
     /// chain proof counted them, its deposits.
     pub(crate) fn matches_accounting(&self, accounting: Accounting) -> bool {
