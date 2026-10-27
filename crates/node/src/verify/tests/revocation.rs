@@ -48,10 +48,12 @@ fn the_revocation_list_must_be_fresh_issued_by_the_root_and_signed_by_it() {
     let early = crl_signed(&chain, &[], (2030, 1, 1), (2049, 1, 1), None);
     assert!(check_revocation(&crl_der(early), &quote).is_err());
 
-    // A list signed by a key that is not the root's is refused, as is one issued by another name.
+    // A list signed by a key that is not the root's is refused.
     let other = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384).unwrap();
     let wrong_key = crl_signed(&chain, &[], (2024, 1, 1), (2049, 1, 1), Some(&other));
     assert!(check_revocation(&crl_der(wrong_key), &quote).is_err());
+    // A list issued under another name but signed with the root's key is refused too, so only
+    // the issuer-name check can reject it, not the signature check.
     let other_params = ca_params("Other-Root");
     let foreign = rcgen::CertificateRevocationListParams {
         this_update: rcgen::date_time_ymd(2024, 1, 1),
@@ -61,7 +63,7 @@ fn the_revocation_list_must_be_fresh_issued_by_the_root_and_signed_by_it() {
         revoked_certs: Vec::new(),
         key_identifier_method: other_params.key_identifier_method.clone(),
     }
-    .signed_by(&rcgen::Issuer::from_params(&other_params, &other))
+    .signed_by(&rcgen::Issuer::from_params(&other_params, &chain.ark_key))
     .unwrap();
     assert!(check_revocation(foreign.der().as_ref(), &quote).is_err());
 }
