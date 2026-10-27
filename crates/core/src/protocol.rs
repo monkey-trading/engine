@@ -146,11 +146,13 @@ pub enum ProtocolVersion {
     V26,
     /// Staking mirror identities and completed finalized scan ranges are authenticated in the state root.
     V27,
+    /// Reserve unresolved negative client cash before allocating staking distributions.
+    V28,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V27;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V28;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

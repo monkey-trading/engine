@@ -161,3 +161,6 @@ fn a_later_close_adds_to_the_cumulative_distribution_and_proves_against_the_root
     assert!(proof.verify(root.into()), "the cumulative distribution proves against the state root");
     assert_eq!(proof.entitled, UsdcUnits(99_000_100_000_000));
 }
+
+#[path = "staking/negative_cash.rs"]
+mod negative_cash;

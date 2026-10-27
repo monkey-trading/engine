@@ -19,6 +19,8 @@
 //!   Below one USDC base unit, when no account is staked, or at or below the floor, nothing
 //!   distributes. Each staker receives `floor(excess · stake / total stake)` in USDC base units, so
 //!   every allocation is a whole USDC unit the vault pays exactly; the remainder is the house's.
+//!   From V28, unresolved negative client cash is reserved too: a partial liquidation cannot pay
+//!   stakers with an unfunded realised loss while another position cannot close.
 //!   House cash falls by the allocated total. Each account's cumulative distribution is a leaf of
 //!   its own in the state tree, which the vault checks a claim against.
 //! - **Reconciliation.** Allocations reduce house cash before any USDC leaves the vault; the
@@ -318,14 +320,29 @@ impl Engine {
         // deposits and each client's, whose realised gains are therefore not distributed until the
         // deposit finalises. NAV can exceed that cash while clients' open positions sit
         // underwater; the unrealised excess is not paid either.
-        let unfinalised: Fixed = self.accounts.values().map(|acct| acct.unfinalised_deposits).sum();
-        let available = Fixed::from_raw(
-            self.house_cash
-                .raw()
-                .saturating_sub(self.unfinalised_house_deposits.raw())
-                .saturating_sub(unfinalised.raw()),
-        );
-        let excess = (nav.min(available) - config.liquidity_floor).max(Fixed::ZERO);
+        // TODO: maintain the account reserve incrementally before account-count growth makes
+        // epoch close exceed its sequencing latency budget.
+        let reserved = if self.protocol_version >= ProtocolVersion::V28 {
+            self.accounts.values().fold(0i128, |reserved, account| {
+                reserved
+                    .saturating_add(account.unfinalised_deposits.raw())
+                    .saturating_add(account.balance.raw().saturating_neg().max(0))
+            })
+        } else {
+            self.accounts.values().map(|account| account.unfinalised_deposits).sum::<Fixed>().raw()
+        };
+        let available_raw =
+            self.house_cash.raw().saturating_sub(self.unfinalised_house_deposits.raw()).saturating_sub(reserved);
+        let available = Fixed::from_raw(if self.protocol_version >= ProtocolVersion::V28 {
+            available_raw.max(0)
+        } else {
+            available_raw
+        });
+        let excess = if self.protocol_version >= ProtocolVersion::V28 {
+            Fixed::from_raw(nav.raw().min(available.raw()).saturating_sub(config.liquidity_floor.raw()).max(0))
+        } else {
+            (nav.min(available) - config.liquidity_floor).max(Fixed::ZERO)
+        };
         let usdc_excess = if excess.is_positive() { (excess.raw() / USDC_SCALE) as u128 } else { 0 };
         let mut allocated = 0u128;
         if usdc_excess > 0 && !self.staked.is_empty() {

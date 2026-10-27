@@ -244,3 +244,27 @@ fn gains_on_unfinalised_trader_deposits_stay_undistributed() {
     assert!(events.iter().any(|e| matches!(e, Event::DistributionEpochClosed { excess, allocated, .. }
         if *excess == UsdcUnits(0) && *allocated == UsdcUnits(0))));
 }
+
+#[test]
+fn v28_negative_cash_reserves_saturate_without_overflow_or_distributing_insolvent_cash() {
+    for cash in [i128::MIN, -1, 0, i128::MAX] {
+        let mut engine = engine(1_000);
+        engine.protocol_version = ProtocolVersion::V28;
+        engine.init_staking(&config(1_000)).unwrap();
+        engine.house_cash = Fixed::from_raw(cash);
+        engine.staked.insert(AccountId([1; 20]), TokenUnits(1));
+        for account in [AccountId([2; 20]), AccountId([3; 20])] {
+            engine.accounts.entry(account).or_default().balance = Fixed::from_raw(i128::MIN);
+            engine.accounts.get_mut(&account).unwrap().unfinalised_deposits = Fixed::from_raw(i128::MAX);
+        }
+        engine.now = config(1_000).epoch_end(0);
+        let mut events = Vec::new();
+        engine.finalise_staking(&mut events);
+        assert_eq!(engine.distribution(AccountId([1; 20])), UsdcUnits(0));
+        assert_eq!(engine.house_cash.raw(), cash);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::DistributionEpochClosed { excess: UsdcUnits(0), allocated: UsdcUnits(0), .. }
+        )));
+    }
+}

@@ -235,6 +235,7 @@ this crate and reproduce the signed state roots exactly.
   emissions from `V19`: allocation, rounding, cancellation, and finality; which losses count and the
   signed initialisation; and the schedule's arithmetic with the first halving
 - `tests/staking_authentication.rs` — V27 mirror-identity roots, migration, and finalized scan anchors
+- `tests/staking/negative_cash.rs` — partial liquidation, unresolved negative cash, finality reserves, and protected claim liquidity
 - `tests/staking.rs` — MONKEY staking and USDC distributions from `V25`: stake and unstake
   mirroring, epoch closes above and below the liquidity floor, pro-rata rounding, skipped epochs,
   and distribution proofs
@@ -242,7 +243,7 @@ this crate and reproduce the signed state roots exactly.
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
   `V15` to `V23` parts (`v15.rs` to `v23.rs`)
-  `V15` to `V22`, `V24`, and `V26` parts (`v15.rs` to `v22.rs`, `v24.rs`, `v26.rs`)
+  `V15` to `V28` parts, including `v24.rs` to `v28.rs`
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
 
@@ -332,6 +333,10 @@ Two suites guard replay and accounting:
   `V15` it also checks that a resting order accepted below its market's minimum notional, or with no
   dollar value, can only reduce its account's position in that market; under `V16`, that no
   account's toxicity history exceeds the memory in force.
+
+Staking protocol V28 also reserves unresolved negative client cash: a partial liquidation cannot
+distribute an unfunded loss while another position remains untradeable. Epoch close uses the existing
+account reserve scan, followed by the staker allocation pass; it is O(accounts + stakers).
 
 Staking protocol V27 authenticates mirror identities as kind-15 leaves and completed finalized
 scan anchors in the staking globals, while retaining V25 reference roots. V25 remains a legacy

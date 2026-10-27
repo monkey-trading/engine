@@ -1,6 +1,5 @@
-//! Writes the reference log for a new protocol version: a scripted session through every command
-//! and the engine's main paths, with the state root after each command. Run it once per protocol
-//! version and commit the output; it refuses to overwrite a log that already exists.
+//! Writes a protocol reference log: a session through every command and main path, with each command's state root.
+//! Run it once per protocol version and commit the output; it refuses to overwrite an existing log.
 //!
 //! `cargo run -p engine-core --example reference_log -- crates/core/tests/reference/v<N>.jsonl`
 
@@ -25,6 +24,7 @@ mod v24;
 mod v25;
 mod v26;
 mod v27;
+mod v28;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -495,5 +495,6 @@ fn session() -> Vec<Sequenced> {
     v25::session(&mut h);
     v26::session(&mut h);
     v27::session(&mut h);
+    v28::session(&mut h);
     h.log
 }
