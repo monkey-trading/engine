@@ -26,6 +26,7 @@ mod v26;
 mod v27;
 mod v28;
 mod v29;
+mod v30;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -48,11 +49,9 @@ use engine_core::session::{Period, Schedule};
 use engine_core::types::{AssetClass, MarketId, Side};
 use helpers::{accepted, event_kind, reducing, small_buy, write_entries};
 
-/// A market the session lists with two margin bands.
 const SOL: MarketId = 10;
 /// A market the session lists for the margin and solvency rules of protocol `V6`.
 const GOLD: MarketId = 11;
-/// A second market for the `V6` rules, whose margin table rises.
 const OIL: MarketId = 12;
 
 /// Writes the session to the path given as the only argument, then prints how often each event
@@ -496,5 +495,6 @@ fn session() -> Vec<Sequenced> {
     v27::session(&mut h);
     v28::session(&mut h);
     v29::session(&mut h);
+    v30::session(&mut h);
     h.log
 }

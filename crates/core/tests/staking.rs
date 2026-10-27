@@ -167,3 +167,6 @@ mod negative_cash;
 
 #[path = "staking/marked_equity.rs"]
 mod marked_equity;
+
+#[path = "staking/composed_reserves.rs"]
+mod composed_reserves;

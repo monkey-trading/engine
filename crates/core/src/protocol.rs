@@ -150,11 +150,13 @@ pub enum ProtocolVersion {
     V28,
     /// Exclude uncollectible marked client equity from distributable house NAV.
     V29,
+    /// Compose reversible principal with marked liabilities before staking allocation.
+    V30,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V29;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V30;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

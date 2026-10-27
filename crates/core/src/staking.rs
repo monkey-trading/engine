@@ -322,24 +322,31 @@ impl Engine {
         // underwater; the unrealised excess is not paid either.
         // TODO: maintain the account reserve incrementally before account-count growth makes
         // epoch close exceed its sequencing latency budget.
-        let (reserved, uncollectible) = if self.protocol_version >= ProtocolVersion::V28 {
-            self.accounts.values().fold((0i128, 0i128), |(reserved, uncollectible), account| {
-                let deficit = if self.protocol_version >= ProtocolVersion::V29 {
-                    self.equity_and_margin(account, None).0.raw().saturating_neg().max(0)
-                } else {
-                    0
-                };
-                (
-                    reserved
-                        .saturating_add(account.unfinalised_deposits.raw())
-                        .saturating_add(account.balance.raw().saturating_neg().max(0)),
-                    uncollectible.saturating_add(deficit),
-                )
-            })
+        let (reserved, uncollectible, principal) = if self.protocol_version >= ProtocolVersion::V28 {
+            self.accounts.values().fold(
+                (0i128, 0i128, self.unfinalised_house_deposits.raw()),
+                |(reserved, uncollectible, principal), account| {
+                    let deficit = if self.protocol_version >= ProtocolVersion::V29 {
+                        self.equity_and_margin(account, None).0.raw().saturating_neg().max(0)
+                    } else {
+                        0
+                    };
+                    (
+                        reserved
+                            .saturating_add(account.unfinalised_deposits.raw())
+                            .saturating_add(account.balance.raw().saturating_neg().max(0)),
+                        uncollectible.saturating_add(deficit),
+                        principal.saturating_add(account.unfinalised_deposits.raw()),
+                    )
+                },
+            )
         } else {
-            (self.accounts.values().map(|account| account.unfinalised_deposits).sum::<Fixed>().raw(), 0)
+            (self.accounts.values().map(|account| account.unfinalised_deposits).sum::<Fixed>().raw(), 0, 0)
         };
-        let distributable_nav = Fixed::from_raw(nav.raw().saturating_sub(uncollectible));
+        // Reversible principal and outstanding client gains must remain covered together.
+        // Cash debt is already in the independent funded-cash ceiling, so it is not deducted here.
+        let principal = if self.protocol_version >= ProtocolVersion::V30 { principal } else { 0 };
+        let distributable_nav = Fixed::from_raw(nav.raw().saturating_sub(principal).saturating_sub(uncollectible));
         let available_raw =
             self.house_cash.raw().saturating_sub(self.unfinalised_house_deposits.raw()).saturating_sub(reserved);
         let available = Fixed::from_raw(if self.protocol_version >= ProtocolVersion::V28 {

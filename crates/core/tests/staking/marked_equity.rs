@@ -13,7 +13,7 @@ use engine_core::types::{AccountId, AssetClass, Side};
 
 #[allow(dead_code)]
 #[path = "../access/support.rs"]
-mod access;
+pub(super) mod access;
 
 const SHARE: u32 = 290;
 
@@ -49,12 +49,14 @@ fn v29_discounts_negative_marked_equity_with_positive_cash_before_clients_settle
 
 #[test]
 fn marked_equity_and_cash_debt_caps_do_not_charge_the_same_deficit_twice() {
-    let (mut h, losing, other, staker) = super::negative_cash::partial_liquidation();
-    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V29 });
-    next_epoch(&mut h);
-    assert_eq!(h.engine.distribution(staker), UsdcUnits(2_100_000_000));
-    assert_eq!(h.engine.house_cash() + h.balance(losing), f("100"));
-    assert_eq!(h.balance(other), f("1000"));
+    for version in [ProtocolVersion::V29, ProtocolVersion::V30] {
+        let (mut h, losing, other, staker) = super::negative_cash::partial_liquidation();
+        h.admin(AdminCommand::ActivateProtocol { version });
+        next_epoch(&mut h);
+        assert_eq!(h.engine.distribution(staker), UsdcUnits(2_100_000_000));
+        assert_eq!(h.engine.house_cash() + h.balance(losing), f("100"));
+        assert_eq!(h.balance(other), f("1000"));
+    }
 }
 
 #[test]
@@ -68,10 +70,15 @@ fn crossing_from_v28_to_v29_at_epoch_end_uses_the_collectible_equity_cap_immedia
 }
 
 /// Two offsetting euro positions leave reported NAV flat while a closed-market FX move makes one insolvent.
-fn closed_share_fx_loss() -> (Harness, AccountId, AccountId, AccountId) {
+pub(super) fn closed_share_fx_loss() -> (Harness, AccountId, AccountId, AccountId) {
+    closed_share_fx_loss_with_house("1000")
+}
+
+pub(super) fn closed_share_fx_loss_with_house(house: &str) -> (Harness, AccountId, AccountId, AccountId) {
     let mut h = Harness::v8(ClientAuth::Eip712 { chain_id: crate::common::CHAIN_ID, vault: crate::common::VAULT });
     let mut parameters = h.engine.params().unwrap().clone();
     parameters.profit_fee_bps = 0;
+    parameters.house_total_cap_floor = f("10000");
     parameters.stress_levels.truncate(1);
     parameters.toxicity.tiers.clear();
     h.operator_admin(AdminCommand::SetParams(parameters));
@@ -87,7 +94,7 @@ fn closed_share_fx_loss() -> (Harness, AccountId, AccountId, AccountId) {
     share.house_cap_floor = f("10000");
     share.financing.markup_bps = 0;
     h.operator_admin(AdminCommand::UpsertMarket(share));
-    h.cmd(Command::HouseCapital { amount: f("-99999000"), chain_ref: "house-to-1000".into() });
+    h.cmd(Command::HouseCapital { amount: f(house) - f("100000000"), chain_ref: "house-to-1000".into() });
     let closes = ny(2026, 10, 20, 16, 0);
     h.operator_admin(AdminCommand::InitStaking(StakingConfig {
         liquidity_floor: f("1"),
@@ -113,14 +120,14 @@ fn closed_share_fx_loss() -> (Harness, AccountId, AccountId, AccountId) {
     assert_eq!(h.equity_and_margin(losing).0, f("-3"));
     assert_eq!(h.engine.accounts()[&losing].position(SHARE).qty, f("1"));
     assert!(!h.engine.markets()[&SHARE].open);
-    assert_eq!(h.engine.house_cash(), f("1000"));
-    assert_eq!(h.engine.house_nav(), f("1000"));
+    assert_eq!(h.engine.house_cash(), f(house));
+    assert_eq!(h.engine.house_nav(), f(house));
     h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V28 });
     (h, losing, winning, staker)
 }
 
 /// Reopening settles the insolvent long and then the solvent short through an authenticated order.
-fn settle_positions(h: &mut Harness, losing: AccountId, winning: AccountId) {
+pub(super) fn settle_positions(h: &mut Harness, losing: AccountId, winning: AccountId) {
     h.advance_to(ny(2026, 10, 21, 9, 30));
     h.price(EURUSD, "1.01");
     let events = h.price(SHARE, "100");

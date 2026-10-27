@@ -311,6 +311,7 @@ impl Command {
         };
         (current < ProtocolVersion::V28 && target >= ProtocolVersion::V28)
             || (current < ProtocolVersion::V29 && target >= ProtocolVersion::V29)
+            || (current < ProtocolVersion::V30 && target >= ProtocolVersion::V30)
     }
 
     /// Whether this node-only activation must precede dated benchmark catch-up.
