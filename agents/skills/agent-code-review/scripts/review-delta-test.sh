@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Checks review-delta.sh on a scratch repository shaped like the engine's: a renumber after main
 # gains a version and extends the shared all-version prose list, a site the renumber missed, a
-# line moved between methods, binary fixtures (also under a text conversion), bad arguments, and
-# failures. Prints one line per case and exits 1 if any case fails.
+# line moved between methods, binary fixtures (also under a text conversion), a caller in a
+# subdirectory under an inherited diff.relative, bad arguments, and failures. Prints one line per
+# case and exits 1 if any case fails.
 set -euo pipefail
 script="$(cd "$(dirname "$0")" && pwd)/review-delta.sh"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
@@ -91,4 +92,11 @@ check binary-changed-under-textconv 1 "$base" "$blob_a" "$base" "$blob_b"
 check bad-ref 3 "$base" no-such-ref "$base" "$reviewed"
 check bad-pair 2 "$base" "$reviewed" "$base" "$reviewed" V2.1=V3
 check non-label-pair 2 "$base" "$reviewed" "$base" "$reviewed" settle=settle_financing
+# An inherited diff.relative must not shrink the patches to the caller's directory.
+git config diff.relative true
+cd crates/core
+check relative-binary-changed 1 "$base" "$blob_a" "$base" "$blob_b"
+check relative-renumber 0 "$base" "$reviewed" "$main" "$renumbered" V21=V22 v21=v22 V20=V21 v20=v21
+cd "$tmp"
+git config diff.relative false
 exit "$failed"
