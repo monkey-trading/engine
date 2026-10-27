@@ -104,6 +104,7 @@ impl Engine {
             markets,
             nonces,
             refs,
+            staking_refs,
             period_results,
             entitlements,
             staked,
@@ -201,6 +202,7 @@ impl Engine {
                 .into_iter()
                 .map(|key| (key, self.withdrawal_approvals.get(&key).map(withdrawal_approval_hash))),
         );
+        changes.extend(self.staking_reference_leaves(staking_refs));
         changes.extend(staked.into_iter().map(|id| (staked_key(id), self.staked.get(&id).map(|s| staked_hash(*s)))));
 
         // A seq has been applied: `V9` takes effect through a sequenced `ActivateProtocol`.
@@ -373,6 +375,7 @@ impl Engine {
             markets: self.markets.take_touched(),
             nonces: self.request_nonces.take_touched(),
             refs: self.credited_refs.take_touched(),
+            staking_refs: self.staking_refs.take_touched(),
             period_results: self.period_results.take_touched(),
             entitlements: self.entitlements.take_touched(),
             staked: self.staked.take_touched(),
@@ -396,6 +399,7 @@ impl Engine {
             markets: self.markets.keys().copied().collect(),
             nonces: self.request_nonces.keys().copied().collect(),
             refs: self.credited_refs.iter().cloned().collect(),
+            staking_refs: self.staking_refs.iter().cloned().collect(),
             period_results: self.period_results.keys().copied().collect(),
             entitlements: self.entitlements.keys().copied().collect(),
             staked: self.staked.keys().copied().collect(),

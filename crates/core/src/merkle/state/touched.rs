@@ -31,6 +31,7 @@ pub(crate) struct Touched {
     pub(crate) markets: BTreeSet<MarketId>,
     pub(crate) nonces: BTreeSet<AccountId>,
     pub(crate) refs: BTreeSet<String>,
+    pub(crate) staking_refs: BTreeSet<String>,
     pub(crate) period_results: BTreeSet<AccountId>,
     pub(crate) entitlements: BTreeSet<AccountId>,
     pub(crate) staked: BTreeSet<AccountId>,
@@ -43,4 +44,21 @@ pub(crate) struct Touched {
     pub(crate) corporate_actions: BTreeSet<String>,
     pub(crate) corporate_refs: BTreeSet<String>,
     pub(crate) changed: Changed,
+}
+
+impl crate::engine::Engine {
+    /// Commits only changed staking identities under the protocol that authenticates them.
+    pub(super) fn staking_reference_leaves(&self, refs: BTreeSet<String>) -> Vec<(B256, Option<B256>)> {
+        if self.protocol_version < crate::protocol::ProtocolVersion::V27 {
+            return Vec::new();
+        }
+        refs.into_iter()
+            .map(|reference| {
+                (
+                    crate::merkle::leaf::staking_reference_key(&reference),
+                    self.staking_refs.contains(&reference).then(|| crate::merkle::leaf::credited_ref_hash(&reference)),
+                )
+            })
+            .collect()
+    }
 }

@@ -140,11 +140,13 @@ pub enum ProtocolVersion {
     /// mirror the staking contract's finalised events, each credited once under its chain
     /// reference.
     V25,
+    /// Staking mirror identities and completed finalized scan ranges are authenticated in the state root.
+    V27,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V25;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V27;
 
     /// Whether this rule set credits exact receipts with withdrawal principal locks.
     pub fn supports_deposit_finality(self) -> bool {

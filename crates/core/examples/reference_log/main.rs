@@ -22,6 +22,7 @@ mod v21;
 mod v22;
 mod v23;
 mod v25;
+mod v27;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -489,5 +490,6 @@ fn session() -> Vec<Sequenced> {
     v22::session(&mut h);
     v23::session(&mut h);
     v25::session(&mut h);
+    v27::session(&mut h);
     h.log
 }

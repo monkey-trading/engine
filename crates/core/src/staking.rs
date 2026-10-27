@@ -75,6 +75,17 @@ pub struct Staking {
     /// frontier the watcher resumes from, so a host cursor cannot skip an unmirrored event.
     #[serde(default)]
     pub mirrored_through: Option<u64>,
+    /// The last fully verified finalized staking block, recorded only after its complete event range.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_through: Option<StakingCheckpoint>,
+}
+
+/// The authenticated anchor of a completed finalized staking scan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StakingCheckpoint {
+    pub block: u64,
+    pub block_hash: alloy_primitives::B256,
 }
 
 impl fmt::Display for UsdcUnits {
@@ -172,6 +183,24 @@ impl Engine {
         self.distributions.get(&account).copied().unwrap_or_default()
     }
 
+    /// Records a fully verified finalized staking range after all its events have applied.
+    pub(crate) fn staking_progress(&mut self, block: u64, block_hash: alloy_primitives::B256, events: &mut Vec<Event>) {
+        let valid = self.protocol_version >= ProtocolVersion::V27
+            && block != u64::MAX
+            && block_hash != alloy_primitives::B256::ZERO
+            && self.staking.as_ref().is_some_and(|staking| {
+                staking.mirrored_through.is_none_or(|through| block >= through)
+                    && staking.completed_through.is_none_or(|through| {
+                        block > through.block || (block == through.block && block_hash == through.block_hash)
+                    })
+            });
+        if !valid {
+            events.push(Event::AdminRejected { reason: "invalid staking finalized frontier".into() });
+            return;
+        }
+        self.staking.as_mut().expect("checked above").completed_through = Some(StakingCheckpoint { block, block_hash });
+    }
+
     /// Whether a staking mirror's chain reference already credited.
     pub fn is_staking_credited(&self, reference: &str) -> bool {
         self.staking_refs.contains(reference)
@@ -189,7 +218,13 @@ impl Engine {
             return Err("staking is already initialised".into());
         }
         config.validate(self.now)?;
-        self.staking = Some(Staking { config: *config, epoch: 0, distributed: UsdcUnits(0), mirrored_through: None });
+        self.staking = Some(Staking {
+            config: *config,
+            epoch: 0,
+            distributed: UsdcUnits(0),
+            mirrored_through: None,
+            completed_through: None,
+        });
         Ok(())
     }
 

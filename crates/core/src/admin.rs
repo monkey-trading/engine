@@ -288,6 +288,9 @@ impl Engine {
                                 .sum::<crate::Fixed>(),
                     );
                 }
+                if self.protocol_version < ProtocolVersion::V27 && *version >= ProtocolVersion::V27 {
+                    self.tree = None;
+                }
                 self.protocol_version = *version;
             }
             AdminCommand::InitEmissions(schedule) => self.init_emissions(schedule)?,

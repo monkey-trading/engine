@@ -3,6 +3,7 @@
 //! sequenced stream *is* the public event log; replaying it through this
 //! crate reproduces the state exactly.
 
+use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
@@ -66,6 +67,11 @@ pub enum Command {
     /// command is refused once any deposit or house capital is credited. Boxed: admin commands are
     /// rare, and inline this one would grow every command.
     SignedAdmin(Box<AdminRequest>),
+    /// From `V27`, the last fully verified finalized staking block, including empty ranges.
+    StakingProgress {
+        block: u64,
+        block_hash: B256,
+    },
     /// From `V25`, a staking contract's `Staked` event, finalised: `amount` of MONKEY base units
     /// staked for `account`, credited once under `chain_ref`, in the finalised Ethereum `block`
     /// the event was mirrored from (see `Engine`'s staking frontier).

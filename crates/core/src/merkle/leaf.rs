@@ -83,6 +83,7 @@ const RECEIPT_INDEX: u8 = 11;
 const LEGACY_PRINCIPAL: u8 = 12;
 const DISTRIBUTION: u8 = 13;
 const STAKED: u8 = 14;
+const STAKING_REFERENCE: u8 = 15;
 const CORPORATE_ACTION: u8 = 21;
 const CORPORATE_REFERENCE: u8 = 22;
 
@@ -411,6 +412,11 @@ pub fn distribution_hash(entitled: UsdcUnits) -> B256 {
 /// The key of `account`'s staked-balance leaf.
 pub(crate) fn staked_key(account: AccountId) -> B256 {
     keccak(&[&[STAKED], &account.0])
+}
+
+/// The key of a credited staking mirror's identity, separate from custody deposits.
+pub(crate) fn staking_reference_key(reference: &str) -> B256 {
+    keccak(&[&[STAKING_REFERENCE], reference.as_bytes()])
 }
 
 /// The value hash of a staked-balance leaf.

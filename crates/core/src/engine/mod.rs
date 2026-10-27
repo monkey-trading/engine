@@ -7,7 +7,7 @@
 //! `execution/`, close-outs in `closeout.rs`, markouts in `markouts.rs`, reserved FIFO
 //! withdrawals in `withdrawal.rs`, and MONKEY staking and USDC distributions in `staking.rs`.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 
 mod market;
 
@@ -60,8 +60,8 @@ pub struct Engine {
     /// Staking mirror references already credited, a namespace of their own: the accounting's
     /// credited-reference scan counts `credited_refs` as vault deposits and house capital, and a
     /// staking mirror moves no USDC, so its references must not enter that count.
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    pub(crate) staking_refs: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "TrackedSet::is_empty")]
+    pub(crate) staking_refs: TrackedSet<String>,
     pub(crate) global_stress_floor: usize,
     pub(crate) next_order_id: OrderId,
     pub(crate) next_rollover: Option<Millis>,
@@ -286,6 +286,7 @@ impl Engine {
             Command::Stake { account, amount, block, chain_ref } => {
                 self.stake(*account, *amount, *block, chain_ref, &mut events)
             }
+            Command::StakingProgress { block, block_hash } => self.staking_progress(*block, *block_hash, &mut events),
             Command::Unstake { account, amount, block, chain_ref } => {
                 self.unstake(*account, *amount, *block, chain_ref, &mut events)
             }
@@ -336,11 +337,6 @@ impl Engine {
     /// Who signs admin commands from `V8`, once recorded.
     pub fn operator(&self) -> Option<&Operator> {
         self.operator.as_ref()
-    }
-
-    /// Whether a market takes no new risk: its own flag, or every market's.
-    pub fn is_reduce_only(&self, market: &MarketState) -> bool {
-        market.reduce_only || self.global_reduce_only
     }
 
     /// Every listed market, by id.

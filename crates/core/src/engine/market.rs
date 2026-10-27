@@ -85,3 +85,10 @@ impl Engine {
         }
     }
 }
+
+impl Engine {
+    /// Whether a market takes no new risk: its own flag, or every market's.
+    pub fn is_reduce_only(&self, market: &MarketState) -> bool {
+        market.reduce_only || self.global_reduce_only
+    }
+}

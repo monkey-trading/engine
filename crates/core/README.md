@@ -218,6 +218,7 @@ this crate and reproduce the signed state roots exactly.
 - `tests/emissions.rs`, `tests/emissions_eligibility.rs`, `tests/emissions_schedule.rs` — MONKEY
   emissions from `V19`: allocation, rounding, cancellation, and finality; which losses count and the
   signed initialisation; and the schedule's arithmetic with the first halving
+- `tests/staking_authentication.rs` — V27 mirror-identity roots, migration, and finalized scan anchors
 - `tests/staking.rs` — MONKEY staking and USDC distributions from `V25`: stake and unstake
   mirroring, epoch closes above and below the liquidity floor, pro-rata rounding, skipped epochs,
   and distribution proofs
@@ -308,7 +309,10 @@ Two suites guard replay and accounting:
   dollar value, can only reduce its account's position in that market; under `V16`, that no
   account's toxicity history exceeds the memory in force.
 
-### Adding a protocol version
+#Staking protocol V27 authenticates mirror identities as kind-15 leaves and completed finalized
+scan anchors in the staking globals, while retaining V25 reference roots.
+
+## Adding a protocol version
 
 A change to engine state, its serialization, or what a command does changes the roots that existing
 logs replay to. It ships as a new protocol version, and the committed logs of earlier versions must
