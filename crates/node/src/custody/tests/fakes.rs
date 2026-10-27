@@ -21,7 +21,9 @@ use crate::clock::now_ms;
 use crate::config::EvmCustodySection;
 use crate::custody::chain::BlockLink;
 use crate::custody::cursor::Cursor;
-use crate::custody::evm::{Beneficiary, BlockRef, DepositWatcher, Finality, VaultDeposit, VaultIdentity, VaultReader};
+use crate::custody::evm::{
+    Beneficiary, BlockRef, DepositWatcher, Finality, StakingEvent, VaultDeposit, VaultIdentity, VaultReader,
+};
 use crate::log::{LogEntry, Manifest};
 use crate::sequencer::{Request, Sequencer, SequencerConfig, SignedWithdrawal};
 use crate::tee::EnclaveKey;
@@ -76,6 +78,8 @@ pub(super) struct ChainState {
     /// A block whose header reports a parent off this chain.
     pub(super) broken_link: Option<u64>,
     pub(super) deposits: Vec<VaultDeposit>,
+    /// Staking events served by `staking_events`.
+    pub(super) staking: Vec<StakingEvent>,
     /// Answer `deposits` with nothing, like a node that lags the one counting.
     pub(super) hide_logs: bool,
     /// Block hashes that differ from `canonical_hash`, as after a reorg.
@@ -201,6 +205,13 @@ impl VaultReader for FakeChain {
             bail!("block {} is not canonical", at.hash);
         }
         Ok(chain.deposits.iter().filter(|d| d.block <= at.number).count() as u64)
+    }
+
+    async fn staking_events(&self, from: u64, to: u64) -> anyhow::Result<Vec<StakingEvent>> {
+        let mut chain = self.0.lock().unwrap();
+        chain.reads.push((from, to));
+        let visible = chain.staking.iter().filter(|e| !chain.hide_logs && (from..=to).contains(&e.block));
+        Ok(visible.cloned().collect())
     }
 }
 

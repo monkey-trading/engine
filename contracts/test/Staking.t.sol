@@ -14,6 +14,8 @@ import {MockUSDC} from "./mocks/MockUSDC.sol";
 contract StakingTest is Test {
     uint256 private constant KEY = 0x1234;
     uint256 private constant COOLDOWN = 3 days;
+    /// @dev One engine distribution epoch, in seconds.
+    uint256 private constant EPOCH = 30 minutes;
 
     MockUSDC internal usdc;
     Vault internal vault;
@@ -25,7 +27,7 @@ contract StakingTest is Test {
         usdc = new MockUSDC();
         vault = new Vault(usdc, vm.addr(KEY), 1e18);
         monkey = vault.monkey();
-        staking = new Staking(monkey, COOLDOWN);
+        staking = new Staking(monkey, COOLDOWN, EPOCH);
     }
 
     function _mintMonkey(address to, uint256 amount) internal {
@@ -107,7 +109,9 @@ contract StakingTest is Test {
         vm.expectRevert(Staking.ZeroAddress.selector);
         new Staking(IERC20(address(0)), COOLDOWN);
         vm.expectRevert(abi.encodeWithSelector(Staking.InvalidAmount.selector, 0));
-        new Staking(monkey, 0);
+        new Staking(monkey, 0, EPOCH);
+        vm.expectRevert(abi.encodeWithSelector(Staking.CooldownBelowEpoch.selector, EPOCH - 1, EPOCH));
+        new Staking(monkey, EPOCH - 1, EPOCH);
     }
 
     function testFuzz_StakeThenUnstakeReturnsWhatWasStaked(uint256 amount) public {

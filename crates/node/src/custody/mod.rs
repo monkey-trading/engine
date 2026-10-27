@@ -29,6 +29,7 @@ use crate::custody::evm::DepositWatcher;
 mod quorum;
 use crate::custody::quorum::Quorum;
 mod rpc;
+pub(crate) mod staking;
 use crate::custody::rpc::VaultRpc;
 mod sizing;
 mod stall;

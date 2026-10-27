@@ -14,7 +14,8 @@ import {ReentrancyGuardTransient} from "@openzeppelin-contracts/utils/Reentrancy
 /// stake through the cooldown and the snapshot, so exiting stake keeps earning until its mirror
 /// lands: the cooldown is the lock-up that prices jumping in just before a snapshot.
 /// @dev Not upgradeable. One pending unstake per account; a further `startUnstake` adds to it and
-/// restarts its cooldown.
+/// restarts its cooldown. The cooldown must cover at least one distribution epoch: a shorter
+/// lock-up would let stake jump in just before a snapshot and leave before it prices.
 contract Staking is ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
@@ -23,6 +24,9 @@ contract Staking is ReentrancyGuardTransient {
 
     /// @notice How long an unstake waits before it completes, in seconds.
     uint256 public immutable cooldown;
+
+    /// @notice The engine's distribution epoch length, in seconds; the cooldown must cover it.
+    uint256 public immutable epoch;
 
     struct Unstake {
         uint256 amount;
@@ -50,15 +54,20 @@ contract Staking is ReentrancyGuardTransient {
     error InsufficientStake(uint256 staked, uint256 amount);
     error NoPendingUnstake();
     error CooldownNotPassed(uint256 claimableAt);
+    error CooldownBelowEpoch(uint256 cooldown, uint256 epoch);
 
     /// @param monkey_ The MONKEY token the vault mints.
     /// @param cooldownSeconds_ How long an unstake waits before it completes, in seconds; the
-    /// engine records the same value at `InitStaking` so the log names it.
-    constructor(IERC20 monkey_, uint256 cooldownSeconds_) {
+    /// engine records the same value at `InitStaking` so the log names it. Must cover at least
+    /// one `epochSeconds_`.
+    /// @param epochSeconds_ The engine's distribution epoch length, in seconds.
+    constructor(IERC20 monkey_, uint256 cooldownSeconds_, uint256 epochSeconds_) {
         if (address(monkey_) == address(0)) revert ZeroAddress();
         if (cooldownSeconds_ == 0) revert InvalidAmount(cooldownSeconds_);
+        if (cooldownSeconds_ < epochSeconds_) revert CooldownBelowEpoch(cooldownSeconds_, epochSeconds_);
         monkey = monkey_;
         cooldown = cooldownSeconds_;
+        epoch = epochSeconds_;
     }
 
     /// @notice Stakes `amount` MONKEY base units from the caller.

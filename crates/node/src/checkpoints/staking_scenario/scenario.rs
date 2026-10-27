@@ -109,7 +109,7 @@ impl Scenario {
             &provider,
             accounts[0],
             "Staking.sol/Staking.json",
-            &(monkey, U256::from(COOLDOWN_SECS)).abi_encode(),
+            &(monkey, U256::from(COOLDOWN_SECS), U256::from(EPOCH_MS / 1000)).abi_encode(),
         )
         .await;
         let mut genesis = dev_config().genesis;

@@ -356,7 +356,11 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
         "re-inclusion still cannot release before finality"
     );
     local_rpc(&url, "anvil_mine", serde_json::json!(["0x2"])).await;
-    assert_eq!(delayed.reconcile(&work).await.unwrap(), (Some(seq), Health::Healthy), "release follows confirmation depth");
+    assert_eq!(
+        delayed.reconcile(&work).await.unwrap(),
+        (Some(seq), Health::Healthy),
+        "release follows confirmation depth"
+    );
 
     let mut forged = entries;
     let cp = forged

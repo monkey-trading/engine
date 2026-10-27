@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use alloy::primitives::B256;
 use crate::checkpoints::Health;
+use alloy::primitives::B256;
 use engine_core::Fixed;
 use engine_core::types::AccountId;
 use tokio::sync::mpsc;

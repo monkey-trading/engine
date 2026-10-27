@@ -22,7 +22,11 @@ async fn only_a_shortfall_or_a_ledger_difference_pauses_and_a_surplus_warns() {
     // Deposits the checkpoint has not credited are compared through its last credited deposit.
     poster.chain.deposit(Fixed::from_int(10));
     poster.chain.deposit(Fixed::from_int(20));
-    assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(5), Health::Healthy), "in-flight deposits keep payouts running");
+    assert_eq!(
+        poster.reconcile(&work).await.unwrap(),
+        (Some(5), Health::Healthy),
+        "in-flight deposits keep payouts running"
+    );
     assert_eq!(next_alert(), None);
     // USDC sent outside a deposit keeps payouts running, with a Warning until it is booked.
     poster.chain.state.lock().unwrap().balance += Fixed::ONE;

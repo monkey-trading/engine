@@ -26,7 +26,9 @@ use tracing::debug;
 
 use crate::config::{EvmCustodySection, FinalityTag, SecretUrl};
 use crate::custody::chain::BlockLink;
-use crate::custody::evm::{Beneficiary, BlockRef, Finality, VaultDeposit, VaultIdentity, VaultReader};
+use crate::custody::evm::{
+    Beneficiary, BlockRef, Finality, StakingEvent, StakingEventKind, VaultDeposit, VaultIdentity, VaultReader,
+};
 
 // The vault's ABI, as `contracts/src/Vault.sol` declares it.
 sol! {
@@ -36,11 +38,19 @@ sol! {
     function usdc() external view returns (address);
 }
 
+// The staking contract's mirrorable events, as `contracts/src/Staking.sol` declares them.
+sol! {
+    event Staked(address indexed account, uint256 amount);
+    event UnstakeCompleted(address indexed account, uint256 amount);
+}
+
 pub struct VaultRpc {
     client: RpcClient,
     /// Kept only to scrub it from errors.
     url: Url,
     vault: Address,
+    /// The staking contract whose events mirror into the engine; `None` without one.
+    staking: Option<Address>,
     finality_tag: BlockNumberOrTag,
     withdrawal_finality_tag: BlockNumberOrTag,
     rpc_timeout: Duration,
@@ -147,6 +157,23 @@ impl VaultReader for VaultRpc {
             })?;
         decode_count(&out)
     }
+
+    /// Both mirrorable staking events from the configured contract, sorted by block and log index.
+    /// Without a staking contract the answer is empty.
+    /// Error cases:
+    /// - the request fails or times out
+    /// - a log is removed, lacks its position, does not decode as a staking event, or carries an
+    ///   amount past `u128`
+    async fn staking_events(&self, from: u64, to: u64) -> anyhow::Result<Vec<StakingEvent>> {
+        let Some(staking) = self.staking else { return Ok(Vec::new()) };
+        let filter = Filter::new()
+            .address(staking)
+            .event_signature(vec![Staked::SIGNATURE_HASH, UnstakeCompleted::SIGNATURE_HASH])
+            .from_block(from)
+            .to_block(to);
+        let logs = self.deadline("eth_getLogs", self.client.request::<_, Vec<Log>>("eth_getLogs", (filter,))).await?;
+        logs.iter().map(|log| self.decode_staking(log)).collect()
+    }
 }
 
 impl VaultRpc {
@@ -208,6 +235,7 @@ impl VaultRpc {
             client,
             url,
             vault,
+            staking: cfg.staking.as_ref().map(|staking| staking.contract),
             withdrawal_finality_tag: match cfg.withdrawal_finality_tag {
                 FinalityTag::Latest => BlockNumberOrTag::Latest,
                 FinalityTag::Safe => BlockNumberOrTag::Safe,
@@ -288,6 +316,34 @@ impl VaultRpc {
         };
         let id = u64::try_from(id).context("deposit id beyond u64")?;
         Ok(VaultDeposit { block, block_hash, tx_hash, log_index, id, beneficiary, units })
+    }
+
+    /// A staking event's fields; `account` is the event's only indexed topic.
+    /// Error cases:
+    /// - the log is removed, comes from another address, lacks its position, or does not decode
+    pub(super) fn decode_staking(&self, log: &Log) -> anyhow::Result<StakingEvent> {
+        let staking = self.staking.context("a staking event without a configured staking contract")?;
+        if log.removed || log.address() != staking {
+            bail!("unexpected log from {} (removed: {})", log.address(), log.removed);
+        }
+        let block = log.block_number.context("log without a block number")?;
+        let block_hash = log.block_hash.context("log without a block hash")?;
+        let tx_hash = log.transaction_hash.context("log without a transaction hash")?;
+        let log_index = log.log_index.context("log without a log index")?;
+        let (kind, account, units) = match log.topic0() {
+            Some(&Staked::SIGNATURE_HASH) => {
+                let event = Staked::decode_log(&log.inner).context("decoding Staked")?.data;
+                (StakingEventKind::Staked, event.account, event.amount)
+            }
+            Some(&UnstakeCompleted::SIGNATURE_HASH) => {
+                let event = UnstakeCompleted::decode_log(&log.inner).context("decoding UnstakeCompleted")?.data;
+                (StakingEventKind::UnstakeCompleted, event.account, event.amount)
+            }
+            other => bail!("unexpected event {other:?}"),
+        };
+        let amount = crate::custody::staking::monkey_units(units)
+            .with_context(|| format!("staking event amount {units} exceeds u128"))?;
+        Ok(StakingEvent { block, block_hash, tx_hash, log_index, account: AccountId(account.into()), amount, kind })
     }
 }
 

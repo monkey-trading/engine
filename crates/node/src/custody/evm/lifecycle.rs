@@ -16,6 +16,7 @@ use crate::custody::credit::{query, submit};
 use crate::custody::evm::{
     Beneficiary, BlockRef, DepositWatcher, VaultDeposit, VaultIdentity, VaultReader, check_complete,
 };
+use crate::custody::staking;
 use crate::custody::stall::{PollError, Polled};
 use crate::custody::usdc_to_fixed;
 use crate::sequencer::Request;
@@ -133,7 +134,24 @@ impl<V: VaultReader> DepositWatcher<V> {
             };
             self.finalise_confirmed_scan(tx, finalised, hashes[&finalised]).await?;
         }
+        self.mirror_staking(tx, to).await?;
         self.finish_confirmed_read(tx, to, eligible).await
+    }
+
+    /// Mirrors the configured staking contract's events through the proven window the poll just
+    /// read. Without a staking contract, or before `InitStaking` has applied, nothing is read or
+    /// sequenced and the cursor holds (see `staking::mirror`).
+    /// Error cases:
+    /// - stalled: a staking read fails, an event is on an unproven block, or the engine refuses a mirror
+    /// - fatal: the sequencer has stopped, or the staking cursor cannot be stored
+    async fn mirror_staking(&mut self, tx: &mpsc::Sender<Request>, to: u64) -> Result<(), PollError> {
+        let from = self.staking.as_ref().map(|(cursor, _)| cursor.next_block);
+        let Some(from) = from.filter(|from| *from <= to) else { return Ok(()) };
+        let Some(hashes) = self.confirmed_window(from, to).await? else {
+            return Ok(());
+        };
+        let (cursor, path) = self.staking.as_mut().expect("staking cursor checked above");
+        staking::mirror(&self.vault, tx, cursor, path, from, to, &hashes).await
     }
 
     /// Applies complete canonical receipts after every orphan reversal has been acknowledged.

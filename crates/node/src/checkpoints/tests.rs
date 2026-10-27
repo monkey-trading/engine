@@ -180,7 +180,6 @@ async fn stale_parent_fails_closed_before_posting_a_divergent_higher_sequence() 
     assert_eq!(*poster.chain.posts.lock().unwrap(), 0);
 }
 
-
 #[tokio::test]
 async fn latest_inclusion_never_authorizes_release_and_waiting_finality_does_not_repost() {
     let (mut poster, work, _key) = poster();

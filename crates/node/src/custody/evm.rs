@@ -35,6 +35,10 @@ pub enum Beneficiary {
     House,
 }
 
+/// What the deposit watcher needs from the chain to mirror staking events: the events of the
+/// configured staking contract, decoded like the vault's.
+pub use crate::custody::staking::{StakingEvent, StakingEventKind};
+
 /// What the watcher needs from the chain.
 pub trait VaultReader {
     /// The chain the endpoint serves and the token the vault holds.
@@ -56,6 +60,10 @@ pub trait VaultReader {
 
     /// The vault's deposit count in block `at`, which the endpoint must hold as canonical.
     fn deposit_count(&self, at: BlockRef) -> impl Future<Output = anyhow::Result<u64>> + Send;
+
+    /// Every staking event in blocks `from..=to`, in chain order; providers for a deployment
+    /// without a staking contract answer empty.
+    fn staking_events(&self, from: u64, to: u64) -> impl Future<Output = anyhow::Result<Vec<StakingEvent>>> + Send;
 }
 
 /// A block by height and hash.
@@ -127,6 +135,8 @@ pub struct DepositWatcher<V> {
     usdc: Address,
     pub(super) cursor: Cursor,
     cursor_path: PathBuf,
+    /// The staking mirror's cursor and store, present when the deployment has a staking contract.
+    staking: Option<(crate::custody::staking::StakingCursor, PathBuf)>,
     /// Blocks the final block sits below the tagged block.
     confirmations: u64,
     pub(super) chain: ProvenChain,
@@ -159,11 +169,30 @@ impl<V: VaultReader> DepositWatcher<V> {
         log_seq: Option<u64>,
     ) -> anyhow::Result<Self> {
         let cursor = Cursor::load(&cfg.cursor_path, chain_id, vault_address, cfg.start_block, log_seq)?;
-        Ok(Self::from_cursor(vault, cfg, cursor))
+        let staking = cfg
+            .staking
+            .as_ref()
+            .map(|staking| {
+                crate::custody::staking::StakingCursor::load(
+                    &staking.cursor_path,
+                    chain_id,
+                    staking.contract,
+                    cfg.start_block,
+                    log_seq,
+                )
+                .map(|cursor| (cursor, staking.cursor_path.clone()))
+            })
+            .transpose()?;
+        Ok(Self::from_cursor(vault, cfg, cursor, staking))
     }
 
     /// Builds the watcher; receipt mode takes no chain evidence from the host cursor.
-    fn from_cursor(vault: V, cfg: &EvmCustodySection, cursor: Cursor) -> Self {
+    fn from_cursor(
+        vault: V,
+        cfg: &EvmCustodySection,
+        cursor: Cursor,
+        staking: Option<(crate::custody::staking::StakingCursor, PathBuf)>,
+    ) -> Self {
         info!(next_block = cursor.next_block, next_deposit_id = cursor.next_deposit_id, "deposit watcher ready");
         // The proof resumes from the last block read, so a change to it stalls rather than passes.
         let mut chain = ProvenChain::default();
@@ -184,6 +213,7 @@ impl<V: VaultReader> DepositWatcher<V> {
             usdc: cfg.usdc,
             cursor,
             cursor_path: cfg.cursor_path.clone(),
+            staking,
             confirmations: cfg.confirmations,
             chain,
             max_block_range: cfg.max_block_range,

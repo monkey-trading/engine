@@ -34,7 +34,7 @@ impl<V: VaultReader> DepositWatcher<V> {
             last_block_hash: None,
             crediting: None,
         };
-        let mut watcher = Self::from_cursor(vault, cfg, cursor);
+        let mut watcher = Self::from_cursor(vault, cfg, cursor, None);
         watcher.prove_legacy_approvals(engine, ledger, approvals).await
     }
 

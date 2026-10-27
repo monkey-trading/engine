@@ -16,7 +16,7 @@ use tracing::{error, info, warn};
 
 use crate::config::EvmCustodySection;
 use crate::custody::chain::BlockLink;
-use crate::custody::evm::{BlockRef, Finality, HeadSupport, VaultDeposit, VaultIdentity, VaultReader};
+use crate::custody::evm::{BlockRef, Finality, HeadSupport, StakingEvent, VaultDeposit, VaultIdentity, VaultReader};
 use crate::custody::rpc::{InvalidRpcResponse, VaultRpc};
 
 /// Independent providers and their alert identities; the watcher owns the reader.
@@ -180,6 +180,20 @@ impl<R: VaultReader + Sync> VaultReader for Quorum<R> {
         }))
         .await;
         self.vote("deposits", answers).map(|v| v.0.1)
+    }
+
+    /// Identical ordered staking event sets; a deployment without a staking contract answers
+    /// empty on every provider.
+    /// Error cases:
+    /// - no quorum
+    async fn staking_events(&self, from: u64, to: u64) -> anyhow::Result<Vec<StakingEvent>> {
+        let answers = join_all(self.providers.iter().enumerate().map(|(i, (_, r))| async move {
+            self.qualified(i)?;
+            let header = last_header(r.headers(to, to).await?, to)?;
+            Ok((header.hash, r.staking_events(from, to).await?))
+        }))
+        .await;
+        self.vote("staking_events", answers).map(|v| v.0.1)
     }
 
     /// Identical counts at the same canonical block hash.

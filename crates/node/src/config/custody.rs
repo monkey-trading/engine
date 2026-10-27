@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use alloy::primitives::Address;
 use alloy::transports::http::reqwest::Url;
-use anyhow::bail;
+use anyhow::{Context, bail};
 use engine_core::Fixed;
 use serde::Deserialize;
 
@@ -65,6 +65,20 @@ pub struct EvmCustodySection {
     #[serde(with = "humantime_serde")]
     pub finality_stalled_after: Duration,
     /// Where the deposit cursor is kept between restarts.
+    pub cursor_path: PathBuf,
+    /// The staking contract whose events the deposit watcher mirrors into the engine as
+    /// `Stake`/`Unstake` commands, once staking is initialised. Absent when the deployment
+    /// has no staking.
+    pub staking: Option<StakingCustodySection>,
+}
+
+/// The staking contract the watcher mirrors. Events only exist from `V25`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StakingCustodySection {
+    /// The `Staking` contract, deployed after the vault with the cooldown the genesis records.
+    pub contract: Address,
+    /// Where the staking cursor is kept between restarts.
     pub cursor_path: PathBuf,
 }
 
@@ -139,6 +153,12 @@ impl NodeConfig {
         }
         if evm.finality_stalled_after.is_zero() {
             bail!("custody.evm.finality_stalled_after must be non-zero");
+        }
+        if let Some(staking) = &evm.staking {
+            let vault: Address = self.custody.vault.parse().context("custody.vault")?;
+            if staking.contract == evm.usdc || staking.contract == vault {
+                bail!("custody.evm.staking.contract must be the staking contract, not the token or the vault");
+            }
         }
         if self.genesis.house_capital != Fixed::ZERO {
             bail!("genesis.house_capital must be zero with EVM custody; deposit to the house instead");
