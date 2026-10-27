@@ -1,6 +1,7 @@
 //! MONKEY emissions dev scenario on a local Anvil: the real sequencer, API routes, checkpoint worker,
 //! vault, and MONKEY token, on a clock the scenario moves.
 
+mod api;
 mod funding;
 
 use std::net::SocketAddr;
@@ -16,9 +17,8 @@ use alloy::rpc::types::TransactionRequest;
 use alloy::sol;
 use alloy::sol_types::{SolCall, SolError, SolValue};
 use axum::Router;
-use axum::body::{Body, to_bytes};
 use axum::extract::connect_info::MockConnectInfo;
-use axum::http::{Request as HttpRequest, StatusCode};
+use axum::http::StatusCode;
 use engine_core::Engine;
 use engine_core::auth::{ClientAuth, Operator};
 use engine_core::command::{AdminCommand, Command, OrderKind, OrderRequest};
@@ -32,11 +32,10 @@ use serde_json::{Value, json};
 use tokio::sync::{Semaphore, broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio::time::{sleep, timeout};
-use tower::ServiceExt;
 
 use crate::api::{ApiState, MAX_BACKFILLS, router};
 use crate::checkpoints::scenario::{Anvil, deploy, send};
-use crate::checkpoints::{CheckpointChain, CheckpointRpc, Poster, View};
+use crate::checkpoints::{CheckpointChain, CheckpointRpc, Health, Poster, View};
 use crate::clock::Clock;
 use crate::clock::test_clock::TestClock;
 use crate::config::{CheckpointSection, FinalityTag, RateLimit};
@@ -68,6 +67,9 @@ sol! {
 #[tokio::test]
 #[ignore = "requires Anvil and compiled contracts; scripts/dev-monkey-emissions.sh runs it"]
 async fn dev_scenario_emissions_share_fixed_budgets_halve_survive_restart_and_claim_once() {
+    let _tracing = tracing::subscriber::set_default(
+        tracing_subscriber::fmt().with_ansi(false).with_writer(std::io::stderr).finish(),
+    );
     let mut s = Scenario::start().await;
     // A schedule with another budget than the vault's cap was derived from never reaches the log.
     let mismatched = EmissionSchedule { start_ms: NOW, period_budget: TokenUnits(DEV_PERIOD_BUDGET / 2) };
@@ -174,6 +176,7 @@ struct Node {
     state: ApiState,
     sequencer: JoinHandle<anyhow::Result<()>>,
     poster: JoinHandle<anyhow::Result<()>>,
+    status: JoinHandle<()>,
 }
 
 impl Scenario {
@@ -290,7 +293,8 @@ impl Scenario {
         let recovery = seq.take_recovery_checkpoints();
         let (tx, rx) = mpsc::channel(1024);
         let sequencer = tokio::spawn(seq.run(rx));
-        let poster = tokio::spawn(poster.run_with_recovery(work_rx, tx.clone(), recovery));
+        let (status_tx, status, ready) = api::status_channel(tx.clone());
+        let poster = tokio::spawn(poster.run_with_recovery(work_rx, status_tx, recovery));
         let unlimited = |_: RateLimit| Quota::per_second(NonZeroU32::MAX);
         let bundle = AttestationBundle {
             enclave_address: self.key.address(),
@@ -317,14 +321,18 @@ impl Scenario {
             listing: Default::default(),
         };
         let app = router(state.clone()).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9))));
-        self.node = Some(Node { app, state, sequencer, poster });
+        self.node = Some(Node { app, state, sequencer, poster, status });
+        let health = timeout(Duration::from_secs(20), ready).await.expect("the worker revalidates custody").unwrap();
+        assert_eq!(health, Health::Healthy, "the scenario starts from proven healthy collateral");
     }
 
     /// Stops the checkpoint worker and the sequencer, which drains and writes a final checkpoint.
     async fn stop(&mut self) {
-        let Node { app, state, sequencer, poster } = self.node.take().expect("the node is running");
+        let Node { app, state, sequencer, poster, status } = self.node.take().expect("the node is running");
         poster.abort();
         let _ = poster.await;
+        status.abort();
+        let _ = status.await;
         drop((app, state));
         sequencer.await.unwrap().unwrap();
     }
@@ -464,26 +472,6 @@ impl Scenario {
         });
         self.node().state.tx.send(Request::Query(query)).await.unwrap();
         rx.await.unwrap()
-    }
-
-    /// The status and JSON body of a POST of `body` to `path`.
-    async fn post(&self, path: &str, body: Value) -> (StatusCode, Value) {
-        let request =
-            HttpRequest::post(path).header("content-type", "application/json").body(Body::from(body.to_string()));
-        self.send(request.unwrap()).await
-    }
-
-    /// The status and JSON body of a GET of `path`.
-    async fn get(&self, path: &str) -> (StatusCode, Value) {
-        self.send(HttpRequest::get(path).body(Body::empty()).unwrap()).await
-    }
-
-    /// Serves one request and reads its JSON response.
-    async fn send(&self, request: HttpRequest<Body>) -> (StatusCode, Value) {
-        let response = self.node().app.clone().oneshot(request).await.unwrap();
-        let status = response.status();
-        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        (status, serde_json::from_slice(&bytes).unwrap())
     }
 }
 

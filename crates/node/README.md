@@ -376,6 +376,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/emissions_scenario.rs` — the MONKEY emissions dev scenario on isolated Anvil: pro-rata
   allocation, cancelled periods, a restart across finalisation, the first halving, and claims that mint
   each entitlement once against the posted root
+- `src/checkpoints/emissions_scenario/api.rs` — HTTP calls and a startup barrier on the worker's
+  real collateral verdict before the scenario drives checkpoint-dependent commands
 - `src/checkpoints/emissions_scenario/funding.rs` — actual Vault funding receipts and finalized
   custody progress for the emissions scenario
 
