@@ -49,7 +49,8 @@ an index: load only the rule whose hint matches the current action.
   roots pinned in the binary, and its launch measurement, guest policy, reported TCB, and
   configuration against a release manifest; `engine replay --attestation` requires every checkpoint
   signer to have passed it; a mock quote never verifies), the trusted time check against
-  Roughtime servers, the custody adapter (mock, or EVM vault deposits over alloy), checkpoint posting
+  Roughtime servers, the custody adapter (mock, or EVM vault deposits over alloy, mirroring the
+  staking contract's finalised events once `InitStaking` has applied), checkpoint posting
   and collateral reconciliation, distributions paid included (`checkpoints/`), with strict signature replay and startup checks
   against the vault's finalized commitment before history writes, plus authenticated withdrawal
   authorization replay, bounded finalized claim polling, immutable signer-epoch history independent
@@ -85,8 +86,10 @@ an index: load only the rule whose hint matches the current action.
   delay, and the engine's initial MONKEY emission period budget, which caps `src/MonkeyToken.sol`,
   the ERC-20 the vault deploys and alone mints: `claimEmissions` mints an account's entitlement,
   proven against the latest posted root, less what it already claimed. `src/Staking.sol` holds
-  MONKEY staked for USDC distributions, enforces the unstake cooldown, and emits the events the
-  engine mirrors; `claimDistribution` pays a staker the USDC its cumulative distribution, proven
+  MONKEY staked for USDC distributions, enforces the unstake cooldown — the constructor refuses a
+  cooldown shorter than the engine's epoch, the lock-up that prices jumping in just before a
+  snapshot — and emits the events the engine mirrors; `claimDistribution` pays a staker the USDC
+  its cumulative distribution, proven
   against the latest posted root, adds to what it was already paid. Deployment gives that
   timelock its multisig proposer. The timelock manages signer rotation and independent
   deposit/withdrawal pauses.

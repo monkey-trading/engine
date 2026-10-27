@@ -90,7 +90,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   crossing zero
 - EVM custody: a strict majority of at least three RPC providers admits each deposit; from V20,
   sequencer confirmation credits trading collateral, Ethereum finality unlocks withdrawal principal,
-  and canonical reversals debit once with a Critical alert
+  and canonical reversals debit once with a Critical alert. From V25, the same poll mirrors the
+  staking contract's finalised `Staked`/`UnstakeCompleted` events (`custody.evm.staking`) into
+  `Stake`/`Unstake` commands once each, holding them until `InitStaking` has applied
 - Mock custody and a mock price feed for local development
 - Prometheus metrics on a separate operator address, from a registry the node owns, with no
   per-account labels or values
@@ -381,6 +383,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/evm/progress.rs` — confirmed header and log windows read one batch per poll, kept
   across polls while their endpoint stays canonical
 - `src/custody/evm/legacy.rs` — independent canonical finality proof before legacy signature redelivery
+- `src/custody/staking.rs` — mirroring the staking contract's finalised events into `Stake`/`Unstake` commands once each, holding them until `InitStaking` has applied
 - `src/custody/evm/lifecycle/tests.rs` — reversal, reinclusion, inconsistent receipt and amount boundaries
 - `src/custody/chain.rs` — the chain of block hashes proven to lead to the tagged block, and the
   headers of an interrupted proof, kept apart until it ends there

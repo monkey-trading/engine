@@ -5,6 +5,8 @@
 //!   retain their legacy credit commands and cursor semantics;
 //! - withdrawals: the engine approves, the enclave signs, and the vault pays out against the
 //!   enclave signature;
+//! - staking: from V25, mirror the staking contract's finalised Staked/UnstakeCompleted events
+//!   into the engine once `InitStaking` has applied (see `staking.rs`);
 //! - checkpoints: post the signed state roots so anyone can check the enclave against the public
 //!   log.
 //!
