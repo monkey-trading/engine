@@ -13,6 +13,16 @@ use engine_core::eip712::Signature;
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
+use tracing::subscriber::set_default;
+use tracing_subscriber::Registry;
+use tracing_subscriber::fmt;
+use tracing_subscriber::prelude::*;
+
+use crate::test_support::Written;
+use crate::test_tracing::keep_callsites_interested;
+
+/// A personal value the source must never see the node log.
+const MARKER: &str = "client-203.0.113.9-personal-value";
 
 #[derive(Clone, Copy)]
 enum Behavior {
@@ -24,6 +34,7 @@ enum Behavior {
     Unavailable,
     Never,
     Redirect,
+    TypedValue,
 }
 
 struct Server {
@@ -93,6 +104,21 @@ async fn absent_sources_refuse_without_network_and_api_capacity_does_not_consume
     );
 }
 
+#[tokio::test]
+async fn decode_failures_log_the_error_position_but_no_response_values() {
+    keep_callsites_interested();
+    let server = server(Behavior::TypedValue).await;
+    let client = client(&server.url, 2048);
+    let written = Written::default();
+    let _logs = set_default(Registry::default().with(fmt::layer().with_writer(written.clone()).with_ansi(false)));
+    let result = client.screen(&query()).await;
+    assert_eq!(result, AccessEvidence::Failed { reason: SourceFailure::InvalidResponse });
+    let text = written.text();
+    assert!(!text.contains(MARKER), "the decode error quoted a response value:\n{text}");
+    assert!(text.contains("access source response is not a screening"), "{text}");
+    assert!(text.contains("category=Data") && text.contains("line=1") && text.contains("column="), "{text}");
+}
+
 fn query() -> ScreeningRequest {
     ScreeningRequest {
         request_hash: B256::repeat_byte(1),
@@ -135,6 +161,8 @@ async fn answer(
             Body::from_stream(chunks).into_response()
         }
         Behavior::Unavailable => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        // A typed field holding a personal value: the whole serde error would quote it.
+        Behavior::TypedValue => json!({"observed_at": MARKER}).to_string().into_response(),
         Behavior::Never => std::future::pending().await,
         Behavior::Redirect => (StatusCode::TEMPORARY_REDIRECT, [("location", "/redirect-target")]).into_response(),
         Behavior::Valid | Behavior::Mismatch => {
