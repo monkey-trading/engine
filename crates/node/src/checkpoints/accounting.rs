@@ -48,7 +48,12 @@ impl Accounting {
         let retry = matches!(command, Command::RetryDepositScreening { .. });
         // A receipt's reserve follows its lifecycle event; its public pending or held event does not
         // move it again.
-        let receipt = matches!(command, Command::CustodyDeposit(_) | Command::AccessCustodyDeposit { .. });
+        let receipt = matches!(
+            command,
+            Command::CustodyDeposit(_)
+                | Command::AccessCustodyDeposit { .. }
+                | Command::AccessCustodyReplacement { .. }
+        );
         for event in events {
             match event {
                 Event::DepositPending { .. } | Event::DepositHeld { .. } if receipt => {}
@@ -129,7 +134,9 @@ impl Accounting {
             };
         }
         let update = match command {
-            Command::CustodyDeposit(update) => update.as_ref().clone(),
+            Command::CustodyDeposit(update) | Command::AccessCustodyReplacement { update, .. } => {
+                update.as_ref().clone()
+            }
             Command::AccessCustodyDeposit { receipt, .. } => DepositUpdate::Credit { receipt: receipt.clone() },
             _ => anyhow::bail!("custody accounting event has no receipt command"),
         };

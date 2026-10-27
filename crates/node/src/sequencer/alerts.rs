@@ -164,7 +164,10 @@ fn resolve(condition: &mut Option<bool>, name: &str, benchmark: &str, message: &
 /// The reference of the receipt a command reinstated after its reversal, if it did: an exact
 /// reappearance, or a replacement that returns a reversed receipt to the chain.
 pub(super) fn reinstated_receipt(cmd: &Command, events: &[Event]) -> Option<String> {
-    let Command::CustodyDeposit(update) = cmd else { return None };
+    let update = match cmd {
+        Command::CustodyDeposit(update) | Command::AccessCustodyReplacement { update, .. } => update,
+        _ => return None,
+    };
     let receipt = match update.as_ref() {
         DepositUpdate::Reinstate { receipt, .. } => receipt,
         DepositUpdate::Replace { replacement, replacement_reversed_at_seq: Some(_), .. } => replacement,

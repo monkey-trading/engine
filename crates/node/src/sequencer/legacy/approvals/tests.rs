@@ -5,6 +5,7 @@ use alloy::primitives::B256;
 fn canonical_proof_retains_only_exact_pending_receipts_with_matching_economics() {
     let receipt = receipt();
     let pending = RecordedDeposit {
+        payer: None,
         receipt: receipt.clone(),
         status: DepositStatus::Unfinalised,
         updated_at_seq: 7,
@@ -39,6 +40,7 @@ fn canonical_proof_retains_only_exact_pending_receipts_with_matching_economics()
 fn independent_receipt_proof_storage_does_not_grow_with_uncredited_chain_history() {
     let receipt = receipt();
     let pending = RecordedDeposit {
+        payer: None,
         receipt: receipt.clone(),
         status: DepositStatus::Unfinalised,
         updated_at_seq: 7,

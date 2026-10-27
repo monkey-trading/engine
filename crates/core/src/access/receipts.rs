@@ -44,8 +44,49 @@ impl Engine {
             });
             return;
         }
+        let fresh = !self.deposits.contains_key(&receipt.reference());
         let update = DepositUpdate::Credit { receipt: receipt.clone() };
         self.update_deposit(&update, CreditScreening { payer, evidence: Some(evidence) }, events);
+        if fresh
+            && self.protocol_version >= ProtocolVersion::V26
+            && let Some(recorded) = self.deposits.get_mut(&receipt.reference())
+        {
+            recorded.payer = payer;
+        }
+    }
+
+    /// Screens an atomic replacement from V26, preserving the legacy transition's replay.
+    pub(crate) fn access_custody_replacement(
+        &mut self,
+        update: &DepositUpdate,
+        payer: Option<AccountId>,
+        evidence: &AccessEvidence,
+        events: &mut Vec<Event>,
+    ) {
+        if self.protocol_version < ProtocolVersion::V26 || !matches!(update, DepositUpdate::Replace { .. }) {
+            events.push(Event::CustodyDepositRejected {
+                receipt: update.subject().clone(),
+                reason: DepositReject::ProtocolNotActive,
+            });
+            return;
+        }
+        self.update_deposit(update, CreditScreening { payer, evidence: Some(evidence) }, events);
+    }
+
+    /// A terminal hold follows its transaction-local deposit across canonical receipt variants.
+    pub(crate) fn terminal_receipt_hold(&self, receipt: &DepositReceipt) -> Option<UncreditedReceipt> {
+        if self.protocol_version < ProtocolVersion::V26 {
+            return None;
+        }
+        if let Some(indexes) = &self.hot_indexes {
+            return indexes.terminal_deposit_holds.get(&receipt.transaction_reference()).copied();
+        }
+        self.deposits.values().find_map(|recorded| {
+            (recorded.receipt.transaction_reference() == receipt.transaction_reference())
+                .then_some(recorded.uncredited)
+                .flatten()
+                .filter(|held| held.reason.holds_deposit())
+        })
     }
 
     /// The refusal that keeps a new receipt uncredited, from `V24`; a receipt sequenced without
@@ -57,6 +98,9 @@ impl Engine {
     ) -> Option<UncreditedReceipt> {
         if self.protocol_version < ProtocolVersion::V24 {
             return None;
+        }
+        if let Some(held) = self.terminal_receipt_hold(receipt) {
+            return Some(held);
         }
         let deposit = receipt_access_deposit(receipt, screening.payer);
         let hash = deposit_screening_hash(&deposit);

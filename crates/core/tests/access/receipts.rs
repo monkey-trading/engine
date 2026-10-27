@@ -237,3 +237,6 @@ fn assert_root_matches_rebuild(engine: &mut Engine) {
     let mut rebuilt: Engine = serde_json::from_slice(&serde_json::to_vec(engine).unwrap()).unwrap();
     assert_eq!(rebuilt.state_root(), incremental);
 }
+
+#[path = "receipts_v26.rs"]
+mod v26;

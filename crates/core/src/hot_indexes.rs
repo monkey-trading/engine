@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Fixed;
-use crate::access::AccessDeposit;
+use crate::access::{AccessDeposit, UncreditedReceipt};
 use crate::account::RestingOrder;
 use crate::command::OrderKind;
 use crate::deposits::DepositStatus;
@@ -14,6 +14,8 @@ use crate::types::{AccountId, MarketId, OrderId, Side};
 pub(crate) struct HotIndexes {
     pub(crate) holders: BTreeMap<MarketId, BTreeSet<AccountId>>,
     pub(crate) pending_deposits: BTreeSet<String>,
+    /// Terminal dispositions by transaction-local identity, rebuilt from retained receipt history.
+    pub(crate) terminal_deposit_holds: BTreeMap<String, UncreditedReceipt>,
     pub(crate) receipts_above_frontier: BTreeSet<String>,
     triggers: BTreeMap<MarketId, Triggers>,
     /// Pending deposit references by beneficiary; the house's are under `None`.
@@ -85,6 +87,11 @@ impl Engine {
                 && self.custody_checkpoint.is_none_or(|checkpoint| recorded.receipt.block > checkpoint.block))
             .then_some(reference.clone())
         }));
+        for (_, recorded) in self.deposits.iter() {
+            if let Some(held) = recorded.uncredited.filter(|held| held.reason.holds_deposit()) {
+                indexes.terminal_deposit_holds.entry(recorded.receipt.transaction_reference()).or_insert(held);
+            }
+        }
         for (account, state) in self.accounts.iter() {
             for market in state.positions.keys() {
                 indexes.holders.entry(*market).or_default().insert(*account);

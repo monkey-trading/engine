@@ -115,6 +115,7 @@ fn plan(
     let recorded: Vec<_> = pending
         .iter()
         .map(|receipt| RecordedDeposit {
+            payer: None,
             receipt: receipt.clone(),
             status: DepositStatus::Unfinalised,
             updated_at_seq: 0,

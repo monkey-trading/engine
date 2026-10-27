@@ -37,6 +37,9 @@ impl Engine {
             Command::AccessCustodyDeposit { receipt, payer, evidence } => {
                 self.access_custody_deposit(receipt, *payer, evidence, events)
             }
+            Command::AccessCustodyReplacement { update, payer, evidence } => {
+                self.access_custody_replacement(update, *payer, evidence, events)
+            }
             Command::Deposit { account, amount, chain_ref } if self.protocol_version >= ProtocolVersion::V24 => {
                 let deposit = AccessDeposit {
                     account: Some(*account),

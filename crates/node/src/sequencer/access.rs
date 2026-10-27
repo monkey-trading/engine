@@ -65,6 +65,7 @@ pub(super) fn is_access_command(cmd: &Command) -> bool {
             | Command::AccessWithdraw { .. }
             | Command::AccessDeposit { .. }
             | Command::AccessCustodyDeposit { .. }
+            | Command::AccessCustodyReplacement { .. }
             | Command::RetryDepositScreening { .. }
     )
 }

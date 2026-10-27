@@ -55,6 +55,12 @@ pub enum Command {
         payer: Option<AccountId>,
         evidence: AccessEvidence,
     },
+    /// An atomic custody replacement screened against its canonical payer, from `V26`.
+    AccessCustodyReplacement {
+        update: Box<DepositUpdate>,
+        payer: Option<AccountId>,
+        evidence: AccessEvidence,
+    },
     /// Venue quotes from the feed handlers.
     Prices {
         market: MarketId,

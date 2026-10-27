@@ -10,6 +10,7 @@ use crate::event::Event;
 use crate::types::AccountId;
 mod cash;
 mod legacy;
+mod replacement;
 pub use legacy::{LegacyDeposit, legacy_chain_reference};
 
 /// The recipient of a vault deposit.
@@ -64,6 +65,9 @@ pub struct RecordedDeposit {
     /// reversal, so a reinstatement or replacement keeps the receipt uncredited.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uncredited: Option<UncreditedReceipt>,
+    /// Canonical vault caller authenticated by screening from V26.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payer: Option<AccountId>,
 }
 
 /// Custody observations admitted by the RPC quorum and persisted in the public log.
@@ -248,7 +252,14 @@ impl Engine {
             return Err(DepositReject::ConflictingReceipt);
         }
         if let DepositUpdate::Replace { observed_at_seq, replacement, replacement_reversed_at_seq, .. } = update {
-            return self.replace_deposit(receipt, *observed_at_seq, replacement, *replacement_reversed_at_seq, events);
+            return self.replace_deposit(
+                receipt,
+                *observed_at_seq,
+                replacement,
+                *replacement_reversed_at_seq,
+                screening,
+                events,
+            );
         }
         if let DepositUpdate::Reinstate { reversed_at_seq, .. } = update {
             if self.custody_checkpoint.is_some_and(|checkpoint| receipt.block <= checkpoint.block) {
@@ -261,7 +272,7 @@ impl Engine {
             if recorded.status != DepositStatus::Reversed || recorded.updated_at_seq != *reversed_at_seq {
                 return Err(DepositReject::SettledReceipt);
             }
-            let uncredited = recorded.uncredited;
+            let uncredited = self.terminal_receipt_hold(receipt).or(recorded.uncredited);
             self.check_transaction_available(receipt)?;
             if let Some(uncredited) = uncredited {
                 self.record_deposit(receipt, DepositStatus::Unfinalised, Fixed::ZERO, Some(uncredited), events);
@@ -335,69 +346,6 @@ impl Engine {
         }
     }
 
-    /// Moves a live receipt's transaction-local deposit to its canonical replacement in one step:
-    /// the orphan is reversed and the replacement credited, or reinstated, so cash and the principal
-    /// lock net out and no close-out runs. Redelivery after the move is a no-op.
-    /// Error cases:
-    /// - the orphan is unknown, or not live at the observed revision
-    /// - the replacement is invalid, at or below the finalised frontier, or not the same
-    ///   transaction-local deposit with the same beneficiary and amount
-    /// - the replacement is recorded but not reversed at the named revision
-    fn replace_deposit(
-        &mut self,
-        orphan: &DepositReceipt,
-        observed_at_seq: u64,
-        replacement: &DepositReceipt,
-        replacement_reversed_at_seq: Option<u64>,
-        events: &mut Vec<Event>,
-    ) -> Result<(), DepositReject> {
-        let recorded = self.deposits.get(&orphan.reference()).ok_or(DepositReject::UnknownReceipt)?;
-        let uncredited = recorded.uncredited;
-        let current = self.deposits.get(&replacement.reference());
-        if recorded.status == DepositStatus::Reversed
-            && current.is_some_and(|d| d.receipt == *replacement && d.status != DepositStatus::Reversed)
-        {
-            return Ok(());
-        }
-        if recorded.status != DepositStatus::Unfinalised || recorded.updated_at_seq != observed_at_seq {
-            return Err(DepositReject::SettledReceipt);
-        }
-        if replacement.block_hash == B256::ZERO
-            || replacement.tx_hash == B256::ZERO
-            || replacement.block == u64::MAX
-            || replacement.reference() == orphan.reference()
-        {
-            return Err(DepositReject::InvalidReceipt);
-        }
-        if replacement.transaction_reference() != orphan.transaction_reference()
-            || replacement.beneficiary != orphan.beneficiary
-            || replacement.amount != orphan.amount
-        {
-            return Err(DepositReject::ConflictingReceipt);
-        }
-        if self.custody_checkpoint.is_some_and(|checkpoint| replacement.block <= checkpoint.block) {
-            return Err(DepositReject::SettledReceipt);
-        }
-        match (current, replacement_reversed_at_seq) {
-            (None, None) => {}
-            (Some(d), _) if d.receipt != *replacement => return Err(DepositReject::ConflictingReceipt),
-            (Some(d), Some(seq)) if d.status == DepositStatus::Reversed && d.updated_at_seq == seq => {}
-            (None, Some(_)) => return Err(DepositReject::UnknownReceipt),
-            (Some(_), _) => return Err(DepositReject::SettledReceipt),
-        }
-        if let Some(uncredited) = uncredited {
-            // The replacement is the same funded deposit, so it keeps the orphan's refusal.
-            self.record_deposit(orphan, DepositStatus::Reversed, Fixed::ZERO, Some(uncredited), events);
-            self.track_uncredited(orphan, uncredited, false);
-            self.record_deposit(replacement, DepositStatus::Unfinalised, Fixed::ZERO, Some(uncredited), events);
-            self.track_uncredited(replacement, uncredited, true);
-            return Ok(());
-        }
-        self.record_deposit(orphan, DepositStatus::Reversed, -orphan.amount, None, events);
-        self.record_deposit(replacement, DepositStatus::Unfinalised, replacement.amount, None, events);
-        Ok(())
-    }
-
     /// Refuses a second active receipt for the same transaction-local deposit.
     /// Error cases:
     /// - another receipt for that deposit remains credited
@@ -421,6 +369,11 @@ impl Engine {
     ) {
         self.ensure_hot_indexes();
         let indexes = self.hot_indexes.as_mut().expect("indexes initialised");
+        if self.protocol_version >= crate::protocol::ProtocolVersion::V26
+            && let Some(held) = uncredited.filter(|held| held.reason.holds_deposit())
+        {
+            indexes.terminal_deposit_holds.entry(receipt.transaction_reference()).or_insert(held);
+        }
         let pending = &mut indexes.pending_deposits;
         if status == DepositStatus::Unfinalised {
             pending.insert(receipt.reference());
@@ -435,6 +388,7 @@ impl Engine {
             indexes.receipts_above_frontier.remove(&receipt.reference());
         }
         self.deposit_transactions.insert(receipt.transaction_reference(), receipt.reference());
+        let payer = self.deposits.get(&receipt.reference()).and_then(|recorded| recorded.payer);
         self.deposits.insert(
             receipt.reference(),
             RecordedDeposit {
@@ -442,6 +396,7 @@ impl Engine {
                 status: status.clone(),
                 updated_at_seq: self.last_seq.expect("custody updates are sequenced"),
                 uncredited,
+                payer,
             },
         );
         events.push(Event::CustodyDepositChanged {

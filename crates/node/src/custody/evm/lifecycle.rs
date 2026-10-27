@@ -115,8 +115,41 @@ impl<V: VaultReader> DepositWatcher<V> {
         let scan = self.confirmed.scan.as_ref().expect("scan retained");
         let orphans = reconcile(&pending, &scan.canonical, &scan.hashes, to == eligible)?;
         let deferred = orphans.iter().any(|(_, orphaned)| *orphaned == Orphaned::Deferred);
+        let screened_replacements =
+            query(tx, |engine| engine.protocol_version() >= engine_core::protocol::ProtocolVersion::V26)
+                .await
+                .map_err(PollError::Fatal)?;
         for (recorded, orphaned) in orphans {
             let update = match orphaned {
+                Orphaned::Replaced(replacement) if screened_replacements => {
+                    let payer = self
+                        .confirmed
+                        .scan
+                        .as_ref()
+                        .expect("scan retained")
+                        .payers
+                        .get(&replacement.reference())
+                        .copied()
+                        .flatten();
+                    let update = replacement_update(tx, recorded, replacement.clone()).await?;
+                    let deposit = receipt_access_deposit(&replacement, payer);
+                    let request = ScreeningRequest {
+                        request_hash: deposit_screening_hash(&deposit),
+                        account: deposit.account,
+                        payer,
+                        peer: None,
+                    };
+                    let evidence = screen(self.access.as_deref(), &request).await;
+                    let events =
+                        submit(tx, Command::AccessCustodyReplacement { update: Box::new(update), payer, evidence })
+                            .await?;
+                    if events.iter().any(|event| matches!(event, Event::CustodyDepositRejected { .. })) {
+                        return Err(PollError::inconsistent(anyhow!(
+                            "sequencer refused screened canonical replacement"
+                        )));
+                    }
+                    continue;
+                }
                 Orphaned::Replaced(replacement) => replacement_update(tx, recorded, replacement).await?,
                 Orphaned::Reversed => DepositUpdate::Reverse {
                     receipt: recorded.receipt.clone(),

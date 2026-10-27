@@ -296,6 +296,10 @@ impl Engine {
                     );
                 }
                 self.protocol_version = *version;
+                if *version >= ProtocolVersion::V26 {
+                    self.hot_indexes = None;
+                    self.ensure_hot_indexes();
+                }
             }
             AdminCommand::InitEmissions(schedule) => self.init_emissions(schedule)?,
         }

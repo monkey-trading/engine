@@ -132,6 +132,7 @@ this crate and reproduce the signed state roots exactly.
 - `src/funds.rs` — legacy and mock deposits, withdrawals, house capital, and overnight financing
 - `src/deposits.rs` — exact custody receipts, sequencer-confirmed principal locks, finality,
   canonical reversals, and atomic moves of reincluded deposits to their replacement receipts
+- `src/deposits/replacement.rs` — atomic canonical replacements and V26 payer screening with retained terminal holds
 - `src/deposits/legacy.rs` — legacy credit provenance, activation principal locks, canonical adoption and exact finality lookup
 - `src/deposits/legacy/tests.rs` — migration, independent release, ambiguous receipts and recovery commitments
 - `src/deposits/tests.rs` — receipt transition, duplicate delivery, arithmetic and recovery tests
@@ -221,7 +222,7 @@ this crate and reproduce the signed state roots exactly.
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
   `V15` to `V23` parts (`v15.rs` to `v23.rs`)
-  `V15` to `V22` and `V24` parts (`v15.rs` to `v22.rs`, `v24.rs`)
+  `V15` to `V22`, `V24`, and `V26` parts (`v15.rs` to `v22.rs`, `v24.rs`, `v26.rs`)
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
 
@@ -352,7 +353,9 @@ and prices markets from roll-adjusted futures contracts; its session is in
 physical cash; its session is in `examples/reference_log/v22.rs`.
 `V24` adds signed eligibility declarations, screened orders and
 withdrawals, and pending and held custody deposits and receipts. Its reference-log session is in
-`examples/reference_log/v24.rs`.
+`examples/reference_log/v24.rs`. `V26` binds canonical receipt payers, screens replacements atomically,
+and preserves terminal holds across transaction-local receipt variants; its session is in
+`examples/reference_log/v26.rs`.
 For each later version:
 
 1. Add the version in code as `src/protocol.rs` lists, then extend the session in

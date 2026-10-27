@@ -21,7 +21,7 @@ an index: load only the rule whose hint matches the current action.
   `merkle/`). It does no IO and uses no clocks,
   randomness, or floats. `impl Engine` is split by area (`engine/mod.rs` for state and dispatch
   with per-market state in `engine/market.rs`, `marks.rs`, `execution/`,
-  `markouts.rs`, `closeout.rs`, `funds.rs`, `deposits.rs` with legacy migration in `deposits/`,
+  `markouts.rs`, `closeout.rs`, `funds.rs`, `deposits.rs` with legacy migration and screened canonical replacements in `deposits/`,
   `corporate/` for dividend/split instructions, captures and ex-date adjustments,
   `admin.rs`, `stress.rs`, `auth.rs`). `withdrawal.rs` reserves FIFO requests and creates
   whole-USDC partial approvals under the V22 rules; `merkle/withdrawal.rs` proves each approval
