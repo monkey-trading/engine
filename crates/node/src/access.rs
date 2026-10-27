@@ -93,8 +93,14 @@ impl AccessClient {
             }
             bytes.extend_from_slice(&chunk);
         }
+        // The serde error can quote response values, which may carry the client's personal data.
         let screening: Screening = serde_json::from_slice(&bytes).map_err(|error| {
-            warn!(%error, "access source response is not a screening");
+            warn!(
+                category = ?error.classify(),
+                line = error.line(),
+                column = error.column(),
+                "access source response is not a screening"
+            );
             SourceFailure::InvalidResponse
         })?;
         if screening.request_hash != request.request_hash
