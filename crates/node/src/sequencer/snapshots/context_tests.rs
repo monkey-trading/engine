@@ -52,6 +52,11 @@ fn cache_restores_each_outstanding_checkpoint_with_its_original_accounting() {
     }
     let offset = seq.outbox.last().unwrap().offset;
     let context = seq.recovery_context(seq.snapshot_base.clone().unwrap());
+    assert_eq!(
+        context.base_work.as_ref().unwrap().checkpoint.seq,
+        base,
+        "the authenticated cache retains anchor accounting"
+    );
     let captured = seq.snapshot_payload(expected[1].checkpoint.clone(), seq.progress.clone(), context, offset).unwrap();
     seq.flush().unwrap();
     let (accounting, command_prefix) = (seq.accounting, seq.command_prefix);
@@ -65,6 +70,7 @@ fn cache_restores_each_outstanding_checkpoint_with_its_original_accounting() {
         Replay::from_snapshot(engine, cached, domain, Some(AccountId(key.address())), Some(parent)).unwrap().finish();
     assert_eq!(replayed.accounting, accounting);
     assert_eq!(replayed.command_prefix, command_prefix);
+    assert_eq!(replayed.recovery_anchor_work.as_ref().unwrap().checkpoint.seq, base);
     let actual = &replayed.recovery_work;
     assert_eq!(actual.len(), expected.len());
     for (actual, expected) in actual.iter().zip(&expected) {
@@ -128,6 +134,7 @@ fn cache_context_requires_work_and_all_accounting_fields() {
             deferred: Vec::new(),
             checkpoint_signers: [AccountId(key.address())].into(),
             base: snapshot::RecoveryBase::Ungated,
+            base_work: None,
             work: Vec::new(),
         },
     };

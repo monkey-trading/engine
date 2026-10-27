@@ -212,7 +212,7 @@ impl<V: VaultReader> DepositWatcher<V> {
         let links = self.headers(next, end).await?;
         let slot = if staking { &mut self.confirmed.staking_window } else { &mut self.confirmed.window };
         let run = &mut slot.as_mut().expect("window retained").run;
-        if let Err(cause) = run.extend(end, &links, |_| false, |_| true) {
+        if let Err(cause) = run.extend(end, &links, |_| false, |number| (from..=to).contains(&number)) {
             *slot = None;
             return Err(PollError::unsettled(cause));
         }

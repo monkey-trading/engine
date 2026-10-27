@@ -51,7 +51,8 @@ an index: load only the rule whose hint matches the current action.
   configuration against a release manifest; `engine replay --attestation` requires every checkpoint
   signer to have passed it; a mock quote never verifies), the trusted time check against
   Roughtime servers, the custody adapter (mock, or EVM vault deposits over alloy, mirroring the
-  staking contract's finalised events once `InitStaking` has applied), checkpoint posting
+  staking contract's finalised events once `InitStaking` has applied, with V27 scan progress
+  authenticated in engine state rather than trusted from the host cursor), checkpoint posting
   and collateral reconciliation, distributions paid included (`checkpoints/`), with strict signature replay and startup checks
   against the vault's finalized commitment before history writes, plus authenticated withdrawal
   authorization replay, bounded finalized claim polling, immutable signer-epoch history independent

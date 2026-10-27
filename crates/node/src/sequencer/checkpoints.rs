@@ -175,6 +175,7 @@ impl Sequencer {
         if let Some(work) = self.snapshot_work.iter().find(|work| Some(work.checkpoint.seq) == posted) {
             self.snapshot_base =
                 Some(crate::snapshot::RecoveryBase::Checkpoint { checkpoint: work.checkpoint.clone() });
+            self.snapshot_anchor_work = Some(work.clone());
             self.snapshot_work.retain(|work| Some(work.checkpoint.seq) > posted);
         }
         let needs_authorization = ProtocolVersion::LATEST.supports_deposit_finality()

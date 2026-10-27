@@ -99,6 +99,7 @@ pub struct Sequencer {
     command_prefix: [u8; 32],
     snapshot_base: Option<RecoveryBase>,
     snapshot_work: Vec<crate::checkpoints::Work>,
+    snapshot_anchor_work: Option<crate::checkpoints::Work>,
     snapshot_signers: BTreeSet<AccountId>,
     /// The newest checkpoint, with its recovery facts as they stood then, when its capture was
     /// skipped because another was in flight.

@@ -383,7 +383,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/evm/progress.rs` — confirmed header and log windows read one batch per poll, kept
   across polls while their endpoint stays canonical
 - `src/custody/evm/legacy.rs` — independent canonical finality proof before legacy signature redelivery
-- `src/custody/staking.rs` — mirroring the staking contract's finalised events into `Stake`/`Unstake` commands once each, holding them until `InitStaking` has applied
+- `src/custody/staking.rs` — mirroring the staking contract's finalised events into `Stake`/`Unstake`
+  commands once each, holding them until `InitStaking` has applied; V27 completed ranges, including
+  empty ones, are authenticated by `StakingProgress` and the host cursor cannot advance them
 - `src/custody/evm/lifecycle/tests.rs` — reversal, reinclusion, inconsistent receipt and amount boundaries
 - `src/custody/chain.rs` — the chain of block hashes proven to lead to the tagged block, and the
   headers of an interrupted proof, kept apart until it ends there

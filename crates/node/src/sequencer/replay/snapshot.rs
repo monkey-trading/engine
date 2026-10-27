@@ -14,7 +14,10 @@ impl Replay {
     /// Matches a separately signed complete history head to this actual strict replay prefix.
     /// Error cases:
     /// - command, time or canonical command/event prefix differs
-    pub(super) fn verify_history_head(&self, head: &crate::history::authenticated::Head) -> anyhow::Result<()> {
+    pub(in crate::sequencer) fn verify_history_head(
+        &self,
+        head: &crate::history::authenticated::Head,
+    ) -> anyhow::Result<()> {
         ensure!(
             head.last_seq() == self.engine.last_seq() && head.last_ts() == Some(self.engine.now()),
             "history head does not match the replay cursor"
@@ -76,6 +79,7 @@ impl Replay {
                     .context
                     .work
                     .iter()
+                    .chain(snapshot.context.base_work.iter())
                     .find(|work| work.checkpoint.seq == parent.seq)
                     .cloned()
                     .or_else(|| {

@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use engine_core::Fixed;
+use engine_core::command::Command;
 use tokio::sync::{broadcast, mpsc, watch};
 
 use crate::checkpoints::Health;

@@ -97,6 +97,7 @@ impl Sequencer {
             deferred: self.gate.as_ref().map_or_else(Vec::new, |gate| gate.pending.clone()),
             checkpoint_signers: self.snapshot_signers.clone(),
             base,
+            base_work: self.snapshot_anchor_work.clone(),
             work: self.snapshot_work.clone(),
         }
     }

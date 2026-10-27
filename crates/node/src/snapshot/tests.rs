@@ -285,6 +285,7 @@ pub(super) fn fixture(label: &str) -> (SnapshotSection, EnclaveKey, Snapshot) {
             deferred: Vec::new(),
             checkpoint_signers: [AccountId(key.address())].into(),
             base: RecoveryBase::Ungated,
+            base_work: None,
             work: Vec::new(),
         },
     };

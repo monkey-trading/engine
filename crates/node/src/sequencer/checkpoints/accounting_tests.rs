@@ -124,8 +124,9 @@ fn gated_live_and_recovered_accounting_matches_cash_through_trading_and_withdraw
         Sequencer::recover(config, key, broadcast::channel(128).0, mpsc::unbounded_channel().0).unwrap();
     assert_matches(recovered.accounting, &recovered.engine, unpaid);
     let restored = recovered.take_recovery_checkpoints();
-    assert_eq!(restored.len(), live.len());
-    for (actual, expected) in restored.iter().zip(&live) {
+    assert_eq!(restored.len(), live.len() + 1);
+    assert_eq!(restored[0].checkpoint, finalized, "the finalized anchor retains its original accounting");
+    for (actual, expected) in restored.iter().skip(1).zip(&live) {
         assert_eq!(actual.checkpoint.signature, expected.checkpoint.signature);
         assert_eq!(actual.checkpoint.seq, expected.checkpoint.seq);
         assert_eq!(

@@ -155,12 +155,13 @@ impl<V: VaultReader> DepositWatcher<V> {
             return Ok(());
         };
         let configured_start = self.start_block;
-        let Some(from) = query(tx, move |engine| {
+        let Some((from, anchor)) = query(tx, move |engine| {
             engine.staking().map(|staking| {
-                staking.completed_through.map_or_else(
+                let from = staking.completed_through.map_or_else(
                     || staking.mirrored_through.unwrap_or(configured_start).max(configured_start),
                     |checkpoint| checkpoint.block + 1,
-                )
+                );
+                (from, staking.completed_through)
             })
         })
         .await
@@ -168,6 +169,13 @@ impl<V: VaultReader> DepositWatcher<V> {
         else {
             return Ok(());
         };
+        if let Some(anchor) = anchor {
+            let links = self.headers(anchor.block, anchor.block).await?;
+            if links.len() != 1 || links[0].number != anchor.block || links[0].hash != anchor.block_hash {
+                return Err(PollError::inconsistent(anyhow!("finalized staking anchor changed")));
+            }
+            self.chain.insert(anchor.block, anchor.block_hash);
+        }
         if from > to {
             return Ok(());
         }
