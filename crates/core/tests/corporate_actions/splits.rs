@@ -156,22 +156,41 @@ fn incoming_opening_gap_is_stored_after_normalization_before_any_resting_fill() 
 }
 
 #[test]
-fn split_preserves_quote_age_so_an_order_without_a_fresh_quote_gets_no_price() {
+fn a_quote_stored_after_the_split_opening_prices_at_the_scaled_level_until_it_ages_out() {
     let mut h = held("2", "0");
-    let quoted_at = h.ts;
     let mut spec = h.engine.markets()[&AAPL].spec.clone();
     spec.price_rules.max_age_ms = 1000;
     h.operator_admin(engine_core::command::AdminCommand::UpsertMarket(spec));
     accepted(&schedule(&mut h, split("stale", 4, 1)));
     tick(&mut h, open());
+    // V21 drops the pre-close quotes at the opening, so the market opens on the scaled mark alone
+    // with no stored quote of any age.
     assert_eq!(h.engine.markets()[&AAPL].mark, Some(f("20")));
-    assert!(h.engine.markets()[&AAPL].quotes.values().all(|q| q.mid == f("20") && q.ts == quoted_at));
+    assert!(h.engine.markets()[&AAPL].quotes.is_empty());
     let events = h.market_order(acct(1), AAPL, Side::Buy, "1", "20");
     assert!(
         events.iter().any(|e| matches!(e, Event::OrderRejected { reason: Reject::NoPrice { .. }, .. })),
         "{events:?}"
     );
     assert_eq!(h.engine.accounts()[&acct(1)].position(AAPL).qty, f("8"));
+    // A quote stored after the opening prices at the scaled level while it stays fresh.
+    h.price(AAPL, "20");
+    assert_eq!(
+        h.engine.markets()[&AAPL].quotes.values().map(|q| (q.mid, q.ts)).collect::<Vec<_>>(),
+        [(f("20"), open()), (f("20"), open())]
+    );
+    let events = h.market_order(acct(1), AAPL, Side::Buy, "1", "20");
+    assert!(events.iter().any(|e| matches!(e, Event::Fill(fill) if fill.price == f("20"))), "{events:?}");
+    assert_eq!(h.engine.accounts()[&acct(1)].position(AAPL).qty, f("9"));
+    // Past max_age the stored quote prices nothing even though it survives in the open session:
+    // the quote-age rule, not an empty quote set, rejects the order.
+    h.advance_to(open() + 1001);
+    let events = h.market_order(acct(1), AAPL, Side::Buy, "1", "20");
+    assert!(
+        events.iter().any(|e| matches!(e, Event::OrderRejected { reason: Reject::NoPrice { .. }, .. })),
+        "{events:?}"
+    );
+    assert_eq!(h.engine.accounts()[&acct(1)].position(AAPL).qty, f("9"));
 }
 
 #[test]
@@ -411,7 +430,7 @@ fn reverse_split_preserves_internal_prices_above_the_external_input_bound() {
 }
 
 #[test]
-fn reverse_split_with_quotes_above_the_feed_input_bound_produces_no_price() {
+fn reverse_split_scaled_mark_above_the_feed_input_bound_produces_no_price() {
     let mut h = fixture();
     h.deposit(acct(1), "10000");
     h.price(AAPL, "1000000000");
@@ -420,9 +439,19 @@ fn reverse_split_with_quotes_above_the_feed_input_bound_produces_no_price() {
     assert!(events.iter().any(|e| matches!(e, Event::CorporateSplit { .. })), "{events:?}");
     let market = &h.engine.markets()[&AAPL];
     assert!(!market.corporate_action_blocked);
+    // The scaled mark persists above the feed input bound; the closure drops every stored quote,
+    // leaving none to scale or bound.
     assert_eq!(market.mark, Some(f("4000000000")));
-    assert!(market.quotes.values().all(|q| q.mid == f("4000000000")));
+    assert!(market.quotes.is_empty());
     assert!(market.processed_index.is_none());
+    // A quote at the scaled level is above the feed input bound, so it stores nothing and no
+    // price can come from quotes.
+    let events = h.quotes(AAPL, &["4000000000", "4000000000"]);
+    assert!(
+        events.iter().any(|e| matches!(e, Event::PricesRejected { reason, .. } if reason.contains("malformed"))),
+        "{events:?}"
+    );
+    assert!(h.engine.markets()[&AAPL].quotes.is_empty());
     let events = h.market_order(acct(1), AAPL, Side::Buy, "1", "1000000000");
     assert!(
         events.iter().any(|e| matches!(e, Event::OrderRejected { reason: Reject::NoPrice { .. }, .. })),
