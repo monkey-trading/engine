@@ -1,7 +1,9 @@
+//! V19 financial fixtures; protocol migration remains tested against actual LATEST.
 //! Publisher synchronization after time admission halts, with controlled clocks and public replay.
 
 use super::*;
 
+use engine_core::access::AccessPolicy;
 use engine_core::benchmark::{BenchmarkBatch, BenchmarkRate};
 use engine_core::command::{OrderKind, OrderRequest};
 use engine_core::fixed::Rounding;
@@ -195,46 +197,59 @@ fn benchmark_recovery_disabled_publishers_keep_existing_time_recovery_behavior()
 
 #[test]
 fn benchmark_recovery_v17_activation_can_precede_the_snapshot_without_charging() {
-    let dir = scratch_dir("benchmark-recovery-v17");
-    let clock = Arc::new(TestClock::at(START));
-    let mut seq = recover_clock(&dir, clock.clone());
-    seq.trust(trusted(clock.as_ref())).unwrap();
-    seq.sequence_required(
-        "v17 activation",
-        vec![
-            Command::Admin(AdminCommand::SetClientAuth(seq.client_auth.clone())),
-            Command::Admin(AdminCommand::SetOperator(seq.operator)),
-            Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V17 }),
-        ],
-    )
-    .unwrap();
-    let mut genesis = dev_config().genesis;
-    genesis.markets.retain(|market| market.id == 1);
-    seq.genesis(&genesis).unwrap();
-    let reference = format!("{}:0", engine_core::eip712::B256::repeat_byte(17));
-    assert!(seq.sequence(deposit(100, &reference)).unwrap().unwrap().iter().any(|event| {
-        matches!(event, Event::Deposited { account: TRADER, amount } if *amount == Fixed::from_int(100))
-    }));
-    seq.flush().unwrap();
-    drop(seq);
-    clock.advance(Duration::from_millis((FIRST + DAY + 1 - START) as u64));
-    let mut seq = recover_clock(&dir, clock.clone());
-    let before = seq.engine.next_rollover();
-    seq.wait_for_benchmarks().unwrap();
-    seq.activate_protocol().unwrap();
-    seq.trust(trusted(clock.as_ref())).unwrap();
-    assert_eq!(seq.engine.protocol_version(), ProtocolVersion::LATEST);
-    assert!(seq.engine.deposit_finality_enabled());
-    assert_eq!(seq.engine.accounts()[&TRADER].balance, Fixed::from_int(100));
-    assert_eq!(seq.engine.accounts()[&TRADER].unfinalised_deposits, Fixed::from_int(100));
-    assert_eq!(seq.engine.next_rollover(), before, "activation must not perform catch-up");
-    assert!(seq.required.is_empty(), "activation is not deadlocked behind publisher synchronization");
-    assert!(seq.sequence(Command::Tick).unwrap().is_none());
-    let mut f = Fixture { dir, seq, clock };
-    let snapshot = f.snapshot(&[("2026-10-20", "0.015"), ("2026-10-21", "0.02003")]);
-    assert!(f.submit(snapshot).contains(&Event::AdminApplied));
-    assert_eq!(f.seq.engine.next_rollover(), Some(FIRST + 2 * DAY));
-    f.assert_public_replay(&[]);
+    for with_policy in [false, true] {
+        let dir = scratch_dir(&format!("benchmark-recovery-v17-{with_policy}"));
+        let clock = Arc::new(TestClock::at(START));
+        let mut seq = recover_clock(&dir, clock.clone());
+        seq.trust(trusted(clock.as_ref())).unwrap();
+        seq.sequence_required(
+            "v17 activation",
+            vec![
+                Command::Admin(AdminCommand::SetClientAuth(seq.client_auth.clone())),
+                Command::Admin(AdminCommand::SetOperator(seq.operator)),
+                Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V17 }),
+            ],
+        )
+        .unwrap();
+        let mut genesis = dev_config().genesis;
+        genesis.markets.retain(|market| market.id == 1);
+        seq.genesis(&genesis).unwrap();
+        let reference = format!("{}:0", engine_core::eip712::B256::repeat_byte(17));
+        assert!(seq.sequence(deposit(100, &reference)).unwrap().unwrap().iter().any(|event| {
+            matches!(event, Event::Deposited { account: TRADER, amount } if *amount == Fixed::from_int(100))
+        }));
+        seq.flush().unwrap();
+        drop(seq);
+        clock.advance(Duration::from_millis((FIRST + DAY + 1 - START) as u64));
+        let mut seq = recover_clock(&dir, clock.clone());
+        let policy = AccessPolicy { source: AccountId([0x46; 20]), max_age_ms: 1000 };
+        if with_policy {
+            seq.access_policy = Some(policy.clone());
+        }
+        let before = seq.engine.next_rollover();
+        seq.wait_for_benchmarks().unwrap();
+        seq.activate_protocol().unwrap();
+        seq.trust(trusted(clock.as_ref())).unwrap();
+        assert_eq!(seq.engine.protocol_version(), ProtocolVersion::LATEST);
+        assert!(seq.engine.deposit_finality_enabled());
+        assert_eq!(seq.engine.accounts()[&TRADER].balance, Fixed::from_int(100));
+        assert_eq!(seq.engine.accounts()[&TRADER].unfinalised_deposits, Fixed::from_int(100));
+        assert_eq!(seq.engine.next_rollover(), before, "activation must not perform catch-up");
+        assert_eq!(seq.engine.access_policy(), None, "source setup must not charge unpaid legacy rollovers");
+        assert_eq!(
+            seq.required.is_empty(),
+            !with_policy,
+            "only source setup may wait behind publisher synchronization"
+        );
+        assert!(seq.sequence(Command::Tick).unwrap().is_none());
+        let mut f = Fixture { dir, seq, clock };
+        let snapshot = f.snapshot(&[("2026-10-20", "0.015"), ("2026-10-21", "0.02003")]);
+        assert!(f.submit(snapshot).contains(&Event::AdminApplied));
+        assert_eq!(f.seq.engine.next_rollover(), Some(FIRST + 2 * DAY));
+        assert!(f.seq.required.is_empty(), "the snapshot must finish queued source setup");
+        assert_eq!(f.seq.engine.access_policy(), with_policy.then_some(&policy));
+        f.assert_public_replay(&[]);
+    }
 }
 
 #[tokio::test]
@@ -325,14 +340,14 @@ impl Fixture {
         if publishers {
             seq.wait_for_benchmarks().unwrap();
         }
-        seq.activate_protocol().unwrap();
+        seq.activate_legacy_protocol().unwrap();
         let mut genesis = dev_config().genesis;
         genesis.markets.retain(|market| market.id == 1);
         genesis.benchmarks.clear();
         seq.genesis(&genesis).unwrap();
         assert!(commands(&log_entries(&dir)).is_empty(), "bootstrap waits for authenticated time");
         seq.trust(trusted(clock.as_ref())).unwrap();
-        assert_eq!(seq.engine.protocol_version(), ProtocolVersion::LATEST);
+        assert_eq!(seq.engine.protocol_version(), ProtocolVersion::V23);
         assert!(!seq.needs_genesis(), "publisher gate must allow cold genesis");
         let mut f = Self { dir, seq, clock };
         let initial = if retained { vec![("2026-10-19", "0.01")] } else { vec![] };

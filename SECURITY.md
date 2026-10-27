@@ -75,13 +75,25 @@ to, forge or reuse a signature the enclave makes, read or alter what the enclave
 machine it runs on, or halt the engine with a request any client can send.
 
 The node's development settings, which are the mock enclave, mock custody, simulated prices, and
-unsigned requests, exist for local testing and make no security claims of their own, and neither
-does `POST /v1/dev/deposit`, which the node serves only with mock custody. A weakness in them is in
-scope when a production configuration can reach it, or when whoever runs an attested enclave can
+historical unsigned requests, exist for local testing and make no security claims of their own.
+Neither does `POST /v1/dev/deposit`, which the node serves only with mock custody. A weakness in
+them is in scope when a production configuration can reach it, or when whoever runs an attested enclave can
 switch them on, since the node reads its configuration from the machine it runs on. A production
 configuration uses hardware attestation, on-chain custody, live prices, and signed requests.
 Requests are signed, and the node refuses unsigned ones unless both the enclave and custody are
-mocks, and a production build of the node refuses every mock provider. The other three are not
+mocks, and a production build of the node refuses every mock provider.
+From V24, client actions and eligibility declarations require signatures even with mock providers,
+and declarations, orders and withdrawals require fresh screening of the account and client peer.
+A missing declaration, an unknown classification, or a screening source failure keeps a deposit
+uncredited and pending for bounded automatic retries.
+Confirmed sanctioned holds have no automatic release or refund path.
+Older logs retain their recorded authorization rules. Access-source evidence is signed by a recorded
+authority and bounded by freshness, subject and request digest; the source classifications and
+host-supplied initial configuration still require approved provenance and attestation binding.
+API jurisdiction screening uses the socket peer address, which the host's network supplies, so it
+is not yet bounded against a host that relays or translates client connections.
+The local source fixture is synthetic and its published signer is refused with real attestation.
+Sanctioned funding remains uncredited and held with public evidence. The other three are not
 finished: the node builds into a reproducible SEV-SNP image and requests an attestation report
 through configfs-tsm, and `engine verify-attestation` verifies a quote's certificate chain,
 measurement, policy, and configuration against a release, but booting that image on SEV-SNP

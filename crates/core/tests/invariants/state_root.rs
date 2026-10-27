@@ -15,9 +15,10 @@ use proptest::bool::weighted;
 use proptest::collection::vec;
 use proptest::test_runner::{TestCaseError, TestRunner};
 
+use crate::access::Clients;
 use crate::common::{Harness, operator};
+use crate::config;
 use crate::session::{command, session};
-use crate::{config, funded};
 
 #[test]
 fn incremental_roots_match_a_rebuild_and_every_account_proves_against_them() {
@@ -30,14 +31,16 @@ fn incremental_roots_match_a_rebuild_and_every_account_proves_against_them() {
         // the latest rules, so the tree holds every state they keep.
         let mut genesis = Harness::fx();
         genesis.admin(AdminCommand::SetOperator(operator()));
-        genesis.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::LATEST });
-        let mut h = funded(genesis, &session);
+        let (mut h, clients) = Clients::prepare(genesis, &session);
+        assert_eq!(h.engine.protocol_version(), ProtocolVersion::LATEST);
+        assert_eq!(h.engine.accounts().len(), 3, "latest-version tree checks need real funded accounts");
         let schedule = EmissionSchedule { start_ms: h.ts, period_budget: TokenUnits(1_000_003) };
         h.operator_admin(AdminCommand::InitEmissions(schedule));
         check(&mut h.engine)?;
         for (step, root) in session.steps.into_iter().zip(roots) {
             h.advance(step.advance_ms);
-            let cmd = command(&step.action, &h.engine, h.ts);
+            let action = step.action.map_accounts(|account| clients.account(account));
+            let cmd = clients.sign(command(&action, &h.engine, h.ts), &h.engine, h.ts);
             // From `V8` an operator command applies only signed by the operator.
             match cmd.clone() {
                 Command::Admin(admin) if admin.is_operator_command() => h.operate(admin),

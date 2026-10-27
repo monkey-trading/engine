@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use alloy::primitives::B256;
 use anyhow::anyhow;
 use engine_core::deposits::{CustodyCheckpoint, DepositReceipt};
+use engine_core::types::AccountId;
 
 use crate::custody::chain::LinkedRun;
 use crate::custody::evm::lifecycle::receipt;
@@ -46,6 +47,8 @@ pub(super) struct ConfirmedScan {
     pub(super) end: Option<BlockRef>,
     count: u64,
     pub(super) canonical: Vec<DepositReceipt>,
+    /// Each canonical receipt's vault caller, by exact reference, for access screening.
+    pub(super) payers: BTreeMap<String, Option<AccountId>>,
     pub(super) hashes: BTreeMap<u64, B256>,
     pub(super) applied: usize,
     pub(super) finalised: usize,
@@ -61,6 +64,7 @@ impl ConfirmedScan {
             end: None,
             count,
             canonical: Vec::new(),
+            payers: BTreeMap::new(),
             hashes: BTreeMap::new(),
             applied: 0,
             finalised: 0,
@@ -225,6 +229,7 @@ impl<V: VaultReader> DepositWatcher<V> {
                 scan.applied = scan.applied.saturating_sub(removed);
                 scan.finalised = scan.finalised.saturating_sub(removed);
                 scan.hashes.retain(|block, _| *block > point.block);
+                scan.payers = scan.payers.split_off(&format!("{:020}:", point.block + 1));
                 scan.anchor = checkpoint;
                 scan.start = from;
                 scan.start_count = count;
@@ -302,7 +307,7 @@ impl<V: VaultReader> DepositWatcher<V> {
                     let ordinal = ordinals.entry(deposit.tx_hash).or_default();
                     let receipt = receipt(deposit, *ordinal)?;
                     *ordinal += 1;
-                    Ok(receipt)
+                    Ok((receipt, deposit.payer))
                 })
                 .collect::<Result<Vec<_>, _>>()
         });
@@ -314,7 +319,7 @@ impl<V: VaultReader> DepositWatcher<V> {
             }
         };
         let raw = self.confirmed.raw.take().expect("validated window retained");
-        let receipt_blocks: BTreeSet<_> = receipts.iter().map(|receipt| receipt.block).collect();
+        let receipt_blocks: BTreeSet<_> = receipts.iter().map(|(receipt, _)| receipt.block).collect();
         let scan = self.confirmed.scan.as_mut().expect("scan retained");
         scan.hashes.extend(
             raw.hashes
@@ -322,7 +327,8 @@ impl<V: VaultReader> DepositWatcher<V> {
                 .filter(|(block, _)| *block == raw.to || needed.contains(block) || receipt_blocks.contains(block)),
         );
         let block = BlockRef { number: raw.to, hash: scan.hashes[&raw.to] };
-        scan.canonical.extend(receipts);
+        scan.payers.extend(receipts.iter().map(|(receipt, payer)| (receipt.reference(), *payer)));
+        scan.canonical.extend(receipts.into_iter().map(|(receipt, _)| receipt));
         scan.end = Some(block);
         scan.count = count;
         self.chain.insert(block.number, block.hash);

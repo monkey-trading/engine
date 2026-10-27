@@ -19,9 +19,11 @@ pub use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
 use k256::ecdsa::signature::hazmat::PrehashVerifier;
 use k256::ecdsa::{RecoveryId, Signature as EcdsaSignature, SigningKey, VerifyingKey};
+use serde::Serialize;
 use sha3::{Digest, Keccak256};
 
 use crate::Fixed;
+use crate::access::{AccessDeposit, EligibilityClass, Screening};
 use crate::command::{AdminCommand, OrderKind, OrderRequest};
 use crate::types::{AccountId, Millis, OrderId, Side};
 
@@ -78,6 +80,19 @@ mod typed {
             uint64 nonce;
             int64 expiresAt;
             string command;
+        }
+
+        /// The statement names only the eligibility class the client declares.
+        struct EligibilityRequest {
+            address account;
+            uint64 nonce;
+            int64 expiresAt;
+            string statement;
+        }
+
+        /// The configured screening authority signs its canonical public decision.
+        struct AccessScreening {
+            string decision;
         }
     }
 }
@@ -154,6 +169,67 @@ pub fn admin_hash(domain: &Eip712Domain, command: &AdminCommand, nonce: u64, exp
     // serde_json encodes.
     let command = serde_json::to_string(command).expect("admin commands serialise");
     typed::AdminRequest { nonce, expiresAt: expires_at, command }.eip712_signing_hash(domain)
+}
+
+/// The digest of the exact eligibility statement, bound to deployment, account, nonce and expiry.
+pub fn eligibility_hash(
+    domain: &Eip712Domain,
+    account: AccountId,
+    class: EligibilityClass,
+    nonce: u64,
+    expires_at: Millis,
+) -> B256 {
+    typed::EligibilityRequest {
+        account: Address::from(account.0),
+        nonce,
+        expiresAt: expires_at,
+        statement: class.statement().into(),
+    }
+    .eip712_signing_hash(domain)
+}
+
+/// Binds deposit screening to the complete canonical custody input.
+pub fn deposit_screening_hash(deposit: &AccessDeposit) -> B256 {
+    let bytes = serde_json::to_vec(deposit).expect("deposit inputs serialise");
+    B256::from_slice(&Keccak256::digest(bytes))
+}
+
+/// The source's signed decision, bound to the same recorded deployment domain as client requests.
+pub fn screening_hash(domain: &Eip712Domain, screening: &Screening) -> B256 {
+    #[derive(Serialize)]
+    struct Decision<'a> {
+        source: AccountId,
+        request_hash: B256,
+        observed_at: Millis,
+        account: Option<AccountId>,
+        payer: Option<AccountId>,
+        jurisdiction: &'a crate::access::Jurisdiction,
+        account_status: &'a crate::access::SanctionsStatus,
+        payer_status: &'a crate::access::SanctionsStatus,
+    }
+    let Screening {
+        source,
+        request_hash,
+        observed_at,
+        account,
+        payer,
+        jurisdiction,
+        account_status,
+        payer_status,
+        signature: _,
+    } = screening;
+    let decision = Decision {
+        source: *source,
+        request_hash: *request_hash,
+        observed_at: *observed_at,
+        account: *account,
+        payer: *payer,
+        jurisdiction,
+        account_status,
+        payer_status,
+    };
+    let decision = serde_json::to_string(&decision).expect("screening decisions serialise");
+    typed::AccessScreening { decision }.eip712_signing_hash(domain)
 }
 
 /// The account whose key signed `hash`, or `None` when `signature` is malformed or recovers no key.

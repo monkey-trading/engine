@@ -36,7 +36,7 @@ async fn an_index_a_power_loss_left_ahead_of_the_log_is_rebuilt_before_it_serves
         lose_log_tail(&dir);
         assert!(last_command_seq(&dir) < taken, "{case}: the power loss cost the log commands");
 
-        let node = TestSequencer::start(&dir, 1024);
+        let node = TestSequencer::start_legacy(&dir, 1024);
         for n in 0..after {
             node.submit(deposit(5, &format!("after-{n}"))).await;
         }

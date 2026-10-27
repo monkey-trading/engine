@@ -17,6 +17,54 @@ use crate::test_support::{dev_config, scratch_dir};
 struct Chain {
     state: VaultState,
 }
+
+#[tokio::test]
+async fn changed_or_removed_recorded_access_policy_preserves_history_wal_and_public_log_bytes() {
+    let root = scratch_dir("preflight-access-policy");
+    let mut cfg = dev_config();
+    cfg.node.log_dir = root.join("log");
+    cfg.history.dir = root.join("history");
+    let policy = engine_core::access::AccessPolicy { source: AccountId([0x46; 20]), max_age_ms: 1000 };
+    let node = crate::test_support::TestSequencer::start(&cfg.node.log_dir, 1024);
+    assert!(
+        node.submit(engine_core::command::Command::Admin(engine_core::command::AdminCommand::SetAccessPolicy(
+            policy.clone()
+        )))
+        .await
+        .contains(&engine_core::event::Event::AdminApplied)
+    );
+    node.stop().await;
+    std::fs::create_dir_all(&cfg.history.dir).unwrap();
+    let db = rusqlite::Connection::open(cfg.history.dir.join(crate::history::INDEX_FILE)).unwrap();
+    db.execute_batch("PRAGMA journal_mode=wal; CREATE TABLE diagnostic(value TEXT); INSERT INTO diagnostic VALUES('keep access WAL');").unwrap();
+    for changed in [
+        None,
+        Some(engine_core::access::AccessPolicy { source: AccountId([0x47; 20]), ..policy.clone() }),
+        Some(engine_core::access::AccessPolicy { max_age_ms: 1001, ..policy.clone() }),
+    ] {
+        let before = files(&root);
+        let (log, plan) = crate::node::read_log_and_history_observe(
+            &cfg,
+            Some(AccountId(EnclaveKey::test_key().address())),
+            None,
+            |_| {},
+        )
+        .unwrap();
+        let mut seq_cfg = crate::test_support::sequencer_config(
+            &cfg.node.log_dir,
+            tokio::sync::watch::channel(crate::log::Manifest::default()).0,
+        );
+        seq_cfg.access_policy = changed;
+        let error =
+            finish_preflight::<Chain>(plan, None, Some((&log, &seq_cfg, AccountId(EnclaveKey::test_key().address()))))
+                .await
+                .err()
+                .unwrap();
+        assert!(error.to_string().contains("access policy"), "{error:#}");
+        assert_eq!(files(&root), before);
+    }
+    drop(db);
+}
 impl CheckpointChain for Chain {
     async fn state(&self, _: View) -> anyhow::Result<VaultState> {
         Ok(self.state.clone())
@@ -83,7 +131,7 @@ async fn replay_valid_truncated_log_cannot_discard_a_newer_valid_history_index()
     let mut cfg = dev_config();
     let full = root.join("full-log");
     cfg.history.dir = root.join("history");
-    let node = crate::test_support::TestSequencer::start(&full, 1024);
+    let node = crate::test_support::TestSequencer::start_legacy(&full, 1024);
     let history = crate::test_support::TestHistory::start(&node, &full, &cfg.history.dir).await.unwrap();
     node.submit(crate::test_support::deposit(100, "startup-boundary")).await;
     node.stop().await;
@@ -157,7 +205,7 @@ async fn wrong_recovery_deployment_preserves_history_wal_and_log_bytes() {
     let mut cfg = dev_config();
     cfg.node.log_dir = root.join("log");
     cfg.history.dir = root.join("history");
-    let node = crate::test_support::TestSequencer::start(&cfg.node.log_dir, 1);
+    let node = crate::test_support::TestSequencer::start_legacy(&cfg.node.log_dir, 1);
     node.stop().await;
     std::fs::create_dir_all(&cfg.history.dir).unwrap();
     let db = rusqlite::Connection::open(cfg.history.dir.join(crate::history::INDEX_FILE)).unwrap();
@@ -201,7 +249,7 @@ async fn wrong_recovery_deployment_preserves_history_wal_and_log_bytes() {
 async fn incomplete_genesis_and_missing_checkpoint_service_preserve_history_bytes() {
     use crate::log::{LogEntry, Manifest};
     use crate::sequencer::{Sequencer, SequencerConfig};
-    use crate::test_support::{sequencer_config, trusted_now};
+    use crate::test_support::{access, sequencer_config, trusted_now};
     use tokio::sync::{broadcast, mpsc, watch};
 
     for incomplete_genesis in [false, true] {
@@ -210,8 +258,10 @@ async fn incomplete_genesis_and_missing_checkpoint_service_preserve_history_byte
         let mut cfg = dev_config();
         cfg.node.log_dir = root.join("log");
         cfg.history.dir = root.join("history");
+        cfg.access = Some(toml::from_str(&format!("source='{}'\nendpoint='http://127.0.0.1:9'\ntimeout='1s'\nmax_age='60s'\nmax_response_bytes=4096\nmax_in_flight=2", access::policy().source)).unwrap());
         let (work, mut queued) = mpsc::channel(64);
         let seq_cfg = SequencerConfig {
+            access_policy: Some(access::policy()),
             checkpoints: Some(work),
             checkpoint_every: 1,
             ..sequencer_config(&cfg.node.log_dir, watch::channel(Manifest::default()).0)
@@ -227,16 +277,61 @@ async fn incomplete_genesis_and_missing_checkpoint_service_preserve_history_byte
         seq.genesis(&cfg.genesis).unwrap();
         seq.trust(trusted_now()).unwrap();
         while queued.try_recv().is_ok() {}
-        // Drive approvals through the public sequencer request path.
         let (tx, rx) = mpsc::channel(64);
         let task = tokio::spawn(seq.run(rx));
         tx.send(crate::sequencer::Request::CheckpointStatus { posted: None, healthy: true, lifecycle: None })
             .await
             .unwrap();
-        for cmd in [crate::test_support::deposit(100, "preflight-pure"), crate::test_support::withdraw(40)] {
+        let builders: [fn(&engine_core::Engine) -> engine_core::command::Command; 3] = [
+            |engine| access::declaration(engine, 1),
+            |engine| {
+                access::funding(
+                    engine,
+                    Some(access::account(1)),
+                    Some(access::account(1)),
+                    Fixed::from_int(100),
+                    "preflight-pure",
+                )
+            },
+            |engine| access::withdrawal(engine, 1, Fixed::from_int(40), true),
+        ];
+        let account = access::account(1);
+        let expected = [
+            engine_core::event::Event::EligibilityAttested {
+                account,
+                class: engine_core::access::EligibilityClass::Professional,
+            },
+            engine_core::event::Event::Deposited { account, amount: Fixed::from_int(100) },
+            engine_core::event::Event::WithdrawalApproved { account, amount: Fixed::from_int(40), nonce: 1 },
+        ];
+        for (build, expected) in builders.into_iter().zip(expected) {
+            let (reply, snapshot) = tokio::sync::oneshot::channel();
+            tx.send(crate::sequencer::Request::Query(Box::new(move |engine| {
+                let _ = reply.send(build(engine));
+            })))
+            .await
+            .unwrap();
+            let cmd = snapshot.await.unwrap();
             let (reply, done) = tokio::sync::oneshot::channel();
             tx.send(crate::sequencer::Request::Submit { cmd, reply: Some(reply) }).await.unwrap();
-            done.await.unwrap();
+            let events = done.await.unwrap();
+            if matches!(expected, engine_core::event::Event::WithdrawalApproved { .. }) {
+                // From V22 a withdrawal reserves its payout in the public queue before approval.
+                let approved = Fixed::from_int(40);
+                assert!(
+                    matches!(
+                        events.as_slice(),
+                        [
+                            engine_core::event::Event::WithdrawalQueued { account: queued, amount, .. },
+                            engine_core::event::Event::WithdrawalApproved { account: paid, amount: paid_amount, nonce: 1 },
+                            engine_core::event::Event::WithdrawalQueueUpdated { .. },
+                        ] if *queued == account && *amount == approved && *paid == account && *paid_amount == approved
+                    ),
+                    "{events:?}"
+                );
+            } else {
+                assert_eq!(events, [expected]);
+            }
         }
         drop(tx);
         task.await.unwrap().unwrap();
@@ -264,7 +359,10 @@ async fn incomplete_genesis_and_missing_checkpoint_service_preserve_history_byte
             |_| {},
         )
         .unwrap();
-        let seq_cfg = sequencer_config(&cfg.node.log_dir, watch::channel(Manifest::default()).0);
+        let seq_cfg = SequencerConfig {
+            access_policy: Some(access::policy()),
+            ..sequencer_config(&cfg.node.log_dir, watch::channel(Manifest::default()).0)
+        };
         let error =
             finish_preflight::<Chain>(plan, None, Some((&log, &seq_cfg, AccountId(EnclaveKey::test_key().address()))))
                 .await

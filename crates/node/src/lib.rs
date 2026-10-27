@@ -2,6 +2,7 @@
 //! API with its TLS and limits, enclave attestation, trusted time, custody, price feeds, and the
 //! operator's metrics and alert routing; and `engine admin`, the operator's client.
 
+mod access;
 pub mod admin;
 mod alerts;
 mod api;

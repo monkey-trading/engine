@@ -1,3 +1,4 @@
+//! V19 financial fixtures; protocol migration remains tested against actual LATEST.
 //! Accepted rollover changes invalidate publisher work without stopping pre-deadline commands.
 
 use super::*;
@@ -173,7 +174,7 @@ impl Fixture {
         if publishers {
             seq.wait_for_benchmarks().unwrap();
         }
-        seq.activate_protocol().unwrap();
+        seq.activate_legacy_protocol().unwrap();
         let mut genesis = dev_config().genesis;
         genesis.markets.retain(|market| market.id == 1);
         genesis.benchmarks.clear();

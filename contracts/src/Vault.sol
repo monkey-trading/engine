@@ -102,11 +102,16 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     event SignerChanged(address indexed previousSigner, address indexed signer, uint64 signerEpoch);
     event PausesChanged(bool depositsPaused, bool withdrawalsPaused);
 
-    /// @notice `amount` USDC base units deposited to trader account `account`.
-    event Deposited(uint256 indexed id, address indexed account, uint256 amount);
+    /// @notice `amount` USDC base units deposited to trader account `account` by `from`, the caller
+    /// whose tokens the vault pulled.
+    event Deposited(uint256 indexed id, address indexed account, address indexed from, uint256 amount);
 
     /// @notice `amount` USDC base units added to house capital by `from`.
     event HouseDeposited(uint256 indexed id, address indexed from, uint256 amount);
+
+    /// @notice Existing vault holdings `amount` beyond recorded deposits booked as house capital.
+    /// Unlike HouseDeposited, a surplus books no funding address: whoever calls is not a payer.
+    event SurplusBooked(uint256 indexed id, uint256 amount);
 
     /// @notice `amount` MONKEY base units minted to `account`, bringing its total to `entitled`, the
     /// entitlement checkpoint `seq` proves.
@@ -331,7 +336,8 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     /// @notice Books USDC the vault holds beyond its deposits less its payments, such as a direct
     /// transfer, as house capital, at most `MAX_DEPOSIT` per call. A surplus does not pause
     /// withdrawals; until it is booked, the engine credits nobody with it. A surplus below
-    /// `MIN_DEPOSIT` must be topped up first, as a deposit would be.
+    /// `MIN_DEPOSIT` must be topped up first, as a deposit would be. A surplus carries no funding
+    /// address, so access screening holds it rather than crediting it under the booker's name.
     /// @return id The deposit's id, one more than the previous deposit's.
     function bookSurplus() external nonReentrant returns (uint256 id) {
         if (depositsPaused) revert DepositsPaused();
@@ -340,14 +346,14 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         if (surplus < MIN_DEPOSIT) revert NoSurplus(surplus);
         uint256 amount = surplus < MAX_DEPOSIT ? surplus : MAX_DEPOSIT;
         id = _record(amount);
-        emit HouseDeposited(id, msg.sender, amount);
+        emit SurplusBooked(id, amount);
     }
 
     /// @dev Pulls `amount` from the caller and credits what arrived to trading account `account`.
     function _deposit(address account, uint256 amount) private returns (uint256 id) {
         uint256 received = _pull(amount);
         id = _record(received);
-        emit Deposited(id, account, received);
+        emit Deposited(id, account, msg.sender, received);
     }
 
     /// @dev Whether `siblings`, from the root down, lead from the leaf at `key` with `valueHash` to

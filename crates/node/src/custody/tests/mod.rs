@@ -16,6 +16,7 @@ mod fakes;
 mod legacy;
 mod reorg;
 use crate::custody::tests::fakes::*;
+mod access;
 mod quorum;
 mod quorum_diagnostics;
 mod rpc;

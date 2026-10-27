@@ -164,7 +164,10 @@ fn resolve(condition: &mut Option<bool>, name: &str, benchmark: &str, message: &
 /// The reference of the receipt a command reinstated after its reversal, if it did: an exact
 /// reappearance, or a replacement that returns a reversed receipt to the chain.
 pub(super) fn reinstated_receipt(cmd: &Command, events: &[Event]) -> Option<String> {
-    let Command::CustodyDeposit(update) = cmd else { return None };
+    let update = match cmd {
+        Command::CustodyDeposit(update) | Command::AccessCustodyReplacement { update, .. } => update,
+        _ => return None,
+    };
     let receipt = match update.as_ref() {
         DepositUpdate::Reinstate { receipt, .. } => receipt,
         DepositUpdate::Replace { replacement, replacement_reversed_at_seq: Some(_), .. } => replacement,
@@ -189,6 +192,14 @@ pub(super) fn alert_on(event: &Event) {
     match event {
         Event::CorporateActionFailed { id: action, market, reason, .. } => {
             error!(alert = "corporate_action_failed", action, market, "corporate action failed: {reason}");
+        }
+        Event::DepositHeld { chain_ref, reason, .. } => {
+            error!(
+                alert = "access_deposit_held",
+                chain_ref,
+                ?reason,
+                "collateral held uncredited; operator handling required"
+            );
         }
         // A finalised deposit the engine will not credit leaves user funds in the vault and
         // nothing re-examines it.

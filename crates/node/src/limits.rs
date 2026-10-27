@@ -45,6 +45,8 @@ type KeyedLimiter<K, C> = RateLimiter<K, DashMapStateStore<K>, C, NoOpMiddleware
 pub struct ApiLimits<C: Clock = DefaultClock> {
     per_ip: KeyedLimiter<IpAddr, C>,
     per_account: KeyedLimiter<AccountId, C>,
+    initial_accounts: KeyedLimiter<(), C>,
+    initial_per_ip: KeyedLimiter<IpAddr, C>,
     per_ip_connections: KeyedLimiter<IpAddr, C>,
     subscribers: Arc<Semaphore>,
     subscribers_full: ThrottledAlert,
@@ -105,6 +107,8 @@ impl<C: Clock + Clone> ApiLimits<C> {
         Self {
             per_ip: RateLimiter::dashmap_with_clock(quota(cfg.per_ip), clock.clone()),
             per_account: RateLimiter::dashmap_with_clock(quota(cfg.per_account), clock.clone()),
+            initial_accounts: RateLimiter::dashmap_with_clock(quota(cfg.per_ip), clock.clone()),
+            initial_per_ip: RateLimiter::dashmap_with_clock(quota(cfg.per_account), clock.clone()),
             per_ip_connections: RateLimiter::dashmap_with_clock(quota(cfg.per_ip_connections), clock),
             subscribers: Arc::new(Semaphore::new(cfg.max_subscribers.get())),
             subscribers_full: ThrottledAlert::new("api_subscribers_full", SHARED_CAP_FULL),
@@ -135,6 +139,18 @@ impl<C: Clock + Clone> ApiLimits<C> {
         check(&self.per_account, &account, "account")
     }
 
+    /// Counts one declaration from a never-credited account: first against its client's share, at
+    /// the per-account rate, so no one client can take the whole budget, then against the budget
+    /// all clients share, at the per-IP rate, so fresh signing keys cannot multiply it.
+    /// Error cases:
+    /// - the client is over its share, or the shared budget is exhausted
+    pub(crate) fn check_initial_account(&self, ip: Option<IpAddr>) -> Result<(), ApiError> {
+        if let Some(ip) = ip {
+            check(&self.initial_per_ip, &client_key(ip), "initial_ip")?;
+        }
+        check(&self.initial_accounts, &(), "initial_account")
+    }
+
     /// A place for one more stream subscriber, held until it disconnects.
     /// Error cases:
     /// - every place is taken: `TooManySubscribers`
@@ -148,6 +164,7 @@ impl<C: Clock + Clone> ApiLimits<C> {
     /// Forgets clients and accounts whose buckets have refilled; they start full when they return.
     fn retain_recent(&self) {
         self.per_ip.retain_recent();
+        self.initial_per_ip.retain_recent();
         self.per_account.retain_recent();
         self.per_ip_connections.retain_recent();
     }
@@ -300,6 +317,27 @@ mod tests {
         clock.advance(Duration::from_millis(1));
         limits.check_ip(ip).unwrap();
         assert!(limits.check_ip(ip).is_err());
+    }
+
+    #[test]
+    fn one_client_takes_only_its_share_of_the_fresh_account_budget_all_clients_share() {
+        let clock = FakeRelativeClock::default();
+        let mut cfg = section(1, 3);
+        cfg.per_account = RateLimit { per_second: NonZeroU32::new(1).unwrap(), burst: NonZeroU32::new(1).unwrap() };
+        let limits = ApiLimits::with_quota(&cfg, per_second, clock.clone());
+        let client = |n| Some(IpAddr::from(Ipv4Addr::new(203, 0, 113, n)));
+        limits.check_initial_account(client(1)).unwrap();
+        // Over its share, a client's fresh keys spend none of the shared budget.
+        for _ in 0..3 {
+            assert!(matches!(limits.check_initial_account(client(1)), Err(ApiError::RateLimited(_))));
+        }
+        limits.check_initial_account(client(2)).unwrap();
+        limits.check_initial_account(client(3)).unwrap();
+        assert!(matches!(limits.check_initial_account(client(4)), Err(ApiError::RateLimited(_))));
+        assert!(matches!(limits.check_initial_account(None), Err(ApiError::RateLimited(_))));
+        clock.advance(Duration::from_secs(1));
+        limits.check_initial_account(client(1)).unwrap();
+        assert!(matches!(limits.check_initial_account(client(4)), Err(ApiError::RateLimited(_))));
     }
 
     #[test]

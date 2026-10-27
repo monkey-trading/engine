@@ -53,7 +53,7 @@ fn a_log_recording_another_operator_refuses_to_start_and_writes_nothing() {
 fn a_log_claiming_an_unsigned_operator_command_applied_after_funds_does_not_replay() {
     let dir = scratch_dir("unsigned-admin");
     let mut seq = recover(&dir, &ClientAuth::Unsigned);
-    seq.activate_protocol().unwrap();
+    seq.activate_legacy_protocol().unwrap();
     seq.genesis(&dev_config().genesis).unwrap();
     seq.sequence(deposit(100, "dep-1")).unwrap();
     let every_market = Command::Admin(AdminCommand::SetReduceOnly { market: None, reduce_only: true });

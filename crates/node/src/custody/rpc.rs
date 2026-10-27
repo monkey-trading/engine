@@ -30,10 +30,19 @@ use crate::custody::evm::{Beneficiary, BlockRef, Finality, VaultDeposit, VaultId
 
 // The vault's ABI, as `contracts/src/Vault.sol` declares it.
 sol! {
-    event Deposited(uint256 indexed id, address indexed account, uint256 amount);
+    event Deposited(uint256 indexed id, address indexed account, address indexed from, uint256 amount);
     event HouseDeposited(uint256 indexed id, address indexed from, uint256 amount);
+    event SurplusBooked(uint256 indexed id, uint256 amount);
     function depositCount() external view returns (uint256);
     function usdc() external view returns (address);
+}
+
+/// Historical vault events cannot authenticate a trader's funding address.
+pub(super) mod legacy {
+    use alloy::sol;
+    sol! {
+        event Deposited(uint256 indexed id, address indexed account, uint256 amount);
+    }
 }
 
 pub struct VaultRpc {
@@ -119,14 +128,19 @@ impl VaultReader for VaultRpc {
         Ok(links)
     }
 
-    /// Both deposit events from the vault, sorted by block and log index.
+    /// Every deposit log the vault emits, sorted by block and log index.
     /// Error cases:
     /// - the request fails or times out
     /// - a log is removed, lacks its position, or does not decode as a vault deposit
     async fn deposits(&self, from: u64, to: u64) -> anyhow::Result<Vec<VaultDeposit>> {
         let filter = Filter::new()
             .address(self.vault)
-            .event_signature(vec![Deposited::SIGNATURE_HASH, HouseDeposited::SIGNATURE_HASH])
+            .event_signature(vec![
+                Deposited::SIGNATURE_HASH,
+                HouseDeposited::SIGNATURE_HASH,
+                SurplusBooked::SIGNATURE_HASH,
+                legacy::Deposited::SIGNATURE_HASH,
+            ])
             .from_block(from)
             .to_block(to);
         let logs = self.deadline("eth_getLogs", self.client.request::<_, Vec<Log>>("eth_getLogs", (filter,))).await?;
@@ -275,19 +289,34 @@ impl VaultRpc {
         let block_hash = log.block_hash.context("log without a block hash")?;
         let tx_hash = log.transaction_hash.context("log without a transaction hash")?;
         let log_index = log.log_index.context("log without a log index")?;
-        let (id, beneficiary, units) = match log.topic0() {
+        let (id, beneficiary, units, payer) = match log.topic0() {
             Some(&Deposited::SIGNATURE_HASH) => {
                 let event = Deposited::decode_log(&log.inner).context("decoding Deposited")?.data;
-                (event.id, Beneficiary::Trader(AccountId(event.account.into())), event.amount)
+                (
+                    event.id,
+                    Beneficiary::Trader(AccountId(event.account.into())),
+                    event.amount,
+                    Some(AccountId(event.from.into())),
+                )
+            }
+            Some(&legacy::Deposited::SIGNATURE_HASH) => {
+                let event = legacy::Deposited::decode_log(&log.inner).context("decoding legacy Deposited")?.data;
+                (event.id, Beneficiary::Trader(AccountId(event.account.into())), event.amount, None)
             }
             Some(&HouseDeposited::SIGNATURE_HASH) => {
                 let event = HouseDeposited::decode_log(&log.inner).context("decoding HouseDeposited")?.data;
-                (event.id, Beneficiary::House, event.amount)
+                (event.id, Beneficiary::House, event.amount, Some(AccountId(event.from.into())))
+            }
+            // A surplus books existing holdings, not the caller's funds: it names no funding address,
+            // so screening holds it as unattributable rather than crediting it under the booker.
+            Some(&SurplusBooked::SIGNATURE_HASH) => {
+                let event = SurplusBooked::decode_log(&log.inner).context("decoding SurplusBooked")?.data;
+                (event.id, Beneficiary::House, event.amount, None)
             }
             other => bail!("unexpected event {other:?}"),
         };
         let id = u64::try_from(id).context("deposit id beyond u64")?;
-        Ok(VaultDeposit { block, block_hash, tx_hash, log_index, id, beneficiary, units })
+        Ok(VaultDeposit { block, block_hash, tx_hash, log_index, id, beneficiary, units, payer })
     }
 }
 

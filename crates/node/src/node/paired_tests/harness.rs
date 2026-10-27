@@ -135,7 +135,8 @@ impl Node {
         seq_cfg.history_sealing = Some(sealing.clone());
         let mut seq = Sequencer::recover_from(log, seq_cfg, key, stream.clone(), withdrawals)?;
         seq.carry_toxicity_notional(cfg.genesis.params.toxicity.notional.unwrap())?;
-        seq.activate_protocol()?;
+        // The `V20` rules, before access screening: these fixtures credit receipts unscreened.
+        seq.activate_legacy_protocol()?;
         if seq.needs_genesis() {
             seq.genesis(&cfg.genesis)?;
         }

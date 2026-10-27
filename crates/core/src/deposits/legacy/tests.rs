@@ -1,4 +1,5 @@
 use super::*;
+use crate::access::CreditScreening;
 use crate::deposits::{DepositStatus, DepositUpdate};
 use crate::protocol::ProtocolVersion;
 use crate::types::AccountId;
@@ -68,7 +69,11 @@ fn changed_or_missing_legacy_receipts_never_credit_again_or_release_the_lock() {
         DepositReceipt { log_index: receipt.log_index + 1, ..receipt.clone() },
     ] {
         assert_eq!(
-            e.apply_deposit_update(&DepositUpdate::Credit { receipt: candidate }, &mut Vec::new()),
+            e.apply_deposit_update(
+                &DepositUpdate::Credit { receipt: candidate },
+                CreditScreening::default(),
+                &mut Vec::new()
+            ),
             Err(DepositReject::ConflictingReceipt)
         );
     }
@@ -249,7 +254,7 @@ fn transition(e: &mut Engine, update: DepositUpdate) -> Vec<Event> {
     let before = crate::deposits::tests::cash_total(e);
     e.last_seq = Some(e.last_seq.unwrap() + 1);
     let mut events = Vec::new();
-    e.apply_deposit_update(&update, &mut events).unwrap();
+    e.apply_deposit_update(&update, CreditScreening::default(), &mut events).unwrap();
     crate::deposits::tests::assert_principal_delta(e, before, &events);
     events
 }

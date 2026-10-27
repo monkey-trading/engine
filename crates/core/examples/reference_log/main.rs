@@ -21,6 +21,8 @@ mod v20;
 mod v21;
 mod v22;
 mod v23;
+mod v24;
+mod v26;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -91,8 +93,8 @@ fn main() -> anyhow::Result<()> {
 /// `v15.rs`. Then, under `V16`, a lowered toxicity memory clamps the history a score weighs (`v16.rs`), under `V17`,
 /// the move window survives a halt (`v17.rs`), under `V18`, dated benchmark rates (`v18.rs`), under `V19`, MONKEY
 /// emissions (`v19.rs`), under `V20`, custody receipt finality, reversal and reinclusion (`v20.rs`), under `V21`, quote
-/// hours and futures (`v21.rs`), and under `V22`, FIFO withdrawals (`v22.rs`). Every client request is signed by its
-/// account's key unless a comment says not.
+/// hours and futures (`v21.rs`), and under `V22`, FIFO withdrawals (`v22.rs`), and under `V24`, access
+/// screening (`v24.rs`). Every client request is signed by its account's key unless a comment says not.
 fn session() -> Vec<Sequenced> {
     let mut h = Harness::signed();
     let (a, b, c, d, t, e) = (h.signer(1), h.signer(2), h.signer(3), h.signer(4), h.signer(5), h.signer(6));
@@ -487,5 +489,7 @@ fn session() -> Vec<Sequenced> {
     v21::session(&mut h, a);
     v22::session(&mut h);
     v23::session(&mut h);
+    v24::session(&mut h);
+    v26::session(&mut h);
     h.log
 }

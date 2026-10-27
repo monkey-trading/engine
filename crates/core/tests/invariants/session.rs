@@ -51,6 +51,21 @@ pub(crate) enum Action {
     Admin(Box<AdminCommand>),
 }
 
+impl Action {
+    /// Relabels generated account handles before resolving an action against engine state.
+    pub(crate) fn map_accounts(&self, map: impl Fn(AccountId) -> AccountId) -> Self {
+        let mut action = self.clone();
+        match &mut action {
+            Action::Deposit { account, .. } | Action::Withdraw { account, .. } | Action::Cancel { account, .. } => {
+                *account = map(*account)
+            }
+            Action::Order(order) => order.account = map(order.account),
+            _ => {}
+        }
+        action
+    }
+}
+
 /// An order before its size and price are resolved.
 #[derive(Clone, Debug)]
 pub(crate) struct Order {

@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
+use crate::access::{AccessReject, EligibilityClass};
 use crate::corporate::CorporateAction;
 use crate::deposits::{DepositReceipt, DepositReject, DepositStatus};
 use crate::emissions::TokenUnits;
@@ -58,6 +59,30 @@ pub enum Event {
         at: Millis,
         reason: String,
     },
+    EligibilityAttested {
+        account: AccountId,
+        class: EligibilityClass,
+    },
+    EligibilityRejected {
+        account: AccountId,
+        reason: Reject,
+    },
+    /// Uncredited until a retry finds the account declared, its subjects classified, and the source working.
+    DepositPending {
+        chain_ref: String,
+        account: Option<AccountId>,
+        payer: Option<AccountId>,
+        amount: Fixed,
+        reason: AccessReject,
+    },
+    /// The collateral stays in custody and never enters client balances or house NAV.
+    DepositHeld {
+        chain_ref: String,
+        account: Option<AccountId>,
+        payer: Option<AccountId>,
+        amount: Fixed,
+        reason: AccessReject,
+    },
     Deposited {
         account: AccountId,
         amount: Fixed,
@@ -74,6 +99,9 @@ pub enum Event {
         status: DepositStatus,
         /// External principal movement; adoption and finality do not move cash again.
         principal_delta: Fixed,
+        /// From `V24`, the access refusal that keeps the receipt's principal out of cash.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        uncredited: Option<AccessReject>,
     },
     CustodyDepositRejected {
         receipt: DepositReceipt,
@@ -210,6 +238,11 @@ pub enum Event {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Reject {
+    Access {
+        reason: AccessReject,
+    },
+    /// The node cannot yet pay an on-chain withdrawal; no collateral is debited.
+    PayoutUnavailable,
     UnknownMarket,
     UnknownOrder,
     InvalidOrder {

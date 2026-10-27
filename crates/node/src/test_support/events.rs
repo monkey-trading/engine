@@ -2,6 +2,7 @@
 
 use alloy::primitives::B256;
 use engine_core::Fixed;
+use engine_core::access::{AccessReject, EligibilityClass};
 use engine_core::corporate::{Adjustment, CorporateAction};
 use engine_core::deposits::{DepositBeneficiary, DepositReceipt, DepositReject, DepositStatus};
 use engine_core::emissions::TokenUnits;
@@ -14,6 +15,8 @@ use engine_core::types::{AccountId, Side};
 pub fn every_event() -> Vec<Event> {
     let (account, amount, market) = (AccountId([1; 20]), Fixed::from_int(5), 2);
     let reasons = [
+        Reject::Access { reason: AccessReject::UnitedStates },
+        Reject::PayoutUnavailable,
         Reject::UnknownMarket,
         Reject::UnknownOrder,
         Reject::InvalidOrder { reason: "qty".into() },
@@ -39,7 +42,9 @@ pub fn every_event() -> Vec<Event> {
     ];
     for reason in &reasons {
         match reason {
-            Reject::UnknownMarket
+            Reject::Access { .. }
+            | Reject::PayoutUnavailable
+            | Reject::UnknownMarket
             | Reject::UnknownOrder
             | Reject::InvalidOrder { .. }
             | Reject::MarketClosed
@@ -92,6 +97,7 @@ pub fn every_event() -> Vec<Event> {
         receipt: receipt.clone(),
         status: DepositStatus::Unfinalised,
         principal_delta: amount,
+        uncredited: None,
     });
     events.push(Event::CustodyDepositRejected { receipt: receipt.clone(), reason: DepositReject::InvalidAmount });
     let house = DepositReceipt { beneficiary: DepositBeneficiary::House, ..receipt };
@@ -99,6 +105,7 @@ pub fn every_event() -> Vec<Event> {
         receipt: house.clone(),
         status: DepositStatus::Unfinalised,
         principal_delta: amount,
+        uncredited: None,
     });
     events.push(Event::CustodyDepositRejected { receipt: house, reason: DepositReject::InvalidAmount });
     events.extend([
@@ -145,6 +152,22 @@ pub fn every_event() -> Vec<Event> {
         Event::MarketRolled { market, contract: "ESH7".into(), adjustment: -amount },
         Event::StressChanged { market, level: 2 },
         Event::PricesRejected { market, reason: "stale quote".into() },
+        Event::EligibilityAttested { account, class: EligibilityClass::Professional },
+        Event::EligibilityRejected { account, reason: Reject::InvalidSignature },
+        Event::DepositPending {
+            account: Some(account),
+            payer: Some(account),
+            amount,
+            chain_ref: "pending".into(),
+            reason: AccessReject::SourceUnavailable,
+        },
+        Event::DepositHeld {
+            account: Some(account),
+            payer: Some(account),
+            amount,
+            chain_ref: "held".into(),
+            reason: AccessReject::PayerSanctioned,
+        },
         Event::AdminApplied,
         Event::AdminRejected { reason: "bad params".into() },
         Event::EmissionAllocated { account, period: 3, weight: amount, amount: TokenUnits(250_000) },
@@ -165,6 +188,10 @@ pub fn every_event() -> Vec<Event> {
             | Event::CorporateCashInLieu { .. }
             | Event::CorporateActionApplied { .. }
             | Event::CorporateActionFailed { .. }
+            | Event::EligibilityAttested { .. }
+            | Event::EligibilityRejected { .. }
+            | Event::DepositHeld { .. }
+            | Event::DepositPending { .. }
             | Event::Deposited { .. }
             | Event::DepositRejected { .. }
             | Event::CustodyDepositChanged { .. }

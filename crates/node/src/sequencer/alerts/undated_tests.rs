@@ -164,7 +164,7 @@ fn signed_calendar_fallback(log_dir: &Path, restart: bool) -> anyhow::Result<(u6
     let fallback = first + 60_000;
     let clock = Arc::new(TestClock::at(start));
     let mut seq = recover(log_dir, clock.clone())?;
-    seq.activate_protocol()?;
+    seq.activate_legacy_protocol()?; // V19 unsigned financing fixture.
     let mut genesis = dev_config().genesis;
     genesis.markets.retain(|market| market.id == 1);
     genesis.benchmarks.clear();

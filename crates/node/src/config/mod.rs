@@ -28,6 +28,8 @@ use sha2::{Digest, Sha256};
 
 mod benchmarks;
 pub use benchmarks::{BenchmarkSection, BenchmarkSource, Publisher};
+mod access;
+pub use access::AccessSection;
 mod custody;
 pub use custody::{EvmCustodySection, FinalityTag, RpcProviderSection, SecretUrl};
 mod feeds;
@@ -91,6 +93,7 @@ pub struct NodeConfig {
     pub alerts: AlertsSection,
     /// Enables startup synchronization with an external signed publisher worker.
     pub benchmarks: Option<BenchmarkSection>,
+    pub access: Option<AccessSection>,
     /// Sequenced as admin commands after protocol activation on a log's first boot, all or nothing,
     /// so the rules every fill ran under are part of the public record.
     pub genesis: Genesis,

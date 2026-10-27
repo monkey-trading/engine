@@ -40,6 +40,8 @@ use crate::metrics::Metrics;
 use crate::sequencer::{Request, Sequencer, SequencerConfig, SignedWithdrawal, StreamMsg, genesis_commands};
 use crate::tee::EnclaveKey;
 pub use crate::test_tracing::keep_callsites_interested;
+#[path = "../../tests/common/access.rs"]
+pub(crate) mod access;
 use crate::trusted_time::Sample;
 
 pub const DEV_CONFIG: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/dev.toml");
@@ -66,9 +68,7 @@ pub struct TestSequencer {
 }
 
 impl TestSequencer {
-    /// Recovers a sequencer from `dir` and boots it as the node does: records client auth and
-    /// activates the latest protocol, sequences the dev genesis if the log lacks it, and runs it.
-    /// The stream channel holds `stream_capacity` messages.
+    /// Boots the current protocol as the node does, with the source left unconfigured.
     pub fn start(dir: &Path, stream_capacity: usize) -> Self {
         Self::start_at(dir, stream_capacity, Arc::new(SystemClock), genesis_commands(&dev_config().genesis))
     }
@@ -84,6 +84,16 @@ impl TestSequencer {
     pub fn start_v18(dir: &Path, stream_capacity: usize) -> Self {
         let genesis = genesis_commands(&dev_config().genesis);
         Self::boot(dir, stream_capacity, Arc::new(SystemClock), genesis, ProtocolVersion::V18)
+    }
+
+    /// Boots an explicit V23 fixture for historical unsigned/admission/storage assertions, the last before access screening.
+    pub fn start_legacy(dir: &Path, stream_capacity: usize) -> Self {
+        Self::start_legacy_at(dir, stream_capacity, Arc::new(SystemClock), genesis_commands(&dev_config().genesis))
+    }
+
+    /// Historical V23 fixture on a controlled clock, on a log whose genesis is `genesis`.
+    pub fn start_legacy_at(dir: &Path, stream_capacity: usize, clock: Arc<dyn Clock>, genesis: Vec<Command>) -> Self {
+        Self::boot(dir, stream_capacity, clock, genesis, ProtocolVersion::V23)
     }
 
     /// Boots as the node does, activating `version`.
@@ -269,6 +279,7 @@ pub fn dev_config() -> NodeConfig {
 /// The sequencer settings the harness runs with, publishing the manifest on `manifest`.
 pub fn sequencer_config(dir: &Path, manifest: watch::Sender<Manifest>) -> SequencerConfig<'_> {
     SequencerConfig {
+        access_policy: None,
         log_dir: dir,
         segment_commands: SEGMENT_COMMANDS,
         manifest,

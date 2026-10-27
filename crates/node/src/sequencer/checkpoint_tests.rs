@@ -1,3 +1,4 @@
+//! Historical V19 withdrawal/storage fixtures; current envelopes are covered by access tests.
 //! Withdrawal signatures must stay inside the enclave until their approval is committed on chain.
 
 use std::sync::Arc;
@@ -136,7 +137,7 @@ fn gated_checkpoints_sign_the_previous_queued_root_and_coalesce_duplicate_reques
         mpsc::unbounded_channel().0,
     )
     .unwrap();
-    seq.activate_protocol().unwrap();
+    seq.activate_legacy_protocol().unwrap();
     seq.genesis(&dev_config().genesis).unwrap();
     seq.trust(trusted_now()).unwrap();
     seq.checkpoint().unwrap();
@@ -176,7 +177,7 @@ fn restart_resumes_exact_unmined_chain_and_original_checkpoint_accounting() {
     };
     let mut seq =
         Sequencer::recover(config(), key.clone(), broadcast::channel(128).0, mpsc::unbounded_channel().0).unwrap();
-    seq.activate_protocol().unwrap();
+    seq.activate_legacy_protocol().unwrap();
     seq.genesis(&dev_config().genesis).unwrap();
     seq.trust(trusted_now()).unwrap();
     let mut prior = Vec::new();

@@ -9,11 +9,11 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 use chrono::{DateTime, Utc};
 use engine_core::Fixed;
-use engine_core::command::{Command, OrderKind, OrderRequest};
+use engine_core::command::{Command, OrderKind};
 use engine_core::event::Event;
 use engine_core::futures::FuturesContract;
 use engine_core::market::MarketSpec;
-use engine_core::types::{MarketId, Millis, Side};
+use engine_core::types::{MarketId, Millis};
 use tokio::net::TcpListener;
 use tokio::task::{AbortHandle, JoinHandle};
 
@@ -67,7 +67,7 @@ async fn dev_scenario_rwa_price_feeds() {
     // A buy limit above every Apple quote rests while its market is closed. The vendors quote it
     // throughout, at 200 before its open and 230 after, and only a quote after the open fills it.
     let limit = OrderKind::Limit { price: "240".parse().unwrap() };
-    let events = node.submit(order(&node, AAPL, limit)).await;
+    let events = node.buy_kind(AAPL, limit).await;
     assert!(matches!(events[..], [Event::OrderAccepted { .. }]), "{events:?}");
     let opens = now_ms() + 2_000;
     open_at.store(opens, Ordering::SeqCst);
@@ -194,20 +194,4 @@ fn filled(applied: &Applied, market: MarketId) -> Vec<(Millis, Fixed)> {
 /// The index of the fill among `events`, if any.
 fn fill_index(events: &[Event]) -> Option<Fixed> {
     events.iter().find_map(|event| if let Event::Fill(fill) = event { Some(fill.index) } else { None })
-}
-
-/// A one-unit buy in `market` by the node's account.
-fn order(node: &Node, market: MarketId, kind: OrderKind) -> Command {
-    let qty = Fixed::ONE;
-    let order = OrderRequest {
-        account: node.account,
-        client_id: 2,
-        market,
-        side: Side::Buy,
-        qty,
-        kind,
-        reduce_only: false,
-        auth: None,
-    };
-    Command::PlaceOrder(order)
 }

@@ -58,6 +58,15 @@ impl Engine {
     pub(crate) fn admin(&mut self, cmd: &AdminCommand, events: &mut Vec<Event>) -> Result<(), String> {
         match cmd {
             AdminCommand::ScheduleCorporateAction(action) => self.schedule_corporate_action(action, events)?,
+            AdminCommand::SetAccessPolicy(policy) => {
+                if policy.max_age_ms <= 0 || policy.source == crate::types::AccountId([0; 20]) {
+                    return Err("access policy needs a nonzero source and positive freshness bound".into());
+                }
+                if self.access_policy.is_some() {
+                    return Err("the access policy is already recorded".into());
+                }
+                self.access_policy = Some(policy.clone());
+            }
             AdminCommand::SetParams(params) => {
                 params.validate_for(self.protocol_version)?;
                 if self.protocol_version >= ProtocolVersion::V8 {
@@ -251,6 +260,9 @@ impl Engine {
                 {
                     params.check_notional_weighting()?;
                 }
+                if self.protocol_version < ProtocolVersion::V26 && *version >= ProtocolVersion::V26 {
+                    self.check_terminal_receipt_holds()?;
+                }
                 if let AdminCommand::ActivateCustodyFinality { legacy_deposits, .. } = cmd {
                     self.lock_legacy_deposits(legacy_deposits)?;
                 }
@@ -287,6 +299,10 @@ impl Engine {
                     );
                 }
                 self.protocol_version = *version;
+                if *version >= ProtocolVersion::V26 {
+                    self.hot_indexes = None;
+                    self.ensure_hot_indexes();
+                }
             }
             AdminCommand::InitEmissions(schedule) => self.init_emissions(schedule)?,
         }

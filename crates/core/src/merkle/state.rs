@@ -8,6 +8,7 @@ use serde::Serialize;
 use sha3::{Digest, Keccak256};
 
 use crate::Fixed;
+use crate::access::AccessPolicy;
 use crate::account::Position;
 use crate::auth::{ClientAuth, Operator};
 use crate::benchmark::BenchmarkHistory;
@@ -16,11 +17,11 @@ use crate::emissions::{Emissions, TokenUnits};
 use crate::engine::{Engine, Markout};
 use crate::merkle::leaf::{deposit_key, deposit_transaction_key, legacy_deposit_key};
 use crate::merkle::{
-    AccountLeaf, AccountProof, EntitlementProof, MarketLeaf, MarketProof, PositionProof, SparseMerkleTree,
-    WithdrawalApprovalProof, account_key, corporate_action_key, corporate_reference_key, credited_ref_hash,
-    credited_ref_key, entitlement_hash, entitlement_key, globals_key, json_hash, market_key, markout_hash, markout_key,
-    order_hash, order_key, period_result_hash, period_result_key, position_hash, position_key, request_nonce_hash,
-    request_nonce_key, withdrawal_approval_hash, withdrawal_approval_key, withdrawal_queue_hash, withdrawal_queue_key,
+    AccountLeaf, MarketLeaf, SparseMerkleTree, account_key, corporate_action_key, corporate_reference_key,
+    credited_ref_hash, credited_ref_key, eligibility_key, entitlement_hash, entitlement_key, globals_key,
+    held_deposit_key, json_hash, market_key, markout_hash, markout_key, order_hash, order_key, pending_deposit_key,
+    period_result_hash, period_result_key, position_hash, position_key, request_nonce_hash, request_nonce_key,
+    withdrawal_approval_hash, withdrawal_queue_hash, withdrawal_queue_key,
 };
 use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
@@ -30,14 +31,14 @@ use crate::types::{AccountId, MarketId, Millis, OrderId};
 /// proofs need.
 #[derive(Debug, Default)]
 pub(crate) struct StateTree {
-    tree: SparseMerkleTree,
-    root: B256,
-    seq: u64,
-    accounts: BTreeMap<AccountId, AccountLeaf>,
-    positions: BTreeMap<(AccountId, MarketId), Position>,
-    markets: BTreeMap<MarketId, MarketLeaf>,
-    entitlements: BTreeMap<AccountId, TokenUnits>,
-    work: RootWork,
+    pub(crate) tree: SparseMerkleTree,
+    pub(crate) root: B256,
+    pub(crate) seq: u64,
+    pub(crate) accounts: BTreeMap<AccountId, AccountLeaf>,
+    pub(crate) positions: BTreeMap<(AccountId, MarketId), Position>,
+    pub(crate) markets: BTreeMap<MarketId, MarketLeaf>,
+    pub(crate) entitlements: BTreeMap<AccountId, TokenUnits>,
+    pub(crate) work: RootWork,
 }
 
 /// Changes since the last root that no tracked map records. Positions change only in `book`,
@@ -74,6 +75,9 @@ struct Touched {
     withdrawal_approvals: BTreeSet<B256>,
     corporate_actions: BTreeSet<String>,
     corporate_refs: BTreeSet<String>,
+    eligibility: BTreeSet<AccountId>,
+    holds: BTreeSet<String>,
+    pending: BTreeSet<String>,
     changed: Changed,
 }
 
@@ -105,6 +109,8 @@ struct Globals<'a> {
     withdrawal_cash: Option<Fixed>,
     #[serde(skip_serializing_if = "is_zero")]
     withdrawal_next_ticket: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    access_policy: &'a Option<AccessPolicy>,
 }
 
 impl Engine {
@@ -140,6 +146,9 @@ impl Engine {
             withdrawal_approvals,
             corporate_actions,
             corporate_refs,
+            eligibility,
+            holds,
+            pending,
             changed: Changed { markouts, positions, orders },
         } = match &self.tree {
             Some(_) => touched,
@@ -184,6 +193,18 @@ impl Engine {
             legacy_deposits
                 .iter()
                 .map(|reference| (legacy_deposit_key(reference), self.legacy_deposits.get(reference).map(json_hash))),
+        );
+        changes
+            .extend(eligibility.into_iter().map(|id| (eligibility_key(id), self.eligibility.get(&id).map(json_hash))));
+        changes.extend(
+            holds
+                .into_iter()
+                .map(|reference| (held_deposit_key(&reference), self.held_deposits.get(&reference).map(json_hash))),
+        );
+        changes.extend(
+            pending.into_iter().map(|reference| {
+                (pending_deposit_key(&reference), self.pending_deposits.get(&reference).map(json_hash))
+            }),
         );
         changes.extend(markouts.into_iter().map(|index| (markout_key(index), self.markout(index).map(markout_hash))));
         let position_leaves: Vec<((AccountId, MarketId), Option<Position>)> = positions
@@ -260,47 +281,6 @@ impl Engine {
     /// Clears the record of what changed since the last root, for a root that does not use it.
     pub(crate) fn clear_touched(&mut self) {
         self.take_touched();
-    }
-
-    /// The proof of `account`'s leaf, of each of its position leaves, and of the leaf of each
-    /// market it holds a position in, against the last state root computed. `None` before the
-    /// first root under `V9`, or for an account that root does not hold.
-    pub fn account_proof(&self, account: AccountId) -> Option<AccountProof> {
-        let state = self.tree.as_ref()?;
-        let leaf = state.accounts.get(&account)?.clone();
-        let proof = |key| state.tree.proof(key).expect("every leaf kept for proofs is in the tree");
-        let held = state.positions.range((account, MarketId::MIN)..=(account, MarketId::MAX));
-        let (positions, markets) = held
-            .map(|((_, market), position)| {
-                let siblings = proof(position_key(account, *market));
-                // Positions are only ever opened in listed markets, and listings are never removed.
-                let market_leaf = state.markets.get(market).expect("a position's market has a leaf").clone();
-                (
-                    PositionProof { market: *market, position: *position, siblings },
-                    MarketProof { market: *market, leaf: market_leaf, siblings: proof(market_key(*market)) },
-                )
-            })
-            .unzip();
-        let siblings = proof(account_key(account));
-        Some(AccountProof { seq: state.seq, root: state.root, account, leaf, siblings, positions, markets })
-    }
-
-    /// The proof of `account`'s cumulative MONKEY entitlement against the last state root computed.
-    /// `None` before the first root under `V9`, or for an account that root holds no entitlement for.
-    pub fn entitlement_proof(&self, account: AccountId) -> Option<EntitlementProof> {
-        let state = self.tree.as_ref()?;
-        let entitled = *state.entitlements.get(&account)?;
-        let siblings =
-            state.tree.proof(entitlement_key(account)).expect("every entitlement kept for proofs is in the tree");
-        Some(EntitlementProof { seq: state.seq, root: state.root, account, entitled, siblings })
-    }
-
-    /// Proves the exact immutable payout against the last computed root, or `None` until included.
-    pub fn approval_proof(&self, account: AccountId, nonce: u64) -> Option<WithdrawalApprovalProof> {
-        let state = self.tree.as_ref()?;
-        let approval = *self.withdrawal_approval(account, nonce)?;
-        let siblings = state.tree.proof(withdrawal_approval_key(account, nonce))?;
-        Some(WithdrawalApprovalProof { seq: state.seq, root: state.root, approval, siblings })
     }
 
     /// What the last state root hashed, or `None` before the first root under `V9`.
@@ -384,6 +364,9 @@ impl Engine {
             withdrawal_approvals: self.withdrawal_approvals.take_touched(),
             corporate_actions: self.corporate_actions.take_touched(),
             corporate_refs: self.corporate_refs.take_touched(),
+            eligibility: self.eligibility.take_touched(),
+            holds: self.held_deposits.take_touched(),
+            pending: self.pending_deposits.take_touched(),
             changed: std::mem::take(&mut self.changed),
         }
     }
@@ -405,6 +388,9 @@ impl Engine {
             withdrawal_approvals: self.withdrawal_approvals.keys().copied().collect(),
             corporate_actions: self.corporate_actions.keys().cloned().collect(),
             corporate_refs: self.corporate_refs.iter().cloned().collect(),
+            eligibility: self.eligibility.keys().copied().collect(),
+            holds: self.held_deposits.keys().cloned().collect(),
+            pending: self.pending_deposits.keys().cloned().collect(),
             changed: Changed {
                 markouts: (self.markout_base..).take(self.markouts.len()).collect(),
                 positions: accounts()
@@ -452,6 +438,10 @@ impl Engine {
             withdrawal_approvals: _,
             corporate_actions: _,
             corporate_refs: _,
+            access_policy,
+            eligibility: _,
+            held_deposits: _,
+            pending_deposits: _,
             changed: _,
             tree: _,
             hot_indexes: _,
@@ -476,6 +466,7 @@ impl Engine {
             custody_checkpoint: *custody_checkpoint,
             withdrawal_cash: *withdrawal_cash,
             withdrawal_next_ticket: *withdrawal_next_ticket,
+            access_policy,
         }
     }
 }

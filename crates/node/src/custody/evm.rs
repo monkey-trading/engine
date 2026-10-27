@@ -4,18 +4,18 @@
 //! Every chain, event-set and count read passes through the fixed provider quorum.
 
 use std::collections::BTreeMap;
-use std::future::Future;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
-use alloy::primitives::{Address, B256, U256};
+use alloy::primitives::{Address, B256};
 use anyhow::{anyhow, bail};
 use engine_core::protocol::ProtocolVersion;
-use engine_core::types::AccountId;
 use tokio::sync::mpsc;
 use tokio::task::spawn_blocking;
 use tracing::{debug, info};
 
+use crate::access::AccessClient;
 use crate::config::EvmCustodySection;
 use crate::custody::chain::{BlockLink, ProvenChain};
 use crate::custody::credit::{credit, moved_credits, sync};
@@ -27,36 +27,8 @@ use crate::sequencer::Request;
 mod legacy;
 mod lifecycle;
 mod progress;
-
-/// Who a vault deposit credits.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Beneficiary {
-    Trader(AccountId),
-    House,
-}
-
-/// What the watcher needs from the chain.
-pub trait VaultReader {
-    /// The chain the endpoint serves and the token the vault holds.
-    fn identity(&self) -> impl Future<Output = anyhow::Result<VaultIdentity>> + Send;
-
-    /// The head, and the block the finality tag names.
-    fn finality(&self) -> impl Future<Output = anyhow::Result<Finality>> + Send;
-
-    /// The head and the separate withdrawal finality tag.
-    fn withdrawal_finality(&self) -> impl Future<Output = anyhow::Result<Finality>> + Send {
-        self.finality()
-    }
-
-    /// The headers of blocks `from..=to`, in order.
-    fn headers(&self, from: u64, to: u64) -> impl Future<Output = anyhow::Result<Vec<BlockLink>>> + Send;
-
-    /// Every vault deposit event in blocks `from..=to`, in chain order.
-    fn deposits(&self, from: u64, to: u64) -> impl Future<Output = anyhow::Result<Vec<VaultDeposit>>> + Send;
-
-    /// The vault's deposit count in block `at`, which the endpoint must hold as canonical.
-    fn deposit_count(&self, at: BlockRef) -> impl Future<Output = anyhow::Result<u64>> + Send;
-}
+mod reader;
+pub use reader::{Beneficiary, VaultDeposit, VaultReader};
 
 /// A block by height and hash.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,20 +64,6 @@ pub struct VaultIdentity {
     pub token: Option<Address>,
 }
 
-/// One vault deposit event.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VaultDeposit {
-    pub block: u64,
-    pub block_hash: B256,
-    pub tx_hash: B256,
-    pub log_index: u64,
-    /// The vault's id for it; trader and house deposits share one sequence.
-    pub id: u64,
-    pub beneficiary: Beneficiary,
-    /// USDC base units the vault received.
-    pub units: U256,
-}
-
 /// One block range's reads, checked against each other and the proven chain.
 struct RangeRead {
     deposits: Vec<VaultDeposit>,
@@ -138,6 +96,8 @@ pub struct DepositWatcher<V> {
     pub(super) poll_interval: Duration,
     pub(super) stall_critical_after: Duration,
     watchdog: Watchdog,
+    pub(super) access: Option<Arc<AccessClient>>,
+    pub(super) access_enforced: bool,
 }
 
 impl VaultDeposit {
@@ -181,6 +141,7 @@ impl<V: VaultReader> DepositWatcher<V> {
             confirmed_deposits: ProtocolVersion::LATEST.supports_deposit_finality(),
             confirmed: progress::ConfirmedProgress::default(),
             legacy_unproven: None,
+            access_enforced: ProtocolVersion::LATEST >= ProtocolVersion::V24,
             usdc: cfg.usdc,
             cursor,
             cursor_path: cfg.cursor_path.clone(),
@@ -192,7 +153,25 @@ impl<V: VaultReader> DepositWatcher<V> {
             poll_interval: cfg.poll_interval,
             stall_critical_after: cfg.stall_critical_after,
             watchdog: Watchdog::new(cfg.stall_critical_after, cfg.finality_stalled_after),
+            access: None,
         }
+    }
+
+    /// Exercises the `V20` receipt rules, which credit receipts without access screening, without
+    /// exposing a production mode override.
+    /// Error cases:
+    /// - the cursor cannot be loaded
+    #[cfg(test)]
+    pub(super) fn start_unscreened(
+        vault: V,
+        cfg: &EvmCustodySection,
+        chain_id: u64,
+        address: Address,
+        seq: Option<u64>,
+    ) -> anyhow::Result<Self> {
+        let mut watcher = Self::start(vault, cfg, chain_id, address, seq)?;
+        watcher.access_enforced = false;
+        Ok(watcher)
     }
 
     /// Exercises historical watcher rules without exposing a production mode override.
@@ -208,6 +187,8 @@ impl<V: VaultReader> DepositWatcher<V> {
     ) -> anyhow::Result<Self> {
         let mut watcher = Self::start(vault, cfg, chain_id, address, seq)?;
         watcher.confirmed_deposits = false;
+        // Historical credit rules predate access screening.
+        watcher.access_enforced = false;
         if let (Some(hash), Some(number)) = (watcher.cursor.last_block_hash, watcher.cursor.next_block.checked_sub(1)) {
             watcher.chain.insert(number, hash);
         }

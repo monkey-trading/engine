@@ -53,7 +53,7 @@ async fn anvil_confirmation_finality_scenario() {
     }
     let vault = cfg.custody.vault.parse().unwrap();
     let quorum = Quorum::connect(&evm, vault).unwrap();
-    let mut watcher = DepositWatcher::start(quorum, &evm, cfg.custody.chain_id, vault, None).unwrap();
+    let mut watcher = DepositWatcher::start_unscreened(quorum, &evm, cfg.custody.chain_id, vault, None).unwrap();
     let dev = crate::test_support::dev_config();
     node.submit(Command::Admin(AdminCommand::SetParams(dev.genesis.params))).await;
     node.submit(Command::Admin(AdminCommand::UpsertMarket(dev.genesis.markets[0].clone()))).await;

@@ -62,6 +62,7 @@
 //!   scaled price once and settle rounded-off position fractions in cash, and a failed split
 //!   blocks its market.
 
+pub mod access;
 pub mod account;
 mod admin;
 pub mod auth;

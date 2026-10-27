@@ -24,6 +24,7 @@ pub(super) struct Node {
     pub services: Services,
     pub client: Client,
     config: PathBuf,
+    metrics: u16,
 }
 
 impl ChildProcess {
@@ -85,11 +86,13 @@ impl Node {
         let config = dir.join("node.toml");
         ensure!(!config.exists(), "scenario needs a fresh artifact directory: {}", dir.display());
         let chain = Chain::start(&dir).await?;
-        let services = Services::start(&chain.url, chain.mining.clone()).await?;
+        let domain = engine_core::eip712::domain(31337, engine_core::types::AccountId(chain.vault.into()));
+        let services = Services::start(&chain.url, chain.mining.clone(), domain).await?;
         let api_port = free_port()?;
-        write_config(&config, &dir, api_port, free_port()?, &chain, &services)?;
+        let metrics = free_port()?;
+        write_config(&config, &dir, api_port, metrics, &chain, &services)?;
         let client = Client::new(api_port, chain.vault)?;
-        let mut node = Self { dir, chain, services, client, config, child: None };
+        let mut node = Self { dir, chain, services, client, config, metrics, child: None };
         node.restart().await?;
         Ok(node)
     }
@@ -119,6 +122,30 @@ impl Node {
         })
         .await
         .context("actual node API and controlled market startup; verify test bootstrap hook is wired")??;
+        Ok(())
+    }
+
+    /// Waits until the custody checkpoint gate admits withdrawals, after a (re)start or a credit.
+    /// Error cases:
+    /// - the metrics endpoint never reports the gate healthy
+    pub async fn wait_withdrawals_enabled(&mut self) -> anyhow::Result<()> {
+        timeout(Duration::from_secs(60), async {
+            loop {
+                self.services.check()?;
+                self.chain.check()?;
+                let text = reqwest::get(format!("http://127.0.0.1:{}/metrics", self.metrics))
+                    .await
+                    .context("metrics endpoint")?
+                    .text()
+                    .await?;
+                if text.lines().any(|line| line == "engine_withdrawals_paused 0") {
+                    return anyhow::Ok(());
+                }
+                sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .context("withdrawals stayed paused; custody never reconciled")??;
         Ok(())
     }
 
@@ -198,6 +225,16 @@ fn write_config(
     }
     let checkpoints = serde_json::json!({"rpc_url":services.rpcs[0],"relayer":format!("{:#x}", chain.relayer),"retry_interval":"80ms","rpc_timeout":"3s"});
     cfg.as_object_mut().context("config table")?.insert("checkpoints".into(), checkpoints);
+    // Every funded account declares against this synthetic source; house funding and screened
+    // client actions clear it.
+    cfg["access"] = serde_json::json!({
+        "source": engine_core::eip712::address(crate::test_support::access::key(0x77).verifying_key()).to_string(),
+        "endpoint": services.access,
+        "timeout": "2s",
+        "max_age": "30s",
+        "max_response_bytes": 4096,
+        "max_in_flight": 8,
+    });
     std::fs::write(path, toml::to_string(&toml::Value::try_from(cfg)?)?)?;
     Ok(())
 }

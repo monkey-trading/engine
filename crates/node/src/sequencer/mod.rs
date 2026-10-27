@@ -15,6 +15,7 @@ mod checkpoints;
 use checkpoints::Gate;
 mod messages;
 pub use messages::{Query, Request, SignedWithdrawal, StreamBody, StreamMsg};
+mod access;
 mod benchmark_schedule;
 mod payout_schedule;
 #[cfg(test)]
@@ -22,6 +23,7 @@ mod payout_tests;
 mod payouts;
 #[cfg(test)]
 mod withdrawal_scenario;
+use access::AccessAlerts;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -79,10 +81,12 @@ pub struct Sequencer {
     /// what it is for.
     required: Vec<(&'static str, Vec<Command>)>,
     client_auth: ClientAuth,
+    access_policy: Option<engine_core::access::AccessPolicy>,
     /// The alert for house NAV below zero.
     deficit: DeficitAlert,
     /// Benchmark clears already emitted during this process, limited to listed names.
     benchmark_alerts: BenchmarkAlerts,
+    access_alerts: AccessAlerts,
     operator: Operator,
     metrics: Arc<Metrics>,
     gate: Option<Gate>,
@@ -119,6 +123,7 @@ pub struct SequencerConfig<'a> {
     pub max_drift: Duration,
     /// The client auth the config gives, which a log that records one must match.
     pub client_auth: ClientAuth,
+    pub access_policy: Option<engine_core::access::AccessPolicy>,
     /// The operator the config gives, which a log that records one must match.
     pub operator: Operator,
     /// Where the sequencer records its metrics.
@@ -238,13 +243,12 @@ impl Sequencer {
     /// - the log cannot be written
     /// - the engine rejects a queued required command
     /// - the engine refuses the sequence, which means this sequencer is broken
-    fn sequence(&mut self, cmd: Command) -> anyhow::Result<Option<Vec<Event>>> {
+    fn sequence(&mut self, mut cmd: Command) -> anyhow::Result<Option<Vec<Event>>> {
         let Some(ts) = self.admitted_ts() else {
             return Ok(None);
         };
         self.sequence_queued(ts)?;
-        if matches!(cmd, Command::Withdraw { .. }) && self.gate.as_ref().is_some_and(|gate| !gate.healthy) {
-            warn!(alert = "withdrawals_paused", "withdrawal refused until custody reconciles");
+        if !access::gate_withdrawal(&mut cmd, self.gate.as_ref().map(|gate| gate.healthy)) {
             return Ok(None);
         }
         if self.benchmark_sync && !matches!(&cmd, Command::SignedAdmin(req) if req.command.is_benchmark_snapshot()) {
@@ -338,6 +342,7 @@ impl Sequencer {
         let events = self.engine.apply(&sequenced).context("sequencer produced an invalid sequence")?;
         #[cfg(test)]
         withdrawal_scenario::before_approval_log(&sequenced, &events)?;
+        let access = access::is_access_command(&sequenced.cmd);
         self.accounting.apply(&sequenced.cmd, &events)?;
         self.progress.genesis.command(&sequenced, &events);
         if self.engine.protocol_version() != version {
@@ -364,8 +369,11 @@ impl Sequencer {
             self.note_benchmark_schedule(previous);
         }
         self.metrics.commands.inc();
-
+        self.metrics.access_pending_deposits.set(self.engine.pending_deposits().len() as i64);
         for (event_index, event) in events.iter().enumerate() {
+            if access {
+                self.access_alerts.note(event);
+            }
             alert_on(event);
             self.benchmark_alerts.note(event);
             self.metrics.record(event);

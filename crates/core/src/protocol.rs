@@ -132,11 +132,15 @@ pub enum ProtocolVersion {
     /// rounding each scaled price and quantity once, before ex-date opening execution, in
     /// chronological order with financing. A failed split blocks its market and its financing.
     V23,
+    /// Signed eligibility declarations and fail-closed API and custody access screening.
+    V24,
+    /// Screen canonical replacement payers and retain terminal holds across receipt variants.
+    V26,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V23;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V26;
 
     /// Whether this rule set credits exact receipts with withdrawal principal locks.
     pub fn supports_deposit_finality(self) -> bool {

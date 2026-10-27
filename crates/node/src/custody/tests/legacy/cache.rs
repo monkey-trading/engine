@@ -11,7 +11,7 @@ async fn many_empty_legacy_windows_keep_bounded_headers_and_the_same_authorizati
         let (engine, ledger, approvals, receipt) = history();
         let before = serde_json::to_value(&engine).unwrap();
         let chains = long_chains(height, Some(receipt));
-        let mut scan = DepositWatcher::start(quorum(&chains), &cfg, CHAIN_ID, VAULT, None).unwrap();
+        let mut scan = DepositWatcher::start_unscreened(quorum(&chains), &cfg, CHAIN_ID, VAULT, None).unwrap();
         let authorized = scan.prove_legacy_approvals(&engine, &ledger, &approvals).await.unwrap();
         assert_eq!(authorized, BTreeMap::from([((TRADER, 1), 2)]));
         assert_eq!(serde_json::to_value(&engine).unwrap(), before, "proof cannot apply cash or release a lock");
@@ -37,7 +37,7 @@ async fn bounded_legacy_header_retention_does_not_weaken_receipt_or_quorum_refus
     let before = serde_json::to_value(&engine).unwrap();
     for changed in [None, Some(VaultDeposit { units: U256::from(101 * USDC), ..receipt.clone() })] {
         let chains = long_chains(255, changed);
-        let mut scan = DepositWatcher::start(quorum(&chains), &cfg, CHAIN_ID, VAULT, None).unwrap();
+        let mut scan = DepositWatcher::start_unscreened(quorum(&chains), &cfg, CHAIN_ID, VAULT, None).unwrap();
         let error = scan.prove_legacy_approvals(&engine, &ledger, &approvals).await.unwrap_err();
         assert!(
             error.to_string().contains("canonical finality proof")
@@ -51,7 +51,7 @@ async fn bounded_legacy_header_retention_does_not_weaken_receipt_or_quorum_refus
     for chain in &chains[..2] {
         chain.0.lock().unwrap().failing = true;
     }
-    let mut scan = DepositWatcher::start(quorum(&chains), &cfg, CHAIN_ID, VAULT, None).unwrap();
+    let mut scan = DepositWatcher::start_unscreened(quorum(&chains), &cfg, CHAIN_ID, VAULT, None).unwrap();
     let error = scan.prove_legacy_approvals(&engine, &ledger, &approvals).await.unwrap_err();
     assert!(error.to_string().contains("quorum"), "{error:#}");
     assert_eq!(serde_json::to_value(&engine).unwrap(), before);
