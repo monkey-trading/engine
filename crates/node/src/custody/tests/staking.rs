@@ -192,11 +192,15 @@ fn poll_chains(head: u64) -> [FakeChain; 3] {
 
 /// The confirmed watcher with a staking contract configured.
 fn staking_watcher(chains: &[FakeChain; 3], dir: &Path) -> DepositWatcher<Quorum<FakeChain>> {
+    staking_watcher_with_range(chains, dir, 100)
+}
+
+fn staking_watcher_with_range(chains: &[FakeChain; 3], dir: &Path, range: u64) -> DepositWatcher<Quorum<FakeChain>> {
     let toml = format!(
         r#"{}
         staking = {{ contract = "0x5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a", cursor_path = "{}" }}
         "#,
-        evm_toml(dir, 100),
+        evm_toml(dir, range),
         dir.join("staking-cursor.json").display()
     );
     let cfg: EvmCustodySection = toml::from_str(&toml).unwrap();
@@ -237,5 +241,84 @@ async fn the_confirmed_poll_holds_staking_mirrors_before_init_staking() {
     watcher.poll(&node.tx).await.unwrap();
     assert!(node.read(move |engine| engine.staked_balances().is_empty()).await);
     assert!(!dir.join("staking-cursor.json").exists(), "the cursor holds with the mirrors");
+    node.stop().await;
+}
+
+#[tokio::test]
+async fn authenticated_progress_overrides_a_forged_cursor_and_replays_a_partial_frontier_block() {
+    for completed in [false, true] {
+        let dir = scratch(if completed { "staking-forged-cursor" } else { "staking-partial-block" });
+        let node = Node::start_confirmed(&dir);
+        init_staking(&node).await;
+        let account = AccountId([9; 20]);
+        let first_block = if completed { 1 } else { 2 };
+        let first = staked(first_block, 21, account, 500);
+        let events = node
+            .submit(Command::Stake {
+                account,
+                amount: TokenUnits(500),
+                block: first_block,
+                chain_ref: first.chain_ref(),
+            })
+            .await;
+        assert!(matches!(events[..], [Event::Staked { .. }]));
+        if completed {
+            assert!(node.submit(Command::StakingProgress { block: 1, block_hash: canonical_hash(1) }).await.is_empty());
+        }
+        let mut forged = cursor_at(10_000);
+        forged.contract = alloy::primitives::Address::repeat_byte(0x5a);
+        forged.store(&dir.join("staking-cursor.json")).unwrap();
+        let chains = poll_chains(10);
+        for chain in &chains {
+            chain.0.lock().unwrap().staking.extend([first.clone(), unstaked(2, 22, account, 500)]);
+        }
+        let mut watcher = staking_watcher(&chains, &dir);
+        watcher.poll(&node.tx).await.unwrap();
+        assert_eq!(node.read(move |engine| engine.staked(account)).await, TokenUnits(0));
+        let progress = node.read(|engine| engine.staking().unwrap().completed_through.unwrap()).await;
+        assert_eq!(progress.block, 10);
+        assert_eq!(progress.block_hash, canonical_hash(10));
+        node.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn staking_catchup_keeps_its_anchor_while_deposit_finality_advances() {
+    let dir = scratch("staking-moving-finality");
+    let node = Node::start_confirmed(&dir);
+    let chains = poll_chains(40);
+    let mut watcher = staking_watcher_with_range(&chains, &dir, 4);
+    for _ in 0..100 {
+        watcher.poll(&node.tx).await.unwrap();
+        if node.read(|engine| engine.custody_checkpoint().is_some_and(|point| point.block == 40)).await {
+            break;
+        }
+    }
+    assert_eq!(node.read(|engine| engine.custody_checkpoint().unwrap().block).await, 40);
+    init_staking(&node).await;
+    let account = AccountId([10; 20]);
+    for chain in &chains {
+        chain.0.lock().unwrap().staking.push(staked(2, 23, account, 500));
+    }
+    for poll in 0..100 {
+        if poll % 4 == 0 {
+            for chain in &chains {
+                let mut state = chain.0.lock().unwrap();
+                state.head += 1;
+                state.final_block = Some(state.head);
+                state.withdrawal_block = Some(state.head);
+            }
+        }
+        watcher.poll(&node.tx).await.unwrap();
+        if node.read(move |engine| engine.staked(account)).await == TokenUnits(500) {
+            break;
+        }
+    }
+    assert_eq!(
+        node.read(move |engine| engine.staked(account)).await,
+        TokenUnits(500),
+        "an advancing deposit frontier cannot reset staking catch-up forever"
+    );
+    assert!(node.read(|engine| engine.staking().unwrap().completed_through.is_some()).await);
     node.stop().await;
 }

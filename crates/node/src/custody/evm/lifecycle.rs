@@ -59,6 +59,7 @@ impl<V: VaultReader> DepositWatcher<V> {
             self.chain.prune_below(checkpoint.block);
         }
         if eligible < from {
+            self.mirror_staking(tx, release.tagged.map(|tag| tag.number.min(eligible))).await?;
             return Ok(Polled::Waiting);
         }
         if !self.prove_confirmed(from, tagged).await? {
@@ -150,8 +151,23 @@ impl<V: VaultReader> DepositWatcher<V> {
     /// - fatal: the sequencer has stopped, or the staking cursor cannot be stored
     async fn mirror_staking(&mut self, tx: &mpsc::Sender<Request>, release_at: Option<u64>) -> Result<(), PollError> {
         let Some(mut to) = release_at else { return Ok(()) };
-        let Some((cursor, _)) = self.staking.as_ref() else { return Ok(()) };
-        let from = cursor.next_block;
+        if self.staking.is_none() {
+            return Ok(());
+        };
+        let configured_start = self.start_block;
+        let Some(from) = query(tx, move |engine| {
+            engine.staking().map(|staking| {
+                staking.completed_through.map_or_else(
+                    || staking.mirrored_through.unwrap_or(configured_start).max(configured_start),
+                    |checkpoint| checkpoint.block + 1,
+                )
+            })
+        })
+        .await
+        .map_err(PollError::Fatal)?
+        else {
+            return Ok(());
+        };
         if from > to {
             return Ok(());
         }

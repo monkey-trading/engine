@@ -40,7 +40,7 @@ impl Gate {
             sink,
             registry: None,
             parent,
-            health: Some(crate::checkpoints::Health::Pending),
+            health: (!parent.has_checkpoint).then_some(crate::checkpoints::Health::Pending),
             recovery: Vec::new(),
             pending: Vec::new(),
             payouts: Default::default(),
@@ -70,12 +70,13 @@ impl Sequencer {
         if self.gate.as_ref().is_some_and(|gate| gate.parent.has_checkpoint && gate.parent.seq == seq) {
             return Ok(());
         }
-        if self.gate.as_ref().is_some_and(|gate| matches!(gate.health, Some(crate::checkpoints::Health::Diverged))) {
+        if self.gate.as_ref().is_some_and(|gate| {
+            gate.health.is_none() || matches!(gate.health, Some(crate::checkpoints::Health::Diverged))
+        }) {
             // A signed checkpoint is public: anyone may relay it to the vault, and its root makes
-            // distributions claimable. While collateral reconciliation is diverged, no new root
-            // may exist for a claim or a relay to reach. The poster's read-only withhold covers
-            // divergence it observes after a restart, before any verdict reaches this gate.
-            warn!(alert = "checkpoint_withheld", seq, "no checkpoint signed: collateral reconciliation is diverged");
+            // distributions claimable. Recovery must revalidate its finalized anchor before
+            // publishing any successor; proved divergence also withholds every new signature.
+            warn!(alert = "checkpoint_withheld", seq, "no checkpoint signed: collateral is unvalidated or diverged");
             return Ok(());
         }
         // The worker finalizes one checkpoint at a time, so a full queue defers the next checkpoint

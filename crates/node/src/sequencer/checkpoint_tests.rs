@@ -209,8 +209,10 @@ fn restart_resumes_exact_unmined_chain_and_original_checkpoint_accounting() {
     };
     let mut recovered = Sequencer::recover(cfg, key, broadcast::channel(128).0, mpsc::unbounded_channel().0).unwrap();
     let restored = recovered.take_recovery_checkpoints();
-    assert_eq!(restored.len(), outstanding.len());
-    for (actual, expected) in restored.iter().zip(&outstanding) {
+    assert_eq!(restored.len(), outstanding.len() + 1);
+    assert_eq!(restored[0].checkpoint, finalized, "the worker revalidates finalized anchor accounting");
+    assert_eq!(restored[0].liabilities, prior.last().unwrap().liabilities);
+    for (actual, expected) in restored.iter().skip(1).zip(&outstanding) {
         assert_eq!(
             serde_json::to_value(&actual.checkpoint).unwrap(),
             serde_json::to_value(&expected.checkpoint).unwrap()
@@ -288,4 +290,51 @@ fn no_checkpoint_is_signed_while_collateral_is_diverged_and_signing_resumes_when
         while queued.try_recv().is_ok() {}
     }
     assert!(checkpoints(&dir) > healthy, "the cadence resumes once collateral reconciles");
+}
+
+#[test]
+fn a_recovered_finalized_anchor_is_reconciled_before_any_new_signature() {
+    let dir = scratch_dir("checkpoint-revalidate-anchor");
+    let key = Arc::new(EnclaveKey::test_key());
+    let (sink, mut queued) = mpsc::channel(64);
+    let config = || crate::sequencer::SequencerConfig {
+        checkpoints: Some(sink.clone()),
+        checkpoint_every: 1,
+        ..sequencer_config(&dir, watch::channel(Manifest::default()).0)
+    };
+    let mut seq =
+        Sequencer::recover(config(), key.clone(), broadcast::channel(128).0, mpsc::unbounded_channel().0).unwrap();
+    seq.activate_protocol().unwrap();
+    seq.genesis(&dev_config().genesis).unwrap();
+    seq.trust(trusted_now()).unwrap();
+    let mut anchor = None;
+    while let Ok(work) = queued.try_recv() {
+        anchor = Some(work);
+    }
+    let anchor = anchor.unwrap();
+    seq.checkpoint_status(Some(anchor.checkpoint.seq), Some(crate::checkpoints::Health::Diverged)).unwrap();
+    seq.flush().unwrap();
+    drop(seq);
+    let config = crate::sequencer::SequencerConfig {
+        checkpoint_parent: crate::log::CheckpointParent {
+            has_checkpoint: true,
+            seq: anchor.checkpoint.seq,
+            root: anchor.checkpoint.root.parse().unwrap(),
+        },
+        ..config()
+    };
+    let mut seq = Sequencer::recover(config, key, broadcast::channel(128).0, mpsc::unbounded_channel().0).unwrap();
+    let recovered = seq.take_recovery_checkpoints();
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].checkpoint, anchor.checkpoint);
+    assert_eq!(recovered[0].liabilities, anchor.liabilities);
+    seq.trust(trusted_now()).unwrap();
+    seq.sequence(Command::Tick).unwrap();
+    assert!(queued.try_recv().is_err(), "no signature before the recovered anchor is checked");
+    seq.checkpoint_status(Some(anchor.checkpoint.seq), Some(crate::checkpoints::Health::Diverged)).unwrap();
+    seq.sequence(Command::Tick).unwrap();
+    assert!(queued.try_recv().is_err(), "proved divergence remains blocked");
+    seq.checkpoint_status(Some(anchor.checkpoint.seq), Some(crate::checkpoints::Health::Pending)).unwrap();
+    seq.sequence(Command::Tick).unwrap();
+    assert!(queued.try_recv().is_ok(), "validated deposit catch-up may sign its clearing checkpoint");
 }

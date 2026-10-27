@@ -29,6 +29,7 @@ pub struct Replayed {
     pub(crate) command_prefix: [u8; 32],
     pub checkpoints: u64,
     pub(crate) recovery_work: Vec<crate::checkpoints::Work>,
+    pub(crate) recovery_anchor_work: Option<crate::checkpoints::Work>,
     pub(crate) last_signed_checkpoint: Option<crate::log::Checkpoint>,
     pub(crate) recovery_base: Option<RecoveryBase>,
     /// Withdrawals the last command approved that the log ends before signing, as a crash between
@@ -70,6 +71,7 @@ pub(super) struct Replay {
     recovery_parent: Option<crate::log::CheckpointParent>,
     recovery_origin: Option<crate::log::CheckpointParent>,
     recovery_anchor: Option<crate::log::Checkpoint>,
+    recovery_anchor_work: Option<crate::checkpoints::Work>,
     recovery_work: Vec<crate::checkpoints::Work>,
     activations: Vec<(ProtocolVersion, u64)>,
     /// Withdrawals the last command approved that no withdrawal entry has matched yet. Entries
@@ -96,18 +98,6 @@ pub(super) struct Replay {
 }
 
 impl Replay {
-    /// Matches a separately signed complete history head to this actual strict replay prefix.
-    /// Error cases:
-    /// - command, time or canonical command/event prefix differs
-    pub(super) fn verify_history_head(&self, head: &crate::history::authenticated::Head) -> anyhow::Result<()> {
-        ensure!(
-            head.last_seq() == self.engine.last_seq() && head.last_ts() == Some(self.engine.now()),
-            "history head does not match the replay cursor"
-        );
-        ensure!(head.command_prefix == self.command_prefix, "history head does not match the replayed command prefix");
-        Ok(())
-    }
-
     /// Pins the authority supplied independently by custody, retained key, or audit caller.
     pub(super) fn with_trust(domain: Option<CheckpointDomain>, trusted_signer: Option<AccountId>) -> Self {
         Self {
@@ -294,6 +284,8 @@ impl Replay {
                     parent.has_checkpoint && parent.seq == cp.seq && parent.root.to_string() == cp.root
                 }) {
                     self.recovery_anchor = Some(cp.clone());
+                    self.recovery_anchor_work =
+                        Some(crate::checkpoints::Work::capture(cp.clone(), self.accounting, engine));
                 }
                 self.checkpoints += 1;
                 if let Some(parent) = self.recovery_parent
@@ -354,6 +346,7 @@ impl Replay {
             requires_checkpoint_gate: self.requires_checkpoint_gate,
             last_signed_checkpoint: self.last_signed_checkpoint,
             recovery_work: self.recovery_work,
+            recovery_anchor_work: self.recovery_anchor_work,
             recovery_base,
             legacy_deposits: self.legacy_deposits,
             legacy_approvals: self.legacy_approvals,

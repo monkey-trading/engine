@@ -184,10 +184,21 @@ impl<V: VaultReader> DepositWatcher<V> {
             self.chain.insert(to, hashes[&to]);
             return Ok(Some(hashes));
         }
-        let upper = self
-            .chain
-            .at_or_above(to)
+        let retained = staking
+            .then(|| self.confirmed.staking_window.as_ref())
+            .flatten()
+            .filter(|proof| (proof.from, proof.to) == (from, to))
+            .map(|proof| proof.upper);
+        let upper = retained
+            .or_else(|| self.chain.at_or_above(to))
             .ok_or_else(|| PollError::unsettled(anyhow!("block {to} is above the proven chain")))?;
+        if retained.is_some() {
+            let links = self.headers(upper.0, upper.0).await?;
+            if links.len() != 1 || links[0].number != upper.0 || links[0].hash != upper.1 {
+                self.confirmed.staking_window = None;
+                return Err(PollError::unsettled(anyhow!("staking proof anchor changed")));
+            }
+        }
         let (next, end) = {
             let slot = if staking { &mut self.confirmed.staking_window } else { &mut self.confirmed.window };
             if slot.as_ref().is_none_or(|proof| (proof.from, proof.to, proof.upper) != (from, to, upper)) {

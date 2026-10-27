@@ -59,11 +59,9 @@ impl StakingEvent {
     }
 }
 
-/// The watcher's place in the staking log, kept at `custody.evm.staking.cursor_path`. It only
-/// avoids rescanning before the first mirror: from then on the poll re-anchors `next_block` from
-/// the engine's mirrored-through frontier, so a host-edited file can make the watcher re-read
-/// blocks, never skip them; the engine's credited references stop a double mirror. `log_seq`
-/// refuses a cursor ahead of the recovered log, as the deposit cursor's does.
+/// A host-stored cache of the staking scan position. The watcher derives its authoritative
+/// start from the engine's completed frontier, or the configured start before any completion;
+/// this file cannot advance it. `log_seq` refuses a cursor ahead of the recovered log.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StakingCursor {
@@ -160,20 +158,6 @@ pub(super) async fn mirror<V: VaultReader>(
         debug!(from, to, "staking is not initialised; holding mirrors until InitStaking applies");
         return Ok(());
     }
-    // The engine's frontier, not the host cursor, anchors where mirroring resumes: credited
-    // references stop a double mirror, and a file that claims more than the frontier is re-read,
-    // never skipped.
-    let frontier = query(tx, |engine| engine.staking().and_then(|staking| staking.mirrored_through))
-        .await
-        .map_err(PollError::Fatal)?;
-    let from = frontier.map_or(from, |frontier| frontier.saturating_add(1).max(from));
-    if from > to {
-        // The finalised boundary sits at or behind the mirrored frontier (its tag reorganised, or
-        // a lagging cursor caught up): nothing mirrors this poll, and the cursor names the first
-        // unmirrored block so the next poll starts there.
-        cursor.next_block = from;
-        return Ok(());
-    }
     let events = reader.staking_events(from, to).await.map_err(PollError::rpc)?;
     for event in &events {
         if hashes.get(&event.block) != Some(&event.block_hash) {
@@ -187,6 +171,18 @@ pub(super) async fn mirror<V: VaultReader>(
     }
     for event in events {
         mirror_one(tx, event).await?;
+    }
+    let modern = query(tx, |engine| engine.protocol_version() >= engine_core::protocol::ProtocolVersion::V27)
+        .await
+        .map_err(PollError::Fatal)?;
+    if modern {
+        let block_hash = *hashes
+            .get(&to)
+            .ok_or_else(|| PollError::unsettled(anyhow::anyhow!("staking progress lacks its proven endpoint")))?;
+        let events = submit(tx, Command::StakingProgress { block: to, block_hash }).await?;
+        if events.iter().any(|event| matches!(event, Event::AdminRejected { .. })) {
+            return Err(PollError::Stalled(Stall::Refused(anyhow::anyhow!("the engine refused staking progress"))));
+        }
     }
     cursor.next_block = to + 1;
     cursor.log_seq = sync(tx).await.map_err(PollError::Fatal)?;

@@ -209,6 +209,7 @@ impl Sequencer {
             last_checkpoint_ts,
             last_signed_checkpoint,
             recovery_work,
+            recovery_anchor_work,
             recovery_base,
             checkpoint_signers,
             genesis,
@@ -342,9 +343,11 @@ impl Sequencer {
             if let Some(registry) = &gate.registry {
                 let mut registry =
                     registry.lock().map_err(|_| anyhow::anyhow!("checkpoint work registry is poisoned"))?;
-                registry.extend(recovery_work.iter().map(|work| (work.checkpoint.seq, work.clone())));
+                registry.extend(
+                    recovery_anchor_work.iter().chain(&recovery_work).map(|work| (work.checkpoint.seq, work.clone())),
+                );
             }
-            gate.recovery = recovery_work;
+            gate.recovery = recovery_anchor_work.into_iter().chain(recovery_work).collect();
         }
         if checkpoint_unsigned {
             if sequencer
