@@ -50,11 +50,20 @@ pub struct EvmCustodySection {
     /// Deadline for each RPC request.
     #[serde(with = "humantime_serde")]
     pub rpc_timeout: Duration,
-    /// A deposit stall, a final block that stays put while the head moves, or an endpoint head
-    /// that stops advancing, that lasts this long raises a Critical alert. On Arbitrum One, set it
-    /// above the longest gap between L1 batch posts.
+    /// A deposit stall, reads trailing the final block, an endpoint head that stops
+    /// advancing, or a checkpoint deposit left uncredited, that lasts this long raises a
+    /// Critical alert. Sized for the credit tag's cadence: on Arbitrum One, above the
+    /// longest gap between L1 batch posts.
     #[serde(with = "humantime_serde")]
     pub stall_critical_after: Duration,
+    /// The release tag (`withdrawal_finality_tag`, `finalized` in production) may trail a
+    /// moving head, and a restarted node's pending checkpoint inclusion may await that tag
+    /// at startup, for this long before `custody_finality_stalled` pages or startup refuses
+    /// to open the log. Sized for the release tag's cadence, not the batch-posting cadence:
+    /// on Arbitrum One the `finalized` tag follows batch posting by one Ethereum finality
+    /// period (about 15 minutes), so production sets this to 30m.
+    #[serde(with = "humantime_serde")]
+    pub finality_stalled_after: Duration,
     /// Where the deposit cursor is kept between restarts.
     pub cursor_path: PathBuf,
 }
@@ -127,6 +136,9 @@ impl NodeConfig {
         }
         if evm.max_block_range == 0 || evm.poll_interval.is_zero() || evm.rpc_timeout.is_zero() {
             bail!("custody.evm.max_block_range, poll_interval, and rpc_timeout must be non-zero");
+        }
+        if evm.finality_stalled_after.is_zero() {
+            bail!("custody.evm.finality_stalled_after must be non-zero");
         }
         if self.genesis.house_capital != Fixed::ZERO {
             bail!("genesis.house_capital must be zero with EVM custody; deposit to the house instead");

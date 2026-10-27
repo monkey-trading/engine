@@ -191,7 +191,7 @@ impl<V: VaultReader> DepositWatcher<V> {
             log_range: AdaptiveSize::new(cfg.max_block_range),
             poll_interval: cfg.poll_interval,
             stall_critical_after: cfg.stall_critical_after,
-            watchdog: Watchdog::new(cfg.stall_critical_after),
+            watchdog: Watchdog::new(cfg.stall_critical_after, cfg.finality_stalled_after),
         }
     }
 

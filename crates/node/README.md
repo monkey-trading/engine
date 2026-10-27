@@ -578,7 +578,7 @@ reconciles at custody's `withdrawal_finality_tag`, independently of the early-cr
 confirmation depth. Latest inclusion is
 tracked separately so delayed finality never causes duplicate submission. Startup waits for a
 pending inclusion to reach that boundary (or disappear in a reorg), bounded by
-`custody.evm.stall_critical_after`, before selecting its rollback anchor. Recovery then restores every outstanding durable signed
+`custody.evm.finality_stalled_after`, before selecting its rollback anchor. Recovery then restores every outstanding durable signed
 checkpoint and its original accounting before signing descendants; an unmined signature remains
 live even when both chain views still show its parent. Permissionless relays matching that local
 chain reconcile the covered prefix, including work beyond the receive queue. The queue is bounded, and

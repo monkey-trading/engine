@@ -78,6 +78,9 @@ max_block_range = 1000
 poll_interval = "200ms"
 rpc_timeout = "5s"
 stall_critical_after = "5m"
+# Anvil marks the finalized tag at once; production sizes this for the release tag's
+# cadence — on Arbitrum One, one Ethereum finality period past batch posting.
+finality_stalled_after = "5m"
 cursor_path = "data/anvil/custody-cursor.json"
 
 [feeds]

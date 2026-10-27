@@ -2,7 +2,9 @@
 //! this node's clock, a final block that stops advancing while the head moves on, and reads that
 //! keep trailing the final block. Each leaves new deposits waiting with no failed read to report,
 //! so each raises a Critical alert once per episode, keyed by its name alone, and resolves it when
-//! the condition clears.
+//! the condition clears. The head and read checks share the batch-posting budget; the
+//! final-block check follows the release tag, whose cadence is the chain's finality delay,
+//! and gets its own.
 
 use std::time::Duration;
 
@@ -30,6 +32,9 @@ struct FinalitySeen {
 
 pub(super) struct Watchdog {
     budget: Duration,
+    /// The release tag may sit still for a whole finality period while the head moves, so the
+    /// final-block check alerts only after this longer budget.
+    finality_budget: Duration,
     /// Since when reads have not reached the final block, and whether that was alerted.
     behind_since: Option<Instant>,
     lag_alerted: bool,
@@ -41,10 +46,12 @@ pub(super) struct Watchdog {
 }
 
 impl Watchdog {
-    /// Watchdogs that alert once a condition lasts `budget`.
-    pub(super) fn new(budget: Duration) -> Self {
+    /// Watchdogs that alert once a condition lasts its budget: `budget` for head-staleness and
+    /// reads trailing the final block, `finality_budget` for the release tag sitting still.
+    pub(super) fn new(budget: Duration, finality_budget: Duration) -> Self {
         Watchdog {
             budget,
+            finality_budget,
             behind_since: None,
             lag_alerted: false,
             finality: None,
@@ -106,10 +113,11 @@ impl Watchdog {
         }
     }
 
-    /// Alerts when the budget has passed since the head first moved on without the highest final
-    /// block rising. Quorum progress needs a configured majority advancing against their own
-    /// baselines; scalar bounds may change contributors between polls. A lower final block is
-    /// no progress. An idle chain raises nothing and its first majority movement gets the budget.
+    /// Alerts when the finality budget has passed since the head first moved on without the
+    /// highest final block rising. Quorum progress needs a configured majority advancing against
+    /// their own baselines; scalar bounds may change contributors between polls. A lower final
+    /// block is no progress. An idle chain raises nothing and its first majority movement gets
+    /// the budget.
     fn check_finality(&mut self, head: u64, final_block: Option<u64>, support: Option<&HeadSupport>) {
         let now = Instant::now();
         let rose = self.finality.as_ref().is_none_or(|seen| final_block > seen.highest);
@@ -158,7 +166,7 @@ impl Watchdog {
         }
         let Some(moving_since) = seen.moving_since else { return };
         let stalled_for = now.duration_since(moving_since);
-        if !seen.alerted && stalled_for >= self.budget {
+        if !seen.alerted && stalled_for >= self.finality_budget {
             let highest = seen.highest;
             error!(
                 alert = "custody_finality_stalled",
