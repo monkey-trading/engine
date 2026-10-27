@@ -9,9 +9,13 @@
 # patch with all pairs at once: the PR's renumber (V21=V23 v21=v23) and, if main has
 # gained versions, main's latest (V20=V22 v20=v22). A site the renumber missed keeps
 # its old label and shows. Reference logs (crates/*/tests/reference/*.jsonl), index
-# lines, and hunk line numbers are ignored. The comparison keys each hunk to its file
-# and the nearest preceding Rust item line, so a line moved within one item does not
-# show; the residual's hunk headers name the file.
+# lines, and hunk line numbers are ignored. Changed lines that enumerate two or more
+# version labels are also ignored: every version PR extends the same all-version prose
+# lists (README bullets, doc comments) that main extends with its own version, and no
+# label pairing reconciles a shared list line, at the cost that a substantive change
+# on such a line is ignored too. The comparison keys each hunk to its file and the
+# nearest preceding Rust item line, so a line moved within one item does not show;
+# the residual's hunk headers name the file.
 #
 # Exit 0 with no output: the patches match. Exit 1: the residual is printed.
 # Exit 2: bad arguments. Exit 3: git, sed, or diff failed.
@@ -30,7 +34,9 @@ patch() { # base head out
   git -c core.attributesFile="$tmp/attributes" diff --no-color --no-ext-diff --no-textconv \
     --no-renames --binary -U0 "$1...$2" -- ':(top)' \
     ':(top,exclude,glob)crates/*/tests/reference/*.jsonl' |
-    sed -E -e '/^index /d' -e 's/^@@ [^@]* @@/@@/' > "$3"
+    sed -E -e '/^index /d' -e 's/^@@ [^@]* @@/@@/' \
+      -e '/^--- /b' -e '/^[+][+][+] /b' -e '/^[-+]/!b' \
+      -e 'h' -e 's/[Vv][0-9]+/@@/g' -e '/@@.*@@/d' -e 'g' > "$3"
 }
 rename() { # file pattern replacement; sed -i is not portable between BSD and GNU
   sed "s/$2/$3/g" "$1" > "$tmp/renamed"

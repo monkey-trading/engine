@@ -227,7 +227,9 @@ finding is fixed by class before the next round.
   round reviewed (its `scope.md`) and the new ones:
   `<reviewed-base> <reviewed-head> <new-base> <new-head> [OLD=NEW ...]`. It compares the reviewed
   patch with the new one, each taken against its own base so `main`'s changes drop out, and
-  ignores reference logs. For a renumber, the pairs rename in the reviewed patch the PR's version
+  ignores reference logs and changed lines that enumerate two or more version labels (the
+  all-version prose lists a renumber also touches, which `main` extends with its own version). For
+  a renumber, the pairs rename in the reviewed patch the PR's version
   labels (`V21=V23 v21=v23`) and, when `main` has gained versions, its previous latest
   (`V20=V22 v20=v22`), so a site the renumber missed shows. The script exits 0 when the patches
   match and 1 with the residual printed; any other exit is a failure to fix before relying on it.
