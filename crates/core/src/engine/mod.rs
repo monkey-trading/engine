@@ -497,12 +497,4 @@ impl Engine {
     fn floored(&self, share: Fixed, floor: Fixed) -> Fixed {
         if self.protocol_version >= ProtocolVersion::V6 { share.max(floor) } else { share }
     }
-
-    /// Refreshes every market's session, so opens and closes fire even without price traffic.
-    pub(crate) fn refresh_all_sessions(&mut self, events: &mut Vec<Event>) {
-        let ids: Vec<MarketId> = self.markets.keys().copied().collect();
-        for market_id in ids {
-            self.refresh_session(market_id, events);
-        }
-    }
 }

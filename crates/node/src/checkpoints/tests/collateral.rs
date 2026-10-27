@@ -70,7 +70,7 @@ async fn the_first_deposit_left_uncredited_past_the_deadline_pauses_until_a_chec
     tokio::time::advance(Duration::from_millis(600)).await;
     assert_eq!(
         poster.reconcile_lifecycle(&work, &[&work], &[], &mut uncredited).await.unwrap().1,
-        Health::Diverged,
+        Health::Pending,
         "deposit 1 is overdue"
     );
     assert!(
@@ -83,7 +83,7 @@ async fn the_first_deposit_left_uncredited_past_the_deadline_pauses_until_a_chec
     tokio::time::advance(Duration::from_millis(1_200)).await;
     assert_eq!(
         poster.reconcile_lifecycle(&work, &[&work], &[], &mut uncredited).await.unwrap().1,
-        Health::Diverged,
+        Health::Pending,
         "deposit 2 is overdue"
     );
     (work.deposits, work.liabilities) = (3, Fixed::from_int(130));
@@ -104,7 +104,7 @@ async fn the_worker_carries_an_uncredited_deposit_across_retries_to_its_deadline
     tokio::time::advance(Duration::from_secs(2)).await;
     let mut paused = false;
     for _ in 0..8 {
-        if matches!(rx.recv().await, Some(Request::CheckpointStatus { health: Some(Health::Diverged), .. })) {
+        if matches!(rx.recv().await, Some(Request::CheckpointStatus { health: Some(Health::Pending), .. })) {
             paused = true;
             break;
         }

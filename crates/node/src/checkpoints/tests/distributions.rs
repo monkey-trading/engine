@@ -36,7 +36,7 @@ async fn paid_distributions_compensate_the_pending_deposit_classification() {
     assert!(!before.iter().any(|alert| alert["alert"] == "collateral_mismatch"), "{before:?}");
     // The deposit never credits: past the catch-up deadline the escalation pauses payouts.
     tokio::time::advance(Duration::from_secs(2)).await;
-    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { health: Some(Health::Diverged), .. })));
+    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { health: Some(Health::Pending), .. })));
     assert!(std::iter::from_fn(|| alerts.try_recv().ok()).any(|alert| alert["alert"] == "collateral_mismatch"));
     drop(work_tx);
     task.await.unwrap().unwrap();

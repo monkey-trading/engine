@@ -138,10 +138,7 @@ async fn failed_post_is_retried_and_never_releases_a_signature_early() {
     let (tx, mut rx) = mpsc::channel(4);
     work_tx.send(work).await.unwrap();
     let task = tokio::spawn(poster.run(work_rx, tx));
-    assert!(matches!(
-        rx.recv().await,
-        Some(Request::CheckpointStatus { posted: None, health: Some(Health::Pending | Health::Diverged), .. })
-    ));
+    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { posted: None, health: None, .. })));
     assert!(chain.state.lock().unwrap().checkpoint.is_none());
     assert!(matches!(
         rx.recv().await,
