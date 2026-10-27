@@ -220,12 +220,17 @@ impl Engine {
         // does, so every effect of the command, market processing and rollovers included, belongs to
         // the next period.
         self.finalise_emissions(&mut events);
-        self.finalise_staking(&mut events);
+        let staking_activation =
+            self.protocol_version < ProtocolVersion::V28 && sequenced.cmd.targets_staking_reserves();
+        if !staking_activation {
+            self.finalise_staking(&mut events);
+        }
         let corporate = self.protocol_version >= ProtocolVersion::V23;
         let mut corporate_margin = false;
         let mut early_outcome = None;
         if corporate {
-            let activation = matches!(sequenced.cmd, Command::Admin(AdminCommand::ActivateProtocol { .. }));
+            let activation =
+                matches!(sequenced.cmd, Command::Admin(AdminCommand::ActivateProtocol { .. })) || staking_activation;
             // Install authenticated dated history before catch-up, without letting today's
             // incoming quote price any earlier rollover or corporate boundary.
             if sequenced.cmd.is_benchmark_batch() || activation {
@@ -234,6 +239,9 @@ impl Engine {
                     Command::SignedAdmin(req) => self.signed_admin(req, &mut events),
                     _ => unreachable!("benchmark batches and activations are admin commands"),
                 };
+                if staking_activation && result.is_ok() {
+                    self.finalise_staking(&mut events);
+                }
                 early_outcome = Some(match result {
                     Ok(()) => Event::AdminApplied,
                     Err(reason) => Event::AdminRejected { reason },

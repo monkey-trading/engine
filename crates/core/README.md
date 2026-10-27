@@ -337,6 +337,8 @@ Two suites guard replay and accounting:
 Staking protocol V28 also reserves unresolved negative client cash: a partial liquidation cannot
 distribute an unfunded loss while another position remains untradeable. Epoch close uses the existing
 account reserve scan, followed by the staker allocation pass; it is O(accounts + stakers).
+Crossing into V28 validates activation before closing a due staking epoch; a rejected activation
+leaves that epoch pending, and a successful activation applies the funded-cash cap immediately.
 
 Staking protocol V27 authenticates mirror identities as kind-15 leaves and completed finalized
 scan anchors in the staking globals, while retaining V25 reference roots. V25 remains a legacy

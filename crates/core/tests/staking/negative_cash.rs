@@ -87,6 +87,72 @@ fn negative_cash_and_unfinalised_principal_are_reserved_independently_until_fina
     assert_eq!(h.engine.house_cash() + h.balance(trader), f("100"));
 }
 
+#[test]
+fn crossing_into_v28_at_the_epoch_boundary_uses_validated_reserves_for_that_epoch() {
+    for old in [ProtocolVersion::V25, ProtocolVersion::V27] {
+        let (mut h, trader, other, staker) = partial_liquidation();
+        if old == ProtocolVersion::V27 {
+            h.admin(AdminCommand::ActivateProtocol { version: old });
+        }
+        let config = config(&h);
+        h.advance_to(config.epoch_end(0));
+        let events = h.cmd(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V28 }));
+        assert!(events.iter().any(|event| matches!(event, Event::AdminApplied)), "{events:?}");
+        assert_eq!(h.engine.protocol_version(), ProtocolVersion::V28);
+        assert_eq!(h.engine.staking().unwrap().epoch, 1);
+        assert_eq!(h.engine.distribution(staker), UsdcUnits(2_100_000_000), "{old:?}: {events:?}");
+        assert_eq!(h.engine.house_cash() + h.balance(trader), f("100"));
+        assert_eq!(h.balance(other), f("1000"));
+    }
+}
+
+#[test]
+fn rejected_crossing_targets_leave_the_epoch_pending_until_an_authorized_upgrade() {
+    for old in [ProtocolVersion::V25, ProtocolVersion::V27] {
+        for form in [0, 1, 2] {
+            let (mut h, trader, other, staker) = partial_liquidation();
+            if old == ProtocolVersion::V27 {
+                h.admin(AdminCommand::ActivateProtocol { version: old });
+            }
+            h.advance_to(config(&h).epoch_end(0));
+            let operator = crate::common::Client { expires_at: h.ts + 60_000, ..crate::common::Client::operator() };
+            let nonce = h.engine.next_request_nonce(operator.account);
+            let command = if form == 0 {
+                Command::Admin(AdminCommand::ActivateCustodyFinality {
+                    version: ProtocolVersion::V28,
+                    legacy_deposits: vec![],
+                })
+            } else {
+                let mut command =
+                    operator.admin(nonce, AdminCommand::ActivateProtocol { version: ProtocolVersion::V28 });
+                if form == 1
+                    && let Command::SignedAdmin(request) = &mut command
+                {
+                    request.auth.signature = engine_core::eip712::Signature::ZERO;
+                }
+                command
+            };
+            let events = h.cmd(command);
+            assert!(events.iter().any(|event| matches!(event, Event::AdminRejected { .. })), "{events:?}");
+            assert!(!events.iter().any(|event| matches!(event, Event::DistributionEpochClosed { .. })), "{events:?}");
+            assert_eq!(h.engine.protocol_version(), old);
+            assert_eq!(h.engine.staking().unwrap().epoch, 0);
+            assert_eq!(h.engine.distribution(staker), UsdcUnits(0));
+            assert_eq!(h.engine.house_cash(), f("2990"));
+            assert_eq!(h.balance(trader), f("-790"));
+            assert_eq!(h.balance(other), f("1000"));
+            assert_eq!(
+                h.engine.next_request_nonce(operator.account),
+                nonce + u64::from(form == 2),
+                "admin authorization runs once"
+            );
+            let events = h.cmd(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V28 }));
+            assert!(events.iter().any(|event| matches!(event, Event::AdminApplied)), "{events:?}");
+            assert_eq!(h.engine.distribution(staker), UsdcUnits(2_100_000_000));
+        }
+    }
+}
+
 /// Real trades leave the liquidated account negative while its other market has no fresh quote.
 fn partial_liquidation()
 -> (Harness, engine_core::types::AccountId, engine_core::types::AccountId, engine_core::types::AccountId) {

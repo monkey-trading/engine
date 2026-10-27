@@ -296,6 +296,17 @@ impl AdminCommand {
 }
 
 impl Command {
+    /// Targets the activation that validates staking cash reserves before closing an overdue epoch.
+    pub(crate) fn targets_staking_reserves(&self) -> bool {
+        let admin = match self {
+            Self::Admin(admin) => admin,
+            Self::SignedAdmin(request) => &request.command,
+            _ => return false,
+        };
+        matches!(admin, AdminCommand::ActivateProtocol { version }
+            | AdminCommand::ActivateCustodyFinality { version, .. } if *version >= ProtocolVersion::V28)
+    }
+
     /// Whether this node-only activation must precede dated benchmark catch-up.
     pub fn is_dated_rate_activation(&self) -> bool {
         matches!(self,

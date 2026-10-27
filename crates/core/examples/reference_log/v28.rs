@@ -19,7 +19,6 @@ const STALE: MarketId = 281;
 
 /// A real partial liquidation leaves cash negative while its other position has no fresh quote.
 pub(crate) fn session(h: &mut Harness) {
-    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V28 });
     let client = Client { expires_at: h.ts + 60_000, ..Client::new(81) };
     let mut parameters = h.engine.params().unwrap().clone();
     parameters.profit_fee_bps = 0;
@@ -72,7 +71,8 @@ pub(crate) fn session(h: &mut Harness) {
     let before = staking.distributed;
     let end = staking.config.epoch_end(staking.epoch);
     h.advance_to(end);
-    let events = h.cmd(Command::Tick);
+    let events = h.cmd(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V28 }));
+    assert!(events.iter().any(|event| matches!(event, Event::AdminApplied)), "{events:?}");
     assert!(events.iter().any(|event| matches!(event, Event::DistributionEpochClosed { .. })), "{events:?}");
     assert!(h.engine.staking().unwrap().distributed.0 - before.0 <= cap, "unfunded client loss is not claimable");
 }
