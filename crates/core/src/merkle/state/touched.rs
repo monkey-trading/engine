@@ -1,0 +1,46 @@
+//! What changed since the last state root: the tracked-map keys and the untracked sets.
+
+use std::collections::BTreeSet;
+
+use alloy_primitives::B256;
+
+use crate::types::{AccountId, MarketId, OrderId};
+
+/// Changes since the last root that no tracked map records. Positions change only in `book`,
+/// and resting orders only where `place_order` rests one and `remove_order` takes one out; each
+/// records what it changed here.
+#[derive(Debug, Default)]
+pub(crate) struct Changed {
+    pub(crate) markouts: BTreeSet<u64>,
+    pub(crate) positions: BTreeSet<(AccountId, MarketId)>,
+    pub(crate) orders: BTreeSet<(AccountId, OrderId)>,
+}
+
+/// What computing a state root hashed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RootWork {
+    /// Leaves re-encoded: those changed since the previous root, and the remaining-state leaf.
+    pub leaves: usize,
+    /// Tree nodes rehashed above the leaves whose hash changed.
+    pub nodes: usize,
+}
+
+/// The keys of entries changed since the last root.
+pub(crate) struct Touched {
+    pub(crate) accounts: BTreeSet<AccountId>,
+    pub(crate) markets: BTreeSet<MarketId>,
+    pub(crate) nonces: BTreeSet<AccountId>,
+    pub(crate) refs: BTreeSet<String>,
+    pub(crate) period_results: BTreeSet<AccountId>,
+    pub(crate) entitlements: BTreeSet<AccountId>,
+    pub(crate) staked: BTreeSet<AccountId>,
+    pub(crate) distributions: BTreeSet<AccountId>,
+    pub(crate) deposits: BTreeSet<String>,
+    pub(crate) deposit_transactions: BTreeSet<String>,
+    pub(crate) legacy_deposits: BTreeSet<String>,
+    pub(crate) withdrawal_queue: BTreeSet<u64>,
+    pub(crate) withdrawal_approvals: BTreeSet<B256>,
+    pub(crate) corporate_actions: BTreeSet<String>,
+    pub(crate) corporate_refs: BTreeSet<String>,
+    pub(crate) changed: Changed,
+}

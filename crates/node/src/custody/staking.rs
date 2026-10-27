@@ -3,7 +3,7 @@
 //! proven blocks, hold until `InitStaking` has applied, and credit once under `tx:logIndex`, so
 //! a restart that re-reads a range mirrors nothing twice.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use alloy::primitives::{B256, U256};
 use anyhow::{Context, bail};
@@ -140,7 +140,7 @@ pub(super) async fn mirror<V: VaultReader>(
     reader: &V,
     tx: &mpsc::Sender<Request>,
     cursor: &mut StakingCursor,
-    cursor_path: &PathBuf,
+    cursor_path: &Path,
     from: u64,
     to: u64,
     hashes: &std::collections::BTreeMap<u64, B256>,
@@ -170,7 +170,7 @@ pub(super) async fn mirror<V: VaultReader>(
     cursor.next_block = to + 1;
     cursor.log_seq = sync(tx).await.map_err(PollError::Fatal)?;
     let stored = cursor.clone();
-    let path = cursor_path.clone();
+    let path = cursor_path.to_path_buf();
     tokio::task::spawn_blocking(move || stored.store(&path))
         .await
         .map_err(|e| PollError::Fatal(anyhow::anyhow!("storing the staking cursor: {e}")))?

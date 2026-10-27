@@ -1,12 +1,13 @@
 //! The engine's state tree: which leaves each root rehashes, the leaf of the engine's remaining
 //! state, and account and entitlement proofs.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use alloy_primitives::B256;
 use serde::Serialize;
 use sha3::{Digest, Keccak256};
 
+mod touched;
 use crate::Fixed;
 use crate::account::Position;
 use crate::auth::{ClientAuth, Operator};
@@ -27,6 +28,9 @@ use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
 use crate::staking::{Staking, UsdcUnits};
 use crate::types::{AccountId, MarketId, Millis, OrderId};
+pub(crate) use touched::Changed;
+pub use touched::RootWork;
+use touched::Touched;
 
 /// The state tree as of the last root, with the account, position, market, and entitlement leaves
 /// proofs need.
@@ -41,45 +45,6 @@ pub(crate) struct StateTree {
     entitlements: BTreeMap<AccountId, TokenUnits>,
     distributions: BTreeMap<AccountId, UsdcUnits>,
     work: RootWork,
-}
-
-/// Changes since the last root that no tracked map records. Positions change only in `book`,
-/// and resting orders only where `place_order` rests one and `remove_order` takes one out; each
-/// records what it changed here.
-#[derive(Debug, Default)]
-pub(crate) struct Changed {
-    markouts: BTreeSet<u64>,
-    positions: BTreeSet<(AccountId, MarketId)>,
-    orders: BTreeSet<(AccountId, OrderId)>,
-}
-
-/// What computing a state root hashed.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct RootWork {
-    /// Leaves re-encoded: those changed since the previous root, and the remaining-state leaf.
-    pub leaves: usize,
-    /// Tree nodes rehashed above the leaves whose hash changed.
-    pub nodes: usize,
-}
-
-/// The keys of entries changed since the last root.
-struct Touched {
-    accounts: BTreeSet<AccountId>,
-    markets: BTreeSet<MarketId>,
-    nonces: BTreeSet<AccountId>,
-    refs: BTreeSet<String>,
-    period_results: BTreeSet<AccountId>,
-    entitlements: BTreeSet<AccountId>,
-    staked: BTreeSet<AccountId>,
-    distributions: BTreeSet<AccountId>,
-    deposits: BTreeSet<String>,
-    deposit_transactions: BTreeSet<String>,
-    legacy_deposits: BTreeSet<String>,
-    withdrawal_queue: BTreeSet<u64>,
-    withdrawal_approvals: BTreeSet<B256>,
-    corporate_actions: BTreeSet<String>,
-    corporate_refs: BTreeSet<String>,
-    changed: Changed,
 }
 
 /// The engine fields no leaf of their own holds.
@@ -113,7 +78,6 @@ struct Globals<'a> {
     /// From `V25`; omitted until staking is initialised, so earlier roots stand.
     #[serde(skip_serializing_if = "Option::is_none")]
     staking: &'a Option<Staking>,
-
 }
 
 impl Engine {
@@ -337,7 +301,6 @@ impl Engine {
         Some(DistributionProof { seq: state.seq, root: state.root, account, entitled, siblings })
     }
 
-
     /// What the last state root hashed, or `None` before the first root under `V9`.
     pub fn last_root_work(&self) -> Option<RootWork> {
         self.tree.as_ref().map(|state| state.work)
@@ -519,7 +482,6 @@ impl Engine {
             withdrawal_cash: *withdrawal_cash,
             withdrawal_next_ticket: *withdrawal_next_ticket,
             staking,
-
         }
     }
 }

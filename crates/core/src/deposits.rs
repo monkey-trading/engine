@@ -1,5 +1,7 @@
 //! Sequencer-confirmed custody receipts, principal locks, and canonical reversals.
 
+use std::ops::Bound;
+
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 
@@ -455,3 +457,16 @@ impl Engine {
 
 #[cfg(test)]
 mod tests;
+
+impl Engine {
+    /// Whether the custody reference `chain_ref` has been credited.
+    pub fn is_credited(&self, chain_ref: &str) -> bool {
+        self.credited_refs.contains(chain_ref)
+    }
+
+    /// The credited custody references that start with `prefix`, in order.
+    pub fn credited_refs_with_prefix<'a>(&'a self, prefix: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+        let from = (Bound::Included(prefix), Bound::Unbounded);
+        self.credited_refs.range::<str, _>(from).map(String::as_str).take_while(move |r| r.starts_with(prefix))
+    }
+}
