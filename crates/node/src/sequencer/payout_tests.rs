@@ -165,7 +165,14 @@ fn restart_redelivers_a_previously_signed_unpaid_approval_without_debiting_it_ag
     let (stream, _) = broadcast::channel(128);
     let (withdrawals, mut signed) = mpsc::unbounded_channel();
     // An unflushed stream can disappear while its signed log entry is already durable.
-    let log = Sequencer::read_log_with_trust(&node.dir, Some(domain), Some(AccountId(key.address())), |_| {}).unwrap();
+    let log = Sequencer::read_log_for_recovery(
+        &node.dir,
+        Some(domain),
+        Some(AccountId(key.address())),
+        Some(cfg.checkpoint_parent),
+        |_| {},
+    )
+    .unwrap();
     let mut recovered = Sequencer::recover_from(log, cfg, key, stream, withdrawals).unwrap();
     assert!(signed.try_recv().is_err(), "fresh authenticated time and custody evidence are required");
     recovered.trust(sample_around(node.clock.as_ref())).unwrap();

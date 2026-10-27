@@ -32,17 +32,17 @@ async fn recovered_claims_retire_without_trusted_time_or_healthy_reconciliation(
             .unwrap();
         let balances = node.seq.engine.accounts().clone();
         let key = node.seq.key.clone();
-        let log =
-            Sequencer::read_log_with_trust(&node.dir, Some(node.domain()), Some(AccountId(key.address())), |_| {})
-                .unwrap();
-        let cfg = SequencerConfig {
-            checkpoint_parent: crate::log::CheckpointParent {
-                has_checkpoint: true,
-                seq: last.seq,
-                root: last.root.parse().unwrap(),
-            },
-            ..node.config()
-        };
+        let parent =
+            crate::log::CheckpointParent { has_checkpoint: true, seq: last.seq, root: last.root.parse().unwrap() };
+        let log = Sequencer::read_log_for_recovery(
+            &node.dir,
+            Some(node.domain()),
+            Some(AccountId(key.address())),
+            Some(parent),
+            |_| {},
+        )
+        .unwrap();
+        let cfg = SequencerConfig { checkpoint_parent: parent, ..node.config() };
         let (withdrawals, mut signed) = mpsc::unbounded_channel();
         let mut recovered = Sequencer::recover_from(log, cfg, key, broadcast::channel(128).0, withdrawals).unwrap();
         recovered
