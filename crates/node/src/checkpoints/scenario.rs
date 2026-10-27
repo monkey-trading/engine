@@ -217,7 +217,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
         replayed.accounting,
         &replayed.engine,
     );
-    assert_eq!(make_poster().reconcile(&work).await.unwrap(), (Some(work.checkpoint.seq), true));
+    assert_eq!(make_poster().reconcile(&work).await.unwrap(), (Some(work.checkpoint.seq), Health::Healthy));
 
     // USDC sent to the vault outside a deposit raises a Warning but keeps withdrawals running. A
     // surplus booking names no funding address, so screening holds it as unattributable rather

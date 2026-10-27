@@ -78,6 +78,13 @@ fn cursor_at(start: u64) -> StakingCursor {
 }
 
 async fn init_staking(node: &Node) {
+    let latest = engine_core::protocol::ProtocolVersion::LATEST;
+    if node.read(move |engine| engine.protocol_version() < latest).await {
+        assert_eq!(
+            node.submit(Command::Admin(AdminCommand::ActivateProtocol { version: latest })).await,
+            [Event::AdminApplied]
+        );
+    }
     // A start just past the stamps the sequencer admits, as sequenced time keeps moving.
     let start = crate::test_support::trusted_now().latest_ms + 60_000;
     let events = node

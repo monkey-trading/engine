@@ -26,7 +26,7 @@ use prometheus_client::registry::Registry;
 
 const CONTENT_TYPE_OPENMETRICS: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
 /// Every `kind` a typed rejection reason can have; see `reject_kind`.
-const REJECT_KINDS: [&str; 22] = [
+const REJECT_KINDS: [&str; 24] = [
     "access",
     "payout_unavailable",
     "unknown_market",

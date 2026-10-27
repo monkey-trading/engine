@@ -102,7 +102,8 @@ fn only_matching_success_events_count_evm_credit_references() {
 
 #[test]
 fn distributions_preserve_cumulative_credits_and_the_deposit_count() {
-    let mut accounting = Accounting { liabilities: Fixed::from_int(10), deposits: 3, unpaid: Fixed::ZERO };
+    let mut accounting =
+        Accounting { liabilities: Fixed::from_int(10), deposits: 3, unpaid: Fixed::ZERO, ..Accounting::default() };
     accounting
         .apply(
             &Command::Tick,
@@ -167,7 +168,7 @@ fn overflow_refuses_the_whole_accounting_batch_without_wrapping() {
             "deposit count overflow",
         ),
         (
-            Accounting { liabilities: Fixed::ONE, deposits: 2, unpaid: Fixed::ZERO },
+            Accounting { liabilities: Fixed::ONE, deposits: 2, unpaid: Fixed::ZERO, ..Accounting::default() },
             Command::Tick,
             vec![Event::DistributionAllocated { account: TRADER, epoch: 0, amount: UsdcUnits(u128::MAX) }],
             "checkpoint distribution overflow",

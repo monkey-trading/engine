@@ -31,7 +31,7 @@ mod chain;
 mod credit;
 mod cursor;
 mod evm;
-mod pending;
+pub(crate) mod pending;
 use crate::custody::evm::DepositWatcher;
 mod quorum;
 use crate::custody::quorum::Quorum;
