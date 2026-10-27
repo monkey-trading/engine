@@ -163,7 +163,9 @@ impl Node {
     /// replaced by a fresh one.
     pub(crate) async fn history_caught_up(&self) -> TestState {
         let target = self.manifest.borrow().flushed;
-        let (mut taken, mut since) = (0_u64, Instant::now());
+        // Start at the counter's current value: entries already taken owe no progress, so an
+        // owner stuck from this call on fails inside the first `HANG` window.
+        let (mut taken, mut since) = (self.sealing.taken.load(Ordering::Acquire), Instant::now());
         loop {
             let state = match timeout(HANG, self.sealing.inspect()).await {
                 Ok(Ok(state)) => Some(state),
