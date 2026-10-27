@@ -135,7 +135,8 @@ an index: load only the rule whose hint matches the current action.
   the attestation verifier dev scenario against a loopback key-distribution stand-in, with no
   hardware or vendor access; and `build-image.sh` and `check-image.sh`, which build the
   enclave image from a commit and boot it under QEMU without SEV-SNP, and `check-image-retry.sh`,
-  which checks the image build's download retries.
+  which scans `image/Dockerfile` so every download runs under `retry` and the cargo build stays
+  `--frozen`, and checks the build's download retries.
 - **ops/** — operator assets: `grafana/engine-node.json`, the node's Grafana dashboard, and
   `prometheus/engine-node-rules.yml`, the alerting rules for a down node or failing alert pages.
 - **.github/workflows/** — `ci.yaml`: fmt, the file line cap, clippy, tests (and the node's
@@ -249,8 +250,9 @@ Run from the repo root:
   `python -I -m pytest research/cap-calibration/tests`
 - Build the enclave image: `scripts/build-image.sh [--variant production|dev] <out-dir>` (Docker,
   slow; see `image/README.md`), then `scripts/check-image.sh <out-dir>` to boot it under QEMU;
-  `scripts/check-image-retry.sh` checks the build's download retries without building (needs
-  Docker and `python3`)
+  `scripts/check-image-retry.sh` scans `image/Dockerfile` so every download runs under `retry` and
+  the cargo build stays `--frozen`, and checks the build's download retries, without building
+  (needs Docker and `python3`)
 - Review-delta script tests: `agents/skills/agent-code-review/scripts/review-delta-test.sh` (builds
   a scratch git repository; needs only `git`, `sed`, and `diff`)
 

@@ -40,7 +40,12 @@ Rust crates by `Cargo.lock` (`--locked`), and `sev-snp-measure` with its depende
 [requirements.txt](requirements.txt). Every download runs under [retry](retry), which runs the
 same pinned download up to five times, waiting about four minutes in all between attempts, so a
 brief outage of the Debian snapshot archive or another source does not fail the build;
-`scripts/check-image-retry.sh` checks it and the apt settings in [apt.conf](apt.conf). CI
+`scripts/check-image-retry.sh` scans the Dockerfile so every download runs under [retry](retry)
+and the cargo build stays `--frozen`, checks the retry helper itself, and exercises the apt
+settings in [apt.conf](apt.conf) against a server that keeps answering 503. Built-in mutation
+checks confirm the scan still catches a download later edited to drop its `retry` — however
+disguised with environment assignments, `env`, command options, or a comment in a continuation —
+and that benign commands are not flagged. CI
 (`.github/workflows/ci.yaml`) runs that check, builds the image twice on separate runners for every
 push to `main` and every pull request that changes its inputs, and fails if the two `SHA256SUMS`
 differ.
