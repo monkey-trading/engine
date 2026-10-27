@@ -16,7 +16,7 @@ use crate::clock::now_ms;
 use crate::config::{FeedProvider, FeedsSection, MockMid};
 use crate::feeds::tests::fake::FakeEngine;
 use crate::feeds::tests::rwa_support::listing;
-use crate::feeds::{Walks, run_mock, split_view};
+use crate::feeds::{SplitView, Walks, run_mock, split_view};
 use crate::log::{LogEntry, read_file};
 use crate::sequencer::Request;
 
@@ -79,8 +79,9 @@ async fn a_mock_market_the_engine_has_closed_is_not_quoted() {
 
 #[test]
 fn a_walk_rescales_once_for_a_quote_stamped_at_or_after_its_split_opening() {
-    let mut walks = Walks::start(&feeds(&[(40, "100", None), (41, "100", None)]), &BTreeMap::new());
-    let pending = || BTreeMap::from([("four".to_owned(), (40, 1_000, 4, 1))]);
+    let mut walks = Walks::start(&feeds(&[(40, "100", None), (41, "100", None)]), &SplitView::default());
+    let pending =
+        || SplitView { pending: BTreeMap::from([("four".to_owned(), (40, 1_000, 4, 1))]), ..Default::default() };
     let mids = |walks: &Walks| walks.mids.iter().map(|(_, mid, _)| mid.to_string()).collect::<Vec<_>>();
     walks.follow(pending(), 999);
     assert_eq!(mids(&walks), ["100", "100"], "a quote before the opening stays in the old units");
@@ -88,16 +89,71 @@ fn a_walk_rescales_once_for_a_quote_stamped_at_or_after_its_split_opening() {
     assert_eq!(mids(&walks), ["25", "100"], "a quote stamped at the opening is in the new units");
     // Still pending until a command at the opening applies it, so the mock sees it again.
     walks.follow(pending(), 1_001);
-    walks.follow(BTreeMap::new(), 2_000);
+    walks.follow(SplitView::default(), 2_000);
     assert_eq!(mids(&walks), ["25", "100"], "only the split market rescales, and only once");
 }
 
 #[test]
 fn a_restarted_walk_starts_from_the_mark_of_a_market_that_has_split() {
     let marks = BTreeMap::from([(40, Fixed::from_int(25))]);
-    let walks = Walks::start(&feeds(&[(40, "100", None), (41, "100", None)]), &marks);
+    let walks =
+        Walks::start(&feeds(&[(40, "100", None), (41, "100", None)]), &SplitView { marks, ..Default::default() });
     let mids: Vec<_> = walks.mids.iter().map(|(market, mid, _)| (*market, mid.to_string())).collect();
     assert_eq!(mids, [(40, "25".to_owned()), (41, "100".to_owned())]);
+}
+
+#[test]
+fn a_split_applied_between_the_startup_query_and_the_next_is_still_followed() {
+    let cfg = feeds(&[(40, "100", None), (41, "100", None)]);
+    // The startup query sees the split pending; a ticker applies it before the next query, so no
+    // view lists it pending again.
+    let startup = SplitView { pending: BTreeMap::from([("four".to_owned(), (40, 1_000, 4, 1))]), ..Default::default() };
+    let mut walks = Walks::start(&cfg, &startup);
+    walks.follow(SplitView::default(), 1_000);
+    let mids: Vec<_> = walks.mids.iter().map(|(_, mid, _)| mid.to_string()).collect();
+    assert_eq!(mids, ["25", "100"], "the seeded split rescales the walk at its opening");
+}
+
+#[test]
+fn a_walk_reanchors_to_the_mark_when_a_split_it_never_followed_is_applied() {
+    let cfg = feeds(&[(40, "100", None), (41, "100", None)]);
+    let mut walks = Walks::start(&cfg, &SplitView::default());
+    // Sequenced and applied entirely between two queries, the split never shows pending; the walk
+    // takes the engine's mark instead of quoting the pre-split level.
+    let applied = SplitView {
+        last_split: BTreeMap::from([(40, 1_000)]),
+        marks: BTreeMap::from([(40, Fixed::from_int(26))]),
+        ..Default::default()
+    };
+    walks.follow(applied, 1_001);
+    let mids: Vec<_> = walks.mids.iter().map(|(_, mid, _)| mid.to_string()).collect();
+    assert_eq!(mids, ["26", "100"], "the walk re-anchors to the mark, in the new units");
+    // A mark that moves without a `last_split_at` change is ordinary marking, not a split.
+    let marked = SplitView { marks: BTreeMap::from([(40, Fixed::from_int(30))]), ..Default::default() };
+    walks.follow(marked, 1_002);
+    let mids: Vec<_> = walks.mids.iter().map(|(_, mid, _)| mid.to_string()).collect();
+    assert_eq!(mids, ["26", "100"], "only a `last_split_at` change re-anchors the walk");
+}
+
+#[test]
+fn a_split_the_walk_followed_is_not_reanchored_to_the_mark() {
+    let cfg = feeds(&[(40, "100", None)]);
+    let mut walks = Walks::start(&cfg, &SplitView::default());
+    walks.follow(
+        SplitView { pending: BTreeMap::from([("three".to_owned(), (40, 1_000, 3, 2))]), ..Default::default() },
+        1_000,
+    );
+    // The engine applies the split the walk followed: `last_split_at` moves, but the walk keeps
+    // its rescaled level instead of snapping to the engine's mark.
+    walks.follow(
+        SplitView {
+            last_split: BTreeMap::from([(40, 1_000)]),
+            marks: BTreeMap::from([(40, Fixed::from_int(70))]),
+            ..Default::default()
+        },
+        1_001,
+    );
+    assert_eq!(walks.mids[0].1.to_string(), "66.666666666", "the rescaled walk keeps its level, not the mark");
 }
 
 #[test]
@@ -132,6 +188,7 @@ fn the_split_view_reads_pending_splits_and_the_marks_of_split_markets() {
     let view = split_view(&engine);
     assert_eq!(view.pending, BTreeMap::from([("split".to_owned(), (40, 1_000, 4, 1))]), "dividends are not followed");
     assert_eq!(view.marks, BTreeMap::from([(split_market, split_mark)]), "an unsplit market keeps its walk");
+    assert_eq!(view.last_split, BTreeMap::from([(split_market, 1_000)]), "a split market reports its opening");
 }
 
 // ── Helpers ──

@@ -398,7 +398,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/tests/anvil_finality.rs` — Anvil receipts through RPC quorum, watcher and sequencer approvals
 - `src/custody/tests/reorg.rs` — reorgs and forked answers against the proven chain
 - `src/feeds/mod.rs` — the feed index and the mock feed, whose walks follow scheduled splits into
-  the new share units
+  the new share units, keeping a restart's pending splits and re-anchoring to a mark when the
+  engine splits without the walk following
 - `src/feeds/venue/mod.rs` — the venue task: connect, subscribe, sequence quotes, reconnect, and
   hold back quotes the engine would refuse
 - `src/feeds/venue/alerts.rs` — the venue task's alerts: outages, silent symbols, a clock ahead of
@@ -429,8 +430,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/feeds/tests/late.rs` — venue tasks against a sequencer that answers late: when a quote
   counts as the venue quoting, and how a connection's last quotes are settled after it ends
 - `src/feeds/tests/mock.rs` — the mock feed stopping one market at its `stop_after` and skipping
-  one the engine has closed, and its walks rescaling at a split's opening and restarting from a
-  split market's mark
+  one the engine has closed, and its walks rescaling at a split's opening, keeping a split applied
+  between the startup query and the next, re-anchoring to the mark after a split they never
+  followed, and restarting from a split market's mark
 - `src/feeds/tests/scenario.rs` — the crypto feeds' dev scenario through the sequencer and engine
 - `src/feeds/tests/rwa.rs` — the RWA price feeds' dev scenario: loopback vendors price FX, index,
   commodity, and share markets through the sequencer, across a market open and a futures roll,
