@@ -25,9 +25,7 @@ use tokio::sync::{Semaphore, broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
 use tokio::time::{sleep, timeout};
 
-use super::{
-    CHECKPOINT_EVERY, COOLDOWN_MS, COOLDOWN_SECS, DEV_PERIOD_BUDGET, EPOCH_MS, FLOOR, NOW, mintCall, monkeyCall,
-};
+use super::{CHECKPOINT_EVERY, COOLDOWN_MS, COOLDOWN_SECS, DEV_PERIOD_BUDGET, EPOCH_MS, FLOOR, NOW, monkeyCall};
 use crate::api::{ApiState, MAX_BACKFILLS, router};
 use crate::checkpoints::scenario::{Anvil, deploy};
 use crate::checkpoints::{CheckpointChain, CheckpointRpc, Poster, View};
@@ -60,7 +58,7 @@ pub(super) struct Scenario {
     domain: CheckpointDomain,
     pub(super) genesis: Genesis,
     pub(super) operator: Operator,
-    /// Dev deposits credited so far, part of the liabilities the vault must hold.
+    /// Canonical house and trader deposits credited so far, backed by the Vault.
     pub(super) deposits: Fixed,
     pub(super) node: Option<Node>,
     pub(super) access: super::access::Source,
@@ -128,6 +126,7 @@ impl Scenario {
         )
         .await;
         let mut genesis = dev_config().genesis;
+        genesis.house_capital = Fixed::ZERO;
         genesis.staking =
             Some(StakingConfig { liquidity_floor: FLOOR, epoch_ms: EPOCH_MS, start_ms: NOW, cooldown_ms: COOLDOWN_MS });
         let section: CheckpointSection = toml::from_str(&format!(
@@ -164,10 +163,10 @@ impl Scenario {
             deposits: Fixed::ZERO,
             node: None,
         };
-        // The vault backs the genesis house capital and the dev deposits the scenario credits.
-        let liabilities = s.liabilities();
-        s.send_tx(accounts[0], s.usdc, mintCall { to: s.vault, amount: liabilities }.abi_encode()).await;
         s.start_node().await;
+        let house = s.fund(None, FLOOR).await;
+        s.finalize_funding(&house).await;
+        assert_eq!(s.query(|engine| engine.house_cash()).await, FLOOR);
         s
     }
 
@@ -250,7 +249,7 @@ impl Scenario {
             protocol: engine_core::protocol::ProtocolVersion::LATEST,
             access: Some(self.access.client.clone()),
             operator: self.operator,
-            mock_custody: true,
+            mock_custody: false,
             clock: || NOW,
             log_dir: self.dir.clone(),
             manifest,

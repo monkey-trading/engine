@@ -380,6 +380,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   which it stops and restarts across an epoch boundary
 - `src/checkpoints/staking_scenario/access.rs` — signed loopback screening and published Anvil keys
   for deposit-first eligibility and authenticated orders under the latest protocol
+- `src/checkpoints/staking_scenario/funding.rs` — real Vault deposits, screened exact receipts,
+  principal finalization, and authenticated custody frontiers
 - `src/checkpoints/staking_scenario/claims.rs` — the scenario's on-chain steps: entitlement and
   distribution claims against posted roots, event mirroring, and balance reads
 - `src/history/preflight.rs` — immutable history planning before authorized SQLite mutation

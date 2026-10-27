@@ -5,6 +5,7 @@
 
 mod access;
 mod claims;
+mod funding;
 mod scenario;
 
 use alloy::primitives::{Address, U256};
@@ -44,7 +45,7 @@ const EPOCH_MS: Millis = 30 * 60_000;
 /// The unstake cooldown, a day.
 const COOLDOWN_MS: Millis = 86_400_000;
 const COOLDOWN_SECS: u64 = (COOLDOWN_MS / 1000) as u64;
-/// The house liquidity floor: the genesis house capital, 10m USDC.
+/// The house liquidity floor, backed by a canonical 10m USDC Vault deposit.
 const FLOOR: Fixed = Fixed::from_int(10_000_000);
 /// Commands between checkpoints.
 const CHECKPOINT_EVERY: u64 = 10;
@@ -76,11 +77,7 @@ async fn dev_scenario_staking_pays_stakers_above_the_floor_and_nothing_below_it(
     let (status, events) = s.post("/v1/admin", s.signed(AdminCommand::InitEmissions(schedule))).await;
     assert_eq!((status, events.as_array().unwrap().last()), (StatusCode::OK, Some(&json!({"type": "admin_applied"}))));
     for staker in s.stakers {
-        // Back the pending deposit before its signed declaration makes it creditable.
-        s.send_tx(s.funder, s.usdc, mintCall { to: s.vault, amount: U256::from(1_000_000_000_000u64) }.abi_encode())
-            .await;
         s.onboard(staker).await;
-        s.deposits += Fixed::from_int(1_000_000);
     }
 
     // 1. Losses of $100 and $300 share the emission period's budget 25% and 75%, and put house NAV
@@ -160,10 +157,8 @@ async fn dev_scenario_staking_pays_stakers_above_the_floor_and_nothing_below_it(
 
 impl Scenario {
     /// Funds first, declares signed eligibility through the API, then retries the pending funding.
-    async fn onboard(&self, account: AccountId) {
-        let (status, body) = self.post("/v1/dev/deposit", json!({ "account": account, "amount": "1000000" })).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        assert!(body.as_array().unwrap().iter().any(|event| event["type"] == "deposit_pending"), "{body}");
+    async fn onboard(&mut self, account: AccountId) {
+        let receipt = self.fund(Some(account), Fixed::from_int(1_000_000)).await;
         let key = access::client_key(account);
         let nonce = self.query(move |engine| engine.next_request_nonce(account)).await;
         let expires_at = self.clock.now_ms() + 60_000;
@@ -188,6 +183,7 @@ impl Scenario {
             .await
             .unwrap();
         assert_eq!(self.query(move |engine| engine.accounts()[&account].balance).await, Fixed::from_int(1_000_000));
+        self.finalize_funding(&receipt).await;
     }
 
     /// Moves the clock to `ts`, and trusted time with it.
