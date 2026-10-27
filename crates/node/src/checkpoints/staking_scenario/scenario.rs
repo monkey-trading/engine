@@ -98,7 +98,14 @@ impl Scenario {
         let accounts: Vec<Address> = provider.request("eth_accounts", ()).await.unwrap();
         let key = Arc::new(EnclaveKey::generate());
         let usdc = deploy(&provider, accounts[0], "MockUSDC.sol/MockUSDC.json", &[]).await;
-        let args = (usdc, Address::from(key.address()), U256::from(DEV_PERIOD_BUDGET)).abi_encode();
+        let governance = deploy(
+            &provider,
+            accounts[0],
+            "TimelockController.sol/TimelockController.json",
+            &(U256::from(172_800), vec![accounts[0]], vec![accounts[0]], Address::ZERO).abi_encode(),
+        )
+        .await;
+        let args = (usdc, Address::from(key.address()), governance, U256::from(DEV_PERIOD_BUDGET)).abi_encode();
         let vault = deploy(&provider, accounts[0], "Vault.sol/Vault.json", &args).await;
         let monkey = {
             let request = TransactionRequest::default().to(vault).input(monkeyCall {}.abi_encode().into());
