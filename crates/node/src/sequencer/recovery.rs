@@ -79,6 +79,15 @@ impl ReplayedLog {
         if (*requires_checkpoint_gate || !deferred.is_empty()) && cfg.checkpoints.is_none() {
             bail!("checkpoint-gated withdrawals require the checkpoint service");
         }
+        if cfg.checkpoints.is_some() && cfg.checkpoint_parent.has_checkpoint {
+            anyhow::ensure!(
+                self.replayed.recovery_anchor_work.as_ref().is_some_and(|work| {
+                    work.checkpoint.seq == cfg.checkpoint_parent.seq
+                        && work.checkpoint.root == cfg.checkpoint_parent.root.to_string()
+                }),
+                "finalized recovery anchor lacks authenticated accounting"
+            );
+        }
         // Last, so a log refused for its deployment or genesis says so.
         self.replayed
             .origin

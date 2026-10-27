@@ -73,7 +73,9 @@ impl Replay {
                     .find(|work| work.checkpoint.seq == parent.seq)
                     .map(|work| work.checkpoint.clone()),
             });
-        let recovery_anchor_work = if let Some(parent) = parent.filter(|parent| parent.has_checkpoint) {
+        let recovery_anchor_work = if let Some(parent) =
+            parent.filter(|parent| parent.has_checkpoint && parent.seq <= snapshot.checkpoint.seq)
+        {
             Some(
                 snapshot
                     .context
