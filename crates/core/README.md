@@ -334,7 +334,8 @@ Two suites guard replay and accounting:
   account's toxicity history exceeds the memory in force.
 
 Staking protocol V27 authenticates mirror identities as kind-15 leaves and completed finalized
-scan anchors in the staking globals, while retaining V25 reference roots.
+scan anchors in the staking globals, while retaining V25 reference roots. V25 remains a legacy
+pre-access rule set for replay; V24 and V26 onward enforce access screening.
 
 ### Adding a protocol version
 
