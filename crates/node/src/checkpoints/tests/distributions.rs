@@ -31,12 +31,12 @@ async fn paid_distributions_compensate_the_pending_deposit_classification() {
     let (tx, mut rx) = mpsc::channel(4);
     work_tx.send(work).await.unwrap();
     let task = tokio::spawn(poster.run(work_rx, tx));
-    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { health: Health::Healthy, .. })));
+    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { health: Some(Health::Healthy), .. })));
     let before: Vec<_> = std::iter::from_fn(|| alerts.try_recv().ok()).collect();
     assert!(!before.iter().any(|alert| alert["alert"] == "collateral_mismatch"), "{before:?}");
     // The deposit never credits: past the catch-up deadline the escalation pauses payouts.
     tokio::time::advance(Duration::from_secs(2)).await;
-    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { health: Health::Diverged, .. })));
+    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { health: Some(Health::Diverged), .. })));
     assert!(std::iter::from_fn(|| alerts.try_recv().ok()).any(|alert| alert["alert"] == "collateral_mismatch"));
     drop(work_tx);
     task.await.unwrap().unwrap();
@@ -57,7 +57,7 @@ async fn paid_distributions_reconcile_healthy_when_the_balance_compensates() {
     let (tx, mut rx) = mpsc::channel(4);
     work_tx.send(work).await.unwrap();
     let task = tokio::spawn(poster.run(work_rx, tx));
-    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { health: Health::Healthy, .. })));
+    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { health: Some(Health::Healthy), .. })));
     drop(work_tx);
     task.await.unwrap().unwrap();
 }
@@ -81,12 +81,12 @@ async fn distributions_paid_past_the_engines_allocation_is_a_mismatch() {
     let task = tokio::spawn(poster.run(work_rx, tx));
     assert!(matches!(
         rx.recv().await,
-        Some(Request::CheckpointStatus { health: Health::Pending | Health::Diverged, .. })
+        Some(Request::CheckpointStatus { health: Some(Health::Pending | Health::Diverged), .. })
     ));
     tokio::time::advance(Duration::from_secs(2)).await;
     assert!(matches!(
         rx.recv().await,
-        Some(Request::CheckpointStatus { health: Health::Pending | Health::Diverged, .. })
+        Some(Request::CheckpointStatus { health: Some(Health::Pending | Health::Diverged), .. })
     ));
     assert!(std::iter::from_fn(|| alerts.try_recv().ok()).any(|alert| alert["alert"] == "collateral_mismatch"));
     // A diverged verdict withholds every later checkpoint: only the first post went out.
@@ -152,7 +152,7 @@ async fn a_repaired_vault_clears_the_withholding_on_the_next_retry() {
     work_tx.send(work).await.unwrap();
     work_tx.send(successor).await.unwrap();
     let task = tokio::spawn(poster.run(work_rx, tx));
-    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { health: Health::Diverged, .. })));
+    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { health: Some(Health::Diverged), .. })));
     // The operator repairs the vault: paid distributions no longer exceed the allocation, and the
     // compensated balance returns to the ledger. Withholding is read-only, so the next retry of
     // the successor reconciles and posts it.
@@ -164,7 +164,7 @@ async fn a_repaired_vault_clears_the_withholding_on_the_next_retry() {
     let mut saw_healthy = false;
     for _ in 0..8 {
         tokio::time::advance(Duration::from_millis(100)).await;
-        if let Ok(Some(Request::CheckpointStatus { posted: Some(6), health: Health::Healthy, .. })) =
+        if let Ok(Some(Request::CheckpointStatus { posted: Some(6), health: Some(Health::Healthy), .. })) =
             timeout(Duration::from_millis(50), rx.recv()).await
         {
             saw_healthy = true;

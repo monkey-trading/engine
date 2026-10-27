@@ -4,8 +4,10 @@
 //!
 //! - **Mirroring.** The staking contract custodies MONKEY and enforces the unstake cooldown on
 //!   chain. The engine mirrors its finalised `Staked` and `UnstakeCompleted` events as sequenced
-//!   commands under their own chain references, credited once. An unstake applies only once its
-//!   cooldown has passed, so stake a snapshot sees persists through the cooldown.
+//!   commands under their own chain references, credited once, and records the highest finalised
+//!   block a credited mirror sequenced: the authenticated frontier a restart resumes from, which a
+//!   host-controlled cursor cannot skip past. An unstake applies only once its cooldown has
+//!   passed, so stake a snapshot sees persists through the cooldown.
 //! - **Epochs** are the half-open windows `[start + n·epoch_ms, start + (n+1)·epoch_ms)` of
 //!   sequenced time. The first command at or after an epoch's end closes it, before anything else
 //!   the command does, exactly as emission periods finalise; epochs no command witnessed are
@@ -69,6 +71,10 @@ pub struct Staking {
     pub epoch: u64,
     /// USDC base units allocated to stakers across every closed epoch.
     pub distributed: UsdcUnits,
+    /// The highest finalised Ethereum block a credited mirror sequenced: the authenticated
+    /// frontier the watcher resumes from, so a host cursor cannot skip an unmirrored event.
+    #[serde(default)]
+    pub mirrored_through: Option<u64>,
 }
 
 impl fmt::Display for UsdcUnits {
@@ -166,6 +172,11 @@ impl Engine {
         self.distributions.get(&account).copied().unwrap_or_default()
     }
 
+    /// Whether a staking mirror's chain reference already credited.
+    pub fn is_staking_credited(&self, reference: &str) -> bool {
+        self.staking_refs.contains(reference)
+    }
+
     /// Records the staking config, once, under `V25` or later.
     /// Error cases:
     /// - before `V25`, or once staking is initialised
@@ -178,19 +189,26 @@ impl Engine {
             return Err("staking is already initialised".into());
         }
         config.validate(self.now)?;
-        self.staking = Some(Staking { config: *config, epoch: 0, distributed: UsdcUnits(0) });
+        self.staking = Some(Staking { config: *config, epoch: 0, distributed: UsdcUnits(0), mirrored_through: None });
         Ok(())
     }
 
     /// Mirrors a staking contract's `Staked` event: credits `amount` to `account`'s stake under
-    /// `chain_ref`, credited once.
-    pub(crate) fn stake(&mut self, account: AccountId, amount: TokenUnits, chain_ref: &str, events: &mut Vec<Event>) {
+    /// `chain_ref`, credited once, advancing the mirrored-through frontier to `block`.
+    pub(crate) fn stake(
+        &mut self,
+        account: AccountId,
+        amount: TokenUnits,
+        block: u64,
+        chain_ref: &str,
+        events: &mut Vec<Event>,
+    ) {
         let total = self.staked.get(&account).copied().unwrap_or_default().0.checked_add(amount.0);
         let reason = if self.staking.is_none() {
             Some(crate::event::Reject::StakingNotInitialised)
         } else if amount.0 == 0 || total.is_none() {
             Some(crate::event::Reject::InvalidAmount)
-        } else if self.credited_refs.contains(chain_ref) {
+        } else if self.staking_refs.contains(chain_ref) {
             Some(crate::event::Reject::DuplicateReference)
         } else {
             None
@@ -199,20 +217,30 @@ impl Engine {
             events.push(Event::StakingRejected { account, amount, chain_ref: chain_ref.to_owned(), reason });
             return;
         }
-        self.credited_refs.insert(chain_ref.to_owned());
+        self.staking_refs.insert(chain_ref.to_owned());
         self.staked.insert(account, TokenUnits(total.expect("checked above")));
+        let staking = self.staking.as_mut().expect("initialised above");
+        staking.mirrored_through = Some(staking.mirrored_through.map_or(block, |frontier| frontier.max(block)));
         events.push(Event::Staked { account, amount });
     }
 
     /// Mirrors a staking contract's `UnstakeCompleted` event, which fires only once the unstake
     /// cooldown has passed: removes `amount` from `account`'s stake under `chain_ref`, credited
-    /// once, refusing an amount above what the account has staked.
-    pub(crate) fn unstake(&mut self, account: AccountId, amount: TokenUnits, chain_ref: &str, events: &mut Vec<Event>) {
+    /// once, refusing an amount above what the account has staked, and advancing the
+    /// mirrored-through frontier to `block`.
+    pub(crate) fn unstake(
+        &mut self,
+        account: AccountId,
+        amount: TokenUnits,
+        block: u64,
+        chain_ref: &str,
+        events: &mut Vec<Event>,
+    ) {
         let reason = if self.staking.is_none() {
             Some(crate::event::Reject::StakingNotInitialised)
         } else if amount.0 == 0 {
             Some(crate::event::Reject::InvalidAmount)
-        } else if self.credited_refs.contains(chain_ref) {
+        } else if self.staking_refs.contains(chain_ref) {
             Some(crate::event::Reject::DuplicateReference)
         } else if self.staked.get(&account).is_none_or(|staked| staked.0 < amount.0) {
             Some(crate::event::Reject::InsufficientStake)
@@ -223,12 +251,14 @@ impl Engine {
             events.push(Event::StakingRejected { account, amount, chain_ref: chain_ref.to_owned(), reason });
             return;
         }
-        self.credited_refs.insert(chain_ref.to_owned());
+        self.staking_refs.insert(chain_ref.to_owned());
         let staked = self.staked.get_mut(&account).expect("checked above");
         staked.0 -= amount.0;
         if staked.0 == 0 {
             self.staked.remove(&account);
         }
+        let staking = self.staking.as_mut().expect("initialised above");
+        staking.mirrored_through = Some(staking.mirrored_through.map_or(block, |frontier| frontier.max(block)));
         events.push(Event::Unstaked { account, amount });
     }
 

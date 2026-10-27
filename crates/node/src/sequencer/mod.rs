@@ -244,7 +244,7 @@ impl Sequencer {
         };
         self.sequence_queued(ts)?;
         if matches!(cmd, Command::Withdraw { .. })
-            && self.gate.as_ref().is_some_and(|gate| !matches!(gate.health, crate::checkpoints::Health::Healthy))
+            && self.gate.as_ref().is_some_and(|gate| !matches!(gate.health, Some(crate::checkpoints::Health::Healthy)))
         {
             warn!(alert = "withdrawals_paused", "withdrawal refused until custody reconciles");
             return Ok(None);

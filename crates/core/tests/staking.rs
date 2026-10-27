@@ -28,7 +28,7 @@ fn config(h: &Harness) -> StakingConfig {
 
 /// Stakes `amount` for `account` under `chain_ref`, which must apply.
 fn stake(h: &mut Harness, account: engine_core::types::AccountId, amount: u128, chain_ref: &str) {
-    let events = h.cmd(Command::Stake { account, amount: TokenUnits(amount), chain_ref: chain_ref.into() });
+    let events = h.cmd(Command::Stake { account, amount: TokenUnits(amount), block: 1, chain_ref: chain_ref.into() });
     assert!(matches!(events[..], [Event::Staked { .. }]), "stake rejected: {events:?}");
 }
 
@@ -62,14 +62,14 @@ fn stake_and_unstake_mirror_finalised_events_credited_once() {
     stake(&mut h, a, 500, "0xstake:1");
     assert_eq!(h.engine.staked(a), TokenUnits(1_500));
 
-    let events = h.cmd(Command::Stake { account: a, amount: TokenUnits(1), chain_ref: "0xstake:0".into() });
+    let events = h.cmd(Command::Stake { account: a, amount: TokenUnits(1), block: 1, chain_ref: "0xstake:0".into() });
     assert!(matches!(events[..], [Event::StakingRejected { reason: Reject::DuplicateReference, .. }]), "{events:?}");
-    let events = h.cmd(Command::Stake { account: a, amount: TokenUnits(0), chain_ref: "0xstake:9".into() });
+    let events = h.cmd(Command::Stake { account: a, amount: TokenUnits(0), block: 9, chain_ref: "0xstake:9".into() });
     assert!(matches!(events[..], [Event::StakingRejected { reason: Reject::InvalidAmount, .. }]), "{events:?}");
 
-    let events = h.cmd(Command::Unstake { account: a, amount: TokenUnits(2_000), chain_ref: "0xunstake:0".into() });
+    let events = h.cmd(Command::Unstake { account: a, amount: TokenUnits(2_000), block: 2, chain_ref: "0xunstake:0".into() });
     assert!(matches!(events[..], [Event::StakingRejected { reason: Reject::InsufficientStake, .. }]), "{events:?}");
-    let events = h.cmd(Command::Unstake { account: a, amount: TokenUnits(1_500), chain_ref: "0xunstake:0".into() });
+    let events = h.cmd(Command::Unstake { account: a, amount: TokenUnits(1_500), block: 3, chain_ref: "0xunstake:0".into() });
     assert!(matches!(events[..], [Event::Unstaked { .. }]), "{events:?}");
     assert_eq!(h.engine.staked(a), TokenUnits(0));
     assert!(!h.engine.staked_balances().contains_key(&a));
@@ -79,9 +79,9 @@ fn stake_and_unstake_mirror_finalised_events_credited_once() {
 fn stake_and_unstake_refuse_before_the_config_is_initialised() {
     let mut h = Harness::v21();
     let a = acct(1);
-    let events = h.cmd(Command::Stake { account: a, amount: TokenUnits(1), chain_ref: "0xstake:0".into() });
+    let events = h.cmd(Command::Stake { account: a, amount: TokenUnits(1), block: 1, chain_ref: "0xstake:0".into() });
     assert!(matches!(events[..], [Event::StakingRejected { reason: Reject::StakingNotInitialised, .. }]));
-    let events = h.cmd(Command::Unstake { account: a, amount: TokenUnits(1), chain_ref: "0xunstake:0".into() });
+    let events = h.cmd(Command::Unstake { account: a, amount: TokenUnits(1), block: 2, chain_ref: "0xunstake:0".into() });
     assert!(matches!(events[..], [Event::StakingRejected { reason: Reject::StakingNotInitialised, .. }]));
 }
 

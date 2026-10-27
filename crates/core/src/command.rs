@@ -67,18 +67,23 @@ pub enum Command {
     /// rare, and inline this one would grow every command.
     SignedAdmin(Box<AdminRequest>),
     /// From `V25`, a staking contract's `Staked` event, finalised: `amount` of MONKEY base units
-    /// staked for `account`, credited once under `chain_ref`.
+    /// staked for `account`, credited once under `chain_ref`, in the finalised Ethereum `block`
+    /// the event was mirrored from (see `Engine`'s staking frontier).
     Stake {
         account: AccountId,
         amount: TokenUnits,
+        #[serde(default)]
+        block: u64,
         chain_ref: String,
     },
     /// From `V25`, a staking contract's `UnstakeCompleted` event, which fires only once the
     /// unstake cooldown has passed: `amount` of MONKEY base units unstaked for `account`, credited
-    /// once under `chain_ref`.
+    /// once under `chain_ref`, in the finalised Ethereum `block` the event was mirrored from.
     Unstake {
         account: AccountId,
         amount: TokenUnits,
+        #[serde(default)]
+        block: u64,
         chain_ref: String,
     },
 }

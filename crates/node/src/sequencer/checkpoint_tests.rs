@@ -33,7 +33,7 @@ fn only_a_reconciled_posted_prefix_releases_signatures_and_recovery_keeps_the_ga
     let before = seq.last_seq();
     assert!(seq.sequence(withdraw(1)).unwrap().is_none(), "initial reconciliation is required");
     assert_eq!(seq.last_seq(), before);
-    seq.checkpoint_status(seq.last_seq(), crate::checkpoints::Health::Healthy).unwrap();
+    seq.checkpoint_status(seq.last_seq(), Some(crate::checkpoints::Health::Healthy)).unwrap();
     seq.sequence(deposit(100, "dep-gate")).unwrap();
     seq.sequence(withdraw(40)).unwrap();
     let approved = seq.last_seq().unwrap();
@@ -53,8 +53,8 @@ fn only_a_reconciled_posted_prefix_releases_signatures_and_recovery_keeps_the_ga
     assert_eq!(replayed.unpaid, Fixed::from_int(40));
     seq.sequence(engine_core::command::Command::Tick).unwrap();
     seq.flush().unwrap();
-    seq.checkpoint_status(Some(approved - 1), crate::checkpoints::Health::Healthy).unwrap();
-    seq.checkpoint_status(Some(approved), crate::checkpoints::Health::Pending).unwrap();
+    seq.checkpoint_status(Some(approved - 1), Some(crate::checkpoints::Health::Healthy)).unwrap();
+    seq.checkpoint_status(Some(approved), Some(crate::checkpoints::Health::Pending)).unwrap();
     seq.flush().unwrap();
     assert!(signed.try_recv().is_err());
     drop(seq);
@@ -66,7 +66,7 @@ fn only_a_reconciled_posted_prefix_releases_signatures_and_recovery_keeps_the_ga
     };
     let mut seq = Sequencer::recover(cfg, key, stream, withdrawals).unwrap();
     assert!(signed.try_recv().is_err());
-    seq.checkpoint_status(Some(approved), crate::checkpoints::Health::Healthy).unwrap();
+    seq.checkpoint_status(Some(approved), Some(crate::checkpoints::Health::Healthy)).unwrap();
     seq.flush().unwrap();
     let signature = signed.try_recv().unwrap();
     assert_eq!(signature.approved_seq, Some(approved));
@@ -185,7 +185,7 @@ fn restart_resumes_exact_unmined_chain_and_original_checkpoint_accounting() {
         prior.push(work);
     }
     let finalized = prior.last().unwrap().checkpoint.clone();
-    seq.checkpoint_status(Some(finalized.seq), crate::checkpoints::Health::Healthy).unwrap();
+    seq.checkpoint_status(Some(finalized.seq), Some(crate::checkpoints::Health::Healthy)).unwrap();
     seq.sequence(deposit(100, "pending-checkpoint-deposit")).unwrap();
     seq.sequence(withdraw(40)).unwrap();
     seq.sequence(deposit(20, "later-deposit")).unwrap();
@@ -220,6 +220,9 @@ fn restart_resumes_exact_unmined_chain_and_original_checkpoint_accounting() {
     }
     assert_eq!(log_entries(&dir).len(), bytes, "restart must not sign a sibling");
     recovered.trust(trusted_now()).unwrap();
+    // Recovery revalidates collateral before signing: the worker's first reconciliation lifts
+    // the hold, then the cadence resumes.
+    recovered.checkpoint_status(None, Some(crate::checkpoints::Health::Healthy)).unwrap();
     recovered.sequence(engine_core::command::Command::Tick).unwrap();
     let child = queued.try_recv().unwrap().checkpoint;
     assert_eq!(child.parent.unwrap().seq, last.seq);
@@ -246,7 +249,7 @@ fn no_checkpoint_is_signed_while_collateral_is_diverged_and_signing_resumes_when
     seq.genesis(&dev_config().genesis).unwrap();
     seq.trust(trusted_now()).unwrap();
     while queued.try_recv().is_ok() {}
-    seq.checkpoint_status(seq.last_seq(), Health::Healthy).unwrap();
+    seq.checkpoint_status(seq.last_seq(), Some(Health::Healthy)).unwrap();
     let checkpoints = |dir: &std::path::Path| {
         log_entries(dir).iter().filter(|entry| matches!(entry, LogEntry::Checkpoint(_))).count()
     };
@@ -261,14 +264,14 @@ fn no_checkpoint_is_signed_while_collateral_is_diverged_and_signing_resumes_when
     let healthy = checkpoints(&dir);
     assert!(healthy > before, "checkpoints are written while collateral reconciles");
 
-    seq.checkpoint_status(None, Health::Diverged).unwrap();
+    seq.checkpoint_status(None, Some(Health::Diverged)).unwrap();
     for _ in 0..4 {
         seq.sequence(engine_core::command::Command::Tick).unwrap();
         while queued.try_recv().is_ok() {}
     }
     assert_eq!(checkpoints(&dir), healthy, "no checkpoint is signed while collateral is diverged");
 
-    seq.checkpoint_status(None, Health::Healthy).unwrap();
+    seq.checkpoint_status(None, Some(Health::Healthy)).unwrap();
     for _ in 0..4 {
         seq.sequence(engine_core::command::Command::Tick).unwrap();
         while queued.try_recv().is_ok() {}

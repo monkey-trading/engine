@@ -1,7 +1,10 @@
 //! Mirroring the staking contract's finalised events into the engine. The deposit watcher calls
-//! `mirror` once per confirmed poll, after the same proven window: events are read only for
-//! proven blocks, hold until `InitStaking` has applied, and credit once under `tx:logIndex`, so
-//! a restart that re-reads a range mirrors nothing twice.
+//! `mirror` once per confirmed poll, after the same proven window, and only through the
+//! Ethereum-finalised boundary the poll proved: a staking mirror has no reversal, so a merely
+//! confirmed event must never become a permanent engine balance. Events hold until `InitStaking`
+//! has applied, credit once under `tx:logIndex`, and advance the engine's authenticated
+//! mirrored-through frontier, so a host cursor cannot skip an event and a restart that re-reads a
+//! range mirrors nothing twice.
 
 use std::path::Path;
 
@@ -45,20 +48,22 @@ impl StakingEvent {
         format!("{}:{}", self.tx_hash, self.log_index)
     }
 
-    /// The mirror command this event carries.
+    /// The mirror command this event carries, naming the finalised block it was read from so the
+    /// engine advances the authenticated mirrored-through frontier.
     fn command(&self) -> Command {
-        let (account, amount, chain_ref) = (self.account, TokenUnits(self.amount), self.chain_ref());
+        let (account, amount, block, chain_ref) = (self.account, TokenUnits(self.amount), self.block, self.chain_ref());
         match self.kind {
-            StakingEventKind::Staked => Command::Stake { account, amount, chain_ref },
-            StakingEventKind::UnstakeCompleted => Command::Unstake { account, amount, chain_ref },
+            StakingEventKind::Staked => Command::Stake { account, amount, block, chain_ref },
+            StakingEventKind::UnstakeCompleted => Command::Unstake { account, amount, block, chain_ref },
         }
     }
 }
 
 /// The watcher's place in the staking log, kept at `custody.evm.staking.cursor_path`. It only
-/// avoids rescanning: the engine's credited references stop a double mirror, and a cursor that
-/// lags only makes the watcher read some blocks again. `log_seq` refuses a cursor ahead of the
-/// recovered log, as the deposit cursor's does.
+/// avoids rescanning before the first mirror: from then on the poll re-anchors `next_block` from
+/// the engine's mirrored-through frontier, so a host-edited file can make the watcher re-read
+/// blocks, never skip them; the engine's credited references stop a double mirror. `log_seq`
+/// refuses a cursor ahead of the recovered log, as the deposit cursor's does.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StakingCursor {
@@ -129,10 +134,12 @@ impl StakingCursor {
 }
 
 /// Mirrors every staking event in `from..=to` that the engine has not credited, then advances the
-/// cursor to `to + 1`. Events hold, with the cursor, until `InitStaking` has applied: a mirror
-/// the engine would refuse as premature is never sequenced, and a cursor that has not moved only
-/// makes the next poll read the same blocks again. The caller proves the range's blocks before
-/// calling, and passes their hashes; an event on an unproven block stalls the poll.
+/// cursor to `to + 1`. `to` is the Ethereum-finalised boundary the poll proved: staking mirrors
+/// have no reversal, so blocks above it wait for finality. Events hold, with the cursor, until
+/// `InitStaking` has applied: a mirror the engine would refuse as premature is never sequenced,
+/// and a cursor that has not moved only makes the next poll read the same blocks again. The
+/// caller proves the range's blocks before calling, and passes their hashes; an event on an
+/// unproven block stalls the poll.
 /// Error cases:
 /// - stalled: a read fails, an event is on an unproven block, or the engine refuses a mirror
 /// - fatal: the sequencer has stopped, or the cursor cannot be stored
@@ -151,6 +158,20 @@ pub(super) async fn mirror<V: VaultReader>(
     let initialised = query(tx, |engine| engine.staking().is_some()).await.map_err(PollError::Fatal)?;
     if !initialised {
         debug!(from, to, "staking is not initialised; holding mirrors until InitStaking applies");
+        return Ok(());
+    }
+    // The engine's frontier, not the host cursor, anchors where mirroring resumes: credited
+    // references stop a double mirror, and a file that claims more than the frontier is re-read,
+    // never skipped.
+    let frontier = query(tx, |engine| engine.staking().and_then(|staking| staking.mirrored_through))
+        .await
+        .map_err(PollError::Fatal)?;
+    let from = frontier.map_or(from, |frontier| frontier.saturating_add(1).max(from));
+    if from > to {
+        // The finalised boundary sits at or behind the mirrored frontier (its tag reorganised, or
+        // a lagging cursor caught up): nothing mirrors this poll, and the cursor names the first
+        // unmirrored block so the next poll starts there.
+        cursor.next_block = from;
         return Ok(());
     }
     let events = reader.staking_events(from, to).await.map_err(PollError::rpc)?;
@@ -189,7 +210,7 @@ async fn mirror_one(tx: &mpsc::Sender<Request>, event: StakingEvent) -> Result<(
     let span = info_span!("staking", id = %event.chain_ref(), block = event.block, kind = ?event.kind);
     async move {
         let reference = event.chain_ref();
-        if query(tx, move |engine| engine.is_credited(&reference)).await.map_err(PollError::Fatal)? {
+        if query(tx, move |engine| engine.is_staking_credited(&reference)).await.map_err(PollError::Fatal)? {
             debug!("staking event already mirrored");
             return Ok(());
         }

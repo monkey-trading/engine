@@ -232,7 +232,7 @@ async fn incomplete_genesis_and_missing_checkpoint_service_preserve_history_byte
         // Drive approvals through the public sequencer request path.
         let (tx, rx) = mpsc::channel(64);
         let task = tokio::spawn(seq.run(rx));
-        tx.send(crate::sequencer::Request::CheckpointStatus { posted: None, health: Health::Healthy, lifecycle: None })
+        tx.send(crate::sequencer::Request::CheckpointStatus { posted: None, health: Some(Health::Healthy), lifecycle: None })
             .await
             .unwrap();
         for cmd in [crate::test_support::deposit(100, "preflight-pure"), crate::test_support::withdraw(40)] {

@@ -65,23 +65,27 @@ impl Scenario {
 
     /// Mirrors a stake transaction's `Staked` event into the engine under its chain reference.
     pub(super) async fn mirror_stake(&self, receipt: TransactionReceipt, account: AccountId, amount: TokenUnits) {
-        let chain_ref = self.chain_ref(&receipt).await;
-        let events = self.submit(Command::Stake { account, amount, chain_ref }).await;
+        let (chain_ref, block) = self.chain_ref(&receipt).await;
+        let events = self.submit(Command::Stake { account, amount, block, chain_ref }).await;
         assert!(matches!(events[..], [Event::Staked { .. }]), "{events:?}");
     }
 
     /// Mirrors an unstake transaction's `UnstakeCompleted` event into the engine under its chain
     /// reference.
     pub(super) async fn mirror_unstake(&self, receipt: TransactionReceipt, account: AccountId, amount: TokenUnits) {
-        let chain_ref = self.chain_ref(&receipt).await;
-        let events = self.submit(Command::Unstake { account, amount, chain_ref }).await;
+        let (chain_ref, block) = self.chain_ref(&receipt).await;
+        let events = self.submit(Command::Unstake { account, amount, block, chain_ref }).await;
         assert!(matches!(events[..], [Event::Unstaked { .. }]), "{events:?}");
     }
 
-    /// The engine's chain reference for the staking transaction's single event log.
-    async fn chain_ref(&self, receipt: &TransactionReceipt) -> String {
+    /// The engine's chain reference for the staking transaction's single event log, and the block
+    /// it finalised in.
+    async fn chain_ref(&self, receipt: &TransactionReceipt) -> (String, u64) {
         let log = self.event_log(receipt);
-        format!("{}:{}", receipt.transaction_hash, log.log_index.expect("a mined log has an index"))
+        (
+            format!("{}:{}", receipt.transaction_hash, log.log_index.expect("a mined log has an index")),
+            receipt.block_number.expect("a mined receipt has a block"),
+        )
     }
 
     /// The single log a staking transaction emits, from the staking contract.

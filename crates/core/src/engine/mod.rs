@@ -7,7 +7,7 @@
 //! `execution/`, close-outs in `closeout.rs`, markouts in `markouts.rs`, reserved FIFO
 //! withdrawals in `withdrawal.rs`, and MONKEY staking and USDC distributions in `staking.rs`.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 mod market;
 
@@ -57,6 +57,11 @@ pub struct Engine {
     pub(crate) benchmarks: BTreeMap<String, i64>,
     /// Custody references already credited (deposits and house capital), so none applies twice.
     pub(crate) credited_refs: TrackedSet<String>,
+    /// Staking mirror references already credited, a namespace of their own: the accounting's
+    /// credited-reference scan counts `credited_refs` as vault deposits and house capital, and a
+    /// staking mirror moves no USDC, so its references must not enter that count.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(crate) staking_refs: BTreeSet<String>,
     pub(crate) global_stress_floor: usize,
     pub(crate) next_order_id: OrderId,
     pub(crate) next_rollover: Option<Millis>,
@@ -278,8 +283,12 @@ impl Engine {
                 Ok(()) => events.push(Event::AdminApplied),
                 Err(reason) => events.push(Event::AdminRejected { reason }),
             },
-            Command::Stake { account, amount, chain_ref } => self.stake(*account, *amount, chain_ref, &mut events),
-            Command::Unstake { account, amount, chain_ref } => self.unstake(*account, *amount, chain_ref, &mut events),
+            Command::Stake { account, amount, block, chain_ref } => {
+                self.stake(*account, *amount, *block, chain_ref, &mut events)
+            }
+            Command::Unstake { account, amount, block, chain_ref } => {
+                self.unstake(*account, *amount, *block, chain_ref, &mut events)
+            }
         }
         if !corporate && benchmark_batch && events.contains(&Event::AdminApplied) {
             self.run_rollovers(&mut events);

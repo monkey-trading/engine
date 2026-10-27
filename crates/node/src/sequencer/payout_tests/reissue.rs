@@ -32,7 +32,7 @@ fn paginated_expiry_and_same_key_epoch_changes_preserve_approval_order() {
                 _ => None,
             })
             .unwrap();
-        node.seq.checkpoint_status(Some(cp.seq), crate::checkpoints::Health::Healthy).unwrap();
+        node.seq.checkpoint_status(Some(cp.seq), Some(crate::checkpoints::Health::Healthy)).unwrap();
         let gate = node.seq.gate.as_ref().unwrap();
         let mut ordered: Vec<_> = gate.payouts.values().map(|payout| (payout.order, payout.approval)).collect();
         ordered.sort_by_key(|(order, _)| *order);

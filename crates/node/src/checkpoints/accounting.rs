@@ -52,6 +52,18 @@ impl Accounting {
                         self.unpaid.raw().checked_add(amount.raw()).context("checkpoint unpaid approvals overflow")?,
                     );
                 }
+                Event::DistributionAllocated { amount, .. } => {
+                    // Allocations move value from house cash to stakers' claimable distributions;
+                    // the ledger the vault reconciles against falls by the allocated total, while
+                    // its deposit count is untouched — no USDC has left the vault yet.
+                    let raw = i128::try_from(amount.0)
+                        .ok()
+                        .and_then(|units| units.checked_mul(1_000))
+                        .context("checkpoint distribution overflow")?;
+                    self.liabilities = Fixed::from_raw(
+                        self.liabilities.raw().checked_sub(raw).context("checkpoint liabilities underflow")?,
+                    );
+                }
                 Event::CustodyDepositChanged { receipt, status, principal_delta } => {
                     let Command::CustodyDeposit(update) = command else {
                         anyhow::bail!("custody accounting event has no receipt command");

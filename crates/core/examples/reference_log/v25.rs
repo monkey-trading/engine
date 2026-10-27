@@ -30,20 +30,29 @@ pub(crate) fn session(h: &mut Harness) {
 
     // Mirrors credit once under their chain reference; a repeat is refused, not credited twice.
     let staker = h.signer(80);
-    let staked = h.cmd(Command::Stake { account: staker, amount: TokenUnits(1_000), chain_ref: "0xstake:25:0".into() });
+    let staked = h.cmd(Command::Stake {
+        account: staker,
+        amount: TokenUnits(1_000),
+        block: 25_000_000,
+        chain_ref: "0xstake:25:0".into(),
+    });
     assert!(
         staked.iter().any(
             |e| matches!(e, Event::Staked { account, amount } if *account == staker && *amount == TokenUnits(1_000))
         ),
         "{staked:?}"
     );
-    let repeat = h.cmd(Command::Stake { account: staker, amount: TokenUnits(1_000), chain_ref: "0xstake:25:0".into() });
+    let repeat = h.cmd(Command::Stake { account: staker, amount: TokenUnits(1_000), block: 25_000_001, chain_ref: "0xstake:25:0".into() });
     assert!(
         repeat.iter().any(|e| matches!(e, Event::StakingRejected { reason: Reject::DuplicateReference, .. })),
         "{repeat:?}"
     );
-    let unstaked =
-        h.cmd(Command::Unstake { account: staker, amount: TokenUnits(400), chain_ref: "0xunstake:25:0".into() });
+    let unstaked = h.cmd(Command::Unstake {
+        account: staker,
+        amount: TokenUnits(400),
+        block: 25_000_002,
+        chain_ref: "0xunstake:25:0".into(),
+    });
     assert!(
         unstaked.iter().any(
             |e| matches!(e, Event::Unstaked { account, amount } if *account == staker && *amount == TokenUnits(400))
@@ -51,7 +60,7 @@ pub(crate) fn session(h: &mut Harness) {
         "{unstaked:?}"
     );
     // An unstake above the stake is refused without mutating it.
-    let over = h.cmd(Command::Unstake { account: staker, amount: TokenUnits(601), chain_ref: "0xunstake:25:1".into() });
+    let over = h.cmd(Command::Unstake { account: staker, amount: TokenUnits(601), block: 25_000_003, chain_ref: "0xunstake:25:1".into() });
     assert!(
         over.iter().any(|e| matches!(e, Event::StakingRejected { reason: Reject::InsufficientStake, .. })),
         "{over:?}"

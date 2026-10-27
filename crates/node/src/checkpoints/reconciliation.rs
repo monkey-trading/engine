@@ -222,19 +222,22 @@ impl<R: CheckpointChain> Poster<R> {
             }
             _ => None,
         };
-        // The first in-flight deposit may stay uncredited only until the catch-up deadline, so a
-        // deposit custody skipped still pauses withdrawals.
+        // The first in-flight deposit may stay uncredited only until the catch-up deadline; past
+        // it, withdrawals stay paused and the escalation pages, but checkpoint signing and posting
+        // continue: the vault is ahead, not short, and only a newer finalised checkpoint — the one
+        // this gate would otherwise block — records the catch-up and clears the escalation. A
+        // ledger disagreement (shortfall, overpaid distributions, a deposit-count mismatch) is a
+        // true Diverged and freezes signing until the vault is repaired against this same
+        // immutable checkpoint.
         let first = (state.deposits > work.deposits).then_some(work.deposits);
         *uncredited = first.map(|id| match *uncredited {
             Some((tracked, since)) if tracked == id => (id, since),
             _ => (id, Instant::now()),
         });
         let overdue = uncredited.filter(|(_, since)| since.elapsed() >= self.pending_deposits_critical_after);
-        // Within the catch-up deadline an uncredited deposit keeps payouts running; past it, or on
-        // any ledger disagreement, the verdict is Diverged.
         let health = match verdict(state, paid, credited, work) {
             Health::Diverged => Health::Diverged,
-            Health::Pending if overdue.is_some() => Health::Diverged,
+            Health::Pending if overdue.is_some() => Health::Pending,
             Health::Pending => Health::Healthy,
             Health::Healthy => Health::Healthy,
         };

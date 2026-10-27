@@ -17,9 +17,11 @@ pub(super) struct Gate {
     sink: mpsc::Sender<Work>,
     pub registry: Option<crate::checkpoints::Registry>,
     pub parent: crate::log::CheckpointParent,
-    /// The latest collateral reconciliation verdict. Starts paused (Pending) until the first
-    /// reconciliation succeeds.
-    pub health: crate::checkpoints::Health,
+    /// The latest collateral reconciliation verdict; `None` before the first observation of this
+    /// process (a failed observation leaves the previous verdict). Starts paused (`Pending`)
+    /// until the first reconciliation succeeds, and a recovered deployment with posted
+    /// checkpoints revalidates collateral before signing again.
+    pub health: Option<crate::checkpoints::Health>,
     pub recovery: Vec<Work>,
     pub pending: Vec<(u64, AccountId, Fixed, u64)>,
     pub payouts: crate::sequencer::payouts::Payouts,
@@ -38,7 +40,7 @@ impl Gate {
             sink,
             registry: None,
             parent,
-            health: crate::checkpoints::Health::Pending,
+            health: Some(crate::checkpoints::Health::Pending),
             recovery: Vec::new(),
             pending: Vec::new(),
             payouts: Default::default(),
@@ -52,9 +54,17 @@ impl Gate {
 }
 
 impl Sequencer {
-    /// Transfers replayed durable work to the worker before admitting live commands.
+    /// Transfers replayed durable work to the worker before admitting live commands. A deployment
+    /// recovering posted checkpoints has not yet observed collateral this process: signing waits
+    /// for the worker's first reconciliation.
     pub(crate) fn take_recovery_checkpoints(&mut self) -> Vec<Work> {
-        self.gate.as_mut().map_or_else(Vec::new, |gate| std::mem::take(&mut gate.recovery))
+        self.gate.as_mut().map_or_else(Vec::new, |gate| {
+            let recovery = std::mem::take(&mut gate.recovery);
+            if !recovery.is_empty() {
+                gate.health = None;
+            }
+            recovery
+        })
     }
 
     /// Logs and publishes a signed state root for the last applied seq. From protocol `V9` the root
@@ -66,13 +76,15 @@ impl Sequencer {
         if self.gate.as_ref().is_some_and(|gate| gate.parent.has_checkpoint && gate.parent.seq == seq) {
             return Ok(());
         }
-        if self.gate.as_ref().is_some_and(|gate| matches!(gate.health, crate::checkpoints::Health::Diverged)) {
+        if self.gate.as_ref().is_some_and(|gate| !matches!(gate.health, Some(crate::checkpoints::Health::Healthy | crate::checkpoints::Health::Pending))) {
             // A signed checkpoint is public: anyone may relay it to the vault, and its root makes
             // new distributions claimable. While collateral reconciliation is diverged, no new
-            // root may exist for a claim or a relay to reach.
+            // root may exist for a claim or a relay to reach; with no verdict yet — a recovered
+            // deployment before its first observation — signing also waits, since divergence
+            // cannot be ruled out.
             warn!(
                 alert = "checkpoint_withheld",
-                seq, "no checkpoint signed while collateral reconciliation is diverged"
+                seq, "no checkpoint signed: collateral reconciliation is diverged or unobserved"
             );
             return Ok(());
         }
@@ -153,16 +165,20 @@ impl Sequencer {
     }
 
     /// Releases only approvals covered by the confirmed prefix, and only after reconciliation.
+    /// A `None` verdict — an observation that failed — leaves the gate's verdict unchanged, so an
+    /// RPC error cannot erase a proved divergence.
     /// Error cases:
     /// - the log cannot be written
     pub(super) fn checkpoint_status(
         &mut self,
         posted: Option<u64>,
-        health: crate::checkpoints::Health,
+        health: Option<crate::checkpoints::Health>,
     ) -> anyhow::Result<()> {
         let Some(gate) = &mut self.gate else { return Ok(()) };
-        gate.health = health;
-        if !matches!(health, crate::checkpoints::Health::Healthy) {
+        if let Some(health) = health {
+            gate.health = Some(health);
+        }
+        if health != Some(crate::checkpoints::Health::Healthy) {
             return Ok(());
         }
         if let Some(work) = self.snapshot_work.iter().find(|work| Some(work.checkpoint.seq) == posted) {

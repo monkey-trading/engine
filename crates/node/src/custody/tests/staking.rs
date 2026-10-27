@@ -119,7 +119,7 @@ async fn mirrors_stake_and_unstake_in_chain_order_once_initialised() {
     mirror_range(&node, &reader, &mut lagging, &dir, 2, 3).await.unwrap();
     assert_eq!(lagging.next_block, 4);
     assert_eq!(node.read(move |engine| engine.staked(account)).await, TokenUnits(0));
-    assert!(node.read(move |engine| engine.is_credited(&format!("{}:0", B256::repeat_byte(1)))).await);
+    assert!(node.read(move |engine| engine.is_staking_credited(&format!("{}:0", B256::repeat_byte(1)))).await);
     node.stop().await;
 }
 

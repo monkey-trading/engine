@@ -134,20 +134,33 @@ impl<V: VaultReader> DepositWatcher<V> {
             };
             self.finalise_confirmed_scan(tx, finalised, hashes[&finalised]).await?;
         }
-        self.mirror_staking(tx, to).await?;
+        self.mirror_staking(tx, release_at).await?;
         self.finish_confirmed_read(tx, to, eligible).await
     }
 
-    /// Mirrors the configured staking contract's events through the proven window the poll just
-    /// read. Without a staking contract, or before `InitStaking` has applied, nothing is read or
-    /// sequenced and the cursor holds (see `staking::mirror`).
+    /// Mirrors the configured staking contract's events through the Ethereum-finalised boundary
+    /// this poll proved (`release_at`), never the merely confirmed scan end: a staking mirror has
+    /// no reversal, so a reorged event must never become a permanent engine balance. Catch-up
+    /// runs in bounded chunks whose proofs are retained on the staking mirror's own slot, so it
+    /// finishes across polls however deposits advance. Without a staking contract, a finalised
+    /// boundary, or before `InitStaking` has applied, nothing is read or sequenced and the cursor
+    /// holds (see `staking::mirror`).
     /// Error cases:
     /// - stalled: a staking read fails, an event is on an unproven block, or the engine refuses a mirror
     /// - fatal: the sequencer has stopped, or the staking cursor cannot be stored
-    async fn mirror_staking(&mut self, tx: &mpsc::Sender<Request>, to: u64) -> Result<(), PollError> {
-        let from = self.staking.as_ref().map(|(cursor, _)| cursor.next_block);
-        let Some(from) = from.filter(|from| *from <= to) else { return Ok(()) };
-        let Some(hashes) = self.confirmed_window(from, to).await? else {
+    async fn mirror_staking(&mut self, tx: &mpsc::Sender<Request>, release_at: Option<u64>) -> Result<(), PollError> {
+        let Some(mut to) = release_at else { return Ok(()) };
+        let Some((cursor, _)) = self.staking.as_ref() else { return Ok(()) };
+        let from = cursor.next_block;
+        if from > to {
+            return Ok(());
+        }
+        // Bound the chunk so its proof completes within header batches and the retained run
+        // survives deposit proofs; the cursor advances per completed chunk until it reaches the
+        // release tag, so catch-up reports progress instead of restarting against a moving end.
+        to = to.min(from.saturating_add(self.max_block_range.saturating_sub(1)));
+        let Some(hashes) = self.staking_window(from, to).await? else {
+            info!(from, to, "staking mirror is proving a bounded catch-up window");
             return Ok(());
         };
         let (cursor, path) = self.staking.as_mut().expect("staking cursor checked above");

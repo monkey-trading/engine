@@ -53,7 +53,7 @@ fn a_gated_cache_restores_canonical_coverage_and_refuses_inherited_provenance() 
     seq.genesis(&dev_config().genesis).unwrap();
     seq.trust(sample_around(clock.as_ref())).unwrap();
     while queued.try_recv().is_ok() {}
-    seq.checkpoint_status(seq.last_seq(), crate::checkpoints::Health::Healthy).unwrap();
+    seq.checkpoint_status(seq.last_seq(), Some(crate::checkpoints::Health::Healthy)).unwrap();
     let parent = seq.snapshot_base.as_ref().unwrap().parent().unwrap();
     let (kept, pending) = (receipt(1, 30), receipt(2, 5));
     custody(&mut seq, Command::CustodyFinalised(frontier(0, 0)));
@@ -142,7 +142,7 @@ fn a_cache_holding_a_v22_approval_refuses_snapshot_recovery() {
     seq.genesis(&dev_config().genesis).unwrap();
     seq.trust(sample_around(clock.as_ref())).unwrap();
     while queued.try_recv().is_ok() {}
-    seq.checkpoint_status(seq.last_seq(), crate::checkpoints::Health::Healthy).unwrap();
+    seq.checkpoint_status(seq.last_seq(), Some(crate::checkpoints::Health::Healthy)).unwrap();
     let parent = seq.snapshot_base.as_ref().unwrap().parent().unwrap();
     custody(
         &mut seq,

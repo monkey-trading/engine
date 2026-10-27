@@ -324,14 +324,14 @@ impl<R: CheckpointChain> Poster<R> {
                     let page = approval_page(&approvals, approval_cursor)?;
                     let result = self.reconcile_lifecycle(work, &known, &page, &mut uncredited).instrument(span.clone()).await;
                     let (posted, health, lifecycle) = match result {
-                        Ok(status) => status,
+                        Ok((posted, health, lifecycle)) => (posted, Some(health), lifecycle),
                         Err(error) => {
                             if error.is::<Conflict>() {
                                 span.in_scope(|| error!(alert = "checkpoint_conflict", "refusing to continue: {error:#}"));
                                 return Err(error);
                             }
                             span.in_scope(|| warn!(alert = "checkpoint_post_failed", "checkpoint remains queued: {error:#}"));
-                            (None, Health::Pending, None)
+                            (None, None, None)
                         }
                     };
                     if lifecycle.is_some() {
@@ -391,7 +391,7 @@ impl<R: CheckpointChain> Poster<R> {
         approvals: &ApprovalRegistry,
         mut cursor: Cursor,
         posted: Option<u64>,
-        health: Health,
+        health: Option<Health>,
         tx: &mpsc::Sender<Request>,
     ) -> anyhow::Result<Cursor> {
         for _ in 1..SWEEP_PAGES {

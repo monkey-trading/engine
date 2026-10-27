@@ -38,14 +38,14 @@ fn stake_and_unstake_mirror_events_once_with_balance_checks() {
     let mut engine = engine(1_000);
     engine.init_staking(&config(1_000)).unwrap();
     let mut events = Vec::new();
-    engine.stake(AccountId([1; 20]), TokenUnits(500), "0xstake:0", &mut events);
-    engine.stake(AccountId([1; 20]), TokenUnits(300), "0xstake:1", &mut events);
+    engine.stake(AccountId([1; 20]), TokenUnits(500), 1, "0xstake:0", &mut events);
+    engine.stake(AccountId([1; 20]), TokenUnits(300), 1, "0xstake:1", &mut events);
     assert_eq!(engine.staked(AccountId([1; 20])), TokenUnits(800));
-    engine.stake(AccountId([1; 20]), TokenUnits(1), "0xstake:0", &mut events);
+    engine.stake(AccountId([1; 20]), TokenUnits(1), 1, "0xstake:0", &mut events);
     assert!(matches!(events.last(), Some(Event::StakingRejected { reason: Reject::DuplicateReference, .. })));
-    engine.unstake(AccountId([1; 20]), TokenUnits(900), "0xunstake:0", &mut events);
+    engine.unstake(AccountId([1; 20]), TokenUnits(900), 1, "0xunstake:0", &mut events);
     assert!(matches!(events.last(), Some(Event::StakingRejected { reason: Reject::InsufficientStake, .. })));
-    engine.unstake(AccountId([1; 20]), TokenUnits(800), "0xunstake:0", &mut events);
+    engine.unstake(AccountId([1; 20]), TokenUnits(800), 1, "0xunstake:0", &mut events);
     assert_eq!(engine.staked(AccountId([1; 20])), TokenUnits(0));
     assert!(!engine.staked_balances().contains_key(&AccountId([1; 20])));
 }
@@ -54,9 +54,9 @@ fn stake_and_unstake_mirror_events_once_with_balance_checks() {
 fn stake_and_unstake_refuse_until_initialised() {
     let mut engine = engine(1_000);
     let mut events = Vec::new();
-    engine.stake(AccountId([1; 20]), TokenUnits(500), "0xstake:0", &mut events);
+    engine.stake(AccountId([1; 20]), TokenUnits(500), 1, "0xstake:0", &mut events);
     assert!(matches!(events.last(), Some(Event::StakingRejected { reason: Reject::StakingNotInitialised, .. })));
-    engine.unstake(AccountId([1; 20]), TokenUnits(500), "0xunstake:0", &mut events);
+    engine.unstake(AccountId([1; 20]), TokenUnits(500), 1, "0xunstake:0", &mut events);
     assert!(matches!(events.last(), Some(Event::StakingRejected { reason: Reject::StakingNotInitialised, .. })));
 }
 
@@ -66,8 +66,8 @@ fn an_epoch_above_the_floor_pays_stakers_pro_rata_and_reduces_house_cash() {
     engine.init_staking(&config(1_000)).unwrap();
     engine.house_cash = Fixed::from_int(1_000);
     let mut events = Vec::new();
-    engine.stake(AccountId([1; 20]), TokenUnits(1), "0xa:0", &mut events);
-    engine.stake(AccountId([2; 20]), TokenUnits(3), "0xa:1", &mut events);
+    engine.stake(AccountId([1; 20]), TokenUnits(1), 1, "0xa:0", &mut events);
+    engine.stake(AccountId([2; 20]), TokenUnits(3), 1, "0xa:1", &mut events);
     engine.now = config(1_000).epoch_end(0);
     engine.finalise_staking(&mut events);
     // Excess 900 USDC splits 25/75; house cash falls by exactly the allocated total.
@@ -85,7 +85,7 @@ fn an_epoch_at_or_below_the_floor_pays_nothing_and_keeps_house_cash() {
     engine.init_staking(&config(1_000)).unwrap();
     engine.house_cash = Fixed::from_int(100);
     let mut events = Vec::new();
-    engine.stake(AccountId([1; 20]), TokenUnits(1), "0xa:0", &mut events);
+    engine.stake(AccountId([1; 20]), TokenUnits(1), 1, "0xa:0", &mut events);
     engine.now = config(1_000).epoch_end(0);
     engine.finalise_staking(&mut events);
     assert_eq!(engine.distribution(AccountId([1; 20])), UsdcUnits(0));
@@ -113,7 +113,7 @@ fn unwitnessed_epochs_are_skipped_and_only_the_latest_closes() {
     engine.init_staking(&config(1_000)).unwrap();
     engine.house_cash = Fixed::from_int(1_000);
     let mut events = Vec::new();
-    engine.stake(AccountId([1; 20]), TokenUnits(1), "0xa:0", &mut events);
+    engine.stake(AccountId([1; 20]), TokenUnits(1), 1, "0xa:0", &mut events);
     // Jump straight past the ends of epochs 0, 1, and 2.
     engine.now = config(1_000).epoch_end(2);
     engine.finalise_staking(&mut events);
@@ -131,7 +131,7 @@ fn sub_usdc_excess_allocates_nothing() {
     engine.init_staking(&config(1_000)).unwrap();
     engine.house_cash = Fixed::from_int(100) + Fixed::from_raw(999);
     let mut events = Vec::new();
-    engine.stake(AccountId([1; 20]), TokenUnits(1), "0xa:0", &mut events);
+    engine.stake(AccountId([1; 20]), TokenUnits(1), 1, "0xa:0", &mut events);
     engine.now = config(1_000).epoch_end(0);
     engine.finalise_staking(&mut events);
     // The excess is 999 raw: less than one USDC base unit, so nothing is allocated.
@@ -146,8 +146,8 @@ fn per_staker_flooring_leaves_the_dust_with_the_house() {
     // 1,000.002999 in the house: a 900.002999 excess, 900_000_002 whole USDC units.
     engine.house_cash = Fixed::from_int(1_000) + Fixed::from_raw(2_999);
     let mut events = Vec::new();
-    engine.stake(AccountId([1; 20]), TokenUnits(1), "0:a", &mut events);
-    engine.stake(AccountId([2; 20]), TokenUnits(2), "0:b", &mut events);
+    engine.stake(AccountId([1; 20]), TokenUnits(1), 1, "0:a", &mut events);
+    engine.stake(AccountId([2; 20]), TokenUnits(2), 1, "0:b", &mut events);
     engine.now = config(1_000).epoch_end(0);
     engine.finalise_staking(&mut events);
     // A third and two thirds of 900_000_002 floor to 300_000_000 and 600_000_001; the last unit
@@ -215,8 +215,8 @@ fn a_stake_sum_past_u128_is_refused_without_mutation() {
     engine.init_staking(&config(1_000)).unwrap();
     let mut events = Vec::new();
     let account = AccountId([1; 20]);
-    engine.stake(account, TokenUnits(u128::MAX - 1), "0xmax:0", &mut events);
-    engine.stake(account, TokenUnits(2), "0xmax:1", &mut events);
+    engine.stake(account, TokenUnits(u128::MAX - 1), 1, "0xmax:0", &mut events);
+    engine.stake(account, TokenUnits(2), 1, "0xmax:1", &mut events);
     assert!(matches!(events.last(), Some(Event::StakingRejected { reason: Reject::InvalidAmount, .. })));
     assert_eq!(engine.staked(account), TokenUnits(u128::MAX - 1));
     assert!(!engine.is_credited("0xmax:1"));

@@ -455,6 +455,7 @@ impl Engine {
             corporate_actions: _,
             corporate_refs: _,
             staking,
+            staking_refs: _,
             staked: _,
             distributions: _,
             changed: _,

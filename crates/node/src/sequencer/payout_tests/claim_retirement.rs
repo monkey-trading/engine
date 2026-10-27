@@ -48,11 +48,11 @@ async fn recovered_claims_retire_without_trusted_time_or_healthy_reconciliation(
         recovered
             .checkpoint_status(
                 Some(last.seq),
-                if unavailable_time {
+                Some(if unavailable_time {
                     crate::checkpoints::Health::Pending
                 } else {
                     crate::checkpoints::Health::Healthy
-                },
+                }),
             )
             .unwrap();
         if !unavailable_time {

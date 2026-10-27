@@ -100,11 +100,11 @@ async fn the_worker_carries_an_uncredited_deposit_across_retries_to_its_deadline
     let (tx, mut rx) = mpsc::channel(4);
     work_tx.send(work).await.unwrap();
     let task = tokio::spawn(poster.run(work_rx, tx));
-    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { health: Health::Healthy, .. })));
+    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { health: Some(Health::Healthy), .. })));
     tokio::time::advance(Duration::from_secs(2)).await;
     let mut paused = false;
     for _ in 0..8 {
-        if matches!(rx.recv().await, Some(Request::CheckpointStatus { health: Health::Diverged, .. })) {
+        if matches!(rx.recv().await, Some(Request::CheckpointStatus { health: Some(Health::Diverged), .. })) {
             paused = true;
             break;
         }

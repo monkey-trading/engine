@@ -6,6 +6,7 @@ use engine_core::Engine;
 use engine_core::auth::ClientAuth;
 use engine_core::command::{AdminCommand, Sequenced};
 use engine_core::protocol::ProtocolVersion;
+use engine_core::staking::UsdcUnits;
 use engine_core::types::AccountId;
 
 use crate::test_support::{TRADER, dev_config};
@@ -100,6 +101,29 @@ fn only_matching_success_events_count_evm_credit_references() {
 }
 
 #[test]
+fn distributions_reduce_liabilities_without_touching_the_deposit_count() {
+    let mut accounting = Accounting { liabilities: Fixed::from_int(10), deposits: 3, unpaid: Fixed::ZERO };
+    accounting
+        .apply(
+            &Command::Tick,
+            &[
+                Event::DistributionAllocated { account: TRADER, epoch: 0, amount: UsdcUnits(4) },
+                Event::DistributionAllocated { account: AccountId([1; 20]), epoch: 0, amount: UsdcUnits(2) },
+                Event::DistributionEpochClosed {
+                    epoch: 0,
+                    nav: Fixed::from_int(10),
+                    floor: Fixed::ONE,
+                    excess: UsdcUnits(6),
+                    allocated: UsdcUnits(6),
+                },
+            ],
+        )
+        .unwrap();
+    assert_eq!(accounting.liabilities, Fixed::from_int(10) - Fixed::from_raw(6_000));
+    assert_eq!(accounting.deposits, 3, "allocations move no USDC into or out of the vault");
+}
+
+#[test]
 fn overflow_refuses_the_whole_accounting_batch_without_wrapping() {
     let max = Fixed::from_raw(i128::MAX);
     let cases = [
@@ -129,6 +153,16 @@ fn overflow_refuses_the_whole_accounting_batch_without_wrapping() {
             capital(0, "0xcount-overflow"),
             vec![Event::HouseCapitalMoved { amount: Fixed::ZERO, nav: Fixed::ONE }],
             "deposit count overflow",
+        ),
+        (
+            Accounting { liabilities: Fixed::ONE, deposits: 2, unpaid: Fixed::ZERO },
+            Command::Tick,
+            vec![Event::DistributionAllocated {
+                account: TRADER,
+                epoch: 0,
+                amount: UsdcUnits(u128::MAX),
+            }],
+            "checkpoint distribution overflow",
         ),
     ];
     for (initial, cmd, events, reason) in cases {

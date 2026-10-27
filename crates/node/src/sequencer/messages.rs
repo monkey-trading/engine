@@ -27,10 +27,12 @@ pub enum Request {
     Sync(oneshot::Sender<Option<u64>>),
     /// Subscribes to durable rollover changes after every prior request has been flushed.
     WatchBenchmarkSchedule(oneshot::Sender<watch::Receiver<BenchmarkSchedule>>),
-    /// Custody confirmation; affects signature release, never deterministic protocol state.
+    /// Custody confirmation; affects signature release, never deterministic protocol state. `None`
+    /// health names an observation that failed: the previous verdict stands, so a proved
+    /// divergence or an unrevalidated startup is never erased by an RPC error.
     CheckpointStatus {
         posted: Option<u64>,
-        health: crate::checkpoints::Health,
+        health: Option<crate::checkpoints::Health>,
         lifecycle: Option<crate::checkpoints::LifecycleEvidence>,
     },
 }
