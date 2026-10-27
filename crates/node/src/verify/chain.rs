@@ -102,10 +102,11 @@ impl QuoteChain {
         Ok(chain)
     }
 
-    /// The certificates whose serials a revocation list must not contain — the VCEK and the
-    /// intermediate — as big-endian serial bytes.
-    pub(crate) fn revoked_serials(&self) -> anyhow::Result<Vec<Vec<u8>>> {
-        (0..=1).map(|index| Ok(parse_cert(&self.ders[index])?.serial.to_bytes_be())).collect()
+    /// The intermediate's serial as big-endian bytes: the only serial the root's revocation list
+    /// can name, since certificate serials are unique only within an issuing CA and the root
+    /// issues the intermediate, not the VCEK.
+    pub(crate) fn intermediate_serial(&self) -> anyhow::Result<Vec<u8>> {
+        Ok(parse_cert(&self.ders[1])?.serial.to_bytes_be())
     }
 
     /// The root certificate the chain is pinned to, DER bytes.
@@ -349,10 +350,12 @@ fn subject_name(cert: &X509Certificate<'_>) -> String {
 }
 
 /// Checks `crl`, the processor's certificate revocation list, against the pinned root and the
-/// chain's certificates: the CRL must be the root's, signed by it, unexpired, and list none of
-/// the chain's serials.
+/// chain's intermediate: the CRL must be the root's, signed by it, unexpired, and not list the
+/// intermediate's serial. Certificate serials are unique only within an issuing CA, and the root
+/// issues the intermediate alone, so a root-issued entry that collides with the VCEK's serial
+/// cannot revoke it.
 /// Error cases:
-/// - the CRL does not parse or verify against the root, is expired, or revokes a chain certificate
+/// - the CRL does not parse or verify against the root, is expired, or revokes the intermediate
 pub(crate) fn check_revocation(crl: &[u8], chain: &QuoteChain) -> anyhow::Result<()> {
     let (_, crl) = x509_parser::revocation_list::CertificateRevocationList::from_der(crl)
         .map_err(|err| anyhow::anyhow!("parsing the certificate revocation list: {err:?}"))?;
@@ -365,10 +368,10 @@ pub(crate) fn check_revocation(crl: &[u8], chain: &QuoteChain) -> anyhow::Result
     if let Some(next) = crl.next_update() {
         ensure!(now <= next, "revocation list is expired");
     }
-    let serials = chain.revoked_serials()?;
-    let revoked = crl.iter_revoked_certificates().find(|entry| {
-        serials.iter().any(|serial| trim_leading_zeros(serial) == trim_leading_zeros(entry.raw_serial()))
-    });
+    let intermediate = chain.intermediate_serial()?;
+    let revoked = crl
+        .iter_revoked_certificates()
+        .find(|entry| trim_leading_zeros(&intermediate) == trim_leading_zeros(entry.raw_serial()));
     if let Some(entry) = revoked {
         bail!("certificate 0x{} is revoked", entry.raw_serial_as_string());
     }
