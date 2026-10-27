@@ -25,6 +25,7 @@ mod v25;
 mod v26;
 mod v27;
 mod v28;
+mod v29;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -56,9 +57,7 @@ const OIL: MarketId = 12;
 
 /// Writes the session to the path given as the only argument, then prints how often each event
 /// kind occurred, so the author can check the session still reaches every path.
-/// Error cases:
-/// - no output path, or a file already at it
-/// - the file cannot be written
+/// Fails if the path is missing, already exists, or cannot be written.
 fn main() -> anyhow::Result<()> {
     let path: PathBuf =
         std::env::args_os().nth(1).ok_or_else(|| anyhow!("usage: reference_log <output.jsonl>"))?.into();
@@ -496,5 +495,6 @@ fn session() -> Vec<Sequenced> {
     v26::session(&mut h);
     v27::session(&mut h);
     v28::session(&mut h);
+    v29::session(&mut h);
     h.log
 }

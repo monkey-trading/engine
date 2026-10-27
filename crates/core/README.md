@@ -235,6 +235,7 @@ this crate and reproduce the signed state roots exactly.
   emissions from `V19`: allocation, rounding, cancellation, and finality; which losses count and the
   signed initialisation; and the schedule's arithmetic with the first halving
 - `tests/staking_authentication.rs` — V27 mirror-identity roots, migration, and finalized scan anchors
+- `tests/staking/marked_equity.rs` — closed-share FX insolvency, collectible NAV, settlement and activation boundaries
 - `tests/staking/negative_cash.rs` — partial liquidation, unresolved negative cash, finality reserves, and protected claim liquidity
 - `tests/staking.rs` — MONKEY staking and USDC distributions from `V25`: stake and unstake
   mirroring, epoch closes above and below the liquidity floor, pro-rata rounding, skipped epochs,
@@ -242,8 +243,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V23` parts (`v15.rs` to `v23.rs`)
-  `V15` to `V28` parts, including `v24.rs` to `v28.rs`
+  `V15` to `V29` parts (`v15.rs` to `v29.rs`)
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
 
