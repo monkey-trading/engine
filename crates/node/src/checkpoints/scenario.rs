@@ -13,6 +13,7 @@ use alloy::rpc::types::{TransactionReceipt, TransactionRequest};
 use alloy::sol;
 use alloy::sol_types::{SolCall, SolValue};
 use engine_core::Fixed;
+use engine_core::access::AccessReject;
 use engine_core::command::Command;
 use engine_core::types::AccountId;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
@@ -217,8 +218,9 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     );
     assert_eq!(make_poster().reconcile(&work).await.unwrap(), (Some(work.checkpoint.seq), true));
 
-    // USDC sent to the vault outside a deposit raises a Warning but keeps withdrawals running, and
-    // anyone can book it as house capital.
+    // USDC sent to the vault outside a deposit raises a Warning but keeps withdrawals running. A
+    // surplus booking names no funding address, so screening holds it as unattributable rather
+    // than crediting it under whoever books it: house cash stays put and the hold is public.
     let sequenced = || Command::Withdraw { account: AccountId(relayer.into()), amount: Fixed::from_int(1), auth: None };
     send(&provider, relayer, token, mintCall { to: vault, amount: U256::from(10_000_000) }.abi_encode()).await;
     timeout(Duration::from_secs(10), async {
@@ -234,13 +236,17 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     assert!(submit(&tx, sequenced()).await.is_some(), "an unbooked surplus keeps withdrawals running");
     send(&provider, relayer, vault, bookSurplusCall {}.abi_encode()).await;
     timeout(Duration::from_secs(10), async {
-        while house(&tx).await != Fixed::from_int(110) || submit(&tx, sequenced()).await.is_none() {
+        while house(&tx).await != Fixed::from_int(100)
+            || held(&tx).await.len() != 1
+            || submit(&tx, sequenced()).await.is_none()
+        {
             submit(&tx, Command::Tick).await;
             sleep(Duration::from_millis(40)).await;
         }
     })
     .await
     .unwrap();
+    assert_eq!(held(&tx).await[0].1, AccessReject::PayerMissing, "a surplus is held, never credited");
     while alerts.try_recv().is_ok() {}
 
     // Anvil impersonation is confined to this local test; no production token has this cheat.
@@ -447,6 +453,18 @@ async fn house(tx: &mpsc::Sender<Request>) -> Fixed {
     let (reply, rx) = oneshot::channel();
     tx.send(Request::Query(Box::new(move |engine| {
         let _ = reply.send(engine.house_cash());
+    })))
+    .await
+    .unwrap();
+    timeout(Duration::from_secs(3), rx).await.unwrap().unwrap()
+}
+
+/// The held deposits and their reasons, in reference order.
+async fn held(tx: &mpsc::Sender<Request>) -> Vec<(String, AccessReject)> {
+    let (reply, rx) = oneshot::channel();
+    tx.send(Request::Query(Box::new(move |engine| {
+        let _ = reply
+            .send(engine.held_deposits().iter().map(|(reference, held)| (reference.clone(), held.reason)).collect());
     })))
     .await
     .unwrap();
