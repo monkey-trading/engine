@@ -32,6 +32,7 @@ pub use types::{
 mod legacy;
 mod lifecycle;
 mod progress;
+mod staking;
 
 /// One block range's reads, checked against each other and the proven chain.
 struct RangeRead {

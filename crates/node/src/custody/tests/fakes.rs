@@ -2,7 +2,7 @@
 //! and deposit fixtures.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -447,31 +447,6 @@ pub(super) fn stored_cursor(dir: &Path) -> Cursor {
     serde_json::from_str(&std::fs::read_to_string(dir.join("cursor.json")).unwrap()).unwrap()
 }
 
-/// A `[custody.evm]` section with its cursor in `dir`.
-pub(super) fn evm_toml(dir: &Path, max_block_range: u64) -> String {
-    format!(
-        r#"
-        providers = [
-          {{ name = "a", rpc_url = "http://127.0.0.1:1" }},
-          {{ name = "b", rpc_url = "http://127.0.0.1:2" }},
-          {{ name = "c", rpc_url = "http://127.0.0.1:3" }},
-        ]
-        usdc = "0xc0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0"
-        finality_tag = "safe"
-        withdrawal_finality_tag = "finalized"
-        confirmations = 0
-        start_block = 0
-        max_block_range = {max_block_range}
-        poll_interval = "10ms"
-        rpc_timeout = "1s"
-        stall_critical_after = "1s"
-        finality_stalled_after = "1s"
-        cursor_path = "{}"
-        "#,
-        dir.join("cursor.json").display()
-    )
-}
-
 /// Vault deposit `id` in canonical `block`, from a transaction named after the id.
 pub(super) fn deposit(id: u64, block: u64, beneficiary: Beneficiary, units: u64) -> VaultDeposit {
     let tx_hash = B256::left_padding_from(&id.to_be_bytes());
@@ -502,10 +477,5 @@ pub(super) async fn wait_for_polls(chain: &FakeChain, polls: u64) {
     }
 }
 
-/// A fresh, empty directory for one test.
-pub(super) fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("engine-custody-test-{}-{name}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
-}
+mod files;
+pub(super) use files::{evm_toml, scratch};

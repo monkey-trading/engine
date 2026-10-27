@@ -170,7 +170,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     timeout(Duration::from_secs(10), async {
         loop {
             submit(&tx, Command::Tick).await;
-            if house(&tx).await == Fixed::from_int(100) {
+            if source::house(&tx).await == Fixed::from_int(100) {
                 break;
             }
             sleep(Duration::from_millis(30)).await;
@@ -237,7 +237,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     assert!(submit(&tx, sequenced()).await.is_some(), "an unbooked surplus keeps withdrawals running");
     send(&provider, relayer, vault, bookSurplusCall {}.abi_encode()).await;
     timeout(Duration::from_secs(10), async {
-        while house(&tx).await != Fixed::from_int(100)
+        while source::house(&tx).await != Fixed::from_int(100)
             || source::held(&tx).await.len() != 1
             || submit(&tx, sequenced()).await.is_none()
         {
@@ -453,16 +453,6 @@ async fn submit(tx: &mpsc::Sender<Request>, cmd: Command) -> Option<Vec<engine_c
     let (reply, rx) = oneshot::channel();
     tx.send(Request::Submit { cmd, reply: Some(reply) }).await.unwrap();
     timeout(Duration::from_secs(3), rx).await.unwrap().ok()
-}
-
-async fn house(tx: &mpsc::Sender<Request>) -> Fixed {
-    let (reply, rx) = oneshot::channel();
-    tx.send(Request::Query(Box::new(move |engine| {
-        let _ = reply.send(engine.house_cash());
-    })))
-    .await
-    .unwrap();
-    timeout(Duration::from_secs(3), rx).await.unwrap().unwrap()
 }
 
 fn write_entries(path: &Path, entries: &[LogEntry]) {

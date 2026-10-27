@@ -54,6 +54,12 @@ impl Gate {
 }
 
 impl Sequencer {
+    /// The state root of the engine a test's recovered sequencer holds.
+    #[cfg(test)]
+    pub fn state_root(&mut self) -> [u8; 32] {
+        self.engine.state_root()
+    }
+
     /// Transfers replayed durable work to the worker before admitting live commands. A deployment
     /// recovering posted checkpoints has not yet observed collateral this process: signing waits
     /// for the worker's first reconciliation.
