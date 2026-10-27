@@ -220,8 +220,7 @@ impl Engine {
         // does, so every effect of the command, market processing and rollovers included, belongs to
         // the next period.
         self.finalise_emissions(&mut events);
-        let staking_activation =
-            self.protocol_version < ProtocolVersion::V28 && sequenced.cmd.targets_staking_reserves();
+        let staking_activation = sequenced.cmd.changes_staking_reserves(self.protocol_version);
         if !staking_activation {
             self.finalise_staking(&mut events);
         }

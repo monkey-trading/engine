@@ -334,6 +334,12 @@ Two suites guard replay and accounting:
   dollar value, can only reduce its account's position in that market; under `V16`, that no
   account's toxicity history exceeds the memory in force.
 
+Staking protocol V29 discounts negative marked client equity from distributable NAV, including
+positive-cash accounts whose losing positions cannot currently close. Its cap is the smaller of
+collectible NAV and the funded-cash cap, so unresolved cash debt is not deducted twice. Epoch close
+uses O(accounts + open positions + stakers) work. Crossing into V29 validates activation before
+closing a due epoch, just as V28 does for its cash reserve rules.
+
 Staking protocol V28 also reserves unresolved negative client cash: a partial liquidation cannot
 distribute an unfunded loss while another position remains untradeable. Epoch close uses the existing
 account reserve scan, followed by the staker allocation pass; it is O(accounts + stakers).

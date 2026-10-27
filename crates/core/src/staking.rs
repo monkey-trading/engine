@@ -322,15 +322,24 @@ impl Engine {
         // underwater; the unrealised excess is not paid either.
         // TODO: maintain the account reserve incrementally before account-count growth makes
         // epoch close exceed its sequencing latency budget.
-        let reserved = if self.protocol_version >= ProtocolVersion::V28 {
-            self.accounts.values().fold(0i128, |reserved, account| {
-                reserved
-                    .saturating_add(account.unfinalised_deposits.raw())
-                    .saturating_add(account.balance.raw().saturating_neg().max(0))
+        let (reserved, uncollectible) = if self.protocol_version >= ProtocolVersion::V28 {
+            self.accounts.values().fold((0i128, 0i128), |(reserved, uncollectible), account| {
+                let deficit = if self.protocol_version >= ProtocolVersion::V29 {
+                    self.equity_and_margin(account, None).0.raw().saturating_neg().max(0)
+                } else {
+                    0
+                };
+                (
+                    reserved
+                        .saturating_add(account.unfinalised_deposits.raw())
+                        .saturating_add(account.balance.raw().saturating_neg().max(0)),
+                    uncollectible.saturating_add(deficit),
+                )
             })
         } else {
-            self.accounts.values().map(|account| account.unfinalised_deposits).sum::<Fixed>().raw()
+            (self.accounts.values().map(|account| account.unfinalised_deposits).sum::<Fixed>().raw(), 0)
         };
+        let distributable_nav = Fixed::from_raw(nav.raw().saturating_sub(uncollectible));
         let available_raw =
             self.house_cash.raw().saturating_sub(self.unfinalised_house_deposits.raw()).saturating_sub(reserved);
         let available = Fixed::from_raw(if self.protocol_version >= ProtocolVersion::V28 {
@@ -339,7 +348,9 @@ impl Engine {
             available_raw
         });
         let excess = if self.protocol_version >= ProtocolVersion::V28 {
-            Fixed::from_raw(nav.raw().min(available.raw()).saturating_sub(config.liquidity_floor.raw()).max(0))
+            Fixed::from_raw(
+                distributable_nav.raw().min(available.raw()).saturating_sub(config.liquidity_floor.raw()).max(0),
+            )
         } else {
             (nav.min(available) - config.liquidity_floor).max(Fixed::ZERO)
         };

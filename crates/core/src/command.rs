@@ -297,14 +297,20 @@ impl AdminCommand {
 
 impl Command {
     /// Targets the activation that validates staking cash reserves before closing an overdue epoch.
-    pub(crate) fn targets_staking_reserves(&self) -> bool {
+    pub(crate) fn changes_staking_reserves(&self, current: ProtocolVersion) -> bool {
         let admin = match self {
             Self::Admin(admin) => admin,
             Self::SignedAdmin(request) => &request.command,
             _ => return false,
         };
-        matches!(admin, AdminCommand::ActivateProtocol { version }
-            | AdminCommand::ActivateCustodyFinality { version, .. } if *version >= ProtocolVersion::V28)
+        let target = match admin {
+            AdminCommand::ActivateProtocol { version } | AdminCommand::ActivateCustodyFinality { version, .. } => {
+                *version
+            }
+            _ => return false,
+        };
+        (current < ProtocolVersion::V28 && target >= ProtocolVersion::V28)
+            || (current < ProtocolVersion::V29 && target >= ProtocolVersion::V29)
     }
 
     /// Whether this node-only activation must precede dated benchmark catch-up.

@@ -154,7 +154,7 @@ fn rejected_crossing_targets_leave_the_epoch_pending_until_an_authorized_upgrade
 }
 
 /// Real trades leave the liquidated account negative while its other market has no fresh quote.
-fn partial_liquidation()
+pub(super) fn partial_liquidation()
 -> (Harness, engine_core::types::AccountId, engine_core::types::AccountId, engine_core::types::AccountId) {
     let mut h = Harness::staking(f("100"), EPOCH_MS, COOLDOWN_MS);
     let mut parameters = params();

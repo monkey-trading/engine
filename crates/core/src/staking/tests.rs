@@ -247,9 +247,12 @@ fn gains_on_unfinalised_trader_deposits_stay_undistributed() {
 
 #[test]
 fn v28_negative_cash_reserves_saturate_without_overflow_or_distributing_insolvent_cash() {
-    for cash in [i128::MIN, -1, 0, i128::MAX] {
+    for (version, cash) in [ProtocolVersion::V28, ProtocolVersion::V29]
+        .into_iter()
+        .flat_map(|version| [i128::MIN, -1, 0, i128::MAX].into_iter().map(move |cash| (version, cash)))
+    {
         let mut engine = engine(1_000);
-        engine.protocol_version = ProtocolVersion::V28;
+        engine.protocol_version = version;
         engine.init_staking(&config(1_000)).unwrap();
         engine.house_cash = Fixed::from_raw(cash);
         engine.staked.insert(AccountId([1; 20]), TokenUnits(1));

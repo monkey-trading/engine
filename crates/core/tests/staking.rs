@@ -164,3 +164,6 @@ fn a_later_close_adds_to_the_cumulative_distribution_and_proves_against_the_root
 
 #[path = "staking/negative_cash.rs"]
 mod negative_cash;
+
+#[path = "staking/marked_equity.rs"]
+mod marked_equity;

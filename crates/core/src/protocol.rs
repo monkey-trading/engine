@@ -148,11 +148,13 @@ pub enum ProtocolVersion {
     V27,
     /// Reserve unresolved negative client cash before allocating staking distributions.
     V28,
+    /// Exclude uncollectible marked client equity from distributable house NAV.
+    V29,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V28;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V29;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {
