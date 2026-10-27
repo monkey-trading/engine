@@ -1,6 +1,8 @@
 //! MONKEY emissions dev scenario on a local Anvil: the real sequencer, API routes, checkpoint worker,
 //! vault, and MONKEY token, on a clock the scenario moves.
 
+mod funding;
+
 use std::net::SocketAddr;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
@@ -75,8 +77,7 @@ async fn dev_scenario_emissions_share_fixed_budgets_halve_survive_restart_and_cl
     let (status, events) = s.post("/v1/admin", s.signed(AdminCommand::InitEmissions(schedule))).await;
     assert_eq!((status, events.as_array().unwrap().last()), (StatusCode::OK, Some(&json!({"type": "admin_applied"}))));
     for account in [ALICE, BOB] {
-        let (status, body) = s.post("/v1/dev/deposit", json!({ "account": account, "amount": "1000000" })).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
+        s.fund(Some(account), engine_core::Fixed::from_int(1_000_000)).await;
     }
     let quarter = DEV_PERIOD_BUDGET / 4;
 
@@ -152,6 +153,7 @@ async fn dev_scenario_emissions_share_fixed_budgets_halve_survive_restart_and_cl
 struct Scenario {
     _anvil: Anvil,
     provider: RpcClient,
+    funder: Address,
     relayer: Address,
     usdc: Address,
     vault: Address,
@@ -217,6 +219,7 @@ impl Scenario {
         let mut s = Scenario {
             _anvil: anvil,
             provider,
+            funder: accounts[0],
             relayer: accounts[1],
             usdc,
             vault,
@@ -231,11 +234,12 @@ impl Scenario {
         };
         s.monkey = s.view(vault, monkeyCall {}).await;
         s.start_node().await;
+        s.fund(None, dev_config().genesis.house_capital).await;
         s
     }
 
     /// Recovers the sequencer from the log, as a node boot does: from the vault's posted checkpoint,
-    /// with the dev genesis on a fresh log, the V23 rules its unsigned accounts need, and the unposted checkpoints queued.
+    /// with zero-capital genesis, the V23 rules its unsigned accounts need, and unposted checkpoints queued.
     async fn start_node(&mut self) {
         let poster = Poster {
             chain: CheckpointRpc::new(
@@ -264,6 +268,8 @@ impl Scenario {
         let (stream, _) = broadcast::channel(1024);
         let (withdrawals, _) = mpsc::unbounded_channel();
         let (manifest_tx, manifest) = watch::channel(Manifest::default());
+        let mut genesis = dev_config().genesis;
+        genesis.house_capital = engine_core::Fixed::ZERO;
         let cfg = SequencerConfig {
             segment_commands: 1_000,
             checkpoint_every: CHECKPOINT_EVERY,
@@ -272,12 +278,13 @@ impl Scenario {
             vault: self.domain.vault,
             operator: self.operator,
             clock: self.clock.clone(),
+            genesis: crate::sequencer::genesis_commands(&genesis),
             ..sequencer_config(&self.dir, manifest_tx)
         };
         let mut seq = Sequencer::recover(cfg, self.key.clone(), stream.clone(), withdrawals).unwrap();
         seq.activate_legacy_protocol().unwrap();
         if seq.needs_genesis() {
-            seq.genesis(&dev_config().genesis).unwrap();
+            seq.genesis(&genesis).unwrap();
         }
         seq.trust(sample_around(self.clock.as_ref())).unwrap();
         let recovery = seq.take_recovery_checkpoints();
@@ -298,7 +305,7 @@ impl Scenario {
             attestation: Arc::new(attest_bundle(&MockAttestor, &bundle).unwrap()),
             auth: ClientAuth::Unsigned,
             operator: self.operator,
-            mock_custody: true,
+            mock_custody: false,
             payouts_enabled: true,
             clock: || NOW,
             log_dir: self.dir.clone(),
@@ -457,13 +464,6 @@ impl Scenario {
         });
         self.node().state.tx.send(Request::Query(query)).await.unwrap();
         rx.await.unwrap()
-    }
-
-    /// Calls a view function at `to`.
-    async fn view<C: SolCall>(&self, to: Address, call: C) -> C::Return {
-        let request = TransactionRequest::default().to(to).input(call.abi_encode().into());
-        let out: Bytes = self.provider.request("eth_call", (request, "latest")).await.unwrap();
-        C::abi_decode_returns(&out).unwrap()
     }
 
     /// The status and JSON body of a POST of `body` to `path`.

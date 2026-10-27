@@ -376,6 +376,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/emissions_scenario.rs` — the MONKEY emissions dev scenario on isolated Anvil: pro-rata
   allocation, cancelled periods, a restart across finalisation, the first halving, and claims that mint
   each entitlement once against the posted root
+- `src/checkpoints/emissions_scenario/funding.rs` — actual Vault funding receipts and finalized
+  custody progress for the emissions scenario
+
 - `src/checkpoints/staking_scenario.rs` — the MONKEY staking dev scenario on isolated Anvil: staking
   mirrored from the Staking contract, an epoch above the floor paying pro-rata in USDC against the
   posted root, an unstake through the cooldown, and an epoch below the floor paying nothing
