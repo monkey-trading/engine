@@ -34,6 +34,26 @@ pub(crate) struct Endpoint {
     pub catalog_store: StoreId,
 }
 
+/// Counts one live `idle` call for tests: `Drop` decrements exactly once however the wait ends, so
+/// a timed-out or cancelled shutdown wait leaves no leaked waiter behind.
+#[cfg(test)]
+struct WaitCount(Arc<std::sync::atomic::AtomicUsize>);
+
+#[cfg(test)]
+impl WaitCount {
+    fn enter(counter: Arc<std::sync::atomic::AtomicUsize>) -> Self {
+        counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Self(counter)
+    }
+}
+
+#[cfg(test)]
+impl Drop for WaitCount {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// Whether a `snapshot_write_failed` episode may be open. The sequencer and the history owner both
 /// raise the alert, so each logs it, or its resolve, while holding this mark: a resolve can then
 /// never follow a failure it did not see. It starts open, since an earlier run may have left an
@@ -94,12 +114,11 @@ impl Endpoint {
 
     /// Resolves once no capture is in flight, so the shutdown checkpoint can be captured too.
     pub(crate) async fn idle(&self) {
+        // The count drops however the wait ends, a timeout included, so `waiting` never leaks.
         #[cfg(test)]
-        self.waiting.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let _waiting = WaitCount::enter(self.waiting.clone());
         // The semaphore is never closed, so acquiring only waits.
         let _ = self.permits.acquire().await;
-        #[cfg(test)]
-        self.waiting.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Queues control before the checkpoint's flush frontier or events are published.
@@ -211,9 +230,12 @@ impl Capture {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
+
     use tracing::warn;
 
-    use super::WriteAlert;
+    use super::{Endpoint, WriteAlert};
     use crate::alerts::capture;
 
     /// A stored capture resolves the episode open when it started completing, but not a failure
@@ -232,5 +254,40 @@ mod tests {
         });
         let firing: Vec<_> = lines.iter().map(|line| line.severity.is_some()).collect();
         assert_eq!(firing, [true, false], "one failure, then one resolve by the next stored capture: {lines:#?}");
+    }
+
+    /// A shutdown capture wait ends by cancellation when it times out, or by abort on task drop;
+    /// either way the test-only `waiting` count returns to zero, so later assertions never see a
+    /// leaked waiter after the shutdown path ran.
+    #[tokio::test]
+    async fn a_dropped_idle_wait_releases_its_waiter_count() {
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let endpoint = Endpoint::new(tx, crate::snapshot::head::StoreId([0x42; 32]));
+        let in_flight = endpoint.try_permit().expect("no capture is in flight");
+        let deadline = Instant::now() + Duration::from_secs(5);
+
+        let waiting = tokio::spawn({
+            let endpoint = endpoint.clone();
+            async move { endpoint.idle().await }
+        });
+        while endpoint.waiting.load(Ordering::Acquire) == 0 {
+            assert!(Instant::now() < deadline, "idle never counts its waiter");
+            tokio::task::yield_now().await;
+        }
+        // Cancellation — how a shutdown wait ends on timeout — drops the acquire future, so the
+        // count must fall before the cancelled task's join resolves.
+        waiting.abort();
+        let _ = waiting.await;
+        assert_eq!(endpoint.waiting.load(Ordering::Acquire), 0, "a cancelled idle wait leaks its waiter");
+
+        // The shutdown path wraps the wait in a timeout and moves on; the dropped future must
+        // release the count just the same.
+        tokio::time::timeout(Duration::from_millis(10), endpoint.idle()).await.expect_err("the permit stays held");
+        assert_eq!(endpoint.waiting.load(Ordering::Acquire), 0, "a timed-out idle wait leaks its waiter");
+
+        // The resolving wait still decrements exactly once.
+        drop(in_flight);
+        endpoint.idle().await;
+        assert_eq!(endpoint.waiting.load(Ordering::Acquire), 0);
     }
 }
