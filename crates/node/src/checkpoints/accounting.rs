@@ -8,9 +8,8 @@ use engine_core::event::Event;
 use serde::{Deserialize, Serialize};
 use tracing::error;
 
-/// Cash plus unpaid approvals equals cumulative deposits and signed house-capital amounts, less
-/// the distributions epochs have allocated: allocations move value from house cash to stakers'
-/// claimable distributions without touching the custody credits.
+/// Cash, unpaid approvals, and allocated distributions equal cumulative custody credits.
+/// Allocations transfer house cash to staker claims without changing the credited deposit total.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Accounting {
@@ -53,16 +52,11 @@ impl Accounting {
                     );
                 }
                 Event::DistributionAllocated { amount, .. } => {
-                    // Allocations move value from house cash to stakers' claimable distributions;
-                    // the ledger the vault reconciles against falls by the allocated total, while
-                    // its deposit count is untouched — no USDC has left the vault yet.
-                    let raw = i128::try_from(amount.0)
+                    // Allocations change the claim holder, not cumulative custody credits.
+                    i128::try_from(amount.0)
                         .ok()
                         .and_then(|units| units.checked_mul(1_000))
                         .context("checkpoint distribution overflow")?;
-                    self.liabilities = Fixed::from_raw(
-                        self.liabilities.raw().checked_sub(raw).context("checkpoint liabilities underflow")?,
-                    );
                 }
                 Event::CustodyDepositChanged { receipt, status, principal_delta } => {
                     let Command::CustodyDeposit(update) = command else {

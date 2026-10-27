@@ -309,10 +309,10 @@ Two suites guard replay and accounting:
   dollar value, can only reduce its account's position in that market; under `V16`, that no
   account's toxicity history exceeds the memory in force.
 
-#Staking protocol V27 authenticates mirror identities as kind-15 leaves and completed finalized
+Staking protocol V27 authenticates mirror identities as kind-15 leaves and completed finalized
 scan anchors in the staking globals, while retaining V25 reference roots.
 
-## Adding a protocol version
+### Adding a protocol version
 
 A change to engine state, its serialization, or what a command does changes the roots that existing
 logs replay to. It ships as a new protocol version, and the committed logs of earlier versions must

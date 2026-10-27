@@ -101,7 +101,7 @@ fn only_matching_success_events_count_evm_credit_references() {
 }
 
 #[test]
-fn distributions_reduce_liabilities_without_touching_the_deposit_count() {
+fn distributions_preserve_cumulative_credits_and_the_deposit_count() {
     let mut accounting = Accounting { liabilities: Fixed::from_int(10), deposits: 3, unpaid: Fixed::ZERO };
     accounting
         .apply(
@@ -119,7 +119,7 @@ fn distributions_reduce_liabilities_without_touching_the_deposit_count() {
             ],
         )
         .unwrap();
-    assert_eq!(accounting.liabilities, Fixed::from_int(10) - Fixed::from_raw(6_000));
+    assert_eq!(accounting.liabilities, Fixed::from_int(10));
     assert_eq!(accounting.deposits, 3, "allocations move no USDC into or out of the vault");
 }
 
@@ -173,7 +173,8 @@ fn overflow_refuses_the_whole_accounting_batch_without_wrapping() {
 pub(crate) fn recompute(engine: &Engine, unpaid: Fixed) -> (Fixed, u64) {
     let reserved = engine.withdrawal_queue().fold(Fixed::ZERO, |sum, request| sum + request.remaining);
     let liabilities =
-        engine.accounts().values().fold(engine.house_cash() + unpaid + reserved, |sum, account| sum + account.balance);
+        engine.accounts().values().fold(engine.house_cash() + unpaid + reserved, |sum, account| sum + account.balance)
+            + Fixed::from_raw(i128::try_from(engine.staking().map_or(0, |s| s.distributed.0)).unwrap() * 1_000);
     let state = receipt_state(engine);
     let historical: BTreeSet<_> = engine.credited_refs_with_prefix("0x").collect();
     let represented: BTreeSet<_> = state

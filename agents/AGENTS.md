@@ -17,9 +17,9 @@ an index: load only the rule whose hint matches the current action.
   nonces, and expiries), USD settlement of markets quoted in other currencies, admin commands signed
   by the operator key the log records, MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
   shared by net realised losses, halvings, and cumulative entitlements) and MONKEY staking with
-  USDC distributions (`staking.rs`: stake mirroring, V27 authenticated mirror identities and completed scan anchors,
-  epoch closes at NAV above a liquidity floor,
-  cumulative distributions proven on chain), protocol versions, and the
+  USDC distributions (`staking.rs`: stake mirroring, V27 authenticated identities and completed scan
+  anchors, epoch closes at NAV above a liquidity floor, cumulative distributions proven on chain),
+  protocol versions, and the
   state tree (a keccak-256 sparse Merkle tree over the state, with account and entitlement proofs, in
   `merkle/`). It does no IO and uses no clocks,
   randomness, or floats. `impl Engine` is split by area (`engine/mod.rs` for state and dispatch

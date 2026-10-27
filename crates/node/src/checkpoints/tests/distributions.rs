@@ -176,3 +176,41 @@ async fn a_repaired_vault_clears_the_withholding_on_the_next_retry() {
     drop(work_tx);
     task.await.unwrap().unwrap();
 }
+
+#[tokio::test]
+async fn allocated_distributions_capture_cumulative_credits_and_reconcile_before_and_after_claims() {
+    use crate::checkpoints::DepositCoverage;
+    use crate::checkpoints::accounting::Accounting;
+    use engine_core::command::Sequenced;
+
+    let (poster, template, _key) = poster();
+    let mut engine = engine_core::Engine::new();
+    let mut accounting = Accounting::default();
+    let mut allocated = false;
+    for line in include_str!("../../../../core/tests/reference/v25.jsonl").lines() {
+        let command: Sequenced = serde_json::from_str(line).unwrap();
+        let events = engine.apply(&command).unwrap();
+        allocated |=
+            events.iter().any(|event| matches!(event, engine_core::event::Event::DistributionAllocated { .. }));
+        accounting.apply(&command.cmd, &events).unwrap();
+    }
+    assert!(allocated, "the fixture must execute an actual distribution allocation");
+    let mut work = Work::capture(template.checkpoint.clone(), accounting, &engine);
+    work.coverage = DepositCoverage::Canonical;
+    assert!(work.distributed.0 > 0);
+    let paid = Fixed::from_raw(i128::try_from(work.distributed.0).unwrap() * 1_000);
+    {
+        let mut state = poster.chain.state.lock().unwrap();
+        state.deposits = work.deposits;
+        state.deposited = work.liabilities;
+        state.balance = work.liabilities;
+    }
+    *poster.chain.through.lock().unwrap() = vec![work.liabilities; work.deposits as usize];
+    assert_eq!(poster.reconcile(&work).await.unwrap().1, Health::Healthy, "allocated, not yet claimed");
+    {
+        let mut state = poster.chain.state.lock().unwrap();
+        state.distributions_paid = paid;
+        state.balance -= paid;
+    }
+    assert_eq!(poster.reconcile(&work).await.unwrap().1, Health::Healthy, "claims explain the balance reduction");
+}
