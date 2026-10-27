@@ -136,6 +136,7 @@ fn candidate(
             Ok(())
         })?;
     let replayed = replay.finish();
+    replayed.origin.require_staking_provenance()?;
     // A signed history head the replay never reached, or a catalog tip covering what the log no
     // longer holds, proves the node took commands the log lost. Both take only synced entries, so
     // storage lost them or the host truncated the log. The tip may cover the lost tail even when

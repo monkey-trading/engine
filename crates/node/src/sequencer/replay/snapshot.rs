@@ -100,7 +100,8 @@ impl Replay {
         };
         let Snapshot { progress: Progress { genesis, activations, checkpoints }, context, checkpoint, .. } = snapshot;
         let last_checkpoint_ts = Some(engine.now());
-        // Commands after the snapshot's checkpoint are sealed from that checkpoint's link.
+        // The pinned snapshot envelope signs all engine bytes, including legacy staking references.
+        // Commands after its checkpoint are checked independently from that checkpoint's link.
         let mut origin = crate::sequencer::origin::Origin::new(Some(domain), trusted_signer);
         origin.link = crate::log::command_seal::checkpoint_link(&checkpoint)?;
         let requires_checkpoint_gate = checkpoint.parent.is_some();

@@ -139,8 +139,8 @@ impl Replay {
                 if self.logs_events && c.events.is_none() {
                     bail!("seq {seq} has no logged events, though earlier commands do");
                 }
-                self.origin.command(c)?;
                 let version = engine.protocol_version();
+                self.origin.command(c, version)?;
                 crate::sequencer::legacy::check_activation_ledger(&c.sequenced.cmd, &self.legacy_deposits)?;
                 let events = engine.apply(&c.sequenced).with_context(|| format!("applying seq {seq}"))?;
                 self.genesis.command(&c.sequenced, &events);
@@ -374,7 +374,7 @@ pub fn replay_with_signer(
     let mut replay = Replay::with_trust(Some(domain), Some(signer));
     entries.iter().try_for_each(|entry| replay.apply(entry))?;
     let replayed = replay.finish();
-    replayed.origin.require_recovery(domain, signer)?;
+    replayed.origin.require_audit(signer)?;
     ensure!(
         replayed.checkpoint_signers.iter().all(|named| *named == signer),
         "checkpoint signer differs from trusted signer"
