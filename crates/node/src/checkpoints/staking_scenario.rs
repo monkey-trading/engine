@@ -3,6 +3,7 @@
 //! the liquidity floor, USDC claims against posted checkpoint roots, unstaking through the
 //! cooldown, and a restart across an epoch boundary.
 
+mod access;
 mod claims;
 mod scenario;
 
@@ -13,7 +14,10 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request as HttpRequest, StatusCode};
 use engine_core::Engine;
 use engine_core::Fixed;
+use engine_core::access::{EligibilityClass, EligibilityRequest};
+use engine_core::auth::RequestAuth;
 use engine_core::command::{AdminCommand, Command, OrderKind, OrderRequest};
+use engine_core::eip712;
 use engine_core::emissions::{EmissionSchedule, TokenUnits};
 use engine_core::event::Event;
 use engine_core::price::SourceQuote;
@@ -72,13 +76,11 @@ async fn dev_scenario_staking_pays_stakers_above_the_floor_and_nothing_below_it(
     let (status, events) = s.post("/v1/admin", s.signed(AdminCommand::InitEmissions(schedule))).await;
     assert_eq!((status, events.as_array().unwrap().last()), (StatusCode::OK, Some(&json!({"type": "admin_applied"}))));
     for staker in s.stakers {
-        let (status, body) = s.post("/v1/dev/deposit", json!({ "account": staker, "amount": "1000000" })).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        s.deposits += Fixed::from_int(1_000_000);
-        // The vault backs each dev deposit too, so its balance plus paid distributions always
-        // equals the ledger.
+        // Back the pending deposit before its signed declaration makes it creditable.
         s.send_tx(s.funder, s.usdc, mintCall { to: s.vault, amount: U256::from(1_000_000_000_000u64) }.abi_encode())
             .await;
+        s.onboard(staker).await;
+        s.deposits += Fixed::from_int(1_000_000);
     }
 
     // 1. Losses of $100 and $300 share the emission period's budget 25% and 75%, and put house NAV
@@ -157,6 +159,37 @@ async fn dev_scenario_staking_pays_stakers_above_the_floor_and_nothing_below_it(
 }
 
 impl Scenario {
+    /// Funds first, declares signed eligibility through the API, then retries the pending funding.
+    async fn onboard(&self, account: AccountId) {
+        let (status, body) = self.post("/v1/dev/deposit", json!({ "account": account, "amount": "1000000" })).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(body.as_array().unwrap().iter().any(|event| event["type"] == "deposit_pending"), "{body}");
+        let key = access::client_key(account);
+        let nonce = self.query(move |engine| engine.next_request_nonce(account)).await;
+        let expires_at = self.clock.now_ms() + 60_000;
+        let class = EligibilityClass::Professional;
+        let hash = eip712::eligibility_hash(
+            &eip712::domain(self.operator.chain_id, self.operator.vault),
+            account,
+            class,
+            nonce,
+            expires_at,
+        );
+        let declaration = EligibilityRequest {
+            account,
+            class,
+            auth: RequestAuth { nonce, expires_at, signature: eip712::sign(&key, &hash) },
+        };
+        let (status, events) = self.post("/v1/eligibility", json!(declaration)).await;
+        assert_eq!(status, StatusCode::OK, "{events}");
+        assert!(events.as_array().unwrap().iter().any(|event| event["type"] == "eligibility_attested"), "{events}");
+        let mut after = None;
+        crate::custody::pending::retry_batch(Some(&self.access.client), &self.node().state.tx, &mut after)
+            .await
+            .unwrap();
+        assert_eq!(self.query(move |engine| engine.accounts()[&account].balance).await, Fixed::from_int(1_000_000));
+    }
+
     /// Moves the clock to `ts`, and trusted time with it.
     async fn advance_to(&self, ts: Millis) {
         let by = u64::try_from(ts - self.clock.now_ms()).expect("time only moves forward");
@@ -195,7 +228,7 @@ impl Scenario {
             });
             self.submit(Command::Prices { market: 1, quotes: quotes.to_vec() }).await;
             for (account, qty) in trades {
-                let order = OrderRequest {
+                let mut order = OrderRequest {
                     account: *account,
                     client_id: 1,
                     market: 1,
@@ -205,6 +238,17 @@ impl Scenario {
                     reduce_only: false,
                     auth: None,
                 };
+                let key = access::client_key(*account);
+                let account = *account;
+                let nonce = self.query(move |engine| engine.next_request_nonce(account)).await;
+                let expires_at = self.clock.now_ms() + 60_000;
+                let hash = eip712::order_hash(
+                    &eip712::domain(self.operator.chain_id, self.operator.vault),
+                    &order,
+                    nonce,
+                    expires_at,
+                );
+                order.auth = Some(RequestAuth { nonce, expires_at, signature: eip712::sign(&key, &hash) });
                 let (status, events) = self.post("/v1/orders", serde_json::to_value(order).unwrap()).await;
                 assert!(status == StatusCode::OK && events.to_string().contains("\"fill\""), "{events}");
             }

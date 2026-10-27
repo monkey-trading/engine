@@ -63,6 +63,7 @@ pub(super) struct Scenario {
     /// Dev deposits credited so far, part of the liabilities the vault must hold.
     pub(super) deposits: Fixed,
     pub(super) node: Option<Node>,
+    pub(super) access: super::access::Source,
 }
 
 /// A running sequencer, its checkpoint worker, and the API over it.
@@ -132,6 +133,13 @@ impl Scenario {
             accounts[9]
         ))
         .unwrap();
+        let clock = Arc::new(TestClock::at(NOW));
+        let operator = {
+            let mut cfg = dev_config();
+            cfg.custody.vault = format!("{vault:#x}");
+            cfg.operator().unwrap()
+        };
+        let access = super::access::Source::start(clock.clone(), operator).await;
         let mut s = Scenario {
             _anvil: anvil,
             url,
@@ -144,17 +152,13 @@ impl Scenario {
             staking,
             stakers: [AccountId(accounts[2].into()), AccountId(accounts[3].into())],
             key,
-            clock: Arc::new(TestClock::at(NOW)),
+            clock,
+            access,
             dir: scratch_dir("staking-anvil"),
             section,
             domain: CheckpointDomain { chain_id: 31337, vault: AccountId(vault.into()) },
             genesis,
-            operator: {
-                // The operator signs under the deployed vault's domain, as the log records it.
-                let mut cfg = dev_config();
-                cfg.custody.vault = format!("{vault:#x}");
-                cfg.operator().unwrap()
-            },
+            operator,
             deposits: Fixed::ZERO,
             node: None,
         };
@@ -200,6 +204,8 @@ impl Scenario {
             checkpoints: Some(work_tx),
             vault: self.domain.vault,
             operator: self.operator,
+            client_auth: ClientAuth::Eip712 { chain_id: self.domain.chain_id, vault: self.domain.vault },
+            access_policy: Some(self.access.policy.clone()),
             clock: self.clock.clone(),
             genesis: genesis_commands(&self.genesis),
             ..sequencer_config(&self.dir, manifest_tx)
@@ -224,7 +230,9 @@ impl Scenario {
             tx,
             stream,
             attestation: Arc::new(attest_bundle(&MockAttestor, &bundle).unwrap()),
-            auth: ClientAuth::Unsigned,
+            auth: ClientAuth::Eip712 { chain_id: self.domain.chain_id, vault: self.domain.vault },
+            protocol: engine_core::protocol::ProtocolVersion::LATEST,
+            access: Some(self.access.client.clone()),
             operator: self.operator,
             mock_custody: true,
             clock: || NOW,
