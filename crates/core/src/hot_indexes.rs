@@ -87,7 +87,7 @@ impl Engine {
                 && self.custody_checkpoint.is_none_or(|checkpoint| recorded.receipt.block > checkpoint.block))
             .then_some(reference.clone())
         }));
-        for (_, recorded) in self.deposits.iter() {
+        for recorded in self.deposits.values() {
             if let Some(held) = recorded.uncredited.filter(|held| held.reason.holds_deposit()) {
                 indexes.terminal_deposit_holds.entry(recorded.receipt.transaction_reference()).or_insert(held);
             }
