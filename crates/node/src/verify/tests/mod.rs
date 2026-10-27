@@ -6,6 +6,7 @@
 //! vendor's extension OIDs for its chip id and TCB.
 
 mod fixtures;
+mod replay_dispatch;
 mod revocation;
 mod stub;
 
