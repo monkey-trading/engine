@@ -354,7 +354,8 @@ physical cash; its session is in `examples/reference_log/v22.rs`.
 `V24` adds signed eligibility declarations, screened orders and
 withdrawals, and pending and held custody deposits and receipts. Its reference-log session is in
 `examples/reference_log/v24.rs`. `V26` binds canonical receipt payers, screens replacements atomically,
-and preserves terminal holds across transaction-local receipt variants; its session is in
+and preserves terminal holds across transaction-local receipt variants. Activation refuses conflicting
+legacy dispositions until a verified migration resolves them. Its session is in
 `examples/reference_log/v26.rs`.
 For each later version:
 

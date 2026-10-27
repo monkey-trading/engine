@@ -260,6 +260,9 @@ impl Engine {
                 {
                     params.check_notional_weighting()?;
                 }
+                if self.protocol_version < ProtocolVersion::V26 && *version >= ProtocolVersion::V26 {
+                    self.check_terminal_receipt_holds()?;
+                }
                 if let AdminCommand::ActivateCustodyFinality { legacy_deposits, .. } = cmd {
                     self.lock_legacy_deposits(legacy_deposits)?;
                 }

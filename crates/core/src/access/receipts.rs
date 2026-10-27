@@ -3,6 +3,8 @@
 //! never enters cash or the withdrawal lock: it is held for good, or pending until a retry credits
 //! it, locked until finality while the receipt is still unfinalised.
 
+use std::collections::BTreeSet;
+
 use crate::Fixed;
 use crate::access::engine::pending_event;
 use crate::access::{AccessDeposit, AccessEvidence, CreditScreening, HeldDeposit, UncreditedReceipt};
@@ -71,6 +73,31 @@ impl Engine {
             return;
         }
         self.update_deposit(update, CreditScreening { payer, evidence: Some(evidence) }, events);
+    }
+
+    /// Refuses an upgrade over conflicting legacy dispositions instead of guessing a cash repair.
+    /// Error cases:
+    /// - retained terminal-hold history has an active credited or curable receipt variant
+    pub(crate) fn check_terminal_receipt_holds(&self) -> Result<(), String> {
+        let held: BTreeSet<_> = self
+            .deposits
+            .values()
+            .filter_map(|recorded| {
+                recorded
+                    .uncredited
+                    .filter(|hold| hold.reason.holds_deposit())
+                    .map(|_| recorded.receipt.transaction_reference())
+            })
+            .collect();
+        let conflicting = self.deposits.values().any(|recorded| {
+            recorded.status != DepositStatus::Reversed
+                && recorded.uncredited.is_none_or(|hold| !hold.reason.holds_deposit())
+                && held.contains(&recorded.receipt.transaction_reference())
+        });
+        if conflicting {
+            return Err("custody receipt conflicts with a retained terminal hold; verified migration required".into());
+        }
+        Ok(())
     }
 
     /// A terminal hold follows its transaction-local deposit across canonical receipt variants.

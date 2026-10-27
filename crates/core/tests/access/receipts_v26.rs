@@ -76,21 +76,27 @@ fn bare_replacement_updates_cannot_preserve_a_credit_without_canonical_screening
 }
 
 #[test]
-fn activation_restores_terminal_holds_hidden_by_legacy_replacement_history() {
-    let (mut h, client) = setup();
-    attest(&mut h, &client);
-    let original = receipt(1, Some(client.account), "100");
-    credit(&mut h, &original, Some(client.account), SanctionsStatus::Sanctioned);
-    transition(&mut h, &original, |receipt, observed_at_seq| DepositUpdate::Reverse { receipt, observed_at_seq });
-    let moved = DepositReceipt { block: 110, block_hash: B256::repeat_byte(0x77), ..original.clone() };
-    credit(&mut h, &moved, Some(client.account), SanctionsStatus::Clear);
-    assert_eq!(h.engine.accounts()[&client.account].balance, f("100"), "the committed V24 rule is preserved");
-    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V26 });
-    let last = DepositReceipt { block: 111, block_hash: B256::repeat_byte(0x78), ..moved.clone() };
-    replace(&mut h, &moved, &last, Some(client.account), SanctionsStatus::Clear);
-    assert_eq!(h.engine.accounts()[&client.account].balance, f("0"));
-    assert_eq!(h.engine.held_deposits()[&last.reference()].reason, AccessReject::PayerSanctioned);
-    assert_root_matches_rebuild(&mut h.engine);
+fn activation_refuses_legacy_credits_or_pending_variants_that_conflict_with_a_terminal_hold() {
+    for status in [SanctionsStatus::Clear, SanctionsStatus::Unknown] {
+        let (mut h, client) = setup();
+        attest(&mut h, &client);
+        let original = receipt(1, Some(client.account), "100");
+        credit(&mut h, &original, Some(client.account), SanctionsStatus::Sanctioned);
+        transition(&mut h, &original, |receipt, observed_at_seq| DepositUpdate::Reverse { receipt, observed_at_seq });
+        let moved = DepositReceipt { block: 110, block_hash: B256::repeat_byte(0x77), ..original.clone() };
+        credit(&mut h, &moved, Some(client.account), status);
+        let before = h.engine.recorded_deposit(&moved.reference()).unwrap().clone();
+        let balance = h.engine.accounts().get(&client.account).map(|account| account.balance);
+        let events = h.cmd(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V26 }));
+        assert!(
+            matches!(events.as_slice(), [Event::AdminRejected { reason }] if reason.contains("verified migration required")),
+            "{events:?}"
+        );
+        assert_eq!(h.engine.protocol_version(), ProtocolVersion::V24);
+        assert_eq!(h.engine.recorded_deposit(&moved.reference()), Some(&before));
+        assert_eq!(h.engine.accounts().get(&client.account).map(|account| account.balance), balance);
+        assert_root_matches_rebuild(&mut h.engine);
+    }
 }
 
 #[test]
@@ -111,6 +117,17 @@ fn clear_replacements_keep_solvent_positions_open_without_a_transient_balance_dr
     replace(&mut h, &original, &moved, Some(AccountId([0x5a; 20])), SanctionsStatus::Clear);
     assert_eq!(h.engine.accounts()[&client.account].position(crate::common::BTC), position);
     assert_eq!(h.engine.accounts()[&client.account].balance, f("100"));
+}
+
+#[test]
+fn activation_keeps_consistent_legacy_held_receipts_uncredited() {
+    let (mut h, client) = setup();
+    let original = receipt(1, Some(client.account), "100");
+    credit(&mut h, &original, Some(client.account), SanctionsStatus::Sanctioned);
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V26 });
+    assert_eq!(h.engine.protocol_version(), ProtocolVersion::V26);
+    assert_eq!(h.engine.held_deposits()[&original.reference()].reason, AccessReject::PayerSanctioned);
+    assert!(!h.engine.accounts().contains_key(&client.account));
 }
 
 fn replace(
