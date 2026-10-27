@@ -188,7 +188,7 @@ async fn replay_valid_truncated_log_cannot_discard_a_newer_valid_history_index()
     assert_eq!(files(&root), before);
 }
 
-fn files(root: &Path) -> BTreeMap<std::path::PathBuf, Vec<u8>> {
+pub(super) fn files(root: &Path) -> BTreeMap<std::path::PathBuf, Vec<u8>> {
     let mut result = BTreeMap::new();
     for entry in std::fs::read_dir(root).unwrap() {
         let path = entry.unwrap().path();

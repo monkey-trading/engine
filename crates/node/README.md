@@ -115,6 +115,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/admin/tests.rs` — `engine admin` tests: key sources, commands, signing, and pins
 - `src/node/mod.rs` — startup, task supervision, and shutdown
 - `src/node/tests.rs` — startup, history recovery, and incomplete-genesis tests
+- `src/node/preflight/unscanned.rs` — unprovable prelaunch anchors refuse writable startup before changing log or history
 - `src/node/preflight/tests/origin.rs` — integrity refusal preserves absent, corrupt, and WAL-backed history
 - `src/telemetry.rs` — the log subscriber, which feeds alert lines to the router, and the metrics
   registry, set up before the node runs
@@ -1170,6 +1171,21 @@ host deletion or rollback. Integrity-protected, rollback-resistant storage is st
 bound a hostile host. Across restarts, retention uses host wall time; a backward clock refuses
 future-dated rows, but trusted time is not sealed with the outbox. The webhook URL remains a
 host-supplied credential, and HTTP client logs stay at `warn` regardless of `logging.level`.
+
+### Older unscanned custody anchors
+
+Writable EVM recovery requires the finalized checkpoint's original authenticated accounting and
+an exact credited deposit prefix. An empty bootstrap ledger proves prefix zero; a nonempty modern
+checkpoint needs the canonical custody frontier recorded at that checkpoint. Later scanning cannot
+supply a missing proof for an older immutable root. Startup refuses older nonempty unscanned anchors
+before opening the log for append or creating or repairing history, rather than serving permanently
+paused. Read-only `engine replay` remains available for their audit.
+
+This project is prelaunch, holds no real funds, and the staking release already requires vault
+redeployment. Such development logs require a fresh deployment or a separately specified and verified
+operator migration. Preserve the original log and custody state; deleting the log alone cannot reset
+a vault's accepted checkpoint, and this node does not infer or fabricate a migration proof.
+
 
 ### Corporate actions operator runbook
 
