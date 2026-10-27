@@ -21,7 +21,7 @@ const V3_REFERENCE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/reference
 #[tokio::test]
 async fn one_withdrawal_puts_command_withdrawal_and_checkpoint_at_one_seq() {
     let dir = scratch_dir("seq-offsets");
-    let node = TestSequencer::start(&dir, 1024);
+    let node = TestSequencer::start_legacy(&dir, 1024);
     let mut live = node.stream.subscribe();
     node.submit(deposit(100, "dep-1")).await;
     let seq = node.tick_to_checkpoint().await;
@@ -104,12 +104,12 @@ async fn replay_refuses_logged_events_or_withdrawals_that_replay_does_not_produc
 #[tokio::test]
 async fn a_restarted_sequencer_continues_the_log_offsets_and_segments() {
     let dir = scratch_dir("seq-restart");
-    let node = TestSequencer::start(&dir, 16);
+    let node = TestSequencer::start_legacy(&dir, 16);
     node.submit(deposit(100, "dep-1")).await;
     node.stop().await;
     let before = replay(&log_entries(&dir)).unwrap().engine.last_seq().unwrap();
 
-    let node = TestSequencer::start(&dir, 16);
+    let node = TestSequencer::start_legacy(&dir, 16);
     let mut live = node.stream.subscribe();
     for n in 0..SEGMENT_COMMANDS {
         node.submit(deposit(1, &format!("dep-after-{n}"))).await;
@@ -163,7 +163,7 @@ async fn a_restart_signs_a_withdrawal_the_log_ends_before_and_hands_it_to_custod
 #[tokio::test]
 async fn replay_refuses_a_command_without_logged_events_after_ones_with_them() {
     let dir = scratch_dir("seq-events-cutover");
-    let node = TestSequencer::start(&dir, 16);
+    let node = TestSequencer::start_legacy(&dir, 16);
     node.submit(deposit(100, "dep-1")).await;
     node.stop().await;
     let mut entries = log_entries(&dir);
@@ -348,7 +348,7 @@ fn a_log_recording_other_client_auth_refuses_to_start_and_writes_nothing() {
 fn a_restart_under_other_client_auth_signs_no_withdrawal_the_log_ends_before() {
     let dir = scratch_dir("activation-mismatch-withdrawal");
     let mut seq = recover(&dir, &ClientAuth::Unsigned);
-    seq.activate_protocol().unwrap();
+    seq.activate_legacy_protocol().unwrap();
     seq.genesis(&dev_config().genesis).unwrap();
     seq.sequence(deposit(100, "dep-1")).unwrap();
     seq.sequence(withdraw(40)).unwrap();
@@ -371,7 +371,7 @@ fn a_restart_under_other_client_auth_signs_no_withdrawal_the_log_ends_before() {
 #[tokio::test]
 async fn a_sync_request_is_answered_after_the_commands_before_it_are_written() {
     let dir = scratch_dir("seq-sync");
-    let node = TestSequencer::start(&dir, 16);
+    let node = TestSequencer::start_legacy(&dir, 16);
     let tick_seq = node.next_seq().await;
     node.tx.send(Request::Submit { cmd: Command::Tick, reply: None }).await.unwrap();
     let (reply, synced) = oneshot::channel();
@@ -484,4 +484,5 @@ mod genesis;
 mod operator;
 mod toxicity;
 
+mod access_tests;
 mod replay;

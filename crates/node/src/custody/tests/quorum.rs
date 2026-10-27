@@ -180,6 +180,7 @@ async fn every_deposit_field_and_the_complete_set_must_agree() {
         crate::custody::evm::VaultDeposit { block: 0, ..d.clone() },
         crate::custody::evm::VaultDeposit { units: U256::from(2 * USDC), ..d.clone() },
         crate::custody::evm::VaultDeposit { beneficiary: Beneficiary::House, ..d.clone() },
+        crate::custody::evm::VaultDeposit { payer: Some(engine_core::types::AccountId([0xcc; 20])), ..d.clone() },
         crate::custody::evm::VaultDeposit { block_hash: B256::ZERO, ..d.clone() },
         crate::custody::evm::VaultDeposit { tx_hash: B256::repeat_byte(99), ..d.clone() },
         crate::custody::evm::VaultDeposit { log_index: 99, ..d.clone() },

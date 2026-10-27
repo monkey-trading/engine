@@ -138,7 +138,7 @@ fn a_cache_holding_a_v22_approval_refuses_snapshot_recovery() {
     };
     let domain = CheckpointDomain { chain_id: cfg.chain_id, vault: cfg.vault };
     let mut seq = Sequencer::recover(cfg, key.clone(), broadcast::channel(32).0, mpsc::unbounded_channel().0).unwrap();
-    seq.activate_protocol().unwrap();
+    seq.activate_legacy_protocol().unwrap();
     seq.genesis(&dev_config().genesis).unwrap();
     seq.trust(sample_around(clock.as_ref())).unwrap();
     while queued.try_recv().is_ok() {}

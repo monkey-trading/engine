@@ -1,4 +1,4 @@
-//! API tests for the operator's admin route, and the operator channel's dev scenario through
+//! V19 API tests for the operator's admin route, and the operator channel's dev scenario through
 //! `engine admin`.
 
 use super::*;
@@ -12,8 +12,9 @@ use axum::extract::connect_info::MockConnectInfo;
 use axum::http::Request as HttpRequest;
 use clap::Parser;
 use engine_core::auth::MAX_EXPIRY_AHEAD_MS;
-use engine_core::command::{AdminCommand, AdminRequest};
+use engine_core::command::{AdminCommand, AdminRequest, Command};
 use engine_core::emissions::{EmissionSchedule, TokenUnits};
+use engine_core::event::Event;
 use engine_core::price::SourceQuote;
 use engine_core::protocol::ProtocolVersion;
 use governor::Quota;
@@ -272,7 +273,7 @@ impl Node {
         let cfg = SequencerConfig { clock: stamps.clone(), ..sequencer_config(&dir, manifest_tx) };
         let operator = cfg.operator;
         let mut seq = Sequencer::recover(cfg, key.clone(), stream.clone(), withdrawals_tx).unwrap();
-        seq.activate_protocol().unwrap();
+        seq.activate_legacy_protocol().unwrap();
         seq.genesis(&dev_config().genesis).unwrap();
         // Trusted time agrees with the fixed clock, so the queued activation and genesis go in now.
         seq.trust(sample_around(stamps.as_ref())).unwrap();
@@ -285,6 +286,8 @@ impl Node {
             tls_public_key_sha256: tls.public_key_sha256,
         };
         let state = ApiState {
+            protocol: engine_core::protocol::ProtocolVersion::V23,
+            access: None,
             tx,
             stream,
             attestation: Arc::new(attest_bundle(&MockAttestor, &bundle).unwrap()),

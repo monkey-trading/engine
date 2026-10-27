@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Fixed;
+use crate::access::{AccessDeposit, UncreditedReceipt};
 use crate::account::RestingOrder;
 use crate::command::OrderKind;
 use crate::deposits::DepositStatus;
@@ -13,8 +14,14 @@ use crate::types::{AccountId, MarketId, OrderId, Side};
 pub(crate) struct HotIndexes {
     pub(crate) holders: BTreeMap<MarketId, BTreeSet<AccountId>>,
     pub(crate) pending_deposits: BTreeSet<String>,
+    /// Terminal dispositions by transaction-local identity, rebuilt from retained receipt history.
+    pub(crate) terminal_deposit_holds: BTreeMap<String, UncreditedReceipt>,
     pub(crate) receipts_above_frontier: BTreeSet<String>,
     triggers: BTreeMap<MarketId, Triggers>,
+    /// Pending deposit references by beneficiary; the house's are under `None`.
+    pub(crate) pending: BTreeMap<Option<AccountId>, BTreeSet<String>>,
+    /// Pending references a retry could settle: the house's and declared accounts'.
+    pub(crate) retryable: BTreeSet<String>,
 }
 
 #[derive(Debug, Default)]
@@ -80,6 +87,11 @@ impl Engine {
                 && self.custody_checkpoint.is_none_or(|checkpoint| recorded.receipt.block > checkpoint.block))
             .then_some(reference.clone())
         }));
+        for (_, recorded) in self.deposits.iter() {
+            if let Some(held) = recorded.uncredited.filter(|held| held.reason.holds_deposit()) {
+                indexes.terminal_deposit_holds.entry(recorded.receipt.transaction_reference()).or_insert(held);
+            }
+        }
         for (account, state) in self.accounts.iter() {
             for market in state.positions.keys() {
                 indexes.holders.entry(*market).or_default().insert(*account);
@@ -88,7 +100,43 @@ impl Engine {
                 indexes.order(*account, order, true);
             }
         }
+        for (reference, deposit) in self.pending_deposits.iter() {
+            indexes.pending.entry(deposit.account).or_default().insert(reference.clone());
+            if deposit.account.is_none_or(|account| self.eligibility.contains_key(&account)) {
+                indexes.retryable.insert(reference.clone());
+            }
+        }
         self.hot_indexes = Some(indexes);
+    }
+
+    /// Records a reference entering (`insert`) or leaving the pending set, at the same boundary as
+    /// the authoritative map.
+    pub(crate) fn index_pending(&mut self, deposit: &AccessDeposit, insert: bool) {
+        let declared = deposit.account.is_none_or(|account| self.eligibility.contains_key(&account));
+        let Some(indexes) = self.hot_indexes.as_mut() else { return };
+        let reference = &deposit.chain_ref;
+        if insert {
+            indexes.pending.entry(deposit.account).or_default().insert(reference.clone());
+            if declared {
+                indexes.retryable.insert(reference.clone());
+            }
+            return;
+        }
+        if let Some(references) = indexes.pending.get_mut(&deposit.account) {
+            references.remove(reference);
+            if references.is_empty() {
+                indexes.pending.remove(&deposit.account);
+            }
+        }
+        indexes.retryable.remove(reference);
+    }
+
+    /// Makes a newly declared account's pending deposits retryable.
+    pub(crate) fn index_declaration(&mut self, account: AccountId) {
+        let Some(indexes) = self.hot_indexes.as_mut() else { return };
+        if let Some(references) = indexes.pending.get(&Some(account)) {
+            indexes.retryable.extend(references.iter().cloned());
+        }
     }
 
     /// Keeps membership aligned with the net position after every fill.

@@ -32,7 +32,7 @@ contract VaultTest is GovernanceTest {
         _fund(trader, 250 * ONE_USDC);
 
         vm.expectEmit(address(vault));
-        emit Vault.Deposited(0, trader, 250 * ONE_USDC);
+        emit Vault.Deposited(0, trader, trader, 250 * ONE_USDC);
         vm.prank(trader);
         uint256 id = vault.deposit(250 * ONE_USDC);
 
@@ -46,7 +46,7 @@ contract VaultTest is GovernanceTest {
         _fund(funder, 250 * ONE_USDC);
 
         vm.expectEmit(address(vault));
-        emit Vault.Deposited(0, trader, 250 * ONE_USDC);
+        emit Vault.Deposited(0, trader, funder, 250 * ONE_USDC);
         vm.prank(funder);
         uint256 id = vault.depositFor(trader, 250 * ONE_USDC);
 
@@ -61,7 +61,7 @@ contract VaultTest is GovernanceTest {
         usdc.mint(address(wallet), 100 * ONE_USDC);
 
         vm.expectEmit(address(vault));
-        emit Vault.Deposited(0, trader, 100 * ONE_USDC);
+        emit Vault.Deposited(0, trader, address(wallet), 100 * ONE_USDC);
         uint256 id = wallet.fund(vault, 100 * ONE_USDC);
 
         assertEq(id, 0);
@@ -101,7 +101,7 @@ contract VaultTest is GovernanceTest {
         vm.prank(funder);
         assertEq(vault.depositToHouse(min), 1);
         vm.expectEmit(address(vault));
-        emit Vault.Deposited(2, trader, min);
+        emit Vault.Deposited(2, trader, funder, min);
         vm.prank(funder);
         assertEq(vault.depositFor(trader, min), 2);
 
@@ -133,7 +133,7 @@ contract VaultTest is GovernanceTest {
         usdc.mint(address(vault), 15 * ONE_USDC);
 
         vm.expectEmit(address(vault));
-        emit Vault.HouseDeposited(1, funder, 15 * ONE_USDC);
+        emit Vault.SurplusBooked(1, 15 * ONE_USDC);
         vm.prank(funder);
         assertEq(vault.bookSurplus(), 1);
 
@@ -155,7 +155,7 @@ contract VaultTest is GovernanceTest {
 
         usdc.mint(address(vault), 1);
         vm.expectEmit(address(vault));
-        emit Vault.HouseDeposited(0, address(this), min);
+        emit Vault.SurplusBooked(0, min);
         vault.bookSurplus();
         assertEq(vault.totalDeposited(), min);
     }
@@ -256,7 +256,7 @@ contract VaultTest is GovernanceTest {
         token.approve(address(feeVault), 100 * ONE_USDC);
 
         vm.expectEmit(address(feeVault));
-        emit Vault.Deposited(0, trader, 99 * ONE_USDC);
+        emit Vault.Deposited(0, trader, trader, 99 * ONE_USDC);
         vm.prank(trader);
         feeVault.deposit(100 * ONE_USDC);
 
@@ -289,8 +289,8 @@ contract VaultTest is GovernanceTest {
         _fund(funder, amount);
 
         vm.expectEmit(address(vault));
-        if (entry == 0) emit Vault.Deposited(0, funder, amount);
-        else if (entry == 1) emit Vault.Deposited(0, account, amount);
+        if (entry == 0) emit Vault.Deposited(0, funder, funder, amount);
+        else if (entry == 1) emit Vault.Deposited(0, account, funder, amount);
         else emit Vault.HouseDeposited(0, funder, amount);
         vm.prank(funder);
         if (entry == 0) vault.deposit(amount);

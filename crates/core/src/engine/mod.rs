@@ -1,7 +1,8 @@
 //! The engine state machine: `apply(sequenced command) -> events`.
 //!
 //! Single-threaded and deterministic. Time comes only from the sequencer's stamp. This file holds
-//! the state, dispatch, time, sessions, and USD valuation; per-market state lives in `market.rs`,
+//! the state, dispatch, time, sessions, and USD valuation; house NAV and the exposure caps set
+//! from it live in `house.rs`; per-market state lives in `market.rs`,
 //! venue prices and marks in `marks.rs`, funds and financing in `funds.rs`, admin in `admin.rs`,
 //! stress levels in `stress.rs`, client request auth in `auth.rs`, orders and pricing in
 //! `execution/`, close-outs in `closeout.rs`, markouts in `markouts.rs`, reserved FIFO
@@ -9,6 +10,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
+mod house;
 mod market;
 
 pub use market::MarketState;
@@ -17,6 +19,7 @@ use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
+use crate::access::{AccessDeposit, AccessPolicy, CreditScreening, EligibilityClass, HeldDeposit};
 use crate::account::{Account, Position};
 use crate::auth::{ClientAuth, Operator};
 use crate::benchmark::BenchmarkHistory;
@@ -26,7 +29,6 @@ use crate::deposits::{CustodyCheckpoint, LegacyDeposit, RecordedDeposit};
 use crate::emissions::{Emissions, PeriodResult, TokenUnits};
 use crate::event::{Event, Reject};
 use crate::fixed::Rounding;
-use crate::market::MarketSpec;
 use crate::merkle::state::{Changed, StateTree, is_zero};
 use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
@@ -141,6 +143,18 @@ pub struct Engine {
     #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
     pub(crate) distributions: TrackedMap<AccountId, UsdcUnits>,
 
+    /// The screening source and freshness bound, recorded once from `V24`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) access_policy: Option<AccessPolicy>,
+    /// Each account's recorded eligibility declaration.
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) eligibility: TrackedMap<AccountId, EligibilityClass>,
+    /// Deposits held uncredited for good, by chain reference.
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) held_deposits: TrackedMap<String, HeldDeposit>,
+    /// Deposits awaiting a declaration, a classification or a working source, by chain reference.
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) pending_deposits: TrackedMap<String, AccessDeposit>,
     // Not state and not encoded; an engine rebuilt without them hashes every leaf at its first root.
     /// Markouts, positions, and resting orders changed since the last state root.
     #[serde(skip)]
@@ -260,35 +274,47 @@ impl Engine {
         if !corporate && !benchmark_batch && !activating_dated_rates {
             self.run_rollovers(&mut events);
         }
-        match &sequenced.cmd {
-            _ if early_outcome.is_some() => events.extend(early_outcome),
-            // From `V12` the quotes are stored and processed above.
-            Command::Prices { .. } if v12 => {}
-            Command::Prices { market, quotes } => self.on_prices(*market, quotes, &mut events),
-            Command::Tick => self.refresh_all_sessions(&mut events),
-            Command::Deposit { account, amount, chain_ref } => self.deposit(*account, *amount, chain_ref, &mut events),
-            Command::CustodyFinalised(checkpoint) => self.advance_custody_checkpoint(*checkpoint, &mut events),
-            Command::CustodyDeposit(update) => self.update_deposit(update, &mut events),
-            Command::Withdraw { account, amount, auth } => self.withdraw(*account, *amount, auth.as_ref(), &mut events),
-            Command::HouseCapital { amount, chain_ref } => self.house_capital(*amount, chain_ref, &mut events),
-            Command::PlaceOrder(req) => self.place_order(req, &mut events),
-            Command::CancelOrder { account, order_id, auth } => {
-                self.cancel_order(*account, *order_id, auth.as_ref(), &mut events)
-            }
-            Command::Admin(cmd) => match self.unsigned_admin(cmd, &mut events) {
-                Ok(()) => events.push(Event::AdminApplied),
-                Err(reason) => events.push(Event::AdminRejected { reason }),
-            },
-            Command::SignedAdmin(req) => match self.signed_admin(req, &mut events) {
-                Ok(()) => events.push(Event::AdminApplied),
-                Err(reason) => events.push(Event::AdminRejected { reason }),
-            },
-            Command::Stake { account, amount, block, chain_ref } => {
-                self.stake(*account, *amount, *block, chain_ref, &mut events)
-            }
-            Command::StakingProgress { block, block_hash } => self.staking_progress(*block, *block_hash, &mut events),
-            Command::Unstake { account, amount, block, chain_ref } => {
-                self.unstake(*account, *amount, *block, chain_ref, &mut events)
+        if self.access_dispatch(&sequenced.cmd, &mut events) {
+            // The access-screened commands and the V24 raw-funding wraps are handled.
+        } else {
+            match &sequenced.cmd {
+                _ if early_outcome.is_some() => events.extend(early_outcome),
+                // From `V12` the quotes are stored and processed above.
+                Command::Prices { .. } if v12 => {}
+                Command::Prices { market, quotes } => self.on_prices(*market, quotes, &mut events),
+                Command::Tick => self.refresh_all_sessions(&mut events),
+                Command::Deposit { account, amount, chain_ref } => {
+                    self.deposit(*account, *amount, chain_ref, &mut events)
+                }
+                Command::CustodyFinalised(checkpoint) => self.advance_custody_checkpoint(*checkpoint, &mut events),
+                Command::CustodyDeposit(update) => self.update_deposit(update, CreditScreening::default(), &mut events),
+                Command::Withdraw { account, amount, auth } => {
+                    self.withdraw(*account, *amount, auth.as_ref(), None, &mut events)
+                }
+                Command::HouseCapital { amount, chain_ref } => self.house_capital(*amount, chain_ref, &mut events),
+                Command::PlaceOrder(req) => self.place_order(req, None, &mut events),
+                Command::CancelOrder { account, order_id, auth } => {
+                    self.cancel_order(*account, *order_id, auth.as_ref(), &mut events)
+                }
+                Command::Admin(cmd) => match self.unsigned_admin(cmd, &mut events) {
+                    Ok(()) => events.push(Event::AdminApplied),
+                    Err(reason) => events.push(Event::AdminRejected { reason }),
+                },
+                Command::SignedAdmin(req) => match self.signed_admin(req, &mut events) {
+                    Ok(()) => events.push(Event::AdminApplied),
+                    Err(reason) => events.push(Event::AdminRejected { reason }),
+                },
+                Command::Stake { account, amount, block, chain_ref } => {
+                    self.stake(*account, *amount, *block, chain_ref, &mut events)
+                }
+                Command::StakingProgress { block, block_hash } => {
+                    self.staking_progress(*block, *block_hash, &mut events)
+                }
+                Command::Unstake { account, amount, block, chain_ref } => {
+                    self.unstake(*account, *amount, *block, chain_ref, &mut events)
+                }
+                // The access variants always dispatch to `access_dispatch` first.
+                _ => unreachable!("access command dispatched above"),
             }
         }
         if !corporate && benchmark_batch && events.contains(&Event::AdminApplied) {

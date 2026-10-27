@@ -161,7 +161,7 @@ fn a_genesis_an_earlier_build_ran_again_is_refused_and_a_fresh_log_advised_only_
             let name = format!("run-{n}-followed-{followed}");
             let dir = scratch_dir(&format!("genesis-ran-again-{name}"));
             let mut seq = recover(&dir, &signed(31_337));
-            seq.activate_protocol().unwrap();
+            seq.activate_legacy_protocol().unwrap();
             match (seq.sequence_required("genesis", first_run.clone()), stopped) {
                 (Err(err), Some(stopped)) => assert!(format!("{err:#}").contains(stopped), "{name}: {err:#}"),
                 (Ok(()), None) => {}

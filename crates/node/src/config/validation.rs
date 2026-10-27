@@ -54,6 +54,12 @@ impl NodeConfig {
     /// - genesis lists a market id, a market symbol, or a benchmark name twice
     /// - the engine would reject a genesis command (see `check_genesis`)
     pub(super) fn validate(&self) -> anyhow::Result<()> {
+        if let Some(access) = &self.access {
+            access.validate()?;
+            if self.tee.provider != TeeProvider::Mock {
+                ensure!(access.endpoint.expose()?.scheme() == "https", "access HTTP fixtures require the mock TEE");
+            }
+        }
         if let Some(benchmarks) = &self.benchmarks {
             benchmarks.validate(self)?;
         }

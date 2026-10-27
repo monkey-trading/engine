@@ -155,11 +155,13 @@ async fn serve_node(
     let vault: AccountId = cfg.custody.vault.parse().context("custody.vault")?;
     let client_auth = cfg.client_auth()?;
     let operator = cfg.operator()?;
+    let access = cfg.access.as_ref().map(crate::access::AccessClient::new).transpose()?.map(Arc::new);
     let (stream_tx, _) = broadcast::channel(CHANNEL_CAPACITY);
     let (withdrawals_tx, withdrawals_rx) = mpsc::unbounded_channel();
     let (manifest_tx, manifest_rx) = watch::channel(Manifest::default());
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let mut seq_cfg = SequencerConfig {
+        access_policy: cfg.access.as_ref().map(crate::config::AccessSection::policy),
         log_dir: &cfg.node.log_dir,
         segment_commands: cfg.node.segment_commands,
         manifest: manifest_tx,
@@ -179,7 +181,8 @@ async fn serve_node(
         history_sealing: None,
     };
     let custody = Custody::connect(&cfg.custody, log.last_seq())
-        .inspect_err(|e| error!(alert = "custody_connect_failed", "refusing to serve: {e:#}"))?;
+        .inspect_err(|e| error!(alert = "custody_connect_failed", "refusing to serve: {e:#}"))?
+        .with_access(access.clone());
     authorize(
         checkpoint_setup.as_ref().map(|setup| (&setup.poster, anchor.as_ref())),
         Some((&log, &seq_cfg, AccountId(key.address()))),
@@ -286,10 +289,12 @@ async fn serve_node(
     let listener = TcpListener::bind(cfg.node.listen).await.with_context(|| format!("binding {}", cfg.node.listen))?;
     let limits = Arc::new(ApiLimits::new(&cfg.api));
     let app = router(ApiState {
+        protocol: engine_core::protocol::ProtocolVersion::LATEST,
         tx,
         stream: stream_tx,
         attestation,
         auth: client_auth,
+        access,
         operator,
         mock_custody,
         payouts_enabled: mock_custody || cfg.checkpoints.is_some(),

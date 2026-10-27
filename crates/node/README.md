@@ -10,6 +10,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 
 ## Features
 
+- Signed eligibility and fail-closed API/custody screening from V24, with public refusal reasons
+  and reserved, uncredited sanctioned deposits
 - Dated publisher ingestion with a separate signing worker, startup synchronization, and per-date
   rollover catch-up under V18
 - Single-owner sequencer on a dedicated OS thread: commands are logged and synced to disk before any
@@ -40,7 +42,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   sample, and resumes once a sample is within the bound
 - REST API for orders, cancels, withdrawals, and reads, plus a WebSocket stream of the log
 - Orders, cancels, and withdrawals signed by the account (EIP-712), checked before they are
-  sequenced; `auth = "none"` trusts the account field and runs only with the mock TEE and custody
+  sequenced; before V24, `auth = "none"` trusts the account field with mock TEE and custody; V24
+  client actions and eligibility declarations require signatures in every mode
 - The latest protocol version and the client auth activated at boot, at the log's next seq, after
   giving parameters a log set before `V11` the config's toxicity notional weighting
 - Stream offsets of `<seq>:<index>`: a subscriber starts or resumes at any offset, reads the log
@@ -129,7 +132,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/replay_audit.rs` and `src/replay_audit/` — read-only custody-backed historical signer audits and tests
 - `src/log/segments/durability_tests.rs` — failed-fsync stream publication regression
 - `src/test_support/written.rs` — shared in-memory test output capture
-- `src/sequencer/checkpoints/accounting_tests.rs` — live/recovery accounting oracles and gated 100k-account capture scaling
+- `src/sequencer/checkpoints/accounting_tests.rs` — live/recovery accounting oracles and gated 100k-account capture scaling over migrated credits and fresh holds
 - `src/sequencer/checkpoint_tests.rs` — confirmed-prefix signature gating and restart tests
 - `src/sequencer/fixture_tests.rs` — test-only signing of copies of placeholder protocol fixtures,
   and logs whose genesis an older protocol applied but no current config can give
@@ -222,7 +225,14 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   staging, and opening the log while a writer rotates
 - `src/log/tests/reader.rs` — reader tests: offsets, following the writer, flushed entries only,
   and the checks on what it reads
-- `src/api/mod.rs` — REST routes, request signature checks, and the request span
+- `src/api/mod.rs` — REST routes, read handlers and the request span
+- `src/api/state.rs` — request authentication, nonce checks and durable sequencer round trips
+- `src/api/actions.rs` — signed client actions and real-peer access screening
+- `src/api/access.rs` — reads of one custody hold, one pending deposit, and an account's signed eligibility
+- `src/api/access_tests.rs` — deposit-first declarations, peer provenance and public access refusals
+- `src/api/access_tests/admission.rs` — admission before sequencing: never-credited signers declare only against a pending deposit, within per-client and shared budgets; expired requests and exhausted screening capacity refuse without a nonce
+- `src/api/access_tests/declarations.rs` — a declaration screened like an order: public refusals that leave its deposit pending until an allowed one is recorded
+- `src/access.rs`, `src/access/tests.rs` — bounded signed-source IO and failure-path tests
 - `src/api/admin.rs` — the operator's admin route, checked before it is sequenced
 - `src/api/distributions.rs` — an account's cumulative USDC distribution with its proof against the
   last checkpoint's root, for the vault's `claimDistribution`
@@ -316,6 +326,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/config/feeds.rs` — the `[feeds]` section: the mock feed, the venues and vendors with their
   redacted API keys, and the checks on their endpoints, credentials, and symbols
 - `src/config/feeds_tests.rs` — vendor connection config tests
+- `src/config/access.rs` — redacted source configuration, recorded identity and freshness bounds
 - `src/config/custody.rs` — the `[custody.evm]` section, independent RPC providers, redacted
   URLs, and custody checks
 - `src/config/telemetry.rs` — the metrics listener and alert webhook config, and the redacting
@@ -332,7 +343,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/config/test_keys.rs` — the published test keys from `config/test-keys.toml`, which a node
   with real attestation refuses, and their tests
 - `src/checkpoints/mod.rs` — posting, retry, signed-parent commitment checks, and collateral reconciliation
-- `src/checkpoints/accounting.rs` — bounded custody totals derived from computed engine events
+- `src/checkpoints/accounting.rs` — bounded custody totals and held reserves derived from computed engine events
+- `src/checkpoints/accounting/access_tests.rs` — actual pending and hold outputs against independent reconciliation totals
 - `src/checkpoints/lifecycle.rs` — pinned signer/epoch, cumulative paid amounts, and approval nonce-use evidence
 - `src/checkpoints/history.rs` — accepted history from the finalized anchor, the signed-parent chain, and signer epochs
 - `src/checkpoints/lifecycle_tests.rs` — paid cash reconciliation, bounded claim polling, and rotated authorities
@@ -355,7 +367,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/setup.rs` — finalized chain anchor lookup and pending-inclusion startup wait
 - `src/checkpoints/tests.rs` — signature mutations, rollback, retry, and reconciliation tests
 - `src/checkpoints/tests/collateral.rs` — shortfall, ledger-difference, surplus, and uncredited-deposit deadline tests
-- `src/checkpoints/scenario.rs` — isolated Anvil posting, tampering, truncation, surplus booking, shortfall, and reorg checks
+- `src/checkpoints/scenario.rs` — isolated Anvil posting, credited/held reconciliation, tampering, truncation, surplus booking, shortfall, and reorg checks
+- `src/checkpoints/scenario/source.rs` — signed synthetic source bound to the scenario vault
 - `src/checkpoints/emission_budget.rs` — the vault's MONKEY cap against the emission period budget
 - `src/checkpoints/emissions_scenario.rs` — the MONKEY emissions dev scenario on isolated Anvil: pro-rata
   allocation, cancelled periods, a restart across finalisation, the first halving, and claims that mint
@@ -394,12 +407,16 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/stall.rs` — what a poll did, the watcher's run loop, and the alert each kind of
   stall raises
 - `src/custody/sizing.rs` — read sizes that adapt to a provider's limits
-- `src/custody/credit.rs` — crediting one deposit once, and the sequencer round trips it needs
+- `src/custody/credit.rs` — crediting or reserving one deposit once, and the sequencer round trips it needs
+- `src/custody/pending.rs` — bounded, backed-off log-derived retries of deposits left pending by source failures
 - `src/custody/quorum.rs` — strict-majority reads at common block heights, provider alerts, and
   a Critical alert while quorum is lost
 - `src/custody/rpc.rs` — the vault over JSON-RPC, trusting only compiled-in TLS roots, with
   errors scrubbed of the endpoint URL
 - `src/custody/cursor.rs` — the deposit cursor kept between restarts
+- `src/custody/tests/access.rs` — payer sanctions and holds across restart, cursor loss and source recovery
+- `src/sequencer/access_tests.rs` — current access refusals, reconciliation admission and recovered signature release
+- `src/sequencer/access.rs` — access-source failure and recovery alert episodes
 - `src/custody/tests/mod.rs` — deposit watcher tests against a fake chain and a real sequencer
 - `src/custody/tests/alerts.rs` — the watcher's alerts over time, in paused time
 - `src/custody/tests/cursor.rs` — the deposit cursor across restarts, and which cursors a log
@@ -479,6 +496,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/alerts/outbox.rs` — the single-owner durable SQLite outbox and disk/row validation
 - `src/alerts/outbox/tests.rs` — restart, bounds, corruption and storage-failure tests
 - `src/alerts/tests.rs` — alert routing tests
+- `examples/access_source.rs` — loopback-only signed synthetic source for the access scenario
 - `examples/reference_log.rs` — writes a protocol version's node reference log from engine-core's
 - `tests/reference_logs.rs` — replays every committed node reference log, events included
 - `tests/usd_settlement.rs` — the USD settlement dev scenario on the committed dev config: Germany 40
@@ -486,9 +504,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `tests/reference/` — one node-format reference log per protocol version, never regenerated
 - `tests/replay.rs` — replays a log the node wrote before protocol versions, kept in
   `tests/fixtures/`, and checks that `engine replay` fails on a log it cannot verify
+- `tests/common/access.rs` — shared explicit signed declarations, screening and financial scenario inputs
 - `tests/production_genesis/` — loads `config/production-genesis.toml` as a dev node's genesis,
   checks the launch values and quote currencies, and steps it through weeks with holidays and early
-  closes (`main.rs`); checks each market reaches every divergence stress level (`divergence.rs`);
+  closes (`main.rs`); checks each market reaches every divergence stress level with screened house
+  funding (`divergence.rs`);
   and recomputes each futures market's roll times from its exchange's calendar and rolls the engine
   through them (`futures.rs`)
 
@@ -552,6 +572,9 @@ jq -r '.file' archive/manifest.jsonl |
 
 # Also fabricate a deposit at one provider, stop two providers, and recover quorum
 RPC_QUORUM_SCENARIO=1 ./scripts/dev-vault-deposits.sh
+
+# Exercise signed eligibility, API refusals, direct-vault and contract-wallet payer holds
+./scripts/dev-access-enforcement.sh
 
 # Run checkpoint posting, tampered replay, truncation, and shortfall checks on isolated Anvil
 ./scripts/dev-checkpoints.sh
@@ -923,19 +946,33 @@ checkpoint the node wrote. It prints restart times without gating on them.
 `cargo test -p engine-node dev_scenario_restart_stays_bounded -- --nocapture` runs the same scenario
 through the node's startup path in-process.
 
-With `auth = "eip712"`, each order, cancel, and withdrawal body carries
+From V24, every client action requires a signature, including logs that recorded development
+`auth = "none"`. Earlier versions require it under `auth = "eip712"`. Each order, cancel, and
+withdrawal body carries
 `"auth": { "nonce": <next nonce>, "expires_at": <ms>, "signature": "0x…" }`: the account's EIP-712
 signature under the domain of `custody.vault` on `custody.chain_id` (see `engine-core`'s
 `sign_request` example). `expires_at` is the latest time, in milliseconds since the Unix epoch, at
 which the request itself is accepted; a limit or stop order it places rests until it fills or is
-cancelled. A missing or invalid signature is refused with 401, an expired request with 400, a
-signed request from an account that has never been credited with 403, and a nonce other than the
-account's next with 409 and the `expected` nonce; none of these reaches the log. A request
+cancelled, and from V24 its screening at placement covers it for that whole time. A
+missing or invalid signature is refused with 401, an expired request with 400, a signed request
+other than a declaration from an account that has never been credited with 403, and a nonce other
+than the account's next with 409 and the `expected` nonce; none of these reaches the log. A request
 refused with 403 or 409 uses no nonce, so it stays valid until its `expires_at`: resubmit that same
 request once its nonce is next, or let it expire before signing different content at that nonce.
+From V24, a never-credited account may sign only a declaration, admitted once a deposit for it is
+pending and within its client's share of a budget all clients share; its other signed requests, and a
+declaration without a pending deposit, get 403. The API screens a declaration like an order, and
+the engine records it only on verified, allowed and clear evidence; a refused declaration is in the
+public log with its reason and leaves the deposit pending, and once one is recorded the pending
+deposit credits on its next retry.
+Authenticated policy refusals consume the nonce. The recorded source supplies geography
+and sanctions classifications; missing, unknown, stale or unauthenticated evidence fails closed.
+See [access-source configuration](../../config/access-source.md) for the response schema, eligibility
+statements, custody holds, operator alerts, and the local scenario.
+
 An expiry more than five minutes ahead is sequenced and rejected with `expiry_too_far`, which uses
-the nonce. Two requests that race for one nonce are both sequenced, and the engine rejects the
-second with `invalid_nonce`.
+the nonce. Requests that both pass API admission for one nonce are sequenced, and the engine rejects
+the second with `invalid_nonce`.
 
 The first start records `auth`, and under `eip712` the custody chain id and vault, in the log;
 changing any of them needs a fresh log, removed while the node is stopped. The history index in
@@ -965,6 +1002,8 @@ has taken every command the log held when the node started, the route answers 50
 catching up with the log`). History is public, like the log.
 `emission_allocated`, `staked`, `unstaked`, `staking_rejected`, or `distribution_allocated`.
 `?limit=` is 1 to 200, 50 by default. A page is one search of a SQLite index that reads
+`emission_allocated`, `eligibility_attested`, `eligibility_rejected`, `deposit_pending`, or
+`deposit_held`. `?limit=` is 1 to 200, 50 by default. A page is one search of a SQLite index that reads
 at most `limit + 1` entries, and at most 16 pages are read at once. Until the index has taken every
 command the log held when the node started, the route answers 503 (`history is catching up with the
 log`). History is public, like the log.

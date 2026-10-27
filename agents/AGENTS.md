@@ -24,17 +24,20 @@ an index: load only the rule whose hint matches the current action.
   `merkle/`). It does no IO and uses no clocks,
   randomness, or floats. `impl Engine` is split by area (`engine/mod.rs` for state and dispatch
   with per-market state in `engine/market.rs`, `marks.rs`, `execution/`,
-  `markouts.rs`, `closeout.rs`, `funds.rs`, `deposits.rs` with legacy migration in `deposits/`,
+  `markouts.rs`, `closeout.rs`, `funds.rs`, `deposits.rs` with legacy migration and screened canonical replacements in `deposits/`,
   `corporate/` for dividend/split instructions, captures and ex-date adjustments,
   `admin.rs`, `stress.rs`, `auth.rs`). `withdrawal.rs` reserves FIFO requests and creates
   whole-USDC partial approvals under the V22 rules; `merkle/withdrawal.rs` proves each approval
   against a root. `tests/corporate_actions/` exercises cash, calendars, splits and replay. Unit
   tests sit
+  against a root, with signed eligibility, authenticated screening evidence,
+  durable outage retries and uncredited custody holds in `access/`. Unit tests sit
   inline; protocol tests are in `tests/` by area, with the shared harness in `tests/common/`.
   `tests/reference/` holds one reference log per protocol version, written once by
   `examples/reference_log/` and replayed to its roots by `tests/reference_logs.rs`;
   `tests/invariants/` holds the property tests. Its `README.md` lists every file.
 - **crates/node/** — `engine-node`, binary `engine` (`main.rs` over `lib.rs`). Contains the
+  access-source screening (`access.rs`, signed decisions with bounded HTTP reads),
   sequencer, the public log with signed checkpoints (segmented, with a public archive), `engine
   replay`, `engine admin` (the operator's signing client), the REST API with the operator's admin
   route, account proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
@@ -74,7 +77,8 @@ an index: load only the rule whose hint matches the current action.
   `api/benchmark_tests/schedule.rs` checks changed schedules and in-flight worker nonce fencing. `tests/reference/` holds the node-format reference log
   per protocol version, with events, written once by `examples/reference_log.rs`. Its `README.md`
   lists every file.
-- **contracts/** — Foundry project for the custody vault. `src/Vault.sol` takes USDC deposits of
+- **contracts/** — Foundry project for the custody vault. `src/Vault.sol` records each deposit's actual
+  funding caller in its event and takes USDC deposits of
   10 to 1e9 USDC for the caller's trading account (`deposit`), for a named one (`depositFor`), or
   for the house, under one deposit id sequence, and records the running deposit total after each;
   anyone can book USDC sent outside a deposit as house capital (`bookSurplus`). `test/` holds unit,
@@ -111,14 +115,15 @@ an index: load only the rule whose hint matches the current action.
   a separate `engine admin ... sync-benchmarks --watch` worker signs daily snapshots and releases
   synchronization before startup catch-up and after trusted-time halts spanning unpaid rollovers.
   `test-keys.toml` lists the keys whose private keys the repo publishes for development (the dev
-  configs' operator key, explicit published mock enclave signer, and Anvil's default accounts);
-  a node whose TEE is not the mock refuses them
-  as its operator key, and a dev config or script that adds such a key lists it there.
+  configs' operator key, explicit published mock enclave signer, shared access-source test
+  authority, and Anvil's default accounts); a node whose TEE is not the mock refuses them
+  as its operator key or access source, and a dev config or script that adds such a key lists it there.
   `production-genesis.toml` is the production `[genesis]` section alone: the launch markets with
   their venue calendars, each calendar's sources and unpublished gaps, their quote currencies, the
   futures contracts the index and commodity markets roll through with the roll rules, and the
   launch margins and fees; a deployment's node sections complete it into a config. Every section
-  rejects unknown keys.
+  rejects unknown keys. `access-source.md` documents the optional signed screening source,
+  declaration API, held collateral, local fixture scenario and promotion requirements.
 - **image/** — the reproducible confidential VM image for AMD SEV-SNP: `Dockerfile` (static
   `engine`, kernel, busybox initramfs, OVMF, and the launch measurement, every input pinned),
   `init`, `kernel.config`, the `sev-snp-measure` pins, `apt.conf` (the Debian snapshot's apt
@@ -145,10 +150,13 @@ an index: load only the rule whose hint matches the current action.
   pre-log crash, unpaid redelivery, and FIFO liquidity scenario; `dev-attestation-verifier.sh`,
   the attestation verifier dev scenario against a loopback key-distribution stand-in, with no
   hardware or vendor access, also replaying a hand-built signed-withdrawal log through
-  `engine replay --attestation`; and `build-image.sh` and `check-image.sh`, which build the
-  enclave image from a commit and boot it under QEMU without SEV-SNP, and `check-image-retry.sh`,
-  which scans `image/Dockerfile` so every download runs under `retry` and the cargo build stays
-  `--frozen`, and checks the build's download retries.
+  `engine replay --attestation`; `dev-access-enforcement.sh` checks signed eligibility, API refusals,
+  direct vault payer sanctions, automatic screening recovery and held collateral across restart,
+  using `dev-access-fixture.sh` and `dev-access-cases.sh` for the explicit synthetic source and
+  assertions; and `build-image.sh` and `check-image.sh`, which build the enclave image from a
+  commit and boot it under QEMU without SEV-SNP, and `check-image-retry.sh`, which scans
+  `image/Dockerfile` so every download runs under `retry` and the cargo build stays `--frozen`,
+  and checks the build's download retries.
 - **ops/** — operator assets: `grafana/engine-node.json`, the node's Grafana dashboard, and
   `prometheus/engine-node-rules.yml`, the alerting rules for a down node or failing alert pages.
 - **.github/workflows/** — `ci.yaml`: fmt, the file line cap, clippy, tests (and the node's
@@ -161,6 +169,12 @@ an index: load only the rule whose hint matches the current action.
   the snapshot restart scenario, the RWA price feeds dev scenario, the review-delta helper's test,
   and the enclave image (`image` checks its download retries, builds it twice, and boots it under
   QEMU, `image-compare` fails if the builds differ), on every push to `main` and every PR.
+  deposit finality scenarios, the signed withdrawal and FIFO dev scenario, the API and
+  direct-vault access enforcement dev scenario, the metrics and alert
+  routing dev scenario, the alert outbox kill/restart scenario, the snapshot restart scenario, the
+  RWA price feeds dev scenario, the review-delta helper's test, and the enclave image (`image`
+  checks its download retries, builds it twice, and boots it under QEMU, `image-compare` fails if
+  the builds differ), on every push to `main` and every PR.
   On a PR, the first job, `changes`, sorts the changed files into the Rust, contracts, scenario,
   image, and agent-script areas from an explicit path list, and each job runs only when its area
   changed: `agents/` (but for the review-delta helper in
@@ -245,6 +259,8 @@ Run from the repo root:
   mismatched `--signer` fails; needs only Cargo)
 - Corporate-action dev scenario: `./scripts/dev-corporate-actions.sh` (runs the isolated signed
   operator/TLS/API scenario with deterministic venue time, restart and public replay)
+- Access enforcement dev scenario: `./scripts/dev-access-enforcement.sh` (Anvil, API and direct vault
+  calls; synthetic signed source, public refusals and restart/rescan holds)
 - Vault deposit dev scenario: `./scripts/dev-vault-deposits.sh` (starts Anvil, deploys the vault
   and a mock USDC, runs a node on `config/anvil.toml`, and checks each deposit credits once;
   `RPC_QUORUM_SCENARIO=1` also injects a fictional deposit, stops providers and checks recovery;

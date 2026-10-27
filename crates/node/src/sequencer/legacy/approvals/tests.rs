@@ -4,7 +4,13 @@ use alloy::primitives::B256;
 #[test]
 fn canonical_proof_retains_only_exact_pending_receipts_with_matching_economics() {
     let receipt = receipt();
-    let pending = RecordedDeposit { receipt: receipt.clone(), status: DepositStatus::Unfinalised, updated_at_seq: 7 };
+    let pending = RecordedDeposit {
+        payer: None,
+        receipt: receipt.clone(),
+        status: DepositStatus::Unfinalised,
+        updated_at_seq: 7,
+        uncredited: None,
+    };
     let mut proof = FinalityProof::default();
     proof.include_pending_receipt(&receipt, None);
     assert!(proof.receipts.is_empty(), "uncredited chain history consumes no retained proof storage");
@@ -33,7 +39,13 @@ fn canonical_proof_retains_only_exact_pending_receipts_with_matching_economics()
 #[test]
 fn independent_receipt_proof_storage_does_not_grow_with_uncredited_chain_history() {
     let receipt = receipt();
-    let pending = RecordedDeposit { receipt: receipt.clone(), status: DepositStatus::Unfinalised, updated_at_seq: 7 };
+    let pending = RecordedDeposit {
+        payer: None,
+        receipt: receipt.clone(),
+        status: DepositStatus::Unfinalised,
+        updated_at_seq: 7,
+        uncredited: None,
+    };
     let mut proof = FinalityProof::default();
     proof.include_pending_receipt(&receipt, Some(&pending));
     for block in 10..1010 {

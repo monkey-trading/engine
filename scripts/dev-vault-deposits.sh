@@ -37,12 +37,14 @@ trader="$(cast wallet address --private-key "$trader_key" | tr '[:upper:]' '[:lo
 usdc_units=1000000
 anvil_pid=""
 node_pid=""
+access_fixture_pid=""
 proxy_pids=()
 rpc_a_port="${RPC_A_PORT:-18545}"
 rpc_b_port="${RPC_B_PORT:-18546}"
 rpc_c_port="${RPC_C_PORT:-18547}"
 
 cleanup() {
+  [[ -n "$access_fixture_pid" ]] && kill "$access_fixture_pid" 2>/dev/null || true
   [[ -n "$node_pid" ]] && kill "$node_pid" 2>/dev/null || true
   [[ -n "$anvil_pid" ]] && kill "$anvil_pid" 2>/dev/null || true
   for pid in "${proxy_pids[@]}"; do kill "$pid" 2>/dev/null || true; done
@@ -93,6 +95,7 @@ rescanned_deposits() {
 progress_tip() {
   jq -sr '[.[] | select(.entry == "command" and .cmd.type == "custody_finalised") | .cmd.block] | last // "none"' "$work"/log/[0-9]*.jsonl
 }
+pending_deposits() { curl -sf "http://127.0.0.1:$metrics_port/metrics" | awk '$1 == "engine_access_pending_deposits" { print $2 }'; }
 log_commands() {
   local n=0 f
   for f in "$work"/log/[0-9]*.jsonl; do
@@ -125,6 +128,8 @@ stop_node() {
 # Built first, so a slow build cannot leave the chain's head stale by the time the node starts.
 step "Build the node"
 cargo build -q --locked -p engine-node --manifest-path "$root/Cargo.toml"
+source "$root/scripts/dev-access-fixture.sh"
+build_access_tools
 # Wherever Cargo put it: `CARGO_TARGET_DIR` or `build.target-dir` may move the target directory.
 engine="$(cargo metadata --format-version 1 --no-deps --manifest-path "$root/Cargo.toml" | jq -r .target_directory)/debug/engine"
 
@@ -152,6 +157,7 @@ governance="$(forge create --rpc-url "$rpc" --private-key "$house_key" --broadca
   0x0000000000000000000000000000000000000000 | jq -r '.deployedTo')"
 # The MONKEY period budget, 1 MONKEY, is a development value, not an approved production parameter.
 vault="$(create src/Vault.sol:Vault --constructor-args "$usdc" "$trader" "$governance" 1000000000000000000)"
+export DEV_DEPOSIT_TOPIC="$(cast keccak 'Deposited(uint256,address,address,uint256)')"
 cd "$root"
 grep -qi "vault = \"$vault\"" config/anvil.toml || fail "vault deployed at $vault, not the address config/anvil.toml names"
 grep -qi "usdc = \"$usdc\"" config/anvil.toml || fail "USDC deployed at $usdc, not the address config/anvil.toml names"
@@ -200,6 +206,8 @@ if [[ "${DEPOSIT_FINALITY_SCENARIO:-0}" == "1" ]]; then
   echo "Approval eligibility was exercised through the sequencer; no physical payout or HTTP cash-out was attempted."
   exit 0
 fi
+start_access_fixture
+write_access_config "$work/anvil.toml"
 # Every Roughtime server points at a closed local port, so no sample arrives and nothing is
 # sequenced. The watcher may read the chain, but it cannot persist finalised progress or unlock
 # principal outside the log. That boot's time alerts are expected and logged apart from node.log.
@@ -217,15 +225,28 @@ code="$(curl -sk -o /dev/null -w '%{http_code}' -X POST "$api/v1/dev/deposit" \
 [[ "$code" == "404" ]] || fail "the mock-only deposit endpoint answered $code under EVM custody"
 code="$(curl -sk -o /dev/null -w '%{http_code}' -X POST "$api/v1/withdrawals" \
   -H 'content-type: application/json' -d "{\"account\":\"$trader\",\"amount\":\"1\"}")"
-[[ "$code" == "501" ]] || fail "a withdrawal answered $code under EVM custody, which cannot pay it out yet"
+[[ "$code" == "401" ]] || fail "an unsigned withdrawal answered $code under EVM custody"
+signed="$(access_request "$trader_key" withdrawal)"
+code="$(curl --max-time 10 -sk -o /dev/null -w '%{http_code}' "$api/v1/withdrawals" -H 'content-type: application/json' -d "$signed")"
+[[ "$code" == "403" ]] || fail "a never-credited signed withdrawal answered $code"
 
-step "A trader deposit credits only once three blocks have passed"
+step "A first trader deposit waits for finality, then for the trader's declaration, and credits once"
 send "$vault" "deposit(uint256)" $((1000 * usdc_units)) --private-key "$trader_key"
 stays trader_balance none
 mine 2
 stays trader_balance none
 mine 1
+wait_for pending_deposits 1
+stays trader_balance none
+access_attest "$trader_key"
 wait_for trader_balance 1000
+wait_for pending_deposits 0
+
+step "An allowed signed withdrawal is refused in the log until on-chain payouts exist"
+signed="$(access_request "$trader_key" withdrawal)"
+events="$(access_post /v1/withdrawals "$signed")"
+jq -e 'any(.[]; .type == "withdrawal_rejected" and .reason.kind == "payout_unavailable")' <<< "$events" >/dev/null || fail "EVM payout guard did not refuse the allowed request"
+[[ "$(trader_balance)" == "1000" ]] || fail "a refused withdrawal changed the trader balance"
 
 step "A house deposit adds house capital"
 send "$vault" "depositToHouse(uint256)" $((5000000 * usdc_units)) --private-key "$house_key"
@@ -323,23 +344,30 @@ if [[ "${RPC_QUORUM_SCENARIO:-0}" == "1" ]]; then
   expected_deposits=7
 fi
 
-step "The log holds one command per deposit and replays"
+if [[ "${ACCESS_ENFORCEMENT_SCENARIO:-0}" == "1" ]]; then
+  source "$root/scripts/dev-access-cases.sh"
+fi
+
+step "The log holds one ingress record per deposit and replays"
 stop_node
 # Genesis's zero house capital credit marks genesis done; every other credit is a vault deposit.
-deposits="$(jq -c 'select(.entry == "command" and .cmd.type == "custody_deposit" and .cmd.action == "credit")' "$work"/log/[0-9]*.jsonl | wc -l | tr -d ' ')"
+deposits="$(jq -c 'select(.entry == "command" and ((.cmd.type == "custody_deposit" and .cmd.action == "credit") or .cmd.type == "access_custody_deposit"))' "$work"/log/[0-9]*.jsonl | wc -l | tr -d ' ')"
 [[ "$deposits" == "$expected_deposits" ]] || fail "expected $expected_deposits deposit commands in the log, found $deposits"
 # Read the whole verdict first: an early `grep -q` exit would break the replay's pipe.
 "$engine" replay --log "$work/log" >"$work/replay.out" || fail "the log does not replay"
 grep -q '^verified' "$work/replay.out" || fail "the log does not replay"
 # Restarts, the rescan, and the reorg are all expected: none of them may raise an alert.
-if [[ "${RPC_QUORUM_SCENARIO:-0}" == "1" ]]; then
-  unexpected="$(grep 'alert=' "$work/node.log" | grep -Ev 'alert="(custody_rpc_provider_failed|custody_rpc_provider_disagreed|custody_rpc_quorum_lost|custody_rpc_failed)"' || true)"
+if [[ "${RPC_QUORUM_SCENARIO:-0}" == "1" || "${ACCESS_ENFORCEMENT_SCENARIO:-0}" == "1" ]]; then
+  allowed_alerts='custody_rpc_provider_failed|custody_rpc_provider_disagreed|custody_rpc_quorum_lost|custody_rpc_failed'
+  # The access cases hold deposits and take the source down, so retries may fail during the outage.
+  [[ "${ACCESS_ENFORCEMENT_SCENARIO:-0}" == "1" ]] && allowed_alerts="$allowed_alerts|access_deposit_held|access_source_failed|access_deposit_retry_failed"
+  unexpected="$(grep 'alert=' "$work/node.log" | grep -Ev "alert=\"($allowed_alerts)\"" || true)"
   [[ -z "$unexpected" ]] || fail "unexpected fault-phase alert: $unexpected"
 elif grep -q 'alert=' "$work/node.log"; then
   fail "unexpected alert: $(grep -m 1 'alert=' "$work/node.log")"
 fi
 
-echo "PASS: every deposit credited once after finality; house NAV equals house deposits"
+echo "PASS: every deposit credited or held once after finality; public log replay verifies"
 if [[ "${RPC_QUORUM_SCENARIO:-0}" == "1" ]]; then
   echo "PASS: fabricated deposit ignored; one outage credits; two halt; recovery credits once"
 fi

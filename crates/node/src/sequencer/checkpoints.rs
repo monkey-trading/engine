@@ -169,6 +169,9 @@ impl Sequencer {
         if let Some(health) = health {
             gate.health = Some(health);
         }
+        self.metrics
+            .withdrawals_paused
+            .set(i64::from(!matches!(gate.health, Some(crate::checkpoints::Health::Healthy))));
         if health != Some(crate::checkpoints::Health::Healthy) {
             return Ok(());
         }

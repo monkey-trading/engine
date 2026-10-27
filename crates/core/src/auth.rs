@@ -134,6 +134,14 @@ impl Engine {
         auth: Option<&RequestAuth>,
         hash: impl FnOnce(&Eip712Domain, &RequestAuth) -> B256,
     ) -> Result<(), Reject> {
+        if self.protocol_version.supports_access() {
+            let domain = self.access_domain().ok_or(Reject::InvalidSignature)?;
+            let auth = auth.ok_or(Reject::MissingSignature)?;
+            if eip712::recover(&hash(&domain, auth), &auth.signature) != Some(account) {
+                return Err(Reject::InvalidSignature);
+            }
+            return self.use_nonce(account, auth);
+        }
         const ORIGINAL: ClientAuth = ClientAuth::Unsigned;
         let rules = if self.protocol_version >= ProtocolVersion::V3 {
             // `ActivateProtocol` refuses `V3` until client auth is recorded.
@@ -164,7 +172,7 @@ impl Engine {
     /// Error cases:
     /// - `InvalidNonce`: a nonce other than `signer`'s next; nothing changes
     /// - `Expired` or `ExpiryTooFar`: see `RequestAuth::check_expiry`; the nonce is used
-    fn use_nonce(&mut self, signer: AccountId, auth: &RequestAuth) -> Result<(), Reject> {
+    pub(crate) fn use_nonce(&mut self, signer: AccountId, auth: &RequestAuth) -> Result<(), Reject> {
         let expected = self.next_request_nonce(signer);
         if auth.nonce != expected {
             return Err(Reject::InvalidNonce { expected });

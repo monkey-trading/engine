@@ -27,6 +27,9 @@ pub struct RootWork {
 
 /// The keys of entries changed since the last root.
 pub(crate) struct Touched {
+    pub(crate) eligibility: BTreeSet<AccountId>,
+    pub(crate) holds: BTreeSet<String>,
+    pub(crate) pending: BTreeSet<String>,
     pub(crate) accounts: BTreeSet<AccountId>,
     pub(crate) markets: BTreeSet<MarketId>,
     pub(crate) nonces: BTreeSet<AccountId>,

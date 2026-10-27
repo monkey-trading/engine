@@ -30,7 +30,7 @@ impl NodeConfig {
     /// Refuses a published test key unless the TEE is the mock. Keys compare by the address they
     /// sign as, so another encoding of a listed key is refused too.
     /// Error cases:
-    /// - `tee.provider` is not `mock` and `operator.public_key` is a published test key
+    /// - `tee.provider` is not `mock` and `operator.public_key` or `access.source` is a published test key
     /// - `operator.public_key`, or a key `config/test-keys.toml` lists, does not parse
     pub(super) fn refuse_test_keys(&self) -> anyhow::Result<()> {
         if self.tee.provider == TeeProvider::Mock {
@@ -38,7 +38,13 @@ impl NodeConfig {
         }
         let operator = public_key_address(&self.operator.public_key).context("operator.public_key")?;
         for key in TestKeys::published()?.operator_public_keys {
-            if public_key_address(&key).with_context(|| format!("config/test-keys.toml: {key}"))? == operator {
+            let published = public_key_address(&key).with_context(|| format!("config/test-keys.toml: {key}"))?;
+            if self.access.as_ref().is_some_and(|access| access.source == published) {
+                bail!(
+                    "access.source is a published test key (config/test-keys.toml); real attestation needs an independent screening authority"
+                );
+            }
+            if published == operator {
                 bail!(
                     "operator.public_key is a published test key (config/test-keys.toml) whose private key anyone \
                      can read; with tee.provider other than \"mock\", use the operator's own key"
@@ -119,6 +125,30 @@ mod tests {
             let operator = cfg.operator().unwrap().address;
             assert!(listed.contains(&operator), "operator {operator} is not in config/test-keys.toml");
         }
+    }
+
+    #[test]
+    fn real_attestation_refuses_a_published_or_plain_http_access_source_and_passes_an_own_https_one() {
+        let with_access = |source: &str, endpoint: &str| {
+            let mut cfg = attested(&own_operator_key());
+            cfg.access = Some(
+                toml::from_str(&format!(
+                    "source='{source}'\nendpoint='{endpoint}'\ntimeout='1s'\nmax_age='30s'\nmax_response_bytes=4096\nmax_in_flight=2"
+                ))
+                .unwrap(),
+            );
+            cfg
+        };
+        let https = "https://screen.example/api";
+        for key in TestKeys::published().unwrap().operator_public_keys {
+            let published = public_key_address(&key).unwrap().to_string();
+            let err = with_access(&published, https).validate().unwrap_err();
+            assert!(format!("{err:#}").contains("access.source is a published test key"), "{key}: {err:#}");
+        }
+        let own = "0x4646464646464646464646464646464646464646";
+        let err = with_access(own, "http://127.0.0.1:18846").validate().unwrap_err();
+        assert!(format!("{err:#}").contains("access HTTP fixtures require the mock TEE"), "{err:#}");
+        with_access(own, https).validate().unwrap();
     }
 
     // ── Helpers ──

@@ -1,3 +1,4 @@
+//! Historical V19 withdrawal/storage fixtures; current envelopes are covered by access tests.
 //! Published mock authority is explicit, stable, and unavailable to hardware attestation.
 
 use std::sync::Arc;
@@ -62,7 +63,7 @@ async fn configured_mock_authority_recovers_completed_withdrawal_history_without
         signed.clone(),
     )
     .unwrap();
-    seq.activate_protocol().unwrap();
+    seq.activate_legacy_protocol().unwrap();
     seq.genesis(&cfg.genesis).unwrap();
     seq.trust(trusted_now()).unwrap();
     let (tx, rx) = mpsc::channel(64);

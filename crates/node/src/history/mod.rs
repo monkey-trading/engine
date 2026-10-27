@@ -66,6 +66,10 @@ pub const KINDS: [&str; 22] = [
     "withdrawal_queue_updated",
     "corporate_dividend",
     "corporate_cash_in_lieu",
+    "eligibility_attested",
+    "eligibility_rejected",
+    "deposit_pending",
+    "deposit_held",
     "staked",
     "unstaked",
     "staking_rejected",
@@ -352,7 +356,10 @@ impl HistoryCheck {
 /// The account an event belongs to, or `None` for an event that names no account.
 pub fn account_of(event: &Event) -> Option<AccountId> {
     match event {
-        Event::Deposited { account, .. }
+        Event::DepositHeld { account, .. } | Event::DepositPending { account, .. } => *account,
+        Event::EligibilityAttested { account, .. }
+        | Event::EligibilityRejected { account, .. }
+        | Event::Deposited { account, .. }
         | Event::DepositRejected { account, .. }
         | Event::WithdrawalApproved { account, .. }
         | Event::WithdrawalQueued { account, .. }

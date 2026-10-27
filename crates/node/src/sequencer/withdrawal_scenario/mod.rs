@@ -34,7 +34,12 @@ struct Barrier {
 /// Error cases:
 /// - the test barrier cannot be read or its reached marker cannot be synced
 pub(crate) fn before_approval_log(sequenced: &Sequenced, events: &[Event]) -> anyhow::Result<()> {
-    let Command::Withdraw { account, auth: Some(auth), .. } = &sequenced.cmd else { return Ok(()) };
+    let request = match &sequenced.cmd {
+        Command::Withdraw { account, auth: Some(auth), .. } => Some((*account, auth.nonce)),
+        Command::AccessWithdraw { request, .. } => request.auth.as_ref().map(|auth| (request.account, auth.nonce)),
+        _ => None,
+    };
+    let Some((account, nonce)) = request else { return Ok(()) };
     if !events.iter().any(|event| matches!(event, Event::WithdrawalApproved { .. })) {
         return Ok(());
     }
@@ -48,7 +53,7 @@ pub(crate) fn before_approval_log(sequenced: &Sequenced, events: &[Event]) -> an
         Err(error) => return Err(error.into()),
     };
     let expected: Barrier = serde_json::from_slice(&bytes)?;
-    if expected.account != *account || expected.nonce != auth.nonce {
+    if expected.account != account || expected.nonce != nonce {
         return Ok(());
     }
     let mut reached = OpenOptions::new().write(true).create_new(true).open(dir.join("barrier.reached"))?;

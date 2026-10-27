@@ -29,11 +29,17 @@ pub(super) async fn payments_and_crashes() -> anyhow::Result<()> {
     let mut node = Node::start("payments-and-crashes").await?;
     let trader = User::new(1)?;
     node.chain.deposit(trader.address(), 100, false).await?;
+    node.client.declare(&trader).await?;
     node.client.wait_balance(&trader, "100").await?;
+    node.client.wait_finalised(&trader).await?;
+    node.wait_withdrawals_enabled().await?;
     let mut stream = node.client.stream().await?;
     let request = node.client.withdrawal(&trader, "10.0000009").await?;
     let events = node.client.request_withdrawal(&request).await?;
-    ensure!(approvals(&events) == [(trader.account, Fixed::from_int(10), 1)], "base-unit approval differs from debit");
+    ensure!(
+        approvals(&events) == [(trader.account, Fixed::from_int(10), 1)],
+        "base-unit approval differs from debit: {events:?}"
+    );
     node.client.wait_balance(&trader, "90").await?;
     let first = stream.payout(trader.account, 10).await?;
     ensure!(
@@ -71,7 +77,7 @@ pub(super) async fn payments_and_crashes() -> anyhow::Result<()> {
     let snapshot = entries(&node.dir.join("log"))?;
     ensure!(
         !snapshot.iter().any(|entry| matches!(entry, LogEntry::Command(command)
-        if matches!(&command.sequenced.cmd, Command::Withdraw { auth: Some(auth), .. } if auth.nonce == nonce))),
+        if matches!(&command.sequenced.cmd, Command::AccessWithdraw { request, .. } if request.auth.as_ref().is_some_and(|auth| auth.nonce == nonce)))),
         "RAM-only approval entered the public log before the barrier"
     );
     std::fs::remove_file(node.dir.join("barrier.arm"))?;
@@ -80,6 +86,7 @@ pub(super) async fn payments_and_crashes() -> anyhow::Result<()> {
     node.restart().await?;
     node.client.wait_balance(&trader, "90").await?;
     ensure!(node.client.nonce(&trader).await? == nonce, "pre-log crash consumed a request nonce");
+    node.wait_withdrawals_enabled().await?;
     let mut stream = node.client.stream().await?;
     node.client.request_withdrawal(&interrupted).await?;
     let durable = stream.payout(trader.account, 7).await?;
@@ -90,6 +97,7 @@ pub(super) async fn payments_and_crashes() -> anyhow::Result<()> {
     node.crash().await?;
     drop(stream);
     node.restart().await?;
+    node.wait_withdrawals_enabled().await?;
     node.client.wait_balance(&trader, "83").await?;
     let mut stream = node.client.stream().await?;
     let recovered_first = stream.payout(trader.account, 10).await?;
@@ -129,7 +137,7 @@ pub(super) async fn payments_and_crashes() -> anyhow::Result<()> {
     drop(stream);
     node.stop().await?;
     let log = entries(&node.dir.join("log"))?;
-    ensure!(log.iter().filter(|entry| matches!(entry, LogEntry::Command(command) if matches!(command.sequenced.cmd, Command::Withdraw { .. }))).count() == 3,
+    ensure!(log.iter().filter(|entry| matches!(entry, LogEntry::Command(command) if matches!(command.sequenced.cmd, Command::AccessWithdraw { .. }))).count() == 3,
         "crash/retry duplicated a withdrawal command");
     replay(&node)?;
     println!(
@@ -152,6 +160,7 @@ pub(super) async fn shortfall_and_fifo() -> anyhow::Result<()> {
     node.client.wait_house_cash("10").await?;
     for user in [&a, &b, &loser] {
         node.chain.deposit(user.address(), 10, false).await?;
+        node.client.declare(user).await?;
         node.client.wait_balance(user, "10").await?;
     }
     // House principal was deposited first, so it is final once every trader deposit is: capacity
@@ -169,6 +178,7 @@ pub(super) async fn shortfall_and_fifo() -> anyhow::Result<()> {
     node.client.wait_balance(&a, "110").await?;
     node.client.wait_balance(&b, "110").await?;
     filled(&node.client.order(&loser, Side::Buy, "0.1").await?)?;
+    node.wait_withdrawals_enabled().await?;
     let mut stream = node.client.stream().await?;
     let request = node.client.withdrawal(&a, "110").await?;
     let events = node.client.request_withdrawal(&request).await?;
@@ -213,6 +223,7 @@ pub(super) async fn shortfall_and_fifo() -> anyhow::Result<()> {
     );
 
     node.chain.deposit(loser.address(), 40, false).await?;
+    node.client.wait_finalised(&loser).await?;
     pay(&node, &stream.payout(a.account, 40).await?).await?;
     queue(&node.client, &[(a.account, "30"), (b.account, "110")]).await?;
     node.chain.deposit(node.chain.funder, 60, true).await?;
@@ -226,6 +237,7 @@ pub(super) async fn shortfall_and_fifo() -> anyhow::Result<()> {
     pay(&node, &follower).await?;
     queue(&node.client, &[(b.account, "80")]).await?;
     node.chain.deposit(loser.address(), 80, false).await?;
+    node.client.wait_finalised(&loser).await?;
     pay(&node, &stream.payout(b.account, 80).await?).await?;
     queue(&node.client, &[]).await?;
     node.client.wait_balance(&loser, "120").await?;

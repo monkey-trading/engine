@@ -1,0 +1,190 @@
+{
+  "source": "Foundry cast wallet sign --threads 1 --data --from-file; public Anvil account 0",
+  "private_key": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+  "chain_id": 31337,
+  "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa3",
+  "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+  "declarations": [
+    {
+      "body": {
+        "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        "class": "professional",
+        "auth": {
+          "nonce": 7,
+          "expires_at": 1792540800000,
+          "signature": "0xf53dfd5dcba6dd0562c726cd2ffeb8378f8e162e5f9592ac35676e5424ec77685b70c915f710941040268a31ec3d63be8777d4359a65f3bd291d8bb999177fcc1b"
+        }
+      },
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "EligibilityRequest": [
+            {
+              "name": "account",
+              "type": "address"
+            },
+            {
+              "name": "nonce",
+              "type": "uint64"
+            },
+            {
+              "name": "expiresAt",
+              "type": "int64"
+            },
+            {
+              "name": "statement",
+              "type": "string"
+            }
+          ]
+        },
+        "primaryType": "EligibilityRequest",
+        "domain": {
+          "name": "monkeytrading",
+          "version": "1",
+          "chainId": 31337,
+          "verifyingContract": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+        },
+        "message": {
+          "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+          "nonce": 7,
+          "expiresAt": 1792540800000,
+          "statement": "I attest that I am a professional client."
+        }
+      }
+    },
+    {
+      "body": {
+        "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        "class": "eligible_client",
+        "auth": {
+          "nonce": 8,
+          "expires_at": 1792540800000,
+          "signature": "0x00ada5a1cb9d7c4e49c95ab79994ba934e2a3af5d25fb8b3168198c69693f8e90299799cc9bbe1a30a2dfa16fa0bea0b22b5f9319dfea1db650fd52a261edf521c"
+        }
+      },
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "EligibilityRequest": [
+            {
+              "name": "account",
+              "type": "address"
+            },
+            {
+              "name": "nonce",
+              "type": "uint64"
+            },
+            {
+              "name": "expiresAt",
+              "type": "int64"
+            },
+            {
+              "name": "statement",
+              "type": "string"
+            }
+          ]
+        },
+        "primaryType": "EligibilityRequest",
+        "domain": {
+          "name": "monkeytrading",
+          "version": "1",
+          "chainId": 31337,
+          "verifyingContract": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+        },
+        "message": {
+          "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+          "nonce": 8,
+          "expiresAt": 1792540800000,
+          "statement": "I attest that I am an eligible client."
+        }
+      }
+    }
+  ],
+  "screenings": [
+    {
+      "body": {
+        "source": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        "request_hash": "0x1212121212121212121212121212121212121212121212121212121212121212",
+        "observed_at": 1792540740000,
+        "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        "payer": null,
+        "jurisdiction": "allowed",
+        "account_status": "clear",
+        "payer_status": "unknown",
+        "signature": "0xeb4b286f047144751de09908ec5d5a726e08b726807c54eba47d6f8cb8b821b050694baa1b49907f4abe0c75b548f757b00aae9198e85fb5f0c68923fda76e091c"
+      },
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "AccessScreening": [
+            {
+              "name": "decision",
+              "type": "string"
+            }
+          ]
+        },
+        "primaryType": "AccessScreening",
+        "domain": {
+          "name": "monkeytrading",
+          "version": "1",
+          "chainId": 31337,
+          "verifyingContract": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+        },
+        "message": {
+          "decision": "{\"source\":\"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266\",\"request_hash\":\"0x1212121212121212121212121212121212121212121212121212121212121212\",\"observed_at\":1792540740000,\"account\":\"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266\",\"payer\":null,\"jurisdiction\":\"allowed\",\"account_status\":\"clear\",\"payer_status\":\"unknown\"}"
+        }
+      }
+    }
+  ]
+}

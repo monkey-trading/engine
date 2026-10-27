@@ -26,7 +26,7 @@ fn receipt_state(engine: &Engine) -> ReceiptState {
 #[test]
 fn accounting_matches_cash_and_references_across_credit_acceptance_rules() {
     for version in
-        [ProtocolVersion::V2, ProtocolVersion::V3, ProtocolVersion::V4, ProtocolVersion::V8, ProtocolVersion::LATEST]
+        [ProtocolVersion::V2, ProtocolVersion::V3, ProtocolVersion::V4, ProtocolVersion::V8, ProtocolVersion::V19]
     {
         let mut engine = Engine::new();
         let mut accounting = Accounting::default();
@@ -93,11 +93,11 @@ fn only_matching_success_events_count_evm_credit_references() {
         deposit(1, "mock-credit"),
         capital(1, "0xcredit"),
     ] {
-        assert!(!evm_credit(&cmd, &credit), "{cmd:?}");
+        assert!(!evm_disposition(&cmd, &credit), "{cmd:?}");
     }
-    assert!(evm_credit(&deposit(1, "0xcredit"), &credit));
-    assert!(!evm_credit(&capital(2, "0xcredit"), &Event::HouseCapitalMoved { amount, nav: amount }));
-    assert!(evm_credit(&capital(0, "0xzero"), &Event::HouseCapitalMoved { amount: Fixed::ZERO, nav: amount }));
+    assert!(evm_disposition(&deposit(1, "0xcredit"), &credit));
+    assert!(!evm_disposition(&capital(2, "0xcredit"), &Event::HouseCapitalMoved { amount, nav: amount }));
+    assert!(evm_disposition(&capital(0, "0xzero"), &Event::HouseCapitalMoved { amount: Fixed::ZERO, nav: amount }));
 }
 
 #[test]
@@ -128,19 +128,25 @@ fn overflow_refuses_the_whole_accounting_batch_without_wrapping() {
     let max = Fixed::from_raw(i128::MAX);
     let cases = [
         (
-            Accounting { liabilities: max, deposits: 2, unpaid: Fixed::ZERO },
+            Accounting { pending: Fixed::ZERO, held: Fixed::ZERO, liabilities: max, deposits: 2, unpaid: Fixed::ZERO },
             deposit(1, "0xoverflow"),
             vec![Event::Deposited { account: TRADER, amount: Fixed::ONE }],
             "liabilities overflow",
         ),
         (
-            Accounting { liabilities: Fixed::from_raw(i128::MIN), deposits: 2, unpaid: Fixed::ZERO },
+            Accounting {
+                pending: Fixed::ZERO,
+                held: Fixed::ZERO,
+                liabilities: Fixed::from_raw(i128::MIN),
+                deposits: 2,
+                unpaid: Fixed::ZERO,
+            },
             capital(-1, "0xunderflow"),
             vec![Event::HouseCapitalMoved { amount: -Fixed::ONE, nav: Fixed::ONE }],
             "liabilities overflow",
         ),
         (
-            Accounting { liabilities: Fixed::ONE, deposits: 2, unpaid: max },
+            Accounting { pending: Fixed::ZERO, held: Fixed::ZERO, liabilities: Fixed::ONE, deposits: 2, unpaid: max },
             deposit(1, "0xatomic"),
             vec![
                 Event::Deposited { account: TRADER, amount: Fixed::ONE },
@@ -149,7 +155,13 @@ fn overflow_refuses_the_whole_accounting_batch_without_wrapping() {
             "unpaid approvals overflow",
         ),
         (
-            Accounting { liabilities: Fixed::ONE, deposits: u64::MAX, unpaid: Fixed::ZERO },
+            Accounting {
+                pending: Fixed::ZERO,
+                held: Fixed::ZERO,
+                liabilities: Fixed::ONE,
+                deposits: u64::MAX,
+                unpaid: Fixed::ZERO,
+            },
             capital(0, "0xcount-overflow"),
             vec![Event::HouseCapitalMoved { amount: Fixed::ZERO, nav: Fixed::ONE }],
             "deposit count overflow",
@@ -172,9 +184,15 @@ fn overflow_refuses_the_whole_accounting_batch_without_wrapping() {
 /// Independent full-state scans, including adopted, live and reversed receipt identities.
 pub(crate) fn recompute(engine: &Engine, unpaid: Fixed) -> (Fixed, u64) {
     let reserved = engine.withdrawal_queue().fold(Fixed::ZERO, |sum, request| sum + request.remaining);
-    let liabilities =
-        engine.accounts().values().fold(engine.house_cash() + unpaid + reserved, |sum, account| sum + account.balance)
-            + Fixed::from_raw(i128::try_from(engine.staking().map_or(0, |s| s.distributed.0)).unwrap() * 1_000);
+    let cash =
+        engine.accounts().values().fold(engine.house_cash() + unpaid + reserved, |sum, account| sum + account.balance);
+    // Uncredited collateral the vault holds: pending and held deposits, receipts among them.
+    let held: Fixed = engine.held_deposits().values().map(|hold| hold.deposit.amount).sum();
+    let pending: Fixed = engine.pending_deposits().values().map(|deposit| deposit.amount).sum();
+    let liabilities = cash
+        + held
+        + pending
+        + Fixed::from_raw(i128::try_from(engine.staking().map_or(0, |s| s.distributed.0)).unwrap() * 1_000);
     let state = receipt_state(engine);
     let historical: BTreeSet<_> = engine.credited_refs_with_prefix("0x").collect();
     let represented: BTreeSet<_> = state
@@ -188,10 +206,20 @@ pub(crate) fn recompute(engine: &Engine, unpaid: Fixed) -> (Fixed, u64) {
         .values()
         .filter(|record| record.status != engine_core::deposits::DepositStatus::Reversed)
         .count();
+    // Uncredited references count at their first held or pending disposition, as the cached count
+    // does; a reference is never both credited and held or pending.
+    let uncredited: BTreeSet<_> = engine
+        .held_deposits()
+        .keys()
+        .chain(engine.pending_deposits().keys())
+        .map(String::as_str)
+        .filter(|reference| reference.starts_with("0x"))
+        .collect();
     let count = |n| u64::try_from(n).expect("state count fits u64");
     let deposits = count(historical.len())
         .checked_sub(count(represented.len()))
         .and_then(|n| n.checked_add(count(live)))
+        .and_then(|n| n.checked_add(count(uncredited.len())))
         .expect("receipt counts are representable");
     (liabilities, deposits)
 }
@@ -225,6 +253,8 @@ pub(crate) fn recompute_work(engine: &Engine, unpaid: Fixed) -> (Fixed, u64, cra
 pub(crate) fn assert_matches(accounting: Accounting, engine: &Engine, unpaid: Fixed) {
     assert_eq!((accounting.liabilities, accounting.deposits), recompute(engine, unpaid));
     assert_eq!(accounting.unpaid(), unpaid);
+    assert_eq!(accounting.held, engine.held_deposits().values().map(|hold| hold.deposit.amount).sum());
+    assert_eq!(accounting.pending, engine.pending_deposits().values().map(|deposit| deposit.amount).sum());
 }
 
 /// Approvals from computed output; signatures do not prove that custody paid them.

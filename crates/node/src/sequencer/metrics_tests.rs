@@ -22,7 +22,7 @@ async fn sequencing_counts_commands_fills_and_rejections_by_reason_and_times_che
     let dir = scratch_dir("seq-metrics");
     // A clock that stands still, so the quotes stay fresh however slowly the commands go through.
     let clock = Arc::new(TestClock::default());
-    let node = TestSequencer::start_at(&dir, 64, clock.clone(), genesis_commands(&dev_config().genesis));
+    let node = TestSequencer::start_legacy_at(&dir, 64, clock.clone(), genesis_commands(&dev_config().genesis));
     let genesis_commands = node.metrics.commands.get();
     let ts = clock.now_ms();
     let quotes =

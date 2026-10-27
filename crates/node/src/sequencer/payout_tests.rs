@@ -339,7 +339,7 @@ impl Node {
         };
         let mut seq =
             Sequencer::recover(cfg, Arc::new(EnclaveKey::test_key()), broadcast::channel(128).0, withdrawals).unwrap();
-        seq.activate_protocol().unwrap();
+        seq.activate_legacy_protocol().unwrap();
         seq.genesis(&dev_config().genesis).unwrap();
         seq.trust(sample_around(clock.as_ref())).unwrap();
         assert_eq!(seq.engine.protocol_version(), ProtocolVersion::V25);

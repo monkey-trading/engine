@@ -22,7 +22,7 @@ const SEND_TIMEOUT: Duration = Duration::from_secs(1);
 #[tokio::test]
 async fn a_feed_from_an_offset_yields_the_log_then_live_messages_once_each() {
     let dir = scratch_dir("feed-from");
-    let node = TestSequencer::start(&dir, 1024);
+    let node = TestSequencer::start_legacy(&dir, 1024);
     node.submit(deposit(100, "dep-1")).await;
     let mut feed =
         Feed::new(node.stream.subscribe(), dir.clone(), node.manifest.clone(), permits(), Some(Offset::start_of(0)));
@@ -39,7 +39,7 @@ async fn a_feed_from_an_offset_yields_the_log_then_live_messages_once_each() {
 #[tokio::test]
 async fn a_feed_resumed_between_two_messages_of_one_seq_starts_at_the_second() {
     let dir = scratch_dir("feed-mid-seq");
-    let node = TestSequencer::start(&dir, 1024);
+    let node = TestSequencer::start_legacy(&dir, 1024);
     node.submit(deposit(100, "dep-1")).await;
     let seq = node.tick_to_checkpoint().await;
     node.submit(withdraw(40)).await;
@@ -57,7 +57,7 @@ async fn a_feed_resumed_between_two_messages_of_one_seq_starts_at_the_second() {
 #[tokio::test]
 async fn a_feed_that_falls_behind_the_live_channel_catches_up_from_disk() {
     let dir = scratch_dir("feed-lag");
-    let node = TestSequencer::start(&dir, 2);
+    let node = TestSequencer::start_legacy(&dir, 2);
     let mut feed = Feed::new(node.stream.subscribe(), dir.clone(), node.manifest.clone(), permits(), None);
     node.submit(deposit(100, "dep-1")).await;
     let first = next_msg(&mut feed).await;
@@ -73,7 +73,7 @@ async fn a_feed_that_falls_behind_the_live_channel_catches_up_from_disk() {
 #[tokio::test]
 async fn a_live_feed_starts_at_the_next_message_and_one_that_lags_before_it_starts_later() {
     let dir = scratch_dir("feed-live");
-    let node = TestSequencer::start(&dir, 2);
+    let node = TestSequencer::start_legacy(&dir, 2);
     let mut feed = Feed::new(node.stream.subscribe(), dir.clone(), node.manifest.clone(), permits(), None);
     assert_next_is_the_next_command(&node, &mut feed).await;
 
@@ -117,7 +117,7 @@ async fn a_backfill_stops_at_the_last_flush_while_a_batch_is_written() {
 #[tokio::test]
 async fn a_feed_backfills_past_one_batch_from_disk() {
     let dir = scratch_dir("feed-batches");
-    let node = TestSequencer::start(&dir, 1024);
+    let node = TestSequencer::start_legacy(&dir, 1024);
     for n in 0..BACKFILL_BATCH {
         node.submit(deposit(1, &format!("dep-{n}"))).await;
     }
@@ -132,7 +132,7 @@ async fn a_feed_backfills_past_one_batch_from_disk() {
 #[tokio::test]
 async fn a_backfill_reads_a_batch_only_with_a_permit_and_returns_it_after() {
     let dir = scratch_dir("feed-permits");
-    let node = TestSequencer::start(&dir, 1024);
+    let node = TestSequencer::start_legacy(&dir, 1024);
     for n in 0..BACKFILL_BATCH {
         node.submit(deposit(1, &format!("dep-{n}"))).await;
     }
@@ -164,7 +164,7 @@ async fn a_backfill_reads_a_batch_only_with_a_permit_and_returns_it_after() {
 #[tokio::test]
 async fn a_feed_from_a_seq_refuses_a_live_message_past_that_seq() {
     let dir = scratch_dir("feed-missing-start");
-    let node = TestSequencer::start(&dir, 1024);
+    let node = TestSequencer::start_legacy(&dir, 1024);
     let seq = node.next_seq().await;
     let mut feed =
         Feed::new(node.stream.subscribe(), dir.clone(), node.manifest.clone(), permits(), Some(Offset::start_of(seq)));
@@ -282,7 +282,7 @@ async fn every_arm_stays_live_while_another_is_busy() {
 #[tokio::test]
 async fn a_feed_refuses_to_go_live_past_history_missing_from_disk() {
     let dir = scratch_dir("feed-tail-gap");
-    let node = TestSequencer::start(&dir, 1024);
+    let node = TestSequencer::start_legacy(&dir, 1024);
     // Stop right after a rotation, so the tick below lands in the open segment.
     let mut n = 0;
     while node.manifest.borrow().segments.len() < 2 || newest_segment(&dir) + 1 != node.next_seq().await {

@@ -6,6 +6,7 @@ use std::num::NonZeroU32;
 use std::path::Path;
 use std::time::Duration;
 
+use engine_core::command::{Command, WithdrawalRequest};
 use futures_util::StreamExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -13,8 +14,8 @@ use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
-use crate::clock::Clock;
 use crate::clock::test_clock::TestClock;
+use crate::clock::{Clock, now_ms};
 use crate::config::RateLimit;
 use crate::history::{HistoryEvent, INDEX_FILE, account_of};
 use crate::log::{LogEntry, MANIFEST, Manifest, Offset, SegmentedLog, segment_seq};
@@ -37,7 +38,7 @@ const REFERENCE_LOG: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/referenc
 #[tokio::test]
 async fn dev_scenario_resume_between_messages_of_one_seq_and_replay_the_archive() {
     let dir = scratch_dir("dev-scenario");
-    let node = TestSequencer::start(&dir, 1024);
+    let node = TestSequencer::start_legacy(&dir, 1024);
     let addr = serve(&node, &dir).await;
     node.submit(deposit(100, "dep-1")).await;
     let seq = node.tick_to_checkpoint().await;
@@ -90,7 +91,7 @@ async fn dev_scenario_resume_between_messages_of_one_seq_and_replay_the_archive(
 #[tokio::test]
 async fn the_archive_serves_the_enclave_manifest_and_completed_segments_only() {
     let dir = scratch_dir("archive-routes");
-    let node = TestSequencer::start(&dir, 16);
+    let node = TestSequencer::start_legacy(&dir, 16);
     let addr = serve(&node, &dir).await;
     for n in 0..2 * SEGMENT_COMMANDS {
         node.submit(deposit(1, &format!("dep-{n}"))).await;
@@ -124,7 +125,7 @@ async fn the_archive_serves_the_enclave_manifest_and_completed_segments_only() {
 #[tokio::test]
 async fn the_archive_serves_only_what_the_enclave_manifest_lists() {
     let dir = scratch_dir("archive-empty");
-    let node = TestSequencer::start(&dir, 16);
+    let node = TestSequencer::start_legacy(&dir, 16);
     // Segment 0 is complete on disk, but this manifest lists nothing.
     let addr = serve_with(&node, &dir, watch::channel(Manifest::default()).1).await;
     assert_eq!(get(addr, &format!("/v1/archive/{MANIFEST}")).await, (200, Vec::new()));
@@ -169,7 +170,7 @@ async fn dev_scenario_page_account_history_one_event_at_a_time_across_a_restart(
     // The node resumes under the genesis the reference log finished, not the dev config's.
     let genesis = finished_genesis(&reference);
 
-    let node = TestSequencer::start_at(&dir, 1024, clock.clone(), genesis.clone());
+    let node = TestSequencer::start_legacy_at(&dir, 1024, clock.clone(), genesis.clone());
     let history = TestHistory::start(&node, &dir, &index).await.unwrap();
     node.submit(deposit(100, "dep-1")).await;
     node.submit(withdraw(40)).await;
@@ -183,7 +184,7 @@ async fn dev_scenario_page_account_history_one_event_at_a_time_across_a_restart(
     }
 
     let segments = Manifest::load(&dir).unwrap().segments.len();
-    let node = TestSequencer::start_at(&dir, 1024, clock.clone(), genesis.clone());
+    let node = TestSequencer::start_legacy_at(&dir, 1024, clock.clone(), genesis.clone());
     let history = TestHistory::start(&node, &dir, &index).await.unwrap();
     for n in 0..SEGMENT_COMMANDS {
         node.submit(deposit(1, &format!("dep-rotate-{n}"))).await;
@@ -199,7 +200,7 @@ async fn dev_scenario_page_account_history_one_event_at_a_time_across_a_restart(
     assert_eq!(second[&TRADER].len(), first[&TRADER].len() + SEGMENT_COMMANDS as usize);
 
     fs::remove_dir_all(&index).unwrap();
-    let node = TestSequencer::start_at(&dir, 1024, clock.clone(), genesis.clone());
+    let node = TestSequencer::start_legacy_at(&dir, 1024, clock.clone(), genesis.clone());
     let history = TestHistory::start(&node, &dir, &index).await.unwrap();
     node.stop().await;
     history.finish().await.unwrap();
@@ -209,7 +210,7 @@ async fn dev_scenario_page_account_history_one_event_at_a_time_across_a_restart(
 #[tokio::test]
 async fn history_refuses_a_malformed_address_cursor_kind_or_limit() {
     let (dir, index) = (scratch_dir("history-params"), scratch_dir("history-params-index"));
-    let node = TestSequencer::start(&dir, 16);
+    let node = TestSequencer::start_legacy(&dir, 16);
     let history = TestHistory::start(&node, &dir, &index).await.unwrap();
     node.submit(deposit(100, "dep-1")).await;
     node.stop().await;
@@ -228,7 +229,7 @@ async fn history_refuses_a_malformed_address_cursor_kind_or_limit() {
 #[tokio::test]
 async fn history_answers_503_while_catching_up_and_500_when_unreadable() {
     let (dir, index) = (scratch_dir("history-unavailable"), scratch_dir("history-unavailable-index"));
-    let node = TestSequencer::start(&dir, 16);
+    let node = TestSequencer::start_legacy(&dir, 16);
     let history = TestHistory::start(&node, &dir, &index).await.unwrap();
     node.submit(deposit(100, "dep-1")).await;
     node.stop().await;
@@ -244,7 +245,7 @@ async fn history_answers_503_while_catching_up_and_500_when_unreadable() {
 #[tokio::test]
 async fn the_stream_refuses_after_and_from_together_or_a_malformed_offset() {
     let dir = scratch_dir("stream-params");
-    let node = TestSequencer::start(&dir, 16);
+    let node = TestSequencer::start_legacy(&dir, 16);
     let addr = serve(&node, &dir).await;
     for query in ["after=1:0&from=0", "after=1", "from=x", "since=0"] {
         let err = connect_async(format!("ws://{addr}/v1/stream?{query}")).await.err().unwrap();
@@ -266,7 +267,7 @@ fn retry_after_is_the_wait_in_whole_seconds_rounded_up() {
 async fn withdrawals_are_refused_while_custody_cannot_pay_them_out() {
     let (state, mut rx) = api_state(false);
     let request = WithdrawalRequest { account: AccountId([0xaa; 20]), amount: Fixed::from_int(5), auth: None };
-    let answer = timeout(Duration::from_secs(5), super::withdraw(State(state), Json(request)));
+    let answer = timeout(Duration::from_secs(5), super::withdraw(State(state), None, Json(request)));
     let res = answer.await.expect("the endpoint answers without waiting on the sequencer");
     assert!(matches!(res, Err(ApiError::NotImplemented(_))));
     assert!(rx.try_recv().is_err(), "nothing may reach the sequencer");
@@ -311,6 +312,8 @@ fn mock_attestation() -> Arc<Attestation> {
 /// Serves the API for `node`, with `dir` as its log directory and `manifest` as the writer's.
 async fn serve_with(node: &TestSequencer, dir: &Path, manifest: watch::Receiver<Manifest>) -> SocketAddr {
     serve_state(ApiState {
+        protocol: engine_core::protocol::ProtocolVersion::V23,
+        access: None,
         tx: node.tx.clone(),
         stream: node.stream.clone(),
         attestation: mock_attestation(),
@@ -337,6 +340,8 @@ async fn serve_history(history: Reader) -> SocketAddr {
     let ample = NonZeroU32::new(1_000_000).unwrap();
     api.per_ip = RateLimit { per_second: ample, burst: ample };
     serve_state(ApiState {
+        protocol: engine_core::protocol::ProtocolVersion::V23,
+        access: None,
         tx: mpsc::channel(1).0,
         stream: broadcast::channel(1).0,
         attestation: mock_attestation(),
@@ -443,6 +448,8 @@ pub(super) fn api_state(mock_custody: bool) -> (ApiState, mpsc::Receiver<sequenc
     let (stream, _) = broadcast::channel(1);
     let (_, manifest) = watch::channel(Manifest::default());
     let state = ApiState {
+        protocol: engine_core::protocol::ProtocolVersion::V23,
+        access: None,
         tx,
         stream,
         attestation,

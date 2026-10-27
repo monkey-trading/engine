@@ -18,7 +18,7 @@ use crate::test_support::{
 #[tokio::test]
 async fn startup_resumes_a_history_index_its_read_of_the_log_matches() {
     let (dir, index) = (scratch_dir("node-history-resumes"), scratch_dir("node-history-resumes-index"));
-    let node = TestSequencer::start(&dir, 1024);
+    let node = TestSequencer::start_legacy(&dir, 1024);
     let history = TestHistory::start(&node, &dir, &index).await.unwrap();
     node.submit(deposit(1, "dep-1")).await;
     node.stop().await;
@@ -96,7 +96,7 @@ async fn a_history_index_the_node_cannot_discard_stops_it_before_it_writes_to_th
 #[tokio::test]
 async fn a_genesis_cut_short_stops_the_node_before_it_writes_to_the_log() {
     let (dir, index) = (scratch_dir("node-genesis-cut"), scratch_dir("node-genesis-cut-index"));
-    TestSequencer::start(&dir, 1024).stop().await;
+    TestSequencer::start_legacy(&dir, 1024).stop().await;
     // As if the boot that ran genesis died before its house capital credit reached disk.
     let segment = files(&dir).into_keys().filter(|name| segment_seq(name).is_some()).max().expect("a segment");
     let text = fs::read_to_string(dir.join(&segment)).unwrap();
@@ -154,7 +154,7 @@ fn telemetry() -> (Telemetry, AlertLayer) {
 /// its first deposit, and an index that took a second deposit the log then lost.
 async fn index_ahead_of_log(name: &str) -> (PathBuf, PathBuf) {
     let (dir, index) = (scratch_dir(name), scratch_dir(&format!("{name}-index")));
-    let node = TestSequencer::start(&dir, 1024);
+    let node = TestSequencer::start_legacy(&dir, 1024);
     let history = TestHistory::start(&node, &dir, &index).await.unwrap();
     node.submit(deposit(1, "dep-1")).await;
     let kept = scratch_dir(&format!("{name}-kept"));

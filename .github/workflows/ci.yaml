@@ -288,6 +288,8 @@ jobs:
         run: ./scripts/dev-deposit-finality.sh
       - name: Run signed withdrawals, crash recovery, and FIFO liquidity on Anvil
         run: ./scripts/dev-withdrawals.sh
+      - name: Run the API and direct-vault access enforcement dev scenario
+        run: ./scripts/dev-access-enforcement.sh
 
   dev-metrics-alerts:
     needs: changes

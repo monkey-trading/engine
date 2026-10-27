@@ -9,6 +9,7 @@ use sha3::{Digest, Keccak256};
 
 mod touched;
 use crate::Fixed;
+use crate::access::AccessPolicy;
 use crate::account::Position;
 use crate::auth::{ClientAuth, Operator};
 use crate::benchmark::BenchmarkHistory;
@@ -19,10 +20,11 @@ use crate::merkle::leaf::{deposit_key, deposit_transaction_key, legacy_deposit_k
 use crate::merkle::{
     AccountLeaf, AccountProof, DistributionProof, EntitlementProof, MarketLeaf, MarketProof, PositionProof,
     SparseMerkleTree, WithdrawalApprovalProof, account_key, corporate_action_key, corporate_reference_key,
-    credited_ref_hash, credited_ref_key, distribution_hash, distribution_key, entitlement_hash, entitlement_key,
-    globals_key, json_hash, market_key, markout_hash, markout_key, order_hash, order_key, period_result_hash,
-    period_result_key, position_hash, position_key, request_nonce_hash, request_nonce_key, staked_hash, staked_key,
-    withdrawal_approval_hash, withdrawal_approval_key, withdrawal_queue_hash, withdrawal_queue_key,
+    credited_ref_hash, credited_ref_key, distribution_hash, distribution_key, eligibility_key, entitlement_hash,
+    entitlement_key, globals_key, held_deposit_key, json_hash, market_key, markout_hash, markout_key, order_hash,
+    order_key, pending_deposit_key, period_result_hash, period_result_key, position_hash, position_key,
+    request_nonce_hash, request_nonce_key, staked_hash, staked_key, withdrawal_approval_hash, withdrawal_approval_key,
+    withdrawal_queue_hash, withdrawal_queue_key,
 };
 use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
@@ -78,6 +80,8 @@ struct Globals<'a> {
     /// From `V25`; omitted until staking is initialised, so earlier roots stand.
     #[serde(skip_serializing_if = "Option::is_none")]
     staking: &'a Option<Staking>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    access_policy: &'a Option<AccessPolicy>,
 }
 
 impl Engine {
@@ -116,6 +120,9 @@ impl Engine {
             withdrawal_approvals,
             corporate_actions,
             corporate_refs,
+            eligibility,
+            holds,
+            pending,
             changed: Changed { markouts, positions, orders },
         } = match &self.tree {
             Some(_) => touched,
@@ -160,6 +167,18 @@ impl Engine {
             legacy_deposits
                 .iter()
                 .map(|reference| (legacy_deposit_key(reference), self.legacy_deposits.get(reference).map(json_hash))),
+        );
+        changes
+            .extend(eligibility.into_iter().map(|id| (eligibility_key(id), self.eligibility.get(&id).map(json_hash))));
+        changes.extend(
+            holds
+                .into_iter()
+                .map(|reference| (held_deposit_key(&reference), self.held_deposits.get(&reference).map(json_hash))),
+        );
+        changes.extend(
+            pending.into_iter().map(|reference| {
+                (pending_deposit_key(&reference), self.pending_deposits.get(&reference).map(json_hash))
+            }),
         );
         changes.extend(markouts.into_iter().map(|index| (markout_key(index), self.markout(index).map(markout_hash))));
         let position_leaves: Vec<((AccountId, MarketId), Option<Position>)> = positions
@@ -387,6 +406,9 @@ impl Engine {
             withdrawal_approvals: self.withdrawal_approvals.take_touched(),
             corporate_actions: self.corporate_actions.take_touched(),
             corporate_refs: self.corporate_refs.take_touched(),
+            eligibility: self.eligibility.take_touched(),
+            holds: self.held_deposits.take_touched(),
+            pending: self.pending_deposits.take_touched(),
             changed: std::mem::take(&mut self.changed),
         }
     }
@@ -411,6 +433,9 @@ impl Engine {
             withdrawal_approvals: self.withdrawal_approvals.keys().copied().collect(),
             corporate_actions: self.corporate_actions.keys().cloned().collect(),
             corporate_refs: self.corporate_refs.iter().cloned().collect(),
+            eligibility: self.eligibility.keys().copied().collect(),
+            holds: self.held_deposits.keys().cloned().collect(),
+            pending: self.pending_deposits.keys().cloned().collect(),
             changed: Changed {
                 markouts: (self.markout_base..).take(self.markouts.len()).collect(),
                 positions: accounts()
@@ -462,6 +487,10 @@ impl Engine {
             staking_refs: _,
             staked: _,
             distributions: _,
+            access_policy,
+            eligibility: _,
+            held_deposits: _,
+            pending_deposits: _,
             changed: _,
             tree: _,
             hot_indexes: _,
@@ -487,6 +516,7 @@ impl Engine {
             withdrawal_cash: *withdrawal_cash,
             withdrawal_next_ticket: *withdrawal_next_ticket,
             staking,
+            access_policy,
         }
     }
 }

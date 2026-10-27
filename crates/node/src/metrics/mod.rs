@@ -27,6 +27,8 @@ use prometheus_client::registry::Registry;
 const CONTENT_TYPE_OPENMETRICS: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
 /// Every `kind` a typed rejection reason can have; see `reject_kind`.
 const REJECT_KINDS: [&str; 22] = [
+    "access",
+    "payout_unavailable",
     "unknown_market",
     "unknown_order",
     "invalid_order",
@@ -103,6 +105,8 @@ pub struct Metrics {
     pub commands: Counter,
     pub batch_seconds: Histogram,
     pub queue_depth: Gauge,
+    pub access_pending_deposits: Gauge,
+    pub withdrawals_paused: Gauge,
     pub fills: Family<MarketLabel, Counter>,
     pub rejections: Family<RejectionLabels, Counter>,
     pub last_checkpoint_seconds: FloatGauge,
@@ -130,6 +134,8 @@ impl Metrics {
             // 50µs to about 1.6s.
             batch_seconds: Histogram::new(exponential_buckets(0.000_05, 2.0, 16)),
             queue_depth: Gauge::default(),
+            access_pending_deposits: Gauge::default(),
+            withdrawals_paused: Gauge::default(),
             fills: Family::default(),
             rejections: Family::default(),
             last_checkpoint_seconds: FloatGauge::default(),
@@ -158,6 +164,16 @@ impl Metrics {
             metrics.batch_seconds.clone(),
         );
         r.register("sequencer_queue_depth", "Requests waiting for the sequencer", metrics.queue_depth.clone());
+        r.register(
+            "access_pending_deposits",
+            "Deposits awaiting automatic source screening retry",
+            metrics.access_pending_deposits.clone(),
+        );
+        r.register(
+            "withdrawals_paused",
+            "Whether the custody checkpoint gate pauses withdrawal approvals (1 paused, 0 healthy)",
+            metrics.withdrawals_paused.clone(),
+        );
         r.register("fills", "Fills, by market", metrics.fills.clone());
         r.register("rejections", "Rejection events, by event type and reason", metrics.rejections.clone());
         r.register(
@@ -232,6 +248,15 @@ impl Metrics {
     pub fn record(&self, event: &Event) {
         let rejection = |event, reason| self.rejections.get_or_create(&RejectionLabels { event, reason }).inc();
         match event {
+            Event::EligibilityRejected { reason, .. } => {
+                rejection("eligibility_rejected", reject_kind(reason));
+            }
+            Event::DepositPending { .. } => {
+                rejection("deposit_pending", "access");
+            }
+            Event::DepositHeld { .. } => {
+                rejection("deposit_held", "access");
+            }
             Event::Fill(fill) => {
                 self.fills.get_or_create(&MarketLabel { market: fill.market }).inc();
             }
@@ -298,6 +323,8 @@ fn deposit_reject_kind(reason: &DepositReject) -> &'static str {
 /// A rejection reason's `kind` in the public log.
 fn reject_kind(reason: &Reject) -> &'static str {
     match reason {
+        Reject::Access { .. } => "access",
+        Reject::PayoutUnavailable => "payout_unavailable",
         Reject::UnknownMarket => "unknown_market",
         Reject::UnknownOrder => "unknown_order",
         Reject::InvalidOrder { .. } => "invalid_order",

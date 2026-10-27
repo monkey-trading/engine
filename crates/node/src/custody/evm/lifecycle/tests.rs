@@ -101,6 +101,7 @@ fn deposit() -> VaultDeposit {
         log_index: 3,
         id: 0,
         beneficiary: Beneficiary::Trader(AccountId([1; 20])),
+        payer: None,
         units: U256::from(10_000_000),
     }
 }
@@ -114,9 +115,11 @@ fn plan(
     let recorded: Vec<_> = pending
         .iter()
         .map(|receipt| RecordedDeposit {
+            payer: None,
             receipt: receipt.clone(),
             status: DepositStatus::Unfinalised,
             updated_at_seq: 0,
+            uncredited: None,
         })
         .collect();
     reconcile(&recorded, canonical, hashes, at_head)

@@ -132,6 +132,8 @@ pub enum ProtocolVersion {
     /// rounding each scaled price and quantity once, before ex-date opening execution, in
     /// chronological order with financing. A failed split blocks its market and its financing.
     V23,
+    /// Signed eligibility declarations and fail-closed API and custody access screening.
+    V24,
     /// MONKEY staking and USDC distributions (`staking`): once the operator's initialisation
     /// records a liquidity floor, an epoch length, and a start, each epoch the house NAV above the
     /// floor is distributed to stakers pro-rata from the staked snapshot at the epoch's close,
@@ -140,6 +142,8 @@ pub enum ProtocolVersion {
     /// mirror the staking contract's finalised events, each credited once under its chain
     /// reference.
     V25,
+    /// Screen canonical replacement payers and retain terminal holds across receipt variants.
+    V26,
     /// Staking mirror identities and completed finalized scan ranges are authenticated in the state root.
     V27,
 }
@@ -147,6 +151,11 @@ pub enum ProtocolVersion {
 impl ProtocolVersion {
     /// The newest version this build implements.
     pub const LATEST: ProtocolVersion = ProtocolVersion::V27;
+
+    /// Whether access screening applies; the standalone legacy V25 rules predate access.
+    pub fn supports_access(self) -> bool {
+        self == Self::V24 || self >= Self::V26
+    }
 
     /// Whether this rule set credits exact receipts with withdrawal principal locks.
     pub fn supports_deposit_finality(self) -> bool {

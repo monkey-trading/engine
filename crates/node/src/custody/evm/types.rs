@@ -89,6 +89,8 @@ pub struct VaultDeposit {
     /// The vault's id for it; trader and house deposits share one sequence.
     pub id: u64,
     pub beneficiary: Beneficiary,
+    /// The actual vault caller; absent for legacy events.
+    pub payer: Option<AccountId>,
     /// USDC base units the vault received.
     pub units: U256,
 }

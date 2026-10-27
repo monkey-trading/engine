@@ -146,20 +146,27 @@ cargo test --workspace
 cargo run -p engine-node -- run --config config/dev.toml
 ```
 
-In another terminal, credit a test account, buy 0.25 BTC at the live price, and read the account
-and its history:
+In another terminal, read the node's health and markets:
 
 ```bash
 API=https://localhost:8080
-ACCOUNT=0x00000000000000000000000000000000000000aa
-curl -sk -X POST $API/v1/dev/deposit -H 'content-type: application/json' \
-  -d "{\"account\":\"$ACCOUNT\",\"amount\":\"50000\"}"
-PRICE=$(curl -sk $API/v1/markets | jq -r '.[] | select(.symbol == "BTC-USD") | .mark')
-curl -sk -X POST $API/v1/orders -H 'content-type: application/json' \
-  -d "{\"account\":\"$ACCOUNT\",\"client_id\":1,\"market\":1,\"side\":\"buy\",\"qty\":\"0.25\",\"kind\":{\"kind\":\"market\",\"quoted\":\"$PRICE\"}}"
-curl -sk $API/v1/accounts/$ACCOUNT
-curl -sk "$API/v1/accounts/$ACCOUNT/history?limit=10"
+curl -sk $API/v1/health
+curl -sk $API/v1/markets
 ```
+
+From V24, funding and trading require a configured access source and the account's signed
+eligibility declaration, including with mock custody. The default config leaves screening
+unconfigured and those actions closed. With Foundry's `anvil`, `forge` and `cast`, install the
+pinned contract dependencies and run the complete local funding and trading scenario:
+
+```bash
+(cd contracts && forge soldeer install)
+./scripts/dev-access-enforcement.sh
+```
+
+The scenario uses explicit public test keys and a signed synthetic source. See
+[access-source configuration](config/access-source.md) for declarations, provider integration,
+public refusal evidence and promotion requirements.
 
 `-k` only skips the CA check that a self-signed certificate cannot pass. What makes a connection
 trustworthy is pinning the attested key. The attestation serves a `bundle` whose SHA-256 is the
