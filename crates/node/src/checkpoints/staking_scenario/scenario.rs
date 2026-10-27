@@ -12,8 +12,8 @@ use alloy::primitives::{Address, Bytes, U64, U256};
 use alloy::rpc::client::RpcClient;
 use alloy::rpc::types::TransactionRequest;
 use alloy::sol_types::{SolCall, SolValue};
-use axum::Router;
-use axum::extract::connect_info::MockConnectInfo;
+use axum::extract::ConnectInfo;
+use axum::{Extension, Router};
 use engine_core::Fixed;
 use engine_core::auth::{ClientAuth, Operator};
 use engine_core::emissions::TokenUnits;
@@ -245,7 +245,7 @@ impl Scenario {
             payouts_enabled: true,
             listing: Default::default(),
         };
-        let app = router(state.clone()).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9))));
+        let app = router(state.clone()).layer(Extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9)))));
         self.node = Some(Node { app, state, sequencer, poster });
     }
 
