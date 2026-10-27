@@ -237,7 +237,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     send(&provider, relayer, vault, bookSurplusCall {}.abi_encode()).await;
     timeout(Duration::from_secs(10), async {
         while house(&tx).await != Fixed::from_int(100)
-            || held(&tx).await.len() != 1
+            || source::held(&tx).await.len() != 1
             || submit(&tx, sequenced()).await.is_none()
         {
             submit(&tx, Command::Tick).await;
@@ -246,7 +246,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     })
     .await
     .unwrap();
-    assert_eq!(held(&tx).await[0].1, AccessReject::PayerMissing, "a surplus is held, never credited");
+    assert_eq!(source::held(&tx).await[0].1, AccessReject::PayerMissing, "a surplus is held, never credited");
     while alerts.try_recv().is_ok() {}
 
     // Anvil impersonation is confined to this local test; no production token has this cheat.
@@ -453,18 +453,6 @@ async fn house(tx: &mpsc::Sender<Request>) -> Fixed {
     let (reply, rx) = oneshot::channel();
     tx.send(Request::Query(Box::new(move |engine| {
         let _ = reply.send(engine.house_cash());
-    })))
-    .await
-    .unwrap();
-    timeout(Duration::from_secs(3), rx).await.unwrap().unwrap()
-}
-
-/// The held deposits and their reasons, in reference order.
-async fn held(tx: &mpsc::Sender<Request>) -> Vec<(String, AccessReject)> {
-    let (reply, rx) = oneshot::channel();
-    tx.send(Request::Query(Box::new(move |engine| {
-        let _ = reply
-            .send(engine.held_deposits().iter().map(|(reference, held)| (reference.clone(), held.reason)).collect());
     })))
     .await
     .unwrap();

@@ -64,6 +64,20 @@ pub(super) async fn await_pending(tx: &tokio::sync::mpsc::Sender<crate::sequence
     .unwrap();
 }
 
+/// The held deposits and their reasons, in reference order.
+pub(super) async fn held(
+    tx: &tokio::sync::mpsc::Sender<crate::sequencer::Request>,
+) -> Vec<(String, engine_core::access::AccessReject)> {
+    let (reply, rx) = tokio::sync::oneshot::channel();
+    tx.send(crate::sequencer::Request::Query(Box::new(move |engine| {
+        let _ = reply
+            .send(engine.held_deposits().iter().map(|(reference, held)| (reference.clone(), held.reason)).collect());
+    })))
+    .await
+    .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), rx).await.unwrap().unwrap()
+}
+
 /// The undeclared account's pending deposit and the credit reconcile to both real vault deposits.
 pub(super) fn assert_pending_reconciliation(replayed: &crate::sequencer::Replayed) {
     use engine_core::Fixed;
