@@ -393,7 +393,7 @@ fn replay(node: &Node) -> anyhow::Result<()> {
         Some(node.chain.signer),
     )?;
     ensure!(
-        replayed.engine.protocol_version() == engine_core::protocol::LATEST,
+        replayed.engine.protocol_version() == engine_core::protocol::ProtocolVersion::LATEST,
         "node boot did not activate the latest protocol"
     );
     Ok(())
