@@ -129,19 +129,24 @@ impl Sequencer {
             releases.push((key, payout.approval, authorization));
             gate.schedule.selected(order);
         }
+        let batch = releases.len();
         for (key, approval, authorization) in releases {
-            self.log.sync()?;
             let mut withdrawal = self.unsigned_payout(approval, authorization);
             withdrawal.signature = self.key.sign_payout(&withdrawal)?;
             let auth = withdrawal.authorization.as_ref().expect("constructed typed payout");
             let released = (auth.signer_epoch, auth.expires_at);
             self.record(LogEntry::Withdrawal(withdrawal))?;
-            self.log.sync()?;
             let gate = self.gate.as_mut().expect("checkpoint gate exists");
             let payout = gate.payouts.get_mut(&key).expect("pending payout exists");
             gate.schedule.issued(payout.order, key, payout.released, released.1);
             payout.released = Some(released);
             info!(account = %approval.account, nonce = approval.nonce, approval_seq = approval.approved_seq, "durable withdrawal authorization issued");
+        }
+        if batch > 0 {
+            // One sync per released batch, not per authorization: custody and the stream see a
+            // signature only after `flush` syncs again, and each release used to cost two syncs on
+            // the sequencer thread.
+            self.log.sync()?;
         }
         Ok(())
     }
