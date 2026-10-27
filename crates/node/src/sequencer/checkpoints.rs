@@ -77,7 +77,7 @@ impl Sequencer {
             return Ok(());
         }
         if self.gate.as_ref().is_some_and(|gate| {
-            gate.health.is_none() || matches!(gate.health, Some(crate::checkpoints::Health::Diverged))
+            !matches!(gate.health, Some(crate::checkpoints::Health::Healthy | crate::checkpoints::Health::Pending))
         }) {
             // A signed checkpoint is public: anyone may relay it to the vault, and its root makes
             // distributions claimable. Recovery must revalidate its finalized anchor before
@@ -172,7 +172,7 @@ impl Sequencer {
         health: Option<crate::checkpoints::Health>,
     ) -> anyhow::Result<()> {
         let Some(gate) = &mut self.gate else { return Ok(()) };
-        if let Some(health) = health {
+        if let Some(health) = health.filter(|health| *health != crate::checkpoints::Health::Unvalidated) {
             gate.health = Some(health);
         }
         self.metrics

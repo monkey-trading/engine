@@ -184,12 +184,12 @@ async fn latest_inclusion_never_authorizes_release_and_waiting_finality_does_not
     let finalized = Arc::new(Mutex::new(poster.chain.state.lock().unwrap().clone()));
     poster.chain.finalized = Some(finalized.clone());
     for _ in 0..3 {
-        assert_eq!(poster.reconcile(&work).await.unwrap(), (None, Health::Pending));
+        assert_eq!(poster.reconcile(&work).await.unwrap(), (None, Health::Unvalidated));
     }
     assert_eq!(*poster.chain.posts.lock().unwrap(), 1, "latest inclusion waits without a duplicate relay");
     poster.startup(None).await.unwrap(); // An unfinalized inclusion cannot become a rollback guarantee.
     poster.chain.state.lock().unwrap().checkpoint = None; // Honest shallow reorg orphans inclusion.
-    assert_eq!(poster.reconcile(&work).await.unwrap(), (None, Health::Pending));
+    assert_eq!(poster.reconcile(&work).await.unwrap(), (None, Health::Unvalidated));
     assert_eq!(*poster.chain.posts.lock().unwrap(), 2, "orphaned inclusion may be relayed again");
     *finalized.lock().unwrap() = poster.chain.state.lock().unwrap().clone();
     assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(work.checkpoint.seq), Health::Healthy));
@@ -257,7 +257,7 @@ async fn a_provisional_then_orphaned_approval_never_releases_a_signature() {
             *poster.chain.state.lock().unwrap() = state.clone();
         }
         let (posted, health) = poster.reconcile(&work).await.unwrap();
-        assert_eq!((posted, health), (None, Health::Pending));
+        assert_eq!((posted, health), (None, Health::Unvalidated));
         tx.send(Request::CheckpointStatus { posted, health: Some(health), lifecycle: None }).await.unwrap();
         sync(&tx).await;
         assert!(signed_rx.try_recv().is_err(), "unfinalized or orphaned inclusion cannot release an approval");

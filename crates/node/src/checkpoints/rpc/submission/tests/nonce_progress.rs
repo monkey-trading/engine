@@ -21,7 +21,7 @@ async fn rejected_submission_public_finality_and_successor_reuse_survive_restart
             state.reject_send = false;
             state.latest = Some(a.checkpoint.clone());
         }
-        assert_eq!(worker.reconcile(&a).await.unwrap(), (None, Health::Pending));
+        assert_eq!(worker.reconcile(&a).await.unwrap(), (None, Health::Unvalidated));
         assert_eq!(server.state.lock().unwrap().sent.len(), 1, "latest A suppresses another send");
         server.state.lock().unwrap().finalized = Some(a.checkpoint.clone());
         assert_eq!(worker.reconcile(&a).await.unwrap(), (Some(10), Health::Healthy));

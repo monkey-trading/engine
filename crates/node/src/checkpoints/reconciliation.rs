@@ -185,9 +185,9 @@ impl<R: CheckpointChain> Poster<R> {
         if let (Some(latest), Some(finalized)) = (&observation.lifecycle, &finalized_observation.lifecycle) {
             ensure!(latest.signer_epoch == finalized.signer_epoch, "signer epoch is not finalized");
         }
-        let Some((seq, root)) = &state.checkpoint else { return Ok((None, Health::Pending, None)) };
+        let Some((seq, root)) = &state.checkpoint else { return Ok((None, Health::Unvalidated, None)) };
         if *seq < known.iter().map(|work| work.checkpoint.seq).min().unwrap_or(cp.seq) {
-            return Ok((None, Health::Pending, None));
+            return Ok((None, Health::Unvalidated, None));
         }
         let finalized = known
             .iter()
@@ -206,9 +206,11 @@ impl<R: CheckpointChain> Poster<R> {
         authorities[0]
             .verify(cp)
             .map_err(|_| Conflict("finalized checkpoint signer conflicts with accepted history"))?;
+        // This immutable checkpoint has no proven deposit prefix; it cannot validate collateral
+        // or release a recovered signing hold. Prelaunch legacy logs need a proven recovery base.
         if work.coverage == DepositCoverage::AwaitingCanonicalScan {
             warn!(alert = "collateral_pending_deposits", "withdrawals await sequenced canonical receipt coverage");
-            return Ok((Some(cp.seq), Health::Pending, finalized_observation.lifecycle));
+            return Ok((Some(cp.seq), Health::Unvalidated, finalized_observation.lifecycle));
         }
         let paid = finalized_observation.lifecycle.as_ref().map_or(Fixed::ZERO, |evidence| evidence.total_withdrawn);
         let distributed_raw = (work.distributed.0 as i128).saturating_mul(1_000);
@@ -236,10 +238,8 @@ impl<R: CheckpointChain> Poster<R> {
         });
         let overdue = uncredited.filter(|(_, since)| since.elapsed() >= self.pending_deposits_critical_after);
         let health = match verdict(state, paid, credited, work) {
-            Health::Diverged => Health::Diverged,
-            Health::Pending if overdue.is_some() => Health::Pending,
-            Health::Pending => Health::Healthy,
-            Health::Healthy => Health::Healthy,
+            Health::Pending if overdue.is_none() => Health::Healthy,
+            health => health,
         };
         if health == Health::Healthy {
             info!(alert_resolved = "collateral_mismatch", "vault collateral reconciles");

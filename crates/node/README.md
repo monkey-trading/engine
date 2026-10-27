@@ -134,6 +134,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/test_support/written.rs` — shared in-memory test output capture
 - `src/sequencer/checkpoints/accounting_tests.rs` — live/recovery accounting oracles and gated 100k-account capture scaling over migrated credits and fresh holds
 - `src/sequencer/checkpoint_tests.rs` — confirmed-prefix signature gating and restart tests
+- `src/sequencer/checkpoint_tests/unvalidated.rs` — worker observations preserve signing holds until collateral is compared
 - `src/sequencer/fixture_tests.rs` — test-only signing of copies of placeholder protocol fixtures,
   and logs whose genesis an older protocol applied but no current config can give
 - `src/sequencer/recovery.rs` — pure recovery validation and exact authenticated checkpoint-tail restoration

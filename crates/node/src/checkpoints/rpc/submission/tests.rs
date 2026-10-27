@@ -62,7 +62,7 @@ async fn long_pending_survives_restart_without_another_send_or_finality_release(
     server.state.lock().unwrap().latest = Some(cp.clone());
     assert_eq!(
         poster.reconcile(&work).await.unwrap(),
-        (None, Health::Pending),
+        (None, Health::Unvalidated),
         "latest inclusion cannot release withdrawals"
     );
     server.state.lock().unwrap().finalized = Some(cp);

@@ -114,6 +114,8 @@ pub(crate) enum View {
 /// How the vault's collateral compared with the checkpoint's ledger.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Health {
+    /// No finalized ledger comparison is available; preserves the preceding reconciliation verdict.
+    Unvalidated,
     /// Balance plus paid distributions equals the ledger and the deposit counts match.
     Healthy,
     /// Routine catch-up: the vault counts deposits the ledger has not credited yet, with the
@@ -324,7 +326,8 @@ impl<R: CheckpointChain> Poster<R> {
                     let page = approval_page(&approvals, approval_cursor)?;
                     let result = self.reconcile_lifecycle(work, &known, &page, &mut uncredited).instrument(span.clone()).await;
                     let (posted, health, lifecycle) = match result {
-                        Ok((posted, health, lifecycle)) => (posted, Some(health), lifecycle),
+                        Ok((posted, health, lifecycle)) =>
+                            (posted, (health != Health::Unvalidated).then_some(health), lifecycle),
                         Err(error) => {
                             if error.is::<Conflict>() {
                                 span.in_scope(|| error!(alert = "checkpoint_conflict", "refusing to continue: {error:#}"));

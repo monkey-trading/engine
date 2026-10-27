@@ -340,3 +340,5 @@ fn a_recovered_finalized_anchor_is_reconciled_before_any_new_signature() {
     seq.sequence(Command::Tick).unwrap();
     assert!(queued.try_recv().is_ok(), "validated deposit catch-up may sign its clearing checkpoint");
 }
+
+mod unvalidated;

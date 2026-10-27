@@ -207,7 +207,7 @@ async fn finalized_rollback_and_competing_fork_never_supply_lifecycle_evidence()
     poster.chain.finalized.lock().unwrap().lifecycle.as_mut().unwrap().checkpoint_root = None;
     assert_eq!(
         poster.reconcile_lifecycle(&work, &[&work], &[approval(1)], &mut None).await.unwrap(),
-        (None, Health::Pending, None)
+        (None, Health::Unvalidated, None)
     );
     let mut fork = poster.chain.latest.lock().unwrap().clone();
     fork.state.checkpoint.as_mut().unwrap().1 = format!("0x{}", "ff".repeat(32));
