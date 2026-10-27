@@ -98,11 +98,21 @@ impl Scenario {
         let accounts: Vec<Address> = provider.request("eth_accounts", ()).await.unwrap();
         let key = Arc::new(EnclaveKey::generate());
         let usdc = deploy(&provider, accounts[0], "MockUSDC.sol/MockUSDC.json", &[]).await;
+        // Constructor arguments: `abi_encode` on a tuple with dynamic members prefixes an offset,
+        // so the timelock's arrays are assembled as the head and tails it expects.
+        let mut governance_args = U256::from(172_800).to_be_bytes::<32>().to_vec();
+        governance_args.extend_from_slice(&U256::from(0x80).to_be_bytes::<32>());
+        governance_args.extend_from_slice(&U256::from(0xC0).to_be_bytes::<32>());
+        governance_args.extend_from_slice(Address::ZERO.into_word().as_slice());
+        for _ in 0..2 {
+            governance_args.extend_from_slice(&U256::from(1).to_be_bytes::<32>());
+            governance_args.extend_from_slice(accounts[0].into_word().as_slice());
+        }
         let governance = deploy(
             &provider,
             accounts[0],
             "TimelockController.sol/TimelockController.json",
-            &(U256::from(172_800), vec![accounts[0]], vec![accounts[0]], Address::ZERO).abi_encode(),
+            &governance_args,
         )
         .await;
         let args = (usdc, Address::from(key.address()), governance, U256::from(DEV_PERIOD_BUDGET)).abi_encode();

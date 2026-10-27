@@ -249,12 +249,23 @@ fn no_checkpoint_is_signed_while_collateral_is_diverged_and_signing_resumes_when
     seq.genesis(&dev_config().genesis).unwrap();
     seq.trust(trusted_now()).unwrap();
     while queued.try_recv().is_ok() {}
-    seq.checkpoint_status(seq.last_seq(), Some(Health::Healthy)).unwrap();
     let checkpoints = |dir: &std::path::Path| {
         log_entries(dir).iter().filter(|entry| matches!(entry, LogEntry::Checkpoint(_))).count()
     };
-    let before = checkpoints(&dir);
+    // Before any collateral verdict — a recovered deployment whose poster has not observed the
+    // vault yet — signing proceeds; only a Diverged verdict stops it, and the poster's read-only
+    // withhold covers divergence it sees before any verdict reaches this gate.
     seq.sequence(deposit(100, "dep-sign-gate")).unwrap();
+    for _ in 0..3 {
+        if checkpoints(&dir) > 0 {
+            break;
+        }
+        seq.sequence(engine_core::command::Command::Tick).unwrap();
+    }
+    assert!(checkpoints(&dir) > 0, "checkpoints are signed before any collateral verdict");
+    seq.checkpoint_status(seq.last_seq(), Some(Health::Healthy)).unwrap();
+    let before = checkpoints(&dir);
+    seq.sequence(deposit(100, "dep-sign-gate-2")).unwrap();
     for _ in 0..3 {
         if checkpoints(&dir) > before {
             break;

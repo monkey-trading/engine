@@ -58,13 +58,7 @@ impl Sequencer {
     /// recovering posted checkpoints has not yet observed collateral this process: signing waits
     /// for the worker's first reconciliation.
     pub(crate) fn take_recovery_checkpoints(&mut self) -> Vec<Work> {
-        self.gate.as_mut().map_or_else(Vec::new, |gate| {
-            let recovery = std::mem::take(&mut gate.recovery);
-            if !recovery.is_empty() {
-                gate.health = None;
-            }
-            recovery
-        })
+        self.gate.as_mut().map_or_else(Vec::new, |gate| std::mem::take(&mut gate.recovery))
     }
 
     /// Logs and publishes a signed state root for the last applied seq. From protocol `V9` the root
@@ -76,15 +70,14 @@ impl Sequencer {
         if self.gate.as_ref().is_some_and(|gate| gate.parent.has_checkpoint && gate.parent.seq == seq) {
             return Ok(());
         }
-        if self.gate.as_ref().is_some_and(|gate| !matches!(gate.health, Some(crate::checkpoints::Health::Healthy | crate::checkpoints::Health::Pending))) {
+        if self.gate.as_ref().is_some_and(|gate| matches!(gate.health, Some(crate::checkpoints::Health::Diverged))) {
             // A signed checkpoint is public: anyone may relay it to the vault, and its root makes
-            // new distributions claimable. While collateral reconciliation is diverged, no new
-            // root may exist for a claim or a relay to reach; with no verdict yet — a recovered
-            // deployment before its first observation — signing also waits, since divergence
-            // cannot be ruled out.
+            // distributions claimable. While collateral reconciliation is diverged, no new root
+            // may exist for a claim or a relay to reach. The poster's read-only withhold covers
+            // divergence it observes after a restart, before any verdict reaches this gate.
             warn!(
                 alert = "checkpoint_withheld",
-                seq, "no checkpoint signed: collateral reconciliation is diverged or unobserved"
+                seq, "no checkpoint signed: collateral reconciliation is diverged"
             );
             return Ok(());
         }

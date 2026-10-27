@@ -64,6 +64,9 @@ sol! {
 #[tokio::test]
 #[ignore = "requires Anvil and compiled contracts; scripts/dev-monkey-staking.sh runs it"]
 async fn dev_scenario_staking_pays_stakers_above_the_floor_and_nothing_below_it() {
+    let _tracing = tracing::subscriber::set_default(
+        tracing_subscriber::fmt().with_ansi(false).with_writer(std::io::stderr).finish(),
+    );
     let mut s = Scenario::start().await;
     let schedule = EmissionSchedule { start_ms: NOW, period_budget: TokenUnits(DEV_PERIOD_BUDGET) };
     let (status, events) = s.post("/v1/admin", s.signed(AdminCommand::InitEmissions(schedule))).await;
