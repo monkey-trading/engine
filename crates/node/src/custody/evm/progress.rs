@@ -189,7 +189,7 @@ impl<V: VaultReader> DepositWatcher<V> {
             return Ok(Some(hashes));
         }
         let retained = staking
-            .then(|| self.confirmed.staking_window.as_ref())
+            .then_some(self.confirmed.staking_window.as_ref())
             .flatten()
             .filter(|proof| (proof.from, proof.to) == (from, to))
             .map(|proof| proof.upper);
