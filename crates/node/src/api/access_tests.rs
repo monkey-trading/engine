@@ -306,7 +306,7 @@ impl Node {
             sequencer.run(rx).await.unwrap();
         });
         let state = ApiState {
-            protocol: engine_core::protocol::ProtocolVersion::V24,
+            protocol: ProtocolVersion::LATEST,
             access: Some(client),
             tx,
             stream,
@@ -336,7 +336,7 @@ impl Node {
         };
         assert_eq!(
             state.query(Engine::protocol_version).await.unwrap(),
-            if trusted { ProtocolVersion::V24 } else { ProtocolVersion::V2 }
+            if trusted { ProtocolVersion::LATEST } else { ProtocolVersion::V2 }
         );
         let quotes = ["a", "b"]
             .map(|source| SourceQuote { source: source.into(), mid: Fixed::from_int(100000), ts: NOW, contract: None })
