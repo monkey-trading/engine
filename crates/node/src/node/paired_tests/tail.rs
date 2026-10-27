@@ -65,6 +65,7 @@ async fn shutdown_waits_for_a_capture_in_flight_and_caches_the_final_checkpoint(
     let stopped = tokio::spawn(async move { node.stop().await });
     let started = Instant::now();
     while sealing.waiting.load(Ordering::Acquire) == 0 {
+        assert!(!stopped.is_finished(), "shutdown completed without waiting for the in-flight capture");
         assert!(started.elapsed() < HANG, "shutdown never waits for the in-flight capture");
         tokio::task::yield_now().await;
     }
