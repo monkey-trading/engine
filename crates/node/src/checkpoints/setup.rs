@@ -140,6 +140,7 @@ mod tests {
                     balance: Fixed::ZERO,
                     deposits: 0,
                     deposited: Fixed::ZERO,
+                    distributions_paid: Fixed::ZERO,
                 },
                 lifecycle: checkpoint.map(|(seq, root)| LifecycleEvidence {
                     height,
@@ -167,6 +168,7 @@ mod tests {
                         balance: Fixed::ZERO,
                         deposits: 0,
                         deposited: Fixed::ZERO,
+                        distributions_paid: Fixed::ZERO,
                     },
                     lifecycle: Some(LifecycleEvidence {
                         height: 10,

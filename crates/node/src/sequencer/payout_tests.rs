@@ -54,7 +54,7 @@ fn a_release_batch_syncs_the_log_once() {
         });
     }
     let last = node.last_checkpoint();
-    node.seq.checkpoint_status(Some(last.seq), true).unwrap();
+    node.seq.checkpoint_status(Some(last.seq), crate::checkpoints::Health::Healthy).unwrap();
     let mut evidence = node.evidence(&last);
     evidence.approvals = observed;
     let before = node.seq.log.sync_count();
