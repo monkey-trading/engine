@@ -277,6 +277,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   configuration hashes
 - `src/verify/roots/` — the vendor root certificates compiled into the verifier
 - `src/verify/tests/mod.rs` — verification tests and the loopback dev scenario
+- `src/verify/tests/replay_dispatch.rs` — the dev-scenario regression replaying a signed log
+  through `engine replay --attestation` with and without a `--signer` pin
 - `src/verify/tests/fixtures.rs` — the stand-in vendor chain, forged reports, and the release
   manifest
 - `src/verify/tests/revocation.rs` — the root-issued revocation list's serial matching: enforced

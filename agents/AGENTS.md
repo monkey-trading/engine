@@ -133,7 +133,8 @@ an index: load only the rule whose hint matches the current action.
   stand-ins for the market-data vendors; `dev-withdrawals.sh`, the actual Anvil/TLS withdrawal,
   pre-log crash, unpaid redelivery, and FIFO liquidity scenario; `dev-attestation-verifier.sh`,
   the attestation verifier dev scenario against a loopback key-distribution stand-in, with no
-  hardware or vendor access; and `build-image.sh` and `check-image.sh`, which build the
+  hardware or vendor access, also replaying a hand-built signed-withdrawal log through
+  `engine replay --attestation`; and `build-image.sh` and `check-image.sh`, which build the
   enclave image from a commit and boot it under QEMU without SEV-SNP, and `check-image-retry.sh`,
   which scans `image/Dockerfile` so every download runs under `retry` and the cargo build stays
   `--frozen`, and checks the build's download retries.
@@ -228,7 +229,9 @@ Run from the repo root:
 - Attestation verifier dev scenario: `./scripts/dev-attestation-verifier.sh` (a loopback
   key-distribution stand-in issues a test certificate chain; a test-signed SEV-SNP report verifies
   against a release manifest and names the release, while a mock quote, an unlisted configuration,
-  an altered measurement, and an unattested checkpoint signer fail; needs only Cargo)
+  an altered measurement, and an unattested checkpoint signer fail; a hand-built log with signed
+  withdrawals also replays through `engine replay --attestation` without `--signer`, and a
+  mismatched `--signer` fails; needs only Cargo)
 - Corporate-action dev scenario: `./scripts/dev-corporate-actions.sh` (runs the isolated signed
   operator/TLS/API scenario with deterministic venue time, restart and public replay)
 - Vault deposit dev scenario: `./scripts/dev-vault-deposits.sh` (starts Anvil, deploys the vault
