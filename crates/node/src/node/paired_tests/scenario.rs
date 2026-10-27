@@ -43,7 +43,30 @@ async fn dev_scenario_authenticated_history_and_paired_restart_preserve_all_publ
     for n in 0..9 {
         node.submit(deposit(100, &format!("whole37-{n}"))).await;
     }
+    let (cfg, reader) = node.stop().await;
+    let http = Http::start(reader.clone()).await;
+    for account in &accounts {
+        let expected = encoded(&logged_history(&cfg.node.log_dir, *account));
+        assert_public_pages(&http, *account, &expected).await;
+    }
+    http.stop().await;
+    drop(reader);
+    // Restart before any withdrawal approval: the paired cache resumes, and the sweep below must
+    // pass against the history recovered from it, not only after the full-replay fallback.
+    let node = Node::start_resuming(cfg, clock.clone(), genesis.clone()).await.unwrap();
+    assert!(
+        node.snapshot_seq.is_some(),
+        "before any withdrawal approval the paired cache must resume, so the sweep below covers it"
+    );
     node.submit(withdraw(40)).await;
+    // The withdrawal is approved under V22; every cache retained so far predates it. Waiting for
+    // the history owner after each deposit lands every checkpoint's capture, so five checkpoints
+    // age the four retained caches past the approval and the next restart refuses every candidate
+    // deterministically, not depending on which captures completed first.
+    for n in 0..15 {
+        node.submit(deposit(1, &format!("whole37-settle-{n}"))).await;
+        node.history_caught_up().await;
+    }
     let (cfg, reader) = node.stop().await;
     let http = Http::start(reader.clone()).await;
     let mut kinds = BTreeSet::new();
@@ -52,16 +75,13 @@ async fn dev_scenario_authenticated_history_and_paired_restart_preserve_all_publ
         kinds.extend(expected.iter().map(|event| event["type"].as_str().unwrap().to_owned()));
         assert_public_pages(&http, *account, &expected).await;
     }
-    for kind in ["deposited", "fill", "financing", "close_out", "withdrawal_approved"] {
-        assert!(kinds.contains(kind), "{kind} must be exercised by the whole scenario");
-    }
     http.stop().await;
     drop(reader);
     let segments = Manifest::load(&cfg.node.log_dir).unwrap().segments.len();
     let node = Node::start_resuming(cfg, clock, genesis).await.unwrap();
     assert!(
         node.snapshot_seq.is_none(),
-        "a V22 withdrawal approval refuses snapshot recovery: payout delivery order is not cached, so the full log replays"
+        "a V22 withdrawal approval refuses snapshot recovery: payout delivery order is not cached, so the full log replays (#213)"
     );
     for n in 0..5 {
         node.submit(deposit(1, &format!("whole37-rotate-{n}"))).await;
@@ -70,8 +90,14 @@ async fn dev_scenario_authenticated_history_and_paired_restart_preserve_all_publ
     assert!(Manifest::load(&cfg.node.log_dir).unwrap().segments.len() > segments);
     let http = Http::start(reader).await;
     for account in accounts {
-        assert_public_pages(&http, account, &encoded(&logged_history(&cfg.node.log_dir, account))).await;
+        let expected = encoded(&logged_history(&cfg.node.log_dir, account));
+        kinds.extend(expected.iter().map(|event| event["type"].as_str().unwrap().to_owned()));
+        assert_public_pages(&http, account, &expected).await;
     }
+    for kind in ["deposited", "fill", "financing", "close_out", "withdrawal_approved"] {
+        assert!(kinds.contains(kind), "{kind} must be exercised by the whole scenario");
+    }
+    http.stop().await;
 }
 
 /// Compares every real HTTP result against independent full-log event vectors.
