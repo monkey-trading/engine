@@ -7,7 +7,7 @@ use anyhow::anyhow;
 use engine_core::access::receipt_access_deposit;
 use engine_core::command::Command;
 use engine_core::deposits::{
-    CustodyCheckpoint, DepositBeneficiary, DepositReceipt, DepositStatus, DepositUpdate, RecordedDeposit,
+    CustodyCheckpoint, DepositBeneficiary, DepositReceipt, DepositReject, DepositStatus, DepositUpdate, RecordedDeposit,
 };
 use engine_core::eip712::deposit_screening_hash;
 use engine_core::event::Event;
@@ -116,10 +116,8 @@ impl<V: VaultReader> DepositWatcher<V> {
         let scan = self.confirmed.scan.as_ref().expect("scan retained");
         let orphans = reconcile(&pending, &scan.canonical, &scan.hashes, to == eligible)?;
         let deferred = orphans.iter().any(|(_, orphaned)| *orphaned == Orphaned::Deferred);
-        let screened_replacements =
-            query(tx, |engine| engine.protocol_version() >= engine_core::protocol::ProtocolVersion::V26)
-                .await
-                .map_err(PollError::Fatal)?;
+        // A startup activation may race this poll; the build's command format cannot follow a query.
+        let screened_replacements = self.access_enforced;
         for (recorded, orphaned) in orphans {
             let update = match orphaned {
                 Orphaned::Replaced(replacement) if screened_replacements => {
@@ -144,6 +142,13 @@ impl<V: VaultReader> DepositWatcher<V> {
                     let events =
                         submit(tx, Command::AccessCustodyReplacement { update: Box::new(update), payer, evidence })
                             .await?;
+                    if events.iter().any(|event| {
+                        matches!(event, Event::CustodyDepositRejected { reason: DepositReject::ProtocolNotActive, .. })
+                    }) {
+                        return Err(PollError::unsettled(anyhow!(
+                            "canonical replacement awaits access protocol activation"
+                        )));
+                    }
                     if events.iter().any(|event| matches!(event, Event::CustodyDepositRejected { .. })) {
                         return Err(PollError::inconsistent(anyhow!(
                             "sequencer refused screened canonical replacement"
