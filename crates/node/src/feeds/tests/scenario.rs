@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use engine_core::Fixed;
 use engine_core::command::{AdminCommand, Command, OrderKind, OrderRequest};
 use engine_core::event::{Event, Reject};
 use engine_core::price::PriceError;
@@ -220,6 +221,21 @@ impl Node {
             market,
             side: Side::Buy,
             qty,
+            kind,
+            reduce_only: false,
+            auth: None,
+        };
+        self.access_command(move |engine| crate::test_support::access::order(engine, 1, order)).await
+    }
+
+    /// A one-unit buy of `kind` in `market` by the node's account, and the events it produced.
+    pub(super) async fn buy_kind(&self, market: MarketId, kind: OrderKind) -> Vec<Event> {
+        let order = OrderRequest {
+            account: self.account,
+            client_id: 2,
+            market,
+            side: Side::Buy,
+            qty: Fixed::ONE,
             kind,
             reduce_only: false,
             auth: None,

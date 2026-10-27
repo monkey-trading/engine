@@ -13,7 +13,7 @@ use tokio::task::JoinHandle;
 
 use crate::config::EvmCustodySection;
 use crate::custody::evm::{Beneficiary, BlockRef, VaultReader};
-use crate::custody::rpc::{Deposited, HouseDeposited, VaultRpc, decode_count, depositCountCall, legacy};
+use crate::custody::rpc::{Deposited, HouseDeposited, SurplusBooked, VaultRpc, decode_count, depositCountCall, legacy};
 use crate::custody::tests::fakes::{VAULT, evm_toml};
 
 #[test]
@@ -33,6 +33,10 @@ fn vault_logs_decode_into_deposits_with_their_position() {
         .unwrap();
     assert_eq!((house.beneficiary, house.id), (Beneficiary::House, 4));
     assert_eq!(house.payer, Some(AccountId(trader.into())));
+    let surplus =
+        rpc.decode(&log(SurplusBooked { id: U256::from(5), amount: U256::from(11) }.encode_log_data())).unwrap();
+    assert_eq!((surplus.beneficiary, surplus.id), (Beneficiary::House, 5));
+    assert_eq!(surplus.payer, None, "a surplus books no funding address, so screening holds it");
 }
 
 #[test]
@@ -396,7 +400,7 @@ async fn rpc_wire_keeps_tags_batches_filters_quantities_and_canonical_hash_calls
         json!([compact("eth_getBlockByNumber", json!(["0x9", false]))]),
         compact(
             "eth_getLogs",
-            json!([{"address":VAULT,"fromBlock":"0x6","toBlock":"0x7","topics":[[Deposited::SIGNATURE_HASH,HouseDeposited::SIGNATURE_HASH,legacy::Deposited::SIGNATURE_HASH]]}]),
+            json!([{"address":VAULT,"fromBlock":"0x6","toBlock":"0x7","topics":[[Deposited::SIGNATURE_HASH,HouseDeposited::SIGNATURE_HASH,SurplusBooked::SIGNATURE_HASH,legacy::Deposited::SIGNATURE_HASH]]}]),
         ),
         compact(
             "eth_call",
@@ -412,8 +416,24 @@ async fn rpc_wire_keeps_tags_batches_filters_quantities_and_canonical_hash_calls
     let expected = canonicalize(expected);
     assert_eq!(canonicalize(observed.clone()), expected);
     for (alternatives, matches) in [
-        (json!([Deposited::SIGNATURE_HASH, HouseDeposited::SIGNATURE_HASH, legacy::Deposited::SIGNATURE_HASH]), true),
-        (json!([legacy::Deposited::SIGNATURE_HASH, HouseDeposited::SIGNATURE_HASH, Deposited::SIGNATURE_HASH]), true),
+        (
+            json!([
+                Deposited::SIGNATURE_HASH,
+                HouseDeposited::SIGNATURE_HASH,
+                SurplusBooked::SIGNATURE_HASH,
+                legacy::Deposited::SIGNATURE_HASH
+            ]),
+            true,
+        ),
+        (
+            json!([
+                legacy::Deposited::SIGNATURE_HASH,
+                SurplusBooked::SIGNATURE_HASH,
+                HouseDeposited::SIGNATURE_HASH,
+                Deposited::SIGNATURE_HASH
+            ]),
+            true,
+        ),
         (json!([Deposited::SIGNATURE_HASH, HouseDeposited::SIGNATURE_HASH]), false),
         (json!([Deposited::SIGNATURE_HASH]), false),
         (json!([Deposited::SIGNATURE_HASH, Deposited::SIGNATURE_HASH]), false),

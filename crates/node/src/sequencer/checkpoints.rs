@@ -146,6 +146,7 @@ impl Sequencer {
     pub(super) fn checkpoint_status(&mut self, posted: Option<u64>, healthy: bool) -> anyhow::Result<()> {
         let Some(gate) = &mut self.gate else { return Ok(()) };
         gate.healthy = healthy;
+        self.metrics.withdrawals_paused.set(i64::from(!healthy));
         if !healthy {
             return Ok(());
         }

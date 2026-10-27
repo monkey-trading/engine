@@ -32,6 +32,7 @@ use crate::custody::evm::{Beneficiary, BlockRef, Finality, VaultDeposit, VaultId
 sol! {
     event Deposited(uint256 indexed id, address indexed account, address indexed from, uint256 amount);
     event HouseDeposited(uint256 indexed id, address indexed from, uint256 amount);
+    event SurplusBooked(uint256 indexed id, uint256 amount);
     function depositCount() external view returns (uint256);
     function usdc() external view returns (address);
 }
@@ -127,7 +128,7 @@ impl VaultReader for VaultRpc {
         Ok(links)
     }
 
-    /// Both deposit events from the vault, sorted by block and log index.
+    /// Every deposit log the vault emits, sorted by block and log index.
     /// Error cases:
     /// - the request fails or times out
     /// - a log is removed, lacks its position, or does not decode as a vault deposit
@@ -137,6 +138,7 @@ impl VaultReader for VaultRpc {
             .event_signature(vec![
                 Deposited::SIGNATURE_HASH,
                 HouseDeposited::SIGNATURE_HASH,
+                SurplusBooked::SIGNATURE_HASH,
                 legacy::Deposited::SIGNATURE_HASH,
             ])
             .from_block(from)
@@ -304,6 +306,12 @@ impl VaultRpc {
             Some(&HouseDeposited::SIGNATURE_HASH) => {
                 let event = HouseDeposited::decode_log(&log.inner).context("decoding HouseDeposited")?.data;
                 (event.id, Beneficiary::House, event.amount, Some(AccountId(event.from.into())))
+            }
+            // A surplus books existing holdings, not the caller's funds: it names no funding address,
+            // so screening holds it as unattributable rather than crediting it under the booker.
+            Some(&SurplusBooked::SIGNATURE_HASH) => {
+                let event = SurplusBooked::decode_log(&log.inner).context("decoding SurplusBooked")?.data;
+                (event.id, Beneficiary::House, event.amount, None)
             }
             other => bail!("unexpected event {other:?}"),
         };

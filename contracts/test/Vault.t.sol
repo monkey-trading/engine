@@ -133,7 +133,7 @@ contract VaultTest is GovernanceTest {
         usdc.mint(address(vault), 15 * ONE_USDC);
 
         vm.expectEmit(address(vault));
-        emit Vault.HouseDeposited(1, funder, 15 * ONE_USDC);
+        emit Vault.SurplusBooked(1, 15 * ONE_USDC);
         vm.prank(funder);
         assertEq(vault.bookSurplus(), 1);
 
@@ -155,7 +155,7 @@ contract VaultTest is GovernanceTest {
 
         usdc.mint(address(vault), 1);
         vm.expectEmit(address(vault));
-        emit Vault.HouseDeposited(0, address(this), min);
+        emit Vault.SurplusBooked(0, min);
         vault.bookSurplus();
         assertEq(vault.totalDeposited(), min);
     }

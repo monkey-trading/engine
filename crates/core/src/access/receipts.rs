@@ -122,6 +122,11 @@ impl Engine {
                     events.push(Event::CustodyDepositRejected { receipt: recorded.receipt, reason });
                     return;
                 }
+                // Finalisation settled while the receipt waited uncredited and released no payout
+                // capacity; crediting it now restores the principal a finalised receipt contributes.
+                if !lock && let Some(cash) = &mut self.withdrawal_cash {
+                    *cash += recorded.receipt.amount;
+                }
                 self.track_uncredited(&recorded.receipt, pending, false);
                 self.record_deposit(&recorded.receipt, recorded.status, recorded.receipt.amount, None, events);
             }

@@ -104,6 +104,7 @@ pub struct Metrics {
     pub batch_seconds: Histogram,
     pub queue_depth: Gauge,
     pub access_pending_deposits: Gauge,
+    pub withdrawals_paused: Gauge,
     pub fills: Family<MarketLabel, Counter>,
     pub rejections: Family<RejectionLabels, Counter>,
     pub last_checkpoint_seconds: FloatGauge,
@@ -132,6 +133,7 @@ impl Metrics {
             batch_seconds: Histogram::new(exponential_buckets(0.000_05, 2.0, 16)),
             queue_depth: Gauge::default(),
             access_pending_deposits: Gauge::default(),
+            withdrawals_paused: Gauge::default(),
             fills: Family::default(),
             rejections: Family::default(),
             last_checkpoint_seconds: FloatGauge::default(),
@@ -164,6 +166,11 @@ impl Metrics {
             "access_pending_deposits",
             "Deposits awaiting automatic source screening retry",
             metrics.access_pending_deposits.clone(),
+        );
+        r.register(
+            "withdrawals_paused",
+            "Whether the custody checkpoint gate pauses withdrawal approvals (1 paused, 0 healthy)",
+            metrics.withdrawals_paused.clone(),
         );
         r.register("fills", "Fills, by market", metrics.fills.clone());
         r.register("rejections", "Rejection events, by event type and reason", metrics.rejections.clone());

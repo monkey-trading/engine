@@ -16,7 +16,7 @@ access_expect_refusal() {
 access_funding_reference() {
   local receipt
   receipt="$(cast send "$@" --rpc-url "$rpc" --json)"
-  python3 -c 'import json,sys; r=json.load(sys.stdin); v=sys.argv[1].lower(); logs=[x for x in r["logs"] if x["address"].lower()==v]; assert len(logs)==1,logs; n=logs[0]["logIndex"]; print(r["transactionHash"]+":"+str(int(n,16) if isinstance(n,str) else n))' "$vault" <<< "$receipt"
+  python3 -c 'import json,sys; r=json.load(sys.stdin); v=sys.argv[1].lower(); logs=[x for x in r["logs"] if x["address"].lower()==v]; assert len(logs)==1,logs; n=logs[0]["logIndex"]; n=int(n,16) if isinstance(n,str) else n; print("%020d:%s:%s:%d" % (int(r["blockNumber"],16), r["blockHash"], r["transactionHash"], n))' "$vault" <<< "$receipt"
 }
 
 access_held_reason() { curl --max-time 2 -sk "$api/v1/access/holds/$access_reference" | jq -r '.reason // "none"'; }

@@ -10,6 +10,8 @@ use axum::routing::post;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use engine_core::Fixed;
+use engine_core::access::{Jurisdiction, SanctionsStatus, Screening};
+use engine_core::eip712::{self, Eip712Domain, Signature};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
@@ -22,11 +24,13 @@ use tokio_tungstenite::tungstenite::Message;
 use crate::clock::now_ms;
 use crate::roughtime::VERSION_1;
 use crate::roughtime::testing::TestServer;
+use crate::test_support::access;
 
 pub(super) struct Services {
     pub feed: String,
     pub time: Vec<Value>,
     pub rpcs: Vec<String>,
+    pub access: String,
     price: watch::Sender<Fixed>,
     tasks: Vec<JoinHandle<anyhow::Result<()>>>,
 }
@@ -41,15 +45,26 @@ impl Drop for Services {
 }
 
 impl Services {
-    /// Starts two independently signed Roughtime servers, one controllable venue, and three RPC
-    /// proxies whose requests never overlap the scenario's block production.
+    /// Starts two independently signed Roughtime servers, one controllable venue, a synthetic
+    /// screening source that clears every subject, and three RPC proxies whose requests never
+    /// overlap the scenario's block production.
     /// Error cases:
     /// - loopback sockets cannot bind
-    pub async fn start(rpc: &str, mining: Arc<RwLock<()>>) -> anyhow::Result<Self> {
+    pub async fn start(rpc: &str, mining: Arc<RwLock<()>>, domain: Eip712Domain) -> anyhow::Result<Self> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let feed = format!("ws://{}", listener.local_addr()?);
         let (price, receiver) = watch::channel(Fixed::from_int(100));
         let mut tasks = vec![tokio::spawn(venue(listener, receiver))];
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let access = format!("http://{}", listener.local_addr()?);
+        let source_app = axum::Router::new().route(
+            "/",
+            post(move |Json(request): Json<Value>| {
+                let domain = domain;
+                async move { Json(screen(&domain, request)) }
+            }),
+        );
+        tasks.push(tokio::spawn(async move { Ok(axum::serve(listener, source_app).await?) }));
         let mut time = Vec::new();
         let mut rpcs = Vec::new();
         for _ in 0..3 {
@@ -82,7 +97,7 @@ impl Services {
             }));
             tasks.push(tokio::spawn(roughtime(socket, server)));
         }
-        Ok(Self { feed, time, rpcs, price, tasks })
+        Ok(Self { feed, time, rpcs, access, price, tasks })
     }
 
     /// Changes the quoted mid; the scenario waits for the actual API mark before trading.
@@ -95,6 +110,27 @@ impl Services {
         anyhow::ensure!(self.tasks.iter().all(|task| !task.is_finished()), "a scenario server stopped");
         Ok(())
     }
+}
+
+/// Signs a clear, allowed disposition for every subject, in the recorded authority's name.
+fn screen(domain: &Eip712Domain, request: Value) -> Screening {
+    let account: Option<engine_core::types::AccountId> =
+        serde_json::from_value(request["account"].clone()).expect("account decodes");
+    let payer: Option<engine_core::types::AccountId> =
+        serde_json::from_value(request["payer"].clone()).expect("payer decodes");
+    let mut screening = Screening {
+        source: eip712::address(access::key(0x77).verifying_key()),
+        request_hash: serde_json::from_value(request["request_hash"].clone()).expect("request hash decodes"),
+        observed_at: now_ms(),
+        account,
+        payer,
+        jurisdiction: Jurisdiction::Allowed,
+        account_status: SanctionsStatus::Clear,
+        payer_status: SanctionsStatus::Clear,
+        signature: Signature::ZERO,
+    };
+    screening.signature = eip712::sign(&access::key(0x77), &eip712::screening_hash(domain, &screening));
+    screening
 }
 
 /// Answers nonce-bound signed packets against the same system clock the real node checks.

@@ -294,6 +294,8 @@ impl Sequencer {
         {
             let _span = info_span!("command", id = sequencer.engine.last_seq()).entered();
             sequencer.deficit.note(sequencer.engine.house_nav());
+            // A gated node pauses withdrawals until its first reconciliation proves the books.
+            sequencer.metrics.withdrawals_paused.set(i64::from(sequencer.gate.is_some()));
         }
         for (account, amount, nonce) in unsigned {
             let _span = info_span!("command", id = sequencer.engine.last_seq()).entered();

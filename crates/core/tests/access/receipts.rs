@@ -113,15 +113,23 @@ fn a_retried_receipt_is_locked_until_finality_only_while_unfinalised_and_a_sanct
     }
     attest(&mut h, &client);
     transition(&mut h, &late, |receipt, seq| DepositUpdate::Finalise { receipt, observed_at_seq: seq });
+    let capacity = h.engine.withdrawal_cash().expect("V24 activation initializes physical cash");
     let events = retry(&mut h, &early, SanctionsStatus::Clear);
     assert_eq!(changed(&events), [(DepositStatus::Unfinalised, f("40"), None)]);
     assert_eq!(h.engine.accounts()[&client.account].unfinalised_deposits, f("40"), "unfinalised principal is locked");
+    assert_eq!(h.engine.withdrawal_cash(), Some(capacity), "an unfinalised credit adds no payout capacity");
     let events = retry(&mut h, &late, SanctionsStatus::Clear);
     assert_eq!(changed(&events), [(DepositStatus::Finalised, f("25"), None)]);
     assert_eq!(h.engine.accounts()[&client.account].balance, f("65"));
     assert_eq!(h.engine.accounts()[&client.account].unfinalised_deposits, f("40"), "final principal is not locked");
+    assert_eq!(
+        h.engine.withdrawal_cash(),
+        Some(capacity + f("25")),
+        "a receipt finalised while pending still contributes payout capacity once credited"
+    );
     transition(&mut h, &early, |receipt, seq| DepositUpdate::Finalise { receipt, observed_at_seq: seq });
     assert_eq!(h.engine.accounts()[&client.account].unfinalised_deposits, f("0"));
+    assert_eq!(h.engine.withdrawal_cash(), Some(capacity + f("65")));
     let events = retry(&mut h, &sanctioned, SanctionsStatus::Sanctioned);
     assert_eq!(changed(&events), [(DepositStatus::Unfinalised, f("0"), Some(AccessReject::PayerSanctioned))]);
     assert!(events.iter().any(|e| matches!(e, Event::DepositHeld { reason: AccessReject::PayerSanctioned, .. })));
