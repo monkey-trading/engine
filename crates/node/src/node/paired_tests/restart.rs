@@ -130,7 +130,9 @@ async fn page(node: &Node, before: Option<Offset>) -> Page {
                 tokio::task::yield_now().await;
             }
             Ok(Err(error)) => panic!("history page fails: {error:#}"),
-            Err(_) => assert!(started.elapsed() < HANG, "a history page stays pending past {HANG:?}"),
+            // A timeout answers only after `HANG`, so this arm can never retry: a page that stays
+            // pending that long is fatal, not transient.
+            Err(_) => panic!("a history page stays pending past {HANG:?}"),
         }
     }
 }
