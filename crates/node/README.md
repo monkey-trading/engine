@@ -279,6 +279,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/verify/tests/mod.rs` — verification tests and the loopback dev scenario
 - `src/verify/tests/fixtures.rs` — the stand-in vendor chain, forged reports, and the release
   manifest
+- `src/verify/tests/revocation.rs` — the root-issued revocation list's serial matching: enforced
+  against the intermediate, never the VCEK
 - `src/verify/tests/stub.rs` — the key-distribution service stand-ins
 - `src/trusted_time/mod.rs` — the trusted time task: queries the Roughtime servers, backs off
   failing ones, and turns agreeing replies into a sample
