@@ -140,8 +140,9 @@ an index: load only the rule whose hint matches the current action.
 - **ops/** — operator assets: `grafana/engine-node.json`, the node's Grafana dashboard, and
   `prometheus/engine-node-rules.yml`, the alerting rules for a down node or failing alert pages.
 - **.github/workflows/** — `ci.yaml`: fmt, the file line cap, clippy, tests (and the node's
-  production-build tests), the reference-log replay and invariant tests on x86_64 and aarch64 Linux,
-  the unchanged-reference-log check, `cargo-deny`, the contracts' `forge fmt --check` / build /
+  production-build tests), the reference-log examples' tests, the reference-log replay and
+  invariant tests on x86_64 and aarch64 Linux, the unchanged-reference-log check, `cargo-deny`,
+  the contracts' `forge fmt --check` / build /
   test, the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
   deposit finality scenarios, the signed withdrawal and FIFO dev scenario, the metrics and alert
   routing dev scenario, the alert outbox kill/restart scenario, the snapshot restart scenario, the
