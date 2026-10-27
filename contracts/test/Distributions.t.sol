@@ -3,6 +3,7 @@ pragma solidity 0.8.36;
 
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin-contracts/token/ERC20/IERC20.sol";
+import {TimelockController} from "@openzeppelin-contracts/governance/TimelockController.sol";
 
 import {Vault} from "../src/Vault.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
@@ -18,7 +19,11 @@ contract DistributionsTest is Test {
 
     function setUp() public {
         usdc = new MockUSDC();
-        vault = new Vault(usdc, vm.addr(KEY), 1e18);
+        address[] memory proposers = new address[](1);
+        proposers[0] = vm.addr(KEY);
+        address[] memory executors = new address[](1);
+        TimelockController governance = new TimelockController(2 days, proposers, executors, address(0));
+        vault = new Vault(usdc, vm.addr(KEY), governance, 1e18);
     }
 
     function test_AProofPaysUsdcOnceToTheAccountWhoeverRelays() public {

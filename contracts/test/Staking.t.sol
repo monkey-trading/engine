@@ -3,6 +3,7 @@ pragma solidity 0.8.36;
 
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin-contracts/token/ERC20/IERC20.sol";
+import {TimelockController} from "@openzeppelin-contracts/governance/TimelockController.sol";
 
 import {MonkeyToken} from "../src/MonkeyToken.sol";
 import {Staking} from "../src/Staking.sol";
@@ -25,7 +26,11 @@ contract StakingTest is Test {
 
     function setUp() public {
         usdc = new MockUSDC();
-        vault = new Vault(usdc, vm.addr(KEY), 1e18);
+        address[] memory proposers = new address[](1);
+        proposers[0] = vm.addr(KEY);
+        address[] memory executors = new address[](1);
+        TimelockController governance = new TimelockController(2 days, proposers, executors, address(0));
+        vault = new Vault(usdc, vm.addr(KEY), governance, 1e18);
         monkey = vault.monkey();
         staking = new Staking(monkey, COOLDOWN, EPOCH);
     }
@@ -107,7 +112,7 @@ contract StakingTest is Test {
 
     function test_ConstructorRefusesANullSetup() public {
         vm.expectRevert(Staking.ZeroAddress.selector);
-        new Staking(IERC20(address(0)), COOLDOWN);
+        new Staking(IERC20(address(0)), COOLDOWN, EPOCH);
         vm.expectRevert(abi.encodeWithSelector(Staking.InvalidAmount.selector, 0));
         new Staking(monkey, 0, EPOCH);
         vm.expectRevert(abi.encodeWithSelector(Staking.CooldownBelowEpoch.selector, EPOCH - 1, EPOCH));
