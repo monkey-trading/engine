@@ -1177,7 +1177,8 @@ host-supplied credential, and HTTP client logs stay at `warn` regardless of `log
 Writable EVM recovery requires the finalized checkpoint's original authenticated accounting and
 an exact credited deposit prefix. An empty bootstrap ledger proves prefix zero; a nonempty modern
 checkpoint needs the canonical custody frontier recorded at that checkpoint. Later scanning cannot
-supply a missing proof for an older immutable root. Startup refuses older nonempty unscanned anchors
+supply a missing proof for an older immutable root. Startup refuses older nonempty unscanned anchors and every outstanding recovered signature with an
+unproven prefix
 before opening the log for append or creating or repairing history, rather than serving permanently
 paused. Read-only `engine replay` remains available for their audit.
 

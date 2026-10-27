@@ -100,6 +100,20 @@ impl Work {
             || Self::empty_prefix(self.deposits, self.liabilities, self.authorized, self.distributed)
     }
 
+    /// Refuses restored signatures that could become an irreconcilable finalized checkpoint.
+    /// Error cases:
+    /// - a nonempty modern checkpoint lacks its original canonical receipt coverage
+    pub(crate) fn validate_recovery_prefix(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.has_proven_prefix(),
+            "recovered checkpoint at seq {} has a nonempty unproven custody prefix; \
+             later scans cannot authenticate that immutable prefix: preserve this prelaunch log \
+             for audit and use a fresh deployment or an explicitly verified operator migration",
+            self.checkpoint.seq
+        );
+        Ok(())
+    }
+
     /// Whether this work carries `accounting`'s liabilities and approvals and, unless sequenced
     /// chain proof counted them, its deposits.
     pub(crate) fn matches_accounting(&self, accounting: Accounting) -> bool {

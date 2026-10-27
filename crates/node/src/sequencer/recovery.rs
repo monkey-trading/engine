@@ -52,7 +52,7 @@ impl ReplayedLog {
     /// Checks every pure recovery refusal before history repair or opening the log for append.
     /// Error cases:
     /// - the deployment, genesis, or required checkpoint service differs from the replayed log
-    /// - the finalized anchor has no provable custody prefix
+    /// - any restored checkpoint has no provable custody prefix
     pub(crate) fn validate_recovery(&self, cfg: &SequencerConfig<'_>, signer: AccountId) -> anyhow::Result<()> {
         let Replayed { engine, genesis, deferred, requires_checkpoint_gate, legacy_deposits, legacy_approvals, .. } =
             &self.replayed;
@@ -90,14 +90,12 @@ impl ReplayedLog {
                 work.checkpoint.seq == cfg.checkpoint_parent.seq
                     && work.checkpoint.root == cfg.checkpoint_parent.root.to_string()
             });
-            let work = work.context("finalized recovery anchor lacks authenticated accounting")?;
-            anyhow::ensure!(
-                work.has_proven_prefix(),
-                "finalized recovery anchor at seq {} has a nonempty unproven custody prefix; \
-                 later scans cannot authenticate that immutable prefix: preserve this prelaunch log \
-                 for audit and use a fresh deployment or an explicitly verified operator migration",
-                work.checkpoint.seq
-            );
+            work.context("finalized recovery anchor lacks authenticated accounting")?;
+        }
+        if cfg.checkpoints.is_some() {
+            for work in self.replayed.recovery_anchor_work.iter().chain(&self.replayed.recovery_work) {
+                work.validate_recovery_prefix()?;
+            }
         }
         // Last, so a log refused for its deployment or genesis says so.
         self.replayed

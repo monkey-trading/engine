@@ -66,6 +66,56 @@ async fn funded_unscanned_anchor_refuses_startup_without_changing_log_or_history
     }
 }
 
+#[tokio::test]
+async fn unscanned_outstanding_full_replay_refuses_startup() {
+    reject_outstanding(false).await;
+}
+
+#[tokio::test]
+async fn unscanned_outstanding_authenticated_snapshot_refuses_startup() {
+    reject_outstanding(true).await;
+}
+
+/// Every restored successor can finalize after preflight, independently of its source.
+async fn reject_outstanding(cached: bool) {
+    let (cfg, successor) = old_funded_anchor(&format!("old-unscanned-queue-{cached}")).await;
+    let key = EnclaveKey::test_key();
+    let signer = AccountId(key.address());
+    let domain = CheckpointDomain { chain_id: 31337, vault: AccountId([0; 20]) };
+    let last = log_entries(&cfg.node.log_dir).pop().unwrap();
+    let LogEntry::Checkpoint(checkpoint) = last else { panic!("signed successor missing") };
+    let anchor = checkpoint.parent.unwrap();
+    assert!(anchor.seq < successor.seq);
+    let mut log =
+        Sequencer::read_log_for_recovery(&cfg.node.log_dir, Some(domain), Some(signer), Some(anchor), |_| {}).unwrap();
+    if cached {
+        let cache = crate::config::SnapshotSection {
+            dir: cfg.node.log_dir.parent().unwrap().join("cache"),
+            retain: std::num::NonZeroUsize::new(2).unwrap(),
+            max_bytes: std::num::NonZeroUsize::new(32 * 1024 * 1024).unwrap(),
+            trusted_signers: vec![signer],
+        };
+        log = log.test_authenticated_snapshot(&cache, &cfg.node.log_dir, anchor);
+        assert_eq!(log.snapshot_sequence(), Some(successor.seq));
+    }
+    let root = cfg.node.log_dir.parent().unwrap();
+    let before = files(root);
+    let (sink, mut work) = mpsc::channel(64);
+    let seq_cfg = SequencerConfig {
+        checkpoints: Some(sink),
+        checkpoint_parent: anchor,
+        genesis: crate::sequencer::genesis_commands(&cfg.genesis),
+        ..sequencer_config(&cfg.node.log_dir, watch::channel(Manifest::default()).0)
+    };
+    let plan = crate::history::HistoryPlan::open(&cfg.history).unwrap();
+    let error = finish_preflight::<NoChain>(plan, None, Some((&log, &seq_cfg, signer))).await.err().unwrap();
+    let message = format!("{error:#}");
+    assert!(message.contains("nonempty unproven custody prefix"), "{message}");
+    assert!(message.contains(&format!("seq {}", successor.seq)), "refuse B even though A is empty: {message}");
+    assert_eq!(files(root), before, "cached={cached}: refusal precedes history repair or writer creation");
+    assert!(work.try_recv().is_err());
+}
+
 /// Reproduces the earlier writer's valid signature after a real credit, without a frontier or successor.
 async fn old_funded_anchor(name: &str) -> (NodeConfig, CheckpointParent) {
     let root = scratch_dir(name);

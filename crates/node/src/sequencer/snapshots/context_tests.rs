@@ -175,3 +175,59 @@ fn cache_context_requires_work_and_all_accounting_fields() {
     missing.as_object_mut().unwrap().remove("context");
     assert!(serde_json::from_value::<Snapshot>(missing).is_err());
 }
+
+impl ReplayedLog {
+    /// Authenticates and restores the exact full-replay work through the production snapshot reader.
+    pub(crate) fn test_authenticated_snapshot(
+        self,
+        cache: &crate::config::SnapshotSection,
+        dir: &std::path::Path,
+        parent: crate::log::CheckpointParent,
+    ) -> Self {
+        let key = EnclaveKey::test_key();
+        let signer = AccountId(key.address());
+        let replayed = &self.replayed;
+        let checkpoint = replayed.last_signed_checkpoint.clone().unwrap();
+        let domain = checkpoint.domain.unwrap();
+        assert!(replayed.recovery_anchor_work.as_ref().unwrap().has_proven_prefix());
+        assert!(replayed.recovery_work.iter().any(|work| !work.has_proven_prefix()));
+        let offset = crate::test_support::log_entries(dir)
+            .iter()
+            .fold(None, |previous, entry| Some(crate::log::offset_of(previous, entry).unwrap()))
+            .unwrap();
+        let payload = Snapshot {
+            schema: 2,
+            pair: None,
+            chain_id: domain.chain_id,
+            vault: domain.vault,
+            checkpoint: checkpoint.clone(),
+            offset,
+            engine: serde_json::to_string(&replayed.engine).unwrap(),
+            progress: snapshot::Progress {
+                genesis: replayed.genesis.clone(),
+                activations: replayed.activations.clone(),
+                checkpoints: replayed.checkpoints,
+            },
+            context: snapshot::RecoveryContext {
+                commands: replayed.commands,
+                command_prefix: replayed.command_prefix,
+                accounting: replayed.accounting,
+                logs_events: true,
+                unsigned: replayed.unsigned.clone(),
+                deferred: replayed.deferred.clone(),
+                checkpoint_signers: replayed.checkpoint_signers.clone(),
+                base: snapshot::RecoveryBase::Checkpoint {
+                    checkpoint: replayed.recovery_anchor_work.as_ref().unwrap().checkpoint.clone(),
+                },
+                base_work: replayed.recovery_anchor_work.clone(),
+                work: replayed.recovery_work.clone(),
+            },
+        };
+        snapshot::write(cache, &payload, &key).unwrap();
+        let path = snapshot::candidates_readonly(cache).unwrap().remove(0);
+        let (cached, engine) = snapshot::read(cache, &path, domain.chain_id, domain.vault).unwrap();
+        let replayed = Replay::from_snapshot(engine, cached, domain, Some(signer), Some(parent)).unwrap().finish();
+        assert_eq!(replayed.recovery_work.last().unwrap().checkpoint, checkpoint);
+        Self { replayed, snapshot_seq: Some(checkpoint.seq), ..self }
+    }
+}
