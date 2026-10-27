@@ -60,6 +60,14 @@ fn changing_a_recorded_mirror_identity_cannot_preserve_an_authenticated_checkpoi
     altered["staking_refs"] = serde_json::json!(["0xforged"]);
     let mut recovered: Engine = serde_json::from_value(altered).unwrap();
     assert_ne!(recovered.state_root(), root, "host-altered deduplication cannot match the signed root");
+    let mut replayed = Engine::new();
+    for mut sequenced in h.log {
+        if let Command::Stake { chain_ref, .. } = &mut sequenced.cmd {
+            *chain_ref = "0xforged".into();
+        }
+        replayed.apply(&sequenced).unwrap();
+    }
+    assert_ne!(replayed.state_root(), root, "altered full-log recovery cannot match the signed checkpoint");
 }
 
 #[test]
