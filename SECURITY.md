@@ -75,6 +75,16 @@ rules do not allow, make the state the node reports differ from the state its pu
 to, forge or reuse a signature the enclave makes, read or alter what the enclave holds from the
 machine it runs on, or halt the engine with a request any client can send.
 
+The node signs every API response and stream frame a client relies on with the attested enclave
+key, over the request or connection it answers and a challenge the client chose, so a client that
+sends a fresh challenge can tell a forged or replayed answer from the node's own. The signatures do
+not stop anyone between the client and the node from delaying or dropping traffic: the stream's
+signed heartbeats let a client detect that, not prevent it. A response to a request sent without a
+challenge can be replayed to another such request, a response the rate limiter refuses is
+unsigned, the attestation, the archive, and health are unsigned because they prove themselves or
+carry nothing to rely on, and the time an answer carries is the host's clock; a report that rests
+only on one of these is not a new finding.
+
 The node's development settings, which are the mock enclave, mock custody, simulated prices, and
 historical unsigned requests, exist for local testing and make no security claims of their own.
 Neither does `POST /v1/dev/deposit`, which the node serves only with mock custody. A weakness in

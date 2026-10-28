@@ -43,6 +43,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   Critical alert when the host clock is beyond the drift bound, or 60 seconds after the last
   sample, and resumes once a sample is within the bound
 - REST API for orders, cancels, withdrawals, and reads, plus a WebSocket stream of the log
+- Signed answers: every `/v1` response a client relies on carries the attested enclave key's
+  signature over the request, the client's challenge, the node's time and log head, and the status
+  and body; a `signed=1` stream connection gets each message in a numbered signed frame and a
+  signed heartbeat at least every `api.heartbeat_interval`; `engine verify-response` and
+  `engine verify-frames` check them with the shared `engine-wire` definitions
 - Orders, cancels, and withdrawals signed by the account (EIP-712), checked before they are
   sequenced; before V24, `auth = "none"` trusts the account field with mock TEE and custody; V24
   client actions and eligibility declarations require signatures in every mode
@@ -107,7 +112,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 
 ## Repository Structure
 
-- `src/main.rs` — the `engine` binary: `run`, `replay`, `verify-attestation`, and `admin`
+- `src/main.rs` — the `engine` binary: `run`, `replay`, `verify-attestation`, `verify-response`,
+  `verify-frames`, and `admin`
 - `src/lib.rs` — module index
 - `src/admin/mod.rs` — `engine admin`: the operator key, the commands it signs, and submission
 - `src/admin/benchmark_feed.rs` — the separate signed publisher worker and rollover scheduling
@@ -259,6 +265,15 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/stream/mod.rs` — the WebSocket stream: backfill from disk, then live, under the
   subscriber cap, reading what the subscriber sends
 - `src/api/stream/tests.rs` — feed, backfill, and subscriber tests
+- `src/api/stream/signed.rs` — signed stream connections: numbered frames under the client's
+  challenge, and heartbeats naming the log head
+- `src/api/stream/signed/tests.rs` — signed frames from offset zero, quiet-log heartbeats, a
+  backfill read never cut short by a heartbeat, and refused parameters
+- `src/api/signing.rs` — the response signing layer and the routes it leaves unsigned
+- `src/api/signing_tests.rs` — what a response signature covers, which responses carry one, and
+  the node signing the `engine-wire` vectors byte for byte
+- `src/api/signing_bench.rs` — the ignored cost benchmark: one frame, a signed account read, and a
+  signed fan-out at `api.max_subscribers`
 - `src/api/archive.rs` — the archive routes: the manifest and completed segments
 - `src/api/auth_tests.rs` — signed-request API tests: signatures, nonces, expiries, refused
   accounts, and racing requests
@@ -308,6 +323,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/verify/release.rs` — the release manifest of launch digest, policy, minimum TCB, and
   configuration hashes
 - `src/verify/roots/` — the vendor root certificates compiled into the verifier
+- `src/verify/answers.rs` — offline checks of a saved signed response or stream connection, for
+  `engine verify-response` and `engine verify-frames`
+- `src/verify/answers/tests.rs` — saved headers in curl's layout, each refused alteration, and a
+  frame removed from a capture
 - `src/verify/tests/mod.rs` — verification tests and the loopback dev scenario
 - `src/verify/tests/replay_dispatch.rs` — the dev-scenario regression replaying a signed log
   through `engine replay --attestation` with and without a `--signer` pin
@@ -344,6 +363,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/config/telemetry.rs` — the metrics listener and alert webhook config, and the redacting
   `WebhookUrl`
 - `src/config/tests.rs` — config loading and validation tests
+- `src/config/api_tests.rs` — the `[api]` heartbeat interval's default and minimum
 - `src/config/mock_key_tests.rs` — published mock-only signer opt-in and hardware refusal regressions
 - `src/config/custody_tests.rs` — independent provider configuration checks
 - `src/config/production_tests.rs` — the config file's hash, and a production build's refusal of
@@ -571,6 +591,21 @@ cargo run -p engine-node -- run --config <copy of config/dev.toml>
 
 # Verify a node's log directory, a downloaded archive, or a single log file
 cargo run -p engine-node -- replay --log data/dev/log
+
+# Verify a signed response: send a fresh challenge, save the headers and body, and check them
+# against the attested enclave address and the deployment (config/dev.toml's chain id and vault)
+SIGNER=$(jq -r .enclave_address <<< "$ATT")
+CHALLENGE=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
+curl -sk -D headers -o body -H "X-Engine-Challenge: $CHALLENGE" $API/v1/markets
+cargo run -p engine-node -- verify-response --signer $SIGNER --chain-id 31337 \
+  --vault 0x0000000000000000000000000000000000000000 --challenge $CHALLENGE --path /v1/markets \
+  --headers headers --body body
+# Frames saved one a line from wss://127.0.0.1:8080/v1/stream?signed=1&challenge=$CHALLENGE
+cargo run -p engine-node -- verify-frames --signer $SIGNER --chain-id 31337 \
+  --vault 0x0000000000000000000000000000000000000000 --challenge $CHALLENGE --frames frames.jsonl
+
+# Run the signed API dev scenario: verified responses and frames, refused tampering, replay and gaps
+./scripts/dev-signed-api.sh
 
 # Sign and submit admin commands as the operator, over TLS pinned to the attested key: the PIN (hex)
 # the bundle check above sets. The key is read from --key-file, OPERATOR_KEY_FILE, or OPERATOR_KEY;
@@ -901,6 +936,33 @@ are reserved as zero. The bundle is 105 bytes, every field at a fixed width:
 
 A verifier checks the quote, recomputes the SHA-256 of `bundle` and compares it with report data
 bytes 0..32, and then reads the fields from the bundle.
+
+Every `/v1` response but those of `/v1/health`, `/v1/attestation`, `/v1/attestation/collateral`,
+and `/v1/archive/*` is signed by the enclave key whose address the bundle holds, error responses
+included. A request may send `X-Engine-Challenge`, 64 hex characters; one that sends none is
+answered under 32 zero bytes, and a malformed one gets an unsigned 400. The response carries
+`X-Engine-Signature` (65-byte recoverable secp256k1, `0x` hex), `X-Engine-Time` (the node's clock in
+milliseconds), `X-Engine-Seq` (the seq of the last log entry the node had flushed when it answered;
+0 before the first), and `X-Engine-Challenge` (echoed in lowercase). The signature covers
+`keccak256("engine.response.v1" ‖ chain_id (u64 BE) ‖ vault (20 bytes) ‖ challenge (32) ‖ time (u64
+BE) ‖ seq (u64 BE) ‖ status (u16 BE) ‖ sha256(method ‖ 0x00 ‖ path and query) ‖ sha256(body as
+sent))`, for the custody chain id and vault in the config; a `HEAD` response is signed over its
+empty body. A client verifies with the challenge it sent, never the echoed one, and sends a fresh
+random one with each request it relies on: then a recorded response cannot answer another request.
+A response a layer outside the signer produces, such as a 429 from the rate limiter, is unsigned,
+and a client never shows an unsigned response on a signed route as data. The time is the host's
+clock, which the sequencer checks its stamps against trusted time but the API does not, so
+freshness comes from the challenge. Signatures prove who answered, not that the answer arrived: a
+man in the middle can still delay or drop it.
+
+`GET /v1/stream?signed=1&challenge=<64 hex>` sends each message, and a heartbeat
+(`{"type":"heartbeat","head":"<seq>:<index>"}`, the last entry flushed, or `null` before the first) at least every
+`api.heartbeat_interval`, as `{"v":1,"n":<u64>,"time":<ms>,"msg":"<the message as a JSON
+string>","sig":"0x…"}`. `n` counts from 0 on each connection, and the signature covers
+`keccak256("engine.frame.v1" ‖ chain_id ‖ vault ‖ challenge ‖ n (u64 BE) ‖ time (u64 BE) ‖
+sha256(msg))`. A client that sees a frame out of sequence, or no heartbeat for longer than the
+interval, closes the connection. Without `signed=1` the stream is unchanged. `crates/wire` holds
+these digests, the client checks, and the known-answer vectors a browser verifier replays.
 
 `/v1/stream` is live from now by default. `?from=<seq>` starts at the first message of `seq`
 (`from=0` is the whole log), and `?after=<seq>:<index>` resumes after the `offset` of the last

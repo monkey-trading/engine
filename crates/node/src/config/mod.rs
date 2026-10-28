@@ -152,6 +152,10 @@ pub struct ApiSection {
     /// message, is disconnected.
     #[serde(with = "humantime_serde")]
     pub send_timeout: Duration,
+    /// A signed stream connection gets a signed heartbeat at least this often, so its client can
+    /// tell a quiet log from a held-back one. At least one second.
+    #[serde(default = "default_heartbeat_interval", with = "humantime_serde")]
+    pub heartbeat_interval: Duration,
     /// Browser origins (`scheme://host[:port]`) that may read the REST API and open the stream. Empty
     /// by default, which sends no CORS headers and leaves the stream open to any `Origin`. The
     /// operator's `/v1/admin` route is never opened to a browser. A production build takes only
@@ -376,6 +380,11 @@ fn public_key_address(key: &str) -> anyhow::Result<AccountId> {
     Ok(eip712::address(&key))
 }
 
+/// Five seconds, the default `api.heartbeat_interval`.
+fn default_heartbeat_interval() -> Duration {
+    Duration::from_secs(5)
+}
+
 /// Decodes a base64 Ed25519 public key.
 /// Error cases:
 /// - the text is not base64, does not decode to 32 bytes, or is not a valid Ed25519 key
@@ -389,6 +398,8 @@ mod origins;
 mod test_keys;
 mod validation;
 
+#[cfg(test)]
+mod api_tests;
 #[cfg(test)]
 mod custody_tests;
 #[cfg(test)]

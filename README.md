@@ -190,6 +190,27 @@ else
 fi
 ```
 
+A pinned connection still passes through machines the client does not control, so the enclave also
+signs what it says. Every API response a client relies on carries the attested key's signature over
+the request it answers, a challenge the client chose, the node's time and log head, and the status
+and body; the attestation, the archive, whose segment catalog proves it, and health are left
+unsigned. Send a fresh random challenge with each request, and check the answer with the challenge
+you sent: a recorded answer then fits no other request. A stream connection opened with `signed=1`
+gets each message in a numbered, signed frame, and a signed heartbeat at least every five seconds,
+so a client can tell a quiet market from a held-back feed. A signature proves who answered; it
+cannot stop someone in between from delaying or dropping an answer, which is why a client treats a
+missing heartbeat as a stale feed and an unsigned answer as no answer:
+
+```bash
+CHALLENGE=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
+curl -sk -D headers -o body -H "X-Engine-Challenge: $CHALLENGE" $API/v1/markets
+cargo run -p engine-node -- verify-response --signer "$(jq -r .enclave_address <<< "$ATT")" \
+  --chain-id 31337 --vault 0x0000000000000000000000000000000000000000 --challenge $CHALLENGE \
+  --path /v1/markets --headers headers --body body
+```
+
+`./scripts/dev-signed-api.sh` runs the whole check against a local node, the stream included.
+
 The node's metrics are at `localhost:9464/metrics` in Prometheus format, and
 [`ops/grafana/engine-node.json`](ops/grafana/engine-node.json) is a Grafana dashboard for them;
 [`ops/prometheus/engine-node-rules.yml`](ops/prometheus/engine-node-rules.yml) holds alerting rules
@@ -222,11 +243,12 @@ OPERATOR_KEY=0x4242424242424242424242424242424242424242424242424242424242424242 
 
 ## Repository layout
 
-The workspace has two crates. [`crates/core`](crates/core) (`engine-core`) is the deterministic
+The workspace has three crates. [`crates/core`](crates/core) (`engine-core`) is the deterministic
 state machine: it performs no input or output, and uses neither clocks, randomness, nor
 floating-point arithmetic. [`crates/node`](crates/node) (`engine-node`, binary `engine`) runs it,
 sequencing commands, writing and streaming the log, signing checkpoints, serving the API, and
-connecting to custody and price feeds. Node configuration lives in [`config`](config), operator
+connecting to custody and price feeds. [`crates/wire`](crates/wire) (`engine-wire`) defines the
+signed answers the node gives and the checks a client runs on them. Node configuration lives in [`config`](config), operator
 assets such as the Grafana dashboard in [`ops`](ops), the confidential VM image is built from
 [`image`](image), and each crate's README describes its files.
 [`contracts`](contracts) is a Foundry project holding the custody vault, and

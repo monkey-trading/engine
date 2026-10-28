@@ -20,7 +20,7 @@ use tokio::time::{interval, timeout};
 use tracing::{error, info, warn};
 
 use crate::alerts::Routing;
-use crate::api::{ApiState, Feed, MAX_BACKFILLS, router};
+use crate::api::{ApiState, Feed, MAX_BACKFILLS, Signing, router};
 use crate::clock::{Clock, SystemClock, now_ms};
 use crate::config::{AuthMode, CustodyProvider, FeedProvider, NodeConfig, TeeProvider};
 use crate::custody::Custody;
@@ -306,6 +306,7 @@ async fn serve_node(
         history: history_reader,
         emission_budget,
         listing: Default::default(),
+        signing: Arc::new(Signing::new(key, cfg.custody.chain_id, vault, cfg.api.heartbeat_interval)),
     });
     info!(listen = %cfg.node.listen, "api up over TLS");
     let (api, retained) = (cfg.api, limits.clone());

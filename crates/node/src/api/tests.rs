@@ -329,6 +329,7 @@ async fn serve_with(node: &TestSequencer, dir: &Path, manifest: watch::Receiver<
         history: Reader::new(dir.join(INDEX_FILE), watch::channel(true).1),
         emission_budget: None,
         listing: Default::default(),
+        signing: crate::test_support::signing(),
     })
     .await
 }
@@ -357,6 +358,7 @@ async fn serve_history(history: Reader) -> SocketAddr {
         history,
         emission_budget: None,
         listing: Default::default(),
+        signing: crate::test_support::signing(),
     })
     .await
 }
@@ -465,6 +467,7 @@ pub(super) fn api_state(mock_custody: bool) -> (ApiState, mpsc::Receiver<sequenc
         history: Reader::new(PathBuf::new(), watch::channel(true).1),
         emission_budget: None,
         listing: Default::default(),
+        signing: crate::test_support::signing(),
     };
     (state, rx)
 }

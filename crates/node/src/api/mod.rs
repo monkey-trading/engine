@@ -14,6 +14,8 @@ mod distributions;
 mod history;
 mod origin;
 pub(crate) mod reissue;
+mod signing;
+pub(crate) use signing::Signing;
 mod state;
 mod stream;
 mod withdrawal_queue;
@@ -111,6 +113,8 @@ pub struct ApiState {
     /// The emission period budget the configured vault's MONKEY cap was derived from, which an
     /// emission schedule must match; `None` when the node reads no vault, as under mock custody.
     pub emission_budget: Option<TokenUnits>,
+    /// The enclave key and deployment the API signs answers for.
+    pub(crate) signing: Arc<Signing>,
 }
 
 #[derive(Serialize)]
@@ -192,7 +196,7 @@ impl IntoResponse for ApiError {
 }
 
 /// Every route, with the request span outermost, then the browser origin check, the per-client rate,
-/// and the body read.
+/// the response signature, and the body read.
 pub fn router(state: ApiState) -> Router {
     let limits = state.limits.clone();
     Router::new()
@@ -221,9 +225,10 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/dev/deposit", post(dev_deposit))
         .route("/v1/stream", get(stream::stream))
         .route("/v1/archive/{file}", get(archive::archive))
-        .with_state(state)
+        .with_state(state.clone())
         .layer(DefaultBodyLimit::max(limits.max_body_bytes))
         .layer(from_fn_with_state(limits.clone(), read_body))
+        .layer(from_fn_with_state(state, signing::sign_responses))
         .layer(from_fn_with_state(limits.clone(), limit_client))
         .layer(from_fn_with_state(limits, origin::browser_origin))
         .layer(from_fn(trace_request))
@@ -358,6 +363,10 @@ mod auth_tests;
 mod origin_tests;
 #[cfg(test)]
 mod proof_tests;
+#[cfg(test)]
+mod signing_bench;
+#[cfg(test)]
+mod signing_tests;
 #[cfg(test)]
 mod tests;
 

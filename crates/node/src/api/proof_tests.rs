@@ -277,6 +277,7 @@ impl Node {
             history: Reader::new(dir.join(INDEX_FILE), watch::channel(true).1),
             emission_budget: None,
             listing: Default::default(),
+            signing: crate::test_support::signing(),
         };
         let app = router(state.clone()).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9))));
         Node { app, state, dir, stamps }

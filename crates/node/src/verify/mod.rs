@@ -3,7 +3,8 @@
 //! checkpoint signer to have passed it. Verification proves the quote's certificate chain up to
 //! a pinned vendor root, the launch measurement and guest policy against the release, the
 //! reported TCB against the release's minimum, and the report data's binding of the enclave
-//! address and a configuration the release lists. A mock quote never verifies.
+//! address and a configuration the release lists. A mock quote never verifies. `answers` checks
+//! the API responses and stream frames that enclave signed.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -14,6 +15,8 @@ use sha2::Digest as _;
 
 use crate::tee::Attestation;
 
+mod answers;
+pub use answers::{Expected, VerifiedResponse, parse_challenge_arg, verify_frames_file, verify_response_files};
 mod chain;
 use self::chain::{Collateral, QuoteChain, Roots};
 pub use chain::KDS_BASE_URL;

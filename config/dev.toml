@@ -56,6 +56,8 @@ per_ip_connections = { per_second = 100, burst = 200 }
 max_subscribers = 256
 # A client that takes longer than this to take a response, or a subscriber a message, is dropped.
 send_timeout = "30s"
+# A signed stream subscriber (`signed=1`) gets a signed heartbeat at least this often; at least 1s.
+heartbeat_interval = "5s"
 
 # A tracing filter directive; it must enable at least "error" for engine_node,
 # the level every Critical alert logs at.

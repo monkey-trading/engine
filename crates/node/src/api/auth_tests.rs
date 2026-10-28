@@ -305,6 +305,24 @@ fn the_published_signing_vectors_are_bodies_the_api_accepts() {
 // ── Helpers ──
 
 /// A node API over a running sequencer on a fresh log, with the dev genesis and `auth` recorded.
+#[tokio::test]
+async fn a_nonce_conflict_is_signed_so_no_one_between_can_invent_one() {
+    let node = Node::start("signed-conflict", signed()).await;
+    let client = SigningKey::from_slice(&[1; 32]).unwrap();
+    node.fund(&client).await;
+    let challenge = "1b6d3f0a8c2e4975b1d0e6a3f8c27b4e9d05a1c3e7f2b6d48a0c9e1f3b5d7a26";
+    let request = HttpRequest::post("/v1/orders")
+        .header("content-type", "application/json")
+        .header(engine_wire::CHALLENGE_HEADER, challenge)
+        .body(Body::from(signed_order(&client, 5, "0.1").to_string()));
+    let response = node.app.clone().oneshot(request.unwrap()).await.unwrap();
+    let (status, headers) = (response.status(), response.headers().clone());
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(status, StatusCode::CONFLICT);
+    let challenge = super::signing_tests::parse(challenge);
+    assert_eq!(super::signing_tests::verify("POST", "/v1/orders", challenge, status, &headers, &body), Ok(()));
+}
+
 struct Node {
     app: Router,
     state: ApiState,
@@ -377,6 +395,7 @@ impl Node {
             history: Reader::new(dir.join(INDEX_FILE), watch::channel(true).1),
             emission_budget: None,
             listing: Default::default(),
+            signing: crate::test_support::signing(),
         };
         let app = router(state.clone()).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9))));
         Node { app, state, dir, withdrawals }

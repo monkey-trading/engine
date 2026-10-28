@@ -26,6 +26,7 @@ check_pkg() {
 
 check_pkg crates/core 500
 check_pkg crates/node 500
+check_pkg crates/wire 500
 
 if [[ "$fail" -ne 0 ]]; then
   exit 1

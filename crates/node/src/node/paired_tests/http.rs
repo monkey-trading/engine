@@ -59,6 +59,7 @@ impl Http {
             history,
             emission_budget: None,
             listing: Default::default(),
+            signing: crate::test_support::signing(),
             protocol: ProtocolVersion::LATEST,
             access: None,
         };

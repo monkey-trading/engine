@@ -40,6 +40,7 @@ impl NodeConfig {
     /// - `node.tick`, `node.checkpoint_every`, `node.segment_commands`, `feeds.interval`,
     ///   `time.max_drift`, `time.interval`, or an `api` timeout is zero, or `time.interval` plus
     ///   twice `time.max_drift` is not under 60s
+    /// - `api.heartbeat_interval` is under one second
     /// - `node.auth` is `none` with a TEE or custody provider other than `mock`
     /// - `tee.provider` is not `mock` and `operator.public_key` is a published test key (see
     ///   `refuse_test_keys`)
@@ -95,6 +96,9 @@ impl NodeConfig {
         if [self.api.handshake_timeout, self.api.read_timeout, self.api.send_timeout].iter().any(Duration::is_zero) {
             anyhow::bail!("api.handshake_timeout, api.read_timeout, and api.send_timeout must be non-zero");
         }
+        // A shorter interval would have every signed subscriber sign heartbeats faster than a client
+        // needs them.
+        ensure!(self.api.heartbeat_interval >= Duration::from_secs(1), "api.heartbeat_interval must be at least 1s");
         self.api.validate_origins()?;
         // Unsigned requests let anyone act for any account, so they never run beside a real
         // enclave or real funds.

@@ -36,12 +36,21 @@ an index: load only the rule whose hint matches the current action.
   `tests/reference/` holds one reference log per protocol version, written once by
   `examples/reference_log/` and replayed to its roots by `tests/reference_logs.rs`;
   `tests/invariants/` holds the property tests. Its `README.md` lists every file.
+- **crates/wire/** — `engine-wire`: the signed answers the node and its clients share. The
+  digests the enclave key signs over each API response (`engine.response.v1`) and stream frame
+  (`engine.frame.v1`), `verify_response`, `FrameVerifier`, the `SignedFrame` envelope, and
+  known-answer vectors (`tests/vectors.json`) a browser verifier replays. No IO and no runtime.
+  Its `README.md` lists every file.
 - **crates/node/** — `engine-node`, binary `engine` (`main.rs` over `lib.rs`). Contains the
   access-source screening (`access.rs`, signed decisions with bounded HTTP reads),
   sequencer, the public log with signed checkpoints (segmented, with a public archive), `engine
   replay`, `engine admin` (the operator's signing client), the REST API with the operator's admin
   route, the browser-origin allowlist (`api.allowed_origins`, in `api/origin.rs`), account proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
-  with rate limits and connection caps), the account history index (SQLite, derived from the log),
+  with rate limits and connection caps), signed answers (`api/signing.rs`: every `/v1` response but
+  health, the attestation and the archive carries the enclave key's signature over the request,
+  the client's challenge, the node's time and log head; `api/stream/signed.rs`: `signed=1` stream
+  frames numbered per connection, with heartbeats) and their offline checks, `engine
+  verify-response` and `engine verify-frames` (`verify/answers.rs`), the account history index (SQLite, derived from the log),
   dated benchmark ingestion (`benchmarks/` and the separate `admin/benchmark_feed.rs` signing worker
   with bounded durable schedule watches in `admin/benchmark_watch.rs` and `api/benchmark_schedule.rs`),
   optional checkpoint snapshots authenticated by pinned attested signers for suffix recovery,
@@ -147,7 +156,8 @@ an index: load only the rule whose hint matches the current action.
   `dev-snapshot-restart.sh`, the checkpoint snapshot restart and fallback scenario;
   `dev-deposit-finality.sh`, the sequencer confirmation and Ethereum finality scenario on the
   vault's Anvil fixture; `dev-rwa-feeds.sh`, the RWA price feeds dev scenario against local
-  stand-ins for the market-data vendors; `dev-withdrawals.sh`, the actual Anvil/TLS withdrawal,
+  stand-ins for the market-data vendors; `dev-signed-api.sh`, the signed API answers scenario:
+  verified responses and stream frames, and refused tampering, replay and gaps; `dev-withdrawals.sh`, the actual Anvil/TLS withdrawal,
   pre-log crash, unpaid redelivery, and FIFO liquidity scenario; `dev-attestation-verifier.sh`,
   the attestation verifier dev scenario against a loopback key-distribution stand-in, with no
   hardware or vendor access, also replaying a hand-built signed-withdrawal log through
@@ -167,13 +177,15 @@ an index: load only the rule whose hint matches the current action.
   test, the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
   deposit finality scenarios, the MONKEY staking dev scenario, the signed withdrawal and FIFO dev
   scenario, the metrics and alert routing dev scenario, the alert outbox kill/restart scenario,
-  the browser-origin scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the review-delta helper's test,
+  the browser-origin scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the
+  signed API answers dev scenario, the review-delta helper's test,
   and the enclave image (`image` checks its download retries, builds it twice, and boots it under
   QEMU, `image-compare` fails if the builds differ), on every push to `main` and every PR.
   deposit finality scenarios, the signed withdrawal and FIFO dev scenario, the API and
   direct-vault access enforcement dev scenario, the metrics and alert
   routing dev scenario, the alert outbox kill/restart scenario, the browser-origin scenario, the snapshot restart scenario, the
-  RWA price feeds dev scenario, the review-delta helper's test, and the enclave image (`image`
+  RWA price feeds dev scenario, the signed API answers dev scenario, the review-delta helper's
+  test, and the enclave image (`image`
   checks its download retries, builds it twice, and boots it under QEMU, `image-compare` fails if
   the builds differ), on every push to `main` and every PR.
   On a PR, the first job, `changes`, sorts the changed files into the Rust, contracts, scenario,
@@ -216,7 +228,8 @@ an index: load only the rule whose hint matches the current action.
 Run from the repo root:
 
 - Build: `cargo build`
-- Test one crate: `cargo test -p engine-core` or `cargo test -p engine-node`; the node's
+- Test one crate: `cargo test -p engine-core`, `cargo test -p engine-node`, or
+  `cargo test -p engine-wire`; the node's
   production build: `cargo test -p engine-node --features production --lib production_build`
 - Lint: `cargo clippy --workspace --all-targets -- -D warnings`
 - Format check: `cargo fmt --all -- --check`
@@ -269,6 +282,12 @@ Run from the repo root:
   an altered measurement, and an unattested checkpoint signer fail; a hand-built log with signed
   withdrawals also replays through `engine replay --attestation` without `--signer`, and a
   mismatched `--signer` fails; needs only Cargo)
+- Signed API answers dev scenario: `./scripts/dev-signed-api.sh` (needs `curl`, `jq`, and `python3`,
+  which reads the WebSocket stream; a dev node on a quiet log with one-second heartbeats)
+- Verify a signed response or stream connection: `cargo run -p engine-node -- verify-response
+  --signer <attested address> --chain-id <id> --vault <address> --challenge <64 hex> --path <path>
+  --headers <curl -D file> --body <file>`, or `verify-frames ... --frames <one frame a line>`; the
+  cost benchmark: `cargo test -p engine-node --lib signing_bench -- --ignored --nocapture`
 - Corporate-action dev scenario: `./scripts/dev-corporate-actions.sh` (runs the isolated signed
   operator/TLS/API scenario with deterministic venue time, restart and public replay)
 - Access enforcement dev scenario: `./scripts/dev-access-enforcement.sh` (Anvil, API and direct vault

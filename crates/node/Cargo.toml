@@ -16,6 +16,7 @@ production = []
 
 [dependencies]
 engine-core.workspace = true
+engine-wire.workspace = true
 
 alloy.workspace = true
 alloy-rpc-client.workspace = true

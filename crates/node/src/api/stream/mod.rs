@@ -3,9 +3,11 @@
 //! that falls behind the live channel reads from disk again from its last offset instead of being
 //! dropped. A subscriber that stops reading is closed, and can resume. Subscribers are capped by
 //! `api.max_subscribers`, and what a subscriber sends is read and dropped, so its close is
-//! answered.
+//! answered. A subscriber that asks for `signed=1` gets each message in a signed frame, with
+//! heartbeats (`signed`); without it, the messages go out as they are.
 
 use std::collections::VecDeque;
+use std::future::pending;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -28,6 +30,8 @@ use tracing::{Instrument, Span, error, info};
 use crate::api::{ApiError, ApiState};
 use crate::log::{LogReader, Manifest, Offset};
 use crate::sequencer::StreamMsg;
+mod signed;
+use signed::Framing;
 
 /// Most messages read from disk per blocking call.
 const BACKFILL_BATCH: usize = 256;
@@ -42,6 +46,12 @@ pub struct StreamParams {
     after: Option<Offset>,
     /// Start at the first message of this seq; `0` is the whole log.
     from: Option<u64>,
+    /// `1` sends each message in a frame the enclave key signs, with a heartbeat at least every
+    /// `api.heartbeat_interval`.
+    signed: Option<u8>,
+    /// With `signed=1`, the 64 hex characters every frame is signed under; 32 zero bytes when
+    /// absent.
+    challenge: Option<String>,
 }
 
 /// One subscriber's messages, in offset order, each once.
@@ -127,10 +137,12 @@ impl Feed {
 }
 
 /// Upgrades to a WebSocket that streams the public log: live from now by default, or from `after`
-/// or `from` through what is on disk and then live. The subscriber holds one of the capped places
-/// until it disconnects, and may send messages up to `api.max_body_bytes`.
+/// or `from` through what is on disk and then live, in signed frames with `signed=1`. The
+/// subscriber holds one of the capped places until it disconnects, and may send messages up to
+/// `api.max_body_bytes`.
 /// Error cases:
 /// - both `after` and `from` are given
+/// - `signed` is not `1`, a `challenge` comes without it, or the challenge is not 64 hex characters
 /// - every subscriber place is taken
 pub async fn stream(
     State(s): State<ApiState>,
@@ -143,6 +155,17 @@ pub async fn stream(
         (None, Some(seq)) => Some(Offset::start_of(seq)),
         (None, None) => None,
     };
+    let framing = match (params.signed, params.challenge.as_deref()) {
+        (None, None) => None,
+        (None, Some(_)) => return Err(ApiError::BadRequest("a challenge needs signed=1".into())),
+        (Some(1), challenge) => {
+            let challenge = challenge.map_or(Some([0; 32]), engine_wire::parse_challenge);
+            let challenge =
+                challenge.ok_or_else(|| ApiError::BadRequest("challenge must be 64 hex characters".into()))?;
+            Some(Framing::new(&s, challenge))
+        }
+        (Some(_), _) => return Err(ApiError::BadRequest("signed must be 1".into())),
+    };
     Span::current().record("id", display(start.map_or_else(|| "live".to_owned(), |from| from.to_string())));
     let place = s.limits.subscribe()?;
     let feed = Feed::new(s.stream.subscribe(), s.log_dir.clone(), s.manifest.clone(), s.backfills.clone(), start);
@@ -150,7 +173,7 @@ pub async fn stream(
     let ws = ws.max_message_size(s.limits.max_body_bytes).max_frame_size(s.limits.max_body_bytes);
     Ok(ws.on_upgrade(move |socket| {
         async move {
-            forward(socket, feed, send_timeout).await;
+            forward(socket, feed, send_timeout, framing).await;
             drop(place);
         }
         .instrument(span)
@@ -160,7 +183,7 @@ pub async fn stream(
 /// Sends the feed to one subscriber until it closes or disconnects, stops reading for
 /// `send_timeout`, or the sequencer stops. What the subscriber sends is read alongside, so its
 /// close is answered while messages are still waiting for it.
-async fn forward<S>(socket: S, feed: Feed, send_timeout: Duration)
+async fn forward<S>(socket: S, feed: Feed, send_timeout: Duration, framing: Option<Framing>)
 where
     S: Sink<Message> + Stream<Item = Result<Message, Error>> + Unpin,
 {
@@ -170,7 +193,7 @@ where
             // Sends the close reply queued when the close was read.
             let _ = timeout(send_timeout, sink.close()).await;
         },
-        () = send_feed(&mut sink, feed, send_timeout) => {}
+        () = send_feed(&mut sink, feed, send_timeout, framing) => {}
     }
 }
 
@@ -188,10 +211,28 @@ async fn read_until_closed<S: Stream<Item = Result<Message, Error>> + Unpin>(inp
 }
 
 /// Sends the feed until the subscriber disconnects, stops reading for `send_timeout`, or the
-/// sequencer stops.
-async fn send_feed<S: Sink<Message> + Unpin>(sink: &mut S, mut feed: Feed, send_timeout: Duration) {
+/// sequencer stops; with `framing`, in signed frames between heartbeats.
+async fn send_feed<S: Sink<Message> + Unpin>(
+    sink: &mut S,
+    mut feed: Feed,
+    send_timeout: Duration,
+    mut framing: Option<Framing>,
+) {
     loop {
-        let msg = match feed.next().await {
+        let next = feed.next();
+        tokio::pin!(next);
+        // The feed's read stays in flight while heartbeats go out, so a slow backfill still ends.
+        let msg = loop {
+            tokio::select! {
+                msg = &mut next => break msg,
+                heartbeat = next_heartbeat(&mut framing) => {
+                    if !send_text(sink, heartbeat, send_timeout, None).await {
+                        return;
+                    }
+                }
+            }
+        };
+        let msg = match msg {
             Ok(Some(msg)) => msg,
             Ok(None) => return,
             Err(e) => {
@@ -207,13 +248,38 @@ async fn send_feed<S: Sink<Message> + Unpin>(sink: &mut S, mut feed: Feed, send_
                 return;
             }
         };
-        match timeout(send_timeout, sink.send(Message::Text(json.into()))).await {
-            Ok(Ok(())) => {}
-            Ok(Err(_)) => return,
-            Err(_) => {
-                info!(offset = %msg.offset, "closing a subscriber that stopped reading");
-                return;
-            }
+        let text = match framing.as_mut() {
+            Some(framing) => framing.frame(json),
+            None => json,
+        };
+        if !send_text(sink, text, send_timeout, Some(msg.offset)).await {
+            return;
+        }
+    }
+}
+
+/// The connection's next heartbeat frame once it is due; never, on an unsigned connection.
+async fn next_heartbeat(framing: &mut Option<Framing>) -> String {
+    match framing {
+        Some(framing) => framing.next_heartbeat().await,
+        None => pending().await,
+    }
+}
+
+/// Sends `text`, the message at `offset` or a heartbeat; `false` once the subscriber has
+/// disconnected or stopped reading for `send_timeout`.
+async fn send_text<S: Sink<Message> + Unpin>(
+    sink: &mut S,
+    text: String,
+    send_timeout: Duration,
+    offset: Option<Offset>,
+) -> bool {
+    match timeout(send_timeout, sink.send(Message::Text(text.into()))).await {
+        Ok(Ok(())) => true,
+        Ok(Err(_)) => false,
+        Err(_) => {
+            info!(offset = offset.map(display), "closing a subscriber that stopped reading");
+            false
         }
     }
 }

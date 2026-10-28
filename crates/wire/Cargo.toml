@@ -1,0 +1,20 @@
+[package]
+name = "engine-wire"
+description = "Signed API answers: the digests the enclave key signs over responses and stream frames, and their checks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# No IO and no runtime: the node signs with these digests, and a browser verifier builds this crate
+# for WebAssembly.
+[dependencies]
+hex.workspace = true
+k256.workspace = true
+serde.workspace = true
+sha2.workspace = true
+sha3.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
