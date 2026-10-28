@@ -416,6 +416,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/staking.rs` — mirroring the staking contract's finalised events into `Stake`/`Unstake`
   commands once each, holding them until `InitStaking` has applied; V27 completed ranges, including
   empty ones, are authenticated by `StakingProgress` and the host cursor cannot advance them
+- `src/custody/tests/staking/anchor.rs` — canonical endpoint binding for empty and partial log votes
+
 - `src/custody/evm/lifecycle/tests.rs` — reversal, reinclusion, inconsistent receipt and amount boundaries
 - `src/custody/chain.rs` — the chain of block hashes proven to lead to the tagged block, and the
   headers of an interrupted proof, kept apart until it ends there

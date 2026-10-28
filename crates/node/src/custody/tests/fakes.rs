@@ -208,10 +208,13 @@ impl VaultReader for FakeChain {
         Ok(chain.deposits.iter().filter(|d| d.block <= at.number).count() as u64)
     }
 
-    async fn staking_events(&self, from: u64, to: u64) -> anyhow::Result<Vec<StakingEvent>> {
+    async fn staking_events(&self, from: u64, to: BlockRef) -> anyhow::Result<Vec<StakingEvent>> {
         let mut chain = self.0.lock().unwrap();
-        chain.reads.push((from, to));
-        let visible = chain.staking.iter().filter(|e| !chain.hide_logs && (from..=to).contains(&e.block));
+        chain.reads.push((from, to.number));
+        if chain.hash_at(to.number) != to.hash {
+            bail!("staking endpoint is not canonical");
+        }
+        let visible = chain.staking.iter().filter(|e| !chain.hide_logs && (from..=to.number).contains(&e.block));
         Ok(visible.cloned().collect())
     }
 }

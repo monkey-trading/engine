@@ -50,8 +50,9 @@ impl VaultReader for StubReader {
         Ok(0)
     }
 
-    async fn staking_events(&self, from: u64, to: u64) -> anyhow::Result<Vec<StakingEvent>> {
-        Ok(self.0.iter().filter(|e| (from..=to).contains(&e.block)).cloned().collect())
+    async fn staking_events(&self, from: u64, to: BlockRef) -> anyhow::Result<Vec<StakingEvent>> {
+        anyhow::ensure!(to.hash == canonical_hash(to.number), "staking endpoint is not canonical");
+        Ok(self.0.iter().filter(|e| (from..=to.number).contains(&e.block)).cloned().collect())
     }
 }
 
@@ -386,3 +387,5 @@ async fn staking_hierarchy_survives_cancellation_and_rejects_changed_cached_anch
     assert!(format!("{error:?}").contains("staking proof anchor changed"));
     assert_eq!(watcher.staking_anchor_count(), 0, "conflicting cached anchors must be discarded");
 }
+
+mod anchor;

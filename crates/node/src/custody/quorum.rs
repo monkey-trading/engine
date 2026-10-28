@@ -182,18 +182,19 @@ impl<R: VaultReader + Sync> VaultReader for Quorum<R> {
         self.vote("deposits", answers).map(|v| v.0.1)
     }
 
-    /// Identical ordered staking event sets; a deployment without a staking contract answers
-    /// empty on every provider.
+    /// Identical staking event sets anchored to the range endpoint the watcher already proved.
     /// Error cases:
-    /// - no quorum
-    async fn staking_events(&self, from: u64, to: u64) -> anyhow::Result<Vec<StakingEvent>> {
+    /// - no quorum, or the winning endpoint differs from that proof, even for an empty response
+    async fn staking_events(&self, from: u64, to: BlockRef) -> anyhow::Result<Vec<StakingEvent>> {
         let answers = join_all(self.providers.iter().enumerate().map(|(i, (_, r))| async move {
             self.qualified(i)?;
-            let header = last_header(r.headers(to, to).await?, to)?;
+            let header = last_header(r.headers(to.number, to.number).await?, to.number)?;
             Ok((header.hash, r.staking_events(from, to).await?))
         }))
         .await;
-        self.vote("staking_events", answers).map(|v| v.0.1)
+        let ((hash, events), _) = self.vote("staking_events", answers)?;
+        ensure!(hash == to.hash, "staking event range endpoint differs from its proven canonical hash");
+        Ok(events)
     }
 
     /// Identical counts at the same canonical block hash.

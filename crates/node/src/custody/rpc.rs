@@ -19,7 +19,7 @@ use alloy::rpc::types::{Block, Filter, Header, Log, TransactionRequest};
 use alloy::sol;
 use alloy::sol_types::{SolCall, SolEvent};
 use alloy::transports::http::reqwest::{Certificate, Client, Url};
-use anyhow::{Context, anyhow, bail};
+use anyhow::{Context, anyhow, bail, ensure};
 use engine_core::types::AccountId;
 use tokio::time::timeout;
 use tracing::debug;
@@ -177,16 +177,26 @@ impl VaultReader for VaultRpc {
     /// Error cases:
     /// - the request fails or times out
     /// - a log is removed, lacks its position, does not decode as a staking event, or carries an
-    ///   amount past `u128`
-    async fn staking_events(&self, from: u64, to: u64) -> anyhow::Result<Vec<StakingEvent>> {
-        let Some(staking) = self.staking else { return Ok(Vec::new()) };
-        let filter = Filter::new()
-            .address(staking)
-            .event_signature(vec![Staked::SIGNATURE_HASH, UnstakeCompleted::SIGNATURE_HASH])
-            .from_block(from)
-            .to_block(to);
-        let logs = self.deadline("eth_getLogs", self.client.request::<_, Vec<Log>>("eth_getLogs", (filter,))).await?;
-        logs.iter().map(|log| self.decode_staking(log)).collect()
+    ///   amount past `u128`, or the range endpoint differs from the proven canonical block
+    async fn staking_events(&self, from: u64, to: BlockRef) -> anyhow::Result<Vec<StakingEvent>> {
+        let events = if let Some(staking) = self.staking {
+            let filter = Filter::new()
+                .address(staking)
+                .event_signature(vec![Staked::SIGNATURE_HASH, UnstakeCompleted::SIGNATURE_HASH])
+                .from_block(from)
+                .to_block(to.number);
+            let logs =
+                self.deadline("eth_getLogs", self.client.request::<_, Vec<Log>>("eth_getLogs", (filter,))).await?;
+            logs.iter().map(|log| self.decode_staking(log)).collect::<anyhow::Result<Vec<_>>>()?
+        } else {
+            Vec::new()
+        };
+        let headers = self.headers(to.number, to.number).await?;
+        ensure!(
+            headers.len() == 1 && headers[0].number == to.number && headers[0].hash == to.hash,
+            "staking event range endpoint is not the proven canonical block"
+        );
+        Ok(events)
     }
 }
 

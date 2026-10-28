@@ -136,8 +136,8 @@ impl StakingCursor {
 /// have no reversal, so blocks above it wait for finality. Events hold, with the cursor, until
 /// `InitStaking` has applied: a mirror the engine would refuse as premature is never sequenced,
 /// and a cursor that has not moved only makes the next poll read the same blocks again. The
-/// caller proves the range's blocks before calling, and passes their hashes; an event on an
-/// unproven block stalls the poll.
+/// caller proves the range's blocks before calling, and passes their hashes. The event response
+/// must match the proven endpoint even when empty; an event on an unproven block also stalls.
 /// Error cases:
 /// - stalled: a read fails, an event is on an unproven block, or the engine refuses a mirror
 /// - fatal: the sequencer has stopped, or the cursor cannot be stored
@@ -158,7 +158,13 @@ pub(super) async fn mirror<V: VaultReader>(
         debug!(from, to, "staking is not initialised; holding mirrors until InitStaking applies");
         return Ok(());
     }
-    let events = reader.staking_events(from, to).await.map_err(PollError::rpc)?;
+    let block_hash = *hashes
+        .get(&to)
+        .ok_or_else(|| PollError::unsettled(anyhow::anyhow!("staking progress lacks its proven endpoint")))?;
+    let events = reader
+        .staking_events(from, crate::custody::evm::BlockRef { number: to, hash: block_hash })
+        .await
+        .map_err(PollError::rpc)?;
     for event in &events {
         if hashes.get(&event.block) != Some(&event.block_hash) {
             return Err(PollError::unsettled(anyhow::anyhow!(
@@ -176,9 +182,6 @@ pub(super) async fn mirror<V: VaultReader>(
         .await
         .map_err(PollError::Fatal)?;
     if modern {
-        let block_hash = *hashes
-            .get(&to)
-            .ok_or_else(|| PollError::unsettled(anyhow::anyhow!("staking progress lacks its proven endpoint")))?;
         let events = submit(tx, Command::StakingProgress { block: to, block_hash }).await?;
         if events.iter().any(|event| matches!(event, Event::AdminRejected { .. })) {
             return Err(PollError::Stalled(Stall::Refused(anyhow::anyhow!("the engine refused staking progress"))));
