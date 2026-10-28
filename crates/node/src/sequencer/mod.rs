@@ -340,7 +340,6 @@ impl Sequencer {
         let events = self.engine.apply(&sequenced).context("sequencer produced an invalid sequence")?;
         #[cfg(test)]
         withdrawal_scenario::before_approval_log(&sequenced, &events)?;
-        let access = access::is_access_command(&sequenced.cmd);
         self.accounting.apply(&sequenced.cmd, &events)?;
         self.progress.genesis.command(&sequenced, &events);
         if self.engine.protocol_version() != version {
@@ -353,6 +352,7 @@ impl Sequencer {
         }
         self.legacy_approvals.observe(&self.engine, &sequenced, &events, true);
         let reinstated = reinstated_receipt(&sequenced.cmd, &events);
+        self.access_alerts.note(&self.engine, &sequenced.cmd, &events);
         self.next_seq += 1;
         self.last_ts = ts;
         let mut entry = CommandEntry { sequenced, events: Some(events.clone()), seal: None };
@@ -369,9 +369,6 @@ impl Sequencer {
         self.metrics.commands.inc();
         self.metrics.access_pending_deposits.set(self.engine.pending_deposits().len() as i64);
         for (event_index, event) in events.iter().enumerate() {
-            if access {
-                self.access_alerts.note(event);
-            }
             alert_on(event);
             self.benchmark_alerts.note(event);
             self.metrics.record(event);
