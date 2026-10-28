@@ -134,8 +134,26 @@ contract DistributionsTest is Test {
         governance.execute(address(vault), 0, data, bytes32(0), salt);
     }
 
-    function testFuzz_SingleLeafTreeClaimsUpToTheBalance(address account, uint256 entitled) public {
+    // The vault's balance-delta check needs the payee's balance to move by exactly the paid amount, so
+    // the payee cannot be the vault, the token, or any other contract or precompile the test uses.
+    function assumePaidExactly(address account) private view {
         vm.assume(account != address(0));
+        vm.assume(account != address(vault) && account != address(usdc) && account != address(vault.governance()));
+        vm.assume(account != address(this) && account != address(vm));
+        assumeNotPrecompile(account);
+    }
+
+    function test_AClaimPaidToTheVaultItselfIsRefused() public {
+        // Counterexample from main's CI: the fuzzer picked an address this test deploys a contract at.
+        address account = address(vault);
+        usdc.mint(address(vault), 11358);
+        post(1, leaf(account, 11358), false, 0, 0);
+        vm.expectRevert(Vault.InexactWithdrawalTransfer.selector);
+        vault.claimDistribution(account, 11358, new bytes32[](0));
+    }
+
+    function testFuzz_SingleLeafTreeClaimsUpToTheBalance(address account, uint256 entitled) public {
+        assumePaidExactly(account);
         entitled = bound(entitled, 1, 1e15);
         usdc.mint(address(vault), entitled);
         post(1, leaf(account, entitled), false, 0, 0);
