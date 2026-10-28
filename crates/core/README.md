@@ -231,6 +231,9 @@ this crate and reproduce the signed state roots exactly.
   encodings and value hashes, a root, and proofs
 - `tests/fixtures/emissions.json` — entitlement proofs the engine produced, which the vault's
   Foundry tests claim with and `tests/emissions_fixture.rs` checks
+- `tests/access/emission_debt.rs` and `tests/corporate_actions/emissions.rs` — the `V33` emission debt
+  (reversals in a later period, restart, root) and eligibility judged at the command's stamp during
+  corporate-action catch-up.
 - `tests/emissions.rs`, `tests/emissions_eligibility.rs`, `tests/emissions_schedule.rs` — MONKEY
   emissions from `V19`: allocation, rounding, cancellation, and finality; which losses count and the
   signed initialisation; and the schedule's arithmetic with the first halving

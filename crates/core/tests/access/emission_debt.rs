@@ -22,6 +22,8 @@ fn a_reversal_landing_after_the_losses_becomes_an_emission_debt_that_later_losse
     let (mut h, client) = emitting(ProtocolVersion::V33);
     let account = client.account;
     let budget = h.engine.emissions().expect("initialised").schedule.budget(0);
+    // A root now makes every later one incremental, so the debt leaf is rehashed from what changed.
+    let no_debt_root = h.engine.state_root();
 
     // Period 0 loses half the receipt's principal in fills and earns its allocation.
     let deposit = receipt(1, account, "100");
@@ -35,12 +37,18 @@ fn a_reversal_landing_after_the_losses_becomes_an_emission_debt_that_later_losse
     let events = next_period(&mut h);
     assert!(allocations(&events).is_empty(), "{events:?}");
     assert_eq!(h.engine.emission_debt(account), f("50"));
+    let debt_50_root = assert_root_matches_rebuild(&mut h.engine);
+    assert_ne!(debt_50_root, no_debt_root, "the root commits to the debt");
 
     // Period 2: new losses pay the debt down before earning, so nothing is allocated yet.
     credit(&mut h, &receipt(2, account, "100"));
     lose(&mut h, "100", "94");
     let events = next_period(&mut h);
     assert!(allocations(&events).is_empty(), "{events:?}");
+    assert_eq!(h.engine.emission_debt(account), f("20"));
+    assert_ne!(assert_root_matches_rebuild(&mut h.engine), debt_50_root, "paying the debt down changes the root");
+    // A restart from the serialized engine keeps the debt, and the rest of the scenario runs on it.
+    h.engine = serde_json::from_slice(&serde_json::to_vec(&h.engine).unwrap()).unwrap();
     assert_eq!(h.engine.emission_debt(account), f("20"));
 
     // Period 3: the weight beyond the debt earns, and the debt is gone.
@@ -49,6 +57,7 @@ fn a_reversal_landing_after_the_losses_becomes_an_emission_debt_that_later_losse
     assert_eq!(allocations(&next_period(&mut h)), [(account, 3, f("30"), budget)]);
     assert_eq!(h.engine.emission_debt(account), Fixed::ZERO);
     assert_eq!(h.engine.entitlement(account).0, 2 * budget);
+    assert!(assert_root_matches_rebuild(&mut h.engine) != debt_50_root, "a cleared debt leaves no leaf");
 
     // The debt is a state-tree leaf: a replay recomputes the same root.
     let root = h.engine.state_root();
@@ -112,6 +121,15 @@ fn before_v33_a_later_period_reversal_leaves_earlier_allocations_unclawed() {
     lose(&mut h, "100", "94");
     assert_eq!(allocations(&next_period(&mut h)), [(account, 2, f("30"), budget)]);
     assert_eq!(h.engine.entitlement(account).0, 2 * budget);
+}
+
+/// The engine's incremental root, which must equal the root of the same state rebuilt from its
+/// serialization.
+fn assert_root_matches_rebuild(engine: &mut engine_core::Engine) -> [u8; 32] {
+    let incremental = engine.state_root();
+    let mut rebuilt: engine_core::Engine = serde_json::from_slice(&serde_json::to_vec(engine).unwrap()).unwrap();
+    assert_eq!(rebuilt.state_root(), incremental, "the incremental root differs from a rebuild's");
+    incremental
 }
 
 /// An emitting log at `version` under the access rules, with the client declared eligible.
