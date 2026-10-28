@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use std::sync::Mutex;
 
 use alloy::primitives::Address;
-use anyhow::{Context, bail};
+use anyhow::{Context, bail, ensure};
 use futures_util::future::join_all;
 use tracing::{error, info, warn};
 
