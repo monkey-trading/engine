@@ -241,9 +241,13 @@ fn after_v33_a_long_gap_checks_for_a_closure_only_within_the_window_and_at_its_e
     assert!(h.engine.markets()[&HALTED].quotes.is_empty());
     assert!(!priced(&h));
 
-    // A gap ending while the market is closed still drops the quotes it holds.
+    // Back at the one-hour window, quotes priced in an open session are fresh through the first hour
+    // of a long gap, so only its end, with the market closed, can drop them.
+    relist(&mut h, 3_600_000);
+    h.advance_to(ny(2026, 10, 26, 14, 0));
     h.price(HALTED, "100");
-    h.advance_to(ny(2026, 10, 23, 17, 30));
+    assert_eq!(h.engine.markets()[&HALTED].quotes.len(), 2);
+    h.advance_to(ny(2026, 10, 26, 17, 30));
     h.cmd(Command::Tick);
     assert!(h.engine.markets()[&HALTED].quotes.is_empty());
 }
