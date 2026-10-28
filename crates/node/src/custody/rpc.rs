@@ -187,7 +187,7 @@ impl VaultReader for VaultRpc {
         );
         let mut events = Vec::new();
         if let Some(staking) = self.staking {
-            let batches = stream::iter(blocks.iter().map(|block| async move {
+            let batches = stream::iter(blocks.to_vec().into_iter().map(|block| async move {
                 let filter = Filter::new()
                     .address(staking)
                     .event_signature(vec![Staked::SIGNATURE_HASH, UnstakeCompleted::SIGNATURE_HASH])
