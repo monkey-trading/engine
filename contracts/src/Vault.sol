@@ -315,6 +315,7 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     }
 
     function _pay(address account, uint256 amount) private {
+        if (withdrawalsPaused) revert WithdrawalsPaused();
         uint256 vaultBefore = usdc.balanceOf(address(this));
         uint256 accountBefore = usdc.balanceOf(account);
         usdc.safeTransfer(account, amount);

@@ -47,6 +47,50 @@ contract DistributionsTest is Test {
         assertEq(usdc.balanceOf(address(vault)), 0);
     }
 
+    function test_WithdrawalPauseBlocksDistributionWithoutChangingClaimsAndDepositsStayIndependent() public {
+        address account = makeAddr("paused claimant");
+        uint256 entitled = 250 * 1e6;
+        usdc.mint(address(vault), entitled);
+        post(1, leaf(account, entitled), false, 0, 0);
+        setPauses(false, true);
+
+        vm.expectRevert(Vault.WithdrawalsPaused.selector);
+        vault.claimDistribution(account, entitled, new bytes32[](0));
+        assertEq(usdc.balanceOf(address(vault)), entitled);
+        assertEq(usdc.balanceOf(account), 0);
+        assertEq(vault.distributionsClaimed(account), 0);
+        assertEq(vault.distributionsPaid(), 0);
+        assertEq(vault.totalWithdrawn(), 0);
+
+        uint256 deposit = 10 * 1e6;
+        usdc.mint(account, deposit);
+        vm.startPrank(account);
+        usdc.approve(address(vault), deposit);
+        vault.deposit(deposit);
+        vm.stopPrank();
+        assertEq(vault.totalDeposited(), deposit);
+        assertEq(usdc.balanceOf(address(vault)), entitled + deposit);
+
+        setPauses(true, false);
+        assertEq(vault.claimDistribution(account, entitled, new bytes32[](0)), entitled);
+        assertEq(usdc.balanceOf(account), entitled);
+        assertEq(usdc.balanceOf(address(vault)), deposit);
+        assertEq(vault.distributionsClaimed(account), entitled);
+        assertEq(vault.distributionsPaid(), entitled);
+        assertEq(vault.totalWithdrawn(), 0);
+    }
+
+    function setPauses(bool deposits, bool withdrawals) private {
+        TimelockController governance = vault.governance();
+        bytes memory data = abi.encodeCall(Vault.setPauses, (deposits, withdrawals));
+        bytes32 salt = keccak256(data);
+        uint256 delay = governance.getMinDelay();
+        vm.prank(vm.addr(KEY));
+        governance.schedule(address(vault), 0, data, bytes32(0), salt, delay);
+        vm.warp(block.timestamp + delay);
+        governance.execute(address(vault), 0, data, bytes32(0), salt);
+    }
+
     function testFuzz_SingleLeafTreeClaimsUpToTheBalance(address account, uint256 entitled) public {
         vm.assume(account != address(0));
         entitled = bound(entitled, 1, 1e15);
