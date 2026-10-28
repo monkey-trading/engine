@@ -13,9 +13,11 @@ Load on request when a task depends on state that may have changed since the las
 **A green check is not the same as "everything ran".** Before reporting CI green, know which jobs
 actually ran on that commit:
 
-- A **cancelled** job is not a passed job. `fail-fast` cancels sibling matrix lanes as soon as one
-  fails, so "only lane X failed" usually means the others never finished — check every lane's
-  conclusion, not just the failures.
+- A **cancelled** job is not a passed job. On a pull request, CI cancels the whole run as soon
+  as one job fails, so "only job X failed" usually means the others never finished — check every
+  job's conclusion, not just the failures.
+- After a flake, `gh run rerun --failed` re-runs the failed, cancelled, and unstarted jobs, not
+  only the flaky one; read the new attempt's `ci-passed`, not the first attempt's.
 - Verify a push produced a new run: `git push` on an unchanged branch succeeds silently and
   triggers nothing, which looks identical to a real push. Match the run's `headSha` to the branch
   tip before believing a result belongs to your change.
