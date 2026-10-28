@@ -6,6 +6,7 @@ use std::time::Duration;
 use crate::checkpoints::{CheckpointChain, DepositCoverage, Poster, VaultState, View, Work};
 use crate::log::Checkpoint;
 use crate::sequencer::Request;
+use crate::test_support::withdraw;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Comparison {
@@ -13,16 +14,21 @@ pub(super) enum Comparison {
     OlderFinalized,
     UnprovenCoverage,
     ValidatedCatchup,
+    Healthy,
+    Shortfall,
+    RpcFailure,
 }
 
 struct Chain {
     latest: VaultState,
     finalized: VaultState,
     credited: Fixed,
+    failing: bool,
 }
 
 impl CheckpointChain for Chain {
     async fn state(&self, view: View) -> anyhow::Result<VaultState> {
+        anyhow::ensure!(!self.failing, "the RPC provider is unreachable");
         Ok(if view == View::Latest { self.latest.clone() } else { self.finalized.clone() })
     }
     async fn deposited_through(&self, _: &crate::checkpoints::Observation, _: u64) -> anyhow::Result<Fixed> {
@@ -35,7 +41,7 @@ impl CheckpointChain for Chain {
 
 #[tokio::test]
 async fn unknown_collateral_observations_preserve_startup_and_divergence_holds() {
-    for comparison in [Comparison::MissingFinalized, Comparison::OlderFinalized, Comparison::UnprovenCoverage] {
+    for comparison in [Comparison::MissingFinalized, Comparison::OlderFinalized, Comparison::RpcFailure] {
         let (mut seq, mut queued, work) = bootstrap(&format!("unknown-collateral-{comparison:?}"));
         for before in [None, Some(Health::Diverged)] {
             seq.gate.as_mut().unwrap().health = before;
@@ -48,6 +54,62 @@ async fn unknown_collateral_observations_preserve_startup_and_divergence_holds()
             seq.checkpoint_status(posted, Some(Health::Unvalidated)).unwrap();
             assert_eq!(seq.gate.as_ref().unwrap().health, before, "direct callers cannot erase a verdict either");
         }
+    }
+}
+
+#[tokio::test]
+async fn an_rpc_failure_does_not_clear_a_proved_divergence() {
+    let (mut seq, mut queued, work) = bootstrap("rpc-failure-after-divergence");
+    let (posted, health) = worker_status(work.clone(), Comparison::Shortfall).await;
+    assert_eq!(health, Some(Health::Diverged), "the vault is short of the ledger");
+    seq.checkpoint_status(posted, health).unwrap();
+    for _ in 0..3 {
+        let (posted, health) = worker_status(work.clone(), Comparison::RpcFailure).await;
+        seq.checkpoint_status(posted, health).unwrap();
+        assert_eq!(seq.gate.as_ref().unwrap().health, Some(Health::Diverged));
+    }
+    assert!(seq.sequence(withdraw(1)).unwrap().is_none(), "withdrawals stay paused");
+    seq.sequence(Command::Tick).unwrap();
+    assert!(queued.try_recv().is_err(), "signing stays withheld");
+    let (posted, health) = worker_status(work, Comparison::Healthy).await;
+    seq.checkpoint_status(posted, health).unwrap();
+    assert!(seq.sequence(withdraw(1)).unwrap().is_some(), "repaired collateral resumes withdrawals");
+}
+
+#[tokio::test]
+async fn an_unproven_finalized_prefix_pauses_withdrawals_until_coverage_is_proven() {
+    let (mut seq, mut queued, work) = bootstrap("unproven-prefix-pauses");
+    let (posted, health) = worker_status(work.clone(), Comparison::Healthy).await;
+    assert_eq!(health, Some(Health::Healthy));
+    seq.checkpoint_status(posted, health).unwrap();
+    assert!(seq.sequence(withdraw(1)).unwrap().is_some(), "proven coverage admits withdrawals");
+
+    let (posted, health) = worker_status(work.clone(), Comparison::UnprovenCoverage).await;
+    assert_eq!(health, Some(Health::Unproven), "the unscanned prefix is reported, not hidden");
+    seq.checkpoint_status(posted, health).unwrap();
+    assert_eq!(seq.gate.as_ref().unwrap().health, Some(Health::Unproven));
+    assert_eq!(seq.metrics.withdrawals_paused.get(), 1);
+    assert!(seq.sequence(withdraw(1)).unwrap().is_none(), "an unproven prefix pauses new withdrawals");
+    while queued.try_recv().is_ok() {}
+    seq.sequence(Command::Tick).unwrap();
+    assert!(queued.try_recv().is_ok(), "signing continues: a proven successor is the way out");
+
+    let (posted, health) = worker_status(work, Comparison::Healthy).await;
+    seq.checkpoint_status(posted, health).unwrap();
+    assert_eq!(seq.metrics.withdrawals_paused.get(), 0);
+    assert!(seq.sequence(withdraw(1)).unwrap().is_some(), "proven coverage resumes withdrawals");
+}
+
+#[tokio::test]
+async fn an_unproven_prefix_leaves_startup_and_divergence_holds_in_place() {
+    let (mut seq, mut queued, work) = bootstrap("unproven-keeps-holds");
+    for before in [None, Some(Health::Diverged)] {
+        seq.gate.as_mut().unwrap().health = before;
+        let (posted, health) = worker_status(work.clone(), Comparison::UnprovenCoverage).await;
+        seq.checkpoint_status(posted, health).unwrap();
+        assert_eq!(seq.gate.as_ref().unwrap().health, before);
+        seq.sequence(Command::Tick).unwrap();
+        assert!(queued.try_recv().is_err(), "an unproven prefix cannot release {before:?}");
     }
 }
 
@@ -143,6 +205,8 @@ pub(super) async fn worker_status(mut work: Work, comparison: Comparison) -> (Op
             finalized.checkpoint = Some((work.checkpoint.seq - 1, format!("0x{}", "11".repeat(32))))
         }
         Comparison::UnprovenCoverage => work.coverage = DepositCoverage::AwaitingCanonicalScan,
+        Comparison::Healthy | Comparison::RpcFailure => {}
+        Comparison::Shortfall => finalized.balance = Fixed::ZERO,
         Comparison::ValidatedCatchup => {
             finalized.deposits += 1;
             finalized.deposited += Fixed::ONE;
@@ -151,7 +215,12 @@ pub(super) async fn worker_status(mut work: Work, comparison: Comparison) -> (Op
         }
     }
     let poster = Poster {
-        chain: Chain { latest, finalized, credited: work.liabilities },
+        chain: Chain {
+            latest,
+            finalized,
+            credited: work.liabilities,
+            failing: matches!(comparison, Comparison::RpcFailure),
+        },
         registry: None,
         domain,
         signer,

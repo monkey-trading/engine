@@ -153,6 +153,11 @@ pub(crate) enum View {
 pub enum Health {
     /// No finalized ledger comparison is available; preserves the preceding reconciliation verdict.
     Unvalidated,
+    /// The finalized checkpoint's nonempty custody prefix has no sequenced canonical receipt
+    /// coverage, so its credits cannot be compared with the vault: withdrawals pause until a
+    /// newer finalized checkpoint proves coverage. Signing continues, as that checkpoint is the
+    /// way out.
+    Unproven,
     /// Balance plus paid distributions equals the ledger and the deposit counts match.
     Healthy,
     /// Routine catch-up: the vault counts deposits the ledger has not credited yet, with the

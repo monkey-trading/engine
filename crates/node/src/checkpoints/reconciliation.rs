@@ -224,8 +224,11 @@ impl<R: CheckpointChain> Poster<R> {
         // The empty bootstrap ledger proves prefix zero without a scan. Every other unscanned
         // prefix remains unknown; a newer checkpoint cannot lend it canonical receipt coverage.
         if !work.has_proven_prefix() {
-            warn!(alert = "collateral_pending_deposits", "withdrawals await sequenced canonical receipt coverage");
-            return Ok((Some(cp.seq), Health::Unvalidated, finalized_observation.lifecycle));
+            warn!(
+                alert = "collateral_pending_deposits",
+                "withdrawals paused: the finalized checkpoint's custody prefix lacks sequenced canonical receipt coverage"
+            );
+            return Ok((Some(cp.seq), Health::Unproven, finalized_observation.lifecycle));
         }
         let paid = finalized_observation.lifecycle.as_ref().map_or(Fixed::ZERO, |evidence| evidence.total_withdrawn);
         let distributed_raw = (work.distributed.0 as i128).saturating_mul(1_000);

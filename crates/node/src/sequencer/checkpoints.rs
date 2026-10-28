@@ -120,7 +120,14 @@ impl Sequencer {
             return Ok(());
         }
         if let Some(gate) = &mut self.gate {
-            if matches!(gate.health, Some(crate::checkpoints::Health::Healthy | crate::checkpoints::Health::Pending)) {
+            if matches!(
+                gate.health,
+                Some(
+                    crate::checkpoints::Health::Healthy
+                        | crate::checkpoints::Health::Pending
+                        | crate::checkpoints::Health::Unproven
+                )
+            ) {
                 gate.clear_withheld(Withheld::Collateral, seq);
             } else {
                 // A signed checkpoint is public: anyone may relay it to the vault, and its root makes
@@ -230,7 +237,8 @@ impl Sequencer {
 
     /// Releases only approvals covered by the confirmed prefix, and only after reconciliation.
     /// A `None` verdict — an observation that failed — leaves the gate's verdict unchanged, so an
-    /// RPC error cannot erase a proved divergence.
+    /// RPC error cannot erase a proved divergence. An `Unproven` verdict pauses a healthy gate, and
+    /// leaves every other verdict (a startup hold, a pending catch-up, a divergence) as it was.
     /// Error cases:
     /// - the log cannot be written
     pub(super) fn checkpoint_status(
@@ -239,8 +247,18 @@ impl Sequencer {
         health: Option<crate::checkpoints::Health>,
     ) -> anyhow::Result<()> {
         let Some(gate) = &mut self.gate else { return Ok(()) };
-        if let Some(health) = health.filter(|health| *health != crate::checkpoints::Health::Unvalidated) {
-            gate.health = Some(health);
+        use crate::checkpoints::Health;
+        match health {
+            None | Some(Health::Unvalidated) => {}
+            Some(Health::Unproven) => {
+                if gate.health == Some(Health::Healthy) {
+                    gate.health = health;
+                }
+            }
+            Some(_) => gate.health = health,
+        }
+        if let (Some(_), Some(posted)) = (health.filter(|health| *health != Health::Unvalidated), posted) {
+            self.metrics.withdrawals_verdict_seq.set(i64::try_from(posted).unwrap_or(i64::MAX));
         }
         self.metrics
             .withdrawals_paused
