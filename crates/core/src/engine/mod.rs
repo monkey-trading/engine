@@ -26,7 +26,7 @@ use crate::benchmark::BenchmarkHistory;
 use crate::command::{AdminCommand, Command, Sequenced};
 use crate::corporate::CorporateEntitlement;
 use crate::deposits::{CustodyCheckpoint, LegacyDeposit, RecordedDeposit};
-use crate::emissions::{Emissions, PeriodResult, TokenUnits};
+use crate::emissions::{EmissionLedger, Emissions, PeriodResult, TokenUnits};
 use crate::event::{Event, Reject};
 use crate::fixed::Rounding;
 use crate::merkle::state::{Changed, StateTree, is_zero};
@@ -109,10 +109,10 @@ pub struct Engine {
     /// Accepted corporate identities, retained after completion to reject redelivery.
     #[serde(default, skip_serializing_if = "TrackedSet::is_empty")]
     pub(crate) corporate_refs: TrackedSet<String>,
-    /// From `V32`, the write-off each account's period losses could not absorb, paid down by
-    /// later loss weight before it earns emission weight again.
+    /// From `V32`, each account's emission ledger: the loss weight it earned that no write-off has
+    /// been charged against, and the write-off debt later loss weight pays down.
     #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
-    pub(crate) emission_debts: TrackedMap<AccountId, Fixed>,
+    pub(crate) emission_ledgers: TrackedMap<AccountId, EmissionLedger>,
     /// Finalised custody scan progress is sequenced, never recovered from a host cursor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) custody_checkpoint: Option<CustodyCheckpoint>,

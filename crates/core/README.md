@@ -89,7 +89,7 @@ this crate and reproduce the signed state roots exactly.
   no earlier than itself and a period budget, each ten-minute period's budget is shared pro rata by
   the accounts' net realised trading losses there (liquidations included, the profit fee and
   financing not), less debt the house wrote off (from `V32`, a write-off the period's losses cannot absorb is carried as
-  debt that later weight pays first), leaving out any account with negative cash at the
+  debt, up to the weight the account earned, that later weight pays first), leaving out any account with negative cash at the
   cutoff; shares round down to base units and the rest, with every empty period's budget, is
   cancelled; budgets halve, rounded down, every 26,280 periods (182.5 days); the first command at or
   after a period's end finalises it before its own effects; and each account's cumulative
@@ -341,7 +341,8 @@ Two suites guard replay and accounting:
   account's toxicity history exceeds the memory in force.
 
 Emission protocol V32 carries a write-off no period's realised losses can absorb forward as a
-per-account emission debt, paid down by later loss weight before it earns again, and judges
+per-account emission debt, capped at the loss weight the account earned and was not yet charged
+for, paid down by later loss weight before it earns again, and judges
 emission eligibility during corporate-action catch-up at the enclosing command's stamp. Its
 session is in `examples/reference_log/v32.rs`.
 

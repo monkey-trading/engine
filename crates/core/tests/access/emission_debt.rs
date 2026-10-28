@@ -83,13 +83,17 @@ fn the_state_root_commits_to_each_accounts_debt() {
     let root = h.engine.state_root();
     let altered = |edit: &dyn Fn(&mut serde_json::Map<String, serde_json::Value>)| {
         let mut state = serde_json::to_value(&h.engine).unwrap();
-        edit(state["emission_debts"].as_object_mut().expect("the debt is encoded"));
+        edit(state["emission_ledgers"].as_object_mut().expect("the ledger is encoded"));
         serde_json::from_value::<engine_core::Engine>(state).unwrap().state_root()
     };
     let key = account.to_string();
-    let larger = serde_json::to_value(f("51")).unwrap();
-    assert_ne!(altered(&|debts| _ = debts.insert(key.clone(), larger.clone())), root, "the amount is committed");
-    assert_ne!(altered(&|debts| _ = debts.remove(&key)), root, "the debt's existence is committed");
+    let ledger = |earned: &str, debt: &str| {
+        serde_json::to_value(engine_core::emissions::EmissionLedger { earned: f(earned), debt: f(debt) }).unwrap()
+    };
+    let (larger, earned) = (ledger("0", "51"), ledger("1", "50"));
+    assert_ne!(altered(&|debts| _ = debts.insert(key.clone(), larger.clone())), root, "the debt is committed");
+    assert_ne!(altered(&|debts| _ = debts.insert(key.clone(), earned.clone())), root, "the earned weight is committed");
+    assert_ne!(altered(&|debts| _ = debts.remove(&key)), root, "the ledger's existence is committed");
 }
 
 #[test]
@@ -118,6 +122,59 @@ fn weight_forfeited_for_negative_cash_pays_no_debt() {
     let events = next_period(&mut h);
     assert!(allocations(&events).is_empty(), "{events:?}");
     assert_eq!(h.engine.emission_debt(account), f("50"));
+    assert_eq!(h.engine.emission_earned(account), Fixed::ZERO, "forfeited weight earns no clawable credit");
+}
+
+#[test]
+fn a_write_off_creates_debt_only_up_to_the_weight_the_account_earned() {
+    // Losses that paid down debt earned nothing, so a later reversal of their deposit has none to
+    // claw back; losses beyond the debt earn, and the next write-off is capped at that much.
+    for (second_loss_to, debt) in [("90", "0"), ("86", "20")] {
+        let (mut h, client) = emitting(ProtocolVersion::V32);
+        let account = client.account;
+        let (first, second) = (receipt(1, account, "100"), receipt(2, account, "100"));
+        credit(&mut h, &first);
+        lose(&mut h, "100", "90");
+        next_period(&mut h);
+        reverse(&mut h, &first);
+        next_period(&mut h);
+        assert_eq!((h.engine.emission_debt(account), h.engine.emission_earned(account)), (f("50"), Fixed::ZERO));
+
+        // 50 of the next period's losses pay the debt; any beyond it (70 in all) earn 20.
+        credit(&mut h, &second);
+        lose(&mut h, "100", second_loss_to);
+        next_period(&mut h);
+        assert_eq!(h.engine.emission_debt(account), Fixed::ZERO);
+        assert_eq!(h.engine.emission_earned(account), f(debt), "second loss to {second_loss_to}");
+
+        // Reversing that deposit writes off what is left of it: 50 or 70, past the weight it earned.
+        let events = reverse(&mut h, &second);
+        assert!(events.iter().any(|e| matches!(e, Event::BadDebt { .. })), "{events:?}");
+        next_period(&mut h);
+        assert_eq!(h.engine.emission_debt(account), f(debt), "second loss to {second_loss_to}");
+        assert_eq!(h.engine.emission_earned(account), Fixed::ZERO);
+    }
+}
+
+#[test]
+fn a_new_write_off_adds_to_the_debt_already_carried() {
+    let (mut h, client) = emitting(ProtocolVersion::V32);
+    let account = client.account;
+    let (first, second) = (receipt(1, account, "100"), receipt(2, account, "100"));
+    credit(&mut h, &first);
+    credit(&mut h, &second);
+    // 110 of losses leave 90 of cash and 110 of earned weight.
+    lose(&mut h, "100", "78");
+    assert_eq!(allocations(&next_period(&mut h)).len(), 1);
+    assert_eq!(h.engine.emission_earned(account), f("110"));
+
+    // Reversing the first receipt writes off 10; reversing the second, in a later period, 100.
+    reverse(&mut h, &first);
+    next_period(&mut h);
+    assert_eq!((h.engine.emission_debt(account), h.engine.emission_earned(account)), (f("10"), f("100")));
+    reverse(&mut h, &second);
+    next_period(&mut h);
+    assert_eq!((h.engine.emission_debt(account), h.engine.emission_earned(account)), (f("110"), Fixed::ZERO));
 }
 
 #[test]

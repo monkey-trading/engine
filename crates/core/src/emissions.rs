@@ -8,9 +8,10 @@
 //!   its fills' `realised_pnl` (liquidations included, the profit fee and financing not) and, from
 //!   `V23`, of the cash in lieu splits realise on its positions (dividends not), less the debt the
 //!   house wrote off for it there. From `V32`, the write-off a period's losses cannot absorb
-//!   becomes a per-account emission debt, and later loss weight pays the debt down before any of it
-//!   earns weight again. A weight that is not positive counts as zero, and so does any weight of an
-//!   account whose cash is negative at the period's cutoff, with no later backfill.
+//!   becomes a per-account emission debt, up to the weight the account earned and has not been
+//!   charged for, and later loss weight pays the debt down before any of it earns weight again. A
+//!   weight that is not positive counts as zero, and so does any weight of an account whose cash is
+//!   negative at the period's cutoff, with no later backfill.
 //! - **Budget.** Period `n`'s budget is the initial budget halved, rounded down, once for each whole
 //!   26,280 periods before `n`; once it reaches zero it stays zero. The nominal maximum supply is
 //!   `2 · 26,280 ·` the initial budget, and every budget and allocation rounds below it.
@@ -70,6 +71,15 @@ pub struct Emissions {
     pub entitled: TokenUnits,
     /// Base units cancelled across every finalised period: empty budgets and allocation remainders.
     pub cancelled: TokenUnits,
+}
+
+/// An account's emission ledger from `V32`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmissionLedger {
+    /// Loss weight the account earned that no write-off has been charged against.
+    pub earned: Fixed,
+    /// Write-off charged against earned weight, paid down by later loss weight before it earns.
+    pub debt: Fixed,
 }
 
 /// An account's realised trading result in the open period.
@@ -207,10 +217,15 @@ impl Engine {
         self.entitlements.get(&account).copied().unwrap_or_default()
     }
 
-    /// `account`'s unabsorbed emission write-off debt from `V32`: later loss weight pays it down
-    /// before the account earns emission weight again.
+    /// `account`'s emission debt from `V32`: write-off charged against loss weight it earned, which
+    /// later loss weight pays down before the account earns again.
     pub fn emission_debt(&self, account: AccountId) -> Fixed {
-        self.emission_debts.get(&account).copied().unwrap_or_default()
+        self.emission_ledgers.get(&account).map_or(Fixed::ZERO, |ledger| ledger.debt)
+    }
+
+    /// The loss weight `account` earned that no write-off has been charged against, from `V32`.
+    pub fn emission_earned(&self, account: AccountId) -> Fixed {
+        self.emission_ledgers.get(&account).map_or(Fixed::ZERO, |ledger| ledger.earned)
     }
 
     /// Records the schedule, once, under `V19` or later.
@@ -248,17 +263,19 @@ impl Engine {
     }
 
     /// From `V32`: the part of `result`'s write-off that its realised losses cannot absorb becomes
-    /// `account`'s emission debt, and `weight` (zero for negative cash at the cutoff) pays the debt
-    /// down before any of it earns: the weight spent on the debt earns nothing. Returns the weight
-    /// left to earn this period. The debt is not capped at what the account was ever allocated.
-    fn settle_emission_debt(&mut self, account: AccountId, result: &PeriodResult, weight: Fixed) -> Fixed {
-        let losses = (-result.realised).max(Fixed::ZERO);
-        let unabsorbed = (result.written_off - losses).max(Fixed::ZERO);
-        let debt = self.emission_debts.remove(&account).unwrap_or_default() + unabsorbed;
-        let (earning, remaining) =
-            if weight >= debt { (weight - debt, Fixed::ZERO) } else { (Fixed::ZERO, debt - weight) };
-        if !remaining.is_zero() {
-            self.emission_debts.insert(account, remaining);
+    /// `account`'s emission debt, up to the weight it earned and has not been charged for. `weight`
+    /// (zero for negative cash at the cutoff) then pays the debt down, and what is left earns.
+    /// Returns that weight. Total debt charged never exceeds total weight earned.
+    fn settle_emission_ledger(&mut self, account: AccountId, result: &PeriodResult, weight: Fixed) -> Fixed {
+        let mut ledger = self.emission_ledgers.remove(&account).unwrap_or_default();
+        let unabsorbed = (result.written_off - (-result.realised).max(Fixed::ZERO)).max(Fixed::ZERO);
+        let charged = unabsorbed.min(ledger.earned);
+        let paid = weight.min(ledger.debt + charged);
+        let earning = weight - paid;
+        ledger.earned += earning - charged;
+        ledger.debt += charged - paid;
+        if ledger != EmissionLedger::default() {
+            self.emission_ledgers.insert(account, ledger);
         }
         earning
     }
@@ -278,7 +295,7 @@ impl Engine {
             let negative_cash = self.accounts.get(&account).is_some_and(|acct| acct.balance.is_negative());
             // Weight forfeited for negative cash pays no debt, while a new write-off still adds to it.
             let weight = if negative_cash { Fixed::ZERO } else { result.weight() };
-            let weight = if v32 { self.settle_emission_debt(account, &result, weight) } else { weight };
+            let weight = if v32 { self.settle_emission_ledger(account, &result, weight) } else { weight };
             if weight.is_positive() {
                 weights.push((account, weight));
             }
