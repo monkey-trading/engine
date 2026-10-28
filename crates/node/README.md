@@ -95,7 +95,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   sequencer confirmation credits trading collateral, Ethereum finality unlocks withdrawal principal,
   and canonical reversals debit once with a Critical alert. From V25, the same poll mirrors the
   staking contract's finalised `Staked`/`UnstakeCompleted` events (`custody.evm.staking`) into
-  `Stake`/`Unstake` commands once each, holding them until `InitStaking` has applied
+  `Stake`/`Unstake` commands once each, holding them until `InitStaking` has applied; its event
+  reads narrow after an RPC size or timeout failure on a range of their own, apart from deposits'
 - Mock custody and a mock price feed for local development
 - Prometheus metrics on a separate operator address, from a registry the node owns, with no
   per-account labels or values
@@ -664,7 +665,9 @@ live even when both chain views still show its parent. Permissionless relays mat
 chain reconcile the covered prefix, including work beyond the receive queue. The queue is bounded, and
 the worker finalizes one checkpoint at a time; while the queue is full the sequencer defers new
 checkpoints with the Warning `checkpoint_backlog` and keeps sequencing, and approvals wait for the
-next checkpoint that fits. Failed posts retry after `retry_interval` and emit `checkpoint_post_failed`. A conflicting
+next checkpoint that fits. Failed posts retry after `retry_interval` and emit `checkpoint_post_failed`. Withheld signing or
+posting emits the Warning `checkpoint_withheld`, one episode per `cause` (`collateral`,
+`custody_prefix`, `post_diverged`) however many attempts it spans, resolved when that hold clears. A conflicting
 posted root or signer stops the node with a Critical alert. Following decision #15 §2, withdrawals
 pause when the vault's USDC is less than the ledger requires, or the vault's deposits or payments
 differ from it: collateral reconciles when the vault's paid total is within the checkpoint's

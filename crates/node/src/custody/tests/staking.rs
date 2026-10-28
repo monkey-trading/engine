@@ -111,7 +111,8 @@ async fn mirror_range(
     from: u64,
     to: u64,
 ) -> anyhow::Result<(), PollError> {
-    mirror(reader, &node.tx, cursor, &dir.join("staking-cursor.json"), from, to, &hashes_through(to)).await
+    let mut range = AdaptiveSize::new(1_000);
+    mirror(reader, &node.tx, cursor, &dir.join("staking-cursor.json"), &mut range, from..=to, &hashes_through(to)).await
 }
 
 #[tokio::test]
@@ -352,6 +353,86 @@ async fn staking_catchup_keeps_its_anchor_while_deposit_finality_advances() {
         assert!(watcher.staking_anchor_count() <= 1, "completed anchors are pruned with authenticated progress");
         node.stop().await;
     }
+}
+
+#[tokio::test]
+async fn staking_reads_narrow_after_size_failures_while_deposit_finality_advances() {
+    let dir = scratch("staking-range-narrowing");
+    let node = Node::start_confirmed(&dir);
+    let chains = poll_chains(64);
+    let mut watcher = staking_watcher_with_range(&chains, &dir, 16);
+    for _ in 0..16 {
+        watcher.poll(&node.tx).await.unwrap();
+    }
+    assert_eq!(node.read(|engine| engine.custody_checkpoint().unwrap().block).await, 64);
+    init_staking(&node).await;
+    let account = AccountId([11; 20]);
+    for chain in &chains {
+        let mut state = chain.0.lock().unwrap();
+        state.log_range_cap = Some(2);
+        state.reads.clear();
+        state.staking.extend([staked(2, 31, account, 500), unstaked(60, 32, account, 500)]);
+    }
+    let mut caught_up = false;
+    for poll in 0..400 {
+        if poll % 5 == 0 {
+            for chain in &chains {
+                let mut state = chain.0.lock().unwrap();
+                state.head += 1;
+                state.final_block = Some(state.head);
+                state.withdrawal_block = Some(state.head);
+            }
+        }
+        // A refused read stalls the poll; the next poll retries with a narrower range.
+        let _ = watcher.poll(&node.tx).await;
+        let target = chains[0].0.lock().unwrap().head;
+        if node.read(move |engine| engine.staking().unwrap().completed_through.is_some_and(|p| p.block == target)).await
+        {
+            caught_up = true;
+            break;
+        }
+    }
+    assert!(caught_up, "staking catch-up must pass the provider's result cap");
+    assert!(node.read(|engine| engine.is_staking_credited(&format!("{}:0", B256::repeat_byte(32)))).await);
+    assert_eq!(node.read(move |engine| engine.staked(account)).await, TokenUnits(0));
+    for chain in &chains {
+        let state = chain.0.lock().unwrap();
+        // 16 -> 8 -> 4 -> 2: the range halves per failure, so refusals are bounded by the halvings.
+        assert!(state.staking_refusals <= 3 * 3, "refused {} times", state.staking_refusals);
+    }
+    assert!(watcher.staking_range_for_test() <= 2);
+    assert_eq!(watcher.log_range_for_test(), 16, "staking failures leave the deposit range alone");
+    node.stop().await;
+}
+
+#[tokio::test]
+async fn a_staking_window_in_progress_keeps_its_end_while_the_release_tag_advances() {
+    let dir = scratch("staking-window-retained");
+    let node = Node::start_confirmed(&dir);
+    let chains = poll_chains(6);
+    let mut watcher = staking_watcher_with_range(&chains, &dir, 100);
+    watcher.poll(&node.tx).await.unwrap();
+    init_staking(&node).await;
+    for chain in &chains {
+        chain.0.lock().unwrap().header_batch_cap = Some(2);
+    }
+    let mut done = None;
+    for _ in 0..40 {
+        for chain in &chains {
+            let mut state = chain.0.lock().unwrap();
+            state.head += 1;
+            state.final_block = Some(state.head);
+            state.withdrawal_block = Some(state.head);
+        }
+        let _ = watcher.poll(&node.tx).await;
+        done = node.read(|engine| engine.staking().unwrap().completed_through).await;
+        if done.is_some() {
+            break;
+        }
+    }
+    let done = done.expect("a proof in progress must finish although the release tag moves every poll");
+    assert!(done.block < 46, "the first window ended at {}, not at the moving tag", done.block);
+    node.stop().await;
 }
 
 #[tokio::test]

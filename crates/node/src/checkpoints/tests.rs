@@ -251,6 +251,7 @@ async fn a_provisional_then_orphaned_approval_never_releases_a_signature() {
         signer: AccountId(key.address()),
         retry: Duration::from_millis(1),
         pending_deposits_critical_after: Duration::from_secs(1),
+        post_withheld: Default::default(),
     };
     for orphan in [false, true] {
         if orphan {
@@ -332,6 +333,7 @@ pub(super) fn poster() -> (Poster<Chain>, Work, EnclaveKey) {
             signer: AccountId(key.address()),
             retry: Duration::from_millis(10),
             pending_deposits_critical_after: Duration::from_secs(1),
+            post_withheld: Default::default(),
         },
         work,
         key,

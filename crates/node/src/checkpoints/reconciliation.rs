@@ -1,5 +1,7 @@
 //! Finalized checkpoint and collateral reconciliation.
 
+use std::sync::atomic::Ordering;
+
 use anyhow::{Context, ensure};
 use engine_core::Fixed;
 use tokio::time::Instant;
@@ -51,6 +53,17 @@ impl<R: CheckpointChain> Poster<R> {
     pub(super) async fn reconcile_known(&self, work: &Work, known: &[&Work]) -> anyhow::Result<(Option<u64>, Health)> {
         let (posted, health, _) = self.reconcile_lifecycle(work, known, &[], &mut None).await?;
         Ok((posted, health))
+    }
+
+    /// Ends the `post_diverged` withholding episode, if one is open.
+    fn resume_posting(&self) {
+        if self.post_withheld.swap(false, Ordering::Relaxed) {
+            info!(
+                alert_resolved = "checkpoint_withheld",
+                cause = "post_diverged",
+                "checkpoint posting resumed: collateral no longer diverges"
+            );
+        }
     }
 
     /// Whether posting `work` must wait: the finalized vault state diverges from the ledger the
@@ -151,11 +164,14 @@ impl<R: CheckpointChain> Poster<R> {
                     // distribution claims drain a vault the ledger says is short. Skip the post;
                     // the finalized read below still returns the verdict, so a repaired vault
                     // clears this on the next retry.
+                    self.post_withheld.store(true, Ordering::Relaxed);
                     warn!(
                         alert = "checkpoint_withheld",
+                        cause = "post_diverged",
                         "checkpoint not posted while collateral reconciliation is diverged"
                     );
                 } else {
+                    self.resume_posting();
                     self.chain.post(cp).await?;
                     // A submitted transaction is not a commitment. Verify inclusion before release.
                     observation = self.chain.observe(View::Latest, &[]).await?;
@@ -244,6 +260,7 @@ impl<R: CheckpointChain> Poster<R> {
             info!(alert_resolved = "collateral_mismatch", "vault collateral reconciles");
             info!(alert_resolved = "checkpoint_post_failed", "checkpoint is posted");
             info!(alert_resolved = "collateral_pending_deposits", "vault deposits are covered");
+            self.resume_posting();
         } else if overpaid {
             error!(
                 alert = "collateral_mismatch",

@@ -90,6 +90,72 @@ fn fresh_nonempty_unscanned_work_is_not_published() {
     assert_eq!(work.liabilities, Fixed::from_int(10));
 }
 
+/// A gated sequencer that checkpoints every command, after its bootstrap, with a work queue of `capacity`.
+fn gated(name: &str, capacity: usize) -> (Sequencer, mpsc::Receiver<Work>) {
+    let dir = scratch_dir(name);
+    let (sink, mut queued) = mpsc::channel(capacity);
+    let mut genesis = dev_config().genesis;
+    genesis.house_capital = Fixed::ZERO;
+    let cfg = crate::sequencer::SequencerConfig {
+        checkpoints: Some(sink),
+        checkpoint_every: 1,
+        genesis: crate::sequencer::genesis_commands(&genesis),
+        ..sequencer_config(&dir, watch::channel(Manifest::default()).0)
+    };
+    let mut seq = Sequencer::recover(
+        cfg,
+        Arc::new(EnclaveKey::test_key()),
+        broadcast::channel(128).0,
+        mpsc::unbounded_channel().0,
+    )
+    .unwrap();
+    seq.activate_protocol_at(engine_core::protocol::ProtocolVersion::V23).unwrap();
+    seq.genesis(&genesis).unwrap();
+    seq.trust(trusted_now()).unwrap();
+    while queued.try_recv().is_ok() {}
+    (seq, queued)
+}
+
+#[test]
+fn a_full_posting_queue_is_one_alert_episode_that_resolves_under_its_own_key() {
+    let (mut seq, mut queued) = gated("backlog-episode", 1);
+    // Fill the queue the bootstrap drained, then defer at several sequences.
+    seq.sequence(Command::Tick).unwrap();
+    let lines = crate::alerts::capture(|| {
+        for _ in 0..3 {
+            seq.sequence(Command::Tick).unwrap();
+        }
+        queued.try_recv().unwrap();
+        seq.sequence(Command::Tick).unwrap();
+    });
+    let key = "checkpoint_backlog{}".to_owned();
+    assert_eq!(
+        crate::alerts::pages_for(lines),
+        [(crate::alerts::Status::Firing, key.clone()), (crate::alerts::Status::Resolved, key)]
+    );
+}
+
+#[test]
+fn a_custody_prefix_hold_is_one_alert_episode_that_resolves_when_signing_resumes() {
+    let (mut seq, mut queued) = gated("custody-prefix-withheld", 128);
+    let lines = crate::alerts::capture(|| {
+        credit(&mut seq);
+        for _ in 0..3 {
+            seq.sequence(Command::Tick).unwrap();
+        }
+        assert!(queued.try_recv().is_err(), "the hold withholds every attempt");
+        finalise(&mut seq);
+    });
+    let withheld = lines.iter().filter(|line| line.name == "checkpoint_withheld" && line.severity.is_some()).count();
+    assert!(withheld >= 4, "one line per attempt at different sequences: {lines:?}");
+    let key = "checkpoint_withheld{cause=custody_prefix}".to_owned();
+    assert_eq!(
+        crate::alerts::pages_for(lines),
+        [(crate::alerts::Status::Firing, key.clone()), (crate::alerts::Status::Resolved, key)]
+    );
+    assert_eq!(drain(&mut queued).coverage, DepositCoverage::Canonical);
+}
+
 fn receipt() -> DepositReceipt {
     DepositReceipt {
         block: 1,

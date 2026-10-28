@@ -65,6 +65,8 @@ pub struct DepositWatcher<V> {
     header_batch: AdaptiveSize,
     /// Blocks per log read.
     log_range: AdaptiveSize,
+    /// Blocks per staking event read and catch-up chunk, independent of the deposit sizes.
+    staking_range: AdaptiveSize,
     pub(super) poll_interval: Duration,
     pub(super) stall_critical_after: Duration,
     watchdog: Watchdog,
@@ -135,6 +137,7 @@ impl<V: VaultReader> DepositWatcher<V> {
             max_block_range: cfg.max_block_range,
             header_batch: AdaptiveSize::new(cfg.max_block_range),
             log_range: AdaptiveSize::new(cfg.max_block_range),
+            staking_range: AdaptiveSize::new(cfg.max_block_range),
             poll_interval: cfg.poll_interval,
             stall_critical_after: cfg.stall_critical_after,
             watchdog: Watchdog::new(cfg.stall_critical_after, cfg.finality_stalled_after),

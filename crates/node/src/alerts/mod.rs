@@ -408,6 +408,32 @@ pub fn capture(f: impl FnOnce()) -> Vec<AlertLine> {
     router.queued()
 }
 
+/// The pages the router would send for `lines`, as `(status, key)`: its episode rules, in order.
+#[cfg(test)]
+pub fn pages_for(lines: Vec<AlertLine>) -> Vec<(Status, String)> {
+    let mut episodes = Episodes::new(Duration::from_secs(3600));
+    let now = Instant::now();
+    lines
+        .into_iter()
+        .filter_map(|line| match episodes.on_line(line, now)? {
+            Routed::One(page) => Some((page.status, page.key)),
+            Routed::Every(_, key) => Some((Status::Resolved, key)),
+        })
+        .collect()
+}
+
+/// Captures this thread's alert lines until the guard drops; read them with `Router::queued`. For
+/// async tests, whose tasks all run on the test's thread.
+#[cfg(test)]
+pub fn capture_until_dropped() -> (tracing::subscriber::DefaultGuard, Router) {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::registry;
+
+    crate::test_support::keep_callsites_interested();
+    let (layer, router) = channel(Routes::default(), Arc::new(Metrics::new()));
+    (tracing::subscriber::set_default(registry().with(layer)), router)
+}
+
 #[cfg(test)]
 impl Router {
     /// The lines queued so far.

@@ -91,6 +91,8 @@ pub(super) struct ChainState {
     pub(super) header_latency: Option<Duration>,
     /// Refuse log reads over more blocks than this, like a provider's result cap.
     pub(super) log_range_cap: Option<u64>,
+    /// Staking event reads refused for covering more blocks than `log_range_cap`.
+    pub(super) staking_refusals: u32,
     pub(super) failing: bool,
     /// Requests that start a poll: identity checks and final-block reads.
     pub(super) polls: u64,
@@ -212,6 +214,10 @@ impl VaultReader for FakeChain {
         let from = blocks.first().unwrap().number;
         let to = *blocks.last().unwrap();
         let mut chain = self.0.lock().unwrap();
+        if chain.log_range_cap.is_some_and(|cap| to.number - from + 1 > cap) {
+            chain.staking_refusals += 1;
+            bail!("query exceeds max results");
+        }
         chain.reads.push((from, to.number));
         if chain.hash_at(to.number) != to.hash {
             bail!("staking endpoint is not canonical");

@@ -64,6 +64,32 @@ async fn compared_pending_collateral_can_release_a_signing_hold() {
     }
 }
 
+#[test]
+fn a_collateral_hold_is_one_alert_episode_that_resolves_when_signing_resumes() {
+    let (mut seq, mut queued, _work) = bootstrap("collateral-withheld-episode");
+    seq.checkpoint_status(None, Some(Health::Diverged)).unwrap();
+    let lines = crate::alerts::capture(|| {
+        for _ in 0..4 {
+            seq.sequence(Command::Tick).unwrap();
+        }
+        // A restored view clears the hold, and the next checkpoint ends the episode.
+        seq.checkpoint_status(None, Some(Health::Healthy)).unwrap();
+        for _ in 0..3 {
+            seq.sequence(Command::Tick).unwrap();
+        }
+        // Later checkpoints do not resolve it again.
+        seq.sequence(Command::Tick).unwrap();
+    });
+    assert!(queued.try_recv().is_ok());
+    let withheld = lines.iter().filter(|line| line.name == "checkpoint_withheld" && line.severity.is_some()).count();
+    assert_eq!(withheld, 4, "{lines:?}");
+    let key = "checkpoint_withheld{cause=collateral}".to_owned();
+    assert_eq!(
+        crate::alerts::pages_for(lines),
+        [(crate::alerts::Status::Firing, key.clone()), (crate::alerts::Status::Resolved, key)]
+    );
+}
+
 fn bootstrap(name: &str) -> (Sequencer, mpsc::Receiver<Work>, Work) {
     let dir = scratch_dir(name);
     let (sink, mut queued) = mpsc::channel(64);
@@ -131,6 +157,7 @@ pub(super) async fn worker_status(mut work: Work, comparison: Comparison) -> (Op
         signer,
         retry: Duration::from_millis(1),
         pending_deposits_critical_after: Duration::ZERO,
+        post_withheld: Default::default(),
     };
     let (work_tx, work_rx) = mpsc::channel(4);
     let (tx, mut rx) = mpsc::channel(4);

@@ -35,9 +35,41 @@ pub(super) struct Gate {
     pub unswept: usize,
     /// Whether a checkpoint is being deferred because the posting queue is full.
     pub backlogged: bool,
+    /// The causes (see `Withheld`) whose `checkpoint_withheld` episode is open.
+    pub withheld: std::collections::BTreeSet<Withheld>,
+}
+
+/// Why signing is withheld. Each is its own alert episode, keyed by the cause alone: the sequence
+/// number of the attempt goes in the message, so repeated attempts are one episode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Withheld {
+    /// Collateral is unvalidated or diverged.
+    Collateral,
+    /// The custody prefix awaits the canonical scan.
+    CustodyPrefix,
+}
+
+impl Withheld {
+    fn cause(self) -> &'static str {
+        match self {
+            Withheld::Collateral => "collateral",
+            Withheld::CustodyPrefix => "custody_prefix",
+        }
+    }
 }
 
 impl Gate {
+    /// Ends the `checkpoint_withheld` episode of `cause`, if open, now that its hold has cleared.
+    fn clear_withheld(&mut self, cause: Withheld, seq: u64) {
+        if self.withheld.remove(&cause) {
+            info!(
+                alert_resolved = "checkpoint_withheld",
+                cause = cause.cause(),
+                "checkpoint signing resumed at seq {seq}"
+            );
+        }
+    }
+
     /// Starts paused until the first reconciliation succeeds.
     pub fn new(sink: mpsc::Sender<Work>, parent: crate::log::CheckpointParent) -> Self {
         Self {
@@ -55,6 +87,7 @@ impl Gate {
             backlog: Default::default(),
             unswept: 0,
             backlogged: false,
+            withheld: Default::default(),
         }
     }
 }
@@ -82,18 +115,35 @@ impl Sequencer {
         if self.gate.as_ref().is_some_and(|gate| gate.parent.has_checkpoint && gate.parent.seq == seq) {
             return Ok(());
         }
-        if self.gate.as_ref().is_some_and(|gate| {
-            !matches!(gate.health, Some(crate::checkpoints::Health::Healthy | crate::checkpoints::Health::Pending))
-        }) {
-            // A signed checkpoint is public: anyone may relay it to the vault, and its root makes
-            // distributions claimable. Recovery must revalidate its finalized anchor before
-            // publishing any successor; proved divergence also withholds every new signature.
-            warn!(alert = "checkpoint_withheld", seq, "no checkpoint signed: collateral is unvalidated or diverged");
-            return Ok(());
+        if let Some(gate) = &mut self.gate {
+            if matches!(gate.health, Some(crate::checkpoints::Health::Healthy | crate::checkpoints::Health::Pending)) {
+                gate.clear_withheld(Withheld::Collateral, seq);
+            } else {
+                // A signed checkpoint is public: anyone may relay it to the vault, and its root makes
+                // distributions claimable. Recovery must revalidate its finalized anchor before
+                // publishing any successor; proved divergence also withholds every new signature.
+                gate.withheld.insert(Withheld::Collateral);
+                warn!(
+                    alert = "checkpoint_withheld",
+                    cause = Withheld::Collateral.cause(),
+                    "no checkpoint signed at seq {seq}: collateral is unvalidated or diverged"
+                );
+                return Ok(());
+            }
         }
-        if self.gate.is_some() && !Work::can_capture(self.accounting, &self.engine) {
-            warn!(alert = "checkpoint_withheld", seq, "no checkpoint signed: custody prefix awaits canonical scan");
-            return Ok(());
+        let capturable = Work::can_capture(self.accounting, &self.engine);
+        if let Some(gate) = &mut self.gate {
+            if capturable {
+                gate.clear_withheld(Withheld::CustodyPrefix, seq);
+            } else {
+                gate.withheld.insert(Withheld::CustodyPrefix);
+                warn!(
+                    alert = "checkpoint_withheld",
+                    cause = Withheld::CustodyPrefix.cause(),
+                    "no checkpoint signed at seq {seq}: custody prefix awaits canonical scan"
+                );
+                return Ok(());
+            }
         }
         // The worker finalizes one checkpoint at a time, so a full queue defers the next checkpoint
         // instead of stopping the sequencer; unproved approvals wait for the next one that fits.
@@ -102,7 +152,7 @@ impl Sequencer {
             && gate.sink.capacity() == 0
         {
             if !std::mem::replace(&mut gate.backlogged, true) {
-                warn!(alert = "checkpoint_backlog", seq, "checkpoint deferred: the posting queue is full");
+                warn!(alert = "checkpoint_backlog", "checkpoint deferred at seq {seq}: the posting queue is full");
             }
             return Ok(());
         }
@@ -132,7 +182,10 @@ impl Sequencer {
             if let Some(gate) = &mut self.gate {
                 gate.parent = crate::log::CheckpointParent { has_checkpoint: true, seq, root: root.into() };
                 if std::mem::take(&mut gate.backlogged) {
-                    info!(alert_resolved = "checkpoint_backlog", seq, "checkpoint posting queue has room again");
+                    info!(
+                        alert_resolved = "checkpoint_backlog",
+                        "checkpoint posting queue has room again at seq {seq}"
+                    );
                 }
             }
         }

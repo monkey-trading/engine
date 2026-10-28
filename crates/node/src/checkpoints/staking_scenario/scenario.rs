@@ -189,6 +189,7 @@ impl Scenario {
             signer: AccountId(self.key.address()),
             retry: self.section.retry_interval,
             pending_deposits_critical_after: Duration::from_secs(1),
+            post_withheld: Default::default(),
         };
         let parent = match poster.chain.state(View::Finalized).await.unwrap().checkpoint {
             Some((seq, root)) => CheckpointParent { has_checkpoint: true, seq, root: root.parse().unwrap() },

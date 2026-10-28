@@ -445,6 +445,7 @@ fn fixture() -> (Poster<Chain>, Work) {
             signer: AccountId(key.address()),
             retry: Duration::from_millis(1),
             pending_deposits_critical_after: Duration::from_secs(1),
+            post_withheld: Default::default(),
         },
         work,
     )

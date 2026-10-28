@@ -98,6 +98,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
         signer: AccountId(key.address()),
         retry: section.retry_interval,
         pending_deposits_critical_after: Duration::from_secs(10),
+        post_withheld: Default::default(),
     };
     make_poster().startup(None).await.unwrap();
 

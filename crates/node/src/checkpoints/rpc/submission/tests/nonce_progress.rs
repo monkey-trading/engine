@@ -425,6 +425,7 @@ fn poster(server: &Server, dir: &Path) -> Poster<CheckpointRpc> {
         signer: AccountId(EnclaveKey::test_key().address()),
         retry: Duration::from_millis(10),
         pending_deposits_critical_after: Duration::from_secs(1),
+        post_withheld: Default::default(),
     }
 }
 
