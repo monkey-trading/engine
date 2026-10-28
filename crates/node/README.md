@@ -193,6 +193,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   public history pages, and the harness
 - `src/sequencer/required.rs` — client auth, the operator, protocol activation, and genesis, which
   wait for trusted time
+- `src/sequencer/catch_up.rs` — the `Tick`s that finish a V33 catch-up before a command
 - `src/sequencer/genesis.rs` — the genesis commands, the check that the engine accepts every one
   before any is written, and how far a replayed log got through genesis and which genesis it ran
 - `src/sequencer/alerts.rs` — the alerts the sequencer raises: engine rejections an operator must
@@ -204,6 +205,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/tests/benchmark_schedule.rs` — schedule changes, durable watches, and due-time synchronization
 - `src/sequencer/tests/mod.rs` — sequencer, activation, recovery, and replay tests
 - `src/sequencer/tests/replay.rs` — root, sequence, and pre-event log replay tests
+- `src/sequencer/tests/catch_up.rs` — a command after an outage of more than one catch-up batch
 - `src/sequencer/tests/benchmarks.rs` — publisher startup prerequisites and legacy-log refusal
 - `src/sequencer/tests/benchmark_recovery.rs` — publisher synchronization after trusted-time halts
 - `src/sequencer/tests/genesis.rs` — genesis tests: a rejected genesis writes nothing, and a log
@@ -1240,7 +1242,11 @@ adjustments; dividends pay the captured pre-split holdings first, then splits ap
 market/id order. An incoming opening quote is stored in the adjusted units before execution and
 margin checks; a coincident rollover follows that processing. A protocol activation, like a rejected
 benchmark batch, runs no catch-up: missed rollovers and due openings wait for the next admitted
-command.
+command. From V33 the engine catches up on at most `MAX_CATCH_UP_BOUNDARIES` (366) rollovers and
+corporate boundaries per command and defers the command (`CatchUpDeferred`) when more are waiting; the
+sequencer sequences `Tick`s, stamped a millisecond before the command, while `Engine::catch_up_pending`
+holds, so no live command is deferred. A benchmark snapshot goes first, because the rollovers need its
+rates, and the `Tick`s follow it.
 
 Splits scale live positions and entry prices, resting orders, stored source quotes, marks and
 processed indices, aggregates, stress price references and pending markouts, preflighting every

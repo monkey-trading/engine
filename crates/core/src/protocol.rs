@@ -159,11 +159,18 @@ pub enum ProtocolVersion {
     /// loss weight pays down before it earns again. Emission eligibility during corporate-action
     /// catch-up is judged at the enclosing command's stamp, not the rewound boundary.
     V32,
+    /// A relisting that raises a market's `max_age_ms` first drops the quotes already stale under the
+    /// old limit, so they cannot price again. A gap between two commands longer than the market's
+    /// `max_age_ms` checks the held quotes for a closure only within that window after the last command
+    /// and at its end, since after the window all of them are stale. A command stamped more than
+    /// [`crate::corporate::MAX_CATCH_UP_BOUNDARIES`] rollover or corporate boundaries past the engine's
+    /// last is deferred: it applies that many and nothing else, but for a benchmark batch's outcome.
+    V33,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V32;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V33;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

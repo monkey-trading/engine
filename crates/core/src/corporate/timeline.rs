@@ -1,17 +1,53 @@
 //! Corporate cutoffs, ex-date openings and financing share one chronological transition loop.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use crate::corporate::Adjustment;
+use crate::corporate::{Adjustment, MAX_CATCH_UP_BOUNDARIES};
 use crate::engine::Engine;
 use crate::event::Event;
+use crate::protocol::ProtocolVersion;
 use crate::types::Millis;
 
 impl Engine {
+    /// Whether, from `V33`, a command stamped `ts` would be deferred: more than
+    /// `MAX_CATCH_UP_BOUNDARIES` distinct rollover and corporate boundaries precede `ts`. The
+    /// sequencer sequences `Tick`s while this holds, so no command is deferred.
+    pub fn catch_up_pending(&self, ts: Millis) -> bool {
+        if self.protocol_version < ProtocolVersion::V33 {
+            return false;
+        }
+        let mut boundaries: BTreeSet<Millis> = self
+            .corporate_actions
+            .values()
+            .filter(|p| p.failure.is_none())
+            .flat_map(|p| {
+                [(p.quantities.is_none()).then_some(p.instruction.previous_close), Some(p.instruction.ex_open)]
+            })
+            .flatten()
+            .filter(|at| *at < ts)
+            .collect();
+        let mut rollover = self.next_rollover.zip(self.params.as_ref().map(|params| &params.rollover));
+        while boundaries.len() <= MAX_CATCH_UP_BOUNDARIES {
+            let Some((at, schedule)) = rollover.filter(|(at, _)| *at < ts) else { break };
+            boundaries.insert(at);
+            rollover = Some((schedule.next_after(at), schedule));
+        }
+        boundaries.len() > MAX_CATCH_UP_BOUNDARIES
+    }
+
     /// Advances past boundaries at recorded prices; target-time execution waits for the incoming
-    /// quote. Returns whether target-time adjustments require an account-wide margin check.
-    pub(crate) fn run_corporate_timeline(&mut self, previous: Millis, target: Millis, events: &mut Vec<Event>) -> bool {
+    /// quote. Returns whether target-time adjustments require an account-wide margin check, or
+    /// `None` when, from `V33`, more than `MAX_CATCH_UP_BOUNDARIES` boundaries precede `target`:
+    /// the rest wait for later commands and this one does nothing else.
+    pub(crate) fn run_corporate_timeline(
+        &mut self,
+        previous: Millis,
+        target: Millis,
+        events: &mut Vec<Event>,
+    ) -> Option<bool> {
         self.now = previous;
+        let bounded = self.protocol_version >= ProtocolVersion::V33;
+        let mut walked = 0;
         loop {
             let corporate = self
                 .corporate_actions
@@ -21,6 +57,14 @@ impl Engine {
                 .min();
             let at = corporate.into_iter().chain(self.next_rollover).filter(|at| *at <= target).min();
             let Some(at) = at else { break };
+            if bounded && at < target {
+                if walked == MAX_CATCH_UP_BOUNDARIES {
+                    events.push(Event::CatchUpDeferred { due: at });
+                    self.now = target;
+                    return None;
+                }
+                walked += 1;
+            }
             self.now = at;
             let captures: Vec<_> = self
                 .corporate_actions
@@ -93,7 +137,7 @@ impl Engine {
                 }
             }
             if at == target {
-                return adjusted;
+                return Some(adjusted);
             }
             // No opening margin check may see another market's pre-split books at this instant.
             self.advance_markets(None, events);
@@ -105,6 +149,6 @@ impl Engine {
             }
         }
         self.now = target;
-        false
+        Some(false)
     }
 }

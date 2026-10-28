@@ -155,8 +155,15 @@ impl Engine {
                         if market.spec.quote_currency != spec.quote_currency {
                             market.fx_mark = None;
                         }
+                        let old_max_age_ms = market.spec.price_rules.max_age_ms;
                         market.spec = spec.clone();
                         market.futures = futures;
+                        // From `V33`, a quote stale under the old limit stays stale: a raised limit
+                        // must not bring it back to pricing.
+                        if self.protocol_version >= ProtocolVersion::V33 && spec.price_rules.max_age_ms > old_max_age_ms
+                        {
+                            market.drop_quotes_older_than(self.now, old_max_age_ms);
+                        }
                     }
                     None => {
                         self.markets.insert(spec.id, MarketState { futures, ..MarketState::new(spec.clone()) });

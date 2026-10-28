@@ -158,6 +158,16 @@ impl MarketState {
         self.quotes.values().chain(next).any(|quote| quote.ts <= ts)
     }
 
+    /// Drops every quote held, of either contract, more than `max_age_ms` old at `now`: stale under
+    /// that limit, so no later limit may count it.
+    pub(crate) fn drop_quotes_older_than(&mut self, now: Millis, max_age_ms: Millis) {
+        let fresh = |quote: &SourceQuote| quote.ts > now || now - quote.ts <= max_age_ms;
+        self.quotes.retain(|_, quote| fresh(quote));
+        if let Some(futures) = &mut self.futures {
+            futures.next_quotes.retain(|_, quote| fresh(quote));
+        }
+    }
+
     /// Keeps only the quotes, of either contract, that could count at `now`: fresh, and from the
     /// session open at `now`.
     pub(crate) fn retain_session_quotes(&mut self, now: Millis) {

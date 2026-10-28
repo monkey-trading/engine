@@ -404,7 +404,8 @@ pub fn account_of(event: &Event) -> Option<AccountId> {
         | Event::EmissionPeriodClosed { .. }
         | Event::EmissionPeriodsCancelled { .. }
         | Event::DistributionEpochClosed { .. }
-        | Event::DistributionEpochsSkipped { .. } => None,
+        | Event::DistributionEpochsSkipped { .. }
+        | Event::CatchUpDeferred { .. } => None,
     }
 }
 

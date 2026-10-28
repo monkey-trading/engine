@@ -262,7 +262,13 @@ impl Engine {
                 events.extend(early_outcome);
                 return Ok(events);
             }
-            corporate_margin = self.run_corporate_timeline(last_now, sequenced.ts, &mut events);
+            // From `V33` a gap of more than `MAX_CATCH_UP_BOUNDARIES` boundaries defers the command,
+            // reporting the outcome of a benchmark batch already applied above.
+            let Some(margin) = self.run_corporate_timeline(last_now, sequenced.ts, &mut events) else {
+                events.extend(early_outcome);
+                return Ok(events);
+            };
+            corporate_margin = margin;
         }
         // From `V12`, a price command's quotes are stored first, then every market is brought to the
         // sequenced time, so no fill or check, a rollover's included, acts on an index the market
@@ -444,26 +450,6 @@ impl Engine {
         match fx.index(self.now) {
             Ok(index) if currency.converts_at(index.mid) => Ok(Some(index.mid)),
             _ => Err(no_price),
-        }
-    }
-
-    /// From `V21`, drops the quotes each market holds from before `last_now`, the previous command's
-    /// time, wherever the market was not open throughout since: a close between two commands,
-    /// observed or not, leaves no quote from before it, so the first index after an open comes from
-    /// quotes stamped after it. Quotes stored by this command passed `MarketState::in_session`, so
-    /// none of them predates the closure.
-    fn drop_quotes_across_closures(&mut self, last_now: Millis) {
-        let now = self.now;
-        let ids: Vec<MarketId> = self
-            .markets
-            .iter()
-            .filter(|(_, market)| {
-                market.holds_quotes_to(last_now) && !market.spec.schedule.open_throughout(last_now, now)
-            })
-            .map(|(id, _)| *id)
-            .collect();
-        for market_id in ids {
-            self.markets.get_mut(&market_id).expect("listed").drop_quotes_to(last_now);
         }
     }
 

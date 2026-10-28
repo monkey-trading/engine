@@ -17,6 +17,13 @@ use crate::market::MarketSpec;
 use crate::protocol::ProtocolVersion;
 use crate::types::{AccountId, AssetClass, MAX_STAMP_MS, MarketId, Millis};
 
+/// From `V33`, the most rollover and corporate-action boundaries one command catches up on before
+/// its own stamp (the boundary at the stamp itself is extra). A command stamped further past the engine's schedule applies only these and is
+/// deferred (`Event::CatchUpDeferred`); later commands continue from there, so a long gap or an
+/// altered stamp never makes one `apply` walk it all. Daily rollovers and corporate boundaries
+/// both count, so an outage of under a year with no corporate action defers nothing.
+pub const MAX_CATCH_UP_BOUNDARIES: usize = 366;
+
 /// One immutable operator instruction. Amounts are per share or index unit held at
 /// `previous_close`, so a dividend going ex after a split is entered per post-split share.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

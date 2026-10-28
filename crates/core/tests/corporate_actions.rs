@@ -2,6 +2,8 @@
 
 #[path = "corporate_actions/cash.rs"]
 mod cash;
+#[path = "corporate_actions/catch_up.rs"]
+mod catch_up;
 mod common;
 #[path = "corporate_actions/emissions.rs"]
 mod emissions;

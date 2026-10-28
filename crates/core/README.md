@@ -249,7 +249,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V31` and `V32` parts (`v15.rs` to `v31.rs`, `v32.rs`)
+  `V15` to `V31` and `V32` parts (`v15.rs` to `v31.rs`, `v32.rs`), and `V33` (`v33.rs`)
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
 
@@ -416,7 +416,13 @@ withdrawals, and pending and held custody deposits and receipts. Its reference-l
 `examples/reference_log/v24.rs`. `V26` binds canonical receipt payers, screens replacements atomically,
 and preserves terminal holds across transaction-local receipt variants. Activation refuses conflicting
 legacy dispositions until a verified migration resolves them. Its session is in
-`examples/reference_log/v26.rs`.
+`examples/reference_log/v26.rs`. `V33` keeps a quote that was stale under a market's freshness window
+stale across a relisting that raises `max_age_ms`, checks held quotes for a closure only within that
+window after the last command and at the end of a gap longer than it, and defers a command stamped more than
+`MAX_CATCH_UP_BOUNDARIES` rollovers or corporate boundaries past the engine's schedule after it
+catches up on that many (`Event::CatchUpDeferred`); the node sequences `Tick`s to finish the
+catch-up before the command; its session is in
+`examples/reference_log/v33.rs`.
 For each later version:
 
 1. Add the version in code as `src/protocol.rs` lists, then extend the session in
@@ -460,6 +466,7 @@ command-processing regression guards, not an end-to-end service latency promise.
 | Dormant resting orders in the repriced market | 100,000 | 200 us |
 | Daily rollover with financing on every position | 100,000 | 500 ms |
 | Finalising a MONKEY emission period in which every account lost (one sample) | 100,000 | 500 ms |
+| First command after a year-long gap with quotes held across it, or at the last stamp the engine accepts (one sample each) | 1 | 5 ms |
 
 A concentrated price update still visits every holder, and a rollover still finances and checks
 all positions. Triggered orders still require work per candidate, including orders retained when

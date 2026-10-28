@@ -15,14 +15,14 @@ use crate::admin::sign;
 use crate::clock::Clock;
 use crate::trusted_time::Sample;
 
-const FIRST: Millis = 1_792_530_000_000;
-const DAY: Millis = 86_400_000;
-const START: Millis = FIRST - 120_000;
+pub(super) const FIRST: Millis = 1_792_530_000_000;
+pub(super) const DAY: Millis = 86_400_000;
+pub(super) const START: Millis = FIRST - 120_000;
 
-struct Fixture {
-    dir: PathBuf,
-    seq: Sequencer,
-    clock: Arc<TestClock>,
+pub(super) struct Fixture {
+    pub(super) dir: PathBuf,
+    pub(super) seq: Sequencer,
+    pub(super) clock: Arc<TestClock>,
 }
 
 #[test]
@@ -333,7 +333,7 @@ async fn benchmark_recovery_dropped_snapshot_acknowledgement_is_durable_and_char
 }
 
 impl Fixture {
-    fn new(name: &str, at: Millis, publishers: bool, retained: bool) -> Self {
+    pub(super) fn new(name: &str, at: Millis, publishers: bool, retained: bool) -> Self {
         let dir = scratch_dir(name);
         let clock = Arc::new(TestClock::at(at));
         let mut seq = recover_clock(&dir, clock.clone());
@@ -376,11 +376,11 @@ impl Fixture {
         f
     }
 
-    fn advance_to(&self, at: Millis) {
+    pub(super) fn advance_to(&self, at: Millis) {
         self.clock.advance(Duration::from_millis((at - self.clock.true_ms()) as u64));
     }
 
-    fn batch(&self, observations: &[(&str, &str)]) -> BenchmarkBatch {
+    pub(super) fn batch(&self, observations: &[(&str, &str)]) -> BenchmarkBatch {
         BenchmarkBatch {
             as_of: self.seq.engine.benchmark_date(self.clock.true_ms()),
             checked: self.seq.engine.benchmark_state().required,
@@ -395,7 +395,7 @@ impl Fixture {
         }
     }
 
-    fn signed(&self, batch: BenchmarkBatch, seed: u8, expires_in: Millis) -> Command {
+    pub(super) fn signed(&self, batch: BenchmarkBatch, seed: u8, expires_in: Millis) -> Command {
         let key = SigningKey::from_bytes((&[seed; 32]).into()).unwrap();
         let req = sign(
             &key,
@@ -407,19 +407,19 @@ impl Fixture {
         Command::SignedAdmin(Box::new(req))
     }
 
-    fn snapshot(&self, observations: &[(&str, &str)]) -> Command {
+    pub(super) fn snapshot(&self, observations: &[(&str, &str)]) -> Command {
         self.signed(self.batch(observations), 0x42, 60_000)
     }
 
-    fn submit(&mut self, cmd: Command) -> Vec<Event> {
+    pub(super) fn submit(&mut self, cmd: Command) -> Vec<Event> {
         self.seq.sequence(cmd).unwrap().expect("time and publisher synchronization admit this command")
     }
 
-    fn balance(&self) -> Fixed {
+    pub(super) fn balance(&self) -> Fixed {
         self.seq.engine.accounts()[&TRADER].balance
     }
 
-    fn assert_public_replay(&mut self, expected: &[Fixed]) {
+    pub(super) fn assert_public_replay(&mut self, expected: &[Fixed]) {
         self.seq.flush().unwrap();
         let entries = log_entries(&self.dir);
         let amounts: Vec<_> = entries
@@ -444,7 +444,7 @@ fn recover_clock(dir: &Path, clock: Arc<TestClock>) -> Sequencer {
         .unwrap()
 }
 
-fn trusted(clock: &TestClock) -> Sample {
+pub(super) fn trusted(clock: &TestClock) -> Sample {
     Sample { at: clock.instant(), earliest_ms: clock.true_ms() - 1_000, latest_ms: clock.true_ms() + 1_000 }
 }
 
@@ -456,7 +456,7 @@ fn charge(rate: &str) -> Fixed {
     fixed("10000").mul_rounded(fixed(rate) + Fixed::from_bps(500), Rounding::Up).div_int_rounded(365, Rounding::Up)
 }
 
-fn charges(events: &[Event]) -> Vec<Fixed> {
+pub(super) fn charges(events: &[Event]) -> Vec<Fixed> {
     events
         .iter()
         .filter_map(|event| match event {

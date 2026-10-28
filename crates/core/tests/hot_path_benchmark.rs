@@ -4,14 +4,18 @@ mod common;
 
 use std::time::Instant;
 
-use common::{BTC, ETH, Harness, acct, f};
+use chrono::NaiveDateTime;
+use common::{BTC, ETH, Harness, acct, f, market, ny, us_equities};
 use engine_core::Engine;
-use engine_core::command::{Command, OrderKind, Sequenced};
+use engine_core::command::{AdminCommand, Command, OrderKind, Sequenced};
+use engine_core::market::{MarketSpec, PriceRules};
 use engine_core::price::SourceQuote;
-use engine_core::types::{AccountId, Side};
+use engine_core::session::{Period, Schedule};
+use engine_core::types::{AccountId, AssetClass, MAX_STAMP_MS, MarketId, Side};
 use serde_json::json;
 
 const SAMPLES: usize = 100;
+const HALTED: MarketId = 9;
 
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
@@ -102,6 +106,38 @@ fn period_finalisation_latency() {
     assert!(emissions.entitled.0 > 0);
 }
 
+#[test]
+#[ignore = "benchmark: run in an isolated CPU window"]
+fn first_command_after_a_long_gap_latency() {
+    // A market holding quotes across a year-long sequencer gap that ends in an open session: from
+    // `V33` the held-quote closure check covers only the freshness window after the last command and
+    // the gap's end, so the first command back does not walk every minute of the gap.
+    let mut h = halted();
+    let start = h.ts;
+    apply(&mut h.engine, start, Command::Tick);
+    let began = Instant::now();
+    apply(&mut h.engine, ny(2027, 10, 19, 10, 29), Command::Tick);
+    let elapsed = began.elapsed().as_micros();
+    println!("LATENCY first_command_after_long_gap us={elapsed}");
+    assert!(elapsed <= 5_000, "the first command after a year-long gap took {elapsed}us");
+    assert_eq!(h.engine.markets()[&HALTED].quotes.len(), 2);
+}
+
+#[test]
+#[ignore = "benchmark: run in an isolated CPU window"]
+fn first_command_after_a_far_past_stamp_latency() {
+    // A stamp 2.9 million days past the last rollover, the farthest the engine accepts: from `V33`
+    // the command catches up on a bounded batch of rollovers and is deferred.
+    let mut h = halted();
+    let start = h.ts;
+    let began = Instant::now();
+    apply(&mut h.engine, MAX_STAMP_MS, Command::Tick);
+    let elapsed = began.elapsed().as_micros();
+    println!("LATENCY first_command_after_far_past_stamp us={elapsed}");
+    assert!(elapsed <= 5_000, "the first command at the last accepted stamp took {elapsed}us");
+    assert!(h.engine.next_rollover().is_some_and(|due| due < MAX_STAMP_MS && due > start));
+}
+
 fn apply(engine: &mut Engine, ts: i64, cmd: Command) {
     let seq = engine.last_seq().map_or(0, |seq| seq + 1);
     engine.apply(&Sequenced { seq, ts, cmd }).expect("valid benchmark sequence");
@@ -162,4 +198,21 @@ fn fixture(count: usize, concentrated: bool, resting: bool) -> Engine {
         state["markets"][BTC.to_string()]["resting"] = book.into();
     }
     serde_json::from_value(state).expect("benchmark fixture")
+}
+
+/// `Harness::v33` with `HALTED` listed (US hours plus a special session open from 20 Oct 2026 to
+/// the end of 2027, so a minute-by-minute walk over the gap finds no closure to stop at; quotes fresh
+/// for an hour) and holding two quotes for it.
+fn halted() -> Harness {
+    let mut h = Harness::v33();
+    let at = |s: &str| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M").expect("a local time");
+    let Schedule::Weekly { tz, windows, closed_dates, .. } = us_equities() else { unreachable!("weekly") };
+    let special_sessions = vec![Period { from: at("2026-10-20 00:00"), to: at("2028-01-01 00:00") }];
+    let schedule = Schedule::Weekly { tz, windows, closed_dates, closures: vec![], special_sessions };
+    let spec = market(HALTED, "HALT", AssetClass::Equity, schedule, 2_000);
+    let price_rules = PriceRules { max_age_ms: 3_600_000, ..spec.price_rules };
+    h.operator_admin(AdminCommand::UpsertMarket(MarketSpec { price_rules, ..spec }));
+    h.advance_to(ny(2026, 10, 20, 14, 30));
+    h.price(HALTED, "100");
+    h
 }

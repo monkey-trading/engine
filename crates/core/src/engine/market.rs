@@ -9,6 +9,7 @@ use crate::fixed::Rounding;
 use crate::futures::FuturesState;
 use crate::market::MarketSpec;
 use crate::price::{Index, SourceQuote};
+use crate::protocol::ProtocolVersion;
 use crate::stress::StressState;
 use crate::types::{AccountId, MarketId, Millis, OrderId};
 
@@ -90,5 +91,35 @@ impl Engine {
     /// Whether a market takes no new risk: its own flag, or every market's.
     pub fn is_reduce_only(&self, market: &MarketState) -> bool {
         market.reduce_only || self.global_reduce_only
+    }
+
+    /// From `V21`, drops the quotes each market holds from before `last_now`, the previous command's
+    /// time, wherever the market was not open throughout since: a close between two commands,
+    /// observed or not, leaves no quote from before it, so the first index after an open comes from
+    /// quotes stamped after it. Quotes stored by this command passed `MarketState::in_session`, so
+    /// none of them predates the closure. From `V33`, a gap longer than the market's freshness window
+    /// checks for a closure only within that window after `last_now` and at `now`: later, every quote
+    /// held from before the gap is stale and cannot price, at `now` or at a catch-up boundary between.
+    pub(super) fn drop_quotes_across_closures(&mut self, last_now: Millis) {
+        let now = self.now;
+        let bounded = self.protocol_version >= ProtocolVersion::V33;
+        let ids: Vec<MarketId> = self
+            .markets
+            .iter()
+            .filter(|(_, market)| {
+                let schedule = &market.spec.schedule;
+                let window = market.spec.price_rules.max_age_ms;
+                market.holds_quotes_to(last_now)
+                    && if bounded && now - last_now > window {
+                        !(schedule.open_throughout(last_now, last_now + window) && schedule.is_open(now))
+                    } else {
+                        !schedule.open_throughout(last_now, now)
+                    }
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for market_id in ids {
+            self.markets.get_mut(&market_id).expect("listed").drop_quotes_to(last_now);
+        }
     }
 }

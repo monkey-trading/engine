@@ -170,4 +170,15 @@ impl Harness {
         h.operator_admin(AdminCommand::InitStaking(config));
         h
     }
+
+    /// `v21`, then `V22`, `V23`, and `V33`, which keeps a quote stale under a market's old freshness
+    /// limit stale across a relisting, bounds the held-quote closure check after a long gap, and
+    /// bounds the rollovers and corporate boundaries one command catches up on.
+    pub fn v33() -> Self {
+        let mut h = Harness::v21();
+        for version in [ProtocolVersion::V22, ProtocolVersion::V23, ProtocolVersion::V33] {
+            h.admin(AdminCommand::ActivateProtocol { version });
+        }
+        h
+    }
 }
