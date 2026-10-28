@@ -126,8 +126,9 @@ and root, which the vault compares atomically to fence divergent same-key publis
 view, and a signature's named signer must be checked against a trusted attestation or the vault's
 authorized signer. A withdrawal signature never settles its approval: finalized custody nonce-use
 evidence does. Withdrawal completion evidence also requires that independently trusted signer
-and its deployment before replay can clear an approval. Signatures expire after 24 hours, are replaced on request or signer rotation but never on a schedule, and bind
-the current signer epoch; the vault rejects retired epochs immediately. Accepted checkpoint history
+and its deployment before replay can clear an approval. Signatures expire after 24 hours and bind
+the current signer epoch; an expired one is replaced only on its account's signed request or a signer
+rotation, never on a schedule or restart; the vault rejects retired epochs immediately. Accepted checkpoint history
 authenticates historical roots; immutable signer-epoch history independently authenticates reissues
 against older roots during recovery and custody-backed replay. The unanchored checkpoint tail still
 requires the current signer. The deployment's multisig proposes changes through its nonzero-delay

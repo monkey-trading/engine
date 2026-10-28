@@ -127,7 +127,8 @@ impl Engine {
         events.push(Event::WithdrawalQueued { account, amount, requested_seq });
     }
 
-    /// Approves at most a fixed number of FIFO heads, partially when physical cash is short.
+    /// Approves at most a fixed number of FIFO heads, partially when physical cash is short; from
+    /// V34 a part below `MIN_WITHDRAWAL` waits unless it settles the request.
     /// Trading changes ledger ownership but never manufactures physical payout capacity.
     pub(crate) fn process_withdrawal_queue(&mut self, events: &mut Vec<Event>) {
         for _ in 0..MAX_WITHDRAWAL_APPROVALS_PER_COMMAND {

@@ -35,10 +35,12 @@ pub enum Request {
         health: Option<crate::checkpoints::Health>,
         lifecycle: Option<crate::checkpoints::LifecycleEvidence>,
     },
-    /// A holder asks for a fresh authorization of an approval whose last one expired unclaimed.
+    /// A holder, already authenticated, asks for a fresh authorization of an approval whose last one
+    /// expired unclaimed. `replaces` is the expiry of the authorization being replaced, 0 if none.
     ReissueWithdrawal {
         account: AccountId,
         nonce: u64,
+        replaces: u64,
         reply: oneshot::Sender<Reissue>,
     },
 }
@@ -48,11 +50,14 @@ pub enum Request {
 pub enum Reissue {
     /// Queued behind earlier approvals; the new authorization arrives on the stream.
     Queued,
-    /// No unpaid approval of this account and nonce is loaded.
+    /// No unpaid approval of this account and nonce is loaded: it is unknown, paid, or still waiting
+    /// for a restart's recovery to load it.
     Unknown,
+    /// The request replaces an authorization other than the latest, whose expiry is `current`.
+    Stale { current: u64 },
     /// The latest authorization is still usable until `expires_at` (unix seconds).
     StillValid { expires_at: u64 },
-    /// Payouts are not enabled, or no trusted time yet.
+    /// No checkpoint gate (mock custody), or no trusted time yet.
     Unavailable,
 }
 

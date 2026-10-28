@@ -1,5 +1,5 @@
 //! From V34 a withdrawal request is at least 10 USDC and the FIFO queue approves less than that
-//! only as a request's final remainder; V31 keeps dust requests and parts.
+//! only as a request's final remainder; V33 keeps dust requests and parts.
 
 #[allow(dead_code)]
 #[path = "access/support.rs"]
@@ -15,7 +15,7 @@ use engine_core::protocol::ProtocolVersion;
 use engine_core::types::Side;
 use engine_core::withdrawal::MIN_WITHDRAWAL;
 
-const V31: ProtocolVersion = ProtocolVersion::V31;
+const V33: ProtocolVersion = ProtocolVersion::V33;
 const V34: ProtocolVersion = ProtocolVersion::V34;
 
 /// A client holding 1000 under `version`, with 1000 of physical payout capacity.
@@ -120,7 +120,7 @@ fn a_request_below_ten_usdc_is_refused_from_v34_and_exactly_ten_is_accepted() {
 #[test]
 fn dust_requests_are_still_accepted_before_v34() {
     for amount in ["0.000001", "9.999999"] {
-        let (mut h, client) = setup(V31);
+        let (mut h, client) = setup(V33);
         let events = withdraw(&mut h, &client, amount);
         assert!(events.iter().any(|e| matches!(e, Event::WithdrawalQueued { .. })), "{amount}: {events:?}");
     }
@@ -160,7 +160,7 @@ fn a_part_below_the_minimum_waits_from_v34_and_the_final_remainder_is_exempt() {
 
 #[test]
 fn a_part_below_the_minimum_is_approved_before_v34() {
-    let (mut h, client) = waiting(V31);
+    let (mut h, client) = waiting(V33);
     withdraw(&mut h, &client, "3000");
     assert_eq!(approved(&capital(&mut h, "5", "a")), [f("5")]);
 }

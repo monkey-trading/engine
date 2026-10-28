@@ -26,10 +26,17 @@ struct EpochScan {
 }
 
 impl Schedule {
-    /// Adds a newly approved or recovered identity to immutable FIFO order.
-    pub(super) fn insert(&mut self, order: Order, identity: Identity) {
+    /// Adds a newly approved or recovered identity to immutable FIFO order, due for signing or not.
+    pub(super) fn insert(&mut self, order: Order, identity: Identity, due: bool) {
         assert!(self.ordered.insert(order, identity).is_none(), "approval orders are unique");
-        self.pending.insert(order, identity);
+        if due {
+            self.pending.insert(order, identity);
+        }
+    }
+
+    /// The signer epoch of the latest custody evidence, once there is any.
+    pub(super) fn epoch(&self) -> Option<u64> {
+        self.epoch
     }
 
     /// Retires every delivery index only after finalized claim evidence is consumed.

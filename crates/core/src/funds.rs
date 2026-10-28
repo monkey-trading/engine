@@ -46,7 +46,8 @@ impl Engine {
     /// Authorises the request, then approves a withdrawal of free cash: no more than the balance,
     /// and no more than equity above the margin requirement. Approval bumps the account's
     /// withdrawal nonce, which the enclave signs with the payout. From V22, reserves whole USDC
-    /// first; the bounded FIFO pass allocates each payable part its own nonce.
+    /// first; the bounded FIFO pass allocates each payable part its own nonce. From V34 a request
+    /// of less than `MIN_WITHDRAWAL` is refused.
     pub(crate) fn withdraw(
         &mut self,
         account: AccountId,

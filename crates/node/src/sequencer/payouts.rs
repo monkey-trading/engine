@@ -53,14 +53,16 @@ impl Sequencer {
             return Ok(());
         }
         for _ in 0..BACKLOG_WINDOW {
-            let Some((key, index)) = gate.backlog.pop_front() else { break };
+            let Some((key, index, released)) = gate.backlog.pop_front() else { break };
             let approval = *self
                 .engine
                 .withdrawal_approval(key.0, key.1)
                 .context("immutable approval lacks its validated event order")?;
             let mut payout = Payout::new(approval, index);
             payout.recovered = true;
-            gate.schedule.insert(payout.order, key);
+            payout.released = released;
+            // A signed approval waits for rotation or a request; only an unsigned one is due.
+            gate.schedule.insert(payout.order, key, released.is_none());
             gate.payouts.insert(key, payout);
             gate.unproved.insert(key);
             gate.unregistered.insert(key);
@@ -204,22 +206,30 @@ impl Sequencer {
         Ok(())
     }
 
-    /// Queues a holder's request to sign an approval again once its last authorization expired
-    /// unclaimed; the signature follows with the next custody evidence, in FIFO order. Expiry alone
-    /// never reissues, so unclaimed approvals cost nothing until their holder asks.
-    pub(super) fn request_reissue(&mut self, account: AccountId, nonce: u64) -> Reissue {
+    /// Queues an authenticated holder's request to sign an approval again once its last
+    /// authorization expired unclaimed or was signed by a retired epoch; the signature follows with
+    /// the next custody evidence, in FIFO order. `replaces` must be the expiry of the latest
+    /// authorization, so one signed request is good for one reissue. Expiry alone never reissues,
+    /// so unclaimed approvals cost nothing until their holder asks.
+    pub(super) fn request_reissue(&mut self, account: AccountId, nonce: u64, replaces: u64) -> Reissue {
         let Some(ts) = self.admitted_ts() else { return Reissue::Unavailable };
         let Some(gate) = &mut self.gate else { return Reissue::Unavailable };
         let Some(payout) = gate.payouts.get(&(account, nonce)) else { return Reissue::Unknown };
         let order = payout.order;
+        let current = payout.released.map_or(0, |(_, expires_at)| expires_at);
+        if replaces != current {
+            return Reissue::Stale { current };
+        }
         let now = u64::try_from(ts / 1_000).unwrap_or_default();
-        match payout.released {
-            Some((_, expires_at)) if now < expires_at => return Reissue::StillValid { expires_at },
-            _ => {}
+        if let Some((epoch, expires_at)) = payout.released
+            && now < expires_at
+            && gate.schedule.epoch().is_none_or(|latest| latest == epoch)
+        {
+            return Reissue::StillValid { expires_at };
         }
         if !gate.schedule.is_pending(order) {
             gate.schedule.request(order);
-            info!(account = %account, nonce, "withdrawal reissue requested");
+            info!(%account, nonce, "withdrawal reissue requested");
         }
         Reissue::Queued
     }

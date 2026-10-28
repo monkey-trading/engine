@@ -181,8 +181,8 @@ impl Sequencer {
                     Request::TimeSample(sample) => self.take_sample(sample)?,
                     Request::Sync(reply) => syncs.push(reply),
                     Request::WatchBenchmarkSchedule(reply) => benchmark_watches.push(reply),
-                    Request::ReissueWithdrawal { account, nonce, reply } => {
-                        let _ = reply.send(self.request_reissue(account, nonce));
+                    Request::ReissueWithdrawal { account, nonce, replaces, reply } => {
+                        let _ = reply.send(self.request_reissue(account, nonce, replaces));
                     }
                     Request::CheckpointStatus { posted, health, lifecycle } => {
                         self.checkpoint_status(posted, health)?;
@@ -380,7 +380,7 @@ impl Sequencer {
                 if let Some(approval) = self.engine.withdrawal_approval(*account, *nonce).copied() {
                     if let Some(gate) = &mut self.gate {
                         gate.payouts.insert((*account, *nonce), payouts::Payout::new(approval, event_index));
-                        gate.schedule.insert((approval.approved_seq, event_index), (*account, *nonce));
+                        gate.schedule.insert((approval.approved_seq, event_index), (*account, *nonce), true);
                         gate.unproved.insert((*account, *nonce));
                         gate.unregistered.insert((*account, *nonce));
                     } else {

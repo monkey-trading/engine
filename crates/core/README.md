@@ -115,9 +115,9 @@ this crate and reproduce the signed state roots exactly.
   and the queue approves its head, in part when physical cash is short, as an immutable payout with
   its own nonce. Payout capacity starts at the conserved cash whose principal is final and grows
   only with final deposit principal and house capital
-- From protocol `V34`, a withdrawal request is at least 10 USDC (`MIN_WITHDRAWAL`, the vault's deposit
-  floor) and is refused with `below_minimum_withdrawal` otherwise, so every request is bounded in
-  count by what it reserves. The queue approves less than 10 USDC only as a request's final
+- From protocol `V34`, a withdrawal request is at least 10 USDC (`MIN_WITHDRAWAL`, the vault's
+  deposit floor) and is refused with `below_minimum_withdrawal` otherwise, so every request is
+  bounded in count by what it reserves. The queue approves less than 10 USDC only as a request's final
   remainder, and otherwise waits for cash. Earlier versions keep dust requests and parts
 - From protocol `V23`, signed corporate instructions capture prior-close stock/index entitlements,
   apply long-net/short-gross cash at the ex-date opening, and scale every split quantity/price
@@ -153,7 +153,7 @@ this crate and reproduce the signed state roots exactly.
 - `src/deposits/tests/coverage.rs` — canonical coverage, partial frontiers and restored index contracts
 - `src/withdrawal.rs` — V22 FIFO reservations, bounded partial approval, the V34 minimum, and exact USDC conversion
 - `src/merkle/withdrawal.rs` — payable approval leaves and root inclusion proofs
-- `tests/withdrawal_minimum.rs` — the V34 minimum request and the waiting of sub-minimum parts, against V31
+- `tests/withdrawal_minimum.rs` — the V34 minimum request and the waiting of sub-minimum parts, against V33
 - `tests/withdrawal_queue.rs` — reservations, partial FIFO, cash conservation, precision, and stale marks
 - `tests/withdrawal_commitment.rs` — approval ABI, tamper rejection, serialization/replay, and incremental roots
 - `tests/withdrawal_pagination.rs` — bounded scans, global positions, empty account continuations, and restart

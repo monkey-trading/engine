@@ -106,7 +106,7 @@ pub(super) async fn attest_eligibility(
 }
 
 /// The existing recorded deployment domain also binds development declarations.
-fn signature_domain(state: &ApiState) -> eip712::Eip712Domain {
+pub(super) fn signature_domain(state: &ApiState) -> eip712::Eip712Domain {
     state.auth.domain().unwrap_or_else(|| eip712::domain(state.operator.chain_id, state.operator.vault))
 }
 

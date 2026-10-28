@@ -644,11 +644,17 @@ trigger another queue pass but do not create vault tokens. New deposits and hous
 physical payout capacity. The node signs only after the approval is synced and included in a
 finalized accepted checkpoint; a logged signature remains unpaid until the vault reports its used
 nonce. From V34 a request is at least 10 USDC. An authorization that expires unclaimed is not
-signed again on a schedule, so unclaimed approvals cost the node nothing. Its holder asks with
-`POST /v1/accounts/<address>/withdrawals/<nonce>/reissue`, which queues the approval for a new
-24-hour authorization with the same nonce, in approval order, and answers `404` for an approval
-that is unknown or paid and `400` while the latest authorization is still usable. A signer
-rotation reissues every unpaid approval under the new epoch without a request.
+signed again on a schedule or by a restart, so unclaimed approvals cost the node nothing. Its
+account asks with `POST /v1/accounts/<address>/withdrawals/<payout-nonce>/reissue` and a body
+`{"replaces_expires_at": <expiry of its latest authorization, 0 if none>, "signature": "0x…"}`.
+The signature is the account's EIP-712 signature, under the same domain as its other requests, of
+`ReissueRequest(address account,uint64 payoutNonce,uint64 replacesExpiresAt)`, so it works once.
+The node queues the approval for a new 24-hour authorization with the same nonce, in approval
+order, and answers `401` for another signer, `404` for an approval that is unknown, paid, or not
+yet loaded by a restart's recovery, and `400` while the latest authorization is usable or the
+request replaces an older one. A signer rotation reissues every unpaid approval under the new
+epoch without a request. Recovery from a checkpoint snapshot sees only the authorizations after
+it, so an approval signed before it is signed once more.
 
 `GET /v1/withdrawals?limit=50&after=<request-seq>` returns `seq`, `queue` and `next`.
 `GET /v1/accounts/<address>/withdrawals` filters the same FIFO and reports each request's global
