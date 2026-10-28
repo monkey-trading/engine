@@ -80,6 +80,49 @@ contract DistributionsTest is Test {
         assertEq(vault.totalWithdrawn(), 0);
     }
 
+    function test_BookSurplusCountsDistributionPaymentsAsHeldAndBooksATransferSmallerThanThem() public {
+        address account = makeAddr("account");
+        uint256 entitled = 50 * 1e6;
+        usdc.mint(address(this), 100 * 1e6);
+        usdc.approve(address(vault), 100 * 1e6);
+        vault.depositToHouse(100 * 1e6);
+        post(1, leaf(account, entitled), false, 0, 0);
+        vault.claimDistribution(account, entitled, new bytes32[](0));
+        assertEq(usdc.balanceOf(address(vault)), 50 * 1e6);
+
+        vm.expectRevert(abi.encodeWithSelector(Vault.NoSurplus.selector, 0));
+        vault.bookSurplus();
+
+        usdc.mint(address(vault), 20 * 1e6);
+        vm.expectEmit(address(vault));
+        emit Vault.SurplusBooked(1, 20 * 1e6);
+        assertEq(vault.bookSurplus(), 1);
+        assertEq(vault.totalDeposited(), 120 * 1e6);
+        assertEq(usdc.balanceOf(address(vault)) + vault.distributionsPaid(), vault.totalDeposited());
+        vm.expectRevert(abi.encodeWithSelector(Vault.NoSurplus.selector, 0));
+        vault.bookSurplus();
+    }
+
+    function testFuzz_BookSurplusBooksExactlyTheTransferAfterDistributionClaims(uint256 entitled, uint256 transfer)
+        public
+    {
+        uint256 funded = 1e9 * 1e6;
+        entitled = bound(entitled, 1, funded);
+        transfer = bound(transfer, vault.MIN_DEPOSIT(), vault.MAX_DEPOSIT());
+        address account = makeAddr("account");
+        usdc.mint(address(this), funded);
+        usdc.approve(address(vault), funded);
+        vault.depositToHouse(funded);
+        post(1, leaf(account, entitled), false, 0, 0);
+        vault.claimDistribution(account, entitled, new bytes32[](0));
+        vm.expectRevert(abi.encodeWithSelector(Vault.NoSurplus.selector, 0));
+        vault.bookSurplus();
+
+        usdc.mint(address(vault), transfer);
+        vault.bookSurplus();
+        assertEq(vault.totalDeposited(), funded + transfer);
+    }
+
     function setPauses(bool deposits, bool withdrawals) private {
         TimelockController governance = vault.governance();
         bytes memory data = abi.encodeCall(Vault.setPauses, (deposits, withdrawals));

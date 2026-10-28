@@ -219,7 +219,11 @@ fn a_stake_sum_past_u128_is_refused_without_mutation() {
     engine.stake(account, TokenUnits(2), 1, "0xmax:1", &mut events);
     assert!(matches!(events.last(), Some(Event::StakingRejected { reason: Reject::InvalidAmount, .. })));
     assert_eq!(engine.staked(account), TokenUnits(u128::MAX - 1));
-    assert!(!engine.is_credited("0xmax:1"));
+    assert!(!engine.is_staking_credited("0xmax:1"), "a refused stake keeps its reference unspent");
+    engine.stake(account, TokenUnits(1), 1, "0xmax:1", &mut events);
+    assert!(matches!(events.last(), Some(Event::Staked { .. })));
+    assert_eq!(engine.staked(account), TokenUnits(u128::MAX));
+    assert!(engine.is_staking_credited("0xmax:1"));
 }
 
 #[test]

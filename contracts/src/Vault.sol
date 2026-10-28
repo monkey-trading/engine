@@ -373,15 +373,16 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         emit HouseDeposited(id, msg.sender, received);
     }
 
-    /// @notice Books USDC the vault holds beyond its deposits less its payments, such as a direct
-    /// transfer, as house capital, at most `MAX_DEPOSIT` per call. A surplus does not pause
-    /// withdrawals; until it is booked, the engine credits nobody with it. A surplus below
-    /// `MIN_DEPOSIT` must be topped up first, as a deposit would be. A surplus carries no funding
-    /// address, so access screening holds it rather than crediting it under the booker's name.
+    /// @notice Books USDC the vault holds beyond its deposits less its withdrawals and distribution
+    /// payments, such as a direct transfer, as house capital, at most `MAX_DEPOSIT` per call. A
+    /// surplus does not pause withdrawals; until it is booked, the engine credits nobody with it. A
+    /// surplus below `MIN_DEPOSIT` must be topped up first, as a deposit would be. A surplus carries
+    /// no funding address, so access screening holds it rather than crediting it under the booker's
+    /// name.
     /// @return id The deposit's id, one more than the previous deposit's.
     function bookSurplus() external nonReentrant returns (uint256 id) {
         if (depositsPaused) revert DepositsPaused();
-        uint256 held = usdc.balanceOf(address(this)) + totalWithdrawn;
+        uint256 held = usdc.balanceOf(address(this)) + totalWithdrawn + distributionsPaid;
         uint256 surplus = held > totalDeposited ? held - totalDeposited : 0;
         if (surplus < MIN_DEPOSIT) revert NoSurplus(surplus);
         uint256 amount = surplus < MAX_DEPOSIT ? surplus : MAX_DEPOSIT;
