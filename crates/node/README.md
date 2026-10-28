@@ -856,6 +856,16 @@ gets 503. A connection over a connection cap or over its client's connection rat
 its TLS handshake. A client is its socket peer IP, with IPv6 counted by its /64; forwarding headers
 are ignored.
 
+`api.allowed_origins` lists the browser origins (`scheme://host[:port]`, exact; no `*`, path, or
+duplicate; `https` only in a production build) that may call the API. It is empty by default, which
+sends no CORS headers. A request from a listed origin gets `Access-Control-Allow-Origin` with that
+origin and `Vary: Origin`, on error responses too, and a preflight `OPTIONS` on any `/v1` route
+answers 204 with `GET, POST, OPTIONS`, the headers `Content-Type` and `X-Engine-Challenge`, and a
+600-second max age. `/v1/admin` never gets either. With any origin listed, `GET /v1/stream` with an
+`Origin` header not on the list gets 403 before the upgrade, since browsers do not apply CORS to
+WebSockets; a request without `Origin` is unaffected. The config is bound by the attestation, so
+changing the list is a new release.
+
 `GET /v1/attestation` returns `provider`, `enclave_address`, `config_sha256`,
 `tls_public_key_sha256`, `bundle`, `report_data`, and `quote`, each byte string as `0x` hex. The
 quote binds the 64 bytes of `report_data`: bytes 0..32 are the SHA-256 of `bundle`, and bytes 32..64
@@ -1432,6 +1442,9 @@ cargo test -p engine-node
 
 # The trusted time dev scenario, offline against loopback Roughtime servers
 cargo test -p engine-node trusted_time::tests::scenario
+
+# Dev scenario: a listed browser origin gets CORS headers and the stream, any other gets neither
+./scripts/dev-browser-origin.sh
 
 # Dev scenario: a mock feed stops, the market goes stale, and a local webhook gets one page
 ./scripts/dev-metrics-alerts.sh

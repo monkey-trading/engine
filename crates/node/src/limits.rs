@@ -1,6 +1,7 @@
 //! Limits on the public API: request and connection rates per client, request rates per account,
-//! request body size and read time, open connections, and stream subscribers. A client is its
-//! socket peer's IP, never a forwarding header, which the untrusted host could forge; an IPv6
+//! request body size and read time, open connections, stream subscribers, and the browser origins
+//! allowed. A client is its socket
+//! peer's IP, never a forwarding header, which the untrusted host could forge; an IPv6
 //! client counts by its /64, the block one host is usually given. Limiters live in enclave memory
 //! and start empty on every boot. They read the host's clock, which the host could skew; the host
 //! controls the network anyway, so the limits bound clients, not the host. Each request checks its
@@ -8,7 +9,7 @@
 //! check through an owner would put a channel round trip and a single queue in front of every
 //! request.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::error::Error;
 use std::fmt::Display;
 use std::hash::Hash;
@@ -55,6 +56,8 @@ pub struct ApiLimits<C: Clock = DefaultClock> {
     /// A stream subscriber that takes longer than this to take a message is disconnected.
     pub send_timeout: Duration,
     pub max_body_bytes: usize,
+    /// The browser origins `api.allowed_origins` lists.
+    allowed_origins: BTreeSet<String>,
 }
 
 /// Open connections, in total and per client.
@@ -115,7 +118,18 @@ impl<C: Clock + Clone> ApiLimits<C> {
             read_timeout: cfg.read_timeout,
             send_timeout: cfg.send_timeout,
             max_body_bytes: cfg.max_body_bytes.get(),
+            allowed_origins: cfg.allowed_origins.iter().cloned().collect(),
         }
+    }
+
+    /// Whether any browser origin is allowed.
+    pub(crate) fn has_allowed_origins(&self) -> bool {
+        !self.allowed_origins.is_empty()
+    }
+
+    /// Whether `origin` is one `api.allowed_origins` lists, exactly.
+    pub(crate) fn origin_allowed(&self, origin: &str) -> bool {
+        self.allowed_origins.contains(origin)
     }
 
     /// Counts one new connection from `ip`, before its TLS handshake.
@@ -463,6 +477,7 @@ mod tests {
             per_ip_connections: rate,
             max_subscribers: NonZeroUsize::new(2).unwrap(),
             send_timeout: Duration::from_secs(1),
+            allowed_origins: Vec::new(),
         }
     }
 }
