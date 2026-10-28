@@ -61,7 +61,8 @@ every job the changed paths can affect, and skips the rest; a push to `main` run
   `cargo test -p <crate>` for each affected crate, `./scripts/check-reference-logs.sh` when
   `crates/core/tests/reference/` changes, and `cargo deny check` when dependencies change.
 - A push to a draft PR may carry failing or skipped checks when the PR says which; `ci-passed`
-  passes before the PR is marked ready.
+  passes before the PR is marked ready. The first failed job cancels the rest of the PR's run, so
+  a push carrying a known failure gets no result from the jobs it cancels.
 - When the change touches a shared or public surface, add its direct consumers, since a check
   scoped to one crate never builds them: a change to `engine-core`'s public API also checks
   `engine-node`.
@@ -70,8 +71,8 @@ every job the changed paths can affect, and skips the rest; a push to `main` run
   deploys, cache or artifact uploads, or repository writes.
 - [context-discipline](context-discipline.md) counts a request to open or update the PR as
   approval for these checks; keep their output out of the prompt as it says.
-- After the push, the PR's CI is the full check of the changed paths: read its result before
-  asking for review.
+- After the push, the PR's CI is the full check of the changed paths once its jobs all ran:
+  read its result before asking for review.
 
 ## Push
 
