@@ -33,6 +33,8 @@
 //! - **Emission period result:** `keccak256(abi.encode(int128 realised, int128 writtenOff))`, the
 //!   account's realised PnL and written-off debt in the open emission period, from `V19`, until the
 //!   period is finalised.
+//! - **Emission debt:** `keccak256(abi.encode(int128 debt))`, the write-off the period's losses
+//!   could not absorb, from `V33`, until later loss weight pays it down.
 //! - **Remaining state:** the keccak-256 of the JSON encoding of every engine field no other leaf
 //!   holds (`state.rs`).
 //!
@@ -84,6 +86,7 @@ const LEGACY_PRINCIPAL: u8 = 12;
 const DISTRIBUTION: u8 = 13;
 const STAKED: u8 = 14;
 const STAKING_REFERENCE: u8 = 15;
+const EMISSION_DEBT: u8 = 23;
 const CORPORATE_ACTION: u8 = 21;
 const CORPORATE_REFERENCE: u8 = 22;
 const ELIGIBILITY: u8 = 0x20;
@@ -440,6 +443,16 @@ pub(crate) fn staking_reference_key(reference: &str) -> B256 {
 /// The value hash of a staked-balance leaf.
 pub(crate) fn staked_hash(staked: TokenUnits) -> B256 {
     keccak(&[&U256::from(staked.0).abi_encode()])
+}
+
+/// The key of `account`'s emission debt leaf.
+pub(crate) fn emission_debt_key(account: AccountId) -> B256 {
+    keccak(&[&[EMISSION_DEBT], &account.0])
+}
+
+/// The value hash of an emission debt leaf.
+pub(crate) fn emission_debt_hash(debt: Fixed) -> B256 {
+    keccak(&[&debt.raw().abi_encode()])
 }
 
 /// keccak-256 of `value`'s JSON encoding.

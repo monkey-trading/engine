@@ -16,7 +16,9 @@ use crate::benchmark::BenchmarkHistory;
 use crate::deposits::CustodyCheckpoint;
 use crate::emissions::{Emissions, TokenUnits};
 use crate::engine::{Engine, Markout};
-use crate::merkle::leaf::{deposit_key, deposit_transaction_key, legacy_deposit_key};
+use crate::merkle::leaf::{
+    deposit_key, deposit_transaction_key, emission_debt_hash, emission_debt_key, legacy_deposit_key,
+};
 use crate::merkle::{
     AccountLeaf, DistributionProof, MarketLeaf, SparseMerkleTree, account_key, corporate_action_key,
     corporate_reference_key, credited_ref_hash, credited_ref_key, distribution_hash, distribution_key, eligibility_key,
@@ -110,6 +112,7 @@ impl Engine {
             staking_refs,
             period_results,
             entitlements,
+            emission_debts,
             staked,
             distributions,
             deposits,
@@ -204,6 +207,11 @@ impl Engine {
             entitlements.into_iter().map(|id| (id, self.entitlements.get(&id).copied())).collect();
         changes.extend(
             entitlement_leaves.iter().map(|(id, entitled)| (entitlement_key(*id), entitled.map(entitlement_hash))),
+        );
+        changes.extend(
+            emission_debts
+                .into_iter()
+                .map(|id| (emission_debt_key(id), self.emission_debts.get(&id).map(|debt| emission_debt_hash(*debt)))),
         );
         let distribution_leaves: Vec<(AccountId, Option<UsdcUnits>)> =
             distributions.into_iter().map(|id| (id, self.distributions.get(&id).copied())).collect();
@@ -376,6 +384,7 @@ impl Engine {
             emissions,
             period_results: _,
             entitlements: _,
+            emission_debts: _,
             withdrawal_cash,
             withdrawal_queue: _,
             withdrawal_next_ticket,
@@ -392,6 +401,7 @@ impl Engine {
             pending_deposits: _,
             changed: _,
             tree: _,
+            command_ms: _,
             hot_indexes: _,
         } = self;
         Globals {

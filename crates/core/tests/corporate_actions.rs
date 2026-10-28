@@ -3,6 +3,8 @@
 #[path = "corporate_actions/cash.rs"]
 mod cash;
 mod common;
+#[path = "corporate_actions/emissions.rs"]
+mod emissions;
 #[path = "corporate_actions/rounding.rs"]
 mod rounding;
 #[path = "corporate_actions/scheduling.rs"]

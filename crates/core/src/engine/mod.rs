@@ -109,6 +109,10 @@ pub struct Engine {
     /// Accepted corporate identities, retained after completion to reject redelivery.
     #[serde(default, skip_serializing_if = "TrackedSet::is_empty")]
     pub(crate) corporate_refs: TrackedSet<String>,
+    /// From `V33`, the write-off each account's period losses could not absorb, paid down by
+    /// later loss weight before it earns emission weight again.
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) emission_debts: TrackedMap<AccountId, Fixed>,
     /// Finalised custody scan progress is sequenced, never recovered from a host cursor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) custody_checkpoint: Option<CustodyCheckpoint>,
@@ -165,6 +169,10 @@ pub struct Engine {
     /// The state tree as of the last root under `V9`; absent until then.
     #[serde(skip)]
     pub(crate) tree: Option<StateTree>,
+    /// The stamp of the command being applied. `now` rewinds to a boundary during corporate
+    /// catch-up; this does not.
+    #[serde(skip)]
+    pub(crate) command_ms: Millis,
 }
 
 /// A fill waiting to be marked against the index once its horizon has passed.
@@ -208,6 +216,7 @@ impl Engine {
         self.last_seq = Some(sequenced.seq);
         let last_now = self.now;
         self.now = sequenced.ts;
+        self.command_ms = sequenced.ts;
 
         let mut events = Vec::new();
         // From `V21`, a quote held across a closure could never count under the hours rules, so it

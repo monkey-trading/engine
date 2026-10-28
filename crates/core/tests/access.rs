@@ -5,6 +5,8 @@ mod common;
 mod declarations;
 #[path = "access/deposits.rs"]
 mod deposits;
+#[path = "access/emission_debt.rs"]
+mod emission_debt;
 #[path = "access/pending.rs"]
 mod pending;
 #[path = "access/policy.rs"]

@@ -245,7 +245,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V31` parts (`v15.rs` to `v31.rs`)
+  `V15` to `V31` and `V33` parts (`v15.rs` to `v31.rs`, `v33.rs`)
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
 
@@ -335,6 +335,11 @@ Two suites guard replay and accounting:
   `V15` it also checks that a resting order accepted below its market's minimum notional, or with no
   dollar value, can only reduce its account's position in that market; under `V16`, that no
   account's toxicity history exceeds the memory in force.
+
+Emission protocol V33 carries a write-off no period's realised losses can absorb forward as a
+per-account emission debt, paid down by later loss weight before it earns again, and judges
+emission eligibility during corporate-action catch-up at the enclosing command's stamp. Its
+session is in `examples/reference_log/v33.rs`.
 
 Staking protocol V31 reserves every allocation from physical withdrawal capacity, whether paid or
 unpaid, and bounds new allocations by that unapproved capacity. Activation deducts cumulative

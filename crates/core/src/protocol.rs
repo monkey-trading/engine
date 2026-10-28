@@ -154,11 +154,16 @@ pub enum ProtocolVersion {
     V30,
     /// Reserve staker distributions from unapproved physical withdrawal capacity.
     V31,
+    /// An emission write-off that a period's realised losses cannot absorb, such as a reversal or
+    /// bad debt landing after the losses it unwinds, becomes a per-account emission debt that later
+    /// loss weight pays down before it earns again. Emission eligibility during corporate-action
+    /// catch-up is judged at the enclosing command's stamp, not the rewound boundary.
+    V33,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V31;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V33;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {
