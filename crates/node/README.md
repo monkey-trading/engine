@@ -1157,7 +1157,11 @@ severity's webhook:
 ```
 
 `status` is `firing` or `resolved`, and `key` is the same for both, so a receiver can match a
-resolve to its alert and drop duplicates. `context` names the spans the line was logged in, such
+resolve to its alert and drop duplicates. A resolve pages only when it ends an episode this node
+paged as firing: code that re-logs `alert_resolved` while healthy, such as the checkpoint
+reconciliation on every tick, pages nothing. Open episodes (up to 1024, keys of at most 256 bytes)
+are kept in the outbox, so a resolve after a restart still pages; a resolve for an episode evicted
+past that cap or whose firing page was refused pages nothing. `context` names the spans the line was logged in, such
 as `command{id=42}`. Repeats of a key do not page again until it has been quiet for
 `alerts.episode_quiet`. Each severity's webhook delivers its oldest pending page first. The
 sequencer only tries a bounded channel send; disk writes and webhook retries run on supervised
@@ -1171,7 +1175,7 @@ Shutdown leaves committed pending pages for the next start, in their original ro
 `max_pages` bounds retained rows across both routes, `max_bytes` bounds their combined serialized
 payload bytes, and `max_age` bounds their age. Dev configs use 2048 pages, 16 MiB, and one hour;
 one serialized row is additionally capped at 64 KiB. SQLite reuses freed pages. Its database file is capped at
-`ceil(max_bytes / page_size) + 4 * max_pages + 16` SQLite pages, including indexes and retained
+`ceil(max_bytes / page_size) + 8 * max_pages + 16` SQLite pages, including indexes and retained
 free pages; the temporary rollback journal requires
 additional space for at most those database pages plus journal record headers. No outbox file enters the public
 log archive. Both directories must resolve to distinct siblings. Keep one node per outbox; an

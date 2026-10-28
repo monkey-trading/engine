@@ -110,13 +110,6 @@ impl Queues {
             Severity::Warning => self.warning.as_ref(),
         }
     }
-
-    /// Every routed severity and its queue.
-    pub fn all(&self) -> impl Iterator<Item = (Severity, &mpsc::Sender<()>)> {
-        [(Severity::Critical, &self.critical), (Severity::Warning, &self.warning)]
-            .into_iter()
-            .filter_map(|(severity, queue)| queue.as_ref().map(|queue| (severity, queue)))
-    }
 }
 
 /// The webhook HTTP client. TLS runs on rustls with the compiled-in Mozilla roots, so the host's

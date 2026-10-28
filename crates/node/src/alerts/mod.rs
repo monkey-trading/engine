@@ -5,8 +5,13 @@
 //! episodes, keyed by name and fields, and queues one page when an episode starts and one when it
 //! is resolved. Each routed severity has its own queue and delivery task, which posts its pages in
 //! order to that severity's webhook.
-//! Episodes live in memory; pending pages live in a bounded SQLite outbox outside the public log.
-//! After restart, pending pages resume in route order under their original episode key. A crash
+//! A resolve pages only when it ends a tracked episode: emitters re-assert health on every tick, so
+//! a resolve with no open episode is dropped.
+//! Episodes are tracked in memory; pending pages and open episodes live in a bounded SQLite outbox
+//! outside the public log.
+//! After restart, pending pages resume in route order under their original episode key. Open
+//! episodes are kept in the outbox too, so a resolve after a restart still ends an episode whose
+//! firing page was delivered before it. A crash
 //! after receiver acceptance but before removal can repeat a page; receivers de-duplicate its key,
 //! status and timestamp. Alert lines not yet committed to the outbox can still be lost on a kill.
 //!
@@ -36,7 +41,7 @@ use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::registry::{Extensions, LookupSpan};
 
 mod episodes;
-use crate::alerts::episodes::{Episodes, Routed};
+use crate::alerts::episodes::Episodes;
 mod outbox;
 use crate::alerts::outbox::Outbox;
 use crate::config::OutboxSection;
@@ -266,9 +271,10 @@ impl Router {
         let mut deliveries = JoinSet::new();
         let routes = [self.routes.has(Severity::Critical), self.routes.has(Severity::Warning)];
         let outbox = Outbox::start(cfg.clone(), routes, self.metrics.clone(), &mut deliveries).await?;
+        // Read before delivery starts removing the pages it delivers.
+        let episodes = Episodes::resumed(episode_quiet, outbox.open_episodes().await?, Instant::now());
         let queues = Queues::start(self.routes, client()?, &self.metrics, RETRY, outbox, &mut deliveries);
         let (drain_tx, drain_rx) = oneshot::channel();
-        let episodes = Episodes::new(episode_quiet);
         let router = tokio::spawn(route(self.lines, queues, episodes, drain_rx, self.metrics.clone()));
         Ok(Routing { router, deliveries, drain: Some(drain_tx), metrics: self.metrics })
     }
@@ -339,19 +345,11 @@ async fn route(
         tokio::select! {
             line = lines.recv() => {
                 let Some(line) = line else { return };
-                match episodes.on_line(line, Instant::now()) {
-                    Some(Routed::One(page)) => {
-                        if let Err(e) = enqueue(&queues, &mut episodes, page, &metrics).await {
-                            error!("alert router stopped: {e:#}"); return;
-                        }
-                    },
-                    Some(Routed::Every(line, key)) => for (severity, _) in queues.all() {
-                        let page = Page::new(line.clone(), key.clone(), Status::Resolved, severity);
-                        if let Err(e) = enqueue(&queues, &mut episodes, page, &metrics).await {
-                            error!("alert router stopped: {e:#}"); return;
-                        }
-                    },
-                    None => {}
+                if let Some(page) = episodes.on_line(line, Instant::now())
+                    && let Err(e) = enqueue(&queues, &mut episodes, page, &metrics).await
+                {
+                    error!("alert router stopped: {e:#}");
+                    return;
                 }
             }
             _ = &mut drain, if !draining => {
@@ -413,13 +411,7 @@ pub fn capture(f: impl FnOnce()) -> Vec<AlertLine> {
 pub fn pages_for(lines: Vec<AlertLine>) -> Vec<(Status, String)> {
     let mut episodes = Episodes::new(Duration::from_secs(3600));
     let now = Instant::now();
-    lines
-        .into_iter()
-        .filter_map(|line| match episodes.on_line(line, now)? {
-            Routed::One(page) => Some((page.status, page.key)),
-            Routed::Every(_, key) => Some((Status::Resolved, key)),
-        })
-        .collect()
+    lines.into_iter().filter_map(|line| episodes.on_line(line, now).map(|page| (page.status, page.key))).collect()
 }
 
 /// Captures this thread's alert lines until the guard drops; read them with `Router::queued`. For

@@ -104,26 +104,13 @@ fn a_resolve_ends_its_episode_on_the_alerts_route_even_after_the_quiet_period() 
     let mut episodes = Episodes::new(Duration::from_secs(10));
     let t0 = Instant::now();
     episodes.on_line(warning("market_no_price", 1), t0).unwrap();
-    let Some(Routed::One(page)) = episodes.on_line(resolve("market_no_price", 1), t0 + Duration::from_secs(3600))
-    else {
+    let Some(page) = episodes.on_line(resolve("market_no_price", 1), t0 + Duration::from_secs(3600)) else {
         panic!("expected a page for the warning route");
     };
     assert_eq!((page.status, page.severity), (Status::Resolved, Severity::Warning));
     assert_eq!(page.key, "market_no_price{market=1}");
     // Ended: the next alert pages again.
     assert_eq!(status(episodes.on_line(alert("market_no_price", 1), t0)), Some(Status::Firing));
-}
-
-#[test]
-fn past_the_cap_the_quietest_episode_is_forgotten_and_its_resolve_goes_everywhere() {
-    let mut episodes = Episodes::new(Duration::from_secs(10));
-    let t0 = Instant::now();
-    for market in 0..=1024 {
-        episodes.on_line(alert("flood", market), t0 + Duration::from_millis(market)).unwrap();
-    }
-    let forgotten = episodes.on_line(resolve("flood", 0), t0);
-    assert_eq!(forgotten, Some(Routed::Every(resolve("flood", 0), "flood{market=0}".into())));
-    assert!(matches!(episodes.on_line(resolve("flood", 1), t0), Some(Routed::One(_))));
 }
 
 #[tokio::test]
@@ -155,20 +142,6 @@ async fn routing_posts_one_page_per_episode_start_and_end_to_its_severitys_webho
 }
 
 #[tokio::test]
-async fn an_untracked_resolve_goes_to_every_route() {
-    let (critical, warning) = (Receiver::start(vec![]).await, Receiver::start(vec![]).await);
-    let routes = routes(Some(&critical.url("/c")), Some(&warning.url("/w")));
-    let (layer, router) = channel(routes, Arc::new(Metrics::new()));
-    let routing = router.spawn(Duration::from_secs(3600), &outbox_config()).await.unwrap();
-    layer.lines.send(resolve("market_no_price", 1)).await.unwrap();
-    routing.drain(Duration::from_secs(10)).await;
-    for (receiver, severity) in [(critical, "critical"), (warning, "warning")] {
-        let [body]: [Value; 1] = receiver.bodies().try_into().unwrap();
-        assert_eq!((&body["status"], &body["severity"]), (&json!("resolved"), &json!(severity)));
-    }
-}
-
-#[tokio::test]
 async fn a_full_outbox_refuses_the_page_counts_overflow_and_forgets_its_episode() {
     let metrics = Arc::new(Metrics::new());
     let mut episodes = Episodes::new(Duration::from_secs(3600));
@@ -179,14 +152,14 @@ async fn a_full_outbox_refuses_the_page_counts_overflow_and_forgets_its_episode(
     let outbox = Outbox::start(cfg, [true, false], metrics.clone(), &mut tasks).await.unwrap();
     let queues = Queues { critical: Some(queue), warning: None, outbox };
     for market in 0..3 {
-        let Some(Routed::One(page)) = episodes.on_line(alert("flood", market), t0) else { panic!() };
+        let Some(page) = episodes.on_line(alert("flood", market), t0) else { panic!() };
         enqueue(&queues, &mut episodes, page, &metrics).await.unwrap();
     }
     assert_eq!(queues.outbox.next(Severity::Critical).await.unwrap().unwrap().page.key, "flood{market=0}");
     assert_eq!(delivered(&metrics, "critical", "dropped"), 2);
     assert_eq!(metrics.alert_outbox_overflows.get(), 2);
     assert_eq!(pending(&metrics, "critical"), 1);
-    assert!(matches!(episodes.on_line(alert("flood", 1), t0), Some(Routed::One(_))));
+    assert!(episodes.on_line(alert("flood", 1), t0).is_some());
     assert_eq!(episodes.on_line(alert("flood", 0), t0), None);
     drop(queues);
     while tasks.join_next().await.is_some() {}
@@ -272,7 +245,7 @@ async fn a_stopped_route_leaves_its_committed_page_pending_and_stops_the_router(
     let (queue, delivery) = mpsc::channel(1);
     drop(delivery);
     let queues = Queues { critical: Some(queue), warning: None, outbox };
-    let Some(Routed::One(page)) = episodes.on_line(alert("flood", 1), Instant::now()) else { panic!() };
+    let Some(page) = episodes.on_line(alert("flood", 1), Instant::now()) else { panic!() };
     assert!(enqueue(&queues, &mut episodes, page, &metrics).await.unwrap_err().to_string().contains("stopped"));
     assert_eq!(pending(&metrics, "critical"), 1);
     assert_eq!(queues.outbox.next(Severity::Critical).await.unwrap().unwrap().page.key, "flood{market=1}");
@@ -335,11 +308,8 @@ fn page() -> Page {
     Page::new(line, key, Status::Firing, Severity::Critical)
 }
 
-fn status(routed: Option<Routed>) -> Option<Status> {
-    match routed? {
-        Routed::One(page) => Some(page.status),
-        Routed::Every(..) => Some(Status::Resolved),
-    }
+fn status(routed: Option<Page>) -> Option<Status> {
+    Some(routed?.status)
 }
 
 /// Routes to `critical` and `warning`, through environment variables.
@@ -468,3 +438,5 @@ async fn restart_delivers_committed_pages_in_route_order_with_their_original_epi
     assert!(critical.bodies().iter().all(|b| b["ts_ms"] == 1_700_000_000_000_i64));
     assert_eq!((pending(&metrics, "critical"), pending(&metrics, "warning")), (0, 0));
 }
+
+mod resolves;
