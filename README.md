@@ -75,8 +75,8 @@ the enclave's signed approval ([#23](https://github.com/0xjevons/monkeytrading/i
 cannot cover waits in a public first-in-first-out queue
 ([#49](https://github.com/0xjevons/monkeytrading/issues/49)). Ownership of the house is represented
 by the MONKEY token, earned on losing trades: every ten minutes a fixed budget is shared among the
-accounts in proportion to their net realised losses, less any debt the house wrote off, and the
-budget halves every 182.5 days. An account claims what it earned from the vault, against the
+accounts in proportion to their net realised losses, less any debt the house wrote off (carried forward, up to the weight the account earned, while the losses cannot cover it), and
+the budget halves every 182.5 days. An account claims what it earned from the vault, against the
 engine's latest posted checkpoint, and no entitlement mints twice
 ([#36](https://github.com/0xjevons/monkeytrading/issues/36)). Holders who stake it share, in USDC,
 the house's net asset value above a reserve floor

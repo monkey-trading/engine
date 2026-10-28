@@ -26,7 +26,7 @@ use crate::benchmark::BenchmarkHistory;
 use crate::command::{AdminCommand, Command, Sequenced};
 use crate::corporate::CorporateEntitlement;
 use crate::deposits::{CustodyCheckpoint, LegacyDeposit, RecordedDeposit};
-use crate::emissions::{Emissions, PeriodResult, TokenUnits};
+use crate::emissions::{EmissionLedger, Emissions, PeriodResult, TokenUnits};
 use crate::event::{Event, Reject};
 use crate::fixed::Rounding;
 use crate::merkle::state::{Changed, StateTree, is_zero};
@@ -109,6 +109,10 @@ pub struct Engine {
     /// Accepted corporate identities, retained after completion to reject redelivery.
     #[serde(default, skip_serializing_if = "TrackedSet::is_empty")]
     pub(crate) corporate_refs: TrackedSet<String>,
+    /// From `V32`, each account's emission ledger: the loss weight it earned that no write-off has
+    /// been charged against, and the write-off debt later loss weight pays down.
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) emission_ledgers: TrackedMap<AccountId, EmissionLedger>,
     /// Finalised custody scan progress is sequenced, never recovered from a host cursor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) custody_checkpoint: Option<CustodyCheckpoint>,
@@ -165,6 +169,10 @@ pub struct Engine {
     /// The state tree as of the last root under `V9`; absent until then.
     #[serde(skip)]
     pub(crate) tree: Option<StateTree>,
+    /// The stamp of the command being applied. `now` rewinds to a boundary during corporate
+    /// catch-up; this does not.
+    #[serde(skip)]
+    pub(crate) command_ms: Millis,
 }
 
 /// A fill waiting to be marked against the index once its horizon has passed.
@@ -208,6 +216,7 @@ impl Engine {
         self.last_seq = Some(sequenced.seq);
         let last_now = self.now;
         self.now = sequenced.ts;
+        self.command_ms = sequenced.ts;
 
         let mut events = Vec::new();
         // From `V21`, a quote held across a closure could never count under the hours rules, so it

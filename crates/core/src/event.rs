@@ -212,7 +212,7 @@ pub enum Event {
         reason: String,
     },
     /// From `V19`, an account's share of a finalised emission period: `weight` is its eligible
-    /// realised loss in USD, and `amount` the base units added to its entitlement.
+    /// realised loss in USD (from `V32` less any emission debt it pays), and `amount` the base units added to its entitlement.
     EmissionAllocated {
         account: AccountId,
         period: u64,

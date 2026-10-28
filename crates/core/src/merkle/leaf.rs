@@ -33,6 +33,9 @@
 //! - **Emission period result:** `keccak256(abi.encode(int128 realised, int128 writtenOff))`, the
 //!   account's realised PnL and written-off debt in the open emission period, from `V19`, until the
 //!   period is finalised.
+//! - **Emission ledger:** `keccak256(abi.encode(int128 earned, int128 debt))`, from `V32`: the loss
+//!   weight the account earned that no write-off has yet been charged against, and the write-off
+//!   debt later loss weight pays down.
 //! - **Remaining state:** the keccak-256 of the JSON encoding of every engine field no other leaf
 //!   holds (`state.rs`).
 //!
@@ -58,7 +61,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
 use crate::account::{Account, Position, RestingOrder};
-use crate::emissions::{PeriodResult, TokenUnits};
+use crate::emissions::{EmissionLedger, PeriodResult, TokenUnits};
 use crate::engine::{MarketState, Markout, StressState};
 use crate::futures::FuturesState;
 use crate::market::{MarketSpec, QuoteCurrency};
@@ -86,6 +89,7 @@ const STAKED: u8 = 14;
 const STAKING_REFERENCE: u8 = 15;
 const CORPORATE_ACTION: u8 = 21;
 const CORPORATE_REFERENCE: u8 = 22;
+const EMISSION_LEDGER: u8 = 23;
 const ELIGIBILITY: u8 = 0x20;
 const HELD_DEPOSIT: u8 = 0x21;
 const PENDING_DEPOSIT: u8 = 0x22;
@@ -440,6 +444,16 @@ pub(crate) fn staking_reference_key(reference: &str) -> B256 {
 /// The value hash of a staked-balance leaf.
 pub(crate) fn staked_hash(staked: TokenUnits) -> B256 {
     keccak(&[&U256::from(staked.0).abi_encode()])
+}
+
+/// The key of `account`'s emission ledger leaf.
+pub(crate) fn emission_ledger_key(account: AccountId) -> B256 {
+    keccak(&[&[EMISSION_LEDGER], &account.0])
+}
+
+/// The value hash of an emission ledger leaf.
+pub(crate) fn emission_ledger_hash(ledger: &EmissionLedger) -> B256 {
+    keccak(&[&(ledger.earned.raw(), ledger.debt.raw()).abi_encode()])
 }
 
 /// keccak-256 of `value`'s JSON encoding.
