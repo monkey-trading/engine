@@ -158,12 +158,12 @@ pub enum ProtocolVersion {
     /// bad debt landing after the losses it unwinds, becomes a per-account emission debt that later
     /// loss weight pays down before it earns again. Emission eligibility during corporate-action
     /// catch-up is judged at the enclosing command's stamp, not the rewound boundary.
-    V33,
+    V32,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V33;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V32;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

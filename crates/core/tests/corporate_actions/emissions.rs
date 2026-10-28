@@ -1,4 +1,4 @@
-//! Emission eligibility during corporate-action catch-up: from `V33` it is judged at the enclosing
+//! Emission eligibility during corporate-action catch-up: from `V32` it is judged at the enclosing
 //! command's stamp, while the boundary time the clock rewinds to keeps ordering the work.
 
 use engine_core::Fixed;
@@ -15,7 +15,7 @@ use crate::support::*;
 /// stamp of the catch-up command a second later.
 fn crossing(version: ProtocolVersion) -> (Harness, Millis) {
     let mut h = held("2", "4");
-    if version >= ProtocolVersion::V33 {
+    if version >= ProtocolVersion::V32 {
         h.admin(AdminCommand::ActivateProtocol { version });
     }
     let start_ms = open() + 1;
@@ -25,7 +25,7 @@ fn crossing(version: ProtocolVersion) -> (Harness, Millis) {
 
 #[test]
 fn cash_in_lieu_at_a_boundary_before_the_start_counts_when_the_command_is_after_it() {
-    for (version, counted) in [(ProtocolVersion::V23, false), (ProtocolVersion::V33, true)] {
+    for (version, counted) in [(ProtocolVersion::V23, false), (ProtocolVersion::V32, true)] {
         let (mut h, at) = crossing(version);
         h.price(AAPL, "80.5");
         accepted(&schedule(&mut h, split("reverse", 1, 3)));
@@ -40,7 +40,7 @@ fn cash_in_lieu_at_a_boundary_before_the_start_counts_when_the_command_is_after_
 
 #[test]
 fn cash_in_lieu_with_the_command_before_the_start_still_counts_nothing() {
-    let (mut h, _) = crossing(ProtocolVersion::V33);
+    let (mut h, _) = crossing(ProtocolVersion::V32);
     h.price(AAPL, "80.5");
     accepted(&schedule(&mut h, split("reverse", 1, 3)));
     // The opening and the command that applies it both precede the start.
@@ -51,7 +51,7 @@ fn cash_in_lieu_with_the_command_before_the_start_still_counts_nothing() {
 
 #[test]
 fn a_liquidation_at_a_rollover_boundary_before_the_start_counts_when_the_command_is_after_it() {
-    for (version, counted) in [(ProtocolVersion::V23, false), (ProtocolVersion::V33, true)] {
+    for (version, counted) in [(ProtocolVersion::V23, false), (ProtocolVersion::V32, true)] {
         let (mut h, trader, command_ms) = liquidated_by_a_missed_rollover(version);
         let events = h.cmd(Command::Tick);
         assert_eq!(h.ts, command_ms);
@@ -78,7 +78,7 @@ fn liquidated_by_a_missed_rollover(version: ProtocolVersion) -> (Harness, engine
     h.deposit(trader, "10000");
     h.price(BTC, "100000");
     assert!(h.market_order(trader, BTC, Side::Buy, "1", "100000").iter().any(|e| matches!(e, Event::Fill(_))));
-    if version >= ProtocolVersion::V33 {
+    if version >= ProtocolVersion::V32 {
         h.admin(AdminCommand::ActivateProtocol { version });
     }
     let rollover = h.engine.next_rollover().expect("a position schedules the rollover");

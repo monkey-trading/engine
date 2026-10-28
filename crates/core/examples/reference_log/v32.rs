@@ -1,4 +1,4 @@
-//! The session's `V33` part: a reversal that lands after the losses it unwinds becomes a per-account
+//! The session's `V32` part: a reversal that lands after the losses it unwinds becomes a per-account
 //! emission debt, paid down by later loss weight before it earns again.
 
 use alloy_primitives::B256;
@@ -23,12 +23,12 @@ use crate::common::{Client, Harness, f, market};
 /// The market this part trades.
 const VLT: MarketId = 33;
 
-/// `V33` activates. A trader loses half its receipt's principal in fills and earns its period's
+/// `V32` activates. A trader loses half its receipt's principal in fills and earns its period's
 /// allocation; the receipt is reversed in the next period, and the write-off, with no losses there to
 /// absorb it, becomes an emission debt. The period after that pays the debt down without earning, and
 /// the one after pays it off, the weight beyond it earning again.
 pub(crate) fn session(h: &mut Harness) {
-    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V33 });
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V32 });
     h.operator_admin(AdminCommand::UpsertMarket(market(VLT, "VLT", AssetClass::Crypto, Schedule::AlwaysOpen, 1_000)));
     let source = SigningKey::from_slice(&[0x77; 32]).expect("a valid scalar");
     let trader = Client::new(80).account;

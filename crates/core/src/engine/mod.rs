@@ -109,7 +109,7 @@ pub struct Engine {
     /// Accepted corporate identities, retained after completion to reject redelivery.
     #[serde(default, skip_serializing_if = "TrackedSet::is_empty")]
     pub(crate) corporate_refs: TrackedSet<String>,
-    /// From `V33`, the write-off each account's period losses could not absorb, paid down by
+    /// From `V32`, the write-off each account's period losses could not absorb, paid down by
     /// later loss weight before it earns emission weight again.
     #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
     pub(crate) emission_debts: TrackedMap<AccountId, Fixed>,

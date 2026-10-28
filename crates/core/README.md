@@ -88,7 +88,7 @@ this crate and reproduce the signed state roots exactly.
 - From protocol `V19`, MONKEY emissions: once the operator's signed initialisation records a start
   no earlier than itself and a period budget, each ten-minute period's budget is shared pro rata by
   the accounts' net realised trading losses there (liquidations included, the profit fee and
-  financing not), less debt the house wrote off (from `V33`, a write-off the period's losses cannot absorb is carried as
+  financing not), less debt the house wrote off (from `V32`, a write-off the period's losses cannot absorb is carried as
   debt that later weight pays first), leaving out any account with negative cash at the
   cutoff; shares round down to base units and the rest, with every empty period's budget, is
   cancelled; budgets halve, rounded down, every 26,280 periods (182.5 days); the first command at or
@@ -232,7 +232,7 @@ this crate and reproduce the signed state roots exactly.
   encodings and value hashes, a root, and proofs
 - `tests/fixtures/emissions.json` — entitlement proofs the engine produced, which the vault's
   Foundry tests claim with and `tests/emissions_fixture.rs` checks
-- `tests/access/emission_debt.rs` and `tests/corporate_actions/emissions.rs` — the `V33` emission debt
+- `tests/access/emission_debt.rs` and `tests/corporate_actions/emissions.rs` — the `V32` emission debt
   (reversals in a later period, restart, root) and eligibility judged at the command's stamp during
   corporate-action catch-up.
 - `tests/emissions.rs`, `tests/emissions_eligibility.rs`, `tests/emissions_schedule.rs` — MONKEY
@@ -249,7 +249,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V31` and `V33` parts (`v15.rs` to `v31.rs`, `v33.rs`)
+  `V15` to `V31` and `V32` parts (`v15.rs` to `v31.rs`, `v32.rs`)
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
 
@@ -340,10 +340,10 @@ Two suites guard replay and accounting:
   dollar value, can only reduce its account's position in that market; under `V16`, that no
   account's toxicity history exceeds the memory in force.
 
-Emission protocol V33 carries a write-off no period's realised losses can absorb forward as a
+Emission protocol V32 carries a write-off no period's realised losses can absorb forward as a
 per-account emission debt, paid down by later loss weight before it earns again, and judges
 emission eligibility during corporate-action catch-up at the enclosing command's stamp. Its
-session is in `examples/reference_log/v33.rs`.
+session is in `examples/reference_log/v32.rs`.
 
 Staking protocol V31 reserves every allocation from physical withdrawal capacity, whether paid or
 unpaid, and bounds new allocations by that unapproved capacity. Activation deducts cumulative

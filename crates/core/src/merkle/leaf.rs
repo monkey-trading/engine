@@ -34,7 +34,7 @@
 //!   account's realised PnL and written-off debt in the open emission period, from `V19`, until the
 //!   period is finalised.
 //! - **Emission debt:** `keccak256(abi.encode(int128 debt))`, the write-off the period's losses
-//!   could not absorb, from `V33`, until later loss weight pays it down.
+//!   could not absorb, from `V32`, until later loss weight pays it down.
 //! - **Remaining state:** the keccak-256 of the JSON encoding of every engine field no other leaf
 //!   holds (`state.rs`).
 //!

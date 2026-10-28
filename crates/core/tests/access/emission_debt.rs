@@ -1,4 +1,4 @@
-//! From `V33`, a reversal or bad-debt write-off that lands in a period after the losses it unwinds
+//! From `V32`, a reversal or bad-debt write-off that lands in a period after the losses it unwinds
 //! becomes a per-account emission debt: later loss weight pays the debt down before any of it earns
 //! emission weight again. The scenarios run under the access rules every version from `V24` keeps.
 
@@ -19,7 +19,7 @@ use crate::support::*;
 
 #[test]
 fn a_reversal_landing_after_the_losses_becomes_an_emission_debt_that_later_losses_pay_first() {
-    let (mut h, client) = emitting(ProtocolVersion::V33);
+    let (mut h, client) = emitting(ProtocolVersion::V32);
     let account = client.account;
     let budget = h.engine.emissions().expect("initialised").schedule.budget(0);
     // A root now makes every later one incremental, so the debt leaf is rehashed from what changed.
@@ -70,7 +70,7 @@ fn a_reversal_landing_after_the_losses_becomes_an_emission_debt_that_later_losse
 
 #[test]
 fn the_state_root_commits_to_each_accounts_debt() {
-    let (mut h, client) = emitting(ProtocolVersion::V33);
+    let (mut h, client) = emitting(ProtocolVersion::V32);
     let account = client.account;
     let deposit = receipt(1, account, "100");
     credit(&mut h, &deposit);
@@ -94,7 +94,7 @@ fn the_state_root_commits_to_each_accounts_debt() {
 
 #[test]
 fn weight_forfeited_for_negative_cash_pays_no_debt() {
-    let (mut h, client) = emitting(ProtocolVersion::V33);
+    let (mut h, client) = emitting(ProtocolVersion::V32);
     let account = client.account;
     let deposit = receipt(1, account, "100");
     credit(&mut h, &deposit);
@@ -122,7 +122,7 @@ fn weight_forfeited_for_negative_cash_pays_no_debt() {
 
 #[test]
 fn losses_in_the_reversal_period_absorb_only_part_of_the_write_off() {
-    let (mut h, client) = emitting(ProtocolVersion::V33);
+    let (mut h, client) = emitting(ProtocolVersion::V32);
     let account = client.account;
     let budget = h.engine.emissions().expect("initialised").schedule.budget(0);
 
@@ -144,7 +144,7 @@ fn losses_in_the_reversal_period_absorb_only_part_of_the_write_off() {
 
 #[test]
 fn a_write_off_the_same_period_losses_absorb_leaves_no_debt() {
-    let (mut h, client) = emitting(ProtocolVersion::V33);
+    let (mut h, client) = emitting(ProtocolVersion::V32);
     let account = client.account;
     let deposit = receipt(1, account, "100");
     credit(&mut h, &deposit);
@@ -156,7 +156,7 @@ fn a_write_off_the_same_period_losses_absorb_leaves_no_debt() {
 }
 
 #[test]
-fn before_v33_a_later_period_reversal_leaves_earlier_allocations_unclawed() {
+fn before_v32_a_later_period_reversal_leaves_earlier_allocations_unclawed() {
     let (mut h, client) = emitting(ProtocolVersion::V26);
     let account = client.account;
     let budget = h.engine.emissions().expect("initialised").schedule.budget(0);
