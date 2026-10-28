@@ -406,6 +406,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   proven to lead to the tagged final block, the completeness check, and stall alerts
 - `src/custody/evm/lifecycle.rs` — confirmed receipt reconciliation, principal finality and the replayed scan frontier
 - `src/custody/evm/progress.rs` — confirmed header and log windows read one batch per poll, kept
+  Staking catch-up retains at most 66 proven binary-hierarchy anchors independently of deposit pruning,
+  plus two private candidate anchors, with O(N log(N/chunk)) header work and one configured chunk of full hashes
   across polls while their endpoint stays canonical
 - `src/custody/evm/types.rs` — the canonical deposit, staking-event, finality and reader types
 - `src/custody/evm/staking.rs` — staking catch-up proofs anchored independently of deposit progress
