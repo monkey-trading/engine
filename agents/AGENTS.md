@@ -167,7 +167,7 @@ an index: load only the rule whose hint matches the current action.
   test, the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
   deposit finality scenarios, the MONKEY staking dev scenario, the signed withdrawal and FIFO dev
   scenario, the metrics and alert routing dev scenario, the alert outbox kill/restart scenario,
-  the snapshot restart scenario, the RWA price feeds dev scenario, the review-delta helper's test,
+  the browser-origin scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the review-delta helper's test,
   and the enclave image (`image` checks its download retries, builds it twice, and boots it under
   QEMU, `image-compare` fails if the builds differ), on every push to `main` and every PR.
   deposit finality scenarios, the signed withdrawal and FIFO dev scenario, the API and

@@ -38,6 +38,30 @@ const CHAIN_ID: u64 = 31_337;
 const VAULT: AccountId = AccountId([0xaa; 20]);
 
 #[tokio::test]
+async fn a_signed_order_carries_the_listed_origin_and_no_other() {
+    let mut node = Node::start("origin", signed()).await;
+    let client = SigningKey::from_slice(&[1; 32]).unwrap();
+    node.fund(&client).await;
+    node.allow_origin("http://localhost:3000");
+    // The origin each request sends, and the one the response grants.
+    let listed = "http://localhost:3000";
+    let cases = [(Some(listed), Some(listed)), (Some("http://evil.test"), None), (None, None)];
+    for (nonce, (origin, granted)) in (0..).zip(cases) {
+        let mut request = HttpRequest::post("/v1/orders").header("content-type", "application/json");
+        if let Some(origin) = origin {
+            request = request.header("origin", origin);
+        }
+        let body = signed_order(&client, nonce, "0.1").to_string();
+        let response = node.app.clone().oneshot(request.body(Body::from(body)).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{origin:?}");
+        let allowed = response.headers().get("access-control-allow-origin").map(|v| v.to_str().unwrap());
+        assert_eq!(allowed, granted, "{origin:?}");
+        let events: Value = serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert!(events.as_array().unwrap().iter().any(|e| e["type"] == "fill"), "{origin:?}: {events}");
+    }
+}
+
+#[tokio::test]
 async fn a_signed_order_fills_and_a_reused_or_ahead_nonce_stays_out_of_the_log() {
     let node = Node::start("stale", signed()).await;
     let client = SigningKey::from_slice(&[1; 32]).unwrap();
@@ -356,6 +380,15 @@ impl Node {
         };
         let app = router(state.clone()).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9))));
         Node { app, state, dir, withdrawals }
+    }
+
+    /// Allows browsers at `origin` to call the API, which serves them from here on.
+    fn allow_origin(&mut self, origin: &str) {
+        let mut api = dev_config().api;
+        api.allowed_origins = vec![origin.to_owned()];
+        let hourly = |rate: RateLimit| Quota::with_period(Duration::from_secs(3600)).unwrap().allow_burst(rate.burst);
+        self.state.limits = Arc::new(ApiLimits::with_quota(&api, hourly, DefaultClock::default()));
+        self.app = router(self.state.clone()).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9))));
     }
 
     /// Every entry of the node's log, as flushed so far.

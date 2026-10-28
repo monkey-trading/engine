@@ -1,14 +1,14 @@
 //! Browser origins: CORS headers for the listed ones, refused stream upgrades for the rest.
 
 use std::net::SocketAddr;
-use std::num::NonZeroU32;
+use std::num::{NonZeroU32, NonZeroUsize};
 use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::connect_info::MockConnectInfo;
 use axum::http::header::{
     ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
-    ACCESS_CONTROL_EXPOSE_HEADERS, ACCESS_CONTROL_MAX_AGE, ORIGIN, VARY,
+    ACCESS_CONTROL_EXPOSE_HEADERS, ACCESS_CONTROL_MAX_AGE, AsHeaderName, ORIGIN, VARY,
 };
 use axum::http::{Method, Request as HttpRequest, Response, StatusCode};
 use governor::Quota;
@@ -46,7 +46,7 @@ async fn send(app: &Router, method: Method, path: &str, origin: Option<&str>, bo
     app.clone().oneshot(req.body(Body::from(body.to_owned())).unwrap()).await.unwrap()
 }
 
-fn header(response: &Response<Body>, name: impl axum::http::header::AsHeaderName) -> Option<&str> {
+fn header(response: &Response<Body>, name: impl AsHeaderName) -> Option<&str> {
     response.headers().get(name).map(|v| v.to_str().unwrap())
 }
 
@@ -120,7 +120,7 @@ async fn a_rate_limited_or_oversized_refusal_from_a_listed_origin_carries_its_or
     let one = NonZeroU32::new(1).unwrap();
     let app = app(|api| {
         api.per_ip = RateLimit { per_second: one, burst: one };
-        api.max_body_bytes = std::num::NonZeroUsize::new(8).unwrap();
+        api.max_body_bytes = NonZeroUsize::new(8).unwrap();
     });
     let big = "x".repeat(64);
     let too_large = send(&app, Method::POST, "/v1/orders", Some(LISTED), &big).await;
@@ -131,9 +131,11 @@ async fn a_rate_limited_or_oversized_refusal_from_a_listed_origin_carries_its_or
     assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(header(&limited, ACCESS_CONTROL_ALLOW_ORIGIN), Some(LISTED));
     assert!(limited.headers().get("retry-after").is_some());
-    let unlisted = send(&app, Method::GET, "/v1/health", Some(UNLISTED), "").await;
-    assert_eq!(unlisted.status(), StatusCode::TOO_MANY_REQUESTS);
-    assert!(unlisted.headers().get(ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
+    for origin in [Some(UNLISTED), None] {
+        let response = send(&app, Method::GET, "/v1/health", origin, "").await;
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS, "{origin:?}");
+        assert!(response.headers().get(ACCESS_CONTROL_ALLOW_ORIGIN).is_none(), "{origin:?}");
+    }
 }
 
 #[tokio::test]

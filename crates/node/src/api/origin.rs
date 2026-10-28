@@ -13,6 +13,7 @@ use axum::http::header::{
 use axum::http::{HeaderValue, Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use tracing::debug;
 
 use crate::api::ApiError;
 use crate::limits::ApiLimits;
@@ -37,6 +38,7 @@ pub(super) async fn browser_origin(State(limits): State<Arc<ApiLimits>>, req: Re
     let origin = req.headers().get(ORIGIN).cloned();
     let listed = origin.clone().filter(|o| o.to_str().is_ok_and(|o| limits.origin_allowed(o)));
     let mut response = if origin.is_some() && listed.is_none() && path == STREAM_PATH {
+        debug!(origin = ?origin, "stream refused: origin not allowed");
         ApiError::Forbidden("origin not allowed").into_response()
     } else if listed.is_some() && req.method() == Method::OPTIONS && path.starts_with("/v1/") {
         preflight()
@@ -52,6 +54,7 @@ pub(super) async fn browser_origin(State(limits): State<Arc<ApiLimits>>, req: Re
     response
 }
 
+/// The 204 answer to a preflight from a listed origin.
 fn preflight() -> Response {
     let headers = [
         (ACCESS_CONTROL_ALLOW_METHODS, ALLOWED_METHODS),

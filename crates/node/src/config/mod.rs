@@ -32,7 +32,6 @@ pub use benchmarks::{BenchmarkSection, BenchmarkSource, Publisher};
 mod access;
 pub use access::AccessSection;
 mod custody;
-mod origins;
 pub use custody::{EvmCustodySection, FinalityTag, RpcProviderSection, SecretUrl};
 mod feeds;
 pub use feeds::*;
@@ -313,8 +312,8 @@ impl NodeConfig {
             .map_err(|e| parse_error(&e, &text))
             .with_context(|| format!("parsing {}", path.display()))?;
         cfg.validate().with_context(|| format!("validating {}", path.display()))?;
-        cfg.refuse_mocks(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
         cfg.api.refuse_insecure_origins(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
+        cfg.refuse_mocks(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
         cfg.file_sha256 = Sha256::digest(text.as_bytes()).into();
         Ok(cfg)
     }
@@ -386,6 +385,7 @@ fn public_key<'de, D: Deserializer<'de>>(deserializer: D) -> Result<VerifyingKey
     VerifyingKey::from_bytes(&bytes).map_err(D::Error::custom)
 }
 
+mod origins;
 mod test_keys;
 mod validation;
 

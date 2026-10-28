@@ -45,8 +45,9 @@ sed -e "s|127.0.0.1:8080|127.0.0.1:$api_port|" \
   -e "s|127.0.0.1:9464|127.0.0.1:$metrics_port|" \
   -e "s|data/dev|$work|g" \
   -e 's|^per_ip = .*|per_ip = { per_second = 1, burst = 40 }|' \
-  -e "s|^max_subscribers = .*|&\nallowed_origins = [\"$listed\"]|" \
-  "$root/config/dev.toml" > "$work/node.toml"
+  "$root/config/dev.toml" |
+  awk -v origin="$listed" '{ print } /^max_subscribers = / { printf "allowed_origins = [\"%s\"]\n", origin }' \
+  > "$work/node.toml"
 for edit in ":$api_port\"" "burst = 40" "allowed_origins = [\"$listed\"]"; do
   grep -qF "$edit" "$work/node.toml" || fail "config edit missing: $edit"
 done

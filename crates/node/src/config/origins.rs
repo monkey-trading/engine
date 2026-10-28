@@ -2,16 +2,16 @@
 
 use std::collections::BTreeSet;
 
-use anyhow::{bail, ensure};
+use anyhow::{anyhow, bail, ensure};
+use reqwest::Url;
 
 use crate::config::ApiSection;
 
 impl ApiSection {
-    /// Checks every allowed origin is one a browser can send: `http` or `https`, a lowercase host,
-    /// and a port only when it is not the scheme's default, as browsers serialize an origin.
+    /// Checks every allowed origin is exactly what a browser sends as `Origin` (see `check_origin`),
+    /// so none can fail to match silently.
     /// Error cases:
-    /// - an origin is `*`, has a path, query, fragment, or userinfo, or is not `scheme://host[:port]`
-    /// - an origin is spelled so that a browser would never send it
+    /// - an origin is `*`, is not an `http` or `https` URL, or is not spelled as a browser sends it
     /// - an origin is listed twice
     pub(super) fn validate_origins(&self) -> anyhow::Result<()> {
         let mut seen = BTreeSet::new();
@@ -33,29 +33,18 @@ impl ApiSection {
     }
 }
 
+/// Whether `origin` is exactly the text a browser sends as `Origin` for an `http` or `https` page.
+/// Error cases:
+/// - it has a wildcard, or is not a URL
+/// - its scheme is not `http` or `https`, or its port is 0
+/// - a browser would spell it differently: with a path, query, fragment, or userinfo, an uppercase
+///   letter, a default or empty port, or a port with leading zeros
 fn check_origin(origin: &str) -> anyhow::Result<()> {
-    let Some((scheme, authority)) = origin.split_once("://") else {
-        bail!("is not scheme://host[:port]");
-    };
-    ensure!(matches!(scheme, "http" | "https"), "scheme must be http or https");
-    ensure!(
-        !authority.is_empty() && !authority.contains(['/', '?', '#', '@', '*']),
-        "must be a bare host with an optional port, with no wildcard, path, query, or userinfo"
-    );
-    ensure!(
-        origin == origin.to_ascii_lowercase() && origin.is_ascii() && !origin.contains(char::is_whitespace),
-        "must be lowercase ASCII, as a browser sends it"
-    );
-    let (host, port) = match authority.rsplit_once(':') {
-        // The colons of an IPv6 literal sit inside brackets.
-        Some((host, port)) if !port.contains(']') => (host, Some(port)),
-        _ => (authority, None),
-    };
-    ensure!(!host.is_empty(), "has no host");
-    if let Some(port) = port {
-        let port: u16 = port.parse().map_err(|_| anyhow::anyhow!("port is not a number up to 65535"))?;
-        let default = if scheme == "https" { 443 } else { 80 };
-        ensure!(port != 0 && port != default, "a browser omits the port when it is {default}, and never sends 0");
-    }
+    ensure!(!origin.contains('*'), "has a wildcard");
+    let url = Url::parse(origin).map_err(|e| anyhow!("is not a URL: {e}"))?;
+    ensure!(matches!(url.scheme(), "http" | "https"), "scheme must be http or https");
+    ensure!(url.port() != Some(0), "port 0 is never a page's port");
+    let sent = url.origin().ascii_serialization();
+    ensure!(sent == origin, "is not spelled as a browser sends it, which is {sent:?}");
     Ok(())
 }

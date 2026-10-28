@@ -1,8 +1,7 @@
 //! Limits on the public API: request and connection rates per client, request rates per account,
 //! request body size and read time, open connections, stream subscribers, and the browser origins
-//! allowed. A client is its socket
-//! peer's IP, never a forwarding header, which the untrusted host could forge; an IPv6
-//! client counts by its /64, the block one host is usually given. Limiters live in enclave memory
+//! allowed. A client is its socket peer's IP, never a forwarding header, which the untrusted host
+//! could forge; an IPv6 client counts by its /64, the block one host is usually given. Limiters live in enclave memory
 //! and start empty on every boot. They read the host's clock, which the host could skew; the host
 //! controls the network anyway, so the limits bound clients, not the host. Each request checks its
 //! limits on its own task, so the limiters are shared rather than owned by one task: routing every
