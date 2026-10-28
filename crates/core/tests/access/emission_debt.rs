@@ -10,11 +10,11 @@ use engine_core::deposits::{DepositBeneficiary, DepositReceipt, DepositUpdate};
 use engine_core::eip712;
 use engine_core::event::Event;
 use engine_core::protocol::ProtocolVersion;
-use engine_core::types::{AccountId, Side};
+use engine_core::types::{AccountId, MarketId, Side};
 
 use crate::common::emissions::{allocations, next_period};
 use crate::common::events::only_fill;
-use crate::common::{BTC, Client, Harness, f};
+use crate::common::{BTC, Client, ETH, Harness, f};
 use crate::support::*;
 
 #[test]
@@ -23,7 +23,7 @@ fn a_reversal_landing_after_the_losses_becomes_an_emission_debt_that_later_losse
     let account = client.account;
     let budget = h.engine.emissions().expect("initialised").schedule.budget(0);
     // A root now makes every later one incremental, so the debt leaf is rehashed from what changed.
-    let no_debt_root = h.engine.state_root();
+    h.engine.state_root();
 
     // Period 0 loses half the receipt's principal in fills and earns its allocation.
     let deposit = receipt(1, account, "100");
@@ -37,8 +37,7 @@ fn a_reversal_landing_after_the_losses_becomes_an_emission_debt_that_later_losse
     let events = next_period(&mut h);
     assert!(allocations(&events).is_empty(), "{events:?}");
     assert_eq!(h.engine.emission_debt(account), f("50"));
-    let debt_50_root = assert_root_matches_rebuild(&mut h.engine);
-    assert_ne!(debt_50_root, no_debt_root, "the root commits to the debt");
+    assert_root_matches_rebuild(&mut h.engine);
 
     // Period 2: new losses pay the debt down before earning, so nothing is allocated yet.
     credit(&mut h, &receipt(2, account, "100"));
@@ -46,10 +45,11 @@ fn a_reversal_landing_after_the_losses_becomes_an_emission_debt_that_later_losse
     let events = next_period(&mut h);
     assert!(allocations(&events).is_empty(), "{events:?}");
     assert_eq!(h.engine.emission_debt(account), f("20"));
-    assert_ne!(assert_root_matches_rebuild(&mut h.engine), debt_50_root, "paying the debt down changes the root");
+    assert_root_matches_rebuild(&mut h.engine);
     // A restart from the serialized engine keeps the debt, and the rest of the scenario runs on it.
     h.engine = serde_json::from_slice(&serde_json::to_vec(&h.engine).unwrap()).unwrap();
     assert_eq!(h.engine.emission_debt(account), f("20"));
+    h.engine.state_root();
 
     // Period 3: the weight beyond the debt earns, and the debt is gone.
     credit(&mut h, &receipt(3, account, "100"));
@@ -57,7 +57,7 @@ fn a_reversal_landing_after_the_losses_becomes_an_emission_debt_that_later_losse
     assert_eq!(allocations(&next_period(&mut h)), [(account, 3, f("30"), budget)]);
     assert_eq!(h.engine.emission_debt(account), Fixed::ZERO);
     assert_eq!(h.engine.entitlement(account).0, 2 * budget);
-    assert!(assert_root_matches_rebuild(&mut h.engine) != debt_50_root, "a cleared debt leaves no leaf");
+    assert_root_matches_rebuild(&mut h.engine);
 
     // The debt is a state-tree leaf: a replay recomputes the same root.
     let root = h.engine.state_root();
@@ -66,6 +66,58 @@ fn a_reversal_landing_after_the_losses_becomes_an_emission_debt_that_later_losse
         replay.apply(command).expect("recorded sequence");
     }
     assert_eq!(replay.state_root(), root);
+}
+
+#[test]
+fn the_state_root_commits_to_each_accounts_debt() {
+    let (mut h, client) = emitting(ProtocolVersion::V33);
+    let account = client.account;
+    let deposit = receipt(1, account, "100");
+    credit(&mut h, &deposit);
+    lose(&mut h, "100", "90");
+    next_period(&mut h);
+    reverse(&mut h, &deposit);
+    next_period(&mut h);
+    assert_eq!(h.engine.emission_debt(account), f("50"));
+
+    let root = h.engine.state_root();
+    let altered = |edit: &dyn Fn(&mut serde_json::Map<String, serde_json::Value>)| {
+        let mut state = serde_json::to_value(&h.engine).unwrap();
+        edit(state["emission_debts"].as_object_mut().expect("the debt is encoded"));
+        serde_json::from_value::<engine_core::Engine>(state).unwrap().state_root()
+    };
+    let key = account.to_string();
+    let larger = serde_json::to_value(f("51")).unwrap();
+    assert_ne!(altered(&|debts| _ = debts.insert(key.clone(), larger.clone())), root, "the amount is committed");
+    assert_ne!(altered(&|debts| _ = debts.remove(&key)), root, "the debt's existence is committed");
+}
+
+#[test]
+fn weight_forfeited_for_negative_cash_pays_no_debt() {
+    let (mut h, client) = emitting(ProtocolVersion::V33);
+    let account = client.account;
+    let deposit = receipt(1, account, "100");
+    credit(&mut h, &deposit);
+    lose(&mut h, "100", "90");
+    next_period(&mut h);
+    reverse(&mut h, &deposit);
+    next_period(&mut h);
+    assert_eq!(h.engine.emission_debt(account), f("50"));
+
+    // A BTC loss larger than the cash, while an ETH gain keeps the account above close-out, leaves
+    // its cash negative at the cutoff: the loss earns nothing and does not pay the debt either.
+    credit(&mut h, &receipt(2, account, "12000"));
+    h.price(ETH, "4000");
+    assert_eq!(only_fill(&order(&mut h, ETH, Side::Buy, "10", "4000")).qty, f("10"));
+    h.price(ETH, "6000");
+    h.price(BTC, "100000");
+    only_fill(&order(&mut h, BTC, Side::Buy, "1", "100000"));
+    h.price(BTC, "85000");
+    only_fill(&order(&mut h, BTC, Side::Sell, "1", "85000"));
+    assert!(h.balance(account).is_negative());
+    let events = next_period(&mut h);
+    assert!(allocations(&events).is_empty(), "{events:?}");
+    assert_eq!(h.engine.emission_debt(account), f("50"));
 }
 
 #[test]
@@ -161,13 +213,18 @@ fn lose(h: &mut Harness, from: &str, to: &str) {
 
 /// A screened market order for five BTC quoted at `quoted`.
 fn trade(h: &mut Harness, side: Side, quoted: &str) -> Vec<Event> {
+    order(h, BTC, side, "5", quoted)
+}
+
+/// A screened market order for `qty` of `market` quoted at `quoted`.
+fn order(h: &mut Harness, market: MarketId, side: Side, qty: &str, quoted: &str) -> Vec<Event> {
     let client = Client { expires_at: h.ts + 60_000, ..Client::new(1) };
     let request = OrderRequest {
         account: client.account,
         client_id: 1,
-        market: BTC,
+        market,
         side,
-        qty: f("5"),
+        qty: f(qty),
         kind: OrderKind::Market { quoted: f(quoted), max_slippage_bps: None },
         reduce_only: false,
         auth: None,

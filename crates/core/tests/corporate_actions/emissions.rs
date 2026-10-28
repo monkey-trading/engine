@@ -6,14 +6,14 @@ use engine_core::command::{AdminCommand, Command};
 use engine_core::emissions::{EmissionSchedule, TokenUnits};
 use engine_core::event::Event;
 use engine_core::protocol::ProtocolVersion;
-use engine_core::types::Side;
+use engine_core::types::{Millis, Side};
 
 use crate::common::*;
 use crate::support::*;
 
 /// The fixture at `version`, with emissions starting one millisecond after the opening and the
 /// stamp of the catch-up command a second later.
-fn crossing(version: ProtocolVersion) -> (Harness, i64) {
+fn crossing(version: ProtocolVersion) -> (Harness, Millis) {
     let mut h = held("2", "4");
     if version >= ProtocolVersion::V33 {
         h.admin(AdminCommand::ActivateProtocol { version });
@@ -72,7 +72,7 @@ fn a_liquidation_at_a_rollover_boundary_before_the_start_counts_when_the_command
 /// A trader long one BTC whose equity sits just above its close-out level, a rollover due before the
 /// emissions start, and a catch-up command after it, not yet applied. Returns the harness set to the
 /// command's stamp, the trader, and that stamp.
-fn liquidated_by_a_missed_rollover(version: ProtocolVersion) -> (Harness, engine_core::types::AccountId, i64) {
+fn liquidated_by_a_missed_rollover(version: ProtocolVersion) -> (Harness, engine_core::types::AccountId, Millis) {
     let mut h = held("0", "0");
     let trader = acct(3);
     h.deposit(trader, "10000");

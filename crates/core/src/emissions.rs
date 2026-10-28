@@ -248,8 +248,9 @@ impl Engine {
     }
 
     /// From `V33`: the part of `result`'s write-off that its realised losses cannot absorb becomes
-    /// `account`'s emission debt, and `weight` pays the debt down before any of it earns: the
-    /// weight spent on the debt earns nothing. Returns the weight left to earn this period.
+    /// `account`'s emission debt, and `weight` (zero for negative cash at the cutoff) pays the debt
+    /// down before any of it earns: the weight spent on the debt earns nothing. Returns the weight
+    /// left to earn this period. The debt is not capped at what the account was ever allocated.
     fn settle_emission_debt(&mut self, account: AccountId, result: &PeriodResult, weight: Fixed) -> Fixed {
         let losses = (-result.realised).max(Fixed::ZERO);
         let unabsorbed = (result.written_off - losses).max(Fixed::ZERO);
@@ -274,15 +275,13 @@ impl Engine {
         let v33 = self.protocol_version >= ProtocolVersion::V33;
         let mut weights: Vec<(AccountId, Fixed)> = Vec::new();
         for (account, result) in self.period_results.take_all() {
-            let weight =
-                if v33 { self.settle_emission_debt(account, &result, result.weight()) } else { result.weight() };
-            if !weight.is_positive() {
-                continue;
+            let negative_cash = self.accounts.get(&account).is_some_and(|acct| acct.balance.is_negative());
+            // Weight forfeited for negative cash pays no debt, while a new write-off still adds to it.
+            let weight = if negative_cash { Fixed::ZERO } else { result.weight() };
+            let weight = if v33 { self.settle_emission_debt(account, &result, weight) } else { weight };
+            if weight.is_positive() {
+                weights.push((account, weight));
             }
-            if self.accounts.get(&account).is_some_and(|acct| acct.balance.is_negative()) {
-                continue;
-            }
-            weights.push((account, weight));
         }
         // Weights are positive `i128`s, so their sum fits 2^160 and its product with a budget 2^256.
         let units = |weight: Fixed| U256::from(weight.raw().unsigned_abs());

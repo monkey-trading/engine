@@ -89,12 +89,10 @@ fn main() -> anyhow::Result<()> {
 /// Then, under `V10`, spreads, a margin requirement, and close-out levels that round up; and under `V11`, markouts
 /// averaged by notional and scored at a valid index. Then, under `V12`, gapped opens, quotes ageing out, a session
 /// close, a leading venue, and an FX index ageing out, each processed before the next command acts. Then, under `V13`,
-/// stress that follows its inputs (`stress.rs`), and, under `V14`, the part in `v14.rs`, and, under `V15`, the part in
-/// `v15.rs`. Then, under `V16`, a lowered toxicity memory clamps the history a score weighs (`v16.rs`), under `V17`,
-/// the move window survives a halt (`v17.rs`), under `V18`, dated benchmark rates (`v18.rs`), under `V19`, MONKEY
-/// emissions (`v19.rs`), under `V20`, custody receipt finality, reversal and reinclusion (`v20.rs`), under `V21`, quote
-/// hours and futures (`v21.rs`), and under `V22`, FIFO withdrawals (`v22.rs`), and under `V24`, access
-/// screening (`v24.rs`). Every client request is signed by its account's key unless a comment says not.
+/// stress that follows its inputs (`stress.rs`), and the parts in `v14.rs` and `v15.rs`. Then, from `V16` on, one part
+/// per version in its `v<N>.rs`: toxicity memory, the move window, dated benchmark rates, MONKEY emissions, custody
+/// finality, quote hours and futures, FIFO withdrawals, access, staking and emission debt. Every client request is
+/// signed by its account's key unless a comment says not.
 fn session() -> Vec<Sequenced> {
     let mut h = Harness::signed();
     let (a, b, c, d, t, e) = (h.signer(1), h.signer(2), h.signer(3), h.signer(4), h.signer(5), h.signer(6));

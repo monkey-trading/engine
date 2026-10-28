@@ -88,7 +88,8 @@ this crate and reproduce the signed state roots exactly.
 - From protocol `V19`, MONKEY emissions: once the operator's signed initialisation records a start
   no earlier than itself and a period budget, each ten-minute period's budget is shared pro rata by
   the accounts' net realised trading losses there (liquidations included, the profit fee and
-  financing not), less debt the house wrote off, leaving out any account with negative cash at the
+  financing not), less debt the house wrote off (from `V33`, a write-off the period's losses cannot absorb is carried as
+  debt that later weight pays first), leaving out any account with negative cash at the
   cutoff; shares round down to base units and the rest, with every empty period's budget, is
   cancelled; budgets halve, rounded down, every 26,280 periods (182.5 days); the first command at or
   after a period's end finalises it before its own effects; and each account's cumulative

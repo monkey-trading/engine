@@ -23,10 +23,10 @@ use crate::common::{Client, Harness, f, market};
 /// The market this part trades.
 const VLT: MarketId = 33;
 
-/// `V33` activates. A trader loses half its receipt's principal in fills and earns period 0's
-/// allocation; the receipt is reversed in period 1, and the write-off, with no losses there to
-/// absorb it, becomes an emission debt. Period 2's losses pay the debt down without earning; period
-/// 3's losses pay it off, and the weight beyond it earns again.
+/// `V33` activates. A trader loses half its receipt's principal in fills and earns its period's
+/// allocation; the receipt is reversed in the next period, and the write-off, with no losses there to
+/// absorb it, becomes an emission debt. The period after that pays the debt down without earning, and
+/// the one after pays it off, the weight beyond it earning again.
 pub(crate) fn session(h: &mut Harness) {
     h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V33 });
     h.operator_admin(AdminCommand::UpsertMarket(market(VLT, "VLT", AssetClass::Crypto, Schedule::AlwaysOpen, 1_000)));
@@ -73,7 +73,7 @@ fn lose(h: &mut Harness, source: &SigningKey, trader: AccountId, from: &str, to:
         let nonce = h.engine.next_request_nonce(trader);
         let request = OrderRequest {
             account: trader,
-            client_id: 28,
+            client_id: 33,
             market: VLT,
             side,
             qty: f("5"),
