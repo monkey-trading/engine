@@ -33,7 +33,7 @@ pub(super) async fn payments_and_crashes() -> anyhow::Result<()> {
     node.client.declare(&trader).await?;
     node.client.wait_balance(&trader, "100").await?;
     node.client.wait_finalised(&trader).await?;
-    node.wait_withdrawals_enabled().await?;
+    node.wait_withdrawals_enabled(last_seq(&node.dir.join("log"))?).await?;
     let mut stream = node.client.stream().await?;
     let request = node.client.withdrawal(&trader, "10.0000009").await?;
     let events = node.client.request_withdrawal(&request).await?;
@@ -98,7 +98,7 @@ pub(super) async fn payments_and_crashes() -> anyhow::Result<()> {
     node.restart().await?;
     node.client.wait_balance(&trader, "90").await?;
     ensure!(node.client.nonce(&trader).await? == nonce, "pre-log crash consumed a request nonce");
-    node.wait_withdrawals_enabled().await?;
+    node.wait_withdrawals_enabled(0).await?;
     let mut stream = node.client.stream().await?;
     node.client.request_withdrawal(&interrupted).await?;
     let durable = stream.payout(trader.account, 11).await?;
@@ -109,7 +109,7 @@ pub(super) async fn payments_and_crashes() -> anyhow::Result<()> {
     node.crash().await?;
     drop(stream);
     node.restart().await?;
-    node.wait_withdrawals_enabled().await?;
+    node.wait_withdrawals_enabled(0).await?;
     node.client.wait_balance(&trader, "79").await?;
     let mut stream = node.client.stream().await?;
     let recovered_first = stream.payout(trader.account, 10).await?;
@@ -190,7 +190,7 @@ pub(super) async fn shortfall_and_fifo() -> anyhow::Result<()> {
     node.client.wait_balance(&a, "110").await?;
     node.client.wait_balance(&b, "110").await?;
     filled(&node.client.order(&loser, Side::Buy, "0.1").await?)?;
-    node.wait_withdrawals_enabled().await?;
+    node.wait_withdrawals_enabled(last_seq(&node.dir.join("log"))?).await?;
     let mut stream = node.client.stream().await?;
     let request = node.client.withdrawal(&a, "110").await?;
     let events = node.client.request_withdrawal(&request).await?;
@@ -405,6 +405,17 @@ fn entries(dir: &Path) -> anyhow::Result<Vec<LogEntry>> {
         }
     }
     Ok(entries)
+}
+
+/// The highest sequence the log holds: everything the node has acknowledged so far.
+/// Error cases:
+/// - the log cannot be read or holds no command
+fn last_seq(dir: &Path) -> anyhow::Result<u64> {
+    entries(dir)?
+        .iter()
+        .filter_map(|entry| if let LogEntry::Command(command) = entry { Some(command.sequenced.seq) } else { None })
+        .max()
+        .context("log holds no command")
 }
 
 /// Replays actual persisted roots, events and authorizations under the independently known signer.

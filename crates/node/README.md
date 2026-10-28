@@ -137,7 +137,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/test_support/written.rs` — shared in-memory test output capture
 - `src/sequencer/checkpoints/accounting_tests.rs` — live/recovery accounting oracles and gated 100k-account capture scaling over migrated credits and fresh holds
 - `src/sequencer/checkpoint_tests.rs` — confirmed-prefix signature gating and restart tests
-- `src/sequencer/checkpoint_tests/unvalidated.rs` — worker observations preserve signing holds until collateral is compared
+- `src/sequencer/checkpoint_tests/unvalidated.rs` — worker observations preserve signing holds until collateral is compared, and an unproven finalized prefix pauses withdrawals until coverage is proven
 - `src/sequencer/checkpoint_tests/bootstrap.rs` — recovered empty anchors reconcile while nonempty unscanned checkpoints wait
 - `src/sequencer/fixture_tests.rs` — test-only signing of copies of placeholder protocol fixtures,
   and logs whose genesis an older protocol applied but no current config can give
@@ -691,7 +691,15 @@ approvals, the vault's running deposit total through the checkpoint's last credi
 the ledger's credits, and the vault's USDC balance is at least its deposits less its payments.
 Deposits the checkpoint has not yet credited do not pause withdrawals until the first of them stays
 uncredited for `custody.evm.stall_critical_after`. A difference emits Critical
-`collateral_mismatch` and pauses withdrawals; ordinary trading commands continue. USDC sent to the
+`collateral_mismatch` and pauses withdrawals; ordinary trading commands continue. While the latest
+finalized checkpoint's nonempty custody prefix has no sequenced canonical receipt coverage, the
+worker cannot compare it with the vault: it emits the Warning `collateral_pending_deposits` and
+pauses new withdrawals (fail closed), while checkpoint signing continues, since a successor with a
+proven prefix is the way out. Withdrawals resume at the first healthy comparison of a proven
+checkpoint. A failed or absent observation never changes the gate, so it cannot erase a proved
+divergence. `engine_withdrawals_paused` is 1 in every paused state (before the first reconciliation,
+an unproven prefix, a pending catch-up past its deadline, a divergence), and
+`engine_withdrawals_verdict_seq` is the finalized checkpoint behind the latest verdict. USDC sent to the
 vault outside a deposit pauses nothing: it emits the Warning `collateral_surplus` until anyone calls
 the vault's `bookSurplus`, which records it as a house deposit; a surplus below the 10 USDC minimum
 deposit must be topped up first.

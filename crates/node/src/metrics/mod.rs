@@ -108,6 +108,7 @@ pub struct Metrics {
     pub queue_depth: Gauge,
     pub access_pending_deposits: Gauge,
     pub withdrawals_paused: Gauge,
+    pub withdrawals_verdict_seq: Gauge,
     pub fills: Family<MarketLabel, Counter>,
     pub rejections: Family<RejectionLabels, Counter>,
     pub last_checkpoint_seconds: FloatGauge,
@@ -137,6 +138,7 @@ impl Metrics {
             queue_depth: Gauge::default(),
             access_pending_deposits: Gauge::default(),
             withdrawals_paused: Gauge::default(),
+            withdrawals_verdict_seq: Gauge::default(),
             fills: Family::default(),
             rejections: Family::default(),
             last_checkpoint_seconds: FloatGauge::default(),
@@ -172,8 +174,15 @@ impl Metrics {
         );
         r.register(
             "withdrawals_paused",
-            "Whether the custody checkpoint gate pauses withdrawal approvals (1 paused, 0 healthy)",
+            "Whether the custody checkpoint gate pauses withdrawal approvals (1 paused, 0 healthy); paused until the \
+             first reconciliation, while the finalized checkpoint's custody prefix is unproven, and on a pending or \
+             diverged comparison",
             metrics.withdrawals_paused.clone(),
+        );
+        r.register(
+            "withdrawals_verdict_seq",
+            "Sequence number of the finalized checkpoint behind the gate's latest collateral verdict",
+            metrics.withdrawals_verdict_seq.clone(),
         );
         r.register("fills", "Fills, by market", metrics.fills.clone());
         r.register("rejections", "Rejection events, by event type and reason", metrics.rejections.clone());

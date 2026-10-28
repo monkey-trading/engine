@@ -125,10 +125,12 @@ impl Node {
         Ok(())
     }
 
-    /// Waits until the custody checkpoint gate admits withdrawals, after a (re)start or a credit.
+    /// Waits until the custody checkpoint gate admits withdrawals on a verdict that covers
+    /// sequence `after` or later, so a healthy verdict taken before a credit cannot satisfy it. A
+    /// restarted node starts paused, so `0` waits for its own first verdict.
     /// Error cases:
-    /// - the metrics endpoint never reports the gate healthy
-    pub async fn wait_withdrawals_enabled(&mut self) -> anyhow::Result<()> {
+    /// - the metrics endpoint never reports a covering healthy verdict
+    pub async fn wait_withdrawals_enabled(&mut self, after: u64) -> anyhow::Result<()> {
         timeout(LOADED_WAIT, async {
             loop {
                 self.services.check()?;
@@ -138,7 +140,7 @@ impl Node {
                     .context("metrics endpoint")?
                     .text()
                     .await?;
-                if text.lines().any(|line| line == "engine_withdrawals_paused 0") {
+                if gate_admits(&text, after) {
                     return anyhow::Ok(());
                 }
                 sleep(Duration::from_millis(100)).await;
@@ -162,6 +164,15 @@ impl Node {
     pub async fn stop(&mut self) -> anyhow::Result<()> {
         self.child.take().context("running node")?.stop().await
     }
+}
+
+/// Whether a metrics scrape shows withdrawals admitted on a verdict for checkpoint `after` or later.
+pub(super) fn gate_admits(metrics: &str, after: u64) -> bool {
+    let verdict = metrics
+        .lines()
+        .find_map(|line| line.strip_prefix("engine_withdrawals_verdict_seq "))
+        .and_then(|seq| seq.parse::<u64>().ok());
+    metrics.lines().any(|line| line == "engine_withdrawals_paused 0") && verdict.is_some_and(|seq| seq >= after)
 }
 
 /// Reserves an unused loopback TCP port for a subsequently spawned process.
@@ -237,4 +248,22 @@ fn write_config(
     });
     std::fs::write(path, toml::to_string(&toml::Value::try_from(cfg)?)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::gate_admits;
+
+    #[test]
+    fn a_healthy_verdict_from_before_the_deposit_does_not_admit_withdrawals() {
+        let scrape = |paused: u8, seq: &str| {
+            format!("engine_withdrawals_paused {paused}\nengine_withdrawals_verdict_seq {seq}\n")
+        };
+        assert!(!gate_admits(&scrape(0, "3"), 7), "verdict for seq 3 predates a credit at seq 7");
+        assert!(!gate_admits("engine_withdrawals_paused 0\n", 7), "no verdict sequence is not a verdict");
+        assert!(!gate_admits(&scrape(1, "63"), 7), "a covering verdict that pauses admits nothing");
+        assert!(gate_admits(&scrape(0, "7"), 7));
+        assert!(gate_admits(&scrape(0, "63"), 7));
+        assert!(gate_admits(&scrape(0, "63"), 0));
+    }
 }

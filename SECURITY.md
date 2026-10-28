@@ -134,7 +134,10 @@ against older roots during recovery and custody-backed replay. The unanchored ch
 requires the current signer. The deployment's multisig proposes changes through its nonzero-delay
 timelock, which alone rotates the signer or changes deposit/withdrawal pauses. Latest transaction
 inclusion alone never authorizes withdrawal release; checkpoint startup and release use custody's
-withdrawal finality tag, independently of the latest credit tag and its confirmation depth.
+withdrawal finality tag, independently of the latest credit tag and its confirmation depth. New
+withdrawals pause while the latest finalized checkpoint's custody prefix is unproven against canonical
+receipts, and resume once a checkpoint with proven coverage reconciles; a failed chain read never
+lifts a pause or erases a proved divergence.
 Hardware EVM custody requires this protection. Staking mirror references and completed scan anchors enter the state root from V27; writable
 recovery of older staking commands also requires authenticated origin seals. Optional recovery snapshots require independently
 provisioned attested signer pins and authenticate the complete snapshot, its deployment, and its

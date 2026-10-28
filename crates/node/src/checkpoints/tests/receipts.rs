@@ -6,7 +6,7 @@ use crate::checkpoints::{DepositCoverage, Health};
 async fn equal_balance_and_count_cannot_prove_an_unscanned_receipt_prefix() {
     let (poster, mut work, _key) = poster();
     work.coverage = DepositCoverage::AwaitingCanonicalScan;
-    assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(work.checkpoint.seq), Health::Unvalidated));
+    assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(work.checkpoint.seq), Health::Unproven));
     assert_eq!(*poster.chain.posts.lock().unwrap(), 1);
     assert_eq!(work.coverage, DepositCoverage::AwaitingCanonicalScan);
 }
@@ -51,7 +51,7 @@ async fn newer_work_cannot_lend_receipt_coverage_to_an_older_finalized_checkpoin
         distributions_paid: Fixed::ZERO,
     }));
     poster.chain.finalized = Some(finalized.clone());
-    assert_eq!(poster.reconcile_known(&second, &[&first, &second]).await.unwrap(), (Some(5), Health::Unvalidated));
+    assert_eq!(poster.reconcile_known(&second, &[&first, &second]).await.unwrap(), (Some(5), Health::Unproven));
     assert_eq!(first.coverage, DepositCoverage::AwaitingCanonicalScan);
     *finalized.lock().unwrap() = poster.chain.state.lock().unwrap().clone();
     assert_eq!(poster.reconcile_known(&second, &[&first, &second]).await.unwrap(), (Some(6), Health::Healthy));
