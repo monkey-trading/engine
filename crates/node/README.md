@@ -506,7 +506,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/metrics/mod.rs` — the metrics registry, event counting, and the `/metrics` route
 - `src/metrics/tests.rs` — metrics tests
 - `src/monitor/mod.rs` — samples queue depth, the house, markets, and quote freshness into
-  metrics, and raises `market_no_price`, `market_unfed`, and `sequencer_stalled`
+  metrics, and raises `market_no_price`, `market_unfed`, `futures_roll_overdue`, and
+  `sequencer_stalled`
 - `src/monitor/tests.rs` — monitor tests
 - `src/alerts/mod.rs` — the tracing layer that picks up alert lines, the router, and the page
   format
@@ -1129,7 +1130,8 @@ index, or for a market quoted in another currency the FX index it converts at), 
 sequencer that answers no sample for as long raises `sequencer_stalled`. A market that no configured
 feed prices, such as the non-crypto markets of `config/dev.toml` with `feeds.provider = "venues"`,
 cannot trade; the node names each such market once, in its own Warning `market_unfed`, and never
-pages for them.
+pages for them. A market priced from futures whose next contract's roll time has passed with no
+gap recorded raises the Warning `futures_roll_overdue`, and it resolves when the market rolls.
 
 An alert is a log line at `error` (Critical) or `warn` (Warning) carrying `alert = "<name>"`; a line
 carrying `alert_resolved = "<name>"` and the same fields ends it. With `[alerts.critical]` or

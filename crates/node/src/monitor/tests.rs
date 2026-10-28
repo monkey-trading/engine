@@ -181,6 +181,46 @@ fn a_sample_names_a_futures_markets_contract_only_while_it_is_the_last_listed() 
     assert_eq!(market(&engine, 20).last_contract, None);
 }
 
+#[test]
+fn a_futures_market_past_a_roll_time_with_no_gap_warns_once_until_it_rolls() {
+    let mut cfg = dev_config();
+    let us500 = cfg.genesis.markets.iter().find(|m| m.id == 20).expect("US 500").clone();
+    let es = |name: &str, from: Millis| FuturesContract {
+        contract: name.into(),
+        from: DateTime::from_timestamp_millis(from).expect("in range"),
+    };
+    let contracts = vec![es("ESZ6", T0 - 86_400_000), es("ESH7", T0 + 3_600_000)];
+    cfg.genesis.markets.push(MarketSpec { id: 70, symbol: "ES70".into(), contracts, ..us500 });
+    let mut engine = engine_of(&cfg);
+    let quote = |contract: &str, ts: Millis| {
+        let quote = |source: &str| SourceQuote {
+            source: source.to_owned(),
+            mid: Fixed::from_int(5_000),
+            ts,
+            contract: Some(contract.into()),
+        };
+        Command::Prices { market: 70, quotes: vec![quote("venue-a"), quote("venue-b")] }
+    };
+    let mut overdue = RollOverdue::default();
+    let mut check = |engine: &Engine| capture(|| overdue.check(&Sample::of(engine)));
+    // Before the roll time nothing is overdue, with or without a gap.
+    sequence(&mut engine, T0, quote("ESZ6", T0));
+    assert!(check(&engine).is_empty());
+    // Past it, with only the front quoting, no gap is recorded: one Warning, not one per sample.
+    let due = T0 + 3_600_000;
+    sequence(&mut engine, due, quote("ESZ6", due));
+    assert_eq!(market(&engine, 70).roll_overdue.as_deref(), Some("ESH7"));
+    let [alert] = check(&engine).try_into().unwrap();
+    assert_eq!((alert.key(), alert.severity), ("futures_roll_overdue{market=70}".to_owned(), Some(Severity::Warning)));
+    assert!(check(&engine).is_empty());
+    // The next contract quotes, the market rolls, and the alert resolves.
+    let events = sequence(&mut engine, due, quote("ESH7", due));
+    assert!(events.iter().any(|e| matches!(e, Event::MarketRolled { market: 70, .. })), "{events:?}");
+    let [resolve] = check(&engine).try_into().unwrap();
+    assert_eq!((resolve.key(), resolve.severity), (alert.key(), None));
+    assert!(check(&engine).is_empty());
+}
+
 /// The engine keeps every source it has heard from, and none it has not, so quote times come from
 /// the config's sources: a venue taken out of the config would age forever and hide a live one going
 /// stale, and one that never quoted would be missing. Every fed venue has a row from the first
@@ -449,6 +489,7 @@ fn market_sample(id: MarketId, open: bool, price: Result<(), PriceError>) -> Mar
         house_net_exposure: Fixed::ZERO,
         quotes: Vec::new(),
         last_contract: None,
+        roll_overdue: None,
     }
 }
 
