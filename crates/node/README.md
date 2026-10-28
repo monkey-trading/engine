@@ -888,7 +888,13 @@ stays fatal. When the catalog cannot take a completed segment, the node warns on
 that the active segment grows, and the catalog retries at each checkpoint. A catalog write that
 rolled back leaves the catalog writable; only a commit of uncertain outcome stops it until restart.
 
-A restart from a cache reads the cache, the checkpoint's segment, the suffix after it, and a bounded
+A cache does not carry the order in which approved withdrawals are paid, which full replay
+validates, so recovery refuses a cache whose engine holds a V22 withdrawal approval, and the node
+takes no cache once its engine holds one. The caches written before the first approval stay
+retained, so a node that has approved a withdrawal restarts from the newest of them (or replays the
+whole log when none remains), and its restart time grows with the log written since.
+
+Before the first approval, a restart from a cache reads the cache, the checkpoint's segment, the suffix after it, and a bounded
 number of proof lookups, so its time follows engine state and the checkpoint interval rather than
 the length of the log or of retained history. History serves once it has indexed what the log
 holds after its newest signed head, which after a clean shutdown is nothing. History and the
