@@ -81,6 +81,7 @@ async fn recovered_claims_retire_without_trusted_time_or_healthy_reconciliation(
             signer: AccountId(node.seq.key.address()),
             retry: Duration::from_millis(5),
             pending_deposits_critical_after: Duration::from_secs(10),
+            post_withheld: Default::default(),
         };
         let (tx, rx) = mpsc::channel(16);
         let task = tokio::spawn(recovered.run(rx));

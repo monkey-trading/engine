@@ -282,6 +282,9 @@ pub(crate) struct Poster<R> {
     pub retry: Duration,
     /// How long the first deposit the finalized checkpoint has not credited may stay uncredited.
     pub pending_deposits_critical_after: Duration,
+    /// Whether the `checkpoint_withheld` episode for a diverged collateral view is open, so only
+    /// the post that ends it logs the resolve.
+    pub post_withheld: std::sync::atomic::AtomicBool,
 }
 
 impl<R: CheckpointChain> Poster<R> {

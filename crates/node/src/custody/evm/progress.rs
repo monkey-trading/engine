@@ -168,6 +168,11 @@ impl<V: VaultReader> DepositWatcher<V> {
         self.prove_window(from, to, false).await
     }
 
+    /// The end of the staking window whose header proof, begun at `from`, is still in progress.
+    pub(super) fn staking_window_end(&self, from: u64) -> Option<u64> {
+        self.confirmed.staking_window.as_ref().filter(|proof| proof.from == from).map(|proof| proof.to)
+    }
+
     /// Proves a window for the staking mirror on its own retained slot, so deposit proofs cannot
     /// discard a catch-up in progress. See `confirmed_window`.
     /// Error cases:

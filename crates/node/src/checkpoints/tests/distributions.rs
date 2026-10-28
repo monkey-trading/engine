@@ -64,9 +64,10 @@ async fn paid_distributions_reconcile_healthy_when_the_balance_compensates() {
 
 #[tokio::test(start_paused = true)]
 async fn distributions_paid_past_the_engines_allocation_is_a_mismatch() {
-    let (_guard, mut alerts) = crate::test_support::capture_alerts();
+    let (_guard, captured) = crate::alerts::capture_until_dropped();
     let (poster, mut work, key) = poster();
     let posts = poster.chain.posts.clone();
+    let chain_state = poster.chain.state.clone();
     // The vault has paid 50 USDC in distributions but the engine allocated only 40: the balance
     // still compensates to the ledger, and the overpayment alone is the mismatch.
     work.distributed = engine_core::UsdcUnits(40_000_000);
@@ -88,7 +89,7 @@ async fn distributions_paid_past_the_engines_allocation_is_a_mismatch() {
         rx.recv().await,
         Some(Request::CheckpointStatus { health: Some(Health::Pending | Health::Diverged), .. })
     ));
-    assert!(std::iter::from_fn(|| alerts.try_recv().ok()).any(|alert| alert["alert"] == "collateral_mismatch"));
+
     // A diverged verdict withholds every later checkpoint: only the first post went out.
     let parent = crate::log::CheckpointParent { has_checkpoint: true, seq: 5, root: [3; 32].into() };
     let domain = crate::log::CheckpointDomain { chain_id: 31337, vault: AccountId([7; 20]) };
@@ -111,8 +112,33 @@ async fn distributions_paid_past_the_engines_allocation_is_a_mismatch() {
     work_tx.send(second).await.unwrap();
     tokio::time::advance(Duration::from_secs(2)).await;
     assert_eq!(*posts.lock().unwrap(), 1, "no checkpoint posts while reconciliation is diverged");
+    // Retries while diverged are one episode; the repaired vault lets the successor post, which ends it.
+    tokio::time::advance(Duration::from_secs(2)).await;
+    {
+        let mut state = chain_state.lock().unwrap();
+        state.distributions_paid = Fixed::from_int(40);
+        state.balance = Fixed::from_int(60);
+    }
+    for _ in 0..8 {
+        tokio::time::advance(Duration::from_millis(100)).await;
+        if timeout(Duration::from_millis(50), rx.recv()).await.is_ok_and(|status| {
+            matches!(status, Some(Request::CheckpointStatus { posted: Some(6), health: Some(Health::Healthy), .. }))
+        }) {
+            break;
+        }
+    }
+    assert_eq!(*posts.lock().unwrap(), 2);
     drop(work_tx);
     task.await.unwrap().unwrap();
+    let lines = captured.queued();
+    assert!(lines.iter().any(|line| line.name == "collateral_mismatch"));
+    let key = "checkpoint_withheld{cause=post_diverged}".to_owned();
+    let withheld = lines.into_iter().filter(|line| line.name == "checkpoint_withheld").collect::<Vec<_>>();
+    assert!(withheld.len() > 1, "every retry while diverged logs the hold");
+    assert_eq!(
+        crate::alerts::pages_for(withheld),
+        [(crate::alerts::Status::Firing, key.clone()), (crate::alerts::Status::Resolved, key)]
+    );
 }
 
 #[tokio::test(start_paused = true)]

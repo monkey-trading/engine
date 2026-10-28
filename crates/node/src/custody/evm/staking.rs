@@ -23,6 +23,18 @@ impl<V: VaultReader> DepositWatcher<V> {
         self.confirmed.staking_chain.window_peak()
     }
 
+    /// The staking range now in force, for the adaptive-size regressions.
+    #[cfg(test)]
+    pub(crate) fn staking_range_for_test(&self) -> u64 {
+        self.staking_range.get()
+    }
+
+    /// The deposit log range now in force, which staking failures must leave alone.
+    #[cfg(test)]
+    pub(crate) fn log_range_for_test(&self) -> u64 {
+        self.log_range.get()
+    }
+
     /// Exercises retained proof cancellation and quorum invalidation without advancing custody.
     #[cfg(test)]
     pub(crate) async fn prove_staking_for_test(&mut self, from: u64, to: u64) -> Result<bool, PollError> {
@@ -78,12 +90,17 @@ impl<V: VaultReader> DepositWatcher<V> {
         // Bound the chunk so its proof completes within header batches and the retained run
         // survives deposit proofs; the cursor advances per completed chunk until it reaches the
         // release tag, so catch-up reports progress instead of restarting against a moving end.
-        to = to.min(from.saturating_add(self.max_block_range.saturating_sub(1)));
+        // A proof in progress keeps its window: a moving release tag or a resized range must not
+        // discard its headers. Event-read failures shrink the range (see `staking::mirror`).
+        to = match self.staking_window_end(from) {
+            Some(end) if end <= to => end,
+            _ => to.min(from.saturating_add(self.staking_range.get() - 1)),
+        };
         let Some(hashes) = self.staking_window(from, to).await? else {
             info!(from, to, "staking mirror is proving a bounded catch-up window");
             return Ok(());
         };
         let (cursor, path) = self.staking.as_mut().expect("staking cursor checked above");
-        staking::mirror(&self.vault, tx, cursor, path, from, to, &hashes).await
+        staking::mirror(&self.vault, tx, cursor, path, &mut self.staking_range, from..=to, &hashes).await
     }
 }

@@ -259,6 +259,7 @@ impl Scenario {
             signer: AccountId(self.key.address()),
             retry: self.section.retry_interval,
             pending_deposits_critical_after: Duration::from_secs(1),
+            post_withheld: Default::default(),
         };
         let emission_budget = poster.chain.emission_budget().await.unwrap();
         assert_eq!(emission_budget, TokenUnits(DEV_PERIOD_BUDGET), "the vault's MONKEY cap gives its budget back");

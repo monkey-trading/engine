@@ -62,8 +62,16 @@ async fn fork_bound_empty_and_partial_staking_responses_cannot_advance_canonical
         reader.identity().await.unwrap();
         let before = node.last_seq().await;
         let mut cursor = cursor_at(1);
-        let result =
-            mirror(&reader, &node.tx, &mut cursor, &dir.join("staking-cursor.json"), 1, 3, &hashes_through(3)).await;
+        let result = mirror(
+            &reader,
+            &node.tx,
+            &mut cursor,
+            &dir.join("staking-cursor.json"),
+            &mut AdaptiveSize::new(1_000),
+            1..=3,
+            &hashes_through(3),
+        )
+        .await;
         assert!(result.is_err(), "a fork endpoint cannot certify canonical completeness");
         assert_eq!(node.last_seq().await, before, "partial events and progress are rejected before sequencing");
         assert_eq!(cursor, cursor_at(1));
@@ -102,7 +110,17 @@ async fn canonical_bound_staking_responses_apply_events_and_complete_the_proven_
     .unwrap();
     reader.identity().await.unwrap();
     let mut cursor = cursor_at(1);
-    mirror(&reader, &node.tx, &mut cursor, &dir.join("staking-cursor.json"), 1, 3, &hashes_through(3)).await.unwrap();
+    mirror(
+        &reader,
+        &node.tx,
+        &mut cursor,
+        &dir.join("staking-cursor.json"),
+        &mut AdaptiveSize::new(1_000),
+        1..=3,
+        &hashes_through(3),
+    )
+    .await
+    .unwrap();
     assert_eq!(node.read(move |engine| engine.staked(account)).await, TokenUnits(25));
     let completed = node.read(|engine| engine.staking().unwrap().completed_through.unwrap()).await;
     assert_eq!((completed.block, completed.block_hash), (3, canonical_hash(3)));

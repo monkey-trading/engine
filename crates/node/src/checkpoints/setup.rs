@@ -92,6 +92,7 @@ pub(crate) async fn connect(cfg: &NodeConfig, key: &Arc<EnclaveKey>) -> anyhow::
         signer: AccountId(key.address()),
         retry: checkpoints.retry_interval,
         pending_deposits_critical_after: evm.stall_critical_after,
+        post_withheld: Default::default(),
     };
     let (tx, rx) = mpsc::channel(64);
     Ok(Some(Setup { poster, tx, rx, posted_seq, parent, approvals: Default::default(), observation: state }))

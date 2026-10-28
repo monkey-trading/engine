@@ -443,3 +443,17 @@ pub fn logged_history(dir: &Path, account: AccountId) -> Vec<HistoryEvent> {
     events.reverse();
     events
 }
+
+/// A checkpoint poster over `chain` that retries after a millisecond and escalates an uncredited
+/// deposit after a second.
+pub fn poster<R>(chain: R, domain: crate::log::CheckpointDomain, signer: AccountId) -> crate::checkpoints::Poster<R> {
+    crate::checkpoints::Poster {
+        registry: None,
+        chain,
+        domain,
+        signer,
+        retry: Duration::from_millis(1),
+        pending_deposits_critical_after: Duration::from_secs(1),
+        post_withheld: Default::default(),
+    }
+}

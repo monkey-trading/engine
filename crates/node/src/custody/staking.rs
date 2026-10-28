@@ -21,6 +21,7 @@ use tracing::{debug, info, info_span};
 
 use crate::custody::credit::{query, submit, sync};
 use crate::custody::evm::VaultReader;
+use crate::custody::sizing::AdaptiveSize;
 use crate::custody::stall::{PollError, Stall};
 use crate::sequencer::Request;
 /// One staking contract event: a stake, or an unstake the cooldown has passed.
@@ -131,13 +132,14 @@ impl StakingCursor {
     }
 }
 
-/// Mirrors every staking event in `from..=to` that the engine has not credited, then advances the
-/// cursor to `to + 1`. `to` is the Ethereum-finalised boundary the poll proved: staking mirrors
+/// Mirrors every staking event in `window` (`from..=to`) that the engine has not credited, then
+/// advances the cursor to `to + 1`. `to` is the Ethereum-finalised boundary the poll proved: staking mirrors
 /// have no reversal, so blocks above it wait for finality. Events hold, with the cursor, until
 /// `InitStaking` has applied: a mirror the engine would refuse as premature is never sequenced,
 /// and a cursor that has not moved only makes the next poll read the same blocks again. The
 /// caller proves the range's blocks before calling, and passes their hashes. The event response
 /// must match the proven endpoint even when empty; an event on an unproven block also stalls.
+/// A failed event read halves `range`; a completed chunk lets it grow back.
 /// Error cases:
 /// - stalled: a read fails, an event is on an unproven block, or the engine refuses a mirror
 /// - fatal: the sequencer has stopped, or the cursor cannot be stored
@@ -146,10 +148,11 @@ pub(super) async fn mirror<V: VaultReader>(
     tx: &mpsc::Sender<Request>,
     cursor: &mut StakingCursor,
     cursor_path: &Path,
-    from: u64,
-    to: u64,
+    range: &mut AdaptiveSize,
+    window: std::ops::RangeInclusive<u64>,
     hashes: &std::collections::BTreeMap<u64, B256>,
 ) -> Result<(), PollError> {
+    let (from, to) = (*window.start(), *window.end());
     if from > to {
         return Ok(());
     }
@@ -170,7 +173,14 @@ pub(super) async fn mirror<V: VaultReader>(
                 .ok_or_else(|| PollError::unsettled(anyhow::anyhow!("staking range lacks a proven block")))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let events = reader.staking_events(&blocks).await.map_err(PollError::rpc)?;
+    let events = match reader.staking_events(&blocks).await {
+        Ok(events) => events,
+        // A response-size or timeout limit is met with a narrower range on the retry, as for deposits.
+        Err(cause) => {
+            range.failed();
+            return Err(PollError::rpc(cause));
+        }
+    };
     for event in &events {
         if hashes.get(&event.block) != Some(&event.block_hash) {
             return Err(PollError::unsettled(anyhow::anyhow!(
@@ -201,6 +211,7 @@ pub(super) async fn mirror<V: VaultReader>(
         .await
         .map_err(|e| PollError::Fatal(anyhow::anyhow!("storing the staking cursor: {e}")))?
         .map_err(PollError::Fatal)?;
+    range.succeeded();
     debug!(from, to, "staking blocks mirrored");
     Ok(())
 }

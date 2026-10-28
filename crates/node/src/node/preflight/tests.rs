@@ -2,17 +2,16 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::time::Duration;
 
 use engine_core::Fixed;
 use engine_core::types::AccountId;
 
-use crate::checkpoints::{CheckpointChain, Health, Poster, VaultState, View};
+use crate::checkpoints::{CheckpointChain, Health, VaultState, View};
 use crate::history::HistoryPlan;
 use crate::log::CheckpointDomain;
 use crate::node::preflight::finish_preflight;
 use crate::tee::EnclaveKey;
-use crate::test_support::{dev_config, scratch_dir};
+use crate::test_support::{dev_config, poster, scratch_dir};
 
 struct Chain {
     state: VaultState,
@@ -99,9 +98,8 @@ async fn rejected_anchor_and_signer_preserve_missing_corrupt_and_wal_history_byt
             }
             let before = files(&root);
             let key = EnclaveKey::generate();
-            let poster = Poster {
-                registry: None,
-                chain: Chain {
+            let poster = poster(
+                Chain {
                     state: VaultState {
                         height: 0,
                         signer: if signer_mismatch { AccountId([9; 20]) } else { AccountId(key.address()) },
@@ -112,11 +110,9 @@ async fn rejected_anchor_and_signer_preserve_missing_corrupt_and_wal_history_byt
                         distributions_paid: Fixed::ZERO,
                     },
                 },
-                domain: CheckpointDomain { chain_id: 31337, vault: AccountId([0; 20]) },
-                signer: AccountId(key.address()),
-                retry: Duration::from_millis(1),
-                pending_deposits_critical_after: Duration::from_secs(1),
-            };
+                CheckpointDomain { chain_id: 31337, vault: AccountId([0; 20]) },
+                AccountId(key.address()),
+            );
             let plan = HistoryPlan::open(&cfg.history).unwrap();
             assert!(finish_preflight(plan, Some((&poster, None)), None).await.is_err());
             assert_eq!(files(&root), before, "history kind {history_kind}, signer mismatch {signer_mismatch}");
@@ -166,9 +162,8 @@ async fn replay_valid_truncated_log_cannot_discard_a_newer_valid_history_index()
         }
     })
     .unwrap();
-    let poster = Poster {
-        registry: None,
-        chain: Chain {
+    let poster = poster(
+        Chain {
             state: VaultState {
                 height: 0,
                 signer: AccountId(key.address()),
@@ -179,11 +174,9 @@ async fn replay_valid_truncated_log_cannot_discard_a_newer_valid_history_index()
                 distributions_paid: Fixed::ZERO,
             },
         },
-        domain: anchor.domain.unwrap(),
-        signer: AccountId(key.address()),
-        retry: Duration::from_millis(1),
-        pending_deposits_critical_after: Duration::from_secs(1),
-    };
+        anchor.domain.unwrap(),
+        AccountId(key.address()),
+    );
     assert!(finish_preflight(plan, Some((&poster, found.as_ref())), None).await.is_err());
     assert_eq!(files(&root), before);
 }
@@ -427,9 +420,8 @@ async fn reserved_signature_missing_from_recovered_log_refuses_before_history_mu
         domain: Some(domain),
         deferred_withdrawals: true,
     };
-    let poster = Poster {
-        registry: None,
-        chain: ReservedChain {
+    let poster = poster(
+        ReservedChain {
             state: VaultState {
                 height: 0,
                 signer: AccountId(key.address()),
@@ -442,10 +434,8 @@ async fn reserved_signature_missing_from_recovered_log_refuses_before_history_mu
             checkpoint,
         },
         domain,
-        signer: AccountId(key.address()),
-        retry: Duration::from_millis(1),
-        pending_deposits_critical_after: Duration::from_secs(1),
-    };
+        AccountId(key.address()),
+    );
     let before = files(&root);
     let (log, plan) =
         crate::node::read_log_and_history_observe(&cfg, Some(AccountId(key.address())), Some(parent), |_| {}).unwrap();
