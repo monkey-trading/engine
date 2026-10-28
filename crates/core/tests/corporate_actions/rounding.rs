@@ -4,6 +4,7 @@ use engine_core::command::{AdminCommand, OrderKind};
 use engine_core::emissions::{EmissionSchedule, TokenUnits};
 use engine_core::event::{CancelReason, Event, Reject};
 use engine_core::fixed::Rounding;
+use engine_core::market::QuoteCurrency;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{OrderId, Side};
 
@@ -247,4 +248,44 @@ fn assert_aggregates(h: &Harness) {
         h.engine.accounts().values().filter_map(|a| a.positions.get(&AAPL).copied()).collect();
     assert_eq!(market.client_qty, positions.iter().map(|p| p.qty).sum::<Fixed>());
     assert_eq!(market.client_cost, positions.iter().map(Position::cost).sum::<Fixed>());
+}
+
+#[test]
+fn cash_in_lieu_converts_a_foreign_quote_currency_to_usd_with_the_recorded_fx_mark() {
+    // A 1-for-4e9 reverse split rounds a 1.000000001 position down to nothing, so the whole
+    // position closes in lieu at the post-split mark: its unrealised P&L in the quote currency.
+    for (currency, fx_market, fx, expected) in [
+        (QuoteCurrency::Eur { fx_market: EURUSD }, EURUSD, "1.25", "EUR"),
+        (QuoteCurrency::Jpy { fx_market: USDJPY }, USDJPY, "150", "JPY"),
+    ] {
+        let mut h = fixture();
+        h.list_fx();
+        let mut stock = h.engine.markets()[&AAPL].spec.clone();
+        stock.quote_currency = currency;
+        h.operator_admin(AdminCommand::UpsertMarket(stock));
+        h.price(fx_market, fx);
+        h.deposit(acct(1), "10000");
+        h.price(AAPL, "80");
+        assert_fill(&h.market_order(acct(1), AAPL, Side::Buy, "1.000000001", "80"));
+        h.price(AAPL, "81");
+        let position = h.engine.accounts()[&acct(1)].position(AAPL);
+        let mark = h.engine.markets()[&AAPL].mark.unwrap();
+        let balance = h.balance(acct(1));
+        accepted(&schedule(&mut h, split("lieu", 1, 4_000_000_000)));
+        let events = tick(&mut h, open());
+        let amount = events.iter().find_map(|e| match e {
+            Event::CorporateCashInLieu { amount, .. } => Some(*amount),
+            _ => None,
+        });
+        let pnl = (mark - position.entry).mul(position.qty);
+        let usd = match currency {
+            QuoteCurrency::Jpy { .. } => pnl.checked_mul_div(Fixed::ONE, f(fx), Rounding::Down),
+            _ => pnl.checked_mul_div(f(fx), Fixed::ONE, Rounding::Down),
+        };
+        assert!(pnl.is_positive() && usd != Some(pnl), "{expected} fixture must convert");
+        assert_eq!(amount, usd, "{expected}: {events:?}");
+        assert_eq!(h.balance(acct(1)), balance + amount.unwrap());
+        assert!(!h.engine.accounts()[&acct(1)].positions.contains_key(&AAPL));
+        h.assert_conserved(Fixed::ZERO);
+    }
 }
