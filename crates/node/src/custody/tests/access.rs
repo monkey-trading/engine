@@ -133,7 +133,7 @@ async fn outages_leave_receipts_pending_and_bounded_retries_credit_each_once_loc
 }
 
 #[tokio::test]
-async fn retries_sequence_nothing_while_the_source_fails_and_back_off_while_its_evidence_does_not_verify() {
+async fn retries_sequence_nothing_while_the_source_fails_or_its_evidence_does_not_verify() {
     use crate::custody::pending::{MAX_RETRY_INTERVAL, next_wait, retry_batch};
     let dir = scratch("access-retry-bounds");
     let (config, clear, calls, source_task) = source(outage_answer).await;
@@ -160,8 +160,8 @@ async fn retries_sequence_nothing_while_the_source_fails_and_back_off_while_its_
     assert_eq!(calls.load(Ordering::SeqCst), 4, "both pending receipts were screened again");
     clear.store(true, Ordering::SeqCst);
     let turn = retry_batch(Some(&client), &node.tx, &mut after).await.unwrap();
-    assert!(turn.failing && turn.unsettled);
-    assert_eq!(node.last_seq().await, seq.map(|seq| seq + 1), "the turn ends at the first retry left pending");
+    assert!(turn.failing && !turn.unsettled, "evidence from another authority fails the turn");
+    assert_eq!(node.last_seq().await, seq, "evidence that does not verify is not sequenced");
     assert_eq!(node.read(|engine| engine.pending_deposits().len()).await, 2);
     assert!(node.read(|engine| engine.held_deposits().is_empty()).await, "unverified evidence holds nothing");
     let backoff: Vec<_> =
@@ -426,3 +426,7 @@ fn signed_by(key: &SigningKey, mut screening: Screening) -> Screening {
 mod health;
 #[path = "access/replacements.rs"]
 mod replacements;
+#[path = "access/rescreens.rs"]
+mod rescreens;
+#[path = "access/revisions.rs"]
+mod revisions;

@@ -68,6 +68,14 @@ impl Engine {
         self.access_policy.as_ref()
     }
 
+    /// The refusal the engine's own screening checks give `evidence` for a pending `deposit`: the
+    /// source, request, signer, freshness and sanctions checks that `RetryDepositScreening` applies,
+    /// without its declaration requirement. A read-only preview that sequences nothing, so a caller
+    /// can tell invalid or unclassified evidence from a confirmed sanction before it sequences a retry.
+    pub fn screening_refusal(&self, deposit: &AccessDeposit, evidence: &AccessEvidence) -> Option<AccessReject> {
+        self.screen_access(deposit.account, deposit.payer, deposit_screening_hash(deposit), Some(evidence), true).err()
+    }
+
     /// The account's signed eligibility declaration, if recorded.
     pub fn eligibility(&self, account: AccountId) -> Option<EligibilityClass> {
         self.eligibility.get(&account).copied()

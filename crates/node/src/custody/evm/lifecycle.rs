@@ -24,6 +24,9 @@ use crate::custody::stall::{PollError, Polled};
 use crate::custody::usdc_to_fixed;
 use crate::sequencer::Request;
 
+mod revision;
+use revision::{observed_revision, refusal_stall, refused, replacement_update};
+
 impl<V: VaultReader> DepositWatcher<V> {
     /// Credits canonical confirmations, reconciles pending receipts, and releases final principal.
     /// Error cases:
@@ -131,6 +134,7 @@ impl<V: VaultReader> DepositWatcher<V> {
                         .copied()
                         .flatten();
                     let update = replacement_update(tx, recorded, replacement.clone()).await?;
+                    let (subject, observed) = (update.subject().clone(), observed_revision(&update));
                     let deposit = receipt_access_deposit(&replacement, payer);
                     let request = ScreeningRequest {
                         request_hash: deposit_screening_hash(&deposit),
@@ -142,17 +146,23 @@ impl<V: VaultReader> DepositWatcher<V> {
                     let events =
                         submit(tx, Command::AccessCustodyReplacement { update: Box::new(update), payer, evidence })
                             .await?;
-                    if events.iter().any(|event| {
-                        matches!(event, Event::CustodyDepositRejected { reason: DepositReject::ProtocolNotActive, .. })
-                    }) {
-                        return Err(PollError::unsettled(anyhow!(
-                            "canonical replacement awaits access protocol activation"
-                        )));
-                    }
-                    if events.iter().any(|event| matches!(event, Event::CustodyDepositRejected { .. })) {
-                        return Err(PollError::inconsistent(anyhow!(
-                            "sequencer refused screened canonical replacement"
-                        )));
+                    match refused(&events) {
+                        Some(DepositReject::ProtocolNotActive) => {
+                            return Err(PollError::unsettled(anyhow!(
+                                "canonical replacement awaits access protocol activation"
+                            )));
+                        }
+                        Some(reason) => {
+                            return Err(refusal_stall(
+                                tx,
+                                &subject,
+                                observed,
+                                &reason,
+                                "sequencer refused screened canonical replacement",
+                            )
+                            .await);
+                        }
+                        None => {}
                     }
                     continue;
                 }
@@ -425,31 +435,6 @@ fn reconcile<'a>(
     Ok(orphans)
 }
 
-/// Moves an orphan to its canonical replacement in one transition, naming the replacement's own
-/// reversal when that exact receipt was credited and reversed before.
-/// Error cases:
-/// - the sequencer stops, or the replacement is already live beside its orphan
-async fn replacement_update(
-    tx: &mpsc::Sender<Request>,
-    orphan: &RecordedDeposit,
-    replacement: DepositReceipt,
-) -> Result<DepositUpdate, PollError> {
-    let reference = replacement.reference();
-    let current =
-        query(tx, move |engine| engine.recorded_deposit(&reference).cloned()).await.map_err(PollError::Fatal)?;
-    let replacement_reversed_at_seq = match current {
-        None => None,
-        Some(recorded) if recorded.status == DepositStatus::Reversed => Some(recorded.updated_at_seq),
-        Some(_) => return Err(PollError::inconsistent(anyhow!("a replacement receipt is live beside its orphan"))),
-    };
-    Ok(DepositUpdate::Replace {
-        receipt: orphan.receipt.clone(),
-        observed_at_seq: orphan.updated_at_seq,
-        replacement,
-        replacement_reversed_at_seq,
-    })
-}
-
 /// Converts the chain boundary's base units without rounding or accepting invalid amounts.
 /// Error cases:
 /// - the token amount is not representable or exceeds the engine input bounds
@@ -478,9 +463,11 @@ pub(super) fn receipt(deposit: &VaultDeposit, transaction_deposit_index: u64) ->
 async fn sequence_update(tx: &mpsc::Sender<Request>, update: DepositUpdate) -> Result<(), PollError> {
     let span = info_span!("deposit", id = %update.subject().reference(), deposit_id = update.subject().deposit_id);
     async move {
+        let (subject, observed) = (update.subject().clone(), observed_revision(&update));
         let events = submit(tx, Command::CustodyDeposit(Box::new(update))).await?;
-        if events.iter().any(|event| matches!(event, Event::CustodyDepositRejected { .. })) {
-            return Err(PollError::inconsistent(anyhow!("sequencer rejected a custody receipt transition")));
+        if let Some(reason) = refused(&events) {
+            let what = "sequencer rejected a custody receipt transition";
+            return Err(refusal_stall(tx, &subject, observed, &reason, what).await);
         }
         Ok(())
     }
