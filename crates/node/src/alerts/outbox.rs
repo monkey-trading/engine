@@ -15,12 +15,20 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::{JoinSet, spawn_blocking};
 use tracing::error;
 
-use crate::alerts::{Page, Severity};
+use crate::alerts::episodes::MAX_EPISODES;
+use crate::alerts::{Page, Severity, Status};
 use crate::clock::now_ms;
 use crate::config::OutboxSection;
 use crate::metrics::{Metrics, SeverityLabel};
 
-const SCHEMA: &str = "CREATE TABLE pages (id INTEGER PRIMARY KEY AUTOINCREMENT, route TEXT NOT NULL, body TEXT NOT NULL);CREATE INDEX pages_by_route ON pages(route,id);";
+const PAGES_SCHEMA: &str = "CREATE TABLE pages (id INTEGER PRIMARY KEY AUTOINCREMENT, route TEXT NOT NULL, body TEXT NOT NULL);CREATE INDEX pages_by_route ON pages(route,id);";
+/// Episodes whose firing page was queued and whose resolve has not been, kept across restarts so
+/// the resolve still pages. Written with the page in one transaction.
+const EPISODES_SCHEMA: &str =
+    "CREATE TABLE episodes (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL UNIQUE, severity TEXT NOT NULL);";
+/// Longest episode key kept. A longer one (fields are unbounded) still pages, but its resolve does
+/// not survive a restart; this bounds the table's disk use.
+const MAX_EPISODE_KEY: usize = 256;
 /// Bounds one serialized row, including its page and durable retention times.
 const MAX_PAGE_BYTES: usize = 65_536;
 /// One router and at most two delivery loops each have one request in flight.
@@ -41,6 +49,7 @@ enum Request {
     Add(Page, Reply<bool>),
     Next(Severity, Reply<Option<Pending>>),
     Remove(i64, Reply<()>),
+    Open(Reply<Vec<(String, Severity)>>),
 }
 
 /// Cloneable requests to the outbox's sole database owner.
@@ -79,6 +88,7 @@ impl Outbox {
                     Request::Add(page, reply) => respond(reply, store.add(page)),
                     Request::Next(route, reply) => respond(reply, store.next(route)),
                     Request::Remove(id, reply) => respond(reply, store.remove(id)),
+                    Request::Open(reply) => respond(reply, store.open_episodes()),
                 };
                 result?;
             }
@@ -112,6 +122,16 @@ impl Outbox {
         rx.await.context("alert outbox stopped")?
     }
 
+    /// The episodes opened and not yet resolved, oldest first, including those whose firing page
+    /// was already delivered.
+    /// Error cases:
+    /// - the owner stops, or a database or row check fails
+    pub async fn open_episodes(&self) -> anyhow::Result<Vec<(String, Severity)>> {
+        let (tx, rx) = oneshot::channel();
+        self.0.send(Request::Open(tx)).await.context("alert outbox stopped")?;
+        rx.await.context("alert outbox stopped")?
+    }
+
     /// Durably removes a page after delivery or permanent failure.
     /// Error cases:
     /// - the owner stops or the delete cannot be committed
@@ -138,7 +158,7 @@ impl Store {
         conn.busy_timeout(Duration::from_secs(5))?;
         // Four pages of row/index slack per message also bound SQLite's retained freelist.
         let page_size: u64 = conn.pragma_query_value(None, "page_size", |r| r.get::<_, i64>(0))? as u64;
-        let limit = u128::from(cfg.max_bytes).div_ceil(u128::from(page_size)) + u128::from(cfg.max_pages) * 4 + 16;
+        let limit = u128::from(cfg.max_bytes).div_ceil(u128::from(page_size)) + u128::from(cfg.max_pages) * 8 + 16;
         let limit = u32::try_from(limit).context("outbox disk bound exceeds SQLite page range")?;
         let actual: u32 = conn.pragma_update_and_check(None, "max_page_count", limit, |r| r.get(0))?;
         ensure!(actual <= limit, "alert outbox file exceeds configured disk bound");
@@ -148,16 +168,24 @@ impl Store {
             .prepare("SELECT sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY name")?
             .query_map([], |row| row.get(0))?
             .collect::<Result<_, _>>()?;
-        if schema.is_empty() {
-            conn.execute_batch(&format!("BEGIN;{SCHEMA}COMMIT;"))?;
-        } else {
+        let schema_of = |sql: &str| -> anyhow::Result<Vec<String>> {
             let expected = Connection::open_in_memory()?;
-            expected.execute_batch(SCHEMA)?;
-            let expected: Vec<String> = expected
+            expected.execute_batch(sql)?;
+            Ok(expected
                 .prepare("SELECT sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY name")?
                 .query_map([], |row| row.get(0))?
-                .collect::<Result<_, _>>()?;
-            ensure!(schema == expected, "unsupported alert outbox schema");
+                .collect::<Result<_, _>>()?)
+        };
+        if schema.is_empty() {
+            conn.execute_batch(&format!("BEGIN;{PAGES_SCHEMA}{EPISODES_SCHEMA}COMMIT;"))?;
+        } else if schema == schema_of(PAGES_SCHEMA)? {
+            // An outbox written before open episodes were kept: none are open.
+            conn.execute_batch(&format!("BEGIN;{EPISODES_SCHEMA}COMMIT;"))?;
+        } else {
+            ensure!(
+                schema == schema_of(&format!("{PAGES_SCHEMA}{EPISODES_SCHEMA}"))?,
+                "unsupported alert outbox schema"
+            );
         }
         let check: String = conn.query_row("PRAGMA integrity_check", [], |r| r.get(0))?;
         ensure!(check == "ok", "alert outbox integrity check failed");
@@ -199,6 +227,7 @@ impl Store {
         let created_ms = now_ms();
         let expires_ms =
             created_ms.checked_add(self.cfg.max_age.as_millis() as i64).context("outbox expiry overflow")?;
+        let (key, status) = (page.key.clone(), page.status);
         let body = serde_json::to_string(&Pending { id: 0, page, created_ms, expires_ms })?;
         let (count, bytes) = self.size()?;
         if count >= self.cfg.max_pages
@@ -208,7 +237,20 @@ impl Store {
             self.metrics.alert_outbox_overflows.inc();
             return Ok(false);
         }
-        self.conn.execute("INSERT INTO pages(route,body) VALUES(?,?)", params![severity, body])?;
+        let tx = self.conn.transaction()?;
+        tx.execute("INSERT INTO pages(route,body) VALUES(?,?)", params![severity, body])?;
+        match status {
+            Status::Firing if key.len() <= MAX_EPISODE_KEY => {
+                tx.execute("INSERT OR REPLACE INTO episodes(key,severity) VALUES(?,?)", params![key, severity])?;
+                let cap = MAX_EPISODES.min(self.cfg.max_pages as usize);
+                tx.execute("DELETE FROM episodes WHERE id <= (SELECT max(id) FROM episodes) - ?", [cap as i64])?;
+            }
+            Status::Firing => {}
+            Status::Resolved => {
+                tx.execute("DELETE FROM episodes WHERE key=?", [key])?;
+            }
+        }
+        tx.commit()?;
         self.metrics.alert_pages_pending.get_or_create(&SeverityLabel { severity }).inc();
         Ok(true)
     }
@@ -249,6 +291,32 @@ impl Store {
         ensure!(pending.page.key == format!("{}{{{fields}}}", pending.page.alert), "invalid alert outbox episode key");
         pending.id = id;
         Ok(pending)
+    }
+
+    /// The open episodes, oldest first, checked against the bounds `add` keeps.
+    /// Error cases:
+    /// - SQLite fails or a row is out of bounds or names no route
+    fn open_episodes(&self) -> anyhow::Result<Vec<(String, Severity)>> {
+        let mut stmt = self.conn.prepare("SELECT key, severity FROM episodes ORDER BY id")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let mut open = Vec::new();
+        for row in rows {
+            let (key, severity) = row?;
+            let severity = match severity.as_str() {
+                "critical" => Severity::Critical,
+                "warning" => Severity::Warning,
+                _ => return Err(anyhow!("invalid alert outbox episode severity")),
+            };
+            ensure!(key.len() <= MAX_EPISODE_KEY, "oversized alert outbox episode key");
+            open.push((key, severity));
+        }
+        ensure!(open.len() <= self.episode_cap(), "alert outbox exceeds configured episode bound");
+        Ok(open)
+    }
+
+    /// Most open episodes kept: the in-memory tracker's cap, and never more than the page bound.
+    fn episode_cap(&self) -> usize {
+        MAX_EPISODES.min(self.cfg.max_pages as usize)
     }
 
     /// Commits removal, updating pending metrics only after the delete succeeds.

@@ -25,6 +25,37 @@ fn committed_pages_reopen_in_route_order_and_only_acknowledged_pages_disappear()
 }
 
 #[test]
+fn open_episodes_survive_delivery_and_reopening_until_a_resolve_is_queued() {
+    let cfg = config("open-episodes");
+    let mut store = open(cfg.clone());
+    for market in [1, 2, 3] {
+        assert!(store.add(page(market, Severity::Critical)).unwrap());
+    }
+    let mut resolved = page(2, Severity::Critical);
+    resolved.status = Status::Resolved;
+    assert!(store.add(resolved).unwrap());
+    // Delivering and removing every page does not close the episodes they opened.
+    while let Some(pending) = store.next(Severity::Critical).unwrap() {
+        store.remove(pending.id).unwrap();
+    }
+    drop(store);
+    let keys = |store: &Store| store.open_episodes().unwrap().into_iter().map(|(key, _)| key).collect::<Vec<_>>();
+    assert_eq!(keys(&open(cfg)), ["outage{market=1}", "outage{market=3}"]);
+}
+
+#[test]
+fn a_refused_firing_page_opens_no_episode_and_an_old_outbox_gains_the_table() {
+    let cfg = OutboxSection { max_pages: 1, ..config("refused-episode") };
+    let mut store = open(cfg.clone());
+    assert!(store.add(page(1, Severity::Critical)).unwrap());
+    assert!(!store.add(page(2, Severity::Critical)).unwrap());
+    assert_eq!(store.open_episodes().unwrap().len(), 1);
+    store.conn.execute_batch("DROP TABLE episodes").unwrap();
+    drop(store);
+    assert!(open(cfg).open_episodes().unwrap().is_empty());
+}
+
+#[test]
 fn page_count_byte_and_payload_bounds_refuse_without_removing_pending_pages() {
     for (name, pages, bytes, large) in
         [("count", 1, 10000, false), ("bytes", 10, 400, false), ("payload", 10, 200000, true)]
@@ -183,6 +214,6 @@ fn sqlite_file_growth_is_capped_even_for_an_oversized_direct_write() {
         store.conn.execute("INSERT INTO pages(route,body) VALUES('critical',zeroblob(1000000))", []).unwrap_err();
     assert_eq!(error.sqlite_error_code(), Some(rusqlite::ErrorCode::DiskFull));
     let page_size: i64 = store.conn.pragma_query_value(None, "page_size", |r| r.get(0)).unwrap();
-    let bound = (cfg.max_bytes.div_ceil(page_size as u64) + cfg.max_pages * 4 + 16) * page_size as u64;
+    let bound = (cfg.max_bytes.div_ceil(page_size as u64) + cfg.max_pages * 8 + 16) * page_size as u64;
     assert!(std::fs::metadata(cfg.dir.join("outbox.sqlite")).unwrap().len() <= bound);
 }
