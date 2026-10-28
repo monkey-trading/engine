@@ -8,7 +8,7 @@ use engine_core::types::AccountId;
 use engine_core::withdrawal::WithdrawalApproval;
 use tracing::info;
 
-use crate::checkpoints::{ApprovalId, LifecycleEvidence};
+use crate::checkpoints::{APPROVAL_PAGE_SIZE, ApprovalId, LifecycleEvidence};
 use crate::log::LogEntry;
 use crate::sequencer::{Sequencer, SignedWithdrawal};
 use crate::withdrawals::{Authorization, LIFETIME_SECONDS};
@@ -20,6 +20,8 @@ pub(super) struct Payout {
     pub proof: Option<WithdrawalApprovalProof>,
     pub released: Option<(u64, u64)>,
     pub observed_epoch: Option<u64>,
+    /// Loaded from the recovery backlog and not yet observed at a finalized block.
+    pub recovered: bool,
 }
 
 impl Payout {
@@ -31,11 +33,59 @@ impl Payout {
             proof: None,
             released: None,
             observed_epoch: None,
+            recovered: false,
         }
     }
 }
 
+/// Recovered approvals loaded, and so proved and observed, at a time.
+pub(super) const BACKLOG_WINDOW: usize = 4 * APPROVAL_PAGE_SIZE;
+
 impl Sequencer {
+    /// Loads the oldest recovered approvals once the previous window was observed, so a restart
+    /// holds proofs and queries custody only for a window plus the approvals still unpaid. An
+    /// unobserved loaded head blocks every release, so no newer approval passes an unloaded one.
+    /// Error cases:
+    /// - the backlog names an approval the engine lacks, or the registry is poisoned
+    pub(super) fn load_backlog(&mut self) -> anyhow::Result<()> {
+        let Some(gate) = &mut self.gate else { return Ok(()) };
+        if gate.unswept > 0 {
+            return Ok(());
+        }
+        for _ in 0..BACKLOG_WINDOW {
+            let Some((key, index)) = gate.backlog.pop_front() else { break };
+            let approval = *self
+                .engine
+                .withdrawal_approval(key.0, key.1)
+                .context("immutable approval lacks its validated event order")?;
+            let mut payout = Payout::new(approval, index);
+            payout.recovered = true;
+            gate.schedule.insert(payout.order, key);
+            gate.payouts.insert(key, payout);
+            gate.unproved.insert(key);
+            gate.unregistered.insert(key);
+            gate.unswept += 1;
+        }
+        self.register_payouts()
+    }
+
+    /// Proves loaded approvals against the checkpoint that already covers the engine state, or
+    /// writes one that does.
+    /// Error cases:
+    /// - the checkpoint cannot be written
+    pub(super) fn prove_loaded(&mut self) -> anyhow::Result<()> {
+        let Some(gate) = &self.gate else { return Ok(()) };
+        if gate.unproved.is_empty() {
+            return Ok(());
+        }
+        if gate.parent.has_checkpoint && Some(gate.parent.seq) == self.engine.last_seq() {
+            self.capture_payout_proofs();
+            Ok(())
+        } else {
+            self.checkpoint()
+        }
+    }
+
     /// Captures each pending approval's first proof, before another command changes the tree.
     pub(super) fn capture_payout_proofs(&mut self) {
         let Some(gate) = &mut self.gate else { return };
@@ -79,6 +129,9 @@ impl Sequencer {
                 payout.approval.approved_seq == observed.approval.approved_seq,
                 "custody observed another withdrawal approval"
             );
+            if std::mem::take(&mut payout.recovered) {
+                gate.unswept -= 1;
+            }
             if observed.claimed {
                 gate.schedule.retire(payout.order, payout.released);
                 gate.payouts.remove(&key);
@@ -89,6 +142,9 @@ impl Sequencer {
             }
             payout.observed_epoch = Some(evidence.signer_epoch);
         }
+        self.load_backlog()?;
+        self.prove_loaded()?;
+        let gate = self.gate.as_ref().expect("checkpoint gate exists");
         if !matches!(gate.health, Some(crate::checkpoints::Health::Healthy)) {
             return Ok(());
         }

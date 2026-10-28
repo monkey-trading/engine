@@ -236,7 +236,6 @@ impl Sequencer {
             legacy_deposits,
             legacy_approvals,
             unreleased,
-            payout_proofs,
             payout_order,
             ..
         } = replayed;
@@ -341,20 +340,13 @@ impl Sequencer {
         }
         if let Some(gate) = &mut sequencer.gate {
             gate.pending.extend(deferred);
-            for approval in sequencer.engine.withdrawal_approvals() {
-                let key = (approval.account, approval.nonce);
-                let index = *payout_order.get(&key).context("immutable approval lacks its validated event order")?;
-                let mut payout = crate::sequencer::payouts::Payout::new(*approval, index);
-                payout.proof = payout_proofs.get(&key).cloned();
-                if payout.proof.is_none() {
-                    gate.unproved.insert(key);
-                }
-                gate.unregistered.insert(key);
-                gate.schedule.insert(payout.order, key);
-                gate.payouts.insert(key, payout);
-            }
+            anyhow::ensure!(
+                payout_order.len() == sequencer.engine.withdrawal_approvals().count(),
+                "immutable approval lacks its validated event order"
+            );
+            gate.backlog = payout_order.into();
         }
-        sequencer.register_payouts()?;
+        sequencer.load_backlog()?;
         if let Some(gate) = &mut sequencer.gate {
             // Resume every durable signature before extending the chain. In particular an
             // unmined child remains a live commitment even while latest equals finalized.
@@ -388,6 +380,7 @@ impl Sequencer {
                 sequencer.checkpoint()?;
             }
         }
+        sequencer.prove_loaded()?;
         sequencer.flush()?;
         Ok(sequencer)
     }
