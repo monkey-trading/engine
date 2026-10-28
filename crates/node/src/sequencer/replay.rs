@@ -50,8 +50,8 @@ pub struct Replayed {
     pub unpaid: Fixed,
     /// Named checkpoint signers, for comparison with independently trusted attestations.
     pub checkpoint_signers: BTreeSet<AccountId>,
-    pub(crate) payout_proofs: BTreeMap<(AccountId, u64), engine_core::merkle::WithdrawalApprovalProof>,
-    pub(crate) payout_order: BTreeMap<(AccountId, u64), usize>,
+    /// Every approval with its event index, in FIFO order.
+    pub(crate) payout_order: Vec<((AccountId, u64), usize)>,
     pub(crate) requires_checkpoint_gate: bool,
 }
 
@@ -86,12 +86,10 @@ pub(super) struct Replay {
     domain: Option<CheckpointDomain>,
     trusted_signer: Option<AccountId>,
     checkpoint_signers: BTreeSet<AccountId>,
-    payout_proofs: BTreeMap<(AccountId, u64), engine_core::merkle::WithdrawalApprovalProof>,
     payout_checkpoints: BTreeMap<u64, engine_core::eip712::B256>,
     authorities: BTreeMap<u64, crate::checkpoints::AcceptedCheckpoint>,
     signer_epochs: BTreeMap<u64, AccountId>,
-    unproved: BTreeSet<(AccountId, u64)>,
-    payout_order: BTreeMap<(AccountId, u64), usize>,
+    payout_order: Vec<((AccountId, u64), usize)>,
     requires_checkpoint_gate: bool,
     /// Approvals a withdrawal entry signed, for `finish` to report the durable ones it lacks.
     signed: BTreeSet<(AccountId, u64)>,
@@ -161,8 +159,7 @@ impl Replay {
                     if let Event::WithdrawalApproved { account, nonce, .. } = event
                         && engine.withdrawal_approval(*account, *nonce).is_some()
                     {
-                        self.unproved.insert((*account, *nonce));
-                        self.payout_order.insert((*account, *nonce), index);
+                        self.payout_order.push(((*account, *nonce), index));
                     }
                 }
                 self.approved = events
@@ -266,12 +263,6 @@ impl Replay {
                 let checkpoint_domain = crate::checkpoints::signature::verify_with_domain(cp, engine, self.domain)?;
                 self.requires_checkpoint_gate |= cp.parent.is_some();
                 self.payout_checkpoints.insert(cp.seq, cp.root.parse()?);
-                for (account, nonce) in std::mem::take(&mut self.unproved) {
-                    self.payout_proofs.insert(
-                        (account, nonce),
-                        engine.approval_proof(account, nonce).context("checkpoint lacks approval proof")?,
-                    );
-                }
                 let signer = cp.signer.parse()?;
                 if self.trusted_signer.is_some_and(|trusted| trusted != signer) {
                     self.authorities
@@ -341,7 +332,6 @@ impl Replay {
             deferred: self.deferred,
             unpaid: self.accounting.unpaid(),
             checkpoint_signers: self.checkpoint_signers,
-            payout_proofs: self.payout_proofs,
             payout_order: self.payout_order,
             requires_checkpoint_gate: self.requires_checkpoint_gate,
             last_signed_checkpoint: self.last_signed_checkpoint,

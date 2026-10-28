@@ -29,6 +29,10 @@ pub(super) struct Gate {
     pub unproved: std::collections::BTreeSet<(AccountId, u64)>,
     pub unregistered: std::collections::BTreeSet<(AccountId, u64)>,
     pub schedule: crate::sequencer::payout_schedule::Schedule,
+    /// Recovered approvals not yet loaded, oldest first, with their event indices.
+    pub backlog: std::collections::VecDeque<((AccountId, u64), usize)>,
+    /// Loaded recovered approvals that custody has not yet been asked about.
+    pub unswept: usize,
     /// Whether a checkpoint is being deferred because the posting queue is full.
     pub backlogged: bool,
 }
@@ -48,6 +52,8 @@ impl Gate {
             unproved: Default::default(),
             unregistered: Default::default(),
             schedule: Default::default(),
+            backlog: Default::default(),
+            unswept: 0,
             backlogged: false,
         }
     }
