@@ -354,6 +354,11 @@ impl Engine {
         } else {
             available_raw
         });
+        let available = if self.protocol_version >= ProtocolVersion::V31 {
+            available.min(self.withdrawal_cash.expect("V31 requires V22 capacity").max(Fixed::ZERO))
+        } else {
+            available
+        };
         let excess = if self.protocol_version >= ProtocolVersion::V28 {
             Fixed::from_raw(
                 distributable_nav.raw().min(available.raw()).saturating_sub(config.liquidity_floor.raw()).max(0),
@@ -379,7 +384,11 @@ impl Engine {
                 events.push(Event::DistributionAllocated { account, epoch: closed, amount: UsdcUnits(amount) });
             }
             // `allocated` is at most `usdc_excess`, so the raw amount fits an `i128`.
-            self.house_cash -= Fixed::from_raw((allocated * USDC_SCALE as u128) as i128);
+            let amount = Fixed::from_raw((allocated * USDC_SCALE as u128) as i128);
+            self.house_cash -= amount;
+            if self.protocol_version >= ProtocolVersion::V31 {
+                *self.withdrawal_cash.as_mut().expect("V31 requires V22 capacity") -= amount;
+            }
         }
         events.push(Event::DistributionEpochClosed {
             epoch: closed,

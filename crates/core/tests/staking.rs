@@ -170,3 +170,6 @@ mod marked_equity;
 
 #[path = "staking/composed_reserves.rs"]
 mod composed_reserves;
+
+#[path = "staking/withdrawal_reserve.rs"]
+mod withdrawal_reserve;

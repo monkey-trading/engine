@@ -235,6 +235,7 @@ this crate and reproduce the signed state roots exactly.
   emissions from `V19`: allocation, rounding, cancellation, and finality; which losses count and the
   signed initialisation; and the schedule's arithmetic with the first halving
 - `tests/staking_authentication.rs` — V27 mirror-identity roots, migration, and finalized scan anchors
+- `tests/staking/withdrawal_reserve.rs` — shared distribution/FIFO capacity, inherited gaps, receipt lifecycle and exact reserves
 - `tests/staking/composed_reserves.rs` — combined principal, marked liabilities, receipt reversal and settlement
 - `tests/staking/marked_equity.rs` — closed-share FX insolvency, collectible NAV, settlement and activation boundaries
 - `tests/staking/negative_cash.rs` — partial liquidation, unresolved negative cash, finality reserves, and protected claim liquidity
@@ -244,7 +245,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V30` parts (`v15.rs` to `v30.rs`)
+  `V15` to `V31` parts (`v15.rs` to `v31.rs`)
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
 
@@ -334,6 +335,11 @@ Two suites guard replay and accounting:
   `V15` it also checks that a resting order accepted below its market's minimum notional, or with no
   dollar value, can only reduce its account's position in that market; under `V16`, that no
   account's toxicity history exceeds the memory in force.
+
+Staking protocol V31 reserves every allocation from physical withdrawal capacity, whether paid or
+unpaid, and bounds new allocations by that unapproved capacity. Activation deducts cumulative
+legacy allocations once; a negative inherited gap blocks new approvals until funded. Existing
+approvals remain immutable and reserved. Receipt reversals do not unlock reserved distributions.
 
 Staking protocol V30 composes reversible house and trader principal with marked liabilities.
 For principal P, negative marked-equity deficits D, and negative cash C, the epoch ceiling is

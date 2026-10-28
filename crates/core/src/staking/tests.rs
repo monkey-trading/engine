@@ -271,3 +271,53 @@ fn v28_negative_cash_reserves_saturate_without_overflow_or_distributing_insolven
         )));
     }
 }
+
+#[test]
+fn v31_activation_rejects_unrepresentable_inherited_reserves_without_mutation() {
+    for (distributed, cash) in [(u128::MAX, 0), (1, i128::MIN)] {
+        let mut engine = engine(1_000);
+        engine.protocol_version = ProtocolVersion::V30;
+        engine.client_auth = Some(crate::auth::ClientAuth::Unsigned);
+        engine.operator =
+            Some(crate::auth::Operator { address: AccountId([1; 20]), chain_id: 1, vault: AccountId([2; 20]) });
+        engine.init_staking(&config(1_000)).unwrap();
+        engine.staking.as_mut().unwrap().distributed = UsdcUnits(distributed);
+        engine.withdrawal_cash = Some(Fixed::from_raw(cash));
+        let result = engine
+            .admin(&crate::command::AdminCommand::ActivateProtocol { version: ProtocolVersion::V31 }, &mut Vec::new());
+        assert!(result.is_err(), "{result:?}");
+        assert_eq!(engine.protocol_version, ProtocolVersion::V30);
+        assert_eq!(engine.withdrawal_cash, Some(Fixed::from_raw(cash)));
+        assert_eq!(engine.staking.as_ref().unwrap().distributed, UsdcUnits(distributed));
+    }
+}
+
+#[test]
+fn v31_reserves_exact_fixed_value_of_usdc_allocations() {
+    let mut engine = engine(1_000);
+    engine.protocol_version = ProtocolVersion::V31;
+    engine.init_staking(&config(1_000)).unwrap();
+    engine.house_cash = Fixed::from_raw(101_000_001_000);
+    engine.withdrawal_cash = Some(Fixed::from_int(300));
+    engine.staked.insert(AccountId([1; 20]), TokenUnits(1));
+    engine.now = config(1_000).epoch_end(0);
+    engine.finalise_staking(&mut Vec::new());
+    assert_eq!(engine.distribution(AccountId([1; 20])), UsdcUnits(1_000_001));
+    assert_eq!(engine.house_cash, Fixed::from_int(100));
+    assert_eq!(engine.withdrawal_cash, Some(Fixed::from_raw(298_999_999_000)));
+}
+
+#[test]
+fn v31_distribution_cannot_consume_cash_already_reserved_for_immutable_approvals() {
+    let mut engine = engine(1_000);
+    engine.protocol_version = ProtocolVersion::V31;
+    engine.init_staking(&StakingConfig { liquidity_floor: Fixed::from_int(1), ..config(1_000) }).unwrap();
+    engine.house_cash = Fixed::from_int(1_000);
+    engine.withdrawal_cash = Some(Fixed::from_raw(49_123_456_789));
+    engine.staked.insert(AccountId([1; 20]), TokenUnits(1));
+    engine.now = config(1_000).epoch_end(0);
+    engine.finalise_staking(&mut Vec::new());
+    assert_eq!(engine.distribution(AccountId([1; 20])), UsdcUnits(48_123_456));
+    assert_eq!(engine.withdrawal_cash, Some(Fixed::from_raw(1_000_000_789)));
+    assert_eq!(engine.house_cash, Fixed::from_raw(951_876_544_000));
+}

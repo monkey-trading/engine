@@ -265,6 +265,23 @@ impl Engine {
                 if self.protocol_version < ProtocolVersion::V26 && *version >= ProtocolVersion::V26 {
                     self.check_terminal_receipt_holds()?;
                 }
+                // Earlier allocations reduced house cash without reserving payout capacity.
+                let distribution_cash =
+                    if self.protocol_version < ProtocolVersion::V31 && *version >= ProtocolVersion::V31 {
+                        let allocated = self.staking.as_ref().map_or(0, |staking| staking.distributed.0);
+                        let amount = crate::withdrawal::from_usdc(allocated)
+                            .ok_or("inherited distribution reserve exceeds cash representation")?;
+                        self.withdrawal_cash
+                            .map(|cash| {
+                                cash.raw()
+                                    .checked_sub(amount.raw())
+                                    .map(crate::Fixed::from_raw)
+                                    .ok_or("inherited distribution reserve overflows payout capacity")
+                            })
+                            .transpose()?
+                    } else {
+                        None
+                    };
                 if let AdminCommand::ActivateCustodyFinality { legacy_deposits, .. } = cmd {
                     self.lock_legacy_deposits(legacy_deposits)?;
                 }
@@ -302,6 +319,9 @@ impl Engine {
                 }
                 if self.protocol_version < ProtocolVersion::V27 && *version >= ProtocolVersion::V27 {
                     self.tree = None;
+                }
+                if let Some(cash) = distribution_cash {
+                    self.withdrawal_cash = Some(cash);
                 }
                 self.protocol_version = *version;
                 if *version >= ProtocolVersion::V26 {

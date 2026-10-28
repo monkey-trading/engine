@@ -27,6 +27,7 @@ mod v27;
 mod v28;
 mod v29;
 mod v30;
+mod v31;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -50,12 +51,10 @@ use engine_core::types::{AssetClass, MarketId, Side};
 use helpers::{accepted, event_kind, reducing, small_buy, write_entries};
 
 const SOL: MarketId = 10;
-/// A market the session lists for the margin and solvency rules of protocol `V6`.
 const GOLD: MarketId = 11;
 const OIL: MarketId = 12;
 
-/// Writes the session to the path given as the only argument, then prints how often each event
-/// kind occurred, so the author can check the session still reaches every path.
+/// Writes the session to the given path and prints the event counts.
 /// Fails if the path is missing, already exists, or cannot be written.
 fn main() -> anyhow::Result<()> {
     let path: PathBuf =
@@ -75,7 +74,7 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The scripted session under the latest protocol version: client auth and activation, genesis, then funding, prices,
+/// The scripted session: client auth and activation, genesis, funding, prices,
 /// every order kind, signed requests refused for each auth reason, triggers (one held back by its spread), cancels,
 /// reduce-only (one clipped to the position), stress, toxicity, a position flip, house capital, withdrawals, a session
 /// close and gapped open, financing rollovers over longs and a short, a two-position close-out with bad debt, two-band
@@ -496,5 +495,6 @@ fn session() -> Vec<Sequenced> {
     v28::session(&mut h);
     v29::session(&mut h);
     v30::session(&mut h);
+    v31::session(&mut h);
     h.log
 }
