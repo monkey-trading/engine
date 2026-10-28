@@ -158,6 +158,8 @@ async fn restart_after_the_log_lost_a_completed_segment_resumes_from_the_cache()
         node.submit(deposit(2, &format!("lost-{n}"))).await;
         n += 1;
     }
+    // Shutdown waits only a bounded time for catalog work in flight; drain the owner first.
+    node.history_caught_up().await;
     let (cfg, reader) = node.stop().await;
     drop(reader);
     let tip: serde_json::Value = serde_json::from_slice(

@@ -1,10 +1,7 @@
 //! Signed source for the real-vault checkpoint scenario.
 
-use std::time::Duration;
-
 use engine_core::Fixed;
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::timeout;
 
 use crate::log::CheckpointDomain;
 use crate::sequencer::Request;
@@ -53,7 +50,7 @@ pub(super) async fn start(domain: CheckpointDomain) -> (Arc<crate::access::Acces
 /// Polls the sequencer until exactly `count` deposits wait pending, as the deposit adapter's
 /// screening of an undeclared beneficiary leaves them.
 pub(super) async fn await_pending(tx: &tokio::sync::mpsc::Sender<crate::sequencer::Request>, count: usize) {
-    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+    crate::test_support::wait_for("the pending deposit count the screening leaves", async {
         loop {
             let (reply, response) = tokio::sync::oneshot::channel();
             tx.send(crate::sequencer::Request::Query(Box::new(move |engine| {
@@ -67,8 +64,7 @@ pub(super) async fn await_pending(tx: &tokio::sync::mpsc::Sender<crate::sequence
             tokio::time::sleep(std::time::Duration::from_millis(30)).await;
         }
     })
-    .await
-    .unwrap();
+    .await;
 }
 
 /// The held deposits and their reasons, in reference order.
@@ -82,7 +78,7 @@ pub(super) async fn held(
     })))
     .await
     .unwrap();
-    tokio::time::timeout(std::time::Duration::from_secs(3), rx).await.unwrap().unwrap()
+    crate::test_support::wait_for("the sequencer to answer a query", rx).await.unwrap()
 }
 
 /// The undeclared account's pending deposit and the credit reconcile to both real vault deposits.
@@ -107,5 +103,5 @@ pub(super) async fn house(tx: &mpsc::Sender<Request>) -> Fixed {
     })))
     .await
     .unwrap();
-    timeout(Duration::from_secs(3), rx).await.unwrap().unwrap()
+    crate::test_support::wait_for("the sequencer to answer a query", rx).await.unwrap()
 }

@@ -44,6 +44,8 @@ async fn dev_scenario_authenticated_history_and_paired_restart_preserve_all_publ
     for n in 0..9 {
         node.submit(deposit(100, &format!("whole37-{n}"))).await;
     }
+    // Shutdown waits only a bounded time for a capture in flight; drain the owner first so none is.
+    node.history_caught_up().await;
     let (cfg, reader) = node.stop().await;
     let http = Http::start(reader.clone()).await;
     for account in &accounts {
@@ -73,6 +75,7 @@ async fn dev_scenario_authenticated_history_and_paired_restart_preserve_all_publ
         retained,
         "no cache is published once the engine holds a withdrawal approval"
     );
+    node.history_caught_up().await;
     let (cfg, reader) = node.stop().await;
     let http = Http::start(reader.clone()).await;
     let mut kinds = BTreeSet::new();
@@ -108,6 +111,7 @@ async fn dev_scenario_authenticated_history_and_paired_restart_preserve_all_publ
     for n in 0..5 {
         node.submit(deposit(1, &format!("whole37-rotate-{n}"))).await;
     }
+    node.history_caught_up().await;
     let (cfg, reader) = node.stop().await;
     assert!(Manifest::load(&cfg.node.log_dir).unwrap().segments.len() > segments);
     let http = Http::start(reader).await;

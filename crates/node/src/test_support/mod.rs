@@ -250,6 +250,47 @@ pub async fn assert_a_dropped_read_keeps_its_permit(permits: &Semaphore, read: i
     drop(back.expect("the permit comes back once the work ends").expect("the semaphore is open"));
 }
 
+/// How long a test waits for work that finishes in seconds on an idle machine. A wait ends the
+/// moment its condition holds, so the ceiling only bounds a hang on a loaded runner.
+pub const LOADED_WAIT: Duration = Duration::from_secs(180);
+
+/// Awaits `condition` for up to `LOADED_WAIT`, panicking with `what` it waited for on a miss.
+pub async fn wait_for<T>(what: &str, condition: impl Future<Output = T>) -> T {
+    timeout(LOADED_WAIT, condition).await.unwrap_or_else(|_| panic!("gave up after {LOADED_WAIT:?} waiting for {what}"))
+}
+
+/// Hands the sequencer a fresh system-clock time sample every second until it stops, so a test that
+/// outlasts the sequencer's no-sample grace on a loaded machine is not refused its stamps. It holds
+/// only a weak sender, so it never keeps the sequencer's queue open.
+pub async fn keep_time_fresh(tx: mpsc::WeakSender<Request>) {
+    let mut every = tokio::time::interval(Duration::from_secs(1));
+    loop {
+        every.tick().await;
+        let Some(tx) = tx.upgrade() else { return };
+        if tx.send(Request::TimeSample(trusted_now())).await.is_err() {
+            return;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn the_time_refresher_samples_every_second_and_ends_with_the_queue() {
+        let (tx, mut rx) = mpsc::channel(8);
+        let refresher = tokio::spawn(keep_time_fresh(tx.downgrade()));
+        for _ in 0..3 {
+            let sample = timeout(Duration::from_secs(2), rx.recv()).await.expect("a sample arrives each second");
+            assert!(matches!(sample, Some(Request::TimeSample(_))));
+        }
+        assert!(rx.try_recv().is_err(), "one sample per second, no more");
+        drop(tx);
+        refresher.await.unwrap();
+    }
+}
+
 /// Routes this thread's logs to an alert collector until the guard drops. `#[tokio::test]` runs
 /// every task on the test's thread, so the alerts of the tasks a test spawns all arrive.
 pub fn capture_alerts() -> (DefaultGuard, mpsc::UnboundedReceiver<Alert>) {

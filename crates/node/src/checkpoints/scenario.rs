@@ -18,7 +18,7 @@ use engine_core::access::AccessReject;
 use engine_core::command::Command;
 use engine_core::types::AccountId;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
-use tokio::time::{sleep, timeout};
+use tokio::time::sleep;
 
 use crate::checkpoints::{CheckpointChain, CheckpointRpc, Poster, View};
 use crate::config::{CheckpointSection, CustodyProvider, FinalityTag, RpcProviderSection};
@@ -61,13 +61,12 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     );
     let url = format!("http://127.0.0.1:{port}");
     let provider = RpcClient::new_http(url.parse().unwrap());
-    timeout(Duration::from_secs(10), async {
+    crate::test_support::wait_for("Anvil to answer eth_chainId", async {
         while provider.request::<_, U64>("eth_chainId", ()).await.is_err() {
             sleep(Duration::from_millis(30)).await;
         }
     })
-    .await
-    .unwrap();
+    .await;
     let accounts: Vec<Address> = provider.request("eth_accounts", ()).await.unwrap();
     let relayer = accounts[0];
     // Checkpoint nonce ownership is independent of deployment, funding, and deposit transactions.
@@ -123,13 +122,12 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
                 .spawn()
                 .expect("Python3 installed"),
         ));
-        timeout(Duration::from_secs(10), async {
+        crate::test_support::wait_for("the RPC proxy to accept connections", async {
             while tokio::net::TcpStream::connect(("127.0.0.1", proxy_port)).await.is_err() {
                 sleep(Duration::from_millis(30)).await;
             }
         })
-        .await
-        .unwrap();
+        .await;
         evm.providers.push(
             toml::from_str::<RpcProviderSection>(&format!(
                 "name = 'scenario-{index}'\nrpc_url = 'http://127.0.0.1:{proxy_port}'"
@@ -167,7 +165,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     send(&provider, relayer, token, mintCall { to: relayer, amount: U256::from(110_000_000) }.abi_encode()).await;
     send(&provider, relayer, token, approveCall { spender: vault, amount: U256::MAX }.abi_encode()).await;
     send(&provider, relayer, vault, depositToHouseCall { amount: U256::from(100_000_000) }.abi_encode()).await;
-    timeout(Duration::from_secs(10), async {
+    crate::test_support::wait_for("the vault deposit to credit house cash", async {
         loop {
             submit(&tx, Command::Tick).await;
             if source::house(&tx).await == Fixed::from_int(100) {
@@ -176,8 +174,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
             sleep(Duration::from_millis(30)).await;
         }
     })
-    .await
-    .unwrap();
+    .await;
     let (_alert_guard, mut alerts) = capture_alerts();
     send(
         &provider,
@@ -191,7 +188,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     for _ in 0..4 {
         submit(&tx, Command::Tick).await;
     }
-    timeout(Duration::from_secs(10), async {
+    crate::test_support::wait_for("the poster to post the latest checkpoint on chain", async {
         loop {
             let entries = log_entries(&dir);
             let latest = entries
@@ -208,8 +205,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
             sleep(Duration::from_millis(40)).await;
         }
     })
-    .await
-    .unwrap();
+    .await;
     let replayed = replay_path(&dir).expect("every checkpoint signature verifies");
     source::assert_pending_reconciliation(&replayed);
     let work = crate::checkpoints::Work::capture(
@@ -224,19 +220,18 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     // than crediting it under whoever books it: house cash stays put and the hold is public.
     let sequenced = || Command::Withdraw { account: AccountId(relayer.into()), amount: Fixed::from_int(1), auth: None };
     send(&provider, relayer, token, mintCall { to: vault, amount: U256::from(10_000_000) }.abi_encode()).await;
-    timeout(Duration::from_secs(10), async {
+    crate::test_support::wait_for("the collateral_surplus warning", async {
         while !std::iter::from_fn(|| alerts.try_recv().ok())
             .any(|alert| alert["alert"] == "collateral_surplus" && alert["level"] == "WARN")
         {
             sleep(Duration::from_millis(40)).await;
         }
     })
-    .await
-    .unwrap();
+    .await;
     // A sequenced request, though the engine rejects it for want of cash, means custody is healthy.
     assert!(submit(&tx, sequenced()).await.is_some(), "an unbooked surplus keeps withdrawals running");
     send(&provider, relayer, vault, bookSurplusCall {}.abi_encode()).await;
-    timeout(Duration::from_secs(10), async {
+    crate::test_support::wait_for("the booked surplus to be held and withdrawals to stay sequenced", async {
         while source::house(&tx).await != Fixed::from_int(100)
             || source::held(&tx).await.len() != 1
             || submit(&tx, sequenced()).await.is_none()
@@ -245,8 +240,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
             sleep(Duration::from_millis(40)).await;
         }
     })
-    .await
-    .unwrap();
+    .await;
     assert_eq!(source::held(&tx).await[0].1, AccessReject::PayerMissing, "a surplus is held, never credited");
     while alerts.try_recv().is_ok() {}
 
@@ -267,7 +261,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     }
     send(&provider, vault, token, transferCall { to: relayer, amount: U256::from(1_000_000) }.abi_encode()).await;
     submit(&tx, Command::Tick).await;
-    timeout(Duration::from_secs(10), async {
+    crate::test_support::wait_for("the collateral_mismatch alert", async {
         loop {
             if std::iter::from_fn(|| alerts.try_recv().ok()).any(|alert| alert["alert"] == "collateral_mismatch") {
                 break;
@@ -275,8 +269,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
             sleep(Duration::from_millis(40)).await;
         }
     })
-    .await
-    .unwrap();
+    .await;
     let (reply, request) = oneshot::channel();
     tx.send(Request::Query(Box::new(move |engine| {
         let _ = reply.send(access::withdrawal(engine, 1, Fixed::ONE, true));
@@ -435,7 +428,7 @@ pub(super) async fn send(provider: &RpcClient, from: Address, to: Address, input
 /// Sends through Anvil's unlocked account and polls its receipt under the scenario deadline.
 pub(super) async fn transact(provider: &RpcClient, transaction: TransactionRequest) -> TransactionReceipt {
     let hash: B256 = provider.request("eth_sendTransaction", (transaction,)).await.unwrap();
-    timeout(Duration::from_secs(5), async {
+    crate::test_support::wait_for("the transaction receipt", async {
         loop {
             if let Some(receipt) =
                 provider.request::<_, Option<TransactionReceipt>>("eth_getTransactionReceipt", (hash,)).await.unwrap()
@@ -446,13 +439,12 @@ pub(super) async fn transact(provider: &RpcClient, transaction: TransactionReque
         }
     })
     .await
-    .unwrap()
 }
 
 async fn submit(tx: &mpsc::Sender<Request>, cmd: Command) -> Option<Vec<engine_core::event::Event>> {
     let (reply, rx) = oneshot::channel();
     tx.send(Request::Submit { cmd, reply: Some(reply) }).await.unwrap();
-    timeout(Duration::from_secs(3), rx).await.unwrap().ok()
+    crate::test_support::wait_for("the sequencer to answer a submission", rx).await.ok()
 }
 
 fn write_entries(path: &Path, entries: &[LogEntry]) {
@@ -480,7 +472,7 @@ async fn local_rpc(url: &str, method: &str, params: serde_json::Value) -> serde_
 /// Awaits canonical inclusion explicitly; transaction RPC acknowledgment is not a mined receipt.
 async fn include_checkpoint(poster: &Poster<CheckpointRpc>, checkpoint: &Checkpoint) {
     poster.chain.post(checkpoint).await.unwrap();
-    timeout(Duration::from_secs(10), async {
+    crate::test_support::wait_for("the checkpoint to be included on local Anvil", async {
         loop {
             if poster.chain.state(View::Latest).await.unwrap().checkpoint
                 == Some((checkpoint.seq, checkpoint.root.clone()))
@@ -490,6 +482,5 @@ async fn include_checkpoint(poster: &Poster<CheckpointRpc>, checkpoint: &Checkpo
             sleep(Duration::from_millis(20)).await;
         }
     })
-    .await
-    .expect("checkpoint is included on local Anvil");
+    .await;
 }

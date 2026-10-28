@@ -23,7 +23,7 @@ use governor::Quota;
 use governor::clock::DefaultClock;
 use tokio::sync::{Semaphore, broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
-use tokio::time::{sleep, timeout};
+use tokio::time::sleep;
 
 use super::{CHECKPOINT_EVERY, COOLDOWN_MS, COOLDOWN_SECS, DEV_PERIOD_BUDGET, EPOCH_MS, FLOOR, NOW, monkeyCall};
 use crate::api::{ApiState, MAX_BACKFILLS, router};
@@ -89,13 +89,12 @@ impl Scenario {
         );
         let url = format!("http://127.0.0.1:{port}");
         let provider = RpcClient::new_http(url.parse().unwrap());
-        timeout(Duration::from_secs(10), async {
+        crate::test_support::wait_for("Anvil to answer eth_chainId", async {
             while provider.request::<_, U64>("eth_chainId", ()).await.is_err() {
                 sleep(Duration::from_millis(30)).await;
             }
         })
-        .await
-        .unwrap();
+        .await;
         let accounts: Vec<Address> = provider.request("eth_accounts", ()).await.unwrap();
         let key = Arc::new(EnclaveKey::generate());
         let usdc = deploy(&provider, accounts[0], "MockUSDC.sol/MockUSDC.json", &[]).await;

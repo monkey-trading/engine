@@ -76,7 +76,7 @@ impl Http {
         });
         Self {
             addr,
-            client: Some(reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build().unwrap()),
+            client: Some(reqwest::Client::builder().timeout(crate::test_support::LOADED_WAIT).build().unwrap()),
             shutdown: Some(shutdown),
             task: Some(task),
         }

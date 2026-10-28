@@ -159,7 +159,7 @@ async fn cast(rpc: &str, args: &[&str]) -> Value {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + crate::test_support::LOADED_WAIT;
     loop {
         if child.try_wait().unwrap().is_some() {
             break;
