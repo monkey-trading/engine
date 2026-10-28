@@ -21,6 +21,7 @@ use alloy::sol_types::{SolCall, SolEvent};
 use alloy::transports::http::reqwest::{Certificate, Client, Url};
 use anyhow::{Context, anyhow, bail, ensure};
 use engine_core::types::AccountId;
+use futures_util::{StreamExt, TryStreamExt, stream};
 use tokio::time::timeout;
 use tracing::debug;
 
@@ -186,13 +187,14 @@ impl VaultReader for VaultRpc {
         );
         let mut events = Vec::new();
         if let Some(staking) = self.staking {
-            for block in blocks {
+            let batches = stream::iter(blocks.iter().map(|block| async move {
                 let filter = Filter::new()
                     .address(staking)
                     .event_signature(vec![Staked::SIGNATURE_HASH, UnstakeCompleted::SIGNATURE_HASH])
                     .at_block_hash(block.hash);
                 let logs =
                     self.deadline("eth_getLogs", self.client.request::<_, Vec<Log>>("eth_getLogs", (filter,))).await?;
+                let mut events = Vec::new();
                 for log in &logs {
                     let event = self.decode_staking(log)?;
                     ensure!(
@@ -201,7 +203,12 @@ impl VaultReader for VaultRpc {
                     );
                     events.push(event);
                 }
-            }
+                Ok::<_, anyhow::Error>(events)
+            }))
+            .buffered(8)
+            .try_collect::<Vec<_>>()
+            .await?;
+            events.extend(batches.into_iter().flatten());
         }
         events.sort_by_key(|event| (event.block, event.log_index));
         Ok(events)
