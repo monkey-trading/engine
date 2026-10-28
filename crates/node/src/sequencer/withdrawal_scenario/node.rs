@@ -14,6 +14,7 @@ use crate::sequencer::withdrawal_scenario::rpc::Chain;
 use crate::sequencer::withdrawal_scenario::services::Services;
 use crate::sequencer::withdrawal_scenario::{CHILD_CONFIG, CHILD_FEED, CHILD_TEST};
 use crate::test_support::ANVIL_CONFIG;
+use crate::test_support::LOADED_WAIT;
 
 pub(super) struct ChildProcess(Child);
 
@@ -55,7 +56,7 @@ impl ChildProcess {
     /// Error cases:
     /// - killing/reaping fails or exceeds ten seconds
     pub async fn kill(&mut self) -> anyhow::Result<()> {
-        timeout(Duration::from_secs(10), self.0.kill()).await.context("SIGKILL deadline")??;
+        timeout(LOADED_WAIT, self.0.kill()).await.context("SIGKILL deadline")??;
         Ok(())
     }
 
@@ -64,10 +65,9 @@ impl ChildProcess {
     /// - signaling, draining or the child's final result fails
     pub async fn stop(&mut self) -> anyhow::Result<()> {
         let id = self.0.id().context("node child already reaped")?;
-        let signal =
-            timeout(Duration::from_secs(3), Command::new("kill").args(["-TERM", &id.to_string()]).status()).await??;
+        let signal = timeout(LOADED_WAIT, Command::new("kill").args(["-TERM", &id.to_string()]).status()).await??;
         ensure!(signal.success(), "could not signal local node");
-        let status = timeout(Duration::from_secs(15), self.0.wait()).await.context("node drain deadline")??;
+        let status = timeout(LOADED_WAIT, self.0.wait()).await.context("node drain deadline")??;
         ensure!(status.success(), "node child did not drain successfully");
         Ok(())
     }
@@ -109,7 +109,7 @@ impl Node {
             &self.dir.join("node.log"),
             &[(CHILD_CONFIG, path), (CHILD_FEED, &self.services.feed)],
         )?);
-        timeout(Duration::from_secs(30), async {
+        timeout(LOADED_WAIT, async {
             loop {
                 self.services.check()?;
                 self.chain.check()?;
@@ -129,7 +129,7 @@ impl Node {
     /// Error cases:
     /// - the metrics endpoint never reports the gate healthy
     pub async fn wait_withdrawals_enabled(&mut self) -> anyhow::Result<()> {
-        timeout(Duration::from_secs(60), async {
+        timeout(LOADED_WAIT, async {
             loop {
                 self.services.check()?;
                 self.chain.check()?;

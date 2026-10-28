@@ -19,6 +19,7 @@ use crate::log::CheckpointDomain;
 use crate::sequencer::SignedWithdrawal;
 use crate::sequencer::withdrawal_scenario::node::{ChildProcess, free_port};
 use crate::tee::EnclaveKey;
+use crate::test_support::LOADED_WAIT;
 use crate::test_support::dev_config;
 
 sol! {
@@ -93,8 +94,8 @@ impl Chain {
         cfg.tee.use_published_mock_key = true;
         let key = EnclaveKey::for_config(&cfg.tee)?;
         let (url, client) =
-            (format!("http://127.0.0.1:{port}"), reqwest::Client::builder().timeout(Duration::from_secs(5)).build()?);
-        timeout(Duration::from_secs(10), async {
+            (format!("http://127.0.0.1:{port}"), reqwest::Client::builder().timeout(LOADED_WAIT).build()?);
+        timeout(LOADED_WAIT, async {
             while rpc::<String>(&client, &url, "eth_chainId", json!([])).await.is_err() {
                 anvil.check()?;
                 sleep(Duration::from_millis(40)).await;
@@ -141,7 +142,7 @@ impl Chain {
             )
             .await?;
         // The node's custody startup reads at the withdrawal finality tag, which trails `safe`.
-        timeout(Duration::from_secs(10), async {
+        timeout(LOADED_WAIT, async {
             while chain.request::<String>("eth_getCode", json!([chain.vault, "finalized"])).await? == "0x" {
                 sleep(Duration::from_millis(100)).await;
             }
@@ -170,14 +171,14 @@ impl Chain {
 
     /// Sends a real local transaction and waits for its mined receipt.
     /// Error cases:
-    /// - submission, receipt polling, or the ten-second inclusion deadline fails
+    /// - submission, receipt polling, or the inclusion deadline fails
     async fn transact(&self, from: Address, to: Option<Address>, data: Vec<u8>) -> anyhow::Result<TransactionReceipt> {
         let mut transaction = json!({"from":from,"data":format!("0x{}",hex::encode(data)),"gas":"0xb71b00"});
         if let Some(to) = to {
             transaction["to"] = json!(to);
         }
         let hash: B256 = self.request("eth_sendTransaction", json!([transaction])).await?;
-        timeout(Duration::from_secs(10), async {
+        timeout(LOADED_WAIT, async {
             loop {
                 if let Some(receipt) =
                     self.request::<Option<TransactionReceipt>>("eth_getTransactionReceipt", json!([hash])).await?

@@ -31,7 +31,7 @@ use governor::{Quota, clock::DefaultClock};
 use serde_json::{Value, json};
 use tokio::sync::{Semaphore, broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
-use tokio::time::{sleep, timeout};
+use tokio::time::sleep;
 
 use crate::api::{ApiState, MAX_BACKFILLS, router};
 use crate::checkpoints::scenario::{Anvil, deploy, send};
@@ -193,13 +193,12 @@ impl Scenario {
         );
         let url = format!("http://127.0.0.1:{port}");
         let provider = RpcClient::new_http(url.parse().unwrap());
-        timeout(Duration::from_secs(10), async {
+        crate::test_support::wait_for("Anvil to answer eth_chainId", async {
             while provider.request::<_, U64>("eth_chainId", ()).await.is_err() {
                 sleep(Duration::from_millis(30)).await;
             }
         })
-        .await
-        .unwrap();
+        .await;
         let accounts: Vec<Address> = provider.request("eth_accounts", ()).await.unwrap();
         let key = Arc::new(EnclaveKey::generate());
         let usdc = deploy(&provider, accounts[0], "MockUSDC.sol/MockUSDC.json", &[]).await;
@@ -322,7 +321,7 @@ impl Scenario {
         };
         let app = router(state.clone()).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9))));
         self.node = Some(Node { app, state, sequencer, poster, status });
-        let health = timeout(Duration::from_secs(20), ready).await.expect("the worker revalidates custody").unwrap();
+        let health = crate::test_support::wait_for("the worker to revalidate custody", ready).await.unwrap();
         assert_eq!(health, Health::Healthy, "the scenario starts from proven healthy collateral");
     }
 
@@ -397,13 +396,12 @@ impl Scenario {
             self.submit(Command::Tick).await;
         }
         let last = self.query(|e| e.last_seq().unwrap()).await;
-        timeout(Duration::from_secs(20), async {
+        crate::test_support::wait_for("the checkpoint worker to post the checkpoint on chain", async {
             while self.view(self.vault, latestSeqCall {}).await != last {
                 sleep(Duration::from_millis(40)).await;
             }
         })
-        .await
-        .expect("the checkpoint worker posts the checkpoint");
+        .await;
     }
 
     /// Fetches `account`'s entitlement proof from the API once the vault has posted its checkpoint,
@@ -461,7 +459,9 @@ impl Scenario {
     async fn submit(&self, cmd: Command) -> Vec<Event> {
         let (reply, rx) = oneshot::channel();
         self.node().state.tx.send(Request::Submit { cmd, reply: Some(reply) }).await.unwrap();
-        timeout(Duration::from_secs(10), rx).await.unwrap().expect("trusted time admits the command")
+        crate::test_support::wait_for("the sequencer to answer a submission", rx)
+            .await
+            .expect("trusted time admits the command")
     }
 
     /// Reads the engine between batches.

@@ -24,6 +24,7 @@ use tokio_tungstenite::tungstenite::Message;
 use crate::clock::now_ms;
 use crate::roughtime::VERSION_1;
 use crate::roughtime::testing::TestServer;
+use crate::test_support::LOADED_WAIT;
 use crate::test_support::access;
 
 pub(super) struct Services {
@@ -71,7 +72,7 @@ impl Services {
             let listener = TcpListener::bind("127.0.0.1:0").await?;
             rpcs.push(format!("http://{}", listener.local_addr()?));
             let target = rpc.to_owned();
-            let client = reqwest::Client::builder().timeout(Duration::from_secs(5)).build()?;
+            let client = reqwest::Client::builder().timeout(LOADED_WAIT).build()?;
             let mining = mining.clone();
             let app = axum::Router::new().route(
                 "/",
@@ -168,8 +169,8 @@ async fn venue(listener: TcpListener, price: watch::Receiver<Fixed>) -> anyhow::
 /// Error cases:
 /// - the handshake fails or the client never subscribes
 async fn quote(socket: TcpStream, price: watch::Receiver<Fixed>) -> anyhow::Result<()> {
-    let mut ws = timeout(Duration::from_secs(5), accept_async(socket)).await??;
-    timeout(Duration::from_secs(5), ws.next()).await?.context("venue client closed before subscribing")??;
+    let mut ws = timeout(LOADED_WAIT, accept_async(socket)).await??;
+    timeout(LOADED_WAIT, ws.next()).await?.context("venue client closed before subscribing")??;
     let mut tick = interval(Duration::from_millis(80));
     loop {
         tokio::select! {

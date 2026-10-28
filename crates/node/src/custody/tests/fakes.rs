@@ -310,6 +310,7 @@ impl Node {
         }
         seq.trust(trusted_now()).unwrap();
         let (tx, rx) = mpsc::channel(64);
+        tokio::spawn(crate::test_support::keep_time_fresh(tx.downgrade()));
         Node { tx, operator, sequencer: tokio::spawn(seq.run(rx)), _withdrawals: received_withdrawals }
     }
 

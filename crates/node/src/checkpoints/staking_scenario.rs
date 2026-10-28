@@ -26,7 +26,7 @@ use engine_core::staking::UsdcUnits;
 use engine_core::types::{AccountId, Millis, Side};
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
-use tokio::time::{sleep, timeout};
+use tokio::time::sleep;
 use tower::ServiceExt;
 
 use crate::clock::Clock;
@@ -255,21 +255,19 @@ impl Scenario {
     async fn checkpoint_posted(&self) {
         // A recovered node waits for real collateral validation before signing another root.
         let mut reconciled = self.node().reconciled.clone();
-        timeout(std::time::Duration::from_secs(20), reconciled.wait_for(|checked| *checked))
+        crate::test_support::wait_for("collateral reconciliation to complete", reconciled.wait_for(|checked| *checked))
             .await
-            .expect("collateral reconciliation completes")
             .expect("the checkpoint worker remains available");
         while (self.query(|e| e.last_seq().unwrap()).await + 1) % CHECKPOINT_EVERY != 0 {
             self.submit(Command::Tick).await;
         }
         let last = self.query(|e| e.last_seq().unwrap()).await;
-        timeout(std::time::Duration::from_secs(20), async {
+        crate::test_support::wait_for("the checkpoint worker to post the checkpoint on chain", async {
             while self.view(self.vault, latestSeqCall {}).await != last {
                 sleep(std::time::Duration::from_millis(40)).await;
             }
         })
-        .await
-        .expect("the checkpoint worker posts the checkpoint");
+        .await;
     }
 
     /// `command` signed by the dev operator key with the operator's next nonce, as `engine admin`
@@ -283,7 +281,9 @@ impl Scenario {
     async fn submit(&self, cmd: Command) -> Vec<Event> {
         let (reply, rx) = oneshot::channel();
         self.node().state.tx.send(Request::Submit { cmd, reply: Some(reply) }).await.unwrap();
-        timeout(std::time::Duration::from_secs(10), rx).await.unwrap().expect("trusted time admits the command")
+        crate::test_support::wait_for("the sequencer to answer a submission", rx)
+            .await
+            .expect("trusted time admits the command")
     }
 
     /// Reads the engine between batches.

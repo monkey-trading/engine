@@ -20,6 +20,7 @@ use crate::sequencer::withdrawal_scenario::rpc::{
     WithdrawalPaid, balanceOfCall, latestSeqCall, totalWithdrawnCall, usedNoncesCall,
 };
 use crate::sequencer::{SignedWithdrawal, replay_path_with_trust};
+use crate::test_support::LOADED_WAIT;
 
 /// Exercises local deposit, exact conversion, malformed proofs/signatures, both crash boundaries,
 /// old accepted roots, actual duplicate transactions and healthy post-payment reconciliation.
@@ -65,7 +66,7 @@ pub(super) async fn payments_and_crashes() -> anyhow::Result<()> {
     let caller = node.client.clone();
     let pending = interrupted.clone();
     let submission = tokio::spawn(async move { caller.post("/v1/withdrawals", &pending).await });
-    timeout(Duration::from_secs(15), async {
+    timeout(LOADED_WAIT, async {
         while !node.dir.join("barrier.reached").exists() {
             sleep(Duration::from_millis(20)).await;
         }

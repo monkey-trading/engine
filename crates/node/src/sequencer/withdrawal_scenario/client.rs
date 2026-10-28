@@ -24,6 +24,7 @@ use tokio_tungstenite::tungstenite::protocol::Role;
 
 use crate::clock::now_ms;
 use crate::sequencer::SignedWithdrawal;
+use crate::test_support::LOADED_WAIT;
 
 pub(super) struct User {
     pub account: AccountId,
@@ -66,7 +67,7 @@ impl Client {
             http: reqwest::Client::builder()
                 .http1_only()
                 .tls_danger_accept_invalid_certs(true)
-                .timeout(Duration::from_secs(8))
+                .timeout(LOADED_WAIT)
                 .build()?,
             base: format!("https://127.0.0.1:{port}"),
             domain: eip712::domain(31337, AccountId(vault.into())),
@@ -156,7 +157,7 @@ impl Client {
     /// Error cases:
     /// - any ambiguous transport failure, another status, decoding, or the deadline fails
     pub async fn request_withdrawal(&self, request: &WithdrawalRequest) -> anyhow::Result<Vec<Event>> {
-        timeout(Duration::from_secs(25), async {
+        timeout(LOADED_WAIT, async {
             loop {
                 let response = self.http.post(format!("{}/v1/withdrawals", self.base)).json(request).send().await?;
                 let status = response.status();
@@ -212,7 +213,7 @@ impl Client {
     /// Error cases:
     /// - the expected mark is absent past its deadline
     pub async fn wait_mark(&self, expected: i64) -> anyhow::Result<()> {
-        timeout(Duration::from_secs(10), async {
+        timeout(LOADED_WAIT, async {
             while self.mark().await? != Fixed::from_int(expected) {
                 sleep(Duration::from_millis(80)).await;
             }
@@ -228,7 +229,7 @@ impl Client {
     /// - the expected balance is absent past its deadline
     pub async fn wait_balance(&self, user: &User, expected: &str) -> anyhow::Result<()> {
         let expected: Fixed = expected.parse()?;
-        timeout(Duration::from_secs(20), async {
+        timeout(LOADED_WAIT, async {
             loop {
                 if let Ok(value) = self.get(&format!("/v1/accounts/{}", user.account)).await
                     && value["balance"].as_str().and_then(|text| text.parse::<Fixed>().ok()) == Some(expected)
@@ -247,7 +248,7 @@ impl Client {
     /// Error cases:
     /// - the principal stays unfinalised past its deadline
     pub async fn wait_finalised(&self, user: &User) -> anyhow::Result<()> {
-        timeout(Duration::from_secs(20), async {
+        timeout(LOADED_WAIT, async {
             loop {
                 if let Ok(value) = self.get(&format!("/v1/accounts/{}", user.account)).await {
                     let unfinalised =
@@ -269,7 +270,7 @@ impl Client {
     /// - the expected house cash is absent past its deadline
     pub async fn wait_house_cash(&self, expected: &str) -> anyhow::Result<()> {
         let expected: Fixed = expected.parse()?;
-        timeout(Duration::from_secs(20), async {
+        timeout(LOADED_WAIT, async {
             loop {
                 if let Ok(value) = self.get("/v1/house").await
                     && value["cash"].as_str().and_then(|text| text.parse::<Fixed>().ok()) == Some(expected)
@@ -314,7 +315,7 @@ impl Stream {
     /// Error cases:
     /// - the stream ends/fails or the expected payout is absent past its deadline
     pub async fn payout(&mut self, account: AccountId, amount: i64) -> anyhow::Result<SignedWithdrawal> {
-        timeout(Duration::from_secs(30), async {
+        timeout(LOADED_WAIT, async {
             loop {
                 if let Some(index) = self
                     .pending

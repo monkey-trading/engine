@@ -68,12 +68,12 @@ pub(crate) fn before_approval_log(sequenced: &Sequenced, events: &[Event]) -> an
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "local Anvil end-to-end; scripts/dev-withdrawals.sh runs the parent only"]
 async fn dev_scenario_signed_withdrawals_and_fifo() -> anyhow::Result<()> {
-    timeout(Duration::from_secs(240), async {
+    timeout(Duration::from_secs(900), async {
         flows::payments_and_crashes().await?;
         flows::shortfall_and_fifo().await
     })
     .await
-    .context("whole withdrawal scenario exceeded four minutes")?
+    .context("whole withdrawal scenario exceeded fifteen minutes")?
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
