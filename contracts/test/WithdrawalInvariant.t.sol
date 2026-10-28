@@ -45,7 +45,7 @@ contract WithdrawalHandler is WithdrawalTest {
     /// @dev Books the surplus, which starts as the vault's opening balance.
     function book(uint256 actorSeed) external {
         address actor = actors[actorSeed % actors.length];
-        uint256 held = usdc.balanceOf(address(vault)) + vault.totalWithdrawn();
+        uint256 held = usdc.balanceOf(address(vault)) + vault.totalWithdrawn() + vault.distributionsPaid();
         uint256 surplus = held - vault.totalDeposited();
         uint256 count = vault.depositCount();
         vm.prank(actor);
@@ -167,7 +167,7 @@ contract WithdrawalInvariantTest is WithdrawalTest {
         // Only the opening balance arrived outside a deposit, and booking moves it into the totals.
         assertEq(vault.totalDeposited(), handler.deposited() + handler.booked());
         assertEq(
-            usdc.balanceOf(address(vault)) + vault.totalWithdrawn(),
+            usdc.balanceOf(address(vault)) + vault.totalWithdrawn() + vault.distributionsPaid(),
             vault.totalDeposited() + initialBalance - handler.booked()
         );
         assertEq(vault.signerEpoch(), uint256(handler.rotations()) + 1);
