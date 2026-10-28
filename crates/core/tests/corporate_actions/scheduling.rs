@@ -3,8 +3,9 @@ use engine_core::command::{AdminCommand, Command};
 use engine_core::corporate::CorporateAction;
 use engine_core::event::Event;
 use engine_core::market::QuoteCurrency;
+use engine_core::protocol::ProtocolVersion;
 use engine_core::session::{Period, Schedule, Window};
-use engine_core::types::AssetClass;
+use engine_core::types::{AssetClass, MAX_STAMP_MS};
 
 use crate::common::*;
 use crate::support::*;
@@ -237,4 +238,59 @@ fn offset_changes_cannot_hide_reopenings_across_weekly_or_dated_closing_boundari
         accepted(&schedule(&mut h, action));
         assert!(tick(&mut h, utc(first_open)).iter().any(|e| matches!(e, Event::CorporateActionApplied { .. })));
     }
+}
+
+#[test]
+fn instructions_are_refused_before_protocol_v23() {
+    let mut h = Harness::v17();
+    for version in
+        [ProtocolVersion::V18, ProtocolVersion::V19, ProtocolVersion::V20, ProtocolVersion::V21, ProtocolVersion::V22]
+    {
+        h.admin(AdminCommand::ActivateProtocol { version });
+    }
+    rejected(&schedule(&mut h, dividend("early", AAPL, "1", "0")), "protocol V23");
+    assert!(h.engine.corporate_actions().is_empty());
+}
+
+#[test]
+fn ids_must_hold_one_to_128_bytes() {
+    let mut h = fixture();
+    rejected(&schedule(&mut h, dividend("", AAPL, "1", "0")), "1–128 bytes");
+    rejected(&schedule(&mut h, dividend(&"x".repeat(129), AAPL, "1", "0")), "1–128 bytes");
+    // A multi-byte id counts bytes, not characters: 65 two-byte characters are 130 bytes.
+    rejected(&schedule(&mut h, dividend(&"é".repeat(65), AAPL, "1", "0")), "1–128 bytes");
+    accepted(&schedule(&mut h, dividend(&"x".repeat(128), AAPL, "1", "0")));
+}
+
+#[test]
+fn boundaries_must_be_ordered_positive_engine_timestamps() {
+    let mut h = fixture();
+    for (previous_close, ex_open) in [
+        (close(), close()),
+        (close(), close() - 1),
+        (open(), close()),
+        (0, open()),
+        (-1, open()),
+        (close(), MAX_STAMP_MS + 1),
+    ] {
+        let mut action = dividend("bounds", AAPL, "1", "0");
+        action.previous_close = previous_close;
+        action.ex_open = ex_open;
+        rejected(&schedule(&mut h, action), "ordered positive engine timestamps");
+    }
+    // The last representable stamp passes this check and is refused by the venue calendar instead.
+    let mut last = dividend("bounds", AAPL, "1", "0");
+    last.ex_open = MAX_STAMP_MS;
+    rejected(&schedule(&mut h, last), "actual venue");
+    assert!(h.engine.corporate_actions().is_empty());
+}
+
+#[test]
+fn an_unknown_market_is_refused() {
+    let mut h = fixture();
+    assert!(!h.engine.markets().contains_key(&999));
+    rejected(&schedule(&mut h, dividend("ghost", 999, "1", "0")), "unknown corporate action market");
+    let mut ghost = split("ghost-split", 2, 1);
+    ghost.market = 999;
+    rejected(&schedule(&mut h, ghost), "unknown corporate action market");
 }
