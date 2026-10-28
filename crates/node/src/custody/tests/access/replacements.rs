@@ -107,3 +107,66 @@ async fn a_reorg_screens_the_canonical_payer_even_when_activation_races_submissi
         let _ = source_task.await;
     }
 }
+
+#[tokio::test]
+async fn a_replacement_that_retains_credit_leaves_a_source_outage_open() {
+    let (logs, _guard) = crate::trusted_time::tests::logs::Logs::capture();
+    let dir = scratch("access-replacement-retained");
+    let (config, clear, _calls, source_task) = source(outage_answer).await;
+    clear.store(true, Ordering::SeqCst);
+    let client = Arc::new(AccessClient::new(&config).unwrap());
+    let node = Node::start_with_policy(&dir, Some(config.policy()));
+    activate(&node, config.policy()).await;
+    assert_eq!(
+        node.submit(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V26 })).await,
+        [Event::AdminApplied]
+    );
+    let trader = eip712::address(client_key().verifying_key());
+    attest(&node, trader).await;
+    let chains = chains(10);
+    let original = funding(0, Beneficiary::Trader(trader), trader);
+    add(&chains, &original);
+    let mut watch = screened_watcher(&chains, &dir, &client);
+    assert!(matches!(watch.poll(&node.tx).await, Ok(Polled::Read { caught_up: true })));
+    assert_eq!(node.balance(trader).await, Some(Fixed::from_int(50)));
+    // An outage opens the episode: a second receipt cannot be screened.
+    clear.store(false, Ordering::SeqCst);
+    let outage = VaultDeposit {
+        block: 3,
+        block_hash: crate::custody::tests::fakes::canonical_hash(3),
+        ..funding(1, Beneficiary::Trader(trader), trader)
+    };
+    add(&chains, &outage);
+    let mut watch = screened_watcher(&chains, &dir, &client);
+    for _ in 0..20 {
+        if matches!(watch.poll(&node.tx).await, Ok(Polled::Read { caught_up: true })) {
+            break;
+        }
+    }
+    assert_eq!(logs.count("alert=\"access_source_failed\""), 1);
+    // The first receipt reorgs under the same payer while the outage continues.
+    let moved = VaultDeposit { block: 2, block_hash: B256::repeat_byte(0x82), ..original.clone() };
+    for chain in &chains {
+        chain.remove(&original);
+        chain.remove(&outage);
+        chain.add(moved.clone());
+        chain.add(outage.clone());
+        chain.0.lock().unwrap().forks.extend([1, 2, 10].map(|height| (height, B256::repeat_byte(0x80 + height as u8))));
+    }
+    for _ in 0..20 {
+        if matches!(watch.poll(&node.tx).await, Ok(Polled::Read { caught_up: true })) {
+            break;
+        }
+    }
+    assert_eq!(node.balance(trader).await, Some(Fixed::from_int(50)), "the credit is retained");
+    assert_eq!(node.read(|engine| engine.pending_deposits().len()).await, 1);
+    let replaced = log_entries(&dir.join("log")).iter().any(|entry| {
+        matches!(entry, LogEntry::Command(command) if matches!(command.sequenced.cmd, Command::AccessCustodyReplacement { .. }))
+    });
+    assert!(replaced, "the reorg was sequenced as a screened replacement");
+    assert_eq!(logs.count("alert_resolved=\"access_source_failed\""), 0, "retained credit proves nothing");
+    node.stop().await;
+    assert!(crate::sequencer::replay(&log_entries(&dir.join("log"))).unwrap().access_failed);
+    source_task.abort();
+    let _ = source_task.await;
+}

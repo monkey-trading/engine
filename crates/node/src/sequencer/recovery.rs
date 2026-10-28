@@ -238,6 +238,7 @@ impl Sequencer {
             unreleased,
             payout_proofs,
             payout_order,
+            access_failed,
             ..
         } = replayed;
         let mut legacy_authorizations = legacy_authorizations;
@@ -255,7 +256,7 @@ impl Sequencer {
             cfg.metrics.last_checkpoint_seconds.set(ts as f64 / 1000.0);
         }
         cfg.metrics.access_pending_deposits.set(engine.pending_deposits().len() as i64);
-        let access_alerts = AccessAlerts::recovered(!engine.pending_deposits().is_empty());
+        let access_alerts = AccessAlerts::recovered(access_failed);
         let benchmark_schedule = watch::channel(BenchmarkSchedule::from_engine(&engine)).0;
         let mut sequencer = Self {
             legacy_deposits,

@@ -53,6 +53,8 @@ pub struct Replayed {
     pub(crate) payout_proofs: BTreeMap<(AccountId, u64), engine_core::merkle::WithdrawalApprovalProof>,
     pub(crate) payout_order: BTreeMap<(AccountId, u64), usize>,
     pub(crate) requires_checkpoint_gate: bool,
+    /// Whether the log ends inside an access-source failure episode.
+    pub(crate) access_failed: bool,
 }
 
 /// Re-applies a log entry by entry, as it is read, and checks every checkpoint root, logged event,
@@ -93,6 +95,7 @@ pub(super) struct Replay {
     unproved: BTreeSet<(AccountId, u64)>,
     payout_order: BTreeMap<(AccountId, u64), usize>,
     requires_checkpoint_gate: bool,
+    access_alerts: crate::sequencer::access::AccessAlerts,
     /// Approvals a withdrawal entry signed, for `finish` to report the durable ones it lacks.
     signed: BTreeSet<(AccountId, u64)>,
 }
@@ -157,6 +160,7 @@ impl Replay {
                     self.legacy_deposits.insert(deposit.chain_ref.clone(), deposit);
                 }
                 self.legacy_approvals.observe(engine, &c.sequenced, &events, c.events.is_some());
+                self.access_alerts.observe(engine, &c.sequenced.cmd, &events);
                 for (index, event) in events.iter().enumerate() {
                     if let Event::WithdrawalApproved { account, nonce, .. } = event
                         && engine.withdrawal_approval(*account, *nonce).is_some()
@@ -344,6 +348,7 @@ impl Replay {
             payout_proofs: self.payout_proofs,
             payout_order: self.payout_order,
             requires_checkpoint_gate: self.requires_checkpoint_gate,
+            access_failed: self.access_alerts.failed(),
             last_signed_checkpoint: self.last_signed_checkpoint,
             recovery_work: self.recovery_work,
             recovery_anchor_work: self.recovery_anchor_work,
@@ -466,28 +471,14 @@ pub(crate) fn replay_path_with_authorities(
     Ok(replayed)
 }
 
-/// Checks the last command's approved withdrawals all have their signed entries.
-/// Error cases:
-/// - `must_sign` and an approval is still unmatched
-fn ensure_signed(
-    must_sign: bool,
-    approved: &VecDeque<(AccountId, Fixed, u64)>,
-    seq: Option<u64>,
-) -> anyhow::Result<()> {
-    match approved.front() {
-        Some((account, _, nonce)) if must_sign => {
-            bail!("withdrawal {account} nonce {nonce} approved at seq {seq:?} has no signed entry")
-        }
-        _ => Ok(()),
-    }
-}
-
 #[cfg(test)]
 pub(super) mod accounting_tests;
 #[cfg(test)]
 mod auth_tests;
 mod authorities;
+mod signed;
 mod snapshot;
+use signed::ensure_signed;
 
 #[cfg(test)]
 mod origin_tests;
