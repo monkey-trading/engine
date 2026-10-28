@@ -278,6 +278,13 @@ pub enum Event {
         first: u64,
         last: u64,
     },
+    /// From `V33`, a command stamped more than `MAX_CATCH_UP_BOUNDARIES` rollover or
+    /// corporate-action boundaries past the engine's schedule caught up on that many and did
+    /// nothing else, but for the outcome of a benchmark batch it had already applied. `due` is the
+    /// first boundary still waiting, which the next command passes.
+    CatchUpDeferred {
+        due: Millis,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

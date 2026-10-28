@@ -199,6 +199,7 @@ pub fn every_event() -> Vec<Event> {
             allocated: engine_core::UsdcUnits(4_000),
         },
         Event::DistributionEpochsSkipped { first: 4, last: 9 },
+        Event::CatchUpDeferred { due: 1_793_000_000_000 },
     ]);
     for event in &events {
         match event {
@@ -247,7 +248,8 @@ pub fn every_event() -> Vec<Event> {
             | Event::StakingRejected { .. }
             | Event::DistributionAllocated { .. }
             | Event::DistributionEpochClosed { .. }
-            | Event::DistributionEpochsSkipped { .. } => {}
+            | Event::DistributionEpochsSkipped { .. }
+            | Event::CatchUpDeferred { .. } => {}
         }
     }
     events

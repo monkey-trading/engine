@@ -4,6 +4,7 @@
 //! locks, and no queue beyond the channel: a fill costs about one engine step plus a buffered
 //! write, and each batch of fills one data sync.
 
+mod catch_up;
 pub(crate) mod history_rebuild;
 pub(crate) mod legacy;
 mod origin;
@@ -322,7 +323,7 @@ impl Sequencer {
     /// Error cases:
     /// - the log cannot be written
     /// - the engine refuses the sequence, which means this sequencer is broken
-    fn stamp(&mut self, ts: Millis, cmd: Command) -> anyhow::Result<Vec<Event>> {
+    fn stamp_once(&mut self, ts: Millis, cmd: Command) -> anyhow::Result<Vec<Event>> {
         let parameters = match &cmd {
             Command::Admin(command) => Some(command),
             Command::SignedAdmin(request) => Some(&request.command),

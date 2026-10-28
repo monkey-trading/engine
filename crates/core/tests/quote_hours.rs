@@ -165,7 +165,129 @@ fn before_v21_quotes_held_over_a_halt_still_price_after_it() {
     assert_eq!(fills(&ev)[0].price, f("100"));
 }
 
+/// Quotes `venue0` and `venue1` both stamped `stamped`, priced 100.
+fn aged_quotes(stamped: i64) -> Command {
+    Command::Prices { market: HALTED, quotes: vec![quote("venue0", "100", stamped), quote("venue1", "100", stamped)] }
+}
+
+/// Whether `HALTED` has an index at `h`'s time.
+fn priced(h: &Harness) -> bool {
+    h.engine.markets()[&HALTED].index(h.ts).is_ok()
+}
+
+/// Holds two quotes `age_min` minutes old at 11:29 (the market is open throughout, so `V21` holds
+/// them even over the one-hour window), relists with `max_age_ms`, and reports whether the market
+/// has an index 46 minutes later.
+fn relisted_prices(mut h: Harness, age_min: i64, max_age_ms: i64) -> bool {
+    h.advance_to(ny(2026, 10, 20, 11, 29));
+    h.cmd(aged_quotes(h.ts - age_min * 60_000));
+    relist(&mut h, max_age_ms);
+    h.advance_to(ny(2026, 10, 20, 12, 15));
+    priced(&h)
+}
+
+#[test]
+fn from_v33_a_relisting_cannot_bring_a_stale_quote_back_to_pricing() {
+    let (hour, two_hours) = (3_600_000, 2 * 3_600_000);
+    // A quote 62 minutes old under the one-hour window is held by `V21`; raising the window to two
+    // hours brings it back to pricing there, and not from `V33`.
+    assert!(relisted_prices(halted(Harness::v21()), 62, two_hours));
+    assert!(!relisted_prices(halted(Harness::v33()), 62, two_hours));
+
+    // A quote that ages past the window after it was stored is stale when the relisting arrives.
+    for (version, revived) in [(Harness::v21(), true), (Harness::v33(), false)] {
+        let mut h = halted(version);
+        h.advance_to(ny(2026, 10, 20, 11, 0));
+        h.price(HALTED, "100");
+        h.advance_to(ny(2026, 10, 20, 12, 5));
+        assert!(!priced(&h));
+        relist(&mut h, two_hours);
+        assert_eq!(priced(&h), revived);
+    }
+
+    // Quotes still fresh under the old window survive a raise; a lowered window judges them as it
+    // always has. Both limits are covered.
+    assert!(relisted_prices(halted(Harness::v33()), 30, two_hours));
+    assert!(!relisted_prices(halted(Harness::v33()), 30, hour / 4));
+    assert!(!relisted_prices(halted(Harness::v33()), 62, hour));
+}
+
+#[test]
+fn a_relisting_that_raises_max_age_prices_quotes_arriving_under_it() {
+    let mut h = halted(Harness::v33());
+    h.advance_to(ny(2026, 10, 20, 11, 0));
+    relist(&mut h, 2 * 3_600_000);
+    h.advance_to(ny(2026, 10, 20, 12, 30));
+    h.cmd(aged_quotes(h.ts - 75 * 60_000));
+    assert!(priced(&h));
+}
+
+#[test]
+fn after_v33_a_long_gap_checks_for_a_closure_only_within_the_window_and_at_its_end() {
+    let mut h = halted(Harness::v33());
+    h.advance_to(ny(2026, 10, 20, 14, 30));
+    h.price(HALTED, "100");
+    // A three-day gap crosses the 16:00 close, more than the one-hour window after the quotes, with
+    // both ends open. The quotes are stale by then and cannot price, so `V33` keeps them instead of
+    // walking every minute of the gap.
+    h.advance_to(ny(2026, 10, 23, 14, 29));
+    h.cmd(Command::Tick);
+    assert_eq!(h.engine.markets()[&HALTED].quotes.len(), 2);
+    assert!(!priced(&h));
+
+    // The kept quotes predate a closure, so a relisting that raises the window past their age must
+    // not make them count.
+    relist(&mut h, 5 * 86_400_000);
+    assert!(h.engine.markets()[&HALTED].quotes.is_empty());
+    assert!(!priced(&h));
+
+    // A gap ending while the market is closed still drops the quotes it holds.
+    h.price(HALTED, "100");
+    h.advance_to(ny(2026, 10, 23, 17, 30));
+    h.cmd(Command::Tick);
+    assert!(h.engine.markets()[&HALTED].quotes.is_empty());
+}
+
+#[test]
+fn from_v33_a_closure_within_the_window_drops_quotes_though_the_gap_is_long() {
+    // The quotes are still fresh at a catch-up boundary inside the gap, so a closure they predate
+    // must drop them before it, as it does for a short gap.
+    let mut h = halted(Harness::v33());
+    h.advance_to(ny(2026, 10, 20, 10, 29) + 59_000);
+    h.price(HALTED, "100");
+    h.advance_to(ny(2026, 10, 23, 10, 29) + 59_000);
+    h.cmd(Command::Tick);
+    assert!(h.engine.markets()[&HALTED].quotes.is_empty());
+}
+
+#[test]
+fn a_gap_within_the_window_still_drops_quotes_across_a_closure_from_v33() {
+    let mut h = halted(Harness::v33());
+    h.advance_to(ny(2026, 10, 20, 10, 30) - 1_000);
+    h.price(HALTED, "100");
+    h.advance_to(ny(2026, 10, 20, 10, 31) + 500);
+    h.cmd(Command::Tick);
+    assert!(h.engine.markets()[&HALTED].quotes.is_empty());
+}
+
+#[test]
+fn before_v33_a_long_gap_walks_every_minute_and_drops_quotes_across_the_closure() {
+    let mut h = halted(Harness::v21());
+    h.advance_to(ny(2026, 10, 20, 10, 29) + 59_000);
+    h.price(HALTED, "100");
+    h.advance_to(ny(2026, 10, 23, 10, 29) + 59_000);
+    h.cmd(Command::Tick);
+    assert!(h.engine.markets()[&HALTED].quotes.is_empty());
+}
+
 // ── Helpers ──
+
+/// Relists `HALTED` with the same spec but a `max_age_ms` of `max_age`.
+fn relist(h: &mut Harness, max_age: i64) {
+    let spec = h.engine.markets()[&HALTED].spec.clone();
+    let price_rules = PriceRules { max_age_ms: max_age, ..spec.price_rules };
+    h.operator_admin(AdminCommand::UpsertMarket(MarketSpec { price_rules, ..spec }));
+}
 
 /// AAPL under `h`'s rules: acct(1) is long 10 at 200 with a sell stop at 190 resting over Tuesday's
 /// close, which has been processed.

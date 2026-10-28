@@ -480,6 +480,7 @@ fn commands(entries: &[LogEntry]) -> Vec<Command> {
 mod benchmark_recovery;
 mod benchmark_schedule;
 mod benchmarks;
+mod catch_up;
 mod genesis;
 mod operator;
 mod toxicity;

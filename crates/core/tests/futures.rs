@@ -170,6 +170,29 @@ fn a_relisting_keeps_the_next_quotes_and_gap_only_while_the_next_contract_stays_
 }
 
 #[test]
+fn from_v33_a_relisting_that_raises_max_age_drops_both_contracts_quotes_stale_under_the_old_limit() {
+    for (v33, kept) in [(false, 2), (true, 0)] {
+        let mut h = listed();
+        if v33 {
+            for version in [ProtocolVersion::V22, ProtocolVersion::V23, ProtocolVersion::V33] {
+                h.admin(AdminCommand::ActivateProtocol { version });
+            }
+        }
+        h.cmd(prices(&h, "ESZ6", &["6000", "6001"]));
+        h.cmd(prices(&h, "ESH7", &["6040", "6041"]));
+        let max_age = h.engine.markets()[&US500].spec.price_rules.max_age_ms;
+        h.advance_to(h.ts + max_age + 1);
+        let mut longer = spec();
+        longer.price_rules.max_age_ms = 4 * max_age;
+        h.operator_admin(AdminCommand::UpsertMarket(longer));
+        let market = &h.engine.markets()[&US500];
+        let next = market.futures.as_ref().map_or(0, |futures| futures.next_quotes.len());
+        assert_eq!((market.quotes.len(), next), (kept, kept), "v33 {v33}");
+        assert_eq!(index(&h).is_ok(), !v33);
+    }
+}
+
+#[test]
 fn a_close_drops_both_contracts_quotes_and_keeps_the_gap() {
     let mut h = Harness::v21();
     h.operator_admin(AdminCommand::UpsertMarket(MarketSpec { schedule: us_equities(), ..spec() }));
