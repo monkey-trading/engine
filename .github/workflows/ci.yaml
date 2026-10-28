@@ -385,7 +385,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.image == 'true'
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         run: [first, second]
     runs-on: ubuntu-24.04
@@ -446,8 +446,302 @@ jobs:
       - name: Test the review-delta helper
         run: ./agents/skills/agent-code-review/scripts/review-delta-test.sh
 
-  # The single check to require in branch rules. It runs even when a job it needs fails or is
-  # skipped, and passes only if every one of them succeeded or was skipped while `changes` set its
+  # Each job above has a `cancel-` companion that runs only when it fails and cancels the run, so
+  # the first failed job stops the rest from spending runner minutes; `ci-passed` still runs and
+  # fails on the cancelled jobs. The companions run no repository code, so `actions: write` is
+  # held by them alone. They are not in `ci-passed`'s `needs`. `changes` has none, so its failure
+  # leaves the other jobs to skip as before. A job that times out is cancelled, not failed, so its
+  # companion skips and the run continues. A new job gets a companion.
+  cancel-fmt:
+    needs: fmt
+    if: failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
+  cancel-file-loc:
+    needs: file-loc
+    if: failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
+  cancel-clippy:
+    needs: clippy
+    if: failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
+  cancel-test:
+    needs: test
+    if: failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
+  cancel-reference-examples:
+    needs: reference-examples
+    if: failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
+  cancel-reference-logs:
+    needs: reference-logs
+    if: failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
+  cancel-reference-logs-frozen:
+    needs: reference-logs-frozen
+    if: failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
+  cancel-cargo-deny:
+    needs: cargo-deny
+    if: failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
+  cancel-contracts:
+    needs: contracts
+    if: failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
+  cancel-dev-vault-deposits:
+    needs: dev-vault-deposits
+    if: failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
+  cancel-dev-metrics-alerts:
+    needs: dev-metrics-alerts
+    if: failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
+  cancel-dev-alert-outbox:
+    needs: dev-alert-outbox
+    if: failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
+  cancel-dev-snapshot-restart:
+    needs: dev-snapshot-restart
+    if: failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
+  cancel-dev-rwa-feeds:
+    needs: dev-rwa-feeds
+    if: failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
+  cancel-dev-attestation-verifier:
+    needs: dev-attestation-verifier
+    if: failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
+  cancel-image:
+    needs: image
+    if: failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
+  cancel-image-compare:
+    needs: image-compare
+    if: failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
+  cancel-review-delta:
+    needs: review-delta
+    if: failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
+  # The single check to require in branch rules. It runs even when a job it needs fails, is
+  # cancelled, or is skipped, and passes only if every one of them succeeded or was skipped while `changes` set its
   # area false. Add every new job to `needs`, and a gated one to `$area` below.
   ci-passed:
     if: always()

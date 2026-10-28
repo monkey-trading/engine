@@ -99,9 +99,9 @@ checklist, no restatement of the diff.
 - Open every PR as a **Draft**, and mark it ready (`gh pr ready`) only once
   [Before a PR is ready for review](#before-a-pr-is-ready-for-review) holds. A reference PR that
   needs no review stays a draft and says so in its overview; the title stays clean.
-- Watch the checks afterwards. A red PR is not ready yet: read the first real failure (the rest are
-  usually fail-fast cancellations), fix, push, and re-check. Ask for review once `ci-passed`
-  succeeds, naming the PR's head commit.
+- Watch the checks afterwards. A red PR is not ready yet: read the first real failure (the one job
+  with conclusion `failure`; CI cancels the rest), fix, push, and re-check. Ask for review once
+  `ci-passed` succeeds, naming the PR's head commit.
 
 ## Merging
 
