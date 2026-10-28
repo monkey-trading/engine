@@ -208,7 +208,9 @@ impl VaultReader for FakeChain {
         Ok(chain.deposits.iter().filter(|d| d.block <= at.number).count() as u64)
     }
 
-    async fn staking_events(&self, from: u64, to: BlockRef) -> anyhow::Result<Vec<StakingEvent>> {
+    async fn staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
+        let from = blocks.first().unwrap().number;
+        let to = *blocks.last().unwrap();
         let mut chain = self.0.lock().unwrap();
         chain.reads.push((from, to.number));
         if chain.hash_at(to.number) != to.hash {

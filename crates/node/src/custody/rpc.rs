@@ -177,25 +177,33 @@ impl VaultReader for VaultRpc {
     /// Error cases:
     /// - the request fails or times out
     /// - a log is removed, lacks its position, does not decode as a staking event, or carries an
-    ///   amount past `u128`, or the range endpoint differs from the proven canonical block
-    async fn staking_events(&self, from: u64, to: BlockRef) -> anyhow::Result<Vec<StakingEvent>> {
-        let events = if let Some(staking) = self.staking {
-            let filter = Filter::new()
-                .address(staking)
-                .event_signature(vec![Staked::SIGNATURE_HASH, UnstakeCompleted::SIGNATURE_HASH])
-                .from_block(from)
-                .to_block(to.number);
-            let logs =
-                self.deadline("eth_getLogs", self.client.request::<_, Vec<Log>>("eth_getLogs", (filter,))).await?;
-            logs.iter().map(|log| self.decode_staking(log)).collect::<anyhow::Result<Vec<_>>>()?
-        } else {
-            Vec::new()
-        };
-        let headers = self.headers(to.number, to.number).await?;
+    ///   amount past `u128`, or a returned log differs from its requested proven block
+    async fn staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
+        ensure!(!blocks.is_empty(), "staking range is empty");
         ensure!(
-            headers.len() == 1 && headers[0].number == to.number && headers[0].hash == to.hash,
-            "staking event range endpoint is not the proven canonical block"
+            blocks.windows(2).all(|pair| pair[0].number.checked_add(1) == Some(pair[1].number)),
+            "staking range is not contiguous"
         );
+        let mut events = Vec::new();
+        if let Some(staking) = self.staking {
+            for block in blocks {
+                let filter = Filter::new()
+                    .address(staking)
+                    .event_signature(vec![Staked::SIGNATURE_HASH, UnstakeCompleted::SIGNATURE_HASH])
+                    .at_block_hash(block.hash);
+                let logs =
+                    self.deadline("eth_getLogs", self.client.request::<_, Vec<Log>>("eth_getLogs", (filter,))).await?;
+                for log in &logs {
+                    let event = self.decode_staking(log)?;
+                    ensure!(
+                        event.block == block.number && event.block_hash == block.hash,
+                        "staking log differs from its requested proven block"
+                    );
+                    events.push(event);
+                }
+            }
+        }
+        events.sort_by_key(|event| (event.block, event.log_index));
         Ok(events)
     }
 }

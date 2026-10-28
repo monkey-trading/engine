@@ -161,10 +161,16 @@ pub(super) async fn mirror<V: VaultReader>(
     let block_hash = *hashes
         .get(&to)
         .ok_or_else(|| PollError::unsettled(anyhow::anyhow!("staking progress lacks its proven endpoint")))?;
-    let events = reader
-        .staking_events(from, crate::custody::evm::BlockRef { number: to, hash: block_hash })
-        .await
-        .map_err(PollError::rpc)?;
+    let blocks = (from..=to)
+        .map(|number| {
+            hashes
+                .get(&number)
+                .copied()
+                .map(|hash| crate::custody::evm::BlockRef { number, hash })
+                .ok_or_else(|| PollError::unsettled(anyhow::anyhow!("staking range lacks a proven block")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let events = reader.staking_events(&blocks).await.map_err(PollError::rpc)?;
     for event in &events {
         if hashes.get(&event.block) != Some(&event.block_hash) {
             return Err(PollError::unsettled(anyhow::anyhow!(

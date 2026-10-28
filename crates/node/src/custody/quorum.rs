@@ -185,11 +185,14 @@ impl<R: VaultReader + Sync> VaultReader for Quorum<R> {
     /// Identical staking event sets anchored to the range endpoint the watcher already proved.
     /// Error cases:
     /// - no quorum, or the winning endpoint differs from that proof, even for an empty response
-    async fn staking_events(&self, from: u64, to: BlockRef) -> anyhow::Result<Vec<StakingEvent>> {
+    async fn staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
+        let to = blocks.last().context("staking range is empty")?;
         let answers = join_all(self.providers.iter().enumerate().map(|(i, (_, r))| async move {
             self.qualified(i)?;
             let header = last_header(r.headers(to.number, to.number).await?, to.number)?;
-            Ok((header.hash, r.staking_events(from, to).await?))
+            let mut events = r.staking_events(blocks).await?;
+            events.sort_by_key(|event| (event.block, event.log_index));
+            Ok((header.hash, events))
         }))
         .await;
         let ((hash, events), _) = self.vote("staking_events", answers)?;

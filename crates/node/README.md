@@ -1444,3 +1444,5 @@ non-waiting shutdown path after node/alert draining, so a blocked storage syscal
 that drain deadline through runtime destruction. On a fatal drain error the CLI returns an error
 and exits, terminating any remaining OS threads. An embedded caller must likewise terminate its
 process after an uncancellable drain failure; a blocked thread is not safe to restart beside.
+
+`src/custody/tests/rpc/staking.rs` checks complete hash-pinned staking log windows against a lagging fork backend.

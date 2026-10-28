@@ -40,10 +40,9 @@ pub trait VaultReader {
     /// The vault's deposit count in block `at`, which the endpoint must hold as canonical.
     fn deposit_count(&self, at: BlockRef) -> impl Future<Output = anyhow::Result<u64>> + Send;
 
-    /// Every staking event through the proven canonical endpoint `to`, in chain order.
-    /// Empty responses also require that endpoint, including deployments without staking.
-    fn staking_events(&self, from: u64, to: BlockRef)
-    -> impl Future<Output = anyhow::Result<Vec<StakingEvent>>> + Send;
+    /// Every staking event in the contiguous proven hash window, in chain order.
+    /// Each log query must name its proven block hash, including empty responses.
+    fn staking_events(&self, blocks: &[BlockRef]) -> impl Future<Output = anyhow::Result<Vec<StakingEvent>>> + Send;
 }
 
 /// A block by height and hash.

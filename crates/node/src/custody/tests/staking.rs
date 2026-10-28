@@ -50,7 +50,9 @@ impl VaultReader for StubReader {
         Ok(0)
     }
 
-    async fn staking_events(&self, from: u64, to: BlockRef) -> anyhow::Result<Vec<StakingEvent>> {
+    async fn staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
+        let from = blocks.first().unwrap().number;
+        let to = *blocks.last().unwrap();
         anyhow::ensure!(to.hash == canonical_hash(to.number), "staking endpoint is not canonical");
         Ok(self.0.iter().filter(|e| (from..=to.number).contains(&e.block)).cloned().collect())
     }
