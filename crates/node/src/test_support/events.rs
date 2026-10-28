@@ -29,6 +29,7 @@ pub fn every_event() -> Vec<Event> {
         Reject::Slippage { quoted: amount, live: amount, slippage_bps: 5 },
         Reject::InsufficientMargin { equity: amount, required: amount },
         Reject::InsufficientFunds { available: amount },
+        Reject::BelowMinimumWithdrawal { minimum: amount },
         Reject::HouseCapacity,
         Reject::TooManyOrders { max: 100 },
         Reject::InvalidAmount,
@@ -56,6 +57,7 @@ pub fn every_event() -> Vec<Event> {
             | Reject::Slippage { .. }
             | Reject::InsufficientMargin { .. }
             | Reject::InsufficientFunds { .. }
+            | Reject::BelowMinimumWithdrawal { .. }
             | Reject::HouseCapacity
             | Reject::TooManyOrders { .. }
             | Reject::InvalidAmount

@@ -52,6 +52,9 @@ pub struct Replayed {
     pub checkpoint_signers: BTreeSet<AccountId>,
     /// Every approval with its event index, in FIFO order.
     pub(crate) payout_order: Vec<((AccountId, u64), usize)>,
+    /// The latest authorization each signed approval holds, as `(signer epoch, expiry)`. A recovery
+    /// from a checkpoint snapshot sees only the suffix after it.
+    pub(crate) authorized: BTreeMap<(AccountId, u64), (u64, u64)>,
     pub(crate) requires_checkpoint_gate: bool,
     /// Whether the log ends inside an access-source failure episode.
     pub(crate) access_failed: bool,
@@ -96,6 +99,8 @@ pub(super) struct Replay {
     access_alerts: crate::sequencer::access::AccessAlerts,
     /// Approvals a withdrawal entry signed, for `finish` to report the durable ones it lacks.
     signed: BTreeSet<(AccountId, u64)>,
+    /// The latest typed authorization each approval holds in this log, as `(signer epoch, expiry)`.
+    authorized: BTreeMap<(AccountId, u64), (u64, u64)>,
 }
 
 impl Replay {
@@ -229,6 +234,7 @@ impl Replay {
                         "typed payout checkpoint is absent from the preceding log"
                     );
                     self.signed.insert((w.account, w.nonce));
+                    self.authorized.insert((w.account, w.nonce), (auth.signer_epoch, auth.expires_at));
                     return Ok(());
                 }
                 if let Some(seq) = w.approved_seq {
@@ -337,6 +343,7 @@ impl Replay {
             unpaid: self.accounting.unpaid(),
             checkpoint_signers: self.checkpoint_signers,
             payout_order: self.payout_order,
+            authorized: self.authorized,
             requires_checkpoint_gate: self.requires_checkpoint_gate,
             access_failed: self.access_alerts.failed(),
             last_signed_checkpoint: self.last_signed_checkpoint,

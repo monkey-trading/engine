@@ -123,13 +123,14 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/mod.rs` — the sequencer, checkpoints, and metrics
 - `src/sequencer/messages.rs` — sequencer requests, stream messages, and signed withdrawals
 - `src/sequencer/checkpoints.rs` — checkpoint creation, custody reconciliation, and signature release
-- `src/sequencer/payouts.rs` — durable unpaid delivery, finalized claim evidence, expiry, and epoch reissues
-- `src/sequencer/payout_schedule.rs` — complete unpaid approval order and bounded expiry/epoch reissue scheduling
-- `src/sequencer/payout_tests.rs` — release order across claim pages, durability, restart, expiry, and rotation
+- `src/sequencer/payouts.rs` — durable unpaid delivery, finalized claim evidence, epoch reissues, and reissue requests
+- `src/sequencer/payout_schedule.rs` — complete unpaid approval order and bounded epoch and requested reissue scheduling
+- `src/sequencer/payout_tests.rs` — release order across claim pages, durability, restart, expiry without reissue, and rotation
 - `src/sequencer/payout_tests/` — paginated replacement signature order, paused claim acknowledgement, and sealed approval recovery
 - `src/sequencer/withdrawal_scenario/` — actual Anvil/TLS/stream/custody crash and FIFO scenarios with local signed time
 - `src/withdrawals.rs` — vault EIP-712 digests and exact approval inclusion verification
 - `src/api/withdrawal_queue.rs` — public FIFO pagination and account queue positions
+- `src/api/reissue.rs` — a holder's request to sign an expired approval again
 - `src/node/signer_history.rs` — finalized accepted roots and immutable signer epochs before recovery writes
 - `src/replay_audit.rs` and `src/replay_audit/` — read-only custody-backed historical signer audits and tests
 - `src/log/segments/durability_tests.rs` — failed-fsync stream publication regression
@@ -642,7 +643,20 @@ approves its head partially when cash is short; each part has its own payout non
 trigger another queue pass but do not create vault tokens. New deposits and house capital add
 physical payout capacity. The node signs only after the approval is synced and included in a
 finalized accepted checkpoint; a logged signature remains unpaid until the vault reports its used
-nonce. Expired approvals are reissued with the same nonce and a new 24-hour authorization.
+nonce. From V34 a request is at least 10 USDC. An authorization that expires unclaimed is not
+signed again on a schedule or by a restart, so unclaimed approvals cost the node nothing. Its
+account asks with `POST /v1/accounts/<address>/withdrawals/<payout-nonce>/reissue` and a body
+`{"replaces_expires_at": <expiry of its latest authorization, 0 if none>, "signature": "0x…"}`.
+The signature is the account's EIP-712 signature, under the same domain as its other requests, of
+`ReissueRequest(address account,uint64 payoutNonce,uint64 replacesExpiresAt)`, so it works once.
+The node queues the approval for a new 24-hour authorization with the same nonce, in approval
+order, and answers `401` for another signer, `404` for an approval that is unknown, paid, or not
+yet loaded by a restart's recovery, and `400` while the latest authorization is usable or the
+request replaces an older one. A signer rotation reissues every unpaid approval under the new
+epoch without a request. A queued request lives in memory: after a node restart, send the same
+signed body again, which stays valid until an authorization replaces the one it names. While the
+host leaves the log intact a restart reissues nothing; recovery from a checkpoint snapshot sees
+only the authorizations after it, so an approval signed before it is signed once more.
 
 `GET /v1/withdrawals?limit=50&after=<request-seq>` returns `seq`, `queue` and `next`.
 `GET /v1/accounts/<address>/withdrawals` filters the same FIFO and reports each request's global

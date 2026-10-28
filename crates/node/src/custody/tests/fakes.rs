@@ -404,6 +404,7 @@ pub(super) fn refusing_sequencer(answer_syncs: bool, refusals: usize) -> mpsc::S
                 Request::Sync(_) => {}
                 Request::CheckpointStatus { .. } => unreachable!("no checkpoint worker in this test"),
                 Request::WatchBenchmarkSchedule(_) => unreachable!("only the API watches benchmark schedules"),
+                Request::ReissueWithdrawal { .. } => unreachable!("only the API asks for a reissue"),
                 Request::TimeSample(_) => unreachable!("custody sends no time samples"),
             }
         }

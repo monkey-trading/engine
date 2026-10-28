@@ -17,7 +17,7 @@ use crate::event::{Event, Reject};
 use crate::fixed::Rounding;
 use crate::protocol::ProtocolVersion;
 use crate::types::{AccountId, MarketId};
-use crate::withdrawal::whole_usdc;
+use crate::withdrawal::{MIN_WITHDRAWAL, whole_usdc};
 
 impl Engine {
     /// Credits legacy or mock cash once; receipt-finality rules refuse the legacy EVM route.
@@ -46,7 +46,8 @@ impl Engine {
     /// Authorises the request, then approves a withdrawal of free cash: no more than the balance,
     /// and no more than equity above the margin requirement. Approval bumps the account's
     /// withdrawal nonce, which the enclave signs with the payout. From V22, reserves whole USDC
-    /// first; the bounded FIFO pass allocates each payable part its own nonce.
+    /// first; the bounded FIFO pass allocates each payable part its own nonce. From V34 a request
+    /// of less than `MIN_WITHDRAWAL` is refused.
     pub(crate) fn withdraw(
         &mut self,
         account: AccountId,
@@ -89,6 +90,8 @@ impl Engine {
             Some(reason)
         } else if !amount.is_valid_input() || !payable.is_positive() {
             Some(Reject::InvalidAmount)
+        } else if self.protocol_version >= ProtocolVersion::V34 && payable < MIN_WITHDRAWAL {
+            Some(Reject::BelowMinimumWithdrawal { minimum: MIN_WITHDRAWAL })
         } else if payable > available {
             Some(Reject::InsufficientFunds { available })
         } else {

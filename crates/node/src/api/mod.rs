@@ -10,6 +10,7 @@ mod archive;
 mod benchmark_schedule;
 mod distributions;
 mod history;
+pub(crate) mod reissue;
 mod state;
 mod stream;
 mod withdrawal_queue;
@@ -205,6 +206,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/orders/cancel", post(cancel_order))
         .route("/v1/withdrawals", get(withdrawal_queue::queue).post(withdraw))
         .route("/v1/accounts/{address}/withdrawals", get(withdrawal_queue::account))
+        .route("/v1/accounts/{address}/withdrawals/{nonce}/reissue", post(reissue::reissue))
         .route("/v1/admin", post(admin::admin))
         .route("/v1/dev/deposit", post(dev_deposit))
         .route("/v1/stream", get(stream::stream))

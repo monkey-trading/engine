@@ -115,6 +115,10 @@ this crate and reproduce the signed state roots exactly.
   and the queue approves its head, in part when physical cash is short, as an immutable payout with
   its own nonce. Payout capacity starts at the conserved cash whose principal is final and grows
   only with final deposit principal and house capital
+- From protocol `V34`, a withdrawal request is at least 10 USDC (`MIN_WITHDRAWAL`, the vault's
+  deposit floor) and is refused with `below_minimum_withdrawal` otherwise, so every request is
+  bounded in count by what it reserves. The queue approves less than 10 USDC only as a request's final
+  remainder, and otherwise waits for cash. Earlier versions keep dust requests and parts
 - From protocol `V23`, signed corporate instructions capture prior-close stock/index entitlements,
   apply long-net/short-gross cash at the ex-date opening, and scale every split quantity/price
   atomically, rounding once and settling rounded-off fractions in cash, with chronological
@@ -147,8 +151,9 @@ this crate and reproduce the signed state roots exactly.
 - `src/deposits/legacy/tests.rs` — migration, independent release, ambiguous receipts and recovery commitments
 - `src/deposits/tests.rs` — receipt transition, duplicate delivery, arithmetic and recovery tests
 - `src/deposits/tests/coverage.rs` — canonical coverage, partial frontiers and restored index contracts
-- `src/withdrawal.rs` — V22 FIFO reservations, bounded partial approval, and exact USDC conversion
+- `src/withdrawal.rs` — V22 FIFO reservations, bounded partial approval, the V34 minimum, and exact USDC conversion
 - `src/merkle/withdrawal.rs` — payable approval leaves and root inclusion proofs
+- `tests/withdrawal_minimum.rs` — the V34 minimum request and the waiting of sub-minimum parts, against V33
 - `tests/withdrawal_queue.rs` — reservations, partial FIFO, cash conservation, precision, and stale marks
 - `tests/withdrawal_commitment.rs` — approval ABI, tamper rejection, serialization/replay, and incremental roots
 - `tests/withdrawal_pagination.rs` — bounded scans, global positions, empty account continuations, and restart
@@ -249,7 +254,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V31` and `V32` parts (`v15.rs` to `v31.rs`, `v32.rs`), and `V33` (`v33.rs`)
+  `V15` to `V33` and `V34` parts (`v15.rs` to `v33.rs`, `v34.rs`)
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
 
@@ -345,6 +350,9 @@ per-account emission debt, capped at the loss weight the account earned and was 
 for, paid down by later loss weight before it earns again, and judges
 emission eligibility during corporate-action catch-up at the enclosing command's stamp. Its
 session is in `examples/reference_log/v32.rs`.
+
+Protocol V34 sets the minimum withdrawal request to 10 USDC and has the queue approve a part below
+that only when it settles the request; its session is in `examples/reference_log/v34.rs`.
 
 Staking protocol V31 reserves every allocation from physical withdrawal capacity, whether paid or
 unpaid, and bounds new allocations by that unapproved capacity. Activation deducts cumulative

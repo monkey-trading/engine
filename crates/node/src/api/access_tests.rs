@@ -158,14 +158,17 @@ async fn an_allowed_mock_withdrawal_is_debited_signed_and_strictly_replayed_from
     assert_eq!(approved[0]["type"], "withdrawal_queued");
     assert_eq!(approved[1]["type"], "withdrawal_approved");
     let signed = node.withdrawals.try_recv().unwrap();
-    assert_eq!((signed.account, signed.amount, signed.chain_id, signed.vault), (account, Fixed::ONE, 31_337, VAULT));
+    assert_eq!(
+        (signed.account, signed.amount, signed.chain_id, signed.vault),
+        (account, Fixed::from_int(10), 31_337, VAULT)
+    );
     let replayed = replay_with_signer(
         &node.entries(),
         crate::log::CheckpointDomain { chain_id: 31_337, vault: VAULT },
         AccountId(EnclaveKey::test_key().address()),
     )
     .unwrap();
-    assert_eq!(replayed.engine.accounts()[&account].balance, Fixed::from_int(99999));
+    assert_eq!(replayed.engine.accounts()[&account].balance, Fixed::from_int(99990));
     assert_eq!(replayed.engine.accounts()[&account].withdrawal_nonce, 1);
     assert_eq!(replayed.engine.next_request_nonce(account), 2);
 }
@@ -453,7 +456,7 @@ fn order(key: &SigningKey, nonce: u64) -> Value {
 
 fn withdrawal(key: &SigningKey, nonce: u64) -> Value {
     let account = eip712::address(key.verifying_key());
-    let amount = Fixed::ONE;
+    let amount = Fixed::from_int(10);
     let hash = eip712::withdrawal_hash(&eip712::domain(31_337, VAULT), account, amount, nonce, NOW + 60_000);
     json!(WithdrawalRequest {
         account,

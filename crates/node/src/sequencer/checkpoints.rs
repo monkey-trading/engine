@@ -13,6 +13,9 @@ use crate::checkpoints::Work;
 use crate::log::{Checkpoint, LogEntry};
 use crate::sequencer::{Sequencer, SignedWithdrawal, legacy};
 
+/// A recovered approval: its identity, event index, and latest logged `(signer epoch, expiry)`.
+pub(super) type BacklogEntry = ((AccountId, u64), usize, Option<(u64, u64)>);
+
 pub(super) struct Gate {
     sink: mpsc::Sender<Work>,
     pub registry: Option<crate::checkpoints::Registry>,
@@ -29,8 +32,9 @@ pub(super) struct Gate {
     pub unproved: std::collections::BTreeSet<(AccountId, u64)>,
     pub unregistered: std::collections::BTreeSet<(AccountId, u64)>,
     pub schedule: crate::sequencer::payout_schedule::Schedule,
-    /// Recovered approvals not yet loaded, oldest first, with their event indices.
-    pub backlog: std::collections::VecDeque<((AccountId, u64), usize)>,
+    /// Recovered approvals not yet loaded, oldest first, with their event indices and the latest
+    /// authorization the log holds for each.
+    pub backlog: std::collections::VecDeque<BacklogEntry>,
     /// Loaded recovered approvals that custody has not yet been asked about.
     pub unswept: usize,
     /// Whether a checkpoint is being deferred because the posting queue is full.

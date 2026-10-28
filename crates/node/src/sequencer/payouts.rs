@@ -10,7 +10,7 @@ use tracing::info;
 
 use crate::checkpoints::{APPROVAL_PAGE_SIZE, ApprovalId, LifecycleEvidence};
 use crate::log::LogEntry;
-use crate::sequencer::{Sequencer, SignedWithdrawal};
+use crate::sequencer::{Reissue, Sequencer, SignedWithdrawal};
 use crate::withdrawals::{Authorization, LIFETIME_SECONDS};
 
 /// A signature is delivery progress; the contract's used nonce is the payment authority.
@@ -53,14 +53,19 @@ impl Sequencer {
             return Ok(());
         }
         for _ in 0..BACKLOG_WINDOW {
-            let Some((key, index)) = gate.backlog.pop_front() else { break };
+            let Some((key, index, released)) = gate.backlog.pop_front() else { break };
             let approval = *self
                 .engine
                 .withdrawal_approval(key.0, key.1)
                 .context("immutable approval lacks its validated event order")?;
             let mut payout = Payout::new(approval, index);
             payout.recovered = true;
-            gate.schedule.insert(payout.order, key);
+            payout.released = released;
+            // A signed approval waits for rotation or a request; an unsigned one, or one signed by an
+            // epoch other than the latest observed, is due. The epoch scan cannot see an approval
+            // loaded behind its position.
+            let retired = released.is_none_or(|(epoch, _)| gate.schedule.epoch().is_some_and(|latest| latest != epoch));
+            gate.schedule.insert(payout.order, key, retired);
             gate.payouts.insert(key, payout);
             gate.unproved.insert(key);
             gate.unregistered.insert(key);
@@ -133,7 +138,7 @@ impl Sequencer {
                 gate.unswept -= 1;
             }
             if observed.claimed {
-                gate.schedule.retire(payout.order, payout.released);
+                gate.schedule.retire(payout.order);
                 gate.payouts.remove(&key);
                 if let Some(registry) = &gate.approvals {
                     registry.lock().map_err(|_| anyhow::anyhow!("approval registry is poisoned"))?.remove(&key);
@@ -152,9 +157,7 @@ impl Sequencer {
         let Some(ts) = self.admitted_ts() else { return Ok(()) };
         let issued_at = u64::try_from(ts / 1_000).context("negative payout issue time")?;
         let gate = self.gate.as_mut().expect("checkpoint gate exists");
-        if !gate.schedule.prepare(evidence.signer_epoch, issued_at, &gate.payouts) {
-            return Ok(());
-        }
+        gate.schedule.prepare(evidence.signer_epoch, &gate.payouts);
         let mut releases = Vec::new();
         for _ in 0..crate::checkpoints::APPROVAL_PAGE_SIZE {
             let Some((order, key)) = gate.schedule.next() else { break };
@@ -194,7 +197,6 @@ impl Sequencer {
             self.record(LogEntry::Withdrawal(withdrawal))?;
             let gate = self.gate.as_mut().expect("checkpoint gate exists");
             let payout = gate.payouts.get_mut(&key).expect("pending payout exists");
-            gate.schedule.issued(payout.order, key, payout.released, released.1);
             payout.released = Some(released);
             info!(account = %approval.account, nonce = approval.nonce, approval_seq = approval.approved_seq, "durable withdrawal authorization issued");
         }
@@ -205,6 +207,34 @@ impl Sequencer {
             self.log.sync()?;
         }
         Ok(())
+    }
+
+    /// Queues an authenticated holder's request to sign an approval again once its last
+    /// authorization expired unclaimed or was signed by a retired epoch; the signature follows with
+    /// the next custody evidence, in FIFO order. `replaces` must be the expiry of the latest
+    /// authorization, so one signed request is good for one reissue. Expiry alone never reissues,
+    /// so unclaimed approvals cost nothing until their holder asks.
+    pub(super) fn request_reissue(&mut self, account: AccountId, nonce: u64, replaces: u64) -> Reissue {
+        let Some(ts) = self.admitted_ts() else { return Reissue::Unavailable };
+        let Some(gate) = &mut self.gate else { return Reissue::Unavailable };
+        let Some(payout) = gate.payouts.get(&(account, nonce)) else { return Reissue::Unknown };
+        let order = payout.order;
+        let current = payout.released.map_or(0, |(_, expires_at)| expires_at);
+        if replaces != current {
+            return Reissue::Stale { current };
+        }
+        let now = u64::try_from(ts / 1_000).unwrap_or_default();
+        if let Some((epoch, expires_at)) = payout.released
+            && now < expires_at
+            && gate.schedule.epoch().is_none_or(|latest| latest == epoch)
+        {
+            return Reissue::StillValid { expires_at };
+        }
+        if !gate.schedule.is_pending(order) {
+            gate.schedule.request(order);
+            info!(%account, nonce, "withdrawal reissue requested");
+        }
+        Reissue::Queued
     }
 
     /// Builds the common stream/log representation before the enclave signs it.

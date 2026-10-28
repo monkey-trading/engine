@@ -325,6 +325,10 @@ pub enum Reject {
     InsufficientFunds {
         available: Fixed,
     },
+    /// From `V34`, a withdrawal of whole USDC below `minimum`.
+    BelowMinimumWithdrawal {
+        minimum: Fixed,
+    },
     HouseCapacity,
     /// A limit or stop order from an account that already rests `max`, the parameters' cap.
     TooManyOrders {

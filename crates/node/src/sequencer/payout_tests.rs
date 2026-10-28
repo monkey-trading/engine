@@ -16,7 +16,7 @@ use tokio::sync::{broadcast, mpsc, watch};
 use crate::checkpoints::{AcceptedCheckpoint, ApprovalId, ApprovalStatus, LifecycleEvidence, SignerHistory};
 use crate::clock::test_clock::TestClock;
 use crate::log::{Checkpoint, CheckpointDomain, LogEntry, Manifest};
-use crate::sequencer::{Sequencer, SequencerConfig, SignedWithdrawal};
+use crate::sequencer::{Reissue, Sequencer, SequencerConfig, SignedWithdrawal};
 use crate::tee::EnclaveKey;
 use crate::test_support::{
     TRADER, deposit, dev_config, log_entries, sample_around, scratch_dir, sequencer_config, withdraw,
@@ -147,43 +147,24 @@ fn out_of_order_claim_pages_cannot_sign_a_later_approval_first() {
 }
 
 #[test]
-fn restart_redelivers_a_previously_signed_unpaid_approval_without_debiting_it_again() {
+fn restart_keeps_a_signed_unpaid_approval_without_debiting_it_or_signing_it_again() {
     let mut node = Node::new("payout-restart");
     let cp = node.approve();
     node.seq.release_payouts(&node.evidence(&cp)).unwrap();
+    node.seq.flush().unwrap();
+    let issued = node.signed.try_recv().unwrap();
     let before = node.seq.engine.accounts()[&TRADER].balance;
-    let key = node.seq.key.clone();
-    let domain = node.domain();
-    let cfg = SequencerConfig {
-        checkpoint_parent: crate::log::CheckpointParent {
-            has_checkpoint: true,
-            seq: cp.seq,
-            root: cp.root.parse().unwrap(),
-        },
-        ..node.config()
-    };
-    let (stream, _) = broadcast::channel(128);
-    let (withdrawals, mut signed) = mpsc::unbounded_channel();
-    // An unflushed stream can disappear while its signed log entry is already durable.
-    let log = Sequencer::read_log_for_recovery(
-        &node.dir,
-        Some(domain),
-        Some(AccountId(key.address())),
-        Some(cfg.checkpoint_parent),
-        |_| {},
-    )
-    .unwrap();
-    let mut recovered = Sequencer::recover_from(log, cfg, key, stream, withdrawals).unwrap();
-    assert!(signed.try_recv().is_err(), "fresh authenticated time and custody evidence are required");
-    recovered.trust(sample_around(node.clock.as_ref())).unwrap();
-    recovered.checkpoint_status(Some(cp.seq), Some(crate::checkpoints::Health::Healthy)).unwrap();
-    recovered.release_payouts(&node.evidence(&cp)).unwrap();
-    recovered.flush().unwrap();
-    let redelivered = signed.try_recv().unwrap();
-    assert_eq!((redelivered.account, redelivered.nonce, redelivered.amount), (TRADER, 1, Fixed::from_int(40)));
-    assert_eq!(recovered.engine.accounts()[&TRADER].balance, before);
-    assert_eq!(recovered.engine.withdrawal_approvals().count(), 1);
-    assert!(signed.try_recv().is_err());
+    let mut recovered = node.restart(&cp);
+    assert!(recovered.signed.try_recv().is_err(), "fresh authenticated time and custody evidence are required");
+    recovered.seq.release_payouts(&recovered.evidence(&cp)).unwrap();
+    recovered.seq.flush().unwrap();
+    assert!(recovered.signed.try_recv().is_err(), "the durable authorization stands; nothing is signed again");
+    let payout = &recovered.seq.gate.as_ref().unwrap().payouts[&(TRADER, 1)];
+    let (account, nonce, amount) = (payout.approval.account, payout.approval.nonce, payout.approval.amount);
+    assert_eq!((account, nonce, amount), (TRADER, issued.nonce, issued.amount));
+    assert_eq!(payout.released, issued.authorization.map(|auth| (auth.signer_epoch, auth.expires_at)));
+    assert_eq!(recovered.seq.engine.accounts()[&TRADER].balance, before);
+    assert_eq!(recovered.seq.engine.withdrawal_approvals().count(), 1);
 }
 
 #[test]
@@ -210,29 +191,28 @@ fn signed_payout_history_cannot_disable_its_checkpoint_gate_on_restart() {
 }
 
 #[test]
-fn expiry_reissues_the_same_nonce_and_authenticated_claim_stops_delivery() {
+fn expiry_alone_never_reissues_and_authenticated_claim_stops_delivery() {
     let mut node = Node::new("payout-expiry");
     let cp = node.approve();
     node.seq.release_payouts(&node.evidence(&cp)).unwrap();
     node.seq.flush().unwrap();
-    let first = node.signed.try_recv().unwrap();
+    node.signed.try_recv().unwrap();
     node.seq.release_payouts(&node.evidence(&cp)).unwrap();
     node.seq.flush().unwrap();
     assert!(node.signed.try_recv().is_err(), "an unexpired authorization is not repeatedly appended");
-    node.clock.advance(Duration::from_secs(86_400));
-    node.seq.trust(sample_around(node.clock.as_ref())).unwrap();
-    node.seq.release_payouts(&node.evidence(&cp)).unwrap();
-    node.seq.flush().unwrap();
-    let second = node.signed.try_recv().unwrap();
-    assert_eq!((second.account, second.amount, second.nonce), (first.account, first.amount, first.nonce));
-    assert_eq!(second.authorization.as_ref().unwrap().issued_at, first.authorization.as_ref().unwrap().expires_at);
-    assert_ne!(second.signature, first.signature);
+    for _ in 0..3 {
+        node.clock.advance(Duration::from_secs(crate::withdrawals::LIFETIME_SECONDS));
+        node.seq.trust(sample_around(node.clock.as_ref())).unwrap();
+        node.seq.release_payouts(&node.evidence(&cp)).unwrap();
+        node.seq.flush().unwrap();
+        assert!(node.signed.try_recv().is_err(), "an expired authorization is not reissued on a schedule");
+    }
     let mut paid = node.evidence(&cp);
     paid.approvals[0].claimed = true;
     node.seq.release_payouts(&paid).unwrap();
     assert!(node.seq.gate.as_ref().unwrap().payouts.is_empty());
     assert!(node.seq.gate.as_ref().unwrap().approvals.as_ref().unwrap().lock().unwrap().is_empty());
-    node.clock.advance(Duration::from_secs(86_400));
+    node.clock.advance(Duration::from_secs(crate::withdrawals::LIFETIME_SECONDS));
     node.seq.trust(sample_around(node.clock.as_ref())).unwrap();
     node.seq.release_payouts(&node.evidence(&cp)).unwrap();
     node.seq.flush().unwrap();
@@ -354,6 +334,35 @@ impl Node {
         assert_eq!(seq.engine.protocol_version(), ProtocolVersion::V23);
         seq.checkpoint_status(seq.last_seq(), Some(crate::checkpoints::Health::Healthy)).unwrap();
         Self { seq, clock, dir, work, _queued: queued, signed }
+    }
+
+    /// Recovers the sequencer from the log it wrote, as a same-key restart does.
+    fn restart(&self, cp: &Checkpoint) -> Node {
+        let key = self.seq.key.clone();
+        let cfg = SequencerConfig {
+            checkpoint_parent: crate::log::CheckpointParent {
+                has_checkpoint: true,
+                seq: cp.seq,
+                root: cp.root.parse().unwrap(),
+            },
+            ..self.config()
+        };
+        let (stream, _) = broadcast::channel(128);
+        let (withdrawals, signed) = mpsc::unbounded_channel();
+        // An unflushed stream can disappear while its signed log entry is already durable.
+        let log = Sequencer::read_log_for_recovery(
+            &self.dir,
+            Some(self.domain()),
+            Some(AccountId(key.address())),
+            Some(cfg.checkpoint_parent),
+            |_| {},
+        )
+        .unwrap();
+        let mut seq = Sequencer::recover_from(log, cfg, key, stream, withdrawals).unwrap();
+        seq.trust(sample_around(self.clock.as_ref())).unwrap();
+        seq.checkpoint_status(Some(cp.seq), Some(crate::checkpoints::Health::Healthy)).unwrap();
+        let (work, queued) = mpsc::channel(64);
+        Node { seq, clock: self.clock.clone(), dir: self.dir.clone(), work, _queued: queued, signed }
     }
 
     fn approve(&mut self) -> Checkpoint {

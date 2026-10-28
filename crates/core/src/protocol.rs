@@ -166,11 +166,14 @@ pub enum ProtocolVersion {
     /// [`crate::corporate::MAX_CATCH_UP_BOUNDARIES`] rollover or corporate boundaries past the engine's
     /// last is deferred: it applies that many and nothing else, but for a benchmark batch's outcome.
     V33,
+    /// A withdrawal request is at least 10 USDC, the vault's deposit floor, and the queue approves
+    /// less than that only as a request's final remainder.
+    V34,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V33;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V34;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

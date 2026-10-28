@@ -132,7 +132,7 @@ pub(crate) fn session(h: &mut Harness) {
     // Withdrawals: approved with a payout path, refused without one, and refused for a sanctioned
     // account; then a resting order cancels without screening.
     let v = Client { expires_at: h.ts + 60_000, ..v };
-    let events = s.withdraw(h, &v, true, clear);
+    let events = s.withdraw(h, &v, "1", true, clear);
     assert!(
         matches!(
             &events[..],
@@ -142,10 +142,10 @@ pub(crate) fn session(h: &mut Harness) {
         "{events:?}"
     );
     assert!(matches!(
-        s.withdraw(h, &v, false, clear)[..],
+        s.withdraw(h, &v, "1", false, clear)[..],
         [Event::WithdrawalRejected { reason: Reject::PayoutUnavailable, .. }]
     ));
-    let events = s.withdraw(h, &v, true, SanctionsStatus::Sanctioned);
+    let events = s.withdraw(h, &v, "1", true, SanctionsStatus::Sanctioned);
     assert!(matches!(
         events[..],
         [Event::WithdrawalRejected { reason: Reject::Access { reason: AccessReject::AccountSanctioned }, .. }]
@@ -165,8 +165,8 @@ pub(crate) fn session(h: &mut Harness) {
 }
 
 /// The session's screening authority.
-struct Session {
-    source: SigningKey,
+pub(crate) struct Session {
+    pub(crate) source: SigningKey,
 }
 
 impl Session {
@@ -226,10 +226,17 @@ impl Session {
         h.cmd(Command::AccessOrder { request, evidence: self.sign(h, screening) })
     }
 
-    /// A screened withdrawal of 1 from `client`, with `status` for the account.
-    fn withdraw(&self, h: &mut Harness, client: &Client, payout: bool, status: SanctionsStatus) -> Vec<Event> {
+    /// A screened withdrawal of `amount` from `client`, with `status` for the account.
+    pub(crate) fn withdraw(
+        &self,
+        h: &mut Harness,
+        client: &Client,
+        amount: &str,
+        payout: bool,
+        status: SanctionsStatus,
+    ) -> Vec<Event> {
         let nonce = h.engine.next_request_nonce(client.account);
-        let Command::Withdraw { account, amount, auth } = client.withdraw(nonce, "1") else { unreachable!() };
+        let Command::Withdraw { account, amount, auth } = client.withdraw(nonce, amount) else { unreachable!() };
         let hash = eip712::withdrawal_hash(&client.domain, account, amount, nonce, client.expires_at);
         let screening = Screening { account_status: status, ..self.screening(h, hash, Some(account), None) };
         let request = WithdrawalRequest { account, amount, auth };

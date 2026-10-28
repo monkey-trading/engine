@@ -83,7 +83,7 @@ fn access_withdrawals_record_refusals_and_recover_only_checkpoint_confirmed_appr
     );
     assert!(seq.gate.as_ref().unwrap().pending.is_empty());
     seq.checkpoint_status(seq.last_seq(), Some(crate::checkpoints::Health::Healthy)).unwrap();
-    let command = crate::test_support::access::withdrawal(&seq.engine, 1, Fixed::ONE, true);
+    let command = crate::test_support::access::withdrawal(&seq.engine, 1, Fixed::from_int(10), true);
     let events = seq.sequence(command).unwrap().unwrap();
     // From V22 a withdrawal reserves its payout in the public queue before its approval.
     assert!(
@@ -93,13 +93,13 @@ fn access_withdrawals_record_refusals_and_recover_only_checkpoint_confirmed_appr
                 Event::WithdrawalQueued { amount, .. },
                 Event::WithdrawalApproved { amount: approved, nonce: 1, .. },
                 Event::WithdrawalQueueUpdated { remaining, .. },
-            ] if *amount == Fixed::ONE && *approved == Fixed::ONE && *remaining == Fixed::ZERO
+            ] if *amount == Fixed::from_int(10) && *approved == Fixed::from_int(10) && *remaining == Fixed::ZERO
         ),
         "{events:?}"
     );
     let approval = seq.last_seq().unwrap();
-    assert_eq!(seq.engine.accounts()[&account].balance, Fixed::from_int(99));
-    crate::checkpoints::accounting::tests::assert_matches(seq.accounting, &seq.engine, Fixed::ONE);
+    assert_eq!(seq.engine.accounts()[&account].balance, Fixed::from_int(90));
+    crate::checkpoints::accounting::tests::assert_matches(seq.accounting, &seq.engine, Fixed::from_int(10));
     seq.flush().unwrap();
     assert!(signed.try_recv().is_err(), "admission does not release an uncommitted signature");
     drop(seq);
@@ -107,7 +107,7 @@ fn access_withdrawals_record_refusals_and_recover_only_checkpoint_confirmed_appr
         Sequencer::recover(config(), Arc::new(EnclaveKey::test_key()), broadcast::channel(128).0, withdrawals).unwrap();
     recovered.trust(sample_around(clock.as_ref())).unwrap();
     assert_eq!(recovered.gate.as_ref().unwrap().payouts.len(), 1);
-    crate::checkpoints::accounting::tests::assert_matches(recovered.accounting, &recovered.engine, Fixed::ONE);
+    crate::checkpoints::accounting::tests::assert_matches(recovered.accounting, &recovered.engine, Fixed::from_int(10));
     let checkpoint = log_entries(&dir)
         .into_iter()
         .rev()
@@ -142,7 +142,10 @@ fn access_withdrawals_record_refusals_and_recover_only_checkpoint_confirmed_appr
     assert!(signed.try_recv().is_err(), "custody cannot see an unflushed outbox");
     recovered.flush().unwrap();
     let released = signed.try_recv().unwrap();
-    assert_eq!((released.account, released.amount, released.approved_seq), (account, Fixed::ONE, Some(approval)));
+    assert_eq!(
+        (released.account, released.amount, released.approved_seq),
+        (account, Fixed::from_int(10), Some(approval))
+    );
     recovered.release_payouts(&evidence(approval)).unwrap();
     recovered.flush().unwrap();
     assert!(signed.try_recv().is_err(), "the same confirmed prefix never releases twice");
@@ -153,5 +156,5 @@ fn access_withdrawals_record_refusals_and_recover_only_checkpoint_confirmed_appr
     )
     .unwrap();
     assert!(replayed.deferred.is_empty());
-    assert_eq!(replayed.engine.accounts()[&account].balance, Fixed::from_int(99));
+    assert_eq!(replayed.engine.accounts()[&account].balance, Fixed::from_int(90));
 }
