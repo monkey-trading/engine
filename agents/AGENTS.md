@@ -187,13 +187,13 @@ an index: load only the rule whose hint matches the current action.
   job must be added to its `needs` and its area map, and every path it reads to `changes`. Each
   job but `changes` and `ci-passed` has a `cancel-<job>` companion that runs only on a pull
   request, and only if that job fails; it cancels the run with its own `actions: write` token (the
-  only jobs that hold it; they run no repository code), so the first failed job stops the rest,
-  `fail-fast` is on for the matrix, and `ci-passed` fails on the cancelled jobs; a new job gets a
-  companion. A push to `main` and a manual run have no cancellation: every job runs to the end. A
-  fork PR's read-only token cannot cancel, so the companion warns and the run continues as before,
-  and a job that times out is cancelled rather than failed, so the run continues too. `gh run
-  rerun --failed` re-runs the failed, cancelled, and unstarted jobs with `ci-passed`, so a re-run
-  after a flake repeats everything the first failure cut short. The test
+  only jobs that hold it; they run no repository code), so the first failed job stops the rest and
+  `ci-passed` fails on the cancelled jobs; a new job gets a companion. The image matrix's
+  `fail-fast` is likewise on only for a pull request, so a push to `main` and a manual run cancel
+  nothing: every job runs to the end. A fork PR's read-only token cannot cancel, so the companion
+  warns and the run continues as before, and a job that times out is cancelled rather than failed,
+  so the run continues too. `gh run rerun --failed` re-runs the failed, cancelled, and unstarted
+  jobs with `ci-passed`, so a re-run after a flake repeats everything the first failure cut short. The test
   job also runs the corporate-action dev scenario and checks command latency budgets against
   100k-account fixtures.
 - **agents/** — this index, `rules/`, and `skills/` (incl. `skills/vendor/` pull-on-demand

@@ -385,7 +385,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.image == 'true'
     strategy:
-      fail-fast: true
+      fail-fast: ${{ github.event_name == 'pull_request' }}
       matrix:
         run: [first, second]
     runs-on: ubuntu-24.04
@@ -450,11 +450,12 @@ jobs:
   # only when that job itself fails (`failure()` alone is also true for a failed ancestor such as
   # `changes`). It cancels the run, so the first failed job stops the rest from spending runner
   # minutes; `ci-passed` still runs and fails on the cancelled jobs. A push to `main` and a manual
-  # run skip the companions: every job runs to the end, so caches are saved whole and every failure
-  # shows. The companions run no repository code, so `actions: write` is held by them
-  # alone. They are not in `ci-passed`'s `needs`. `changes` has none, so its failure leaves the
-  # other jobs to skip as before. A job that times out is cancelled, not failed, so its companion
-  # skips and the run continues. A new job gets a companion.
+  # run skip the companions and the image matrix's `fail-fast`: every job runs to the end, so
+  # caches are saved whole and every failure shows. The companions run no repository code, so
+  # `actions: write` is held by them alone. They are not in `ci-passed`'s `needs`. `changes` has
+  # none, so its failure leaves the other jobs to skip as before. A job that times out is
+  # cancelled, not failed, so its companion skips and the run continues. A new job gets a
+  # companion.
   cancel-fmt:
     needs: fmt
     if: failure() && needs.fmt.result == 'failure' && github.event_name == 'pull_request'
