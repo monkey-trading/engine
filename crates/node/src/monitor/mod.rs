@@ -5,7 +5,8 @@
 //! market no configured feed prices is named once, in its own `market_unfed` Warning, and never
 //! pages. A sequencer that answers no sample for that long raises `sequencer_stalled`, since no
 //! market can be priced meanwhile. A market priced from futures that prices from the last contract
-//! its listing names raises `futures_last_contract`. It reads the engine's state, not the feeds, so any feed that
+//! its listing names raises `futures_last_contract`, and one whose next contract's roll time has
+//! passed with no gap recorded raises `futures_roll_overdue`. It reads the engine's state, not the feeds, so any feed that
 //! sequences `Command::Prices` is covered.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -51,6 +52,9 @@ pub struct MarketSample {
     /// For a market priced from futures that prices from the last contract its listing names, that
     /// contract: it can roll nowhere once the contract expires.
     pub last_contract: Option<String>,
+    /// For a market priced from futures whose next contract's roll time has passed with no gap
+    /// recorded, that next contract: the market cannot roll until both contracts have an index.
+    pub roll_overdue: Option<String>,
 }
 
 /// Why the engine could not price a trade in a market: its own index, or, for a market quoted in
@@ -74,6 +78,12 @@ pub struct NoPrice {
 /// Markets priced from futures alerted as pricing from the last contract their listing names.
 #[derive(Default)]
 pub struct LastContract {
+    alerted: BTreeSet<MarketId>,
+}
+
+/// Markets priced from futures alerted as past a roll time with no gap recorded.
+#[derive(Default)]
+pub struct RollOverdue {
     alerted: BTreeSet<MarketId>,
 }
 
@@ -108,6 +118,13 @@ impl Sample {
                     .as_ref()
                     .filter(|_| market.next_contract().is_none())
                     .map(|futures| futures.contract.clone()),
+                roll_overdue: market
+                    .futures
+                    .as_ref()
+                    .filter(|futures| futures.gap.is_none())
+                    .and(market.next_contract())
+                    .filter(|next| next.from.timestamp_millis() <= now)
+                    .map(|next| next.contract.clone()),
             })
             .collect();
         Sample { house_nav: engine.house_nav(), house_gross_exposure: engine.house_gross_exposure(), markets }
@@ -230,6 +247,36 @@ impl LastContract {
     }
 }
 
+impl RollOverdue {
+    /// Warns once for each market priced from futures whose next contract's roll time has passed
+    /// with no gap recorded, so the operator checks the next contract's feeds before the front
+    /// stops quoting: the market rolls only once both contracts have an index. Resolves when the
+    /// market rolls, or records a gap and so is no longer overdue.
+    pub fn check(&mut self, sample: &Sample) {
+        for market in &sample.markets {
+            match &market.roll_overdue {
+                Some(next) if self.alerted.insert(market.id) => {
+                    warn!(
+                        alert = "futures_roll_overdue",
+                        market = market.id,
+                        "{} is past the roll time of {next} with no gap recorded: check the feeds quoting {next}",
+                        market.symbol
+                    );
+                }
+                None if self.alerted.remove(&market.id) => {
+                    info!(
+                        alert_resolved = "futures_roll_overdue",
+                        market = market.id,
+                        "{} has rolled or recorded a gap",
+                        market.symbol
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 impl Stall {
     /// Fires `sequencer_stalled` once samples have gone unanswered for `after`, and resolves it at
     /// the next answer.
@@ -262,7 +309,7 @@ pub async fn run(
     let mut every = interval(SAMPLE_EVERY);
     every.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let (mut no_price, mut stall) = (NoPrice::new(sources.keys().copied().collect()), Stall::default());
-    let mut last_contract = LastContract::default();
+    let (mut last_contract, mut roll_overdue) = (LastContract::default(), RollOverdue::default());
     loop {
         every.tick().await;
         metrics.queue_depth.set(queue_depth(&tx));
@@ -284,6 +331,7 @@ pub async fn run(
         sample.record(&metrics, &sources, started_ms);
         no_price.check(&sample, Instant::now(), no_price_after);
         last_contract.check(&sample);
+        roll_overdue.check(&sample);
     }
 }
 
