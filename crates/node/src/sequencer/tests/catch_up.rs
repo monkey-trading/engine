@@ -49,7 +49,8 @@ fn a_snapshot_after_a_long_outage_applies_first_and_a_rejected_one_catches_up_no
     let mut f = Fixture::new("seq-catch-up-snapshot", START, true, true);
     f.submit(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V33 }));
     let before = (f.seq.engine.next_rollover(), f.balance());
-    f.advance_to(FIRST + (MAX_CATCH_UP_BOUNDARIES as Millis + 40) * DAY);
+    // More than two batches wait, so the snapshot's own batch leaves a whole one for the drain after it.
+    f.advance_to(FIRST + (2 * MAX_CATCH_UP_BOUNDARIES as Millis + 40) * DAY);
     f.seq.trust(trusted(f.clock.as_ref())).unwrap();
 
     // A snapshot the engine rejects leaves the backlog alone: no tick, no financing.
@@ -64,15 +65,17 @@ fn a_snapshot_after_a_long_outage_applies_first_and_a_rejected_one_catches_up_no
     // An applied one reports its outcome, releases the gate, and the ticks finish the catch-up after it.
     let applied = f.submit(f.snapshot(&[]));
     assert!(applied.contains(&Event::AdminApplied), "{applied:?}");
+    assert!(applied.iter().any(|event| matches!(event, Event::CatchUpDeferred { .. })), "{applied:?}");
     assert!(!f.seq.benchmark_sync);
-    // The ticks leave at most one batch for the next command, which is then not deferred.
-    let next = f.submit(Command::Tick);
-    assert!(!next.iter().any(|event| matches!(event, Event::CatchUpDeferred { .. })), "{next:?}");
-    assert!(f.seq.engine.next_rollover().unwrap() > f.clock.true_ms());
+    // The snapshot's own drain, not a later command, finishes the catch-up.
+    assert!(!f.seq.engine.catch_up_pending(f.clock.true_ms()));
     let logged = commands(&log_entries(&f.dir));
     let snapshot = logged.iter().rposition(|command| matches!(command, Command::SignedAdmin(_))).unwrap();
     assert!(logged[snapshot + 1..].iter().all(|command| matches!(command, Command::Tick)), "{logged:?}");
     assert!(logged.len() > snapshot + 1);
+    let next = f.submit(Command::Tick);
+    assert!(!next.iter().any(|event| matches!(event, Event::CatchUpDeferred { .. })), "{next:?}");
+    assert!(f.seq.engine.next_rollover().unwrap() > f.clock.true_ms());
     f.seq.flush().unwrap();
     let mut replayed = replay(&log_entries(&f.dir)).unwrap();
     assert_eq!(replayed.engine.state_root(), f.seq.engine.state_root());
