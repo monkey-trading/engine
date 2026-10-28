@@ -63,7 +63,7 @@ an index: load only the rule whose hint matches the current action.
   (`log/command_seal.rs`, `sequencer/origin.rs`), bounded FIFO reissue scheduling
   (`sequencer/payout_schedule.rs`), and public queue/account-position reads.
   Withdrawal authorizations carry EIP-712 data and an approval inclusion proof; custody's used nonce
-  determines payment, and unpaid approvals are reissued after expiry or signer rotation. It also has
+  determines payment, and unpaid approvals are reissued on signer rotation or on their holder's request, never on a schedule. It also has
   price feeds: live crypto
   venue WebSockets and RWA market-data vendors (`feeds/`, one adapter per venue: Massive and
   TraderMade over WebSocket, Databento's live gateway over TCP, with API keys read from the

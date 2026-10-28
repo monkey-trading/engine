@@ -8,12 +8,16 @@ use crate::Fixed;
 use crate::engine::Engine;
 use crate::event::Event;
 use crate::merkle::withdrawal_approval_key;
+use crate::protocol::ProtocolVersion;
 use crate::types::AccountId;
 
 /// A protocol work bound: one command creates at most this many approval leaves and payouts.
 pub const MAX_WITHDRAWAL_APPROVALS_PER_COMMAND: usize = 16;
 /// A query work bound: each page examines at most this many requests plus one continuation probe.
 pub const MAX_WITHDRAWAL_QUEUE_PAGE_SIZE: usize = 200;
+/// From `V34`, the least a request reserves and the queue approves short of a request's remainder:
+/// 10 USDC, the vault's deposit floor.
+pub const MIN_WITHDRAWAL: Fixed = Fixed::from_int(10);
 /// One USDC base unit (six decimals) in the engine's nine-decimal representation.
 const USDC_BASE_UNIT_RAW: i128 = 1_000;
 
@@ -131,6 +135,10 @@ impl Engine {
             let cash = self.withdrawal_cash.expect("V22 initializes physical cash on activation");
             let amount = head.remaining.min(whole_usdc(cash.max(Fixed::ZERO)));
             if !amount.is_positive() {
+                break;
+            }
+            // A part below the minimum waits for more cash unless it settles the request.
+            if self.protocol_version >= ProtocolVersion::V34 && amount < head.remaining && amount < MIN_WITHDRAWAL {
                 break;
             }
             let acct = self.accounts.get_mut(&head.account).expect("a queued account exists");

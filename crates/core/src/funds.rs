@@ -17,7 +17,7 @@ use crate::event::{Event, Reject};
 use crate::fixed::Rounding;
 use crate::protocol::ProtocolVersion;
 use crate::types::{AccountId, MarketId};
-use crate::withdrawal::whole_usdc;
+use crate::withdrawal::{MIN_WITHDRAWAL, whole_usdc};
 
 impl Engine {
     /// Credits legacy or mock cash once; receipt-finality rules refuse the legacy EVM route.
@@ -89,6 +89,8 @@ impl Engine {
             Some(reason)
         } else if !amount.is_valid_input() || !payable.is_positive() {
             Some(Reject::InvalidAmount)
+        } else if self.protocol_version >= ProtocolVersion::V34 && payable < MIN_WITHDRAWAL {
+            Some(Reject::BelowMinimumWithdrawal { minimum: MIN_WITHDRAWAL })
         } else if payable > available {
             Some(Reject::InsufficientFunds { available })
         } else {

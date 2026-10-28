@@ -15,7 +15,7 @@ pub use replay::{Replayed, replay, replay_path, replay_path_in_domain, replay_pa
 mod checkpoints;
 use checkpoints::Gate;
 mod messages;
-pub use messages::{Query, Request, SignedWithdrawal, StreamBody, StreamMsg};
+pub use messages::{Query, Reissue, Request, SignedWithdrawal, StreamBody, StreamMsg};
 mod access;
 mod benchmark_schedule;
 mod payout_schedule;
@@ -181,6 +181,9 @@ impl Sequencer {
                     Request::TimeSample(sample) => self.take_sample(sample)?,
                     Request::Sync(reply) => syncs.push(reply),
                     Request::WatchBenchmarkSchedule(reply) => benchmark_watches.push(reply),
+                    Request::ReissueWithdrawal { account, nonce, reply } => {
+                        let _ = reply.send(self.request_reissue(account, nonce));
+                    }
                     Request::CheckpointStatus { posted, health, lifecycle } => {
                         self.checkpoint_status(posted, health)?;
                         if let Some(evidence) = lifecycle {

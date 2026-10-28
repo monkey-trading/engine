@@ -60,7 +60,7 @@ pub(super) async fn payments_and_crashes() -> anyhow::Result<()> {
     invalid.signature = bytes.into();
     node.chain.refuses(invalid.abi_encode()).await?;
 
-    let interrupted = node.client.withdrawal(&trader, "7").await?;
+    let interrupted = node.client.withdrawal(&trader, "11").await?;
     let nonce = interrupted.auth.as_ref().context("signed request")?.nonce;
     std::fs::write(node.dir.join("barrier.arm"), serde_json::to_vec(&Barrier { account: trader.account, nonce })?)?;
     let caller = node.client.clone();
@@ -90,7 +90,7 @@ pub(super) async fn payments_and_crashes() -> anyhow::Result<()> {
     node.wait_withdrawals_enabled().await?;
     let mut stream = node.client.stream().await?;
     node.client.request_withdrawal(&interrupted).await?;
-    let durable = stream.payout(trader.account, 7).await?;
+    let durable = stream.payout(trader.account, 11).await?;
     ensure!(
         entries(&node.dir.join("log"))?.contains(&LogEntry::Withdrawal(durable.clone())),
         "stream payout is not durable"
@@ -99,10 +99,10 @@ pub(super) async fn payments_and_crashes() -> anyhow::Result<()> {
     drop(stream);
     node.restart().await?;
     node.wait_withdrawals_enabled().await?;
-    node.client.wait_balance(&trader, "83").await?;
+    node.client.wait_balance(&trader, "79").await?;
     let mut stream = node.client.stream().await?;
     let recovered_first = stream.payout(trader.account, 10).await?;
-    let recovered = stream.payout(trader.account, 7).await?;
+    let recovered = stream.payout(trader.account, 11).await?;
     ensure!(
         recovered.nonce == durable.nonce && recovered.approved_seq == durable.approved_seq,
         "restart changed payout identity"
@@ -123,16 +123,16 @@ pub(super) async fn payments_and_crashes() -> anyhow::Result<()> {
 
     // A new release requires the real worker to reconcile the reduced token balance against its
     // independently read cumulative paid counter, not a manually supplied healthy flag.
-    let next = node.client.withdrawal(&trader, "1").await?;
+    let next = node.client.withdrawal(&trader, "12").await?;
     node.client.request_withdrawal(&next).await?;
-    pay(&node, &stream.payout(trader.account, 1).await?).await?;
-    node.client.wait_balance(&trader, "82").await?;
+    pay(&node, &stream.payout(trader.account, 12).await?).await?;
+    node.client.wait_balance(&trader, "67").await?;
     ensure!(
-        node.chain.read(node.chain.vault, totalWithdrawnCall {}).await? == U256::from(18_000_000),
+        node.chain.read(node.chain.vault, totalWithdrawnCall {}).await? == U256::from(33_000_000),
         "wrong cumulative paid units"
     );
     ensure!(
-        node.chain.read(node.chain.token, balanceOfCall { owner: node.chain.vault }).await? == U256::from(82_000_000),
+        node.chain.read(node.chain.token, balanceOfCall { owner: node.chain.vault }).await? == U256::from(67_000_000),
         "wrong final Vault collateral"
     );
     drop(stream);

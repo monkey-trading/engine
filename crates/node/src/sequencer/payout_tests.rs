@@ -16,7 +16,7 @@ use tokio::sync::{broadcast, mpsc, watch};
 use crate::checkpoints::{AcceptedCheckpoint, ApprovalId, ApprovalStatus, LifecycleEvidence, SignerHistory};
 use crate::clock::test_clock::TestClock;
 use crate::log::{Checkpoint, CheckpointDomain, LogEntry, Manifest};
-use crate::sequencer::{Sequencer, SequencerConfig, SignedWithdrawal};
+use crate::sequencer::{Reissue, Sequencer, SequencerConfig, SignedWithdrawal};
 use crate::tee::EnclaveKey;
 use crate::test_support::{
     TRADER, deposit, dev_config, log_entries, sample_around, scratch_dir, sequencer_config, withdraw,
@@ -210,29 +210,28 @@ fn signed_payout_history_cannot_disable_its_checkpoint_gate_on_restart() {
 }
 
 #[test]
-fn expiry_reissues_the_same_nonce_and_authenticated_claim_stops_delivery() {
+fn expiry_alone_never_reissues_and_authenticated_claim_stops_delivery() {
     let mut node = Node::new("payout-expiry");
     let cp = node.approve();
     node.seq.release_payouts(&node.evidence(&cp)).unwrap();
     node.seq.flush().unwrap();
-    let first = node.signed.try_recv().unwrap();
+    node.signed.try_recv().unwrap();
     node.seq.release_payouts(&node.evidence(&cp)).unwrap();
     node.seq.flush().unwrap();
     assert!(node.signed.try_recv().is_err(), "an unexpired authorization is not repeatedly appended");
-    node.clock.advance(Duration::from_secs(86_400));
-    node.seq.trust(sample_around(node.clock.as_ref())).unwrap();
-    node.seq.release_payouts(&node.evidence(&cp)).unwrap();
-    node.seq.flush().unwrap();
-    let second = node.signed.try_recv().unwrap();
-    assert_eq!((second.account, second.amount, second.nonce), (first.account, first.amount, first.nonce));
-    assert_eq!(second.authorization.as_ref().unwrap().issued_at, first.authorization.as_ref().unwrap().expires_at);
-    assert_ne!(second.signature, first.signature);
+    for _ in 0..3 {
+        node.clock.advance(Duration::from_secs(crate::withdrawals::LIFETIME_SECONDS));
+        node.seq.trust(sample_around(node.clock.as_ref())).unwrap();
+        node.seq.release_payouts(&node.evidence(&cp)).unwrap();
+        node.seq.flush().unwrap();
+        assert!(node.signed.try_recv().is_err(), "an expired authorization is not reissued on a schedule");
+    }
     let mut paid = node.evidence(&cp);
     paid.approvals[0].claimed = true;
     node.seq.release_payouts(&paid).unwrap();
     assert!(node.seq.gate.as_ref().unwrap().payouts.is_empty());
     assert!(node.seq.gate.as_ref().unwrap().approvals.as_ref().unwrap().lock().unwrap().is_empty());
-    node.clock.advance(Duration::from_secs(86_400));
+    node.clock.advance(Duration::from_secs(crate::withdrawals::LIFETIME_SECONDS));
     node.seq.trust(sample_around(node.clock.as_ref())).unwrap();
     node.seq.release_payouts(&node.evidence(&cp)).unwrap();
     node.seq.flush().unwrap();

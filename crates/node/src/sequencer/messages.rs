@@ -35,6 +35,25 @@ pub enum Request {
         health: Option<crate::checkpoints::Health>,
         lifecycle: Option<crate::checkpoints::LifecycleEvidence>,
     },
+    /// A holder asks for a fresh authorization of an approval whose last one expired unclaimed.
+    ReissueWithdrawal {
+        account: AccountId,
+        nonce: u64,
+        reply: oneshot::Sender<Reissue>,
+    },
+}
+
+/// The sequencer's answer to a reissue request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reissue {
+    /// Queued behind earlier approvals; the new authorization arrives on the stream.
+    Queued,
+    /// No unpaid approval of this account and nonce is loaded.
+    Unknown,
+    /// The latest authorization is still usable until `expires_at` (unix seconds).
+    StillValid { expires_at: u64 },
+    /// Payouts are not enabled, or no trusted time yet.
+    Unavailable,
 }
 
 /// What `/v1/stream` publishes: each log entry at its offset, in offset order.
