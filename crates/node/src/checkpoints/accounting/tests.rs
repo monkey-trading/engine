@@ -6,6 +6,7 @@ use engine_core::Engine;
 use engine_core::auth::ClientAuth;
 use engine_core::command::{AdminCommand, Sequenced};
 use engine_core::protocol::ProtocolVersion;
+use engine_core::staking::UsdcUnits;
 use engine_core::types::AccountId;
 
 use crate::test_support::{TRADER, dev_config};
@@ -100,6 +101,30 @@ fn only_matching_success_events_count_evm_credit_references() {
 }
 
 #[test]
+fn distributions_preserve_cumulative_credits_and_the_deposit_count() {
+    let mut accounting =
+        Accounting { liabilities: Fixed::from_int(10), deposits: 3, unpaid: Fixed::ZERO, ..Accounting::default() };
+    accounting
+        .apply(
+            &Command::Tick,
+            &[
+                Event::DistributionAllocated { account: TRADER, epoch: 0, amount: UsdcUnits(4) },
+                Event::DistributionAllocated { account: AccountId([1; 20]), epoch: 0, amount: UsdcUnits(2) },
+                Event::DistributionEpochClosed {
+                    epoch: 0,
+                    nav: Fixed::from_int(10),
+                    floor: Fixed::ONE,
+                    excess: UsdcUnits(6),
+                    allocated: UsdcUnits(6),
+                },
+            ],
+        )
+        .unwrap();
+    assert_eq!(accounting.liabilities, Fixed::from_int(10));
+    assert_eq!(accounting.deposits, 3, "allocations move no USDC into or out of the vault");
+}
+
+#[test]
 fn overflow_refuses_the_whole_accounting_batch_without_wrapping() {
     let max = Fixed::from_raw(i128::MAX);
     let cases = [
@@ -142,6 +167,12 @@ fn overflow_refuses_the_whole_accounting_batch_without_wrapping() {
             vec![Event::HouseCapitalMoved { amount: Fixed::ZERO, nav: Fixed::ONE }],
             "deposit count overflow",
         ),
+        (
+            Accounting { liabilities: Fixed::ONE, deposits: 2, unpaid: Fixed::ZERO, ..Accounting::default() },
+            Command::Tick,
+            vec![Event::DistributionAllocated { account: TRADER, epoch: 0, amount: UsdcUnits(u128::MAX) }],
+            "checkpoint distribution overflow",
+        ),
     ];
     for (initial, cmd, events, reason) in cases {
         let mut accounting = initial;
@@ -159,7 +190,10 @@ pub(crate) fn recompute(engine: &Engine, unpaid: Fixed) -> (Fixed, u64) {
     // Uncredited collateral the vault holds: pending and held deposits, receipts among them.
     let held: Fixed = engine.held_deposits().values().map(|hold| hold.deposit.amount).sum();
     let pending: Fixed = engine.pending_deposits().values().map(|deposit| deposit.amount).sum();
-    let liabilities = cash + held + pending;
+    let liabilities = cash
+        + held
+        + pending
+        + Fixed::from_raw(i128::try_from(engine.staking().map_or(0, |s| s.distributed.0)).unwrap() * 1_000);
     let state = receipt_state(engine);
     let historical: BTreeSet<_> = engine.credited_refs_with_prefix("0x").collect();
     let represented: BTreeSet<_> = state

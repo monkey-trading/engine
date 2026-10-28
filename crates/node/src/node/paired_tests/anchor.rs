@@ -11,7 +11,7 @@ use engine_core::Fixed;
 use engine_core::types::AccountId;
 use tokio::sync::{mpsc, watch};
 
-use crate::checkpoints::{CheckpointChain, Poster, VaultState, View};
+use crate::checkpoints::{CheckpointChain, Health, Poster, VaultState, View};
 use crate::config::NodeConfig;
 use crate::log::{Checkpoint, CheckpointDomain, CheckpointParent, LogEntry, Manifest};
 use crate::node::paired_tests::harness::{Node, configuration};
@@ -76,6 +76,7 @@ async fn gated_log() -> (NodeConfig, Vec<Checkpoint>, Checkpoint) {
     cfg.node.checkpoint_every = 2;
     let (work, mut sent) = mpsc::channel(1024);
     let node = Node::start_gated(cfg, CheckpointParent::default(), work).await.unwrap();
+    node.submit(crate::test_support::empty_custody_frontier()).await;
     let mut checkpoints = Vec::new();
     let mut n = 0;
     while checkpoints.is_empty() {
@@ -86,7 +87,10 @@ async fn gated_log() -> (NodeConfig, Vec<Checkpoint>, Checkpoint) {
         }
     }
     let base = checkpoints[0].clone();
-    node.tx.send(Request::CheckpointStatus { posted: Some(base.seq), healthy: true, lifecycle: None }).await.unwrap();
+    node.tx
+        .send(Request::CheckpointStatus { posted: Some(base.seq), health: Some(Health::Healthy), lifecycle: None })
+        .await
+        .unwrap();
     for _ in 0..12 {
         node.submit(deposit(1, &format!("anchor-{n}"))).await;
         n += 1;
@@ -122,6 +126,7 @@ async fn recover(cfg: &NodeConfig, finalized: &Checkpoint) -> anyhow::Result<Opt
             balance: Fixed::ZERO,
             deposits: 0,
             deposited: Fixed::ZERO,
+            distributions_paid: Fixed::ZERO,
         }),
         domain: CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? },
         signer: AccountId(key.address()),

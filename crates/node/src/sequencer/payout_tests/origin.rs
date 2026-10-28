@@ -27,6 +27,14 @@ fn durable_sealed_approval_recovers_before_checkpoint_and_retains_release_gates(
     assert_eq!(recovered.engine.withdrawal_approval(TRADER, 1), Some(&approval));
     assert_eq!(recovered.engine.accounts(), &balances);
     assert!(signed.try_recv().is_err(), "recovery integrity alone grants no payout authority");
+    assert!(queued.try_recv().is_err(), "unvalidated collateral cannot produce a successor signature");
+    let anchors = recovered.take_recovery_checkpoints();
+    assert!(
+        anchors.iter().any(|work| work.checkpoint.seq == parent.seq),
+        "the worker receives the finalized anchor accounting"
+    );
+    recovered.checkpoint_status(Some(parent.seq), Some(crate::checkpoints::Health::Pending)).unwrap();
+    recovered.checkpoint().unwrap();
     let mut recovered_checkpoint = None;
     while let Ok(work) = queued.try_recv() {
         if work.checkpoint.seq == approval.approved_seq {
@@ -40,7 +48,7 @@ fn durable_sealed_approval_recovers_before_checkpoint_and_retains_release_gates(
     let evidence = node.evidence(&checkpoint);
     recovered.release_payouts(&evidence).unwrap();
     assert!(signed.try_recv().is_err(), "unreconciled custody cannot release a recovered approval");
-    recovered.checkpoint_status(Some(checkpoint.seq), true).unwrap();
+    recovered.checkpoint_status(Some(checkpoint.seq), Some(crate::checkpoints::Health::Healthy)).unwrap();
     let mut not_included = evidence.clone();
     not_included.checkpoint_seq = Some(checkpoint.seq - 1);
     recovered.release_payouts(&not_included).unwrap();

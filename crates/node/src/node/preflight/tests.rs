@@ -7,7 +7,7 @@ use std::time::Duration;
 use engine_core::Fixed;
 use engine_core::types::AccountId;
 
-use crate::checkpoints::{CheckpointChain, Poster, VaultState, View};
+use crate::checkpoints::{CheckpointChain, Health, Poster, VaultState, View};
 use crate::history::HistoryPlan;
 use crate::log::CheckpointDomain;
 use crate::node::preflight::finish_preflight;
@@ -109,6 +109,7 @@ async fn rejected_anchor_and_signer_preserve_missing_corrupt_and_wal_history_byt
                         balance: Fixed::ZERO,
                         deposits: 0,
                         deposited: Fixed::ZERO,
+                        distributions_paid: Fixed::ZERO,
                     },
                 },
                 domain: CheckpointDomain { chain_id: 31337, vault: AccountId([0; 20]) },
@@ -175,6 +176,7 @@ async fn replay_valid_truncated_log_cannot_discard_a_newer_valid_history_index()
                 balance: Fixed::from_int(100),
                 deposits: 1,
                 deposited: Fixed::from_int(100),
+                distributions_paid: Fixed::ZERO,
             },
         },
         domain: anchor.domain.unwrap(),
@@ -186,7 +188,7 @@ async fn replay_valid_truncated_log_cannot_discard_a_newer_valid_history_index()
     assert_eq!(files(&root), before);
 }
 
-fn files(root: &Path) -> BTreeMap<std::path::PathBuf, Vec<u8>> {
+pub(super) fn files(root: &Path) -> BTreeMap<std::path::PathBuf, Vec<u8>> {
     let mut result = BTreeMap::new();
     for entry in std::fs::read_dir(root).unwrap() {
         let path = entry.unwrap().path();
@@ -251,7 +253,6 @@ async fn incomplete_genesis_and_missing_checkpoint_service_preserve_history_byte
     use crate::sequencer::{Sequencer, SequencerConfig};
     use crate::test_support::{access, sequencer_config, trusted_now};
     use tokio::sync::{broadcast, mpsc, watch};
-
     for incomplete_genesis in [false, true] {
         let (_guard, mut alerts) = crate::test_support::capture_alerts();
         let root = scratch_dir(&format!("preflight-pure-genesis-{incomplete_genesis}"));
@@ -279,9 +280,16 @@ async fn incomplete_genesis_and_missing_checkpoint_service_preserve_history_byte
         while queued.try_recv().is_ok() {}
         let (tx, rx) = mpsc::channel(64);
         let task = tokio::spawn(seq.run(rx));
-        tx.send(crate::sequencer::Request::CheckpointStatus { posted: None, healthy: true, lifecycle: None })
+        tx.send(crate::sequencer::Request::Submit { cmd: crate::test_support::empty_custody_frontier(), reply: None })
             .await
             .unwrap();
+        tx.send(crate::sequencer::Request::CheckpointStatus {
+            posted: None,
+            health: Some(Health::Healthy),
+            lifecycle: None,
+        })
+        .await
+        .unwrap();
         let builders: [fn(&engine_core::Engine) -> engine_core::command::Command; 3] = [
             |engine| access::declaration(engine, 1),
             |engine| {
@@ -335,6 +343,7 @@ async fn incomplete_genesis_and_missing_checkpoint_service_preserve_history_byte
         }
         drop(tx);
         task.await.unwrap().unwrap();
+        while alerts.try_recv().is_ok() {}
         if incomplete_genesis {
             let mut entries = crate::test_support::log_entries(&cfg.node.log_dir);
             let first = entries.iter().position(|entry| matches!(entry, LogEntry::Command(command) if matches!(command.sequenced.cmd, engine_core::command::Command::Admin(engine_core::command::AdminCommand::SetParams(_))))).unwrap();
@@ -428,6 +437,7 @@ async fn reserved_signature_missing_from_recovered_log_refuses_before_history_mu
                 balance: Fixed::ZERO,
                 deposits: 0,
                 deposited: Fixed::ZERO,
+                distributions_paid: Fixed::ZERO,
             },
             checkpoint,
         },

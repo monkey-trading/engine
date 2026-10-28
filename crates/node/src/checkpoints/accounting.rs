@@ -9,7 +9,7 @@ use engine_core::event::Event;
 use serde::{Deserialize, Serialize};
 use tracing::error;
 
-/// Cash, unpaid approvals, pending and held collateral equal processed custody funding.
+/// Cash, unpaid approvals, allocated distributions, pending and held collateral equal cumulative custody credits.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Accounting {
@@ -97,6 +97,13 @@ impl Accounting {
                     self.unpaid = Fixed::from_raw(
                         self.unpaid.raw().checked_add(amount.raw()).context("checkpoint unpaid approvals overflow")?,
                     );
+                }
+                Event::DistributionAllocated { amount, .. } => {
+                    // Allocations change the claim holder, not cumulative custody credits.
+                    i128::try_from(amount.0)
+                        .ok()
+                        .and_then(|units| units.checked_mul(1_000))
+                        .context("checkpoint distribution overflow")?;
                 }
                 Event::CustodyDepositChanged { receipt, status, principal_delta, uncredited } => {
                     self.receipt_changed(command, receipt, status, *principal_delta, *uncredited)?;

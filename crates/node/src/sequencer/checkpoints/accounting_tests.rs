@@ -47,12 +47,13 @@ fn gated_live_and_recovered_accounting_matches_cash_through_trading_and_withdraw
     seq.activate_legacy_protocol().unwrap();
     seq.genesis(&genesis).unwrap();
     seq.trust(sample_around(clock.as_ref())).unwrap();
+    seq.sequence(crate::test_support::empty_custody_frontier()).unwrap();
     let mut bootstrap = Vec::new();
     while let Ok(work) = queued.try_recv() {
         bootstrap.push(work);
     }
     let finalized = bootstrap.last().unwrap().checkpoint.clone();
-    seq.checkpoint_status(Some(finalized.seq), true).unwrap();
+    seq.checkpoint_status(Some(finalized.seq), Some(crate::checkpoints::Health::Healthy)).unwrap();
     let mut unpaid = Fixed::ZERO;
     let mut live = Vec::new();
     for cmd in [
@@ -105,7 +106,7 @@ fn gated_live_and_recovered_accounting_matches_cash_through_trading_and_withdraw
     let expected = recompute(&seq.engine, unpaid);
     assert_eq!(expected.1, 4, "one client deposit and three successful house references");
     let last = seq.last_seq().unwrap();
-    seq.checkpoint_status(Some(last), true).unwrap();
+    seq.checkpoint_status(Some(last), Some(crate::checkpoints::Health::Healthy)).unwrap();
     assert_matches(seq.accounting, &seq.engine, unpaid);
     seq.flush().unwrap();
     let entries = log_entries(&dir);
@@ -125,8 +126,9 @@ fn gated_live_and_recovered_accounting_matches_cash_through_trading_and_withdraw
         Sequencer::recover(config, key, broadcast::channel(128).0, mpsc::unbounded_channel().0).unwrap();
     assert_matches(recovered.accounting, &recovered.engine, unpaid);
     let restored = recovered.take_recovery_checkpoints();
-    assert_eq!(restored.len(), live.len());
-    for (actual, expected) in restored.iter().zip(&live) {
+    assert_eq!(restored.len(), live.len() + 1);
+    assert_eq!(restored[0].checkpoint, finalized, "the finalized anchor retains its original accounting");
+    for (actual, expected) in restored.iter().skip(1).zip(&live) {
         assert_eq!(actual.checkpoint.signature, expected.checkpoint.signature);
         assert_eq!(actual.checkpoint.seq, expected.checkpoint.seq);
         assert_eq!(
@@ -135,6 +137,9 @@ fn gated_live_and_recovered_accounting_matches_cash_through_trading_and_withdraw
         );
     }
     recovered.trust(sample_around(clock.as_ref())).unwrap();
+    // Recovery revalidates collateral before signing: the worker's first reconciliation lifts
+    // the hold this restart put on it.
+    recovered.checkpoint_status(None, Some(crate::checkpoints::Health::Healthy)).unwrap();
     let (events, _) = apply(&mut recovered, &mut queued, &mut unpaid, deposit(7, "0xafter-restart"));
     assert!(events.iter().any(|event| matches!(event, Event::Deposited { .. })));
     assert_eq!(recompute(&recovered.engine, unpaid), (expected.0 + Fixed::from_int(7), expected.1 + 1));
@@ -192,7 +197,7 @@ fn capture_population(count: u64) -> (Duration, Duration, Duration) {
     seq.genesis(&dev_config().genesis).unwrap();
     seq.trust(sample_around(clock.as_ref())).unwrap();
     while queued.try_recv().is_ok() {}
-    seq.checkpoint_status(seq.last_seq(), true).unwrap();
+    seq.checkpoint_status(seq.last_seq(), Some(crate::checkpoints::Health::Healthy)).unwrap();
     seq.sequence(Command::CustodyFinalised(CustodyCheckpoint {
         block: 0,
         block_hash: B256::repeat_byte(1),

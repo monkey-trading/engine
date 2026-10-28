@@ -52,6 +52,7 @@ impl ReplayedLog {
     /// Checks every pure recovery refusal before history repair or opening the log for append.
     /// Error cases:
     /// - the deployment, genesis, or required checkpoint service differs from the replayed log
+    /// - any restored checkpoint has no provable custody prefix
     pub(crate) fn validate_recovery(&self, cfg: &SequencerConfig<'_>, signer: AccountId) -> anyhow::Result<()> {
         let Replayed { engine, genesis, deferred, requires_checkpoint_gate, legacy_deposits, legacy_approvals, .. } =
             &self.replayed;
@@ -83,6 +84,18 @@ impl ReplayedLog {
         genesis.ensure_matches(&cfg.genesis, &cfg.client_auth, cfg.operator)?;
         if (*requires_checkpoint_gate || !deferred.is_empty()) && cfg.checkpoints.is_none() {
             bail!("checkpoint-gated withdrawals require the checkpoint service");
+        }
+        if cfg.checkpoints.is_some() && cfg.checkpoint_parent.has_checkpoint {
+            let work = self.replayed.recovery_anchor_work.as_ref().filter(|work| {
+                work.checkpoint.seq == cfg.checkpoint_parent.seq
+                    && work.checkpoint.root == cfg.checkpoint_parent.root.to_string()
+            });
+            work.context("finalized recovery anchor lacks authenticated accounting")?;
+        }
+        if cfg.checkpoints.is_some() {
+            for work in self.replayed.recovery_anchor_work.iter().chain(&self.replayed.recovery_work) {
+                work.validate_recovery_prefix()?;
+            }
         }
         // Last, so a log refused for its deployment or genesis says so.
         self.replayed
@@ -214,6 +227,7 @@ impl Sequencer {
             last_checkpoint_ts,
             last_signed_checkpoint,
             recovery_work,
+            recovery_anchor_work,
             recovery_base,
             checkpoint_signers,
             genesis,
@@ -288,6 +302,7 @@ impl Sequencer {
             command_prefix,
             snapshot_base: recovery_base,
             snapshot_work: recovery_work.clone(),
+            snapshot_anchor_work: recovery_anchor_work.clone(),
             snapshot_signers: checkpoint_signers,
             uncaptured: None,
         };
@@ -353,9 +368,11 @@ impl Sequencer {
             if let Some(registry) = &gate.registry {
                 let mut registry =
                     registry.lock().map_err(|_| anyhow::anyhow!("checkpoint work registry is poisoned"))?;
-                registry.extend(recovery_work.iter().map(|work| (work.checkpoint.seq, work.clone())));
+                registry.extend(
+                    recovery_anchor_work.iter().chain(&recovery_work).map(|work| (work.checkpoint.seq, work.clone())),
+                );
             }
-            gate.recovery = recovery_work;
+            gate.recovery = recovery_anchor_work.into_iter().chain(recovery_work).collect();
         }
         if checkpoint_unsigned {
             if sequencer

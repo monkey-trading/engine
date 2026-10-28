@@ -32,20 +32,29 @@ async fn recovered_claims_retire_without_trusted_time_or_healthy_reconciliation(
             .unwrap();
         let balances = node.seq.engine.accounts().clone();
         let key = node.seq.key.clone();
-        let log =
-            Sequencer::read_log_with_trust(&node.dir, Some(node.domain()), Some(AccountId(key.address())), |_| {})
-                .unwrap();
-        let cfg = SequencerConfig {
-            checkpoint_parent: crate::log::CheckpointParent {
-                has_checkpoint: true,
-                seq: last.seq,
-                root: last.root.parse().unwrap(),
-            },
-            ..node.config()
-        };
+        let parent =
+            crate::log::CheckpointParent { has_checkpoint: true, seq: last.seq, root: last.root.parse().unwrap() };
+        let log = Sequencer::read_log_for_recovery(
+            &node.dir,
+            Some(node.domain()),
+            Some(AccountId(key.address())),
+            Some(parent),
+            |_| {},
+        )
+        .unwrap();
+        let cfg = SequencerConfig { checkpoint_parent: parent, ..node.config() };
         let (withdrawals, mut signed) = mpsc::unbounded_channel();
         let mut recovered = Sequencer::recover_from(log, cfg, key, broadcast::channel(128).0, withdrawals).unwrap();
-        recovered.checkpoint_status(Some(last.seq), unavailable_time).unwrap();
+        recovered
+            .checkpoint_status(
+                Some(last.seq),
+                Some(if unavailable_time {
+                    crate::checkpoints::Health::Pending
+                } else {
+                    crate::checkpoints::Health::Healthy
+                }),
+            )
+            .unwrap();
         if !unavailable_time {
             recovered.trust(sample_around(node.clock.as_ref())).unwrap();
         }
@@ -54,6 +63,7 @@ async fn recovered_claims_retire_without_trusted_time_or_healthy_reconciliation(
         // and its claim is final, so the work is canonical despite the unscanned ledger receipts.
         let work = Work {
             deposits: 1,
+            distributed: Default::default(),
             coverage: crate::checkpoints::DepositCoverage::Canonical,
             ..Work::capture(last.clone(), node.seq.accounting, &node.seq.engine)
         };
@@ -138,6 +148,7 @@ impl ClaimChain {
             balance: self.work.liabilities - lifecycle.total_withdrawn - if healthy { Fixed::ZERO } else { Fixed::ONE },
             deposits: self.work.deposits,
             deposited: self.work.liabilities,
+            distributions_paid: engine_core::Fixed::ZERO,
         };
         Observation { view, state, lifecycle: Some(lifecycle) }
     }

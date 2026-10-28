@@ -19,14 +19,17 @@ use alloy::rpc::types::{Block, Filter, Header, Log, TransactionRequest};
 use alloy::sol;
 use alloy::sol_types::{SolCall, SolEvent};
 use alloy::transports::http::reqwest::{Certificate, Client, Url};
-use anyhow::{Context, anyhow, bail};
+use anyhow::{Context, anyhow, bail, ensure};
 use engine_core::types::AccountId;
+use futures_util::{StreamExt, TryStreamExt, stream};
 use tokio::time::timeout;
 use tracing::debug;
 
 use crate::config::{EvmCustodySection, FinalityTag, SecretUrl};
 use crate::custody::chain::BlockLink;
-use crate::custody::evm::{Beneficiary, BlockRef, Finality, VaultDeposit, VaultIdentity, VaultReader};
+use crate::custody::evm::{
+    Beneficiary, BlockRef, Finality, StakingEvent, StakingEventKind, VaultDeposit, VaultIdentity, VaultReader,
+};
 
 // The vault's ABI, as `contracts/src/Vault.sol` declares it.
 sol! {
@@ -35,6 +38,12 @@ sol! {
     event SurplusBooked(uint256 indexed id, uint256 amount);
     function depositCount() external view returns (uint256);
     function usdc() external view returns (address);
+}
+
+// The staking contract's mirrorable events, as `contracts/src/Staking.sol` declares them.
+sol! {
+    event Staked(address indexed account, uint256 amount);
+    event UnstakeCompleted(address indexed account, uint256 amount);
 }
 
 /// Historical vault events cannot authenticate a trader's funding address.
@@ -50,6 +59,8 @@ pub struct VaultRpc {
     /// Kept only to scrub it from errors.
     url: Url,
     vault: Address,
+    /// The staking contract whose events mirror into the engine; `None` without one.
+    staking: Option<Address>,
     finality_tag: BlockNumberOrTag,
     withdrawal_finality_tag: BlockNumberOrTag,
     rpc_timeout: Duration,
@@ -161,6 +172,48 @@ impl VaultReader for VaultRpc {
             })?;
         decode_count(&out)
     }
+
+    /// Both mirrorable staking events from the configured contract, sorted by block and log index.
+    /// Without a staking contract the answer is empty.
+    /// Error cases:
+    /// - the request fails or times out
+    /// - a log is removed, lacks its position, does not decode as a staking event, or carries an
+    ///   amount past `u128`, or a returned log differs from its requested proven block
+    async fn staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
+        ensure!(!blocks.is_empty(), "staking range is empty");
+        ensure!(
+            blocks.windows(2).all(|pair| pair[0].number.checked_add(1) == Some(pair[1].number)),
+            "staking range is not contiguous"
+        );
+        let mut events = Vec::new();
+        if let Some(staking) = self.staking {
+            let owned_blocks = blocks.to_vec();
+            let batches = stream::iter(owned_blocks.into_iter().map(|block| async move {
+                let filter = Filter::new()
+                    .address(staking)
+                    .event_signature(vec![Staked::SIGNATURE_HASH, UnstakeCompleted::SIGNATURE_HASH])
+                    .at_block_hash(block.hash);
+                let logs =
+                    self.deadline("eth_getLogs", self.client.request::<_, Vec<Log>>("eth_getLogs", (filter,))).await?;
+                let mut events = Vec::new();
+                for log in &logs {
+                    let event = self.decode_staking(log)?;
+                    ensure!(
+                        event.block == block.number && event.block_hash == block.hash,
+                        "staking log differs from its requested proven block"
+                    );
+                    events.push(event);
+                }
+                Ok::<_, anyhow::Error>(events)
+            }))
+            .buffered(8)
+            .try_collect::<Vec<_>>()
+            .await?;
+            events.extend(batches.into_iter().flatten());
+        }
+        events.sort_by_key(|event| (event.block, event.log_index));
+        Ok(events)
+    }
 }
 
 impl VaultRpc {
@@ -222,6 +275,7 @@ impl VaultRpc {
             client,
             url,
             vault,
+            staking: cfg.staking.as_ref().map(|staking| staking.contract),
             withdrawal_finality_tag: match cfg.withdrawal_finality_tag {
                 FinalityTag::Latest => BlockNumberOrTag::Latest,
                 FinalityTag::Safe => BlockNumberOrTag::Safe,
@@ -317,6 +371,34 @@ impl VaultRpc {
         };
         let id = u64::try_from(id).context("deposit id beyond u64")?;
         Ok(VaultDeposit { block, block_hash, tx_hash, log_index, id, beneficiary, units, payer })
+    }
+
+    /// A staking event's fields; `account` is the event's only indexed topic.
+    /// Error cases:
+    /// - the log is removed, comes from another address, lacks its position, or does not decode
+    pub(super) fn decode_staking(&self, log: &Log) -> anyhow::Result<StakingEvent> {
+        let staking = self.staking.context("a staking event without a configured staking contract")?;
+        if log.removed || log.address() != staking {
+            bail!("unexpected log from {} (removed: {})", log.address(), log.removed);
+        }
+        let block = log.block_number.context("log without a block number")?;
+        let block_hash = log.block_hash.context("log without a block hash")?;
+        let tx_hash = log.transaction_hash.context("log without a transaction hash")?;
+        let log_index = log.log_index.context("log without a log index")?;
+        let (kind, account, units) = match log.topic0() {
+            Some(&Staked::SIGNATURE_HASH) => {
+                let event = Staked::decode_log(&log.inner).context("decoding Staked")?.data;
+                (StakingEventKind::Staked, event.account, event.amount)
+            }
+            Some(&UnstakeCompleted::SIGNATURE_HASH) => {
+                let event = UnstakeCompleted::decode_log(&log.inner).context("decoding UnstakeCompleted")?.data;
+                (StakingEventKind::UnstakeCompleted, event.account, event.amount)
+            }
+            other => bail!("unexpected event {other:?}"),
+        };
+        let amount = crate::custody::staking::monkey_units(units)
+            .with_context(|| format!("staking event amount {units} exceeds u128"))?;
+        Ok(StakingEvent { block, block_hash, tx_hash, log_index, account: AccountId(account.into()), amount, kind })
     }
 }
 

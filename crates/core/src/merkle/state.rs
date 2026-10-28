@@ -1,12 +1,13 @@
 //! The engine's state tree: which leaves each root rehashes, the leaf of the engine's remaining
-//! state, and account and entitlement proofs.
+//! state, and distribution proofs.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use alloy_primitives::B256;
 use serde::Serialize;
 use sha3::{Digest, Keccak256};
 
+mod touched;
 use crate::Fixed;
 use crate::access::AccessPolicy;
 use crate::account::Position;
@@ -17,68 +18,34 @@ use crate::emissions::{Emissions, TokenUnits};
 use crate::engine::{Engine, Markout};
 use crate::merkle::leaf::{deposit_key, deposit_transaction_key, legacy_deposit_key};
 use crate::merkle::{
-    AccountLeaf, MarketLeaf, SparseMerkleTree, account_key, corporate_action_key, corporate_reference_key,
-    credited_ref_hash, credited_ref_key, eligibility_key, entitlement_hash, entitlement_key, globals_key,
-    held_deposit_key, json_hash, market_key, markout_hash, markout_key, order_hash, order_key, pending_deposit_key,
-    period_result_hash, period_result_key, position_hash, position_key, request_nonce_hash, request_nonce_key,
-    withdrawal_approval_hash, withdrawal_queue_hash, withdrawal_queue_key,
+    AccountLeaf, DistributionProof, MarketLeaf, SparseMerkleTree, account_key, corporate_action_key,
+    corporate_reference_key, credited_ref_hash, credited_ref_key, distribution_hash, distribution_key, eligibility_key,
+    entitlement_hash, entitlement_key, globals_key, held_deposit_key, json_hash, market_key, markout_hash, markout_key,
+    order_hash, order_key, pending_deposit_key, period_result_hash, period_result_key, position_hash, position_key,
+    request_nonce_hash, request_nonce_key, staked_hash, staked_key, withdrawal_approval_hash, withdrawal_queue_hash,
+    withdrawal_queue_key,
 };
 use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
+use crate::staking::{Staking, UsdcUnits};
 use crate::types::{AccountId, MarketId, Millis, OrderId};
+pub(crate) use touched::Changed;
+pub use touched::RootWork;
+use touched::Touched;
 
 /// The state tree as of the last root, with the account, position, market, and entitlement leaves
 /// proofs need.
 #[derive(Debug, Default)]
 pub(crate) struct StateTree {
-    pub(crate) tree: SparseMerkleTree,
-    pub(crate) root: B256,
-    pub(crate) seq: u64,
-    pub(crate) accounts: BTreeMap<AccountId, AccountLeaf>,
-    pub(crate) positions: BTreeMap<(AccountId, MarketId), Position>,
-    pub(crate) markets: BTreeMap<MarketId, MarketLeaf>,
-    pub(crate) entitlements: BTreeMap<AccountId, TokenUnits>,
-    pub(crate) work: RootWork,
-}
-
-/// Changes since the last root that no tracked map records. Positions change only in `book`,
-/// and resting orders only where `place_order` rests one and `remove_order` takes one out; each
-/// records what it changed here.
-#[derive(Debug, Default)]
-pub(crate) struct Changed {
-    markouts: BTreeSet<u64>,
-    positions: BTreeSet<(AccountId, MarketId)>,
-    orders: BTreeSet<(AccountId, OrderId)>,
-}
-
-/// What computing a state root hashed.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct RootWork {
-    /// Leaves re-encoded: those changed since the previous root, and the remaining-state leaf.
-    pub leaves: usize,
-    /// Tree nodes rehashed above the leaves whose hash changed.
-    pub nodes: usize,
-}
-
-/// The keys of entries changed since the last root.
-struct Touched {
-    accounts: BTreeSet<AccountId>,
-    markets: BTreeSet<MarketId>,
-    nonces: BTreeSet<AccountId>,
-    refs: BTreeSet<String>,
-    period_results: BTreeSet<AccountId>,
-    entitlements: BTreeSet<AccountId>,
-    deposits: BTreeSet<String>,
-    deposit_transactions: BTreeSet<String>,
-    legacy_deposits: BTreeSet<String>,
-    withdrawal_queue: BTreeSet<u64>,
-    withdrawal_approvals: BTreeSet<B256>,
-    corporate_actions: BTreeSet<String>,
-    corporate_refs: BTreeSet<String>,
-    eligibility: BTreeSet<AccountId>,
-    holds: BTreeSet<String>,
-    pending: BTreeSet<String>,
-    changed: Changed,
+    pub(super) tree: SparseMerkleTree,
+    pub(super) root: B256,
+    pub(super) seq: u64,
+    pub(super) accounts: BTreeMap<AccountId, AccountLeaf>,
+    pub(super) positions: BTreeMap<(AccountId, MarketId), Position>,
+    pub(super) markets: BTreeMap<MarketId, MarketLeaf>,
+    pub(super) entitlements: BTreeMap<AccountId, TokenUnits>,
+    distributions: BTreeMap<AccountId, UsdcUnits>,
+    work: RootWork,
 }
 
 /// The engine fields no leaf of their own holds.
@@ -109,6 +76,9 @@ struct Globals<'a> {
     withdrawal_cash: Option<Fixed>,
     #[serde(skip_serializing_if = "is_zero")]
     withdrawal_next_ticket: u64,
+    /// From `V25`; omitted until staking is initialised, so earlier roots stand.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    staking: &'a Option<Staking>,
     #[serde(skip_serializing_if = "Option::is_none")]
     access_policy: &'a Option<AccessPolicy>,
 }
@@ -137,8 +107,11 @@ impl Engine {
             markets,
             nonces,
             refs,
+            staking_refs,
             period_results,
             entitlements,
+            staked,
+            distributions,
             deposits,
             deposit_transactions,
             legacy_deposits,
@@ -232,6 +205,11 @@ impl Engine {
         changes.extend(
             entitlement_leaves.iter().map(|(id, entitled)| (entitlement_key(*id), entitled.map(entitlement_hash))),
         );
+        let distribution_leaves: Vec<(AccountId, Option<UsdcUnits>)> =
+            distributions.into_iter().map(|id| (id, self.distributions.get(&id).copied())).collect();
+        changes.extend(
+            distribution_leaves.iter().map(|(id, entitled)| (distribution_key(*id), entitled.map(distribution_hash))),
+        );
         changes.extend(
             withdrawal_queue
                 .into_iter()
@@ -242,6 +220,8 @@ impl Engine {
                 .into_iter()
                 .map(|key| (key, self.withdrawal_approvals.get(&key).map(withdrawal_approval_hash))),
         );
+        changes.extend(self.staking_reference_leaves(staking_refs));
+        changes.extend(staked.into_iter().map(|id| (staked_key(id), self.staked.get(&id).map(|s| staked_hash(*s)))));
 
         // A seq has been applied: `V9` takes effect through a sequenced `ActivateProtocol`.
         let seq = self.last_seq.expect("a state root under V9 follows a command");
@@ -272,6 +252,12 @@ impl Engine {
                 None => state.entitlements.remove(&id),
             };
         }
+        for (id, entitled) in distribution_leaves {
+            match entitled {
+                Some(entitled) => state.distributions.insert(id, entitled),
+                None => state.distributions.remove(&id),
+            };
+        }
         state.root = state.tree.root();
         state.seq = seq;
         state.work = RootWork { leaves, nodes };
@@ -281,6 +267,17 @@ impl Engine {
     /// Clears the record of what changed since the last root, for a root that does not use it.
     pub(crate) fn clear_touched(&mut self) {
         self.take_touched();
+    }
+
+    /// The proof of `account`'s cumulative USDC distribution against the last state root computed,
+    /// as the vault's `claimDistribution` takes it. `None` before the first root under `V9`, or for
+    /// an account that root holds no distribution for.
+    pub fn distribution_proof(&self, account: AccountId) -> Option<DistributionProof> {
+        let state = self.tree.as_ref()?;
+        let entitled = *state.distributions.get(&account)?;
+        let siblings =
+            state.tree.proof(distribution_key(account)).expect("every distribution kept for proofs is in the tree");
+        Some(DistributionProof { seq: state.seq, root: state.root, account, entitled, siblings })
     }
 
     /// What the last state root hashed, or `None` before the first root under `V9`.
@@ -348,59 +345,6 @@ impl Engine {
         self.markouts.get(usize::try_from(position).ok()?)
     }
 
-    /// The keys of everything changed since the last root, clearing the record.
-    fn take_touched(&mut self) -> Touched {
-        Touched {
-            accounts: self.accounts.take_touched(),
-            markets: self.markets.take_touched(),
-            nonces: self.request_nonces.take_touched(),
-            refs: self.credited_refs.take_touched(),
-            period_results: self.period_results.take_touched(),
-            entitlements: self.entitlements.take_touched(),
-            deposits: self.deposits.take_touched(),
-            deposit_transactions: self.deposit_transactions.take_touched(),
-            legacy_deposits: self.legacy_deposits.take_touched(),
-            withdrawal_queue: self.withdrawal_queue.take_touched(),
-            withdrawal_approvals: self.withdrawal_approvals.take_touched(),
-            corporate_actions: self.corporate_actions.take_touched(),
-            corporate_refs: self.corporate_refs.take_touched(),
-            eligibility: self.eligibility.take_touched(),
-            holds: self.held_deposits.take_touched(),
-            pending: self.pending_deposits.take_touched(),
-            changed: std::mem::take(&mut self.changed),
-        }
-    }
-
-    /// The key of every entry, for a root with no tree to update.
-    fn every_key(&self) -> Touched {
-        let accounts = || self.accounts.iter();
-        Touched {
-            accounts: self.accounts.keys().copied().collect(),
-            markets: self.markets.keys().copied().collect(),
-            nonces: self.request_nonces.keys().copied().collect(),
-            refs: self.credited_refs.iter().cloned().collect(),
-            period_results: self.period_results.keys().copied().collect(),
-            entitlements: self.entitlements.keys().copied().collect(),
-            deposits: self.deposits.keys().cloned().collect(),
-            deposit_transactions: self.deposit_transactions.keys().cloned().collect(),
-            legacy_deposits: self.legacy_deposits.keys().cloned().collect(),
-            withdrawal_queue: self.withdrawal_queue.keys().copied().collect(),
-            withdrawal_approvals: self.withdrawal_approvals.keys().copied().collect(),
-            corporate_actions: self.corporate_actions.keys().cloned().collect(),
-            corporate_refs: self.corporate_refs.iter().cloned().collect(),
-            eligibility: self.eligibility.keys().copied().collect(),
-            holds: self.held_deposits.keys().cloned().collect(),
-            pending: self.pending_deposits.keys().cloned().collect(),
-            changed: Changed {
-                markouts: (self.markout_base..).take(self.markouts.len()).collect(),
-                positions: accounts()
-                    .flat_map(|(id, acct)| acct.positions.keys().map(|market| (*id, *market)))
-                    .collect(),
-                orders: accounts().flat_map(|(id, acct)| acct.orders.keys().map(|order_id| (*id, *order_id))).collect(),
-            },
-        }
-    }
-
     /// The fields the remaining-state leaf holds.
     fn globals(&self) -> Globals<'_> {
         // Every field is named, so a field added to `Engine` fails to compile until a leaf holds it.
@@ -438,6 +382,10 @@ impl Engine {
             withdrawal_approvals: _,
             corporate_actions: _,
             corporate_refs: _,
+            staking,
+            staking_refs: _,
+            staked: _,
+            distributions: _,
             access_policy,
             eligibility: _,
             held_deposits: _,
@@ -466,6 +414,7 @@ impl Engine {
             custody_checkpoint: *custody_checkpoint,
             withdrawal_cash: *withdrawal_cash,
             withdrawal_next_ticket: *withdrawal_next_ticket,
+            staking,
             access_policy,
         }
     }

@@ -134,7 +134,7 @@ impl Engine {
         auth: Option<&RequestAuth>,
         hash: impl FnOnce(&Eip712Domain, &RequestAuth) -> B256,
     ) -> Result<(), Reject> {
-        if self.protocol_version >= ProtocolVersion::V24 {
+        if self.protocol_version.supports_access() {
             let domain = self.access_domain().ok_or(Reject::InvalidSignature)?;
             let auth = auth.ok_or(Reject::MissingSignature)?;
             if eip712::recover(&hash(&domain, auth), &auth.signature) != Some(account) {

@@ -179,6 +179,9 @@ pub fn genesis_commands(genesis: &Genesis) -> Vec<Command> {
         Command::Admin(AdminCommand::SetBenchmarkRate { benchmark: b.name.clone(), annual_bps: b.annual_bps })
     }));
     cmds.extend(genesis.markets.iter().map(|m| Command::Admin(AdminCommand::UpsertMarket(m.clone()))));
+    if let Some(staking) = &genesis.staking {
+        cmds.push(Command::Admin(AdminCommand::InitStaking(*staking)));
+    }
     cmds.push(Command::HouseCapital { amount: genesis.house_capital, chain_ref: GENESIS_REF.into() });
     cmds
 }
@@ -188,7 +191,10 @@ fn is_genesis_command(cmd: &Command) -> bool {
     matches!(
         cmd,
         Command::Admin(
-            AdminCommand::SetParams(_) | AdminCommand::SetBenchmarkRate { .. } | AdminCommand::UpsertMarket(_)
+            AdminCommand::SetParams(_)
+                | AdminCommand::SetBenchmarkRate { .. }
+                | AdminCommand::UpsertMarket(_)
+                | AdminCommand::InitStaking(_)
         )
     ) || is_genesis_credit(cmd)
 }
@@ -237,6 +243,7 @@ fn config_entry(cmd: &Command) -> String {
         Command::Admin(AdminCommand::SetParams(_)) => "genesis.params".into(),
         Command::Admin(AdminCommand::SetBenchmarkRate { benchmark, .. }) => format!("genesis benchmark {benchmark}"),
         Command::Admin(AdminCommand::UpsertMarket(spec)) => format!("genesis market {}", spec.symbol),
+        Command::Admin(AdminCommand::InitStaking(_)) => "genesis.staking".into(),
         Command::HouseCapital { .. } => "genesis.house_capital".into(),
         _ => "protocol activation".into(),
     }

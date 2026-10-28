@@ -1,6 +1,5 @@
-//! Writes the reference log for a new protocol version: a scripted session through every command
-//! and the engine's main paths, with the state root after each command. Run it once per protocol
-//! version and commit the output; it refuses to overwrite a log that already exists.
+//! Writes a protocol reference log: a session through every command and main path, with each command's state root.
+//! Run it once per protocol version and commit the output; it refuses to overwrite an existing log.
 //!
 //! `cargo run -p engine-core --example reference_log -- crates/core/tests/reference/v<N>.jsonl`
 
@@ -22,7 +21,13 @@ mod v21;
 mod v22;
 mod v23;
 mod v24;
+mod v25;
 mod v26;
+mod v27;
+mod v28;
+mod v29;
+mod v30;
+mod v31;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -45,18 +50,12 @@ use engine_core::session::{Period, Schedule};
 use engine_core::types::{AssetClass, MarketId, Side};
 use helpers::{accepted, event_kind, reducing, small_buy, write_entries};
 
-/// A market the session lists with two margin bands.
 const SOL: MarketId = 10;
-/// A market the session lists for the margin and solvency rules of protocol `V6`.
 const GOLD: MarketId = 11;
-/// A second market for the `V6` rules, whose margin table rises.
 const OIL: MarketId = 12;
 
-/// Writes the session to the path given as the only argument, then prints how often each event
-/// kind occurred, so the author can check the session still reaches every path.
-/// Error cases:
-/// - no output path, or a file already at it
-/// - the file cannot be written
+/// Writes the session to the given path and prints the event counts.
+/// Fails if the path is missing, already exists, or cannot be written.
 fn main() -> anyhow::Result<()> {
     let path: PathBuf =
         std::env::args_os().nth(1).ok_or_else(|| anyhow!("usage: reference_log <output.jsonl>"))?.into();
@@ -75,7 +74,7 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The scripted session under the latest protocol version: client auth and activation, genesis, then funding, prices,
+/// The scripted session: client auth and activation, genesis, funding, prices,
 /// every order kind, signed requests refused for each auth reason, triggers (one held back by its spread), cancels,
 /// reduce-only (one clipped to the position), stress, toxicity, a position flip, house capital, withdrawals, a session
 /// close and gapped open, financing rollovers over longs and a short, a two-position close-out with bad debt, two-band
@@ -490,6 +489,12 @@ fn session() -> Vec<Sequenced> {
     v22::session(&mut h);
     v23::session(&mut h);
     v24::session(&mut h);
+    v25::session(&mut h);
     v26::session(&mut h);
+    v27::session(&mut h);
+    v28::session(&mut h);
+    v29::session(&mut h);
+    v30::session(&mut h);
+    v31::session(&mut h);
     h.log
 }

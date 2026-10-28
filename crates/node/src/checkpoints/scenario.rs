@@ -1,5 +1,6 @@
 //! Local Anvil scenario over the real sequencer, vault RPC, checkpoint worker, and deposit adapter.
 
+use crate::checkpoints::Health;
 mod source;
 
 use std::path::Path;
@@ -169,7 +170,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     timeout(Duration::from_secs(10), async {
         loop {
             submit(&tx, Command::Tick).await;
-            if house(&tx).await == Fixed::from_int(100) {
+            if source::house(&tx).await == Fixed::from_int(100) {
                 break;
             }
             sleep(Duration::from_millis(30)).await;
@@ -216,7 +217,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
         replayed.accounting,
         &replayed.engine,
     );
-    assert_eq!(make_poster().reconcile(&work).await.unwrap(), (Some(work.checkpoint.seq), true));
+    assert_eq!(make_poster().reconcile(&work).await.unwrap(), (Some(work.checkpoint.seq), Health::Healthy));
 
     // USDC sent to the vault outside a deposit raises a Warning but keeps withdrawals running. A
     // surplus booking names no funding address, so screening holds it as unattributable rather
@@ -236,7 +237,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     assert!(submit(&tx, sequenced()).await.is_some(), "an unbooked surplus keeps withdrawals running");
     send(&provider, relayer, vault, bookSurplusCall {}.abi_encode()).await;
     timeout(Duration::from_secs(10), async {
-        while house(&tx).await != Fixed::from_int(100)
+        while source::house(&tx).await != Fixed::from_int(100)
             || source::held(&tx).await.len() != 1
             || submit(&tx, sequenced()).await.is_none()
         {
@@ -367,11 +368,12 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
         deposits: current.deposits,
         authorized: Fixed::ZERO,
         coverage: crate::checkpoints::DepositCoverage::Historical,
+        distributed: engine_core::UsdcUnits(0),
     };
     include_checkpoint(&delayed, &work.checkpoint).await;
-    assert_eq!(delayed.reconcile(&work).await.unwrap(), (None, false));
+    assert_eq!(delayed.reconcile(&work).await.unwrap(), (None, Health::Unvalidated));
     let nonce = provider.request::<_, U64>("eth_getTransactionCount", (checkpoint_relayer, "latest")).await.unwrap();
-    assert_eq!(delayed.reconcile(&work).await.unwrap(), (None, false));
+    assert_eq!(delayed.reconcile(&work).await.unwrap(), (None, Health::Unvalidated));
     assert_eq!(
         provider.request::<_, U64>("eth_getTransactionCount", (checkpoint_relayer, "latest")).await.unwrap(),
         nonce,
@@ -390,11 +392,15 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     include_checkpoint(&delayed, &work.checkpoint).await;
     assert_eq!(
         delayed.reconcile(&work).await.unwrap(),
-        (None, false),
+        (None, Health::Unvalidated),
         "re-inclusion still cannot release before finality"
     );
     local_rpc(&url, "anvil_mine", serde_json::json!(["0x2"])).await;
-    assert_eq!(delayed.reconcile(&work).await.unwrap(), (Some(seq), true), "release follows confirmation depth");
+    assert_eq!(
+        delayed.reconcile(&work).await.unwrap(),
+        (Some(seq), Health::Healthy),
+        "release follows confirmation depth"
+    );
 
     let mut forged = entries;
     let cp = forged
@@ -447,16 +453,6 @@ async fn submit(tx: &mpsc::Sender<Request>, cmd: Command) -> Option<Vec<engine_c
     let (reply, rx) = oneshot::channel();
     tx.send(Request::Submit { cmd, reply: Some(reply) }).await.unwrap();
     timeout(Duration::from_secs(3), rx).await.unwrap().ok()
-}
-
-async fn house(tx: &mpsc::Sender<Request>) -> Fixed {
-    let (reply, rx) = oneshot::channel();
-    tx.send(Request::Query(Box::new(move |engine| {
-        let _ = reply.send(engine.house_cash());
-    })))
-    .await
-    .unwrap();
-    timeout(Duration::from_secs(3), rx).await.unwrap().unwrap()
 }
 
 fn write_entries(path: &Path, entries: &[LogEntry]) {

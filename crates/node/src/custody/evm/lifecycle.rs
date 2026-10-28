@@ -62,6 +62,7 @@ impl<V: VaultReader> DepositWatcher<V> {
             self.chain.prune_below(checkpoint.block);
         }
         if eligible < from {
+            self.mirror_staking(tx, release.tagged.map(|tag| tag.number.min(eligible))).await?;
             return Ok(Polled::Waiting);
         }
         if !self.prove_confirmed(from, tagged).await? {
@@ -175,6 +176,7 @@ impl<V: VaultReader> DepositWatcher<V> {
             };
             self.finalise_confirmed_scan(tx, finalised, hashes[&finalised]).await?;
         }
+        self.mirror_staking(tx, release_at).await?;
         self.finish_confirmed_read(tx, to, eligible).await
     }
 

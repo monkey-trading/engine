@@ -89,7 +89,7 @@ impl Sequencer {
             }
             payout.observed_epoch = Some(evidence.signer_epoch);
         }
-        if !gate.healthy {
+        if !matches!(gate.health, Some(crate::checkpoints::Health::Healthy)) {
             return Ok(());
         }
         let Some(posted) = evidence.checkpoint_seq else { return Ok(()) };

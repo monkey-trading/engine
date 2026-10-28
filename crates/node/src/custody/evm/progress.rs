@@ -7,7 +7,7 @@ use anyhow::anyhow;
 use engine_core::deposits::{CustodyCheckpoint, DepositReceipt};
 use engine_core::types::AccountId;
 
-use crate::custody::chain::LinkedRun;
+use crate::custody::chain::{LinkedRun, ProvenChain};
 use crate::custody::evm::lifecycle::receipt;
 use crate::custody::evm::{BlockRef, DepositWatcher, VaultDeposit, VaultReader, check_complete};
 use crate::custody::stall::PollError;
@@ -17,6 +17,11 @@ pub(super) struct ConfirmedProgress {
     pub(super) scan: Option<ConfirmedScan>,
     proof: Option<HeaderProof>,
     window: Option<WindowProof>,
+    /// The staking mirror's own retained window, separate from the deposit proofs that share
+    /// `window`: catch-up survives deposit activity and an advancing release tag.
+    staking_window: Option<WindowProof>,
+    /// At most 64 binary levels plus two endpoints; an incomplete run has two private candidates.
+    pub(super) staking_chain: ProvenChain,
     raw: Option<RawWindow>,
 }
 
@@ -160,37 +165,98 @@ impl<V: VaultReader> DepositWatcher<V> {
         from: u64,
         to: u64,
     ) -> Result<Option<BTreeMap<u64, B256>>, PollError> {
-        if let Some(hashes) = self.chain.window(from, to) {
+        self.prove_window(from, to, false).await
+    }
+
+    /// Proves a window for the staking mirror on its own retained slot, so deposit proofs cannot
+    /// discard a catch-up in progress. See `confirmed_window`.
+    /// Error cases:
+    /// - headers lack quorum, fail to link, or do not reach the previously proven anchor
+    pub(super) async fn staking_window(
+        &mut self,
+        from: u64,
+        to: u64,
+    ) -> Result<Option<BTreeMap<u64, B256>>, PollError> {
+        self.prove_window(from, to, true).await
+    }
+
+    async fn prove_window(
+        &mut self,
+        from: u64,
+        to: u64,
+        staking: bool,
+    ) -> Result<Option<BTreeMap<u64, B256>>, PollError> {
+        if let Some(hashes) = self.chain.window(from, to).filter(|_| !staking) {
             self.chain.insert(to, hashes[&to]);
             return Ok(Some(hashes));
         }
-        let upper = self
-            .chain
-            .at_or_above(to)
+        let retained = staking
+            .then_some(self.confirmed.staking_window.as_ref())
+            .flatten()
+            .filter(|proof| (proof.from, proof.to) == (from, to))
+            .map(|proof| proof.upper);
+        let upper = retained
+            .or_else(|| {
+                staking
+                    .then(|| self.confirmed.staking_chain.at_or_above(to))
+                    .flatten()
+                    .into_iter()
+                    .chain(self.chain.at_or_above(to))
+                    .min_by_key(|(number, _)| *number)
+            })
             .ok_or_else(|| PollError::unsettled(anyhow!("block {to} is above the proven chain")))?;
-        if self.confirmed.window.as_ref().is_none_or(|proof| (proof.from, proof.to, proof.upper) != (from, to, upper)) {
-            self.confirmed.window = Some(WindowProof { from, to, upper, run: LinkedRun::new(None, from) });
+        if staking {
+            let links = self.headers(upper.0, upper.0).await?;
+            if links.len() != 1 || links[0].number != upper.0 || links[0].hash != upper.1 {
+                self.confirmed.staking_window = None;
+                self.confirmed.staking_chain = ProvenChain::default();
+                return Err(PollError::unsettled(anyhow!("staking proof anchor changed")));
+            }
         }
-        let next = self.confirmed.window.as_ref().expect("window initialized").run.next();
-        let end = upper.0.min(next.saturating_add(self.header_batch.get() - 1));
+        if staking && let Some(hashes) = self.confirmed.staking_chain.window(from, to) {
+            return Ok(Some(hashes));
+        }
+        let midpoint = from + (upper.0 - from) / 2;
+        let (next, end) = {
+            let slot = if staking { &mut self.confirmed.staking_window } else { &mut self.confirmed.window };
+            if slot.as_ref().is_none_or(|proof| (proof.from, proof.to, proof.upper) != (from, to, upper)) {
+                *slot = Some(WindowProof { from, to, upper, run: LinkedRun::new(None, from) });
+            }
+            let next = slot.as_ref().expect("window initialized").run.next();
+            (next, upper.0.min(next.saturating_add(self.header_batch.get() - 1)))
+        };
+        // The retained slot is not read across the header fetch; headers cannot touch it, so the
+        // run below is the same one initialized above.
         let links = self.headers(next, end).await?;
-        let run = &mut self.confirmed.window.as_mut().expect("window retained").run;
-        if let Err(cause) = run.extend(end, &links, |_| false, |_| true) {
-            self.confirmed.window = None;
+        let slot = if staking { &mut self.confirmed.staking_window } else { &mut self.confirmed.window };
+        let run = &mut slot.as_mut().expect("window retained").run;
+        if let Err(cause) = run.extend(
+            end,
+            &links,
+            |number| staking && (number == midpoint || number == upper.0),
+            |number| (from..=to).contains(&number),
+        ) {
+            *slot = None;
             return Err(PollError::unsettled(cause));
         }
         if run.next() <= upper.0 {
             return Ok(None);
         }
         if run.last() != Some(upper) {
-            self.confirmed.window = None;
+            *slot = None;
             return Err(PollError::unsettled(anyhow!("window did not reach its canonical anchor")));
         }
-        let proof = self.confirmed.window.take().expect("complete window retained");
+        let proof = slot.take().expect("complete window retained");
         let hashes = proof.run.window(from, to);
-        self.chain.clear_window();
-        self.chain.keep(proof.run);
-        self.chain.insert(to, hashes[&to]);
+        // Midpoints form a depth-first binary hierarchy: O(N log(N/chunk)) header work,
+        // at most 66 anchors and one configured chunk of full hashes, independent of deposits.
+        let chain = if staking { &mut self.confirmed.staking_chain } else { &mut self.chain };
+        chain.clear_window();
+        chain.keep(proof.run);
+        chain.insert(to, hashes[&to]);
+        if staking {
+            chain.cap_anchors(66);
+        }
         Ok(Some(hashes))
     }
 

@@ -7,7 +7,6 @@ use engine_core::auth::{ClientAuth, RequestAuth};
 use engine_core::command::Command;
 use engine_core::eip712::{B256, Eip712Domain};
 use engine_core::event::{Event, Reject};
-use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{AccountId, Millis};
 use tokio::sync::oneshot;
 use tracing::field::display;
@@ -20,7 +19,7 @@ impl ApiState {
     /// Whether the build's access rules apply, including while startup activation waits for trusted
     /// time.
     pub(super) fn access_enforced(&self) -> bool {
-        self.protocol >= ProtocolVersion::V24
+        self.protocol.supports_access()
     }
 
     /// Checks the request may act for `account`, records it as the request's id, counts it against

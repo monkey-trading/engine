@@ -33,6 +33,9 @@ pub(crate) struct RecoveryContext {
     pub deferred: Vec<(u64, AccountId, Fixed, u64)>,
     pub checkpoint_signers: BTreeSet<AccountId>,
     pub base: RecoveryBase,
+    /// Original accounting of the finalized base, authenticated with the snapshot context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_work: Option<Work>,
     pub work: Vec<Work>,
 }
 
@@ -69,6 +72,12 @@ impl RecoveryContext {
     pub(crate) fn validate(&self, checkpoint: &Checkpoint, domain: CheckpointDomain) -> anyhow::Result<()> {
         let signer = checkpoint.signer.parse::<AccountId>()?;
         self.base.validate(domain, signer)?;
+        if let Some(work) = &self.base_work {
+            ensure!(
+                matches!(&self.base, RecoveryBase::Checkpoint { checkpoint } if *checkpoint == work.checkpoint),
+                "snapshot base accounting belongs to another checkpoint"
+            );
+        }
         ensure!(
             self.commands == checkpoint.seq.checked_add(1).context("snapshot command count overflow")?,
             "snapshot command count mismatch"
@@ -114,8 +123,8 @@ impl RecoveryContext {
         let Some(last) = self.work.last().filter(|_| checkpoint.parent.is_some()) else { return Ok(()) };
         let expected = Work::capture(checkpoint.clone(), self.accounting, engine);
         ensure!(
-            (last.liabilities, last.deposits, last.coverage)
-                == (expected.liabilities, expected.deposits, expected.coverage),
+            (last.liabilities, last.deposits, last.distributed, last.coverage)
+                == (expected.liabilities, expected.deposits, expected.distributed, expected.coverage),
             "snapshot checkpoint accounting mismatch"
         );
         Ok(())

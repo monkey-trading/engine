@@ -8,6 +8,7 @@ use crate::corporate::CorporateAction;
 use crate::deposits::{DepositReceipt, DepositReject, DepositStatus};
 use crate::emissions::TokenUnits;
 use crate::price::PriceError;
+use crate::staking::UsdcUnits;
 use crate::types::{AccountId, MarketId, Millis, OrderId, Side};
 
 /// Engine outputs. Clients and the custody layer act on events; they never
@@ -233,6 +234,50 @@ pub enum Event {
         last: u64,
         cancelled: TokenUnits,
     },
+    /// From `V25`, a staking contract's `Staked` event mirrored: `amount` of MONKEY base units
+    /// added to `account`'s stake.
+    Staked {
+        account: AccountId,
+        amount: TokenUnits,
+    },
+    /// From `V25`, a staking contract's `UnstakeCompleted` event mirrored: `amount` of MONKEY base
+    /// units removed from `account`'s stake, its cooldown having passed.
+    Unstaked {
+        account: AccountId,
+        amount: TokenUnits,
+    },
+    /// From `V25`, a stake or unstake mirror the engine refused: before staking is initialised, a
+    /// zero amount, a reference already credited, or an unstake above the account's stake.
+    StakingRejected {
+        account: AccountId,
+        amount: TokenUnits,
+        chain_ref: String,
+        reason: Reject,
+    },
+    /// From `V25`, an account's share of a closed distribution epoch: `amount` of USDC base units
+    /// added to its cumulative distribution, which the vault pays against a checkpoint proof.
+    DistributionAllocated {
+        account: AccountId,
+        epoch: u64,
+        amount: UsdcUnits,
+    },
+    /// From `V25`, a closed distribution epoch: the NAV and floor it measured, the excess above the
+    /// floor in whole USDC base units, and what stakers were allocated of it. House cash fell by
+    /// the allocated total; the dust is the house's.
+    DistributionEpochClosed {
+        epoch: u64,
+        nav: Fixed,
+        floor: Fixed,
+        excess: UsdcUnits,
+        allocated: UsdcUnits,
+    },
+    /// From `V25`, the distribution epochs from `first` to `last` whose end no command witnessed;
+    /// they allocate nothing themselves, and the close that witnesses the range's end distributes
+    /// the whole excess then, to whoever is staked at that moment.
+    DistributionEpochsSkipped {
+        first: u64,
+        last: u64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -282,6 +327,10 @@ pub enum Reject {
     InvalidAmount,
     /// A custody reference that was already credited.
     DuplicateReference,
+    /// From `V25`, a stake or unstake before the staking config is initialised.
+    StakingNotInitialised,
+    /// From `V25`, an unstake of more MONKEY than the account has staked.
+    InsufficientStake,
     /// EVM credits under receipt finality require an exact custody receipt.
     CustodyReceiptRequired,
     /// An unsigned request, where the rules in force require a signature.

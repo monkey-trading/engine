@@ -93,6 +93,14 @@ this crate and reproduce the signed state roots exactly.
   cancelled; budgets halve, rounded down, every 26,280 periods (182.5 days); the first command at or
   after a period's end finalises it before its own effects; and each account's cumulative
   entitlement is a state tree leaf with a proof the vault checks a claim against
+- From protocol `V25`, MONKEY staking and USDC distributions: once the operator's initialisation
+  records a liquidity floor, an epoch length, a start, and the unstake cooldown the staking
+  contract enforces, each epoch the first command at or after its end closes it before its own
+  effects, distributing the house NAV above the floor pro-rata to the staked snapshot in whole USDC
+  base units that reduce house cash (epochs no command witnessed distribute nothing); stake and
+  unstake mirror the staking contract's finalised events, credited once under their chain
+  references; and each account's cumulative distribution is a state tree leaf with a proof the
+  vault pays a claim against
 - From protocol `V21`, no quote from outside a market's hours prices it: a quote is refused unless
   the market stays open from its stamp to its sequencing, quotes held from before a closure are
   dropped at the first command after it, and activation drops held quotes that could not count, so
@@ -115,6 +123,7 @@ this crate and reproduce the signed state roots exactly.
 
 - `src/lib.rs` — module index and the protocol summary
 - `src/engine/mod.rs` — engine state, command dispatch, sessions, and USD valuation
+- `src/engine/house.rs` — house NAV, gross exposure, and the caps set from them
 - `src/engine/market.rs` — per-market state: quotes, marks, positions, resting orders, and futures
   roll position
 - `src/hot_indexes.rs` — derived holder, trigger, pending-receipt and above-frontier coverage indexes, rebuilt after recovery
@@ -147,6 +156,11 @@ this crate and reproduce the signed state roots exactly.
 - `src/admin.rs` — operator commands and signed admin commands
 - `src/emissions.rs` — MONKEY emissions: the schedule, period results, finalisation, and
   entitlements
+- `src/staking.rs` — MONKEY staking and USDC distributions: the config, stake and unstake
+  mirroring, epoch finalisation, and claimable distributions
+- `src/staking/tests.rs` — staking tests: initialisation and validation, mirror crediting and
+  refusals, epoch closes above and below the floor, rounding, skipped epochs, and the
+  floor-preserving and principal locks
 - `src/stress.rs` — stress levels: the automatic triggers, the move window, and the floors
 - `src/access/mod.rs` — signed eligibility, source policy and bounded public screening types
 - `src/access/engine.rs` — deterministic screening, declarations and uncredited custody holds
@@ -159,7 +173,9 @@ this crate and reproduce the signed state roots exactly.
 - `src/merkle/leaf.rs` — each leaf's key and value hash, and the account and market leaves
 - `src/merkle/proof.rs` — account, market, and entitlement proofs, and how to check them
 - `src/merkle/state.rs` — the engine's state tree: what each root rehashes, the remaining-state
-  leaf, and account and entitlement proofs
+  leaf, and distribution proofs
+- `src/merkle/state/touched.rs` — tracked changes and complete leaf-key enumeration
+- `src/merkle/proofs.rs` — account, entitlement, and withdrawal-approval proofs
 - `src/merkle/tests.rs` — tree, proof, and work tests, and the layout fixture
 - `src/tracked.rs` — maps and sets that record what changed since the last root
 - `src/fixed/` — `Fixed`, the 9-decimal fixed-point type used for all money (`mod.rs`), and its
@@ -218,11 +234,18 @@ this crate and reproduce the signed state roots exactly.
 - `tests/emissions.rs`, `tests/emissions_eligibility.rs`, `tests/emissions_schedule.rs` — MONKEY
   emissions from `V19`: allocation, rounding, cancellation, and finality; which losses count and the
   signed initialisation; and the schedule's arithmetic with the first halving
+- `tests/staking_authentication.rs` — V27 mirror-identity roots, migration, and finalized scan anchors
+- `tests/staking/withdrawal_reserve.rs` — shared distribution/FIFO capacity, inherited gaps, receipt lifecycle and exact reserves
+- `tests/staking/composed_reserves.rs` — combined principal, marked liabilities, receipt reversal and settlement
+- `tests/staking/marked_equity.rs` — closed-share FX insolvency, collectible NAV, settlement and activation boundaries
+- `tests/staking/negative_cash.rs` — partial liquidation, unresolved negative cash, finality reserves, and protected claim liquidity
+- `tests/staking.rs` — MONKEY staking and USDC distributions from `V25`: stake and unstake
+  mirroring, epoch closes above and below the liquidity floor, pro-rata rounding, skipped epochs,
+  and distribution proofs
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V23` parts (`v15.rs` to `v23.rs`)
-  `V15` to `V22`, `V24`, and `V26` parts (`v15.rs` to `v22.rs`, `v24.rs`, `v26.rs`)
+  `V15` to `V31` parts (`v15.rs` to `v31.rs`)
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
 
@@ -312,6 +335,33 @@ Two suites guard replay and accounting:
   `V15` it also checks that a resting order accepted below its market's minimum notional, or with no
   dollar value, can only reduce its account's position in that market; under `V16`, that no
   account's toxicity history exceeds the memory in force.
+
+Staking protocol V31 reserves every allocation from physical withdrawal capacity, whether paid or
+unpaid, and bounds new allocations by that unapproved capacity. Activation deducts cumulative
+legacy allocations once; a negative inherited gap blocks new approvals until funded. Existing
+approvals remain immutable and reserved. Receipt reversals do not unlock reserved distributions.
+
+Staking protocol V30 composes reversible house and trader principal with marked liabilities.
+For principal P, negative marked-equity deficits D, and negative cash C, the epoch ceiling is
+min(NAV - P - D, house cash - P - C), less the liquidity floor and clamped at zero.
+This retains principal and client gains together; cash debt is not charged twice. Crossing into
+V30 installs the validated rules before closing a due epoch.
+
+Staking protocol V29 discounts negative marked client equity from distributable NAV, including
+positive-cash accounts whose losing positions cannot currently close. Its cap is the smaller of
+collectible NAV and the funded-cash cap, so unresolved cash debt is not deducted twice. Epoch close
+uses O(accounts + open positions + stakers) work. Crossing into V29 validates activation before
+closing a due epoch, just as V28 does for its cash reserve rules.
+
+Staking protocol V28 also reserves unresolved negative client cash: a partial liquidation cannot
+distribute an unfunded loss while another position remains untradeable. Epoch close uses the existing
+account reserve scan, followed by the staker allocation pass; it is O(accounts + stakers).
+Crossing into V28 validates activation before closing a due staking epoch; a rejected activation
+leaves that epoch pending, and a successful activation applies the funded-cash cap immediately.
+
+Staking protocol V27 authenticates mirror identities as kind-15 leaves and completed finalized
+scan anchors in the staking globals, while retaining V25 reference roots. V25 remains a legacy
+pre-access rule set for replay; V24 and V26 onward enforce access screening.
 
 ### Adding a protocol version
 

@@ -13,7 +13,8 @@ house, in turn, is issued to the people who trade with it.
 > their FIFO queue also run against Anvil, as do MONKEY emissions and claims; MONKEY's production
 > budget and start are still to be set. FX, index, commodity, and share prices from two market-data
 > vendors each run against local stand-ins for those vendors; live vendor feeds wait on credentials
-> and redistribution licences. MONKEY staking and hardware attestation are under construction.
+> and redistribution licences. MONKEY staking and USDC distribution claims run against Anvil;
+> hardware attestation remains under construction.
 > Nothing here holds real funds.
 
 ## How it works

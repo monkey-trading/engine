@@ -16,11 +16,14 @@ an index: load only the rule whose hint matches the current action.
   `tests/benchmark_retention.rs`), house exposure caps, toxicity scoring, signed client requests (EIP-712, per-account
   nonces, and expiries), USD settlement of markets quoted in other currencies, admin commands signed
   by the operator key the log records, MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
-  shared by net realised losses, halvings, and cumulative entitlements), protocol versions, and the
+  shared by net realised losses, halvings, and cumulative entitlements) and MONKEY staking with
+  USDC distributions (`staking.rs`: stake mirroring, V27 authenticated identities and completed scan
+  anchors, epoch closes at NAV above a liquidity floor, cumulative distributions proven on chain),
+  protocol versions, and the
   state tree (a keccak-256 sparse Merkle tree over the state, with account and entitlement proofs, in
   `merkle/`). It does no IO and uses no clocks,
   randomness, or floats. `impl Engine` is split by area (`engine/mod.rs` for state and dispatch
-  with per-market state in `engine/market.rs`, `marks.rs`, `execution/`,
+  with house NAV and exposure caps in `engine/house.rs`, per-market state in `engine/market.rs`, `marks.rs`, `execution/`,
   `markouts.rs`, `closeout.rs`, `funds.rs`, `deposits.rs` with legacy migration and screened canonical replacements in `deposits/`,
   `corporate/` for dividend/split instructions, captures and ex-date adjustments,
   `admin.rs`, `stress.rs`, `auth.rs`). `withdrawal.rs` reserves FIFO requests and creates
@@ -37,7 +40,7 @@ an index: load only the rule whose hint matches the current action.
   access-source screening (`access.rs`, signed decisions with bounded HTTP reads),
   sequencer, the public log with signed checkpoints (segmented, with a public archive), `engine
   replay`, `engine admin` (the operator's signing client), the REST API with the operator's admin
-  route, account proofs, and MONKEY entitlement proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
+  route, account proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
   with rate limits and connection caps), the account history index (SQLite, derived from the log),
   dated benchmark ingestion (`benchmarks/` and the separate `admin/benchmark_feed.rs` signing worker
   with bounded durable schedule watches in `admin/benchmark_watch.rs` and `api/benchmark_schedule.rs`),
@@ -50,8 +53,10 @@ an index: load only the rule whose hint matches the current action.
   roots pinned in the binary, and its launch measurement, guest policy, reported TCB, and
   configuration against a release manifest; `engine replay --attestation` requires every checkpoint
   signer to have passed it; a mock quote never verifies), the trusted time check against
-  Roughtime servers, the custody adapter (mock, or EVM vault deposits over alloy), checkpoint posting
-  and collateral reconciliation (`checkpoints/`), with strict signature replay and startup checks
+  Roughtime servers, the custody adapter (mock, or EVM vault deposits over alloy, mirroring the
+  staking contract's finalised events once `InitStaking` has applied, with V27 scan progress
+  authenticated in engine state rather than trusted from the host cursor), checkpoint posting
+  and collateral reconciliation, distributions paid included (`checkpoints/`), with strict signature replay and startup checks
   against the vault's finalized commitment before history writes, plus authenticated withdrawal
   authorization replay, bounded finalized claim polling, immutable signer-epoch history independent
   of approval-root history, command-origin seals checked before writable recovery
@@ -86,7 +91,12 @@ an index: load only the rule whose hint matches the current action.
   The constructor takes the token, the signer, an existing OpenZeppelin timelock with a nonzero
   delay, and the engine's initial MONKEY emission period budget, which caps `src/MonkeyToken.sol`,
   the ERC-20 the vault deploys and alone mints: `claimEmissions` mints an account's entitlement,
-  proven against the latest posted root, less what it already claimed. Deployment gives that
+  proven against the latest posted root, less what it already claimed. `src/Staking.sol` holds
+  MONKEY staked for USDC distributions, enforces the unstake cooldown — the constructor refuses a
+  cooldown shorter than the engine's epoch, the lock-up that prices jumping in just before a
+  snapshot — and emits the events the engine mirrors; `claimDistribution` pays a staker the USDC
+  its cumulative distribution, proven
+  against the latest posted root, adds to what it was already paid. Deployment gives that
   timelock its multisig proposer. The timelock manages signer rotation and independent
   deposit/withdrawal pauses.
 - **config/** — node configs. `dev.toml` runs the TEE, custody and feeds as mocks on one machine,
@@ -132,6 +142,7 @@ an index: load only the rule whose hint matches the current action.
   `dev-rpc-proxy.py` providing three local fault-injection endpoints; `dev-metrics-alerts.sh`,
   the metrics and alert routing dev scenario; `dev-alert-outbox.sh`, the isolated alert retry
   kill/restart scenario; `dev-monkey-emissions.sh`, the MONKEY emissions scenario on Anvil;
+  `dev-monkey-staking.sh`, the MONKEY staking and USDC distributions scenario on Anvil;
   `dev-snapshot-restart.sh`, the checkpoint snapshot restart and fallback scenario;
   `dev-deposit-finality.sh`, the sequencer confirmation and Ethereum finality scenario on the
   vault's Anvil fixture; `dev-rwa-feeds.sh`, the RWA price feeds dev scenario against local
@@ -153,6 +164,11 @@ an index: load only the rule whose hint matches the current action.
   invariant tests on x86_64 and aarch64 Linux, the unchanged-reference-log check, `cargo-deny`,
   the contracts' `forge fmt --check` / build /
   test, the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
+  deposit finality scenarios, the MONKEY staking dev scenario, the signed withdrawal and FIFO dev
+  scenario, the metrics and alert routing dev scenario, the alert outbox kill/restart scenario,
+  the snapshot restart scenario, the RWA price feeds dev scenario, the review-delta helper's test,
+  and the enclave image (`image` checks its download retries, builds it twice, and boots it under
+  QEMU, `image-compare` fails if the builds differ), on every push to `main` and every PR.
   deposit finality scenarios, the signed withdrawal and FIFO dev scenario, the API and
   direct-vault access enforcement dev scenario, the metrics and alert
   routing dev scenario, the alert outbox kill/restart scenario, the snapshot restart scenario, the
@@ -252,6 +268,11 @@ Run from the repo root:
 - MONKEY emissions dev scenario: `./scripts/dev-monkey-emissions.sh` (starts Anvil, deploys the
   vault and its token, and drives allocation, halving, a restart, and claims through the real
   sequencer, API, and checkpoint worker; needs Anvil, Forge, and installed Soldeer dependencies)
+- MONKEY staking dev scenario: `./scripts/dev-monkey-staking.sh` (starts Anvil, deploys the vault,
+  its token, and the staking contract, and drives staking mirrored into the engine, an epoch above
+  the liquidity floor paying pro-rata in USDC against posted checkpoint roots, an unstake through
+  the cooldown, and an epoch below the floor paying nothing; needs Anvil, Forge, and installed
+  Soldeer dependencies)
 - Signed withdrawal and FIFO dev scenario: `./scripts/dev-withdrawals.sh` (needs Anvil, Forge,
   Cargo and pinned contract dependencies; uses local signed time and price servers, and preserves
   its child logs under `SCENARIO_LOG_DIR` or a fresh temporary artifact directory)

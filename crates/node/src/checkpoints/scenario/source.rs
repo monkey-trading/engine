@@ -1,6 +1,13 @@
 //! Signed source for the real-vault checkpoint scenario.
 
+use std::time::Duration;
+
+use engine_core::Fixed;
+use tokio::sync::{mpsc, oneshot};
+use tokio::time::timeout;
+
 use crate::log::CheckpointDomain;
+use crate::sequencer::Request;
 use crate::test_support::access;
 use std::sync::Arc;
 
@@ -90,4 +97,15 @@ pub(super) fn assert_pending_reconciliation(replayed: &crate::sequencer::Replaye
         (replayed.accounting.pending, replayed.accounting.liabilities, replayed.accounting.deposits),
         (Fixed::from_int(10), Fixed::from_int(110), 2)
     );
+}
+
+/// The scenario engine's house cash.
+pub(super) async fn house(tx: &mpsc::Sender<Request>) -> Fixed {
+    let (reply, rx) = oneshot::channel();
+    tx.send(Request::Query(Box::new(move |engine| {
+        let _ = reply.send(engine.house_cash());
+    })))
+    .await
+    .unwrap();
+    timeout(Duration::from_secs(3), rx).await.unwrap().unwrap()
 }

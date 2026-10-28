@@ -5,11 +5,10 @@
 //! from it live in `house.rs`; per-market state lives in `market.rs`,
 //! venue prices and marks in `marks.rs`, funds and financing in `funds.rs`, admin in `admin.rs`,
 //! stress levels in `stress.rs`, client request auth in `auth.rs`, orders and pricing in
-//! `execution/`, close-outs in `closeout.rs`, markouts in `markouts.rs`, and reserved FIFO
-//! withdrawals in `withdrawal.rs`.
+//! `execution/`, close-outs in `closeout.rs`, markouts in `markouts.rs`, reserved FIFO
+//! withdrawals in `withdrawal.rs`, and MONKEY staking and USDC distributions in `staking.rs`.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::ops::Bound;
 
 mod house;
 mod market;
@@ -33,6 +32,7 @@ use crate::fixed::Rounding;
 use crate::merkle::state::{Changed, StateTree, is_zero};
 use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
+use crate::staking::{Staking, UsdcUnits};
 pub use crate::stress::{MoveBucket, StressState};
 use crate::tracked::{TrackedMap, TrackedSet};
 use crate::types::{AccountId, MAX_STAMP_MS, MarketId, Millis, OrderId, Side};
@@ -59,6 +59,11 @@ pub struct Engine {
     pub(crate) benchmarks: BTreeMap<String, i64>,
     /// Custody references already credited (deposits and house capital), so none applies twice.
     pub(crate) credited_refs: TrackedSet<String>,
+    /// Staking mirror references already credited, a namespace of their own: the accounting's
+    /// credited-reference scan counts `credited_refs` as vault deposits and house capital, and a
+    /// staking mirror moves no USDC, so its references must not enter that count.
+    #[serde(default, skip_serializing_if = "TrackedSet::is_empty")]
+    pub(crate) staking_refs: TrackedSet<String>,
     pub(crate) global_stress_floor: usize,
     pub(crate) next_order_id: OrderId,
     pub(crate) next_rollover: Option<Millis>,
@@ -131,6 +136,13 @@ pub struct Engine {
     /// Immutable payouts keyed by their account/nonce approval leaf key.
     #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
     pub(crate) withdrawal_approvals: TrackedMap<B256, WithdrawalApproval>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) staking: Option<Staking>,
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) staked: TrackedMap<AccountId, TokenUnits>,
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) distributions: TrackedMap<AccountId, UsdcUnits>,
+
     /// The screening source and freshness bound, recorded once from `V24`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) access_policy: Option<AccessPolicy>,
@@ -208,11 +220,16 @@ impl Engine {
         // does, so every effect of the command, market processing and rollovers included, belongs to
         // the next period.
         self.finalise_emissions(&mut events);
+        let staking_activation = sequenced.cmd.changes_staking_reserves(self.protocol_version);
+        if !staking_activation {
+            self.finalise_staking(&mut events);
+        }
         let corporate = self.protocol_version >= ProtocolVersion::V23;
         let mut corporate_margin = false;
         let mut early_outcome = None;
         if corporate {
-            let activation = matches!(sequenced.cmd, Command::Admin(AdminCommand::ActivateProtocol { .. }));
+            let activation =
+                matches!(sequenced.cmd, Command::Admin(AdminCommand::ActivateProtocol { .. })) || staking_activation;
             // Install authenticated dated history before catch-up, without letting today's
             // incoming quote price any earlier rollover or corporate boundary.
             if sequenced.cmd.is_benchmark_batch() || activation {
@@ -221,6 +238,9 @@ impl Engine {
                     Command::SignedAdmin(req) => self.signed_admin(req, &mut events),
                     _ => unreachable!("benchmark batches and activations are admin commands"),
                 };
+                if staking_activation && result.is_ok() {
+                    self.finalise_staking(&mut events);
+                }
                 early_outcome = Some(match result {
                     Ok(()) => Event::AdminApplied,
                     Err(reason) => Event::AdminRejected { reason },
@@ -291,6 +311,15 @@ impl Engine {
                     Ok(()) => events.push(Event::AdminApplied),
                     Err(reason) => events.push(Event::AdminRejected { reason }),
                 },
+                Command::Stake { account, amount, block, chain_ref } => {
+                    self.stake(*account, *amount, *block, chain_ref, &mut events)
+                }
+                Command::StakingProgress { block, block_hash } => {
+                    self.staking_progress(*block, *block_hash, &mut events)
+                }
+                Command::Unstake { account, amount, block, chain_ref } => {
+                    self.unstake(*account, *amount, *block, chain_ref, &mut events)
+                }
                 // The access variants always dispatch to `access_dispatch` first.
                 _ => unreachable!("access command dispatched above"),
             }
@@ -343,11 +372,6 @@ impl Engine {
         self.operator.as_ref()
     }
 
-    /// Whether a market takes no new risk: its own flag, or every market's.
-    pub fn is_reduce_only(&self, market: &MarketState) -> bool {
-        market.reduce_only || self.global_reduce_only
-    }
-
     /// Every listed market, by id.
     pub fn markets(&self) -> &BTreeMap<MarketId, MarketState> {
         &self.markets
@@ -356,17 +380,6 @@ impl Engine {
     /// Every account that has ever been credited, by id.
     pub fn accounts(&self) -> &BTreeMap<AccountId, Account> {
         &self.accounts
-    }
-
-    /// Whether the custody reference `chain_ref` has been credited.
-    pub fn is_credited(&self, chain_ref: &str) -> bool {
-        self.credited_refs.contains(chain_ref)
-    }
-
-    /// The credited custody references that start with `prefix`, in order.
-    pub fn credited_refs_with_prefix<'a>(&'a self, prefix: &'a str) -> impl Iterator<Item = &'a str> + 'a {
-        let from = (Bound::Included(prefix), Bound::Unbounded);
-        self.credited_refs.range::<str, _>(from).map(String::as_str).take_while(move |r| r.starts_with(prefix))
     }
 
     /// (equity, margin requirement) in USD at current marks, optionally overriding one market's mark
@@ -465,14 +478,6 @@ impl Engine {
             events.push(Event::MarketOpened { market: market_id });
         } else {
             events.push(Event::MarketClosed { market: market_id });
-        }
-    }
-
-    /// Refreshes every market's session, so opens and closes fire even without price traffic.
-    pub(crate) fn refresh_all_sessions(&mut self, events: &mut Vec<Event>) {
-        let ids: Vec<MarketId> = self.markets.keys().copied().collect();
-        for market_id in ids {
-            self.refresh_session(market_id, events);
         }
     }
 }

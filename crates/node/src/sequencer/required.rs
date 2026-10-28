@@ -145,9 +145,11 @@ impl Sequencer {
     }
 
     /// Checks that the engine accepts every genesis command, then sequences them as ordinary admin
-    /// commands and checkpoints, once trusted time admits a stamp (see `sequence_required`). A
-    /// genesis the engine would reject queues and writes nothing. The check runs under the latest
-    /// rules, so callers activate the protocol first, as `run` does.
+    /// commands and checkpoints, once trusted time admits a stamp (see `sequence_required`). The
+    /// check at load stamps at zero, so a value the engine refuses only at the admission stamp —
+    /// like a staking start that has already passed — is stamped and refused, stops the
+    /// sequencer, and recovery refuses the log. The check runs under the latest rules, so callers
+    /// activate the protocol first, as `run` does.
     /// Error cases:
     /// - the engine would reject a genesis command (see `check_genesis`)
     /// - the engine rejects one when it is sequenced

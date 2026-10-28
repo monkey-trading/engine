@@ -37,6 +37,7 @@ fn access_withdrawals_record_refusals_and_recover_only_checkpoint_confirmed_appr
     seq.activate_protocol().unwrap();
     seq.genesis(&dev_config().genesis).unwrap();
     seq.trust(sample_around(clock.as_ref())).unwrap();
+    seq.sequence(crate::test_support::empty_custody_frontier()).unwrap();
     let account = access::account(1);
     let declaration = access::declaration(&seq.engine, 1);
     let declared = seq.sequence(declaration).unwrap().unwrap();
@@ -81,7 +82,7 @@ fn access_withdrawals_record_refusals_and_recover_only_checkpoint_confirmed_appr
             .all(|command| matches!(command.sequenced.cmd, Command::AccessWithdraw { payout_available: false, .. }))
     );
     assert!(seq.gate.as_ref().unwrap().pending.is_empty());
-    seq.checkpoint_status(seq.last_seq(), true).unwrap();
+    seq.checkpoint_status(seq.last_seq(), Some(crate::checkpoints::Health::Healthy)).unwrap();
     let command = crate::test_support::access::withdrawal(&seq.engine, 1, Fixed::ONE, true);
     let events = seq.sequence(command).unwrap().unwrap();
     // From V22 a withdrawal reserves its payout in the public queue before its approval.
@@ -130,10 +131,10 @@ fn access_withdrawals_record_refusals_and_recover_only_checkpoint_confirmed_appr
     };
     // Unhealthy books cannot authorize signing, and a healthy checkpoint behind the approval cannot
     // either.
-    recovered.checkpoint_status(Some(approval), false).unwrap();
+    recovered.checkpoint_status(Some(approval), Some(crate::checkpoints::Health::Diverged)).unwrap();
     recovered.release_payouts(&evidence(approval)).unwrap();
     assert!(signed.try_recv().is_err());
-    recovered.checkpoint_status(Some(approval), true).unwrap();
+    recovered.checkpoint_status(Some(approval), Some(crate::checkpoints::Health::Healthy)).unwrap();
     recovered.release_payouts(&evidence(approval - 1)).unwrap();
     assert!(signed.try_recv().is_err());
     // Healthy books at the covering checkpoint release the payout, durable before custody sees it.

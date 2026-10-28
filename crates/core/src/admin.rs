@@ -55,6 +55,8 @@ impl Engine {
     /// - `ScheduleCorporateAction` with any error case of `Engine::schedule_corporate_action`
     /// - `UpsertMarket` changing the calendar, asset class, quote currency or symbol of a market
     ///   with a pending corporate action
+    /// - `InitStaking` before `V25`, once staking is initialised, or with a config that fails its
+    ///   checks at the sequenced time (see `StakingConfig::validate`)
     pub(crate) fn admin(&mut self, cmd: &AdminCommand, events: &mut Vec<Event>) -> Result<(), String> {
         match cmd {
             AdminCommand::ScheduleCorporateAction(action) => self.schedule_corporate_action(action, events)?,
@@ -263,6 +265,23 @@ impl Engine {
                 if self.protocol_version < ProtocolVersion::V26 && *version >= ProtocolVersion::V26 {
                     self.check_terminal_receipt_holds()?;
                 }
+                // Earlier allocations reduced house cash without reserving payout capacity.
+                let distribution_cash =
+                    if self.protocol_version < ProtocolVersion::V31 && *version >= ProtocolVersion::V31 {
+                        let allocated = self.staking.as_ref().map_or(0, |staking| staking.distributed.0);
+                        let amount = crate::withdrawal::from_usdc(allocated)
+                            .ok_or("inherited distribution reserve exceeds cash representation")?;
+                        self.withdrawal_cash
+                            .map(|cash| {
+                                cash.raw()
+                                    .checked_sub(amount.raw())
+                                    .map(crate::Fixed::from_raw)
+                                    .ok_or("inherited distribution reserve overflows payout capacity")
+                            })
+                            .transpose()?
+                    } else {
+                        None
+                    };
                 if let AdminCommand::ActivateCustodyFinality { legacy_deposits, .. } = cmd {
                     self.lock_legacy_deposits(legacy_deposits)?;
                 }
@@ -298,6 +317,12 @@ impl Engine {
                                 .sum::<crate::Fixed>(),
                     );
                 }
+                if self.protocol_version < ProtocolVersion::V27 && *version >= ProtocolVersion::V27 {
+                    self.tree = None;
+                }
+                if let Some(cash) = distribution_cash {
+                    self.withdrawal_cash = Some(cash);
+                }
                 self.protocol_version = *version;
                 if *version >= ProtocolVersion::V26 {
                     self.hot_indexes = None;
@@ -305,6 +330,7 @@ impl Engine {
                 }
             }
             AdminCommand::InitEmissions(schedule) => self.init_emissions(schedule)?,
+            AdminCommand::InitStaking(config) => self.init_staking(config)?,
         }
         Ok(())
     }

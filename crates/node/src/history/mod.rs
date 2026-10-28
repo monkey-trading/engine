@@ -47,7 +47,7 @@ use crate::sequencer::StreamBody;
 
 /// The `type` of every event that names an account: what the `kind` filter accepts. A kind's
 /// position is its authenticated history storage tag, so new kinds are only ever appended.
-pub const KINDS: [&str; 22] = [
+pub const KINDS: [&str; 26] = [
     "deposited",
     "deposit_rejected",
     "withdrawal_approved",
@@ -70,6 +70,10 @@ pub const KINDS: [&str; 22] = [
     "eligibility_rejected",
     "deposit_pending",
     "deposit_held",
+    "staked",
+    "unstaked",
+    "staking_rejected",
+    "distribution_allocated",
 ];
 /// The SQLite file of the index, in `history.dir`; SQLite keeps its `-wal` and `-shm` files beside it.
 pub const INDEX_FILE: &str = "history.sqlite";
@@ -369,7 +373,11 @@ pub fn account_of(event: &Event) -> Option<AccountId> {
         | Event::CorporateDividend { account, .. }
         | Event::CorporateCashInLieu { account, .. }
         | Event::Financing { account, .. }
-        | Event::EmissionAllocated { account, .. } => Some(*account),
+        | Event::EmissionAllocated { account, .. }
+        | Event::Staked { account, .. }
+        | Event::Unstaked { account, .. }
+        | Event::StakingRejected { account, .. }
+        | Event::DistributionAllocated { account, .. } => Some(*account),
         Event::CustodyDepositChanged { receipt, .. } | Event::CustodyDepositRejected { receipt, .. } => {
             match receipt.beneficiary {
                 engine_core::deposits::DepositBeneficiary::Trader { account } => Some(account),
@@ -394,7 +402,9 @@ pub fn account_of(event: &Event) -> Option<AccountId> {
         | Event::AdminApplied
         | Event::AdminRejected { .. }
         | Event::EmissionPeriodClosed { .. }
-        | Event::EmissionPeriodsCancelled { .. } => None,
+        | Event::EmissionPeriodsCancelled { .. }
+        | Event::DistributionEpochClosed { .. }
+        | Event::DistributionEpochsSkipped { .. } => None,
     }
 }
 

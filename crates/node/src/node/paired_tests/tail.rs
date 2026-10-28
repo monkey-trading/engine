@@ -11,6 +11,7 @@ use std::time::Instant;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::timeout;
 
+use crate::checkpoints::Health;
 use crate::history::PageQuery;
 use crate::log::CheckpointParent;
 use crate::node::paired_tests::harness::{HANG, Node, configuration};
@@ -295,6 +296,7 @@ async fn shutdown_caches_a_skipped_checkpoint_the_chain_finalized_meanwhile() {
     let (work, mut sent) = mpsc::channel(1024);
     let node =
         Node::start_gated(configuration("paired-skipped-finalized"), CheckpointParent::default(), work).await.unwrap();
+    node.submit(crate::test_support::empty_custody_frontier()).await;
     let mut n = 0;
     let base = loop {
         node.submit(deposit(1, &format!("gated-{n}"))).await;
@@ -303,11 +305,18 @@ async fn shutdown_caches_a_skipped_checkpoint_the_chain_finalized_meanwhile() {
             break work.checkpoint;
         }
     };
-    node.tx.send(Request::CheckpointStatus { posted: Some(base.seq), healthy: true, lifecycle: None }).await.unwrap();
+    node.tx
+        .send(Request::CheckpointStatus { posted: Some(base.seq), health: Some(Health::Healthy), lifecycle: None })
+        .await
+        .unwrap();
     node.history_caught_up().await;
     let final_checkpoint = burst_to_second_checkpoint(&node).await;
     node.tx
-        .send(Request::CheckpointStatus { posted: Some(final_checkpoint), healthy: true, lifecycle: None })
+        .send(Request::CheckpointStatus {
+            posted: Some(final_checkpoint),
+            health: Some(Health::Healthy),
+            lifecycle: None,
+        })
         .await
         .unwrap();
     let (cfg, reader) = node.stop().await;

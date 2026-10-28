@@ -106,6 +106,13 @@ impl ProvenChain {
         (hashes.len() as u64 == to - from + 1).then_some(hashes)
     }
 
+    /// Bounds a hierarchical cache, retaining the nearest upcoming proof anchors.
+    pub(super) fn cap_anchors(&mut self, limit: usize) {
+        while self.anchors.len() > limit {
+            self.anchors.pop_last();
+        }
+    }
+
     /// Forgets everything below `number`.
     pub(super) fn prune_below(&mut self, number: u64) {
         self.anchors = self.anchors.split_off(&number);

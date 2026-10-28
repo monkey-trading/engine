@@ -3,6 +3,7 @@
 //! sequenced stream *is* the public event log; replaying it through this
 //! crate reproduces the state exactly.
 
+use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
@@ -11,11 +12,12 @@ use crate::auth::{ClientAuth, Operator, RequestAuth};
 use crate::benchmark::BenchmarkBatch;
 use crate::corporate::CorporateAction;
 use crate::deposits::{CustodyCheckpoint, DepositReceipt, DepositUpdate, LegacyDeposit};
-use crate::emissions::EmissionSchedule;
+use crate::emissions::{EmissionSchedule, TokenUnits};
 use crate::market::MarketSpec;
 use crate::params::{NotionalWeighting, ProtocolParams};
 use crate::price::SourceQuote;
 use crate::protocol::ProtocolVersion;
+use crate::staking::StakingConfig;
 use crate::types::{AccountId, MarketId, Millis, OrderId, Side};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -106,6 +108,31 @@ pub enum Command {
     /// command is refused once any deposit or house capital is credited. Boxed: admin commands are
     /// rare, and inline this one would grow every command.
     SignedAdmin(Box<AdminRequest>),
+    /// From `V27`, the last fully verified finalized staking block, including empty ranges.
+    StakingProgress {
+        block: u64,
+        block_hash: B256,
+    },
+    /// From `V25`, a staking contract's `Staked` event, finalised: `amount` of MONKEY base units
+    /// staked for `account`, credited once under `chain_ref`, in the finalised Ethereum `block`
+    /// the event was mirrored from (see `Engine`'s staking frontier).
+    Stake {
+        account: AccountId,
+        amount: TokenUnits,
+        #[serde(default)]
+        block: u64,
+        chain_ref: String,
+    },
+    /// From `V25`, a staking contract's `UnstakeCompleted` event, which fires only once the
+    /// unstake cooldown has passed: `amount` of MONKEY base units unstaked for `account`, credited
+    /// once under `chain_ref`, in the finalised Ethereum `block` the event was mirrored from.
+    Unstake {
+        account: AccountId,
+        amount: TokenUnits,
+        #[serde(default)]
+        block: u64,
+        chain_ref: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,6 +203,10 @@ pub enum AdminCommand {
     /// From `V19`, records the MONKEY emission schedule: when period 0 starts, no earlier than this
     /// command, and its budget. A log records it once, and only signed by the operator.
     InitEmissions(EmissionSchedule),
+    /// From `V25`, records the MONKEY staking config: the liquidity floor, the epoch length, when
+    /// epoch 0 starts, and the unstake cooldown the staking contract enforces. A log records it
+    /// once.
+    InitStaking(StakingConfig),
 }
 
 /// An admin command with the operator's signature, nonce, and expiry, as `engine admin` signs and
@@ -241,8 +272,8 @@ impl AdminCommand {
     }
 
     /// Whether the operator may sign this command: listings, parameters, benchmark rates, stress
-    /// floors, reduce-only, the emission schedule, and corporate actions. The node alone sequences the
-    /// others, from its config and build.
+    /// floors, reduce-only, the emission schedule, corporate actions, and the staking config. The
+    /// node alone sequences the others, from its config and build.
     pub fn is_operator_command(&self) -> bool {
         match self {
             AdminCommand::SetParams(_)
@@ -251,8 +282,9 @@ impl AdminCommand {
             | AdminCommand::SetBenchmarkRates(_)
             | AdminCommand::SetStressFloor { .. }
             | AdminCommand::SetReduceOnly { .. }
-            | AdminCommand::InitEmissions(_) => true,
-            AdminCommand::ScheduleCorporateAction(_) => true,
+            | AdminCommand::InitEmissions(_)
+            | AdminCommand::ScheduleCorporateAction(_)
+            | AdminCommand::InitStaking(_) => true,
             AdminCommand::SetClientAuth(_)
             | AdminCommand::SetAccessPolicy(_)
             | AdminCommand::SetOperator(_)
@@ -264,6 +296,25 @@ impl AdminCommand {
 }
 
 impl Command {
+    /// Targets the activation that validates staking cash reserves before closing an overdue epoch.
+    pub(crate) fn changes_staking_reserves(&self, current: ProtocolVersion) -> bool {
+        let admin = match self {
+            Self::Admin(admin) => admin,
+            Self::SignedAdmin(request) => &request.command,
+            _ => return false,
+        };
+        let target = match admin {
+            AdminCommand::ActivateProtocol { version } | AdminCommand::ActivateCustodyFinality { version, .. } => {
+                *version
+            }
+            _ => return false,
+        };
+        (current < ProtocolVersion::V28 && target >= ProtocolVersion::V28)
+            || (current < ProtocolVersion::V29 && target >= ProtocolVersion::V29)
+            || (current < ProtocolVersion::V30 && target >= ProtocolVersion::V30)
+            || (current < ProtocolVersion::V31 && target >= ProtocolVersion::V31)
+    }
+
     /// Whether this node-only activation must precede dated benchmark catch-up.
     pub fn is_dated_rate_activation(&self) -> bool {
         matches!(self,

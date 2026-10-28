@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use anyhow::ensure;
+use anyhow::{Context, ensure};
 use engine_core::Engine;
 use engine_core::types::AccountId;
 
@@ -11,6 +11,21 @@ use crate::sequencer::replay::Replay;
 use crate::snapshot::{Progress, RecoveryBase, Snapshot};
 
 impl Replay {
+    /// Matches a separately signed complete history head to this actual strict replay prefix.
+    /// Error cases:
+    /// - command, time or canonical command/event prefix differs
+    pub(in crate::sequencer) fn verify_history_head(
+        &self,
+        head: &crate::history::authenticated::Head,
+    ) -> anyhow::Result<()> {
+        ensure!(
+            head.last_seq() == self.engine.last_seq() && head.last_ts() == Some(self.engine.now()),
+            "history head does not match the replay cursor"
+        );
+        ensure!(head.command_prefix == self.command_prefix, "history head does not match the replayed command prefix");
+        Ok(())
+    }
+
     /// Restores required concrete replay facts with fresh external signer and finality authority.
     /// Error cases:
     /// - the cache contradicts its context, deployment, signer, or finalized prefix
@@ -58,9 +73,35 @@ impl Replay {
                     .find(|work| work.checkpoint.seq == parent.seq)
                     .map(|work| work.checkpoint.clone()),
             });
+        let recovery_anchor_work = if let Some(parent) =
+            parent.filter(|parent| parent.has_checkpoint && parent.seq <= snapshot.checkpoint.seq)
+        {
+            Some(
+                snapshot
+                    .context
+                    .work
+                    .iter()
+                    .chain(snapshot.context.base_work.iter())
+                    .find(|work| work.checkpoint.seq == parent.seq)
+                    .cloned()
+                    .or_else(|| {
+                        (snapshot.checkpoint.seq == parent.seq).then(|| {
+                            crate::checkpoints::Work::capture(
+                                snapshot.checkpoint.clone(),
+                                snapshot.context.accounting,
+                                &engine,
+                            )
+                        })
+                    })
+                    .context("snapshot lacks finalized anchor accounting; full replay is required")?,
+            )
+        } else {
+            None
+        };
         let Snapshot { progress: Progress { genesis, activations, checkpoints }, context, checkpoint, .. } = snapshot;
         let last_checkpoint_ts = Some(engine.now());
-        // Commands after the snapshot's checkpoint are sealed from that checkpoint's link.
+        // The pinned snapshot envelope signs all engine bytes, including legacy staking references.
+        // Commands after its checkpoint are checked independently from that checkpoint's link.
         let mut origin = crate::sequencer::origin::Origin::new(Some(domain), trusted_signer);
         origin.link = crate::log::command_seal::checkpoint_link(&checkpoint)?;
         let requires_checkpoint_gate = checkpoint.parent.is_some();
@@ -80,6 +121,7 @@ impl Replay {
             deferred: context.deferred,
             checkpoint_signers: context.checkpoint_signers,
             recovery_work: work,
+            recovery_anchor_work,
             recovery_parent,
             recovery_origin: parent,
             recovery_anchor,

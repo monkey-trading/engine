@@ -144,6 +144,7 @@ impl Fixture {
             balance: Fixed::from_int(100),
             deposits: 1,
             deposited: Fixed::from_int(100),
+            distributions_paid: engine_core::Fixed::ZERO,
         };
         let lifecycle = LifecycleEvidence {
             height: 99,

@@ -282,6 +282,8 @@ jobs:
         run: ./scripts/dev-checkpoints.sh
       - name: Run the MONKEY emissions dev scenario
         run: ./scripts/dev-monkey-emissions.sh
+      - name: Run the MONKEY staking dev scenario
+        run: ./scripts/dev-monkey-staking.sh
       - name: Run sequencer confirmation and Ethereum finality dev scenario
         run: ./scripts/dev-deposit-finality.sh
       - name: Run signed withdrawals, crash recovery, and FIFO liquidity on Anvil

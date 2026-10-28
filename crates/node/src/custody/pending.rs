@@ -24,7 +24,7 @@ const RETRY_INTERVAL: Duration = Duration::from_secs(5);
 pub(super) const MAX_RETRY_INTERVAL: Duration = Duration::from_secs(300);
 
 /// What one retry turn found.
-pub(super) struct RetryTurn {
+pub(crate) struct RetryTurn {
     /// A sequenced retry left its deposit pending, so the next turn waits longer.
     pub(super) unsettled: bool,
     /// A screening failed, or a sequenced retry left its deposit pending.
@@ -92,7 +92,7 @@ pub(super) fn next_wait(wait: Duration, settled: bool) -> Duration {
 /// leaves its deposit pending, so the caller backs off.
 /// Error cases:
 /// - the sequencer stops or its durable submission fails
-pub(super) async fn retry_batch(
+pub(crate) async fn retry_batch(
     access: Option<&AccessClient>,
     tx: &mpsc::Sender<Request>,
     after: &mut Option<String>,

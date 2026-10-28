@@ -13,7 +13,7 @@ use crate::sequencer::replay::Replay;
 use crate::sequencer::{ReplayedLog, Sequencer, SequencerConfig};
 use crate::snapshot::{self, Snapshot};
 use crate::tee::EnclaveKey;
-use crate::test_support::{deposit, dev_config, sample_around, scratch_dir, sequencer_config};
+use crate::test_support::{dev_config, sample_around, scratch_dir, sequencer_config};
 
 /// A cache captured at a checkpoint restores each outstanding checkpoint's work with the accounting
 /// it was signed with, under a freshly supplied finalized anchor, and a cache missing that work
@@ -38,20 +38,42 @@ fn cache_restores_each_outstanding_checkpoint_with_its_original_accounting() {
     };
     let domain = CheckpointDomain { chain_id: cfg.chain_id, vault: cfg.vault };
     let mut seq = Sequencer::recover(cfg, key.clone(), broadcast::channel(32).0, mpsc::unbounded_channel().0).unwrap();
-    seq.activate_protocol().unwrap();
+    seq.activate_legacy_protocol().unwrap();
     seq.genesis(&dev_config().genesis).unwrap();
     seq.trust(sample_around(clock.as_ref())).unwrap();
+    seq.sequence(crate::test_support::empty_custody_frontier()).unwrap();
     while queued.try_recv().is_ok() {}
     let base = seq.last_seq().unwrap();
-    seq.checkpoint_status(Some(base), true).unwrap();
+    seq.checkpoint_status(Some(base), Some(crate::checkpoints::Health::Healthy)).unwrap();
     let parent = seq.snapshot_base.as_ref().unwrap().parent().unwrap();
     let mut expected = Vec::new();
-    for (amount, reference) in [(7, "0xfirst"), (13, "0xsecond")] {
-        seq.stamp(seq.last_ts, deposit(amount, reference)).unwrap();
+    for amount in [7, 13] {
+        let receipt = engine_core::deposits::DepositReceipt {
+            block: 1,
+            block_hash: engine_core::eip712::B256::repeat_byte(1),
+            tx_hash: engine_core::eip712::B256::repeat_byte(amount as u8),
+            log_index: 0,
+            transaction_deposit_index: 0,
+            deposit_id: expected.len() as u64,
+            beneficiary: engine_core::deposits::DepositBeneficiary::House,
+            amount: Fixed::from_int(amount),
+        };
+        seq.stamp(
+            seq.last_ts,
+            engine_core::command::Command::CustodyDeposit(Box::new(engine_core::deposits::DepositUpdate::Credit {
+                receipt,
+            })),
+        )
+        .unwrap();
         expected.push(queued.try_recv().unwrap());
     }
     let offset = seq.outbox.last().unwrap().offset;
     let context = seq.recovery_context(seq.snapshot_base.clone().unwrap());
+    assert_eq!(
+        context.base_work.as_ref().unwrap().checkpoint.seq,
+        base,
+        "the authenticated cache retains anchor accounting"
+    );
     let captured = seq.snapshot_payload(expected[1].checkpoint.clone(), seq.progress.clone(), context, offset).unwrap();
     seq.flush().unwrap();
     let (accounting, command_prefix) = (seq.accounting, seq.command_prefix);
@@ -65,6 +87,7 @@ fn cache_restores_each_outstanding_checkpoint_with_its_original_accounting() {
         Replay::from_snapshot(engine, cached, domain, Some(AccountId(key.address())), Some(parent)).unwrap().finish();
     assert_eq!(replayed.accounting, accounting);
     assert_eq!(replayed.command_prefix, command_prefix);
+    assert_eq!(replayed.recovery_anchor_work.as_ref().unwrap().checkpoint.seq, base);
     let actual = &replayed.recovery_work;
     assert_eq!(actual.len(), expected.len());
     for (actual, expected) in actual.iter().zip(&expected) {
@@ -128,6 +151,7 @@ fn cache_context_requires_work_and_all_accounting_fields() {
             deferred: Vec::new(),
             checkpoint_signers: [AccountId(key.address())].into(),
             base: snapshot::RecoveryBase::Ungated,
+            base_work: None,
             work: Vec::new(),
         },
     };
@@ -150,4 +174,60 @@ fn cache_context_requires_work_and_all_accounting_fields() {
     let mut missing = value;
     missing.as_object_mut().unwrap().remove("context");
     assert!(serde_json::from_value::<Snapshot>(missing).is_err());
+}
+
+impl ReplayedLog {
+    /// Authenticates and restores the exact full-replay work through the production snapshot reader.
+    pub(crate) fn test_authenticated_snapshot(
+        self,
+        cache: &crate::config::SnapshotSection,
+        dir: &std::path::Path,
+        parent: crate::log::CheckpointParent,
+    ) -> Self {
+        let key = EnclaveKey::test_key();
+        let signer = AccountId(key.address());
+        let replayed = &self.replayed;
+        let checkpoint = replayed.last_signed_checkpoint.clone().unwrap();
+        let domain = checkpoint.domain.unwrap();
+        assert!(replayed.recovery_anchor_work.as_ref().unwrap().has_proven_prefix());
+        assert!(replayed.recovery_work.iter().any(|work| !work.has_proven_prefix()));
+        let offset = crate::test_support::log_entries(dir)
+            .iter()
+            .fold(None, |previous, entry| Some(crate::log::offset_of(previous, entry).unwrap()))
+            .unwrap();
+        let payload = Snapshot {
+            schema: 2,
+            pair: None,
+            chain_id: domain.chain_id,
+            vault: domain.vault,
+            checkpoint: checkpoint.clone(),
+            offset,
+            engine: serde_json::to_string(&replayed.engine).unwrap(),
+            progress: snapshot::Progress {
+                genesis: replayed.genesis.clone(),
+                activations: replayed.activations.clone(),
+                checkpoints: replayed.checkpoints,
+            },
+            context: snapshot::RecoveryContext {
+                commands: replayed.commands,
+                command_prefix: replayed.command_prefix,
+                accounting: replayed.accounting,
+                logs_events: true,
+                unsigned: replayed.unsigned.clone(),
+                deferred: replayed.deferred.clone(),
+                checkpoint_signers: replayed.checkpoint_signers.clone(),
+                base: snapshot::RecoveryBase::Checkpoint {
+                    checkpoint: replayed.recovery_anchor_work.as_ref().unwrap().checkpoint.clone(),
+                },
+                base_work: replayed.recovery_anchor_work.clone(),
+                work: replayed.recovery_work.clone(),
+            },
+        };
+        snapshot::write(cache, &payload, &key).unwrap();
+        let path = snapshot::candidates_readonly(cache).unwrap().remove(0);
+        let (cached, engine) = snapshot::read(cache, &path, domain.chain_id, domain.vault).unwrap();
+        let replayed = Replay::from_snapshot(engine, cached, domain, Some(signer), Some(parent)).unwrap().finish();
+        assert_eq!(replayed.recovery_work.last().unwrap().checkpoint, checkpoint);
+        Self { replayed, snapshot_seq: Some(checkpoint.seq), ..self }
+    }
 }

@@ -134,13 +134,36 @@ pub enum ProtocolVersion {
     V23,
     /// Signed eligibility declarations and fail-closed API and custody access screening.
     V24,
+    /// MONKEY staking and USDC distributions (`staking`): once the operator's initialisation
+    /// records a liquidity floor, an epoch length, and a start, each epoch the house NAV above the
+    /// floor is distributed to stakers pro-rata from the staked snapshot at the epoch's close,
+    /// paid in whole USDC base units that reduce house cash, with each account's cumulative
+    /// distribution a leaf of the state tree the vault pays a claim against. Stake and unstake
+    /// mirror the staking contract's finalised events, each credited once under its chain
+    /// reference.
+    V25,
     /// Screen canonical replacement payers and retain terminal holds across receipt variants.
     V26,
+    /// Staking mirror identities and completed finalized scan ranges are authenticated in the state root.
+    V27,
+    /// Reserve unresolved negative client cash before allocating staking distributions.
+    V28,
+    /// Exclude uncollectible marked client equity from distributable house NAV.
+    V29,
+    /// Compose reversible principal with marked liabilities before staking allocation.
+    V30,
+    /// Reserve staker distributions from unapproved physical withdrawal capacity.
+    V31,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V26;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V31;
+
+    /// Whether access screening applies; the standalone legacy V25 rules predate access.
+    pub fn supports_access(self) -> bool {
+        self == Self::V24 || self >= Self::V26
+    }
 
     /// Whether this rule set credits exact receipts with withdrawal principal locks.
     pub fn supports_deposit_finality(self) -> bool {

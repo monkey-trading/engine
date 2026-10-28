@@ -19,6 +19,7 @@ use std::time::Duration;
 use anyhow::{Context, ensure};
 use engine_core::Fixed;
 use engine_core::emissions::TokenUnits;
+use engine_core::staking::UsdcUnits;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio::time::{MissedTickBehavior, interval};
@@ -35,6 +36,11 @@ pub(crate) struct Work {
     pub checkpoint: Checkpoint,
     pub liabilities: Fixed,
     pub deposits: u64,
+    /// USDC base units the engine has allocated to stakers across closed epochs; the vault cannot
+    /// legitimately have paid more than this. Logs written before distributions existed carry no
+    /// value; they had none.
+    #[serde(default)]
+    pub distributed: UsdcUnits,
     pub authorized: Fixed,
     pub coverage: DepositCoverage,
 }
@@ -60,7 +66,52 @@ impl Work {
         } else {
             (accounting.deposits, DepositCoverage::Historical)
         };
-        Self { checkpoint, liabilities: accounting.liabilities, deposits, authorized: accounting.unpaid(), coverage }
+        let distributed = engine.staking().map_or(UsdcUnits(0), |staking| staking.distributed);
+        Self {
+            checkpoint,
+            liabilities: accounting.liabilities,
+            deposits,
+            distributed,
+            authorized: accounting.unpaid(),
+            coverage,
+        }
+    }
+
+    /// Whether signing now can produce work with a provable credited prefix.
+    pub(crate) fn can_capture(accounting: Accounting, engine: &engine_core::Engine) -> bool {
+        !engine.deposit_finality_enabled()
+            || engine.custody_deposit_coverage().is_some()
+            || Self::empty_prefix(
+                accounting.deposits,
+                accounting.liabilities,
+                accounting.unpaid(),
+                engine.staking().map_or(UsdcUnits(0), |staking| staking.distributed),
+            )
+    }
+
+    /// No allocated custody liability can depend on the identity of a receipt in an empty prefix.
+    fn empty_prefix(deposits: u64, liabilities: Fixed, authorized: Fixed, distributed: UsdcUnits) -> bool {
+        deposits == 0 && liabilities == Fixed::ZERO && authorized == Fixed::ZERO && distributed == UsdcUnits(0)
+    }
+
+    /// An empty ledger has the exact empty credited prefix independently of a custody scan.
+    pub(crate) fn has_proven_prefix(&self) -> bool {
+        self.coverage != DepositCoverage::AwaitingCanonicalScan
+            || Self::empty_prefix(self.deposits, self.liabilities, self.authorized, self.distributed)
+    }
+
+    /// Refuses restored signatures that could become an irreconcilable finalized checkpoint.
+    /// Error cases:
+    /// - a nonempty modern checkpoint lacks its original canonical receipt coverage
+    pub(crate) fn validate_recovery_prefix(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.has_proven_prefix(),
+            "recovered checkpoint at seq {} has a nonempty unproven custody prefix; \
+             later scans cannot authenticate that immutable prefix: preserve this prelaunch log \
+             for audit and use a fresh deployment or an explicitly verified operator migration",
+            self.checkpoint.seq
+        );
+        Ok(())
     }
 
     /// Whether this work carries `accounting`'s liabilities and approvals and, unless sequenced
@@ -85,6 +136,9 @@ pub(crate) struct VaultState {
     pub deposits: u64,
     /// USDC the vault's deposits brought in, house deposits and booked surpluses included.
     pub deposited: Fixed,
+    /// USDC the vault has paid out in staker distributions; the engine's ledger holds the
+    /// liabilities, and this explains what has left the vault since.
+    pub distributions_paid: Fixed,
 }
 
 /// Latest inclusion is progress; only final custody-policy state authorizes signature release.
@@ -92,6 +146,20 @@ pub(crate) struct VaultState {
 pub(crate) enum View {
     Latest,
     Finalized,
+}
+
+/// How the vault's collateral compared with the checkpoint's ledger.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Health {
+    /// No finalized ledger comparison is available; preserves the preceding reconciliation verdict.
+    Unvalidated,
+    /// Balance plus paid distributions equals the ledger and the deposit counts match.
+    Healthy,
+    /// Routine catch-up: the vault counts deposits the ledger has not credited yet, with the
+    /// compensated collateral still at or above the ledger.
+    Pending,
+    /// The ledger and the vault disagree; withdrawals pause and no further checkpoint posts.
+    Diverged,
 }
 
 /// Chain access, kept separate from the authorized enclave signer lifecycle.
@@ -294,25 +362,28 @@ impl<R: CheckpointChain> Poster<R> {
                         finalized_seq = tracing::field::Empty);
                     let page = approval_page(&approvals, approval_cursor)?;
                     let result = self.reconcile_lifecycle(work, &known, &page, &mut uncredited).instrument(span.clone()).await;
-                    let (posted, healthy, lifecycle) = match result {
-                        Ok(status) => status,
+                    let (posted, health, lifecycle) = match result {
+                        Ok((posted, health, lifecycle)) =>
+                            (posted, (health != Health::Unvalidated).then_some(health), lifecycle),
                         Err(error) => {
                             if error.is::<Conflict>() {
                                 span.in_scope(|| error!(alert = "checkpoint_conflict", "refusing to continue: {error:#}"));
                                 return Err(error);
                             }
                             span.in_scope(|| warn!(alert = "checkpoint_post_failed", "checkpoint remains queued: {error:#}"));
-                            (None, false, None)
+                            (None, None, None)
                         }
                     };
                     if lifecycle.is_some() {
                         approval_cursor = page.last().map(|approval| (approval.account, approval.nonce));
                     }
                     let evidence = lifecycle.clone();
-                    tx.send(Request::CheckpointStatus { posted, healthy, lifecycle }).await.map_err(|_| anyhow::anyhow!("sequencer stopped"))?;
+                    tx.send(Request::CheckpointStatus { posted, health, lifecycle }).await.map_err(|_| anyhow::anyhow!("sequencer stopped"))?;
                     if let Some(evidence) = &evidence {
-                        approval_cursor = self.sweep(evidence, &approvals, approval_cursor, (posted, healthy), &tx)
-                            .instrument(span.clone()).await?;
+                        approval_cursor = self
+                            .sweep(evidence, &approvals, approval_cursor, posted, health, &tx)
+                            .instrument(span.clone())
+                            .await?;
                     }
                     if let Some(posted) = posted {
                         let confirmed = known.iter().find(|work| work.checkpoint.seq == posted).map(|work| (*work).clone());
@@ -338,6 +409,8 @@ mod lifecycle_tests;
 #[cfg(test)]
 mod scenario;
 #[cfg(test)]
+mod staking_scenario;
+#[cfg(test)]
 mod tests;
 
 /// Approval pages observed per retry interval, the first with the tick's finalized observation and
@@ -357,7 +430,8 @@ impl<R: CheckpointChain> Poster<R> {
         evidence: &LifecycleEvidence,
         approvals: &ApprovalRegistry,
         mut cursor: Cursor,
-        (posted, healthy): (Option<u64>, bool),
+        posted: Option<u64>,
+        health: Option<Health>,
         tx: &mpsc::Sender<Request>,
     ) -> anyhow::Result<Cursor> {
         for _ in 1..SWEEP_PAGES {
@@ -380,7 +454,7 @@ impl<R: CheckpointChain> Poster<R> {
             };
             cursor = page.last().map(|approval| (approval.account, approval.nonce));
             let lifecycle = Some(LifecycleEvidence { approvals: statuses, ..evidence.clone() });
-            tx.send(Request::CheckpointStatus { posted, healthy, lifecycle })
+            tx.send(Request::CheckpointStatus { posted, health, lifecycle })
                 .await
                 .map_err(|_| anyhow::anyhow!("sequencer stopped"))?;
         }

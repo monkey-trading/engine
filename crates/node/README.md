@@ -72,6 +72,12 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   against the last checkpoint's root, for the vault's `claimEmissions`; with `[checkpoints]`, the
   node reads the period budget the vault's MONKEY cap was derived from, refuses a schedule with any
   other, and refuses to start on a log that records one
+- MONKEY staking from protocol `V25`: `engine admin init-staking` or a genesis `staking` entry
+  records the liquidity floor, epoch length, start, and unstake cooldown once; each epoch the
+  engine distributes house NAV above the floor to stakers pro-rata, and
+  `GET /v1/accounts/{address}/distributions` serves an account's cumulative USDC distribution with
+  its proof against the last checkpoint's root, for the vault's `claimDistribution`; checkpoint
+  reconciliation counts the USDC the vault has paid in distributions against the ledger
 - Supervised tasks: any task stopping stops the node, and SIGTERM drains to a final checkpoint
 - Live crypto prices from Coinbase, Kraken, and Bitstamp over WebSocket: one supervised task per
   venue connection, quotes stamped with the venue's own time, and reconnects with backoff
@@ -87,7 +93,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   crossing zero
 - EVM custody: a strict majority of at least three RPC providers admits each deposit; from V20,
   sequencer confirmation credits trading collateral, Ethereum finality unlocks withdrawal principal,
-  and canonical reversals debit once with a Critical alert
+  and canonical reversals debit once with a Critical alert. From V25, the same poll mirrors the
+  staking contract's finalised `Staked`/`UnstakeCompleted` events (`custody.evm.staking`) into
+  `Stake`/`Unstake` commands once each, holding them until `InitStaking` has applied
 - Mock custody and a mock price feed for local development
 - Prometheus metrics on a separate operator address, from a registry the node owns, with no
   per-account labels or values
@@ -107,6 +115,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/admin/tests.rs` — `engine admin` tests: key sources, commands, signing, and pins
 - `src/node/mod.rs` — startup, task supervision, and shutdown
 - `src/node/tests.rs` — startup, history recovery, and incomplete-genesis tests
+- `src/node/preflight/unscanned.rs` — unprovable prelaunch anchors refuse writable startup before changing log or history
 - `src/node/preflight/tests/origin.rs` — integrity refusal preserves absent, corrupt, and WAL-backed history
 - `src/telemetry.rs` — the log subscriber, which feeds alert lines to the router, and the metrics
   registry, set up before the node runs
@@ -126,6 +135,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/test_support/written.rs` — shared in-memory test output capture
 - `src/sequencer/checkpoints/accounting_tests.rs` — live/recovery accounting oracles and gated 100k-account capture scaling over migrated credits and fresh holds
 - `src/sequencer/checkpoint_tests.rs` — confirmed-prefix signature gating and restart tests
+- `src/sequencer/checkpoint_tests/unvalidated.rs` — worker observations preserve signing holds until collateral is compared
+- `src/sequencer/checkpoint_tests/bootstrap.rs` — recovered empty anchors reconcile while nonempty unscanned checkpoints wait
 - `src/sequencer/fixture_tests.rs` — test-only signing of copies of placeholder protocol fixtures,
   and logs whose genesis an older protocol applied but no current config can give
 - `src/sequencer/recovery.rs` — pure recovery validation and exact authenticated checkpoint-tail restoration
@@ -226,6 +237,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/access_tests/declarations.rs` — a declaration screened like an order: public refusals that leave its deposit pending until an allowed one is recorded
 - `src/access.rs`, `src/access/tests.rs` — bounded signed-source IO and failure-path tests
 - `src/api/admin.rs` — the operator's admin route, checked before it is sequenced
+- `src/api/distributions.rs` — an account's cumulative USDC distribution with its proof against the
+  last checkpoint's root, for the vault's `claimDistribution`
 - `src/api/benchmark_schedule.rs` — capped, bounded watches of the durable rollover schedule
 - `src/api/benchmark_tests.rs` — deterministic publisher/TLS/API restart and financing dev scenario
 - `src/api/benchmark_tests/recovery.rs` — publisher retries during an in-process trusted-time halt
@@ -363,6 +376,22 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/emissions_scenario.rs` — the MONKEY emissions dev scenario on isolated Anvil: pro-rata
   allocation, cancelled periods, a restart across finalisation, the first halving, and claims that mint
   each entitlement once against the posted root
+- `src/checkpoints/emissions_scenario/api.rs` — HTTP calls and a startup barrier on the worker's
+  real collateral verdict before the scenario drives checkpoint-dependent commands
+- `src/checkpoints/emissions_scenario/funding.rs` — actual Vault funding receipts and finalized
+  custody progress for the emissions scenario
+
+- `src/checkpoints/staking_scenario.rs` — the MONKEY staking dev scenario on isolated Anvil: staking
+  mirrored from the Staking contract, an epoch above the floor paying pro-rata in USDC against the
+  posted root, an unstake through the cooldown, and an epoch below the floor paying nothing
+- `src/checkpoints/staking_scenario/scenario.rs` — the scenario's chain, deployments, and node,
+  which it stops and restarts across an epoch boundary
+- `src/checkpoints/staking_scenario/access.rs` — signed loopback screening and published Anvil keys
+  for deposit-first eligibility and authenticated orders under the latest protocol
+- `src/checkpoints/staking_scenario/funding.rs` — real Vault deposits, screened exact receipts,
+  principal finalization, and authenticated custody frontiers
+- `src/checkpoints/staking_scenario/claims.rs` — the scenario's on-chain steps: entitlement and
+  distribution claims against posted roots, event mirroring, and balance reads
 - `src/history/preflight.rs` — immutable history planning before authorized SQLite mutation
 - `src/history/preflight/tests.rs` — private WAL resume and malformed geometry byte-preservation regressions
 - `src/node/tests/custody_preflight.rs` — local custody refusal preserves log/history across image states
@@ -377,8 +406,18 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   proven to lead to the tagged final block, the completeness check, and stall alerts
 - `src/custody/evm/lifecycle.rs` — confirmed receipt reconciliation, principal finality and the replayed scan frontier
 - `src/custody/evm/progress.rs` — confirmed header and log windows read one batch per poll, kept
+  Staking catch-up retains at most 66 proven binary-hierarchy anchors independently of deposit pruning,
+  plus two private candidate anchors, with O(N log(N/chunk)) header work and one configured chunk of full hashes
   across polls while their endpoint stays canonical
+- `src/custody/evm/types.rs` — the canonical deposit, staking-event, finality and reader types
+- `src/custody/evm/staking.rs` — staking catch-up proofs anchored independently of deposit progress
+- `src/custody/tests/fakes/files.rs` — temporary directories and custody test configurations
 - `src/custody/evm/legacy.rs` — independent canonical finality proof before legacy signature redelivery
+- `src/custody/staking.rs` — mirroring the staking contract's finalised events into `Stake`/`Unstake`
+  commands once each, holding them until `InitStaking` has applied; V27 completed ranges, including
+  empty ones, are authenticated by `StakingProgress` and the host cursor cannot advance them
+- `src/custody/tests/staking/anchor.rs` — canonical endpoint binding for empty and partial log votes
+
 - `src/custody/evm/lifecycle/tests.rs` — reversal, reinclusion, inconsistent receipt and amount boundaries
 - `src/custody/chain.rs` — the chain of block hashes proven to lead to the tagged block, and the
   headers of an interrupted proof, kept apart until it ends there
@@ -538,6 +577,11 @@ cargo run -p engine-node -- admin --pin $PIN set-params params.toml           # 
 cargo run -p engine-node -- admin --pin $PIN init-emissions --start 2027-01-01T00:00:00Z --period-budget <units>
 cargo run -p engine-node -- admin --pin $PIN schedule-corporate-action action.toml  # see the runbook
 
+# Once per log, from protocol V25: when staking epoch 0 starts (not before the command is
+# sequenced), the house NAV liquidity floor, the epoch length, and the unstake cooldown in
+# milliseconds. Production values need the owner's approval.
+cargo run -p engine-node -- admin --pin $PIN init-staking --start 2027-01-01T00:00:00Z --liquidity-floor 10000000 --epoch-ms 3600000 --cooldown-ms 86400000
+
 # Download the archive: the manifest, then each segment it lists (`--retry` waits out a 429)
 curl -kf --retry 5 --create-dirs -o archive/manifest.jsonl https://127.0.0.1:8080/v1/archive/manifest.jsonl
 jq -r '.file' archive/manifest.jsonl |
@@ -559,6 +603,11 @@ RPC_QUORUM_SCENARIO=1 ./scripts/dev-vault-deposits.sh
 cargo build --release -p engine-node --features production
 # Run the MONKEY emissions scenario on isolated Anvil: allocation, halving, restart, and claims
 ./scripts/dev-monkey-emissions.sh
+
+# Run the MONKEY staking scenario on isolated Anvil: staking mirrored from the contract, an epoch
+# above the floor paying pro-rata in USDC, an unstake through the cooldown, and an epoch below the
+# floor paying nothing
+./scripts/dev-monkey-staking.sh
 ```
 
 EVM custody requires at least three entries in `custody.evm.providers`, each with a unique
@@ -977,6 +1026,8 @@ one event `type`: `deposited`, `deposit_rejected`, `custody_deposit_changed`,
 index that reads at most `limit + 1` entries, and at most 16 pages are read at once. Until the index
 has taken every command the log held when the node started, the route answers 503 (`history is
 catching up with the log`). History is public, like the log.
+`emission_allocated`, `staked`, `unstaked`, `staking_rejected`, or `distribution_allocated`.
+`?limit=` is 1 to 200, 50 by default. A page is one search of a SQLite index that reads
 `emission_allocated`, `eligibility_attested`, `eligibility_rejected`, `deposit_pending`, or
 `deposit_held`. `?limit=` is 1 to 200, 50 by default. A page is one search of a SQLite index that reads
 at most `limit + 1` entries, and at most 16 pages are read at once. Until the index has taken every
@@ -1059,6 +1110,12 @@ vault's `latestSeq` equals the proof's `seq`, and a proof stops working once a l
 posted; fetch a fresh one then. An account has no entitlement, and gets 404, until the first
 checkpoint after a period in which it was allocated a share.
 
+`/v1/accounts/{address}/distributions` returns, from `V25`, the account's cumulative USDC
+distribution the same way (`entitled` in the 6-decimal token's base units). The vault's
+`claimDistribution` pays the USDC the distribution adds to what the account was already paid,
+against its latest posted root. An account has no distribution, and gets 404, until the first
+checkpoint after an epoch in which it was allocated a share.
+
 The operator listener, `metrics.listen` (`127.0.0.1:9464` in `config/dev.toml`), serves
 `GET /metrics` in Prometheus text format. `ops/grafana/engine-node.json` is a Grafana dashboard
 over it, showing sequencer health and the quote freshness of each venue the config feeds (one
@@ -1129,6 +1186,22 @@ host deletion or rollback. Integrity-protected, rollback-resistant storage is st
 bound a hostile host. Across restarts, retention uses host wall time; a backward clock refuses
 future-dated rows, but trusted time is not sealed with the outbox. The webhook URL remains a
 host-supplied credential, and HTTP client logs stay at `warn` regardless of `logging.level`.
+
+### Older unscanned custody anchors
+
+Writable EVM recovery requires the finalized checkpoint's original authenticated accounting and
+an exact credited deposit prefix. An empty bootstrap ledger proves prefix zero; a nonempty modern
+checkpoint needs the canonical custody frontier recorded at that checkpoint. Later scanning cannot
+supply a missing proof for an older immutable root. Startup refuses older nonempty unscanned anchors and every outstanding recovered signature with an
+unproven prefix
+before opening the log for append or creating or repairing history, rather than serving permanently
+paused. Read-only `engine replay` remains available for their audit.
+
+This project is prelaunch, holds no real funds, and the staking release already requires vault
+redeployment. Such development logs require a fresh deployment or a separately specified and verified
+operator migration. Preserve the original log and custody state; deleting the log alone cannot reset
+a vault's accepted checkpoint, and this node does not infer or fabricate a migration proof.
+
 
 ### Corporate actions operator runbook
 
@@ -1377,3 +1450,5 @@ non-waiting shutdown path after node/alert draining, so a blocked storage syscal
 that drain deadline through runtime destruction. On a fatal drain error the CLI returns an error
 and exits, terminating any remaining OS threads. An embedded caller must likewise terminate its
 process after an uncancellable drain failure; a blocked thread is not safe to restart beside.
+
+`src/custody/tests/rpc/staking.rs` checks complete hash-pinned staking log windows against a lagging fork backend.

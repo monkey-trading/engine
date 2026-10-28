@@ -16,8 +16,9 @@ use tokio::task::JoinHandle;
 
 use crate::checkpoints::rpc::{
     balanceOfCall, checkpointEpochAtCall, checkpointRootsCall, checkpointSignerAtCall, checkpointSignerCall,
-    depositCountCall, depositedThroughCall, hasCheckpointAtCall, hasCheckpointCall, latestRootCall, latestSeqCall,
-    signerAtEpochCall, signerEpochCall, totalDepositedCall, totalWithdrawnCall, usdcCall, usedNoncesCall,
+    depositCountCall, depositedThroughCall, distributionsPaidCall, hasCheckpointAtCall, hasCheckpointCall,
+    latestRootCall, latestSeqCall, signerAtEpochCall, signerEpochCall, totalDepositedCall, totalWithdrawnCall,
+    usdcCall, usedNoncesCall,
 };
 use crate::log::Checkpoint;
 use crate::tee::EnclaveKey;
@@ -284,6 +285,8 @@ async fn answer(State(state): State<Arc<Mutex<RpcState>>>, Json(request): Json<V
                 depositedThroughCall::abi_encode_returns(
                     &state.deposited_through.get(&id.to::<u64>()).copied().unwrap_or(U256::ZERO),
                 )
+            } else if selector == hex::encode(distributionsPaidCall::SELECTOR) {
+                distributionsPaidCall::abi_encode_returns(&U256::ZERO)
             } else {
                 assert_eq!(selector, hex::encode(depositCountCall::SELECTOR));
                 depositCountCall::abi_encode_returns(&U256::from(state.deposits))

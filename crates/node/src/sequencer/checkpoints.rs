@@ -17,7 +17,11 @@ pub(super) struct Gate {
     sink: mpsc::Sender<Work>,
     pub registry: Option<crate::checkpoints::Registry>,
     pub parent: crate::log::CheckpointParent,
-    pub healthy: bool,
+    /// The latest collateral reconciliation verdict; `None` before the first observation of this
+    /// process (a failed observation leaves the previous verdict). Starts paused (`Pending`)
+    /// until the first reconciliation succeeds, and a recovered deployment with posted
+    /// checkpoints revalidates collateral before signing again.
+    pub health: Option<crate::checkpoints::Health>,
     pub recovery: Vec<Work>,
     pub pending: Vec<(u64, AccountId, Fixed, u64)>,
     pub payouts: crate::sequencer::payouts::Payouts,
@@ -36,7 +40,7 @@ impl Gate {
             sink,
             registry: None,
             parent,
-            healthy: false,
+            health: (!parent.has_checkpoint).then_some(crate::checkpoints::Health::Pending),
             recovery: Vec::new(),
             pending: Vec::new(),
             payouts: Default::default(),
@@ -50,7 +54,15 @@ impl Gate {
 }
 
 impl Sequencer {
-    /// Transfers replayed durable work to the worker before admitting live commands.
+    /// The state root of the engine a test's recovered sequencer holds.
+    #[cfg(test)]
+    pub fn state_root(&mut self) -> [u8; 32] {
+        self.engine.state_root()
+    }
+
+    /// Transfers replayed durable work to the worker before admitting live commands. A deployment
+    /// recovering posted checkpoints has not yet observed collateral this process: signing waits
+    /// for the worker's first reconciliation.
     pub(crate) fn take_recovery_checkpoints(&mut self) -> Vec<Work> {
         self.gate.as_mut().map_or_else(Vec::new, |gate| std::mem::take(&mut gate.recovery))
     }
@@ -62,6 +74,19 @@ impl Sequencer {
     pub(super) fn checkpoint(&mut self) -> anyhow::Result<()> {
         let seq = self.engine.last_seq().context("checkpoint before any command")?;
         if self.gate.as_ref().is_some_and(|gate| gate.parent.has_checkpoint && gate.parent.seq == seq) {
+            return Ok(());
+        }
+        if self.gate.as_ref().is_some_and(|gate| {
+            !matches!(gate.health, Some(crate::checkpoints::Health::Healthy | crate::checkpoints::Health::Pending))
+        }) {
+            // A signed checkpoint is public: anyone may relay it to the vault, and its root makes
+            // distributions claimable. Recovery must revalidate its finalized anchor before
+            // publishing any successor; proved divergence also withholds every new signature.
+            warn!(alert = "checkpoint_withheld", seq, "no checkpoint signed: collateral is unvalidated or diverged");
+            return Ok(());
+        }
+        if self.gate.is_some() && !Work::can_capture(self.accounting, &self.engine) {
+            warn!(alert = "checkpoint_withheld", seq, "no checkpoint signed: custody prefix awaits canonical scan");
             return Ok(());
         }
         // The worker finalizes one checkpoint at a time, so a full queue defers the next checkpoint
@@ -141,18 +166,29 @@ impl Sequencer {
     }
 
     /// Releases only approvals covered by the confirmed prefix, and only after reconciliation.
+    /// A `None` verdict — an observation that failed — leaves the gate's verdict unchanged, so an
+    /// RPC error cannot erase a proved divergence.
     /// Error cases:
     /// - the log cannot be written
-    pub(super) fn checkpoint_status(&mut self, posted: Option<u64>, healthy: bool) -> anyhow::Result<()> {
+    pub(super) fn checkpoint_status(
+        &mut self,
+        posted: Option<u64>,
+        health: Option<crate::checkpoints::Health>,
+    ) -> anyhow::Result<()> {
         let Some(gate) = &mut self.gate else { return Ok(()) };
-        gate.healthy = healthy;
-        self.metrics.withdrawals_paused.set(i64::from(!healthy));
-        if !healthy {
+        if let Some(health) = health.filter(|health| *health != crate::checkpoints::Health::Unvalidated) {
+            gate.health = Some(health);
+        }
+        self.metrics
+            .withdrawals_paused
+            .set(i64::from(!matches!(gate.health, Some(crate::checkpoints::Health::Healthy))));
+        if health != Some(crate::checkpoints::Health::Healthy) {
             return Ok(());
         }
         if let Some(work) = self.snapshot_work.iter().find(|work| Some(work.checkpoint.seq) == posted) {
             self.snapshot_base =
                 Some(crate::snapshot::RecoveryBase::Checkpoint { checkpoint: work.checkpoint.clone() });
+            self.snapshot_anchor_work = Some(work.clone());
             self.snapshot_work.retain(|work| Some(work.checkpoint.seq) > posted);
         }
         let needs_authorization = ProtocolVersion::LATEST.supports_deposit_finality()

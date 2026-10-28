@@ -17,6 +17,7 @@ use tracing::{debug, info};
 
 use crate::access::AccessClient;
 use crate::config::EvmCustodySection;
+mod types;
 use crate::custody::chain::{BlockLink, ProvenChain};
 use crate::custody::credit::{credit, moved_credits, sync};
 use crate::custody::cursor::Cursor;
@@ -24,45 +25,14 @@ use crate::custody::sizing::AdaptiveSize;
 use crate::custody::stall::{PollError, Polled, Stall};
 use crate::custody::watchdog::Watchdog;
 use crate::sequencer::Request;
+pub use types::{
+    Beneficiary, BlockRef, Finality, HeadSupport, StakingEvent, StakingEventKind, VaultDeposit, VaultIdentity,
+    VaultReader,
+};
 mod legacy;
 mod lifecycle;
 mod progress;
-mod reader;
-pub use reader::{Beneficiary, VaultDeposit, VaultReader};
-
-/// A block by height and hash.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct BlockRef {
-    pub number: u64,
-    pub hash: B256,
-}
-
-/// Identity-qualified head observations for a fixed configured provider population.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HeadSupport {
-    pub required: usize,
-    pub heads: Vec<Option<u64>>,
-}
-
-/// The chain's head, and the block the finality tag names.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Finality {
-    pub head: u64,
-    /// The head block's timestamp, in seconds since the epoch.
-    pub head_time: u64,
-    /// `None` while the chain has no block at the tag yet.
-    pub tagged: Option<BlockRef>,
-    /// Per-provider diagnostics; raw single-provider readers leave this unset.
-    pub head_support: Option<HeadSupport>,
-}
-
-/// Which chain an endpoint serves and which token its vault holds.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct VaultIdentity {
-    pub chain_id: u64,
-    /// `None` when nothing answers at the vault address on that chain.
-    pub token: Option<Address>,
-}
+mod staking;
 
 /// One block range's reads, checked against each other and the proven chain.
 struct RangeRead {
@@ -85,6 +55,8 @@ pub struct DepositWatcher<V> {
     usdc: Address,
     pub(super) cursor: Cursor,
     cursor_path: PathBuf,
+    /// The staking mirror's cursor and store, present when the deployment has a staking contract.
+    staking: Option<(crate::custody::staking::StakingCursor, PathBuf)>,
     /// Blocks the final block sits below the tagged block.
     confirmations: u64,
     pub(super) chain: ProvenChain,
@@ -100,13 +72,6 @@ pub struct DepositWatcher<V> {
     pub(super) access_enforced: bool,
 }
 
-impl VaultDeposit {
-    /// The engine's reference for this deposit: `<tx hash>:<log index>`.
-    pub fn chain_ref(&self) -> String {
-        format!("{}:{}", self.tx_hash, self.log_index)
-    }
-}
-
 impl<V: VaultReader> DepositWatcher<V> {
     /// A watcher resuming from the stored cursor, or from `cfg.start_block` without one.
     /// Error cases:
@@ -119,11 +84,30 @@ impl<V: VaultReader> DepositWatcher<V> {
         log_seq: Option<u64>,
     ) -> anyhow::Result<Self> {
         let cursor = Cursor::load(&cfg.cursor_path, chain_id, vault_address, cfg.start_block, log_seq)?;
-        Ok(Self::from_cursor(vault, cfg, cursor))
+        let staking = cfg
+            .staking
+            .as_ref()
+            .map(|staking| {
+                crate::custody::staking::StakingCursor::load(
+                    &staking.cursor_path,
+                    chain_id,
+                    staking.contract,
+                    cfg.start_block,
+                    log_seq,
+                )
+                .map(|cursor| (cursor, staking.cursor_path.clone()))
+            })
+            .transpose()?;
+        Ok(Self::from_cursor(vault, cfg, cursor, staking))
     }
 
     /// Builds the watcher; receipt mode takes no chain evidence from the host cursor.
-    fn from_cursor(vault: V, cfg: &EvmCustodySection, cursor: Cursor) -> Self {
+    fn from_cursor(
+        vault: V,
+        cfg: &EvmCustodySection,
+        cursor: Cursor,
+        staking: Option<(crate::custody::staking::StakingCursor, PathBuf)>,
+    ) -> Self {
         info!(next_block = cursor.next_block, next_deposit_id = cursor.next_deposit_id, "deposit watcher ready");
         // The proof resumes from the last block read, so a change to it stalls rather than passes.
         let mut chain = ProvenChain::default();
@@ -141,10 +125,11 @@ impl<V: VaultReader> DepositWatcher<V> {
             confirmed_deposits: ProtocolVersion::LATEST.supports_deposit_finality(),
             confirmed: progress::ConfirmedProgress::default(),
             legacy_unproven: None,
-            access_enforced: ProtocolVersion::LATEST >= ProtocolVersion::V24,
+            access_enforced: ProtocolVersion::LATEST.supports_access(),
             usdc: cfg.usdc,
             cursor,
             cursor_path: cfg.cursor_path.clone(),
+            staking,
             confirmations: cfg.confirmations,
             chain,
             max_block_range: cfg.max_block_range,

@@ -39,7 +39,7 @@ impl Engine {
         evidence: &AccessEvidence,
         events: &mut Vec<Event>,
     ) {
-        if self.protocol_version < ProtocolVersion::V24 {
+        if !self.protocol_version.supports_access() {
             events.push(Event::CustodyDepositRejected {
                 receipt: receipt.clone(),
                 reason: DepositReject::ProtocolNotActive,
@@ -123,7 +123,7 @@ impl Engine {
         receipt: &DepositReceipt,
         screening: CreditScreening<'_>,
     ) -> Option<UncreditedReceipt> {
-        if self.protocol_version < ProtocolVersion::V24 {
+        if !self.protocol_version.supports_access() {
             return None;
         }
         if let Some(held) = self.terminal_receipt_hold(receipt) {

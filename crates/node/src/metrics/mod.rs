@@ -26,7 +26,7 @@ use prometheus_client::registry::Registry;
 
 const CONTENT_TYPE_OPENMETRICS: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
 /// Every `kind` a typed rejection reason can have; see `reject_kind`.
-const REJECT_KINDS: [&str; 22] = [
+const REJECT_KINDS: [&str; 24] = [
     "access",
     "payout_unavailable",
     "unknown_market",
@@ -49,6 +49,8 @@ const REJECT_KINDS: [&str; 22] = [
     "invalid_nonce",
     "expired",
     "expiry_too_far",
+    "staking_not_initialised",
+    "insufficient_stake",
 ];
 /// Every reason a price rejection can have; see `prices_reject_reason`.
 const PRICES_REJECT_REASONS: [&str; 6] =
@@ -222,7 +224,7 @@ impl Metrics {
             "Alert pages queued for, or being posted to, their webhook, by severity",
             metrics.alert_pages_pending.clone(),
         );
-        let typed = ["order_rejected", "withdrawal_rejected", "deposit_rejected"];
+        let typed = ["order_rejected", "withdrawal_rejected", "deposit_rejected", "staking_rejected"];
         let rejections = typed
             .iter()
             .flat_map(|event| REJECT_KINDS.map(|reason| (*event, reason)))
@@ -266,6 +268,9 @@ impl Metrics {
             }
             Event::DepositRejected { reason, .. } => {
                 rejection("deposit_rejected", reject_kind(reason));
+            }
+            Event::StakingRejected { reason, .. } => {
+                rejection("staking_rejected", reject_kind(reason));
             }
             Event::CustodyDepositRejected { reason, .. } => {
                 rejection("custody_deposit_rejected", deposit_reject_kind(reason));
@@ -340,6 +345,8 @@ fn reject_kind(reason: &Reject) -> &'static str {
         Reject::InvalidNonce { .. } => "invalid_nonce",
         Reject::Expired { .. } => "expired",
         Reject::ExpiryTooFar { .. } => "expiry_too_far",
+        Reject::StakingNotInitialised => "staking_not_initialised",
+        Reject::InsufficientStake => "insufficient_stake",
     }
 }
 

@@ -311,6 +311,15 @@ pub fn trusted_now() -> Sample {
     sample_around(&SystemClock)
 }
 
+/// A fixture's authenticated scan of an empty vault before any receipt.
+pub fn empty_custody_frontier() -> Command {
+    Command::CustodyFinalised(engine_core::deposits::CustodyCheckpoint {
+        block: 0,
+        block_hash: engine_core::eip712::B256::repeat_byte(1),
+        deposit_count: 0,
+    })
+}
+
 /// A deposit to `TRADER` of `amount` whole units under `chain_ref`.
 pub fn deposit(amount: i64, chain_ref: &str) -> Command {
     Command::Deposit { account: TRADER, amount: Fixed::from_int(amount), chain_ref: chain_ref.to_owned() }

@@ -193,6 +193,10 @@ pub(super) fn event_kind(event: &Event) -> Result<u8> {
         Event::WithdrawalQueueUpdated { .. } => "withdrawal_queue_updated",
         Event::CorporateDividend { .. } => "corporate_dividend",
         Event::CorporateCashInLieu { .. } => "corporate_cash_in_lieu",
+        Event::Staked { .. } => "staked",
+        Event::Unstaked { .. } => "unstaked",
+        Event::StakingRejected { .. } => "staking_rejected",
+        Event::DistributionAllocated { .. } => "distribution_allocated",
         Event::EligibilityAttested { .. } => "eligibility_attested",
         Event::EligibilityRejected { .. } => "eligibility_rejected",
         Event::DepositPending { .. } => "deposit_pending",
@@ -215,7 +219,9 @@ pub(super) fn event_kind(event: &Event) -> Result<u8> {
         | Event::AdminApplied
         | Event::AdminRejected { .. }
         | Event::EmissionPeriodClosed { .. }
-        | Event::EmissionPeriodsCancelled { .. } => bail!("event is not an account-history kind"),
+        | Event::EmissionPeriodsCancelled { .. }
+        | Event::DistributionEpochClosed { .. }
+        | Event::DistributionEpochsSkipped { .. } => bail!("event is not an account-history kind"),
     };
     kind_id(kind)
 }

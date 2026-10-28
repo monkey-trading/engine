@@ -3,12 +3,14 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
+use crate::engine::Engine;
+use crate::event::Event;
 use crate::fixed::Rounding;
 use crate::futures::FuturesState;
 use crate::market::MarketSpec;
 use crate::price::{Index, SourceQuote};
 use crate::stress::StressState;
-use crate::types::{AccountId, Millis, OrderId};
+use crate::types::{AccountId, MarketId, Millis, OrderId};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MarketState {
@@ -71,5 +73,22 @@ impl MarketState {
     /// `amount` in this market's quote currency, in USD at its FX mark, rounded as `rounding` says.
     pub fn usd_at_mark(&self, amount: Fixed, rounding: Rounding) -> Fixed {
         self.spec.quote_currency.to_usd(amount, self.fx_mark, rounding)
+    }
+}
+
+impl Engine {
+    /// Refreshes every market's session, so opens and closes fire even without price traffic.
+    pub(crate) fn refresh_all_sessions(&mut self, events: &mut Vec<Event>) {
+        let ids: Vec<MarketId> = self.markets.keys().copied().collect();
+        for market_id in ids {
+            self.refresh_session(market_id, events);
+        }
+    }
+}
+
+impl Engine {
+    /// Whether a market takes no new risk: its own flag, or every market's.
+    pub fn is_reduce_only(&self, market: &MarketState) -> bool {
+        market.reduce_only || self.global_reduce_only
     }
 }

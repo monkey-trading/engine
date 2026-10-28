@@ -103,6 +103,7 @@ pub struct Sequencer {
     command_prefix: [u8; 32],
     snapshot_base: Option<RecoveryBase>,
     snapshot_work: Vec<crate::checkpoints::Work>,
+    snapshot_anchor_work: Option<crate::checkpoints::Work>,
     snapshot_signers: BTreeSet<AccountId>,
     /// The newest checkpoint, with its recovery facts as they stood then, when its capture was
     /// skipped because another was in flight.
@@ -179,8 +180,8 @@ impl Sequencer {
                     Request::TimeSample(sample) => self.take_sample(sample)?,
                     Request::Sync(reply) => syncs.push(reply),
                     Request::WatchBenchmarkSchedule(reply) => benchmark_watches.push(reply),
-                    Request::CheckpointStatus { posted, healthy, lifecycle } => {
-                        self.checkpoint_status(posted, healthy)?;
+                    Request::CheckpointStatus { posted, health, lifecycle } => {
+                        self.checkpoint_status(posted, health)?;
                         if let Some(evidence) = lifecycle {
                             self.release_payouts(&evidence)?;
                         }
@@ -248,7 +249,10 @@ impl Sequencer {
             return Ok(None);
         };
         self.sequence_queued(ts)?;
-        if !access::gate_withdrawal(&mut cmd, self.gate.as_ref().map(|gate| gate.healthy)) {
+        if !access::gate_withdrawal(
+            &mut cmd,
+            self.gate.as_ref().map(|gate| matches!(gate.health, Some(crate::checkpoints::Health::Healthy))),
+        ) {
             return Ok(None);
         }
         if self.benchmark_sync && !matches!(&cmd, Command::SignedAdmin(req) if req.command.is_benchmark_snapshot()) {
@@ -297,12 +301,6 @@ impl Sequencer {
     pub fn trust(&mut self, sample: Sample) -> anyhow::Result<()> {
         self.take_sample(sample)?;
         self.flush()
-    }
-
-    /// The state root of the engine a test's recovered sequencer holds.
-    #[cfg(test)]
-    pub fn state_root(&mut self) -> [u8; 32] {
-        self.engine.state_root()
     }
 
     /// The stamp for a command now, if trusted time admits it. The host clock is untrusted inside

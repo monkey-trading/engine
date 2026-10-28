@@ -8,6 +8,7 @@ use actions::{attest_eligibility, cancel_order, dev_deposit, place_order, withdr
 mod admin;
 mod archive;
 mod benchmark_schedule;
+mod distributions;
 mod history;
 mod state;
 mod stream;
@@ -198,6 +199,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/accounts/{address}/history", get(history::history))
         .route("/v1/accounts/{address}/proof", get(proof))
         .route("/v1/accounts/{address}/emissions", get(emissions))
+        .route("/v1/accounts/{address}/distributions", get(distributions::distributions))
         .route("/v1/eligibility", post(attest_eligibility))
         .route("/v1/orders", post(place_order))
         .route("/v1/orders/cancel", post(cancel_order))

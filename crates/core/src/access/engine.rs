@@ -13,7 +13,6 @@ use crate::deposits::legacy_chain_reference;
 use crate::eip712::{self, B256, Eip712Domain, deposit_screening_hash, eligibility_hash};
 use crate::engine::Engine;
 use crate::event::{Event, Reject};
-use crate::protocol::ProtocolVersion;
 use crate::types::AccountId;
 
 impl Engine {
@@ -40,7 +39,7 @@ impl Engine {
             Command::AccessCustodyReplacement { update, payer, evidence } => {
                 self.access_custody_replacement(update, *payer, evidence, events)
             }
-            Command::Deposit { account, amount, chain_ref } if self.protocol_version >= ProtocolVersion::V24 => {
+            Command::Deposit { account, amount, chain_ref } if self.protocol_version.supports_access() => {
                 let deposit = AccessDeposit {
                     account: Some(*account),
                     payer: None,
@@ -50,7 +49,7 @@ impl Engine {
                 self.access_deposit(&deposit, None, events);
             }
             Command::HouseCapital { amount, chain_ref }
-                if self.protocol_version >= ProtocolVersion::V24
+                if self.protocol_version.supports_access()
                     && (chain_ref != "genesis"
                         || self.held_deposits.contains_key(chain_ref)
                         || self.pending_deposits.contains_key(chain_ref)) =>
@@ -162,7 +161,7 @@ impl Engine {
     ///   jurisdiction
     /// - a declaration exists
     fn accept_eligibility(&mut self, request: &EligibilityRequest, evidence: &AccessEvidence) -> Result<(), Reject> {
-        if self.protocol_version < ProtocolVersion::V24 {
+        if !self.protocol_version.supports_access() {
             return Err(access_error(AccessReject::ProtocolInactive));
         }
         let domain = self.access_domain().ok_or(Reject::InvalidSignature)?;
@@ -194,7 +193,7 @@ impl Engine {
         deposit: bool,
         needs_declaration: bool,
     ) -> Result<(), AccessReject> {
-        if self.protocol_version < ProtocolVersion::V24 {
+        if !self.protocol_version.supports_access() {
             return if evidence.is_some() { Err(AccessReject::ProtocolInactive) } else { Ok(()) };
         }
         self.screen_access(account, payer, request_hash, evidence, deposit).and_then(|()| {
@@ -308,7 +307,7 @@ impl Engine {
         events: &mut Vec<Event>,
     ) {
         let Some(deposit) =
-            self.pending_deposits.get(reference).cloned().filter(|_| self.protocol_version >= ProtocolVersion::V24)
+            self.pending_deposits.get(reference).cloned().filter(|_| self.protocol_version.supports_access())
         else {
             events.push(Event::AdminRejected { reason: "deposit is not awaiting screening".into() });
             return;
@@ -322,7 +321,7 @@ impl Engine {
     /// Moves a screened input between pending, held and credited custody states. Only a confirmed
     /// sanction or a missing payer holds it; every curable refusal leaves it pending for a retry.
     fn screen_deposit(&mut self, deposit: &AccessDeposit, evidence: Option<&AccessEvidence>, events: &mut Vec<Event>) {
-        let reason = if self.protocol_version < ProtocolVersion::V24 {
+        let reason = if !self.protocol_version.supports_access() {
             Some(AccessReject::ProtocolInactive)
         } else if self.held_deposits.contains_key(&deposit.chain_ref) {
             Some(AccessReject::DepositHeld)
@@ -343,7 +342,7 @@ impl Engine {
             self.index_pending(&pending, false);
         }
         if let Some(reason) = reason {
-            if self.protocol_version >= ProtocolVersion::V24 && !self.is_credited(&deposit.chain_ref) {
+            if self.protocol_version.supports_access() && !self.is_credited(&deposit.chain_ref) {
                 self.held_deposits
                     .entry(deposit.chain_ref.clone())
                     .or_insert_with(|| HeldDeposit { deposit: deposit.clone(), reason });

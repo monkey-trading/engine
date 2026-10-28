@@ -80,3 +80,6 @@ pub(super) async fn authorize<R: CheckpointChain>(
 mod emission_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod unscanned;

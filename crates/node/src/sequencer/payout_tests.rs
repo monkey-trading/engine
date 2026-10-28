@@ -54,7 +54,7 @@ fn a_release_batch_syncs_the_log_once() {
         });
     }
     let last = node.last_checkpoint();
-    node.seq.checkpoint_status(Some(last.seq), true).unwrap();
+    node.seq.checkpoint_status(Some(last.seq), Some(crate::checkpoints::Health::Healthy)).unwrap();
     let mut evidence = node.evidence(&last);
     evidence.approvals = observed;
     let before = node.seq.log.sync_count();
@@ -85,13 +85,13 @@ fn typed_payout_waits_for_finalized_unpaid_evidence_and_publishes_only_after_syn
     let mut behind = node.evidence(&cp);
     behind.checkpoint_seq = Some(cp.seq - 1);
     node.seq.release_payouts(&behind).unwrap();
-    node.seq.checkpoint_status(Some(cp.seq), false).unwrap();
+    node.seq.checkpoint_status(Some(cp.seq), Some(crate::checkpoints::Health::Diverged)).unwrap();
     node.seq.release_payouts(&node.evidence(&cp)).unwrap();
     assert!(
         !log_entries(&node.dir).iter().any(|entry| matches!(entry, LogEntry::Withdrawal(_))),
         "an unfinalized prefix or unhealthy books cannot authorize signing"
     );
-    node.seq.checkpoint_status(Some(cp.seq), true).unwrap();
+    node.seq.checkpoint_status(Some(cp.seq), Some(crate::checkpoints::Health::Healthy)).unwrap();
     node.seq.release_payouts(&node.evidence(&cp)).unwrap();
     assert!(node.signed.try_recv().is_err(), "custody cannot see an unflushed outbox");
     let durable = log_entries(&node.dir)
@@ -165,11 +165,18 @@ fn restart_redelivers_a_previously_signed_unpaid_approval_without_debiting_it_ag
     let (stream, _) = broadcast::channel(128);
     let (withdrawals, mut signed) = mpsc::unbounded_channel();
     // An unflushed stream can disappear while its signed log entry is already durable.
-    let log = Sequencer::read_log_with_trust(&node.dir, Some(domain), Some(AccountId(key.address())), |_| {}).unwrap();
+    let log = Sequencer::read_log_for_recovery(
+        &node.dir,
+        Some(domain),
+        Some(AccountId(key.address())),
+        Some(cfg.checkpoint_parent),
+        |_| {},
+    )
+    .unwrap();
     let mut recovered = Sequencer::recover_from(log, cfg, key, stream, withdrawals).unwrap();
     assert!(signed.try_recv().is_err(), "fresh authenticated time and custody evidence are required");
     recovered.trust(sample_around(node.clock.as_ref())).unwrap();
-    recovered.checkpoint_status(Some(cp.seq), true).unwrap();
+    recovered.checkpoint_status(Some(cp.seq), Some(crate::checkpoints::Health::Healthy)).unwrap();
     recovered.release_payouts(&node.evidence(&cp)).unwrap();
     recovered.flush().unwrap();
     let redelivered = signed.try_recv().unwrap();
@@ -266,7 +273,7 @@ fn rotation_requires_accepted_historical_signers_and_reissues_with_the_current_e
     let (withdrawals, mut signed) = mpsc::unbounded_channel();
     let mut recovered = Sequencer::recover_from(log, cfg, key, broadcast::channel(128).0, withdrawals).unwrap();
     recovered.trust(sample_around(node.clock.as_ref())).unwrap();
-    recovered.checkpoint_status(Some(cp.seq), true).unwrap();
+    recovered.checkpoint_status(Some(cp.seq), Some(crate::checkpoints::Health::Healthy)).unwrap();
     let mut evidence = node.evidence(&cp);
     evidence.signer = signer;
     evidence.signer_epoch = 2;
@@ -303,7 +310,7 @@ fn rotation_requires_accepted_historical_signers_and_reissues_with_the_current_e
     let cfg = SequencerConfig { checkpoint_parent: parent, ..node.config() };
     let mut recovered = Sequencer::recover_from(log, cfg, next_key, broadcast::channel(128).0, withdrawals).unwrap();
     recovered.trust(sample_around(node.clock.as_ref())).unwrap();
-    recovered.checkpoint_status(Some(cp.seq), true).unwrap();
+    recovered.checkpoint_status(Some(cp.seq), Some(crate::checkpoints::Health::Healthy)).unwrap();
     evidence.signer = next_signer;
     evidence.signer_epoch = 3;
     recovered.release_payouts(&evidence).unwrap();
@@ -342,8 +349,10 @@ impl Node {
         seq.activate_legacy_protocol().unwrap();
         seq.genesis(&dev_config().genesis).unwrap();
         seq.trust(sample_around(clock.as_ref())).unwrap();
+        seq.sequence(crate::test_support::empty_custody_frontier()).unwrap();
+        seq.checkpoint().unwrap();
         assert_eq!(seq.engine.protocol_version(), ProtocolVersion::V23);
-        seq.checkpoint_status(seq.last_seq(), true).unwrap();
+        seq.checkpoint_status(seq.last_seq(), Some(crate::checkpoints::Health::Healthy)).unwrap();
         Self { seq, clock, dir, work, _queued: queued, signed }
     }
 

@@ -9,10 +9,11 @@ use engine_core::types::AccountId;
 use engine_core::{Engine, Fixed};
 use tokio::sync::mpsc;
 
-use crate::checkpoints::{CheckpointChain, Poster, VaultState, View, Work, signature};
+use crate::checkpoints::{CheckpointChain, Health, Poster, VaultState, View, Work, signature};
 use crate::log::{Checkpoint, CheckpointDomain, CommandEntry, LogEntry};
 use crate::sequencer::{Request, replay};
 use crate::tee::EnclaveKey;
+mod distributions;
 mod receipts;
 
 mod collateral;
@@ -35,7 +36,7 @@ fn signature_tampering_changes_every_original_byte() {
 }
 
 #[derive(Clone)]
-struct Chain {
+pub(super) struct Chain {
     state: Arc<Mutex<VaultState>>,
     finalized: Option<Arc<Mutex<VaultState>>>,
     fails: Arc<Mutex<usize>>,
@@ -106,7 +107,7 @@ fn strict_replay_rejects_missing_forged_domain_and_signer_signatures() {
 
 #[tokio::test]
 async fn startup_refuses_truncation_wrong_root_and_unrecovered_signer() {
-    let (poster, work) = poster();
+    let (poster, work, _key) = poster();
     poster.startup(None).await.unwrap();
     poster.chain.post(&work.checkpoint).await.unwrap();
     poster.startup(Some(&work.checkpoint)).await.unwrap();
@@ -120,27 +121,30 @@ async fn startup_refuses_truncation_wrong_root_and_unrecovered_signer() {
 
 #[tokio::test]
 async fn mismatch_pauses_withdrawals_but_reconciliation_preserves_posting() {
-    let (poster, work) = poster();
-    assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(5), true));
+    let (poster, work, _key) = poster();
+    assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(5), Health::Healthy));
     poster.chain.state.lock().unwrap().balance -= Fixed::from_int(1);
-    assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(5), false));
+    assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(5), Health::Diverged));
     poster.chain.state.lock().unwrap().balance += Fixed::from_int(1);
-    assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(5), true));
+    assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(5), Health::Healthy));
     assert_eq!(*poster.chain.posts.lock().unwrap(), 1, "retry must not repost an included checkpoint");
 }
 
 #[tokio::test(start_paused = true)]
 async fn failed_post_is_retried_and_never_releases_a_signature_early() {
-    let (poster, work) = poster();
+    let (poster, work, _key) = poster();
     *poster.chain.fails.lock().unwrap() = 1;
     let chain = poster.chain.clone();
     let (work_tx, work_rx) = mpsc::channel(4);
     let (tx, mut rx) = mpsc::channel(4);
     work_tx.send(work).await.unwrap();
     let task = tokio::spawn(poster.run(work_rx, tx));
-    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { posted: None, healthy: false, .. })));
+    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { posted: None, health: None, .. })));
     assert!(chain.state.lock().unwrap().checkpoint.is_none());
-    assert!(matches!(rx.recv().await, Some(Request::CheckpointStatus { posted: Some(5), healthy: true, .. })));
+    assert!(matches!(
+        rx.recv().await,
+        Some(Request::CheckpointStatus { posted: Some(5), health: Some(Health::Healthy), .. })
+    ));
     assert_eq!(*chain.posts.lock().unwrap(), 1);
     drop(work_tx);
     task.await.unwrap().unwrap();
@@ -168,7 +172,7 @@ fn signed_parent_metadata_cannot_be_rewritten_by_the_relayer() {
 
 #[tokio::test]
 async fn stale_parent_fails_closed_before_posting_a_divergent_higher_sequence() {
-    let (poster, work) = poster();
+    let (poster, work, _key) = poster();
     poster.chain.state.lock().unwrap().checkpoint = Some((4, format!("0x{}", "ab".repeat(32))));
     assert!(poster.reconcile(&work).await.unwrap_err().is::<super::Conflict>());
     assert_eq!(*poster.chain.posts.lock().unwrap(), 0);
@@ -176,19 +180,19 @@ async fn stale_parent_fails_closed_before_posting_a_divergent_higher_sequence() 
 
 #[tokio::test]
 async fn latest_inclusion_never_authorizes_release_and_waiting_finality_does_not_repost() {
-    let (mut poster, work) = poster();
+    let (mut poster, work, _key) = poster();
     let finalized = Arc::new(Mutex::new(poster.chain.state.lock().unwrap().clone()));
     poster.chain.finalized = Some(finalized.clone());
     for _ in 0..3 {
-        assert_eq!(poster.reconcile(&work).await.unwrap(), (None, false));
+        assert_eq!(poster.reconcile(&work).await.unwrap(), (None, Health::Unvalidated));
     }
     assert_eq!(*poster.chain.posts.lock().unwrap(), 1, "latest inclusion waits without a duplicate relay");
     poster.startup(None).await.unwrap(); // An unfinalized inclusion cannot become a rollback guarantee.
     poster.chain.state.lock().unwrap().checkpoint = None; // Honest shallow reorg orphans inclusion.
-    assert_eq!(poster.reconcile(&work).await.unwrap(), (None, false));
+    assert_eq!(poster.reconcile(&work).await.unwrap(), (None, Health::Unvalidated));
     assert_eq!(*poster.chain.posts.lock().unwrap(), 2, "orphaned inclusion may be relayed again");
     *finalized.lock().unwrap() = poster.chain.state.lock().unwrap().clone();
-    assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(work.checkpoint.seq), true));
+    assert_eq!(poster.reconcile(&work).await.unwrap(), (Some(work.checkpoint.seq), Health::Healthy));
     assert!(poster.startup(None).await.is_err(), "finalized commitment is now the rollback boundary");
 }
 
@@ -213,7 +217,7 @@ async fn a_provisional_then_orphaned_approval_never_releases_a_signature() {
     let posted = seq.last_seq();
     let (tx, rx) = mpsc::channel(64);
     let task = tokio::spawn(seq.run(rx));
-    tx.send(Request::CheckpointStatus { posted, healthy: true, lifecycle: None }).await.unwrap();
+    tx.send(Request::CheckpointStatus { posted, health: Some(Health::Healthy), lifecycle: None }).await.unwrap();
     submit(&tx, crate::test_support::deposit(100, "0xfinality-deposit")).await;
     submit(&tx, crate::test_support::withdraw(40)).await;
     let mut work = None;
@@ -230,6 +234,7 @@ async fn a_provisional_then_orphaned_approval_never_releases_a_signature() {
         balance: work.liabilities,
         deposits: work.deposits,
         deposited: work.liabilities,
+        distributions_paid: Fixed::ZERO,
     };
     let finalized = Arc::new(Mutex::new(state.clone()));
     let chain = Chain {
@@ -251,15 +256,15 @@ async fn a_provisional_then_orphaned_approval_never_releases_a_signature() {
         if orphan {
             *poster.chain.state.lock().unwrap() = state.clone();
         }
-        let (posted, healthy) = poster.reconcile(&work).await.unwrap();
-        assert_eq!((posted, healthy), (None, false));
-        tx.send(Request::CheckpointStatus { posted, healthy, lifecycle: None }).await.unwrap();
+        let (posted, health) = poster.reconcile(&work).await.unwrap();
+        assert_eq!((posted, health), (None, Health::Unvalidated));
+        tx.send(Request::CheckpointStatus { posted, health: Some(health), lifecycle: None }).await.unwrap();
         sync(&tx).await;
         assert!(signed_rx.try_recv().is_err(), "unfinalized or orphaned inclusion cannot release an approval");
     }
     *finalized.lock().unwrap() = poster.chain.state.lock().unwrap().clone();
-    let (posted, healthy) = poster.reconcile(&work).await.unwrap();
-    tx.send(Request::CheckpointStatus { posted, healthy, lifecycle: None }).await.unwrap();
+    let (posted, health) = poster.reconcile(&work).await.unwrap();
+    tx.send(Request::CheckpointStatus { posted, health: Some(health), lifecycle: None }).await.unwrap();
     sync(&tx).await;
     let released = signed_rx.try_recv().expect("finalized healthy approval releases");
     assert_eq!(released.approved_seq, Some(work.checkpoint.seq));
@@ -280,7 +285,7 @@ async fn sync(tx: &mpsc::Sender<Request>) {
     rx.await.unwrap();
 }
 
-fn checkpoint(key: &EnclaveKey, seq: u64, root: [u8; 32]) -> Checkpoint {
+pub(super) fn checkpoint(key: &EnclaveKey, seq: u64, root: [u8; 32]) -> Checkpoint {
     let domain = CheckpointDomain { chain_id: 31337, vault: AccountId([7; 20]) };
     Checkpoint {
         parent: Some(Default::default()),
@@ -293,7 +298,7 @@ fn checkpoint(key: &EnclaveKey, seq: u64, root: [u8; 32]) -> Checkpoint {
     }
 }
 
-fn poster() -> (Poster<Chain>, Work) {
+pub(super) fn poster() -> (Poster<Chain>, Work, EnclaveKey) {
     let key = EnclaveKey::generate();
     let checkpoint = checkpoint(&key, 5, [3; 32]);
     let work = Work {
@@ -302,6 +307,7 @@ fn poster() -> (Poster<Chain>, Work) {
         deposits: 1,
         authorized: Fixed::ZERO,
         coverage: crate::checkpoints::DepositCoverage::Historical,
+        distributed: engine_core::UsdcUnits(0),
     };
     let chain = Chain {
         state: Arc::new(Mutex::new(VaultState {
@@ -311,6 +317,7 @@ fn poster() -> (Poster<Chain>, Work) {
             balance: work.liabilities,
             deposits: work.deposits,
             deposited: work.liabilities,
+            distributions_paid: Fixed::ZERO,
         })),
         finalized: None,
         fails: Arc::new(Mutex::new(0)),
@@ -327,12 +334,13 @@ fn poster() -> (Poster<Chain>, Work) {
             pending_deposits_critical_after: Duration::from_secs(1),
         },
         work,
+        key,
     )
 }
 
 #[tokio::test]
 async fn public_relayer_advanced_prefix_reconciles_against_its_own_accounting() {
-    let (poster, first) = poster();
+    let (poster, first, _key) = poster();
     let key = EnclaveKey::test_key();
     // The fixture poster uses another key; make a self-consistent signed two-checkpoint chain.
     let mut first = first;
@@ -367,7 +375,10 @@ async fn public_relayer_advanced_prefix_reconciles_against_its_own_accounting() 
         state.checkpoint = Some((second.checkpoint.seq, second.checkpoint.root.clone()));
     }
     poster.chain.deposit(Fixed::from_int(10));
-    assert_eq!(poster.reconcile_known(&first, &[&first, &second]).await.unwrap(), (Some(second.checkpoint.seq), true));
+    assert_eq!(
+        poster.reconcile_known(&first, &[&first, &second]).await.unwrap(),
+        (Some(second.checkpoint.seq), Health::Healthy)
+    );
     assert_eq!(*poster.chain.posts.lock().unwrap(), 0);
     // A backend which still sees the predecessor is retried, without treating it as a fork.
     poster.chain.state.lock().unwrap().checkpoint = None;
@@ -378,7 +389,7 @@ async fn public_relayer_advanced_prefix_reconciles_against_its_own_accounting() 
 
 #[tokio::test]
 async fn publicly_relayed_work_beyond_the_full_worker_queue_is_recognized() {
-    let (mut poster, first) = poster();
+    let (mut poster, first, _key) = poster();
     let key = EnclaveKey::test_key();
     let domain = first.checkpoint.domain.unwrap();
     let root = first.checkpoint.root.parse::<engine_core::eip712::B256>().unwrap();
@@ -414,7 +425,7 @@ async fn publicly_relayed_work_beyond_the_full_worker_queue_is_recognized() {
     let (tx, mut status) = mpsc::channel(8);
     let task = tokio::spawn(poster.run_with_recovery(input, tx, chain));
     assert!(
-        matches!(status.recv().await, Some(Request::CheckpointStatus {posted: Some(seq), healthy: true, ..}) if seq == advanced.checkpoint.seq)
+        matches!(status.recv().await, Some(Request::CheckpointStatus { posted: Some(seq), health: Some(Health::Healthy), .. }) if seq == advanced.checkpoint.seq)
     );
     assert_eq!(registry.lock().unwrap().len(), 1, "finalized covered prefix retires from the registry");
     drop(sink);

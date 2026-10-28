@@ -60,7 +60,8 @@ The policy covers the code in this repository and what is built from it: `engine
 deterministic state machine that applies the trading rules; `engine-node`, which sequences commands
 into it, publishes the log and its signed checkpoints, and serves the public REST and WebSocket API;
 the custody vault contract that will hold collateral on Arbitrum One, with the MONKEY token it
-deploys and alone mints against posted checkpoints; and the enclave image the node runs in, together
+deploys and alone mints against posted checkpoints, the staking contract that holds MONKEY, and
+the vault’s USDC distribution claims; and the enclave image the node runs in, together
 with the attestation that vouches for it. The vault contract takes deposits, pays signed withdrawals
 with approval inclusion proofs, and mints MONKEY entitlements, and is in scope as published here;
 the enclave image, built from `image`, is in scope as published here too. A trading account must be
@@ -82,12 +83,12 @@ switch them on, since the node reads its configuration from the machine it runs 
 configuration uses hardware attestation, on-chain custody, live prices, and signed requests.
 Requests are signed, and the node refuses unsigned ones unless both the enclave and custody are
 mocks, and a production build of the node refuses every mock provider.
-From V24, client actions and eligibility declarations require signatures even with mock providers,
+Under V24 and V26 onward, client actions and eligibility declarations require signatures even with mock providers,
 and declarations, orders and withdrawals require fresh screening of the account and client peer.
 A missing declaration, an unknown classification, or a screening source failure keeps a deposit
 uncredited and pending for bounded automatic retries.
 Confirmed sanctioned holds have no automatic release or refund path.
-Older logs retain their recorded authorization rules. Access-source evidence is signed by a recorded
+Older logs retain their recorded authorization rules, including the standalone pre-access V25 rules. Access-source evidence is signed by a recorded
 authority and bounded by freshness, subject and request digest; the source classifications and
 host-supplied initial configuration still require approved provenance and attestation binding.
 API jurisdiction screening uses the socket peer address, which the host's network supplies, so it
@@ -133,7 +134,8 @@ requires the current signer. The deployment's multisig proposes changes through 
 timelock, which alone rotates the signer or changes deposit/withdrawal pauses. Latest transaction
 inclusion alone never authorizes withdrawal release; checkpoint startup and release use custody's
 withdrawal finality tag, independently of the latest credit tag and its confirmation depth.
-Hardware EVM custody requires this protection. Optional recovery snapshots require independently
+Hardware EVM custody requires this protection. Staking mirror references and completed scan anchors enter the state root from V27; writable
+recovery of older staking commands also requires authenticated origin seals. Optional recovery snapshots require independently
 provisioned attested signer pins and authenticate the complete snapshot, its deployment, and its
 checkpoint; with them, account history and the segment catalog are read and updated only through
 proofs against roots the node signed. Their signatures establish integrity, not freshness; the same
