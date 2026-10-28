@@ -653,8 +653,10 @@ The node queues the approval for a new 24-hour authorization with the same nonce
 order, and answers `401` for another signer, `404` for an approval that is unknown, paid, or not
 yet loaded by a restart's recovery, and `400` while the latest authorization is usable or the
 request replaces an older one. A signer rotation reissues every unpaid approval under the new
-epoch without a request. Recovery from a checkpoint snapshot sees only the authorizations after
-it, so an approval signed before it is signed once more.
+epoch without a request. A queued request lives in memory: after a node restart, send the same
+signed body again, which stays valid until an authorization replaces the one it names. While the
+host leaves the log intact a restart reissues nothing; recovery from a checkpoint snapshot sees
+only the authorizations after it, so an approval signed before it is signed once more.
 
 `GET /v1/withdrawals?limit=50&after=<request-seq>` returns `seq`, `queue` and `next`.
 `GET /v1/accounts/<address>/withdrawals` filters the same FIFO and reports each request's global

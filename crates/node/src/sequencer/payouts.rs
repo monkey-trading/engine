@@ -61,8 +61,11 @@ impl Sequencer {
             let mut payout = Payout::new(approval, index);
             payout.recovered = true;
             payout.released = released;
-            // A signed approval waits for rotation or a request; only an unsigned one is due.
-            gate.schedule.insert(payout.order, key, released.is_none());
+            // A signed approval waits for rotation or a request; an unsigned one, or one signed by an
+            // epoch other than the latest observed, is due. The epoch scan cannot see an approval
+            // loaded behind its position.
+            let retired = released.is_none_or(|(epoch, _)| gate.schedule.epoch().is_some_and(|latest| latest != epoch));
+            gate.schedule.insert(payout.order, key, retired);
             gate.payouts.insert(key, payout);
             gate.unproved.insert(key);
             gate.unregistered.insert(key);

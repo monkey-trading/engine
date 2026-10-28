@@ -92,6 +92,29 @@ impl Client {
         Ok(serde_json::from_value(value)?)
     }
 
+    /// Posts `signer`'s signed request to replace the authorization of `account`'s payout `nonce`
+    /// that expires at `replaces`, and returns the HTTP status and JSON body whatever they are.
+    /// Error cases:
+    /// - transport or JSON decoding fails
+    pub async fn reissue(
+        &self,
+        signer: &User,
+        account: AccountId,
+        nonce: u64,
+        replaces: u64,
+    ) -> anyhow::Result<(u16, Value)> {
+        let hash = crate::api::reissue::reissue_hash(&self.domain, account, nonce, replaces);
+        let body =
+            serde_json::json!({ "replaces_expires_at": replaces, "signature": eip712::sign(&signer.key, &hash) });
+        let response = self
+            .http
+            .post(format!("{}/v1/accounts/{account}/withdrawals/{nonce}/reissue", self.base))
+            .json(&body)
+            .send()
+            .await?;
+        Ok((response.status().as_u16(), response.json().await?))
+    }
+
     /// Reads the next request nonce, which differs from the Vault's payout nonce.
     /// Error cases:
     /// - the account/nonce response is unavailable or malformed

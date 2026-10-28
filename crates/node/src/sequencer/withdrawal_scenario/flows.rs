@@ -47,6 +47,17 @@ pub(super) async fn payments_and_crashes() -> anyhow::Result<()> {
         entries(&node.dir.join("log"))?.contains(&LogEntry::Withdrawal(first.clone())),
         "public authorization preceded its log entry"
     );
+    // Only the account's signature reissues, and only an authorization that is expired or retired.
+    let expires_at = first.authorization.as_ref().context("typed payout")?.expires_at;
+    let other = User::new(2)?;
+    let (status, _) = node.client.reissue(&other, trader.account, first.nonce, expires_at).await?;
+    ensure!(status == 401, "another account's signature reissued: {status}");
+    let (status, _) = node.client.reissue(&trader, trader.account, 99, 0).await?;
+    ensure!(status == 404, "an unknown approval answered {status}");
+    let (status, body) = node.client.reissue(&trader, trader.account, first.nonce, expires_at + 1).await?;
+    ensure!(status == 400 && body.to_string().contains("not the one replaced"), "stale: {status} {body}");
+    let (status, body) = node.client.reissue(&trader, trader.account, first.nonce, expires_at).await?;
+    ensure!(status == 400 && body.to_string().contains("usable until"), "a usable authorization: {status} {body}");
     let mut invalid = node.chain.claim(&first)?;
     if let Some(sibling) = invalid.siblings.first_mut() {
         *sibling ^= B256::with_last_byte(1);

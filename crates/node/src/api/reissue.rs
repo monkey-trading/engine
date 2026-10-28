@@ -30,7 +30,7 @@ pub(super) struct Body {
 }
 
 /// The digest an account signs to replace the authorization expiring at `replaces_expires_at`.
-fn reissue_hash(
+pub(crate) fn reissue_hash(
     domain: &eip712::Eip712Domain,
     account: AccountId,
     payout_nonce: u64,
@@ -69,7 +69,7 @@ pub(super) async fn reissue(
     let outcome = rx.await.map_err(|_| ApiError::Unavailable)?;
     debug!(nonce, ?outcome, "reissue request answered");
     match outcome {
-        Reissue::Queued => Ok(Json(json!({ "status": "queued" }))),
+        Reissue::Queued => Ok(Json(json!({ "status": "queued", "resend_after_restart": true }))),
         Reissue::Unknown => Err(ApiError::NotFound),
         Reissue::Stale { current } => {
             Err(ApiError::BadRequest(format!("the latest authorization expires at {current}, not the one replaced")))

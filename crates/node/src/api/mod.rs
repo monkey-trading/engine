@@ -10,7 +10,7 @@ mod archive;
 mod benchmark_schedule;
 mod distributions;
 mod history;
-mod reissue;
+pub(crate) mod reissue;
 mod state;
 mod stream;
 mod withdrawal_queue;
