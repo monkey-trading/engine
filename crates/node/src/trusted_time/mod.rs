@@ -7,7 +7,8 @@
 //! servers, and at least two of them share an instant. As many servers as fall outside that
 //! majority may sign a wrong time, so true time lies wherever all but that many replies overlap;
 //! the sample spans those instants, and counts only if it is no wider than the drift bound. The
-//! sequencer checks every stamp against the latest sample through `TimeGate`.
+//! sequencer checks every stamp against the latest sample through `TimeGate`, and the API the time
+//! it signs answers with through `TrustedClock`.
 //!
 //! The servers and their keys come from the config file, on host storage; the attestation binds that
 //! file's SHA-256, so a verifier checks them against a published copy.
@@ -27,13 +28,13 @@ use engine_core::types::Millis;
 use rand::RngCore;
 use rand::rngs::OsRng;
 use tokio::net::{UdpSocket, lookup_host};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 use tokio::time::{Instant as TokioInstant, MissedTickBehavior, interval, timeout};
 use tracing::{debug, info, warn};
 
 mod gate;
-pub use crate::trusted_time::gate::{NO_SAMPLE_GRACE, TimeGate};
+pub use crate::trusted_time::gate::{NO_SAMPLE_GRACE, TimeGate, TrustedClock};
 
 use crate::clock::Clock;
 use crate::config::{RoughtimeServer, TimeSection};
@@ -246,18 +247,25 @@ impl Sampler {
     }
 }
 
-/// Samples the configured servers every `interval` and sends each agreed sample to the sequencer.
-/// Network failures are retried here, so it returns only when the sequencer has gone.
+/// Samples the configured servers every `interval`, and publishes each agreed sample on `published`
+/// and sends it to the sequencer. Network failures are retried here, so it returns only when the
+/// sequencer has gone.
 /// Error cases:
 /// - the sequencer has gone away
 /// - a query task panicked
-pub async fn run(cfg: TimeSection, clock: Arc<dyn Clock>, tx: mpsc::Sender<Request>) -> anyhow::Result<()> {
+pub async fn run(
+    cfg: TimeSection,
+    clock: Arc<dyn Clock>,
+    tx: mpsc::Sender<Request>,
+    published: watch::Sender<Option<Sample>>,
+) -> anyhow::Result<()> {
     let mut rounds = interval(cfg.interval);
     rounds.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let mut sampler = Sampler::new(cfg);
     loop {
         rounds.tick().await;
         if let Some(sample) = sampler.round(&clock).await? {
+            published.send_replace(Some(sample));
             tx.send(Request::TimeSample(sample)).await.map_err(|_| anyhow!("sequencer gone"))?;
         }
     }

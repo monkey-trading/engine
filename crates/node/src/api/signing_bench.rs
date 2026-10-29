@@ -20,10 +20,11 @@ use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tower::ServiceExt;
 
+use crate::clock::test_clock::TestClock;
 use crate::config::RateLimit;
 use crate::log::Offset;
 use crate::tee::EnclaveKey;
-use crate::test_support::{TRADER, TestSequencer, deposit, dev_config, log_messages, scratch_dir, signing};
+use crate::test_support::{TRADER, TestSequencer, deposit, dev_config, log_messages, scratch_dir, signing, trusted};
 
 const CHALLENGE: &str = "8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71";
 const LIVE_MESSAGES: usize = 50;
@@ -97,7 +98,9 @@ async fn fan_out(node: &TestSequencer, mut state: ApiState, api: &crate::config:
     let cfg = dev_config();
     let vault = cfg.custody.vault.parse().unwrap();
     let interval = Duration::from_secs(1);
-    state.signing = Arc::new(Signing::new(Arc::new(EnclaveKey::test_key()), cfg.custody.chain_id, vault, interval));
+    let time = trusted(Arc::new(TestClock::default()));
+    state.signing =
+        Arc::new(Signing::new(Arc::new(EnclaveKey::test_key()), cfg.custody.chain_id, vault, interval, time));
     // Places of its own, so the run before it need not have closed its subscribers yet.
     state.limits = Arc::new(ApiLimits::new(api));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

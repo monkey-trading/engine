@@ -44,8 +44,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   sample, and resumes once a sample is within the bound
 - REST API for orders, cancels, withdrawals, and reads, plus a WebSocket stream of the log
 - Signed answers: every `/v1` response a client relies on carries the attested enclave key's
-  signature over the request and its body, the client's challenge, the node's time and log head,
-  and the status and body; a `signed=1` stream connection gets each message in a numbered frame
+  signature over the request and its body, the client's challenge, the node's time, which it signs
+  only while trusted time bounds it, the log head, and the status and body; a `signed=1` stream
+  connection gets each message in a numbered frame
   chained to the one before it, and a signed heartbeat at least every `api.heartbeat_interval`;
   `engine verify-response` and `engine verify-frames` check them with the shared `engine-wire`
   definitions
@@ -280,10 +281,12 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/stream/signed.rs` — signed stream connections: numbered frames chained under the
   client's challenge and the opening request, and heartbeats naming the log head
 - `src/api/stream/signed/tests.rs` — signed frames from offset zero bound to their opening request,
-  quiet-log heartbeats, a backfill read never cut short by a heartbeat, and refused parameters
+  quiet-log heartbeats, a backfill read never cut short by a heartbeat, a connection closed while
+  trusted time does not bound the host clock, and refused parameters
 - `src/api/signing.rs` — the response signing layer and the routes it leaves unsigned
-- `src/api/signing_tests.rs` — what a response signature covers, which responses carry one, and
-  the node signing the `engine-wire` vectors byte for byte
+- `src/api/signing_tests.rs` — what a response signature covers, which responses carry one, the
+  time they carry under a skewed host clock, and the node signing the `engine-wire` vectors byte
+  for byte
 - `src/api/signing_bench.rs` — the ignored cost benchmark: one frame, a signed account read, and a
   signed fan-out at `api.max_subscribers`
 - `src/api/archive.rs` — the archive routes: the manifest and completed segments
@@ -355,8 +358,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   against the intermediate, never the VCEK
 - `src/verify/tests/stub.rs` — the key-distribution service stand-ins
 - `src/trusted_time/mod.rs` — the trusted time task: queries the Roughtime servers, backs off
-  failing ones, and turns agreeing replies into a sample
-- `src/trusted_time/gate.rs` — the sequencer's check of each stamp against the latest sample
+  failing ones, and turns agreeing replies into a sample, which it publishes and sends to the
+  sequencer
+- `src/trusted_time/gate.rs` — the sequencer's check of each stamp against the latest sample, and
+  `TrustedClock`, the same check of the time the API signs answers with
 - `src/trusted_time/tests/` — agreement, round, back-off, gate, and alert key tests, and the
   offline dev scenario
 - `src/roughtime/mod.rs` — the Roughtime client: builds requests and verifies signed replies, for
@@ -971,9 +976,10 @@ Every `/v1` response but those of `/v1/health`, `/v1/attestation`, `/v1/attestat
 and `/v1/archive/*` is signed by the enclave key whose address the bundle holds, error responses
 included. A request may send `X-Engine-Challenge`, 64 hex characters; one that sends none is
 answered under 32 zero bytes, and a malformed one gets an unsigned 400. The response carries
-`X-Engine-Signature` (65-byte recoverable secp256k1, `0x` hex), `X-Engine-Time` (the node's clock in
-milliseconds), `X-Engine-Seq` (the seq of the last log entry the node had flushed when it answered;
-0 before the first), and `X-Engine-Challenge` (echoed in lowercase). The signature covers
+`X-Engine-Signature` (65-byte recoverable secp256k1, `0x` hex), `X-Engine-Time` (the host clock in
+milliseconds, within `time.max_drift` of trusted time), `X-Engine-Seq` (the seq of the last log
+entry the node had flushed when it answered; 0 before the first), and `X-Engine-Challenge` (echoed
+in lowercase). The signature covers
 `keccak256("engine.response.v1" ‖ chain_id (u64 BE) ‖ vault (20 bytes) ‖ challenge (32) ‖ time (u64
 BE) ‖ seq (u64 BE) ‖ status (u16 BE) ‖ sha256(method ‖ 0x00 ‖ path and query) ‖ sha256(request
 body) ‖ sha256(response body as sent))`, for the custody chain id and vault in the config; a `HEAD`
@@ -984,15 +990,27 @@ body fails. A response a layer outside the signer produces is unsigned: a listed
 preflight, which has no body and which the browser rather than the page reads; a stream upgrade
 refused for its origin; a 429 from the rate limiter; and a 408 or 413 from the body read. A client
 never shows an unsigned response on a signed route as data. A listed origin may read the four
-`X-Engine-*` headers (`Access-Control-Expose-Headers`). The time is the host's clock, which the
-sequencer checks its stamps against trusted time but the API does not, so freshness comes from the
-challenge. Signatures prove who answered, not that the answer arrived: a man in the middle can still
-delay or drop it.
+`X-Engine-*` headers (`Access-Control-Expose-Headers`). The time is the host clock, signed only
+while it is within `time.max_drift` of every time the latest trusted time sample allows, and that
+sample is no older than 60 seconds, the bound the sequencer holds its stamps to; otherwise the
+response goes out unsigned. Signatures prove who answered, not that the answer arrived: a man in the
+middle can still delay or drop it. They bind the bytes of the request and challenge, not one
+delivery of them: a man in the middle can send a copy of a request first, and the node's refusal of
+the second, a `409` invalid nonce or any other status, verifies as the answer to the client's
+request. Before showing a refusal of a state-changing request, a client confirms it with a signed
+read of the state the request changes, under a fresh challenge sent after the refusal arrived: for
+an order, cancel, or withdrawal, `GET /v1/accounts/{address}` or `/v1/accounts/{address}/withdrawals`,
+which the sequencer answers from state that holds every command logged before the refusal. A next
+nonce past the request's does not show it ran, since a request refused for its expiry uses its nonce
+too.
 
 `GET /v1/stream?signed=1&challenge=<64 hex>` (both required together) sends each message, and a
 heartbeat (`{"type":"heartbeat","head":"<seq>:<index>"}`, the last entry flushed, or `null` before
 the first) at once and then every `api.heartbeat_interval`, as
-`{"v":1,"n":<u64>,"time":<ms>,"msg":"<the message as a JSON string>","sig":"0x…"}`. `n` counts from 0 on each connection, and the signature
+`{"v":1,"n":<u64>,"time":<ms>,"msg":"<the message as a JSON string>","sig":"0x…"}`, with `time` held
+to the same bound as a response's; while trusted time does not bound the host clock, the
+connection closes instead of sending its next frame, and the client resumes it with `after`. `n`
+counts from 0 on each connection, and the signature
 covers `keccak256("engine.frame.v1" ‖ chain_id ‖ vault ‖ challenge ‖ sha256("GET" ‖ 0x00 ‖ path and
 query of the request that opened the connection) ‖ the previous frame's digest (32 zero bytes for
 frame 0) ‖ n (u64 BE) ‖ time (u64 BE) ‖ sha256(msg))`. The chain and the opening request mean a

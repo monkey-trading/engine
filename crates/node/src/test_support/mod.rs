@@ -32,6 +32,7 @@ mod written;
 pub use written::Written;
 
 use crate::api::{Feed, MAX_BACKFILLS, Signing};
+use crate::clock::test_clock::TestClock;
 use crate::clock::{Clock, SystemClock};
 use crate::config::{HistorySection, NodeConfig};
 use crate::history::{History, HistoryCheck, HistoryEvent, Reader};
@@ -42,7 +43,7 @@ use crate::tee::EnclaveKey;
 pub use crate::test_tracing::keep_callsites_interested;
 #[path = "../../tests/common/access.rs"]
 pub(crate) mod access;
-use crate::trusted_time::Sample;
+use crate::trusted_time::{Sample, TrustedClock};
 
 pub const DEV_CONFIG: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/dev.toml");
 pub const ANVIL_CONFIG: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/anvil.toml");
@@ -317,11 +318,25 @@ pub fn dev_config() -> NodeConfig {
     NodeConfig::load(Path::new(DEV_CONFIG)).expect("dev config loads")
 }
 
-/// The dev config's answer signing, by the published mock enclave key.
+/// The dev config's answer signing, by the published mock enclave key, at a time trusted time
+/// bounds: the system's when it was made, on a test clock that stands still.
 pub fn signing() -> Arc<Signing> {
+    signing_with(trusted(Arc::new(TestClock::default())))
+}
+
+/// The dev config's answer signing, by the published mock enclave key, at the times `time` reads.
+pub fn signing_with(time: TrustedClock) -> Arc<Signing> {
     let cfg = dev_config();
     let vault = cfg.custody.vault.parse().expect("the dev vault parses");
-    Arc::new(Signing::new(Arc::new(EnclaveKey::test_key()), cfg.custody.chain_id, vault, cfg.api.heartbeat_interval))
+    let key = Arc::new(EnclaveKey::test_key());
+    Arc::new(Signing::new(key, cfg.custody.chain_id, vault, cfg.api.heartbeat_interval, time))
+}
+
+/// `clock`, bounded under the dev config's drift by a sample around its reading now, which ages only
+/// as a test clock is advanced.
+pub fn trusted(clock: Arc<dyn Clock>) -> TrustedClock {
+    let sample = sample_around(clock.as_ref());
+    TrustedClock::new(clock, watch::channel(Some(sample)).1, dev_config().time.max_drift)
 }
 
 /// The sequencer settings the harness runs with, publishing the manifest on `manifest`.

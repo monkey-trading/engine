@@ -167,7 +167,7 @@ pub async fn stream(
             // Frames bind the request exactly as the client sent it, start included.
             let request = uri.path_and_query().map_or(uri.path(), |request| request.as_str());
             let connection = Connection::new(challenge, request);
-            Some(Framing::new(s.signing.clone(), connection, s.clock, s.manifest.clone()))
+            Some(Framing::new(s.signing.clone(), connection, s.manifest.clone()))
         }
         (Some(1), None) => return Err(ApiError::BadRequest("signed=1 needs a challenge".into())),
         (None, Some(_)) => return Err(ApiError::BadRequest("a challenge needs signed=1".into())),
@@ -233,6 +233,10 @@ async fn send_feed<S: Sink<Message> + Unpin>(
             tokio::select! {
                 msg = &mut next => break msg,
                 heartbeat = next_heartbeat(&mut framing) => {
+                    let Some(heartbeat) = heartbeat else {
+                        log_unbounded_time(None);
+                        return;
+                    };
                     if !send_text(sink, heartbeat, send_timeout, None).await {
                         return;
                     }
@@ -256,7 +260,13 @@ async fn send_feed<S: Sink<Message> + Unpin>(
             }
         };
         let text = match framing.as_mut() {
-            Some(framing) => framing.frame(json),
+            Some(framing) => match framing.frame(json) {
+                Some(frame) => frame,
+                None => {
+                    log_unbounded_time(Some(msg.offset));
+                    return;
+                }
+            },
             None => json,
         };
         if !send_text(sink, text, send_timeout, Some(msg.offset)).await {
@@ -265,8 +275,15 @@ async fn send_feed<S: Sink<Message> + Unpin>(
     }
 }
 
-/// The connection's next heartbeat frame once it is due; never, on an unsigned connection.
-async fn next_heartbeat(framing: &mut Option<Framing>) -> String {
+/// Logs the close of a signed connection whose next frame, the message at `offset` or a heartbeat,
+/// trusted time gave no time to sign at.
+fn log_unbounded_time(offset: Option<Offset>) {
+    info!(offset = offset.map(display), "closing a signed subscriber: trusted time does not bound the host clock");
+}
+
+/// The connection's next heartbeat frame once it is due, or `None` as `Framing::frame`; never, on
+/// an unsigned connection.
+async fn next_heartbeat(framing: &mut Option<Framing>) -> Option<String> {
     match framing {
         Some(framing) => framing.next_heartbeat().await,
         None => pending().await,

@@ -80,12 +80,21 @@ key, over the request or connection it answers and a challenge the client chose,
 sends a fresh challenge can tell a forged, replayed, or substituted answer from the node's own, and
 a stream frame dropped, repeated, or taken from another connection from one that fits. The
 signatures do not stop anyone between the client and the node from delaying or dropping traffic:
-the stream's signed heartbeats let a client detect that, not prevent it. Four limits are by design,
-and a report that rests only on one of them is not a new finding. A response to a request sent
-without a challenge can be replayed to another such request. A browser's preflight, and a response
-the origin check, the rate limiter, or the body read refuses, are unsigned. The attestation, the
-archive, and health are unsigned, because they prove themselves or carry nothing to rely on. The
-time an answer carries is the host's clock.
+the stream's signed heartbeats let a client detect that, not prevent it. Five limits are by design,
+and a report that rests only on one of them is not a new finding. A signature binds an answer to the
+bytes of the request and challenge it answers, not to one delivery of them: someone in between can
+send the node a copy of a request, or open a copy of a stream connection, and the node answers each
+copy, so a refusal can be the node's answer to a second copy of a request whose first copy ran. A
+client therefore confirms a refusal of an order, cancel, withdrawal, or other state-changing
+request with a signed read of the account under a fresh challenge before showing it; the account's
+next nonce alone does not show that the request ran, since a request refused for its expiry uses
+its nonce too. A response to a request sent without a challenge can be replayed to another such
+request. A browser's preflight, a response the origin check, the rate limiter, or the body read
+refuses, and every answer while trusted time does not bound the host's clock are unsigned (a signed
+stream connection closes instead). The attestation, the archive, and health are unsigned, because
+they prove themselves or carry nothing to rely on. The time an answer carries is the host's clock,
+signed only while it is within the configured drift bound (`time.max_drift`) of trusted time, so it
+is accurate to that bound.
 
 The node's development settings, which are the mock enclave, mock custody, simulated prices, and
 historical unsigned requests, exist for local testing and make no security claims of their own.
@@ -166,9 +175,9 @@ rows it checks but whose deletion or rollback it cannot detect, and its cross-re
 uses an unsealed host clock; without snapshots, the
 account history index is read from host disk with only its schema checked, and is matched to the log
 by one command, the newest it has taken, though SQLite reads it in defensive mode and each event it
-serves names its place in the log, where anyone can check it; the sequencer, which bounds its host's
-clock with signed time, trusts the guest's monotonic clock without yet checking that the host cannot
-scale it; hardware enclave signing keys do not yet survive a restart (#28), so a hardware node cannot
+serves names its place in the log, where anyone can check it; the sequencer and the signed answers,
+which bound the host's clock with signed time, trust the guest's monotonic clock without yet
+checking that the host cannot scale it; hardware enclave signing keys do not yet survive a restart (#28), so a hardware node cannot
 restart after a crash or a drained shutdown: its vault must name the enclave's key, and the old key's
 commands and checkpoints after the last one the vault accepted cannot be authenticated under a new
 key; the dev configurations explicitly

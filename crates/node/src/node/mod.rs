@@ -262,9 +262,11 @@ async fn serve_node(
         }
     }
 
+    let (samples, samples_rx) = watch::channel(None);
+    let trusted_clock = trusted_time::TrustedClock::new(clock.clone(), samples_rx, cfg.time.max_drift);
     let time_cfg = cfg.time;
     let time_tx = tx.clone();
-    tasks.spawn(async move { ("trusted_time", trusted_time::run(time_cfg, clock, time_tx).await) });
+    tasks.spawn(async move { ("trusted_time", trusted_time::run(time_cfg, clock, time_tx, samples).await) });
 
     let mock_custody = cfg.custody.provider == CustodyProvider::Mock;
     let custody_tx = tx.clone();
@@ -319,7 +321,7 @@ async fn serve_node(
         emission_budget,
         collateral: served,
         listing: Default::default(),
-        signing: Arc::new(Signing::new(key, cfg.custody.chain_id, vault, cfg.api.heartbeat_interval)),
+        signing: Arc::new(Signing::new(key, cfg.custody.chain_id, vault, cfg.api.heartbeat_interval, trusted_clock)),
     });
     info!(listen = %cfg.node.listen, "api up over TLS");
     let (api, retained) = (cfg.api, limits.clone());

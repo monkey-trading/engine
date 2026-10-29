@@ -21,6 +21,12 @@
 //! before it on its connection, so a frame from another connection, even one opened with the same
 //! challenge and request, fits nowhere in this one. Without a challenge the node signs a response
 //! under 32 zero bytes: the answer still proves where it came from, but not that it is fresh.
+//!
+//! A signature binds the bytes of a request and its challenge, not one delivery of them: whoever
+//! relays the traffic can send the node a copy, and the node answers each copy. A verified refusal
+//! of a state-changing request can therefore answer a second copy after the first ran, so a client
+//! confirms it with a signed read of the account, under a fresh challenge, before showing it. The
+//! node signs the host's clock only while it is within its drift bound of trusted time.
 
 use k256::ecdsa::signature::hazmat::PrehashVerifier;
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
