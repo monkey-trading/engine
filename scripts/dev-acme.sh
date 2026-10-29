@@ -254,8 +254,8 @@ node_pid=""
 step "build the production binary and run it on a config without [api.tls.acme]"
 (cd "$root" && cargo build -p engine-node --features production --locked --quiet)
 # config/anvil.toml with every provider real: a configfs-tsm TEE, a fresh operator key nobody
-# publishes, credit at latest, live venues, and the checkpoints hardware custody requires. The node
-# refuses it at load, before it reaches any of them.
+# publishes, credit at latest, live venues, the checkpoints hardware custody requires, and no plain
+# HTTP browser origin. The node refuses it at load, before it reaches any of them.
 operator_key="0x$(openssl ecparam -name secp256k1 -genkey -noout 2> /dev/null \
   | openssl ec -pubout -conv_form uncompressed -outform DER 2> /dev/null | tail -c 65 | od -An -v -tx1 | tr -d ' \n')"
 [[ "$operator_key" =~ ^0x04[0-9a-f]{128}$ ]] || fail "no fresh operator key: '$operator_key'"
@@ -263,6 +263,7 @@ awk -v operator_key="$operator_key" '
   /^\[/ { section = $0 }
   section == "[tee]" && /^provider = / { print "provider = \"configfs_tsm\""; next }
   section == "[tee]" && /^use_published_mock_key/ { next }
+  section == "[api]" && /^allowed_origins = / { next }
   section == "[operator]" && /^public_key = / { print "public_key = \"" operator_key "\""; next }
   section == "[custody.evm]" && /^finality_tag = / { print "finality_tag = \"latest\""; next }
   section == "[feeds]" && /^provider = / { print "provider = \"venues\""; next }
@@ -276,6 +277,7 @@ relayer = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
 retry_interval = "5s"
 rpc_timeout = "5s"
 TOML
+grep -q '^allowed_origins' "$work/production.toml" && fail "production config edit missing: no allowed_origins"
 for edit in 'provider = "configfs_tsm"' 'finality_tag = "latest"' 'provider = "venues"' '[feeds.venues]'; do
   grep -qF "$edit" "$work/production.toml" || fail "production config edit missing: $edit"
 done

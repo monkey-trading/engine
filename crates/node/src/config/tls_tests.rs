@@ -106,7 +106,8 @@ fn test_root() -> String {
 }
 
 /// `config/anvil.toml` with every provider real, as a production node runs: a configfs-tsm TEE, an
-/// operator key nobody publishes, credit at latest, live venues, and checkpoints.
+/// operator key nobody publishes, credit at latest, live venues, checkpoints, and no plain HTTP
+/// browser origin.
 #[cfg(feature = "production")]
 fn real_providers() -> String {
     let anvil = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/anvil.toml");
@@ -115,6 +116,7 @@ fn real_providers() -> String {
     let tee = cfg["tee"].as_table_mut().unwrap();
     tee.insert("provider".into(), "configfs_tsm".into());
     tee.remove("use_published_mock_key");
+    cfg["api"].as_table_mut().unwrap().remove("allowed_origins");
     cfg["operator"]["public_key"] = crate::test_support::own_operator_key().into();
     cfg["custody"]["evm"]["finality_tag"] = "latest".into();
     let feeds = cfg["feeds"].as_table_mut().unwrap();
