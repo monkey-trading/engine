@@ -23,7 +23,6 @@ use crate::alerts::Routing;
 use crate::api::{ApiState, Feed, MAX_BACKFILLS, Signing, router};
 use crate::clock::{Clock, SystemClock, now_ms};
 use crate::config::{AuthMode, CustodyProvider, FeedProvider, NodeConfig, TeeProvider};
-use crate::custody::Custody;
 use crate::feeds;
 use crate::feeds::venue::{self, Timing};
 use crate::history::HistoryPlan;
@@ -36,8 +35,7 @@ use crate::sequencer::{ReplayedLog, Request, Sequencer, SequencerConfig, genesis
 use crate::tee::{AttestationBundle, Attestor, ConfigfsTsm, EnclaveKey, MockAttestor, attest_bundle};
 use crate::telemetry::Telemetry;
 use crate::tls::{TlsIdentity, acme::CertificateTask, serve};
-use crate::verify::Relay;
-use crate::{metrics, monitor, trusted_time};
+use crate::{custody::Custody, metrics, monitor, trusted_time, verify::Relay};
 use preflight::{authorize, emission_preflight};
 
 /// How long the sequencer gets to drain and checkpoint after a shutdown signal.
