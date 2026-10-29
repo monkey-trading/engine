@@ -12,14 +12,14 @@ use super::super::chain::Collateral;
 use super::super::refresh::{Relay, is_stale, next_wait};
 use super::super::relay::RelayedCollateral;
 use super::super::report::{SnpReport, Tcb};
-use super::super::{Options, verify_attestation};
+use super::super::{Options, load_relayed_collateral, verify_attestation};
 use super::fixtures::*;
-use super::stub::{kds_stub, kds_stub_switched};
+use super::stub::{kds_stub, kds_stub_swappable, kds_stub_switched};
 use crate::config::TeeSection;
 use crate::test_support::capture_alerts;
 
 /// The collateral a node would hold for `chain`, with `crl_pem` as its list.
-fn collateral_of(chain: &TestChain, crl_pem: &str) -> RelayedCollateral {
+pub(super) fn collateral_of(chain: &TestChain, crl_pem: &str) -> RelayedCollateral {
     let mut blocks = x509_parser::pem::Pem::iter_from_buffer(crl_pem.as_bytes());
     RelayedCollateral {
         vcek: chain.vcek.der().to_vec(),
@@ -34,7 +34,7 @@ fn quote_of(attestation: &crate::tee::Attestation) -> Vec<u8> {
     hex::decode(attestation.quote.trim_start_matches("0x")).unwrap()
 }
 
-fn tee(base: &str, refresh: &str) -> TeeSection {
+pub(super) fn tee(base: &str, refresh: &str) -> TeeSection {
     toml::from_str(&format!(
         "provider = 'mock'\nprocessor = '{PROCESSOR}'\nkds_base = '{base}'\ncollateral_refresh = '{refresh}'"
     ))
@@ -79,18 +79,79 @@ fn the_node_refuses_collateral_that_would_not_verify_for_its_quote() {
     // A list that revokes the intermediate, an expired list, and a list another key signed.
     let ask_serial = SerialNumber::from_slice(&x509_serial(chain.ask.der()));
     let revoked = collateral_of(&chain, &crl_revoking(&chain, &[ask_serial]));
-    assert!(revoked.check(&report).is_err(), "served a list revoking the intermediate");
+    let err = revoked.check(&report).expect_err("a list revoking the intermediate does not pass");
+    assert!(RelayedCollateral::is_revoked(&err), "{err:#}");
     let expired = collateral_of(&chain, &crl_signed(&chain, &[], (2024, 1, 1), (2025, 1, 1), None));
     assert!(expired.check(&report).is_err(), "served an expired list");
     let other_key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384).unwrap();
     let forged = collateral_of(&chain, &crl_signed(&chain, &[], (2024, 1, 1), (2049, 1, 1), Some(&other_key)));
     assert!(forged.check(&report).is_err(), "served a list the root did not sign");
 
+    // A revocation outlasts its list: an authentic list naming the intermediate is a revocation
+    // whatever its dates, so a skewed clock cannot turn it into an ordinary refusal.
+    let ask_serial = SerialNumber::from_slice(&x509_serial(chain.ask.der()));
+    let old_revoking =
+        collateral_of(&chain, &crl_signed(&chain, std::slice::from_ref(&ask_serial), (2024, 1, 1), (2025, 1, 1), None));
+    assert!(RelayedCollateral::is_revoked(&old_revoking.check(&report).unwrap_err()), "an expired revoking list");
+    // Anything else wrong with the collateral is not an authentic revocation and is still dropped:
+    // a list the root did not sign, a VCEK for another chip beside a revoking list.
+    let forged_revoking = collateral_of(
+        &chain,
+        &crl_signed(&chain, std::slice::from_ref(&ask_serial), (2024, 1, 1), (2049, 1, 1), Some(&other_key)),
+    );
+    assert!(!RelayedCollateral::is_revoked(&forged_revoking.check(&report).unwrap_err()), "a forged revocation");
+    let foreign_revoking = RelayedCollateral { vcek: other_chip_vcek.vcek.clone(), ..revoked.clone() };
+    assert!(!RelayedCollateral::is_revoked(&foreign_revoking.check(&report).unwrap_err()), "a foreign VCEK");
+
     // A chain whose intermediate does not link to its root, and garbage in place of a certificate.
     let unlinked = RelayedCollateral { intermediate: chain.vcek.der().to_vec(), ..good.clone() };
     assert!(unlinked.check(&report).is_err(), "served an unlinked chain");
     let garbage = RelayedCollateral { root: vec![1, 2, 3], ..good };
     assert!(garbage.check(&report).is_err(), "served a malformed certificate");
+}
+
+#[tokio::test]
+async fn a_list_that_revokes_the_intermediate_replaces_the_served_one_and_pages_critical() {
+    let (chain, _enclave, attestation) = fixtures();
+    // The vendor first publishes a list that revokes nothing, then one that revokes the intermediate.
+    let clean = crl_revoking(&chain, &[]);
+    let ask_serial = SerialNumber::from_slice(&x509_serial(chain.ask.der()));
+    let cell = Arc::new(std::sync::Mutex::new(clean.clone()));
+    let stub = kds_stub_swappable(&chain, &cell).await;
+    let (_guard, mut alerts) = capture_alerts();
+    let relay = Relay::new(&tee(&stub.base, "20ms"), &attestation).unwrap().unwrap();
+    let mut served = relay.served();
+    let task = tokio::spawn(relay.run());
+    let first =
+        timeout(Duration::from_secs(20), served.wait_for(Option::is_some)).await.unwrap().unwrap().clone().unwrap();
+    assert_eq!(RelayedCollateral::from_json(&first).unwrap().crl, collateral_of(&chain, &clean).crl);
+
+    let revoking = crl_revoking(&chain, &[ask_serial]);
+    *cell.lock().unwrap() = revoking.clone();
+    let second = timeout(Duration::from_secs(20), served.wait_for(|doc| doc.as_ref() != Some(&first)))
+        .await
+        .unwrap()
+        .unwrap()
+        .clone()
+        .unwrap();
+    let relayed = RelayedCollateral::from_json(&second).unwrap();
+    assert_eq!(relayed.crl, collateral_of(&chain, &revoking).crl, "the revoking list is what verifiers get");
+    let alert = timeout(Duration::from_secs(20), async {
+        loop {
+            let alert = alerts.recv().await.unwrap();
+            if alert["alert"] == "collateral_revoked" {
+                break alert;
+            }
+        }
+    })
+    .await
+    .expect("no collateral_revoked page");
+    assert_eq!(alert["level"], "ERROR", "revocation is a Critical page");
+
+    // A verifier given what the node serves refuses the chain.
+    let ark = pem(&chain.ark);
+    assert!(verify_relayed(&attestation, &relayed, Some(&ark), "http://127.0.0.1:1").await.is_err());
+    task.abort();
 }
 
 #[test]
@@ -144,6 +205,40 @@ async fn a_verifier_checks_relayed_collateral_against_its_pinned_roots_with_no_v
         verify_relayed(&attestation, &revoked, Some(&ark), dead).await.is_err(),
         "accepted a list revoking the intermediate"
     );
+}
+
+#[tokio::test]
+async fn a_saved_collateral_file_loads_and_verifies_and_an_oversized_or_malformed_one_is_refused() {
+    let (chain, _enclave, attestation) = fixtures();
+    let dir = crate::test_support::scratch_dir("saved-collateral");
+    std::fs::create_dir_all(&dir).unwrap();
+    let dead = "http://127.0.0.1:1";
+    let options = Options { processor: PROCESSOR, kds_base: dead, root_pem: None, collateral: None };
+    let saved = |name: &str, bytes: &[u8]| {
+        let path = dir.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        path.to_str().unwrap().to_owned()
+    };
+
+    // What an operator saves with `curl -k` loads and verifies against the pinned root.
+    let good = collateral_of(&chain, &crl_revoking(&chain, &[]));
+    let loaded = load_relayed_collateral(&saved("good.json", &good.to_json()), &options).await.unwrap();
+    assert_eq!(loaded, good);
+    verify_relayed(&attestation, &loaded, Some(&pem(&chain.ark)), dead).await.expect("the saved file verifies");
+
+    // A file over the fetch limit is refused whatever it holds, and so are malformed and missing ones.
+    let limit = 1024 * 1024;
+    let mut oversized = good.to_json();
+    oversized.resize(limit + 1, b' ');
+    let err = load_relayed_collateral(&saved("big.json", &oversized), &options).await.unwrap_err();
+    assert!(format!("{err:#}").contains("byte limit"), "{err:#}");
+    let mut at_limit = good.to_json();
+    at_limit.resize(limit, b' ');
+    assert_eq!(load_relayed_collateral(&saved("limit.json", &at_limit), &options).await.unwrap(), good);
+    let err = load_relayed_collateral(&saved("junk.json", b"not json"), &options).await.unwrap_err();
+    assert!(format!("{err:#}").contains("parsing the collateral document"), "{err:#}");
+    assert!(load_relayed_collateral(dir.join("absent.json").to_str().unwrap(), &options).await.is_err());
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// Verifies `attestation` against `collateral` with the vendor service at `kds_base` unreachable.
@@ -339,81 +434,4 @@ fn x509_serial(der: &[u8]) -> Vec<u8> {
     use x509_parser::prelude::FromDer as _;
     let (_, cert) = x509_parser::certificate::X509Certificate::from_der(der).unwrap();
     cert.serial.to_bytes_be()
-}
-
-/// The dev scenario: the node relays the stand-in service's collateral over its API route, the
-/// stand-in then stops, and `engine verify-attestation --collateral <the node's route>` still
-/// verifies the quote; a VCEK for another chip and a stale revocation list in the served document
-/// each fail. `scripts/dev-attestation-verifier.sh` runs it, and CI runs the script.
-#[tokio::test]
-#[ignore = "dev scenario, run by scripts/dev-attestation-verifier.sh"]
-async fn dev_scenario_relayed_collateral() -> anyhow::Result<()> {
-    use anyhow::{Context as _, ensure};
-
-    let (chain, enclave, attestation) = fixtures();
-    let stub = kds_stub(&chain).await;
-    let dir = std::env::temp_dir().join(format!("relayed-collateral-{}", std::process::id()));
-    std::fs::create_dir_all(&dir)?;
-    let (attestation_path, release_path, root_path) =
-        (dir.join("attestation.json"), dir.join("release.toml"), dir.join("root.pem"));
-    std::fs::write(&attestation_path, serde_json::to_string(&attestation)?)?;
-    std::fs::write(&release_path, release_toml())?;
-    std::fs::write(&root_path, pem(&chain.ark))?;
-
-    // The node's API route, over the relay's served collateral.
-    let relay = Relay::new(&tee(&stub.base, "12h"), &attestation)?.context("an SNP quote has a relay")?;
-    let (mut state, _rx) = crate::api::tests::api_state(true);
-    state.collateral = Some(relay.served());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-    let route = format!("http://{}/v1/attestation/collateral", listener.local_addr()?);
-    let app = crate::api::router(state).into_make_service_with_connect_info::<std::net::SocketAddr>();
-    tokio::spawn(async move { axum::serve(listener, app).await });
-
-    let client = Collateral::new(&stub.base, PROCESSOR)?;
-    ensure!(client.document(&route).await.is_err(), "the route served before the first fetch succeeded");
-    let mut served = relay.served();
-    tokio::spawn(relay.run());
-    timeout(Duration::from_secs(20), served.wait_for(Option::is_some)).await??;
-    let relayed = RelayedCollateral::from_json(&client.document(&route).await?)?;
-    ensure!(
-        relayed.vcek[..] == chain.vcek.der()[..] && relayed.root[..] == chain.ark.der()[..],
-        "the route serves the four items"
-    );
-
-    // The vendor's service is gone; verification must need only the node.
-    let dead = stub.base.clone();
-    stub.stop().await;
-    ensure!(tokio::net::TcpStream::connect(dead.trim_start_matches("http://")).await.is_err());
-    let verify = |collateral: &str| {
-        let mut command = tokio::process::Command::new(super::replay_dispatch::engine_binary().unwrap());
-        command
-            .args(["verify-attestation", "--processor", PROCESSOR, "--kds", &dead, "--collateral", collateral])
-            .arg("--attestation")
-            .arg(&attestation_path)
-            .arg("--release")
-            .arg(&release_path)
-            .arg("--root")
-            .arg(&root_path);
-        async move { command.output().await }
-    };
-    let verified = verify(&route).await?;
-    ensure!(verified.status.success(), "relayed collateral must verify: {}", String::from_utf8_lossy(&verified.stderr));
-    println!("{}", String::from_utf8_lossy(&verified.stdout).trim());
-
-    // The same document with a VCEK for another chip, and with a stale list, each fail.
-    let mut other_chip = enclave.chip_id;
-    other_chip[0] ^= 1;
-    let foreign =
-        RelayedCollateral { vcek: vcek_for(&chain, other_chip, REPORTED_TCB).der().to_vec(), ..relayed.clone() };
-    let stale = collateral_of(&chain, &crl_signed(&chain, &[], (2024, 1, 1), (2025, 1, 1), None));
-    let stale = RelayedCollateral { vcek: relayed.vcek.clone(), intermediate: relayed.intermediate.clone(), ..stale };
-    for (what, document) in [("a VCEK for another chip", foreign), ("a stale revocation list", stale)] {
-        let path = dir.join("served.json");
-        std::fs::write(&path, document.to_json())?;
-        let refused = verify(path.to_str().unwrap()).await?;
-        ensure!(!refused.status.success(), "verified with {what}");
-    }
-    std::fs::remove_dir_all(&dir).ok();
-    println!("PASS: relayed collateral verifies; foreign VCEK and stale CRL fail");
-    Ok(())
 }

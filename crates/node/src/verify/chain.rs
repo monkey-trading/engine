@@ -380,13 +380,29 @@ fn subject_name(cert: &X509Certificate<'_>) -> String {
     cert.subject().to_string()
 }
 
+/// The root's list names the chain's intermediate: the chain is revoked. It is raised only for a
+/// list issued and signed by the root, so it is proof of revocation, not an input error.
+#[derive(Debug)]
+pub(crate) struct IntermediateRevoked(pub(crate) String);
+
+impl std::fmt::Display for IntermediateRevoked {
+    /// The revoked serial.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "certificate 0x{} is revoked", self.0)
+    }
+}
+
+impl std::error::Error for IntermediateRevoked {}
+
 /// Checks `crl`, the processor's certificate revocation list, against the pinned root and the
 /// chain's intermediate: the CRL must be the root's, signed by it, unexpired, and not list the
 /// intermediate's serial. Certificate serials are unique only within an issuing CA, and the root
 /// issues the intermediate alone, so a root-issued entry that collides with the VCEK's serial
-/// cannot revoke it.
+/// cannot revoke it. A revocation outlasts its list, so an authentic list naming the intermediate
+/// is reported as `IntermediateRevoked` before its dates are read.
 /// Error cases:
-/// - the CRL does not parse or verify against the root, is expired, or revokes the intermediate
+/// - the CRL does not parse or verify against the root, or is expired
+/// - the CRL revokes the intermediate (`IntermediateRevoked`)
 pub(crate) fn check_revocation(crl: &[u8], chain: &QuoteChain) -> anyhow::Result<()> {
     let (_, crl) = x509_parser::revocation_list::CertificateRevocationList::from_der(crl)
         .map_err(|err| anyhow::anyhow!("parsing the certificate revocation list: {err:?}"))?;
@@ -394,17 +410,17 @@ pub(crate) fn check_revocation(crl: &[u8], chain: &QuoteChain) -> anyhow::Result
     ensure!(crl.issuer() == root.subject(), "revocation list issuer is not the chain's root");
     crl.verify_signature(root.public_key())
         .map_err(|err| anyhow::anyhow!("revocation list signature does not verify against the root: {err:?}"))?;
-    let now = x509_parser::time::ASN1Time::now();
-    ensure!(crl.last_update() <= now, "revocation list is not yet valid");
-    if let Some(next) = crl.next_update() {
-        ensure!(now <= next, "revocation list is expired");
-    }
     let intermediate = chain.intermediate_serial()?;
     let revoked = crl
         .iter_revoked_certificates()
         .find(|entry| trim_leading_zeros(&intermediate) == trim_leading_zeros(entry.raw_serial()));
     if let Some(entry) = revoked {
-        bail!("certificate 0x{} is revoked", entry.raw_serial_as_string());
+        return Err(IntermediateRevoked(entry.raw_serial_as_string()).into());
+    }
+    let now = x509_parser::time::ASN1Time::now();
+    ensure!(crl.last_update() <= now, "revocation list is not yet valid");
+    if let Some(next) = crl.next_update() {
+        ensure!(now <= next, "revocation list is expired");
     }
     Ok(())
 }

@@ -6,8 +6,9 @@
 # withdrawal one enclave key signed also replays through `engine replay --attestation` without a
 # `--signer` pin, and the same command with a mismatched `--signer` fails. The node relays the
 # stand-in's collateral at `/v1/attestation/collateral`; with the stand-in stopped,
-# `engine verify-attestation --collateral <the route>` still verifies, and a served VCEK for
-# another chip or a stale revocation list fails. Needs only Cargo: no
+# `engine verify-attestation --collateral <the route>` and `--collateral <the route's response saved
+# to a file>` still verify, and a served VCEK for another chip or a stale revocation list fails,
+# each naming its reason. Needs only Cargo: no
 # hardware, vendor account, or network beyond loopback is involved.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"

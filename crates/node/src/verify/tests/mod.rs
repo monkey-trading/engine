@@ -7,6 +7,7 @@
 
 mod fixtures;
 mod relay;
+mod relay_scenario;
 mod replay_dispatch;
 mod revocation;
 mod stub;

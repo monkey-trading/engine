@@ -336,7 +336,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/verify/relay.rs` — the vendor collateral a verifier needs (VCEK, intermediate, root,
   revocation list): fetching it, bounding and checking it, and the JSON the node serves
 - `src/verify/refresh.rs` — the node's boot fetch and periodic refresh of that collateral, and the
-  `collateral_stale` alert
+  `collateral_stale` and `collateral_revoked` alerts
 - `src/verify/release.rs` — the release manifest of launch digest, policy, minimum TCB, and
   configuration hashes
 - `src/verify/roots/` — the vendor root certificates compiled into the verifier
@@ -1015,6 +1015,8 @@ the VCEK, as `engine verify-attestation` does. The node fetches it from `tee.kds
 `tee.processor` at boot and every `tee.collateral_refresh` (1 minute to 24 hours, default 12 hours),
 drops any fetch that fails its own checks, bounds every answer, and keeps serving the last good
 copy, refreshing sooner when the list nears its `nextUpdate`; `image/README.md` lists each bound.
+A fetch whose root-signed list revokes the node's intermediate is the one failing fetch it serves,
+so verifiers refuse the chain, and it raises the Critical `collateral_revoked`.
 The Warning `collateral_stale` fires when a refresh fails with the served list within a day of its
 `nextUpdate`, or when one fails after the node has gone a refresh interval (at most 30 minutes)
 without any collateral.
