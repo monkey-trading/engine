@@ -56,37 +56,48 @@ fn a_halt_stops_first_issuance_and_new_withdrawals_until_finalized_custody_clear
 }
 
 #[test]
-fn a_halt_stops_requested_and_rotation_reissues_until_finalized_custody_clears_it() {
+fn a_halt_stops_a_requested_reissue_until_finalized_custody_clears_it() {
     for halt in [Halt::Paused, Halt::Retired] {
-        let mut node = Node::new(&format!("halt-reissue-{halt:?}"));
+        let mut node = Node::new(&format!("halt-requested-reissue-{halt:?}"));
         let cp = node.approve();
-        node.seq.custody_status(Some(cp.seq), Some(Health::Healthy), Some(node.evidence(&cp))).unwrap();
-        node.seq.flush().unwrap();
-        let first = node.signed.try_recv().unwrap();
+        let first = released(&mut node, &cp);
         let expires_at = first.authorization.as_ref().unwrap().expires_at;
         node.clock.advance(Duration::from_secs(crate::withdrawals::LIFETIME_SECONDS));
         node.seq.trust(sample_around(node.clock.as_ref())).unwrap();
         assert_eq!(node.seq.request_reissue(TRADER, 1, expires_at, None), Reissue::Queued);
 
-        // Under a pause the timelock may also rotate the signer; the rotation's reissue still waits.
-        let mut halted = halt.apply(node.evidence(&cp));
-        halted.signer_epoch = match halt {
-            Halt::Paused => 2,
-            Halt::Retired => 1,
-        };
-        node.seq.custody_status(Some(cp.seq), Some(Health::Healthy), Some(halted)).unwrap();
+        node.seq.custody_status(Some(cp.seq), Some(Health::Healthy), Some(halt.apply(node.evidence(&cp)))).unwrap();
         node.seq.flush().unwrap();
         assert!(node.signed.try_recv().is_err(), "{halt:?}: a requested reissue waits for the halt to clear");
 
         let mut cleared = node.evidence(&cp);
-        cleared.signer_epoch = 2;
+        cleared.signer_epoch = halt.cleared_epoch();
         node.seq.custody_status(Some(cp.seq), Some(Health::Healthy), Some(cleared)).unwrap();
         node.seq.flush().unwrap();
         let reissued = node.signed.try_recv().expect("the cleared vault's reissue");
         assert_eq!((reissued.account, reissued.nonce, reissued.amount), (first.account, first.nonce, first.amount));
-        assert_eq!(reissued.authorization.unwrap().signer_epoch, 2, "{halt:?}");
+        assert_eq!(reissued.authorization.unwrap().signer_epoch, halt.cleared_epoch(), "{halt:?}");
         assert!(node.signed.try_recv().is_err(), "{halt:?}: one reissue");
     }
+}
+
+#[test]
+fn a_rotation_under_a_pause_reissues_a_usable_authorization_only_once_the_pause_ends() {
+    let mut node = Node::new("halt-rotation-reissue");
+    let cp = node.approve();
+    let first = released(&mut node, &cp);
+    let mut rotated = Halt::Paused.apply(node.evidence(&cp));
+    rotated.signer_epoch = 2;
+    node.seq.custody_status(Some(cp.seq), Some(Health::Healthy), Some(rotated.clone())).unwrap();
+    node.seq.flush().unwrap();
+    assert!(node.signed.try_recv().is_err(), "the new epoch's reissue waits for the pause to end");
+
+    rotated.withdrawals_paused = false;
+    node.seq.custody_status(Some(cp.seq), Some(Health::Healthy), Some(rotated)).unwrap();
+    node.seq.flush().unwrap();
+    let reissued = node.signed.try_recv().expect("the rotation's reissue");
+    assert_eq!((reissued.nonce, reissued.authorization.unwrap().signer_epoch), (first.nonce, 2));
+    assert!(node.signed.try_recv().is_err(), "one reissue");
 }
 
 #[test]
@@ -119,6 +130,13 @@ fn only_a_retired_signer_differs_from_this_enclave_without_failing() {
     node.seq.release_payouts(&Halt::Retired.apply(node.evidence(&cp))).unwrap();
     node.seq.flush().unwrap();
     assert!(node.signed.try_recv().is_err());
+}
+
+/// Releases the approval's first authorization at epoch 1 and returns it.
+fn released(node: &mut Node, cp: &Checkpoint) -> SignedWithdrawal {
+    node.seq.custody_status(Some(cp.seq), Some(Health::Healthy), Some(node.evidence(cp))).unwrap();
+    node.seq.flush().unwrap();
+    node.signed.try_recv().expect("the first authorization")
 }
 
 /// The withdrawal authorizations the log holds.

@@ -55,7 +55,7 @@ pub(super) async fn pause_and_retirement() -> anyhow::Result<()> {
     node.crash().await?;
     node.restart().await?;
     let posted = node.chain.read(node.chain.vault, latestSeqCall {}).await?;
-    node.wait_withdrawals_halted("paused", posted).await?;
+    node.wait_withdrawals_refused(posted).await?;
     refused(&node, &trader).await?;
 
     node.chain.send(guardian, node.chain.vault, retireSignerCall {}.abi_encode()).await?;

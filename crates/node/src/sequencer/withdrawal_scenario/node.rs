@@ -148,6 +148,16 @@ impl Node {
         .with_context(|| format!("the node never paged and refused withdrawals for {cause}"))
     }
 
+    /// Waits until the gate refuses withdrawals on a verdict covering sequence `after` or later,
+    /// as a node restarted during a halt does without paging again: its episode is still open.
+    /// Error cases:
+    /// - a covering refusing verdict never arrives
+    pub async fn wait_withdrawals_refused(&mut self, after: u64) -> anyhow::Result<()> {
+        self.wait_metrics(|_, scrape| gate_refuses(scrape, after))
+            .await
+            .context("the restarted node never refused withdrawals on a fresh verdict")
+    }
+
     /// Polls the metrics endpoint until `done` holds for the local services and a scrape.
     /// Error cases:
     /// - a scenario server or the chain stopped, the endpoint fails, or the deadline passes

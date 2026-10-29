@@ -22,9 +22,14 @@ struct ConsumingBlock {
 
 impl CheckpointRpc {
     /// Identifies a finalized nonce consumer without trusting a saved or returned transaction hash.
+    /// Returns the hash of the finalized block that proves it.
     /// Error cases:
     /// - canonical history is absent/inconsistent, finality lags, or the consumer is unrelated
-    pub(super) async fn verify_consumer(&self, reservation: &Reservation, obsolete: &Checkpoint) -> anyhow::Result<()> {
+    pub(super) async fn verify_consumer(
+        &self,
+        reservation: &Reservation,
+        obsolete: &Checkpoint,
+    ) -> anyhow::Result<B256> {
         let mut anchor = self
             .deadline(self.client.request::<_, Option<Block>>("eth_getBlockByNumber", (self.finality_tag, false)))
             .await?
@@ -103,7 +108,7 @@ impl CheckpointRpc {
             self.nonce_at(anchor.header.hash).await? == final_nonce,
             "finalized nonce changed during reconciliation"
         );
-        Ok(())
+        Ok(anchor.header.hash)
     }
 
     /// Reads an account nonce at an exact block that the endpoint must still consider canonical.

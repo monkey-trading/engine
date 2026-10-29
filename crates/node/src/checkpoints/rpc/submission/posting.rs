@@ -1,13 +1,13 @@
 //! Reservation transitions require actual vault progress, never transaction hashes or nonces alone.
 
-use alloy::eips::BlockNumberOrTag;
+use alloy::eips::{BlockId, BlockNumberOrTag};
 use alloy::primitives::{Address, U64};
 use alloy::rpc::types::TransactionRequest;
 use alloy::sol_types::SolCall;
 use anyhow::{Context, ensure};
 
 use crate::checkpoints::rpc::submission::Reservation;
-use crate::checkpoints::rpc::{CheckpointRpc, postCheckpointCall};
+use crate::checkpoints::rpc::{CheckpointRpc, hasCheckpointAtCall, postCheckpointCall};
 use crate::checkpoints::{CheckpointChain, VaultState, View};
 use crate::log::{Checkpoint, CheckpointParent};
 
@@ -28,13 +28,17 @@ impl CheckpointRpc {
             Some(previous) if previous.checkpoint == *cp => {
                 if latest_nonce > previous.nonce {
                     ensure!(latest_nonce == previous.nonce + 1, "unrelated relayer nonce consumption");
-                    let obsolete = previous
-                        .reused_through
-                        .as_ref()
-                        .context("reserved nonce is consumed; await canonical checkpoint reconciliation")?;
-                    self.check_finalized_parent(cp, obsolete).await?;
-                    self.verify_consumer(&previous, obsolete).await?;
-                    self.reserve_after_progress(cp, latest_nonce, None).await?
+                    match previous.reused_through.as_ref() {
+                        Some(obsolete) => {
+                            self.check_finalized_parent(cp, obsolete).await?;
+                            self.verify_consumer(&previous, obsolete).await?;
+                            self.reserve_after_progress(cp, latest_nonce, None).await?
+                        }
+                        None => self
+                            .reserve_after_revert(cp, &previous, latest_nonce)
+                            .await
+                            .context("reserved nonce is consumed; await canonical checkpoint reconciliation")?,
+                    }
                 } else {
                     ensure!(latest_nonce == previous.nonce, "relayer nonce is behind its reservation");
                     previous
@@ -166,6 +170,30 @@ impl CheckpointRpc {
         self.check_finalized_parent(cp, obsolete).await?;
         self.check_free_nonce(nonce).await?;
         self.submissions()?.reserve(cp.clone(), nonce, reused_through)
+    }
+
+    /// Moves a checkpoint to the next nonce once its own send consumed the reserved one without
+    /// committing it, as a send in flight when the guardian retires the signer does: finalized
+    /// history must show this exact call as the consumer, and the vault at that block must still
+    /// lack the checkpoint.
+    /// Error cases:
+    /// - the consumption is not final, its consumer is another call, the checkpoint was accepted,
+    ///   or the parent, authority or nonce checks fail
+    async fn reserve_after_revert(
+        &self,
+        cp: &Checkpoint,
+        previous: &Reservation,
+        nonce: u64,
+    ) -> anyhow::Result<Reservation> {
+        let anchor = self.verify_consumer(previous, cp).await?;
+        let vault = Address::from(self.domain.vault.0);
+        let call = hasCheckpointAtCall { seq: cp.seq }.abi_encode();
+        let accepted =
+            hasCheckpointAtCall::abi_decode_returns(&self.call(vault, call, BlockId::hash_canonical(anchor)).await?)?;
+        ensure!(!accepted, "the reserved checkpoint is accepted; await its canonical inclusion");
+        self.check_parent(cp, &self.checked_latest(cp).await?)?;
+        self.check_free_nonce(nonce).await?;
+        self.submissions()?.reserve(cp.clone(), nonce, None)
     }
 }
 

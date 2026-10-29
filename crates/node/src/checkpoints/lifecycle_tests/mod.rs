@@ -29,6 +29,8 @@ struct Chain {
     blocks: Arc<Mutex<u8>>,
     /// A swept page, by its first nonce, whose nonce-use read fails once.
     fail_once: Arc<Mutex<Option<u64>>>,
+    /// Running deposit totals through earlier deposit counts than the observed one.
+    deposited_through: Arc<Mutex<BTreeMap<u64, Fixed>>>,
 }
 
 impl Chain {
@@ -74,6 +76,16 @@ impl CheckpointChain for Chain {
         drop(fail);
         self.pages.lock().unwrap().push(approvals.to_vec());
         Ok(self.statuses(approvals))
+    }
+
+    async fn deposited_through(&self, at: &Observation, count: u64) -> anyhow::Result<Fixed> {
+        match self.deposited_through.lock().unwrap().get(&count) {
+            Some(total) => Ok(*total),
+            None => {
+                anyhow::ensure!(count == at.state.deposits, "no running total for that deposit count");
+                Ok(at.state.deposited)
+            }
+        }
     }
 
     async fn accepted_checkpoints(
@@ -429,6 +441,7 @@ fn fixture() -> (Poster<Chain>, Work) {
         pages: Default::default(),
         blocks: Default::default(),
         fail_once: Default::default(),
+        deposited_through: Default::default(),
     };
     let work = Work {
         checkpoint,

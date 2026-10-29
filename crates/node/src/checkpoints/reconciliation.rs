@@ -283,7 +283,9 @@ impl<R: CheckpointChain> Poster<R> {
         // ledger disagreement (shortfall, overpaid distributions, a deposit-count mismatch) is a
         // true Diverged and freezes signing until the vault is repaired against this same
         // immutable checkpoint.
-        let first = (state.deposits > work.deposits).then_some(work.deposits);
+        // A retired signer posts no checkpoint, so none can record the catch-up: the halt alert
+        // covers it, and the deadline starts once the timelock installs a signer.
+        let first = (state.deposits > work.deposits && !state.signer_retired()).then_some(work.deposits);
         *uncredited = first.map(|id| match *uncredited {
             Some((tracked, since)) if tracked == id => (id, since),
             _ => (id, Instant::now()),

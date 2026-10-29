@@ -72,7 +72,40 @@ async fn a_halt_or_its_end_seen_only_in_the_latest_block_supplies_no_evidence() 
 }
 
 #[tokio::test]
-async fn another_signer_after_retirement_still_conflicts() {
+async fn a_deposit_a_retired_signer_cannot_checkpoint_raises_no_collateral_alert() {
+    let (_guard, mut alerts) = capture_alerts();
+    let (mut poster, work) = fixture();
+    poster.pending_deposits_critical_after = Duration::ZERO;
+    poster.chain.deposited_through.lock().unwrap().insert(1, Fixed::from_int(100));
+    for view in [&poster.chain.latest, &poster.chain.finalized] {
+        let mut at = view.lock().unwrap();
+        at.state.signer = RETIRED;
+        at.lifecycle.as_mut().unwrap().signer = RETIRED;
+        at.state.deposits = 2;
+        at.state.deposited = Fixed::from_int(110);
+        at.state.balance = Fixed::from_int(110);
+    }
+    let mut uncredited = None;
+    for _ in 0..2 {
+        let (_, health, _) = poster.reconcile_lifecycle(&work, &[&work], &[], &mut uncredited).await.unwrap();
+        assert_eq!(health, Health::Healthy, "the halt, not the catch-up deadline, holds withdrawals");
+    }
+    assert!(uncredited.is_none());
+    assert!(!drained(&mut alerts).contains(&"collateral_mismatch".to_owned()));
+
+    // With a signer, the same deposit past its deadline pages.
+    for view in [&poster.chain.latest, &poster.chain.finalized] {
+        let mut at = view.lock().unwrap();
+        at.state.signer = poster.signer;
+        at.lifecycle.as_mut().unwrap().signer = poster.signer;
+    }
+    let (_, health, _) = poster.reconcile_lifecycle(&work, &[&work], &[], &mut uncredited).await.unwrap();
+    assert_eq!(health, Health::Pending);
+    assert!(drained(&mut alerts).contains(&"collateral_mismatch".to_owned()));
+}
+
+#[tokio::test]
+async fn a_foreign_signer_still_conflicts() {
     let (poster, work) = fixture();
     for view in [&poster.chain.latest, &poster.chain.finalized] {
         let mut at = view.lock().unwrap();
@@ -99,6 +132,11 @@ fn successor(work: &Work) -> Work {
         deferred_withdrawals: true,
     };
     Work { checkpoint, ..work.clone() }
+}
+
+/// The names of the alerts raised so far.
+fn drained(alerts: &mut tokio::sync::mpsc::UnboundedReceiver<Alert>) -> Vec<String> {
+    std::iter::from_fn(|| alerts.try_recv().ok()).map(|alert| alert["alert"].clone()).collect()
 }
 
 /// The causes of the Critical `vault_withdrawals_halted` alerts raised so far.

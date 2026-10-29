@@ -114,6 +114,20 @@ async fn independently_supplied_current_signer_is_required_before_trusting_any_h
 }
 
 #[tokio::test]
+async fn a_retired_vault_signer_is_audited_against_its_epoch_signer() {
+    let mut fixture = Fixture::new("audit-retired-signer");
+    fixture.chain.at.state.signer = AccountId([0; 20]);
+    fixture.chain.at.lifecycle.as_mut().unwrap().signer = AccountId([0; 20]);
+    let replayed = replay_with_chain(&fixture.path, &fixture.chain, fixture.domain, fixture.signer()).await.unwrap();
+    assert_eq!((replayed.commands, replayed.checkpoints), (6, 2));
+    let error = replay_with_chain(&fixture.path, &fixture.chain, fixture.domain, AccountId(fixture.old.address()))
+        .await
+        .err()
+        .unwrap();
+    assert!(format!("{error:#}").contains("supplied trusted signer"), "{error:#}");
+}
+
+#[tokio::test]
 async fn reissues_on_an_old_root_survive_two_rotations_without_an_intermediate_checkpoint() {
     let mut fixture = Fixture::new("audit-reissue-epochs");
     let middle = std::mem::replace(&mut fixture.current, crate::tee::EnclaveKey::generate());
