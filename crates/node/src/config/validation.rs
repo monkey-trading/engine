@@ -58,7 +58,7 @@ impl NodeConfig {
     /// - genesis lists a market id, a market symbol, or a benchmark name twice
     /// - the engine would reject a genesis command (see `check_genesis`)
     /// - `[api.tls.acme]` fails validation (see `AcmeSection::validate`)
-    /// - `[api.proxy_protocol]` lists no range, or every address
+    /// - `[api.proxy_protocol]` fails validation (see `ProxyProtocolSection::validate`)
     pub(super) fn validate(&self) -> anyhow::Result<()> {
         if let Some(access) = &self.access {
             access.validate()?;

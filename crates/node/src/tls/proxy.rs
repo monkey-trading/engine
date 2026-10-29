@@ -35,7 +35,7 @@ pub(super) async fn client_behind(
             Some(client)
         }
         Err(e) => {
-            refused.raise(&format!("{proxy}: {e}"));
+            refused.raise(&format!("{proxy}: {e:#}"));
             None
         }
     }

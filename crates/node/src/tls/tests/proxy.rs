@@ -12,75 +12,6 @@ use crate::limits::limit_client;
 use crate::tls::proxy::client_behind;
 use crate::tls::tests::acme::Unverified;
 
-/// The proxy: the loopback every test connects from.
-fn trusted_loopback() -> Option<ProxyProtocolSection> {
-    Some(ProxyProtocolSection { trusted: vec!["127.0.0.1/32".parse().unwrap(), "::1/128".parse().unwrap()] })
-}
-
-/// An `[api]` section behind a proxy at the loopback.
-fn behind_proxy() -> ApiSection {
-    ApiSection { proxy_protocol: trusted_loopback(), ..api() }
-}
-
-/// A v2 header for a TCP client at `client`.
-fn header(client: &str) -> Vec<u8> {
-    let client: SocketAddr = client.parse().unwrap();
-    // Where the proxy accepted the client, in the client's family; the node never reads it.
-    let proxy_side: SocketAddr = if client.is_ipv4() { "192.0.2.1:443" } else { "[2001:db8::fe]:443" }.parse().unwrap();
-    Builder::with_addresses(Version::Two | Command::Proxy, Protocol::Stream, (client, proxy_side)).build().unwrap()
-}
-
-impl TestNode {
-    /// A TLS connection from the loopback that sends `prefix` first.
-    /// Error cases:
-    /// - the connection or handshake fails
-    async fn connect_after(&self, prefix: &[u8]) -> io::Result<ClientTls<TcpStream>> {
-        let provider = Arc::new(default_provider());
-        let pin = Some(attested_tls_key(&self.attestation));
-        let verifier = Arc::new(PinnedKey { pin, seen: Arc::default(), provider: provider.clone() });
-        let config = ClientConfig::builder_with_provider(provider)
-            .with_protocol_versions(&[&TLS13])
-            .unwrap()
-            .dangerous()
-            .with_custom_certificate_verifier(verifier)
-            .with_no_client_auth();
-        let mut tcp = TcpStream::connect((V4, self.port)).await?;
-        tcp.write_all(prefix).await?;
-        TlsConnector::from(Arc::new(config)).connect(ServerName::try_from("engine").unwrap(), tcp).await
-    }
-
-    /// Whether a request on a connection from the proxy naming `client` gets a 200.
-    async fn served_as(&self, client: &str) -> bool {
-        match self.connect_after(&header(client)).await {
-            Ok(mut conn) => http(&mut conn, "GET", "/v1/health", "").await.0 == 200,
-            Err(_) => false,
-        }
-    }
-}
-
-/// Serves `/v1/health`, which echoes the `ConnectInfo` a handler sees, under the request limit.
-async fn serve_echo(api: ApiSection) -> TestNode {
-    let tls = TlsIdentity::generate().unwrap();
-    let bundle = AttestationBundle {
-        enclave_address: EnclaveKey::generate().address(),
-        config_sha256: [0; 32],
-        tls_public_key_sha256: tls.public_key_sha256,
-    };
-    let attestation = attest_bundle(&MockAttestor, &bundle).unwrap();
-    let listener = TcpListener::bind(SocketAddr::new(V4, 0)).await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let hourly = |rate: RateLimit| Quota::with_period(Duration::from_secs(3600)).unwrap().allow_burst(rate.burst);
-    let limits = Arc::new(ApiLimits::with_quota(&api, hourly, DefaultClock::default()));
-    let who = get(|ConnectInfo(client): ConnectInfo<SocketAddr>| async move { client.to_string() });
-    let app = Router::new()
-        .route("/v1/health", who)
-        .layer(axum::middleware::from_fn_with_state(limits.clone(), limit_client));
-    let server = tokio::spawn(serve(listener, tls.acceptors, app, limits, api));
-    let (stream, _) = broadcast::channel(16);
-    let sequencer = tokio::spawn(async {});
-    TestNode { port, attestation, stream, server, sequencer, key: tls.key }
-}
-
 #[tokio::test]
 async fn a_trusted_proxys_header_names_the_client_handlers_see() {
     let node = serve_echo(behind_proxy()).await;
@@ -147,7 +78,7 @@ async fn connection_caps_and_rates_count_each_client_the_header_names() {
 
 #[tokio::test]
 async fn a_trusted_peer_without_a_valid_header_is_closed() {
-    let node = TestNode::start(behind_proxy(), V4).await;
+    let node = TestNode::start(slow_timeout(behind_proxy()), V4).await;
     let no_client = |family_protocol: u8, command: u8| {
         let mut bytes = header("203.0.113.7:1");
         (bytes[12], bytes[13]) = (0x20 | command, family_protocol);
@@ -173,7 +104,7 @@ async fn a_trusted_peer_without_a_valid_header_is_closed() {
 
 #[tokio::test]
 async fn a_header_the_proxy_cuts_short_closes_the_connection() {
-    let node = TestNode::start(behind_proxy(), V4).await;
+    let node = TestNode::start(slow_timeout(behind_proxy()), V4).await;
     let mut tcp = TcpStream::connect((V4, node.port)).await.unwrap();
     tcp.write_all(&header("203.0.113.7:1")[..20]).await.unwrap();
     tcp.shutdown().await.unwrap();
@@ -189,29 +120,30 @@ async fn only_an_unusable_header_raises_the_alert() {
         bytes[12] = 0x20;
         bytes
     };
-    let cases: [(&str, Vec<u8>, Option<&str>, bool); 6] = [
+    let mut over_cap = header("203.0.113.7:1");
+    over_cap[14..16].copy_from_slice(&2000u16.to_be_bytes());
+    let cases: [(&str, Vec<u8>, Option<&str>, bool); 7] = [
         ("a valid header", header("203.0.113.7:5555"), Some("203.0.113.7:5555"), false),
         ("a LOCAL header", local("203.0.113.7:5555"), None, false),
         ("no bytes", Vec::new(), None, true),
         ("the signature alone", header("203.0.113.7:1")[..12].to_vec(), None, true),
         ("a header cut short", header("203.0.113.7:1")[..20].to_vec(), None, true),
+        ("a header over the read cap", over_cap, None, true),
         ("a TLS hello", vec![0x16, 3, 1, 0, 200, 1, 0, 0, 196, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0], None, true),
     ];
-    for (name, mut bytes, client, alerts) in cases {
+    for (name, bytes, client, alerts) in cases {
         let alert = ThrottledAlert::new("test", "test");
         let proxy: SocketAddr = "127.0.0.1:1".parse().unwrap();
         let got = client_behind(&mut bytes.as_slice(), proxy, &alert).await;
         assert_eq!(got, client.map(|c| c.parse().unwrap()), "{name}");
         assert_eq!(!alert.due(Instant::now()), alerts, "{name}");
-        bytes.clear();
     }
 }
 
 #[tokio::test]
 async fn a_header_from_an_address_outside_the_trusted_ranges_is_refused() {
-    let mut api = api();
-    api.proxy_protocol = Some(ProxyProtocolSection { trusted: vec!["10.0.0.0/8".parse().unwrap()] });
-    let node = TestNode::start(api, V4).await;
+    let elsewhere = Some(ProxyProtocolSection { trusted: vec!["10.0.0.0/8".parse().unwrap()] });
+    let node = TestNode::start(slow_timeout(ApiSection { proxy_protocol: elsewhere, ..api() }), V4).await;
     let forged = timeout(Duration::from_secs(5), node.connect_after(&header("198.51.100.1:1"))).await;
     assert!(forged.expect("closed, not held open").is_err(), "the loopback is not the proxy");
     let version_1 = node.connect_after(b"PROXY TCP4 198.51.100.1 192.0.2.1 5555 443\r\n").await;
@@ -219,13 +151,9 @@ async fn a_header_from_an_address_outside_the_trusted_ranges_is_refused() {
     node.connect(V4).await.unwrap();
 
     // The same without any proxy configured.
-    let node = TestNode::start(api_without_proxy(), V4).await;
+    let node = TestNode::start(slow_timeout(api()), V4).await;
     assert!(node.connect_after(&header("198.51.100.1:1")).await.is_err());
     node.connect(V4).await.unwrap();
-}
-
-fn api_without_proxy() -> ApiSection {
-    ApiSection { proxy_protocol: None, ..api() }
 }
 
 #[tokio::test]
@@ -256,6 +184,83 @@ async fn a_validation_through_the_proxy_is_answered_like_any_other() {
     let alpn = vec![crate::tls::ACME_TLS_ALPN.to_vec()];
     assert!(node.validate_after(&header("203.0.113.7:1"), &alpn).await.is_ok(), "through the proxy");
     assert!(node.validate_after(&[], &alpn).await.is_err(), "without its header, a proxy peer is closed");
+}
+
+// ── Helpers ──
+
+/// The proxy: the loopback every test connects from.
+fn trusted_loopback() -> Option<ProxyProtocolSection> {
+    Some(ProxyProtocolSection { trusted: vec!["127.0.0.1/32".parse().unwrap(), "::1/128".parse().unwrap()] })
+}
+
+/// An `[api]` section behind a proxy at the loopback.
+fn behind_proxy() -> ApiSection {
+    ApiSection { proxy_protocol: trusted_loopback(), ..api() }
+}
+
+/// An `[api]` section whose handshake timeout is far past the 5 seconds a test waits, so a refusal
+/// that waits for the timeout fails the test.
+fn slow_timeout(api: ApiSection) -> ApiSection {
+    ApiSection { handshake_timeout: Duration::from_secs(60), ..api }
+}
+
+/// A v2 header for a TCP client at `client`.
+fn header(client: &str) -> Vec<u8> {
+    let client: SocketAddr = client.parse().unwrap();
+    // Where the proxy accepted the client, in the client's family; the node never reads it.
+    let proxy_side: SocketAddr = if client.is_ipv4() { "192.0.2.1:443" } else { "[2001:db8::fe]:443" }.parse().unwrap();
+    Builder::with_addresses(Version::Two | Command::Proxy, Protocol::Stream, (client, proxy_side)).build().unwrap()
+}
+
+impl TestNode {
+    /// A TLS connection from the loopback that sends `prefix` first.
+    /// Error cases:
+    /// - the connection or handshake fails
+    async fn connect_after(&self, prefix: &[u8]) -> io::Result<ClientTls<TcpStream>> {
+        let provider = Arc::new(default_provider());
+        let pin = Some(attested_tls_key(&self.attestation));
+        let verifier = Arc::new(PinnedKey { pin, seen: Arc::default(), provider: provider.clone() });
+        let config = ClientConfig::builder_with_provider(provider)
+            .with_protocol_versions(&[&TLS13])
+            .unwrap()
+            .dangerous()
+            .with_custom_certificate_verifier(verifier)
+            .with_no_client_auth();
+        let mut tcp = TcpStream::connect((V4, self.port)).await?;
+        tcp.write_all(prefix).await?;
+        TlsConnector::from(Arc::new(config)).connect(ServerName::try_from("engine").unwrap(), tcp).await
+    }
+
+    /// Whether a request on a connection from the proxy naming `client` gets a 200.
+    async fn served_as(&self, client: &str) -> bool {
+        match self.connect_after(&header(client)).await {
+            Ok(mut conn) => http(&mut conn, "GET", "/v1/health", "").await.0 == 200,
+            Err(_) => false,
+        }
+    }
+}
+
+/// Serves `/v1/health`, which echoes the `ConnectInfo` a handler sees, under the request limit.
+async fn serve_echo(api: ApiSection) -> TestNode {
+    let tls = TlsIdentity::generate().unwrap();
+    let bundle = AttestationBundle {
+        enclave_address: EnclaveKey::generate().address(),
+        config_sha256: [0; 32],
+        tls_public_key_sha256: tls.public_key_sha256,
+    };
+    let attestation = attest_bundle(&MockAttestor, &bundle).unwrap();
+    let listener = TcpListener::bind(SocketAddr::new(V4, 0)).await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let hourly = |rate: RateLimit| Quota::with_period(Duration::from_secs(3600)).unwrap().allow_burst(rate.burst);
+    let limits = Arc::new(ApiLimits::with_quota(&api, hourly, DefaultClock::default()));
+    let who = get(|ConnectInfo(client): ConnectInfo<SocketAddr>| async move { client.to_string() });
+    let app = Router::new()
+        .route("/v1/health", who)
+        .layer(axum::middleware::from_fn_with_state(limits.clone(), limit_client));
+    let server = tokio::spawn(serve(listener, tls.acceptors, app, limits, api));
+    let (stream, _) = broadcast::channel(16);
+    let sequencer = tokio::spawn(async {});
+    TestNode { port, attestation, stream, server, sequencer, key: tls.key }
 }
 
 impl TestNode {

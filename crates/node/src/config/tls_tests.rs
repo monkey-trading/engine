@@ -87,6 +87,25 @@ fn a_production_build_loads_a_real_provider_config_only_with_a_public_certificat
     NodeConfig::load(&path).unwrap();
 }
 
+// A production build refuses an unsafe proxy range at load, not only when the check is called.
+#[cfg(feature = "production")]
+#[test]
+fn a_production_build_refuses_an_unsafe_proxy_range_at_load() {
+    let dir = crate::test_support::scratch_dir("production-proxy");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("node.toml");
+    let with_range = |range: &str| {
+        std::fs::write(&path, format!("{}{ACME}[api.proxy_protocol]\ntrusted = [\"{range}\"]\n", real_providers()))
+            .unwrap();
+        NodeConfig::load(&path)
+    };
+    for unsafe_range in ["127.0.0.2/32", "0.0.0.0/1"] {
+        let err = format!("{:#}", with_range(unsafe_range).unwrap_err());
+        assert!(err.contains("a production build trusts no"), "{unsafe_range}: {err}");
+    }
+    with_range("198.51.100.0/24").unwrap();
+}
+
 // ── Helpers ──
 
 /// The committed dev config with `section` appended.
