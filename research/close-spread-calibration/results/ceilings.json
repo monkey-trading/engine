@@ -10,7 +10,8 @@
   "engine_revision": "41a9ef4a52cb26ac592c5a0e372f610d8d1ba067",
   "objective": {
     "need": "max_divergence_bps + hourly tail move * sqrt(max_age_ms / 1h)",
-    "selection_statistic": "calibration hourly p99, upper end of its weekly block-bootstrap interval",
+    "selection_statistic": "the larger of the calibration hourly p99 (upper end of its weekly block-bootstrap interval) and the validation hourly p99",
+    "markets_where_validation_could_fail": 23,
     "floor_bps": 13,
     "step_bps": 5,
     "burden_limit_percent_of_min_initial_margin": 30,
@@ -1498,6 +1499,92 @@
         "max_blended_bps": 14.333
       }
     }
+  },
+  "reversal_summary_if_every_ceiling_were_the_floor": {
+    "calm": {
+      "cells": 888,
+      "exceeding": 0,
+      "share": 0.0,
+      "max_blended_bps": 8.633,
+      "commodity": {
+        "share": 0.0,
+        "max_blended_bps": 4.067
+      },
+      "crypto": {
+        "share": 0.0,
+        "max_blended_bps": 6.467
+      },
+      "equity": {
+        "share": 0.0,
+        "max_blended_bps": 8.633
+      },
+      "fx": {
+        "share": 0.0,
+        "max_blended_bps": 3.0
+      },
+      "index": {
+        "share": 0.0,
+        "max_blended_bps": 3.333
+      }
+    },
+    "elevated": {
+      "cells": 888,
+      "exceeding": 40,
+      "share": 0.04504504504504504,
+      "max_blended_bps": 16.267,
+      "commodity": {
+        "share": 0.0,
+        "max_blended_bps": 7.133
+      },
+      "crypto": {
+        "share": 0.0,
+        "max_blended_bps": 11.933
+      },
+      "equity": {
+        "share": 0.08333333333333333,
+        "max_blended_bps": 16.267
+      },
+      "fx": {
+        "share": 0.0,
+        "max_blended_bps": 5.0
+      },
+      "index": {
+        "share": 0.0,
+        "max_blended_bps": 5.667
+      }
+    },
+    "top": {
+      "cells": 888,
+      "exceeding": 218,
+      "share": 0.24549549549549549,
+      "max_blended_bps": 35.533,
+      "commodity": {
+        "share": 0.16666666666666666,
+        "max_blended_bps": 17.267
+      },
+      "crypto": {
+        "share": 0.2222222222222222,
+        "max_blended_bps": 26.867
+      },
+      "equity": {
+        "share": 0.375,
+        "max_blended_bps": 35.533
+      },
+      "fx": {
+        "share": 0.0,
+        "max_blended_bps": 13.0
+      },
+      "index": {
+        "share": 0.041666666666666664,
+        "max_blended_bps": 14.333
+      }
+    }
+  },
+  "gap_comparison": {
+    "market": "EUR-USD",
+    "shortfall_reduction_min": 0.21936216034974143,
+    "shortfall_reduction_max": 0.35041097583585684,
+    "trader_cost_ratio": 7.923076923076923
   },
   "rounding": [
     {

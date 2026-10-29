@@ -1,6 +1,6 @@
 //! Engine::apply agreement vectors for the research-only closing-price model, at `V17` and at `V21`,
-//! the last version before orders need access evidence. `Engine::price` has no version gate after
-//! `V14` other than the `V10` rounding.
+//! the latest standalone harness without access screening. `Engine::price` has no version gate other
+//! than the `V10` rounding. This checks the engine half; `tests/test_execution.py` checks the model.
 
 mod common;
 

@@ -168,7 +168,7 @@ an index: load only the rule whose hint matches the current action.
   `init`, `kernel.config`, the `sev-snp-measure` pins, `apt.conf` (the Debian snapshot's apt
   settings), and `retry`, which repeats each download after a failure. Its `README.md` covers the
   build, what the guest exposes, the attestation layout, booting on a host, and the release steps.
-- **research/** — studies that set protocol parameters from data, outside the build and CI.
+- **research/** — studies that set protocol parameters from data, outside the build and CI except the close-spread study's `fixtures/`.
   `cap-calibration/` calibrates the house exposure-cap floors by Monte Carlo (#111): scripts that
   fetch and derive its public data (raw pulls in gitignored `data/raw/`, the derived dataset in
   `data/derived/`), the Python model behind `run.py`, its tests, and `results/`. Its `README.md`
@@ -400,7 +400,8 @@ Run from the repo root:
   (`all` re-runs the simulations and report from the committed data), and its tests with
   `python -I -m pytest research/cap-calibration/tests`
 - Close-spread research, from a virtualenv with `research/close-spread-calibration/requirements.txt`:
-  `python -I research/close-spread-calibration/run.py`, then `calibrate.py`, then
+  `python -I research/close-spread-calibration/run.py`, then
+  `python -I research/close-spread-calibration/calibrate.py`, then
   `python -I research/close-spread-calibration/report.py`; tests:
   `python -I -m unittest discover -s research/close-spread-calibration/tests` and
   `cargo test -p engine-core --test close_spread_calibration --locked`

@@ -24,7 +24,7 @@ GAP_SHOCK = D("0.05")
 ATTACK_BPS = 100
 
 
-def exceedances(rows, statistics):
+def exceedances(rows):
     """Out-of-sample exceedance of the calibration-only ceiling, and in-sample exceedance of the proposal."""
     with np.load(RUN.REPO / "research/cap-calibration/data/derived/hourly_bars.npz", allow_pickle=False) as data:
         bars, unit = data["bars"], float(data["unit"])
@@ -100,6 +100,20 @@ def comparisons(rows):
     }
 
 
+def gap_comparison(rows):
+    """What an uncapped operator charge does in a 5% gap against the capped one, per EUR-USD band."""
+    by_band = {}
+    for row in rows:
+        if row["symbol"] == "EUR-USD":
+            by_band.setdefault(row["margin_band"], {})[row["case"]] = row
+    reductions = [1 - D(pair["no_cap_operator_attack"]["house_cash_shortfall_usd_zero_capital"])
+                  / D(pair["at_ceiling"]["house_cash_shortfall_usd_zero_capital"]) for pair in by_band.values()]
+    ratios = [pair["no_cap_operator_attack"]["close_cost_bps"] / pair["at_ceiling"]["close_cost_bps"]
+              for pair in by_band.values()]
+    return {"market": "EUR-USD", "shortfall_reduction_min": float(min(reductions)),
+            "shortfall_reduction_max": float(max(reductions)), "trader_cost_ratio": ratios[0]}
+
+
 def reversal_summary(rows):
     out = {}
     for level in ("calm", "elevated", "top"):
@@ -124,23 +138,31 @@ def write_csv(path, rows):
 def build():
     statistics = json.loads((ROOT / "results/market_statistics.json").read_text())
     params = statistics["protocol_params"]
-    rows = exceedances([CEILINGS.propose(item, params) for item in statistics["markets"]], statistics)
+    rows = exceedances([CEILINGS.propose(item, params) for item in statistics["markets"]])
     ceilings = {row["symbol"]: row["proposed_ceiling_bps"] for row in rows if row["proposed_ceiling_bps"]}
     live = [item for item in statistics["markets"] if item["market"]["symbol"] in ceilings]
-    reversals = PATHS.reversal_rows(live, ceilings)
+    levels, toxicity = PATHS.levels_from(params)
+    reversals = PATHS.reversal_rows(live, ceilings, levels, toxicity)
+    floor = CEILINGS.launch_close_charge_bps(params)
+    at_floor = PATHS.reversal_rows(live, {symbol: floor for symbol in ceilings}, levels, toxicity)
+    effects_rows = effects(live, rows, params)
     return {
         "inputs": statistics["input_sha256"], "engine_revision": statistics["engine_revision"],
         "objective": {
             "need": "max_divergence_bps + hourly tail move * sqrt(max_age_ms / 1h)",
             "selection_statistic": CEILINGS.SELECTION_STATISTIC,
+            "markets_where_validation_could_fail": sum(
+                row["calibration_only_ceiling_bps"] > floor for row in rows if row["proposed_ceiling_bps"]),
             "floor_bps": CEILINGS.launch_close_charge_bps(params), "step_bps": CEILINGS.LAUNCH_STEP_BPS,
             "burden_limit_percent_of_min_initial_margin": CEILINGS.BURDEN_LIMIT_PERCENT,
             "owner_decisions": "the burden limit, the floor, and whether to adopt the tail statistic",
         },
         "markets": rows, "registry_vs_global": comparisons(rows),
         "reversal_summary": reversal_summary(reversals), "reversals": reversals,
+        "reversal_summary_if_every_ceiling_were_the_floor": reversal_summary(at_floor),
+        "gap_comparison": gap_comparison(effects_rows),
         "rounding": PATHS.rounding_rows(), "pure_close_excess_atoms_seeded": PATHS.pure_close_excess_atoms(),
-        "effects": effects(live, rows, params),
+        "effects": effects_rows,
     }
 
 

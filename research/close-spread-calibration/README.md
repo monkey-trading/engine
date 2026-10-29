@@ -20,7 +20,7 @@ cargo test -p engine-core --test close_spread_calibration --locked
 ```
 
 `run.py` hashes its inputs and refuses to run if the genesis inventory (its parameters and each market's
-margins, spreads and price rules; not its calendars or contract rolls) or the hourly grid differs from the
+margins, spreads and price rules; not its calendars, contract rolls or financing) or the hourly grid differs from the
 pinned digest, so a change to a rule this study reads is a visible change here. Simulation seeds are fixed
 (147), the outputs are deterministic, and a second run changes no committed file.
 
@@ -53,7 +53,7 @@ session gaps, is left out and reported separately. DE40 and UK100 fold their ove
 overstates their tail. Different asset classes differ because their divergence limits differ (FX 5, indices and commodities
 10, shares 10, crypto 25 bps), and a tail move over one second is small: one second is 1/60 of an hour's
 scale. The 13-bps floor is the stress-minimum 10 plus the top toxicity tier 3 in `production-genesis.toml`;
-a ceiling below it would make the launch parameters illegal.
+a ceiling below it would clamp a launch close at the top stress level.
 
 Volatility enters only through that one-second tail, and a doubled volatility input raises 33 of 37 ceilings,
 by at most 7 bps (the floor absorbs the four calm FX markets). A price jump over a gap, a closure or a contract roll is not a spread: it moves margin and
@@ -73,7 +73,8 @@ The chronological split is the first 78 weeks (calibration) and the last 24 (val
 selection. The method is fixed on the calibration sample and tested on the validation sample: the
 calibration-only ceiling covers the validation need for 36 of 37 markets (BRENT does not: its validation
 tail is a regime shift), and over validation hours the need exceeds it in at most 1.3% of hours (BRENT; 1.0% or less for the proposed values). The proposed
-value then refits on the larger of the two tails. The weekly bootstrap (200 resamples) describes sampling
+value then refits on the larger of the two tails, which is in-sample on the validation tail: the out-of-sample test
+can fail only for markets whose calibration-only ceiling is above the 13-bp floor (23 of 37). The weekly bootstrap (200 resamples) describes sampling
 sensitivity under weekly stationarity; it does not cover proxy error, missing feeds or unseen tails.
 
 ## Engine model boundary
@@ -81,9 +82,9 @@ sensitivity under weekly stationarity; it does not cover proxy error, missing fe
 At engine revision `41a9ef4a52cb26ac592c5a0e372f610d8d1ba067`, a pure reduction has no size spread. It pays the
 stress minimum plus the account's toxicity add-on; a liquidation waives the add-on. A reversal also pays
 size spread on its opening slice, divided over the whole fill quantity, with the stress multiplier on that
-slice only. `Engine::price` has no version gate after V14 except the V10 upward rounding.
+slice only. `Engine::price` has no version gate other than the V10 upward rounding.
 
-Thirteen vectors compare `execution.py` with actual `Engine::apply` fills at V17 and at V21 (later versions
+Thirteen vectors compare `execution.py` with actual `Engine::apply` fills at V17 and at V21 (the latest standalone harness without access screening; later versions
 need access evidence on every order, which does not touch pricing), including reversals across bounded size-spread bands (USD and EUR), a reduce-only
 clamp, EUR and JPY quotes, a one-raw-unit index and a liquidation gap that creates bad debt. They are research
 fixtures, separate from the protocol reference logs, and the fixture file is read by both the Python tests and

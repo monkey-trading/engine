@@ -50,6 +50,19 @@ class ClosingPathTests(unittest.TestCase):
         dust = P.rounding_rows(charge_bps=1, mids=(1,))[0]
         self.assertEqual((dust["rounded_up_raw"], dust["floor_bound_raw"], dust["floor_makes_close_free"]), (1, 0, True))
 
+    def test_levels_come_from_the_pinned_parameters(self):
+        params = {"stress_levels": [{"min_spread_bps": 0, "size_spread_multiplier_bps": 10_000},
+                                    {"min_spread_bps": 3, "size_spread_multiplier_bps": 20_000},
+                                    {"min_spread_bps": 7, "size_spread_multiplier_bps": 30_000}],
+                  "toxicity": {"tiers": [{"extra_spread_bps": 1}, {"extra_spread_bps": 4}]}}
+        levels, toxicity = P.levels_from(params)
+        self.assertEqual((levels[2], toxicity), (("top", 7, 30_000), 4))
+        with self.assertRaises(ValueError):
+            P.levels_from(params | {"stress_levels": params["stress_levels"][:2]})
+        item = {"market": {"symbol": "T", "asset_class": "equity", "spread_tiers": FLAT["spread_tiers"]}}
+        rows = P.reversal_rows([item], {"T": 11}, levels, toxicity)
+        self.assertEqual({row["pure_close_bps"] for row in rows if row["stress_level"] == "top"}, {11})
+
     def test_pure_close_is_never_more_than_one_atom_over_the_exact_bound(self):
         self.assertLessEqual(P.pure_close_excess_atoms(2_000), 1)
         self.assertEqual(P.pure_close_excess_atoms(2_000), P.pure_close_excess_atoms(2_000))

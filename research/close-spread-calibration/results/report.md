@@ -10,9 +10,9 @@ engine bounds that risk per market in its price rules, so the need is
 
 `need = max_divergence_bps + hourly tail move * sqrt(max_age_ms / 1 hour)`
 
-The ceiling is the smallest multiple of 5 bps at or above the need, never below 13 bps (the largest close charge the launch parameters allow: stress 10 plus toxicity 3, so the launch configuration stays legal). The tail move is the upper end of the weekly block-bootstrap interval of the calibration sample's hourly p99 of the in-bar move (the open against the previous close is left out). Hourly bars are scaled to the one-second quote age by square-root-of-time, an assumption no hourly data can test.
+The ceiling is the smallest multiple of 5 bps at or above the need, never below 13 bps (the largest close charge the launch parameters allow, so no launch close is clamped). The tail move is the upper end of the weekly block-bootstrap interval of the calibration sample's hourly p99 of the in-bar move (the open against the previous close is left out). Hourly bars are scaled to the one-second quote age by square-root-of-time, an assumption no hourly data can test.
 
-Gaps, closures and contract rolls are not in the need: a price jump is not a spread. They move margin and close-out risk, which `ceiling_effects.csv` shows a close spread cannot repair: in a 5% gap on EUR-USD, an uncapped 103-bp close charge cuts the zero-capital house shortfall by a fifth to a third while costing the trader 8 times as much.
+Gaps, closures and contract rolls are not in the need: a price jump is not a spread. They move margin and close-out risk, which `ceiling_effects.csv` shows a close spread cannot repair: in a 5% gap on EUR-USD, an uncapped 103-bp close charge cuts the zero-capital house shortfall by 22% to 35% while costing the trader 8 times as much.
 
 ![Ceilings against the reference-risk need](ceilings_vs_need.png)
 
@@ -58,9 +58,9 @@ Gaps, closures and contract rolls are not in the need: a price jump is not a spr
 | AMD | equity | 10 | 436 | 17.3 | 20 | **20** | 2.0% | 0.25% | moderate |
 | ORCL | equity | 10 | 388 | 16.5 | 20 | **20** | 2.0% | 0.37% | moderate |
 
-Method and test: the method is fixed on the calibration sample (2024-10-28 to 2026-04-27) and tested on the later validation sample (to 2026-10-12). The calibration-only ceiling covers the validation need for 36 of 37 markets; BRENT did not, so the proposed value refits on the larger of the two tails. Over the validation hours, the share whose need would exceed the calibration-only ceiling is at most 1.29%.
+Method and test: the method is fixed on the calibration sample (2024-10-28 to 2026-04-27) and tested on the later validation sample (to 2026-10-12). The calibration-only ceiling covers the validation need for 36 of 37 markets; BRENT did not, so the proposed value refits on the larger of the two tails (in-sample on the validation tail). Over the validation hours, the share whose need would exceed the calibration-only ceiling is at most 1.29%. The out-of-sample test could fail only for the 23 markets whose calibration-only ceiling is above the floor.
 
-Burden: every proposed ceiling is at most 26% of the market's smallest initial margin (limit 30%). FX and index markets sit at the 13-bp floor, 26% of their 50-bp margin, so the launch parameters themselves already cost them a quarter of margin to close at the top stress level: an owner decision for the launch stress minimum, not for the ceiling.
+Burden: every proposed ceiling is at most 26% of the market's smallest initial margin (limit 30%). FX and index markets sit at the 13-bp floor, 26% of their 50-bp margin, so the launch parameters themselves already cost them that share of margin to close at the top stress level: an owner decision for the launch stress minimum, not for the ceiling.
 
 Sensitivity: doubling the volatility input raises 33 ceilings, by at most 7 bps. The divergence limit in the genesis price rules, not volatility, sets most of each ceiling.
 
@@ -68,9 +68,9 @@ Sensitivity: doubling the volatility input raises 33 ceilings, by at most 7 bps.
 
 Registry against one global value: a single value must be at least 35 bps (the largest market), which costs 14 of 37 markets more than the burden limit, up to 70% of margin. At the strictest value (13 bps) 23 markets would need more than they may charge.
 
-Reversal blending (grid of 6 position sizes and 4 opening fractions per market and stress level, against each market's proposed ceiling): the share of reversals whose blended spread exceeds the ceiling is 0.0% at calm, 1.9% at the elevated level and 16.4% at the top level (by class: commodity 7%, crypto 0%, equity 28%, fx 0%, index 4%). This is a grid, not a flow distribution.
+Reversal blending (grid of 6 position sizes and 4 opening fractions per market and stress level, against each market's proposed ceiling): the share of reversals whose blended spread exceeds the ceiling is 0.0% at calm, 1.9% at the elevated level and 16.4% at the top level (by class: commodity 7%, crypto 0%, equity 28%, fx 0%, index 4%). This is a grid, not a flow distribution. Under one global value at the floor instead, the shares are 0.0%, 4.5% and 24.5%.
 
-Rounding: see `rounding` in `ceilings.json`. At an index of 0.65 units one raw unit is 0.000015 bp; a seeded search of 20,000 pure closes found at most 1 raw unit above the exact bound. A floor to the exact bound makes a close free only below 770 raw units (7.7e-7).
+Rounding: see `rounding` in `ceilings.json`. At an index of 0.65 units one raw unit is 0.000015 bp; a seeded search of 20,000 pure closes found at most 1 raw unit above the exact bound. A floor to the exact bound makes a close free only below 770 raw units.
 
 ## Evidence and limits
 

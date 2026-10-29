@@ -8,7 +8,8 @@ from pathlib import Path
 
 os.environ.setdefault("MPLBACKEND", "Agg")
 if "MPLCONFIGDIR" not in os.environ:
-    os.environ["MPLCONFIGDIR"] = tempfile.mkdtemp(prefix="close-spread-matplotlib-")
+    _CONFIG_DIR = tempfile.TemporaryDirectory(prefix="close-spread-matplotlib-")  # removed at exit
+    os.environ["MPLCONFIGDIR"] = _CONFIG_DIR.name
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -42,6 +43,9 @@ def write_report(data):
     live = [row for row in rows if row["proposed_ceiling_bps"] is not None]
     uncovered = [row["symbol"] for row in live if not row["validation_covered_by_calibration_ceiling"]]
     registry, reversals = data["registry_vs_global"], data["reversal_summary"]
+    at_floor, gap = data["reversal_summary_if_every_ceiling_were_the_floor"], data["gap_comparison"]
+    floor = data["objective"]["floor_bps"]
+    fx = next(row for row in live if row["asset_class"] == "fx")
     top_classes = ", ".join(f"{name} {value['share'] * 100:.0f}%" for name, value in reversals["top"].items()
                             if isinstance(value, dict))
     classes = ", ".join(f"{name} {low}" if low == high else f"{name} {low}-{high}"
@@ -57,14 +61,15 @@ def write_report(data):
         "engine bounds that risk per market in its price rules, so the need is", "",
         "`need = max_divergence_bps + hourly tail move * sqrt(max_age_ms / 1 hour)`", "",
         f"The ceiling is the smallest multiple of {data['objective']['step_bps']} bps at or above the need, never "
-        f"below {data['objective']['floor_bps']} bps (the largest close charge the launch parameters allow: stress "
-        "10 plus toxicity 3, so the launch configuration stays legal). The tail move is the upper end of the "
+        f"below {data['objective']['floor_bps']} bps (the largest close charge the launch parameters allow, so no launch "
+        "close is clamped). The tail move is the upper end of the "
         "weekly block-bootstrap interval of the calibration sample's hourly p99 of the in-bar move (the open against the previous close is left out). Hourly bars are scaled to the "
         "one-second quote age by square-root-of-time, an assumption no hourly data can test.", "",
         "Gaps, closures and contract rolls are not in the need: a price jump is not a spread. They move margin and "
         "close-out risk, which `ceiling_effects.csv` shows a close spread cannot repair: in a 5% gap on EUR-USD, "
-        "an uncapped 103-bp close charge cuts the zero-capital house shortfall by a fifth to a third while costing "
-        "the trader 8 times as much.", "",
+        "an uncapped 103-bp close charge cuts the zero-capital house shortfall by "
+        f"{gap['shortfall_reduction_min'] * 100:.0f}% to {gap['shortfall_reduction_max'] * 100:.0f}% while costing "
+        f"the trader {gap['trader_cost_ratio']:.0f} times as much.", "",
         "![Ceilings against the reference-risk need](ceilings_vs_need.png)", "",
         "## Per-market ceilings (basis points of the index price)", ""]
     lines += table(rows)
@@ -74,13 +79,16 @@ def write_report(data):
         "the later validation sample (to 2026-10-12). "
         + (f"The calibration-only ceiling covers the validation need for {len(live) - len(uncovered)} of "
            f"{len(live)} markets; {', '.join(uncovered)} did not" if uncovered else "It covers every market")
-        + ", so the proposed value refits on the larger of the two tails. Over the validation hours, the share "
-        "whose need would exceed the calibration-only ceiling is at most "
-        f"{max(row['validation_hours_over_calibration_ceiling'] for row in live) * 100:.2f}%.", "",
+        + ", so the proposed value refits on the larger of the two tails (in-sample on the validation tail). Over the "
+        "validation hours, the share whose need would exceed the calibration-only ceiling is at most "
+        f"{max(row['validation_hours_over_calibration_ceiling'] for row in live) * 100:.2f}%. The out-of-sample test "
+        f"could fail only for the {data['objective']['markets_where_validation_could_fail']} markets whose "
+        "calibration-only ceiling is above the floor.", "",
         "Burden: every proposed ceiling is at most "
         f"{max(row['ceiling_percent_of_min_margin'] for row in live):.0f}% of the market's smallest initial margin "
         f"(limit {data['objective']['burden_limit_percent_of_min_initial_margin']}%). FX and index markets sit at "
-        "the 13-bp floor, 26% of their 50-bp margin, so the launch parameters themselves already cost them a quarter "
+        f"the {floor}-bp floor, {floor / fx['min_initial_margin_bps'] * 100:.0f}% of their "
+        f"{fx['min_initial_margin_bps']}-bp margin, so the launch parameters themselves already cost them that share "
         "of margin to close at the top stress level: an owner decision for the launch stress minimum, not for the ceiling.",
         "",
         "Sensitivity: doubling the volatility input raises "
@@ -98,10 +106,13 @@ def write_report(data):
         "each market's proposed ceiling): the share of reversals whose blended spread exceeds the ceiling is "
         f"{reversals['calm']['share'] * 100:.1f}% at calm, {reversals['elevated']['share'] * 100:.1f}% at the "
         f"elevated level and {reversals['top']['share'] * 100:.1f}% at the top level (by class: {top_classes}). "
-        "This is a grid, not a flow distribution.",
-        "", "Rounding: see `rounding` in `ceilings.json`. At an index of 0.65 units one raw unit is 0.000015 bp; a "
-        f"seeded search of 20,000 pure closes found at most {data['pure_close_excess_atoms_seeded']} raw unit above the "
-        "exact bound. A floor to the exact bound makes a close free only below 770 raw units (7.7e-7).", "",
+        "This is a grid, not a flow distribution. Under one global value at the floor instead, the shares are "
+        f"{at_floor['calm']['share'] * 100:.1f}%, {at_floor['elevated']['share'] * 100:.1f}% and "
+        f"{at_floor['top']['share'] * 100:.1f}%.",
+        "", f"Rounding: see `rounding` in `ceilings.json`. At an index of 0.65 units one raw unit is "
+        f"{10_000 / 650_000_000:.6f} bp; a seeded search of 20,000 pure closes found at most "
+        f"{data['pure_close_excess_atoms_seeded']} raw unit above the exact bound. A floor to the exact bound makes "
+        f"a close free only below {10_000 // floor + 1} raw units.", "",
         "## Evidence and limits", "",
         "- Data: the 102-week hourly grid inherited from the exposure-cap study, a transformed proxy with selected "
         "gaps removed. See [the source audit](../source-audit.md) for providers, dates, time zones, checksums, "
@@ -135,7 +146,8 @@ def plots(data, statistics):
     fig.tight_layout()
     fig.savefig(RESULTS / "ceilings_vs_need.png", dpi=150, metadata={"Software": "close-spread-calibration"})
     plt.close(fig)
-    items = statistics["markets"]
+    items = [item for item in statistics["markets"]
+             if item["calibration"].get("hourly_p99_week_block_bootstrap") is not None]
     labels = [item["market"]["symbol"] for item in items]
     y = np.arange(len(items))
     calibration = np.array([item["calibration"]["abs_hourly_p99_bps"] for item in items])

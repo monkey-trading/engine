@@ -12,9 +12,23 @@ EXEC = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(EXEC)
 
 SCALE = EXEC.SCALE
-# The genesis stress levels as (name, minimum spread bps, size-spread multiplier bps).
+# The launch stress levels as (name, minimum spread bps, size-spread multiplier bps), and the top toxicity
+# add-on; `levels_from` reads the same from the pinned parameters, and these are the defaults for tests.
 LEVELS = (("calm", 0, 10_000), ("elevated", 2, 20_000), ("top", 10, 40_000))
 TOXICITY_BPS = 3
+
+
+def levels_from(params):
+    """Stress levels and the top toxicity add-on from the genesis protocol parameters."""
+    names = ("calm", "elevated", "top")
+    stress = params["stress_levels"]
+    if len(stress) != len(names):
+        raise ValueError("expected three stress levels")
+    toxicity = max((tier["extra_spread_bps"] for tier in params["toxicity"]["tiers"]), default=0)
+    return tuple((name, level["min_spread_bps"], level["size_spread_multiplier_bps"])
+                 for name, level in zip(names, stress)), toxicity
+
+
 POSITIONS_USD = (10_000, 100_000, 500_000, 1_000_000, 2_000_000, 5_000_000)
 OPEN_FRACTIONS = (0.1, 0.5, 1.0, 2.0)
 MID = 100
@@ -27,28 +41,28 @@ def tiers(spec):
             for tier in spec["spread_tiers"]]
 
 
-def reversal(spec, level, position_usd, open_fraction):
+def reversal(spec, level, position_usd, open_fraction, toxicity_bps=TOXICITY_BPS):
     """Sell through a long position of `position_usd`, opening `open_fraction` of it on the other side."""
     _, minimum, multiplier = level
     quantity = position_usd // MID
     opening = round(quantity * open_fraction)
     result = EXEC.adjustment(mid=EXEC.raw(MID), current=EXEC.raw(quantity), quantity=EXEC.raw(quantity + opening),
-                             buy=False, tiers=tiers(spec), minimum_bps=minimum, toxicity_bps=TOXICITY_BPS,
+                             buy=False, tiers=tiers(spec), minimum_bps=minimum, toxicity_bps=toxicity_bps,
                              multiplier_bps=multiplier)
     return result["adjustment_raw"] * 10_000 / EXEC.raw(MID)
 
 
-def reversal_rows(items, ceilings):
+def reversal_rows(items, ceilings, levels=LEVELS, toxicity_bps=TOXICITY_BPS):
     """Blended per-unit spread of reversals against each market's ceiling and a pure close's charge."""
     rows = []
     for item in items:
         spec = item["market"]
         ceiling = ceilings[spec["symbol"]]
-        for level in LEVELS:
-            pure = level[1] + TOXICITY_BPS
+        for level in levels:
+            pure = level[1] + toxicity_bps
             for position in POSITIONS_USD:
                 for fraction in OPEN_FRACTIONS:
-                    blended = reversal(spec, level, position, fraction)
+                    blended = reversal(spec, level, position, fraction, toxicity_bps)
                     rows.append({"symbol": spec["symbol"], "asset_class": spec["asset_class"],
                                  "stress_level": level[0], "position_usd": position,
                                  "opening_over_closing": fraction, "pure_close_bps": pure,

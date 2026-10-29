@@ -33,8 +33,9 @@ Representation:
   `results/ceilings.csv`; the protocol carries only the number.
 - Genesis refuses a duplicate ID, an ID with no listed market, a listed market with no entry, a value outside
   0 to 9,999 (an arithmetic limit, not an economic range), and a value below the genesis parameters' largest
-  close charge (stress minimum plus top toxicity add-on, 13 bps here), which would make the launch
-  configuration illegal. Zero is a legal ceiling and means free closes: no nonzero charge meets it.
+  close charge (stress minimum plus top toxicity add-on, 13 bps here), so that no launch close is clamped and
+  launch behaviour is unchanged. A lower FX or index ceiling is possible under the clamp (it would clamp
+  top-stress closes); the floor is a choice the owner may revisit, not a technical constraint. Zero is a legal ceiling and means free closes: no nonzero charge meets it.
 - An entry follows its market ID. `UpsertMarket` must not change `asset_class` or `quote_currency` of an ID with
   an entry: the calibration is per instrument, so a different instrument is a new ID with its own entry.
 - Routine calendar corrections, price-rule edits and margin changes leave an entry alone. A price-rule or
@@ -46,9 +47,9 @@ Representation:
 
 A pure close's charge is the stress minimum plus the toxicity add-on, so today it is a function of the global
 parameters alone: at most 13 bps on every market. Refusing a `SetParams` whose maximum close charge exceeds the
-strictest ceiling would hold that sum at 13 for every market, whatever the registry says: 23 of 37 markets
-would have headroom they can never use (crypto 17 to 22 bps, shares and commodities up to 7). The registry would be
-decoration above the floor.
+strictest ceiling would hold that sum at 13 for every market, whatever the registry says: for pure closes, 23 of 37
+markets would have headroom they can never use (crypto 17 to 22 bps, shares and commodities up to 7). The registry
+would still decide which reversals pass (choice 3), but it would add nothing to what a close can be charged.
 
 Clamping each close fill to `min(charge, ceiling)` at the pricing site keeps the per-market values meaningful
 and makes the guarantee structural: every close, whichever command changed the parameters, stress levels,
@@ -58,8 +59,9 @@ ceiling is at least 13.
 
 The cost is a change to #344's dev scenario. A signed `SetParams` that would raise a close above its
 ceiling is accepted and the close pays the ceiling, instead of being refused as `admin_rejected`; the fill
-records the charge actually paid. If the owner wants the refusal, it is sound but pairs with one global
-value of 13 bps and choice 1 collapses: the registry then adds nothing.
+records the charge actually paid. If the owner wants the refusal, it is sound, and the registry still matters for reversals: with every ceiling at
+13 bps instead, the share of grid reversals refused is 0%, 4.5% and 24.5% (calm, elevated, top), against 0%, 1.9% and 16.4%
+with the registry.
 
 The cap protects what the house forgoes only weakly: in a 5% gap on EUR-USD with no house capital, an uncapped
 103-bp close charge would cut the shortfall by a fifth to a third. That is the price of the protection, and

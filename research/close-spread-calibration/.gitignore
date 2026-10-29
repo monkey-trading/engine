@@ -1,4 +1,2 @@
 __pycache__/
-tests/__pycache__/
 data/raw/
-results/conditional_gap_sweep.csv

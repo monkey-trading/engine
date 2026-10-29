@@ -24,7 +24,8 @@ BURDEN_LIMIT_PERCENT = 30
 MIN_CALIBRATION_HOURS = 1_000
 MIN_VALIDATION_HOURS = 250
 HOUR_MS = 3_600_000
-SELECTION_STATISTIC = "calibration hourly p99, upper end of its weekly block-bootstrap interval"
+SELECTION_STATISTIC = ("the larger of the calibration hourly p99 (upper end of its weekly block-bootstrap interval) "
+                       "and the validation hourly p99")
 
 CLASS_FLAGS = {
     "crypto": ["single-venue USDT spot; USDT/USD basis unmeasured"],
