@@ -1,0 +1,33 @@
+name: Merge approval
+
+# Branch rules require a check named `merge-approved`. On a pull request it is the commit status the
+# owner's account posts on the approved head; on a merge group it is this job, which passes only if
+# the latest `merge-approved` status on the head of every pull request in the group is `success`
+# from that account. It runs on no other event: a `merge-approved` check on a pull request, even a
+# skipped one, would satisfy the rule without the owner.
+on:
+  merge_group:
+
+permissions: {}
+
+jobs:
+  merge-approved:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require the owner's merge-approved status on every pull request in the group
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE_REF: ${{ github.event.merge_group.base_ref }}
+          HEAD_REF: ${{ github.event.merge_group.head_ref }}
+          GROUP_SHA: ${{ github.event.merge_group.head_sha }}
+          APPROVER: 0xjevons
+        run: ./scripts/check-merge-approved.sh

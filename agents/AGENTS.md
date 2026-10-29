@@ -175,6 +175,8 @@ an index: load only the rule whose hint matches the current action.
 - **scripts/** — `check-file-loc.sh`, the 500-line cap per Rust file, opted in per crate;
   `dev-corporate-actions.sh`, the signed localhost TLS/API dividend, split and restart scenario;
   `check-reference-logs.sh`, which fails a branch that changes a committed reference log;
+  `check-merge-approved.sh`, the merge queue's approval gate, with `check-merge-approved-test.sh`
+  running it against a stubbed GitHub API;
   `dev-vault-deposits.sh`, the vault deposit and RPC quorum dev scenarios on Anvil, with
   `dev-rpc-proxy.py` providing three local fault-injection endpoints; `dev-metrics-alerts.sh`,
   the metrics and alert routing dev scenario; `dev-alert-outbox.sh`, the isolated alert retry
@@ -215,42 +217,45 @@ an index: load only the rule whose hint matches the current action.
   the contracts' `forge fmt --check` / build /
   test, the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
   deposit finality scenarios, the MONKEY staking dev scenario, the signed withdrawal and FIFO dev
-  scenario, the metrics and alert routing dev scenario, the alert outbox kill/restart scenario,
+  scenario, the API and direct-vault access enforcement dev scenario, the metrics and alert routing
+  dev scenario, the alert outbox kill/restart scenario,
   the browser-origin scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the
-  signed API answers dev scenario, the public certificate dev scenario, the executable quotes dev scenario, the review-delta helper's
-  test, the browser verifier (`wasm-verifier` builds its package twice on separate runners with the
-  pinned toolchain, the second from another checkout path, and its first run also runs
-  `dev-wasm-verifier.sh` on that package; `wasm-verifier-compare` fails if the builds differ), and
-  the enclave image (`image` checks its download retries, builds it twice, and boots it under QEMU,
-  `image-compare` fails if the builds differ), on every push to `main` and every PR.
-  deposit finality scenarios, the signed withdrawal and FIFO dev scenario, the API and
-  direct-vault access enforcement dev scenario, the metrics and alert
-  routing dev scenario, the alert outbox kill/restart scenario, the browser-origin scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the
-  RWA price feeds dev scenario, the signed API answers dev scenario, the public certificate dev
-  scenario, the review-delta helper's test, and the enclave image (`image`
+  signed API answers dev scenario, the public certificate dev scenario, the executable quotes dev
+  scenario, the review-delta helper's test, the merge approval gate's test, the browser verifier
+  (`wasm-verifier` builds its package twice on separate runners with the pinned toolchain, the
+  second from another checkout path, and its first run also runs `dev-wasm-verifier.sh` on that
+  package; `wasm-verifier-compare` fails if the builds differ), and the enclave image (`image`
   checks its download retries, builds it twice, and boots it under QEMU, `image-compare` fails if
-  the builds differ), on every push to `main` and every PR.
+  the builds differ), on every push to `main`, every PR, and every merge group of the merge queue.
   On a PR, the first job, `changes`, sorts the changed files into the Rust, contracts, scenario,
-  image, and agent-script areas from an explicit path list, and each job runs only when its area
-  changed: `agents/` (but for the review-delta helper in
+  image, agent-script, and merge-approval areas from an explicit path list, and each job runs only
+  when its area changed: `agents/` (but for the review-delta helper in
   `agents/skills/agent-code-review/scripts/`), `research/`, the root `README.md`, `SECURITY.md`,
   `AGENTS.md`, and `CLAUDE.md`, and the `README.md` of `image/` and of each crate change none. A
-  push to `main`, a manual run, a workflow change, a failed diff, or any path the list does not
-  name runs every job.
+  push to `main`, a merge group, a manual run, a workflow change, a failed diff, or any path the
+  list does not name runs every job.
   Actions are pinned by commit SHA. `ci-passed` is the one CI check branch rules require: it passes
   only when every other job succeeded or was skipped because its area did not change, so each new
   job must be added to its `needs` and its area map, and every path it reads to `changes`. Each
   job but `changes` and `ci-passed` has a `cancel-<job>` companion that runs only on a pull
-  request, and only if that job fails; it cancels the run with its own `actions: write` token (the
-  only jobs that hold it; they run no repository code), so the first failed job stops the rest and
-  `ci-passed` fails on the cancelled jobs; a new job gets a companion. The image matrix's
-  `fail-fast` is likewise on only for a pull request, so a push to `main` and a manual run cancel
-  nothing: every job runs to the end. A fork PR's read-only token cannot cancel, so the companion
-  warns and the run continues as before, and a job that times out is cancelled rather than failed,
-  so the run continues too. `gh run rerun --failed` re-runs the failed, cancelled, and unstarted
-  jobs with `ci-passed`, so a re-run after a flake repeats everything the first failure cut short. The test
-  job also runs the corporate-action dev scenario and checks command latency budgets against
-  100k-account fixtures.
+  request or a merge group, and only if that job fails; it cancels the run with its own
+  `actions: write` token (the only jobs that hold it; they run no repository code), so the first
+  failed job stops the rest and `ci-passed` fails on the cancelled jobs, and the merge queue drops a
+  failed group's PR without waiting for the slowest job; a new job gets a companion. The image and
+  browser-verifier matrices' `fail-fast` is likewise on only for a pull request or a merge group,
+  so a push to `main` and a manual run cancel nothing: every job runs to the end.
+  `cancel-in-progress` is on for a pull request and a merge group: a group's ref names its PR and
+  base commit, so a new run cancels only the stale run of a group the queue rebuilt on the same
+  base. A fork PR's read-only token cannot cancel, so the companion warns and the run continues as
+  before, and a job that times out is cancelled rather than failed, so the run continues too.
+  `gh run rerun --failed` re-runs the failed, cancelled, and unstarted jobs with `ci-passed`, so a
+  re-run after a flake repeats everything the first failure cut short. The test job also runs the
+  corporate-action dev scenario and checks command latency budgets against 100k-account fixtures.
+  `merge-approval.yaml` runs only on merge groups: its `merge-approved` job, the merge-group side of
+  the required `merge-approved` check, runs `scripts/check-merge-approved.sh`, which follows the
+  queue's entries from the group's head down to `main` and passes only if the latest
+  `merge-approved` status on the head of every PR in the group is `success` from the owner's
+  account. It never runs on a pull request, where the owner's commit status is the check.
 - **agents/** — this index, `rules/`, and `skills/` (incl. `skills/vendor/` pull-on-demand
   packs); root `AGENTS.md` / `CLAUDE.md` symlink to `agents/AGENTS.md`.
 - **Cargo.toml** — workspace manifest, shared dependencies, and the Cargo profiles (release keeps
@@ -390,14 +395,17 @@ Run from the repo root:
   (needs Docker and `python3`)
 - Review-delta script tests: `agents/skills/agent-code-review/scripts/review-delta-test.sh` (builds
   a scratch git repository; needs only `git`, `sed`, and `diff`)
+- Merge approval gate tests: `scripts/check-merge-approved-test.sh` (stubs the GitHub API; needs
+  only `jq`)
 
 ## Repo facts
 
 - Default branch `main`; issues and milestones live in GitHub Issues on
   `0xjevons/monkeytrading`.
-- **Merging needs the owner's go-ahead.** Branch rules require `ci-passed` and `merge-approved`.
-  Only after the owner approves a PR in chat does the session they told post `merge-approved` and
-  merge it, and only as [agent-create-pr](skills/agent-create-pr/SKILL.md#merging) describes.
+- **Merging needs the owner's go-ahead.** `main` merges through GitHub's merge queue, and branch
+  rules require `ci-passed` and `merge-approved` on a PR's head and again on its merge group. Only
+  after the owner approves a PR in chat does the session they told post `merge-approved` and queue
+  it, and only as [agent-create-pr](skills/agent-create-pr/SKILL.md#merging) describes.
 - **`engine-core` is deterministic.** No clocks, randomness, floats, `HashMap` iteration, or IO.
   Time comes only from the sequencer's stamp, and money is `Fixed`.
 - **Replay is the audit.** The sequenced log is public, and anyone can replay it against this code
@@ -457,7 +465,7 @@ skills: section 14 of [development-checklist](rules/development-checklist.md) fo
 - [skills/agent-code-review/SKILL.md](skills/agent-code-review/SKILL.md) — review a branch or GitHub PR against `development-checklist`, graded by its severity guide, with the current agent or with Claude and Codex reviewers per `low` / `medium` / `high` level; writes local Markdown under gitignored `agents/.processes/reviews/` and prints a fixed report; also holds how any skill fixes an accepted finding — by class: name the invariant, fix every site, test the class, re-read the fix for mirror-image defects, and record the invariant and sites in the branch's gitignored fix notes under the main checkout's `agents/.processes/fixes/`, which every later review round checks; and the review loop — a clean round ends it with the PR marked ready on that round's commit or a later one that needs no round, a later change is re-checked against the reviewed patch with `agents/skills/agent-code-review/scripts/review-delta.sh` (a mechanical rebase needs no re-check, a protocol-version renumber the script matches needs no round only when main's changes between the two bases leave what the PR does unchanged (a renumber ships with a rebase onto a main that may just have gained a version, and the full-diff round applies when that alters what the PR does), any other change gets one round on the residual and the change itself, or a full-diff round when either changes behaviour beyond resolving a conflict), Critical and High have no round cap, any round from 3 on that accepts Mediums but no Critical or High also ends it, with each Medium filed, without a per-issue yes, as its own `bug` issue for a small follow-up PR, a later round notes a filed Medium's issue instead of raising it again while its scenario and impact hold, and a round log in the fix notes carries the count across sessions; load for a local code review, before fixing an accepted finding, to decide whether a PR's review loop has ended, or to re-check a change made after it ended — a GitHub PR review that drafts comments goes through `agent-review-pr`.
 - [skills/agent-plan-feature/SKILL.md](skills/agent-plan-feature/SKILL.md) — turn a spec into vertical features that each ship as one PR and run end to end on a dev node; a feature is Ready only when every behaviour decision it needs is recorded (spec or decision issue); one GitHub issue per feature with sourced acceptance criteria, a dev scenario and promotion needs, milestones in delivery order; re-plans an existing project issue by issue; the user revises and approves the plan before any issue write; load for "plan the build" / "break this spec into issues" / "organise the milestones" / "re-plan the project".
 - [skills/agent-build-feature/SKILL.md](skills/agent-build-feature/SKILL.md) — build one Ready feature end to end on one branch for one PR (parallel subagents merge into it, no stacked PRs), self-review with multi-agent `agent-code-review` at `medium` or higher until its review loop ends, record the dev scenario and run it on the branch rebased onto `main` before the PR is marked ready, open via `agent-create-pr` ending `Closes #<feature>` so the merge closes the issue; checks readiness first (`ready-to-build`, or the same checks with the user for an issue the plan did not write); deploys and issue writes only on the user's approval, except the review loop's `bug` issues; load for "build #12" / "implement this feature".
-- [skills/agent-create-pr/SKILL.md](skills/agent-create-pr/SKILL.md) — open a PR: issue blocker check (asks before opening over an open blocker), every PR opened as a draft and marked ready only after the ready prerequisites, including feature completeness and a multi-agent `agent-code-review` loop at `medium` or higher that ends on a round accepting no Critical / High / Medium finding, or on a round from 3 on accepting Mediums but no Critical / High, whose Mediums are filed as `bug` issues, with the PR marked ready on that round's commit or a later one its delta re-check lets stand without a round; a feature never spanning several PRs, `[scopes] Title` and an end-state squashed-commit body ending with `Closes #12` (every feature PR) or `Part of #12` (a supporting PR that does not finish its issue); on the owner's go-ahead in chat, `merge-approved` on the approved head, then a squash merge pinned to it and branch cleanup; issues read-only but for those `bug` issues; load for "create a PR" / "open a PR", before a PR title / body edit, or on the owner's go-ahead to merge.
+- [skills/agent-create-pr/SKILL.md](skills/agent-create-pr/SKILL.md) — open a PR: issue blocker check (asks before opening over an open blocker), every PR opened as a draft and marked ready only after the ready prerequisites, including feature completeness and a multi-agent `agent-code-review` loop at `medium` or higher that ends on a round accepting no Critical / High / Medium finding, or on a round from 3 on accepting Mediums but no Critical / High, whose Mediums are filed as `bug` issues, with the PR marked ready on that round's commit or a later one its delta re-check lets stand without a round; a feature never spanning several PRs, `[scopes] Title` and an end-state squashed-commit body ending with `Closes #12` (every feature PR) or `Part of #12` (a supporting PR that does not finish its issue); on the owner's go-ahead in chat, `merge-approved` on the approved head, then queueing it pinned to that head and branch cleanup once the queue merges it; issues read-only but for those `bug` issues; load for "create a PR" / "open a PR", before a PR title / body edit, or on the owner's go-ahead to merge.
 - [skills/agent-review-pr/SKILL.md](skills/agent-review-pr/SKILL.md) — review or re-review a GitHub PR via `agent-code-review` (multi-agent on request) and post its in-scope findings — Low confidence rechecked or dropped, points already in the discussion skipped or added as replies — as a PENDING review only after a yes to "Push the draft comments?"; a re-review runs the same flow and also rechecks your earlier threads; never submits; load for "review PR" / "draft review" / "review the PR but don't submit" / "re-check my review".
 - [skills/agent-address-pr-comments/SKILL.md](skills/agent-address-pr-comments/SKILL.md) — answer a PR's open threads and actionable comments: verify, agree the triage with the user, fix what is true and in scope, update the PR description, and post the approved replies as one `COMMENT` review; never approves, requests changes, or resolves; load for "address the PR comments" / "address review feedback" / "reply to the review".
 - [skills/agent-create-worktree/SKILL.md](skills/agent-create-worktree/SKILL.md) — create a worktree under the sibling `<repo>-worktrees/`, named after the branch, clearing a new branch's leftover fix notes; detached at the head SHA to review a PR; load for "create a worktree" / "spin up a working tree".

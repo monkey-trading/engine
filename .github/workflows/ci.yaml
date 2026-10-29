@@ -4,11 +4,14 @@ on:
   push:
     branches: [main]
   pull_request:
+  merge_group:
   workflow_dispatch:
 
+# A merge group's ref names its pull request and base commit, so a group shares it only with the
+# stale run of a group the queue rebuilt on the same base, which the new run cancels.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -19,8 +22,9 @@ permissions:
 
 jobs:
   # Sorts a PR's changed files into areas; every other job runs only when its area is true. A push,
-  # a manual run, a failed diff, a workflow change, and any path not listed set every area true, so
-  # only the listed paths can skip a job. Each path lists the area of every job that reads it.
+  # a merge group, a manual run, a failed diff, a workflow change, and any path not listed set every
+  # area true, so only the listed paths can skip a job. Each path lists the area of every job that
+  # reads it.
   changes:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -30,6 +34,7 @@ jobs:
       scenarios: ${{ steps.classify.outputs.scenarios }}
       image: ${{ steps.classify.outputs.image }}
       agent_scripts: ${{ steps.classify.outputs.agent_scripts }}
+      merge_approval: ${{ steps.classify.outputs.merge_approval }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -42,7 +47,7 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          all="rust contracts scenarios image agent_scripts"
+          all="rust contracts scenarios image agent_scripts merge_approval"
           areas=$all
           # --no-renames lists both sides of a move.
           if [[ "$EVENT" == pull_request ]] && files=$(git diff --name-only --no-renames "$BASE...$HEAD"); then
@@ -52,6 +57,8 @@ jobs:
               case "$file" in
                 # The review-delta helper and its test.
                 agents/skills/agent-code-review/scripts/*) areas+=" agent_scripts" ;;
+                # The merge queue's approval gate and its test.
+                scripts/check-merge-approved.sh | scripts/check-merge-approved-test.sh) areas+=" merge_approval" ;;
                 # Read by no build, test, scenario, or image.
                 agents/* | AGENTS.md | CLAUDE.md | README.md | SECURITY.md | research/* | image/README.md \
                   | crates/core/README.md | crates/node/README.md | crates/verify/README.md \
@@ -212,7 +219,8 @@ jobs:
           fetch-depth: 0
       - name: Check committed reference logs are unchanged
         env:
-          # A PR against its base, a push against the commit it replaced, a manual run against main.
+          # A PR against its base, a push against the commit it replaced, a merge group or a manual
+          # run against main.
           BASE: >-
             ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha
             || github.event_name == 'push' && github.event.before
@@ -460,7 +468,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.scenarios == 'true'
     strategy:
-      fail-fast: ${{ github.event_name == 'pull_request' }}
+      fail-fast: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
       matrix:
         run: [first, second]
     runs-on: ubuntu-24.04
@@ -517,7 +525,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.image == 'true'
     strategy:
-      fail-fast: ${{ github.event_name == 'pull_request' }}
+      fail-fast: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
       matrix:
         run: [first, second]
     runs-on: ubuntu-24.04
@@ -578,19 +586,33 @@ jobs:
       - name: Test the review-delta helper
         run: ./agents/skills/agent-code-review/scripts/review-delta-test.sh
 
-  # Each job above but `changes` has a `cancel-` companion that runs only on a pull request, and
-  # only when that job itself fails (`failure()` alone is also true for a failed ancestor such as
-  # `changes`). It cancels the run, so the first failed job stops the rest from spending runner
-  # minutes; `ci-passed` still runs and fails on the cancelled jobs. A push to `main` and a manual
-  # run skip the companions and the image matrix's `fail-fast`: every job runs to the end, so
-  # caches are saved whole and every failure shows. The companions run no repository code, so
-  # `actions: write` is held by them alone. They are not in `ci-passed`'s `needs`. `changes` has
+  merge-approval:
+    needs: changes
+    if: needs.changes.outputs.merge_approval == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test the merge queue's approval gate
+        run: ./scripts/check-merge-approved-test.sh
+
+  # Each job above but `changes` has a `cancel-` companion that runs only on a pull request or a
+  # merge group, and only when that job itself fails (`failure()` alone is also true for a failed
+  # ancestor such as `changes`). It cancels the run, so the first failed job stops the rest from
+  # spending runner minutes; `ci-passed` still runs and fails on the cancelled jobs, so the merge
+  # queue drops a failed group's pull request without waiting for the slowest job. A push to `main`
+  # and a manual run skip the companions and the image matrix's `fail-fast`: every job runs to the
+  # end, so caches are saved whole and every failure shows. The companions run no repository code,
+  # so `actions: write` is held by them alone. They are not in `ci-passed`'s `needs`. `changes` has
   # none, so its failure leaves the other jobs to skip as before. A job that times out is
   # cancelled, not failed, so its companion skips and the run continues. A new job gets a
   # companion.
   cancel-fmt:
     needs: fmt
-    if: failure() && needs.fmt.result == 'failure' && github.event_name == 'pull_request'
+    if: failure() && needs.fmt.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -606,7 +628,8 @@ jobs:
 
   cancel-file-loc:
     needs: file-loc
-    if: failure() && needs.file-loc.result == 'failure' && github.event_name == 'pull_request'
+    if: failure() && needs.file-loc.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -622,7 +645,8 @@ jobs:
 
   cancel-clippy:
     needs: clippy
-    if: failure() && needs.clippy.result == 'failure' && github.event_name == 'pull_request'
+    if: failure() && needs.clippy.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -638,7 +662,8 @@ jobs:
 
   cancel-test:
     needs: test
-    if: failure() && needs.test.result == 'failure' && github.event_name == 'pull_request'
+    if: failure() && needs.test.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -654,7 +679,8 @@ jobs:
 
   cancel-reference-examples:
     needs: reference-examples
-    if: failure() && needs.reference-examples.result == 'failure' && github.event_name == 'pull_request'
+    if: failure() && needs.reference-examples.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -670,7 +696,8 @@ jobs:
 
   cancel-reference-logs:
     needs: reference-logs
-    if: failure() && needs.reference-logs.result == 'failure' && github.event_name == 'pull_request'
+    if: failure() && needs.reference-logs.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -686,7 +713,8 @@ jobs:
 
   cancel-reference-logs-frozen:
     needs: reference-logs-frozen
-    if: failure() && needs.reference-logs-frozen.result == 'failure' && github.event_name == 'pull_request'
+    if: failure() && needs.reference-logs-frozen.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -702,7 +730,8 @@ jobs:
 
   cancel-cargo-deny:
     needs: cargo-deny
-    if: failure() && needs.cargo-deny.result == 'failure' && github.event_name == 'pull_request'
+    if: failure() && needs.cargo-deny.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -718,7 +747,8 @@ jobs:
 
   cancel-contracts:
     needs: contracts
-    if: failure() && needs.contracts.result == 'failure' && github.event_name == 'pull_request'
+    if: failure() && needs.contracts.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -734,7 +764,8 @@ jobs:
 
   cancel-dev-vault-deposits:
     needs: dev-vault-deposits
-    if: failure() && needs.dev-vault-deposits.result == 'failure' && github.event_name == 'pull_request'
+    if: failure() && needs.dev-vault-deposits.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -750,7 +781,8 @@ jobs:
 
   cancel-dev-metrics-alerts:
     needs: dev-metrics-alerts
-    if: failure() && needs.dev-metrics-alerts.result == 'failure' && github.event_name == 'pull_request'
+    if: failure() && needs.dev-metrics-alerts.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -766,7 +798,8 @@ jobs:
 
   cancel-dev-ct-watch:
     needs: dev-ct-watch
-    if: failure() && needs.dev-ct-watch.result == 'failure' && github.event_name == 'pull_request'
+    if: failure() && needs.dev-ct-watch.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -782,7 +815,8 @@ jobs:
 
   cancel-dev-alert-outbox:
     needs: dev-alert-outbox
-    if: failure() && needs.dev-alert-outbox.result == 'failure' && github.event_name == 'pull_request'
+    if: failure() && needs.dev-alert-outbox.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -798,7 +832,8 @@ jobs:
 
   cancel-dev-browser-origin:
     needs: dev-browser-origin
-    if: failure() && needs.dev-browser-origin.result == 'failure' && github.event_name == 'pull_request'
+    if: failure() && needs.dev-browser-origin.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -814,7 +849,8 @@ jobs:
 
   cancel-dev-snapshot-restart:
     needs: dev-snapshot-restart
-    if: failure() && needs.dev-snapshot-restart.result == 'failure' && github.event_name == 'pull_request'
+    if: failure() && needs.dev-snapshot-restart.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -830,7 +866,8 @@ jobs:
 
   cancel-dev-rwa-feeds:
     needs: dev-rwa-feeds
-    if: failure() && needs.dev-rwa-feeds.result == 'failure' && github.event_name == 'pull_request'
+    if: failure() && needs.dev-rwa-feeds.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -846,7 +883,8 @@ jobs:
 
   cancel-dev-attestation-verifier:
     needs: dev-attestation-verifier
-    if: failure() && needs.dev-attestation-verifier.result == 'failure' && github.event_name == 'pull_request'
+    if: failure() && needs.dev-attestation-verifier.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -862,7 +900,8 @@ jobs:
 
   cancel-dev-signed-api:
     needs: dev-signed-api
-    if: failure() && needs.dev-signed-api.result == 'failure' && github.event_name == 'pull_request'
+    if: failure() && needs.dev-signed-api.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -878,7 +917,8 @@ jobs:
 
   cancel-dev-acme:
     needs: dev-acme
-    if: failure() && needs.dev-acme.result == 'failure' && github.event_name == 'pull_request'
+    if: failure() && needs.dev-acme.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -894,7 +934,8 @@ jobs:
 
   cancel-wasm-verifier:
     needs: wasm-verifier
-    if: failure() && needs.wasm-verifier.result == 'failure' && github.event_name == 'pull_request'
+    if: failure() && needs.wasm-verifier.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -910,7 +951,8 @@ jobs:
 
   cancel-wasm-verifier-compare:
     needs: wasm-verifier-compare
-    if: failure() && needs.wasm-verifier-compare.result == 'failure' && github.event_name == 'pull_request'
+    if: failure() && needs.wasm-verifier-compare.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -926,7 +968,8 @@ jobs:
 
   cancel-image:
     needs: image
-    if: failure() && needs.image.result == 'failure' && github.event_name == 'pull_request'
+    if: failure() && needs.image.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -942,7 +985,8 @@ jobs:
 
   cancel-image-compare:
     needs: image-compare
-    if: failure() && needs.image-compare.result == 'failure' && github.event_name == 'pull_request'
+    if: failure() && needs.image-compare.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -958,7 +1002,25 @@ jobs:
 
   cancel-review-delta:
     needs: review-delta
-    if: failure() && needs.review-delta.result == 'failure' && github.event_name == 'pull_request'
+    if: failure() && needs.review-delta.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
+  cancel-merge-approval:
+    needs: merge-approval
+    if: failure() && needs.merge-approval.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -977,7 +1039,7 @@ jobs:
   # `changes` set its area false. Add every new job to `needs`, and a gated one to `$area` below.
   ci-passed:
     if: always()
-    needs: [changes, fmt, file-loc, clippy, test, reference-examples, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, dev-metrics-alerts, dev-alert-outbox, dev-ct-watch, dev-browser-origin, dev-snapshot-restart, dev-rwa-feeds, dev-attestation-verifier, dev-signed-api, dev-acme, wasm-verifier, wasm-verifier-compare, image, image-compare, review-delta]
+    needs: [changes, fmt, file-loc, clippy, test, reference-examples, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, dev-metrics-alerts, dev-alert-outbox, dev-ct-watch, dev-browser-origin, dev-snapshot-restart, dev-rwa-feeds, dev-attestation-verifier, dev-signed-api, dev-acme, wasm-verifier, wasm-verifier-compare, image, image-compare, review-delta, merge-approval]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -996,6 +1058,6 @@ jobs:
                "dev-rwa-feeds": "scenarios", "dev-attestation-verifier": "scenarios", "dev-signed-api": "scenarios",
                "dev-acme": "scenarios",
                "wasm-verifier": "scenarios", "wasm-verifier-compare": "scenarios", image: "image",
-               "image-compare": "image", "review-delta": "agent_scripts"} as $area
+               "image-compare": "image", "review-delta": "agent_scripts", "merge-approval": "merge_approval"} as $area
             | all(to_entries[]; .value.result == "success"
                 or .value.result == "skipped" and $run[$area[.key] // ""] == "false")'

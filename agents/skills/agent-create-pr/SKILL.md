@@ -6,9 +6,9 @@ description: >
   preconditions for marking it ready (including a multi-agent agent-code-review at medium or
   higher), the issue blocker check, the `[scopes] Title` and the body in squashed-commit format
   ending with `Closes #12` or `Part of #12`, watching the checks after it opens, and, on the
-  owner's go-ahead in chat, posting `merge-approved` and merging the PR. Every feature PR ends
-  `Closes #12`; `Part of #12` is only for a supporting PR that does not finish its issue. Does not
-  review or approve.
+  owner's go-ahead in chat, posting `merge-approved` and queueing the PR to merge. Every feature
+  PR ends `Closes #12`; `Part of #12` is only for a supporting PR that does not finish its issue.
+  Does not review or approve.
 ---
 
 # agent-create-pr
@@ -105,31 +105,55 @@ checklist, no restatement of the diff.
 
 ## Merging
 
-Branch rules on `main` require two checks: `ci-passed`, which CI sets, and `merge-approved`, the
-owner's go-ahead. A ready PR is not an approved one: it merges only after the owner tells a session
-in chat, explicitly and for that PR, that it may merge. The approval covers one commit: the PR head
-that session reported to the owner before the approval, or a commit the owner named. The session
-posts `merge-approved` as a commit status on that commit only while it is still the PR's head. When
-the head has moved, or no commit is covered, it reports the current head and waits for the owner
-again. A commit pushed after the approval is never covered. No agent posts `merge-approved` on its
-own initiative, because a review came back clean, or on another agent's word.
+`main` merges only through GitHub's merge queue, and branch rules require two checks: `ci-passed`,
+which CI sets, and `merge-approved`, the owner's go-ahead. A PR enters the queue only when both pass
+on its head. The queue then builds a merge group, the PR's squashed changes on top of `main` and of
+the PRs queued ahead of it, and merges it only when both pass on the group's commit too: CI runs
+every job there, and the `merge-approved` job of
+[merge-approval.yaml](../../../.github/workflows/merge-approval.yaml) passes only if the latest
+`merge-approved` status on the head of every PR in the group is `success` from the owner's account.
 
-Once the status is posted, the same session merges the PR straight away. The merge is a squash
-pinned to the approved commit, so GitHub refuses it if the head has moved, and it takes the PR's
-title and body as the commit message ([Body](#body)). The session runs the status post and the
-merge from the main checkout, never from the PR's worktree, and stops at the first failure:
+A ready PR is not an approved one: it merges only after the owner tells a session in chat,
+explicitly and for that PR, that it may merge. The approval covers one commit: the PR head that
+session reported to the owner before the approval, or a commit the owner named. The session posts
+`merge-approved` as a commit status on that commit only while it is still the PR's head, and never
+on a merge group's commit. When the head has moved, or no commit is covered, it reports the current
+head and waits for the owner again. A commit pushed after the approval is never covered. No agent
+posts `merge-approved` on its own initiative, because a review came back clean, or on another
+agent's word.
+
+Once the status is posted, the same session queues the PR straight away, pinned to the approved
+commit, so GitHub refuses it if the head has moved. On a branch that requires a merge queue,
+`gh pr merge` takes no merge method and ignores a commit subject and body: it adds the PR to the
+queue once its required checks pass, and the queue squashes it with the PR's title and body as the
+commit message ([Body](#body)), as the repository's squash-merge settings say. The session runs the
+status post and the queueing from the main checkout, never from the PR's worktree, and stops at the
+first failure:
 
 ```bash
 set -e
 cd "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"  # the main checkout
 [ "$(gh pr view "$PR" --json headRefOid --jq .headRefOid)" = "$SHA" ]  # the approved commit, full
 gh api --method POST "repos/{owner}/{repo}/statuses/$SHA" -f state=success -f context=merge-approved
-TITLE="$(gh pr view "$PR" --json title --jq .title)"
-BODY="$(gh pr view "$PR" --json body --jq .body)"
-gh pr merge "$PR" --squash --match-head-commit "$SHA" --subject "$TITLE (#$PR)" --body "$BODY"
+gh pr merge "$PR" --match-head-commit "$SHA"
 ```
 
-After the merge, still in the main checkout, the session cleans up the PR's head branch
+The session then waits for the queue, which takes about as long as a CI run, reading the PR's state:
+
+```bash
+gh api graphql -F owner='{owner}' -F name='{repo}' -F pr="$PR" -f query='
+  query($owner: String!, $name: String!, $pr: Int!) {
+    repository(owner: $owner, name: $name) {
+      pullRequest(number: $pr) { state isInMergeQueue autoMergeRequest { enabledAt } }
+    }
+  }' --jq '.data.repository.pullRequest | [.state, .isInMergeQueue, .autoMergeRequest != null] | @tsv'
+```
+
+`MERGED` means the queue merged it. `OPEN` with neither the queue nor auto-merge (`false false`)
+means the queue removed it — its merge group failed or timed out, or someone removed it — and the
+session reports the reason the PR's timeline gives, and stops.
+
+After the queue merges the PR, in the main checkout, the session cleans up its head branch
 (`headRefName`, here `$BRANCH`):
 
 - **On `origin`**, only for a PR from this repository (`isCrossRepository` is false), with a lease
@@ -157,5 +181,5 @@ If GitHub or git refuses any step, the session reports why and stops.
   [the review loop](../agent-code-review/SKILL.md#the-review-loop) files for Mediums from round 3
   on.
 - No AI signatures anywhere — title, body, or commits.
-- Never approve or dismiss reviews. Post `merge-approved` and merge only as
+- Never approve or dismiss reviews. Post `merge-approved` and queue a PR only as
   [Merging](#merging) describes.
