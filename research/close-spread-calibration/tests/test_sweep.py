@@ -45,6 +45,16 @@ class SweepTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid"):
             self.scenario(move=D(-1))
 
+    def test_usd_jpy_converts_profit_at_its_own_moved_index(self):
+        # Long 10,000 USD of USD-JPY, up 5%: JPY profit of 0.05 * P0 per USD converts at 1.05 * P0.
+        up = self.scenario(self_quoted_jpy=True)
+        loss = D(10_000) * D("0.05") / D("1.05")
+        self.assertEqual(up["bad_debt_usd"].quantize(D("0.000001")), (loss - 100).quantize(D("0.000001")))
+        self.assertEqual(up["initial_margin_per_account_usd"], D(100))
+        plain = self.scenario()
+        self.assertGreater(plain["bad_debt_usd"], up["bad_debt_usd"])
+        self.assertEqual(self.scenario(self_quoted_jpy=True, move=D(0)), self.scenario(move=D(0)))
+
     def test_margin_is_progressive_instead_of_last_band_rate_on_whole_position(self):
         tiers = [{"up_to": "5000", "bps": 100}, {"bps": 200}]
         self.assertEqual(SWEEP.margin_cost(D(10_000), tiers), D(150))

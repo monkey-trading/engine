@@ -16,12 +16,12 @@ SPEC.loader.exec_module(MODEL)
 
 
 class InputTests(unittest.TestCase):
-    def test_hourly_return_includes_gap_and_close_and_excludes_closed_sentinel(self):
+    def test_hourly_tail_is_the_in_bar_move_and_excludes_gap_and_closed_sentinel(self):
         closed = np.iinfo(np.int32).min
         rows = np.array([[1000, 0, 0, 2000], [closed, closed, closed, closed]], dtype=np.int32)
         result = MODEL.summarize(rows, 1e6)
         self.assertEqual(result["active_hours"], 1)
-        self.assertAlmostEqual(result["abs_hourly_p99_bps"], np.expm1(0.003) * 10_000)
+        self.assertAlmostEqual(result["abs_hourly_p99_bps"], np.expm1(0.002) * 10_000)
         self.assertAlmostEqual(result["abs_gap_max_bps"], np.expm1(0.001) * 10_000)
 
     def test_no_trades_produces_missing_statistics(self):
@@ -36,6 +36,9 @@ class InputTests(unittest.TestCase):
         self.assertEqual(first, MODEL.uncertainty(rows, 1e6))
         self.assertEqual(first["p025_bps"], 0)
         self.assertAlmostEqual(first["p975_bps"], np.expm1(0.01) * 10_000)
+        gap_only = np.zeros((168 * 3, 4), dtype=np.int32)
+        gap_only[:, 0] = 50_000
+        self.assertEqual(MODEL.uncertainty(gap_only, 1e6)["p975_bps"], 0)
         self.assertIsNone(MODEL.uncertainty(rows[:167], 1e6))
 
     def test_changed_input_refuses_calibration(self):

@@ -62,7 +62,8 @@ def effects(items, rows, params):
                 gap = SWEEP.paired_gap(
                     notional=notional, margin_bps=tier["bps"], move=GAP_SHOCK, cap_bps=cap,
                     minimum_bps=ATTACK_BPS, toxicity_bps=3, closeout_level_bps=params["closeout_level_bps"],
-                    profit_fee_bps=params["profit_fee_bps"], capital=D(0), margin_tiers=spec["margin_tiers"])
+                    profit_fee_bps=params["profit_fee_bps"], capital=D(0), margin_tiers=spec["margin_tiers"],
+                    self_quoted_jpy=spec["symbol"] == "USD-JPY")
                 out.append({"symbol": spec["symbol"], "margin_band": band, "notional_usd": str(notional),
                             "case": label, "close_cost_bps": min(cap, ATTACK_BPS + 3),
                             "close_cost_usd": str(cost),

@@ -130,7 +130,7 @@
           "replicate_sha256": "c69fcf2afdbd7cd82c9bc724d11d16e5b81c6068eaf31349dc66004c7fb6f385",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
@@ -146,7 +146,7 @@
           "replicate_sha256": "0e459824c5b8a523c33f4c5c619b15e478e0a57e14af46f05961db27df1d5d30",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -210,7 +210,7 @@
           "replicate_sha256": "d4a108c70fc95c64a7f9fdf97afca14a80d6abb1f8cd5d4b0390fb9550d40ee7",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
@@ -226,7 +226,7 @@
           "replicate_sha256": "f8b13188b7c4036fb7506bf16e58a7c43ff983a273c8ac43b56d8a5cac7f74d4",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -290,7 +290,7 @@
           "replicate_sha256": "4491a75ad559d3e58590a883f540c700ae6ee91e78583205628d4f5864e14b38",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
@@ -306,7 +306,7 @@
           "replicate_sha256": "d2fcfb80070cd07e46987d3321130e98a5049ad17fc031b168e04bf638a23d49",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -384,34 +384,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 9213,
-        "abs_hourly_p99_bps": 35.45269654420583,
-        "abs_hourly_max_bps": 126.86834893925037,
+        "abs_hourly_p99_bps": 34.158206642745405,
+        "abs_hourly_max_bps": 121.22893745632504,
         "abs_gap_max_bps": 111.69156593775273,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 31.370690836649477,
-          "p975_bps": 39.708630681818185,
+          "p025_bps": 30.436224418474996,
+          "p975_bps": 38.545520690547036,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "cec52fd2c9bc0dbb8805310e801034252a584ef590c2120e95b5c4615ac91158",
+          "replicate_sha256": "3f283693dcdfbb2bd238137bb57ea38423368cec4ab6314febcaaa96bc4bdf1d",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 2851,
-        "abs_hourly_p99_bps": 23.72810669990689,
+        "abs_hourly_p99_bps": 21.412892924745414,
         "abs_hourly_max_bps": 54.74957490381954,
         "abs_gap_max_bps": 36.10502216983436,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 18.353137482062284,
-          "p975_bps": 29.207263553190245,
+          "p025_bps": 17.44476628731064,
+          "p975_bps": 27.93895672132585,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "5be45823e52e9afa739fd5521227a211ac0a3ae34d6d29ba3b4c4b26c0d403f7",
+          "replicate_sha256": "cb1b9ffb6e6348b3a788143523a3c9ad1fd70fa8138f09420a90de0d3486b3de",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -489,34 +489,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 9214,
-        "abs_hourly_p99_bps": 31.440470997582768,
+        "abs_hourly_p99_bps": 30.27408130022275,
         "abs_hourly_max_bps": 96.22405514451584,
         "abs_gap_max_bps": 83.0730206841646,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 29.376765588938454,
-          "p975_bps": 34.241242698379175,
+          "p025_bps": 28.648883525454366,
+          "p975_bps": 33.61637672912603,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "bee102d4c649e607d0d7713b9d111ab3af380b379fcb3da95acd8f90bed2791d",
+          "replicate_sha256": "e17e781ac2b27bfd25d2b54d43bbb243bf0c4a7227b34a531ef0a0648c2f5849",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 2851,
-        "abs_hourly_p99_bps": 24.760603867588298,
+        "abs_hourly_p99_bps": 23.637893552906355,
         "abs_hourly_max_bps": 53.67352903435599,
         "abs_gap_max_bps": 39.246814706655684,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 20.57879656219303,
-          "p975_bps": 28.40956822688688,
+          "p025_bps": 19.451058250189938,
+          "p975_bps": 26.214299545538754,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "624adcf352c26bfe4b92219fa8779d2587d4d6b5fddf866d4a82bb4c1fb6d45f",
+          "replicate_sha256": "8065d90ba30b3af0f28e4ca08760b693078dcd24aa68067a28888cfdb5f9f49a",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -598,18 +598,18 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 9144,
-        "abs_hourly_p99_bps": 40.78293697966309,
-        "abs_hourly_max_bps": 147.76103016987054,
+        "abs_hourly_p99_bps": 38.95568077049166,
+        "abs_hourly_max_bps": 147.59866729229432,
         "abs_gap_max_bps": 130.59540554711546,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 35.30752183845914,
-          "p975_bps": 44.619248750486726,
+          "p025_bps": 34.07182335944475,
+          "p975_bps": 42.99729579693669,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "942119a0f7d9fd00f7f07a5cf58a981a71e228cabd575c3d7977519ff76d28bf",
+          "replicate_sha256": "cd628501d08ae99fa1799dd167a92281d9836a0469e01fb67c6903d6e9621525",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
@@ -625,7 +625,7 @@
           "replicate_sha256": "f45f33b7b389e99cf328e105bb8cb59a3eedcd92de879b56082505ef10464803",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -703,34 +703,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 9276,
-        "abs_hourly_p99_bps": 44.830187969564534,
+        "abs_hourly_p99_bps": 43.5646190983936,
         "abs_hourly_max_bps": 184.98007118558883,
         "abs_gap_max_bps": 114.2621919347481,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 38.31640460269801,
-          "p975_bps": 50.78853874743211,
+          "p025_bps": 37.510175231357366,
+          "p975_bps": 49.05995178150817,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "1221585389fb47f3f131504492f8bfd96fe35f15b72360d48ca00e1a2cd731d9",
+          "replicate_sha256": "28d2f07a11d674f20f0758d48b75408046b06ad9a2ba4aa3fdcc2dbf045e5e19",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 2851,
-        "abs_hourly_p99_bps": 32.312091380535776,
+        "abs_hourly_p99_bps": 31.8292372382229,
         "abs_hourly_max_bps": 61.07575643726313,
         "abs_gap_max_bps": 45.83472121418661,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 26.524759526470177,
-          "p975_bps": 38.18271094279262,
+          "p025_bps": 26.485010986214487,
+          "p975_bps": 36.68713314217523,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "79f91b27322751e74bbc10705dbecd413b94b221149e782da6635795cc7e425a",
+          "replicate_sha256": "c53eb96fe2d74d1c91d1406561c721d5c69cc0031d04995bb752b330e83e9fb0",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -894,34 +894,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 8525,
-        "abs_hourly_p99_bps": 88.10586737094077,
+        "abs_hourly_p99_bps": 84.43446507097352,
         "abs_hourly_max_bps": 673.0523518574448,
         "abs_gap_max_bps": 181.37499216437755,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 70.28585373133829,
+          "p025_bps": 67.01444494720447,
           "p975_bps": 109.131183546034,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "e430dcedcc8c0e104b38f5deb2f917614cdef95884b411d3196f5998744c412c",
+          "replicate_sha256": "d27009b9dbee29b60715479f1fcbe9b33fcb58774afd9afa290ce46f3264f6f6",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 2664,
-        "abs_hourly_p99_bps": 56.82082137450021,
+        "abs_hourly_p99_bps": 54.351756930509275,
         "abs_hourly_max_bps": 167.21615453562123,
         "abs_gap_max_bps": 87.76287760230926,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 46.57814048973041,
-          "p975_bps": 74.79835251806512,
+          "p025_bps": 45.336916516222765,
+          "p975_bps": 70.10312314047182,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "1b0ec88315db7d5d123e69061eb994208fe9800b90c0858227f7dfe711718806",
+          "replicate_sha256": "61f5d6b165566f42f682c1d4b5b19cf78b7628adc19bb7c65d222b7eb4df43b9",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -1085,34 +1085,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 8527,
-        "abs_hourly_p99_bps": 110.33677488121783,
+        "abs_hourly_p99_bps": 106.53841496434242,
         "abs_hourly_max_bps": 767.7234822976322,
         "abs_gap_max_bps": 219.2116127201057,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 95.48296876204442,
-          "p975_bps": 130.0281080888819,
+          "p025_bps": 92.26302330361536,
+          "p975_bps": 129.2582552074472,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "f11ca5bcff944450bd8e8c71621b5b185a8ab86229930c34c4b2a34088412ad7",
+          "replicate_sha256": "12c096a695e0be682d72a3e2f352d8cff12bab5d84ff3674a0652b0f3b412b60",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 2664,
-        "abs_hourly_p99_bps": 96.0854013107133,
+        "abs_hourly_p99_bps": 94.36243234343358,
         "abs_hourly_max_bps": 293.60357934577456,
         "abs_gap_max_bps": 138.89576171614684,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 81.89283615403919,
-          "p975_bps": 120.38891031612474,
+          "p025_bps": 78.70861271392462,
+          "p975_bps": 119.98437739306844,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "67a1cfff7f944bdc6d5a7bcca4afe6c1c3093045fddb34525f04f5dbb24c3a3f",
+          "replicate_sha256": "9baba05d96f2dc72ac8af046f092eb91ffd0d25efc063f6ce9f31eb87f384619",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -1276,34 +1276,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 8523,
-        "abs_hourly_p99_bps": 81.98424520973131,
+        "abs_hourly_p99_bps": 79.75029362038505,
         "abs_hourly_max_bps": 590.2852283430014,
         "abs_gap_max_bps": 224.55046554010752,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 66.89273917054706,
-          "p975_bps": 100.12795919356755,
+          "p025_bps": 64.88855857669462,
+          "p975_bps": 99.62046777553633,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "d9366cbad7c53245295c8284ea9690c789b8549a84d49e8125c31fde0aeba67e",
+          "replicate_sha256": "527c0ee3cf8bcda430d154c76b4c44f99f111aa5ebd5635f6589079ae46da568",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 2664,
-        "abs_hourly_p99_bps": 57.615341602524595,
+        "abs_hourly_p99_bps": 55.935860081087256,
         "abs_hourly_max_bps": 115.99204468462918,
         "abs_gap_max_bps": 66.85247168012539,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 48.40248062482874,
+          "p025_bps": 45.99545585559974,
           "p975_bps": 64.70846044895963,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "fcef73da7c73aea2a929406dd837f828511a1a50770c060e5b2cb0590aa42afb",
+          "replicate_sha256": "31b531bd666e754511219c940b6d12cf536e7420d74fd989f6cfe5486bc63719",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -2017,34 +2017,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 3370,
-        "abs_hourly_p99_bps": 141.5486439878221,
-        "abs_hourly_max_bps": 629.709556010006,
+        "abs_hourly_p99_bps": 126.84860265620195,
+        "abs_hourly_max_bps": 598.262716267205,
         "abs_gap_max_bps": 629.709556010006,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 114.55113027637766,
-          "p975_bps": 167.89383755310192,
+          "p025_bps": 106.71649567014191,
+          "p975_bps": 151.9123133107431,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "7833e00c0524fa17279935bf7c9f110f5650d3d722952e5e23c4bbe40ee2d963",
+          "replicate_sha256": "8f92207b677dd2cbecbfd56257e578294846ecc4a5d5336c1fdc719de92b76a0",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 1071,
-        "abs_hourly_p99_bps": 118.04125242777647,
+        "abs_hourly_p99_bps": 115.56702320465429,
         "abs_hourly_max_bps": 180.31641837100256,
         "abs_gap_max_bps": 166.63309688478216,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 95.98775553004658,
+          "p025_bps": 90.47685082941783,
           "p975_bps": 132.5437677993184,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "3bc33f559448f282edcba02478b903e89b8d0a1623d886be8a2858f5bb97608b",
+          "replicate_sha256": "f2041772218641cba5f019168afe94984b536e02c0898bfcd3984b7ae20a4e1c",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -2184,34 +2184,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 3375,
-        "abs_hourly_p99_bps": 99.17859178637055,
-        "abs_hourly_max_bps": 508.790134152299,
+        "abs_hourly_p99_bps": 86.82475927787047,
+        "abs_hourly_max_bps": 446.67862533096286,
         "abs_gap_max_bps": 508.790134152299,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 77.64697773902675,
-          "p975_bps": 130.32334035835356,
+          "p025_bps": 69.23918453140048,
+          "p975_bps": 103.15845213253778,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "4e8baedbd91623ff425d005416bfb7643865d291a95ffb7e3273b779899a0d67",
+          "replicate_sha256": "63bebe8ba0dc1d4ce4faa4dec40213818b5ae6c315c8bddbb408f26f5e8fafc9",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 1053,
-        "abs_hourly_p99_bps": 90.1236903199838,
+        "abs_hourly_p99_bps": 88.55556524043884,
         "abs_hourly_max_bps": 182.33717026764833,
         "abs_gap_max_bps": 110.29721614919994,
         "hourly_p99_week_block_bootstrap": {
           "p025_bps": 75.0271307365616,
-          "p975_bps": 110.29721614919994,
+          "p975_bps": 96.29338133348789,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "90302080e2620f74ce857c5357ac5966f36ab04a211ca6ca5d10e39b03529aff",
+          "replicate_sha256": "fd227bdb6c54f3910388f9947cf16f65e8713d0f9dc920af64953ed7adca99d4",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -2359,34 +2359,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 8531,
-        "abs_hourly_p99_bps": 114.52910325224686,
+        "abs_hourly_p99_bps": 107.8575132598203,
         "abs_hourly_max_bps": 747.456189042052,
         "abs_gap_max_bps": 374.8920760005315,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 95.70507183048198,
-          "p975_bps": 132.43934170402542,
+          "p025_bps": 93.1108090040738,
+          "p975_bps": 129.57226708051752,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "b0f5274bc101ec9bac42f69914230e3308ca90bb585fd1f6bf9623ceba2c0a03",
+          "replicate_sha256": "40e2e8e60da38e061acf2da194a9de6fc829e8b44ce9e22c2b4dc52c538f6d30",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 2668,
-        "abs_hourly_p99_bps": 136.95941755241336,
-        "abs_hourly_max_bps": 261.3057014352064,
+        "abs_hourly_p99_bps": 125.40701731902087,
+        "abs_hourly_max_bps": 261.13001463622714,
         "abs_gap_max_bps": 283.4118089450693,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 109.9016201259782,
-          "p975_bps": 161.8660639189538,
+          "p025_bps": 107.82718973276583,
+          "p975_bps": 153.22199447177888,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "cb42e649e00077e63e0b4bb63d4982af47e20c6b5f49e7656690e67ac8eb995d",
+          "replicate_sha256": "580bacf7cf408694e21ca7ae91cc2039cb9f443b2be2180da692b2c6c2835b12",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -2558,34 +2558,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 8543,
-        "abs_hourly_p99_bps": 128.92399520034581,
+        "abs_hourly_p99_bps": 122.6156408077672,
         "abs_hourly_max_bps": 565.3970714171262,
         "abs_gap_max_bps": 221.60986077276326,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 103.10478809452644,
-          "p975_bps": 155.83170785816418,
+          "p025_bps": 98.33333477451481,
+          "p975_bps": 149.75018626271302,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "d617bd0dabea9811b006e60f890fb71188cc775f940502d4220b254486858196",
+          "replicate_sha256": "e4488128e42dc9b9ee73d519361832216c73bb3a92d4212567707bfac9533bb6",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 2672,
-        "abs_hourly_p99_bps": 110.91054721374772,
+        "abs_hourly_p99_bps": 110.09942011556917,
         "abs_hourly_max_bps": 233.6374075241913,
         "abs_gap_max_bps": 204.77852055590694,
         "hourly_p99_week_block_bootstrap": {
           "p025_bps": 91.66727022970322,
-          "p975_bps": 130.47383913164884,
+          "p975_bps": 130.2813619572443,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "5126672a72610e94adba35941c2991f35399e273c50c78447c4b8ccdf38ba46e",
+          "replicate_sha256": "63be4b145cbdc92a5b6d10cd4d28d240eeabc23cdfb93c9214cbb20ea895224e",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -2753,34 +2753,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 8541,
-        "abs_hourly_p99_bps": 268.5774011864752,
+        "abs_hourly_p99_bps": 251.9809208927036,
         "abs_hourly_max_bps": 1373.4289850289374,
         "abs_gap_max_bps": 602.8845663015887,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 202.78878275013957,
-          "p975_bps": 355.08903418975285,
+          "p025_bps": 197.7094006338186,
+          "p975_bps": 349.14691863444096,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "6dafef0f189130ea47db48766a8123438799e1c38393e06a0f23dd4a4701a1af",
+          "replicate_sha256": "568d64dbf2a7ee055b423328be0bab9f0ef47f648a30fe022ef7b4f10018c65e",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 2673,
-        "abs_hourly_p99_bps": 230.9771449664188,
+        "abs_hourly_p99_bps": 226.7526238292102,
         "abs_hourly_max_bps": 371.71526624083083,
         "abs_gap_max_bps": 284.08025243682886,
         "hourly_p99_week_block_bootstrap": {
           "p025_bps": 190.19796952387043,
-          "p975_bps": 265.2389507235582,
+          "p975_bps": 260.99366950201835,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "b8e5d71eacb79a5f20c1c19e54131990483d1d8c0423db5dbb6d4db63a1b4d69",
+          "replicate_sha256": "c333dbb281386ebfab6449bb4a0c417962628d0b7035b007338eb828f8dcbc7d",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -2980,34 +2980,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 8372,
-        "abs_hourly_p99_bps": 215.28873009140636,
-        "abs_hourly_max_bps": 1764.577300728845,
+        "abs_hourly_p99_bps": 210.14764601392244,
+        "abs_hourly_max_bps": 1048.858258850723,
         "abs_gap_max_bps": 2097.9146284574126,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 170.44077876964937,
-          "p975_bps": 257.7148728713591,
+          "p025_bps": 166.74416958349076,
+          "p975_bps": 250.96751660866707,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "3c9daf9ac2260ab274cd2a3f39fff4be94dc7ff63483fe7d1bee336ab2caff33",
+          "replicate_sha256": "6c237b8a4fd23b5f056149058bf09a4629fe326f0aaa39d18097d5a8d77f5f66",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 2673,
-        "abs_hourly_p99_bps": 275.12671836708694,
+        "abs_hourly_p99_bps": 237.8458028272143,
         "abs_hourly_max_bps": 514.6633751036512,
         "abs_gap_max_bps": 550.3746710070509,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 213.5175370634194,
-          "p975_bps": 308.98755580534856,
+          "p025_bps": 191.4597788394788,
+          "p975_bps": 297.9510710313769,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "6d2b5c1f14e381a0afaca75c924c62cc2434c4e32f8467142a7e5283da0b37d1",
+          "replicate_sha256": "1e71a9782abcaf370f7983ff85eb36164516b949ff13d541e2b02437a1f808a2",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -3207,34 +3207,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 8519,
-        "abs_hourly_p99_bps": 219.52459294078844,
-        "abs_hourly_max_bps": 1606.428121036702,
+        "abs_hourly_p99_bps": 211.25659848612918,
+        "abs_hourly_max_bps": 977.8461374292709,
         "abs_gap_max_bps": 1596.7176051172135,
         "hourly_p99_week_block_bootstrap": {
           "p025_bps": 176.7641078552323,
-          "p975_bps": 273.8115863173827,
+          "p975_bps": 258.70991947300763,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "e6ddf34f1fb74931d96c6493963e45ba2e24643400317feab87abadd7a810db0",
+          "replicate_sha256": "8255c71b8601d96da6ca8ff876ea037d3b087ca7ddaae9808d2341b94de1c8dd",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 2640,
-        "abs_hourly_p99_bps": 418.1460809501502,
+        "abs_hourly_p99_bps": 360.67193163488014,
         "abs_hourly_max_bps": 1519.7861645916237,
         "abs_gap_max_bps": 818.0454767998452,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 260.2488413771859,
-          "p975_bps": 666.4531970139449,
+          "p025_bps": 217.31768605102522,
+          "p975_bps": 657.0122095811314,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "883a757ca2a58b7a023bf3b50b141415368ce7cfbd7bee153252bd8892505e55",
+          "replicate_sha256": "3cd07c22780bc3d91086b46eae56a678f5a8cdb6d5f70d2bca198ca885af3cde",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -3343,34 +3343,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 2596,
-        "abs_hourly_p99_bps": 276.2524654059471,
-        "abs_hourly_max_bps": 811.257504560379,
+        "abs_hourly_p99_bps": 201.6257311241083,
+        "abs_hourly_max_bps": 498.10844662115215,
         "abs_gap_max_bps": 816.3925762290806,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 218.14544868100768,
-          "p975_bps": 330.07945294967897,
+          "p025_bps": 171.38202332904473,
+          "p975_bps": 276.2159395269355,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "5d8ab71e13001ab04bb12e29366419dc2dab55dbe2f47b8b301ab1fd7f2a0352",
+          "replicate_sha256": "39f556dece5cdc3511d14c4a0bba175b0576265cf596f934471b52aecb41df9e",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 812,
-        "abs_hourly_p99_bps": 255.79685952996883,
-        "abs_hourly_max_bps": 931.8516431438344,
+        "abs_hourly_p99_bps": 222.19250914014796,
+        "abs_hourly_max_bps": 372.85287605795673,
         "abs_gap_max_bps": 869.8502814975832,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 215.48442235987537,
-          "p975_bps": 367.03533756661017,
+          "p025_bps": 164.65079671143795,
+          "p975_bps": 257.9253992807224,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "8992d46a4eded2b27fe8b95c260ce3e26aa739d723042b0a0b728863753c76af",
+          "replicate_sha256": "5755a6c180270f7e6ace59feb216dea180c141936027286bb0d195f37d705abd",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -3479,34 +3479,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 2596,
-        "abs_hourly_p99_bps": 237.1721909482668,
-        "abs_hourly_max_bps": 1149.8350877917833,
+        "abs_hourly_p99_bps": 168.21921536192076,
+        "abs_hourly_max_bps": 422.7518337931974,
         "abs_gap_max_bps": 986.4983150979776,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 202.3251924018277,
-          "p975_bps": 267.217916073588,
+          "p025_bps": 143.3427188688499,
+          "p975_bps": 193.68963749294477,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "de677ffefe56c8643f302c45ff44fcff3f61c5d178aa85eb89a1d8f6e261f33f",
+          "replicate_sha256": "c113f56b9ffc8feab9f7444cfbc5144d832f6575f50232220f6dca9f897a3f42",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 812,
-        "abs_hourly_p99_bps": 293.22686484806536,
-        "abs_hourly_max_bps": 1465.0822809793515,
+        "abs_hourly_p99_bps": 210.35185100888583,
+        "abs_hourly_max_bps": 302.2167754260891,
         "abs_gap_max_bps": 1174.820670563966,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 253.40753722855595,
-          "p975_bps": 354.77385454120775,
+          "p025_bps": 186.69129157603595,
+          "p975_bps": 259.746101501186,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "7e28d1e28d43503b15f934295fbf52356bcc1050d5c1d8822a55fbcafca146e4",
+          "replicate_sha256": "10fdc08fbac7444a265d182461a18afc5523cb16a3fcab2ec269428188dae512",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -3615,34 +3615,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 2596,
-        "abs_hourly_p99_bps": 413.8812070921189,
-        "abs_hourly_max_bps": 1302.2698180507666,
+        "abs_hourly_p99_bps": 323.4726412466807,
+        "abs_hourly_max_bps": 706.9610246413299,
         "abs_gap_max_bps": 1248.972754241069,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 365.8787574086113,
-          "p975_bps": 473.8171884437908,
+          "p025_bps": 271.58241107741287,
+          "p975_bps": 356.0372964090137,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "f4775f190ad624fabdcc469e95b46ddb63b55f9922a389d47d089465ccbd8d5d",
+          "replicate_sha256": "eb212e6f183d762c6942c208af9f973191391c5ade11912c214b832a18fe5a73",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 812,
-        "abs_hourly_p99_bps": 354.94746704930884,
-        "abs_hourly_max_bps": 751.1324476630961,
+        "abs_hourly_p99_bps": 261.1209995949021,
+        "abs_hourly_max_bps": 444.1255312781877,
         "abs_gap_max_bps": 601.8137290385843,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 275.01369259482783,
-          "p975_bps": 387.70418499641164,
+          "p025_bps": 224.80972541187714,
+          "p975_bps": 304.37170195903343,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "75334dcbebdec8314308013fb272c16f46bcf3d3f12fbe634a8701e3f4a89501",
+          "replicate_sha256": "1683fc6e03ecf825015bb6dbdd5d910de96088187792c35aa5459bd232747355",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -3751,34 +3751,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 2596,
-        "abs_hourly_p99_bps": 317.30672968481707,
-        "abs_hourly_max_bps": 1067.469092609377,
+        "abs_hourly_p99_bps": 210.79651673442157,
+        "abs_hourly_max_bps": 712.2622823015535,
         "abs_gap_max_bps": 1231.3176285500574,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 264.0999170486223,
-          "p975_bps": 373.71774120083734,
+          "p025_bps": 181.73827456890155,
+          "p975_bps": 238.9098196447361,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "79856053325b4973425d743ba7f44270b9ac5c33cec20d60db56fd99bca02a39",
+          "replicate_sha256": "e6afda599d2eca0334d28659bfb3cec00b469acca9aaf985582ccdac74af8dd4",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 812,
-        "abs_hourly_p99_bps": 292.92836559724486,
-        "abs_hourly_max_bps": 1423.550901648909,
+        "abs_hourly_p99_bps": 195.42502788438446,
+        "abs_hourly_max_bps": 512.377133496003,
         "abs_gap_max_bps": 1226.747412377316,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 227.27420151314334,
-          "p975_bps": 467.5510195869286,
+          "p025_bps": 175.298759331327,
+          "p975_bps": 271.2948107963254,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "3b117643b154b47073e2d6cc23287b651a9d89a50504a0c17c2386356480b6af",
+          "replicate_sha256": "dec979ef936ba7481d8a5ddb1a98710145faa208424a21542aec30759de492ef",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -3887,34 +3887,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 2596,
-        "abs_hourly_p99_bps": 315.42810496967064,
-        "abs_hourly_max_bps": 861.8396280363493,
+        "abs_hourly_p99_bps": 203.912287162512,
+        "abs_hourly_max_bps": 596.6492079680776,
         "abs_gap_max_bps": 723.5763220039697,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 274.9417677507169,
-          "p975_bps": 369.948883830545,
+          "p025_bps": 186.5283058192603,
+          "p975_bps": 240.5788233616921,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "812c7954f22035426a716c21d480a1b1834f1455c6b0aab006f3d3d461917e98",
+          "replicate_sha256": "45a19d8c6bc05efc8b6bd7c9b0c4108e83ace5cf071d38449f07d32990b46c9c",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 812,
-        "abs_hourly_p99_bps": 286.19477277654073,
-        "abs_hourly_max_bps": 685.9678812316463,
+        "abs_hourly_p99_bps": 245.00859494165005,
+        "abs_hourly_max_bps": 363.82647102319845,
         "abs_gap_max_bps": 684.1794686291332,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 235.88919279316977,
-          "p975_bps": 397.9439864630319,
+          "p025_bps": 195.72069949741078,
+          "p975_bps": 258.4222324160064,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "ddb0a21e2f71f9fac0424a6f237e8ed0ebd30676ec416aae4b5a0805ceaf2f75",
+          "replicate_sha256": "b2991fb5a3b2c58210c466de77a626b8a74efb8d5faf60d9ac1b2220b8e19bd0",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -4023,34 +4023,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 2596,
-        "abs_hourly_p99_bps": 358.22710156031036,
-        "abs_hourly_max_bps": 1203.3225033375702,
+        "abs_hourly_p99_bps": 233.54950986532015,
+        "abs_hourly_max_bps": 619.0981579483129,
         "abs_gap_max_bps": 1150.1069857435527,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 264.59643529152993,
-          "p975_bps": 428.4697540153559,
+          "p025_bps": 213.0379876738714,
+          "p975_bps": 263.5449549276238,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "2b7426a864dc646403b8873d8e7971e0a84ed52cd331ba7dfaeefc5f97cc011d",
+          "replicate_sha256": "b70695fe5c22c896a115faa1d5da4b9f85ad88993199884600326cdf743a1287",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 812,
-        "abs_hourly_p99_bps": 417.1563185887474,
-        "abs_hourly_max_bps": 1009.7910294217543,
+        "abs_hourly_p99_bps": 276.8261495866384,
+        "abs_hourly_max_bps": 469.9588332093858,
         "abs_gap_max_bps": 1043.6113525970243,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 352.7770860706911,
-          "p975_bps": 703.7387143549398,
+          "p025_bps": 234.17454269542486,
+          "p975_bps": 308.647364829189,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "24b2f8fe3503bf74e9cc9f3d57e8371470dacf1b734c6ac9543f5030e5b25c85",
+          "replicate_sha256": "f46d7317e1c5c96c9d9b7893984a55bc95b8d31484c883392fba12c5ffeb532b",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -4159,34 +4159,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 2596,
-        "abs_hourly_p99_bps": 577.3337212310852,
-        "abs_hourly_max_bps": 1181.6282090374057,
+        "abs_hourly_p99_bps": 398.3679138866332,
+        "abs_hourly_max_bps": 778.5935983425936,
         "abs_gap_max_bps": 1256.222569136559,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 494.8373010125667,
-          "p975_bps": 647.4213848564137,
+          "p025_bps": 341.8792207134428,
+          "p975_bps": 438.0173761449501,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "f4deb4997f804b334a3faf2921e9625a0ca0220a7073a3798b57d828b28efd54",
+          "replicate_sha256": "c30f286cd5d5772005b25d02165a0f2a971e3f75fb394c89ad4f2af69e12fad0",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 812,
-        "abs_hourly_p99_bps": 420.60496805019966,
-        "abs_hourly_max_bps": 1340.2219493211353,
+        "abs_hourly_p99_bps": 348.02927112128054,
+        "abs_hourly_max_bps": 623.9638070757146,
         "abs_gap_max_bps": 883.599054820656,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 324.99173678988456,
-          "p975_bps": 560.9240095970757,
+          "p025_bps": 281.04509146110917,
+          "p975_bps": 424.03391111489293,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "92f9f3dee85854dbfd89f694a0b34f4c9093ae0b8196dfcfec482e9ace80633b",
+          "replicate_sha256": "0670edd6bd66a1955f070ca9de5e5032ea0456b0d2e470cdb1f98fe12d2f5734",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -4295,34 +4295,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 2596,
-        "abs_hourly_p99_bps": 447.7337931571995,
-        "abs_hourly_max_bps": 2122.3649924289884,
+        "abs_hourly_p99_bps": 318.2265418537272,
+        "abs_hourly_max_bps": 691.7037792216124,
         "abs_gap_max_bps": 1810.371581333651,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 361.1485335054944,
-          "p975_bps": 549.1555907106223,
+          "p025_bps": 282.18214266661556,
+          "p975_bps": 363.99028458077186,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "4b71ca5bb3f77e6fd4f95d88b570c9f5fc2480780b001d4f105f0db0b50dd9ed",
+          "replicate_sha256": "fdadadec88543d285a4dc647d73a7c38b364cd225d7f5f4ede372c3b1fb8240c",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 812,
-        "abs_hourly_p99_bps": 460.8330085446419,
-        "abs_hourly_max_bps": 1512.7495279048358,
+        "abs_hourly_p99_bps": 295.26323122942625,
+        "abs_hourly_max_bps": 442.1248662419375,
         "abs_gap_max_bps": 1441.3189700588393,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 379.10959255265965,
-          "p975_bps": 528.9445978051689,
+          "p025_bps": 222.93738329129582,
+          "p975_bps": 350.5869178945459,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "75b7f6c823b1ecc97d4bbb47a9d8f8e344c53751f6bbac975746135ecb9ed793",
+          "replicate_sha256": "2ae36dd5228520497c7970a2a147fc1eb4a956164d830f7339c22046ea94ba4e",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -4431,34 +4431,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 2596,
-        "abs_hourly_p99_bps": 162.40465709293457,
-        "abs_hourly_max_bps": 564.5290480192325,
+        "abs_hourly_p99_bps": 126.39208070404482,
+        "abs_hourly_max_bps": 347.9775311042751,
         "abs_gap_max_bps": 530.6800560921874,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 127.6478311769724,
-          "p975_bps": 211.66771707544197,
+          "p025_bps": 109.85906719474622,
+          "p975_bps": 179.62418039091136,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "d5053492fa2e72990fbcabb0c06c6a21b69f379e3f6b3cc8616af9507f96d26c",
+          "replicate_sha256": "b05c3525f1b66186eb5beb755e7f1739cd2adb0a1eef3816ac46b4808b051741",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 812,
-        "abs_hourly_p99_bps": 124.96265063662486,
-        "abs_hourly_max_bps": 274.9314928140866,
+        "abs_hourly_p99_bps": 107.13200485156986,
+        "abs_hourly_max_bps": 210.6581661591204,
         "abs_gap_max_bps": 124.98461002630519,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 91.84924900209106,
-          "p975_bps": 158.0662366230445,
+          "p025_bps": 87.83349218960323,
+          "p975_bps": 134.93222839457593,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "7d45c73fef854923e60dc53766677301eac18f9fdce0ad23e9a21357c39bb16e",
+          "replicate_sha256": "2e02f69352786141ded90db3ba45a60439e7d8f7dd78fa1f4ae18ea0634fc68b",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -4567,34 +4567,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 2596,
-        "abs_hourly_p99_bps": 252.28310480028114,
-        "abs_hourly_max_bps": 951.397711408078,
+        "abs_hourly_p99_bps": 187.39196490362022,
+        "abs_hourly_max_bps": 537.6977872124261,
         "abs_gap_max_bps": 606.1295454353639,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 195.99598767267085,
-          "p975_bps": 319.48744867585526,
+          "p025_bps": 158.00836028079797,
+          "p975_bps": 213.2111498103198,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "a96c3e666372775f5783582679224ba897c060329ae479b9e4880c43d8d926e4",
+          "replicate_sha256": "63e731ed27fac212f1ac49ffc6f00fb9c9ee394400124807cf012d7a80f24c56",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 812,
-        "abs_hourly_p99_bps": 197.21927385078283,
-        "abs_hourly_max_bps": 324.5466761734612,
+        "abs_hourly_p99_bps": 154.42522323256003,
+        "abs_hourly_max_bps": 500.9223167265988,
         "abs_gap_max_bps": 226.84742627724822,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 154.8466399590674,
-          "p975_bps": 239.40070497621005,
+          "p025_bps": 126.75663738093095,
+          "p975_bps": 193.76330903860443,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "60153b88ade5e1ab99b969ca2e1d77455864b6c00dac7078cd64e8db2c259a4d",
+          "replicate_sha256": "39ac85bf1a07a804feb4dfdd31954aa257a16c39d7e0fe6384760b63bbba0f72",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -4703,34 +4703,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 2596,
-        "abs_hourly_p99_bps": 198.0818805994303,
-        "abs_hourly_max_bps": 649.5535297069171,
+        "abs_hourly_p99_bps": 160.70469657513954,
+        "abs_hourly_max_bps": 419.5317010126917,
         "abs_gap_max_bps": 442.4903470081321,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 177.79201293845858,
-          "p975_bps": 229.442613487412,
+          "p025_bps": 146.18102742976453,
+          "p975_bps": 197.40552491518892,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "cb7896c322d4ff4564066b5093e5c1d4114bc12d8ec3d533021c9ef70be5150d",
+          "replicate_sha256": "d4dc8e259b76f297e111a05dbb540312df659ab3b0dc449419b57591a43420bb",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 812,
-        "abs_hourly_p99_bps": 176.02123119068705,
-        "abs_hourly_max_bps": 939.1499512688243,
+        "abs_hourly_p99_bps": 180.25533665573764,
+        "abs_hourly_max_bps": 354.47810195941366,
         "abs_gap_max_bps": 871.6022676059845,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 153.82462485311285,
-          "p975_bps": 244.48181118274337,
+          "p025_bps": 160.42919244960387,
+          "p975_bps": 220.08695436285316,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "c71cb9618f8e870490e46c3c4764828cbb979b69a8ae4757a10db4c4c768e7ad",
+          "replicate_sha256": "c5905cd1671ca2a35b4478a8a14a58e675ed2c11b33da3220aede9d692ef70ba",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -4839,34 +4839,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 2596,
-        "abs_hourly_p99_bps": 209.7783866303142,
-        "abs_hourly_max_bps": 540.0973435589151,
+        "abs_hourly_p99_bps": 173.97605647016272,
+        "abs_hourly_max_bps": 459.5254861404266,
         "abs_gap_max_bps": 343.0284687045663,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 178.40269877962695,
-          "p975_bps": 252.23436609395853,
+          "p025_bps": 137.71296041824738,
+          "p975_bps": 212.58816293147433,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "68999409820362cce6856a0d7a40ec399b547dd4ee141ecbaf1d8cdcb70a082b",
+          "replicate_sha256": "c2f1be254f4132c80c24588c29b8d2ad5a9ab7d243f6c126ab9331341ec62246",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 812,
-        "abs_hourly_p99_bps": 208.71832539825814,
-        "abs_hourly_max_bps": 367.3567206434866,
+        "abs_hourly_p99_bps": 178.497713536347,
+        "abs_hourly_max_bps": 242.81347493377163,
         "abs_gap_max_bps": 439.4520244145308,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 176.1229919118017,
-          "p975_bps": 287.10421653198574,
+          "p025_bps": 155.82155203153425,
+          "p975_bps": 217.17464460471297,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "518de29fa6e205579b7922620c992a65ea967df2da6fb0ab817359a6de320b28",
+          "replicate_sha256": "c35270cf2688bc0f606eac4281b0bba3a7256c95f19a4ad7b6ab3bf7b56e0ee8",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -4975,34 +4975,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 2596,
-        "abs_hourly_p99_bps": 365.3392315124421,
-        "abs_hourly_max_bps": 1431.119508378394,
+        "abs_hourly_p99_bps": 249.3681016773666,
+        "abs_hourly_max_bps": 557.685851219953,
         "abs_gap_max_bps": 1447.8632056876254,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 289.439654251291,
-          "p975_bps": 422.5335652344792,
+          "p025_bps": 228.28675177950433,
+          "p975_bps": 287.02041113072755,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "bc25a6a6bab995d40a1c85e1ea5525a132416e3cf61d834ea962552e27ee6582",
+          "replicate_sha256": "e8b5fe9abf00f15f4412864b328b83b9fb174f042993c5b2090196ba52747611",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 812,
-        "abs_hourly_p99_bps": 387.09419751645913,
-        "abs_hourly_max_bps": 876.6369849029996,
+        "abs_hourly_p99_bps": 258.334557821563,
+        "abs_hourly_max_bps": 562.5433096211248,
         "abs_gap_max_bps": 557.4850629226146,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 312.14447855402426,
-          "p975_bps": 458.22913978965164,
+          "p025_bps": 214.2835932833469,
+          "p975_bps": 349.40565054154223,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "ed21cc71291523c75097cce4f8c904554b3dde726b5e834b055efeb7781caef3",
+          "replicate_sha256": "22334a25f27b8d5f5aeda453657d2825d6e28e83cf49d73c85194ad7ad02a8c1",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -5111,34 +5111,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 2596,
-        "abs_hourly_p99_bps": 159.46486725930137,
-        "abs_hourly_max_bps": 530.0291349514471,
+        "abs_hourly_p99_bps": 139.82858303534746,
+        "abs_hourly_max_bps": 327.45716890242164,
         "abs_gap_max_bps": 520.6277758400327,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 129.75088251097725,
-          "p975_bps": 189.5745331709947,
+          "p025_bps": 114.71296438913151,
+          "p975_bps": 159.46486725930137,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "c3beea59e51ea46f2ef1bdb14386746175936d1ed5b60a89dde783f2691cf9ad",
+          "replicate_sha256": "b7ca43145b5e4965a647c4d8cdc64e1660e4ea2d10f02e8aef74339fd2cdc52e",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 812,
-        "abs_hourly_p99_bps": 215.40614592214888,
-        "abs_hourly_max_bps": 409.4226253134913,
+        "abs_hourly_p99_bps": 160.60630313013888,
+        "abs_hourly_max_bps": 254.07403037926858,
         "abs_gap_max_bps": 248.10043713417465,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 182.09812963940638,
-          "p975_bps": 270.1239499282322,
+          "p025_bps": 132.02077875992464,
+          "p975_bps": 182.0574013283445,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "27d144fb3348adab401874b80be05f690260c4539bacf880811f6f525306d598",
+          "replicate_sha256": "7be72ad72488040c2a355e134a14b6f2a45a54cf9fd6b9d1fbd02d484c2e070d",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -5247,34 +5247,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 2596,
-        "abs_hourly_p99_bps": 228.7572637917795,
-        "abs_hourly_max_bps": 602.4492858987174,
+        "abs_hourly_p99_bps": 185.134805492166,
+        "abs_hourly_max_bps": 398.73426023602605,
         "abs_gap_max_bps": 629.3066248579568,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 197.7396520656196,
-          "p975_bps": 245.02810490495017,
+          "p025_bps": 160.55526774487925,
+          "p975_bps": 211.61877529167296,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "54759d325def92de7a4f8e3969d48648f0fd9c4efc29f07dd1863b2616f4b0a8",
+          "replicate_sha256": "83dc857217426eb3ee3e044b6c7bcdd2524ff1953c3acaa0722db47df80dcd89",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 812,
-        "abs_hourly_p99_bps": 273.4314623210263,
-        "abs_hourly_max_bps": 423.44338132883325,
+        "abs_hourly_p99_bps": 157.35876739624712,
+        "abs_hourly_max_bps": 197.72945433106642,
         "abs_gap_max_bps": 494.523625467882,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 221.88584796481442,
-          "p975_bps": 327.9518364000888,
+          "p025_bps": 130.85880445183062,
+          "p975_bps": 177.4154416005926,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "e0a568027dcbb6429b2c195316308d7f5c247af858de24d0678b1658869d2226",
+          "replicate_sha256": "572142ddd050fe38d60d0aeedde4147ce270e378c0531c2f2bfb5f227486ede4",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -5383,34 +5383,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 2596,
-        "abs_hourly_p99_bps": 210.47346768919388,
-        "abs_hourly_max_bps": 621.7532643622731,
+        "abs_hourly_p99_bps": 186.68543169020282,
+        "abs_hourly_max_bps": 388.82898709834274,
         "abs_gap_max_bps": 501.01364923627693,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 184.75201828527824,
-          "p975_bps": 250.18712035755954,
+          "p025_bps": 149.84153442545548,
+          "p975_bps": 212.62692663713236,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "d0eeea005e43d611919ed7b37f124fe91557e15c66f454de935dd084d9f084a2",
+          "replicate_sha256": "891f6dc6952ac806391584b5bc527fff6836e3878a7952e714e23a4a1fb7d218",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 812,
-        "abs_hourly_p99_bps": 217.78351336684685,
-        "abs_hourly_max_bps": 932.4229184949537,
+        "abs_hourly_p99_bps": 188.90299018909178,
+        "abs_hourly_max_bps": 261.2749175642779,
         "abs_gap_max_bps": 702.4856244086229,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 179.6860434176014,
-          "p975_bps": 267.17684728406135,
+          "p025_bps": 153.62813147424365,
+          "p975_bps": 220.88398454246462,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "800edd82b36651b7cb00f9363eb49937f1721764a358a7cd4c98c204247960fe",
+          "replicate_sha256": "7a2fabb9828b483c4ba9998ede30ef68ee869487ca4015245b26ac09efd5a0bc",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -5519,34 +5519,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 2596,
-        "abs_hourly_p99_bps": 175.8651981822738,
-        "abs_hourly_max_bps": 628.6319106455265,
+        "abs_hourly_p99_bps": 155.37470571393592,
+        "abs_hourly_max_bps": 434.1292613020439,
         "abs_gap_max_bps": 353.7031750174476,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 154.795865852803,
-          "p975_bps": 211.46215993915817,
+          "p025_bps": 136.97969149152237,
+          "p975_bps": 168.42551257156947,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "186610d06aa6c67b57f3c5335b1455d36a930ab9dd555d19938326b75da0c56c",
+          "replicate_sha256": "0dbe5d7376575d0f704fb2142a4bd1c215794f917be43e8cdc8015a74be2bfdb",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 812,
-        "abs_hourly_p99_bps": 218.00226926927235,
-        "abs_hourly_max_bps": 416.4211920093738,
+        "abs_hourly_p99_bps": 153.40123020906194,
+        "abs_hourly_max_bps": 360.13319070182087,
         "abs_gap_max_bps": 270.01754515781704,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 140.01110159250416,
-          "p975_bps": 296.90319316266186,
+          "p025_bps": 145.08237485596476,
+          "p975_bps": 232.31885957422298,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "0068da6ae56f9db5cdca01501ad1c3dfe418df333ae1bc5e41ab43c654e1b349",
+          "replicate_sha256": "abfbf3998c8d870f064eb51eb05a587ca4bc7a4f790ee5e8a7d42972636ce85e",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -5655,34 +5655,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 2596,
-        "abs_hourly_p99_bps": 296.17543361150706,
-        "abs_hourly_max_bps": 1143.1180599206998,
+        "abs_hourly_p99_bps": 254.77820093951993,
+        "abs_hourly_max_bps": 605.4295639850071,
         "abs_gap_max_bps": 1444.440806263336,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 263.9149331897051,
-          "p975_bps": 365.83058668197157,
+          "p025_bps": 209.53362803051022,
+          "p975_bps": 305.97777088903666,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "af1be74c7aefb89f6c34f5d224ab2fbb6d492b163ee564abd6eddc54be61d411",
+          "replicate_sha256": "2d90a436ac752e44dede2890b8975b713d83057fc5ac6241f9b2f9e3e11dbb2e",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 812,
-        "abs_hourly_p99_bps": 334.642578465549,
-        "abs_hourly_max_bps": 896.963010149299,
+        "abs_hourly_p99_bps": 241.04938120458633,
+        "abs_hourly_max_bps": 387.5720148392591,
         "abs_gap_max_bps": 1212.7123398387914,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 270.9250508388559,
-          "p975_bps": 400.460593404914,
+          "p025_bps": 222.5756252819957,
+          "p975_bps": 308.51085147098553,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "eb26c4971a8beddb9ef1066967fb9b9673e3cfd2bc13fe67390e04a9f4bbbcd7",
+          "replicate_sha256": "cf322597de890a42ba257943022957162e0f741422b0e0e6c304aa03dccdfe36",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -5791,34 +5791,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 2596,
-        "abs_hourly_p99_bps": 587.0345097887297,
-        "abs_hourly_max_bps": 2800.9718393680305,
+        "abs_hourly_p99_bps": 348.857146577547,
+        "abs_hourly_max_bps": 835.5575618373992,
         "abs_gap_max_bps": 3746.3604288952697,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 497.165780623419,
-          "p975_bps": 687.0389333386281,
+          "p025_bps": 299.99173691540716,
+          "p975_bps": 435.71266062553593,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "980e87d54649a842e6059f63f226bd55a0a2f27b21112adcb3b3fa4bae6b6cb3",
+          "replicate_sha256": "12be9526eac4e562f0e25e801b41297bd211a252f23be79c3a23361f54c5bfdd",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 812,
-        "abs_hourly_p99_bps": 732.5383352433798,
-        "abs_hourly_max_bps": 1573.200146675235,
+        "abs_hourly_p99_bps": 417.7605311772212,
+        "abs_hourly_max_bps": 827.3798033704936,
         "abs_gap_max_bps": 1513.5671593452826,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 547.8504779174788,
-          "p975_bps": 959.9645758773504,
+          "p025_bps": 387.1772946024272,
+          "p975_bps": 586.5051712968128,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "7ee37535a5892f64a84adffc13cc26563b06cab750e512d5b9afb1f93ccf950c",
+          "replicate_sha256": "ac75d7a668973af0fb41b6af31a4b3f6a287a60540666ab0faeefd2cadcbd0bb",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     },
@@ -5927,34 +5927,34 @@
       "resolution": "1h transformed log returns, units 1e-6; grid UTC",
       "calibration": {
         "active_hours": 2596,
-        "abs_hourly_p99_bps": 489.30368619604167,
-        "abs_hourly_max_bps": 3871.3573661294636,
+        "abs_hourly_p99_bps": 356.20744419849865,
+        "abs_hourly_max_bps": 622.3587215537077,
         "abs_gap_max_bps": 3210.4091789511285,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 417.5000904194648,
-          "p975_bps": 604.0721558767892,
+          "p025_bps": 299.5076486799348,
+          "p975_bps": 388.45391483013833,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "2a86de15c934961eb275f788fa5bfa79940eba25dcfe26fd413f2a30a339e5f2",
+          "replicate_sha256": "41d4da09e93938cb828342d30e490e2c250a37674a228c10aa60f9ddc86a055a",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       },
       "validation": {
         "active_hours": 812,
-        "abs_hourly_p99_bps": 519.2203462928568,
-        "abs_hourly_max_bps": 1201.404618601457,
+        "abs_hourly_p99_bps": 385.57779246388424,
+        "abs_hourly_max_bps": 664.4746664581447,
         "abs_gap_max_bps": 1193.7905409827306,
         "hourly_p99_week_block_bootstrap": {
-          "p025_bps": 447.7860319567621,
-          "p975_bps": 648.4260552479356,
+          "p025_bps": 360.2782335817884,
+          "p975_bps": 459.22216429951646,
           "replicates": 200,
           "seed": 147,
-          "replicate_sha256": "719d8ea523d0393bdec03283944c41287e39d773bbe9b957693450cfd8acff9f",
+          "replicate_sha256": "655806df40ea2d43a793703086f6a2feea06678fd79669efc5262033d5d019d2",
           "limitation": "week-block stationarity assumed; not unseen-tail, proxy or missing-feed uncertainty"
         },
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence"
       }
     }

@@ -7,7 +7,8 @@ import tempfile
 from pathlib import Path
 
 os.environ.setdefault("MPLBACKEND", "Agg")
-os.environ.setdefault("MPLCONFIGDIR", tempfile.mkdtemp(prefix="close-spread-matplotlib-"))
+if "MPLCONFIGDIR" not in os.environ:
+    os.environ["MPLCONFIGDIR"] = tempfile.mkdtemp(prefix="close-spread-matplotlib-")
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -58,7 +59,7 @@ def write_report(data):
         f"The ceiling is the smallest multiple of {data['objective']['step_bps']} bps at or above the need, never "
         f"below {data['objective']['floor_bps']} bps (the largest close charge the launch parameters allow: stress "
         "10 plus toxicity 3, so the launch configuration stays legal). The tail move is the upper end of the "
-        "weekly block-bootstrap interval of the calibration sample's hourly p99. Hourly bars are scaled to the "
+        "weekly block-bootstrap interval of the calibration sample's hourly p99 of the in-bar move (the open against the previous close is left out). Hourly bars are scaled to the "
         "one-second quote age by square-root-of-time, an assumption no hourly data can test.", "",
         "Gaps, closures and contract rolls are not in the need: a price jump is not a spread. They move margin and "
         "close-out risk, which `ceiling_effects.csv` shows a close spread cannot repair: in a 5% gap on EUR-USD, "
@@ -111,7 +112,7 @@ def write_report(data):
         "covered, and no historical calibration guarantees future outcomes.",
         "- The sweep conditions on two existing isolated positions and one price jump; it is not a "
         "cross-margin or admission simulation, and scenario counts are not probabilities.",
-        "- Engine agreement: 11 vectors compare the pricing model with `Engine::apply` fills at V17 and V21 "
+        "- Engine agreement: 13 vectors compare the pricing model with `Engine::apply` fills at V17 and V21 "
         "(`cargo test -p engine-core --test close_spread_calibration`).", ""]
     (RESULTS / "report.md").write_text("\n".join(lines))
 
@@ -145,13 +146,13 @@ def plots(data, statistics):
     ax.hlines(y, low, high, color="#5b75a6", alpha=.65, label="Calibration weekly bootstrap 2.5-97.5%")
     ax.scatter(calibration, y, label="Calibration hourly p99", s=20, color=BLUE)
     ax.scatter(validation, y, label="Validation hourly p99", s=20, marker="x", color=ORANGE)
-    ax.set(yticks=y, yticklabels=labels, xlabel="Absolute proxy bar return including encoded gaps (basis points)",
+    ax.set(yticks=y, yticklabels=labels, xlabel="Absolute in-bar move, close against open (basis points)",
            title="Inherited hourly tails: the volatility input")
     ax.invert_yaxis()
     ax.grid(axis="x", alpha=.2)
     ax.legend(loc="upper right", fontsize=8)
     fig.tight_layout(rect=(0, .035, 1, 1))
-    fig.text(.5, .008, "Bar returns may span closures; transformed gaps are not execution-horizon evidence.",
+    fig.text(.5, .008, "Hourly in-bar moves of transformed proxy data; not execution-horizon evidence.",
              ha="center", fontsize=8)
     fig.savefig(RESULTS / "hourly_tails.png", dpi=150, metadata={"Software": "close-spread-calibration"})
     plt.close(fig)

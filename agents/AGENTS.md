@@ -237,7 +237,8 @@ an index: load only the rule whose hint matches the current action.
   On a PR, the first job, `changes`, sorts the changed files into the Rust, contracts, scenario,
   image, agent-script, and merge-approval areas from an explicit path list, and each job runs only
   when its area changed: `agents/` (but for the review-delta helper in
-  `agents/skills/agent-code-review/scripts/`), `research/`, the root `README.md`, `SECURITY.md`,
+  `agents/skills/agent-code-review/scripts/`), `research/` (but for the close-spread study's
+  `fixtures/`, which an `engine-core` test reads), the root `README.md`, `SECURITY.md`,
   `AGENTS.md`, and `CLAUDE.md`, and the `README.md` of `image/` and of each crate change none. A
   push to `main`, a merge group, a manual run, a workflow change, a failed diff, or any path the
   list does not name runs every job.
@@ -399,7 +400,7 @@ Run from the repo root:
   (`all` re-runs the simulations and report from the committed data), and its tests with
   `python -I -m pytest research/cap-calibration/tests`
 - Close-spread research, from a virtualenv with `research/close-spread-calibration/requirements.txt`:
-  `python -I research/close-spread-calibration/run.py`, then
+  `python -I research/close-spread-calibration/run.py`, then `calibrate.py`, then
   `python -I research/close-spread-calibration/report.py`; tests:
   `python -I -m unittest discover -s research/close-spread-calibration/tests` and
   `cargo test -p engine-core --test close_spread_calibration --locked`

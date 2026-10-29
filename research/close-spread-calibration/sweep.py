@@ -25,8 +25,13 @@ def margin_cost(notional, tiers):
 
 
 def paired_gap(*, notional, margin_bps, move, cap_bps, minimum_bps, toxicity_bps,
-               closeout_level_bps, profit_fee_bps, capital, margin_tiers=None):
-    """Close two already-admitted opposite positions after one unobserved price jump."""
+               closeout_level_bps, profit_fee_bps, capital, margin_tiers=None, self_quoted_jpy=False):
+    """Close two already-admitted opposite positions after one unobserved price jump.
+
+    `self_quoted_jpy` is USD-JPY, whose JPY profit converts at its own moved index: the USD notional
+    stays constant and a move of m is worth m / (1 + m) of it. Other non-USD markets assume their FX
+    index does not move in the gap.
+    """
     if notional <= 0 or move <= -1 or min(margin_bps, cap_bps, minimum_bps, toxicity_bps,
                                          closeout_level_bps, profit_fee_bps, capital) < 0:
         raise ValueError("invalid paired-gap scenario")
@@ -34,16 +39,18 @@ def paired_gap(*, notional, margin_bps, move, cap_bps, minimum_bps, toxicity_bps
     margin = margin_cost(notional, tiers)
     bad_debt, profit_fees, total_cost, largest_cost = D(0), D(0), D(0), D(0)
     liquidations = 0
+    value = notional if self_quoted_jpy else notional * (1 + move)
+    pnl_move = move / (1 + move) if self_quoted_jpy else move
     for direction in (1, -1):
-        at_index_equity = margin + notional * move * direction
-        required = margin_cost(notional * (1 + move), tiers)
+        at_index_equity = margin + notional * pnl_move * direction
+        required = margin_cost(value, tiers)
         liquidation = at_index_equity < charge(required, closeout_level_bps)
         liquidations += int(liquidation)
         requested = minimum_bps + (0 if liquidation else toxicity_bps)
-        close_cost = charge(notional * (1 + move), min(cap_bps, requested))
+        close_cost = charge(value, min(cap_bps, requested))
         total_cost += close_cost
         largest_cost = max(largest_cost, close_cost)
-        pnl = notional * move * direction - close_cost
+        pnl = notional * pnl_move * direction - close_cost
         fee = charge(max(pnl, D(0)), profit_fee_bps)
         profit_fees += fee
         bad_debt += max(-(margin + pnl - fee), D(0))
@@ -90,7 +97,8 @@ def frontier(market, profit_fee_bps, closeout_level_bps):
                                             closeout_level_bps=closeout_level_bps,
                                             margin_tiers=spec["margin_tiers"],
                                             profit_fee_bps=profit_fee_bps,
-                                            capital=2 * notional * capital_fraction)
+                                            capital=2 * notional * capital_fraction,
+                                            self_quoted_jpy=spec["symbol"] == "USD-JPY")
                         rows.append({"symbol": spec["symbol"], "margin_band": band,
                                      "notional_per_leg_usd": str(notional), "marginal_margin_bps": tier["bps"],
                                      "candidate_cap_bps": cap, "requested_stress_minimum_bps": requested,

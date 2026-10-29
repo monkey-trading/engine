@@ -39,11 +39,16 @@ class ClosingPathTests(unittest.TestCase):
 
     def test_rounding_rows_agree_with_engine_vectors(self):
         by_name = {vector["name"]: vector for vector in FIXTURES}
-        row = P.rounding_rows(charge_bps=1, mids=(1_000_000_000,))[0]
-        self.assertEqual((row["rounded_up_raw"], row["floor_bound_raw"], row["excess_atoms"]), (100_000, 100_000, 0))
+        for name, sign in (("precision-floor-buy", 1), ("precision-floor-sell", -1), ("raw-unit-sell", -1)):
+            vector = by_name[name]
+            mid = P.EXEC.raw(vector["mid"])
+            row = P.rounding_rows(charge_bps=vector["minimum_bps"], mids=(mid,))[0]
+            engine_adjustment = (vector["expected_price_raw"] - mid) * sign
+            # The engine's sell stops a unit short of the index; the row is the rounded-up charge.
+            self.assertEqual(min(row["rounded_up_raw"], mid - 1) if sign < 0 else row["rounded_up_raw"],
+                             engine_adjustment, name)
         dust = P.rounding_rows(charge_bps=1, mids=(1,))[0]
         self.assertEqual((dust["rounded_up_raw"], dust["floor_bound_raw"], dust["floor_makes_close_free"]), (1, 0, True))
-        self.assertEqual(by_name["precision-floor-buy"]["expected_spread_bps"], 10_000)
 
     def test_pure_close_is_never_more_than_one_atom_over_the_exact_bound(self):
         self.assertLessEqual(P.pure_close_excess_atoms(2_000), 1)

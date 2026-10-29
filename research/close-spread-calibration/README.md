@@ -48,13 +48,15 @@ ceiling = need rounded up to a multiple of 5 bps, never below the launch close c
 ```
 
 The tail move is the upper end of the weekly block-bootstrap interval of the calibration sample's hourly
-p99. Different asset classes differ because their divergence limits differ (FX 5, indices and commodities
+p99 of the in-bar move (close against the bar's own open); the open against the previous close, which carries
+session gaps, is left out and reported separately. DE40 and UK100 fold their overnight move into the bar, which
+overstates their tail. Different asset classes differ because their divergence limits differ (FX 5, indices and commodities
 10, shares 10, crypto 25 bps), and a tail move over one second is small: one second is 1/60 of an hour's
 scale. The 13-bps floor is the stress-minimum 10 plus the top toxicity tier 3 in `production-genesis.toml`;
 a ceiling below it would make the launch parameters illegal.
 
 Volatility enters only through that one-second tail, and a doubled volatility input raises 33 of 37 ceilings,
-by at most 10 bps (the floor absorbs the four calm FX markets). A price jump over a gap, a closure or a contract roll is not a spread: it moves margin and
+by at most 7 bps (the floor absorbs the four calm FX markets). A price jump over a gap, a closure or a contract roll is not a spread: it moves margin and
 close-out risk. `results/ceiling_effects.csv` shows a close spread cannot repair it: in a 5% gap on EUR-USD
 with no house capital, an uncapped 103-bp close charge cuts the house shortfall by a fifth to a third and
 costs the trader eight times as much. A volatility-responsive charged spread is a different mechanism (the
@@ -70,7 +72,7 @@ a decision). Its parameters are the floor, the step, the burden limit and the ta
 The chronological split is the first 78 weeks (calibration) and the last 24 (validation), fixed before any
 selection. The method is fixed on the calibration sample and tested on the validation sample: the
 calibration-only ceiling covers the validation need for 36 of 37 markets (BRENT does not: its validation
-tail is a regime shift), and over validation hours the need exceeds it in at most 1.6% of hours (BRENT; 1.0% or less for the proposed values). The proposed
+tail is a regime shift), and over validation hours the need exceeds it in at most 1.3% of hours (BRENT; 1.0% or less for the proposed values). The proposed
 value then refits on the larger of the two tails. The weekly bootstrap (200 resamples) describes sampling
 sensitivity under weekly stationarity; it does not cover proxy error, missing feeds or unseen tails.
 
@@ -81,8 +83,8 @@ stress minimum plus the account's toxicity add-on; a liquidation waives the add-
 size spread on its opening slice, divided over the whole fill quantity, with the stress multiplier on that
 slice only. `Engine::price` has no version gate after V14 except the V10 upward rounding.
 
-Eleven vectors compare `execution.py` with actual `Engine::apply` fills at V17 and at V21 (later versions
-need access evidence on every order, which does not touch pricing), including a reversal, a reduce-only
+Thirteen vectors compare `execution.py` with actual `Engine::apply` fills at V17 and at V21 (later versions
+need access evidence on every order, which does not touch pricing), including reversals across bounded size-spread bands (USD and EUR), a reduce-only
 clamp, EUR and JPY quotes, a one-raw-unit index and a liquidation gap that creates bad debt. They are research
 fixtures, separate from the protocol reference logs, and the fixture file is read by both the Python tests and
 `crates/core/tests/close_spread_calibration.rs`. Charges round upward at nine decimal places; a sell's adjustment

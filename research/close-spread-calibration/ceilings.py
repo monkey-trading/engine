@@ -10,8 +10,11 @@ price when a client closes. The engine bounds that risk per market in its price 
 
 and the ceiling is the smallest multiple of 5 bps at or above the need, never below the largest
 charge the launch parameters already allow. The method is fixed on the calibration sample and tested
-on the later validation sample; the proposed value then refits on both samples (the larger tail). Gaps, closures and contract rolls change margin and
-close-out risk, not this need: a price jump is not a spread (see the README).
+on the later validation sample; the proposed value then refits on both samples (the larger tail).
+Gaps, closures and contract rolls change margin and close-out risk, not this need: a price jump is
+not a spread (see the README). The tail is therefore the in-bar move (close against the bar's own
+open); the open against the previous close is left out. The two folded cash indices carry their
+overnight move inside the bar, which overstates their tail.
 """
 
 import math
@@ -26,12 +29,12 @@ SELECTION_STATISTIC = "calibration hourly p99, upper end of its weekly block-boo
 CLASS_FLAGS = {
     "crypto": ["single-venue USDT spot; USDT/USD basis unmeasured"],
     "fx": ["aggregator spot FX; no independent simultaneous quotes"],
-    "index": ["front-month continuation: roll and session gaps zeroed by the inherited transform"],
-    "commodity": ["front-month continuation: roll and session gaps zeroed by the inherited transform"],
+    "index": ["front-month continuation: roll gaps zeroed by the inherited transform"],
+    "commodity": ["front-month continuation: roll gaps zeroed by the inherited transform"],
     "equity": ["regular-session bars; corporate actions not audited"],
 }
-PROXY_SYMBOLS = {"DE40": "cash index standing in for a longer-session future",
-                 "UK100": "cash index standing in for a longer-session future"}
+PROXY_SYMBOLS = {"DE40": "cash index standing in for a longer-session future; overnight move folded into the bar",
+                 "UK100": "cash index standing in for a longer-session future; overnight move folded into the bar"}
 
 
 def launch_close_charge_bps(params):
@@ -66,7 +69,7 @@ def exceedance(rows, unit, divergence_bps, max_age_ms, ceiling_bps):
     values = rows[active].astype(np.float64) / unit
     if not len(values):
         return None
-    moves = np.abs(np.expm1(values[:, 0] + values[:, 3])) * 10_000
+    moves = np.abs(np.expm1(values[:, 3])) * 10_000
     needs = divergence_bps + moves * horizon_scale(max_age_ms)
     return float(np.mean(needs > ceiling_bps))
 

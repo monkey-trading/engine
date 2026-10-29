@@ -55,7 +55,7 @@ def summarize(rows, unit):
     values = rows[active].astype(np.float64) / unit
     if not len(values):
         return {"active_hours": 0, "abs_hourly_p99_bps": None, "abs_gap_max_bps": None}
-    returns = np.expm1(values[:, 0] + values[:, 3]) * 10_000
+    returns = np.expm1(values[:, 3]) * 10_000
     gaps = np.abs(np.expm1(values[:, 0]) * 10_000)
     return {
         "active_hours": len(values),
@@ -63,7 +63,7 @@ def summarize(rows, unit):
         "abs_hourly_max_bps": float(np.max(np.abs(returns))),
         "abs_gap_max_bps": float(gaps.max()),
         "hourly_p99_week_block_bootstrap": uncertainty(rows, unit),
-        "return_definition": "gap plus bar close: previous observed close to this close; may span closed hours",
+        "return_definition": "in-bar move: close against the bar's own open; the open-against-previous-close gap is excluded and reported separately",
         "warning": "transformed hourly proxy; not execution-scale or uncensored gap evidence",
     }
 
@@ -79,7 +79,7 @@ def uncertainty(rows, unit):
         sampled = weeks[generator.integers(0, len(weeks), size=len(weeks))].reshape(-1, 4)
         active = sampled[sampled[:, 0] != np.iinfo(np.int32).min].astype(np.float64)
         if len(active):
-            returns = np.abs(np.expm1((active[:, 0] + active[:, 3]) / unit)) * 10_000
+            returns = np.abs(np.expm1(active[:, 3] / unit)) * 10_000
             estimates.append(float(np.quantile(returns, 0.99, method="higher")))
     if not estimates:
         return None

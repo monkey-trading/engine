@@ -16,7 +16,7 @@ from pathlib import Path
 UTC = timezone.utc
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 SECOND = 1_000_000_000
-MAX_BODY_BYTES = 1_000_000  # The research task's response-body budget.
+MAX_BODY_BYTES = 1_000_000  # Response-body budget for one audited input.
 
 
 def require(condition, message):

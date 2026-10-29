@@ -260,7 +260,12 @@
     "minimum_bps": 10,
     "toxicity_bps": 3,
     "multiplier_bps": 10000,
-    "tiers": [[null, 100]],
+    "tiers": [
+      [
+        null,
+        100
+      ]
+    ],
     "reduce_only": false,
     "liquidation": true,
     "deposit": "100",
@@ -269,5 +274,71 @@
     "expected_quantity_raw": 10000000000,
     "expected_spread_bps": 10,
     "expected_bad_debt_raw": 100800000000
+  },
+  {
+    "mid": "100",
+    "current": "10",
+    "quantity": "25",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 20000,
+    "tiers": [
+      [
+        "100",
+        0
+      ],
+      [
+        "300",
+        30
+      ],
+      [
+        null,
+        80
+      ]
+    ],
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "name": "banded-usd-reversal",
+    "expected_price_raw": 99054000000,
+    "expected_quantity_raw": 25000000000,
+    "expected_spread_bps": 94,
+    "opening_mid": "100"
+  },
+  {
+    "mid": "100.5",
+    "current": "10",
+    "quantity": "25",
+    "buy": false,
+    "currency": "EUR",
+    "fx": "1.25",
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 40000,
+    "tiers": [
+      [
+        "100",
+        0
+      ],
+      [
+        "300",
+        30
+      ],
+      [
+        null,
+        80
+      ]
+    ],
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "name": "banded-eur-reversal",
+    "expected_price_raw": 98670150000,
+    "expected_quantity_raw": 25000000000,
+    "expected_spread_bps": 182,
+    "opening_mid": "100.5"
   }
 ]

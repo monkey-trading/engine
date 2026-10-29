@@ -40,9 +40,9 @@ Decoded means a payload passed format checks, not that its history is fit for ca
 | Input | Available | Appropriate use | Missing evidence |
 |---|---|---|---|
 | Pinned production genesis | Committed; the digest of the parameters and market fields this study reads is checked | Instrument IDs, parameters, margins, calendars, reference age/divergence limits | Actual production reference providers/contracts for each market |
-| #111 catalogue and transformation code | Committed, full SHA-256 checked | Trace source tickers and explain changes | Independent audit of presumed roll-gap exclusions |
+| Exposure-cap study (#111) catalogue and transformation code | Committed, full SHA-256 checked | Trace source tickers and explain changes | Independent audit of presumed roll-gap exclusions |
 | #111 hourly NPZ | Committed, full SHA-256 checked | Chronological coarse historical stress context | Unmodified gaps, quotes, source ages, independent simultaneous observations |
-| #111 raw pulls | Absent in both this worktree and main checkout | Re-fetch subject to access and terms; preserve each response | Original response hashes, retrieval metadata and contract identifiers |
+| Exposure-cap study (#111) raw pulls | Not committed | Re-fetch subject to access and terms; preserve each response | Original response hashes, retrieval metadata and contract identifiers |
 | Binance spot kline REST | Minimal historical BTC request succeeded, HTTP 200 | Spot bar observations; potentially minute-scale supplementary validation | USD/USDT basis, other venues, sub-minute observations, redistribution clearance |
 | Yahoo chart REST | Minimal historical AAPL request succeeded, HTTP 200 | Exploratory proxy cross-checks | Documented service guarantees, data licensing, contract rolls and corporate actions |
 
@@ -50,7 +50,7 @@ The minimal access probes on 23 October 2026 requested three BTCUSDT one-minute 
 `2024-10-27T00:00:00Z` and AAPL daily observations for `2024-10-27` through `2024-10-29`.
 They downloaded 506 and 1,304 bytes respectively. Their bodies were inspected only to establish
 access, not persisted as calibration data or used in results. An access probe is not a data-quality
-or licensing approval. The Yahoo terms page could not be retrieved through the web tool (HTTP 999).
+or licensing approval. The Yahoo terms page could not be retrieved (HTTP 999).
 
 The inherited fetch code describes raw source windows from 28 October 2024 through
 17 October 2026 for hourly bars and from 2016 for daily bars. This pipeline uses only the
@@ -65,8 +65,8 @@ closed hours occurs. Hourly tails are marked as transformed proxy statistics in 
   `https://data-api.binance.vision/api/v3/klines`.
 - The inherited Yahoo endpoint is `https://query1.finance.yahoo.com/v8/finance/chart/<ticker>`.
   A working public endpoint does not establish a licensed historical-data service.
-- [Yahoo terms](https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html) were unavailable to
-  the web tool at audit time. Do not describe redistribution rights as verified.
+- [Yahoo terms](https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html) were unavailable at
+  audit time. Do not describe redistribution rights as verified.
 - [Coinbase market-data terms](https://www.coinbase.com/legal/market_data), checked on
   23 October 2026, restrict external distribution of data and derived research and certain
   benchmark uses without written consent. No such permission is established here.

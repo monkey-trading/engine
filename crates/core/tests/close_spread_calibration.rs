@@ -8,6 +8,7 @@ use common::events::only_fill;
 use common::{EURUSD, Harness, USDJPY, acct, f, market, params};
 use engine_core::Fixed;
 use engine_core::command::{AdminCommand, Command, OrderKind, OrderRequest};
+use engine_core::event::Event;
 use engine_core::market::{QuoteCurrency, Tier};
 use engine_core::params::{ProtocolParams, StressLevel, ToxicityTier};
 use engine_core::session::Schedule;
@@ -45,7 +46,7 @@ fn research_model_prices_agree_with_fills() {
     let json = include_str!("../../../research/close-spread-calibration/fixtures/engine-v17.json");
     for (version, harness) in [("V17", Harness::v17 as fn() -> Harness), ("V21", Harness::v21)] {
         let vectors: Vec<Vector> = serde_json::from_str(json).expect("valid pinned research vectors");
-        assert_eq!(vectors.len(), 11, "all shared research scenarios must be present");
+        assert_eq!(vectors.len(), 13, "all shared research scenarios must be present");
         for vector in vectors {
             check(version, harness(), vector);
         }
@@ -92,7 +93,7 @@ fn check(version: &str, mut h: Harness, vector: Vector) {
     let events = if vector.liquidation {
         prices
     } else {
-        assert!(!prices.iter().any(|event| matches!(event, engine_core::event::Event::Fill(_))));
+        assert!(!prices.iter().any(|event| matches!(event, Event::Fill(_))));
         h.cmd(Command::PlaceOrder(OrderRequest {
             account: a,
             client_id: 1,
@@ -113,7 +114,7 @@ fn check(version: &str, mut h: Harness, vector: Vector) {
     let bad_debt: Fixed = events
         .iter()
         .filter_map(|event| match event {
-            engine_core::event::Event::BadDebt { account, amount } if *account == a => Some(*amount),
+            Event::BadDebt { account, amount } if *account == a => Some(*amount),
             _ => None,
         })
         .sum();
