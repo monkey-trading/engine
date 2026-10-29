@@ -31,6 +31,8 @@ per_account = { per_second = 10, burst = 20 }
 # New connections from one client, closed before the TLS handshake when over. Keep it above per_ip.
 per_ip_connections = { per_second = 100, burst = 200 }
 max_subscribers = 256
+# The console's dev origin; the stream refuses any other browser origin.
+allowed_origins = ["http://localhost:3000"]
 # A client that takes longer than this to take a response, or a subscriber a message, is dropped.
 send_timeout = "30s"
 

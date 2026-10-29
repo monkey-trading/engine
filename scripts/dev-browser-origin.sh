@@ -5,7 +5,8 @@
 #   2. the same from http://evil.test carry no CORS headers;
 #   3. a stream upgrade from the evil origin gets 403, and from the listed origin 101;
 #   4. /v1/admin gets no CORS headers and no successful preflight, even from the listed origin;
-#   5. a request the rate limiter refuses with 429 still carries the listed origin.
+#   5. a request the rate limiter refuses with 429 still carries the listed origin, and once the
+#      burst is spent a preflight from the listed origin is refused with 429 too.
 #
 # Needs curl and jq, and the public Roughtime servers config/dev.toml names. API_PORT and
 # METRICS_PORT override 18380 and 19764; SCENARIO_ARTIFACTS keeps the node log.
@@ -46,7 +47,7 @@ sed -e "s|127.0.0.1:8080|127.0.0.1:$api_port|" \
   -e "s|data/dev|$work|g" \
   -e 's|^per_ip = .*|per_ip = { per_second = 1, burst = 40 }|' \
   "$root/config/dev.toml" |
-  awk -v origin="$listed" '{ print } /^max_subscribers = / { printf "allowed_origins = [\"%s\"]\n", origin }' \
+  sed -e "s|^allowed_origins = .*|allowed_origins = [\"$listed\"]|" \
   > "$work/node.toml"
 for edit in ":$api_port\"" "burst = 40" "allowed_origins = [\"$listed\"]"; do
   grep -qF "$edit" "$work/node.toml" || fail "config edit missing: $edit"
@@ -107,5 +108,6 @@ for _ in $(seq 1 80); do
 done
 [[ -n "$limited" ]] || fail "the rate limiter never answered 429"
 grep -qix "access-control-allow-origin: $listed" <<< "$limited" || fail "the 429 carries no allowed origin: $limited"
+expect "limited preflight status" "$(status -X OPTIONS -H "Origin: $listed" -H 'Access-Control-Request-Method: POST' "$base/v1/orders")" 429
 
 echo "PASS: browser origins"

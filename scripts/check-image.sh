@@ -77,7 +77,8 @@ if [[ -w /dev/kvm ]]; then accel=kvm; fi
 
 case $variant in
   production)
-    boot < config/dev.toml
+    # Without the dev origin, which a production build refuses as `http` before it reaches the mocks.
+    boot < <(grep -v '^allowed_origins' config/dev.toml)
     await_poweroff
     grep -q 'a production build refuses mock providers' "$work/console.log" ||
       fail "the engine did not refuse the mock providers"
