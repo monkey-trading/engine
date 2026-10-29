@@ -449,8 +449,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/setup.rs` — finalized chain anchor lookup and pending-inclusion startup wait
 - `src/checkpoints/tests.rs` — signature mutations, rollback, retry, and reconciliation tests
 - `src/checkpoints/tests/collateral.rs` — shortfall, ledger-difference, surplus, and uncredited-deposit deadline tests
+- `src/checkpoints/tests/torn.rs` — conflicts read once are retried; a conflict a fresh observation repeats stops the worker
 - `src/checkpoints/scenario.rs` — isolated Anvil posting, credited/held reconciliation, tampering, truncation, surplus booking, shortfall, and reorg checks
 - `src/checkpoints/scenario/source.rs` — signed synthetic source bound to the scenario vault
+- `src/checkpoints/scenario/tasks.rs` — the scenario's node tasks, and waits that fail on a stopped task or report the poster's last alert
 - `src/checkpoints/emission_budget.rs` — the vault's MONKEY cap against the emission period budget
 - `src/checkpoints/emissions_scenario.rs` — the MONKEY emissions dev scenario on isolated Anvil: pro-rata
   allocation, cancelled periods, a restart across finalisation, the first halving, and claims that mint
@@ -788,7 +790,9 @@ checkpoints with the Warning `checkpoint_backlog` and keeps sequencing, and appr
 next checkpoint that fits. Failed posts retry after `retry_interval` and emit `checkpoint_post_failed`. Withheld signing or
 posting emits the Warning `checkpoint_withheld`, one episode per `cause` (`collateral`,
 `custody_prefix`, `post_diverged`) however many attempts it spans, resolved when that hold clears. A conflicting
-posted root or signer stops the node with a Critical alert. Following decision #15 §2, withdrawals
+posted root or signer stops the node with the Critical `checkpoint_conflict` once the next retry's fresh observation
+repeats it; seen once, it retries with `checkpoint_post_failed`, since one read can be torn across a block the
+endpoint is still mining. Following decision #15 §2, withdrawals
 pause when the vault's USDC is less than the ledger requires, or the vault's deposits or payments
 differ from it: collateral reconciles when the vault's paid total is within the checkpoint's
 approvals, the vault's running deposit total through the checkpoint's last credited deposit equals

@@ -17,6 +17,7 @@ mod distributions;
 mod receipts;
 
 mod collateral;
+mod torn;
 
 /// Corrupts a hex signature without the fixed-byte no-op case.
 pub(super) fn tamper_signature(signature: &mut String) {

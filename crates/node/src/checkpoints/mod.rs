@@ -335,7 +335,7 @@ impl<R: CheckpointChain> Poster<R> {
 
     /// Polls bounded pages of replay-registered approvals while extending the checkpoint chain.
     /// Error cases:
-    /// - the sequencer disappears, registry is poisoned, or authenticated state conflicts
+    /// - the sequencer disappears, registry is poisoned, or two observations in a row conflict
     pub async fn run_with_approvals(
         self,
         mut rx: mpsc::Receiver<Work>,
@@ -347,6 +347,8 @@ impl<R: CheckpointChain> Poster<R> {
         let mut queued = VecDeque::from(recovery);
         let mut latest = None;
         let mut uncredited = None;
+        // A conflict from one observation, not yet repeated by a fresh one.
+        let mut unconfirmed = false;
         let mut timer = interval(self.retry);
         timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
         loop {
@@ -370,14 +372,19 @@ impl<R: CheckpointChain> Poster<R> {
                         finalized_seq = tracing::field::Empty);
                     let page = approval_page(&approvals, approval_cursor)?;
                     let result = self.reconcile_lifecycle(work, &known, &page, &mut uncredited).instrument(span.clone()).await;
+                    // One read can be torn, its fields answered from either side of a block the endpoint
+                    // is still mining, so only a conflict a fresh observation repeats stops the worker.
                     let (posted, health, lifecycle) = match result {
-                        Ok((posted, health, lifecycle)) =>
-                            (posted, (health != Health::Unvalidated).then_some(health), lifecycle),
+                        Ok((posted, health, lifecycle)) => {
+                            unconfirmed = false;
+                            (posted, (health != Health::Unvalidated).then_some(health), lifecycle)
+                        }
+                        Err(error) if unconfirmed && error.is::<Conflict>() => {
+                            span.in_scope(|| error!(alert = "checkpoint_conflict", "refusing to continue: {error:#}"));
+                            return Err(error);
+                        }
                         Err(error) => {
-                            if error.is::<Conflict>() {
-                                span.in_scope(|| error!(alert = "checkpoint_conflict", "refusing to continue: {error:#}"));
-                                return Err(error);
-                            }
+                            unconfirmed |= error.is::<Conflict>();
                             span.in_scope(|| warn!(alert = "checkpoint_post_failed", "checkpoint remains queued: {error:#}"));
                             (None, None, None)
                         }

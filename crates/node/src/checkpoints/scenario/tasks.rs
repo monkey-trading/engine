@@ -50,11 +50,11 @@ impl Tasks {
                         .is_some_and(|name| name.starts_with("checkpoint_") || name.starts_with("collateral_"))
                 });
                 poster = latest.cloned().or(poster.take());
+                self.ensure_running().await;
                 match check(&raised).await {
                     Ok(()) => return,
                     Err(state) => missing = state,
                 }
-                self.ensure_running().await;
                 sleep(Duration::from_millis(40)).await;
             }
         })
