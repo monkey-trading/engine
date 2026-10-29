@@ -100,10 +100,14 @@ class Stream:
             return
 
     def take(self, text):
-        arrived = time.monotonic()
         self.frames.append(text)
+        # The time the node signed the frame at, not when this thread read it: quotes are sent exactly
+        # an interval apart while the index moves, so a delay in reading would show as a closer pair.
+        arrived = 0.0
         try:
-            msg = json.loads(json.loads(text)["msg"])
+            frame = json.loads(text)
+            arrived = frame["time"] / 1000
+            msg = json.loads(frame["msg"])
         except (ValueError, KeyError) as error:
             msg = {"type": "quote_error", "error": f"an unreadable frame: {error}"}
         if msg["type"] in ("quote", "quote_error"):
