@@ -9,10 +9,12 @@ use serde::Serialize;
 
 /// Halvings of the gap between the largest size known to fill and the smallest known to be declined.
 const BISECTIONS: usize = 10;
-/// Halvings of a declined size while looking for one the account can open.
-const HALVINGS: usize = 40;
-/// Doublings from the last tier's start while looking for a size the account cannot open.
-const DOUBLINGS: usize = 40;
+/// Halvings of a declined size while looking for one the account can open: enough to go from the
+/// largest order (`Fixed::MAX_INPUT`) to the smallest (one unit), so the floor is always reached.
+const HALVINGS: usize = 64;
+/// Doublings from the least size while looking for a size the account cannot open: enough to pass
+/// the largest order.
+const DOUBLINGS: usize = 64;
 
 /// A market's quotes for one account. A buy pays `ask` and a sell receives `bid`; an order takes
 /// the price of the first step whose `qty` is at least its own. That price is the average for the
@@ -97,12 +99,13 @@ pub(super) fn market_quote(
         .filter_map(|tier| tier.up_to)
         .map(|usd| market.spec.quote_currency.from_usd(usd, fx, Rounding::Down).div_rounded(mid, Rounding::Down))
         .collect();
-    // The least size worth looking for: the market's minimum order, and at least a dollar.
+    // The least size worth looking for: the market's minimum order, and at least the smallest quantity.
     let floor = market
         .spec
         .quote_currency
-        .from_usd(market.spec.min_order_notional.max(Fixed::ONE), fx, Rounding::Up)
-        .div_rounded(mid, Rounding::Up);
+        .from_usd(market.spec.min_order_notional, fx, Rounding::Up)
+        .div_rounded(mid, Rounding::Up)
+        .max(Fixed::from_raw(1));
     let held = engine.accounts().get(&account).map_or(Fixed::ZERO, |acct| acct.position(market_id).qty);
     let position = Held { qty: held, floor, tops: &tops };
     quote.ask = steps(quoter, account, market_id, Side::Buy, &position);

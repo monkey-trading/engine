@@ -1072,8 +1072,8 @@ sending it again replaces the subscription, and an empty `markets` ends it) and 
 frames, one message per market,
 `{"type":"quote","market":1,"open":true,"reduce_only":false,"stress_level":0,"mark":"…","ask":[…],"bid":[…],"close":{…}|null}`,
 and again for each market whose message changed. The node reads the engine only after the log head
-has moved, and sends no sooner than `api.quote_interval` after its last quote message on the
-connection. `ask` is what a buy pays and `bid` what a sell receives: a list of `{"qty","price"}`
+has moved, once per `api.quote_interval` while it keeps moving, and sends no sooner than that after
+its last quote message on the connection. `ask` is what a buy pays and `bid` what a sell receives: a list of `{"qty","price"}`
 steps by size, one for the top of each spread tier as the account would reach it, then, between the
 last tier top the account can open and the first it cannot, and in the unbounded last tier, one
 at the largest order it can open (its margin and the house's exposure caps limit it). A step the
@@ -1082,7 +1082,10 @@ priced as a fill would be. An order takes the price of the first step whose `qty
 own. That price is the average for the step's whole size, which is never better for the trader than
 the price of any smaller order, but for the rounding of a fill's cost up to a unit before it is
 divided by the order's size: an order of a cent's notional can price about a thousandth of a basis
-point above its step, and a slippage bound of a basis point covers it. A step's price is also the
+point above its step, and a slippage bound of a basis point covers it. An order far smaller than
+that, such as closing the last dust of a position, can price above its step by more than the bound:
+the rounding is a unit of cost whatever the order's size, so no step price covers every size, and
+the engine's pricing is what it is. A step's price is also the
 worst of its own and those of the steps before it, so it holds where a tier charges less than the
 one before. The steps are accurate to the search's resolution, a thousandth of the gap between the
 last size known to fill and the first known to be declined, so a slightly larger order than the

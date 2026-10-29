@@ -67,9 +67,12 @@ pub(super) struct Quotes {
     interval: Duration,
     max_markets: usize,
     subscription: Option<(AccountId, Vec<MarketId>)>,
-    /// The earliest the next message may start: an interval after the last reply or refusal, so
-    /// messages are at least an interval apart.
+    /// The earliest the next message may be sent: an interval after the last one, so messages are
+    /// at least an interval apart.
     gate: Instant,
+    /// The earliest the next read may start: an interval after the slot the last one started at, so
+    /// a changing index is read every interval, whatever the replies take.
+    next_read: Instant,
     /// The instant the connection's slots count from: reads start only at whole intervals after it.
     anchor: Instant,
     /// The slot the read that has fallen due waits for.
@@ -79,6 +82,8 @@ pub(super) struct Quotes {
     in_flight: Option<oneshot::Receiver<Reply>>,
     /// The last message sent per market, to send only what changed.
     sent: BTreeMap<MarketId, String>,
+    /// The latest message per market that changed, waiting for the gate.
+    held: BTreeMap<MarketId, String>,
     /// A refusal waiting for the gate.
     refusal: Option<String>,
 }
@@ -103,11 +108,13 @@ impl Quotes {
             max_markets,
             subscription: None,
             gate: now,
+            next_read: now,
             anchor: now + phase,
             read_slot: None,
             read_at: None,
             in_flight: None,
             sent: BTreeMap::new(),
+            held: BTreeMap::new(),
             refusal: None,
         }
     }
@@ -116,17 +123,20 @@ impl Quotes {
     /// the quotes that changed. Cancel-safe: a read in flight is kept across polls.
     pub(super) async fn next(&mut self) -> Vec<String> {
         loop {
+            if let Some(messages) = self.ready() {
+                return messages;
+            }
             let reading = self.subscription.is_some() && self.in_flight.is_none();
             let head = self.manifest.borrow().flushed;
             let due = reading && self.read_at != Some(head);
             // The slot is fixed when a read falls due and kept across polls, so a poll that is dropped
             // and made again, as the feed's messages do, cannot push the read to a later slot.
             let slot = if due {
-                let wanted = self.slot(self.gate.max(Instant::now()));
+                let wanted = self.slot(self.next_read.max(Instant::now()));
                 *self.read_slot.get_or_insert(wanted)
             } else {
                 self.read_slot = None;
-                self.gate
+                self.next_read
             };
             tokio::select! {
                 changed = self.inbox.changed() => {
@@ -138,16 +148,10 @@ impl Quotes {
                 }
                 reply = in_flight(&mut self.in_flight) => {
                     self.in_flight = None;
-                    self.gate = Instant::now() + self.interval;
-                    if let Some(messages) = self.changed(reply) {
-                        return messages;
-                    }
+                    self.receive(reply);
                 }
-                () = sleep_until(self.gate), if self.refusal.is_some() => {
-                    self.gate = Instant::now() + self.interval;
-                    return self.refusal.take().into_iter().collect();
-                }
-                () = sleep_until(slot), if due => self.read(head),
+                () = sleep_until(self.gate), if self.refusal.is_some() || !self.held.is_empty() => {}
+                () = sleep_until(slot), if due => self.read(head, slot),
                 changed = self.manifest.changed(), if reading && !due => {
                     // The log has stopped, and the stream ends with it.
                     if changed.is_err() {
@@ -156,6 +160,22 @@ impl Quotes {
                 }
             }
         }
+    }
+
+    /// What is waiting to be sent, once the gate allows: a refusal, or the quotes that changed.
+    fn ready(&mut self) -> Option<Vec<String>> {
+        if self.gate > Instant::now() {
+            return None;
+        }
+        let messages = match self.refusal.take() {
+            Some(refusal) => vec![refusal],
+            None => std::mem::take(&mut self.held).into_values().collect(),
+        };
+        if messages.is_empty() {
+            return None;
+        }
+        self.gate = Instant::now() + self.interval;
+        Some(messages)
     }
 
     /// The first instant at or after `from` that is a whole interval from the connection's anchor.
@@ -174,6 +194,7 @@ impl Quotes {
         self.subscription = None;
         self.in_flight = None;
         self.sent.clear();
+        self.held.clear();
         self.read_at = None;
         let op: Op = match serde_json::from_str(text) {
             Ok(op) => op,
@@ -196,7 +217,7 @@ impl Quotes {
 
     /// Asks the sequencer for the subscription's quotes. A full queue leaves the read for the next
     /// interval.
-    fn read(&mut self, head: Option<Offset>) {
+    fn read(&mut self, head: Option<Offset>, slot: Instant) {
         let Some((account, markets)) = self.subscription.clone() else { return };
         let Some(tx) = self.tx.upgrade() else {
             // The sequencer is stopping, and the stream ends with it.
@@ -208,44 +229,44 @@ impl Quotes {
             let _ = reply.send(read(engine, account, &markets));
         });
         match tx.try_send(sequencer::Request::Query(query)) {
-            Ok(()) => (self.in_flight, self.read_at) = (Some(rx), Some(head)),
+            Ok(()) => {
+                (self.in_flight, self.read_at) = (Some(rx), Some(head));
+                self.next_read = slot + self.interval;
+            }
             Err(mpsc::error::TrySendError::Full(_)) => {
-                self.gate = Instant::now() + self.interval;
+                self.next_read = Instant::now() + self.interval;
                 self.read_slot = None;
             }
             Err(mpsc::error::TrySendError::Closed(_)) => self.subscription = None,
         }
     }
 
-    /// The messages for the quotes in `reply` that differ from those last sent; `None` when none do.
-    fn changed(&mut self, reply: Result<Reply, oneshot::error::RecvError>) -> Option<Vec<String>> {
+    /// Holds the messages for the quotes in `reply` that differ from those last sent, and a refusal
+    /// for a subscription the engine cannot serve, for the gate.
+    fn receive(&mut self, reply: Result<Reply, oneshot::error::RecvError>) {
         let quotes = match reply {
             Ok(Ok(quotes)) => quotes,
             Ok(Err(why)) => {
                 self.subscription = None;
-                return Some(vec![refusal(match why {
+                self.held.clear();
+                return self.refuse(match why {
                     Unquotable::Account => "the account has never been credited".to_owned(),
                     Unquotable::Market(id) => format!("unknown market {id}"),
-                })]);
+                });
             }
             // Dropped unanswered when the sequencer stops.
-            Err(_) => {
-                self.subscription = None;
-                return None;
-            }
+            Err(_) => return self.subscription = None,
         };
-        let messages: Vec<String> = quotes
-            .iter()
-            .filter_map(|quote| {
-                let text = serde_json::to_string(quote).expect("a quote encodes");
-                (self.sent.get(&quote.market) != Some(&text)).then(|| {
-                    self.sent.insert(quote.market, text.clone());
-                    text
-                })
-            })
-            .collect();
-        debug!(markets = quotes.len(), changed = messages.len(), "quotes read");
-        (!messages.is_empty()).then_some(messages)
+        let mut changed = 0;
+        for quote in &quotes {
+            let text = serde_json::to_string(quote).expect("a quote encodes");
+            if self.sent.get(&quote.market) != Some(&text) {
+                self.sent.insert(quote.market, text.clone());
+                self.held.insert(quote.market, text);
+                changed += 1;
+            }
+        }
+        debug!(markets = quotes.len(), changed, "quotes read");
     }
 }
 
@@ -275,5 +296,7 @@ async fn in_flight(read: &mut Option<oneshot::Receiver<Reply>>) -> Result<Reply,
 mod api_tests;
 #[cfg(test)]
 mod bench;
+#[cfg(test)]
+mod ladder_tests;
 #[cfg(test)]
 mod tests;
