@@ -170,7 +170,8 @@ signed() {
   expires_at="$(python3 -c 'import time; print(int(time.time() * 1000) + 60000)')"
   SIGNER_KEY="$trader_key" "$access_signer" 31337 "$vault" "$nonce" "$expires_at" "$1" "$2"
 }
-# Posts `$3` to path `$2` behind forwarder port `$1`, claiming to be the US address in a forwarding header.
+# Posts `$3` to path `$2` behind forwarder port `$1`. The forwarding headers claim loopback and an
+# allowed address; only the address in the proxy's header counts.
 post_via() {
   curl --max-time 10 -skf "$(via "$1")$2" -H 'content-type: application/json' \
     -H 'x-forwarded-for: 127.0.0.1' -H 'forwarded: for=203.0.113.7' -d "$3"

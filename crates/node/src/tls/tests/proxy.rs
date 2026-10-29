@@ -9,6 +9,7 @@ use tokio::time::sleep;
 
 use crate::config::ProxyProtocolSection;
 use crate::limits::limit_client;
+use crate::tls::proxy::client_behind;
 use crate::tls::tests::acme::Unverified;
 
 /// The proxy: the loopback every test connects from.
@@ -133,7 +134,7 @@ async fn connection_caps_and_rates_count_each_client_the_header_names() {
     assert!(other.is_ok(), "the proxy's own address is not the client");
     drop((held, other));
 
-    // Three connections of a client in the hour: one was refused above (counted), one held.
+    // A fresh node: a client's third connection in the hour is over its rate.
     let mut api = behind_proxy();
     api.per_ip_connections = rate(1, 2);
     let node = TestNode::start(api, V4).await;
@@ -154,12 +155,9 @@ async fn a_trusted_peer_without_a_valid_header_is_closed() {
     };
     let mut too_long = header("203.0.113.7:1");
     too_long[14..16].copy_from_slice(&2000u16.to_be_bytes());
-    let mut truncated = header("203.0.113.7:1");
-    truncated.truncate(20);
-    let cases: [(&str, Vec<u8>); 8] = [
+    let cases: [(&str, Vec<u8>); 7] = [
         ("no header at all", Vec::new()),
         ("a version 1 header", b"PROXY TCP4 203.0.113.7 192.0.2.1 5555 443\r\n".to_vec()),
-        ("a header cut short", truncated),
         ("a header over the read cap", too_long),
         ("a LOCAL header", no_client(0x11, 0x00)),
         ("an unspecified address family", no_client(0x01, 0x01)),
@@ -171,6 +169,42 @@ async fn a_trusted_peer_without_a_valid_header_is_closed() {
         assert!(conn.is_err(), "{name}");
     }
     assert!(node.served_as("203.0.113.7:1").await, "a valid header is served meanwhile");
+}
+
+#[tokio::test]
+async fn a_header_the_proxy_cuts_short_closes_the_connection() {
+    let node = TestNode::start(behind_proxy(), V4).await;
+    let mut tcp = TcpStream::connect((V4, node.port)).await.unwrap();
+    tcp.write_all(&header("203.0.113.7:1")[..20]).await.unwrap();
+    tcp.shutdown().await.unwrap();
+    let closed = timeout(Duration::from_secs(5), tcp.read(&mut [0u8; 1])).await.expect("closed, not held open");
+    assert!(matches!(closed, Ok(0) | Err(_)));
+    assert!(node.served_as("203.0.113.7:1").await);
+}
+
+#[tokio::test]
+async fn only_an_unusable_header_raises_the_alert() {
+    let local = |client: &str| {
+        let mut bytes = header(client);
+        bytes[12] = 0x20;
+        bytes
+    };
+    let cases: [(&str, Vec<u8>, Option<&str>, bool); 6] = [
+        ("a valid header", header("203.0.113.7:5555"), Some("203.0.113.7:5555"), false),
+        ("a LOCAL header", local("203.0.113.7:5555"), None, false),
+        ("no bytes", Vec::new(), None, true),
+        ("the signature alone", header("203.0.113.7:1")[..12].to_vec(), None, true),
+        ("a header cut short", header("203.0.113.7:1")[..20].to_vec(), None, true),
+        ("a TLS hello", vec![0x16, 3, 1, 0, 200, 1, 0, 0, 196, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0], None, true),
+    ];
+    for (name, mut bytes, client, alerts) in cases {
+        let alert = ThrottledAlert::new("test", "test");
+        let proxy: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let got = client_behind(&mut bytes.as_slice(), proxy, &alert).await;
+        assert_eq!(got, client.map(|c| c.parse().unwrap()), "{name}");
+        assert_eq!(!alert.due(Instant::now()), alerts, "{name}");
+        bytes.clear();
+    }
 }
 
 #[tokio::test]

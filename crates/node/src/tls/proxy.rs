@@ -31,7 +31,7 @@ pub(super) async fn client_behind(
             None
         }
         Ok(Some(client)) => {
-            debug!(%proxy, %client, "client address from the PROXY protocol header");
+            debug!(%proxy, "client address from the PROXY protocol header");
             Some(client)
         }
         Err(e) => {

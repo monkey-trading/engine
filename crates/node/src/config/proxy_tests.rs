@@ -45,6 +45,12 @@ fn a_range_that_is_not_one_fails_to_parse() {
 }
 
 #[test]
+fn a_range_in_ipv4_mapped_form_is_refused_since_no_peer_could_match_it() {
+    let err = with_proxy(r#"["::ffff:198.51.100.0/120"]"#).unwrap().validate().unwrap_err().to_string();
+    assert!(err.contains("IPv4-mapped"), "{err}");
+}
+
+#[test]
 fn a_section_that_trusts_no_proxy_or_every_address_is_refused() {
     let err = with_proxy("[]").unwrap().validate().unwrap_err().to_string();
     assert!(err.contains("api.proxy_protocol.trusted must list at least one range"), "{err}");
@@ -56,9 +62,16 @@ fn a_section_that_trusts_no_proxy_or_every_address_is_refused() {
 
 #[test]
 fn a_production_build_refuses_a_loopback_or_wide_range_but_a_dev_build_takes_them() {
-    for unsafe_range in
-        [r#"["127.0.0.0/8"]"#, r#"["127.0.0.1/32"]"#, r#"["::1/128"]"#, r#"["0.0.0.0/7"]"#, r#"["2001::/16"]"#]
-    {
+    for unsafe_range in [
+        r#"["127.0.0.0/8"]"#,
+        r#"["127.0.0.1/32"]"#,
+        r#"["127.0.0.2/32"]"#,
+        r#"["127.0.1.0/24"]"#,
+        r#"["127.255.255.255/32"]"#,
+        r#"["::1/128"]"#,
+        r#"["0.0.0.0/7"]"#,
+        r#"["2001::/16"]"#,
+    ] {
         let cfg = with_proxy(unsafe_range).unwrap();
         cfg.validate().unwrap();
         cfg.api.refuse_unsafe_proxy(false).unwrap();

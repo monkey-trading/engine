@@ -1003,8 +1003,10 @@ Warning alert except for a LOCAL header, the proxy's own check. A header from an
 read: the bytes go to the TLS handshake, which fails, so it is closed too. Until its header arrives a
 proxy connection counts against the total connection cap only. A production build refuses a trusted
 range that holds a loopback address or is wider than /8 (IPv4) or /32 (IPv6). The host controls the
-network, so a malicious host can still present any address as the proxy's. Absent, no connection may
-carry a header.
+network, so a malicious host can still present any address as the proxy's. The header is
+unauthenticated: list only addresses that reach the node solely through the operator's own proxy,
+not a shared provider's egress range its other customers can point at the node. Absent, no
+connection may carry a header.
 
 `api.allowed_origins` lists the browser origins (`scheme://host[:port]`, exact; no `*`, path, or
 duplicate; `https` only in a production build) that may call the API. It is empty by default, which
@@ -1548,8 +1550,9 @@ certificate comes within 7 days of expiry.
 
 Before the first production certificate:
 
-- Point the domain at the host, or at a pass-through proxy that never decrypts (#300), and forward
-  port 443 unmodified at layer 4 to `node.listen`: the CA validates by connecting to port 443, and
+- Point the domain at the host, or at a pass-through proxy that never decrypts, which sends a PROXY
+  protocol v2 header and is listed under `[api.proxy_protocol]` (see the API limits above), and
+  forward port 443 unmodified at layer 4 to `node.listen`: the CA validates by connecting to port 443, and
   TLS terminates in the enclave.
 - Publish a CAA record that allows only the chosen CA, and only TLS-ALPN-01, such as
   `api.example.com. CAA 0 issue "letsencrypt.org; validationmethods=tls-alpn-01"`. The CAA record

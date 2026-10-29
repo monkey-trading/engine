@@ -39,9 +39,9 @@ hyper = { version = "1", features = ["client", "http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 # ACME (RFC 8555) for the API's public certificate, on ring and the node's own HTTP client, so it
 # brings no second crypto backend and never reads the host's trust store.
+instant-acme = { version = "0.8.5", default-features = false, features = ["ring"] }
 # Address ranges for the PROXY protocol's trusted proxies; already in the tree through reqwest.
 ipnet = { version = "2.12", features = ["serde"] }
-instant-acme = { version = "0.8.5", default-features = false, features = ["ring"] }
 jmt = { version = "=0.12.0", default-features = false, features = ["std", "sha2"] }
 k256 = { version = "0.14.0", default-features = false, features = ["ecdsa"] }
 nix = { version = "0.31.3", default-features = false, features = ["sched"] }
