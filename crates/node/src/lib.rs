@@ -1,6 +1,7 @@
 //! The TEE-hosted node around `engine-core`: the sequencer and public log, log replay, the client
 //! API with its TLS and limits, enclave attestation, trusted time, custody, price feeds, and the
-//! operator's metrics and alert routing; and `engine admin`, the operator's client.
+//! operator's metrics and alert routing; `engine admin`, the operator's client; and `engine ct-watch`,
+//! the Certificate Transparency watcher.
 
 mod access;
 pub mod admin;
@@ -13,6 +14,7 @@ pub use checkpoints::{ApprovalId, ApprovalStatus, LifecycleEvidence};
 mod clock;
 pub mod config;
 pub use config::NodeConfig;
+pub mod ct_watch;
 mod custody;
 mod feeds;
 mod history;

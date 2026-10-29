@@ -26,6 +26,9 @@ use sha3::{Digest, Keccak256};
 /// tag.
 const BUNDLE_TAG: &[u8] = b"engine.attestation.v1";
 
+/// What a mock quote starts with, before the report data.
+pub(crate) const MOCK_QUOTE_MARKER: &[u8] = b"MOCK-ATTESTATION-NOT-A-TEE:";
+
 /// A source of hardware attestation quotes over caller-chosen report data.
 pub trait Attestor: Send + Sync {
     /// A quote binding `report_data`, and the provider that produced it.
@@ -81,7 +84,7 @@ impl Attestor for MockAttestor {
     /// Error cases:
     /// - none; the mock always produces a quote
     fn attest(&self, report_data: [u8; 64]) -> anyhow::Result<(String, Vec<u8>)> {
-        let mut quote = b"MOCK-ATTESTATION-NOT-A-TEE:".to_vec();
+        let mut quote = MOCK_QUOTE_MARKER.to_vec();
         quote.extend_from_slice(&report_data);
         Ok(("mock".into(), quote))
     }

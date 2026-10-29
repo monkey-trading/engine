@@ -73,6 +73,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   `OPERATOR_KEY`, and submit it over TLS pinned to the node's attested key; the node holds only the
   operator's public key, recorded in the log, and refuses a request before the log unless it carries
   the operator's signature, next nonce, and an unexpired expiry
+- `engine ct-watch`, a separate process outside the enclave that follows Certificate Transparency
+  logs and raises a Critical `unattested_certificate` alert for any certificate for the API's domain
+  whose key no verified attestation of the node names (`config/ct-watch.toml`)
 - Proofs of an account's balance and positions, and of its positions' marks, against the last
   checkpoint's state root, from protocol `V9`
 - MONKEY emissions from protocol `V19`: `engine admin init-emissions` records the schedule once,
@@ -114,7 +117,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 ## Repository Structure
 
 - `src/main.rs` — the `engine` binary: `run`, `replay`, `verify-attestation`, `verify-response`,
-  `verify-frames`, and `admin`
+  `verify-frames`, `admin`, and `ct-watch`
 - `src/lib.rs` — module index
 - `src/admin/mod.rs` — `engine admin`: the operator key, the commands it signs, and submission
 - `src/admin/benchmark_feed.rs` — the separate signed publisher worker and rollover scheduling
@@ -123,6 +126,14 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   schedule notifications (`schedule.rs`), and tests
 - `src/admin/tls.rs` — the TLS connection to a node, pinned to its attested key
 - `src/admin/tests.rs` — `engine admin` tests: key sources, commands, signing, and pins
+- `src/ct_watch/mod.rs` — `engine ct-watch`: the poll loop over the node's attestation and the logs
+- `src/ct_watch/config.rs` — the watcher's config: domain, node, logs, and alert routing
+- `src/ct_watch/attestation.rs` — polling `/v1/attestation` and verifying it, or a mock one for dev
+- `src/ct_watch/log_client.rs` — the bounded RFC 6962 client: signed tree heads and entries
+- `src/ct_watch/leaf.rs` — reading a log leaf's certificate or precertificate, and name matching
+- `src/ct_watch/tracker.rs` — attested keys, log positions, grace waits, and the alerts they raise
+- `src/ct_watch/state.rs` — the watcher's durable, locked state file
+- `src/ct_watch/tests/` — leaf, log client, tracker, state, config, and loopback poll-flow tests
 - `src/node/mod.rs` — startup, task supervision, and shutdown
 - `src/node/tests.rs` — startup, history recovery, and incomplete-genesis tests
 - `src/node/preflight/unscanned.rs` — unprovable prelaunch anchors refuse writable startup before changing log or history
@@ -570,6 +581,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 ```bash
 # Run a local node with mock TEE, custody, and feeds (API on https://127.0.0.1:8080)
 cargo run -p engine-node -- run --config config/dev.toml
+
+# Watch Certificate Transparency logs for a certificate for the API's domain whose key no verified
+# attestation names (outside the enclave; see config/ct-watch.toml)
+cargo run -p engine-node -- ct-watch --config config/ct-watch.toml
 
 # Call it pinned to the attested TLS key: check that the served bundle hashes to report data bytes
 # 0..32 and the rest is zero, then pin bundle bytes 73..105, the SHA-256 of the certificate's DER
@@ -1557,6 +1572,9 @@ cargo test -p engine-node --features production --lib production_build
 ./scripts/dev-rwa-feeds.sh
 # Dev scenario: a signed dividend and four-for-one split through the TLS API, restart and replay
 ./scripts/dev-corporate-actions.sh
+# Dev scenario: the Certificate Transparency watcher against a mock node and a loopback stand-in
+# log (needs python3, OpenSSL 3, curl and jq)
+./scripts/dev-ct-watch.sh
 ```
 
 ## Authors

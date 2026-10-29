@@ -9,6 +9,7 @@ use clap::{Args, Parser, Subcommand};
 use engine_core::auth::{ClientAuth, Operator};
 use engine_core::types::AccountId;
 use engine_node::admin::{self, AdminArgs, HexKey, KeyEnv};
+use engine_node::ct_watch::{self, CtWatchArgs};
 use engine_node::log::CheckpointDomain;
 use engine_node::{
     ExpectedSigner, KDS_BASE_URL, NodeConfig, SentRequest, VerifiedAttestation, VerifyOptions, ensure_signers_verified,
@@ -122,6 +123,10 @@ enum Cmd {
     /// `--key-file`, or the `OPERATOR_KEY_FILE` or `OPERATOR_KEY` environment variable, never the
     /// command line.
     Admin(AdminArgs),
+    /// Watch Certificate Transparency logs for a certificate for the API's domain whose key no
+    /// verified attestation of the node names, and alert on it. Run it outside the enclave, on a
+    /// host independent of the node's.
+    CtWatch(CtWatchArgs),
 }
 
 /// Who must have signed an answer, for which deployment, and under which challenge.
@@ -157,6 +162,7 @@ struct Cli {
 /// - an attestation does not verify against its release
 /// - a saved response or stream connection does not verify against the attested signer
 /// - an admin command cannot be signed or submitted, or the engine rejects it
+/// - the CT watcher cannot start, or stops with an error
 fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
         Cmd::Run { config } => {
@@ -266,6 +272,9 @@ fn main() -> anyhow::Result<()> {
             };
             tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(admin::run(args, env)).map(drop)
         }
+        Cmd::CtWatch(args) => {
+            tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(ct_watch::run(args))
+        }
     }
 }
 
@@ -356,5 +365,13 @@ mod replay_cli_tests {
         ])
         .unwrap();
         assert!(matches!(cli.cmd, Cmd::Replay { custody_config: None, chain_id: Some(31337), signer: Some(_), .. }));
+    }
+
+    #[test]
+    fn ct_watch_needs_a_config_and_takes_allow_mock_as_a_flag() {
+        assert!(Cli::try_parse_from(["engine", "ct-watch"]).is_err());
+        let cli = Cli::try_parse_from(["engine", "ct-watch", "--config", "watch.toml"]).unwrap();
+        assert!(matches!(cli.cmd, Cmd::CtWatch(_)));
+        assert!(Cli::try_parse_from(["engine", "ct-watch", "-c", "watch.toml", "--allow-mock"]).is_ok());
     }
 }

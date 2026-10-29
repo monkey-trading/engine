@@ -130,6 +130,11 @@ SEV-SNP hardware is being validated in [#108](https://github.com/0xjevons/monkey
 and a verifier for its quotes is being built in
 [#27](https://github.com/0xjevons/monkeytrading/issues/27).
 
+`engine ct-watch` runs outside the enclave and watches Certificate Transparency logs for a
+certificate for the API's domain whose key no verified attestation of the node names, and alerts
+when one appears. It checks the logs' signed tree heads but not their consistency, so it sees what
+the logs it follows show it.
+
 ## Running it locally
 
 You need the latest stable Rust on Linux or macOS, and `jq` and `xxd` for the API examples. Start

@@ -207,7 +207,10 @@ Databento's live gateway, one of the sources for futures and US share prices, of
 host can alter its quotes in flight; the divergence bound limits how far that moves a market priced
 from it and one TLS source, and beyond that the market has no price. Before a futures roll the host
 can move the two contracts' prices apart, so the roll's gap shifts by up to the full divergence
-bound and the market's index keeps that shift after the roll. A
+bound and the market's index keeps that shift after the roll. The
+Certificate Transparency watcher (`engine ct-watch`) checks tree head signatures but not consistency
+or inclusion proofs, so a log that shows different views to different clients can hide a certificate
+from it, and it sees only the logs it follows. A
 gap that this policy, an open issue, or a `TODO` in the code already records is known, so a report
 of it is not a new finding, though its details stay private under the disclosure timeline above; a
 way around a check that exists is a new finding.

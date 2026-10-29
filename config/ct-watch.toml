@@ -1,0 +1,78 @@
+# `engine ct-watch --config config/ct-watch.toml`: watches Certificate Transparency logs for a
+# certificate for the API's domain whose key no verified attestation of the node names, and alerts
+# on it. It runs outside the enclave, on a host independent of the node's, and holds no key of the
+# node's. Every key below is required except those shown commented out or marked with a default;
+# the minimum to say is `domain`, `[node]` (the URL and the release manifest it verifies against)
+# and `[[logs]]`. Every section rejects unknown keys.
+#
+# A node release changes its launch measurement and TLS key. Switch `node.release` to the new
+# release's manifest right after the node upgrade: until then the new attestation does not verify
+# (`attestation_unverified`), and past `grace` its certificate would raise `unattested_certificate`.
+# Without `[alerts.critical]` the watcher refuses to start (only a mock run may log alone).
+#
+# Replace the placeholders: this file lists no real log. Follow every log the certificate authority
+# submits its certificates to, since a certificate only a followed log holds can be seen. Take each
+# log's URL and public key from the operator's published log list.
+#
+# Consistency and inclusion proofs are not checked: a log that shows different views to different
+# clients is out of scope. A log is read from its current end the first time, or from `start_index`.
+
+# The API's domain, lowercase ASCII. A certificate naming it, or a wildcard that covers it, is checked.
+domain = "api.example.com"
+# The watcher's durable state: attested keys, log positions and open findings. Keep it across
+# restarts; a second watcher on the same file is refused.
+state_file = "data/ct-watch/state.json"
+# How often the node's attestation is fetched and verified: at most half of `grace`. Each
+# verification asks the vendor's key-distribution service for the quote's chain, so keep it modest.
+attestation_interval = "5m"
+# How often each log is polled for new entries.
+log_interval = "1m"
+# A certificate for an unknown key waits this long (counted from its log time) for an attestation
+# that names the key before it alerts, because a restarted node gets its certificate before the
+# watcher polls its new attestation. Default "10m".
+grace = "10m"
+# A log not read up to its signed tree head for this long raises `ct_log_unreachable`, and so does
+# a log whose newest signed tree head is older than this. Default "1h".
+log_stale_after = "1h"
+
+[node]
+# The node's API. Its attestation is verified; the connection is not trusted.
+url = "https://api.example.com"
+# The release manifest the attestation is verified against (see `engine verify-attestation`).
+release = "release.toml"
+# The vendor processor name for the quote's certificate chain, such as Milan or Genoa.
+processor = "Milan"
+# kds = "https://kdsintf.amd.com"   # the vendor key-distribution service; this is the default
+# root = "extra-root.pem"           # an extra root to pin the quote's chain, for test chains only
+
+[[logs]]
+# A label for alerts and state.
+name = "example-log"
+# The log's base URL: its /ct/v1/ endpoints are beneath it.
+url = "https://ct.example.com/log"
+# The log's public key: base64 of its DER SubjectPublicKeyInfo, ECDSA P-256 or RSA. This is a
+# placeholder key; no log signs with it.
+public_key = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAETZofi4oxnTlX22AiRpEDdo8MYN/u6k65RVw/BfwuCB3JnUyiRW4WLQBruVmhWTUGYVaBTs9haePLjzSrw7sxOg=="
+# start_index = 0                   # without it, the first read starts at the log's current end
+
+[logging]
+level = "info"
+
+# The operator listener for Prometheus (`GET /metrics`); keep it off any public interface. Scrape it
+# in the node's job ("engine") as another instance: ops/prometheus/engine-node-rules.yml then pages
+# when it stops answering or when alert pages fail, as for the node.
+[metrics]
+listen = "127.0.0.1:9465"
+
+# Alerts use the node's routing: Critical and Warning pages are posted to the webhook named by an
+# environment variable (the URL is a credential), through a bounded durable outbox.
+[alerts]
+episode_quiet = "1h"
+[alerts.outbox]
+dir = "data/ct-watch/alerts"
+max_pages = 1000
+max_bytes = 1048576
+max_age = "24h"
+# Required outside --allow-mock: the watcher's only output is a Critical page.
+[alerts.critical]
+url_env = "CT_WATCH_ALERTS_CRITICAL_URL"

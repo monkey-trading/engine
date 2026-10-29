@@ -54,13 +54,24 @@ impl Routes {
     /// Error cases:
     /// - a configured route's variable is unset, or does not hold an acceptable URL
     pub fn from_config(cfg: &AlertsSection, env: impl Fn(&str) -> Option<String>) -> anyhow::Result<Self> {
+        Self::from_routes(&cfg.critical, &cfg.warning, env)
+    }
+
+    /// Reads the Critical and Warning routes' URLs as `from_config` does.
+    /// Error cases:
+    /// - a configured route's variable is unset, or does not hold an acceptable URL
+    pub fn from_routes(
+        critical: &Option<WebhookRoute>,
+        warning: &Option<WebhookRoute>,
+        env: impl Fn(&str) -> Option<String>,
+    ) -> anyhow::Result<Self> {
         let url = |route: &Option<WebhookRoute>, key: &str| {
             route
                 .as_ref()
                 .map(|route| WebhookUrl::from_env(&route.url_env, &env).with_context(|| format!("alerts.{key}")))
                 .transpose()
         };
-        Ok(Self { critical: url(&cfg.critical, "critical")?, warning: url(&cfg.warning, "warning")? })
+        Ok(Self { critical: url(critical, "critical")?, warning: url(warning, "warning")? })
     }
 
     /// Whether `severity` has a webhook.

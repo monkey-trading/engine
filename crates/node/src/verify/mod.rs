@@ -21,6 +21,7 @@ pub use answers::{
 };
 mod chain;
 use self::chain::{Collateral, QuoteChain, Roots};
+pub(crate) use chain::CollateralUnavailable;
 pub use chain::KDS_BASE_URL;
 mod release;
 pub use release::ReleaseManifest;
@@ -49,6 +50,8 @@ pub struct VerifiedAttestation {
     pub enclave_address: AccountId,
     /// The published configuration the enclave's config file hash matches.
     pub config_name: String,
+    /// SHA-256 of the DER SubjectPublicKeyInfo of the API's TLS key, which the report data binds.
+    pub tls_public_key_sha256: [u8; 32],
 }
 
 /// Loads the attestation JSON `/v1/attestation` serves at `path`.
@@ -101,29 +104,8 @@ pub async fn verify_attestation(
     chain::check_revocation(&crl, &chain)?;
     report.verify_signature(&chain.vcek_public_key()?)?;
 
-    let bundle = crate::tee::AttestationBundle::decode(&unhex(&attestation.bundle)?)
-        .context("the served bundle is not an attestation bundle")?;
-    let report_data = unhex(&attestation.report_data)?;
-    ensure!(report_data.len() == 64, "the served report data is not 64 bytes");
-    ensure!(
-        report_data[..32] == sha2::Sha256::digest(bundle.encode())[..],
-        "the served report data is not the served bundle's SHA-256"
-    );
-    ensure!(report_data[32..] == [0u8; 32], "the served report data's reserved half is not zero");
+    let (bundle, report_data) = served_bundle(attestation)?;
     ensure!(report.report_data[..] == report_data[..], "the quote's report data differs from the served one");
-    let expected = |bytes: &[u8]| format!("0x{}", hex::encode(bytes));
-    ensure!(
-        attestation.enclave_address == expected(&bundle.enclave_address),
-        "the served enclave address differs from the bundle's"
-    );
-    ensure!(
-        attestation.config_sha256 == expected(&bundle.config_sha256),
-        "the served config hash differs from the bundle's"
-    );
-    ensure!(
-        attestation.tls_public_key_sha256 == expected(&bundle.tls_public_key_sha256),
-        "the served TLS key hash differs from the bundle's"
-    );
 
     ensure!(
         report.measurement == release.launch_digest,
@@ -150,7 +132,40 @@ pub async fn verify_attestation(
         release_name: release.name.clone(),
         enclave_address: AccountId(bundle.enclave_address),
         config_name,
+        tls_public_key_sha256: bundle.tls_public_key_sha256,
     })
+}
+
+/// The bundle `attestation` serves and the report data that binds it, after checking that the
+/// report data is the bundle's SHA-256 and that the served fields are the bundle's. The caller
+/// still checks that a quote vouches for the report data.
+/// Error cases:
+/// - the bundle does not decode, the report data is not the bundle's hash padded with zeros, or a
+///   served field differs from the bundle's
+pub(crate) fn served_bundle(attestation: &Attestation) -> anyhow::Result<(crate::tee::AttestationBundle, Vec<u8>)> {
+    let bundle = crate::tee::AttestationBundle::decode(&unhex(&attestation.bundle)?)
+        .context("the served bundle is not an attestation bundle")?;
+    let report_data = unhex(&attestation.report_data)?;
+    ensure!(report_data.len() == 64, "the served report data is not 64 bytes");
+    ensure!(
+        report_data[..32] == sha2::Sha256::digest(bundle.encode())[..],
+        "the served report data is not the served bundle's SHA-256"
+    );
+    ensure!(report_data[32..] == [0u8; 32], "the served report data's reserved half is not zero");
+    let expected = |bytes: &[u8]| format!("0x{}", hex::encode(bytes));
+    ensure!(
+        attestation.enclave_address == expected(&bundle.enclave_address),
+        "the served enclave address differs from the bundle's"
+    );
+    ensure!(
+        attestation.config_sha256 == expected(&bundle.config_sha256),
+        "the served config hash differs from the bundle's"
+    );
+    ensure!(
+        attestation.tls_public_key_sha256 == expected(&bundle.tls_public_key_sha256),
+        "the served TLS key hash differs from the bundle's"
+    );
+    Ok((bundle, report_data))
 }
 
 /// Reconciles an explicitly pinned signer with a verified attestation for replay: the verified

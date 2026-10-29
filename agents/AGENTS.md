@@ -80,7 +80,11 @@ an index: load only the rule whose hint matches the current action.
   environment variables the config names) and a mock, Prometheus metrics on an operator
   listener, and alert routing to webhooks with a bounded durable outbox outside the public log. Its
   `production` cargo feature refuses mock TEE, custody, and feed providers at config load; release
-  images build with it.
+  images build with it. `engine ct-watch` (`ct_watch/`) is a separate process outside the enclave,
+  holding no key of the node's: it verifies the node's attestation, follows RFC 6962 logs (bounded
+  reads, tree head signatures checked, no consistency proofs), and raises `unattested_certificate`
+  for a certificate for the API domain whose key no verified attestation names, through the same
+  alert routing.
   `sequencer/alerts/` tests benchmark retirement, scalar fallback, and webhook recovery;
   `sequencer/legacy/tests/activated.rs` checks custody recovery, approval funding prefixes and restart;
   `api/benchmark_tests/retention.rs` checks failed publisher refreshes across restart/calendar changes;
@@ -124,6 +128,8 @@ an index: load only the rule whose hint matches the current action.
   `benchmark-publishers.toml` supplies the optional benchmark section with official publisher endpoints;
   a separate `engine admin ... sync-benchmarks --watch` worker signs daily snapshots and releases
   synchronization before startup catch-up and after trusted-time halts spanning unpaid rollovers.
+  `ct-watch.toml` is the Certificate Transparency watcher's config, documenting what it needs: the
+  domain, the node and its release manifest, the logs to follow, and alert routing.
   `test-keys.toml` lists the keys whose private keys the repo publishes for development (the dev
   configs' operator key, explicit published mock enclave signer, shared access-source test
   authority, and Anvil's default accounts); a node whose TEE is not the mock refuses them
@@ -155,6 +161,9 @@ an index: load only the rule whose hint matches the current action.
   `dev-monkey-emissions.sh`, the MONKEY emissions scenario on Anvil;
   `dev-monkey-staking.sh`, the MONKEY staking and USDC distributions scenario on Anvil;
   `dev-snapshot-restart.sh`, the checkpoint snapshot restart and fallback scenario;
+  `dev-ct-watch.sh`, the Certificate Transparency watcher against a mock node and a loopback
+  stand-in log (`dev-ct-log.py`), a webhook stand-in, a foreign-key certificate, a restart
+  rotation, and a log outage;
   `dev-deposit-finality.sh`, the sequencer confirmation and Ethereum finality scenario on the
   vault's Anvil fixture; `dev-rwa-feeds.sh`, the RWA price feeds dev scenario against local
   stand-ins for the market-data vendors; `dev-signed-api.sh`, the signed API answers scenario:
@@ -178,13 +187,13 @@ an index: load only the rule whose hint matches the current action.
   test, the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
   deposit finality scenarios, the MONKEY staking dev scenario, the signed withdrawal and FIFO dev
   scenario, the metrics and alert routing dev scenario, the alert outbox kill/restart scenario,
-  the browser-origin scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the
+  the browser-origin scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the
   signed API answers dev scenario, the review-delta helper's test,
   and the enclave image (`image` checks its download retries, builds it twice, and boots it under
   QEMU, `image-compare` fails if the builds differ), on every push to `main` and every PR.
   deposit finality scenarios, the signed withdrawal and FIFO dev scenario, the API and
   direct-vault access enforcement dev scenario, the metrics and alert
-  routing dev scenario, the alert outbox kill/restart scenario, the browser-origin scenario, the snapshot restart scenario, the
+  routing dev scenario, the alert outbox kill/restart scenario, the browser-origin scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the
   RWA price feeds dev scenario, the signed API answers dev scenario, the review-delta helper's
   test, and the enclave image (`image`
   checks its download retries, builds it twice, and boots it under QEMU, `image-compare` fails if
@@ -270,6 +279,10 @@ Run from the repo root:
   `curl`, and `jq`; uses loopback endpoints and private temporary data)
 - Browser-origin dev scenario: `./scripts/dev-browser-origin.sh` (needs `curl` and `jq`; runs a dev node
   with `api.allowed_origins` on private temporary data and public Roughtime servers)
+- Certificate Transparency watcher: `cargo run -p engine-node -- ct-watch --config
+  config/ct-watch.toml` (outside the enclave; `--allow-mock` accepts a mock node and loopback HTTP,
+  dev only, refused in a `production` build); its dev scenario: `./scripts/dev-ct-watch.sh` (needs
+  `python3`, OpenSSL 3, `curl`, and `jq`; loopback stand-ins only)
 - Snapshot restart dev scenario: `./scripts/dev-snapshot-restart.sh` (needs `python3`, `curl`, and
   `jq`; runs a dev node with `[snapshots]` on private temporary data and public Roughtime servers)
 - Deposit finality dev scenario: `./scripts/dev-deposit-finality.sh` (same Anvil/Foundry requirements
