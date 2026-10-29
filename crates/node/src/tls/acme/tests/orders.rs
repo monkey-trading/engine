@@ -143,7 +143,7 @@ async fn a_late_certificate_is_counted_from_its_finalize_and_refused_once_its_li
     tokio::time::advance(89 * DAY).await;
     let issued = task.issue(&mut progress).await.unwrap();
     assert!(issued.finalized.elapsed() >= 89 * DAY, "counted from the first attempt's finalize");
-    let mut schedule = Schedule::start(DOMAIN.into(), None);
+    let mut schedule = Schedule::start(DOMAIN.into(), None, Gauge::default());
     assert_eq!(schedule.issued(issued.lifetime, issued.finalized, Instant::now()), Duration::ZERO);
 
     // Downloaded after its 90 days: refused, and ordered anew.
@@ -173,6 +173,7 @@ fn scripted() -> (CertificateTask<FakeCa>, FakeCa, [u8; 32]) {
         http: ca.clone(),
         key: tls.key,
         not_after: FloatGauge::default(),
+        pending: Gauge::default(),
     };
     (task, ca, tls.public_key_sha256)
 }

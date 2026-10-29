@@ -35,8 +35,7 @@ use crate::metrics::Metrics;
 use crate::sequencer::{ReplayedLog, Request, Sequencer, SequencerConfig, genesis_commands};
 use crate::tee::{AttestationBundle, Attestor, ConfigfsTsm, EnclaveKey, MockAttestor, attest_bundle};
 use crate::telemetry::Telemetry;
-use crate::tls::acme::CertificateTask;
-use crate::tls::{TlsIdentity, serve};
+use crate::tls::{TlsIdentity, acme::CertificateTask, serve};
 use crate::verify::Relay;
 use crate::{metrics, monitor, trusted_time};
 use preflight::{authorize, emission_preflight};
@@ -296,7 +295,7 @@ async fn serve_node(
     let metrics_listener =
         TcpListener::bind(metrics_listen).await.with_context(|| format!("binding {metrics_listen}"))?;
     info!(listen = %metrics_listen, "metrics up");
-    let not_after = metrics.tls_certificate_not_after.clone();
+    let certificates = CertificateTask::configured(&cfg.api, tls.key, &metrics)?;
     let metrics_app = metrics::router(metrics);
     tasks.spawn(async move { ("metrics", axum::serve(metrics_listener, metrics_app).await.context("metrics server")) });
 
@@ -325,8 +324,7 @@ async fn serve_node(
     });
     info!(listen = %cfg.node.listen, "api up over TLS");
     // After the bind, so the CA's validation connections find the listener.
-    if let Some(acme) = cfg.api.tls.as_ref().map(|tls| &tls.acme) {
-        let certificates = CertificateTask::new(acme, tls.key, not_after)?;
+    if let Some(certificates) = certificates {
         tasks.spawn(async move { ("certificate", certificates.run().await) });
     }
     let (api, retained) = (cfg.api, limits.clone());

@@ -81,10 +81,10 @@ fn the_certificate_request_is_for_the_attested_key_and_the_domain_alone() {
 async fn renewal_waits_until_a_third_of_the_life_remains_unless_renew_before_says_otherwise() {
     let (logs, _guard) = Logs::capture();
     let now = Instant::now();
-    let mut schedule = Schedule::start(DOMAIN.into(), None);
+    let mut schedule = Schedule::start(DOMAIN.into(), None, Gauge::default());
     assert_eq!(schedule.issued(90 * DAY, now, now), 60 * DAY);
 
-    let mut schedule = Schedule::start(DOMAIN.into(), Some(30 * DAY));
+    let mut schedule = Schedule::start(DOMAIN.into(), Some(30 * DAY), Gauge::default());
     assert_eq!(schedule.issued(6 * DAY, now, now), 4 * DAY, "a renew_before as long as the life falls back to a third");
     assert_eq!(logs.count("is not shorter than the certificate's life"), 1);
     assert_eq!(schedule.issued(90 * DAY, now, now), 60 * DAY);
@@ -98,19 +98,23 @@ async fn renewal_waits_until_a_third_of_the_life_remains_unless_renew_before_say
 async fn the_api_is_pending_until_the_first_certificate_and_retries_with_backoff() {
     let (logs, _guard) = Logs::capture();
     let now = Instant::now();
-    let mut schedule = Schedule::start(DOMAIN.into(), None);
+    let pending = Gauge::default();
+    let mut schedule = Schedule::start(DOMAIN.into(), None, pending.clone());
     assert_eq!(logs.warnings("certificate_pending"), 1, "raised before the first attempt");
+    assert_eq!(pending.get(), 1, "the operator's Prometheus sees it too");
 
     let retries: Vec<u64> = (0..8).map(|_| schedule.failed(&anyhow!("refused"), now).as_secs()).collect();
     assert_eq!(retries, [60, 120, 240, 480, 960, 1920, 3600, 3600]);
     assert_eq!(logs.warnings("certificate_pending"), 9);
     assert_eq!(logs.warnings("certificate_expiring"), 0);
     assert!(logs.count("domain=api.engine.test") >= 9, "the alert names the domain");
+    assert_eq!(pending.get(), 1);
 
     schedule.issued(90 * DAY, now, now);
     assert_eq!(logs.count("alert_resolved=\"certificate_pending\""), 1);
     schedule.issued(90 * DAY, now, now);
     assert_eq!(logs.count("alert_resolved=\"certificate_pending\""), 1, "resolved by the first certificate only");
+    assert_eq!(pending.get(), 0);
     assert_eq!(schedule.failed(&anyhow!("refused"), now).as_secs(), 60, "a certificate resets the backoff");
 }
 
@@ -118,7 +122,7 @@ async fn the_api_is_pending_until_the_first_certificate_and_retries_with_backoff
 async fn a_failed_renewal_alerts_once_fewer_than_14_days_remain() {
     let (logs, _guard) = Logs::capture();
     let arrived = Instant::now();
-    let mut schedule = Schedule::start(DOMAIN.into(), None);
+    let mut schedule = Schedule::start(DOMAIN.into(), None, Gauge::default());
     schedule.issued(90 * DAY, arrived, arrived);
 
     // 76 days in, exactly 14 days remain; a second later, 14 days less a second.

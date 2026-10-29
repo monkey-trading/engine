@@ -124,6 +124,7 @@ pub struct Metrics {
     pub alert_attempts_failed: Family<SeverityLabel, Counter>,
     pub alert_pages_pending: Family<SeverityLabel, Gauge>,
     pub tls_certificate_not_after: FloatGauge,
+    pub tls_certificate_pending: Gauge,
 }
 
 impl Metrics {
@@ -155,6 +156,7 @@ impl Metrics {
             alert_attempts_failed: Family::default(),
             alert_pages_pending: Family::default(),
             tls_certificate_not_after: FloatGauge::default(),
+            tls_certificate_pending: Gauge::default(),
         };
         let r = &mut metrics.registry;
         r.register(
@@ -240,6 +242,11 @@ impl Metrics {
             "tls_certificate_not_after_seconds",
             "Expiry, in Unix seconds, of the CA certificate the API serves; 0 while it serves only its self-signed one",
             metrics.tls_certificate_not_after.clone(),
+        );
+        r.register(
+            "tls_certificate_pending",
+            "1 while [api.tls.acme] is set and the CA has issued no certificate yet; 0 otherwise",
+            metrics.tls_certificate_pending.clone(),
         );
         let typed = ["order_rejected", "withdrawal_rejected", "deposit_rejected", "staking_rejected"];
         let rejections = typed

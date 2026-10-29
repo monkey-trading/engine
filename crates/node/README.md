@@ -1445,9 +1445,11 @@ another issuance; an account the CA no longer knows is registered again. Every r
 30-second deadline and every attempt a 10-minute one, and the CA is authenticated against the
 compiled-in Mozilla roots, so the host, which resolves its name and carries the connection, can
 delay or drop the exchange but not answer it without a certificate for the CA's name (validity is
-judged by the host's clock, a TODO in `src/tls/acme/http.rs`). `engine_tls_certificate_not_after_seconds` on the
-metrics listener holds the served CA certificate's expiry, 0 before the first, and
-`ops/prometheus/engine-node-rules.yml` pages when it stays 0 for 30 minutes or comes within 7 days.
+judged by the host's clock, a TODO in `src/tls/acme/http.rs`).
+`engine_tls_certificate_not_after_seconds` on the metrics listener holds the served CA
+certificate's expiry, 0 before the first, and `engine_tls_certificate_pending` is 1 until the first;
+`ops/prometheus/engine-node-rules.yml` pages when a node stays pending for 30 minutes or its
+certificate comes within 7 days of expiry.
 
 Before the first production certificate:
 

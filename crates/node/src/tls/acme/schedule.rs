@@ -7,6 +7,7 @@
 
 use std::time::Duration;
 
+use prometheus_client::metrics::gauge::Gauge;
 use tokio::time::Instant;
 use tracing::{info, warn};
 
@@ -24,17 +25,21 @@ pub(super) struct Schedule {
     /// When the served CA certificate's life is counted from, and how long it is valid for.
     served: Option<(Instant, Duration)>,
     failures: u32,
+    /// Mirrors `certificate_pending` for the operator's Prometheus: 1 until the first certificate.
+    pending: Gauge,
 }
 
 impl Schedule {
-    /// No CA certificate yet: raises `certificate_pending`, which the first issuance resolves.
-    pub(super) fn start(domain: String, renew_before: Option<Duration>) -> Self {
+    /// No CA certificate yet: raises `certificate_pending`, which the first issuance resolves, and
+    /// sets `pending`.
+    pub(super) fn start(domain: String, renew_before: Option<Duration>, pending: Gauge) -> Self {
         warn!(
             alert = "certificate_pending",
             domain = %domain,
             "serving the self-signed certificate until the CA issues one for the attested key"
         );
-        Self { domain, renew_before, served: None, failures: 0 }
+        pending.set(1);
+        Self { domain, renew_before, served: None, failures: 0, pending }
     }
 
     /// Records a certificate valid for `lifetime`, counted from `finalized`, installed at `now`,
@@ -55,6 +60,7 @@ impl Schedule {
             None => lifetime / 3,
         };
         if self.served.is_none() {
+            self.pending.set(0);
             info!(alert_resolved = "certificate_pending", domain = %self.domain, "the CA issued the first certificate");
         }
         // Also ends an episode an earlier process left open in the alert outbox.

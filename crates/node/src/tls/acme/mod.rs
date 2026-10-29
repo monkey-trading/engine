@@ -31,6 +31,7 @@ use instant_acme::{
     Account, AuthorizationStatus, ChallengeStatus, ChallengeType, HttpClient, Identifier, NewAccount, NewOrder, Order,
     OrderStatus, Problem, RetryPolicy,
 };
+use prometheus_client::metrics::gauge::Gauge;
 use rustls::pki_types::CertificateDer;
 use rustls::pki_types::pem::PemObject;
 use tokio::time::{Instant, sleep, timeout};
@@ -39,8 +40,8 @@ use x509_parser::certificate::X509Certificate;
 use x509_parser::extensions::GeneralName;
 use x509_parser::prelude::FromDer;
 
-use crate::config::AcmeSection;
-use crate::metrics::FloatGauge;
+use crate::config::ApiSection;
+use crate::metrics::{FloatGauge, Metrics};
 use crate::tls::TlsKey;
 use crate::tls::certificates::Answer;
 
@@ -70,6 +71,8 @@ pub struct CertificateTask<H = AcmeHttp> {
     key: TlsKey,
     /// `notAfter` of the served CA certificate, in Unix seconds; 0 before the first.
     not_after: FloatGauge,
+    /// 1 until the first CA certificate.
+    pending: Gauge,
 }
 
 /// What attempts carry over: the account, once registered, and the order not yet issued.
@@ -93,19 +96,23 @@ struct Issued {
 }
 
 impl CertificateTask {
-    /// The task for `cfg`, serving through `key`.
+    /// The task `api`'s `[api.tls.acme]` asks for, serving through `key` and exporting its gauges
+    /// to `metrics`; none without the section.
     /// Error cases:
     /// - the ACME HTTP client cannot be built (see `AcmeHttp::new`)
-    pub fn new(cfg: &AcmeSection, key: TlsKey, not_after: FloatGauge) -> anyhow::Result<Self> {
-        Ok(Self {
+    pub fn configured(api: &ApiSection, key: TlsKey, metrics: &Metrics) -> anyhow::Result<Option<Self>> {
+        let Some(tls) = &api.tls else { return Ok(None) };
+        let cfg = &tls.acme;
+        Ok(Some(Self {
             domain: cfg.domain.clone(),
             directory_url: cfg.directory_url.clone(),
             contact: cfg.contact.clone(),
             renew_before: cfg.renew_before,
             http: AcmeHttp::new(cfg.test_ca.as_ref())?,
             key,
-            not_after,
-        })
+            not_after: metrics.tls_certificate_not_after.clone(),
+            pending: metrics.tls_certificate_pending.clone(),
+        }))
     }
 }
 
@@ -115,7 +122,7 @@ impl<H: HttpClient + Clone> CertificateTask<H> {
     /// Error cases:
     /// - none; it runs until the node stops
     pub async fn run(self) -> anyhow::Result<()> {
-        let mut schedule = Schedule::start(self.domain.clone(), self.renew_before);
+        let mut schedule = Schedule::start(self.domain.clone(), self.renew_before, self.pending.clone());
         let mut progress = Progress::default();
         let mut attempt = 0_u64;
         loop {
