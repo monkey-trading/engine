@@ -64,7 +64,7 @@ fn paginated_requests_and_same_key_epoch_changes_preserve_approval_order() {
             assert!(deliver_pages_silently(&mut node, &evidence), "expiry alone signs nothing");
             for key in expected.iter().rev() {
                 let replaces = node.seq.gate.as_ref().unwrap().payouts[key].released.unwrap().1;
-                assert_eq!(node.seq.request_reissue(key.0, key.1, replaces), Reissue::Queued);
+                assert_eq!(node.seq.request_reissue(key.0, key.1, replaces, None), Reissue::Queued);
             }
         }
         let reissued = deliver_pages(&mut node, &evidence, count, false);
@@ -129,27 +129,31 @@ fn a_request_reissues_only_an_expired_authorization_and_only_once() {
     let mut node = Node::new("reissue-on-request");
     let cp = node.approve();
     let lifetime = Duration::from_secs(crate::withdrawals::LIFETIME_SECONDS);
-    assert_eq!(node.seq.request_reissue(TRADER, 1, 0), Reissue::Queued, "the first authorization is still unsigned");
+    assert_eq!(
+        node.seq.request_reissue(TRADER, 1, 0, None),
+        Reissue::Queued,
+        "the first authorization is still unsigned"
+    );
     node.seq.release_payouts(&node.evidence(&cp)).unwrap();
     node.seq.flush().unwrap();
     let first = node.signed.try_recv().unwrap();
     let expires_at = first.authorization.as_ref().unwrap().expires_at;
-    assert_eq!(node.seq.request_reissue(TRADER, 1, expires_at), Reissue::StillValid { expires_at });
+    assert_eq!(node.seq.request_reissue(TRADER, 1, expires_at, None), Reissue::StillValid { expires_at });
     node.clock.advance(lifetime - Duration::from_secs(1));
     node.seq.trust(sample_around(node.clock.as_ref())).unwrap();
-    let valid = node.seq.request_reissue(TRADER, 1, expires_at);
+    let valid = node.seq.request_reissue(TRADER, 1, expires_at, None);
     assert_eq!(valid, Reissue::StillValid { expires_at }, "one second before expiry");
-    assert_eq!(node.seq.request_reissue(TRADER, 2, 0), Reissue::Unknown, "no such approval");
+    assert_eq!(node.seq.request_reissue(TRADER, 2, 0, None), Reissue::Unknown, "no such approval");
     node.clock.advance(Duration::from_secs(1));
     node.seq.trust(sample_around(node.clock.as_ref())).unwrap();
     node.seq.release_payouts(&node.evidence(&cp)).unwrap();
     node.seq.flush().unwrap();
     assert!(node.signed.try_recv().is_err(), "expiry alone signs nothing");
 
-    let stale = node.seq.request_reissue(TRADER, 1, expires_at - 1);
+    let stale = node.seq.request_reissue(TRADER, 1, expires_at - 1, None);
     assert_eq!(stale, Reissue::Stale { current: expires_at }, "a request names the authorization it replaces");
-    assert_eq!(node.seq.request_reissue(TRADER, 1, expires_at), Reissue::Queued);
-    let repeat = node.seq.request_reissue(TRADER, 1, expires_at);
+    assert_eq!(node.seq.request_reissue(TRADER, 1, expires_at, None), Reissue::Queued);
+    let repeat = node.seq.request_reissue(TRADER, 1, expires_at, None);
     assert_eq!(repeat, Reissue::Queued, "a repeat before signing is absorbed");
     node.seq.release_payouts(&node.evidence(&cp)).unwrap();
     node.seq.flush().unwrap();
@@ -162,7 +166,7 @@ fn a_request_reissues_only_an_expired_authorization_and_only_once() {
     node.seq.flush().unwrap();
     assert!(node.signed.try_recv().is_err(), "one request yields one authorization");
     assert_eq!(
-        node.seq.request_reissue(TRADER, 1, expires_at),
+        node.seq.request_reissue(TRADER, 1, expires_at, None),
         Reissue::Stale { current: renewed.expires_at },
         "the same signed request cannot be replayed"
     );
@@ -170,7 +174,7 @@ fn a_request_reissues_only_an_expired_authorization_and_only_once() {
     let mut paid = node.evidence(&cp);
     paid.approvals[0].claimed = true;
     node.seq.release_payouts(&paid).unwrap();
-    assert_eq!(node.seq.request_reissue(TRADER, 1, renewed.expires_at), Reissue::Unknown, "claimed means done");
+    assert_eq!(node.seq.request_reissue(TRADER, 1, renewed.expires_at, None), Reissue::Unknown, "claimed means done");
 }
 
 #[test]
@@ -183,7 +187,7 @@ fn an_authorization_of_a_retired_epoch_is_not_reported_usable() {
     // Custody reports epoch 2 before the bounded scan has signed this approval again.
     let gate = node.seq.gate.as_mut().unwrap();
     gate.schedule.prepare(2, &gate.payouts);
-    assert_eq!(node.seq.request_reissue(TRADER, 1, expires_at), Reissue::Queued);
+    assert_eq!(node.seq.request_reissue(TRADER, 1, expires_at, None), Reissue::Queued);
 }
 
 #[test]
@@ -202,7 +206,7 @@ fn a_restart_keeps_a_signed_approval_idle_until_rotation_or_a_request() {
     assert!(recovered.signed.try_recv().is_err(), "a restart is not a reissue trigger");
     let released = recovered.seq.gate.as_ref().unwrap().payouts[&(TRADER, 1)].released;
     assert_eq!(released, Some((1, expires_at)), "recovery restores the logged authorization");
-    assert_eq!(recovered.seq.request_reissue(TRADER, 1, expires_at), Reissue::Queued);
+    assert_eq!(recovered.seq.request_reissue(TRADER, 1, expires_at, None), Reissue::Queued);
     recovered.seq.release_payouts(&recovered.evidence(&cp)).unwrap();
     recovered.seq.flush().unwrap();
     assert_eq!(recovered.signed.try_recv().unwrap().nonce, 1, "a request still reissues after a restart");
@@ -235,6 +239,32 @@ fn a_recovered_approval_of_a_retired_epoch_loaded_after_the_scan_is_still_due() 
     assert!(gate.schedule.is_pending(gate.payouts[&(TRADER, 1)].order), "a retired epoch is due on load");
 }
 
+#[test]
+fn a_rotation_or_restart_never_replaces_an_expired_authorization_without_a_request() {
+    for restart in [false, true] {
+        let mut node = Node::new(if restart { "reissue-expired-restart" } else { "reissue-expired-rotation" });
+        let cp = node.approve();
+        node.seq.release_payouts(&node.evidence(&cp)).unwrap();
+        node.seq.flush().unwrap();
+        let expires_at = node.signed.try_recv().unwrap().authorization.unwrap().expires_at;
+        node.clock.advance(Duration::from_secs(crate::withdrawals::LIFETIME_SECONDS));
+        node.seq.trust(sample_around(node.clock.as_ref())).unwrap();
+        let mut node = if restart { node.restart(&cp) } else { node };
+        let mut rotated = node.evidence(&cp);
+        rotated.signer_epoch = 2;
+        for _ in 0..3 {
+            node.seq.release_payouts(&rotated).unwrap();
+            node.seq.flush().unwrap();
+        }
+        assert!(node.signed.try_recv().is_err(), "a rotation gave an unscreened account a fresh window");
+        assert_eq!(node.seq.request_reissue(TRADER, 1, expires_at, None), Reissue::Queued);
+        node.seq.release_payouts(&rotated).unwrap();
+        node.seq.flush().unwrap();
+        let reissued = node.signed.try_recv().unwrap().authorization.unwrap();
+        assert_eq!(reissued.signer_epoch, 2, "the account's request is signed by the current epoch");
+    }
+}
+
 #[tokio::test]
 async fn the_run_loop_answers_a_reissue_request() {
     let mut node = Node::new("reissue-run-loop");
@@ -247,9 +277,15 @@ async fn the_run_loop_answers_a_reissue_request() {
     let mut answers = Vec::new();
     for (nonce, replaces) in [(1, expires_at), (2, 0)] {
         let (reply, answer) = oneshot::channel();
-        tx.send(crate::sequencer::Request::ReissueWithdrawal { account: TRADER, nonce, replaces, reply })
-            .await
-            .unwrap();
+        tx.send(crate::sequencer::Request::ReissueWithdrawal {
+            account: TRADER,
+            nonce,
+            replaces,
+            screening: None,
+            reply,
+        })
+        .await
+        .unwrap();
         answers.push(answer.await.unwrap());
     }
     assert_eq!(answers, [Reissue::StillValid { expires_at }, Reissue::Unknown]);

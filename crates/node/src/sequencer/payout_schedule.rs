@@ -19,6 +19,8 @@ pub(super) struct Schedule {
     pending: BTreeMap<Order, Identity>,
     epoch: Option<u64>,
     scan: Option<EpochScan>,
+    /// The order of the oldest recovered approval not yet loaded, which may need a signature.
+    unloaded: Option<Order>,
 }
 
 struct EpochScan {
@@ -52,6 +54,11 @@ impl Schedule {
         }
     }
 
+    /// Records the oldest recovered approval not yet loaded; nothing after it is signed until it is.
+    pub(super) fn hold_after(&mut self, unloaded: Option<Order>) {
+        self.unloaded = unloaded;
+    }
+
     /// Whether the approval already waits for an authorization.
     pub(super) fn is_pending(&self, order: Order) -> bool {
         self.pending.contains_key(&order)
@@ -79,9 +86,13 @@ impl Schedule {
         }
     }
 
-    /// Inspects the earliest due approval after all earlier epoch entries were classified.
+    /// Inspects the earliest due approval after all earlier epoch entries were classified and all
+    /// earlier recovered approvals were loaded.
     pub(super) fn next(&self) -> Option<(Order, Identity)> {
         let (&order, &identity) = self.pending.first_key_value()?;
+        if self.unloaded.is_some_and(|unloaded| order > unloaded) {
+            return None;
+        }
         if let Some(scan) = &self.scan
             && scan.after.is_none_or(|after| order > after)
         {
@@ -92,6 +103,11 @@ impl Schedule {
 
     /// Reserves one selected identity for this issuance batch; failures stop the sequencer.
     pub(super) fn selected(&mut self, order: Order) {
+        self.pending.remove(&order);
+    }
+
+    /// Leaves a due approval unsigned until its holder asks again.
+    pub(super) fn dismiss(&mut self, order: Order) {
         self.pending.remove(&order);
     }
 }

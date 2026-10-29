@@ -1,9 +1,10 @@
 //! Current access envelopes keep reconciliation admission closed while recording policy refusals.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use engine_core::Fixed;
-use engine_core::access::{AccessEvidence, Jurisdiction};
+use engine_core::access::{AccessEvidence, AccessReject, Jurisdiction, SanctionsStatus, Screening};
 use engine_core::command::Command;
 use engine_core::eip712;
 use engine_core::event::{Event, Reject};
@@ -13,7 +14,7 @@ use tokio::sync::{broadcast, mpsc, watch};
 use crate::checkpoints::{ApprovalId, ApprovalStatus, LifecycleEvidence};
 use crate::clock::test_clock::TestClock;
 use crate::log::{LogEntry, Manifest};
-use crate::sequencer::Sequencer;
+use crate::sequencer::{Reissue, ReissueScreening, Sequencer};
 use crate::tee::EnclaveKey;
 use crate::test_support::{access, dev_config, log_entries, sample_around, scratch_dir, sequencer_config};
 
@@ -157,4 +158,94 @@ fn access_withdrawals_record_refusals_and_recover_only_checkpoint_confirmed_appr
     .unwrap();
     assert!(replayed.deferred.is_empty());
     assert_eq!(replayed.engine.accounts()[&account].balance, Fixed::from_int(90));
+}
+
+#[test]
+fn a_reissue_needs_the_screening_a_withdrawal_gets_and_a_refused_account_stays_held() {
+    let dir = scratch_dir("access-reissue-screening");
+    let (work, _queued) = mpsc::channel(64);
+    let (withdrawals, mut signed) = mpsc::unbounded_channel();
+    let clock = Arc::new(TestClock::at(NOW));
+    let cfg = crate::sequencer::SequencerConfig {
+        clock: clock.clone(),
+        checkpoints: Some(work),
+        access_policy: Some(access::policy()),
+        ..sequencer_config(&dir, watch::channel(Manifest::default()).0)
+    };
+    let mut seq =
+        Sequencer::recover(cfg, Arc::new(EnclaveKey::test_key()), broadcast::channel(128).0, withdrawals).unwrap();
+    seq.activate_protocol().unwrap();
+    seq.genesis(&dev_config().genesis).unwrap();
+    seq.trust(sample_around(clock.as_ref())).unwrap();
+    seq.sequence(crate::test_support::empty_custody_frontier()).unwrap();
+    let account = access::account(1);
+    seq.sequence(access::declaration(&seq.engine, 1)).unwrap().unwrap();
+    let funding =
+        access::funding(&seq.engine, Some(account), Some(account), Fixed::from_int(100), "0xreissue-funding:1");
+    seq.sequence(funding).unwrap().unwrap();
+    seq.checkpoint_status(seq.last_seq(), Some(crate::checkpoints::Health::Healthy)).unwrap();
+    // The account is screened clear and its withdrawal approved and signed.
+    let events = seq.sequence(access::withdrawal(&seq.engine, 1, Fixed::from_int(10), true)).unwrap().unwrap();
+    assert!(events.iter().any(|event| matches!(event, Event::WithdrawalApproved { nonce: 1, .. })), "{events:?}");
+    let approved_seq = seq.last_seq().unwrap();
+    let checkpoint = log_entries(&dir)
+        .into_iter()
+        .rev()
+        .find_map(|entry| match entry {
+            LogEntry::Checkpoint(cp) => Some(cp),
+            _ => None,
+        })
+        .unwrap();
+    let evidence = LifecycleEvidence {
+        height: 10,
+        block_hash: eip712::B256::from([1; 32]),
+        signer: AccountId(EnclaveKey::test_key().address()),
+        signer_epoch: 1,
+        total_withdrawn: Fixed::ZERO,
+        checkpoint_seq: Some(checkpoint.seq),
+        checkpoint_root: Some(checkpoint.root.clone()),
+        approvals: vec![ApprovalStatus { approval: ApprovalId { account, nonce: 1, approved_seq }, claimed: false }],
+    };
+    seq.release_payouts(&evidence).unwrap();
+    seq.flush().unwrap();
+    let first = signed.try_recv().unwrap();
+    let expires_at = first.authorization.as_ref().unwrap().expires_at;
+
+    // Its authorization expires unclaimed; by now the account is sanctioned or calls from the US.
+    clock.advance(Duration::from_secs(crate::withdrawals::LIFETIME_SECONDS));
+    seq.trust(sample_around(clock.as_ref())).unwrap();
+    let now = clock.as_ref().true_ms();
+    let hash = crate::api::reissue::reissue_hash(&seq.engine.access_domain().unwrap(), account, 1, expires_at);
+    let domain = seq.engine.access_domain().unwrap();
+    let AccessEvidence::Screened(clear) = access::proof(&seq.engine, hash, Some(account), None) else { unreachable!() };
+    let screened = |edit: &dyn Fn(&mut Screening)| {
+        let mut screening = Screening { observed_at: now, ..clear.clone() };
+        edit(&mut screening);
+        screening.signature = eip712::sign(&access::key(0x77), &eip712::screening_hash(&domain, &screening));
+        Some(ReissueScreening { request_hash: hash, evidence: AccessEvidence::Screened(screening) })
+    };
+    let refusals = [
+        (screened(&|s| s.account_status = SanctionsStatus::Sanctioned), AccessReject::AccountSanctioned),
+        (screened(&|s| s.jurisdiction = Jurisdiction::UnitedStates), AccessReject::UnitedStates),
+        (screened(&|s| s.observed_at = now - access::policy().max_age_ms - 1), AccessReject::EvidenceStale),
+        (screened(&|s| s.request_hash = eip712::B256::ZERO), AccessReject::EvidenceMismatch),
+        (None, AccessReject::EvidenceMissing),
+    ];
+    for (screening, reason) in refusals {
+        assert_eq!(seq.request_reissue(account, 1, expires_at, screening.as_ref()), Reissue::Refused { reason });
+        seq.release_payouts(&evidence).unwrap();
+        seq.flush().unwrap();
+        assert!(signed.try_recv().is_err(), "{reason:?} got a fresh authorization");
+    }
+    // The approved funds stay held: debited from the account, still approved and unpaid.
+    assert_eq!(seq.engine.accounts()[&account].balance, Fixed::from_int(90));
+    assert!(seq.engine.withdrawal_approval(account, 1).is_some());
+    assert_eq!(seq.gate.as_ref().unwrap().payouts[&(account, 1)].released.map(|(_, expiry)| expiry), Some(expires_at));
+    // Clear screening of the same request reissues it.
+    assert_eq!(seq.request_reissue(account, 1, expires_at, screened(&|_| {}).as_ref()), Reissue::Queued);
+    seq.release_payouts(&evidence).unwrap();
+    seq.flush().unwrap();
+    let reissued = signed.try_recv().unwrap();
+    assert_eq!((reissued.account, reissued.nonce, reissued.amount), (first.account, first.nonce, first.amount));
+    assert!(reissued.authorization.unwrap().expires_at > expires_at);
 }
