@@ -58,6 +58,7 @@ impl NodeConfig {
     /// - genesis lists a market id, a market symbol, or a benchmark name twice
     /// - the engine would reject a genesis command (see `check_genesis`)
     /// - `[api.tls.acme]` fails validation (see `AcmeSection::validate`)
+    /// - `[api.proxy_protocol]` fails validation (see `ProxyProtocolSection::validate`)
     pub(super) fn validate(&self) -> anyhow::Result<()> {
         if let Some(access) = &self.access {
             access.validate()?;
@@ -106,6 +107,7 @@ impl NodeConfig {
         // one connection can take.
         ensure!(self.api.quote_interval >= MIN_QUOTE_INTERVAL, "api.quote_interval must be at least 100ms");
         self.api.validate_origins()?;
+        self.api.validate_proxy_protocol()?;
         if let Some(tls) = &self.api.tls {
             tls.acme.validate(self.tee.provider)?;
         }

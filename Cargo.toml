@@ -40,6 +40,8 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 # ACME (RFC 8555) for the API's public certificate, on ring and the node's own HTTP client, so it
 # brings no second crypto backend and never reads the host's trust store.
 instant-acme = { version = "0.8.5", default-features = false, features = ["ring"] }
+# Address ranges for the PROXY protocol's trusted proxies; already in the tree through reqwest.
+ipnet = { version = "2.12", features = ["serde"] }
 jmt = { version = "=0.12.0", default-features = false, features = ["std", "sha2"] }
 k256 = { version = "0.14.0", default-features = false, features = ["ecdsa"] }
 nix = { version = "0.31.3", default-features = false, features = ["sched"] }
@@ -47,6 +49,8 @@ nix = { version = "0.31.3", default-features = false, features = ["sched"] }
 # so the native and browser verifiers run the same implementation. Without `std`, which would pull
 # in an OS random source that does not build for the browser and that verification never uses.
 p384 = { version = "0.14.0", default-features = false, features = ["ecdsa"] }
+# PROXY protocol v2 header parsing for the proxy that passes TLS through (`[api.proxy_protocol]`).
+ppp = "2.3"
 prometheus-client = "0.25"
 proptest = { version = "1.12", default-features = false, features = ["std"] }
 rand = "0.8"

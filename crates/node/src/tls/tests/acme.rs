@@ -20,7 +20,7 @@ const ACME_IDENTIFIER: &str = "1.3.6.1.5.5.7.1.31";
 /// Accepts any certificate and handshake signature, as a validator does (RFC 8737 §3): webpki
 /// refuses the challenge certificate's critical acmeIdentifier extension, which it does not know.
 #[derive(Debug)]
-struct Unverified(Arc<CryptoProvider>);
+pub(super) struct Unverified(pub(super) Arc<CryptoProvider>);
 
 impl ServerCertVerifier for Unverified {
     /// Accepts the certificate.

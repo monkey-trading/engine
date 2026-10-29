@@ -33,7 +33,7 @@ use rustls::version::TLS13;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::watch;
+use tokio::sync::{OwnedSemaphorePermit, watch};
 use tokio::task::JoinSet;
 use tokio::time::{Sleep, sleep, timeout};
 use tokio_rustls::LazyConfigAcceptor;
@@ -43,10 +43,12 @@ use tracing::debug;
 
 pub mod acme;
 mod certificates;
+mod proxy;
 use crate::config::ApiSection;
 use crate::limits::{ApiLimits, ConnectionCaps, ConnectionSlot, ThrottledAlert};
 pub use crate::tls::certificates::TlsKey;
 use crate::tls::certificates::{Answering, Served, load_key};
+use crate::tls::proxy::client_behind;
 
 /// The ALPN protocol of a TLS-ALPN-01 validation (RFC 8737).
 const ACME_TLS_ALPN: &[u8] = b"acme-tls/1";
@@ -66,6 +68,13 @@ pub struct TlsIdentity {
 pub struct Acceptors {
     api: Arc<ServerConfig>,
     validation: Arc<ServerConfig>,
+}
+
+/// A connection's place under the caps: complete for a direct client, total-only for a trusted
+/// proxy's connection until its header names the client.
+enum Place {
+    Client(ConnectionSlot),
+    Proxy(OwnedSemaphorePermit),
 }
 
 /// A connection after its handshake.
@@ -193,7 +202,11 @@ impl TlsIdentity {
 /// within `api.handshake_timeout`, send each request's headers within `api.read_timeout`, which
 /// also closes a connection idle that long between requests, and take what it is sent within
 /// `api.send_timeout`. A TLS-ALPN-01 validation is a connection like any other until its handshake
-/// ends, and is then closed. Handlers see the socket peer as `ConnectInfo<SocketAddr>`.
+/// ends, and is then closed. Handlers see the client as `ConnectInfo<SocketAddr>`: the socket peer,
+/// or, for a peer in `api.proxy_protocol.trusted`, the address in the PROXY protocol header it must
+/// send first, within the same timeout. Only that header is believed, and only from those peers: a
+/// trusted peer without a valid one is closed, and any other peer's bytes go to the TLS handshake,
+/// which a header fails.
 /// Error cases:
 /// - none; it runs until the node stops
 pub async fn serve(
@@ -208,30 +221,55 @@ pub async fn serve(
     http.timer(TokioTimer::new()).header_read_timeout(api.read_timeout);
     let mut connections = JoinSet::new();
     let accept_failed = ThrottledAlert::new("api_accept_failed", "accepting connections is failing");
+    let header_refused = Arc::new(ThrottledAlert::new(
+        "api_proxy_header_refused",
+        "a trusted proxy's connection has no valid PROXY protocol header; connections are being refused",
+    ));
     loop {
         // Reaps finished connections, so the set holds open ones only.
         while connections.try_join_next().is_some() {}
-        let (tcp, peer) = match listener.accept().await {
+        let (mut tcp, peer) = match listener.accept().await {
             Ok(accepted) => accepted,
             Err(e) => {
                 back_off(e, &accept_failed).await;
                 continue;
             }
         };
-        let Some(slot) = caps.admit(peer.ip()) else { continue };
-        if limits.check_connection(peer.ip()).is_err() {
-            continue;
-        }
+        let proxied = api.proxy_protocol.as_ref().is_some_and(|proxy| proxy.trusts(peer.ip()));
+        let place = if proxied {
+            let Some(total) = caps.admit_total() else { continue };
+            Place::Proxy(total)
+        } else {
+            let Some(slot) = caps.admit(peer.ip()) else { continue };
+            if limits.check_connection(peer.ip()).is_err() {
+                continue;
+            }
+            Place::Client(slot)
+        };
         let (acceptors, http, app) = (acceptors.clone(), http.clone(), app.clone());
+        let (caps, limits, header_refused) = (caps.clone(), limits.clone(), header_refused.clone());
         connections.spawn(async move {
-            let stream = match timeout(api.handshake_timeout, accept(tcp, &acceptors)).await {
-                Ok(Ok(Accepted::Api(stream))) => *stream,
-                Ok(Ok(Accepted::Validation)) => return debug!("answered a TLS-ALPN-01 validation"),
-                Ok(Err(e)) => return debug!("TLS handshake failed: {e}"),
+            let opened = async {
+                let (client, slot) = match place {
+                    Place::Client(slot) => (peer, slot),
+                    Place::Proxy(total) => {
+                        let client = client_behind(&mut tcp, peer, &header_refused).await?;
+                        let slot = caps.claim(total, client.ip())?;
+                        limits.check_connection(client.ip()).ok()?;
+                        (client, slot)
+                    }
+                };
+                Some((client, slot, accept(tcp, &acceptors).await))
+            };
+            let (client, slot, stream) = match timeout(api.handshake_timeout, opened).await {
+                Ok(Some((client, slot, Ok(Accepted::Api(stream))))) => (client, slot, *stream),
+                Ok(Some((_, _, Ok(Accepted::Validation)))) => return debug!("answered a TLS-ALPN-01 validation"),
+                Ok(Some((_, _, Err(e)))) => return debug!("TLS handshake failed: {e}"),
+                Ok(None) => return,
                 Err(_) => return debug!("TLS handshake timed out"),
             };
             let service = service_fn(move |mut req: Request<Incoming>| {
-                req.extensions_mut().insert(ConnectInfo(peer));
+                req.extensions_mut().insert(ConnectInfo(client));
                 app.clone().call(req)
             });
             let conn = TlsConn { stream, send_timeout: api.send_timeout, stalled: None, _slot: slot };

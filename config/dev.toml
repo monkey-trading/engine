@@ -38,7 +38,9 @@ auth = "none"
 # trusted_signers = []
 
 # Limits on the public API, served over TLS with a key generated in the enclave. A client is its
-# socket peer IP (an IPv6 client by its /64); forwarding headers are ignored.
+# socket peer IP (an IPv6 client by its /64), or, behind a pass-through proxy listed under
+# [api.proxy_protocol], the address in the PROXY protocol v2 header it sends; forwarding headers
+# are ignored.
 [api]
 # Keep max_connections below the process's open-file limit (`ulimit -n`).
 max_connections = 512

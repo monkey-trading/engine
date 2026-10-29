@@ -38,8 +38,10 @@ humantime-serde.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
 instant-acme.workspace = true
+ipnet.workspace = true
 jmt.workspace = true
 k256 = { workspace = true, features = ["getrandom"] }
+ppp.workspace = true
 prometheus-client.workspace = true
 rand.workspace = true
 rcgen.workspace = true

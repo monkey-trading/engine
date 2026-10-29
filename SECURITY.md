@@ -113,7 +113,8 @@ Confirmed sanctioned holds have no automatic release or refund path.
 Older logs retain their recorded authorization rules, including the standalone pre-access V25 rules. Access-source evidence is signed by a recorded
 authority and bounded by freshness, subject and request digest; the source classifications and
 host-supplied initial configuration still require approved provenance and attestation binding.
-API jurisdiction screening uses the socket peer address, which the host's network supplies, so it
+API jurisdiction screening uses the socket peer address, or, behind a configured pass-through proxy,
+the client address in that proxy's PROXY protocol header. The host's network supplies both, so it
 is not yet bounded against a host that relays or translates client connections.
 The local source fixture is synthetic and its published signer is refused with real attestation.
 Sanctioned funding remains uncredited and held with public evidence. The other three are not
