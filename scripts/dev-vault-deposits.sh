@@ -12,7 +12,8 @@
 # Needs anvil, forge, cast, curl, jq, and python3, and the contract dependencies
 # (`forge soldeer install` in contracts/). ANVIL_PORT, API_PORT, and METRICS_PORT override 8545,
 # 8080, and 9464. RPC_A_PORT, RPC_B_PORT and RPC_C_PORT override the local proxy ports
-# 18545, 18546 and 18547. RPC_QUORUM_SCENARIO=1 also exercises lies, outages and recovery.
+# 18545, 18546 and 18547. ALERT_CLEAR_SECONDS (5) bounds how long a provider Warning may stay open.
+# RPC_QUORUM_SCENARIO=1 also exercises lies, outages and recovery.
 set -euo pipefail
 
 # A closed local port stands in for the required Critical route; the quorum scenario checks
@@ -42,6 +43,25 @@ proxy_pids=()
 rpc_a_port="${RPC_A_PORT:-18545}"
 rpc_b_port="${RPC_B_PORT:-18546}"
 rpc_c_port="${RPC_C_PORT:-18547}"
+
+# Fails on an alert in the node log that is not in $1 (a `|` list), except a Warning a retry clears
+# (an RPC provider or deposit read that has not caught up): that one is tolerated and logged when it
+# resolves within ALERT_CLEAR_SECONDS, and fails when it persists past it or never resolves. A wrong
+# outcome fails the scenario's own checks regardless. $2 names the phase for the message.
+alert_clear_seconds="${ALERT_CLEAR_SECONDS:-5}"
+audit_alerts() {
+  local out status=0 deadline=$((SECONDS + alert_clear_seconds + 2))
+  while :; do
+    out="$(python3 -I "$root/scripts/dev-alert-audit.py" audit "$work/node.log" --allow "$1" \
+      --transient 'custody_rpc_provider_failed|custody_rpc_provider_disagreed|custody_rpc_failed|custody_chain_unsettled' \
+      --window "$alert_clear_seconds")" && status=0 || status=$?
+    # Young and still open: give it the rest of its window to clear.
+    if [[ "$status" == 2 && "$SECONDS" -lt "$deadline" ]]; then sleep 1; continue; fi
+    break
+  done
+  grep '^tolerated' <<< "$out" || true
+  [[ "$status" == 0 ]] || fail "unexpected alert $2: $out"
+}
 
 cleanup() {
   [[ -n "$access_fixture_pid" ]] && kill "$access_fixture_pid" 2>/dev/null || true
@@ -124,6 +144,9 @@ stop_node() {
   wait "$node_pid" || fail "node did not shut down cleanly"
   node_pid=""
 }
+
+step "The alert audit tolerates a quick-clearing provider warning and fails a persisting one"
+python3 -I "$root/scripts/dev-alert-audit.py" selftest
 
 # Built first, so a slow build cannot leave the chain's head stale by the time the node starts.
 step "Build the node"
@@ -304,8 +327,9 @@ wait_for trader_balance 1377
 mine 3
 stays trader_balance 1377
 
-# Ordinary deposits, restarts, rescans and reorgs must remain free of alerts in both modes.
-if grep -q 'alert=' "$work/node.log"; then fail "unexpected alert before fault injection: $(grep -m 1 'alert=' "$work/node.log")"; fi
+# Ordinary deposits, restarts, rescans and reorgs must remain free of alerts in both modes, but an
+# RPC provider may warn briefly (not yet at the common final block) and clear: see audit_alerts.
+audit_alerts "" "before fault injection"
 expected_deposits=5
 if [[ "${RPC_QUORUM_SCENARIO:-0}" == "1" ]]; then
   step "A fictional deposit from one provider is ignored and alerted"
@@ -364,10 +388,9 @@ if [[ "${RPC_QUORUM_SCENARIO:-0}" == "1" || "${ACCESS_ENFORCEMENT_SCENARIO:-0}" 
   allowed_alerts='custody_rpc_provider_failed|custody_rpc_provider_disagreed|custody_rpc_quorum_lost|custody_rpc_failed'
   # The access cases hold deposits and take the source down, so retries may fail during the outage.
   [[ "${ACCESS_ENFORCEMENT_SCENARIO:-0}" == "1" ]] && allowed_alerts="$allowed_alerts|access_deposit_held|access_source_failed|access_deposit_retry_failed"
-  unexpected="$(grep 'alert=' "$work/node.log" | grep -Ev "alert=\"($allowed_alerts)\"" || true)"
-  [[ -z "$unexpected" ]] || fail "unexpected fault-phase alert: $unexpected"
-elif grep -q 'alert=' "$work/node.log"; then
-  fail "unexpected alert: $(grep -m 1 'alert=' "$work/node.log")"
+  audit_alerts "$allowed_alerts" "in the fault phase"
+else
+  audit_alerts "" "in the run"
 fi
 
 echo "PASS: every deposit credited or held once after finality; public log replay verifies"

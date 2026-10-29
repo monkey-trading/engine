@@ -204,8 +204,9 @@ impl TlsIdentity {
 /// `api.send_timeout`. A TLS-ALPN-01 validation is a connection like any other until its handshake
 /// ends, and is then closed. Handlers see the client as `ConnectInfo<SocketAddr>`: the socket peer,
 /// or, for a peer in `api.proxy_protocol.trusted`, the address in the PROXY protocol header it must
-/// send first, within the same timeout. Only that header is believed, and only from those peers: a
-/// trusted peer without a valid one is closed, and any other peer's bytes go to the TLS handshake,
+/// send first, within the same timeout (a LOCAL header, the proxy's own connection, names the proxy
+/// itself). Only that header is believed, and only from those peers: a trusted peer without a
+/// valid one is closed, and any other peer's bytes go to the TLS handshake,
 /// which a header fails.
 /// Error cases:
 /// - none; it runs until the node stops

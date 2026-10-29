@@ -998,9 +998,12 @@ one, and not every address). A connection from a listed range must begin with a 
 header, read before the TLS handshake and under `api.handshake_timeout`; its source address then
 replaces the socket peer for the request, connection and rate limits, connection caps, and the
 access screening, and the TLS handshake (including a TLS-ALPN-01 validation) follows. A listed peer
-whose first bytes are not a valid header for a TCP client (no header, version 1, a LOCAL command, a
-UNIX or unspecified family, over 1024 bytes) is closed, and raises the `api_proxy_header_refused`
-Warning alert except for a LOCAL header, the proxy's own check. A header from any other peer is never
+whose first bytes are not a valid header (no header, version 1, a UNIX or unspecified family, a
+datagram transport, over 1024 bytes) is closed and raises the `api_proxy_header_refused` Warning
+alert. A LOCAL header is the proxy's own connection, such as a health check: the proxy's socket
+address stands in for the client, so it is counted against the caps and rates and screened as the
+proxy, the header's addresses are ignored, and the TLS handshake follows. That address is the real
+peer, not one a client chose. A header from any other peer is never
 read: the bytes go to the TLS handshake, which fails, so it is closed too. Until its header arrives a
 proxy connection counts against the total connection cap only. A production build refuses a trusted
 range that holds a loopback address or is wider than /8 (IPv4) or /32 (IPv6). The host controls the

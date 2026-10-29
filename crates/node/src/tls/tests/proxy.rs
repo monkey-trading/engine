@@ -27,6 +27,34 @@ async fn a_trusted_proxys_header_names_the_client_handlers_see() {
 }
 
 #[tokio::test]
+async fn a_local_header_is_the_proxys_own_connection() {
+    let node = serve_echo(behind_proxy()).await;
+    // The header's addresses are ignored: handlers see the socket peer, the proxy.
+    let mut conn = node.connect_after(&local("203.0.113.7:5555")).await.unwrap();
+    let (status, who) = http(&mut conn, "GET", "/v1/health", "").await;
+    assert_eq!(status, 200);
+    assert!(who.starts_with("127.0.0.1:"), "{who}");
+}
+
+#[tokio::test]
+async fn a_local_connection_counts_against_the_proxys_caps_and_rates_alone() {
+    let mut api = behind_proxy();
+    api.max_connections_per_ip = NonZeroUsize::new(1).unwrap();
+    let node = TestNode::start(api, V4).await;
+    let held = node.connect_after(&local("203.0.113.7:1")).await.unwrap();
+    assert!(node.connect_after(&local("203.0.113.9:1")).await.is_err(), "a second connection of the proxy");
+    assert!(node.connect_after(&header("203.0.113.7:1")).await.is_ok(), "the named client is not charged");
+    drop(held);
+
+    let mut api = behind_proxy();
+    api.per_ip_connections = rate(1, 1);
+    let node = TestNode::start(api, V4).await;
+    node.connect_after(&local("203.0.113.7:1")).await.unwrap();
+    assert!(node.connect_after(&local("203.0.113.7:2")).await.is_err(), "over the proxy's connection rate");
+    node.connect_after(&header("203.0.113.7:1")).await.unwrap();
+}
+
+#[tokio::test]
 async fn a_direct_client_is_its_socket_peer_while_a_proxy_range_is_configured() {
     let mut api = api();
     api.proxy_protocol = Some(ProxyProtocolSection { trusted: vec!["10.0.0.0/8".parse().unwrap()] });
@@ -86,11 +114,10 @@ async fn a_trusted_peer_without_a_valid_header_is_closed() {
     };
     let mut too_long = header("203.0.113.7:1");
     too_long[14..16].copy_from_slice(&2000u16.to_be_bytes());
-    let cases: [(&str, Vec<u8>); 7] = [
+    let cases: [(&str, Vec<u8>); 6] = [
         ("no header at all", Vec::new()),
         ("a version 1 header", b"PROXY TCP4 203.0.113.7 192.0.2.1 5555 443\r\n".to_vec()),
         ("a header over the read cap", too_long),
-        ("a LOCAL header", no_client(0x11, 0x00)),
         ("an unspecified address family", no_client(0x01, 0x01)),
         ("a datagram header", no_client(0x12, 0x01)),
         ("a unix address family", no_client(0x31, 0x01)),
@@ -115,16 +142,11 @@ async fn a_header_the_proxy_cuts_short_closes_the_connection() {
 
 #[tokio::test]
 async fn only_an_unusable_header_raises_the_alert() {
-    let local = |client: &str| {
-        let mut bytes = header(client);
-        bytes[12] = 0x20;
-        bytes
-    };
     let mut over_cap = header("203.0.113.7:1");
     over_cap[14..16].copy_from_slice(&2000u16.to_be_bytes());
     let cases: [(&str, Vec<u8>, Option<&str>, bool); 7] = [
         ("a valid header", header("203.0.113.7:5555"), Some("203.0.113.7:5555"), false),
-        ("a LOCAL header", local("203.0.113.7:5555"), None, false),
+        ("a LOCAL header", local("203.0.113.7:5555"), Some("127.0.0.1:1"), false),
         ("no bytes", Vec::new(), None, true),
         ("the signature alone", header("203.0.113.7:1")[..12].to_vec(), None, true),
         ("a header cut short", header("203.0.113.7:1")[..20].to_vec(), None, true),
@@ -146,6 +168,8 @@ async fn a_header_from_an_address_outside_the_trusted_ranges_is_refused() {
     let node = TestNode::start(slow_timeout(ApiSection { proxy_protocol: elsewhere, ..api() }), V4).await;
     let forged = timeout(Duration::from_secs(5), node.connect_after(&header("198.51.100.1:1"))).await;
     assert!(forged.expect("closed, not held open").is_err(), "the loopback is not the proxy");
+    let local = timeout(Duration::from_secs(5), node.connect_after(&local("198.51.100.1:1"))).await;
+    assert!(local.expect("closed, not held open").is_err(), "nor is its LOCAL header accepted");
     let version_1 = node.connect_after(b"PROXY TCP4 198.51.100.1 192.0.2.1 5555 443\r\n").await;
     assert!(version_1.is_err());
     node.connect(V4).await.unwrap();
@@ -202,6 +226,13 @@ fn behind_proxy() -> ApiSection {
 /// that waits for the timeout fails the test.
 fn slow_timeout(api: ApiSection) -> ApiSection {
     ApiSection { handshake_timeout: Duration::from_secs(60), ..api }
+}
+
+/// A v2 LOCAL header, which carries addresses a receiver must ignore.
+fn local(client: &str) -> Vec<u8> {
+    let mut bytes = header(client);
+    bytes[12] = 0x20;
+    bytes
 }
 
 /// A v2 header for a TCP client at `client`.

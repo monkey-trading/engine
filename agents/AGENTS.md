@@ -178,7 +178,8 @@ an index: load only the rule whose hint matches the current action.
   `check-merge-approved.sh`, the merge queue's approval gate, with `check-merge-approved-test.sh`
   running it against a stubbed GitHub API;
   `dev-vault-deposits.sh`, the vault deposit and RPC quorum dev scenarios on Anvil, with
-  `dev-rpc-proxy.py` providing three local fault-injection endpoints; `dev-metrics-alerts.sh`,
+  `dev-rpc-proxy.py` providing three local fault-injection endpoints and `dev-alert-audit.py`
+  judging its node log's alerts (a provider Warning that clears within a bounded window passes); `dev-metrics-alerts.sh`,
   the metrics and alert routing dev scenario; `dev-alert-outbox.sh`, the isolated alert retry
   kill/restart scenario; `dev-browser-origin.sh`, the browser-origin allowlist scenario against a dev node;
   `dev-proxy-protocol.sh`, the proxied client address scenario against a dev node;
@@ -321,7 +322,7 @@ Run from the repo root:
 - Browser-origin dev scenario: `./scripts/dev-browser-origin.sh` (needs `curl` and `jq`; runs a dev node
   with `api.allowed_origins` on private temporary data and public Roughtime servers)
 - Proxy protocol dev scenario: `./scripts/dev-proxy-protocol.sh` (needs `python3`, `curl`, and `jq`; a
-  loopback forwarder prepends PROXY v2 headers to a dev node with a synthetic access source, on private
+  loopback forwarder prepends PROXY v2 (and LOCAL) headers to a dev node with a synthetic access source, on private
   temporary data and public Roughtime servers)
 - Certificate Transparency watcher: `cargo run -p engine-node -- ct-watch --config
   config/ct-watch.toml` (outside the enclave; `--allow-mock` accepts a mock node and loopback HTTP,
