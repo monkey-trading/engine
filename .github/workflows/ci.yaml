@@ -54,7 +54,8 @@ jobs:
                 agents/skills/agent-code-review/scripts/*) areas+=" agent_scripts" ;;
                 # Read by no build, test, scenario, or image.
                 agents/* | AGENTS.md | CLAUDE.md | README.md | SECURITY.md | research/* | image/README.md \
-                  | crates/core/README.md | crates/node/README.md | crates/wire/README.md) ;;
+                  | crates/core/README.md | crates/node/README.md | crates/verify/README.md \
+                  | crates/verify-wasm/README.md | crates/wire/README.md) ;;
                 # The contracts' emission tests read the engine's entitlement proof vectors.
                 crates/core/tests/fixtures/emissions.json) areas+=" rust scenarios image contracts" ;;
                 # The image embeds config/test-keys.toml and boots on config/dev.toml.
@@ -70,7 +71,8 @@ jobs:
                 contracts/*) areas+=" contracts scenarios" ;;
                 # The test job runs the corporate-action scenario.
                 scripts/dev-corporate-actions.sh) areas+=" rust" ;;
-                scripts/dev-*) areas+=" scenarios" ;;
+                # The browser verifier's jobs build its package and run its scenario.
+                scripts/dev-* | scripts/build-wasm-verifier.sh) areas+=" scenarios" ;;
                 # The ACME scenario downloads its test CA under image/retry.
                 image/retry) areas+=" image scenarios" ;;
                 image/* | scripts/build-image.sh | scripts/check-image.sh | scripts/check-image-retry.sh)
@@ -446,6 +448,63 @@ jobs:
           cache-on-failure: true
       - name: Run the public certificate dev scenario against the Pebble test CA
         run: ./scripts/dev-acme.sh
+
+  # Builds the browser verifier's package twice on separate runners with no shared cache and the
+  # pinned toolchain, the second from another checkout path so the build's path remapping is
+  # covered; the first run also checks that package against the CLI on every fixture and vector.
+  # `wasm-verifier-compare` fails if the two builds differ by a single byte.
+  wasm-verifier:
+    name: wasm-verifier (${{ matrix.run }})
+    needs: changes
+    if: needs.changes.outputs.scenarios == 'true'
+    strategy:
+      fail-fast: ${{ github.event_name == 'pull_request' }}
+      matrix:
+        run: [first, second]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: ${{ matrix.run == 'second' && 'elsewhere/engine' || '.' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: ${{ matrix.run == 'second' && 'elsewhere/engine' || '' }}
+      # scripts/build-wasm-verifier.sh pins this toolchain and the wasm-bindgen CLI version.
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: 1.99.1
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-bindgen-cli
+        run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
+      - name: Build the package
+        run: ./scripts/build-wasm-verifier.sh out/wasm-verifier
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wasm-verifier-${{ matrix.run }}
+          path: ${{ matrix.run == 'second' && 'elsewhere/engine/' || '' }}out/wasm-verifier/
+          retention-days: 14
+          if-no-files-found: error
+      - name: Run the browser verifier dev scenario on the package
+        if: matrix.run == 'first'
+        run: ./scripts/dev-wasm-verifier.sh out/wasm-verifier
+
+  wasm-verifier-compare:
+    needs: [changes, wasm-verifier]
+    if: needs.changes.outputs.scenarios == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: wasm-verifier-*
+      - name: Compare the two builds
+        run: |
+          (cd wasm-verifier-first && sha256sum -c SHA256SUMS)
+          (cd wasm-verifier-second && sha256sum -c SHA256SUMS)
+          diff wasm-verifier-first/SHA256SUMS wasm-verifier-second/SHA256SUMS
+          cat wasm-verifier-first/SHA256SUMS
 
   # Builds the enclave image twice on separate runners with no shared cache, then boots it under
   # QEMU: the production image must refuse mock providers, and the dev image must attest its config
@@ -831,6 +890,38 @@ jobs:
           gh run cancel ${{ github.run_id }} \
             || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
 
+  cancel-wasm-verifier:
+    needs: wasm-verifier
+    if: failure() && needs.wasm-verifier.result == 'failure' && github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
+  cancel-wasm-verifier-compare:
+    needs: wasm-verifier-compare
+    if: failure() && needs.wasm-verifier-compare.result == 'failure' && github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
   cancel-image:
     needs: image
     if: failure() && needs.image.result == 'failure' && github.event_name == 'pull_request'
@@ -884,7 +975,7 @@ jobs:
   # `changes` set its area false. Add every new job to `needs`, and a gated one to `$area` below.
   ci-passed:
     if: always()
-    needs: [changes, fmt, file-loc, clippy, test, reference-examples, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, dev-metrics-alerts, dev-alert-outbox, dev-ct-watch, dev-browser-origin, dev-snapshot-restart, dev-rwa-feeds, dev-attestation-verifier, dev-signed-api, dev-acme, image, image-compare, review-delta]
+    needs: [changes, fmt, file-loc, clippy, test, reference-examples, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, dev-metrics-alerts, dev-alert-outbox, dev-ct-watch, dev-browser-origin, dev-snapshot-restart, dev-rwa-feeds, dev-attestation-verifier, dev-signed-api, dev-acme, wasm-verifier, wasm-verifier-compare, image, image-compare, review-delta]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -902,7 +993,7 @@ jobs:
                "dev-snapshot-restart": "scenarios",
                "dev-rwa-feeds": "scenarios", "dev-attestation-verifier": "scenarios", "dev-signed-api": "scenarios",
                "dev-acme": "scenarios",
-               image: "image",
+               "wasm-verifier": "scenarios", "wasm-verifier-compare": "scenarios", image: "image",
                "image-compare": "image", "review-delta": "agent_scripts"} as $area
             | all(to_entries[]; .value.result == "success"
                 or .value.result == "skipped" and $run[$area[.key] // ""] == "false")'

@@ -7,7 +7,7 @@ that checks them. The attested enclave key signs each API response over the requ
 client's challenge, the node's time and log head, and the status and body; and each frame of a
 signed stream connection over its place on the connection, the node's time, and the message. This
 crate holds those digests, the checks a client runs on them, and known-answer vectors. It does no IO
-and needs no runtime, so a browser verifier can build it for WebAssembly.
+and needs no runtime, so the browser verifier (`crates/verify-wasm`) builds it for WebAssembly.
 
 ## Features
 
@@ -18,8 +18,12 @@ and needs no runtime, so a browser verifier can build it for WebAssembly.
   challenge and opening request, the previous frame's digest, the frame's place `n`, the time, and
   SHA-256 of the message
 - `verify_response`: checks an `X-Engine-Signature` against the attested address
+- `verify_received`: checks a response from its status, its `X-Engine-*` header values as
+  received, and its body, refusing one without a signature, time, or seq, or that echoes another
+  challenge; `engine verify-response` and the browser verifier both run it
 - `FrameVerifier`: checks a connection's frames in order from `n` 0, refusing a dropped, repeated,
-  reordered, or spliced-in frame, and every frame after the first that fails
+  reordered, or spliced-in frame, and every frame after the first that fails; `verify_text` takes a
+  frame's JSON as received, so text that is not a frame fails the connection too
 - `SignedFrame`: the stream envelope, `{"v":1,"n":…,"time":…,"msg":"…","sig":"0x…"}`
 - `parse_challenge`: exactly 64 hex characters, as the node accepts them
 - Header names and domain tags as constants

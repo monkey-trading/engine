@@ -13,7 +13,14 @@ yanked = "warn"
 unmaintained = "none"
 # Every entry needs a reason, a removal condition, and an `expires YYYY-MM-DD` on its own line, so
 # an ignore can't quietly become permanent.
-ignore = []
+ignore = [
+    # rsa: the Marvin timing attack recovers a private key from decryption or signing timings.
+    # Outside tests, engine-verify only verifies RSASSA-PSS signatures with the vendor's public keys,
+    # so no private key is loaded; its tests sign with throwaway keys. Remove when a patched rsa
+    # release ships, or if non-test code starts using an rsa private key.
+    # expires 2027-04-30
+    { id = "RUSTSEC-2023-0071", reason = "rsa is used only to verify signatures with public keys" },
+]
 
 [licenses]
 # SPDX expressions allowed workspace-wide. Add entries with a comment saying which crate needs it,

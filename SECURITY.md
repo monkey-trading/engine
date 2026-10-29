@@ -98,7 +98,8 @@ is accurate to that bound.
 
 The node's development settings, which are the mock enclave, mock custody, simulated prices, and
 historical unsigned requests, exist for local testing and make no security claims of their own.
-Neither does `POST /v1/dev/deposit`, which the node serves only with mock custody. A weakness in
+Neither does `POST /v1/dev/deposit`, which the node serves only with mock custody, nor the browser
+verifier's `verifyMockAttestation`, which reads a mock attestation and reports it as a mock. A weakness in
 them is in scope when a production configuration can reach it, or when whoever runs an attested enclave can
 switch them on, since the node reads its configuration from the machine it runs on. A production
 configuration uses hardware attestation, on-chain custody, live prices, and signed requests.
@@ -117,9 +118,10 @@ is not yet bounded against a host that relays or translates client connections.
 The local source fixture is synthetic and its published signer is refused with real attestation.
 Sanctioned funding remains uncredited and held with public evidence. The other three are not
 finished: the node builds into a reproducible SEV-SNP image and requests an attestation report
-through configfs-tsm, and `engine verify-attestation` verifies a quote's certificate chain,
-measurement, policy, and configuration against a release, but booting that image on SEV-SNP
-hardware and the verifier against a hardware quote are still being validated, as are live prices
+through configfs-tsm, and `engine verify-attestation`, and the browser build of the same code,
+verify a quote's certificate chain, measurement, policy, and configuration against a release, but
+booting that image on SEV-SNP hardware and the verifier against a hardware quote are still being
+validated, as are live prices
 and the separate signed benchmark publisher worker. The node relays the vendor's certificate chain
 and revocation list for verifiers that cannot call the vendor; a verifier pins the vendor roots
 itself, but a host that blocks the node's fetches delays a revocation until the served list's

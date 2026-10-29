@@ -8,14 +8,13 @@ use axum::Router;
 use axum::extract::Path;
 use axum::response::IntoResponse as _;
 use axum::routing::get;
+use engine_verify::fixtures::{PROCESSOR, TestChain, pem};
 use futures_util::StreamExt as _;
+use rcgen::SerialNumber;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
 use super::super::Options;
-use rcgen::SerialNumber;
-
-use super::fixtures::{PROCESSOR, TestChain, pem};
 
 /// A key-distribution service stand-in with the vendor endpoints' shapes: the VCEK endpoint
 /// answers for any chip and TCB (so the verifier itself must bind the certificate's signed
@@ -49,7 +48,7 @@ pub(super) async fn kds_stub_with(chain: &TestChain, vcek_pem: bool, revoked: &[
 pub(super) type CrlCell = Arc<std::sync::Mutex<String>>;
 
 fn crl_cell(chain: &TestChain, revoked: &[SerialNumber], crl_pem: Option<String>) -> CrlCell {
-    Arc::new(std::sync::Mutex::new(crl_pem.unwrap_or_else(|| super::fixtures::crl_revoking(chain, revoked))))
+    Arc::new(std::sync::Mutex::new(crl_pem.unwrap_or_else(|| engine_verify::fixtures::crl_revoking(chain, revoked))))
 }
 
 /// The stand-in answering whatever `crl` holds when asked.

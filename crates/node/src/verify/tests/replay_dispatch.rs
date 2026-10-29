@@ -14,10 +14,10 @@ use engine_core::command::{AdminCommand, Command, Sequenced};
 use engine_core::event::Event;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::AccountId;
-
-use super::fixtures::{
+use engine_verify::fixtures::{
     LAUNCH_DIGEST, PROCESSOR, REPORTED_TCB, attestation, forged_report, pem, release_toml, test_chain,
 };
+
 use super::stub::kds_stub;
 use crate::log::{Checkpoint, CheckpointDomain, CheckpointParent, CommandEntry, LogEntry};
 use crate::sequencer::SignedWithdrawal;

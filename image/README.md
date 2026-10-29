@@ -218,10 +218,11 @@ kernel only in an SEV-SNP launch (under plain QEMU it finds no bootable option),
 
 ## Release
 
-1. Tag `v<version>` on a `main` commit whose CI run passed. That run built the commit's image twice
-   and found the builds identical; its `image-first` artifact holds the release files. Artifacts
-   expire after 14 days; after that, run CI on the tag (`gh workflow run ci.yaml --ref v<version>`)
-   and take the files from that run.
+1. Tag `v<version>` on a `main` commit whose CI run passed. That run built the commit's image and
+   its browser verifier twice each and found the builds identical; its `image-first` artifact holds
+   the image files and its `wasm-verifier-first` artifact the verifier package. Artifacts expire
+   after 14 days; after that, run CI on the tag (`gh workflow run ci.yaml --ref v<version>`) and
+   take the files from that run.
 2. Rebuild the tag on a second machine with
    `scripts/build-image.sh --ref v<version> --no-cache <dir>` and check its `SHA256SUMS` matches
    the CI run's.
@@ -249,6 +250,14 @@ kernel only in an SEV-SNP launch (under plain QEMU it finds no bootable option),
    config hashes, and reads that config to see what the node runs with. A processor name the
    key-distribution service knows (the CPU generation's codename, for example `Milan`, `Genoa`,
    or `Turin`) passes as `--processor`.
+5. Attach the browser verifier from the same run, the files `scripts/build-wasm-verifier.sh` wrote:
+   `engine_verify_bg.wasm`, its glue `engine_verify.js`, the TypeScript types `engine_verify.d.ts`
+   and `engine_verify_bg.wasm.d.ts`, and `package.json`, with their `SHA256SUMS` attached as
+   `engine-verify.SHA256SUMS`. On a second x86_64 Linux machine, `scripts/build-wasm-verifier.sh
+   <dir>` from a checkout of the tag must give the same sums.
+6. Before the node release goes live, ship a console build that pins this `release.toml`, beside
+   the previous release's for the upgrade, and the verifier's SHA-256. The attestation binds the
+   config file, so a console that does not pin the new manifest refuses the new node.
 
 The attestation binds every byte of the config file, so a verifier can check the hash only against
 a copy it can read. A credential in the file, such as an API key in a `custody.evm.providers`

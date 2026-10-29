@@ -332,33 +332,30 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/test_tracing.rs` — the tracing setup the test collectors share: one process-wide
   interested subscriber, so no callsite can be cached uninteresting and a collector never
   silently misses an alert or line
-- `src/tee.rs` — the enclave key, signatures, the attestation bundle, and attestation providers
-- `src/verify/mod.rs` — attestation verification against a release manifest: the quote, its
-  certificate chain, the report data's bundle binding, and the checkpoint-signer check
-- `src/verify/report.rs` — the SEV-SNP attestation report layout, parsing, and signature
-  verification
-- `src/verify/chain.rs` — the VCEK chain up to the pinned vendor roots and the key-distribution
-  service client that issues it
-- `src/verify/relay.rs` — the vendor collateral a verifier needs (VCEK, intermediate, root,
-  revocation list): fetching it, bounding and checking it, and the JSON the node serves
-- `src/verify/refresh.rs` — the node's boot fetch and periodic refresh of that collateral, and the
-  `collateral_stale` and `collateral_revoked` alerts
-- `src/verify/release.rs` — the release manifest of launch digest, policy, minimum TCB, and
-  configuration hashes
-- `src/verify/roots/` — the vendor root certificates compiled into the verifier
+- `src/tee.rs` — the enclave key, signatures, and attestation providers; the attestation and its
+  bundle are `engine-verify`'s
+- `src/verify/mod.rs` — attestation verification for the CLI and replay: loading or fetching the
+  attestation, release manifest, and collateral, `engine-verify` on the system clock, and the
+  checkpoint-signer check
+- `src/verify/fetch.rs` — the key-distribution service client that fetches a quote's VCEK,
+  intermediate, root, and revocation list
+- `src/verify/refresh.rs` — the node's boot fetch and periodic refresh of that collateral, checked
+  with `engine-verify` before it is served, and the `collateral_stale` and `collateral_revoked`
+  alerts
 - `src/verify/answers.rs` — offline checks of a saved signed response or stream connection, for
   `engine verify-response` and `engine verify-frames`
 - `src/verify/answers/tests.rs` — saved headers in curl's layout, each refused alteration, and a
   frame removed from a capture
-- `src/verify/tests/mod.rs` — verification tests and the loopback dev scenario
+- `src/verify/tests/mod.rs` — verification through fetched collateral, and the loopback dev
+  scenario
 - `src/verify/tests/replay_dispatch.rs` — the dev-scenario regression replaying a signed log
   through `engine replay --attestation` with and without a `--signer` pin
-- `src/verify/tests/fixtures.rs` — the stand-in vendor chain, forged reports, and the release
-  manifest
 - `src/verify/tests/relay.rs` — the relay: what the node refuses to serve, the bounded document,
   and a verifier checking relayed collateral with no vendor call
-- `src/verify/tests/revocation.rs` — the root-issued revocation list's serial matching: enforced
-  against the intermediate, never the VCEK
+- `src/verify/tests/relay_scenario.rs` — the relay's dev scenario, over the node's API route and
+  the `engine` binary
+- `src/verify/tests/revocation.rs` — the root-issued revocation list through fetched collateral:
+  enforced against the intermediate, never the VCEK
 - `src/verify/tests/stub.rs` — the key-distribution service stand-ins
 - `src/trusted_time/mod.rs` — the trusted time task: queries the Roughtime servers, backs off
   failing ones, and turns agreeing replies into a sample, which it publishes and sends to the
@@ -1044,7 +1041,8 @@ and treats the feed as stale when no heartbeat has come for about two intervals;
 the node has written, which a connection still catching up, or the live tail just behind it, has not
 received yet; it says how far the log has gone, not what this connection has missed. Without
 `signed=1` the stream is unchanged. `crates/wire` holds these digests, the client checks, and the known-answer vectors a
-browser verifier replays.
+browser verifier replays; `crates/verify-wasm` builds those checks and the attestation verifier for
+browsers.
 
 `GET /v1/attestation/collateral` returns `vcek`, `intermediate`, `root`, and `crl` as `0x` hex DER,
 and `fetched_at` in Unix milliseconds by the host's clock, for a client that cannot call the
@@ -1063,7 +1061,8 @@ The Warning `collateral_stale` fires when a refresh fails with the served list w
 without any collateral.
 `engine verify-attestation --collateral <file or URL>` verifies from the served document instead of
 calling the vendor (save a self-signed node's response with `curl -k`, or pass the URL of a node
-with a CA certificate).
+with a CA certificate). A browser passes the same document to `crates/verify-wasm`'s
+`verifyAttestation`.
 
 `/v1/stream` is live from now by default. `?from=<seq>` starts at the first message of `seq`
 (`from=0` is the whole log), and `?after=<seq>:<index>` resumes after the `offset` of the last

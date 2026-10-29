@@ -2,13 +2,13 @@
 
 use std::time::Duration;
 
+use engine_verify::RelayedCollateral;
+use engine_verify::fixtures::*;
 use tokio::time::timeout;
 
-use super::super::chain::Collateral;
+use super::super::fetch::Collateral;
 use super::super::refresh::Relay;
-use super::super::relay::RelayedCollateral;
-use super::fixtures::*;
-use super::relay::{collateral_of, tee};
+use super::relay::tee;
 use super::stub::kds_stub;
 
 /// The dev scenario: the node relays the stand-in service's collateral over its API route, the

@@ -38,9 +38,21 @@ an index: load only the rule whose hint matches the current action.
   `tests/invariants/` holds the property tests. Its `README.md` lists every file.
 - **crates/wire/** — `engine-wire`: the signed answers the node and its clients share. The
   digests the enclave key signs over each API response (`engine.response.v1`) and stream frame
-  (`engine.frame.v1`), `verify_response`, `FrameVerifier`, the `SignedFrame` envelope, and
-  known-answer vectors (`tests/vectors.json`) a browser verifier replays. No IO and no runtime.
+  (`engine.frame.v1`), `verify_response`, `verify_received` (a response from its header values as
+  received), `FrameVerifier` (`verify_text` for a frame's JSON), the `SignedFrame` envelope, and
+  known-answer vectors (`tests/vectors.json`) the browser verifier replays. No IO and no runtime.
   Its `README.md` lists every file.
+- **crates/verify/** — `engine-verify`: SEV-SNP attestation verification against a list of release
+  manifests, with the attestation, collateral, extra root, and time passed in (no IO, no clock, no
+  C code); names the release that admitted the quote and the validity window of the dates it
+  checked. Signatures on RustCrypto (`p384`, `rsa`: RSASSA-PSS/SHA-384 and ECDSA P-384/SHA-384
+  only). Holds the attestation and bundle types the node builds, the relayed collateral document,
+  the pinned vendor roots, and, behind `test-fixtures`, the stand-in vendor chain the node's tests
+  and `examples/verifier_fixtures.rs` use. Its `README.md` lists every file.
+- **crates/verify-wasm/** — `engine-verify-wasm`: `engine-verify` and `engine-wire` built for
+  browsers with wasm-bindgen (`verifyAttestation`, the development-only `verifyMockAttestation`,
+  `ExpectedSigner`, `verifyResponse`, `FrameVerifier`); `scripts/build-wasm-verifier.sh` packages
+  it as an npm package. Its `README.md` lists every file.
 - **crates/node/** — `engine-node`, binary `engine` (`main.rs` over `lib.rs`). Contains the
   access-source screening (`access.rs`, signed decisions with bounded HTTP reads),
   sequencer, the public log with signed checkpoints (segmented, with a public archive), `engine
@@ -62,13 +74,12 @@ an index: load only the rule whose hint matches the current action.
   and authenticated segment metadata (`log/catalog.rs`),
   TEE attestation (configfs-tsm for TDX and SEV-SNP; the report data is the hash of a bundle of the
   enclave address, the config file's SHA-256, and the TLS key's hash), attestation verification
-  (`verify/`: `engine verify-attestation` checks an SEV-SNP quote's certificate chain against vendor
-  roots pinned in the binary, and its launch measurement, guest policy, reported TCB, and
-  configuration against a release manifest; `engine replay --attestation` requires every checkpoint
-  signer to have passed it; a mock quote never verifies; `verify/relay.rs` and `verify/refresh.rs`
-  fetch the node's own quote's vendor certificate chain and revocation list in the background,
-  check and bound them, and serve them at `/v1/attestation/collateral` for a verifier that cannot
-  call the vendor, which pins the roots itself), the trusted time check against
+  (`verify/`: `engine verify-attestation` loads or fetches (`verify/fetch.rs`) what `engine-verify`
+  checks and passes the system clock; `engine replay --attestation` requires every checkpoint
+  signer to have passed it; a mock quote never verifies; `verify/refresh.rs` fetches the node's own
+  quote's vendor certificate chain and revocation list in the background, checks and bounds them,
+  and serves them at `/v1/attestation/collateral` for a verifier that cannot call the vendor, which
+  pins the roots itself), the trusted time check against
   Roughtime servers, the custody adapter (mock, or EVM vault deposits over alloy, mirroring the
   staking contract's finalised events once `InitStaking` has applied, with V27 scan progress
   authenticated in engine state rather than trusted from the host cursor), checkpoint posting
@@ -181,7 +192,11 @@ an index: load only the rule whose hint matches the current action.
   hardware or vendor access, also replaying a hand-built signed-withdrawal log through
   `engine replay --attestation`, and verifying from the collateral the node's route relays after
   the stand-in stops; `dev-acme.sh`, the public certificate scenario against the Pebble ACME test CA
-  on loopback; `dev-access-enforcement.sh` checks signed eligibility, API refusals,
+  on loopback; `dev-wasm-verifier.sh`, with its Node harness `dev-wasm-verifier.mjs`, the browser
+  verifier scenario: the WebAssembly package and the `engine` CLI reach the same verdict and message
+  on every attestation fixture and `engine-wire` vector; `build-wasm-verifier.sh`, the browser
+  verifier's reproducible npm package build (`--dev` for the scenario);
+  `dev-access-enforcement.sh` checks signed eligibility, API refusals,
   direct vault payer sanctions, automatic screening recovery and held collateral across restart,
   using `dev-access-fixture.sh` and `dev-access-cases.sh` for the explicit synthetic source and
   assertions; and `build-image.sh` and `check-image.sh`, which build the enclave image from a
@@ -200,8 +215,11 @@ an index: load only the rule whose hint matches the current action.
   scenario, the metrics and alert routing dev scenario, the alert outbox kill/restart scenario,
   the browser-origin scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the
   signed API answers dev scenario, the public certificate dev scenario, the review-delta helper's
-  test, and the enclave image (`image` checks its download retries, builds it twice, and boots it under
-  QEMU, `image-compare` fails if the builds differ), on every push to `main` and every PR.
+  test, the browser verifier (`wasm-verifier` builds its package twice on separate runners with the
+  pinned toolchain, the second from another checkout path, and its first run also runs
+  `dev-wasm-verifier.sh` on that package; `wasm-verifier-compare` fails if the builds differ), and
+  the enclave image (`image` checks its download retries, builds it twice, and boots it under QEMU,
+  `image-compare` fails if the builds differ), on every push to `main` and every PR.
   deposit finality scenarios, the signed withdrawal and FIFO dev scenario, the API and
   direct-vault access enforcement dev scenario, the metrics and alert
   routing dev scenario, the alert outbox kill/restart scenario, the browser-origin scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the
@@ -233,7 +251,7 @@ an index: load only the rule whose hint matches the current action.
 - **agents/** — this index, `rules/`, and `skills/` (incl. `skills/vendor/` pull-on-demand
   packs); root `AGENTS.md` / `CLAUDE.md` symlink to `agents/AGENTS.md`.
 - **Cargo.toml** — workspace manifest, shared dependencies, and the Cargo profiles (release keeps
-  overflow checks on).
+  overflow checks on; `wasm` is release optimised for size, for the browser verifier).
 - **deny.toml** — `cargo-deny` policy: advisories, allowed licenses, bans, and sources.
 - **rustfmt.toml** — `max_width = 120`.
 - **README.md** — the public introduction: what the engine does and how, its status, how to verify
@@ -249,8 +267,9 @@ an index: load only the rule whose hint matches the current action.
 Run from the repo root:
 
 - Build: `cargo build`
-- Test one crate: `cargo test -p engine-core`, `cargo test -p engine-node`, or
-  `cargo test -p engine-wire`; the node's
+- Test one crate: `cargo test -p engine-core`, `cargo test -p engine-node`,
+  `cargo test -p engine-wire`, `cargo test -p engine-verify`, or `cargo test -p engine-verify-wasm`;
+  the node's
   production build: `cargo test -p engine-node --features production --lib production_build`
 - Lint: `cargo clippy --workspace --all-targets -- -D warnings`
 - Format check: `cargo fmt --all -- --check`
@@ -311,6 +330,14 @@ Run from the repo root:
   mismatched `--signer` fails; the node's collateral route relays the stand-in's chain, and with
   the stand-in stopped `verify-attestation --collateral` still verifies while a VCEK for another
   chip and a stale revocation list fail; needs only Cargo)
+- Browser verifier dev scenario: `./scripts/dev-wasm-verifier.sh [package-dir]` (builds the package
+  with `--dev` unless given one, writes the attestation fixtures with
+  `cargo run -p engine-verify --features test-fixtures --example verifier_fixtures`, and checks the
+  package under Node against the `engine` CLI on each fixture and `engine-wire` vector; needs the
+  `wasm32-unknown-unknown` target, wasm-bindgen-cli 0.2.129, and Node 18 or later)
+- Build the browser verifier's npm package: `scripts/build-wasm-verifier.sh <out-dir>` (Rust
+  1.99.1 with the `wasm32-unknown-unknown` target and wasm-bindgen-cli 0.2.129, both pinned in the
+  script; fails over 1.5 MB gzipped; see `crates/verify-wasm/README.md`)
 - Signed API answers dev scenario: `./scripts/dev-signed-api.sh` (needs `curl`, `jq`, and `python3`,
   which reads the WebSocket stream; a dev node on a quiet log with one-second heartbeats)
 - Verify a signed response or stream connection: `cargo run -p engine-node -- verify-response

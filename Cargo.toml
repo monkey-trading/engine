@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/node", "crates/wire"]
+members = ["crates/core", "crates/node", "crates/verify", "crates/verify-wasm", "crates/wire"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,6 +10,7 @@ repository = "https://github.com/0xjevons/monkeytrading"
 
 [workspace.dependencies]
 engine-core = { path = "crates/core", version = "0.1.0" }
+engine-verify = { path = "crates/verify", version = "0.1.0" }
 engine-wire = { path = "crates/wire", version = "0.1.0" }
 
 alloy-dyn-abi = { version = "1.7.3", default-features = false, features = ["std", "eip712"] }
@@ -42,15 +43,23 @@ instant-acme = { version = "0.8.5", default-features = false, features = ["ring"
 jmt = { version = "=0.12.0", default-features = false, features = ["std", "sha2"] }
 k256 = { version = "0.14.0", default-features = false, features = ["ecdsa"] }
 nix = { version = "0.31.3", default-features = false, features = ["sched"] }
+# ECDSA on P-384: the attestation report's signature and the test chain's certificates. Pure Rust,
+# so the native and browser verifiers run the same implementation. Without `std`, which would pull
+# in an OS random source that does not build for the browser and that verification never uses.
+p384 = { version = "0.14.0", default-features = false, features = ["ecdsa"] }
 prometheus-client = "0.25"
 proptest = { version = "1.12", default-features = false, features = ["std"] }
 rand = "0.8"
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
 # HTTPS for alert webhooks. TLS is configured in code: rustls on ring with the compiled-in Mozilla roots.
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider", "stream"] }
-# P-384 ECDSA over the attestation report. The workspace already builds ring as rustls's only
+# Certificate Transparency log signatures. The workspace already builds ring as rustls's only
 # crypto provider, so no new backend enters the tree.
 ring = { version = "0.17", default-features = false, features = ["std"] }
+# RSASSA-PSS over the vendor's attestation certificates and revocation lists, verification only.
+# Pure Rust and without `std`, like p384, for the browser verifier; `sha2` re-exports the digest it
+# verifies with.
+rsa = { version = "0.9.10", default-features = false, features = ["sha2", "u64_digit"] }
 rusqlite = { version = "0.40", default-features = false, features = ["bundled", "limits"] }
 # TLS for the API, venue feeds, and alert webhooks with ring as the only crypto provider, so no
 # OpenSSL or aws-lc build.
@@ -72,10 +81,15 @@ tower = { version = "0.5", features = ["util"] }
 tower-service = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# The browser verifier's JavaScript bindings. Pinned exactly: the wasm-bindgen CLI that generates
+# the glue must be this same version.
+wasm-bindgen = "=0.2.129"
 webpki-root-certs = "1"
 webpki-roots = "1"
-# X.509 parsing for the attestation certificate chain; already in the tree via rcgen.
-x509-parser = { version = "0.18", features = ["verify"] }
+# X.509 parsing for the attestation certificate chain; already in the tree via rcgen. Signatures are
+# checked with p384 and rsa, not this crate's ring-backed `verify`, which does not build for the
+# browser.
+x509-parser = "0.18"
 
 [profile.release]
 opt-level = 3
@@ -89,3 +103,9 @@ overflow-checks = true
 [profile.dev]
 opt-level = 2
 lto = "thin"
+
+# The browser verifier's release build (scripts/build-wasm-verifier.sh): the release profile, with
+# its overflow checks, optimised for size.
+[profile.wasm]
+inherits = "release"
+opt-level = "s"

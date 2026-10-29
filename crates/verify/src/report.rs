@@ -4,9 +4,10 @@
 //! offsets are fixed and little-endian where the field is an integer.
 
 use anyhow::{Context, ensure};
+use p384::ecdsa::signature::Verifier as _;
 
 /// The report size every supported version occupies.
-pub const REPORT_LEN: usize = 0x2A0 + 512;
+pub(crate) const REPORT_LEN: usize = 0x2A0 + 512;
 
 /// The bytes the report signature covers.
 const SIGNED_LEN: usize = 0x2A0;
@@ -52,7 +53,7 @@ impl Tcb {
     }
 
     /// The packed form the report carries.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-fixtures"))]
     pub fn to_packed(self) -> u64 {
         (self.boot_loader as u64)
             | ((self.tee as u64) << 8)
@@ -128,9 +129,11 @@ impl<'a> SnpReport<'a> {
         let mut signature = [0u8; 2 * SCALAR_LEN];
         signature[..SCALAR_LEN].copy_from_slice(&r);
         signature[SCALAR_LEN..].copy_from_slice(&s);
-        ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P384_SHA384_FIXED, vcek_spki_der)
-            .verify(&self.bytes[..SIGNED_LEN], &signature)
-            .context("report signature does not verify against the VCEK")
+        let verified = p384::ecdsa::VerifyingKey::from_sec1_bytes(vcek_spki_der).and_then(|key| {
+            let signature = p384::ecdsa::Signature::from_slice(&signature)?;
+            key.verify(&self.bytes[..SIGNED_LEN], &signature)
+        });
+        verified.context("report signature does not verify against the VCEK")
     }
 }
 
@@ -142,7 +145,7 @@ fn le_u64(bytes: &[u8], offset: usize) -> u64 {
     u64::from_le_bytes(bytes[offset..offset + 8].try_into().expect("report length checked"))
 }
 
-/// The 48-byte big-endian value ring verifies, from a 72-byte signature field that carries it
+/// The 48-byte big-endian value the verifier reads, from a 72-byte signature field that carries it
 /// little-endian in its first 48 bytes, zero-extended.
 /// Error cases:
 /// - the field's zero padding is not zero, so the value is not a zero-extended scalar
