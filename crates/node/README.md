@@ -14,6 +14,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   and reserved, uncredited sanctioned deposits
 - Dated publisher ingestion with a separate signing worker, startup synchronization, and per-date
   rollover catch-up under V18
+- Browser-origin allowlist (`api.allowed_origins`): CORS for the REST API and an `Origin` check on the
+  stream, off by default
 - Single-owner sequencer on a dedicated OS thread: commands are logged and synced to disk before any
   client sees their effect
 - Genesis all or nothing: the engine checks every genesis command at config load and again before
@@ -259,6 +261,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/archive.rs` — the archive routes: the manifest and completed segments
 - `src/api/auth_tests.rs` — signed-request API tests: signatures, nonces, expiries, refused
   accounts, and racing requests
+- `src/api/origin.rs` — CORS headers and preflight for the allowed browser origins, and the stream's `Origin` check
+- `src/api/origin_tests.rs` — listed, unlisted, and absent origins on reads, a POST, a preflight, a 429, and the stream
 - `src/api/history.rs` — the account history route: its parameters and limits
 - `src/api/proof_tests.rs` — account proof and emission entitlement API tests, including the state
   tree dev scenario: 100k accounts, checkpoint work, a proof checked against its logged root, and
@@ -326,7 +330,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   caps and timeouts
 - `src/tls/tests/mod.rs` — the API end to end over TLS: key pinning, limits, caps, and the harness
 - `src/tls/tests/stream.rs` — the stream end to end over TLS: the subscriber and message caps
-- `src/limits.rs` — request rate limits, connection caps, and the stream subscriber cap
+- `src/limits.rs` — request rate limits, connection caps, the stream subscriber cap, and the allowed browser origins
 - `src/config/mod.rs` — the node config schema, loading, and the config file's hash
 - `src/config/benchmarks.rs` — publisher endpoints, cadence, timeout, and catalogue coverage
 - `src/config/checkpoints.rs` — checkpoint relayer config and validation
@@ -345,6 +349,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   mock providers
 - `src/config/telemetry_tests.rs` — metrics and alert config tests: the Critical route, the dev
   config's telemetry, and webhook URLs
+- `src/config/origins.rs` — `api.allowed_origins` validation: exact browser origins, `https` only in a production build
+- `src/config/origins_tests.rs` — the origin allowlist's accepted and refused spellings
 - `src/config/validation.rs` — the checks a parsed config must also pass, and the production
   build's refusal of mocks
 - `src/config/test_keys.rs` — the published test keys from `config/test-keys.toml`, which a node
@@ -863,6 +869,16 @@ body not received within `api.read_timeout` gets 408, and a subscriber over `api
 gets 503. A connection over a connection cap or over its client's connection rate is closed before
 its TLS handshake. A client is its socket peer IP, with IPv6 counted by its /64; forwarding headers
 are ignored.
+
+`api.allowed_origins` lists the browser origins (`scheme://host[:port]`, exact; no `*`, path, or
+duplicate; `https` only in a production build) that may call the API. It is empty by default, which
+sends no CORS headers. A request from a listed origin gets `Access-Control-Allow-Origin` with that
+origin and `Vary: Origin`, on error responses too, and a preflight `OPTIONS` on any `/v1` route
+answers 204 with `GET, POST, OPTIONS`, the headers `Content-Type` and `X-Engine-Challenge`, and a
+600-second max age. `/v1/admin` never gets either. With any origin listed, `GET /v1/stream` with an
+`Origin` header not on the list gets 403 before the upgrade, since browsers do not apply CORS to
+WebSockets; a request without `Origin` is unaffected. The config is bound by the attestation, so
+changing the list is a new release.
 
 `GET /v1/attestation` returns `provider`, `enclave_address`, `config_sha256`,
 `tls_public_key_sha256`, `bundle`, `report_data`, and `quote`, each byte string as `0x` hex. The
@@ -1440,6 +1456,9 @@ cargo test -p engine-node
 
 # The trusted time dev scenario, offline against loopback Roughtime servers
 cargo test -p engine-node trusted_time::tests::scenario
+
+# Dev scenario: a listed browser origin gets CORS headers and the stream, any other gets neither
+./scripts/dev-browser-origin.sh
 
 # Dev scenario: a mock feed stops, the market goes stale, and a local webhook gets one page
 ./scripts/dev-metrics-alerts.sh

@@ -412,6 +412,7 @@ fn api() -> ApiSection {
         per_ip_connections: rate(1, 5000),
         max_subscribers: NonZeroUsize::new(8).unwrap(),
         send_timeout: Duration::from_secs(5),
+        allowed_origins: Vec::new(),
     }
 }
 

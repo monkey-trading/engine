@@ -152,6 +152,12 @@ pub struct ApiSection {
     /// message, is disconnected.
     #[serde(with = "humantime_serde")]
     pub send_timeout: Duration,
+    /// Browser origins (`scheme://host[:port]`) that may read the REST API and open the stream. Empty
+    /// by default, which sends no CORS headers and leaves the stream open to any `Origin`. The
+    /// operator's `/v1/admin` route is never opened to a browser. A production build takes only
+    /// `https` origins.
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
 }
 
 /// A token bucket: `burst` requests at once, refilled at `per_second`.
@@ -298,13 +304,15 @@ impl NodeConfig {
     /// - `operator.public_key` or `custody.vault` does not parse
     /// - genesis lists a market id, a market symbol, or a benchmark name twice
     /// - the engine would reject a genesis command
-    /// - this is a production build and a TEE, custody, or feed provider is `mock`
+    /// - this is a production build and a TEE, custody, or feed provider is `mock`, or an allowed
+    ///   origin is not `https`
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         let mut cfg: NodeConfig = toml::from_str(&text)
             .map_err(|e| parse_error(&e, &text))
             .with_context(|| format!("parsing {}", path.display()))?;
         cfg.validate().with_context(|| format!("validating {}", path.display()))?;
+        cfg.api.refuse_insecure_origins(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
         cfg.refuse_mocks(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
         cfg.file_sha256 = Sha256::digest(text.as_bytes()).into();
         Ok(cfg)
@@ -377,6 +385,7 @@ fn public_key<'de, D: Deserializer<'de>>(deserializer: D) -> Result<VerifyingKey
     VerifyingKey::from_bytes(&bytes).map_err(D::Error::custom)
 }
 
+mod origins;
 mod test_keys;
 mod validation;
 
@@ -384,6 +393,8 @@ mod validation;
 mod custody_tests;
 #[cfg(test)]
 mod feeds_tests;
+#[cfg(test)]
+mod origins_tests;
 #[cfg(test)]
 mod production_tests;
 #[cfg(test)]

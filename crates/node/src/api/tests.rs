@@ -362,7 +362,7 @@ async fn serve_history(history: Reader) -> SocketAddr {
 }
 
 /// Serves `state`'s API on a free local port.
-async fn serve_state(state: ApiState) -> SocketAddr {
+pub(super) async fn serve_state(state: ApiState) -> SocketAddr {
     let app = router(state);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

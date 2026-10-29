@@ -61,3 +61,18 @@ fn a_production_build_refuses_the_dev_config_at_load() {
     let err = NodeConfig::load(Path::new(DEV)).unwrap_err();
     assert!(format!("{err:#}").contains("a production build refuses mock providers"), "{err:#}");
 }
+
+// A production build refuses an `http` origin at load, before any other check can pass the file.
+#[cfg(feature = "production")]
+#[test]
+fn a_production_build_refuses_an_http_origin_at_load() {
+    let dev = std::fs::read_to_string(DEV).unwrap();
+    let text =
+        dev.replace("max_subscribers = 256", "max_subscribers = 256\nallowed_origins = [\"http://localhost:3000\"]");
+    let dir = crate::test_support::scratch_dir("production-origin");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("node.toml");
+    std::fs::write(&path, text).unwrap();
+    let err = NodeConfig::load(&path).unwrap_err();
+    assert!(format!("{err:#}").contains("allows only https origins"), "{err:#}");
+}

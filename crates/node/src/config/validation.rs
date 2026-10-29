@@ -48,6 +48,8 @@ impl NodeConfig {
     ///   no longer than `feeds.interval`
     /// - `time.servers` has fewer than two servers, lists a public key twice, or has an address
     ///   that is not `host:port`
+    /// - `api.allowed_origins` lists a wildcard, a malformed origin, or one twice (see
+    ///   `validate_origins`)
     /// - `history.retention` is zero, or too long to count in milliseconds
     /// - the custody section does not match its provider (see `validate_custody`)
     /// - `operator.public_key` or `custody.vault` does not parse
@@ -93,6 +95,7 @@ impl NodeConfig {
         if [self.api.handshake_timeout, self.api.read_timeout, self.api.send_timeout].iter().any(Duration::is_zero) {
             anyhow::bail!("api.handshake_timeout, api.read_timeout, and api.send_timeout must be non-zero");
         }
+        self.api.validate_origins()?;
         // Unsigned requests let anyone act for any account, so they never run beside a real
         // enclave or real funds.
         if self.node.auth == AuthMode::None

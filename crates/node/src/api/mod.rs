@@ -1,6 +1,8 @@
 //! Client API: REST for actions and reads, the operator's admin route, a WebSocket that streams
 //! the public log (every sequenced command with its events, every signed checkpoint, every signed
-//! withdrawal), the log archive, and account history. Every request passes the limits in `limits`.
+//! withdrawal), the log archive, and account history. Every request passes the limits in `limits`;
+//! when the config lists browser origins, `origin` gives them CORS headers and refuses the stream
+//! to the rest.
 
 mod access;
 mod actions;
@@ -10,6 +12,7 @@ mod archive;
 mod benchmark_schedule;
 mod distributions;
 mod history;
+mod origin;
 pub(crate) mod reissue;
 mod state;
 mod stream;
@@ -182,7 +185,8 @@ impl IntoResponse for ApiError {
     }
 }
 
-/// Every route, with the request span outermost, then the per-client rate, then the body read.
+/// Every route, with the request span outermost, then the browser origin check, the per-client rate,
+/// and the body read.
 pub fn router(state: ApiState) -> Router {
     let limits = state.limits.clone();
     Router::new()
@@ -214,7 +218,8 @@ pub fn router(state: ApiState) -> Router {
         .with_state(state)
         .layer(DefaultBodyLimit::max(limits.max_body_bytes))
         .layer(from_fn_with_state(limits.clone(), read_body))
-        .layer(from_fn_with_state(limits, limit_client))
+        .layer(from_fn_with_state(limits.clone(), limit_client))
+        .layer(from_fn_with_state(limits, origin::browser_origin))
         .layer(from_fn(trace_request))
 }
 
@@ -343,6 +348,8 @@ mod access_tests;
 mod admin_tests;
 #[cfg(test)]
 mod auth_tests;
+#[cfg(test)]
+mod origin_tests;
 #[cfg(test)]
 mod proof_tests;
 #[cfg(test)]
