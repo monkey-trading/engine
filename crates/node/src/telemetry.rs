@@ -14,7 +14,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer, fmt, registry};
 
 use crate::alerts::{self, AlertLayer, Routes, Severity, is_alert_callsite};
-use crate::config::NodeConfig;
+use crate::config::{NodeConfig, WebhookRoute};
 use crate::metrics::Metrics;
 
 /// The HTTP client's crates, whose logs stay at `warn` or above whatever `logging.level` says.
@@ -47,6 +47,24 @@ pub fn init_telemetry(cfg: &NodeConfig, env: impl Fn(&str) -> Option<String>) ->
     let metrics = Arc::new(Metrics::new());
     let (layer, alerts) = alerts::channel(routes, metrics.clone());
     install_subscriber(&cfg.logging.level, Some(layer))?;
+    Ok(Telemetry { metrics, alerts, pages_critical })
+}
+
+/// As `init_telemetry`, for a worker with only the alert routes and a log level of its own.
+/// Error cases:
+/// - a configured webhook's variable is unset, or does not hold an acceptable URL
+/// - `level` is not a valid filter directive
+pub(crate) fn init_worker_telemetry(
+    level: &str,
+    critical: &Option<WebhookRoute>,
+    warning: &Option<WebhookRoute>,
+    env: impl Fn(&str) -> Option<String>,
+) -> anyhow::Result<Telemetry> {
+    let routes = Routes::from_routes(critical, warning, env)?;
+    let pages_critical = routes.has(Severity::Critical);
+    let metrics = Arc::new(Metrics::new());
+    let (layer, alerts) = alerts::channel(routes, metrics.clone());
+    install_subscriber(level, Some(layer))?;
     Ok(Telemetry { metrics, alerts, pages_critical })
 }
 

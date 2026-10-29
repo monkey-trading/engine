@@ -430,6 +430,11 @@ pub fn capture_until_dropped() -> (tracing::subscriber::DefaultGuard, Router) {
 impl Router {
     /// The lines queued so far.
     pub fn queued(mut self) -> Vec<AlertLine> {
+        self.take()
+    }
+
+    /// The lines queued since the last call, for a test that checks between steps.
+    pub fn take(&mut self) -> Vec<AlertLine> {
         std::iter::from_fn(|| self.lines.try_recv().ok()).collect()
     }
 }

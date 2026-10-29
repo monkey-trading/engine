@@ -276,7 +276,7 @@ impl<'a> Collateral<'a> {
                 Err(FetchError::Refused(message)) => return Err(anyhow::anyhow!(message)),
             }
         }
-        Err(anyhow::anyhow!(last.expect("at least one attempt")))
+        Err(CollateralUnavailable(last.expect("at least one attempt")).into())
     }
 
     /// One fetch attempt.
@@ -313,6 +313,20 @@ impl<'a> Collateral<'a> {
         Ok(body)
     }
 }
+
+/// The service kept failing in a way worth retrying (transport, 429 or 5xx): it supplied no
+/// collateral, which says nothing about the quote. A refusal (4xx) is not this error.
+#[derive(Debug)]
+pub(crate) struct CollateralUnavailable(pub(crate) String);
+
+impl std::fmt::Display for CollateralUnavailable {
+    /// The last failure.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for CollateralUnavailable {}
 
 /// How an attempt failed: worth retrying, or not.
 enum FetchError {

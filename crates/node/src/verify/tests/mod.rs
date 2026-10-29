@@ -28,13 +28,14 @@ use stub::{kds_stub, kds_stub_with, options, status_stub, streamed_oversized_stu
 
 #[tokio::test]
 async fn a_release_quote_verifies_and_names_the_release() {
-    let (chain, _enclave, attestation) = fixtures();
+    let (chain, enclave, attestation) = fixtures();
     let stub = kds_stub(&chain).await;
 
     let verified = verify_attestation(&attestation, &release(), &options(&stub, &pem(&chain.ark))).await.unwrap();
     assert_eq!(verified.release_name, "test-release-v1");
     assert_eq!(verified.enclave_address.0, [0x5e; 20]);
     assert_eq!(verified.config_name, "node.toml");
+    assert_eq!(verified.tls_public_key_sha256, enclave.bundle.tls_public_key_sha256);
 }
 
 #[tokio::test]
@@ -306,6 +307,7 @@ fn the_signer_reconciliation_feeds_the_attested_address_and_rejects_a_mismatch()
         release_name: "test-release-v1".into(),
         enclave_address: address,
         config_name: "node.toml".into(),
+        tls_public_key_sha256: enclave.bundle.tls_public_key_sha256,
     };
 
     assert_eq!(
@@ -326,6 +328,7 @@ fn signers_pass_only_when_they_match_the_verified_enclave_address() {
         release_name: "test-release-v1".into(),
         enclave_address: engine_core::types::AccountId(enclave.bundle.enclave_address),
         config_name: "node.toml".into(),
+        tls_public_key_sha256: enclave.bundle.tls_public_key_sha256,
     };
     let mut signers = BTreeSet::new();
     signers.insert(engine_core::types::AccountId(enclave.bundle.enclave_address));
@@ -348,14 +351,16 @@ async fn collateral_fetches_retry_transient_failures_and_stop_at_a_persistent_on
     // Fail always: the fetch gives up after exactly the attempt limit.
     let failing = status_stub(axum::http::StatusCode::INTERNAL_SERVER_ERROR, usize::MAX, pem_chain.clone()).await;
     let collateral = Collateral::new(&failing.base, PROCESSOR).unwrap();
-    collateral.issuer_chain().await.expect_err("a persistent failure must fail");
+    let err = collateral.issuer_chain().await.expect_err("a persistent failure must fail");
     assert_eq!(failing.attempts.load(Ordering::SeqCst), 3);
+    assert!(err.downcast_ref::<super::CollateralUnavailable>().is_some(), "the service was unavailable");
 
     // A 4xx is refused without another try.
     let refused = status_stub(axum::http::StatusCode::NOT_FOUND, usize::MAX, pem_chain).await;
     let collateral = Collateral::new(&refused.base, PROCESSOR).unwrap();
-    collateral.issuer_chain().await.expect_err("a 404 must fail");
+    let err = collateral.issuer_chain().await.expect_err("a 404 must fail");
     assert_eq!(refused.attempts.load(Ordering::SeqCst), 1);
+    assert!(err.downcast_ref::<super::CollateralUnavailable>().is_none(), "a refusal is not an outage");
 }
 
 #[tokio::test]

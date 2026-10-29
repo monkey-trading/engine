@@ -1,7 +1,9 @@
 # Alerting rules for the operator's Prometheus, which runs outside the enclave. They page on what
 # the node cannot page itself: a node whose metrics stop answering, and alert pages that its
 # webhook keeps failing or refuses, or that the node drops. Route them through Alertmanager to a
-# receiver other than the node's own webhook. The rules assume the scrape job is named `engine`.
+# receiver other than the node's own webhook. The rules assume the scrape job is named `engine`;
+# scrape a Certificate Transparency watcher (`engine ct-watch`, which serves the same alert metrics)
+# in that job too, as another instance, and they cover it.
 groups:
   - name: engine-node
     rules:
