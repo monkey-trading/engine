@@ -78,17 +78,19 @@ async fn a_key_that_is_not_the_operators_is_refused_before_any_call() {
     assert!(err.to_string().contains("is not the operator key"), "{err:#}");
 }
 
-#[tokio::test]
-async fn a_rotated_key_is_signed_with_once_the_flag_says_the_log_names_it() {
-    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-    let node = format!("https://127.0.0.1:{port}");
-    let argv =
-        ["engine", "--config", DEV_CONFIG, "--node", &node, "--pin", ZERO_PIN, "--rotated", "set-reduce-only", "true"];
-    let args = Cli::try_parse_from(argv).unwrap().args;
-    let env = KeyEnv { key_file: None, key: Some(HexKey(OTHER_KEY.into())) };
-    // The key check passes, so the run reaches the (absent) node.
-    let err = run_with_clock(args, env, || 1_000).await.unwrap_err();
-    assert!(!err.to_string().contains("is not the operator key"), "{err:#}");
+#[test]
+fn a_rotated_key_signs_as_its_own_address_on_the_configured_domain() {
+    let configured = dev_config().operator().unwrap();
+    let other = operator_key(None, Some(HexKey(OTHER_KEY.into()))).unwrap();
+    let config = Path::new(DEV_CONFIG);
+    let rotated = signing_operator(configured, &other, true, config).unwrap();
+    assert_eq!(rotated.address, eip712::address(other.verifying_key()));
+    assert_ne!(rotated.address, configured.address);
+    assert_eq!((rotated.chain_id, rotated.vault), (configured.chain_id, configured.vault));
+    let err = signing_operator(configured, &other, false, config).unwrap_err();
+    assert!(err.to_string().contains("is not the operator key"), "{err:#}");
+    let dev = operator_key(None, Some(HexKey(DEV_KEY.into()))).unwrap();
+    assert_eq!(signing_operator(configured, &dev, false, config).unwrap(), configured);
 }
 
 #[test]

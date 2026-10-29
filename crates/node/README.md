@@ -1364,7 +1364,7 @@ log; changing it needs a fresh log, except by a rotation: from `V35`, `engine ad
 <address>` hands the role to another key seven days after it is logged, `--rotated` signs with that
 key, and a restart accepts the log's rotated key under the config that names the original one, as
 long as the chain and vault match. `announce-params` gives the notice a profit fee or close-out level
-change needs. `engine replay` prints the operator a log records. A node
+change needs. With real attestation, `rotate-operator` refuses an address that `config/test-keys.toml` lists. `engine replay` prints the operator a log records. A node
 whose `tee.provider` is not `mock` refuses to start with an operator key that
 `config/test-keys.toml` lists, in either SEC1 encoding: the repository publishes those keys' private
 keys for local nodes.

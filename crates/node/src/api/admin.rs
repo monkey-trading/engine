@@ -14,7 +14,8 @@ use crate::checkpoints::emission_budget::check_budget;
 
 /// Sequences an admin command the operator signed and returns the events it produced, ending in
 /// `admin_applied` or `admin_rejected`. A request stays out of the log unless the operator may send
-/// its command, it carries the operator's signature, its nonce is the operator's next, and it has
+/// its command, it carries the signature of the operator or of a pending rotation's key (which the
+/// engine then judges at the sequenced time), its nonce is the operator's next, and it has
 /// not expired, so a copy sent after the original was sequenced stays out of the log. Copies that
 /// race the original all pass these checks and are sequenced; the engine, which checks all four
 /// again at the sequenced time, applies one and refuses the rest for their nonce.

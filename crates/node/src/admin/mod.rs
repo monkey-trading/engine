@@ -280,14 +280,10 @@ async fn run_configured(
     clock: impl Fn() -> Millis,
     cfg: NodeConfig,
 ) -> anyhow::Result<AdminRequest> {
-    let mut operator = cfg.operator()?;
     let key = resolve_key(args.key_file.as_deref(), env)?;
-    let address = eip712::address(key.verifying_key());
-    if args.rotated {
-        // The node, which checks the signature against the key the log records, refuses a wrong one.
-        operator.address = address;
-    } else if address != operator.address {
-        bail!("the key is not the operator key {} in {}", operator.address, args.config.display());
+    let operator = signing_operator(cfg.operator()?, &key, args.rotated, &args.config)?;
+    if let AdminAction::RotateOperator { address } = &args.action {
+        cfg.refuse_rotation_to_test_key(*address)?;
     }
     let node = NodeApi { url: args.node, pin: args.pin };
     if let AdminAction::SyncBenchmarks { watch } = args.action {
@@ -304,6 +300,22 @@ async fn run_configured(
         bail!("the engine rejected the command: {reason}");
     }
     Ok(req)
+}
+
+/// The operator `key` signs as: the configured one, or with `rotated`, the key's own address on the
+/// configured chain and vault. The node, which checks a signature against the key the log records,
+/// refuses a rotated key the log does not name.
+/// Error cases:
+/// - without `rotated`, `key` is not the configured operator's
+fn signing_operator(configured: Operator, key: &SigningKey, rotated: bool, config: &Path) -> anyhow::Result<Operator> {
+    let address = eip712::address(key.verifying_key());
+    if rotated {
+        return Ok(Operator { address, ..configured });
+    }
+    if address != configured.address {
+        bail!("the key is not the operator key {} in {}", configured.address, config.display());
+    }
+    Ok(configured)
 }
 
 /// `command` signed by `key` for `operator`'s domain, with `nonce`, to expire at `expires_at`.

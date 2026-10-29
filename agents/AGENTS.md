@@ -16,7 +16,7 @@ an index: load only the rule whose hint matches the current action.
   `tests/benchmark_retention.rs`), house exposure caps, toxicity scoring, signed client requests (EIP-712, per-account
   nonces, and expiries), USD settlement of markets quoted in other currencies, admin commands signed
   by the operator key the log records and, from `V35`, bounded (`operator_bounds.rs`: profit fee and
-  close-out level moves within ±50% after a seven-day notice, held markets kept priced, and a
+  close-out level moves within ±50% after a seven-day notice, held markets kept priced by price-rule changes, and a
   seven-day key rotation), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
   shared by net realised losses, halvings, and cumulative entitlements) and MONKEY staking with
   USDC distributions (`staking.rs`: stake mirroring, V27 authenticated identities and completed scan

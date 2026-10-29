@@ -9,10 +9,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::engine::Engine;
+use crate::engine::{Engine, MarketState};
 use crate::market::MarketSpec;
 use crate::params::{MAX_RATE_BPS, ProtocolParams};
-use crate::price::compute_index;
 use crate::protocol::ProtocolVersion;
 use crate::types::{AccountId, MAX_STAMP_MS, Millis};
 
@@ -205,33 +204,53 @@ impl Engine {
         self.operator_bounds.rotations += 1;
     }
 
-    /// Checks a relisting leaves a market with open positions priced. Price rules no tighter than
-    /// those in force (no more sources, no shorter freshness, no narrower divergence) always do.
-    /// Tighter ones must still give an index from the quotes the market holds now, unless it is
-    /// reduce-only.
+    /// Checks a relisting leaves priced the markets that hold positions and depend on its price: the
+    /// market itself, and the markets that convert at it. Price rules no tighter than those in force
+    /// (no more sources, no shorter freshness, no narrower divergence) always do. Tighter ones must
+    /// still give the market an index, from the quotes it keeps through the relisting, as trading
+    /// reads it, unless every affected market that holds positions is reduce-only.
     /// Error cases:
-    /// - tighter price rules that give no index from the held quotes, in a market that accepts new
-    ///   risk and has open positions
+    /// - tighter price rules that give no index, in a market that holds positions and accepts new
+    ///   risk, or that markets holding positions and accepting new risk convert at
     pub(crate) fn check_priceable(&self, spec: &MarketSpec) -> Result<(), String> {
         let Some(market) = self.markets.get(&spec.id) else { return Ok(()) };
         let (old, new) = (&market.spec.price_rules, &spec.price_rules);
         let tighter = new.min_sources > old.min_sources
             || new.max_age_ms < old.max_age_ms
             || new.max_divergence_bps < old.max_divergence_bps;
-        if !tighter || self.is_reduce_only(market) || compute_index(&market.quotes, new, self.now).is_ok() {
+        if !tighter {
             return Ok(());
         }
-        let held = self
-            .hot_indexes
-            .as_ref()
-            .expect("apply builds derived indexes")
-            .holders
-            .get(&spec.id)
-            .is_some_and(|holders| !holders.is_empty());
-        if held {
+        // The market as the relisting leaves it: `UpsertMarket` drops the quotes stale under the old
+        // limit when a relisting raises it.
+        let mut relisted = market.clone();
+        relisted.spec = spec.clone();
+        if self.protocol_version >= ProtocolVersion::V33 && new.max_age_ms > old.max_age_ms {
+            relisted.drop_quotes_older_than(self.now, old.max_age_ms);
+        }
+        if relisted.index(self.now).is_ok() {
+            return Ok(());
+        }
+        let holders = &self.hot_indexes.as_ref().expect("apply builds derived indexes").holders;
+        let accepts_risk_and_holds = |id| {
+            let held = holders.get(&id).is_some_and(|accounts| !accounts.is_empty());
+            held && self.markets.get(&id).is_some_and(|market| !self.is_reduce_only(market))
+        };
+        if accepts_risk_and_holds(spec.id) {
             return Err(format!(
                 "market {} has open positions, so price rules it cannot price under need it reduce-only first",
                 spec.id
+            ));
+        }
+        let converts_here = |dependent: &&MarketState| {
+            dependent.spec.id != spec.id && dependent.spec.quote_currency.fx_market() == Some(spec.id)
+        };
+        if let Some(dependent) =
+            self.markets.values().filter(converts_here).find(|dependent| accepts_risk_and_holds(dependent.spec.id))
+        {
+            return Err(format!(
+                "market {} has open positions and converts at market {}, which the price rules cannot price under, so it needs to be reduce-only first",
+                dependent.spec.id, spec.id
             ));
         }
         Ok(())

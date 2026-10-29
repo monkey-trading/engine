@@ -49,8 +49,9 @@ this crate and reproduce the signed state roots exactly.
   parameters are first set under `V35` or when it activates, and only from the time a signed
   `announce_params` names, at least seven days after it is logged (`NOTICE_MS`); a `set_params`
   that changes either rate otherwise is refused with `admin_rejected`. A relisting whose tighter
-  price rules (more sources, shorter freshness, narrower divergence) give no index from the quotes a
-  market holds is refused while accounts hold positions in it, unless the market is reduce-only. The
+  price rules (more sources, shorter freshness, narrower divergence) give no index, as trading reads
+  it, from the quotes the market keeps through the relisting is refused while accounts hold positions
+  in the market, or in a market that converts at it, unless each such market is reduce-only. The
   operator key changes only by a signed `rotate_operator`, which takes effect seven days after it is
   logged: from then the old key signs nothing, and the new one signs under the same chain and vault.
   Earlier versions keep their rules
@@ -173,7 +174,8 @@ this crate and reproduce the signed state roots exactly.
 - `tests/withdrawals/setup.rs` — shared Engine::apply-driven withdrawal setup
 - `src/admin.rs` — operator commands and signed admin commands
 - `src/operator_bounds.rs` — the V35 bounds: launch rates, rate notices, price-rule checks, and operator rotation
-- `tests/operator_bounds.rs` — every V35 refusal and each change that takes effect after its notice
+- `tests/operator_bounds.rs` — the V35 rate bounds, notices and rotation: each refusal and each change that takes effect after its notice
+- `tests/operator_price_rules.rs` — the V35 price-rule bound: held markets, reduce-only, FX dependents, relisting and futures
 - `src/emissions.rs` — MONKEY emissions: the schedule, period results, finalisation, and
   entitlements
 - `src/staking.rs` — MONKEY staking and USDC distributions: the config, stake and unstake
