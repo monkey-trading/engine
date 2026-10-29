@@ -373,6 +373,7 @@ impl Node {
             history: Reader::new(PathBuf::new(), watch::channel(true).1),
             emission_budget: None,
             listing: Default::default(),
+            signing: crate::test_support::signing(),
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("https://{}", listener.local_addr().unwrap());

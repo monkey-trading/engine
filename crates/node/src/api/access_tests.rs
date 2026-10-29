@@ -337,6 +337,7 @@ impl Node {
             history: Reader::new(dir.join(INDEX_FILE), watch::channel(true).1),
             emission_budget: None,
             listing: Default::default(),
+            signing: crate::test_support::signing(),
         };
         assert_eq!(
             state.query(Engine::protocol_version).await.unwrap(),

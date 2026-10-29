@@ -31,7 +31,7 @@ use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
 mod written;
 pub use written::Written;
 
-use crate::api::{Feed, MAX_BACKFILLS};
+use crate::api::{Feed, MAX_BACKFILLS, Signing};
 use crate::clock::{Clock, SystemClock};
 use crate::config::{HistorySection, NodeConfig};
 use crate::history::{History, HistoryCheck, HistoryEvent, Reader};
@@ -315,6 +315,13 @@ pub fn own_operator_key() -> String {
 /// The committed dev config.
 pub fn dev_config() -> NodeConfig {
     NodeConfig::load(Path::new(DEV_CONFIG)).expect("dev config loads")
+}
+
+/// The dev config's answer signing, by the published mock enclave key.
+pub fn signing() -> Arc<Signing> {
+    let cfg = dev_config();
+    let vault = cfg.custody.vault.parse().expect("the dev vault parses");
+    Arc::new(Signing::new(Arc::new(EnclaveKey::test_key()), cfg.custody.chain_id, vault, cfg.api.heartbeat_interval))
 }
 
 /// The sequencer settings the harness runs with, publishing the manifest on `manifest`.

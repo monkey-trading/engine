@@ -43,6 +43,7 @@ mod trusted_time;
 mod verify;
 mod withdrawals;
 pub use verify::{
-    KDS_BASE_URL, Options as VerifyOptions, ReleaseManifest, VerifiedAttestation, ensure_signers_verified,
-    load_attestation, reconcile_signer, verify_attestation, verify_attestation_files,
+    Expected as ExpectedSigner, KDS_BASE_URL, Options as VerifyOptions, ReleaseManifest, SentRequest,
+    VerifiedAttestation, VerifiedResponse, ensure_signers_verified, load_attestation, parse_challenge_arg,
+    reconcile_signer, verify_attestation, verify_attestation_files, verify_frames_file, verify_response_files,
 };

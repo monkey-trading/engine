@@ -476,6 +476,7 @@ mod tests {
             per_ip_connections: rate,
             max_subscribers: NonZeroUsize::new(2).unwrap(),
             send_timeout: Duration::from_secs(1),
+            heartbeat_interval: Duration::from_secs(5),
             allowed_origins: Vec::new(),
         }
     }

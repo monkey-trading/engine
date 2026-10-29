@@ -1,17 +1,19 @@
 //! `engine`: runs the node, replays a published log and verifies its checkpoints, verifies an
-//! attestation against a release, or signs and submits an operator's admin command.
+//! attestation against a release or a response or stream connection the attested enclave signed,
+//! or signs and submits an operator's admin command.
 
 use std::path::PathBuf;
 
 use anyhow::Context as _;
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use engine_core::auth::{ClientAuth, Operator};
 use engine_core::types::AccountId;
 use engine_node::admin::{self, AdminArgs, HexKey, KeyEnv};
 use engine_node::log::CheckpointDomain;
 use engine_node::{
-    KDS_BASE_URL, NodeConfig, VerifiedAttestation, VerifyOptions, ensure_signers_verified, init_logging,
-    init_telemetry, replay_path_with_custody, replay_path_with_trust, run_dedicated, verify_attestation_files,
+    ExpectedSigner, KDS_BASE_URL, NodeConfig, SentRequest, VerifiedAttestation, VerifyOptions, ensure_signers_verified,
+    init_logging, init_telemetry, parse_challenge_arg, replay_path_with_custody, replay_path_with_trust, run_dedicated,
+    verify_attestation_files, verify_frames_file, verify_response_files,
 };
 
 #[derive(Subcommand)]
@@ -79,10 +81,64 @@ enum Cmd {
         #[arg(long)]
         root: Option<PathBuf>,
     },
+    /// Verify a response a node served, saved with `curl -D <headers> -o <body>`: its
+    /// `X-Engine-Signature` over the request and its body, the challenge sent, the node's time and
+    /// log head, and the status and body, by the attested enclave address. Exits non-zero on any
+    /// mismatch.
+    VerifyResponse {
+        #[command(flatten)]
+        answer: AnswerArgs,
+        /// The request's method.
+        #[arg(long, default_value = "GET")]
+        method: String,
+        /// The request's path and query, exactly as sent.
+        #[arg(long)]
+        path: String,
+        /// The request's body, exactly as sent; none when omitted.
+        #[arg(long)]
+        request_body: Option<PathBuf>,
+        /// The status line and headers, as `curl -D` saves them.
+        #[arg(long)]
+        headers: PathBuf,
+        /// The body as received.
+        #[arg(long)]
+        body: PathBuf,
+    },
+    /// Verify a signed stream connection (`/v1/stream?signed=1&challenge=…`), saved one JSON frame a
+    /// line from its first: each frame in its place on the connection the request opened, under the
+    /// challenge sent, by the attested enclave address. Exits non-zero at the first frame that
+    /// fails.
+    VerifyFrames {
+        #[command(flatten)]
+        answer: AnswerArgs,
+        /// The path and query of the request that opened the connection, exactly as sent.
+        #[arg(long)]
+        path: String,
+        /// The saved frames.
+        #[arg(long)]
+        frames: PathBuf,
+    },
     /// Sign an admin command with the operator's key and submit it to a node. The key comes from
     /// `--key-file`, or the `OPERATOR_KEY_FILE` or `OPERATOR_KEY` environment variable, never the
     /// command line.
     Admin(AdminArgs),
+}
+
+/// Who must have signed an answer, for which deployment, and under which challenge.
+#[derive(Args)]
+struct AnswerArgs {
+    /// The enclave address the node's verified attestation names.
+    #[arg(long)]
+    signer: AccountId,
+    /// The custody chain id of the deployment the node serves.
+    #[arg(long)]
+    chain_id: u64,
+    /// The custody vault of the deployment the node serves.
+    #[arg(long)]
+    vault: AccountId,
+    /// The 64 hex characters the client sent as its challenge; 64 zeros when it sent none.
+    #[arg(long, value_parser = parse_challenge_arg)]
+    challenge: [u8; 32],
 }
 
 #[derive(Parser)]
@@ -99,6 +155,7 @@ struct Cli {
 /// - the log is missing or cannot be read, fails its manifest check or verification, or holds no
 ///   command or no checkpoint
 /// - an attestation does not verify against its release
+/// - a saved response or stream connection does not verify against the attested signer
 /// - an admin command cannot be signed or submitted, or the engine rejects it
 fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
@@ -186,6 +243,22 @@ fn main() -> anyhow::Result<()> {
             );
             Ok(())
         }
+        Cmd::VerifyResponse { answer, method, path, request_body, headers, body } => {
+            let request_body = request_body.map(std::fs::read).transpose().context("reading --request-body")?;
+            let request_body = request_body.as_deref().unwrap_or_default();
+            let request = SentRequest { method: &method, path_and_query: &path, body: request_body };
+            let verified = verify_response_files(&answer.expected(), &request, &headers, &body)?;
+            println!(
+                "verified: status {}, signed by {} at {} ms, log head seq {}",
+                verified.status, answer.signer, verified.time_ms, verified.head_seq
+            );
+            Ok(())
+        }
+        Cmd::VerifyFrames { answer, path, frames } => {
+            let count = verify_frames_file(&answer.expected(), &path, &frames)?;
+            println!("verified: {count} frames, n 0 to {}, signed by {}", count - 1, answer.signer);
+            Ok(())
+        }
         Cmd::Admin(args) => {
             let env = KeyEnv {
                 key_file: std::env::var_os("OPERATOR_KEY_FILE").map(PathBuf::from),
@@ -193,6 +266,13 @@ fn main() -> anyhow::Result<()> {
             };
             tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(admin::run(args, env)).map(drop)
         }
+    }
+}
+
+impl AnswerArgs {
+    /// The signer, deployment, and challenge to verify against.
+    fn expected(&self) -> ExpectedSigner {
+        ExpectedSigner { signer: self.signer, chain_id: self.chain_id, vault: self.vault, challenge: self.challenge }
     }
 }
 

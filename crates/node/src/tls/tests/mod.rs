@@ -353,6 +353,7 @@ impl TestNode {
             history: Reader::new(PathBuf::new(), watch::channel(true).1),
             emission_budget: None,
             listing: Default::default(),
+            signing: crate::test_support::signing(),
         };
         let server = tokio::spawn(serve(listener, tls.config, router(state), limits, api));
         Self { port, attestation, stream, server, sequencer }
@@ -412,6 +413,7 @@ fn api() -> ApiSection {
         per_ip_connections: rate(1, 5000),
         max_subscribers: NonZeroUsize::new(8).unwrap(),
         send_timeout: Duration::from_secs(5),
+        heartbeat_interval: Duration::from_secs(5),
         allowed_origins: Vec::new(),
     }
 }

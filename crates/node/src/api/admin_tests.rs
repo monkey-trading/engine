@@ -303,6 +303,7 @@ impl Node {
             history: Reader::new(PathBuf::new(), watch::channel(true).1),
             emission_budget: None,
             listing: Default::default(),
+            signing: crate::test_support::signing(),
         };
         Node { state, dir, tls, stamps, key, task }
     }

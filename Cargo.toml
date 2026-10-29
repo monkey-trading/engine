@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/node"]
+members = ["crates/core", "crates/node", "crates/wire"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,6 +10,7 @@ repository = "https://github.com/0xjevons/monkeytrading"
 
 [workspace.dependencies]
 engine-core = { path = "crates/core", version = "0.1.0" }
+engine-wire = { path = "crates/wire", version = "0.1.0" }
 
 alloy-dyn-abi = { version = "1.7.3", default-features = false, features = ["std", "eip712"] }
 alloy-primitives = { version = "1.7.3", default-features = false, features = ["std", "serde"] }

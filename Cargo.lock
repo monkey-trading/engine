@@ -1973,6 +1973,7 @@ dependencies = [
  "csv",
  "ed25519-dalek",
  "engine-core",
+ "engine-wire",
  "futures-util",
  "governor",
  "hex",
@@ -2007,6 +2008,19 @@ dependencies = [
  "webpki-root-certs",
  "webpki-roots",
  "x509-parser",
+]
+
+[[package]]
+name = "engine-wire"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "k256 0.14.0",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "sha3 0.10.9",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

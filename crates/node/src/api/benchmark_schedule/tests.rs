@@ -144,6 +144,7 @@ fn state() -> (ApiState, mpsc::Receiver<Request>) {
         history: Reader::new(PathBuf::new(), watch::channel(true).1),
         emission_budget: None,
         listing: Default::default(),
+        signing: crate::test_support::signing(),
     };
     (state, requests)
 }

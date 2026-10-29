@@ -319,6 +319,7 @@ impl Scenario {
             history: Reader::new(self.dir.join(INDEX_FILE), watch::channel(true).1),
             emission_budget: Some(emission_budget),
             listing: Default::default(),
+            signing: crate::test_support::signing(),
         };
         let app = router(state.clone()).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9))));
         self.node = Some(Node { app, state, sequencer, poster, status });

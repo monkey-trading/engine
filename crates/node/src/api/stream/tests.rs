@@ -10,11 +10,14 @@ use engine_core::Fixed;
 use engine_core::command::{Command, Sequenced};
 use engine_core::event::Event;
 use engine_core::types::AccountId;
+use engine_wire::{FrameVerifier, SignedFrame};
 use futures_util::FutureExt;
 use tokio::sync::oneshot;
-use tokio::time::timeout;
+use tokio::time::{Instant, timeout};
 
+use crate::api::Signing;
 use crate::log::{CommandEntry, LogEntry, SegmentedLog, segment_seq};
+use crate::tee::EnclaveKey;
 use crate::test_support::{TestSequencer, deposit, log_entries, log_messages, scratch_dir, withdraw};
 
 const SEND_TIMEOUT: Duration = Duration::from_secs(1);
@@ -203,7 +206,7 @@ async fn a_subscriber_that_stops_reading_is_closed_at_the_send_timeout() {
     live.send(tick(0)).unwrap();
     let mut subscriber = Subscriber { stopped_reading: true, ..Subscriber::default() };
     let started = tokio::time::Instant::now();
-    timeout(Duration::from_secs(60), forward(&mut subscriber, feed, SEND_TIMEOUT))
+    timeout(Duration::from_secs(60), forward(&mut subscriber, feed, SEND_TIMEOUT, None))
         .await
         .expect("closed, not waited on");
     assert_eq!(started.elapsed(), SEND_TIMEOUT);
@@ -215,7 +218,7 @@ async fn a_subscriber_that_stops_reading_is_closed_at_the_send_timeout() {
 async fn a_subscriber_that_disconnects_is_dropped_with_no_message_sent() {
     let (_live, feed) = live_feed(4);
     let mut subscriber = Subscriber { disconnected: true, ..Subscriber::default() };
-    timeout(Duration::from_secs(60), forward(&mut subscriber, feed, SEND_TIMEOUT))
+    timeout(Duration::from_secs(60), forward(&mut subscriber, feed, SEND_TIMEOUT, None))
         .await
         .expect("its place is freed without waiting for a message");
     assert!(subscriber.sent.is_empty());
@@ -227,7 +230,7 @@ async fn a_subscriber_close_is_answered() {
     let (_live, feed) = live_feed(4);
     let incoming = VecDeque::from([Ok(Message::Ping(vec![1].into())), Ok(Message::Close(None))]);
     let mut subscriber = Subscriber { incoming, ..Subscriber::default() };
-    timeout(Duration::from_secs(60), forward(&mut subscriber, feed, SEND_TIMEOUT))
+    timeout(Duration::from_secs(60), forward(&mut subscriber, feed, SEND_TIMEOUT, None))
         .await
         .expect("the stream ends at the subscriber's close");
     assert!(subscriber.closed, "the close reply is flushed");
@@ -238,7 +241,7 @@ async fn what_a_subscriber_sends_does_not_end_its_stream() {
     let (live, feed) = live_feed(4);
     let incoming = VecDeque::from([Ok(Message::Text("hello".into())), Ok(Message::Pong(vec![].into()))]);
     let mut subscriber = Subscriber { incoming, ..Subscriber::default() };
-    let open = timeout(Duration::from_secs(60), forward(&mut subscriber, feed, SEND_TIMEOUT)).await;
+    let open = timeout(Duration::from_secs(60), forward(&mut subscriber, feed, SEND_TIMEOUT, None)).await;
     assert!(open.is_err(), "the stream is still open");
     assert!(subscriber.incoming.is_empty(), "what it sent was read");
     drop(live);
@@ -249,7 +252,7 @@ async fn a_subscriber_read_error_ends_its_stream() {
     let (_live, feed) = live_feed(4);
     let incoming = VecDeque::from([Err(Error::new(io::Error::other("connection reset")))]);
     let mut subscriber = Subscriber { incoming, ..Subscriber::default() };
-    timeout(Duration::from_secs(60), forward(&mut subscriber, feed, SEND_TIMEOUT))
+    timeout(Duration::from_secs(60), forward(&mut subscriber, feed, SEND_TIMEOUT, None))
         .await
         .expect("the stream ends at the read error");
     assert!(!subscriber.closed);
@@ -261,7 +264,7 @@ async fn every_arm_stays_live_while_another_is_busy() {
     let (live, feed) = live_feed(4);
     let incoming = (0..10_000).map(|_| Ok(Message::Text("noise".into()))).collect();
     let mut subscriber = Subscriber { incoming, publish_after: Some((100, live.clone())), ..Subscriber::default() };
-    let _open = timeout(Duration::from_secs(60), forward(&mut subscriber, feed, SEND_TIMEOUT)).await;
+    let _open = timeout(Duration::from_secs(60), forward(&mut subscriber, feed, SEND_TIMEOUT, None)).await;
     let left = subscriber.input_left_at_first_send.expect("the message mid-flood was sent");
     assert!(left > 0, "sending stays live under a flood of input");
 
@@ -272,11 +275,36 @@ async fn every_arm_stays_live_while_another_is_busy() {
             live.send(tick(seq)).unwrap();
         }
         let mut subscriber = Subscriber { incoming: VecDeque::from([Ok(input.clone())]), ..Subscriber::default() };
-        let _ = timeout(Duration::from_secs(60), forward(&mut subscriber, feed, SEND_TIMEOUT)).await;
+        let _ = timeout(Duration::from_secs(60), forward(&mut subscriber, feed, SEND_TIMEOUT, None)).await;
         let sent = subscriber.sent_when_first_read.expect("the input was read");
         assert!(sent < 500, "{input:?} read while {} messages still waited", 500 - sent);
         assert_eq!(subscriber.closed, answered, "{input:?}");
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_quiet_signed_subscriber_gets_a_heartbeat_at_once_and_then_exactly_each_interval() {
+    let (live, feed) = live_feed(4);
+    let interval = Duration::from_secs(5);
+    let signing = Signing::new(Arc::new(EnclaveKey::test_key()), 31337, AccountId([0; 20]), interval);
+    let connection = Connection::new([7; 32], "/v1/stream?signed=1&challenge=07");
+    let framing = Framing::new(Arc::new(signing), connection, || 1, watch::channel(Manifest::default()).1);
+    let mut subscriber = Subscriber::default();
+    let started = Instant::now();
+    let _open =
+        timeout(interval * 3 + Duration::from_millis(1), forward(&mut subscriber, feed, SEND_TIMEOUT, Some(framing)))
+            .await;
+    let offsets: Vec<Duration> = subscriber.sent_at.iter().map(|at| at.duration_since(started)).collect();
+    assert_eq!(offsets, [Duration::ZERO, interval, interval * 2, interval * 3]);
+    let deployment = engine_wire::Deployment { chain_id: 31337, vault: [0; 20] };
+    let mut verifier = FrameVerifier::new(EnclaveKey::test_key().address(), deployment, connection);
+    for sent in &subscriber.sent {
+        let Message::Text(text) = sent else { panic!("{sent:?}") };
+        let frame: SignedFrame = serde_json::from_str(text).unwrap();
+        assert_eq!(verifier.verify(&frame), Ok(()));
+        assert_eq!(frame.msg, r#"{"type":"heartbeat","head":null}"#);
+    }
+    drop(live);
 }
 
 #[tokio::test]
@@ -333,6 +361,8 @@ struct Subscriber {
     /// Publishes a tick on the channel once this many messages of `incoming` have been read.
     publish_after: Option<(usize, broadcast::Sender<Arc<StreamMsg>>)>,
     read: usize,
+    /// When each message in `sent` was sent.
+    sent_at: Vec<Instant>,
 }
 
 impl Stream for Subscriber {
@@ -370,6 +400,7 @@ impl Sink<Message> for Subscriber {
             self.input_left_at_first_send = Some(self.incoming.len());
         }
         self.sent.push(msg);
+        self.sent_at.push(Instant::now());
         Ok(())
     }
 
