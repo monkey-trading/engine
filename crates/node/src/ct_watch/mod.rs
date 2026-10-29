@@ -17,6 +17,7 @@ use std::time::Duration;
 use anyhow::{Context, ensure};
 use clap::Args;
 use futures_util::FutureExt as _;
+use prometheus_client::metrics::counter::Counter;
 use tokio::net::TcpListener;
 use tokio::signal::ctrl_c;
 use tokio::signal::unix::{SignalKind, signal};
@@ -117,7 +118,7 @@ pub async fn run(args: CtWatchArgs) -> anyhow::Result<()> {
     // Ends an episode a previous run's `ct_watch_stopped` left open in the outbox.
     info!(alert_resolved = "ct_watch_stopped", "the watcher started");
     let outcome = tokio::select! {
-        result = watch(&cfg, args.allow_mock) => result,
+        result = watch(&cfg, args.allow_mock, metrics.alerts_dropped.clone()) => result,
         stopped = routing.stopped() => Err(stopped),
         served = axum::serve(listener, metrics::router(metrics)) => {
             Err(served.err().map_or_else(|| anyhow::anyhow!("the metrics server stopped"), anyhow::Error::from))
@@ -156,28 +157,16 @@ async fn shutdown_signal() {
 /// Error cases:
 /// - the state file is locked, unreadable or cannot be written, or a client or the release manifest
 ///   cannot be built
-async fn watch(cfg: &WatchConfig, allow_mock: bool) -> anyhow::Result<()> {
+async fn watch(cfg: &WatchConfig, allow_mock: bool, alerts_dropped: Counter) -> anyhow::Result<()> {
     let mut watcher = Watcher::new(cfg, allow_mock, Arc::new(now))?;
+    watcher.store.tracker.count_drops(alerts_dropped);
     // The first pass learns the attested key before it reads any log.
     watcher.poll_attestation().await;
     let mut log_reads = interval(cfg.log_interval);
     log_reads.set_missed_tick_behavior(MissedTickBehavior::Skip);
     info!(domain = %cfg.domain, logs = watcher.logs.len(), "certificate transparency watch started");
     loop {
-        // An overdue attestation poll goes first, and `poll_logs` makes one between logs, so a backlog
-        // cannot delay it past a grace. It is cut off at `attestation_budget`, so it cannot starve
-        // the logs either.
-        tokio::select! {
-            biased;
-            _ = watcher.attestation_ticks.tick() => watcher.poll_attestation().await,
-            _ = log_reads.tick() => {
-                // A log still behind its tree head is read again at once, not a tick later.
-                if watcher.poll_logs().await? {
-                    log_reads.reset_immediately();
-                }
-            }
-        }
-        watcher.settle()?;
+        watcher.step(&mut log_reads).await?;
     }
 }
 
@@ -244,6 +233,25 @@ impl Watcher {
         poll_attestation(&self.source, self.attestation_budget, &mut self.store).await;
     }
 
+    /// Waits for the next poll that is due, makes it, and decides what it changed. An overdue
+    /// attestation poll goes first, and `poll_logs` makes one between logs, so a backlog cannot
+    /// delay it past a grace; it is cut off at `attestation_budget`, so it cannot starve the logs
+    /// either. A log still behind its tree head is read again at once, not a tick later.
+    /// Error cases:
+    /// - the state file cannot be written
+    async fn step(&mut self, log_reads: &mut Interval) -> anyhow::Result<()> {
+        tokio::select! {
+            biased;
+            _ = self.attestation_ticks.tick() => self.poll_attestation().await,
+            _ = log_reads.tick() => {
+                if self.poll_logs().await? {
+                    log_reads.reset_immediately();
+                }
+            }
+        }
+        self.settle()
+    }
+
     /// Reads every log up to its tree head or as far as its time budget allows, and says whether a
     /// budget ran out with a log still behind. A failed read is logged and retried at the next poll;
     /// `ct_log_unreachable` is raised when reads keep failing.
@@ -268,6 +276,8 @@ impl Watcher {
                     warn!(id = name, "log read used its {}s budget", self.log_budget.as_secs());
                 }
             }
+            // Decide what this log brought, whatever the logs still to read take.
+            settle(&mut self.store)?;
         }
         Ok(behind)
     }
@@ -276,11 +286,7 @@ impl Watcher {
     /// Error cases:
     /// - the state file cannot be written
     fn settle(&mut self) -> anyhow::Result<()> {
-        let now = (self.store.clock)();
-        self.store.tracker.settle(now);
-        self.store.tracker.check_logs(now);
-        self.store.tracker.check_attestation(now);
-        self.store.persist()
+        settle(&mut self.store)
     }
 }
 
@@ -292,9 +298,13 @@ enum ReadError {
     State(anyhow::Error),
 }
 
-/// Reads `followed` up to its signed tree head, batch by batch. A
-/// batch's findings and the new position are saved together, so a failed or cut-off batch is read
-/// again whole.
+/// Reads `followed` up to its signed tree head, batch by batch. A batch's findings and the new
+/// position are saved together, so a failed or cut-off batch is read again whole.
+/// Error cases:
+/// - `ReadError::Log`: the log answers badly or not at all, its tree head is dated ahead of this
+///   clock or its tree is shorter than the position already read, or too many findings are open to
+///   read the next batch
+/// - `ReadError::State`: the state file cannot be written
 async fn read_log(followed: &Followed, store: &mut Store) -> Result<(), ReadError> {
     let name = followed.section.name.as_str();
     let head = followed.client.tree_head().await.map_err(ReadError::Log)?;
@@ -337,6 +347,17 @@ async fn read_log(followed: &Followed, store: &mut Store) -> Result<(), ReadErro
     store.tracker.advance(name, next, Some(head.timestamp_ms), (store.clock)());
     store.persist().map_err(ReadError::State)?;
     Ok(())
+}
+
+/// Decides the findings that are due and checks the logs and the attestation, then saves the state.
+/// Error cases:
+/// - the state file cannot be written
+fn settle(store: &mut Store) -> anyhow::Result<()> {
+    let now = (store.clock)();
+    store.tracker.settle(now);
+    store.tracker.check_logs(now);
+    store.tracker.check_attestation(now);
+    store.persist()
 }
 
 /// Polls the node's attestation for at most `budget` and records the TLS key a verified one names.

@@ -6,7 +6,7 @@ use crate::test_support::scratch_dir;
 fn sample() -> State {
     let mut state = State::default();
     state.attested.insert("aa".repeat(32), 5);
-    state.logs.insert("log".into(), LogProgress { next_index: Some(9), caught_up_ms: 7 });
+    state.logs.insert("log".into(), LogProgress { name: "log".into(), next_index: Some(9), caught_up_ms: 7 });
     state.findings.push(Finding {
         log: "log".into(),
         index: 8,

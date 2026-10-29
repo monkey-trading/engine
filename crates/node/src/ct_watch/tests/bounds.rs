@@ -180,3 +180,54 @@ fn a_vendor_outage_is_unavailable_and_any_other_failure_is_a_rejection() {
     assert!(matches!(classify(Err(anyhow::anyhow!("the quote's signature does not verify"))), Poll::Rejected(_)));
     assert!(matches!(classify(Ok([3; 32])), Poll::Verified(key) if key == [3; 32]));
 }
+
+#[tokio::test]
+async fn an_attestation_poll_that_falls_due_is_made_before_the_next_log_is_read() {
+    let mut h = harness("ct-bounds-between", Vec::new(), Some(0), true).await;
+    h.node.attest([9; 32]);
+    // Due by the time the logs are read; the watcher makes no poll of its own.
+    let due = std::time::Duration::from_millis(20);
+    h.watcher.attestation_ticks =
+        tokio::time::interval_at(tokio::time::Instant::now() + due, std::time::Duration::from_secs(60));
+    tokio::time::sleep(due * 3).await;
+    assert!(h.watcher.store.tracker.state.attested.is_empty());
+    h.logs_at(T0).await;
+    assert!(h.watcher.store.tracker.state.attested.contains_key(&hex::encode([9u8; 32])));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_log_cut_off_at_its_budget_is_read_again_at_once_not_a_tick_later() {
+    let mut h = harness("ct-bounds-again", Vec::new(), Some(0), true).await;
+    h.node.attest([9; 32]);
+    h.log.set_fault(Fault::SlowHead);
+    h.watcher.log_budget = std::time::Duration::from_secs(2);
+    let mut log_reads = tokio::time::interval(std::time::Duration::from_secs(60));
+    let started = tokio::time::Instant::now();
+    h.watcher.step(&mut log_reads).await.unwrap();
+    h.watcher.step(&mut log_reads).await.unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(30), "{:?}", started.elapsed());
+}
+
+#[tokio::test]
+async fn a_finding_whose_grace_ended_is_decided_after_the_log_read_not_after_the_whole_pass() {
+    let (_guard, mut router) = capture_until_dropped();
+    let mut h = harness("ct-bounds-settle-per-log", Vec::new(), Some(0), true).await;
+    h.node.attest([5; 32]);
+    h.pass(T0).await;
+    h.watcher.store.tracker.state.findings.push(Finding {
+        log: "log".into(),
+        index: 0,
+        issuer: "CN=Issuer".into(),
+        key_sha256: hex::encode([1u8; 32]),
+        not_after_ms: T0 + 90 * 86_400_000,
+        decide_at_ms: T0 + GRACE_MS,
+        alerted_at_ms: None,
+        resolving: false,
+    });
+    let _ = alerts(&mut router);
+    // Only the logs are read, with no `settle` after them: the read itself decides.
+    h.log.shared.lock().unwrap().sth_timestamp = T0 + GRACE_MS;
+    h.logs_at(T0 + GRACE_MS).await;
+    let raised = alerts(&mut router);
+    assert!(raised.contains(&fired("unattested_certificate", Some([1; 32]))), "{raised:?}");
+}

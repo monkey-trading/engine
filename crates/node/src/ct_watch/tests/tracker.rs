@@ -1,9 +1,11 @@
+use std::sync::Arc;
 use std::time::Duration;
 
-use crate::alerts::{AlertLine, Severity, capture};
+use crate::alerts::{AlertLine, Severity, capture, capture_refused};
 use crate::ct_watch::leaf::Certificate;
 use crate::ct_watch::state::{LogProgress, MAX_ATTESTED, MAX_FINDINGS, State};
 use crate::ct_watch::tracker::Tracker;
+use crate::metrics::Metrics;
 
 const GRACE_MS: u64 = 600_000;
 const STALE_MS: u64 = 3_600_000;
@@ -177,9 +179,11 @@ fn a_batch_that_would_pass_the_bound_waits_instead_of_dropping_findings() {
 }
 
 #[test]
-fn a_log_no_longer_configured_is_dropped_and_never_found_unreachable() {
+fn a_log_no_longer_configured_keeps_its_position_is_not_checked_and_its_outage_is_resolved() {
     let mut state = State::default();
-    state.logs.insert("key-retired".into(), LogProgress { next_index: Some(5), caught_up_ms: 1 });
+    state
+        .logs
+        .insert("key-retired".into(), LogProgress { name: "retired".into(), next_index: Some(5), caught_up_ms: 1 });
     let mut tracker = Tracker::new(
         state,
         "api.example.com",
@@ -188,13 +192,16 @@ fn a_log_no_longer_configured_is_dropped_and_never_found_unreachable() {
         [("log".to_owned(), "key-log".to_owned())],
         T0,
     );
-    assert!(!tracker.state.logs.contains_key("key-retired"));
+    let resolves = capture(|| tracker.settle(T0));
+    let [resolve] = resolves.as_slice() else { panic!("{resolves:?}") };
+    assert_eq!((resolve.name.as_str(), resolve.severity), ("ct_log_unreachable", None));
+    assert!(resolve.fields.contains(&("log".to_owned(), "retired".to_owned())), "{resolve:?}");
+    assert_eq!(tracker.state.logs["key-retired"].next_index, Some(5), "its position waits for it to return");
     assert_eq!(
         lines(|| tracker.check_logs(T0 + 100 * STALE_MS)),
         [fired("ct_log_unreachable")],
         "only `log` is checked"
     );
-    assert!(tracker.take_changed());
 }
 
 #[test]
@@ -272,7 +279,7 @@ fn only_a_changed_state_asks_to_be_saved() {
     tracker.attested(&[1; 32], T0);
     assert!(tracker.take_changed());
     tracker.attested(&[1; 32], T0 + 1);
-    assert!(!tracker.take_changed(), "a key already attested changes nothing");
+    assert!(tracker.take_changed(), "the time of the last verification is state, so a restart keeps the outage clock");
 }
 
 #[test]
@@ -295,22 +302,29 @@ fn an_expired_certificate_is_ignored_and_an_open_alert_ends_when_its_certificate
 #[test]
 fn a_logs_position_follows_its_key_through_a_rename_and_a_new_shard_starts_afresh() {
     let mut state = State::default();
-    state.logs.insert("key-log".into(), LogProgress { next_index: Some(500), caught_up_ms: 1 });
+    state.logs.insert("key-log".into(), LogProgress { name: "log".into(), next_index: Some(500), caught_up_ms: 1 });
     let resume = |name: &str, key: &str| {
-        Tracker::new(
+        let mut tracker = Tracker::new(
             State { logs: state.logs.clone(), ..State::default() },
             "api.example.com",
             Duration::from_millis(GRACE_MS),
             Duration::from_millis(STALE_MS),
             [(name.to_owned(), key.to_owned())],
             T0,
-        )
+        );
+        let resolves = capture(|| tracker.settle(T0));
+        (tracker, resolves)
     };
-    let mut renamed = resume("renamed", "key-log");
+    let (mut renamed, resolves) = resume("renamed", "key-log");
     assert_eq!(renamed.next_index("renamed", 900, None), 500, "the same key keeps its position");
-    let mut new_shard = resume("log", "key-new-shard");
+    assert_eq!(renamed.state.logs["key-log"].name, "renamed");
+    let [resolve] = resolves.as_slice() else { panic!("{resolves:?}") };
+    assert!(
+        resolve.fields.contains(&("log".to_owned(), "log".to_owned())),
+        "the outage under the old name is resolved: {resolve:?}"
+    );
+    let (mut new_shard, _) = resume("log", "key-new-shard");
     assert_eq!(new_shard.next_index("log", 7, None), 7, "another key starts at its own tree's end");
-    assert!(!new_shard.state.logs.contains_key("key-log"));
 }
 
 #[test]
@@ -343,4 +357,88 @@ fn going_a_grace_without_a_verified_attestation_is_asserted_until_one_verifies()
     }
     tracker.attested(&[1; 32], T0 + GRACE_MS + 200_000);
     assert!(lines(|| tracker.check_attestation(T0 + GRACE_MS + 250_000)).is_empty());
+}
+
+#[test]
+fn the_last_verification_survives_a_restart_so_an_outage_is_not_given_a_fresh_grace() {
+    let mut first = tracker();
+    first.attested(&[1; 32], T0 + 1_000);
+    let mut resumed = Tracker::new(
+        std::mem::take(&mut first.state),
+        "api.example.com",
+        Duration::from_millis(GRACE_MS),
+        Duration::from_millis(STALE_MS),
+        [("log".to_owned(), "key-log".to_owned())],
+        T0 + GRACE_MS,
+    );
+    assert!(lines(|| resumed.check_attestation(T0 + GRACE_MS)).is_empty());
+    assert_eq!(lines(|| resumed.check_attestation(T0 + 1_000 + GRACE_MS)), [fired("attestation_unverified")]);
+}
+
+#[test]
+fn the_longest_alert_episode_key_fits_the_outbox_bound() {
+    let log = "l".repeat(64);
+    let mut tracker = Tracker::new(
+        State::default(),
+        "api.example.com",
+        Duration::from_millis(GRACE_MS),
+        Duration::from_millis(STALE_MS),
+        [(log.clone(), "key-log".to_owned())],
+        T0,
+    );
+    let mut cert = certificate("api.example.com", 0xff, T0);
+    cert.issuer = "I".repeat(48);
+    let raised = capture(|| tracker.ingest(&log, u64::MAX, &cert, T0 + 10 * GRACE_MS));
+    let [line] = raised.as_slice() else { panic!("{raised:?}") };
+    assert!(line.key().len() <= 256, "{} bytes: {}", line.key().len(), line.key());
+}
+
+/// Runs `settle` at `now` with the alert queue full, as a router backlog leaves it.
+fn settle_refused(tracker: &mut Tracker, metrics: &Arc<Metrics>, now: u64) {
+    capture_refused(metrics, || tracker.settle(now));
+}
+
+#[test]
+fn a_resolve_the_alert_queue_refused_is_sent_again_before_the_finding_is_forgotten() {
+    let metrics = Arc::new(Metrics::new());
+    let mut tracker = tracker();
+    tracker.count_drops(metrics.alerts_dropped.clone());
+    tracker.ingest("log", 0, &certificate("api.example.com", 1, T0), T0);
+    let at = T0 + GRACE_MS;
+    assert_eq!(lines(|| tracker.settle(at)), [fired("unattested_certificate")]);
+    tracker.attested(&[1; 32], at + 1);
+    // The queue is full: the resolve is lost, and the finding must stay to resolve it later.
+    settle_refused(&mut tracker, &metrics, at + 2);
+    assert_eq!(metrics.alerts_dropped.get(), 1);
+    assert!(!tracker.state.findings[0].resolving, "the resolve was not accepted");
+    settle_refused(&mut tracker, &metrics, at + 3);
+    assert_eq!(tracker.state.findings.len(), 1, "still waiting for a resolve the queue takes");
+    // The queue has room again.
+    assert_eq!(lines(|| tracker.settle(at + 4)), [resolved("unattested_certificate")]);
+    assert!(tracker.state.findings[0].resolving);
+    assert!(lines(|| tracker.settle(at + 5)).is_empty());
+    assert!(tracker.state.findings.is_empty());
+}
+
+#[test]
+fn a_renamed_logs_old_label_is_resolved_until_the_alert_queue_takes_it() {
+    let mut state = State::default();
+    state.logs.insert("key-log".into(), LogProgress { name: "old".into(), next_index: Some(5), caught_up_ms: 1 });
+    let metrics = Arc::new(Metrics::new());
+    let mut tracker = Tracker::new(
+        state,
+        "api.example.com",
+        Duration::from_millis(GRACE_MS),
+        Duration::from_millis(STALE_MS),
+        [("new".to_owned(), "key-log".to_owned())],
+        T0,
+    );
+    tracker.count_drops(metrics.alerts_dropped.clone());
+    settle_refused(&mut tracker, &metrics, T0);
+    assert_eq!(tracker.state.logs["key-log"].name, "old", "the old label is kept while its resolve is owed");
+    let resolves = capture(|| tracker.settle(T0 + 1));
+    let [resolve] = resolves.as_slice() else { panic!("{resolves:?}") };
+    assert!(resolve.fields.contains(&("log".to_owned(), "old".to_owned())), "{resolve:?}");
+    assert_eq!(tracker.state.logs["key-log"].name, "new");
+    assert!(capture(|| tracker.settle(T0 + 2)).is_empty());
 }

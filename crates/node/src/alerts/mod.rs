@@ -406,6 +406,30 @@ pub fn capture(f: impl FnOnce()) -> Vec<AlertLine> {
     router.queued()
 }
 
+/// Runs `f` with the router's queue full, so each alert line it logs is refused and counted in
+/// `metrics.alerts_dropped`.
+#[cfg(test)]
+pub fn capture_refused(metrics: &Arc<Metrics>, f: impl FnOnce()) {
+    use tracing::subscriber::with_default;
+    use tracing_subscriber::filter::filter_fn;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::registry;
+
+    crate::test_support::keep_callsites_interested();
+    let (tx, _rx) = mpsc::channel(1);
+    let full = AlertLine {
+        name: "full".into(),
+        severity: None,
+        fields: Vec::new(),
+        summary: String::new(),
+        context: String::new(),
+        ts_ms: 0,
+    };
+    tx.try_send(full).expect("an empty queue takes a line");
+    let layer = AlertLayer { lines: tx, metrics: metrics.clone() };
+    with_default(registry().with(layer.with_filter(filter_fn(is_alert_callsite))), f);
+}
+
 /// The pages the router would send for `lines`, as `(status, key)`: its episode rules, in order.
 #[cfg(test)]
 pub fn pages_for(lines: Vec<AlertLine>) -> Vec<(Status, String)> {
