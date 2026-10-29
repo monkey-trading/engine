@@ -55,6 +55,9 @@ pub struct ApiLimits<C: Clock = DefaultClock> {
     /// A stream subscriber that takes longer than this to take a message is disconnected.
     pub send_timeout: Duration,
     pub max_body_bytes: usize,
+    /// The least time between quote messages to one connection, and the most markets it may ask for.
+    pub quote_interval: Duration,
+    pub quote_max_markets: usize,
     /// The browser origins `api.allowed_origins` lists.
     allowed_origins: BTreeSet<String>,
 }
@@ -117,6 +120,8 @@ impl<C: Clock + Clone> ApiLimits<C> {
             read_timeout: cfg.read_timeout,
             send_timeout: cfg.send_timeout,
             max_body_bytes: cfg.max_body_bytes.get(),
+            quote_interval: cfg.quote_interval,
+            quote_max_markets: cfg.quote_max_markets.get(),
             allowed_origins: cfg.allowed_origins.iter().cloned().collect(),
         }
     }
@@ -477,6 +482,8 @@ mod tests {
             max_subscribers: NonZeroUsize::new(2).unwrap(),
             send_timeout: Duration::from_secs(1),
             heartbeat_interval: Duration::from_secs(5),
+            quote_interval: Duration::from_millis(100),
+            quote_max_markets: NonZeroUsize::new(4).unwrap(),
             allowed_origins: Vec::new(),
             tls: None,
         }

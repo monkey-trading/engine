@@ -64,7 +64,9 @@ an index: load only the rule whose hint matches the current action.
   health, the attestation and the archive carries the enclave key's signature over the request and
   its body, the client's challenge, the node's time and log head, signed only while trusted time
   bounds the host clock (`trusted_time::TrustedClock`); `api/stream/signed.rs`: `signed=1` stream
-  frames numbered per connection, chained and bound to the opening request, with heartbeats)
+  frames numbered per connection, chained and bound to the opening request, with heartbeats;
+  `api/stream/quotes/`: a signed connection's executable quote subscription, read from
+  `Engine::quote` at most every `api.quote_interval`)
   and their offline checks, `engine
   verify-response` and `engine verify-frames` (`verify/answers.rs`), the account history index (SQLite, derived from the log),
   dated benchmark ingestion (`benchmarks/` and the separate `admin/benchmark_feed.rs` signing worker
@@ -199,7 +201,8 @@ an index: load only the rule whose hint matches the current action.
   `dev-access-enforcement.sh` checks signed eligibility, API refusals,
   direct vault payer sanctions, automatic screening recovery and held collateral across restart,
   using `dev-access-fixture.sh` and `dev-access-cases.sh` for the explicit synthetic source and
-  assertions; and `build-image.sh` and `check-image.sh`, which build the enclave image from a
+  assertions; `dev-quotes.sh`, the executable quotes scenario run through the vault deposit scenario
+  with `dev-quotes-cases.sh` and the stream client `dev-quotes-client.py`; and `build-image.sh` and `check-image.sh`, which build the enclave image from a
   commit and boot it under QEMU without SEV-SNP, and `check-image-retry.sh`, which scans
   `image/Dockerfile` so every download runs under `retry` and the cargo build stays `--frozen`,
   and checks the build's download retries.
@@ -214,7 +217,7 @@ an index: load only the rule whose hint matches the current action.
   deposit finality scenarios, the MONKEY staking dev scenario, the signed withdrawal and FIFO dev
   scenario, the metrics and alert routing dev scenario, the alert outbox kill/restart scenario,
   the browser-origin scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the
-  signed API answers dev scenario, the public certificate dev scenario, the review-delta helper's
+  signed API answers dev scenario, the public certificate dev scenario, the executable quotes dev scenario, the review-delta helper's
   test, the browser verifier (`wasm-verifier` builds its package twice on separate runners with the
   pinned toolchain, the second from another checkout path, and its first run also runs
   `dev-wasm-verifier.sh` on that package; `wasm-verifier-compare` fails if the builds differ), and
@@ -349,6 +352,10 @@ Run from the repo root:
   attested key over TLS-ALPN-01 on loopback, renew it without a restart, and a stopped CA raises
   `certificate_expiring`; the production binary refuses a config without `[api.tls.acme]`; needs
   `curl`, `jq`, and `openssl`)
+- Executable quotes: `./scripts/dev-quotes.sh` (the vault deposit scenario's Anvil node, then a signed
+  stream whose quotes fill at their price within a bound and decline once the index moves; needs
+  what that scenario needs); the quote read's cost on the sequencer's thread:
+  `cargo test -p engine-node --lib quotes::bench -- --ignored --nocapture`
 - Corporate-action dev scenario: `./scripts/dev-corporate-actions.sh` (runs the isolated signed
   operator/TLS/API scenario with deterministic venue time, restart and public replay)
 - Access enforcement dev scenario: `./scripts/dev-access-enforcement.sh` (Anvil, API and direct vault

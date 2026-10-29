@@ -77,6 +77,7 @@ pub mod engine;
 pub use engine::{Engine, SequenceError};
 pub mod event;
 mod execution;
+pub use execution::{Quote, Quoter};
 pub mod fixed;
 pub use fixed::Fixed;
 mod funds;

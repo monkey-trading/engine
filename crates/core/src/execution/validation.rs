@@ -1,12 +1,15 @@
 //! The checks an order passes before it is considered at all.
 
 use crate::Fixed;
+use crate::account::Account;
 use crate::command::{OrderKind, OrderRequest};
-use crate::engine::Engine;
+use crate::engine::{Engine, MarketState};
 use crate::event::Reject;
 use crate::execution::growth;
 use crate::fixed::Rounding;
+use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
+use crate::types::{AccountId, MarketId};
 
 impl Engine {
     /// Checks an order can be considered at all.
@@ -23,25 +26,11 @@ impl Engine {
     ///   quantity at most the position
     pub(super) fn validate_order(&self, req: &OrderRequest) -> Result<(), Reject> {
         let invalid = |reason: &str| Err(Reject::InvalidOrder { reason: reason.into() });
-        let Some(params) = &self.params else {
-            return invalid("protocol params not set");
-        };
-        let Some(market) = self.markets.get(&req.market) else {
-            return Err(Reject::UnknownMarket);
-        };
-        if !req.qty.is_valid_input() {
-            return invalid("qty out of range");
-        }
         let (price, rests) = match req.kind {
             OrderKind::Market { quoted, .. } => (quoted, false),
             OrderKind::Limit { price } | OrderKind::Stop { price } => (price, true),
         };
-        if !price.is_valid_input() {
-            return invalid("price out of range");
-        }
-        let Some(acct) = self.accounts.get(&req.account) else {
-            return Err(Reject::InsufficientFunds { available: Fixed::ZERO });
-        };
+        let (params, market, acct) = self.orderable(req.account, req.market, req.qty, Some(price))?;
         if rests && self.protocol_version >= ProtocolVersion::V14 {
             if acct.orders.len() >= params.max_resting_orders {
                 return Err(Reject::TooManyOrders { max: params.max_resting_orders });
@@ -75,5 +64,38 @@ impl Engine {
             }
         }
         Ok(())
+    }
+
+    /// The parameters, market, and account an order is checked against, once its market is listed,
+    /// its qty and any price are in range, and its account has been credited.
+    /// Error cases:
+    /// - protocol params not set yet
+    /// - an unknown market
+    /// - a qty, or a quoted or trigger price, at or below zero or above `Fixed::MAX_INPUT`
+    /// - an account that has never been credited
+    pub(super) fn orderable(
+        &self,
+        account: AccountId,
+        market: MarketId,
+        qty: Fixed,
+        price: Option<Fixed>,
+    ) -> Result<(&ProtocolParams, &MarketState, &Account), Reject> {
+        let invalid = |reason: &str| Err(Reject::InvalidOrder { reason: reason.into() });
+        let Some(params) = &self.params else {
+            return invalid("protocol params not set");
+        };
+        let Some(market) = self.markets.get(&market) else {
+            return Err(Reject::UnknownMarket);
+        };
+        if !qty.is_valid_input() {
+            return invalid("qty out of range");
+        }
+        if price.is_some_and(|price| !price.is_valid_input()) {
+            return invalid("price out of range");
+        }
+        let Some(acct) = self.accounts.get(&account) else {
+            return Err(Reject::InsufficientFunds { available: Fixed::ZERO });
+        };
+        Ok((params, market, acct))
     }
 }

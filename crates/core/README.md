@@ -138,7 +138,9 @@ this crate and reproduce the signed state roots exactly.
   conversion (`cash.rs`), atomic split scaling with rounding and cash in lieu (`split.rs`), and
   chronological financing/action catch-up (`timeline.rs`)
 - `src/execution/` — order placement, triggers, pricing, risk checks, and booking fills (`mod.rs`),
-  the checks an order passes first (`validation.rs`), and unit tests (`tests.rs`)
+  the checks an order passes first (`validation.rs`), `Engine::quote`, which prices an order with
+  those same functions and changes nothing (`quote.rs`; `tests/quote.rs` checks it against fills),
+  and unit tests (`tests.rs`)
 - `src/markouts.rs` — each fill's markout, queued and then marked against the index after its
   horizon, and toxicity scores
 - `src/closeout.rs` — account close-out and bad-debt write-off

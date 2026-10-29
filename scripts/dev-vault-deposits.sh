@@ -347,6 +347,9 @@ fi
 if [[ "${ACCESS_ENFORCEMENT_SCENARIO:-0}" == "1" ]]; then
   source "$root/scripts/dev-access-cases.sh"
 fi
+if [[ "${QUOTES_SCENARIO:-0}" == "1" ]]; then
+  source "$root/scripts/dev-quotes-cases.sh"
+fi
 
 step "The log holds one ingress record per deposit and replays"
 stop_node
@@ -370,4 +373,7 @@ fi
 echo "PASS: every deposit credited or held once after finality; public log replay verifies"
 if [[ "${RPC_QUORUM_SCENARIO:-0}" == "1" ]]; then
   echo "PASS: fabricated deposit ignored; one outage credits; two halt; recovery credits once"
+fi
+if [[ "${QUOTES_SCENARIO:-0}" == "1" ]]; then
+  echo "PASS: streamed quote fills within its bound; moved index declines a stale quote"
 fi

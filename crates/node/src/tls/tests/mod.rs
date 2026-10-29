@@ -417,6 +417,8 @@ fn api() -> ApiSection {
         max_subscribers: NonZeroUsize::new(8).unwrap(),
         send_timeout: Duration::from_secs(5),
         heartbeat_interval: Duration::from_secs(5),
+        quote_interval: Duration::from_millis(100),
+        quote_max_markets: NonZeroUsize::new(4).unwrap(),
         allowed_origins: Vec::new(),
         tls: None,
     }

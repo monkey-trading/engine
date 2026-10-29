@@ -9,6 +9,8 @@
 //! Normal trades therefore fill at the mid. A market quoted in another currency than USD fills only
 //! while its FX market has a price, and its realised PnL converts to USD at that FX index.
 
+use std::cell::OnceCell;
+
 use crate::Fixed;
 use crate::access::AccessEvidence;
 use crate::account::{Account, RestingOrder};
@@ -34,6 +36,23 @@ pub(crate) enum PriceGuard {
     },
     /// Triggered limit: never fill worse than the limit.
     Limit(Fixed),
+}
+
+/// The house totals a risk check reads. The NAV is taken at once, and the gross exposure on first
+/// use, so a run of checks over one state computes each once.
+struct HouseTotals {
+    nav: Fixed,
+    gross: OnceCell<Fixed>,
+}
+
+impl HouseTotals {
+    fn of(engine: &Engine) -> Self {
+        Self { nav: engine.house_nav(), gross: OnceCell::new() }
+    }
+
+    fn gross(&self, engine: &Engine) -> Fixed {
+        *self.gross.get_or_init(|| engine.house_gross_exposure())
+    }
 }
 
 /// One fill to price, risk-check, and book.
@@ -189,7 +208,7 @@ impl Engine {
         }
         let priced = self.price(&exec)?;
         if priced.increases && !exec.liquidation {
-            self.check_risk(&exec, &priced)?;
+            self.check_risk(&exec, &priced, &HouseTotals::of(self))?;
         }
         Ok(self.book(&exec, priced))
     }
@@ -341,7 +360,7 @@ impl Engine {
     /// Error cases:
     /// - the account's equity after the fill would be below its margin requirement
     /// - the fill would push the house's net exposure past the market cap or the total cap
-    fn check_risk(&self, exec: &Exec, priced: &Priced) -> Result<(), Reject> {
+    fn check_risk(&self, exec: &Exec, priced: &Priced, house: &HouseTotals) -> Result<(), Reject> {
         let params = self.params.as_ref().expect("callers check params are set");
         let market = &self.markets[&exec.market];
         let usd = |amount, rounding| market.spec.quote_currency.to_usd(amount, priced.fx, rounding);
@@ -358,14 +377,14 @@ impl Engine {
             return Err(Reject::InsufficientMargin { equity, required });
         }
 
-        let nav = self.house_nav();
+        let nav = house.nav;
         let before = usd(market.client_qty.abs().mul(priced.mid), Rounding::Up);
         let after = usd((market.client_qty + priced.delta).abs().mul(priced.mid), Rounding::Up);
         if after > before {
             // `house_gross_exposure` values this market at its marks; swap that term for `after`.
             let exposure = |mark: Fixed| market.usd_at_mark(market.client_qty.abs().mul(mark), Rounding::Up);
             let at_mark = market.mark.map_or(Fixed::ZERO, exposure);
-            let total_after = self.house_gross_exposure() - at_mark + after;
+            let total_after = house.gross(self) - at_mark + after;
             if after > self.market_cap(&market.spec, nav) || total_after > self.total_cap(params, nav) {
                 return Err(Reject::HouseCapacity);
             }
@@ -467,6 +486,8 @@ fn profit_fee(realised: Fixed, fee_bps: i64, version: ProtocolVersion) -> Fixed 
     }
 }
 
+mod quote;
+pub use quote::{Quote, Quoter};
 mod validation;
 
 #[cfg(test)]

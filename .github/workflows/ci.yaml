@@ -295,6 +295,8 @@ jobs:
         run: ./scripts/dev-withdrawals.sh
       - name: Run the API and direct-vault access enforcement dev scenario
         run: ./scripts/dev-access-enforcement.sh
+      - name: Run the executable quotes dev scenario
+        run: ./scripts/dev-quotes.sh
 
   dev-metrics-alerts:
     needs: changes

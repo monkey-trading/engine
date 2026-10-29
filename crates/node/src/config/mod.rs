@@ -49,6 +49,9 @@ const PRODUCTION_BUILD: bool = true;
 #[cfg(not(feature = "production"))]
 const PRODUCTION_BUILD: bool = false;
 
+/// 100 ms, the default and the least `api.quote_interval`.
+pub(crate) const MIN_QUOTE_INTERVAL: Duration = Duration::from_millis(100);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthMode {
@@ -159,6 +162,13 @@ pub struct ApiSection {
     /// tell a quiet log from a held-back one. At least one second.
     #[serde(default = "default_heartbeat_interval", with = "humantime_serde")]
     pub heartbeat_interval: Duration,
+    /// A signed stream connection that asked for an account's quotes gets them again when one
+    /// changes, at most this often. At least 100 ms.
+    #[serde(default = "default_quote_interval", with = "humantime_serde")]
+    pub quote_interval: Duration,
+    /// Most markets one quote subscription may name.
+    #[serde(default = "default_quote_max_markets")]
+    pub quote_max_markets: NonZeroUsize,
     /// Browser origins (`scheme://host[:port]`) that may read the REST API and open the stream. Empty
     /// by default, which sends no CORS headers and refuses a stream upgrade that carries any `Origin`
     /// (a client that sends none still connects). The
@@ -401,6 +411,15 @@ fn public_key_address(key: &str) -> anyhow::Result<AccountId> {
 /// Five seconds, the default `api.heartbeat_interval`.
 fn default_heartbeat_interval() -> Duration {
     Duration::from_secs(5)
+}
+
+fn default_quote_interval() -> Duration {
+    MIN_QUOTE_INTERVAL
+}
+
+/// Four, the default `api.quote_max_markets`.
+fn default_quote_max_markets() -> NonZeroUsize {
+    NonZeroUsize::new(4).expect("four is not zero")
 }
 
 /// Decodes a base64 Ed25519 public key.
