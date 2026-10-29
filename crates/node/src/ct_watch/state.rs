@@ -27,6 +27,9 @@ pub(super) struct State {
     pub allow_mock: bool,
     /// Hex SHA-256 of each TLS key a verified attestation named, with when the watcher first saw it.
     pub attested: BTreeMap<String, u64>,
+    /// When an attestation of the node last verified, in watcher milliseconds; 0 before the first run.
+    #[serde(default)]
+    pub last_verified_ms: u64,
     /// Progress by the hex SHA-256 of a log's public key, so it survives a rename or a new URL.
     pub logs: BTreeMap<String, LogProgress>,
     pub findings: Vec<Finding>,
@@ -35,6 +38,9 @@ pub(super) struct State {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub(super) struct LogProgress {
+    /// The label the log had when its alerts were last raised, to resolve them after a rename.
+    #[serde(default)]
+    pub name: String,
     /// The next entry to read; `None` until the log's first tree head fixes the starting point.
     pub next_index: Option<u64>,
     /// When the log was last read up to a signed tree head, in watcher milliseconds.

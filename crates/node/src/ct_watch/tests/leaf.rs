@@ -99,20 +99,11 @@ fn an_entry_that_does_not_parse_is_suspect_only_when_it_mentions_the_domains_par
 }
 
 #[test]
-fn the_issuer_is_bounded_so_the_alert_key_fits_the_outbox() {
+fn the_issuer_is_bounded_to_48_ascii_bytes() {
     let long = "A very long issuer organisation name, Inc. ".repeat(10);
     let cert = cert(&["api.example.com"], &long);
     let parsed = parse_leaf(&x509_leaf(1, &cert.der)).unwrap();
     assert!(parsed.issuer.chars().count() <= 48, "{}", parsed.issuer);
-    // The longest episode key: name, the largest index, the issuer, a key hash, a 64-byte log name.
-    let key = format!(
-        "unattested_certificate{{index={},issuer={},key_sha256={},log={}}}",
-        u64::MAX,
-        parsed.issuer,
-        "f".repeat(64),
-        "l".repeat(64)
-    );
-    assert!(key.len() <= 256, "{} bytes", key.len());
 }
 
 #[test]

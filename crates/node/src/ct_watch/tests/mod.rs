@@ -211,12 +211,15 @@ impl Drop for StubLog {
 type StubState = State<(Arc<TestLogKey>, Arc<Mutex<StubLogState>>)>;
 
 async fn sth(State((key, shared)): StubState) -> impl IntoResponse {
-    let slow = shared.lock().unwrap().fault == Fault::SlowHead;
+    let slow = {
+        let mut log = shared.lock().unwrap();
+        log.requests.push("get-sth".into());
+        log.fault == Fault::SlowHead
+    };
     if slow {
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
     }
-    let mut log = shared.lock().unwrap();
-    log.requests.push("get-sth".into());
+    let log = shared.lock().unwrap();
     if log.fault == Fault::ServerError {
         return (StatusCode::INTERNAL_SERVER_ERROR, String::new());
     }

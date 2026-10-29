@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 use std::time::Duration;
 
+use prometheus_client::metrics::counter::Counter;
 use tracing::{error, info};
 
 use crate::ct_watch::leaf::{Certificate, covers};
@@ -25,10 +26,13 @@ pub(super) struct Tracker {
     stale_after_ms: u64,
     pub(super) state: State,
     changed: bool,
-    /// When an attestation last verified, or the watcher started.
-    attestation_ok_ms: u64,
     /// Each configured log's name and the fingerprint of its key, which keys its progress.
     logs: BTreeMap<String, String>,
+    /// Logs whose outage alert is still open under a label they no longer have: the fingerprint of
+    /// each and that label. A resolve is sent until the alert queue accepts it.
+    renamed: Vec<(String, String)>,
+    /// Counts the alert lines the router's queue refused; a resolve that raises it was not accepted.
+    drops: Counter,
     /// Set until the first `settle`, which resolves again the alerts a previous run was resolving:
     /// the resolve may not have reached the outbox before a kill.
     resuming: bool,
@@ -47,16 +51,26 @@ impl Tracker {
     ) -> Self {
         let mut changed = false;
         let logs: BTreeMap<String, String> = logs.into_iter().collect();
-        // Progress belongs to a log's key: it survives a rename or a new URL, but a log that is no
-        // longer configured is not checked, and a new shard (a new key) starts afresh.
-        let before = state.logs.len();
-        state.logs.retain(|fingerprint, _| logs.values().any(|configured| configured == fingerprint));
-        changed |= state.logs.len() != before;
-        for fingerprint in logs.values() {
+        // Progress belongs to a log's key: it survives a rename or a new URL, and a log taken out
+        // of the config keeps its position for when it returns. A new shard (a new key) starts
+        // afresh. A log not configured is not checked, and an outage alert raised under a label it
+        // no longer has is resolved.
+        let mut renamed = Vec::new();
+        for (fingerprint, progress) in &state.logs {
+            let configured = logs.iter().find(|(_, key)| *key == fingerprint).map(|(name, _)| name);
+            if !progress.name.is_empty() && configured != Some(&progress.name) && !logs.contains_key(&progress.name) {
+                renamed.push((fingerprint.clone(), progress.name.clone()));
+            }
+        }
+        for (name, fingerprint) in &logs {
             state.logs.entry(fingerprint.clone()).or_insert_with(|| {
                 changed = true;
-                LogProgress { next_index: None, caught_up_ms: now }
+                LogProgress { name: name.clone(), next_index: None, caught_up_ms: now }
             });
+        }
+        if state.last_verified_ms == 0 {
+            state.last_verified_ms = now;
+            changed = true;
         }
         Self {
             domain: domain.to_owned(),
@@ -64,10 +78,16 @@ impl Tracker {
             stale_after_ms: millis(log_stale_after),
             state,
             changed,
-            attestation_ok_ms: now,
             logs,
+            renamed,
+            drops: Counter::default(),
             resuming: true,
         }
+    }
+
+    /// Reads the alert queue's refusals from `drops`, so a resolve it refused is sent again.
+    pub(super) fn count_drops(&mut self, drops: Counter) {
+        self.drops = drops;
     }
 
     /// Whether the state changed since the last call; clears the flag.
@@ -77,7 +97,8 @@ impl Tracker {
 
     /// Records the TLS key hash a verified attestation named, evicting the oldest past the bound.
     pub(super) fn attested(&mut self, key_sha256: &[u8; 32], now: u64) {
-        self.attestation_ok_ms = now;
+        self.state.last_verified_ms = now;
+        self.changed = true;
         let attested = &mut self.state.attested;
         if let Entry::Vacant(first_seen) = attested.entry(hex::encode(key_sha256)) {
             first_seen.insert(now);
@@ -163,6 +184,8 @@ impl Tracker {
     /// on one pass and dropped on the next, so a kill between the resolve line and its commit to the
     /// outbox still resolves it after a restart.
     pub(super) fn settle(&mut self, now: u64) {
+        self.resolve_renamed();
+        let drops = &self.drops;
         let State { attested, findings, .. } = &mut self.state;
         let resuming = std::mem::take(&mut self.resuming);
         let before = findings.len();
@@ -176,14 +199,17 @@ impl Tracker {
                     if finding.resolving && !resuming {
                         return false;
                     }
+                    let refused = drops.get();
                     info!(
                         alert_resolved = "unattested_certificate",
                         log = %finding.log, index = finding.index, issuer = %finding.issuer,
                         key_sha256 = %finding.key_sha256,
                         "the certificate's key is attested or the certificate has expired"
                     );
-                    touched |= !finding.resolving;
-                    finding.resolving = true;
+                    // Forgotten only once the queue took the line: a refused resolve is sent again.
+                    let accepted = drops.get() == refused;
+                    touched |= accepted != finding.resolving;
+                    finding.resolving = accepted;
                     true
                 }
                 None if now >= finding.decide_at_ms => {
@@ -202,10 +228,26 @@ impl Tracker {
         self.changed |= touched || findings.len() != before;
     }
 
+    /// Resolves the outage alert of each log that was renamed or taken out of the config, under the
+    /// label it had, until the alert queue takes the line. A renamed log then carries its new label.
+    fn resolve_renamed(&mut self) {
+        let pending = std::mem::take(&mut self.renamed);
+        for (fingerprint, old) in pending {
+            let refused = self.drops.get();
+            info!(alert_resolved = "ct_log_unreachable", log = %old, "the log is no longer followed under this name");
+            if self.drops.get() != refused {
+                self.renamed.push((fingerprint, old));
+            } else if let Some((name, _)) = self.logs.iter().find(|(_, key)| **key == fingerprint) {
+                self.state.logs.get_mut(&fingerprint).expect("a followed log has progress").name.clone_from(name);
+                self.changed = true;
+            }
+        }
+    }
+
     /// Asserts `attestation_unverified` while no attestation has verified for a grace: the watcher
     /// cannot tell a restart's key from a foreign one.
     pub(super) fn check_attestation(&mut self, now: u64) {
-        let behind = now.saturating_sub(self.attestation_ok_ms);
+        let behind = now.saturating_sub(self.state.last_verified_ms);
         if behind >= self.grace_ms {
             error!(
                 alert = "attestation_unverified",
