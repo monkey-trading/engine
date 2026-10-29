@@ -175,10 +175,22 @@ impl Harness {
     /// limit stale across a relisting, bounds the held-quote closure check after a long gap, and
     /// bounds the rollovers and corporate boundaries one command catches up on.
     pub fn v33() -> Self {
-        let mut h = Harness::v21();
+        Harness::v21().into_v33()
+    }
+
+    /// This harness, after `V22`, `V23`, and `V33`.
+    pub fn into_v33(mut self) -> Self {
         for version in [ProtocolVersion::V22, ProtocolVersion::V23, ProtocolVersion::V33] {
-            h.admin(AdminCommand::ActivateProtocol { version });
+            self.admin(AdminCommand::ActivateProtocol { version });
         }
+        self
+    }
+
+    /// `v33`, then `V35`, which bounds the operator's profit fee and close-out level changes, price
+    /// rule changes, and key rotation. Its launch rates are the genesis parameters'.
+    pub fn v35() -> Self {
+        let mut h = Harness::v33();
+        h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V35 });
         h
     }
 }

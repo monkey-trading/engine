@@ -27,6 +27,7 @@ use crate::merkle::{
     request_nonce_hash, request_nonce_key, staked_hash, staked_key, withdrawal_approval_hash, withdrawal_queue_hash,
     withdrawal_queue_key,
 };
+use crate::operator_bounds::OperatorBounds;
 use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
 use crate::staking::{Staking, UsdcUnits};
@@ -83,6 +84,8 @@ struct Globals<'a> {
     staking: &'a Option<Staking>,
     #[serde(skip_serializing_if = "Option::is_none")]
     access_policy: &'a Option<AccessPolicy>,
+    #[serde(skip_serializing_if = "OperatorBounds::is_default")]
+    operator_bounds: &'a OperatorBounds,
 }
 
 impl Engine {
@@ -396,6 +399,7 @@ impl Engine {
             staked: _,
             distributions: _,
             access_policy,
+            operator_bounds,
             eligibility: _,
             held_deposits: _,
             pending_deposits: _,
@@ -426,6 +430,7 @@ impl Engine {
             withdrawal_next_ticket: *withdrawal_next_ticket,
             staking,
             access_policy,
+            operator_bounds,
         }
     }
 }

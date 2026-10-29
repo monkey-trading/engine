@@ -71,7 +71,13 @@ impl ReplayedLog {
         if let Some(recorded) = engine.client_auth().filter(|recorded| **recorded != cfg.client_auth) {
             bail!("the log records client auth {recorded:?}, but the config gives {:?}", cfg.client_auth);
         }
-        if let Some(recorded) = engine.operator().filter(|recorded| **recorded != cfg.operator) {
+        // A rotation the log records changes the operator's key only, never its chain or vault.
+        let rotated = engine.operator_bounds().rotations > 0;
+        let same_domain =
+            |recorded: &Operator| (recorded.chain_id, recorded.vault) == (cfg.operator.chain_id, cfg.operator.vault);
+        if let Some(recorded) =
+            engine.operator().filter(|recorded| **recorded != cfg.operator && !(rotated && same_domain(recorded)))
+        {
             bail!("the log records operator {recorded:?}, but the config gives {:?}", cfg.operator);
         }
         if let Some(recorded) = engine.access_policy()

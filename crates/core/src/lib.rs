@@ -87,6 +87,7 @@ pub mod market;
 mod markouts;
 mod marks;
 pub mod merkle;
+pub mod operator_bounds;
 pub mod params;
 pub mod price;
 pub mod protocol;

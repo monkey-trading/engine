@@ -5,6 +5,8 @@
 use anyhow::{Context, bail};
 use serde::Deserialize;
 
+use engine_core::types::AccountId;
+
 use crate::config::{NodeConfig, TeeProvider, public_key_address};
 
 /// `config/test-keys.toml`, compiled in so that the list does not come from host storage.
@@ -55,6 +57,32 @@ impl NodeConfig {
     }
 }
 
+/// Whether `address` is the address of a published test key.
+/// Error cases:
+/// - a key `config/test-keys.toml` lists does not parse
+pub(crate) fn is_published_operator(address: AccountId) -> anyhow::Result<bool> {
+    for key in TestKeys::published()?.operator_public_keys {
+        if public_key_address(&key).with_context(|| format!("config/test-keys.toml: {key}"))? == address {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+impl NodeConfig {
+    /// Refuses an operator rotation to a published test key unless the TEE is the mock, as
+    /// `refuse_test_keys` does for `operator.public_key`.
+    /// Error cases:
+    /// - `tee.provider` is not `mock` and `address` is the address of a published test key
+    /// - a key `config/test-keys.toml` lists does not parse
+    pub(crate) fn refuse_rotation_to_test_key(&self, address: AccountId) -> anyhow::Result<()> {
+        if self.tee.provider != TeeProvider::Mock && is_published_operator(address)? {
+            bail!("{address} is a published test key (config/test-keys.toml) whose private key anyone can read");
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,6 +113,16 @@ mod tests {
         assert!(format!("{err:#}").contains("operator.public_key is a published test key"), "{err:#}");
         attested(&own_operator_key()).validate().unwrap();
         NodeConfig::load(Path::new(DEV_CONFIG)).unwrap();
+    }
+
+    #[test]
+    fn real_attestation_refuses_a_rotation_to_a_published_key_and_the_mock_tee_allows_it() {
+        let published = public_key_address(&TestKeys::published().unwrap().operator_public_keys[0]).unwrap();
+        let own = public_key_address(&own_operator_key()).unwrap();
+        let err = attested_dev().refuse_rotation_to_test_key(published).unwrap_err();
+        assert!(format!("{err:#}").contains("is a published test key"), "{err:#}");
+        attested(&own_operator_key()).refuse_rotation_to_test_key(own).unwrap();
+        NodeConfig::load(Path::new(DEV_CONFIG)).unwrap().refuse_rotation_to_test_key(published).unwrap();
     }
 
     #[test]

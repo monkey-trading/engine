@@ -483,6 +483,7 @@ mod benchmarks;
 mod catch_up;
 mod genesis;
 mod operator;
+mod rotation;
 mod toxicity;
 
 mod access_tests;

@@ -66,6 +66,77 @@ async fn a_signed_admin_command_is_applied_and_logged_with_the_operators_signatu
     assert_eq!(replayed.next_request_nonce(node.state.operator.address), 1);
 }
 
+/// The node's clock once a rotation logged at `NOW` has run its seven days.
+fn after_the_notice() -> Millis {
+    NOW + engine_core::operator_bounds::NOTICE_MS + 1_000
+}
+
+#[tokio::test]
+async fn a_rotated_key_reaches_the_log_only_once_its_notice_has_run_and_the_old_key_leaves_it() {
+    let mut node = Node::start_on("rotation", true).await;
+    let next = SigningKey::from_slice(&[0x55; 32]).unwrap();
+    let address = engine_core::eip712::address(next.verifying_key());
+    let rotation = node.sign(0, AdminCommand::RotateOperator { address }, NOW + 60_000);
+    let (status, events) = node.post("/v1/admin", serde_json::to_value(&rotation).unwrap()).await;
+    assert_eq!((status, events), (StatusCode::OK, serde_json::json!([{ "type": "admin_applied" }])));
+
+    // Until then the new key stays out of the log, as a stranger's does, so a copy of its request
+    // cannot be sent again once it is the operator.
+    let early = sign(&next, &node.state.operator, reduce_only(Some(1)), 0, NOW + 60_000);
+    let stranger =
+        sign(&SigningKey::from_slice(&[7; 32]).unwrap(), &node.state.operator, reduce_only(Some(1)), 0, NOW + 60_000);
+    let logged = node.entries().len();
+    for req in [&early, &stranger] {
+        let (status, body) = node.post("/v1/admin", serde_json::to_value(req).unwrap()).await;
+        assert_eq!((status, body["error"].as_str()), (StatusCode::UNAUTHORIZED, Some("invalid signature")));
+    }
+    assert_eq!(node.entries().len(), logged);
+
+    // After the notice the log's operator is the new key: it applies, and the old key is refused
+    // before the log.
+    node.stamps.advance(Duration::from_millis(after_the_notice() as u64 - NOW as u64));
+    let sample = sample_around(node.stamps.as_ref());
+    node.state.tx.send(crate::sequencer::Request::TimeSample(sample)).await.unwrap();
+    node.state.clock = after_the_notice;
+    let expires_at = after_the_notice() + 60_000;
+    let handover = sign(&next, &node.state.operator, reduce_only(Some(1)), 0, expires_at);
+    let (status, events) = node.post("/v1/admin", serde_json::to_value(&handover).unwrap()).await;
+    assert_eq!(
+        (status, events.as_array().and_then(|e| e.last()).cloned()),
+        (StatusCode::OK, Some(serde_json::json!({ "type": "admin_applied" })))
+    );
+    let old = node.sign(1, reduce_only(Some(2)), expires_at);
+    let logged = node.entries().len();
+    let (status, body) = node.post("/v1/admin", serde_json::to_value(&old).unwrap()).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::UNAUTHORIZED, Some("invalid signature")));
+    assert_eq!(node.entries().len(), logged);
+}
+
+#[tokio::test]
+async fn a_rotation_to_a_published_test_key_is_refused_before_the_log_under_real_attestation() {
+    let mut node = Node::start_on("rotation-published", true).await;
+    // The dev operator's key is one the repository publishes; rotating to it would hand a real enclave
+    // an operator key anyone can read.
+    let published = AdminCommand::RotateOperator { address: node.state.operator.address };
+    let logged = node.entries().len();
+    let mut real = (*node.state.attestation).clone();
+    real.provider = "tdx".into();
+    node.state.attestation = Arc::new(real);
+    let (status, body) =
+        node.post("/v1/admin", serde_json::to_value(node.sign(0, published.clone(), NOW + 60_000)).unwrap()).await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("the operator may not rotate to a published test key"))
+    );
+    assert_eq!(node.entries().len(), logged);
+    // The mock enclave leaves it to the engine, which refuses its own key.
+    let mock = Node::start_on("rotation-published-mock", true).await;
+    let (status, events) =
+        mock.post("/v1/admin", serde_json::to_value(mock.sign(0, published, NOW + 60_000)).unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(events[0]["type"], "admin_rejected", "{events}");
+}
+
 #[tokio::test]
 async fn an_admin_request_the_operator_did_not_sign_stays_out_of_the_log() {
     let node = Node::start("unsigned").await;
@@ -264,6 +335,11 @@ impl Node {
     /// Recovers a sequencer on a fresh log named after `name`, activates the protocol, and sequences
     /// the dev genesis.
     async fn start(name: &str) -> Self {
+        Self::start_on(name, false).await
+    }
+
+    /// `start`, under the latest protocol version instead of the legacy one when `latest`.
+    async fn start_on(name: &str, latest: bool) -> Self {
         let dir = scratch_dir(&format!("admin-{name}"));
         let key = Arc::new(EnclaveKey::generate());
         let (stream, _) = broadcast::channel(1024);
@@ -273,7 +349,11 @@ impl Node {
         let cfg = SequencerConfig { clock: stamps.clone(), ..sequencer_config(&dir, manifest_tx) };
         let operator = cfg.operator;
         let mut seq = Sequencer::recover(cfg, key.clone(), stream.clone(), withdrawals_tx).unwrap();
-        seq.activate_legacy_protocol().unwrap();
+        if latest {
+            seq.activate_protocol().unwrap();
+        } else {
+            seq.activate_legacy_protocol().unwrap();
+        }
         seq.genesis(&dev_config().genesis).unwrap();
         // Trusted time agrees with the fixed clock, so the queued activation and genesis go in now.
         seq.trust(sample_around(stamps.as_ref())).unwrap();
@@ -286,7 +366,7 @@ impl Node {
             tls_public_key_sha256: tls.public_key_sha256,
         };
         let state = ApiState {
-            protocol: engine_core::protocol::ProtocolVersion::V23,
+            protocol: if latest { ProtocolVersion::LATEST } else { ProtocolVersion::V23 },
             access: None,
             tx,
             stream,

@@ -30,6 +30,7 @@ use crate::emissions::{EmissionLedger, Emissions, PeriodResult, TokenUnits};
 use crate::event::{Event, Reject};
 use crate::fixed::Rounding;
 use crate::merkle::state::{Changed, StateTree, is_zero};
+use crate::operator_bounds::OperatorBounds;
 use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
 use crate::staking::{Staking, UsdcUnits};
@@ -146,6 +147,10 @@ pub struct Engine {
     pub(crate) staked: TrackedMap<AccountId, TokenUnits>,
     #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
     pub(crate) distributions: TrackedMap<AccountId, UsdcUnits>,
+    /// From `V35`, the launch rates, the pending rate notice and operator rotation, and the
+    /// rotations so far.
+    #[serde(default, skip_serializing_if = "OperatorBounds::is_default")]
+    pub(crate) operator_bounds: OperatorBounds,
 
     /// The screening source and freshness bound, recorded once from `V24`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -217,6 +222,8 @@ impl Engine {
         let last_now = self.now;
         self.now = sequenced.ts;
         self.command_ms = sequenced.ts;
+        // From `V35` a rotation whose notice has run hands over before the command is authorised.
+        self.apply_due_rotation(sequenced.ts);
 
         let mut events = Vec::new();
         // From `V21`, a quote held across a closure could never count under the hours rules, so it

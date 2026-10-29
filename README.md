@@ -88,7 +88,11 @@ parameters, raises stress levels, and can stop new risk in one market or in all 
 neither those modes nor any spread stops a trader reducing or closing a position in an open market
 with a price. Once the engine has credited any funds, each
 of these is a command the operator's key signs, published in the log with its signature, and replay
-checks every one.
+checks every one. From protocol V35 the operator's powers are bounded: the profit fee and the
+close-out level move only within half of their launch values and only after a public notice of at
+least seven days, a change of price rules cannot leave a market with open positions unpriced unless
+the market is reduce-only first, and the operator key rotates only by a signed command that takes effect seven
+days after it is logged.
 
 The reasoning behind each of these choices is recorded in the decision issues
 [#1](https://github.com/0xjevons/monkeytrading/issues/1) to

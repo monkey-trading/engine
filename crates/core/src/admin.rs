@@ -57,6 +57,12 @@ impl Engine {
     ///   with a pending corporate action
     /// - `InitStaking` before `V25`, once staking is initialised, or with a config that fails its
     ///   checks at the sequenced time (see `StakingConfig::validate`)
+    /// - from `V35`, `SetParams` that changes the profit fee or the close-out level outside ±50% of
+    ///   its launch value, or without a notice whose time has come (see
+    ///   `Engine::check_rate_changes`); `UpsertMarket` whose price rules leave a market with open
+    ///   positions unpriced and not reduce-only (see `Engine::check_priceable`)
+    /// - `AnnounceParams` and `RotateOperator` with any error case of `Engine::announce_params` and
+    ///   `Engine::rotate_operator`
     pub(crate) fn admin(&mut self, cmd: &AdminCommand, events: &mut Vec<Event>) -> Result<(), String> {
         match cmd {
             AdminCommand::ScheduleCorporateAction(action) => self.schedule_corporate_action(action, events)?,
@@ -85,8 +91,16 @@ impl Engine {
                 {
                     return Err(format!("a resting-order cap needs protocol {:?}", ProtocolVersion::V14));
                 }
+                let bounded = self.protocol_version >= ProtocolVersion::V35;
+                if bounded {
+                    self.check_rate_changes(params)?;
+                }
+                let rates_before = self.params.as_ref().map(|p| (p.profit_fee_bps, p.closeout_level_bps));
                 self.next_rollover = Some(params.rollover.next_after(self.now));
                 self.params = Some(params.clone());
+                if bounded {
+                    self.settle_rate_changes(rates_before, params);
+                }
                 // From `V16`, a lowered memory reweighs old history at once: without the clamp,
                 // the account's next markout still weighs the history it built under the earlier
                 // memory, and caps it only then. Raising the memory clamps nothing, since history
@@ -125,6 +139,9 @@ impl Engine {
                     return Err(format!("futures contracts need protocol {:?}", ProtocolVersion::V21));
                 }
                 self.check_quote_currency(spec)?;
+                if self.protocol_version >= ProtocolVersion::V35 {
+                    self.check_priceable(spec)?;
+                }
                 if let Some(params) = self.params.as_ref().filter(|_| self.protocol_version >= ProtocolVersion::V13) {
                     params.check_divergence_reachable(spec)?;
                 }
@@ -327,6 +344,9 @@ impl Engine {
                 if self.protocol_version < ProtocolVersion::V27 && *version >= ProtocolVersion::V27 {
                     self.tree = None;
                 }
+                if self.protocol_version < ProtocolVersion::V35 && *version >= ProtocolVersion::V35 {
+                    self.record_launch_rates();
+                }
                 if let Some(cash) = distribution_cash {
                     self.withdrawal_cash = Some(cash);
                 }
@@ -338,6 +358,8 @@ impl Engine {
             }
             AdminCommand::InitEmissions(schedule) => self.init_emissions(schedule)?,
             AdminCommand::InitStaking(config) => self.init_staking(config)?,
+            AdminCommand::AnnounceParams(notice) => self.announce_params(notice)?,
+            AdminCommand::RotateOperator { address } => self.rotate_operator(*address)?,
         }
         Ok(())
     }
@@ -349,6 +371,7 @@ impl Engine {
     /// - a corporate instruction, which only the signed operator channel accepts
     /// - from `V8`, an operator command once any deposit or house capital is credited
     /// - the emission schedule, which only the operator's signature initialises
+    /// - a parameter notice or an operator rotation, which only the operator's signature records
     /// - any error case of `admin`
     pub(crate) fn unsigned_admin(&mut self, cmd: &AdminCommand, events: &mut Vec<Event>) -> Result<(), String> {
         if matches!(cmd, AdminCommand::ScheduleCorporateAction(_)) {
@@ -362,6 +385,9 @@ impl Engine {
         }
         if matches!(cmd, AdminCommand::InitEmissions(_)) {
             return Err("the operator signs the emission schedule".into());
+        }
+        if matches!(cmd, AdminCommand::AnnounceParams(_) | AdminCommand::RotateOperator { .. }) {
+            return Err("the operator signs a parameter notice or a rotation".into());
         }
         self.admin(cmd, events)
     }

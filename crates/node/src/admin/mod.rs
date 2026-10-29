@@ -21,9 +21,10 @@ use engine_core::eip712;
 use engine_core::emissions::{EmissionSchedule, TokenUnits};
 use engine_core::event::Event;
 use engine_core::market::MarketSpec;
+use engine_core::operator_bounds::ParamsNotice;
 use engine_core::params::ProtocolParams;
 use engine_core::protocol::ProtocolVersion;
-use engine_core::types::{MarketId, Millis};
+use engine_core::types::{AccountId, MarketId, Millis};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper::header::{CONTENT_TYPE, HOST};
@@ -62,6 +63,9 @@ pub struct AdminArgs {
     /// file, or `OPERATOR_KEY` holds the key.
     #[arg(short, long)]
     key_file: Option<PathBuf>,
+    /// The key is the one an operator rotation handed over to, not the config's `operator.public_key`.
+    #[arg(long)]
+    rotated: bool,
     #[command(subcommand)]
     action: AdminAction,
 }
@@ -102,6 +106,21 @@ pub enum AdminAction {
         #[arg(short, long)]
         market: Option<MarketId>,
     },
+    /// Give notice of a new profit fee and/or close-out level (from V35): a `set-params` carrying
+    /// them applies only from `--effective-at`, at least seven days after the notice is logged, and
+    /// each must stay within 50% of its launch value.
+    AnnounceParams {
+        #[arg(long)]
+        profit_fee_bps: Option<i64>,
+        #[arg(long)]
+        closeout_level_bps: Option<i64>,
+        /// When the new rates may apply from, in RFC 3339 (`2027-01-01T00:00:00Z`).
+        #[arg(long)]
+        effective_at: DateTime<Utc>,
+    },
+    /// Rotate the operator key to the key at `address` (from V35). The old key signs nothing from
+    /// seven days after the rotation is logged; sign later commands with `--rotated` and the new key.
+    RotateOperator { address: AccountId },
     /// Record the MONKEY emission schedule, which a log takes once: period 0 starts at `--start`,
     /// no earlier than the node sequences the command, with `--period-budget` base units.
     InitEmissions {
@@ -202,6 +221,14 @@ impl AdminAction {
             AdminAction::SyncBenchmarks { .. } => bail!("publisher sync is asynchronous"),
             AdminAction::SetStressFloor { level, market } => AdminCommand::SetStressFloor { market, level },
             AdminAction::SetReduceOnly { reduce_only, market } => AdminCommand::SetReduceOnly { market, reduce_only },
+            AdminAction::AnnounceParams { profit_fee_bps, closeout_level_bps, effective_at } => {
+                AdminCommand::AnnounceParams(ParamsNotice {
+                    profit_fee_bps,
+                    closeout_level_bps,
+                    effective_at: effective_at.timestamp_millis(),
+                })
+            }
+            AdminAction::RotateOperator { address } => AdminCommand::RotateOperator { address },
             AdminAction::InitEmissions { start, period_budget } => {
                 AdminCommand::InitEmissions(EmissionSchedule { start_ms: start.timestamp_millis(), period_budget })
             }
@@ -253,10 +280,10 @@ async fn run_configured(
     clock: impl Fn() -> Millis,
     cfg: NodeConfig,
 ) -> anyhow::Result<AdminRequest> {
-    let operator = cfg.operator()?;
     let key = resolve_key(args.key_file.as_deref(), env)?;
-    if eip712::address(key.verifying_key()) != operator.address {
-        bail!("the key is not the operator key {} in {}", operator.address, args.config.display());
+    let operator = signing_operator(cfg.operator()?, &key, args.rotated, &args.config)?;
+    if let AdminAction::RotateOperator { address } = &args.action {
+        cfg.refuse_rotation_to_test_key(*address)?;
     }
     let node = NodeApi { url: args.node, pin: args.pin };
     if let AdminAction::SyncBenchmarks { watch } = args.action {
@@ -273,6 +300,22 @@ async fn run_configured(
         bail!("the engine rejected the command: {reason}");
     }
     Ok(req)
+}
+
+/// The operator `key` signs as: the configured one, or with `rotated`, the key's own address on the
+/// configured chain and vault. The node, which checks a signature against the key the log records,
+/// refuses a rotated key the log does not name.
+/// Error cases:
+/// - without `rotated`, `key` is not the configured operator's
+fn signing_operator(configured: Operator, key: &SigningKey, rotated: bool, config: &Path) -> anyhow::Result<Operator> {
+    let address = eip712::address(key.verifying_key());
+    if rotated {
+        return Ok(Operator { address, ..configured });
+    }
+    if address != configured.address {
+        bail!("the key is not the operator key {} in {}", configured.address, config.display());
+    }
+    Ok(configured)
 }
 
 /// `command` signed by `key` for `operator`'s domain, with `nonce`, to expire at `expires_at`.
