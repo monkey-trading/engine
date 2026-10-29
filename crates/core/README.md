@@ -55,6 +55,14 @@ this crate and reproduce the signed state roots exactly.
   operator key changes only by a signed `rotate_operator`, which takes effect seven days after it is
   logged: from then the old key signs nothing, and the new one signs under the same chain and vault.
   Earlier versions keep their rules
+- From protocol `V37`, the operator key follows the operator registry's elections (`src/election.rs`).
+  The registry's finalised `RotationChanged` and `Elected` events arrive as `switch_rotation` and
+  `elect_operator` commands on the staking mirror, credited once under their chain references and
+  advancing its authenticated frontier; an `election_rejected` event refuses one that contradicts
+  the state the log holds. An election naming a key other than the one in effect records a pending
+  rotation that takes effect at the election's effective time, or seven days after the election is
+  logged when that is later. While rotation is on, `rotate_operator` is refused; turning rotation
+  off with an election not yet in effect cancels the election and its rotation
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
   and toxicity spreads would reach the price are refused
@@ -176,6 +184,8 @@ this crate and reproduce the signed state roots exactly.
 - `src/operator_bounds.rs` — the V35 bounds: launch rates, rate notices, price-rule checks, and operator rotation
 - `tests/operator_bounds.rs` — the V35 rate bounds, notices and rotation: each refusal and each change that takes effect after its notice
 - `tests/operator_price_rules.rs` — the V35 price-rule bound: held markets, reduce-only, FX dependents, relisting and futures
+- `src/election.rs` — the V37 elected operator key: the mirrored rotation switch and elections, and the pending rotation they record
+- `tests/operator_election.rs` — the V37 elections: refusals, the effective time and its seven-day floor, cancellation, and the refused signed rotation
 - `src/emissions.rs` — MONKEY emissions: the schedule, period results, finalisation, and
   entitlements
 - `src/staking.rs` — MONKEY staking and USDC distributions: the config, stake and unstake
@@ -272,7 +282,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V34` and `V35` parts (`v15.rs` to `v34.rs`, `v35.rs`)
+  `V15` to `V35` and `V37` parts (`v15.rs` to `v35.rs`, `v37.rs`)
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
 
@@ -368,6 +378,10 @@ per-account emission debt, capped at the loss weight the account earned and was 
 for, paid down by later loss weight before it earns again, and judges
 emission eligibility during corporate-action catch-up at the enclosing command's stamp. Its
 session is in `examples/reference_log/v32.rs`.
+
+Protocol V37 hands the operator key to the operator registry's elections while the registry has
+rotation on: an election takes effect at its effective time, never less than seven days after it
+is logged, and a signed rotation is refused; its session is in `examples/reference_log/v37.rs`.
 
 Protocol V35 bounds the operator: rate changes within ±50% of the launch rates after a seven-day
 notice, no price rules that leave a held market unpriced unless it is reduce-only, and an operator

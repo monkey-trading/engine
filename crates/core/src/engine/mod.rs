@@ -6,7 +6,8 @@
 //! venue prices and marks in `marks.rs`, funds and financing in `funds.rs`, admin in `admin.rs`,
 //! stress levels in `stress.rs`, client request auth in `auth.rs`, orders and pricing in
 //! `execution/`, close-outs in `closeout.rs`, markouts in `markouts.rs`, reserved FIFO
-//! withdrawals in `withdrawal.rs`, and MONKEY staking and USDC distributions in `staking.rs`.
+//! withdrawals in `withdrawal.rs`, MONKEY staking and USDC distributions in `staking.rs`, and the
+//! elected operator key in `election.rs`.
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -26,6 +27,7 @@ use crate::benchmark::BenchmarkHistory;
 use crate::command::{AdminCommand, Command, Sequenced};
 use crate::corporate::CorporateEntitlement;
 use crate::deposits::{CustodyCheckpoint, LegacyDeposit, RecordedDeposit};
+use crate::election::OperatorElection;
 use crate::emissions::{EmissionLedger, Emissions, PeriodResult, TokenUnits};
 use crate::event::{Event, Reject};
 use crate::fixed::Rounding;
@@ -151,6 +153,9 @@ pub struct Engine {
     /// rotations so far.
     #[serde(default, skip_serializing_if = "OperatorBounds::is_default")]
     pub(crate) operator_bounds: OperatorBounds,
+    /// From `V37`, the mirrored operator registry: whether rotation is on, and the last election.
+    #[serde(default, skip_serializing_if = "OperatorElection::is_default")]
+    pub(crate) operator_election: OperatorElection,
 
     /// The screening source and freshness bound, recorded once from `V24`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -342,6 +347,10 @@ impl Engine {
                 Command::Unstake { account, amount, block, chain_ref } => {
                     self.unstake(*account, *amount, *block, chain_ref, &mut events)
                 }
+                Command::SwitchRotation { enabled, election_cancelled, block, chain_ref } => {
+                    self.switch_rotation(*enabled, *election_cancelled, *block, chain_ref, &mut events)
+                }
+                Command::ElectOperator(election) => self.elect_operator(election, &mut events),
                 // The access variants always dispatch to `access_dispatch` first.
                 _ => unreachable!("access command dispatched above"),
             }

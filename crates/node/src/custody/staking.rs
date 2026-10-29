@@ -1,19 +1,20 @@
-//! Mirroring the staking contract's finalised events into the engine. The deposit watcher calls
-//! `mirror` once per confirmed poll, after the same proven window, and only through the
-//! Ethereum-finalised boundary the poll proved: a staking mirror has no reversal, so a merely
-//! confirmed event must never become a permanent engine balance. Events hold until `InitStaking`
-//! has applied, credit once under `tx:logIndex`, and advance the engine's authenticated
-//! mirrored-through frontier, so a host cursor cannot skip an event and a restart that re-reads a
-//! range mirrors nothing twice.
+//! Mirroring the staking contract's finalised events, and from `V37` the operator registry's, into
+//! the engine. The deposit watcher calls `mirror` once per confirmed poll, after the same proven
+//! window, and only through the Ethereum-finalised boundary the poll proved: a staking mirror has
+//! no reversal, so a merely confirmed event must never become a permanent engine balance or
+//! election. Events hold until `InitStaking` has applied, credit once under `tx:logIndex`, and
+//! advance the engine's authenticated mirrored-through frontier, so a host cursor cannot skip an
+//! event and a restart that re-reads a range mirrors nothing twice.
 
 use std::path::Path;
 
 use alloy::primitives::{B256, U256};
 use anyhow::{Context, bail};
 use engine_core::command::Command;
+use engine_core::election::RegistryElection;
 use engine_core::emissions::TokenUnits;
 use engine_core::event::Event;
-use engine_core::types::AccountId;
+use engine_core::types::{AccountId, Millis};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::Instrument;
@@ -24,23 +25,28 @@ use crate::custody::evm::VaultReader;
 use crate::custody::sizing::AdaptiveSize;
 use crate::custody::stall::{PollError, Stall};
 use crate::sequencer::Request;
-/// One staking contract event: a stake, or an unstake the cooldown has passed.
+/// One mirrorable event: from the staking contract, a stake or an unstake the cooldown has passed;
+/// from the operator registry, a rotation switch or an election.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StakingEvent {
     pub block: u64,
     pub block_hash: B256,
     pub tx_hash: B256,
     pub log_index: u64,
-    pub account: AccountId,
-    /// MONKEY base units staked or unstaked.
-    pub amount: u128,
     pub kind: StakingEventKind,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StakingEventKind {
-    Staked,
-    UnstakeCompleted,
+    /// `amount` MONKEY base units staked by `account`.
+    Staked { account: AccountId, amount: u128 },
+    /// `amount` MONKEY base units returned to `account` after the cooldown.
+    UnstakeCompleted { account: AccountId, amount: u128 },
+    /// The registry turned rotation on or off, cancelling an election not yet in effect or not.
+    RotationChanged { enabled: bool, election_cancelled: bool },
+    /// The registry elected `candidate`, whose `admin_key` takes effect at `effective_at`
+    /// milliseconds.
+    Elected { epoch: u64, candidate: AccountId, admin_key: AccountId, effective_at: Millis },
 }
 
 impl StakingEvent {
@@ -52,10 +58,20 @@ impl StakingEvent {
     /// The mirror command this event carries, naming the finalised block it was read from so the
     /// engine advances the authenticated mirrored-through frontier.
     fn command(&self) -> Command {
-        let (account, amount, block, chain_ref) = (self.account, TokenUnits(self.amount), self.block, self.chain_ref());
+        let (block, chain_ref) = (self.block, self.chain_ref());
         match self.kind {
-            StakingEventKind::Staked => Command::Stake { account, amount, block, chain_ref },
-            StakingEventKind::UnstakeCompleted => Command::Unstake { account, amount, block, chain_ref },
+            StakingEventKind::Staked { account, amount } => {
+                Command::Stake { account, amount: TokenUnits(amount), block, chain_ref }
+            }
+            StakingEventKind::UnstakeCompleted { account, amount } => {
+                Command::Unstake { account, amount: TokenUnits(amount), block, chain_ref }
+            }
+            StakingEventKind::RotationChanged { enabled, election_cancelled } => {
+                Command::SwitchRotation { enabled, election_cancelled, block, chain_ref }
+            }
+            StakingEventKind::Elected { epoch, candidate, admin_key, effective_at } => {
+                Command::ElectOperator(RegistryElection { epoch, candidate, admin_key, effective_at, block, chain_ref })
+            }
         }
     }
 }
@@ -217,8 +233,8 @@ pub(super) async fn mirror<V: VaultReader>(
 }
 
 /// Sequences one event's mirror unless the engine has already credited its chain reference.
-/// The sequencer alerts a refused mirror as `staking_rejected` at Critical; the poll retries it,
-/// with the cursor unmoved, on the next pass.
+/// The sequencer alerts a refused mirror as `staking_rejected` or `election_rejected` at Critical;
+/// the poll retries it, with the cursor unmoved, on the next pass.
 /// Error cases:
 /// - stalled: the sequencer refused the mirror (it stays uncredited for the retry)
 /// - fatal: the sequencer has stopped
@@ -231,13 +247,20 @@ async fn mirror_one(tx: &mpsc::Sender<Request>, event: StakingEvent) -> Result<(
             return Ok(());
         }
         let events = submit(tx, event.command()).await?;
-        if events.iter().any(|event| matches!(event, Event::StakingRejected { .. })) {
+        if events.iter().any(|event| matches!(event, Event::StakingRejected { .. } | Event::ElectionRejected { .. })) {
             return Err(PollError::Stalled(Stall::Refused(anyhow::anyhow!(
                 "the engine refused staking mirror {}",
                 event.chain_ref()
             ))));
         }
-        info!(account = %event.account, amount = %event.amount, ?event.kind, "staking event mirrored");
+        match event.kind {
+            StakingEventKind::Staked { account, amount } | StakingEventKind::UnstakeCompleted { account, amount } => {
+                info!(%account, amount, "staking event mirrored");
+            }
+            StakingEventKind::RotationChanged { .. } | StakingEventKind::Elected { .. } => {
+                info!("operator registry event mirrored");
+            }
+        }
         Ok(())
     }
     .instrument(span)

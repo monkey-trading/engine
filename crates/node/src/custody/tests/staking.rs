@@ -59,19 +59,15 @@ impl VaultReader for StubReader {
 }
 
 fn staked(block: u64, tx: u8, account: AccountId, amount: u64) -> StakingEvent {
-    StakingEvent {
-        block,
-        block_hash: canonical_hash(block),
-        tx_hash: B256::repeat_byte(tx),
-        log_index: 0,
-        account,
-        amount: u128::from(amount),
-        kind: StakingEventKind::Staked,
-    }
+    event(block, tx, StakingEventKind::Staked { account, amount: u128::from(amount) })
 }
 
 fn unstaked(block: u64, tx: u8, account: AccountId, amount: u64) -> StakingEvent {
-    StakingEvent { kind: StakingEventKind::UnstakeCompleted, ..staked(block, tx, account, amount) }
+    event(block, tx, StakingEventKind::UnstakeCompleted { account, amount: u128::from(amount) })
+}
+
+fn event(block: u64, tx: u8, kind: StakingEventKind) -> StakingEvent {
+    StakingEvent { block, block_hash: canonical_hash(block), tx_hash: B256::repeat_byte(tx), log_index: 0, kind }
 }
 
 fn hashes_through(to: u64) -> BTreeMap<u64, B256> {
@@ -472,3 +468,4 @@ async fn staking_hierarchy_survives_cancellation_and_rejects_changed_cached_anch
 }
 
 mod anchor;
+mod registry;

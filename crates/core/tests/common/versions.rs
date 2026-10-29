@@ -193,4 +193,13 @@ impl Harness {
         h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V35 });
         h
     }
+
+    /// `staking` with a one-day epoch and a three-day cooldown over a 1m floor, then `V37`, whose
+    /// operator key follows the operator registry's mirrored elections.
+    pub fn v37() -> Self {
+        const DAY_MS: Millis = 24 * 60 * 60 * 1000;
+        let mut h = Harness::staking(Fixed::from_int(1_000_000), DAY_MS, 3 * DAY_MS);
+        h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V37 });
+        h
+    }
 }

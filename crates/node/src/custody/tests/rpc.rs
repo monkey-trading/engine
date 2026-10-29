@@ -488,4 +488,5 @@ async fn rpc_wire_keeps_tags_batches_filters_quantities_and_canonical_hash_calls
     }
 }
 
+mod registry;
 mod staking;

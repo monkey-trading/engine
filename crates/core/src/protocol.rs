@@ -175,11 +175,17 @@ pub enum ProtocolVersion {
     /// market is reduce-only. The operator key rotates only by a signed rotation that takes effect
     /// seven days after it is logged.
     V35,
+    /// The operator key follows the operator registry's election (`election`): the registry's
+    /// finalised events turning rotation on or off and electing a candidate mirror on the staking
+    /// mirror, each credited once under its chain reference, and an election naming another key
+    /// hands it over at the election's effective time, or seven days after it is logged when that
+    /// is later. While rotation is on, `RotateOperator` is refused.
+    V37,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V35;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V37;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

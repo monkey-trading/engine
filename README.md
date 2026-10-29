@@ -13,7 +13,7 @@ house, in turn, is issued to the people who trade with it.
 > their FIFO queue also run against Anvil, as do MONKEY emissions and claims; MONKEY's production
 > budget and start are still to be set. FX, index, commodity, and share prices from two market-data
 > vendors each run against local stand-ins for those vendors; live vendor feeds wait on credentials
-> and redistribution licences. MONKEY staking and USDC distribution claims run against Anvil, and
+> and redistribution licences. MONKEY staking, USDC distribution claims and operator elections run against Anvil, and
 > the API's public certificate is issued and renewed against a local ACME test CA; hardware
 > attestation remains under construction.
 > Nothing here holds real funds.
@@ -92,7 +92,11 @@ checks every one. From protocol V35 the operator's powers are bounded: the profi
 close-out level move only within half of their launch values and only after a public notice of at
 least seven days, a change of price rules cannot leave a market with open positions unpriced unless
 the market is reduce-only first, and the operator key rotates only by a signed command that takes effect seven
-days after it is logged.
+days after it is logged. From protocol V37 stakers can elect the operator key instead: each delegates its
+staked MONKEY to a registered candidate, an operator registry contract elects one when an election
+epoch closes, and the engine applies the elected key from the election's effective time, at least
+seven days after it is logged. Rotation starts off, with the deployer as the only operator, until the
+governance timelock turns it on.
 
 The reasoning behind each of these choices is recorded in the decision issues
 [#1](https://github.com/0xjevons/monkeytrading/issues/1) to

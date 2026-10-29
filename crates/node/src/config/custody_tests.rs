@@ -57,3 +57,22 @@ fn production_requires_latest_credit_and_ethereum_finality_for_release() {
         }
     }
 }
+
+#[test]
+fn the_operator_registry_must_be_a_contract_of_its_own() {
+    let text = std::fs::read_to_string(Path::new("../../config/anvil.toml")).unwrap();
+    let staking = "0x00000000000000000000000000000000000000a5";
+    let section = |registry: &str| {
+        format!(
+            "{text}\n[custody.evm.staking]\ncontract = '{staking}'\ncursor_path = 'staking.json'\n[custody.evm.staking.registry]\ncontract = '{registry}'\n"
+        )
+    };
+    let cfg: NodeConfig = toml::from_str(&section("0x00000000000000000000000000000000000000a6")).unwrap();
+    cfg.validate_custody().unwrap();
+    let usdc = cfg.custody.evm.as_ref().unwrap().usdc.to_string();
+    for other in [staking, cfg.custody.vault.as_str(), usdc.as_str()] {
+        let cfg: NodeConfig = toml::from_str(&section(other)).unwrap();
+        let err = cfg.validate_custody().unwrap_err().to_string();
+        assert!(err.contains("custody.evm.staking.registry.contract must be the operator registry"), "{err}");
+    }
+}

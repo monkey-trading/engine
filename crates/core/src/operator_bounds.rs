@@ -193,9 +193,13 @@ impl Engine {
     /// Records a rotation to `address`, replacing any pending one, from seven days after now.
     /// Error cases:
     /// - before `V35`, or with no operator recorded
+    /// - from `V37`, while rotation is on, when only an election moves the key
     /// - the zero address, or the address already operating
     pub(crate) fn rotate_operator(&mut self, address: AccountId) -> Result<(), String> {
         self.require_bounds_protocol("an operator rotation")?;
+        if self.rotation_by_election() {
+            return Err("while rotation is on, only an election moves the operator key".into());
+        }
         let operator = self.operator.ok_or("no operator is recorded")?;
         if address == AccountId([0; 20]) || address == operator.address {
             return Err("an operator rotation names a new, nonzero address".into());

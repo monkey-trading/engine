@@ -296,6 +296,9 @@ impl Metrics {
             Event::StakingRejected { reason, .. } => {
                 rejection("staking_rejected", reject_kind(reason));
             }
+            Event::ElectionRejected { .. } => {
+                rejection("election_rejected", "other");
+            }
             Event::CustodyDepositRejected { reason, .. } => {
                 rejection("custody_deposit_rejected", deposit_reject_kind(reason));
             }

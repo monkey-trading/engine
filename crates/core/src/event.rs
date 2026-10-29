@@ -278,6 +278,26 @@ pub enum Event {
         first: u64,
         last: u64,
     },
+    /// From `V37`, the operator registry turned rotation on or off, mirrored; `election_cancelled`
+    /// when turning it off cancelled the last election before it took effect.
+    RotationSwitched {
+        enabled: bool,
+        election_cancelled: bool,
+    },
+    /// From `V37`, an election the operator registry made, mirrored: `admin_key` signs admin
+    /// commands from `effective_at`, when it is not the key in effect already.
+    OperatorElected {
+        epoch: u64,
+        candidate: AccountId,
+        admin_key: AccountId,
+        effective_at: Millis,
+    },
+    /// From `V37`, a registry mirror the engine refused: before `V37` or staking, a reference
+    /// already credited, or an event that contradicts the registry state the log holds.
+    ElectionRejected {
+        chain_ref: String,
+        reason: String,
+    },
     /// From `V33`, a command stamped more than `MAX_CATCH_UP_BOUNDARIES` rollover or
     /// corporate-action boundaries past the engine's schedule caught up on that many and did
     /// nothing else, but for the outcome of a benchmark batch it had already applied. `due` is the

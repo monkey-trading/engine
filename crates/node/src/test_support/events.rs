@@ -201,6 +201,9 @@ pub fn every_event() -> Vec<Event> {
             allocated: engine_core::UsdcUnits(4_000),
         },
         Event::DistributionEpochsSkipped { first: 4, last: 9 },
+        Event::RotationSwitched { enabled: true, election_cancelled: false },
+        Event::OperatorElected { epoch: 3, candidate: account, admin_key: account, effective_at: 1_793_000_000_000 },
+        Event::ElectionRejected { chain_ref: "0xef:4".into(), reason: "rotation is off".into() },
         Event::CatchUpDeferred { due: 1_793_000_000_000 },
     ]);
     for event in &events {
@@ -251,6 +254,9 @@ pub fn every_event() -> Vec<Event> {
             | Event::DistributionAllocated { .. }
             | Event::DistributionEpochClosed { .. }
             | Event::DistributionEpochsSkipped { .. }
+            | Event::RotationSwitched { .. }
+            | Event::OperatorElected { .. }
+            | Event::ElectionRejected { .. }
             | Event::CatchUpDeferred { .. } => {}
         }
     }

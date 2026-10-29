@@ -17,7 +17,9 @@ an index: load only the rule whose hint matches the current action.
   nonces, and expiries), USD settlement of markets quoted in other currencies, admin commands signed
   by the operator key the log records and, from `V35`, bounded (`operator_bounds.rs`: profit fee and
   close-out level moves within ±50% after a seven-day notice, held markets kept priced by price-rule changes, and a
-  seven-day key rotation), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
+  seven-day key rotation) and, from `V37`, elected (`election.rs`: the operator registry's rotation switch and
+  elections mirrored on the staking mirror, the elected key in effect at the election's time or seven days after it
+  is logged, `RotateOperator` refused while rotation is on; `tests/operator_election.rs`), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
   shared by net realised losses, halvings, and cumulative entitlements) and MONKEY staking with
   USDC distributions (`staking.rs`: stake mirroring, V27 authenticated identities and completed scan
   anchors, epoch closes at NAV above a liquidity floor, cumulative distributions proven on chain),
@@ -86,7 +88,9 @@ an index: load only the rule whose hint matches the current action.
   pins the roots itself), the trusted time check against
   Roughtime servers, the custody adapter (mock, or EVM vault deposits over alloy, mirroring the
   staking contract's finalised events once `InitStaking` has applied, with V27 scan progress
-  authenticated in engine state rather than trusted from the host cursor), checkpoint posting
+  authenticated in engine state rather than trusted from the host cursor, and from V37 the operator
+  registry's rotation switches and elections in the same proven blocks, `custody/registry.rs`), the
+  `/v1/operator` read of the key in effect, its pending rotation, and the last election, checkpoint posting
   and collateral reconciliation, distributions paid included (`checkpoints/`), with strict signature replay and startup checks
   against the vault's finalized commitment before history writes, plus authenticated withdrawal
   authorization replay, bounded finalized claim polling, immutable signer-epoch history independent
@@ -132,7 +136,14 @@ an index: load only the rule whose hint matches the current action.
   cooldown shorter than the engine's epoch, the lock-up that prices jumping in just before a
   snapshot — and emits the events the engine mirrors; `claimDistribution` pays a staker the USDC
   its cumulative distribution, proven
-  against the latest posted root, adds to what it was already paid. Deployment gives that
+  against the latest posted root, adds to what it was already paid. Each staker delegates its whole
+  stake to one candidate, changeable at any time; votes drop at `startUnstake`, and a registered
+  candidate's self-bond cannot be unstaked until one cooldown after it leaves. `src/OperatorRegistry.sol`
+  deploys the staking contract and elects the operator key: candidates register a self-bond, admin
+  key, API hostname, handover endpoint and release, the timelock approves releases, switches rotation
+  (off at deployment, the deployer in effect) and moves parameters within deployment bounds, and
+  anyone closes an election epoch, electing the top eligible candidate past quorum, minimum term and
+  margin to take effect seven days plus a finality margin later. Deployment gives that
   timelock its multisig proposer. The timelock manages signer rotation and independent
   deposit/withdrawal pauses; the guardian, the same multisig acting without the delay, may only
   pause withdrawals for seven days (counted, renewed or lifted by the timelock) and retire the
@@ -192,6 +203,7 @@ an index: load only the rule whose hint matches the current action.
   `dev-proxy-protocol.sh`, the proxied client address scenario against a dev node;
   `dev-monkey-emissions.sh`, the MONKEY emissions scenario on Anvil;
   `dev-monkey-staking.sh`, the MONKEY staking and USDC distributions scenario on Anvil;
+  `dev-operator-election.sh`, the delegated operator election scenario on Anvil;
   `dev-snapshot-restart.sh`, the checkpoint snapshot restart and fallback scenario;
   `dev-ct-watch.sh`, the Certificate Transparency watcher against a mock node and a loopback
   stand-in log (`dev-ct-log.py`), a webhook stand-in, a foreign-key certificate, a restart
@@ -225,7 +237,7 @@ an index: load only the rule whose hint matches the current action.
   invariant tests on x86_64 and aarch64 Linux, the unchanged-reference-log check, `cargo-deny`,
   the contracts' `forge fmt --check` / build /
   test, the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
-  deposit finality scenarios, the MONKEY staking dev scenario, the signed withdrawal and FIFO dev
+  deposit finality scenarios, the MONKEY staking and operator election dev scenarios, the signed withdrawal and FIFO dev
   scenario, the API and direct-vault access enforcement dev scenario, the metrics and alert routing
   dev scenario, the alert outbox kill/restart scenario,
   the browser-origin scenario, the proxy protocol scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the
@@ -390,6 +402,11 @@ Run from the repo root:
   the liquidity floor paying pro-rata in USDC against posted checkpoint roots, an unstake through
   the cooldown, and an epoch below the floor paying nothing; needs Anvil, Forge, and installed
   Soldeer dependencies)
+- Operator election dev scenario: `./scripts/dev-operator-election.sh` (starts Anvil, deploys the
+  vault, the registry and its staking contract, delegates to two candidates, elects one, and checks
+  through the real custody quorum, sequencer and API that the deployer's key is refused and the
+  elected key applies from the effective time; needs Anvil, Forge, Python 3, and installed Soldeer
+  dependencies)
 - Signed withdrawal and FIFO dev scenario: `./scripts/dev-withdrawals.sh` (needs Anvil, Forge,
   Cargo and pinned contract dependencies; uses local signed time and price servers and a loopback
   alert webhook, ends with the guardian pause and signer retirement flow, and preserves

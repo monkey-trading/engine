@@ -119,6 +119,90 @@ contract StakingTest is Test {
         new Staking(monkey, EPOCH - 1, EPOCH);
     }
 
+    function test_OnlyTheRegistryLocksAndReleasesSelfBonds() public {
+        // This test deployed the contract, so it stands in for the registry.
+        assertEq(staking.registry(), address(this));
+        vm.expectRevert(abi.encodeWithSelector(Staking.NotRegistry.selector, staker));
+        vm.prank(staker);
+        staking.lockBond(staker, 1);
+        vm.expectRevert(abi.encodeWithSelector(Staking.NotRegistry.selector, staker));
+        vm.prank(staker);
+        staking.releaseBond(staker);
+    }
+
+    function test_ALockedSelfBondStaysStakedUntilOneCooldownAfterItsRelease() public {
+        _mintMonkey(staker, 1_000);
+        vm.startPrank(staker);
+        monkey.approve(address(staking), 1_000);
+        staking.stake(1_000);
+        vm.stopPrank();
+        vm.expectRevert(abi.encodeWithSelector(Staking.InsufficientStake.selector, 1_000, 1_001));
+        staking.lockBond(staker, 1_001);
+        vm.expectEmit(address(staking));
+        emit Staking.BondLocked(staker, 600);
+        staking.lockBond(staker, 600);
+        vm.expectRevert(abi.encodeWithSelector(Staking.SelfBondLocked.selector, 600));
+        staking.lockBond(staker, 100);
+
+        vm.startPrank(staker);
+        vm.expectRevert(abi.encodeWithSelector(Staking.SelfBondLocked.selector, 600));
+        staking.startUnstake(401);
+        staking.startUnstake(400);
+        vm.stopPrank();
+
+        vm.expectEmit(address(staking));
+        emit Staking.BondReleasing(staker, 600, block.timestamp + COOLDOWN);
+        staking.releaseBond(staker);
+        vm.warp(block.timestamp + COOLDOWN - 1);
+        assertEq(staking.lockedBond(staker), 600);
+        vm.expectRevert(abi.encodeWithSelector(Staking.SelfBondLocked.selector, 600));
+        vm.prank(staker);
+        staking.startUnstake(1);
+        vm.warp(block.timestamp + 1);
+        assertEq(staking.lockedBond(staker), 0);
+        vm.prank(staker);
+        staking.startUnstake(600);
+        assertEq(staking.stakes(staker), 0);
+    }
+
+    function testFuzz_VotesAreTheStakeOfTheAccountsDelegatingToEachCandidate(
+        uint256 first,
+        uint256 second,
+        uint256 unstaked,
+        bool switchFirst
+    ) public {
+        address other = makeAddr("other staker");
+        address[2] memory candidates = [makeAddr("candidate a"), makeAddr("candidate b")];
+        first = bound(first, 1, monkey.cap() / 2);
+        second = bound(second, 1, monkey.cap() / 2);
+        unstaked = bound(unstaked, 1, first);
+        _stakeFor(staker, first);
+        vm.prank(staker);
+        staking.delegate(candidates[0]);
+        vm.prank(other);
+        staking.delegate(candidates[1]);
+        _stakeFor(other, second);
+        assertEq(staking.votes(candidates[0]), first);
+        assertEq(staking.votes(candidates[1]), second);
+
+        vm.startPrank(staker);
+        staking.startUnstake(unstaked);
+        if (switchFirst) staking.delegate(candidates[1]);
+        vm.stopPrank();
+        uint256 remaining = first - unstaked;
+        assertEq(staking.votes(candidates[0]), switchFirst ? 0 : remaining);
+        assertEq(staking.votes(candidates[1]), second + (switchFirst ? remaining : 0));
+        assertEq(staking.totalStaked(), remaining + second);
+    }
+
+    function _stakeFor(address account, uint256 amount) internal {
+        _mintMonkey(account, amount);
+        vm.startPrank(account);
+        monkey.approve(address(staking), amount);
+        staking.stake(amount);
+        vm.stopPrank();
+    }
+
     function testFuzz_StakeThenUnstakeReturnsWhatWasStaked(uint256 amount) public {
         amount = bound(amount, 1, monkey.cap());
         _mintMonkey(staker, amount);

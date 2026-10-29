@@ -42,7 +42,8 @@ impl<V: VaultReader> DepositWatcher<V> {
         self.staking_window(from, to).await.map(|proof| proof.is_some())
     }
 
-    /// Mirrors the configured staking contract's events through the Ethereum-finalised boundary
+    /// Mirrors the configured staking contract's events, and the operator registry's with them,
+    /// through the Ethereum-finalised boundary
     /// this poll proved (`release_at`), never the merely confirmed scan end: a staking mirror has
     /// no reversal, so a reorged event must never become a permanent engine balance. Catch-up
     /// runs in bounded chunks whose proofs are retained on the staking mirror's own slot, so it

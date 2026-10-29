@@ -12,6 +12,7 @@ mod archive;
 mod benchmark_schedule;
 mod distributions;
 mod history;
+mod operator;
 mod origin;
 pub(crate) mod reissue;
 mod signing;
@@ -210,6 +211,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/benchmarks", get(benchmarks))
         .route("/v1/benchmarks/schedule", get(benchmark_schedule::schedule))
         .route("/v1/house", get(house))
+        .route("/v1/operator", get(operator::operator))
         .route("/v1/accounts/{address}", get(account))
         .route("/v1/accounts/{address}/nonce", get(nonce))
         .route("/v1/accounts/{address}/eligibility", get(access::eligibility))

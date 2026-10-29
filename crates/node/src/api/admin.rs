@@ -24,7 +24,8 @@ use crate::config::is_published_operator;
 /// - a command only the node sequences: client auth, the operator, or a protocol activation
 /// - a signature that is neither the recorded operator's nor a pending rotation's key over this
 ///   command, nonce, and expiry
-/// - with a real enclave, a rotation to a published test key
+/// - with a real enclave, a rotation to a published test key, or a request signed by a published
+///   test key other than the configured one, as an election may name
 /// - an emission schedule whose period budget is not the one the configured vault's MONKEY cap was
 ///   derived from
 /// - a nonce other than the operator's next
@@ -52,6 +53,15 @@ pub(super) async fn admin(State(s): State<ApiState>, Json(req): Json<AdminReques
         return Err(ApiError::Unauthorized("invalid signature"));
     };
     Span::current().record("id", display(operator.address));
+    // An election can name any key, and a real enclave takes no admin command from a published one;
+    // the configured key is checked at config load.
+    if operator.address != s.operator.address
+        && s.attestation.provider != "mock"
+        && is_published_operator(operator.address).map_err(|_| ApiError::Internal)?
+    {
+        debug!("admin request refused: signed by a published test key");
+        return Err(ApiError::Unauthorized("signed by a published test key"));
+    }
     // The vault's real attestation means a real enclave, whose operator key must not be a published one.
     if let AdminCommand::RotateOperator { address } = &req.command
         && s.attestation.provider != "mock"
