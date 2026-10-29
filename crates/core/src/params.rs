@@ -12,7 +12,7 @@ use crate::protocol::ProtocolVersion;
 use crate::types::Millis;
 
 /// The most any per-trade rate may be: 100%.
-const MAX_RATE_BPS: i64 = 10_000;
+pub(crate) const MAX_RATE_BPS: i64 = 10_000;
 /// The largest benchmark rate accepted, either sign: 100% a year.
 pub const MAX_BENCHMARK_BPS: i64 = 10_000;
 /// The most a multiplier or house cap may be: ten times.

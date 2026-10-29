@@ -171,6 +171,13 @@ impl Harness {
         self.cmd(operator.admin(nonce, command))
     }
 
+    /// `operate` signed by the key from `seed` instead of the harness operator's.
+    pub fn operate_as(&mut self, seed: u8, command: AdminCommand) -> Vec<Event> {
+        let signer = Client { expires_at: self.ts + 60_000, ..Client::new(seed) };
+        let nonce = self.engine.next_request_nonce(signer.account);
+        self.cmd(signer.admin(nonce, command))
+    }
+
     /// `operate` for a command that must apply.
     pub fn operator_admin(&mut self, command: AdminCommand) {
         let events = self.operate(command);

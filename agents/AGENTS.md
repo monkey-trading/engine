@@ -15,7 +15,9 @@ an index: load only the rule whose hint matches the current action.
   roll-adjusted front futures contracts (`futures.rs`), dated benchmark histories (`benchmark.rs`, with calendar-change regressions in
   `tests/benchmark_retention.rs`), house exposure caps, toxicity scoring, signed client requests (EIP-712, per-account
   nonces, and expiries), USD settlement of markets quoted in other currencies, admin commands signed
-  by the operator key the log records, MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
+  by the operator key the log records and, from `V35`, bounded (`operator_bounds.rs`: profit fee and
+  close-out level moves within ±50% after a seven-day notice, held markets kept priced, and a
+  seven-day key rotation), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
   shared by net realised losses, halvings, and cumulative entitlements) and MONKEY staking with
   USDC distributions (`staking.rs`: stake mirroring, V27 authenticated identities and completed scan
   anchors, epoch closes at NAV above a liquidity floor, cumulative distributions proven on chain),

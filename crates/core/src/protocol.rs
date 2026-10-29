@@ -169,11 +169,17 @@ pub enum ProtocolVersion {
     /// A withdrawal request is at least 10 USDC, the vault's deposit floor, and the queue approves
     /// less than that only as a request's final remainder.
     V34,
+    /// The profit fee and the close-out level move only within ±50% of their launch values and only
+    /// from the time a signed notice, logged at least seven days before, names. A relisting whose
+    /// tighter price rules leave a market with open positions without a price is refused unless the
+    /// market is reduce-only. The operator key rotates only by a signed rotation that takes effect
+    /// seven days after it is logged.
+    V35,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V34;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V35;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

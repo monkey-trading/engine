@@ -14,6 +14,7 @@ use crate::corporate::CorporateAction;
 use crate::deposits::{CustodyCheckpoint, DepositReceipt, DepositUpdate, LegacyDeposit};
 use crate::emissions::{EmissionSchedule, TokenUnits};
 use crate::market::MarketSpec;
+use crate::operator_bounds::ParamsNotice;
 use crate::params::{NotionalWeighting, ProtocolParams};
 use crate::price::SourceQuote;
 use crate::protocol::ProtocolVersion;
@@ -207,6 +208,15 @@ pub enum AdminCommand {
     /// epoch 0 starts, and the unstake cooldown the staking contract enforces. A log records it
     /// once.
     InitStaking(StakingConfig),
+    /// From `V35`, signed notice of a new profit fee or close-out level, which a `SetParams` may
+    /// apply from the notice's time on, at least seven days after the sequenced time. Replaces a
+    /// pending notice.
+    AnnounceParams(ParamsNotice),
+    /// From `V35`, signed rotation of the operator key to `address`, in effect seven days after it
+    /// is logged. Replaces a pending rotation.
+    RotateOperator {
+        address: AccountId,
+    },
 }
 
 /// An admin command with the operator's signature, nonce, and expiry, as `engine admin` signs and
@@ -272,7 +282,8 @@ impl AdminCommand {
     }
 
     /// Whether the operator may sign this command: listings, parameters, benchmark rates, stress
-    /// floors, reduce-only, the emission schedule, corporate actions, and the staking config. The
+    /// floors, reduce-only, the emission schedule, corporate actions, the staking config, and from `V35`
+    /// parameter notices and operator rotations. The
     /// node alone sequences the others, from its config and build.
     pub fn is_operator_command(&self) -> bool {
         match self {
@@ -284,7 +295,9 @@ impl AdminCommand {
             | AdminCommand::SetReduceOnly { .. }
             | AdminCommand::InitEmissions(_)
             | AdminCommand::ScheduleCorporateAction(_)
-            | AdminCommand::InitStaking(_) => true,
+            | AdminCommand::InitStaking(_)
+            | AdminCommand::AnnounceParams(_)
+            | AdminCommand::RotateOperator { .. } => true,
             AdminCommand::SetClientAuth(_)
             | AdminCommand::SetAccessPolicy(_)
             | AdminCommand::SetOperator(_)

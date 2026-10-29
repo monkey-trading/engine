@@ -78,6 +78,19 @@ async fn a_key_that_is_not_the_operators_is_refused_before_any_call() {
     assert!(err.to_string().contains("is not the operator key"), "{err:#}");
 }
 
+#[tokio::test]
+async fn a_rotated_key_is_signed_with_once_the_flag_says_the_log_names_it() {
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let node = format!("https://127.0.0.1:{port}");
+    let argv =
+        ["engine", "--config", DEV_CONFIG, "--node", &node, "--pin", ZERO_PIN, "--rotated", "set-reduce-only", "true"];
+    let args = Cli::try_parse_from(argv).unwrap().args;
+    let env = KeyEnv { key_file: None, key: Some(HexKey(OTHER_KEY.into())) };
+    // The key check passes, so the run reaches the (absent) node.
+    let err = run_with_clock(args, env, || 1_000).await.unwrap_err();
+    assert!(!err.to_string().contains("is not the operator key"), "{err:#}");
+}
+
 #[test]
 fn a_key_never_prints() {
     let key = HexKey(DEV_KEY.into());
@@ -101,7 +114,7 @@ fn a_missing_or_malformed_key_is_refused_without_echoing_it() {
 fn no_argument_takes_the_key_itself() {
     let mut names: Vec<String> = Cli::command().get_arguments().map(|arg| arg.get_id().to_string()).collect();
     names.sort();
-    assert_eq!(names, ["config", "key_file", "node", "pin"]);
+    assert_eq!(names, ["config", "key_file", "node", "pin", "rotated"]);
     let with_key = ["engine", "--pin", ZERO_PIN, "--key", DEV_KEY, "set-reduce-only", "true"];
     assert!(Cli::try_parse_from(with_key).is_err());
 }
@@ -119,6 +132,18 @@ fn each_action_builds_its_admin_command() {
         (
             vec!["set-benchmark-rate", "SOFR", "-25"],
             AdminCommand::SetBenchmarkRate { benchmark: "SOFR".into(), annual_bps: -25 },
+        ),
+        (
+            vec!["announce-params", "--profit-fee-bps", "1200", "--effective-at", "2027-01-01T00:00:00Z"],
+            AdminCommand::AnnounceParams(ParamsNotice {
+                profit_fee_bps: Some(1_200),
+                closeout_level_bps: None,
+                effective_at: 1_798_761_600_000,
+            }),
+        ),
+        (
+            vec!["rotate-operator", "0x5555555555555555555555555555555555555555"],
+            AdminCommand::RotateOperator { address: AccountId([0x55; 20]) },
         ),
         (
             vec!["init-emissions", "--start", "2027-01-01T00:00:00Z", "--period-budget", "1000000000000000000000"],

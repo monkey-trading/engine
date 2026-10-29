@@ -44,6 +44,16 @@ this crate and reproduce the signed state roots exactly.
   nonces and expiries, limited to listings, parameters, benchmark rates, stress floors, and
   reduce-only; once any deposit or house capital is credited, an unsigned one is refused, so only
   genesis runs unsigned
+- From protocol `V35`, the operator's powers are bounded (`src/operator_bounds.rs`). The profit fee
+  and the close-out level change only within ±50% of their launch values, the rates in force when
+  parameters are first set under `V35` or when it activates, and only from the time a signed
+  `announce_params` names, at least seven days after it is logged (`NOTICE_MS`); a `set_params`
+  that changes either rate otherwise is refused with `admin_rejected`. A relisting whose tighter
+  price rules (more sources, shorter freshness, narrower divergence) give no index from the quotes a
+  market holds is refused while accounts hold positions in it, unless the market is reduce-only. The
+  operator key changes only by a signed `rotate_operator`, which takes effect seven days after it is
+  logged: from then the old key signs nothing, and the new one signs under the same chain and vault.
+  Earlier versions keep their rules
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
   and toxicity spreads would reach the price are refused
@@ -162,6 +172,8 @@ this crate and reproduce the signed state roots exactly.
 - `tests/withdrawal_finality.rs` — payout capacity that waits for receipt finality and ignores reversals
 - `tests/withdrawals/setup.rs` — shared Engine::apply-driven withdrawal setup
 - `src/admin.rs` — operator commands and signed admin commands
+- `src/operator_bounds.rs` — the V35 bounds: launch rates, rate notices, price-rule checks, and operator rotation
+- `tests/operator_bounds.rs` — every V35 refusal and each change that takes effect after its notice
 - `src/emissions.rs` — MONKEY emissions: the schedule, period results, finalisation, and
   entitlements
 - `src/staking.rs` — MONKEY staking and USDC distributions: the config, stake and unstake
@@ -256,7 +268,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V33` and `V34` parts (`v15.rs` to `v33.rs`, `v34.rs`)
+  `V15` to `V34` and `V35` parts (`v15.rs` to `v34.rs`, `v35.rs`)
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
 
@@ -352,6 +364,11 @@ per-account emission debt, capped at the loss weight the account earned and was 
 for, paid down by later loss weight before it earns again, and judges
 emission eligibility during corporate-action catch-up at the enclosing command's stamp. Its
 session is in `examples/reference_log/v32.rs`.
+
+Protocol V35 bounds the operator: rate changes within ±50% of the launch rates after a seven-day
+notice, no price rules that leave a held market unpriced unless it is reduce-only, and an operator
+key that rotates seven days after a signed rotation; its session is in
+`examples/reference_log/v35.rs`.
 
 Protocol V34 sets the minimum withdrawal request to 10 USDC and has the queue approve a part below
 that only when it settles the request; its session is in `examples/reference_log/v34.rs`.

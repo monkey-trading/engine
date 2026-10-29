@@ -79,7 +79,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `engine admin` to sign an admin command with the operator's key, read from a file or
   `OPERATOR_KEY`, and submit it over TLS pinned to the node's attested key; the node holds only the
   operator's public key, recorded in the log, and refuses a request before the log unless it carries
-  the operator's signature, next nonce, and an unexpired expiry
+  the operator's signature, next nonce, and an unexpired expiry; from `V35` the key a logged
+  rotation hands over to also passes the route, and signs with `--rotated`
 - `engine ct-watch`, a separate process outside the enclave that follows Certificate Transparency
   logs and raises a Critical `unattested_certificate` alert for any certificate for the API's domain
   whose key no verified attestation of the node names (`config/ct-watch.toml`)
@@ -242,6 +243,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   is refused at recovery
 - `src/sequencer/tests/operator.rs` — recovery, activation, and replay with the operator the log
   records
+- `src/sequencer/tests/rotation.rs` — an operator rotation through the sequencer, and recovery after it
 - `src/sequencer/batch_tests.rs` — batching: a batch ends after `MAX_BATCH` requests of any kind
 - `src/sequencer/margin_tests.rs` — the margin and solvency dev scenario on the dev genesis (a
   close-out after the rollover's financing, and a withdrawal limited at a stale market's last
@@ -1358,7 +1360,11 @@ The engine also refuses parameters whose stress and toxicity spreads would price
 the price itself. Once any deposit or house capital is credited, the engine refuses an unsigned
 operator command, so only genesis, which credits its house capital last, runs unsigned. The first
 start under protocol `V8` records `operator.public_key`, with the custody chain id and vault, in the
-log; changing it needs a fresh log, and `engine replay` prints the operator a log records. A node
+log; changing it needs a fresh log, except by a rotation: from `V35`, `engine admin rotate-operator
+<address>` hands the role to another key seven days after it is logged, `--rotated` signs with that
+key, and a restart accepts the log's rotated key under the config that names the original one, as
+long as the chain and vault match. `announce-params` gives the notice a profit fee or close-out level
+change needs. `engine replay` prints the operator a log records. A node
 whose `tee.provider` is not `mock` refuses to start with an operator key that
 `config/test-keys.toml` lists, in either SEC1 encoding: the repository publishes those keys' private
 keys for local nodes.

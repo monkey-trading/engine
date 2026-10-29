@@ -67,6 +67,29 @@ async fn a_signed_admin_command_is_applied_and_logged_with_the_operators_signatu
 }
 
 #[tokio::test]
+async fn a_pending_rotations_key_is_sequenced_for_the_engine_to_judge_and_a_stranger_stays_out() {
+    let node = Node::start_on("rotation", true).await;
+    let next = SigningKey::from_slice(&[0x55; 32]).unwrap();
+    let address = engine_core::eip712::address(next.verifying_key());
+    let rotation = node.sign(0, AdminCommand::RotateOperator { address }, NOW + 60_000);
+    let (status, events) = node.post("/v1/admin", serde_json::to_value(&rotation).unwrap()).await;
+    assert_eq!((status, events), (StatusCode::OK, serde_json::json!([{ "type": "admin_applied" }])));
+
+    // The new key is not the operator for seven days, so the engine refuses it and the log records
+    // why; the route let it through only because the log names it.
+    let early = sign(&next, &node.state.operator, reduce_only(Some(1)), 0, NOW + 60_000);
+    let (status, events) = node.post("/v1/admin", serde_json::to_value(&early).unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(events, serde_json::json!([{ "type": "admin_rejected", "reason": "invalid signature" }]));
+    let stranger =
+        sign(&SigningKey::from_slice(&[7; 32]).unwrap(), &node.state.operator, reduce_only(Some(1)), 0, NOW + 60_000);
+    let logged = node.entries().len();
+    let (status, body) = node.post("/v1/admin", serde_json::to_value(&stranger).unwrap()).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::UNAUTHORIZED, Some("invalid signature")));
+    assert_eq!(node.entries().len(), logged);
+}
+
+#[tokio::test]
 async fn an_admin_request_the_operator_did_not_sign_stays_out_of_the_log() {
     let node = Node::start("unsigned").await;
     let expires_at = NOW + 60_000;
@@ -264,6 +287,11 @@ impl Node {
     /// Recovers a sequencer on a fresh log named after `name`, activates the protocol, and sequences
     /// the dev genesis.
     async fn start(name: &str) -> Self {
+        Self::start_on(name, false).await
+    }
+
+    /// `start`, under the latest protocol version instead of the legacy one when `latest`.
+    async fn start_on(name: &str, latest: bool) -> Self {
         let dir = scratch_dir(&format!("admin-{name}"));
         let key = Arc::new(EnclaveKey::generate());
         let (stream, _) = broadcast::channel(1024);
@@ -273,7 +301,11 @@ impl Node {
         let cfg = SequencerConfig { clock: stamps.clone(), ..sequencer_config(&dir, manifest_tx) };
         let operator = cfg.operator;
         let mut seq = Sequencer::recover(cfg, key.clone(), stream.clone(), withdrawals_tx).unwrap();
-        seq.activate_legacy_protocol().unwrap();
+        if latest {
+            seq.activate_protocol().unwrap();
+        } else {
+            seq.activate_legacy_protocol().unwrap();
+        }
         seq.genesis(&dev_config().genesis).unwrap();
         // Trusted time agrees with the fixed clock, so the queued activation and genesis go in now.
         seq.trust(sample_around(stamps.as_ref())).unwrap();
@@ -286,7 +318,7 @@ impl Node {
             tls_public_key_sha256: tls.public_key_sha256,
         };
         let state = ApiState {
-            protocol: engine_core::protocol::ProtocolVersion::V23,
+            protocol: if latest { ProtocolVersion::LATEST } else { ProtocolVersion::V23 },
             access: None,
             tx,
             stream,
