@@ -1414,7 +1414,7 @@ section.
 domain = "api.example.com"
 directory_url = "https://acme-v02.api.letsencrypt.org/directory"
 contact = "mailto:ops@example.com"
-# renew_before = "30d" # at least a day; one third of each certificate's life when unset
+# renew_before = "30d" # at least 14 days; one third of each certificate's life when unset
 ```
 
 Setting the section agrees to the CA's terms of service. The domain is in the config file whose
@@ -1434,14 +1434,18 @@ The sequencer never waits for the CA. Until the first certificate, the API serve
 one and the node raises `certificate_pending` (Warning). It renews once `renew_before` of the
 certificate's life remains, measured on the monotonic clock from the certificate's arrival against
 its own validity period, so the host's wall clock does not move it; a CA that backdates `notBefore`
-(Let's Encrypt by an hour) makes renewal that much later, which the floor of a day on
-`renew_before` keeps well before expiry. A failed attempt keeps the current certificate serving and
+(Let's Encrypt by an hour) makes renewal that much later, which the floor of 14 days on
+`renew_before` keeps well before expiry. The life counts from the order's finalize request, so a
+certificate downloaded late is renewed sooner, and one whose life ran out before it arrived is
+refused. A failed attempt keeps the current certificate serving and
 retries after a minute, doubling up to an hour; once fewer than 14 days remain, each failure raises
-`certificate_expiring` (Warning). A failed attempt takes up its order again, unless the CA refused
-it, so a lost answer never costs another issuance. Every request to the CA has a
+`certificate_expiring` (Warning). A failed attempt takes up its order again unless the CA ended it,
+so a lost answer or a passing problem (`serverInternal`, `rateLimited`, any 5xx or 429) never costs
+another issuance; an account the CA no longer knows is registered again. Every request to the CA has a
 30-second deadline and every attempt a 10-minute one, and the CA is authenticated against the
 compiled-in Mozilla roots, so the host, which resolves its name and carries the connection, can
-delay or drop the exchange but not answer it. `engine_tls_certificate_not_after_seconds` on the
+delay or drop the exchange but not answer it without a certificate for the CA's name (validity is
+judged by the host's clock, a TODO in `src/tls/acme/http.rs`). `engine_tls_certificate_not_after_seconds` on the
 metrics listener holds the served CA certificate's expiry, 0 before the first, and
 `ops/prometheus/engine-node-rules.yml` pages when it stays 0 for 30 minutes or comes within 7 days.
 

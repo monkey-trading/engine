@@ -18,9 +18,9 @@ const DAY: Duration = Duration::from_secs(86_400);
 fn an_issued_certificate_names_the_domain_and_lasts_from_not_before_to_not_after() {
     let tls = TlsIdentity::generate().unwrap();
     let chain = certified(&tls.key, &[DOMAIN], (2026, 10, 1), (2026, 12, 30));
-    let issued = check(&chain, DOMAIN).unwrap();
-    assert_eq!(issued.lifetime, 90 * DAY);
-    assert_eq!(issued.not_after_seconds, 1_798_588_800, "2026-12-30T00:00:00Z");
+    let (lifetime, not_after_seconds) = check(&chain, DOMAIN).unwrap();
+    assert_eq!(lifetime, 90 * DAY);
+    assert_eq!(not_after_seconds, 1_798_588_800, "2026-12-30T00:00:00Z");
     // Names compare as DNS does, without case.
     check(&chain, "API.engine.test").unwrap();
     // Any of its names will do.
@@ -82,13 +82,16 @@ async fn renewal_waits_until_a_third_of_the_life_remains_unless_renew_before_say
     let (logs, _guard) = Logs::capture();
     let now = Instant::now();
     let mut schedule = Schedule::start(DOMAIN.into(), None);
-    assert_eq!(schedule.issued(90 * DAY, now), 60 * DAY);
+    assert_eq!(schedule.issued(90 * DAY, now, now), 60 * DAY);
 
     let mut schedule = Schedule::start(DOMAIN.into(), Some(30 * DAY));
-    assert_eq!(schedule.issued(6 * DAY, now), 4 * DAY, "a renew_before as long as the life falls back to a third");
+    assert_eq!(schedule.issued(6 * DAY, now, now), 4 * DAY, "a renew_before as long as the life falls back to a third");
     assert_eq!(logs.count("is not shorter than the certificate's life"), 1);
-    assert_eq!(schedule.issued(90 * DAY, now), 60 * DAY);
-    assert_eq!(schedule.issued(30 * DAY + Duration::from_secs(1), now), Duration::from_secs(1));
+    assert_eq!(schedule.issued(90 * DAY, now, now), 60 * DAY);
+    assert_eq!(schedule.issued(30 * DAY + Duration::from_secs(1), now, now), Duration::from_secs(1));
+    // Its life counts from its order's finalize request, however late it arrives.
+    assert_eq!(schedule.issued(90 * DAY, now, now + 10 * DAY), 50 * DAY);
+    assert_eq!(schedule.issued(90 * DAY, now, now + 70 * DAY), Duration::ZERO, "inside the window: renew at once");
 }
 
 #[tokio::test(start_paused = true)]
@@ -104,9 +107,9 @@ async fn the_api_is_pending_until_the_first_certificate_and_retries_with_backoff
     assert_eq!(logs.warnings("certificate_expiring"), 0);
     assert!(logs.count("domain=api.engine.test") >= 9, "the alert names the domain");
 
-    schedule.issued(90 * DAY, now);
+    schedule.issued(90 * DAY, now, now);
     assert_eq!(logs.count("alert_resolved=\"certificate_pending\""), 1);
-    schedule.issued(90 * DAY, now);
+    schedule.issued(90 * DAY, now, now);
     assert_eq!(logs.count("alert_resolved=\"certificate_pending\""), 1, "resolved by the first certificate only");
     assert_eq!(schedule.failed(&anyhow!("refused"), now).as_secs(), 60, "a certificate resets the backoff");
 }
@@ -116,7 +119,7 @@ async fn a_failed_renewal_alerts_once_fewer_than_14_days_remain() {
     let (logs, _guard) = Logs::capture();
     let arrived = Instant::now();
     let mut schedule = Schedule::start(DOMAIN.into(), None);
-    schedule.issued(90 * DAY, arrived);
+    schedule.issued(90 * DAY, arrived, arrived);
 
     // 76 days in, exactly 14 days remain; a second later, 14 days less a second.
     let fourteen_left = arrived + 90 * DAY - EXPIRING_WITHIN;
@@ -130,7 +133,7 @@ async fn a_failed_renewal_alerts_once_fewer_than_14_days_remain() {
     assert_eq!(logs.warnings("certificate_expiring"), 2);
     assert_eq!(logs.warnings("certificate_pending"), 1, "only the start's");
 
-    schedule.issued(90 * DAY, arrived + 100 * DAY);
+    schedule.issued(90 * DAY, arrived + 100 * DAY, arrived + 100 * DAY);
     assert_eq!(logs.count("alert_resolved=\"certificate_expiring\""), 2, "every issuance ends the episode");
 }
 

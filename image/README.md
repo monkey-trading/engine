@@ -53,7 +53,8 @@ differ.
 ## Production builds
 
 The `production` cargo feature of `engine-node` makes `NodeConfig::load` refuse `mock` for
-`tee.provider`, `custody.provider`, and `feeds.provider`, whatever the rest of the config says.
+`tee.provider`, `custody.provider`, and `feeds.provider`, and a config without `[api.tls.acme]`,
+whose API would serve only its self-signed certificate, whatever the rest of the config says.
 The image's default `production` variant builds with it. The `dev` variant leaves it off and has a
 different measurement; it runs the image on mock custody and prices, without a chain or live venues.
 
@@ -61,11 +62,14 @@ different measurement; it runs the image on mock custody and prices, without a c
 
 The engine takes input from the host through five paths:
 
-- the API port, `node.listen` in the config, served over TLS with a key generated in the enclave;
+- the API port, `node.listen` in the config, served over TLS with a key generated in the enclave,
+  which also answers the CA's TLS-ALPN-01 validations for `[api.tls.acme]`, so the host forwards
+  port 443 to it;
 - the metrics port, `metrics.listen`, which serves `GET /metrics` over plain HTTP and is reachable
   from the host only when the config puts it on a guest address rather than loopback;
 - its outbound network: venue feeds over TLS, the custody RPC providers and the checkpoint RPC
-  endpoint over HTTPS, alert webhooks, Roughtime replies it verifies under each server's key, and
+  endpoint over HTTPS, the ACME CA's directory over HTTPS, alert webhooks, Roughtime replies it
+  verifies under each server's key, and
   the DNS answers that pick their addresses, from the resolvers DHCP names;
 - the clock, which stamps every sequenced command, bounded by the signed Roughtime readings. The
   guest launches without Secure TSC (`guest_features` is `0x1` in `measurement.json`), so the host
@@ -170,9 +174,11 @@ support, and QEMU 9.1 or later. The launch flags must match `measurement.json`, 
 ```bash
 # The data disk: a config whose node.listen is 0.0.0.0:8080, tee.provider is "configfs_tsm",
 # tee.processor names the host's CPU generation (for example "Genoa"; the node refuses to start
-# without it, since it relays that generation's vendor collateral), and
-# node.log_dir, history.dir, and alerts.outbox.dir are under /data. The dev variant accepts mock
-# custody and feeds.
+# without it, since it relays that generation's vendor collateral), node.log_dir, history.dir,
+# and alerts.outbox.dir are under /data, and, for the production variant, [api.tls.acme] names the
+# API's domain. The CA validates it on port 443, so forward the host's 443 to the guest's 8080 too
+# (hostfwd=tcp::443-:8080, where QEMU may bind it). The dev variant accepts mock custody and feeds,
+# and no [api.tls.acme].
 mkdir disk && cp node.toml disk/config.toml
 mke2fs -t ext4 -d disk data.img 1G
 

@@ -24,7 +24,12 @@ pub(super) const MAX_RESPONSE_BYTES: usize = 1 << 20;
 
 /// Requests to the CA over TLS that must chain to the compiled-in Mozilla roots, or to a test CA's
 /// root alone. The host resolves the CA's name and carries the connection, so it can delay or drop
-/// requests, but not answer them. No proxy, no redirect, and a deadline on each.
+/// requests, but not answer them without a certificate for the CA's name. No proxy, no redirect,
+/// and a deadline on each.
+///
+/// TODO: certificate validity is judged by the untrusted host clock and revocation is not checked,
+/// so a host holding an expired or revoked key for the CA's name could set the clock back and pose
+/// as the CA, which gains it no more than delaying issuance; a trusted time bound closes the first.
 #[derive(Clone)]
 pub(crate) struct AcmeHttp(Client);
 

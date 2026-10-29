@@ -228,9 +228,9 @@ step "wait for the renewal at two thirds of the certificate's 60 seconds"
 renewed="$(wait_change leaf_serial "$first" 60)"
 [[ "$(leaf_key_sha256)" == "$attested" ]] || fail "the renewed certificate is for $(leaf_key_sha256), not $attested"
 [[ "$(attested_key_sha256)" == "$attested" ]] || fail "the attestation changed: the node restarted"
+[[ "$(grep -c 'certificate ordered' "$work/node.log")" == 2 ]] || fail "expected two orders, the first and the renewal"
 [[ "$(grep -c 'answering the tls-alpn-01 challenge' "$work/node.log")" == 1 ]] \
-  || fail "expected one TLS-ALPN-01 validation, for the first order"
-grep -q 'the CA reused its validation of the domain' "$work/node.log" || fail "the renewal did not reuse the validation"
+  || fail "expected one TLS-ALPN-01 validation, for the first order; the renewal's order is ready at once"
 kill -0 "$node_pid" 2>/dev/null || fail "the node exited"
 echo "renewed as serial $renewed without a restart"
 

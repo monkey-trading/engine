@@ -24,7 +24,7 @@ fn the_acme_section_takes_its_keys_and_leaves_renew_before_unset_by_default() {
     let cfg = with(&format!("{ACME}renew_before = \"30d\"\n"));
     cfg.validate().unwrap();
     assert_eq!(cfg.api.tls.unwrap().acme.renew_before, Some(Duration::from_secs(30 * 86_400)));
-    with(&format!("{ACME}renew_before = \"1d\"\n")).validate().unwrap();
+    with(&format!("{ACME}renew_before = \"14d\"\n")).validate().unwrap();
     assert!(toml::from_str::<NodeConfig>(&dev_with(&format!("{ACME}renewal = \"30d\"\n"))).is_err(), "unknown key");
     assert!(with("").api.tls.is_none(), "the dev config serves its self-signed certificate");
 }
@@ -43,8 +43,8 @@ fn acme_settings_a_ca_would_refuse_or_that_would_fail_every_renewal_are_refused(
         ("api.tls.acme.directory_url", ACME.replace("https://acme-staging-v02.api.letsencrypt.org", "not a url")),
         ("contact must be a mailto: URL", ACME.replace("mailto:ops@example.com", "ops@example.com")),
         ("contact must be a mailto: URL", ACME.replace("mailto:ops@example.com", "mailto:")),
-        ("renew_before must be at least a day", format!("{ACME}renew_before = \"0s\"\n")),
-        ("renew_before must be at least a day", format!("{ACME}renew_before = \"86399s\"\n")),
+        ("renew_before must be at least 14 days", format!("{ACME}renew_before = \"0s\"\n")),
+        ("renew_before must be at least 14 days", format!("{ACME}renew_before = \"13d\"\n")),
         ("test_ca.root must be one PEM certificate", format!("{ACME}[api.tls.acme.test_ca]\nroot = \"not a PEM\"\n")),
         (
             "test_ca.root must be one PEM certificate",

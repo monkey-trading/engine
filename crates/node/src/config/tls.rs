@@ -11,9 +11,10 @@ use serde::Deserialize;
 
 use crate::config::{ApiSection, TeeProvider};
 
-/// The least `renew_before`. The node times renewal from a certificate's `notBefore`, which a CA
-/// may backdate (Let's Encrypt by an hour), so a shorter one could renew only after expiry.
-const MIN_RENEW_BEFORE: Duration = Duration::from_secs(86_400);
+/// The least `renew_before`: renewal then starts before a failure raises `certificate_expiring`
+/// and before the operator's Prometheus pages at 7 days left, and long before a CA's backdated
+/// `notBefore` (Let's Encrypt's, by an hour) could push it past expiry.
+const MIN_RENEW_BEFORE: Duration = Duration::from_secs(14 * 86_400);
 
 /// TLS for the API beyond its in-enclave key and self-signed certificate.
 #[derive(Debug, Deserialize)]
@@ -88,7 +89,7 @@ impl AcmeSection {
         );
         ensure!(
             self.renew_before.is_none_or(|before| before >= MIN_RENEW_BEFORE),
-            "api.tls.acme.renew_before must be at least a day"
+            "api.tls.acme.renew_before must be at least 14 days"
         );
         if let Some(test_ca) = &self.test_ca {
             ensure!(tee == TeeProvider::Mock, "api.tls.acme.test_ca requires tee.provider = \"mock\"");

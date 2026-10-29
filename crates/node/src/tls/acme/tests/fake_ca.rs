@@ -1,6 +1,6 @@
 //! A scripted ACME CA behind the client's `HttpClient`: it answers what the certificate task sends,
 //! without checking signatures, validates when told the challenge is ready, issues for the key in
-//! the finalize request, and drops or refuses the exchanges a test asks it to.
+//! the finalize request, and drops, stalls, or answers with a problem the exchanges a test asks it to.
 
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -34,11 +34,19 @@ pub(super) struct State {
     pub(super) authorized: bool,
     /// Whether the next validation fails, recording why on the challenge.
     pub(super) refuse_validation: bool,
+    /// Whether a validation the challenge starts never ends, so the order stays pending.
+    pub(super) never_validate: bool,
     /// How many finalize answers, and certificate downloads, to drop after the CA acts on them.
     pub(super) lose_finalize: usize,
     pub(super) lose_downloads: usize,
-    /// Answers the next certificate download with a problem document, as for an order it cannot serve.
-    pub(super) refuse_download: bool,
+    /// Problem documents, as status and type, answering the next order reads in turn, `None` for
+    /// one answered as usual, and the next downloads.
+    pub(super) order_problems: Vec<Option<(u16, &'static str)>>,
+    pub(super) download_problems: Vec<(u16, &'static str)>,
+    /// Whether the next new order is refused for an account the CA no longer knows.
+    pub(super) forget_account: bool,
+    /// An endpoint whose next request the CA acts on and then never answers.
+    pub(super) stall: Option<&'static str>,
     /// Requests by endpoint: `new-account`, `new-order`, `challenge`, `finalize`, `certificate`.
     pub(super) requests: BTreeMap<&'static str, usize>,
     orders: Vec<FakeOrder>,
@@ -77,7 +85,11 @@ impl HttpClient for FakeCa {
             let body =
                 body.collect().await.map(|collected| collected.to_bytes()).unwrap_or_else(|never| match never {});
             let path = parts.uri.path().to_owned();
-            ca.answer(&path, &body).map(|(status, location, json)| reply(status, location, json))
+            match ca.answer(&path, &body) {
+                Ok(Some((status, location, json))) => Ok(reply(status, location, json)),
+                Ok(None) => std::future::pending().await,
+                Err(e) => Err(e),
+            }
         })
     }
 }
@@ -100,8 +112,22 @@ impl FakeCa {
         self.state().requests.get(endpoint).copied().unwrap_or(0)
     }
 
-    /// The status, `Location`, and body answering a request for `path` carrying `body`.
-    fn answer(&self, path: &str, body: &[u8]) -> Result<(u16, Option<String>, Value), instant_acme::Error> {
+    /// The status, `Location`, and body answering a request for `path` carrying `body`; `None`
+    /// for a request the CA never answers.
+    fn answer(&self, path: &str, body: &[u8]) -> Result<Option<(u16, Option<String>, Value)>, instant_acme::Error> {
+        let answered = self.act(path, body)?;
+        let mut state = self.state();
+        let endpoint = path.trim_start_matches('/').split('/').next().unwrap_or_default();
+        Ok(if state.stall == Some(endpoint) {
+            state.stall = None;
+            None
+        } else {
+            Some(answered)
+        })
+    }
+
+    /// Does what a request for `path` carrying `body` asks, and the answer it would get.
+    fn act(&self, path: &str, body: &[u8]) -> Result<(u16, Option<String>, Value), instant_acme::Error> {
         let mut state = self.state();
         let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
         let id = |segments: &[&str]| segments.get(1).and_then(|id| id.parse::<usize>().ok()).unwrap_or(0);
@@ -117,12 +143,24 @@ impl FakeCa {
                 *state.requests.entry("new-account").or_default() += 1;
                 (201, Some(format!("{BASE}/account/1")), json!({"status": "valid"}))
             }
+            "new-order" if state.forget_account => {
+                state.forget_account = false;
+                problem(400, "accountDoesNotExist")
+            }
             "new-order" => {
                 *state.requests.entry("new-order").or_default() += 1;
                 let status = if state.authorized { "ready" } else { "pending" };
                 state.orders.push(FakeOrder { status, chain: None });
                 let id = state.orders.len() - 1;
                 (201, Some(format!("{BASE}/order/{id}")), order_json(id, &state.orders[id]))
+            }
+            "order" if state.order_problems.first().is_some_and(Option::is_some) => {
+                let (status, kind) = state.order_problems.remove(0).expect("checked above");
+                problem(status, kind)
+            }
+            "order" if !state.order_problems.is_empty() => {
+                state.order_problems.remove(0);
+                (200, None, order_json(id(&segments), &state.orders[id(&segments)]))
             }
             "order" => (200, None, order_json(id(&segments), &state.orders[id(&segments)])),
             "authz" => {
@@ -152,7 +190,7 @@ impl FakeCa {
                 let id = id(&segments);
                 if state.refuse_validation {
                     state.orders[id].status = "invalid";
-                } else {
+                } else if !state.never_validate {
                     state.authorized = true;
                     state.orders[id].status = "ready";
                 }
@@ -176,14 +214,9 @@ impl FakeCa {
             }
             "certificate" => {
                 *state.requests.entry("certificate").or_default() += 1;
-                if state.refuse_download {
-                    state.refuse_download = false;
-                    return Ok((
-                        404,
-                        None,
-                        json!({"type": "urn:ietf:params:acme:error:malformed",
-                                                 "detail": "no such certificate", "status": 404}),
-                    ));
+                if !state.download_problems.is_empty() {
+                    let (status, kind) = state.download_problems.remove(0);
+                    return Ok(problem(status, kind));
                 }
                 if state.lose_downloads > 0 {
                     state.lose_downloads -= 1;
@@ -195,6 +228,12 @@ impl FakeCa {
             other => panic!("the certificate task requested an unknown endpoint {other}"),
         })
     }
+}
+
+/// A problem document answer of `status` and ACME error type `kind`.
+fn problem(status: u16, kind: &str) -> (u16, Option<String>, Value) {
+    let json = json!({"type": format!("urn:ietf:params:acme:error:{kind}"), "detail": kind, "status": status});
+    (status, None, json)
 }
 
 /// An order's JSON.

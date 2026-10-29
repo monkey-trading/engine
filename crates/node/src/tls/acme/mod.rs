@@ -9,11 +9,13 @@
 //! The sequencer never waits for it. Until the first certificate the API serves its self-signed
 //! one, under `certificate_pending`; a failed renewal keeps serving the current one and retries
 //! with backoff, raising `certificate_expiring` once fewer than 14 days remain. A failed attempt
-//! resumes its order unless the CA refused it, so a lost exchange never costs another issuance.
+//! resumes its order unless the CA ended it, so a lost exchange never costs another issuance. A
+//! certificate's life counts from the order's finalize request, which precedes its issuance, so a
+//! late download is never taken for a fresh certificate.
 //!
 //! The host carries the connections and resolves the CA's name, so it can delay or drop them;
-//! `http` authenticates the CA against compiled-in roots, and every request and attempt has a
-//! deadline. Nothing here stops the host from having a CA certify a key of its own for the domain:
+//! `http` authenticates the CA against compiled-in roots (see its TODO on the host clock), and
+//! every request and attempt has a deadline. Nothing here stops the host from having a CA certify a key of its own for the domain:
 //! it forwards port 443, so it can answer the CA's TLS-ALPN-01 validation itself, as can whoever
 //! controls the domain's DNS. A browser that trusts the certificate alone cannot tell; the CAA
 //! record narrows issuance to one CA and method, and Certificate Transparency monitoring is to
@@ -22,15 +24,12 @@
 //! TODO: once the key survives restarts (#28), keep the account and the certificate with it, so a
 //! restart orders nothing and a CAA `accounturi` can bind issuance to the enclave's account.
 
-pub(crate) mod http;
-mod schedule;
-
 use std::time::Duration;
 
 use anyhow::{Context, anyhow, bail, ensure};
 use instant_acme::{
     Account, AuthorizationStatus, ChallengeStatus, ChallengeType, HttpClient, Identifier, NewAccount, NewOrder, Order,
-    OrderStatus, RetryPolicy,
+    OrderStatus, Problem, RetryPolicy,
 };
 use rustls::pki_types::CertificateDer;
 use rustls::pki_types::pem::PemObject;
@@ -43,14 +42,23 @@ use x509_parser::prelude::FromDer;
 use crate::config::AcmeSection;
 use crate::metrics::FloatGauge;
 use crate::tls::TlsKey;
-use crate::tls::acme::http::AcmeHttp;
-use crate::tls::acme::schedule::Schedule;
 use crate::tls::certificates::Answer;
+
+pub(crate) mod http;
+use crate::tls::acme::http::AcmeHttp;
+mod schedule;
+use crate::tls::acme::schedule::Schedule;
 
 /// How long the CA gets to validate the challenge, and then to issue.
 const POLL_TIMEOUT: Duration = Duration::from_secs(120);
 /// One attempt, from registering to installing.
 const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(600);
+/// Problems after which the same request can succeed, so they end neither the order nor the account.
+const PASSING_PROBLEMS: [&str; 3] = [
+    "urn:ietf:params:acme:error:serverInternal",
+    "urn:ietf:params:acme:error:rateLimited",
+    "urn:ietf:params:acme:error:badNonce",
+];
 
 /// Obtains and renews the API's CA certificate, over `H`.
 pub struct CertificateTask<H = AcmeHttp> {
@@ -68,8 +76,10 @@ pub struct CertificateTask<H = AcmeHttp> {
 #[derive(Default)]
 struct Progress {
     account: Option<Account>,
-    /// The URL of an order that may still issue, until it has issued or the CA refused it.
+    /// The URL of an order that may still issue, until it has issued or the CA ended it.
     order: Option<String>,
+    /// When this process last sent the order's finalize request: no later than the CA issued.
+    finalized: Option<Instant>,
 }
 
 /// A certificate the CA issued and the API now serves.
@@ -78,6 +88,8 @@ struct Issued {
     /// `notAfter` less `notBefore`.
     lifetime: Duration,
     not_after_seconds: i64,
+    /// When its order's finalize request was sent, from which its life is counted.
+    finalized: Instant,
 }
 
 impl CertificateTask {
@@ -116,7 +128,7 @@ impl<H: HttpClient + Clone> CertificateTask<H> {
                 match issued {
                     Ok(issued) => {
                         self.not_after.set(issued.not_after_seconds as f64);
-                        let wait = schedule.issued(issued.lifetime, Instant::now());
+                        let wait = schedule.issued(issued.lifetime, issued.finalized, Instant::now());
                         info!(not_after = issued.not_after_seconds, "serving the CA certificate; renewing in {wait:?}");
                         wait
                     }
@@ -129,44 +141,64 @@ impl<H: HttpClient + Clone> CertificateTask<H> {
         }
     }
 
-    /// One attempt: registers the account if this process has none, takes up the unfinished order
-    /// or places one, answers its challenge, finalizes it, and installs what the CA issues. A CA
-    /// refusal at any step ends the order, so the next attempt places a new one; a lost exchange
-    /// keeps it.
+    /// One attempt (see `attempt`). A problem the CA answers that ends the order drops it, so the
+    /// next attempt places a new one, and one that names the account as unknown drops the account
+    /// too; a lost exchange or a passing problem keeps both.
+    /// Error cases:
+    /// - see `attempt`
+    async fn issue(&self, progress: &mut Progress) -> anyhow::Result<Issued> {
+        let attempted = self.attempt(progress).await;
+        if let Err(problem) = attempted.as_ref().map_err(problem) {
+            match problem {
+                Some(problem)
+                    if problem.r#type.as_deref() == Some("urn:ietf:params:acme:error:accountDoesNotExist") =>
+                {
+                    *progress = Progress::default();
+                }
+                Some(problem) if ends_order(problem) => (progress.order, progress.finalized) = (None, None),
+                _ => {}
+            }
+        }
+        attempted
+    }
+
+    /// Registers the account if this process has none, takes up the unfinished order or places one,
+    /// answers its challenge, finalizes it, and installs what the CA issues.
     /// Error cases:
     /// - any request to the CA fails, or the CA refuses the account, the order, or the challenge
     /// - the CA does not validate or issue within `POLL_TIMEOUT`
-    /// - the certificate is not for the domain or the key (see `check` and `TlsKey::install`)
-    async fn issue(&self, progress: &mut Progress) -> anyhow::Result<Issued> {
-        let Progress { account, order: unfinished } = progress;
+    /// - the certificate is not for the domain or the key (see `check` and `TlsKey::install`), or
+    ///   its life ran out before it arrived
+    async fn attempt(&self, progress: &mut Progress) -> anyhow::Result<Issued> {
+        let Progress { account, order: unfinished, finalized } = progress;
         let account = match account {
             Some(account) => account,
             None => account.insert(self.register().await?),
         };
-        let mut order = self.order(account, unfinished).await?;
-        let pem = match self.complete(&mut order).await {
-            Ok(pem) => pem,
-            Err(e) => {
-                if refused_by_ca(&e) {
-                    *unfinished = None;
-                }
-                return Err(e);
-            }
-        };
+        let mut order = self.order(account, unfinished, finalized).await?;
+        let pem = self.complete(&mut order, finalized).await?;
         // What the order issued is taken: a certificate refused below needs a new order.
         *unfinished = None;
+        let finalized = finalized.take().context("the CA issued an order this process did not finalize")?;
         let chain = CertificateDer::pem_slice_iter(pem.as_bytes())
             .collect::<Result<Vec<_>, _>>()
             .context("parsing the certificate chain")?;
-        let issued = check(&chain, &self.domain)?;
+        let (lifetime, not_after_seconds) = check(&chain, &self.domain)?;
+        ensure!(finalized.elapsed() < lifetime, "the certificate's life ran out before it arrived");
         self.key.install(chain)?;
-        Ok(issued)
+        Ok(Issued { lifetime, not_after_seconds, finalized })
     }
 
-    /// The unfinished order, or a new one when there is none or it can no longer issue.
+    /// The unfinished order, or a new one when there is none or the CA ended it.
     /// Error cases:
-    /// - the unfinished order cannot be read for want of an answer, or the CA refuses a new one
-    async fn order(&self, account: &Account, unfinished: &mut Option<String>) -> anyhow::Result<Order> {
+    /// - the unfinished order cannot be read for a lost exchange or a passing problem, or the CA
+    ///   refuses a new one
+    async fn order(
+        &self,
+        account: &Account,
+        unfinished: &mut Option<String>,
+        finalized: &mut Option<Instant>,
+    ) -> anyhow::Result<Order> {
         if let Some(url) = unfinished.clone() {
             match account.order(url).await {
                 Ok(mut order) => {
@@ -176,7 +208,7 @@ impl<H: HttpClient + Clone> CertificateTask<H> {
                     }
                     info!(order = %order.url(), "the unfinished order is invalid");
                 }
-                Err(instant_acme::Error::Api(problem)) => {
+                Err(instant_acme::Error::Api(problem)) if ends_order(&problem) => {
                     info!("the CA no longer serves the unfinished order: {problem}")
                 }
                 Err(e) => return Err(e).context("reading the unfinished order"),
@@ -185,17 +217,17 @@ impl<H: HttpClient + Clone> CertificateTask<H> {
         let identifiers = [Identifier::Dns(self.domain.clone())];
         let order = account.new_order(&NewOrder::new(&identifiers)).await.context("ordering the certificate")?;
         info!(order = %order.url(), "certificate ordered");
-        *unfinished = Some(order.url().to_owned());
+        (*unfinished, *finalized) = (Some(order.url().to_owned()), None);
         Ok(order)
     }
 
     /// Takes `order` from wherever it stands to its certificate chain, PEM: validates the domain
-    /// while it is pending, finalizes it with the key's request once ready, and downloads what it
-    /// issues.
+    /// while it is pending, finalizes it with the key's request once ready, noting when in
+    /// `finalized`, and downloads what it issues.
     /// Error cases:
     /// - a request to the CA fails, or the CA refuses the challenge or the order
     /// - the CA does not validate or issue within `POLL_TIMEOUT`
-    async fn complete(&self, order: &mut Order) -> anyhow::Result<String> {
+    async fn complete(&self, order: &mut Order, finalized: &mut Option<Instant>) -> anyhow::Result<String> {
         let retries = RetryPolicy::new().timeout(POLL_TIMEOUT);
         if order.state().status == OrderStatus::Pending {
             let answer = self.answer(order).await?;
@@ -207,6 +239,7 @@ impl<H: HttpClient + Clone> CertificateTask<H> {
         }
         if order.state().status == OrderStatus::Ready {
             let request = self.key.certificate_request(&self.domain)?;
+            *finalized = Some(Instant::now());
             order.finalize_csr(&request).await.context("finalizing the order")?;
         }
         order.poll_certificate(&retries).await.context("waiting for the CA to issue")
@@ -272,16 +305,27 @@ async fn refusal(order: &mut Order) -> String {
     }
 }
 
-/// Whether the CA itself answered `e` with a problem document, rather than the exchange failing.
-fn refused_by_ca(e: &anyhow::Error) -> bool {
-    e.chain().any(|cause| matches!(cause.downcast_ref::<instant_acme::Error>(), Some(instant_acme::Error::Api(_))))
+/// The problem document the CA answered `e` with, if it answered rather than the exchange failing.
+fn problem(e: &anyhow::Error) -> Option<&Problem> {
+    e.chain().find_map(|cause| match cause.downcast_ref::<instant_acme::Error>() {
+        Some(instant_acme::Error::Api(problem)) => Some(problem),
+        _ => None,
+    })
 }
 
-/// The validity of `chain`'s first certificate, once it names `domain` and is valid for some time.
+/// Whether `problem` ends the order: any but a passing one, a 5xx, or a 429.
+fn ends_order(problem: &Problem) -> bool {
+    let passing_type = problem.r#type.as_deref().is_some_and(|kind| PASSING_PROBLEMS.contains(&kind));
+    let passing_status = problem.status.is_some_and(|status| status >= 500 || status == 429);
+    !passing_type && !passing_status
+}
+
+/// The life and `notAfter`, in Unix seconds, of `chain`'s first certificate, once it names `domain`
+/// and is valid for some time.
 /// Error cases:
 /// - the chain is empty, or its first certificate does not parse
 /// - it does not name `domain`, or its `notAfter` is not after its `notBefore`
-fn check(chain: &[CertificateDer<'_>], domain: &str) -> anyhow::Result<Issued> {
+fn check(chain: &[CertificateDer<'_>], domain: &str) -> anyhow::Result<(Duration, i64)> {
     let leaf = chain.first().context("the CA returned no certificate")?;
     let (_, leaf) = X509Certificate::from_der(leaf).map_err(|e| anyhow!("parsing the certificate: {e}"))?;
     let names = leaf.subject_alternative_name().map_err(|e| anyhow!("reading the certificate's names: {e}"))?;
@@ -297,7 +341,7 @@ fn check(chain: &[CertificateDer<'_>], domain: &str) -> anyhow::Result<Issued> {
     let (not_before, not_after) = (validity.not_before.timestamp(), validity.not_after.timestamp());
     let lifetime = u64::try_from(not_after.saturating_sub(not_before)).ok().filter(|seconds| *seconds > 0);
     let lifetime = lifetime.context("the certificate's notAfter is not after its notBefore")?;
-    Ok(Issued { lifetime: Duration::from_secs(lifetime), not_after_seconds: not_after })
+    Ok((Duration::from_secs(lifetime), not_after))
 }
 
 #[cfg(test)]

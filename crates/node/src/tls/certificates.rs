@@ -90,6 +90,18 @@ impl TlsKey {
         &self.key_pair
     }
 
+    /// The chain served now, for tests.
+    #[cfg(test)]
+    pub(crate) fn served(&self) -> Vec<CertificateDer<'static>> {
+        self.served.borrow().cert.clone()
+    }
+
+    /// Whether a challenge is being answered, for tests.
+    #[cfg(test)]
+    pub(crate) fn answering(&self) -> bool {
+        self.challenge.borrow().is_some()
+    }
+
     /// A certificate request for `domain` alone, signed by the key: what an ACME order is
     /// finalized with.
     /// Error cases:
