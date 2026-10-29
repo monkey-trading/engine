@@ -93,14 +93,14 @@ pub(super) async fn sign_responses(State(s): State<ApiState>, req: Request, next
     let (parts, request_body) = req.into_parts();
     let request_body = match collect(request_body, "request").await {
         Ok(body) => body,
-        Err(refusal) => return refusal,
+        Err(e) => return e.into_response(),
     };
     let response = next.run(Request::from_parts(parts, Body::from(request_body.clone()))).await;
     let (mut parts, body) = response.into_parts();
     // Every signed route answers from memory; only the archive streams its body.
     let body = match collect(body, "response").await {
         Ok(body) => body,
-        Err(refusal) => return refusal,
+        Err(e) => return e.into_response(),
     };
     let time_ms = u64::try_from((s.clock)()).expect("the node's clock reads after the epoch");
     let head_seq = s.manifest.borrow().flushed.map_or(0, |head| head.seq);
@@ -126,10 +126,10 @@ pub(super) async fn sign_responses(State(s): State<ApiState>, req: Request, next
 
 /// The whole of `body`, a `what` body held in memory.
 /// Error cases:
-/// - the body fails while it is read: a Critical alert, and a 500 to send in its place
-async fn collect(body: Body, what: &str) -> Result<Bytes, Response> {
+/// - the body fails while it is read: a Critical alert, and `Internal` to answer in its place
+async fn collect(body: Body, what: &str) -> Result<Bytes, ApiError> {
     to_bytes(body, usize::MAX).await.map_err(|e| {
         error!(alert = "response_signing_failed", "reading a {what} body to sign: {e}");
-        ApiError::Internal.into_response()
+        ApiError::Internal
     })
 }
