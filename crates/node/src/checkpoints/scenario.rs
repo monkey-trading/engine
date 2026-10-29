@@ -2,6 +2,7 @@
 
 use crate::checkpoints::Health;
 mod source;
+mod tasks;
 
 use std::path::Path;
 use std::process::{Child, Command as Process, Stdio};
@@ -160,9 +161,11 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     seq.genesis(&cfg.genesis).unwrap();
     seq.trust(trusted_now()).unwrap();
     let (tx, rx) = mpsc::channel(64);
-    let sequencer = tokio::spawn(seq.run(rx));
-    let poster = tokio::spawn(make_poster().run(work_rx, tx.clone()));
-    let custody_task = tokio::spawn(custody.run(_signed, tx.clone()));
+    let mut tasks = tasks::Tasks {
+        sequencer: tokio::spawn(seq.run(rx)),
+        poster: tokio::spawn(make_poster().run(work_rx, tx.clone())),
+        custody: tokio::spawn(custody.run(_signed, tx.clone())),
+    };
     send(&provider, relayer, token, mintCall { to: relayer, amount: U256::from(110_000_000) }.abi_encode()).await;
     send(&provider, relayer, token, approveCall { spender: vault, amount: U256::MAX }.abi_encode()).await;
     send(&provider, relayer, vault, depositToHouseCall { amount: U256::from(100_000_000) }.abi_encode()).await;
@@ -189,8 +192,8 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     for _ in 0..4 {
         submit(&tx, Command::Tick).await;
     }
-    crate::test_support::wait_for("the poster to post the latest checkpoint on chain", async {
-        loop {
+    tasks
+        .wait("the poster to post the latest checkpoint on chain", &mut alerts, async |_| {
             let entries = log_entries(&dir);
             let latest = entries
                 .iter()
@@ -200,13 +203,13 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
                     _ => None,
                 })
                 .unwrap();
-            if make_poster().chain.state(View::Latest).await.unwrap().checkpoint.is_some_and(|(seq, _)| seq >= latest) {
-                break;
+            let posted = make_poster().chain.state(View::Latest).await.unwrap().checkpoint.map(|(seq, _)| seq);
+            match posted {
+                Some(seq) if seq >= latest => Ok(()),
+                _ => Err(format!("the vault's latest checkpoint is {posted:?} and the log's is {latest}")),
             }
-            sleep(Duration::from_millis(40)).await;
-        }
-    })
-    .await;
+        })
+        .await;
     let replayed = replay_path(&dir).expect("every checkpoint signature verifies");
     source::assert_pending_reconciliation(&replayed);
     let work = crate::checkpoints::Work::capture(
@@ -221,27 +224,28 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     // than crediting it under whoever books it: house cash stays put and the hold is public.
     let sequenced = || Command::Withdraw { account: AccountId(relayer.into()), amount: Fixed::from_int(1), auth: None };
     send(&provider, relayer, token, mintCall { to: vault, amount: U256::from(10_000_000) }.abi_encode()).await;
-    crate::test_support::wait_for("the collateral_surplus warning", async {
-        while !std::iter::from_fn(|| alerts.try_recv().ok())
-            .any(|alert| alert["alert"] == "collateral_surplus" && alert["level"] == "WARN")
-        {
-            sleep(Duration::from_millis(40)).await;
-        }
-    })
-    .await;
+    tasks
+        .wait("the collateral_surplus warning", &mut alerts, async |raised| {
+            if raised.iter().any(|alert| alert["alert"] == "collateral_surplus" && alert["level"] == "WARN") {
+                Ok(())
+            } else {
+                Err("no collateral_surplus warning yet".into())
+            }
+        })
+        .await;
     // A sequenced request, though the engine rejects it for want of cash, means custody is healthy.
     assert!(submit(&tx, sequenced()).await.is_some(), "an unbooked surplus keeps withdrawals running");
     send(&provider, relayer, vault, bookSurplusCall {}.abi_encode()).await;
-    crate::test_support::wait_for("the booked surplus to be held and withdrawals to stay sequenced", async {
-        while source::house(&tx).await != Fixed::from_int(100)
-            || source::held(&tx).await.len() != 1
-            || submit(&tx, sequenced()).await.is_none()
-        {
+    tasks
+        .wait("the booked surplus to be held and withdrawals to stay sequenced", &mut alerts, async |_| {
+            let (house, held) = (source::house(&tx).await, source::held(&tx).await.len());
+            if house == Fixed::from_int(100) && held == 1 && submit(&tx, sequenced()).await.is_some() {
+                return Ok(());
+            }
             submit(&tx, Command::Tick).await;
-            sleep(Duration::from_millis(40)).await;
-        }
-    })
-    .await;
+            Err(format!("house cash is {house:?} with {held} deposits held, or withdrawals are refused"))
+        })
+        .await;
     assert_eq!(source::held(&tx).await[0].1, AccessReject::PayerMissing, "a surplus is held, never credited");
     while alerts.try_recv().is_ok() {}
 
@@ -262,15 +266,15 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     }
     send(&provider, vault, token, transferCall { to: relayer, amount: U256::from(1_000_000) }.abi_encode()).await;
     submit(&tx, Command::Tick).await;
-    crate::test_support::wait_for("the collateral_mismatch alert", async {
-        loop {
-            if std::iter::from_fn(|| alerts.try_recv().ok()).any(|alert| alert["alert"] == "collateral_mismatch") {
-                break;
+    tasks
+        .wait("the collateral_mismatch alert", &mut alerts, async |raised| {
+            if raised.iter().any(|alert| alert["alert"] == "collateral_mismatch") {
+                Ok(())
+            } else {
+                Err("no collateral_mismatch alert yet".into())
             }
-            sleep(Duration::from_millis(40)).await;
-        }
-    })
-    .await;
+        })
+        .await;
     let (reply, request) = oneshot::channel();
     tx.send(Request::Query(Box::new(move |engine| {
         let _ = reply.send(access::withdrawal(engine, 1, Fixed::ONE, true));
@@ -288,9 +292,10 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
         "signed screened withdrawals pause without an approval"
     );
     assert!(submit(&tx, Command::Tick).await.is_some(), "trading commands continue");
-    custody_task.abort();
+    let tasks::Tasks { sequencer, poster, custody } = tasks;
+    custody.abort();
     poster.abort();
-    let _ = custody_task.await;
+    let _ = custody.await;
     let _ = poster.await;
     drop(tx);
     sequencer.await.unwrap().unwrap();
