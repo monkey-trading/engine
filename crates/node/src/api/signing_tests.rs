@@ -8,6 +8,7 @@ use std::path::Path;
 
 use axum::body::{Body, Bytes, to_bytes};
 use axum::extract::connect_info::MockConnectInfo;
+use axum::http::header::{ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS, ORIGIN};
 use axum::http::{HeaderMap, Request as HttpRequest};
 use engine_wire::{
     CHALLENGE_HEADER, Connection, Deployment, Error, SEQ_HEADER, SIGNATURE_HEADER, SignedFrame, TIME_HEADER,
@@ -149,6 +150,36 @@ async fn a_head_request_is_signed_over_the_empty_body_it_sends() {
     let (_, _, get) = call(&app, "GET", "/v1/markets", Some(CHALLENGE), Body::empty()).await;
     let verified = verify(("HEAD", "/v1/markets", b""), parse(CHALLENGE), status, &headers, &get);
     assert_eq!(verified, Err(Error::WrongSigner));
+}
+
+#[tokio::test]
+async fn a_listed_origin_can_read_a_signed_answer_and_gets_its_preflight_unsigned_with_no_body() {
+    let mut api = dev_config().api;
+    let origin = "http://localhost:3000";
+    api.allowed_origins = vec![origin.to_owned()];
+    let (_node, app) = node("origins", &api);
+    let send = |method: &str, extra: Option<(&'static str, &'static str)>| {
+        let mut request = HttpRequest::builder().method(method).uri("/v1/markets").header(ORIGIN, origin);
+        request = request.header(CHALLENGE_HEADER, CHALLENGE);
+        if let Some((name, value)) = extra {
+            request = request.header(name, value);
+        }
+        app.clone().oneshot(request.body(Body::empty()).unwrap())
+    };
+    let response = send("GET", None).await.unwrap();
+    let (status, headers) = (response.status(), response.headers().clone());
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(headers[ACCESS_CONTROL_ALLOW_ORIGIN], origin);
+    let exposed = headers[ACCESS_CONTROL_EXPOSE_HEADERS].to_str().unwrap().to_ascii_lowercase();
+    for name in [SIGNATURE_HEADER, TIME_HEADER, SEQ_HEADER, CHALLENGE_HEADER] {
+        assert!(exposed.split(", ").any(|exposed| exposed == name), "{name} is not exposed: {exposed}");
+    }
+    assert_eq!(verify(("GET", "/v1/markets", b""), parse(CHALLENGE), status, &headers, &body), Ok(()));
+
+    let preflight = send("OPTIONS", Some(("access-control-request-method", "GET"))).await.unwrap();
+    assert_eq!(preflight.status(), StatusCode::NO_CONTENT);
+    assert!(!preflight.headers().contains_key(SIGNATURE_HEADER));
+    assert!(to_bytes(preflight.into_body(), usize::MAX).await.unwrap().is_empty());
 }
 
 #[test]

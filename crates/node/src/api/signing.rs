@@ -2,9 +2,11 @@
 //! it answers with its body, the client's challenge, the node's time, the log head, and the status
 //! and body as sent (`engine_wire::response_digest`). Health, the attestation and its collateral,
 //! and the archive stay unsigned: the attestation and the archive's catalog authenticate
-//! themselves, and health carries nothing to rely on. This layer sits inside the per-client rate
-//! limit and the body read, so a refused request (429, 408, 413) costs no signature, and its
-//! unsigned refusal is the client's to discard.
+//! themselves, and health carries nothing to rely on. This layer sits inside the browser origin
+//! check, the per-client rate limit, and the body read, so a refused request (a 403 stream upgrade
+//! from an unlisted origin, 429, 408, 413) costs no signature, and its unsigned refusal is the
+//! client's to discard. A listed origin's preflight is answered there too, unsigned: it has no body,
+//! and the browser, not the page, reads it.
 //!
 //! The time is the host clock, which the sequencer checks its stamps against trusted time; the
 //! API reads it unchecked, so a client takes freshness from its challenge, not from the time.

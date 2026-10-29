@@ -56,7 +56,7 @@ async fn a_read_from_a_listed_origin_carries_that_origin_and_vary() {
     let response = send(&app, Method::GET, "/v1/health", Some(LISTED), "").await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(header(&response, ACCESS_CONTROL_ALLOW_ORIGIN), Some(LISTED));
-    assert_eq!(header(&response, ACCESS_CONTROL_EXPOSE_HEADERS), Some("Retry-After"));
+    assert_eq!(header(&response, ACCESS_CONTROL_EXPOSE_HEADERS), Some(origin::EXPOSED_HEADERS));
     assert_eq!(header(&response, VARY), Some("Origin"));
     assert!(response.headers().get("access-control-allow-credentials").is_none());
 }

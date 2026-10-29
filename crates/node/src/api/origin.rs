@@ -20,8 +20,10 @@ use crate::limits::ApiLimits;
 
 const ADMIN_PATH: &str = "/v1/admin";
 const STREAM_PATH: &str = "/v1/stream";
-/// The response headers a page may read beyond the safelisted ones.
-const EXPOSED_HEADERS: &str = "Retry-After";
+/// The response headers a page may read beyond the safelisted ones: the rate limiter's wait, and the
+/// `X-Engine-*` headers a signed answer carries (`engine_wire`).
+pub(super) const EXPOSED_HEADERS: &str =
+    "Retry-After, x-engine-signature, x-engine-time, x-engine-seq, x-engine-challenge";
 const ALLOWED_METHODS: &str = "GET, POST, OPTIONS";
 const ALLOWED_HEADERS: &str = "Content-Type, X-Engine-Challenge";
 /// Seconds a browser may cache a preflight answer.

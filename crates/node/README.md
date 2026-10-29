@@ -954,9 +954,11 @@ body) ‖ sha256(response body as sent))`, for the custody chain id and vault in
 response is signed over its empty body. A client verifies with the challenge, request line, and
 request body it sent, never the echoed challenge, and sends a fresh random challenge with each
 request it relies on: then a recorded response answers no other request, and one to a substituted
-body fails. A response a layer outside the signer produces, such as a 429 from the rate limiter or
-a 408 or 413 from the body read, is unsigned, and a client never shows an unsigned response on a
-signed route as data. The time is the host's clock, which the sequencer checks its stamps against
+body fails. A response a layer outside the signer produces is unsigned: a listed browser origin's
+preflight, which has no body and which the browser rather than the page reads; a stream upgrade
+refused for its origin; a 429 from the rate limiter; and a 408 or 413 from the body read. A client
+never shows an unsigned response on a signed route as data. A listed origin may read the four
+`X-Engine-*` headers (`Access-Control-Expose-Headers`). The time is the host's clock, which the sequencer checks its stamps against
 trusted time but the API does not, so freshness comes from the challenge. Signatures prove who
 answered, not that the answer arrived: a man in the middle can still delay or drop it.
 
