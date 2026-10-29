@@ -406,6 +406,7 @@ fn fixture() -> (Poster<Chain>, Work) {
         block_hash: B256::repeat_byte(8),
         signer: state.signer,
         signer_epoch: 1,
+        withdrawals_paused: false,
         total_withdrawn: Fixed::ZERO,
         checkpoint_seq: Some(5),
         checkpoint_root: Some(checkpoint.root.clone()),
@@ -450,3 +451,5 @@ fn fixture() -> (Poster<Chain>, Work) {
         work,
     )
 }
+
+mod halt;

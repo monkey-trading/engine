@@ -5,7 +5,7 @@ use std::sync::atomic::Ordering;
 use anyhow::{Context, ensure};
 use engine_core::Fixed;
 use tokio::time::Instant;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::checkpoints::{
     ApprovalId, CheckpointChain, Conflict, Health, LifecycleEvidence, Poster, VaultState, View, Work, signature,
@@ -34,6 +34,29 @@ fn verdict(state: &VaultState, paid: Fixed, credited: Option<Fixed>, work: &Work
         Health::Pending
     } else {
         Health::Healthy
+    }
+}
+
+/// Raises the Critical `vault_withdrawals_halted` for each way the finalized vault refuses
+/// withdrawal claims, one episode per `cause`, and resolves each that has cleared.
+fn report_halt(evidence: &LifecycleEvidence) {
+    if evidence.withdrawals_paused {
+        error!(
+            alert = "vault_withdrawals_halted",
+            cause = "paused",
+            "withdrawal authorizations stopped: the vault's withdrawals are paused until its guardian's pause ends or its timelock lifts it"
+        );
+    } else {
+        info!(alert_resolved = "vault_withdrawals_halted", cause = "paused", "the vault's withdrawals are not paused");
+    }
+    if evidence.signer_retired() {
+        error!(
+            alert = "vault_withdrawals_halted",
+            cause = "signer_retired",
+            "withdrawal authorizations stopped: the vault's guardian retired its signer, and only its timelock installs one"
+        );
+    } else {
+        info!(alert_resolved = "vault_withdrawals_halted", cause = "signer_retired", "the vault has a signer");
     }
 }
 
@@ -122,7 +145,9 @@ impl<R: CheckpointChain> Poster<R> {
         }
         let cp = &work.checkpoint;
         signature::verify_domain(cp, self.domain)?;
-        if state.signer != self.signer {
+        // A retired signer is the guardian's halt, not another authority: the vault accepts no
+        // checkpoint until its timelock installs a signer, and one other than this enclave conflicts.
+        if state.signer != self.signer && !state.signer_retired() {
             return Err(Conflict("checkpoint signer differs from the authorized vault signer").into());
         }
         match &state.checkpoint {
@@ -159,7 +184,9 @@ impl<R: CheckpointChain> Poster<R> {
                     );
                     return Err(Conflict("signed parent differs from the latest vault checkpoint").into());
                 }
-                if self.withholds(known).await? {
+                if state.signer_retired() {
+                    debug!("checkpoint not posted: the vault's signer is retired");
+                } else if self.withholds(known).await? {
                     // The finalized vault diverges from the ledger: a new root would let
                     // distribution claims drain a vault the ledger says is short. Skip the post;
                     // the finalized read below still returns the verdict, so a repaired vault
@@ -194,11 +221,18 @@ impl<R: CheckpointChain> Poster<R> {
         tracing::Span::current()
             .record("finalized_seq", tracing::field::debug(state.checkpoint.as_ref().map(|(seq, _)| *seq)));
         ensure!(included_height >= state.height, "latest checkpoint view is behind the finalized view");
-        if state.signer != self.signer {
+        if state.signer != self.signer && !state.signer_retired() {
             return Err(Conflict("finalized vault signer differs from this enclave").into());
         }
         if let (Some(latest), Some(finalized)) = (&observation.lifecycle, &finalized_observation.lifecycle) {
             ensure!(latest.signer_epoch == finalized.signer_epoch, "signer epoch is not finalized");
+            // No release evidence leaves while a pause or retirement is only in the latest block,
+            // so either stops releases at once and only a finalized clearing resumes them.
+            ensure!(
+                latest.signer == finalized.signer && latest.withdrawals_paused == finalized.withdrawals_paused,
+                "the vault's signer or withdrawal pause is not finalized"
+            );
+            report_halt(finalized);
         }
         let Some((seq, root)) = &state.checkpoint else { return Ok((None, Health::Unvalidated, None)) };
         if *seq < known.iter().map(|work| work.checkpoint.seq).min().unwrap_or(cp.seq) {

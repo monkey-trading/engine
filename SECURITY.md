@@ -160,7 +160,10 @@ rotation replaces only an authorization still usable, and the vault rejects reti
 authenticates historical roots; immutable signer-epoch history independently authenticates reissues
 against older roots during recovery and custody-backed replay. The unanchored checkpoint tail still
 requires the current signer. The deployment's multisig proposes changes through its nonzero-delay
-timelock, which alone rotates the signer or changes deposit/withdrawal pauses. Latest transaction
+timelock, which alone rotates the signer, lifts a withdrawal pause or changes the deposit pause. As
+the vault's immutable guardian, the same multisig may also, without the delay, pause withdrawals for
+seven days or retire the signer, which the vault then refuses for withdrawals and checkpoints until
+the timelock installs one; the node signs no withdrawal while either holds. Latest transaction
 inclusion alone never authorizes withdrawal release; checkpoint startup and release use custody's
 withdrawal finality tag, independently of the latest credit tag and its confirmation depth. New
 withdrawals pause while the latest finalized checkpoint's custody prefix is unproven against canonical

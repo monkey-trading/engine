@@ -154,8 +154,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/payouts.rs` — durable unpaid delivery, finalized claim evidence, epoch reissues, and reissue requests
 - `src/sequencer/payout_schedule.rs` — complete unpaid approval order, bounded epoch and requested reissue scheduling, and the hold behind unloaded recovered approvals
 - `src/sequencer/payout_tests.rs` — release order across claim pages, durability, restart, expiry without reissue, and rotation
-- `src/sequencer/payout_tests/` — paginated replacement signature order, paused claim acknowledgement, sealed approval recovery, FIFO signing across unloaded recovery windows, and expired authorizations a rotation leaves unsigned
-- `src/sequencer/withdrawal_scenario/` — actual Anvil/TLS/stream/custody crash and FIFO scenarios with local signed time
+- `src/sequencer/payout_tests/` — paginated replacement signature order, paused claim acknowledgement, sealed approval recovery, FIFO signing across unloaded recovery windows, expired authorizations a rotation leaves unsigned, and no issuance or reissue while the vault pauses withdrawals or has a retired signer
+- `src/sequencer/withdrawal_scenario/` — actual Anvil/TLS/stream/custody crash, FIFO, and guardian pause and signer retirement scenarios with local signed time
 - `src/withdrawals.rs` — vault EIP-712 digests and exact approval inclusion verification
 - `src/api/withdrawal_queue.rs` — public FIFO pagination and account queue positions
 - `src/api/reissue.rs` — a holder's screened request to sign an expired approval again
@@ -446,7 +446,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/accounting/access_tests.rs` — actual pending and hold outputs against independent reconciliation totals
 - `src/checkpoints/lifecycle.rs` — pinned signer/epoch, cumulative paid amounts, and approval nonce-use evidence
 - `src/checkpoints/history.rs` — accepted history from the finalized anchor, the signed-parent chain, and signer epochs
-- `src/checkpoints/lifecycle_tests.rs` — paid cash reconciliation, bounded claim polling, and rotated authorities
+- `src/checkpoints/lifecycle_tests/` — paid cash reconciliation, bounded claim polling, rotated authorities, and the vault's pause and retired signer observed, alerted and finalized
 - `src/checkpoints/reconciliation.rs` — finalized collateral health: shortfalls, deposit totals, payouts, surpluses, and the credit deadline
 - `src/checkpoints/rpc/observation.rs` — same-block balance, epoch, paid total, and bounded claim reads
 - `src/checkpoints/rpc/authority.rs` — accepted historical signer identities for rotated nonce journals
@@ -832,6 +832,20 @@ an unproven prefix, a pending catch-up past its deadline, a divergence), and
 vault outside a deposit pauses nothing: it emits the Warning `collateral_surplus` until anyone calls
 the vault's `bookSurplus`, which records it as a house deposit; a surplus below the 10 USDC minimum
 deposit must be topped up first.
+
+The vault's guardian, the deployment's multisig acting without the timelock's delay, may pause
+withdrawals for seven days or retire the vault's signer. Each observation reads the vault's
+withdrawal pause and signer at the latest and at the withdrawal finality block, and a change seen
+only at the latest block supplies no release evidence until it is final. While the finalized vault
+pauses withdrawals or has no signer, the node signs no withdrawal authorization, first or
+reissued, refuses new withdrawals with `payout_unavailable`, sets `engine_withdrawals_paused` to 1,
+and emits the Critical `vault_withdrawals_halted`, one episode per `cause` (`paused`,
+`signer_retired`), resolved once the vault lifts it. Checkpoints keep posting during a pause. While
+the signer is retired the vault accepts no checkpoint, so the worker posts none and the running
+node keeps sequencing; once the timelock installs this enclave's key again, the next epoch begins
+and the node reissues each authorization still usable, while another key stops the node with
+`checkpoint_conflict`. A node started while the signer is retired refuses to start until the
+timelock installs one.
 
 ```toml
 [checkpoints]

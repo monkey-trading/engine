@@ -43,6 +43,12 @@ async fn await_finality_boundary<C: CheckpointChain>(
             let finalized = chain.observe(View::Finalized, &[]).await?;
             latest.validate(&[])?;
             finalized.validate(&[])?;
+            // A running node rides out a retired signer; a starting one cannot authenticate the
+            // vault's authority until the timelock installs a signer.
+            anyhow::ensure!(
+                !latest.state.signer_retired() && !finalized.state.signer_retired(),
+                "the vault's guardian retired its signer; the node starts once the vault's timelock installs one"
+            );
             anyhow::ensure!(
                 latest.state.signer == signer && finalized.state.signer == signer,
                 "vault signer differs from this enclave; signer recovery is required"
@@ -148,6 +154,7 @@ mod tests {
                     block_hash: B256::repeat_byte(u8::try_from(height).unwrap()),
                     signer: self.signer,
                     signer_epoch: 1,
+                    withdrawals_paused: false,
                     total_withdrawn: Fixed::ZERO,
                     checkpoint_seq: Some(seq),
                     checkpoint_root: Some(root),
@@ -176,6 +183,7 @@ mod tests {
                         block_hash: B256::repeat_byte(10),
                         signer,
                         signer_epoch: 1,
+                        withdrawals_paused: false,
                         total_withdrawn: Fixed::ZERO,
                         checkpoint_seq: Some(1),
                         checkpoint_root: Some("root".to_owned()),
@@ -247,6 +255,15 @@ mod tests {
             "the boundary arrived only through the release-tag retries: {:?}",
             start.elapsed()
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn startup_refuses_a_vault_whose_guardian_retired_its_signer() {
+        let chain = LaggingChain::new(AccountId([0; 20]), 0);
+        let err = await_finality_boundary(&chain, AccountId([0xaa; 20]), Duration::from_secs(1), &evm("1s", "30s"))
+            .await
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("guardian retired its signer"), "{err:#}");
     }
 
     #[tokio::test(start_paused = true)]

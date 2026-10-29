@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Runs the actual local TLS API/stream, EVM custody quorum, checkpoint poster and Vault withdrawal
-# scenario, including SIGKILL before approval logging and after durable authorization delivery.
+# scenario, including SIGKILL before approval logging and after durable authorization delivery, and
+# the guardian's pause and signer retirement through to the timelock's new epoch.
 # Needs Cargo, Forge, Anvil and pinned Soldeer dependencies. Uses no external server or real funds.
 set -euo pipefail
 

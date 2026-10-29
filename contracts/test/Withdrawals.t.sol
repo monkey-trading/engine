@@ -159,7 +159,7 @@ contract WithdrawalsTest is WithdrawalTest {
     function test_RevertWhen_SignatureDomainUsesAnotherVaultOrChain() public {
         Vault.Withdrawal memory withdrawal = _approval(0, 1);
         _postApproval(withdrawal);
-        Vault other = new Vault(usdc, vm.addr(KEY), governance, 1e18);
+        Vault other = new Vault(usdc, vm.addr(KEY), governance, multisig, 1e18);
         bytes memory wrongVault = _sign(other, withdrawal, KEY);
         vm.expectRevert(Vault.InvalidWithdrawalSigner.selector);
         vault.withdraw(withdrawal, 10, new bytes32[](0), wrongVault);
@@ -190,7 +190,7 @@ contract WithdrawalsTest is WithdrawalTest {
 
     function test_FeeOnTransferWithdrawalRevertsWithoutBurningFundsOrNonce() public {
         FeeOnTransferToken token = new FeeOnTransferToken();
-        Vault target = new Vault(token, vm.addr(KEY), governance, 1e18);
+        Vault target = new Vault(token, vm.addr(KEY), governance, multisig, 1e18);
         token.mint(address(target), 100e6);
         Vault.Withdrawal memory withdrawal = _approval(0, 10e6);
         _post(target, 10, _root(withdrawal, new bytes32[](0)), KEY);
@@ -206,7 +206,7 @@ contract WithdrawalsTest is WithdrawalTest {
 
     function test_SenderFeeAndFailedTokenTransferPreserveNonce() public {
         WithdrawalToken token = new WithdrawalToken();
-        Vault target = new Vault(token, vm.addr(KEY), governance, 1e18);
+        Vault target = new Vault(token, vm.addr(KEY), governance, multisig, 1e18);
         token.mint(address(target), 100e6);
         Vault.Withdrawal memory withdrawal = _approval(0, 10e6);
         _post(target, 10, _root(withdrawal, new bytes32[](0)), KEY);
@@ -224,7 +224,7 @@ contract WithdrawalsTest is WithdrawalTest {
 
     function test_OutgoingTransferCannotReenterWithdrawOrAnyDeposit() public {
         WithdrawalToken token = new WithdrawalToken();
-        Vault target = new Vault(token, vm.addr(KEY), governance, 1e18);
+        Vault target = new Vault(token, vm.addr(KEY), governance, multisig, 1e18);
         token.mint(address(target), 100e6);
         Vault.Withdrawal memory withdrawal = _approval(0, 10e6);
         _post(target, 10, _root(withdrawal, new bytes32[](0)), KEY);

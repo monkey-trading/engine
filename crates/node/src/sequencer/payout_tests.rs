@@ -389,6 +389,7 @@ impl Node {
             block_hash: B256::from([1; 32]),
             signer: AccountId(self.seq.key.address()),
             signer_epoch: 1,
+            withdrawals_paused: false,
             total_withdrawn: Fixed::ZERO,
             checkpoint_seq: Some(cp.seq),
             checkpoint_root: Some(cp.root.clone()),
@@ -415,6 +416,7 @@ impl Node {
 
 mod backlog;
 mod claim_retirement;
+mod halt;
 mod origin;
 mod reissue;
 mod restart_bound;

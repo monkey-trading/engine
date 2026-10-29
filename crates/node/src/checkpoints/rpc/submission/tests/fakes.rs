@@ -18,7 +18,7 @@ use crate::checkpoints::rpc::{
     balanceOfCall, checkpointEpochAtCall, checkpointRootsCall, checkpointSignerAtCall, checkpointSignerCall,
     depositCountCall, depositedThroughCall, distributionsPaidCall, hasCheckpointAtCall, hasCheckpointCall,
     latestRootCall, latestSeqCall, signerAtEpochCall, signerEpochCall, totalDepositedCall, totalWithdrawnCall,
-    usdcCall, usedNoncesCall,
+    usdcCall, usedNoncesCall, withdrawalsPausedCall,
 };
 use crate::log::Checkpoint;
 use crate::tee::EnclaveKey;
@@ -40,6 +40,7 @@ pub struct RpcState {
     pub epoch_signers: BTreeMap<u64, alloy::primitives::Address>,
     pub paid: U256,
     pub finalized_paid: Option<U256>,
+    pub withdrawals_paused: bool,
     pub balance: U256,
     /// The vault's deposit count, and its running deposit total after each deposit id.
     pub deposits: u64,
@@ -86,6 +87,7 @@ impl Server {
             epoch_signers: BTreeMap::from([(1, alloy::primitives::Address::from(EnclaveKey::test_key().address()))]),
             paid: U256::ZERO,
             finalized_paid: None,
+            withdrawals_paused: false,
             balance: U256::ZERO,
             deposits: 0,
             deposited_through: BTreeMap::new(),
@@ -287,6 +289,8 @@ async fn answer(State(state): State<Arc<Mutex<RpcState>>>, Json(request): Json<V
                 )
             } else if selector == hex::encode(distributionsPaidCall::SELECTOR) {
                 distributionsPaidCall::abi_encode_returns(&U256::ZERO)
+            } else if selector == hex::encode(withdrawalsPausedCall::SELECTOR) {
+                withdrawalsPausedCall::abi_encode_returns(&state.withdrawals_paused)
             } else {
                 assert_eq!(selector, hex::encode(depositCountCall::SELECTOR));
                 depositCountCall::abi_encode_returns(&U256::from(state.deposits))

@@ -12,7 +12,7 @@ use tokio::time::{sleep, timeout};
 use crate::sequencer::withdrawal_scenario::client::Client;
 use crate::sequencer::withdrawal_scenario::rpc::Chain;
 use crate::sequencer::withdrawal_scenario::services::Services;
-use crate::sequencer::withdrawal_scenario::{CHILD_CONFIG, CHILD_FEED, CHILD_TEST};
+use crate::sequencer::withdrawal_scenario::{CHILD_ALERTS, CHILD_CONFIG, CHILD_FEED, CHILD_TEST};
 use crate::test_support::ANVIL_CONFIG;
 use crate::test_support::LOADED_WAIT;
 
@@ -107,7 +107,7 @@ impl Node {
             std::env::current_exe()?,
             &["--ignored", "--exact", CHILD_TEST, "--nocapture", "--test-threads=1"],
             &self.dir.join("node.log"),
-            &[(CHILD_CONFIG, path), (CHILD_FEED, &self.services.feed)],
+            &[(CHILD_CONFIG, path), (CHILD_FEED, &self.services.feed), (CHILD_ALERTS, &self.services.alerts)],
         )?);
         timeout(LOADED_WAIT, async {
             loop {
@@ -131,6 +131,27 @@ impl Node {
     /// Error cases:
     /// - the metrics endpoint never reports a covering healthy verdict
     pub async fn wait_withdrawals_enabled(&mut self, after: u64) -> anyhow::Result<()> {
+        self.wait_metrics(|_, scrape| gate_admits(scrape, after))
+            .await
+            .context("withdrawals stayed paused; custody never reconciled")
+    }
+
+    /// Waits until the node pages the Critical `vault_withdrawals_halted` for `cause` and its gate
+    /// refuses withdrawals on a verdict covering sequence `after` or later.
+    /// Error cases:
+    /// - the page or a covering refusing verdict never arrives
+    pub async fn wait_withdrawals_halted(&mut self, cause: &str, after: u64) -> anyhow::Result<()> {
+        self.wait_metrics(|services, scrape| {
+            services.paged("vault_withdrawals_halted", cause) && gate_refuses(scrape, after)
+        })
+        .await
+        .with_context(|| format!("the node never paged and refused withdrawals for {cause}"))
+    }
+
+    /// Polls the metrics endpoint until `done` holds for the local services and a scrape.
+    /// Error cases:
+    /// - a scenario server or the chain stopped, the endpoint fails, or the deadline passes
+    async fn wait_metrics(&mut self, done: impl Fn(&Services, &str) -> bool) -> anyhow::Result<()> {
         timeout(LOADED_WAIT, async {
             loop {
                 self.services.check()?;
@@ -140,15 +161,13 @@ impl Node {
                     .context("metrics endpoint")?
                     .text()
                     .await?;
-                if gate_admits(&text, after) {
+                if done(&self.services, &text) {
                     return anyhow::Ok(());
                 }
                 sleep(Duration::from_millis(100)).await;
             }
         })
-        .await
-        .context("withdrawals stayed paused; custody never reconciled")??;
-        Ok(())
+        .await?
     }
 
     /// Kills the actual running node and preserves its files for restart.
@@ -168,11 +187,21 @@ impl Node {
 
 /// Whether a metrics scrape shows withdrawals admitted on a verdict for checkpoint `after` or later.
 pub(super) fn gate_admits(metrics: &str, after: u64) -> bool {
-    let verdict = metrics
+    metrics.lines().any(|line| line == "engine_withdrawals_paused 0") && verdict_covers(metrics, after)
+}
+
+/// Whether a metrics scrape shows withdrawals refused on a verdict for checkpoint `after` or later.
+fn gate_refuses(metrics: &str, after: u64) -> bool {
+    metrics.lines().any(|line| line == "engine_withdrawals_paused 1") && verdict_covers(metrics, after)
+}
+
+/// Whether the scrape's latest custody verdict is for checkpoint `after` or later.
+fn verdict_covers(metrics: &str, after: u64) -> bool {
+    metrics
         .lines()
         .find_map(|line| line.strip_prefix("engine_withdrawals_verdict_seq "))
-        .and_then(|seq| seq.parse::<u64>().ok());
-    metrics.lines().any(|line| line == "engine_withdrawals_paused 0") && verdict.is_some_and(|seq| seq >= after)
+        .and_then(|seq| seq.parse::<u64>().ok())
+        .is_some_and(|seq| seq >= after)
 }
 
 /// Reserves an unused loopback TCP port for a subsequently spawned process.

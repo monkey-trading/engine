@@ -36,6 +36,7 @@ sol! {
     function depositCount() external view returns (uint256);
     function signerEpoch() external view returns (uint64);
     function signerAtEpoch(uint64 epoch) external view returns (address);
+    function withdrawalsPaused() external view returns (bool);
     function totalWithdrawn() external view returns (uint256);
     function totalDeposited() external view returns (uint256);
     function depositedThrough(uint256 id) external view returns (uint256);

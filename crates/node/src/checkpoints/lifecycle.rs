@@ -35,8 +35,11 @@ pub struct ApprovalStatus {
 pub struct LifecycleEvidence {
     pub height: u64,
     pub block_hash: B256,
+    /// Zero once the vault's guardian retired the signer, until the timelock installs one.
     pub signer: AccountId,
     pub signer_epoch: u64,
+    /// The vault refuses withdrawal claims: its timelock or its guardian paused them.
+    pub withdrawals_paused: bool,
     pub total_withdrawn: Fixed,
     pub checkpoint_seq: Option<u64>,
     pub checkpoint_root: Option<String>,
@@ -97,6 +100,25 @@ impl SignerHistory {
             }
         }
         Ok(())
+    }
+}
+
+impl VaultState {
+    /// Whether the vault's guardian retired its signer and the timelock has not installed one.
+    pub(crate) fn signer_retired(&self) -> bool {
+        self.signer.0 == [0; 20]
+    }
+}
+
+impl LifecycleEvidence {
+    /// Whether the vault's guardian retired its signer and the timelock has not installed one.
+    pub fn signer_retired(&self) -> bool {
+        self.signer.0 == [0; 20]
+    }
+
+    /// Whether the vault refuses every withdrawal claim: they are paused, or it has no signer.
+    pub fn halts_withdrawals(&self) -> bool {
+        self.withdrawals_paused || self.signer_retired()
     }
 }
 

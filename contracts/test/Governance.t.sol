@@ -8,13 +8,13 @@ import {WithdrawalTest} from "./helpers/WithdrawalTest.sol";
 contract GovernanceTestCases is WithdrawalTest {
     function test_ConstructorRejectsMissingUndeployedOrZeroDelayTimelock() public {
         vm.expectRevert(Vault.InvalidGovernance.selector);
-        new Vault(usdc, vm.addr(KEY), TimelockController(payable(address(0))), 1e18);
+        new Vault(usdc, vm.addr(KEY), TimelockController(payable(address(0))), multisig, 1e18);
         vm.expectRevert(Vault.InvalidGovernance.selector);
-        new Vault(usdc, vm.addr(KEY), TimelockController(payable(multisig)), 1e18);
+        new Vault(usdc, vm.addr(KEY), TimelockController(payable(multisig)), multisig, 1e18);
         address[] memory roles = new address[](0);
         TimelockController zeroDelay = new TimelockController(0, roles, roles, address(0));
         vm.expectRevert(Vault.InvalidGovernance.selector);
-        new Vault(usdc, vm.addr(KEY), zeroDelay, 1e18);
+        new Vault(usdc, vm.addr(KEY), zeroDelay, multisig, 1e18);
     }
 
     function test_OnlyTimelockCanSetSignerOrPausesEvenForMultisigProposer() public {

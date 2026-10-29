@@ -299,7 +299,7 @@ pub(super) async fn shortfall_and_fifo() -> anyhow::Result<()> {
 /// Pays a stream authorization and authenticates the exact token changes and Vault event.
 /// Error cases:
 /// - verification, EVM payment, nonce/counter or event fields differ
-async fn pay(node: &Node, signed: &SignedWithdrawal) -> anyhow::Result<()> {
+pub(super) async fn pay(node: &Node, signed: &SignedWithdrawal) -> anyhow::Result<()> {
     let call = node.chain.claim(signed)?;
     let amount = call.withdrawal.amount;
     let owner = call.withdrawal.account;
@@ -387,7 +387,7 @@ fn filled(events: &[Event]) -> anyhow::Result<()> {
 /// Reads complete log lines without opening a second writer or repairing a crashed log.
 /// Error cases:
 /// - files cannot be read or a complete line is malformed
-fn entries(dir: &Path) -> anyhow::Result<Vec<LogEntry>> {
+pub(super) fn entries(dir: &Path) -> anyhow::Result<Vec<LogEntry>> {
     let mut paths =
         std::fs::read_dir(dir)?.map(|entry| entry.map(|entry| entry.path())).collect::<Result<Vec<_>, _>>()?;
     paths.retain(|path| {
@@ -410,7 +410,7 @@ fn entries(dir: &Path) -> anyhow::Result<Vec<LogEntry>> {
 /// The highest sequence the log holds: everything the node has acknowledged so far.
 /// Error cases:
 /// - the log cannot be read or holds no command
-fn last_seq(dir: &Path) -> anyhow::Result<u64> {
+pub(super) fn last_seq(dir: &Path) -> anyhow::Result<u64> {
     entries(dir)?
         .iter()
         .filter_map(|entry| if let LogEntry::Command(command) = entry { Some(command.sequenced.seq) } else { None })
@@ -421,7 +421,7 @@ fn last_seq(dir: &Path) -> anyhow::Result<u64> {
 /// Replays actual persisted roots, events and authorizations under the independently known signer.
 /// Error cases:
 /// - full replay fails or the log does not end under the latest protocol
-fn replay(node: &Node) -> anyhow::Result<()> {
+pub(super) fn replay(node: &Node) -> anyhow::Result<()> {
     let replayed = replay_path_with_trust(
         &node.dir.join("log"),
         Some(CheckpointDomain { chain_id: 31337, vault: AccountId(node.chain.vault.into()) }),

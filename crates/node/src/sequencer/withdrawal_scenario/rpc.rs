@@ -41,6 +41,13 @@ sol! {
     function totalWithdrawn() external view returns (uint256);
     function latestSeq() external view returns (uint64);
     function usedNonces(address account, uint64 nonce) external view returns (bool);
+    function withdrawalsPaused() external view returns (bool);
+    function pauseWithdrawals() external;
+    function retireSigner() external;
+    function setSigner(address signer) external;
+    function setPauses(bool depositsPaused, bool withdrawalsPaused) external;
+    function schedule(address target, uint256 value, bytes data, bytes32 predecessor, bytes32 salt, uint256 delay) external;
+    function execute(address target, uint256 value, bytes payload, bytes32 predecessor, bytes32 salt) external payable;
     event WithdrawalPaid(address indexed account, uint256 amount, uint64 indexed nonce, uint64 approvedSeq);
 }
 
@@ -55,7 +62,10 @@ pub(super) struct Chain {
     /// Held for writing while a block is mined; node RPC proxies hold it for reading.
     pub mining: Arc<RwLock<()>>,
     client: reqwest::Client,
+    /// Deploys, proposes to the timelock, and is the Vault's guardian, as the deployment's
+    /// multisig is.
     deployer: Address,
+    timelock: Address,
     miner: JoinHandle<anyhow::Result<()>>,
     _anvil: ChildProcess,
 }
@@ -114,6 +124,7 @@ impl Chain {
             payer: Address::ZERO,
             funder: Address::ZERO,
             deployer: Address::ZERO,
+            timelock: Address::ZERO,
             signer: engine_core::types::AccountId(key.address()),
             mining,
             client,
@@ -126,7 +137,7 @@ impl Chain {
         chain.funder = accounts[8];
         chain.relayer = accounts[9];
         chain.token = chain.deploy(deployer, "MockUSDC.sol/MockUSDC.json", &[]).await?;
-        let timelock = chain
+        chain.timelock = chain
             .deploy(
                 deployer,
                 "TimelockController.sol/TimelockController.json",
@@ -138,7 +149,14 @@ impl Chain {
                 deployer,
                 "Vault.sol/Vault.json",
                 // The MONKEY period budget, 1 MONKEY, is a development value.
-                &(chain.token, Address::from(key.address()), timelock, U256::from(10).pow(U256::from(18))).abi_encode(),
+                &(
+                    chain.token,
+                    Address::from(key.address()),
+                    chain.timelock,
+                    deployer,
+                    U256::from(10).pow(U256::from(18)),
+                )
+                    .abi_encode(),
             )
             .await?;
         // The node's custody startup reads at the withdrawal finality tag, which trails `safe`.
@@ -215,6 +233,32 @@ impl Chain {
         let receipt = self.transact(from, Some(to), data).await?;
         ensure!(receipt.status(), "local contract transaction reverted");
         Ok(receipt)
+    }
+
+    /// The Vault's guardian.
+    pub fn guardian(&self) -> Address {
+        self.deployer
+    }
+
+    /// Runs a Vault call through the timelock: its proposer schedules it, and it executes once the
+    /// one-second delay has passed.
+    /// Error cases:
+    /// - scheduling fails, or execution still reverts at the deadline
+    pub async fn govern(&self, data: Vec<u8>) -> anyhow::Result<()> {
+        let (target, value, predecessor, salt) = (self.vault, U256::ZERO, B256::ZERO, B256::ZERO);
+        let delay = U256::from(1);
+        let schedule = scheduleCall { target, value, data: data.clone().into(), predecessor, salt, delay };
+        self.send(self.deployer, self.timelock, schedule.abi_encode()).await?;
+        let execute = executeCall { target, value, payload: data.into(), predecessor, salt }.abi_encode();
+        timeout(LOADED_WAIT, async {
+            // Ready only in a block at least the delay later; one mines every second.
+            while !self.transact(self.deployer, Some(self.timelock), execute.clone()).await?.status() {
+                sleep(Duration::from_millis(200)).await;
+            }
+            anyhow::Ok(())
+        })
+        .await
+        .context("timelock operation execution")?
     }
 
     /// Reads a typed ABI value at latest; production canonical-finality reads run inside the node.

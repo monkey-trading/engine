@@ -82,7 +82,8 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     )
     .await;
     // The MONKEY period budget, 1 MONKEY, is a development value, not an approved production parameter.
-    let args = (token, Address::from(key.address()), governance, U256::from(10).pow(U256::from(18))).abi_encode();
+    let args =
+        (token, Address::from(key.address()), governance, relayer, U256::from(10).pow(U256::from(18))).abi_encode();
     let vault = deploy(&provider, relayer, "Vault.sol/Vault.json", &args).await;
     let domain = CheckpointDomain { chain_id: 31337, vault: AccountId(vault.into()) };
     let section: CheckpointSection = toml::from_str(&format!(
