@@ -77,7 +77,8 @@
 # sequenced at. A running node takes admin commands through the operator
 # command channel (#47).
 #
-# Sourcing, as read on 2026-10-20. A venue's own publication decides, checked
+# Sourcing, as read on 2026-10-20 and re-read against the venues' own files on
+# 2026-10-29 (#107). A venue's own publication decides, checked
 # against a second, independent source. Where the venue has published nothing,
 # two independent sources must agree; where they disagree, the schedule closes
 # at the earliest time any of them gives. The independent sources are
@@ -103,6 +104,11 @@
 #   at 17:00 ET, and it has not said whether a holiday closure follows it or
 #   how it treats Christmas Day on a Saturday, so the schedule takes the
 #   earlier close: shut from 17:00 ET the evening before each of those days.
+#   Re-read on 2026-10-29: Cboe FX's Operating Procedures (effective
+#   16 Oct 2026, section 22) and its hours page say only that the week runs
+#   Sunday 17:00 to Friday 17:00 ET and the platform is closed on Christmas Day
+#   and New Year's Day (25 December, 1 January); neither says when a closure
+#   starts or how a Saturday Christmas is treated.
 #   NOT VERIFIED: that 17:00 ET start of each closure, and the closure on
 #   24 Dec 2027.
 # - US 500, US Tech 100, Wall St 30 (ids 20-22) and gold, silver, WTI
@@ -118,6 +124,9 @@
 #   Friday 2027. They halt equity at 12:00 CT on Thanksgiving and on MLK,
 #   Presidents', Memorial, Independence and Labor Days, and metals and energy
 #   at 12:00 CT on Labor Day.
+#   CME's site refused automated reads on 2026-10-29 (HTTP 403), so no
+#   holiday hours could be read from it; the first, Thanksgiving 2026, should
+#   be out about two weeks ahead.
 #   NOT VERIFIED, the libraries disagree and the schedule takes the earliest:
 #   equity on 27 Nov 2026, 24 Dec 2026 and 26 Nov 2027 (12:00 or 12:15 CT),
 #   Juneteenth 2027 (12:00 CT or no halt) and Good Friday 2027 (shut, or open
@@ -137,13 +146,20 @@
 #   libraries' ICE calendars (pandas_market_calendars ICE, exchange_calendars
 #   IEPA) give the same 20:00-18:00 ET week and the same closures on
 #   25 Dec 2026, 1 Jan 2027 and Good Friday 2027.
-#   NOT VERIFIED, ICE's schedule is used where the libraries differ: their
-#   20:00 ET Sunday open, against ICE's 23:00 London (18:00 ET); their
-#   13:00 ET closes on US holidays, against ICE's 13:30-15:00 ET closes and
-#   regular hours on MLK and Presidents' Days; their closure on 24 Dec 2027,
-#   when ICE trades until 08:00 ET; and the hours for the weeks of 2027 when US
-#   and UK clocks differ (14-27 March and 31 October-6 November), which ICE
-#   has not published.
+#   Read on 2026-10-29 (Trading_Schedule.pdf, July 2026 edition, and the
+#   temporary-hours file, October 2026 edition): Brent and Options cease
+#   at 19:00 GMT (14:00 ET) on 24 Dec 2026, 20:00 GMT (15:00 ET) on 31 Dec 2026
+#   and 2027, and 13:00 GMT (08:00 ET) on 24 Dec 2027 (Appendices 1 and 2);
+#   27 and 28 Dec 2026 and 2027 are regular hours; the statuses above are the
+#   file's. The Sunday open is 18:00 ET: the product page gives "Sunday open
+#   11:00 PM (London Local Time)", and the temporary-hours file, for 25-30 Oct
+#   2026, "these markets open at 22:00 hours Sunday (18:00 EDT)" with trading
+#   00:00-22:00 GMT, 20:00-18:00 EDT. ICE's schedule is used where the
+#   libraries differ: their 20:00 ET Sunday open, and their 13:00 ET closes on
+#   US holidays.
+#   NOT VERIFIED: the hours for the weeks of 2027 when US and UK clocks differ
+#   (14-27 March and 31 October-6 November). ICE publishes a temporary-hours
+#   file per occasion, and the one out covers 25-30 Oct 2026 only.
 # - UK 100 (id 24): ICE Futures Europe FTSE 100 Index Future, 01:00-21:00
 #   London, closed 25 and 28 Dec 2026:
 #   https://www.ice.com/products/38716764/FTSE-100-Index-Future and
@@ -152,6 +168,10 @@
 #   of 2026 and covers 2026 only. The 2027 closures are the 2027 bank holidays,
 #   https://www.gov.uk/bank-holidays.json , which both libraries' London
 #   calendars (LSE, XLON) also close.
+#   The schedule's October 2026 edition lists the 2026 closures (Good Friday,
+#   Christmas Day, 6 Apr, 4 and 25 May, 31 Aug, 28 Dec, 1 Jan) and says the
+#   Christmas and New Year hours "will be confirmed via an Exchange circular";
+#   none is out on 2026-10-29. The product page gives 01:00-21:00 London.
 #   NOT VERIFIED: ICE's on-screen hours on 24 and 31 Dec 2026 and 2027. The
 #   schedule closes at 12:30 with the London Stock Exchange, as both libraries
 #   give; ICE's 2026 schedule names 13:00 for block trades only.
@@ -166,12 +186,20 @@
 #   https://www.eurex.com/ex-en/trade/trading-calendar/indicative-trading-calendars
 #   and https://www.eurex.com/ex-en/trade/trading-calendar/holiday-regulations
 #   exchange_calendars' XEUR closes the same days in both years.
-#   NOT VERIFIED: the 01:10 CET / 02:10 CEST open, which only Eurex publishes;
-#   FDAX hours on 30 Dec 2026, which Eurex has not published; and the final
-#   2027 calendar.
+#   Read on 2026-10-29: Eurex's 2026 trading hours (tradingcalendar_2026_en.pdf,
+#   page 1) give FDAX 01:10-22:00 CET, with the note "02:10-22:00 CEST"; its
+#   2026 calendar closes all derivatives on 24 and 31 Dec 2026 as well as
+#   1 Jan, 3 and 6 Apr, 1 May and 25 Dec, and its holiday regulations list
+#   26 Mar, 29 Mar, 24 Dec and 31 Dec 2027 as non-trading days with 1 Jan 2027
+#   (the indicative file's EXCH and Deutschland calendars give the same).
+#   NOT VERIFIED: the final 2027 calendar, which Eurex confirms by the end of
+#   2026; and FDAX hours on 30 Dec 2026, on which the 2026 calendar names no
+#   closure, though its line for closures in German equity index derivatives
+#   reads "to be announced".
 # - Japan 225 (id 25): Osaka Exchange Nikkei 225 Futures, day session
-#   08:45-15:45 and night session 17:00-06:00 Tokyo, as JPX's pages give them
-#   in search-engine excerpts and QUICK gives them:
+#   08:45-15:45 and night session 17:00-06:00 Tokyo, as JPX's trading hours
+#   page (updated 13 Apr 2026) gives them (opening auctions 08:45 and 17:00,
+#   closing auctions 15:45 and 06:00) and QUICK gives them:
 #   https://www.jpx.co.jp/english/derivatives/rules/trading-hours/index.html
 #   https://corporate.quick.co.jp/en/japanmarketsview/equity/one-month-to-extension-of-tokyo-stock-exchange-trading-hours-new-market-close-system-to-be-introduced/
 #   Japan's national holidays are the Cabinet Office's,
@@ -179,14 +207,22 @@
 #   from 31 Dec to 3 Jan; both libraries' Tokyo calendars (JPX, XTKS) give the
 #   same holidays and year-end. Closed 23 Nov 2026 and 20 Sep 2027 (BCP
 #   tests), 31 Dec 2026 to 3 Jan 2027, and 31 Dec 2027.
-#   NOT VERIFIED, from JPX's pages in search-engine excerpts only:
+#   Read on 2026-10-29 from JPX's holiday trading page (updated 26 Jun 2026):
 #   https://www.jpx.co.jp/english/derivatives/rules/holidaytrading/index.html
-#   that Nikkei 225 futures trade both sessions on every other national
-#   holiday as a holiday-trading day, which the schedule follows; that holiday
-#   trading days from July 2027 hold, as they are scheduled until JPX
-#   finalises them in December 2026; that the night session after a business
-#   day runs before a holiday; and whether the Friday night sessions before the
-#   BCP tests run, which the schedule keeps.
+#   index futures trade both sessions on every national holiday except
+#   23 Nov 2026 and 20 Sep 2027 (BCP tests) and 31 Dec; 2026 and 2027 up to
+#   May are finalized, and the national holidays match the Cabinet Office's.
+#   JPX's market holidays page (updated 6 Feb 2026) says the night session
+#   runs after every business day, including one before a Saturday or a
+#   closed day, and not after a non-business day:
+#   https://www.jpx.co.jp/english/corporate/about-jpx/calendar/index.html
+#   so the sessions before each closure run, as the schedule has them. That
+#   page ends the night session at 5:30, against 06:00 on the hours page,
+#   which the schedule follows.
+#   NOT VERIFIED: that holiday trading days from July 2027 hold, as they are
+#   scheduled until JPX finalizes them in December 2026; and whether the
+#   Friday night sessions before the BCP tests run, on which JPX says nothing
+#   beyond the rule above, which the schedule follows.
 
 [genesis]
 house_capital = "0"
@@ -781,7 +817,7 @@ contracts = [
   { contract = "NIYH8", from = "2027-12-02T01:00:00Z" },
 ]
 
-# Osaka Exchange Nikkei 225 Futures, Tokyo time. UNVERIFIED: see the header.
+# Osaka Exchange Nikkei 225 Futures, Tokyo time; its open points are in the header.
 [genesis.markets.schedule]
 kind = "weekly"
 tz = "Asia/Tokyo"
