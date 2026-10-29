@@ -199,9 +199,9 @@ challenge and request you sent: a recorded answer then fits no other request. A 
 opened with `signed=1` and a challenge gets each message in a numbered frame chained to the one
 before it, so no frame can be dropped, repeated, or taken from another connection unnoticed, and a
 signed heartbeat every five seconds by default, so a client can tell a quiet market from a
-held-back feed. A signature proves who answered; it
-cannot stop someone in between from delaying or dropping an answer, which is why a client treats a
-missing heartbeat as a stale feed and an unsigned answer as no answer:
+held-back feed. A signature proves who answered; it cannot stop someone in between from delaying or
+dropping an answer, which is why a client treats a missing heartbeat as a stale feed and an
+unsigned answer as no answer:
 
 ```bash
 CHALLENGE=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
@@ -250,9 +250,9 @@ state machine: it performs no input or output, and uses neither clocks, randomne
 floating-point arithmetic. [`crates/node`](crates/node) (`engine-node`, binary `engine`) runs it,
 sequencing commands, writing and streaming the log, signing checkpoints, serving the API, and
 connecting to custody and price feeds. [`crates/wire`](crates/wire) (`engine-wire`) defines the
-signed answers the node gives and the checks a client runs on them. Node configuration lives in [`config`](config), operator
-assets such as the Grafana dashboard in [`ops`](ops), the confidential VM image is built from
-[`image`](image), and each crate's README describes its files.
+signed answers the node gives and the checks a client runs on them. Node configuration lives in
+[`config`](config), operator assets such as the Grafana dashboard in [`ops`](ops), the confidential
+VM image is built from [`image`](image), and each crate's README describes its files.
 [`contracts`](contracts) is a Foundry project holding the custody vault, and
 [`scripts/dev-vault-deposits.sh`](scripts/dev-vault-deposits.sh) runs a node against it on a local
 Anvil chain through three local RPC proxies. `RPC_QUORUM_SCENARIO=1` adds fabricated-deposit,

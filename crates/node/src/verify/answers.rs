@@ -23,6 +23,14 @@ pub struct Expected {
     pub challenge: [u8; 32],
 }
 
+/// The request a saved response answers, as the client sent it.
+pub struct SentRequest<'a> {
+    pub method: &'a str,
+    pub path_and_query: &'a str,
+    /// The request body; empty when it had none.
+    pub body: &'a [u8],
+}
+
 /// What a verified response's signature vouches for besides its body.
 #[derive(Debug, PartialEq, Eq)]
 pub struct VerifiedResponse {
@@ -42,14 +50,6 @@ impl Expected {
 /// - not exactly 64 hex characters
 pub fn parse_challenge_arg(text: &str) -> Result<[u8; 32], String> {
     engine_wire::parse_challenge(text).ok_or_else(|| "a challenge is 64 hex characters, without 0x".to_owned())
-}
-
-/// The request a saved response answers, as the client sent it.
-pub struct SentRequest<'a> {
-    pub method: &'a str,
-    pub path_and_query: &'a str,
-    /// The request body; empty when it had none.
-    pub body: &'a [u8],
 }
 
 /// Verifies the response whose status line and headers are in `headers` and whose body is in

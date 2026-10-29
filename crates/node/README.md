@@ -46,8 +46,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - Signed answers: every `/v1` response a client relies on carries the attested enclave key's
   signature over the request and its body, the client's challenge, the node's time and log head,
   and the status and body; a `signed=1` stream connection gets each message in a numbered frame
-  chained to the one before it, and a signed heartbeat at least every `api.heartbeat_interval`; `engine verify-response` and
-  `engine verify-frames` check them with the shared `engine-wire` definitions
+  chained to the one before it, and a signed heartbeat at least every `api.heartbeat_interval`;
+  `engine verify-response` and `engine verify-frames` check them with the shared `engine-wire`
+  definitions
 - Orders, cancels, and withdrawals signed by the account (EIP-712), checked before they are
   sequenced; before V24, `auth = "none"` trusts the account field with mock TEE and custody; V24
   client actions and eligibility declarations require signatures in every mode
@@ -958,23 +959,25 @@ body fails. A response a layer outside the signer produces is unsigned: a listed
 preflight, which has no body and which the browser rather than the page reads; a stream upgrade
 refused for its origin; a 429 from the rate limiter; and a 408 or 413 from the body read. A client
 never shows an unsigned response on a signed route as data. A listed origin may read the four
-`X-Engine-*` headers (`Access-Control-Expose-Headers`). The time is the host's clock, which the sequencer checks its stamps against
-trusted time but the API does not, so freshness comes from the challenge. Signatures prove who
-answered, not that the answer arrived: a man in the middle can still delay or drop it.
+`X-Engine-*` headers (`Access-Control-Expose-Headers`). The time is the host's clock, which the
+sequencer checks its stamps against trusted time but the API does not, so freshness comes from the
+challenge. Signatures prove who answered, not that the answer arrived: a man in the middle can still
+delay or drop it.
 
 `GET /v1/stream?signed=1&challenge=<64 hex>` (both required together) sends each message, and a
 heartbeat (`{"type":"heartbeat","head":"<seq>:<index>"}`, the last entry flushed, or `null` before
-the first) at once and then every `api.heartbeat_interval`, as `{"v":1,"n":<u64>,"time":<ms>,"msg":"<the
-message as a JSON string>","sig":"0x…"}`. `n` counts from 0 on each connection, and the signature
+the first) at once and then every `api.heartbeat_interval`, as
+`{"v":1,"n":<u64>,"time":<ms>,"msg":"<the message as a JSON string>","sig":"0x…"}`. `n` counts from 0 on each connection, and the signature
 covers `keccak256("engine.frame.v1" ‖ chain_id ‖ vault ‖ challenge ‖ sha256("GET" ‖ 0x00 ‖ path and
 query of the request that opened the connection) ‖ the previous frame's digest (32 zero bytes for
 frame 0) ‖ n (u64 BE) ‖ time (u64 BE) ‖ sha256(msg))`. The chain and the opening request mean a
 frame fits only its own connection and place: not one opened from another start, and not a second
 connection opened with the same challenge. A client closes the connection on a frame that fails,
 and treats the feed as stale when no heartbeat has come for about two intervals; the interval is
-`api.heartbeat_interval` in the config the attestation binds. A heartbeat's `head` past the last
-offset the client has received means messages are being held back. Without `signed=1` the stream
-is unchanged. `crates/wire` holds these digests, the client checks, and the known-answer vectors a
+`api.heartbeat_interval` in the config the attestation binds. A heartbeat's `head` is the last entry
+the node has written, which a connection still catching up, or the live tail just behind it, has not
+received yet; it says how far the log has gone, not what this connection has missed. Without
+`signed=1` the stream is unchanged. `crates/wire` holds these digests, the client checks, and the known-answer vectors a
 browser verifier replays.
 
 `/v1/stream` is live from now by default. `?from=<seq>` starts at the first message of `seq`

@@ -80,11 +80,12 @@ key, over the request or connection it answers and a challenge the client chose,
 sends a fresh challenge can tell a forged, replayed, or substituted answer from the node's own, and
 a stream frame dropped, repeated, or taken from another connection from one that fits. The
 signatures do not stop anyone between the client and the node from delaying or dropping traffic:
-the stream's signed heartbeats let a client detect that, not prevent it. A response to a request
-sent without a challenge can be replayed to another such request, a browser's preflight and a
-response the origin check, the rate limiter, or the body read refuses are unsigned, the attestation, the archive, and health are unsigned because they prove themselves or
-carry nothing to rely on, and the time an answer carries is the host's clock; a report that rests
-only on one of these is not a new finding.
+the stream's signed heartbeats let a client detect that, not prevent it. Four limits are by design,
+and a report that rests only on one of them is not a new finding. A response to a request sent
+without a challenge can be replayed to another such request. A browser's preflight, and a response
+the origin check, the rate limiter, or the body read refuses, are unsigned. The attestation, the
+archive, and health are unsigned, because they prove themselves or carry nothing to rely on. The
+time an answer carries is the host's clock.
 
 The node's development settings, which are the mock enclave, mock custody, simulated prices, and
 historical unsigned requests, exist for local testing and make no security claims of their own.
