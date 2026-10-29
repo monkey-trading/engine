@@ -17,16 +17,22 @@ use tokio::time::timeout;
 
 use crate::clock::now_ms;
 use crate::config::{Genesis, Venue, VenueConnection, VenueSymbol};
-use crate::feeds::tests::fake::{WAIT, accept, bitstamp_book, fast, kraken_book, listen, next_alert, stream};
+use crate::feeds::tests::fake::{accept, bitstamp_book, fast, kraken_book, listen, next_alert, stream};
 use crate::feeds::tests::rwa_support::{around_the_clock, commands, events_of, listing, priced, wait_for};
 use crate::feeds::tests::scenario::Node;
 use crate::feeds::venue::{self, tls_config};
-use crate::test_support::{Alert, capture_alerts, dev_config};
+use crate::test_support::{Alert, LOADED_WAIT, capture_alerts, dev_config};
 
 const US500: MarketId = 20;
 const AAPL: MarketId = 40;
 /// Short enough that a symbol counted as silent while its market is closed would alert in the test.
 const TIMEOUT: Duration = Duration::from_millis(400);
+/// How long a wait for the feeds or the sequencer lasts. A wait ends the moment its condition holds,
+/// so the ceiling only bounds a hang, and a loaded machine is not mistaken for one. Unlike the
+/// feeds' own timeout, `TIMEOUT`, it is no part of what the tests check.
+const WAIT: Duration = LOADED_WAIT;
+/// The commands after the roll that must quote June and never December.
+const RUN: usize = 200;
 /// Far enough ahead that setup ends well before it, however long setup takes.
 const LATER_MS: Millis = 600_000;
 
@@ -122,7 +128,9 @@ async fn contracts_the_market_does_not_take_are_held_back_without_an_alert() {
     assert_no_feed_alert(&mut alerts);
 
     // March rolls in half a second from here. December, rolled off, is held back once the feeds
-    // learn of the roll, and June, now next, is sequenced.
+    // learn of the roll, and June, now next, is sequenced. The feeds learn of it when their next
+    // confirmation is answered, so the check waits for a run of commands after the roll that
+    // quotes June and never December, however many commands the confirmation takes to arrive.
     node.relist(futures(now_ms() + 500)).await;
     let rolled = || {
         commands(&applied)
@@ -130,13 +138,12 @@ async fn contracts_the_market_does_not_take_are_held_back_without_an_alert() {
             .position(|(_, _, events)| events.iter().any(|e| matches!(e, Event::MarketRolled { .. })))
     };
     let at = wait_for(WAIT, rolled).await;
-    // The 200 commands after the 400 that follow the roll, by when the feeds have learnt of it.
-    let tail = wait_for(WAIT, || {
+    wait_for(WAIT, || {
         let applied = commands(&applied);
-        (applied.len() > at + 600).then(|| contracts(&applied[at + 400..]))
+        let run = contracts(&applied[applied.len().checked_sub(RUN).filter(|from| *from > at)?..]);
+        (!run.contains(&"ESZ6".into()) && run.contains(&"ESM7".into())).then_some(())
     })
     .await;
-    assert!(!tail.contains(&"ESZ6".into()) && tail.contains(&"ESM7".into()), "{tail:?}");
     assert!(events_of(&applied).iter().all(|e| !matches!(e, Event::PricesRejected { .. })));
     assert_no_feed_alert(&mut alerts);
 }
