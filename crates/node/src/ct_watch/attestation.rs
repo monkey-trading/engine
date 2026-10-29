@@ -156,7 +156,12 @@ impl AttestationSource {
         if attestation.provider == "mock" && self.allow_mock {
             return check_mock(attestation);
         }
-        let options = Options { processor: &self.processor, kds_base: &self.kds, root_pem: self.root_pem.as_deref() };
+        let options = Options {
+            processor: &self.processor,
+            kds_base: &self.kds,
+            root_pem: self.root_pem.as_deref(),
+            collateral: None,
+        };
         Ok(verify_attestation(attestation, &self.release, &options).await?.tls_public_key_sha256)
     }
 }
