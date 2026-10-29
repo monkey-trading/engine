@@ -6,6 +6,7 @@
 //! vendor's extension OIDs for its chip id and TCB.
 
 mod fixtures;
+mod relay;
 mod replay_dispatch;
 mod revocation;
 mod stub;
@@ -54,7 +55,7 @@ async fn a_chain_not_reaching_a_root_never_verifies() {
     let stub = kds_stub(&chain).await;
 
     // No extra root: only the compiled-in vendor roots pin, and the test chain reaches none of them.
-    let options = Options { processor: PROCESSOR, kds_base: &stub.base, root_pem: None };
+    let options = Options { processor: PROCESSOR, kds_base: &stub.base, root_pem: None, collateral: None };
     assert!(verify_attestation(&attestation, &release(), &options).await.is_err());
 }
 

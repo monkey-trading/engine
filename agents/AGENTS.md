@@ -62,7 +62,10 @@ an index: load only the rule whose hint matches the current action.
   (`verify/`: `engine verify-attestation` checks an SEV-SNP quote's certificate chain against vendor
   roots pinned in the binary, and its launch measurement, guest policy, reported TCB, and
   configuration against a release manifest; `engine replay --attestation` requires every checkpoint
-  signer to have passed it; a mock quote never verifies), the trusted time check against
+  signer to have passed it; a mock quote never verifies; `verify/relay.rs` and `verify/refresh.rs`
+  fetch the node's own quote's vendor certificate chain and revocation list in the background,
+  check and bound them, and serve them at `/v1/attestation/collateral` for a verifier that cannot
+  call the vendor, which pins the roots itself), the trusted time check against
   Roughtime servers, the custody adapter (mock, or EVM vault deposits over alloy, mirroring the
   staking contract's finalised events once `InitStaking` has applied, with V27 scan progress
   authenticated in engine state rather than trusted from the host cursor), checkpoint posting
@@ -162,7 +165,8 @@ an index: load only the rule whose hint matches the current action.
   pre-log crash, unpaid redelivery, and FIFO liquidity scenario; `dev-attestation-verifier.sh`,
   the attestation verifier dev scenario against a loopback key-distribution stand-in, with no
   hardware or vendor access, also replaying a hand-built signed-withdrawal log through
-  `engine replay --attestation`; `dev-access-enforcement.sh` checks signed eligibility, API refusals,
+  `engine replay --attestation`, and verifying from the collateral the node's route relays after
+  the stand-in stops; `dev-access-enforcement.sh` checks signed eligibility, API refusals,
   direct vault payer sanctions, automatic screening recovery and held collateral across restart,
   using `dev-access-fixture.sh` and `dev-access-cases.sh` for the explicit synthetic source and
   assertions; and `build-image.sh` and `check-image.sh`, which build the enclave image from a
@@ -263,7 +267,9 @@ Run from the repo root:
 - Verify an enclave's attestation: `cargo run -p engine-node -- verify-attestation
   --attestation <attestation.json> --release <release.toml> --processor <name>`; the quote's
   certificate chain must reach a vendor root pinned in the binary, and the measurement, policy,
-  reported TCB, and configuration must match the release; a mock quote never verifies
+  reported TCB, and configuration must match the release; a mock quote never verifies;
+  `--collateral <file or URL>` takes the chain and revocation list from a node's
+  `/v1/attestation/collateral` instead of the vendor
 - Contracts, from `contracts/`: `forge soldeer install` (once, fetches the pinned dependencies),
   then `forge fmt --check`, `forge build`, and `forge test`
 - Alert outbox kill/restart dev scenario: `./scripts/dev-alert-outbox.sh` (needs `python3`,
@@ -282,7 +288,9 @@ Run from the repo root:
   against a release manifest and names the release, while a mock quote, an unlisted configuration,
   an altered measurement, and an unattested checkpoint signer fail; a hand-built log with signed
   withdrawals also replays through `engine replay --attestation` without `--signer`, and a
-  mismatched `--signer` fails; needs only Cargo)
+  mismatched `--signer` fails; the node's collateral route relays the stand-in's chain, and with
+  the stand-in stopped `verify-attestation --collateral` still verifies while a VCEK for another
+  chip and a stale revocation list fail; needs only Cargo)
 - Signed API answers dev scenario: `./scripts/dev-signed-api.sh` (needs `curl`, `jq`, and `python3`,
   which reads the WebSocket stream; a dev node on a quiet log with one-second heartbeats)
 - Verify a signed response or stream connection: `cargo run -p engine-node -- verify-response

@@ -287,6 +287,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/tests.rs` — API tests, including the dev scenarios of the resumable stream and archive,
   and of account history, and `Retry-After`
 - `src/api/tests/catalog_archive.rs` — archive responses over the lazy catalog
+- `src/api/tests/collateral.rs` — the attestation collateral route's 404, 503, and served body
 - `src/history/mod.rs` — the history index: which events name an account, the startup check
   against the log and the rebuild when it fails, and the supervised task that follows the log into
   the index
@@ -321,6 +322,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   verification
 - `src/verify/chain.rs` — the VCEK chain up to the pinned vendor roots and the key-distribution
   service client that issues it
+- `src/verify/relay.rs` — the vendor collateral a verifier needs (VCEK, intermediate, root,
+  revocation list): fetching it, bounding and checking it, and the JSON the node serves
+- `src/verify/refresh.rs` — the node's boot fetch and periodic refresh of that collateral, and the
+  `collateral_stale` alert
 - `src/verify/release.rs` — the release manifest of launch digest, policy, minimum TCB, and
   configuration hashes
 - `src/verify/roots/` — the vendor root certificates compiled into the verifier
@@ -333,6 +338,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   through `engine replay --attestation` with and without a `--signer` pin
 - `src/verify/tests/fixtures.rs` — the stand-in vendor chain, forged reports, and the release
   manifest
+- `src/verify/tests/relay.rs` — the relay: what the node refuses to serve, the bounded document,
+  and a verifier checking relayed collateral with no vendor call
 - `src/verify/tests/revocation.rs` — the root-issued revocation list's serial matching: enforced
   against the intermediate, never the VCEK
 - `src/verify/tests/stub.rs` — the key-distribution service stand-ins
@@ -354,6 +361,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/limits.rs` — request rate limits, connection caps, the stream subscriber cap, and the allowed browser origins
 - `src/config/mod.rs` — the node config schema, loading, and the config file's hash
 - `src/config/benchmarks.rs` — publisher endpoints, cadence, timeout, and catalogue coverage
+- `src/config/collateral.rs` — the `[tee]` keys of the attestation collateral relay and their bounds
 - `src/config/checkpoints.rs` — checkpoint relayer config and validation
 - `src/config/feeds.rs` — the `[feeds]` section: the mock feed, the venues and vendors with their
   redacted API keys, and the checks on their endpoints, credentials, and symbols
@@ -904,7 +912,8 @@ approval limited to finalised headroom, approval after finality, and one reorg d
 The EVM HTTP withdrawal route remains disabled until #23; this scenario proves approval eligibility
 at the sequencer/core boundary and does not perform a physical payout or HTTP cash-out.
 
-Endpoints: `GET /v1/health`, `GET /v1/attestation`, `GET /v1/markets`, `GET /v1/house`,
+Endpoints: `GET /v1/health`, `GET /v1/attestation`, `GET /v1/attestation/collateral`,
+`GET /v1/markets`, `GET /v1/house`,
 `GET /v1/accounts/{address}`, `GET /v1/accounts/{address}/nonce`,
 `GET /v1/accounts/{address}/history`, `GET /v1/accounts/{address}/proof`,
 `GET /v1/accounts/{address}/emissions`, `POST /v1/orders`, `POST /v1/orders/cancel`,
@@ -980,6 +989,23 @@ the node has written, which a connection still catching up, or the live tail jus
 received yet; it says how far the log has gone, not what this connection has missed. Without
 `signed=1` the stream is unchanged. `crates/wire` holds these digests, the client checks, and the known-answer vectors a
 browser verifier replays.
+
+`GET /v1/attestation/collateral` returns `vcek`, `intermediate`, `root`, and `crl` as `0x` hex DER,
+and `fetched_at` in Unix milliseconds by the host's clock, for a client that cannot call the
+vendor's key-distribution service. It answers 404 for a quote with no collateral (a mock quote), 503
+until the first fetch succeeds, and carries no per-account data. It is not signed and needs no
+signature: a verifier checks the chain to a root pinned in its own binary, the VCEK against the
+quote's chip id and reported TCB, the list against that root, and the report's signature against
+the VCEK, as `engine verify-attestation` does. The node fetches it from `tee.kds_base` for
+`tee.processor` at boot and every `tee.collateral_refresh` (1 minute to 24 hours, default 12 hours),
+drops any fetch that fails its own checks, bounds every answer, and keeps serving the last good
+copy, refreshing sooner when the list nears its `nextUpdate`; `image/README.md` lists each bound.
+The Warning `collateral_stale` fires when a refresh fails with the served list within a day of its
+`nextUpdate`, or when one fails after the node has gone a refresh interval (at most 30 minutes)
+without any collateral.
+`engine verify-attestation --collateral <file or URL>` verifies from the served document instead of
+calling the vendor (save a self-signed node's response with `curl -k`, or pass the URL of a node
+with a CA certificate).
 
 `/v1/stream` is live from now by default. `?from=<seq>` starts at the first message of `seq`
 (`from=0` is the whole log), and `?after=<seq>:<index>` resumes after the `offset` of the last

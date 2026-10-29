@@ -28,6 +28,7 @@ use serde::{Deserialize, Deserializer};
 use sha2::{Digest, Sha256};
 
 mod benchmarks;
+mod collateral;
 pub use benchmarks::{BenchmarkSection, BenchmarkSource, Publisher};
 mod access;
 pub use access::AccessSection;
@@ -187,6 +188,15 @@ pub struct TeeSection {
     /// Uses the public development signer only with simulated attestation.
     #[serde(default)]
     pub use_published_mock_key: bool,
+    /// The vendor's name for the CPU generation, which keys its certificate chain (for example
+    /// Milan or Genoa). Required with an SEV-SNP quote; the node relays that quote's collateral.
+    pub processor: Option<String>,
+    /// The vendor's key-distribution service the node fetches collateral from.
+    #[serde(default = "collateral::default_kds_base")]
+    pub kds_base: String,
+    /// How often the node refetches the collateral.
+    #[serde(default = "collateral::default_refresh", with = "humantime_serde")]
+    pub collateral_refresh: Duration,
 }
 
 #[derive(Debug, Deserialize)]

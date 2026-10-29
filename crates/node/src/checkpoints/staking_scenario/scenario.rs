@@ -258,6 +258,7 @@ impl Scenario {
             history: Reader::new(self.dir.join(INDEX_FILE), watch::channel(true).1),
             emission_budget: Some(TokenUnits(DEV_PERIOD_BUDGET)),
             payouts_enabled: true,
+            collateral: None,
             listing: Default::default(),
             signing: crate::test_support::signing(),
         };

@@ -12,8 +12,8 @@ use engine_node::admin::{self, AdminArgs, HexKey, KeyEnv};
 use engine_node::log::CheckpointDomain;
 use engine_node::{
     ExpectedSigner, KDS_BASE_URL, NodeConfig, SentRequest, VerifiedAttestation, VerifyOptions, ensure_signers_verified,
-    init_logging, init_telemetry, parse_challenge_arg, replay_path_with_custody, replay_path_with_trust, run_dedicated,
-    verify_attestation_files, verify_frames_file, verify_response_files,
+    init_logging, init_telemetry, load_relayed_collateral, parse_challenge_arg, replay_path_with_custody,
+    replay_path_with_trust, run_dedicated, verify_attestation_files, verify_frames_file, verify_response_files,
 };
 
 #[derive(Subcommand)]
@@ -80,6 +80,11 @@ enum Cmd {
         /// vendor roots. Test and private chains verify against this; release chains do not need it.
         #[arg(long)]
         root: Option<PathBuf>,
+        /// Take the vendor collateral from a node instead of the key-distribution service: a file
+        /// holding what the node's `/v1/attestation/collateral` served, or that route's URL. It is
+        /// verified against the pinned roots like fetched collateral, so the node adds no trust.
+        #[arg(long)]
+        collateral: Option<String>,
     },
     /// Verify a response a node served, saved with `curl -D <headers> -o <body>`: its
     /// `X-Engine-Signature` over the request and its body, the challenge sent, the node's time and
@@ -184,7 +189,7 @@ fn main() -> anyhow::Result<()> {
             let verified = attestation
                 .map(|attestation| {
                     let release = release.expect("clap requires --release with --attestation");
-                    verify(&attestation, &release, &processor, &kds, root.as_deref())
+                    verify(&attestation, &release, &processor, &kds, root.as_deref(), None)
                 })
                 .transpose()?;
             let mut replayed = if let Some(config) = custody_config {
@@ -234,9 +239,10 @@ fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Cmd::VerifyAttestation { attestation, release, processor, kds, root } => {
+        Cmd::VerifyAttestation { attestation, release, processor, kds, root, collateral } => {
             init_logging("info")?;
-            let verified = verify(&attestation, &release, &Some(processor), &kds, root.as_deref())?;
+            let verified =
+                verify(&attestation, &release, &Some(processor), &kds, root.as_deref(), collateral.as_deref())?;
             println!(
                 "verified: release {}, enclave {}, config {}",
                 verified.release_name, verified.enclave_address, verified.config_name
@@ -284,15 +290,23 @@ fn verify(
     processor: &Option<String>,
     kds: &str,
     root: Option<&std::path::Path>,
+    collateral: Option<&str>,
 ) -> anyhow::Result<VerifiedAttestation> {
     let processor = processor.as_deref().context("--processor is required with --attestation")?;
     let root_pem = root.map(std::fs::read_to_string).transpose()?;
-    let options = VerifyOptions { processor, kds_base: kds, root_pem: root_pem.as_deref() };
+    let options = VerifyOptions { processor, kds_base: kds, root_pem: root_pem.as_deref(), collateral: None };
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("building the subcommand runtime")
-        .block_on(verify_attestation_files(attestation, release, &options))
+        .block_on(async {
+            let relayed = match collateral {
+                Some(source) => Some(load_relayed_collateral(source, &options).await?),
+                None => None,
+            };
+            let options = VerifyOptions { collateral: relayed.as_ref(), ..options };
+            verify_attestation_files(attestation, release, &options).await
+        })
 }
 
 #[cfg(test)]

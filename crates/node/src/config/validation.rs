@@ -66,6 +66,7 @@ impl NodeConfig {
         if let Some(benchmarks) = &self.benchmarks {
             benchmarks.validate(self)?;
         }
+        self.tee.validate()?;
         let filter = EnvFilter::try_new(&self.logging.level).context("logging.level")?;
         // A word that is not a level, such as "warning", parses as a target and hides every alert.
         ensure!(
