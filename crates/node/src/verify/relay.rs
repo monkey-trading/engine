@@ -6,18 +6,19 @@
 //! the chain to a root pinned in its own binary, the VCEK against the quote's chip id and
 //! reported TCB, the revocation list against that root, and the quote's signature against the
 //! VCEK (see `verify_attestation`). A node that served other bytes could make a verifier refuse,
-//! but never accept a chain the vendor did not issue. It could withhold a newer revocation list:
-//! a served list stays valid until its `nextUpdate`, so revocation reaches a verifier as fast as
-//! the node's fetches do. The node treats what it fetches as untrusted input, and checks it the
-//! same way short of the root pin: a chain that does not verify for the node's own quote is never
-//! served.
+//! but never accept a chain the vendor did not issue. A host that blocks the node's fetches can
+//! delay a newer revocation list: a served list stays valid until its `nextUpdate`. The node
+//! treats what it fetches as untrusted input, and checks it the same way short of the root pin: a
+//! chain that does not verify for the node's own quote is never served, with one exception. An
+//! authentic list that revokes the intermediate is served, because a verifier refusing it is the
+//! right outcome and the node must not hide it.
 
 use anyhow::{Context, bail, ensure};
 use engine_core::types::Millis;
 use serde::{Deserialize, Serialize};
 use x509_parser::prelude::FromDer as _;
 
-use super::chain::{Collateral, QuoteChain, check_revocation};
+use super::chain::{Collateral, IntermediateRevoked, QuoteChain, check_revocation};
 use super::report::SnpReport;
 
 /// The most bytes one relayed certificate or revocation list may carry. Vendor certificates are
@@ -63,14 +64,21 @@ impl RelayedCollateral {
 
     /// Requires the collateral to link, bind to `report`, and sign it, as a verifier does except
     /// for the root pin: the chain is in date and linked, the VCEK certifies the report's chip and
-    /// TCB, the list is the root's, current, and does not revoke the intermediate, and the VCEK
-    /// signed the report. The dates are read from the host's clock, so a skewed clock can only make
+    /// TCB, the VCEK signed the report, and the list is the root's, current, and does not revoke
+    /// the intermediate. The dates are read from the host's clock, so a skewed clock can only make
     /// the node refuse collateral, never accept something a verifier would refuse.
     /// Error cases:
     /// - any of the checks above fails
+    /// - the list revokes the intermediate and every other check passed (`is_revoked` tells it
+    ///   apart): the collateral is authentic, and it is what a verifier must be shown
     pub fn check(&self, report: &SnpReport<'_>) -> anyhow::Result<()> {
         let chain = QuoteChain::link(self.vcek.clone(), self.intermediate.clone(), self.root.clone())?;
         check_collateral(&chain, &self.crl, report)
+    }
+
+    /// Whether `err`, from `check`, is the intermediate's revocation by an authentic list.
+    pub fn is_revoked(err: &anyhow::Error) -> bool {
+        err.downcast_ref::<IntermediateRevoked>().is_some()
     }
 
     /// The revocation list's `nextUpdate` in Unix seconds, if it names one.
@@ -135,10 +143,12 @@ impl RelayedCollateral {
 /// Checks `crl` against `chain`'s root and intermediate, the VCEK against `report`'s chip and
 /// reported TCB, and `report`'s signature against the VCEK.
 /// Error cases:
-/// - the list is not current, not the root's, or revokes the intermediate, the VCEK does not
-///   certify the report's chip and TCB, or the report's signature does not verify
+/// - the VCEK does not certify the report's chip and TCB, or the report's signature does not verify
+/// - the list is not current or not the root's
+/// - the list revokes the intermediate (`IntermediateRevoked`), reported last so that it means
+///   everything else checked
 pub(super) fn check_collateral(chain: &QuoteChain, crl: &[u8], report: &SnpReport<'_>) -> anyhow::Result<()> {
     chain.bind_vcek(report)?;
-    check_revocation(crl, chain)?;
-    report.verify_signature(&chain.vcek_public_key()?)
+    report.verify_signature(&chain.vcek_public_key()?)?;
+    check_revocation(crl, chain)
 }

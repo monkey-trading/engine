@@ -132,10 +132,12 @@ one pinned in the verifier's own binary, each certificate to be signed by its pa
 the VCEK's signed extensions to name the quote's chip id and reported TCB, the revocation list to be
 the root's, current, and not to list the intermediate, and the report's signature to verify against
 the VCEK. A node, or a host between the node and the vendor, that serves other bytes can make a
-verifier refuse; it cannot make one accept a chain the vendor did not issue. It can withhold a newer
-revocation list: a served list stays valid until its `nextUpdate`, so a revocation reaches a verifier
-only as fast as the node's refreshes do, and a host that blocks the node's fetches delays it until
-the served list expires.
+verifier refuse; it cannot make one accept a chain the vendor did not issue. It can delay a newer
+revocation list: a served list stays valid until its `nextUpdate`, so while the node's fetches are
+blocked, or its clock reads a time that makes it refuse the fresh list, a verifier keeps accepting
+the chain until the served list expires. Once a fetch succeeds, a revocation of the intermediate
+reaches verifiers at once: the node serves a list that revokes its own intermediate, so verifiers
+refuse the chain, and raises the Critical `collateral_revoked`.
 
 The node treats what it fetches from the vendor as untrusted input. The service URL and processor
 name come from `tee.kds_base` and `tee.processor`, so the attestation binds them through the config
@@ -144,16 +146,21 @@ pending, then `tee.collateral_refresh` (1 minute to 24 hours, default 12 hours) 
 fetch is bounded: 15 seconds and three attempts per request, no redirect or proxy, TLS to the
 compiled-in public roots, at most 1 MiB per answer, then at most 16 KiB per certificate and 256 KiB
 for the list, and five minutes for the whole refresh. A fetch whose result is malformed, does not
-link, does not name this quote's chip and TCB, or lists a revoked intermediate is dropped, and the
-node keeps serving the last good copy; it does not pin the root, which is the verifier's job. The
-dates in those checks come from the host's clock, so a skewed clock can only make the node refuse
-candidates. A blocked or slowed network, or a host that tampers with the vendor's answers, therefore
-costs a stale copy and a delayed revocation, never an accepted forgery. After a good fetch the node
+link, does not name this quote's chip and TCB, or carries a list that is expired or that the root did
+not sign is dropped, and the node keeps serving the last good copy; it does not pin the root, which
+is the verifier's job. The one exception is a list the root signed that names the intermediate: the
+node serves it, whatever its dates, because hiding vendor data that makes a verifier refuse this
+node is the one failure the relay must not have. The dates in the other checks come from the host's
+clock, so a skewed clock can make the node refuse a fresh candidate and keep the last copy, which
+delays a revocation but never makes a verifier accept anything, since a verifier re-checks every
+date on its own clock. A blocked or slowed network, or a host that tampers with the vendor's
+answers, therefore costs a stale copy and a delayed revocation, never an accepted forgery. After a good fetch the node
 waits `tee.collateral_refresh`, or half the time left to the list's `nextUpdate` (at least five
 minutes) when that is sooner, so a replacement is fetched before the served list expires. Once the
 served list is within a day of its `nextUpdate` and a refresh fails, the node raises the Warning
 `collateral_stale`, and the same when a fetch fails after the node has gone a refresh interval (at
-most 30 minutes) without any collateral. The node's fetches are its only calls to the vendor, so a
+most 30 minutes) without any collateral. The Critical `collateral_revoked` fires when a refresh
+fetches an authentic list that revokes the intermediate and resolves if a later list does not. The node's fetches are its only calls to the vendor, so a
 deployment must allow outbound HTTPS from the enclave to `tee.kds_base`.
 
 The route is unauthenticated and carries no per-account data. `engine replay

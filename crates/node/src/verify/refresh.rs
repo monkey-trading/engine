@@ -7,10 +7,14 @@
 //!   or proxy, over TLS to the compiled-in public roots (`Collateral`), then each item is capped
 //!   again at what a vendor certificate or list can be (`RelayedCollateral`);
 //! - what is fetched: a candidate replaces the served copy only if it links, binds to this
-//!   node's quote, carries a current list that does not revoke the intermediate, and the VCEK
-//!   signed the quote (`RelayedCollateral::check`); anything else is dropped;
+//!   node's quote, carries a current list, and the VCEK signed the quote
+//!   (`RelayedCollateral::check`); anything else is dropped. The one candidate that fails the
+//!   check and is served anyway is otherwise-valid collateral whose authentic list revokes the
+//!   intermediate: the relay never hides vendor data that makes a verifier refuse this node, so
+//!   verifiers learn of the revocation and the Critical `collateral_revoked` pages the operator;
 //! - the clock those dates are read from: a skewed clock makes the node refuse a candidate and
-//!   keep the last copy, and a verifier re-checks every date on its own clock;
+//!   keep the last copy, which delays a revocation but never makes a verifier accept anything,
+//!   because a verifier re-checks every date on its own clock;
 //! - the refresh cadence: `tee.collateral_refresh` is bounded in config, and one refresh has a
 //!   deadline, so a slow vendor cannot stall the loop or make it hammer the vendor;
 //! - the service URL and processor name: config, which the attestation binds by hash.
@@ -19,8 +23,9 @@
 //! being served until a verifier's own date checks refuse it, and `collateral_stale` pages once the
 //! list is within a day of its `nextUpdate`. It cannot make a verifier accept a chain that is not
 //! the vendor's, because a verifier pins the vendor roots itself (see `relay`). It can delay a
-//! revocation: while the node cannot refresh, a list that predates a new revocation stays valid
-//! until its `nextUpdate`.
+//! revocation: while the node cannot refresh, or reads a skewed clock, a list that predates a new
+//! revocation stays valid until its `nextUpdate`. A revocation the node does fetch reaches
+//! verifiers at the next fetch.
 
 use std::time::Duration;
 
@@ -28,7 +33,7 @@ use anyhow::{Context, Result};
 use axum::body::Bytes;
 use tokio::sync::watch;
 use tokio::time::{Instant, sleep, timeout};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use super::chain::Collateral;
 use super::relay::RelayedCollateral;
@@ -52,6 +57,15 @@ const STALE_WINDOW_SECS: i64 = 24 * 60 * 60;
 
 /// The kernel's configfs-tsm provider name for an SEV-SNP guest report.
 const SNP_PROVIDER: &str = "sev_guest";
+
+/// One refresh's result: the document to serve, the list's `nextUpdate`, and whether its authentic
+/// list revokes the intermediate.
+#[derive(Debug)]
+pub(super) struct Refreshed {
+    pub(super) json: Bytes,
+    pub(super) next_update: Option<i64>,
+    pub(super) revoked: bool,
+}
 
 /// A node's collateral relay: what to fetch, and where the result goes.
 pub struct Relay {
@@ -102,12 +116,24 @@ impl Relay {
         let mut held: Option<Option<i64>> = None;
         loop {
             let wait = match self.refresh_once(&collateral).await {
-                Ok((json, next_update)) => {
-                    info!(next_update, bytes = json.len(), "attestation collateral refreshed");
+                Ok(fetched) => {
+                    info!(
+                        next_update = fetched.next_update,
+                        bytes = fetched.json.len(),
+                        "attestation collateral refreshed"
+                    );
                     info!(alert_resolved = "collateral_stale", "attestation collateral is current");
-                    held = Some(next_update);
-                    self.served.send_replace(Some(json));
-                    next_wait(self.refresh, next_update, unix_now())
+                    if fetched.revoked {
+                        error!(
+                            alert = "collateral_revoked",
+                            "the vendor revoked this node's attestation chain; verifiers now refuse the quote"
+                        );
+                    } else {
+                        info!(alert_resolved = "collateral_revoked", "attestation chain is not revoked");
+                    }
+                    held = Some(fetched.next_update);
+                    self.served.send_replace(Some(fetched.json));
+                    next_wait(self.refresh, fetched.next_update, unix_now())
                 }
                 Err(err) => {
                     warn!("attestation collateral refresh failed: {err:#}");
@@ -126,14 +152,19 @@ impl Relay {
 
     /// One bounded fetch and check of the collateral for this node's quote.
     /// Error cases:
-    /// - the refresh exceeds its deadline, or the fetched collateral fails its checks
-    pub(super) async fn refresh_once(&self, collateral: &Collateral<'_>) -> Result<(Bytes, Option<i64>)> {
+    /// - the refresh exceeds its deadline, or the fetched collateral fails its checks other than an
+    ///   authentic revocation of the intermediate, which is returned with `revoked` set
+    pub(super) async fn refresh_once(&self, collateral: &Collateral<'_>) -> Result<Refreshed> {
         let report = SnpReport::parse(&self.quote)?;
         let fetched = timeout(REFRESH_DEADLINE, RelayedCollateral::fetch(collateral, &report))
             .await
             .context("the refresh exceeded its deadline")??;
-        fetched.check(&report).context("the fetched collateral is not valid for this node's quote")?;
-        Ok((Bytes::from(fetched.to_json()), fetched.crl_next_update()?))
+        let revoked = match fetched.check(&report) {
+            Ok(()) => false,
+            Err(err) if RelayedCollateral::is_revoked(&err) => true,
+            Err(err) => return Err(err.context("the fetched collateral is not valid for this node's quote")),
+        };
+        Ok(Refreshed { json: Bytes::from(fetched.to_json()), next_update: fetched.crl_next_update()?, revoked })
     }
 }
 

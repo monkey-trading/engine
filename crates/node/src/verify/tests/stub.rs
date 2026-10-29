@@ -42,13 +42,24 @@ pub(super) async fn kds_stub(chain: &TestChain) -> KdsStub {
 
 /// The stand-in with a PEM-encoded VCEK or a revocation list that revokes `revoked`.
 pub(super) async fn kds_stub_with(chain: &TestChain, vcek_pem: bool, revoked: &[SerialNumber]) -> KdsStub {
-    serve(kds_app(chain, vcek_pem, revoked, None)).await
+    serve(kds_app(chain, vcek_pem, &crl_cell(chain, revoked, None))).await
 }
 
-/// The stand-in's routes, answering `crl_pem` as the list when given.
-fn kds_app(chain: &TestChain, vcek_pem: bool, revoked: &[SerialNumber], crl_pem: Option<String>) -> Router {
+/// A revocation list the stand-in answers, which a test may replace while the stand-in runs.
+pub(super) type CrlCell = Arc<std::sync::Mutex<String>>;
+
+fn crl_cell(chain: &TestChain, revoked: &[SerialNumber], crl_pem: Option<String>) -> CrlCell {
+    Arc::new(std::sync::Mutex::new(crl_pem.unwrap_or_else(|| super::fixtures::crl_revoking(chain, revoked))))
+}
+
+/// The stand-in answering whatever `crl` holds when asked.
+pub(super) async fn kds_stub_swappable(chain: &TestChain, crl: &CrlCell) -> KdsStub {
+    serve(kds_app(chain, false, crl)).await
+}
+
+/// The stand-in's routes, answering `crl` as the list.
+fn kds_app(chain: &TestChain, vcek_pem: bool, crl: &CrlCell) -> Router {
     let vcek = if vcek_pem { pem(&chain.vcek).into_bytes() } else { chain.vcek.der().to_vec() };
-    let crl = crl_pem.unwrap_or_else(|| super::fixtures::crl_revoking(chain, revoked));
     Router::new()
         .route("/vcek/v1/{processor}/cert_chain", {
             let ark = pem(&chain.ark);
@@ -72,7 +83,8 @@ fn kds_app(chain: &TestChain, vcek_pem: bool, revoked: &[SerialNumber], crl_pem:
                     if processor != PROCESSOR {
                         return (axum::http::StatusCode::NOT_FOUND, String::new());
                     }
-                    (axum::http::StatusCode::OK, crl)
+                    let list = crl.lock().expect("the list is not poisoned").clone();
+                    (axum::http::StatusCode::OK, list)
                 }
             })
         })
@@ -101,7 +113,7 @@ pub(super) async fn kds_stub_switched(
 ) -> KdsStub {
     let attempts = Arc::new(AtomicUsize::new(0));
     let (switch, counted) = (down, attempts.clone());
-    let app = kds_app(chain, false, &[], crl_pem).layer(axum::middleware::from_fn(
+    let app = kds_app(chain, false, &crl_cell(chain, &[], crl_pem)).layer(axum::middleware::from_fn(
         move |request: axum::extract::Request, next: axum::middleware::Next| {
             let (switch, counted) = (switch.clone(), counted.clone());
             async move {
