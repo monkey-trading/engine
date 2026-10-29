@@ -406,7 +406,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   restart
 - `src/tls/tests/proxy.rs` — the PROXY protocol header: the client it names, the trusted ranges, and every refusal
 - `src/tls/tests/stream.rs` — the stream end to end over TLS: the subscriber and message caps
-- `src/limits.rs` — request rate limits, connection caps, the stream subscriber cap, and the allowed browser origins
+- `src/limits/mod.rs` — request rate limits, connection caps, the stream subscriber cap, and the allowed browser origins
+- `src/limits/tests.rs` — the limiters' buckets, caps, and alert throttle
 - `src/config/mod.rs` — the node config schema, loading, and the config file's hash
 - `src/config/benchmarks.rs` — publisher endpoints, cadence, timeout, and catalogue coverage
 - `src/config/collateral.rs` — the `[tee]` keys of the attestation collateral relay and their bounds
