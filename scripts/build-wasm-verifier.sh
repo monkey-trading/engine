@@ -5,9 +5,9 @@
 #
 # The release build uses the pinned Rust toolchain and wasm-bindgen CLI below and maps the build's
 # paths to fixed names, so a commit builds to the same bytes on any x86_64 Linux machine, from any
-# checkout path; CI builds it twice on separate runners, the second from another path, and fails if
-# the two differ. A build on another host is not checked and may differ. It fails if the module and glue together exceed
-# 1.5 MB gzipped. `--dev` builds with the dev profile and the active toolchain instead, for the
+# checkout path, spaces included; CI builds it twice on separate runners, the second from another
+# path with a space in it, and fails if the two differ. A build on another host is not checked and
+# may differ. It fails if the module and glue together exceed 1.5 MB gzipped. `--dev` builds with the dev profile and the active toolchain instead, for the
 # dev scenario only. The out-dir must be new or empty.
 #
 # Needs rustup with the pinned toolchain and its wasm32-unknown-unknown target
@@ -49,7 +49,10 @@ else
   profile=wasm
   built="$target_dir/wasm32-unknown-unknown/wasm/engine_verify_wasm.wasm"
   # Panic messages carry source paths; these names keep the checkout and registry locations out.
-  export RUSTFLAGS="--remap-path-prefix=$root=/engine --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo"
+  # CARGO_ENCODED_RUSTFLAGS separates flags with 0x1f, so a path with a space stays one flag (RUSTFLAGS
+  # splits on whitespace), and it takes precedence over any RUSTFLAGS in the caller's environment.
+  unit_sep=$'\x1f'
+  export CARGO_ENCODED_RUSTFLAGS="--remap-path-prefix=$root=/engine${unit_sep}--remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo"
 fi
 "${cargo[@]}" build --manifest-path "$root/Cargo.toml" -p engine-verify-wasm --locked \
   --target wasm32-unknown-unknown --profile "$profile" --target-dir "$target_dir"

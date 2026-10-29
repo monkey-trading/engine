@@ -450,8 +450,8 @@ jobs:
         run: ./scripts/dev-acme.sh
 
   # Builds the browser verifier's package twice on separate runners with no shared cache and the
-  # pinned toolchain, the second from another checkout path so the build's path remapping is
-  # covered; the first run also checks that package against the CLI on every fixture and vector.
+  # pinned toolchain, the second from another checkout path, with a space in it, so the build's path
+  # remapping is covered; the first run also checks that package against the CLI on every fixture and vector.
   # `wasm-verifier-compare` fails if the two builds differ by a single byte.
   wasm-verifier:
     name: wasm-verifier (${{ matrix.run }})
@@ -465,12 +465,12 @@ jobs:
     timeout-minutes: 60
     defaults:
       run:
-        working-directory: ${{ matrix.run == 'second' && 'elsewhere/engine' || '.' }}
+        working-directory: ${{ matrix.run == 'second' && 'elsewhere/engine copy' || '.' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          path: ${{ matrix.run == 'second' && 'elsewhere/engine' || '' }}
+          path: ${{ matrix.run == 'second' && 'elsewhere/engine copy' || '' }}
       # scripts/build-wasm-verifier.sh pins this toolchain and the wasm-bindgen CLI version.
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
@@ -483,7 +483,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wasm-verifier-${{ matrix.run }}
-          path: ${{ matrix.run == 'second' && 'elsewhere/engine/' || '' }}out/wasm-verifier/
+          path: ${{ matrix.run == 'second' && 'elsewhere/engine copy/' || '' }}out/wasm-verifier/
           retention-days: 14
           if-no-files-found: error
       - name: Run the browser verifier dev scenario on the package
