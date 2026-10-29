@@ -216,7 +216,7 @@ first="$(wait_change leaf_serial "" 60)"
 attested="$(attested_key_sha256)"
 [[ "$attested" =~ ^0x[0-9a-f]{64}$ ]] || fail "no attested TLS key hash: '$attested'"
 [[ "$(leaf_key_sha256)" == "$attested" ]] || fail "the served key $(leaf_key_sha256) is not the attested $attested"
-grep -q 'certificate_pending' "$work/node.log" || fail "certificate_pending was not raised before the first certificate"
+grep -q 'alert="certificate_pending"' "$work/node.log" || fail "certificate_pending was not raised before the first certificate"
 not_after="$(served_leaf | openssl x509 -noout -enddate | cut -d= -f2 | tr -s ' ' \
   | jq -R 'strptime("%b %d %H:%M:%S %Y GMT") | mktime')"
 gauge="$(metric engine_tls_certificate_not_after_seconds)"

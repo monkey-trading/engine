@@ -2,6 +2,7 @@
 //! the bounds on what it takes back.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use hyper::Request;
 use hyper::body::Bytes;
@@ -14,7 +15,7 @@ use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
 use crate::config::AcmeTestCa;
-use crate::tls::acme::http::{AcmeHttp, MAX_RESPONSE_BYTES};
+use crate::tls::acme::http::{AcmeHttp, MAX_RESPONSE_BYTES, REQUEST_TIMEOUT};
 
 #[tokio::test]
 async fn a_body_up_to_the_cap_is_read_and_one_byte_more_is_refused() {
@@ -31,6 +32,22 @@ async fn a_body_up_to_the_cap_is_read_and_one_byte_more_is_refused() {
                 assert!(e.to_string().contains("answered more than"), "{e}");
             }
         }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_request_the_ca_never_finishes_answering_fails_at_the_request_deadline() {
+    // Nothing answered, and a body that stops short of the length its headers promise.
+    let stalled_body = b"HTTP/1.1 200 OK\r\ncontent-length: 10\r\n\r\nx".to_vec();
+    for (case, sent) in [("no answer", Vec::new()), ("a stalled body", stalled_body)] {
+        let (port, root) = stalled(sent).await;
+        let started = tokio::time::Instant::now();
+        let client = trusting(&root);
+        let giving_up = tokio::time::timeout(REQUEST_TIMEOUT * 2, request(&client, port));
+        let err = giving_up.await.unwrap_or_else(|_| panic!("{case}: never gave up")).err().expect(case);
+        assert!(format!("{err:?}").contains("timed out"), "{case}: {err:?}");
+        let waited = started.elapsed();
+        assert!(waited >= REQUEST_TIMEOUT && waited < REQUEST_TIMEOUT + Duration::from_secs(1), "{case}: {waited:?}");
     }
 }
 
@@ -76,6 +93,16 @@ fn ok(len: usize) -> Vec<u8> {
 /// A stand-in on a free loopback port that answers each request with `response`, certified for
 /// 127.0.0.1 by a fresh root, which it returns as PEM.
 async fn stand_in(response: Vec<u8>) -> (u16, String) {
+    serve(response, false).await
+}
+
+/// A stand-in that sends `sent` (possibly nothing) to each request, then holds the connection open
+/// without finishing.
+async fn stalled(sent: Vec<u8>) -> (u16, String) {
+    serve(sent, true).await
+}
+
+async fn serve(response: Vec<u8>, stall: bool) -> (u16, String) {
     let ca_key = KeyPair::generate().unwrap();
     let mut ca = CertificateParams::new(Vec::<String>::new()).unwrap();
     ca.distinguished_name.push(DnType::CommonName, "stand-in CA");
@@ -107,6 +134,10 @@ async fn stand_in(response: Vec<u8>) -> (u16, String) {
                     }
                 }
                 let _ = tls.write_all(&response).await;
+                if stall {
+                    let _ = tls.flush().await;
+                    std::future::pending::<()>().await;
+                }
                 let _ = tls.shutdown().await;
             });
         }
