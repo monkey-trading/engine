@@ -379,7 +379,7 @@ impl Node {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("https://{}", listener.local_addr().unwrap());
         let app = wrap(router(state.clone()));
-        let api = tokio::spawn(serve(listener, tls.config, app, state.limits.clone(), dev_config().api));
+        let api = tokio::spawn(serve(listener, tls.acceptors, app, state.limits.clone(), dev_config().api));
         Self { tx, task, api, url, pin: hex::encode(tls.public_key_sha256), clock }
     }
 

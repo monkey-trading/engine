@@ -206,6 +206,11 @@ are in scope. Earlier protocols keep a host cursor whose advancement can skip de
 The enclave image's kernel takes input from its host that the launch measurement does not cover,
 without yet bounding it: the data disk's filesystem, the ACPI tables, the emulated devices, and the
 network configuration.
+With `[api.tls.acme]`, the node has a public CA certify its attested TLS key for the API's domain,
+so a browser can trust the API without checking the attestation; a browser that does not check it
+also trusts any other certificate a CA issues for the domain, which whoever controls the domain's
+DNS can obtain for a key outside the enclave. The domain's CAA record narrows that to one CA and
+TLS-ALPN-01, and Certificate Transparency monitoring for such certificates (#299) is not yet built.
 Databento's live gateway, one of the sources for futures and US share prices, offers no TLS, so the
 host can alter its quotes in flight; the divergence bound limits how far that moves a market priced
 from it and one TLS source, and beyond that the market has no price. Before a futures roll the host

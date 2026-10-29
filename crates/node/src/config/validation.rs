@@ -56,6 +56,7 @@ impl NodeConfig {
     /// - `operator.public_key` or `custody.vault` does not parse
     /// - genesis lists a market id, a market symbol, or a benchmark name twice
     /// - the engine would reject a genesis command (see `check_genesis`)
+    /// - `[api.tls.acme]` fails validation (see `AcmeSection::validate`)
     pub(super) fn validate(&self) -> anyhow::Result<()> {
         if let Some(access) = &self.access {
             access.validate()?;
@@ -101,6 +102,9 @@ impl NodeConfig {
         // needs them.
         ensure!(self.api.heartbeat_interval >= Duration::from_secs(1), "api.heartbeat_interval must be at least 1s");
         self.api.validate_origins()?;
+        if let Some(tls) = &self.api.tls {
+            tls.acme.validate(self.tee.provider)?;
+        }
         // Unsigned requests let anyone act for any account, so they never run beside a real
         // enclave or real funds.
         if self.node.auth == AuthMode::None

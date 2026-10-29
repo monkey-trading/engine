@@ -123,6 +123,7 @@ pub struct Metrics {
     pub alert_deliveries: Family<DeliveryLabels, Counter>,
     pub alert_attempts_failed: Family<SeverityLabel, Counter>,
     pub alert_pages_pending: Family<SeverityLabel, Gauge>,
+    pub tls_certificate_not_after: FloatGauge,
 }
 
 impl Metrics {
@@ -153,6 +154,7 @@ impl Metrics {
             alert_deliveries: Family::default(),
             alert_attempts_failed: Family::default(),
             alert_pages_pending: Family::default(),
+            tls_certificate_not_after: FloatGauge::default(),
         };
         let r = &mut metrics.registry;
         r.register(
@@ -233,6 +235,11 @@ impl Metrics {
             "alert_pages_pending",
             "Alert pages queued for, or being posted to, their webhook, by severity",
             metrics.alert_pages_pending.clone(),
+        );
+        r.register(
+            "tls_certificate_not_after_seconds",
+            "Expiry, in Unix seconds, of the CA certificate the API serves; 0 while it serves only its self-signed one",
+            metrics.tls_certificate_not_after.clone(),
         );
         let typed = ["order_rejected", "withdrawal_rejected", "deposit_rejected", "staking_rejected"];
         let rejections = typed

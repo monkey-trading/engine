@@ -13,8 +13,9 @@ house, in turn, is issued to the people who trade with it.
 > their FIFO queue also run against Anvil, as do MONKEY emissions and claims; MONKEY's production
 > budget and start are still to be set. FX, index, commodity, and share prices from two market-data
 > vendors each run against local stand-ins for those vendors; live vendor feeds wait on credentials
-> and redistribution licences. MONKEY staking and USDC distribution claims run against Anvil;
-> hardware attestation remains under construction.
+> and redistribution licences. MONKEY staking and USDC distribution claims run against Anvil, and
+> the API's public certificate is issued and renewed against a local ACME test CA; hardware
+> attestation remains under construction.
 > Nothing here holds real funds.
 
 ## How it works
@@ -123,8 +124,10 @@ than a set bound, or once a minute has passed without signed time.
 The enclave also attests to the key it signs with, to the key its API serves TLS with, and to the
 SHA-256 of the config file it runs with. Both keys are generated inside the enclave, so client
 connections end where the host cannot read them. One hash in the attestation's report data commits
-to all three: the hash of a bundle the node serves beside the quote. The local node uses a mock
-attestation, labelled as such. The confidential VM image for AMD SEV-SNP builds reproducibly from
+to all three: the hash of a bundle the node serves beside the quote. A production node also has a
+public certificate authority certify that same TLS key for the API's domain, over ACME from inside
+the enclave, so a browser trusts the API while a client that checks the attestation can still pin
+the key. The local node uses a mock attestation, labelled as such. The confidential VM image for AMD SEV-SNP builds reproducibly from
 [`image`](image), so anyone can rebuild a release and compare its launch measurement; booting it on
 SEV-SNP hardware is being validated in [#108](https://github.com/0xjevons/monkeytrading/issues/108),
 and a verifier for its quotes is being built in

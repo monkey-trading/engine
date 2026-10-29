@@ -1,11 +1,15 @@
 //! The public API's server: TLS terminated inside the enclave, so the host can neither read nor
 //! alter client traffic, under the connection caps and timeouts in `[api]`. The key is generated
 //! in the enclave at boot and never leaves it; a restart makes a new one, and a new attestation.
-//! The certificate is self-signed; what makes it trustworthy is the attestation, whose bundle
-//! carries the SHA-256 of the certificate's DER SubjectPublicKeyInfo in bytes 73..105 (see
-//! `tee::AttestationBundle`). A client that has checked the quote, and that the bundle hashes to its
-//! report data, pins that hash, which is the key pin curl takes as
-//! `--pinnedpubkey sha256//<base64 of bundle bytes 73..105>`.
+//! What makes the key trustworthy is the attestation, whose bundle carries the SHA-256 of its DER
+//! SubjectPublicKeyInfo in bytes 73..105 (see `tee::AttestationBundle`). A client that has checked
+//! the quote, and that the bundle hashes to its report data, pins that hash, which is the key pin
+//! curl takes as `--pinnedpubkey sha256//<base64 of bundle bytes 73..105>`.
+//!
+//! The certificate is self-signed until `[api.tls.acme]` has a CA issue one for the same key
+//! (`acme`), so browsers trust the API's domain too. The CA validates the domain by TLS-ALPN-01
+//! (RFC 8737) on this listener: a handshake offering `acme-tls/1` gets the challenge certificate
+//! while one is being answered, and every other handshake the served certificate with `http/1.1`.
 
 use std::io::{self, ErrorKind};
 use std::pin::Pin;
@@ -23,26 +27,52 @@ use hyper_util::rt::{TokioIo, TokioTimer};
 use rcgen::{CertificateParams, DnType, KeyPair, PublicKeyData};
 use rustls::ServerConfig;
 use rustls::crypto::ring::default_provider;
-use rustls::pki_types::PrivatePkcs8KeyDer;
+use rustls::server::Acceptor;
+use rustls::sign::CertifiedKey;
 use rustls::version::TLS13;
 use sha2::{Digest, Sha256};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::watch;
 use tokio::task::JoinSet;
 use tokio::time::{Sleep, sleep, timeout};
-use tokio_rustls::TlsAcceptor;
+use tokio_rustls::LazyConfigAcceptor;
 use tokio_rustls::server::TlsStream;
 use tower_service::Service;
 use tracing::debug;
 
+pub mod acme;
+mod certificates;
 use crate::config::ApiSection;
 use crate::limits::{ApiLimits, ConnectionCaps, ConnectionSlot, ThrottledAlert};
+pub use crate::tls::certificates::TlsKey;
+use crate::tls::certificates::{Answering, Served, load_key};
 
-/// The API's TLS key and certificate.
+/// The ALPN protocol of a TLS-ALPN-01 validation (RFC 8737).
+const ACME_TLS_ALPN: &[u8] = b"acme-tls/1";
+
+/// The API's TLS key and the certificates served for it.
 pub struct TlsIdentity {
-    pub config: Arc<ServerConfig>,
-    /// SHA-256 of the certificate's DER SubjectPublicKeyInfo: what the attestation commits to.
+    pub acceptors: Acceptors,
+    /// SHA-256 of the key's DER SubjectPublicKeyInfo: what the attestation commits to.
     pub public_key_sha256: [u8; 32],
+    /// The key, and the certificates it serves: what `acme` needs to have a CA certify it.
+    pub key: TlsKey,
+}
+
+/// The server configs a connection's ClientHello picks between: the API's, and the one that
+/// answers a TLS-ALPN-01 validation.
+#[derive(Clone)]
+pub struct Acceptors {
+    api: Arc<ServerConfig>,
+    validation: Arc<ServerConfig>,
+}
+
+/// A connection after its handshake.
+enum Accepted {
+    Api(Box<TlsStream<TcpStream>>),
+    /// A TLS-ALPN-01 validation, answered and closed.
+    Validation,
 }
 
 /// A client connection after its TLS handshake. It holds its place under the connection caps
@@ -116,27 +146,42 @@ impl TlsConn {
 }
 
 impl TlsIdentity {
-    /// A fresh ECDSA P-256 key from the enclave's RNG, a self-signed certificate for it, and a
-    /// server config that speaks TLS 1.3 and HTTP/1.1 only.
+    /// A fresh ECDSA P-256 key from the enclave's RNG and a self-signed certificate for it, served
+    /// over TLS 1.3 and HTTP/1.1 only until `key` installs a CA certificate in its place. A
+    /// validator may speak TLS 1.2 as well.
     ///
-    /// TODO: serve a CA-issued certificate for the API's domain, its key still generated here.
+    /// TODO: survive restarts by sealing the key to the measurement (#28), so a restart reuses its
+    /// certificate instead of ordering a new one.
     /// Error cases:
-    /// - the key, the certificate, or the server config cannot be built
+    /// - the key, the certificate, or a server config cannot be built
     pub fn generate() -> anyhow::Result<Self> {
-        let key = KeyPair::generate().context("generating the TLS key")?;
+        let provider = Arc::new(default_provider());
+        let key_pair = KeyPair::generate().context("generating the TLS key")?;
         let mut params = CertificateParams::new(Vec::<String>::new()).context("certificate parameters")?;
         params.distinguished_name.push(DnType::CommonName, "engine enclave");
-        let cert = params.self_signed(&key).context("signing the TLS certificate")?;
-        let public_key_sha256 = Sha256::digest(key.subject_public_key_info()).into();
+        let cert = params.self_signed(&key_pair).context("signing the TLS certificate")?;
+        let public_key_sha256 = Sha256::digest(key_pair.subject_public_key_info()).into();
+        let signer = load_key(&provider, &key_pair)?;
 
-        let mut config = ServerConfig::builder_with_provider(Arc::new(default_provider()))
+        let (served, served_rx) = watch::channel(Arc::new(CertifiedKey::new(vec![cert.der().clone()], signer.clone())));
+        let (challenge, challenge_rx) = watch::channel(None);
+        let mut api = ServerConfig::builder_with_provider(provider.clone())
             .with_protocol_versions(&[&TLS13])
             .context("TLS protocol versions")?
             .with_no_client_auth()
-            .with_single_cert(vec![cert.der().clone()], PrivatePkcs8KeyDer::from(key.serialize_der()).into())
-            .context("TLS certificate")?;
-        config.alpn_protocols = vec![b"http/1.1".to_vec()];
-        Ok(Self { config: Arc::new(config), public_key_sha256 })
+            .with_cert_resolver(Arc::new(Served(served_rx)));
+        api.alpn_protocols = vec![b"http/1.1".to_vec()];
+        let mut validation = ServerConfig::builder_with_provider(provider.clone())
+            .with_safe_default_protocol_versions()
+            .context("TLS protocol versions")?
+            .with_no_client_auth()
+            .with_cert_resolver(Arc::new(Answering(challenge_rx)));
+        validation.alpn_protocols = vec![ACME_TLS_ALPN.to_vec()];
+        Ok(Self {
+            acceptors: Acceptors { api: Arc::new(api), validation: Arc::new(validation) },
+            public_key_sha256,
+            key: TlsKey::new(provider, key_pair, signer, public_key_sha256, served, challenge),
+        })
     }
 }
 
@@ -147,17 +192,17 @@ impl TlsIdentity {
 /// one gets its own task, so a slow client delays nobody else: it must finish its TLS handshake
 /// within `api.handshake_timeout`, send each request's headers within `api.read_timeout`, which
 /// also closes a connection idle that long between requests, and take what it is sent within
-/// `api.send_timeout`. Handlers see the socket peer as `ConnectInfo<SocketAddr>`.
+/// `api.send_timeout`. A TLS-ALPN-01 validation is a connection like any other until its handshake
+/// ends, and is then closed. Handlers see the socket peer as `ConnectInfo<SocketAddr>`.
 /// Error cases:
 /// - none; it runs until the node stops
 pub async fn serve(
     listener: TcpListener,
-    tls: Arc<ServerConfig>,
+    acceptors: Acceptors,
     app: Router,
     limits: Arc<ApiLimits>,
     api: ApiSection,
 ) -> anyhow::Result<()> {
-    let acceptor = TlsAcceptor::from(tls);
     let caps = ConnectionCaps::new(api.max_connections.get(), api.max_connections_per_ip.get());
     let mut http = http1::Builder::new();
     http.timer(TokioTimer::new()).header_read_timeout(api.read_timeout);
@@ -177,10 +222,11 @@ pub async fn serve(
         if limits.check_connection(peer.ip()).is_err() {
             continue;
         }
-        let (acceptor, http, app) = (acceptor.clone(), http.clone(), app.clone());
+        let (acceptors, http, app) = (acceptors.clone(), http.clone(), app.clone());
         connections.spawn(async move {
-            let stream = match timeout(api.handshake_timeout, acceptor.accept(tcp)).await {
-                Ok(Ok(stream)) => stream,
+            let stream = match timeout(api.handshake_timeout, accept(tcp, &acceptors)).await {
+                Ok(Ok(Accepted::Api(stream))) => *stream,
+                Ok(Ok(Accepted::Validation)) => return debug!("answered a TLS-ALPN-01 validation"),
                 Ok(Err(e)) => return debug!("TLS handshake failed: {e}"),
                 Err(_) => return debug!("TLS handshake timed out"),
             };
@@ -194,6 +240,26 @@ pub async fn serve(
             }
         });
     }
+}
+
+/// Completes the handshake under the config the ClientHello asks for: a validation, which offers
+/// `acme-tls/1`, gets the challenge certificate for its server name, or no handshake when nothing
+/// is being validated for that name; every other hello gets the API's config.
+/// Error cases:
+/// - the client sends no ClientHello, or the handshake fails
+async fn accept(tcp: TcpStream, acceptors: &Acceptors) -> io::Result<Accepted> {
+    let start = LazyConfigAcceptor::new(Acceptor::default(), tcp).await?;
+    let validating = start.client_hello().alpn().is_some_and(|mut offered| offered.any(|p| p == ACME_TLS_ALPN));
+    if !validating {
+        return Ok(Accepted::Api(Box::new(start.into_stream(acceptors.api.clone()).await?)));
+    }
+    let mut stream = start.into_stream(acceptors.validation.clone()).await?;
+    // The validator learns everything from the handshake (RFC 8737 §3); a failed close leaves
+    // nothing to do.
+    if let Err(e) = stream.shutdown().await {
+        debug!("closing a TLS-ALPN-01 validation: {e}");
+    }
+    Ok(Accepted::Validation)
 }
 
 /// Backs off after a failed accept: a client that reset its own connection is no fault of ours,
