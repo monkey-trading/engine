@@ -60,6 +60,10 @@ allowed_origins = ["http://localhost:3000"]
 send_timeout = "30s"
 # A signed stream subscriber (`signed=1`) gets a signed heartbeat at least this often; at least 1s.
 heartbeat_interval = "5s"
+# A signed stream subscriber that asked for an account's quotes gets them again when one changes, at
+# most this often (at least 100ms), for at most this many markets.
+quote_interval = "100ms"
+quote_max_markets = 4
 
 # A tracing filter directive; it must enable at least "error" for engine_node,
 # the level every Critical alert logs at.

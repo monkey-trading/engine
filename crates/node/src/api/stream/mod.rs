@@ -4,7 +4,8 @@
 //! dropped. A subscriber that stops reading is closed, and can resume. Subscribers are capped by
 //! `api.max_subscribers`, and what a subscriber sends is read and dropped, so its close is
 //! answered. A subscriber that asks for `signed=1` gets each message in a signed frame, with
-//! heartbeats (`signed`); without it, the messages go out as they are.
+//! heartbeats (`signed`), and may ask for an account's executable quotes (`quotes`); without
+//! `signed=1`, the messages go out as they are and what the subscriber sends is dropped.
 
 use std::collections::VecDeque;
 use std::future::pending;
@@ -20,6 +21,7 @@ use axum::http::Uri;
 use axum::response::Response;
 use engine_wire::Connection;
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
+use rand::Rng;
 use serde::Deserialize;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, broadcast, watch};
@@ -32,7 +34,9 @@ use tracing::{Instrument, Span, error, info};
 use crate::api::{ApiError, ApiState};
 use crate::log::{LogReader, Manifest, Offset};
 use crate::sequencer::StreamMsg;
+mod quotes;
 mod signed;
+use quotes::Quotes;
 use signed::Framing;
 
 /// Most messages read from disk per blocking call.
@@ -159,7 +163,7 @@ pub async fn stream(
         (None, Some(seq)) => Some(Offset::start_of(seq)),
         (None, None) => None,
     };
-    let framing = match (params.signed, params.challenge.as_deref()) {
+    let signed = match (params.signed, params.challenge.as_deref()) {
         (None, None) => None,
         (Some(1), Some(challenge)) => {
             let challenge = engine_wire::parse_challenge(challenge)
@@ -167,7 +171,19 @@ pub async fn stream(
             // Frames bind the request exactly as the client sent it, start included.
             let request = uri.path_and_query().map_or(uri.path(), |request| request.as_str());
             let connection = Connection::new(challenge, request);
-            Some(Framing::new(s.signing.clone(), connection, s.manifest.clone()))
+            let framing = Framing::new(s.signing.clone(), connection, s.manifest.clone());
+            let (inbox, requests) = watch::channel(String::new());
+            // Each connection reads at its own phase of the interval, so many do not read at once.
+            let phase = rand::thread_rng().gen_range(Duration::ZERO..s.limits.quote_interval);
+            let quotes = Quotes::new(
+                s.tx.downgrade(),
+                s.manifest.clone(),
+                requests,
+                s.limits.quote_interval,
+                s.limits.quote_max_markets,
+                phase,
+            );
+            Some((framing, quotes, inbox))
         }
         (Some(1), None) => return Err(ApiError::BadRequest("signed=1 needs a challenge".into())),
         (None, Some(_)) => return Err(ApiError::BadRequest("a challenge needs signed=1".into())),
@@ -180,7 +196,11 @@ pub async fn stream(
     let ws = ws.max_message_size(s.limits.max_body_bytes).max_frame_size(s.limits.max_body_bytes);
     Ok(ws.on_upgrade(move |socket| {
         async move {
-            forward(socket, feed, send_timeout, framing).await;
+            let (framing, quotes) = match signed {
+                Some((framing, quotes, inbox)) => (Some(framing), Some((quotes, inbox))),
+                None => (None, None),
+            };
+            forward(socket, feed, send_timeout, framing, quotes).await;
             drop(place);
         }
         .instrument(span)
@@ -189,27 +209,41 @@ pub async fn stream(
 
 /// Sends the feed to one subscriber until it closes or disconnects, stops reading for
 /// `send_timeout`, or the sequencer stops. What the subscriber sends is read alongside, so its
-/// close is answered while messages are still waiting for it.
-async fn forward<S>(socket: S, feed: Feed, send_timeout: Duration, framing: Option<Framing>)
-where
+/// close is answered while messages are still waiting for it. With `quotes`, what a subscriber
+/// sends goes to its quote subscription, whose messages join the feed's.
+async fn forward<S>(
+    socket: S,
+    feed: Feed,
+    send_timeout: Duration,
+    framing: Option<Framing>,
+    quotes: Option<(Quotes, watch::Sender<String>)>,
+) where
     S: Sink<Message> + Stream<Item = Result<Message, Error>> + Unpin,
 {
     let (mut sink, mut input) = socket.split();
+    let (quotes, inbox) = quotes.unzip();
     tokio::select! {
-        closed = read_until_closed(&mut input) => if closed {
+        closed = read_until_closed(&mut input, inbox.as_ref()) => if closed {
             // Sends the close reply queued when the close was read.
             let _ = timeout(send_timeout, sink.close()).await;
         },
-        () = send_feed(&mut sink, feed, send_timeout, framing) => {}
+        () = send_feed(&mut sink, feed, send_timeout, framing, quotes) => {}
     }
 }
 
-/// Reads and drops what the subscriber sends, which also answers its pings, until it closes
-/// (`true`), or fails or disconnects (`false`).
-async fn read_until_closed<S: Stream<Item = Result<Message, Error>> + Unpin>(input: &mut S) -> bool {
+/// Reads what the subscriber sends, which also answers its pings, until it closes (`true`), or
+/// fails or disconnects (`false`). Text goes to `inbox` if there is one, and is dropped if not.
+async fn read_until_closed<S: Stream<Item = Result<Message, Error>> + Unpin>(
+    input: &mut S,
+    inbox: Option<&watch::Sender<String>>,
+) -> bool {
     while let Some(Ok(msg)) = input.next().await {
-        if let Message::Close(_) = msg {
-            return true;
+        match (msg, inbox) {
+            (Message::Close(_), _) => return true,
+            (Message::Text(text), Some(inbox)) => {
+                inbox.send_replace(text.to_string());
+            }
+            _ => {}
         }
         // A subscriber that floods its input yields to its own stream, so it is still sent to.
         consume_budget().await;
@@ -218,19 +252,21 @@ async fn read_until_closed<S: Stream<Item = Result<Message, Error>> + Unpin>(inp
 }
 
 /// Sends the feed until the subscriber disconnects, stops reading for `send_timeout`, or the
-/// sequencer stops; with `framing`, in signed frames between heartbeats.
+/// sequencer stops; with `framing`, in signed frames between heartbeats and the messages of its
+/// `quotes`.
 async fn send_feed<S: Sink<Message> + Unpin>(
     sink: &mut S,
     mut feed: Feed,
     send_timeout: Duration,
     mut framing: Option<Framing>,
+    mut quotes: Option<Quotes>,
 ) {
     loop {
         let next = feed.next();
         tokio::pin!(next);
         // The feed's read stays in flight while heartbeats go out, so a slow backfill still ends.
         let msg = loop {
-            tokio::select! {
+            let texts = tokio::select! {
                 msg = &mut next => break msg,
                 heartbeat = next_heartbeat(&mut framing) => {
                     let Some(heartbeat) = heartbeat else {
@@ -240,6 +276,24 @@ async fn send_feed<S: Sink<Message> + Unpin>(
                     if !send_text(sink, heartbeat, send_timeout, None).await {
                         return;
                     }
+                    continue;
+                }
+                texts = next_quotes(&mut quotes) => texts,
+            };
+            // Quotes exist only on a signed connection.
+            for text in texts {
+                let text = match framing.as_mut() {
+                    Some(framing) => match framing.frame(text) {
+                        Some(frame) => frame,
+                        None => {
+                            log_unbounded_time(None);
+                            return;
+                        }
+                    },
+                    None => text,
+                };
+                if !send_text(sink, text, send_timeout, None).await {
+                    return;
                 }
             }
         };
@@ -286,6 +340,14 @@ fn log_unbounded_time(offset: Option<Offset>) {
 async fn next_heartbeat(framing: &mut Option<Framing>) -> Option<String> {
     match framing {
         Some(framing) => framing.next_heartbeat().await,
+        None => pending().await,
+    }
+}
+
+/// The connection's next quote messages; never, with no quote subscription.
+async fn next_quotes(quotes: &mut Option<Quotes>) -> Vec<String> {
+    match quotes {
+        Some(quotes) => quotes.next().await,
         None => pending().await,
     }
 }

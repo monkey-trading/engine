@@ -11,7 +11,7 @@ use tracing::{Level, enabled};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, registry};
 
-use crate::config::{AuthMode, CustodyProvider, FeedProvider, NodeConfig, TeeProvider};
+use crate::config::{AuthMode, CustodyProvider, FeedProvider, MIN_QUOTE_INTERVAL, NodeConfig, TeeProvider};
 use crate::sequencer::genesis::check_genesis;
 use crate::trusted_time::NO_SAMPLE_GRACE;
 
@@ -41,6 +41,7 @@ impl NodeConfig {
     ///   `time.max_drift`, `time.interval`, or an `api` timeout is zero, or `time.interval` plus
     ///   twice `time.max_drift` is not under 60s
     /// - `api.heartbeat_interval` is under one second
+    /// - `api.quote_interval` is under 100 ms
     /// - `node.auth` is `none` with a TEE or custody provider other than `mock`
     /// - `tee.provider` is not `mock` and `operator.public_key` is a published test key (see
     ///   `refuse_test_keys`)
@@ -101,6 +102,9 @@ impl NodeConfig {
         // A shorter interval would have every signed subscriber sign heartbeats faster than a client
         // needs them.
         ensure!(self.api.heartbeat_interval >= Duration::from_secs(1), "api.heartbeat_interval must be at least 1s");
+        // Every quote read runs on the sequencer's thread, so the interval bounds how much of it
+        // one connection can take.
+        ensure!(self.api.quote_interval >= MIN_QUOTE_INTERVAL, "api.quote_interval must be at least 100ms");
         self.api.validate_origins()?;
         if let Some(tls) = &self.api.tls {
             tls.acme.validate(self.tee.provider)?;

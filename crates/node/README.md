@@ -51,6 +51,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   chained to the one before it, and a signed heartbeat at least every `api.heartbeat_interval`;
   `engine verify-response` and `engine verify-frames` check them with the shared `engine-wire`
   definitions
+- Executable quotes: a `signed=1` stream connection can ask for an account's quotes in up to
+  `api.quote_max_markets` markets, and gets them again when one changes, at most every
+  `api.quote_interval` (at least 100 ms)
 - Orders, cancels, and withdrawals signed by the account (EIP-712), checked before they are
   sequenced; before V24, `auth = "none"` trusts the account field with mock TEE and custody; V24
   client actions and eligibility declarations require signatures in every mode
@@ -283,6 +286,16 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/stream/tests.rs` — feed, backfill, and subscriber tests
 - `src/api/stream/signed.rs` — signed stream connections: numbered frames chained under the
   client's challenge and the opening request, and heartbeats naming the log head
+- `src/api/stream/quotes/mod.rs` — a connection's quote subscription: the `quotes` op, one bounded
+  sequencer read per interval while the log head moves, and only the quotes that changed
+- `src/api/stream/quotes/ladder.rs` — one account's quotes in one market from `Engine::quote`: a
+  price per spread tier up to the largest order the account can open, and the closing price
+- `src/api/stream/quotes/tests.rs` — the subscription against a stand-in sequencer under paused
+  time: pacing, spreading, replacement, refusals, a full queue, a stopped log, and the ladder search
+- `src/api/stream/quotes/api_tests.rs` — signed quotes through the API against a real sequencer
+  that fill at their price until the index moves
+- `src/api/stream/quotes/bench.rs` — the ignored benchmark of a quote read's time on the sequencer's
+  thread
 - `src/api/stream/signed/tests.rs` — signed frames from offset zero bound to their opening request,
   quiet-log heartbeats, a backfill read never cut short by a heartbeat, a connection closed while
   trusted time does not bound the host clock, and refused parameters
@@ -405,7 +418,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/config/telemetry.rs` — the metrics listener and alert webhook config, and the redacting
   `WebhookUrl`
 - `src/config/tests.rs` — config loading and validation tests
-- `src/config/api_tests.rs` — the `[api]` heartbeat interval's default and minimum
+- `src/config/api_tests.rs` — the `[api]` heartbeat and quote intervals' defaults and minimums
 - `src/config/mock_key_tests.rs` — published mock-only signer opt-in and hardware refusal regressions
 - `src/config/custody_tests.rs` — independent provider configuration checks
 - `src/config/production_tests.rs` — the config file's hash, and a production build's refusal of
@@ -697,6 +710,10 @@ RPC_QUORUM_SCENARIO=1 ./scripts/dev-vault-deposits.sh
 
 # Exercise signed eligibility, API refusals, direct-vault and contract-wallet payer holds
 ./scripts/dev-access-enforcement.sh
+
+# Stream the trader's executable quotes on that node: an order at the streamed ask fills within its
+# bound, and one at a stale ask is declined once the index moves
+./scripts/dev-quotes.sh
 
 # Run checkpoint posting, tampered replay, truncation, and shortfall checks on isolated Anvil
 ./scripts/dev-checkpoints.sh
@@ -1047,6 +1064,42 @@ received yet; it says how far the log has gone, not what this connection has mis
 `signed=1` the stream is unchanged. `crates/wire` holds these digests, the client checks, and the known-answer vectors a
 browser verifier replays; `crates/verify-wasm` builds those checks and the attestation verifier for
 browsers.
+
+A `signed=1` connection can also ask for an account's executable quotes, by address and without a
+signature, as the account reads are public: it sends
+`{"op":"quotes","account":"0x…","markets":[1,2]}` (at most `api.quote_max_markets` distinct markets;
+sending it again replaces the subscription, and an empty `markets` ends it) and receives, in signed
+frames, one message per market,
+`{"type":"quote","market":1,"open":true,"reduce_only":false,"stress_level":0,"mark":"…","ask":[…],"bid":[…],"close":{…}|null}`,
+and again for each market whose message changed. The node reads the engine only after the log head
+has moved, and sends no sooner than `api.quote_interval` after its last quote message on the
+connection. `ask` is what a buy pays and `bid` what a sell receives: a list of `{"qty","price"}`
+steps by size, one for the top of each spread tier as the account would reach it, then, between the
+last tier top the account can open and the first it cannot, and in the unbounded last tier, one
+at the largest order it can open (its margin and the house's exposure caps limit it). A step the
+account cannot open also carries `declined` (`insufficient_margin` or `house_capacity`) and is
+priced as a fill would be. An order takes the price of the first step whose `qty` is at least its
+own. That price is the average for the step's whole size, which is never better for the trader than
+the price of any smaller order, but for the rounding of a fill's cost up to a unit before it is
+divided by the order's size: an order of a cent's notional can price about a thousandth of a basis
+point above its step, and a slippage bound of a basis point covers it. A step's price is also the
+worst of its own and those of the steps before it, so it holds where a tier charges less than the
+one before. The steps are accurate to the search's resolution, a thousandth of the gap between the
+last size known to fill and the first known to be declined, so a slightly larger order than the
+last step may still fill. So an order sent with the
+step's price as `quoted`, and its slippage bound, fills when nothing moved, and is declined with
+`Slippage` when the live price is worse than the bound. An order larger than the last step with no
+`declined`, or a side with no steps, cannot be opened. `close` is the price of closing the
+account's whole position. `unavailable` (with `ask` and `bid` empty) carries why a market has no
+price now: closed, no valid index, or no FX price. Quotes come from `Engine::quoter`, which prices as
+a fill does but does not re-evaluate stress or check access screening, so an order is declined for
+screening whatever its quote. A request the node cannot serve, such as an uncredited account, an
+unknown market, or too many markets, gets `{"type":"quote_error","error":"…"}` and no subscription, at most one such message per
+`api.quote_interval`.
+Without `signed=1`, what a connection sends is dropped. Each read runs on the sequencer's thread
+between batches, at an instant of its own connection's phase of the interval so that the reads of
+many connections spread out; `api/stream/quotes/bench.rs` measures them against the command latency
+budget.
 
 `GET /v1/attestation/collateral` returns `vcek`, `intermediate`, `root`, and `crl` as `0x` hex DER,
 and `fetched_at` in Unix milliseconds by the host's clock, for a client that cannot call the
