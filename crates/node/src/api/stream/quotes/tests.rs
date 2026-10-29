@@ -1,5 +1,5 @@
 use super::*;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use engine_core::command::{AdminCommand, Command, Sequenced};
@@ -33,6 +33,8 @@ struct Rig {
     head: watch::Sender<Manifest>,
     engine: Arc<Mutex<Engine>>,
     queries: Arc<AtomicUsize>,
+    /// Milliseconds the stand-in sequencer takes to answer a query.
+    latency: Arc<AtomicU64>,
     seq: u64,
 }
 
@@ -46,20 +48,22 @@ impl Rig {
         let engine = Arc::new(Mutex::new(engine()));
         let queries = Arc::new(AtomicUsize::new(0));
         let (tx, mut rx) = mpsc::channel(4);
-        let (served, counted) = (engine.clone(), queries.clone());
+        let latency = Arc::new(AtomicU64::new(0));
+        let (served, counted, delay) = (engine.clone(), queries.clone(), latency.clone());
         let (open, mut opened) = watch::channel(true);
         let sequencer = tokio::spawn(async move {
             while let Some(request) = rx.recv().await {
                 let sequencer::Request::Query(query) = request else { panic!("only queries") };
                 counted.fetch_add(1, Ordering::SeqCst);
                 opened.wait_for(|open| *open).await.expect("the rig outlives its sequencer");
+                tokio::time::sleep(Duration::from_millis(delay.load(Ordering::SeqCst))).await;
                 query(&served.lock().unwrap());
             }
         });
         let (inbox, requests) = watch::channel(String::new());
         let (head, manifest) = watch::channel(Manifest::default());
         let quotes = Quotes::new(tx.downgrade(), manifest, requests, INTERVAL, 2, phase);
-        Self { quotes, tx: Some(tx), sequencer, open, inbox, head, engine, queries, seq: 0 }
+        Self { quotes, tx: Some(tx), sequencer, open, inbox, head, engine, queries, latency, seq: 0 }
     }
 
     fn send(&self, text: &str) {
@@ -229,6 +233,29 @@ async fn pushes_never_come_closer_than_the_interval_while_the_index_moves_consta
     }
     assert!(sent.len() > 1, "{sent:?}");
     assert!(sent.windows(2).all(|pair| pair[1] - pair[0] >= INTERVAL), "{sent:?}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_changing_index_is_pushed_every_interval_whatever_a_read_takes() {
+    for latency in [1, 5, 50, 99] {
+        let mut rig = Rig::new();
+        rig.latency.store(latency, Ordering::SeqCst);
+        rig.subscribe("[1]");
+        rig.within(INTERVAL * 2).await.expect("the first quotes");
+        let mut sent = vec![tokio::time::Instant::now()];
+        for round in 0..10 {
+            // The index has moved again by the time the last message is out.
+            rig.sequence(prices(101_000 + round));
+            rig.within(INTERVAL * 3).await.expect("a changed quote");
+            sent.push(tokio::time::Instant::now());
+        }
+        let gaps: Vec<_> = sent.windows(2).map(|pair| pair[1] - pair[0]).collect();
+        // Never closer than an interval, and not an interval late for each read that takes a moment.
+        assert!(
+            gaps.iter().all(|gap| *gap >= INTERVAL && *gap <= INTERVAL + Duration::from_millis(latency)),
+            "{latency}: {gaps:?}"
+        );
+    }
 }
 
 #[tokio::test(start_paused = true)]
@@ -453,7 +480,7 @@ async fn a_full_sequencer_queue_leaves_the_read_for_the_next_interval() {
     advance(Duration::from_millis(1)).await;
     assert_eq!(poll_once(&mut rig).await, 0, "the read does not retry in a loop");
     // The next try waits for the next interval, not for the slot that just fired.
-    assert!(rig.quotes.gate >= before + INTERVAL && rig.quotes.read_slot >= Some(before + INTERVAL));
+    assert!(rig.quotes.next_read >= before + INTERVAL && rig.quotes.read_slot >= Some(before + INTERVAL));
     // Once the queue drains, the read goes out and its quotes arrive.
     rig.open.send_replace(true);
     assert!(rig.within(Duration::from_secs(1)).await.is_some());
