@@ -17,21 +17,18 @@ const MINIMUM_LENGTH: usize = 16;
 const MAX_HEADER: usize = 1024;
 
 /// The client address a trusted proxy's connection names, with an IPv4-mapped address as its IPv4
-/// one; exactly the header's bytes are read, so the TLS handshake follows unread. `None` closes the
-/// connection: a LOCAL header is the proxy's own check and is only logged, while any other failure
-/// raises `refused`.
+/// one; exactly the header's bytes are read, so the TLS handshake follows unread. A LOCAL header
+/// is the proxy's own connection (a health check), so it names the socket peer, `proxy`: that
+/// address is the real peer, not one the header chose, and the header's own addresses are ignored.
+/// `None` closes the connection and raises `refused`.
 pub(super) async fn client_behind(
     conn: &mut (impl AsyncRead + Unpin),
     proxy: SocketAddr,
     refused: &ThrottledAlert,
 ) -> Option<SocketAddr> {
-    match read_client(conn).await {
-        Ok(None) => {
-            debug!(%proxy, "PROXY protocol LOCAL header; closing");
-            None
-        }
-        Ok(Some(client)) => {
-            debug!(%proxy, "client address from the PROXY protocol header");
+    match read_client(conn, proxy).await {
+        Ok(client) => {
+            debug!(%proxy, %client, "client address from the PROXY protocol header");
             Some(client)
         }
         Err(e) => {
@@ -41,11 +38,11 @@ pub(super) async fn client_behind(
     }
 }
 
-/// Reads one header and returns its source address, or `None` for a LOCAL header.
+/// Reads one header and returns its source address, or `proxy` for a LOCAL header.
 /// Error cases:
 /// - the stream ends or fails before the header does, or the header is not valid v2, is over
 ///   `MAX_HEADER`, or gives a source that is not a TCP IPv4 or IPv6 address
-async fn read_client(conn: &mut (impl AsyncRead + Unpin)) -> anyhow::Result<Option<SocketAddr>> {
+async fn read_client(conn: &mut (impl AsyncRead + Unpin), proxy: SocketAddr) -> anyhow::Result<SocketAddr> {
     let mut buf = [0u8; MAX_HEADER];
     conn.read_exact(&mut buf[..MINIMUM_LENGTH]).await.context("reading the header")?;
     // Checked before the length is believed, so only a signed header gets its bytes read.
@@ -55,12 +52,12 @@ async fn read_client(conn: &mut (impl AsyncRead + Unpin)) -> anyhow::Result<Opti
     conn.read_exact(&mut buf[MINIMUM_LENGTH..total]).await.context("reading the header")?;
     let header = Header::try_from(&buf[..total]).context("parsing the header")?;
     if header.command == Command::Local {
-        return Ok(None);
+        return Ok(proxy);
     }
     ensure!(header.protocol == Protocol::Stream, "a header for a transport other than TCP");
     match header.addresses {
-        Addresses::IPv4(v4) => Ok(Some(SocketAddr::new(IpAddr::V4(v4.source_address), v4.source_port))),
-        Addresses::IPv6(v6) => Ok(Some(SocketAddr::new(IpAddr::V6(v6.source_address).to_canonical(), v6.source_port))),
+        Addresses::IPv4(v4) => Ok(SocketAddr::new(IpAddr::V4(v4.source_address), v4.source_port)),
+        Addresses::IPv6(v6) => Ok(SocketAddr::new(IpAddr::V6(v6.source_address).to_canonical(), v6.source_port)),
         Addresses::Unspecified | Addresses::Unix(_) => bail!("a header that names no IPv4 or IPv6 client"),
     }
 }

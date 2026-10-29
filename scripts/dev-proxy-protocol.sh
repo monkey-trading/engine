@@ -9,12 +9,14 @@
 #   2. an account whose declaration comes from an address the source places in the United States is
 #      refused in the public log, then admitted from an allowed address, and its order is refused
 #      from the US address and filled from the allowed one, whatever X-Forwarded-For says;
-#   3. a connection from outside the trusted range that sends a header is closed, and so is one from
+#   3. a connection from the forwarder that opens with a LOCAL header, as a health check does, is
+#      served as the proxy's own;
+#   4. a connection from outside the trusted range that sends a header is closed, and so is one from
 #      the forwarder that sends none.
 #
 # Needs python3, curl, and jq, and the public Roughtime servers config/dev.toml names. API_PORT,
 # METRICS_PORT, ACCESS_SOURCE_PORT, and FORWARDER_PORT override 18480, 19864, 18846, and 18490 (the
-# forwarder takes that port and the next five); SCENARIO_ARTIFACTS keeps the logs.
+# forwarder takes that port and the next six); SCENARIO_ARTIFACTS keeps the logs.
 set -Eeuo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -47,7 +49,7 @@ fail() { echo "FAIL: $*" >&2; tail -n 40 "$work"/node.log >&2 || true; exit 1; }
 trap 'fail "the command at line $LINENO failed"' ERR
 
 # The forwarder's ports, each the proxy in front of one client address.
-allowed_a=$fwd; allowed_b=$((fwd + 1)); us=$((fwd + 2)); spare_a=$((fwd + 3)); spare_b=$((fwd + 4)); headerless=$((fwd + 5))
+allowed_a=$fwd; allowed_b=$((fwd + 1)); us=$((fwd + 2)); spare_a=$((fwd + 3)); spare_b=$((fwd + 4)); headerless=$((fwd + 5)); local_check=$((fwd + 6))
 allowed_a_ip="203.0.113.7"; allowed_b_ip="203.0.113.9"; us_ip="198.51.100.5"
 
 step "build the node and the scenario's tools"
@@ -86,8 +88,8 @@ for edit in "[::]:$api_port" "burst = 40" 'trusted = ["::1/128"]'; do
   grep -qF "$edit" "$work/node.toml" || fail "config edit missing: $edit"
 done
 
-step "start the forwarder: each port prepends the header for its client; the last prepends none"
-python3 - "$fwd" "$api_port" "$allowed_a_ip" "$allowed_b_ip" "$us_ip" 203.0.113.50 203.0.113.51 none <<'PY' > "$work/forwarder.log" 2>&1 &
+step "start the forwarder: each port prepends the header for its client; one prepends none, the last a LOCAL header"
+python3 - "$fwd" "$api_port" "$allowed_a_ip" "$allowed_b_ip" "$us_ip" 203.0.113.50 203.0.113.51 none local <<'PY' > "$work/forwarder.log" 2>&1 &
 import asyncio, random, socket, struct, sys
 
 first_port, node_port, *claims = int(sys.argv[1]), int(sys.argv[2]), *sys.argv[3:]
@@ -115,7 +117,10 @@ async def pipe(reader, writer):
 def forward(client):
     async def handle(reader, writer):
         upstream_reader, upstream_writer = await asyncio.open_connection("::1", node_port)
-        if client != "none":
+        if client == "local":
+            # Command LOCAL, no addresses: the proxy's own connection.
+            upstream_writer.write(SIGNATURE + bytes([0x20, 0x00]) + struct.pack("!H", 0))
+        elif client != "none":
             upstream_writer.write(header(client))
         await asyncio.gather(pipe(reader, upstream_writer), pipe(upstream_reader, writer))
 
@@ -214,6 +219,10 @@ expect "the limited client, again" "$(status "$(via "$spare_a")/v1/health")" 429
 expect "another client behind the same proxy" "$(status "$(via "$spare_b")/v1/health")" 200
 expect "a direct client" "$(status "$direct/v1/health")" 200
 expect "the first client, from the proxy's own address" "$(status "$(via "$allowed_a")/v1/health")" 200
+
+step "a LOCAL header is the proxy's own connection and is served without an alert"
+expect "the forwarder's LOCAL port" "$(status "$(via "$local_check")/v1/health")" 200
+if grep -q 'alert="api_proxy_header_refused"' "$work/node.log"; then fail "a LOCAL header raised the refusal alert"; fi
 
 step "a header from outside the trusted range is refused, and a trusted peer without one is too"
 python3 - "$api_port" "$us_ip" <<'PY'
