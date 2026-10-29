@@ -37,7 +37,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - Attestation through Linux configfs-tsm, covering TDX and SEV-SNP, or a clearly marked mock: the
   report data is the SHA-256 of a served bundle of the enclave address, the config file's SHA-256,
   and the TLS key's hash
-- A `production` cargo feature that refuses mock TEE, custody, and feed providers at config load
+- A `production` cargo feature that refuses mock TEE, custody, and feed providers, and an API
+  without `[api.tls.acme]`, at config load
 - Trusted time: every stamp is checked against signed Roughtime readings that independent servers
   agree on, and nothing, genesis included, is stamped before the first; sequencing halts with a
   Critical alert when the host clock is beyond the drift bound, or 60 seconds after the last
@@ -60,6 +61,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - Segmented log: completed segments and a manifest of their seq ranges and SHA-256 hashes are a
   public archive served over HTTP
 - TLS terminated in the enclave, with a key generated there and its hash in the attestation
+- A public CA certificate for the API's domain, for that same key: ordered over ACME from inside the
+  enclave, validated by TLS-ALPN-01 on the API's own listener, and renewed without a restart
 - Rate limits on requests per client IP and per account and on new connections per client IP,
   caps on request size, connections, and stream subscribers, and read timeouts, all set in `[api]`
 - `engine replay` to verify a published log, or a downloaded archive, against the open-source
@@ -370,9 +373,26 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/roughtime/testing.rs` — a Roughtime server for tests that signs with its own keys
 - `src/roughtime/tests.rs` — client tests over recorded and locally signed replies
 - `src/roughtime/fixtures/replies.json` — replies recorded from the servers in `config/dev.toml`
-- `src/tls/mod.rs` — the TLS key and certificate, and the server loop that applies the connection
-  caps and timeouts
+- `src/tls/mod.rs` — the TLS key and its self-signed certificate, the choice between the API and a
+  TLS-ALPN-01 validation from each ClientHello, and the server loop that applies the connection caps
+  and timeouts
+- `src/tls/certificates.rs` — the certificates the key serves: a CA certificate swapped in for the
+  attested key only, and the challenge certificate while a validation is answered
+- `src/tls/acme/mod.rs` — the certificate task: the ACME account, the order, the challenge, and
+  checking and installing what the CA issues
+- `src/tls/acme/http.rs` — the ACME client's HTTP, against compiled-in roots or a test CA's root
+- `src/tls/acme/schedule.rs` — when the certificate is renewed, the retry backoff, and the
+  `certificate_pending` and `certificate_expiring` alerts
+- `src/tls/acme/tests/mod.rs` — the issued-certificate checks, the certificate request, and the
+  schedule's renewals and alerts
+- `src/tls/acme/tests/orders.rs` — attempts against a scripted CA: validation, a reused validation,
+  and an order resumed after a lost exchange but replaced after a refusal
+- `src/tls/acme/tests/fake_ca.rs` — the scripted ACME CA behind the client's HTTP
+- `src/tls/acme/tests/http.rs` — the ACME HTTP client against a loopback HTTPS stand-in: its roots,
+  its response cap, and its refusal to follow redirects
 - `src/tls/tests/mod.rs` — the API end to end over TLS: key pinning, limits, caps, and the harness
+- `src/tls/tests/acme.rs` — TLS-ALPN-01 on the listener, and a CA certificate installed without a
+  restart
 - `src/tls/tests/stream.rs` — the stream end to end over TLS: the subscriber and message caps
 - `src/limits.rs` — request rate limits, connection caps, the stream subscriber cap, and the allowed browser origins
 - `src/config/mod.rs` — the node config schema, loading, and the config file's hash
@@ -393,6 +413,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/config/custody_tests.rs` — independent provider configuration checks
 - `src/config/production_tests.rs` — the config file's hash, and a production build's refusal of
   mock providers
+- `src/config/tls.rs` — the `[api.tls.acme]` section, and a production build's refusal of an API with
+  only its self-signed certificate
+- `src/config/tls_tests.rs` — `[api.tls.acme]` parsing and validation, and the production refusal
 - `src/config/telemetry_tests.rs` — metrics and alert config tests: the Critical route, the dev
   config's telemetry, and webhook URLs
 - `src/config/origins.rs` — `api.allowed_origins` validation: exact browser origins, `https` only in a production build
@@ -1399,6 +1422,80 @@ operator migration. Preserve the original log and custody state; deleting the lo
 a vault's accepted checkpoint, and this node does not infer or fabricate a migration proof.
 
 
+### Public API certificate
+
+With `[api.tls.acme]`, the node has a public CA certify the TLS key it generated in the enclave, the
+key whose hash the attestation carries, for the API's domain. Browsers then trust the API, and a
+client that pins the attested key still matches it. A production build refuses a config without the
+section.
+
+```toml
+[api.tls.acme]
+domain = "api.example.com"
+directory_url = "https://acme-v02.api.letsencrypt.org/directory"
+contact = "mailto:ops@example.com"
+# renew_before = "30d" # at least 14 days; one third of each certificate's life when unset
+```
+
+Setting the section agrees to the CA's terms of service. The domain is in the config file whose
+SHA-256 the attestation binds, so it is part of the release manifest; the attestation bundle's
+layout is unchanged.
+
+At boot the node registers an ACME account under a key it generates in memory, orders a
+certificate for the domain, and answers the CA's TLS-ALPN-01 challenge on `node.listen`: while the
+challenge is open, a handshake that offers `acme-tls/1` for the domain gets the challenge
+certificate, and every other handshake gets the API's certificate with `http/1.1`. Validation
+connections pass the same connection caps and handshake timeout as any other. The order is
+finalized with a request signed by the API's key, and the issued chain is served from the next
+handshake once its first certificate names the domain and carries the attested key. Neither key is
+written to disk or logged.
+
+The sequencer never waits for the CA. Until the first certificate, the API serves its self-signed
+one and the node raises `certificate_pending` (Warning). It renews once `renew_before` of the
+certificate's life remains, measured on the monotonic clock from the certificate's arrival against
+its own validity period, so the host's wall clock does not move it; a CA that backdates `notBefore`
+(Let's Encrypt by an hour) makes renewal that much later, which the floor of 14 days on
+`renew_before` keeps well before expiry. The life counts from the order's finalize request, so a
+certificate downloaded late is renewed sooner, and one whose life ran out before it arrived is
+refused. A failed attempt keeps the current certificate serving and
+retries after a minute, doubling up to an hour; once fewer than 14 days remain, each failure raises
+`certificate_expiring` (Warning). A failed attempt takes up its order again unless the CA ended it,
+so a lost answer or a passing problem (`serverInternal`, `rateLimited`, any 5xx or 429) never costs
+another issuance; an account the CA no longer knows is registered again. Every request to the CA has a
+30-second deadline and every attempt a 10-minute one, and the CA is authenticated against the
+compiled-in Mozilla roots, so the host, which resolves its name and carries the connection, can
+delay or drop the exchange but not answer it without a certificate for the CA's name (validity is
+judged by the host's clock, a TODO in `src/tls/acme/http.rs`).
+`engine_tls_certificate_not_after_seconds` on the metrics listener holds the served CA
+certificate's expiry, 0 before the first, and `engine_tls_certificate_pending` is 1 until the first;
+`ops/prometheus/engine-node-rules.yml` pages when a node stays pending for 30 minutes or its
+certificate comes within 7 days of expiry.
+
+Before the first production certificate:
+
+- Point the domain at the host, or at a pass-through proxy that never decrypts (#300), and forward
+  port 443 unmodified at layer 4 to `node.listen`: the CA validates by connecting to port 443, and
+  TLS terminates in the enclave.
+- Publish a CAA record that allows only the chosen CA, and only TLS-ALPN-01, such as
+  `api.example.com. CAA 0 issue "letsencrypt.org; validationmethods=tls-alpn-01"`. The CAA record
+  narrows issuance to that CA and method, but not to the enclave: the host forwards port 443, so it
+  can answer the CA's TLS-ALPN-01 validation itself and have a certificate issued for a key of its
+  own, as can whoever controls the domain's DNS. A browser that trusts the certificate alone cannot
+  tell; the console's in-browser attestation check and signed answers (#292) are what bind it to the
+  enclave, and Certificate Transparency monitoring (#299) is to flag any certificate whose key is
+  not the attested one. A CAA `accounturi` would bind issuance to the enclave's account, but cannot
+  while the account changes at every start (#28).
+- Run against the CA's staging directory first (for Let's Encrypt,
+  `https://acme-staging-v02.api.letsencrypt.org/directory`), then its production one.
+
+Until the enclave's keys survive a restart (#28), every start generates a new TLS key and ACME
+account and orders a new certificate, so the CA's issuance limits cap how often a production node
+can restart. Let's Encrypt publishes, among others, 5 certificates per exact set of identifiers
+every 7 days, refilling one every 34 hours with no override, which renewals of the same domain also
+count against; 10 new accounts per IP address every 3 hours; and 5 failed authorizations per
+identifier per account every hour ([rate limits](https://letsencrypt.org/docs/rate-limits/)).
+Restarts must fit within these, and rehearsals belong on the staging directory.
+
 ### Corporate actions operator runbook
 
 Protocol V23 accepts single-stock dividends and splits, and index dividend points, through
@@ -1612,6 +1709,10 @@ cargo test -p engine-node trusted_time::tests::scenario
 
 # The production build's tests: it refuses the dev config the other tests load
 cargo test -p engine-node --features production --lib production_build
+
+# Dev scenario: the Pebble ACME test CA certifies a dev node's attested key over TLS-ALPN-01 and the
+# node renews it without a restart; a stopped CA raises certificate_expiring
+./scripts/dev-acme.sh
 
 # Dev scenario: loopback market-data vendors price FX, index and commodity futures, and a share,
 # two vendors each, across a market open and a futures roll, and the log replays

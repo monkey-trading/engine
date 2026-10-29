@@ -35,7 +35,7 @@ use crate::metrics::Metrics;
 use crate::sequencer::{ReplayedLog, Request, Sequencer, SequencerConfig, genesis_commands};
 use crate::tee::{AttestationBundle, Attestor, ConfigfsTsm, EnclaveKey, MockAttestor, attest_bundle};
 use crate::telemetry::Telemetry;
-use crate::tls::{TlsIdentity, serve};
+use crate::tls::{TlsIdentity, acme::CertificateTask, serve};
 use crate::verify::Relay;
 use crate::{metrics, monitor, trusted_time};
 use preflight::{authorize, emission_preflight};
@@ -72,7 +72,7 @@ pub(crate) async fn run_with_cpu(cfg: NodeConfig, telemetry: Telemetry, cpu: Opt
 /// Error cases:
 /// - operator rotation is enabled
 /// - `feeds.provider = "venues"` without `[feeds.venues]`, an API key variable a venue connection
-///   names is unset, or the TLS config cannot be built
+///   names is unset, or the TLS config or the ACME client cannot be built
 /// - generating the TLS key, attesting the keys, opening the history index (or a fresh one in place
 ///   of an index the log does not match), recovering the log (including a log that records another
 ///   client auth or operator, or whose genesis did not apply in full, is not the config's, or is one
@@ -297,6 +297,7 @@ async fn serve_node(
     let metrics_listener =
         TcpListener::bind(metrics_listen).await.with_context(|| format!("binding {metrics_listen}"))?;
     info!(listen = %metrics_listen, "metrics up");
+    let certificates = CertificateTask::configured(&cfg.api, tls.key, &metrics)?;
     let metrics_app = metrics::router(metrics);
     tasks.spawn(async move { ("metrics", axum::serve(metrics_listener, metrics_app).await.context("metrics server")) });
 
@@ -324,8 +325,12 @@ async fn serve_node(
         signing: Arc::new(Signing::new(key, cfg.custody.chain_id, vault, cfg.api.heartbeat_interval, trusted_clock)),
     });
     info!(listen = %cfg.node.listen, "api up over TLS");
+    // After the bind, so the CA's validation connections find the listener.
+    if let Some(certificates) = certificates {
+        tasks.spawn(async move { ("certificate", certificates.run().await) });
+    }
     let (api, retained) = (cfg.api, limits.clone());
-    tasks.spawn(async move { ("api", serve(listener, tls.config, app, limits, api).await) });
+    tasks.spawn(async move { ("api", serve(listener, tls.acceptors, app, limits, api).await) });
     tasks.spawn(async move { ("rate limits", run_retain(retained).await) });
 
     let outcome = tokio::select! {

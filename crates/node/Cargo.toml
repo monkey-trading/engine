@@ -36,6 +36,7 @@ http-body-util.workspace = true
 humantime-serde.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
+instant-acme.workspace = true
 jmt.workspace = true
 k256 = { workspace = true, features = ["getrandom"] }
 prometheus-client.workspace = true

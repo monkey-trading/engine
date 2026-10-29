@@ -318,7 +318,7 @@ impl Node {
     async fn serve_on(&self, addr: &str) -> SocketAddr {
         let listener = TcpListener::bind(addr).await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let (tls, app, limits) = (self.tls.config.clone(), router(self.state.clone()), self.state.limits.clone());
+        let (tls, app, limits) = (self.tls.acceptors.clone(), router(self.state.clone()), self.state.limits.clone());
         tokio::spawn(serve(listener, tls, app, limits, dev_config().api));
         addr
     }

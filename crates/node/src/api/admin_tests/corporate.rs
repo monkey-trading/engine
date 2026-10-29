@@ -55,7 +55,7 @@ async fn corporate_actions_dev_scenario_signed_dividend_split_restart_and_replay
     let url = format!("https://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(serve(
         listener,
-        node.tls.config.clone(),
+        node.tls.acceptors.clone(),
         router(node.state.clone()),
         node.state.limits.clone(),
         dev_config().api,

@@ -40,6 +40,8 @@ mod checkpoints;
 pub use checkpoints::CheckpointSection;
 mod telemetry;
 pub use crate::config::telemetry::*;
+mod tls;
+pub use tls::{AcmeSection, AcmeTestCa, ApiTlsSection};
 
 /// Built with the `production` feature: mock TEE, custody, and feed providers are refused.
 #[cfg(feature = "production")]
@@ -164,6 +166,9 @@ pub struct ApiSection {
     /// `https` origins.
     #[serde(default)]
     pub allowed_origins: Vec<String>,
+    /// A public CA certificate for the API's domain; without it the API serves only its
+    /// self-signed certificate, which clients trust by pinning the attested key.
+    pub tls: Option<ApiTlsSection>,
 }
 
 /// A token bucket: `burst` requests at once, refilled at `per_second`.
@@ -319,8 +324,9 @@ impl NodeConfig {
     /// - `operator.public_key` or `custody.vault` does not parse
     /// - genesis lists a market id, a market symbol, or a benchmark name twice
     /// - the engine would reject a genesis command
-    /// - this is a production build and a TEE, custody, or feed provider is `mock`, or an allowed
-    ///   origin is not `https`
+    /// - `[api.tls.acme]` fails validation (see `AcmeSection::validate`)
+    /// - this is a production build and a TEE, custody, or feed provider is `mock`, an allowed
+    ///   origin is not `https`, or `[api.tls.acme]` is missing
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         let mut cfg: NodeConfig = toml::from_str(&text)
@@ -329,6 +335,7 @@ impl NodeConfig {
         cfg.validate().with_context(|| format!("validating {}", path.display()))?;
         cfg.api.refuse_insecure_origins(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
         cfg.refuse_mocks(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
+        cfg.api.refuse_self_signed(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
         cfg.file_sha256 = Sha256::digest(text.as_bytes()).into();
         Ok(cfg)
     }
@@ -423,6 +430,8 @@ mod production_tests;
 mod telemetry_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tls_tests;
 
 #[cfg(test)]
 mod mock_key_tests;

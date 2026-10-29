@@ -48,6 +48,7 @@ struct TestNode {
     stream: broadcast::Sender<Arc<StreamMsg>>,
     server: JoinHandle<anyhow::Result<()>>,
     sequencer: JoinHandle<()>,
+    key: TlsKey,
 }
 
 /// Checks what a client that verified the attestation checks: that the server's certificate key
@@ -308,6 +309,7 @@ async fn an_accept_failure_backs_off_and_alerts_unless_the_client_reset() {
     assert!(!alert.due(Instant::now()), "the failure was alerted");
 }
 
+mod acme;
 mod stream;
 
 // ── Helpers ──
@@ -356,8 +358,8 @@ impl TestNode {
             listing: Default::default(),
             signing: crate::test_support::signing(),
         };
-        let server = tokio::spawn(serve(listener, tls.config, router(state), limits, api));
-        Self { port, attestation, stream, server, sequencer }
+        let server = tokio::spawn(serve(listener, tls.acceptors, router(state), limits, api));
+        Self { port, attestation, stream, server, sequencer, key: tls.key }
     }
 
     /// A TLS connection from `from`, pinned to the attested key.
@@ -416,6 +418,7 @@ fn api() -> ApiSection {
         send_timeout: Duration::from_secs(5),
         heartbeat_interval: Duration::from_secs(5),
         allowed_origins: Vec::new(),
+        tls: None,
     }
 }
 

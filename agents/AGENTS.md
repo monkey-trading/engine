@@ -46,7 +46,9 @@ an index: load only the rule whose hint matches the current action.
   sequencer, the public log with signed checkpoints (segmented, with a public archive), `engine
   replay`, `engine admin` (the operator's signing client), the REST API with the operator's admin
   route, the browser-origin allowlist (`api.allowed_origins`, in `api/origin.rs`), account proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
-  with rate limits and connection caps), signed answers (`api/signing.rs`: every `/v1` response but
+  with rate limits and connection caps, and with `[api.tls.acme]` a public CA certificate for that
+  key, obtained and renewed over ACME TLS-ALPN-01 answered on the API's listener, in `tls/acme/`),
+  signed answers (`api/signing.rs`: every `/v1` response but
   health, the attestation and the archive carries the enclave key's signature over the request and
   its body, the client's challenge, the node's time and log head, signed only while trusted time
   bounds the host clock (`trusted_time::TrustedClock`); `api/stream/signed.rs`: `signed=1` stream
@@ -83,8 +85,9 @@ an index: load only the rule whose hint matches the current action.
   TraderMade over WebSocket, Databento's live gateway over TCP, with API keys read from the
   environment variables the config names) and a mock, Prometheus metrics on an operator
   listener, and alert routing to webhooks with a bounded durable outbox outside the public log. Its
-  `production` cargo feature refuses mock TEE, custody, and feed providers at config load; release
-  images build with it. `engine ct-watch` (`ct_watch/`) is a separate process outside the enclave,
+  `production` cargo feature refuses mock TEE, custody, and feed providers, and an API without
+  `[api.tls.acme]`, at config load; release images build with it. `engine ct-watch` (`ct_watch/`)
+  is a separate process outside the enclave,
   holding no key of the node's: it verifies the node's attestation, follows RFC 6962 logs (bounded
   reads, tree head signatures checked, no consistency proofs), and raises `unattested_certificate`
   for a certificate for the API domain whose key no verified attestation names, through the same
@@ -120,7 +123,8 @@ an index: load only the rule whose hint matches the current action.
 - **config/** — node configs. `dev.toml` runs the TEE, custody and feeds as mocks on one machine,
   and checks the clock against public Roughtime servers, citing each server's key source;
   `feeds.provider = "venues"` prices its crypto markets from live venues instead, leaving the others
-  unpriced. `anvil.toml` runs EVM custody against the vault on a local Anvil chain. The `[genesis]`
+  unpriced. `anvil.toml` runs EVM custody against the vault on a local Anvil chain. The optional
+  `[api.tls.acme]` names the API's domain and the ACME CA that certifies its key. The `[genesis]`
   section is protocol: it is sequenced into the log as admin commands on first boot, all or
   nothing, and credits house capital from config only under mock custody. Loading refuses a genesis
   value the engine would reject or an entry listed twice, and recovery refuses a log whose genesis
@@ -176,7 +180,8 @@ an index: load only the rule whose hint matches the current action.
   the attestation verifier dev scenario against a loopback key-distribution stand-in, with no
   hardware or vendor access, also replaying a hand-built signed-withdrawal log through
   `engine replay --attestation`, and verifying from the collateral the node's route relays after
-  the stand-in stops; `dev-access-enforcement.sh` checks signed eligibility, API refusals,
+  the stand-in stops; `dev-acme.sh`, the public certificate scenario against the Pebble ACME test CA
+  on loopback; `dev-access-enforcement.sh` checks signed eligibility, API refusals,
   direct vault payer sanctions, automatic screening recovery and held collateral across restart,
   using `dev-access-fixture.sh` and `dev-access-cases.sh` for the explicit synthetic source and
   assertions; and `build-image.sh` and `check-image.sh`, which build the enclave image from a
@@ -184,7 +189,8 @@ an index: load only the rule whose hint matches the current action.
   `image/Dockerfile` so every download runs under `retry` and the cargo build stays `--frozen`,
   and checks the build's download retries.
 - **ops/** — operator assets: `grafana/engine-node.json`, the node's Grafana dashboard, and
-  `prometheus/engine-node-rules.yml`, the alerting rules for a down node or failing alert pages.
+  `prometheus/engine-node-rules.yml`, the alerting rules for a down node, failing alert pages, or a
+  missing or expiring API certificate.
 - **.github/workflows/** — `ci.yaml`: fmt, the file line cap, clippy, tests (and the node's
   production-build tests), the reference-log examples' tests, the reference-log replay and
   invariant tests on x86_64 and aarch64 Linux, the unchanged-reference-log check, `cargo-deny`,
@@ -193,14 +199,14 @@ an index: load only the rule whose hint matches the current action.
   deposit finality scenarios, the MONKEY staking dev scenario, the signed withdrawal and FIFO dev
   scenario, the metrics and alert routing dev scenario, the alert outbox kill/restart scenario,
   the browser-origin scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the
-  signed API answers dev scenario, the review-delta helper's test,
-  and the enclave image (`image` checks its download retries, builds it twice, and boots it under
+  signed API answers dev scenario, the public certificate dev scenario, the review-delta helper's
+  test, and the enclave image (`image` checks its download retries, builds it twice, and boots it under
   QEMU, `image-compare` fails if the builds differ), on every push to `main` and every PR.
   deposit finality scenarios, the signed withdrawal and FIFO dev scenario, the API and
   direct-vault access enforcement dev scenario, the metrics and alert
   routing dev scenario, the alert outbox kill/restart scenario, the browser-origin scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the
-  RWA price feeds dev scenario, the signed API answers dev scenario, the review-delta helper's
-  test, and the enclave image (`image`
+  RWA price feeds dev scenario, the signed API answers dev scenario, the public certificate dev
+  scenario, the review-delta helper's test, and the enclave image (`image`
   checks its download retries, builds it twice, and boots it under QEMU, `image-compare` fails if
   the builds differ), on every push to `main` and every PR.
   On a PR, the first job, `changes`, sorts the changed files into the Rust, contracts, scenario,
@@ -311,6 +317,11 @@ Run from the repo root:
   --signer <attested address> --chain-id <id> --vault <address> --challenge <64 hex> --path <path>
   --headers <curl -D file> --body <file>`, or `verify-frames ... --frames <one frame a line>`; the
   cost benchmark: `cargo test -p engine-node --lib signing_bench -- --ignored --nocapture`
+- Public certificate dev scenario: `./scripts/dev-acme.sh` (Pebble, Let's Encrypt's ACME test CA,
+  and its challenge test server, downloaded by SHA-256 under `image/retry`, certify a dev node's
+  attested key over TLS-ALPN-01 on loopback, renew it without a restart, and a stopped CA raises
+  `certificate_expiring`; the production binary refuses a config without `[api.tls.acme]`; needs
+  `curl`, `jq`, and `openssl`)
 - Corporate-action dev scenario: `./scripts/dev-corporate-actions.sh` (runs the isolated signed
   operator/TLS/API scenario with deterministic venue time, restart and public replay)
 - Access enforcement dev scenario: `./scripts/dev-access-enforcement.sh` (Anvil, API and direct vault
