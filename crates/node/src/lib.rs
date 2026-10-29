@@ -46,6 +46,7 @@ mod verify;
 mod withdrawals;
 pub use verify::{
     Expected as ExpectedSigner, KDS_BASE_URL, Options as VerifyOptions, ReleaseManifest, SentRequest,
-    VerifiedAttestation, VerifiedResponse, ensure_signers_verified, load_attestation, parse_challenge_arg,
-    reconcile_signer, verify_attestation, verify_attestation_files, verify_frames_file, verify_response_files,
+    VerifiedAttestation, VerifiedResponse, ensure_signers_verified, load_attestation, load_relayed_collateral,
+    parse_challenge_arg, reconcile_signer, verify_attestation, verify_attestation_files, verify_frames_file,
+    verify_response_files,
 };

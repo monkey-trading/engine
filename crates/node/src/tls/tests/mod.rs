@@ -352,6 +352,7 @@ impl TestNode {
             limits: limits.clone(),
             history: Reader::new(PathBuf::new(), watch::channel(true).1),
             emission_budget: None,
+            collateral: None,
             listing: Default::default(),
             signing: crate::test_support::signing(),
         };

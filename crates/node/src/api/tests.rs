@@ -328,6 +328,7 @@ async fn serve_with(node: &TestSequencer, dir: &Path, manifest: watch::Receiver<
         limits: Arc::new(ApiLimits::new(&dev_config().api)),
         history: Reader::new(dir.join(INDEX_FILE), watch::channel(true).1),
         emission_budget: None,
+        collateral: None,
         listing: Default::default(),
         signing: crate::test_support::signing(),
     })
@@ -357,6 +358,7 @@ async fn serve_history(history: Reader) -> SocketAddr {
         limits: Arc::new(ApiLimits::new(&api)),
         history,
         emission_budget: None,
+        collateral: None,
         listing: Default::default(),
         signing: crate::test_support::signing(),
     })
@@ -444,7 +446,7 @@ async fn get(addr: SocketAddr, path: &str) -> (u16, Vec<u8>) {
 }
 
 /// API state over a channel no sequencer reads, so a test sees each request the API sends.
-pub(super) fn api_state(mock_custody: bool) -> (ApiState, mpsc::Receiver<sequencer::Request>) {
+pub(crate) fn api_state(mock_custody: bool) -> (ApiState, mpsc::Receiver<sequencer::Request>) {
     let (tx, rx) = mpsc::channel(1);
     let attestation = mock_attestation();
     let (stream, _) = broadcast::channel(1);
@@ -466,6 +468,7 @@ pub(super) fn api_state(mock_custody: bool) -> (ApiState, mpsc::Receiver<sequenc
         limits: Arc::new(ApiLimits::new(&dev_config().api)),
         history: Reader::new(PathBuf::new(), watch::channel(true).1),
         emission_budget: None,
+        collateral: None,
         listing: Default::default(),
         signing: crate::test_support::signing(),
     };
@@ -477,3 +480,4 @@ fn body() -> AmountBody {
 }
 
 mod catalog_archive;
+mod collateral;

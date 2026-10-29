@@ -7,6 +7,7 @@
 //! the API responses and stream frames that enclave signed.
 
 use std::collections::BTreeSet;
+use std::io::Read as _;
 use std::path::Path;
 
 use anyhow::{Context, ensure};
@@ -23,8 +24,12 @@ mod chain;
 use self::chain::{Collateral, QuoteChain, Roots};
 pub(crate) use chain::CollateralUnavailable;
 pub use chain::KDS_BASE_URL;
+mod refresh;
+pub use refresh::{Relay, Served};
 mod release;
 pub use release::ReleaseManifest;
+mod relay;
+pub use relay::RelayedCollateral;
 mod report;
 use self::report::{SnpReport, Tcb};
 #[cfg(test)]
@@ -40,6 +45,10 @@ pub struct Options<'a> {
     /// An extra root certificate, ASCII PEM, pinning the chain in addition to the compiled-in
     /// vendor roots. Test and private chains verify against this; release chains do not need it.
     pub root_pem: Option<&'a str>,
+    /// Collateral a node relayed (`GET /v1/attestation/collateral`), used in place of calls to
+    /// the key-distribution service. It is checked exactly as fetched collateral is: against the
+    /// pinned roots, so where it came from adds no trust.
+    pub collateral: Option<&'a RelayedCollateral>,
 }
 
 /// What a verified attestation proves, for pinning a replay's checkpoint signers to it.
@@ -60,6 +69,27 @@ pub struct VerifiedAttestation {
 pub fn load_attestation(path: &Path) -> anyhow::Result<Attestation> {
     let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))
+}
+
+/// Loads the collateral a node relayed, from the file it was saved to or the URL of the node's
+/// `/v1/attestation/collateral`. A URL is fetched with the same bounded client as vendor
+/// collateral, over TLS to public roots, so a node with a self-signed certificate is read from a
+/// saved file instead. Where it came from adds no trust: `verify_attestation` checks it against the
+/// pinned roots.
+/// Error cases:
+/// - the file or URL cannot be read, is over the fetch size limit, or is not a collateral document
+pub async fn load_relayed_collateral(source: &str, options: &Options<'_>) -> anyhow::Result<RelayedCollateral> {
+    let bytes = if source.starts_with("https://") || source.starts_with("http://") {
+        Collateral::new(options.kds_base, options.processor)?.document(source).await?
+    } else {
+        let limit = chain::MAX_COLLATERAL_BYTES as u64;
+        let file = std::fs::File::open(source).with_context(|| format!("reading {source}"))?;
+        let mut bytes = Vec::new();
+        file.take(limit + 1).read_to_end(&mut bytes).with_context(|| format!("reading {source}"))?;
+        ensure!(bytes.len() as u64 <= limit, "{source} is over the {limit} byte limit");
+        bytes
+    };
+    RelayedCollateral::from_json(&bytes)
 }
 
 /// Loads the attestation and release manifest files and verifies the attestation against the
@@ -91,18 +121,22 @@ pub async fn verify_attestation(
     let report = SnpReport::parse(&quote)
         .context("the quote is not an SEV-SNP attestation report; a mock quote never verifies")?;
 
-    let collateral = Collateral::new(options.kds_base, options.processor)?;
-    let (intermediate, root) = collateral.issuer_chain().await.context("fetching the issuer chain")?;
+    let fetched;
+    let collateral = match options.collateral {
+        Some(relayed) => relayed,
+        None => {
+            let client = Collateral::new(options.kds_base, options.processor)?;
+            fetched = RelayedCollateral::fetch(&client, &report).await?;
+            &fetched
+        }
+    };
     let chain = QuoteChain::verify(
-        collateral.vcek(&report).await.context("issuing the VCEK")?,
-        intermediate,
-        root,
+        collateral.vcek.clone(),
+        collateral.intermediate.clone(),
+        collateral.root.clone(),
         &roots(options)?,
     )?;
-    chain.bind_vcek(&report)?;
-    let crl = collateral.crl().await.context("fetching the certificate revocation list")?;
-    chain::check_revocation(&crl, &chain)?;
-    report.verify_signature(&chain.vcek_public_key()?)?;
+    relay::check_collateral(&chain, &collateral.crl, &report)?;
 
     let (bundle, report_data) = served_bundle(attestation)?;
     ensure!(report.report_data[..] == report_data[..], "the quote's report data differs from the served one");

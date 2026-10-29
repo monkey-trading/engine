@@ -118,7 +118,45 @@ of these hold:
 
 The verifier checks the report signature against the VCEK, fetched from the vendor's
 key-distribution service by the chip id and reported TCB the quote carries, and the VCEK's chain
-against the vendor roots pinned in the binary. A mock quote never verifies. `engine replay
+against the vendor roots pinned in the binary. A mock quote never verifies.
+
+A client that may call only the node's origin, such as a browser, cannot reach the vendor's
+key-distribution service. The node relays what the verifier would fetch at `GET
+/v1/attestation/collateral`: `vcek`, `intermediate`, `root`, and `crl` as `0x` hex DER, and
+`fetched_at` in Unix milliseconds by the host's clock (informational). The route answers 404 for a
+quote with no collateral (a mock quote) and 503 until the first fetch succeeds. `engine
+verify-attestation --collateral <file or URL>` verifies from it with no call to the vendor.
+
+The relay adds no trust. A verifier takes none of it on the node's word: it requires the root to be
+one pinned in the verifier's own binary, each certificate to be signed by its parent and in date,
+the VCEK's signed extensions to name the quote's chip id and reported TCB, the revocation list to be
+the root's, current, and not to list the intermediate, and the report's signature to verify against
+the VCEK. A node, or a host between the node and the vendor, that serves other bytes can make a
+verifier refuse; it cannot make one accept a chain the vendor did not issue. It can withhold a newer
+revocation list: a served list stays valid until its `nextUpdate`, so a revocation reaches a verifier
+only as fast as the node's refreshes do, and a host that blocks the node's fetches delays it until
+the served list expires.
+
+The node treats what it fetches from the vendor as untrusted input. The service URL and processor
+name come from `tee.kds_base` and `tee.processor`, so the attestation binds them through the config
+hash. The first fetch runs in the background at boot, so the API serves the attestation while it is
+pending, then `tee.collateral_refresh` (1 minute to 24 hours, default 12 hours) repeats it. Each
+fetch is bounded: 15 seconds and three attempts per request, no redirect or proxy, TLS to the
+compiled-in public roots, at most 1 MiB per answer, then at most 16 KiB per certificate and 256 KiB
+for the list, and five minutes for the whole refresh. A fetch whose result is malformed, does not
+link, does not name this quote's chip and TCB, or lists a revoked intermediate is dropped, and the
+node keeps serving the last good copy; it does not pin the root, which is the verifier's job. The
+dates in those checks come from the host's clock, so a skewed clock can only make the node refuse
+candidates. A blocked or slowed network, or a host that tampers with the vendor's answers, therefore
+costs a stale copy and a delayed revocation, never an accepted forgery. After a good fetch the node
+waits `tee.collateral_refresh`, or half the time left to the list's `nextUpdate` (at least five
+minutes) when that is sooner, so a replacement is fetched before the served list expires. Once the
+served list is within a day of its `nextUpdate` and a refresh fails, the node raises the Warning
+`collateral_stale`, and the same when a fetch fails after the node has gone a refresh interval (at
+most 30 minutes) without any collateral. The node's fetches are its only calls to the vendor, so a
+deployment must allow outbound HTTPS from the enclave to `tee.kds_base`.
+
+The route is unauthenticated and carries no per-account data. `engine replay
 --attestation <JSON> --release <manifest> --processor <name>` runs the same verification and requires every
 checkpoint signer to be the enclave address the report data binds; the commands below only read
 the fields.
@@ -130,7 +168,9 @@ support, and QEMU 9.1 or later. The launch flags must match `measurement.json`, 
 51 on Milan and later. The guest kernel refuses virtio devices without `iommu_platform=on`.
 
 ```bash
-# The data disk: a config whose node.listen is 0.0.0.0:8080, tee.provider is "configfs_tsm", and
+# The data disk: a config whose node.listen is 0.0.0.0:8080, tee.provider is "configfs_tsm",
+# tee.processor names the host's CPU generation (for example "Genoa"; the node refuses to start
+# without it, since it relays that generation's vendor collateral), and
 # node.log_dir, history.dir, and alerts.outbox.dir are under /data. The dev variant accepts mock
 # custody and feeds.
 mkdir disk && cp node.toml disk/config.toml

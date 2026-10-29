@@ -276,6 +276,7 @@ impl Node {
             limits: Arc::new(ApiLimits::with_quota(&dev_config().api, unlimited, DefaultClock::default())),
             history: Reader::new(dir.join(INDEX_FILE), watch::channel(true).1),
             emission_budget: None,
+            collateral: None,
             listing: Default::default(),
             signing: crate::test_support::signing(),
         };

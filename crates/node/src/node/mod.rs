@@ -36,6 +36,7 @@ use crate::sequencer::{ReplayedLog, Request, Sequencer, SequencerConfig, genesis
 use crate::tee::{AttestationBundle, Attestor, ConfigfsTsm, EnclaveKey, MockAttestor, attest_bundle};
 use crate::telemetry::Telemetry;
 use crate::tls::{TlsIdentity, serve};
+use crate::verify::Relay;
 use crate::{metrics, monitor, trusted_time};
 use preflight::{authorize, emission_preflight};
 
@@ -121,6 +122,14 @@ async fn serve_node(
         provider = %attestation.provider,
         "enclave, config, and TLS key attested"
     );
+
+    // The relay fetches in the background, so the API serves the attestation while it is pending.
+    let relay = Relay::new(&cfg.tee, &attestation)
+        .inspect_err(|e| error!(alert = "collateral_relay_failed", "refusing to serve: {e:#}"))?;
+    let served = relay.as_ref().map(Relay::served);
+    if relay.is_none() {
+        info!(provider = %attestation.provider, "no attestation collateral to relay for this provider");
+    }
 
     let checkpoint_setup = crate::checkpoints::setup::connect(&cfg, &key)
         .await
@@ -225,6 +234,9 @@ async fn serve_node(
     let tick = cfg.node.tick;
     let ticks = tx.clone();
     tasks.spawn(async move { ("ticker", run_ticker(ticks, tick).await) });
+    if let Some(relay) = relay {
+        tasks.spawn(async move { ("collateral", relay.run().await) });
+    }
 
     // The monitor exports quote times only for the sources this config still feeds.
     let sources = feeds::configured_sources(&cfg.feeds);
@@ -305,6 +317,7 @@ async fn serve_node(
         limits: limits.clone(),
         history: history_reader,
         emission_budget,
+        collateral: served,
         listing: Default::default(),
         signing: Arc::new(Signing::new(key, cfg.custody.chain_id, vault, cfg.api.heartbeat_interval)),
     });

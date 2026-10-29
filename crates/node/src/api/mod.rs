@@ -28,7 +28,7 @@ use std::time::Duration;
 
 use axum::extract::{DefaultBodyLimit, Path, Request, State};
 use axum::http::StatusCode;
-use axum::http::header::RETRY_AFTER;
+use axum::http::header::{CONTENT_TYPE, RETRY_AFTER};
 use axum::middleware::{Next, from_fn, from_fn_with_state};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -88,6 +88,9 @@ pub struct ApiState {
     pub tx: mpsc::Sender<sequencer::Request>,
     pub stream: broadcast::Sender<Arc<StreamMsg>>,
     pub attestation: Arc<Attestation>,
+    /// The vendor collateral for the attestation's quote; `None` when the quote has none (a mock
+    /// attestor), and a value of `None` until the first fetch succeeds.
+    pub collateral: Option<crate::verify::Served>,
     /// The client auth the log records; `Unsigned` trusts the `account` field.
     pub auth: ClientAuth,
     pub(crate) access: Option<Arc<crate::access::AccessClient>>,
@@ -202,6 +205,7 @@ pub fn router(state: ApiState) -> Router {
     Router::new()
         .route("/v1/health", get(health))
         .route("/v1/attestation", get(attestation))
+        .route("/v1/attestation/collateral", get(attestation_collateral))
         .route("/v1/markets", get(markets))
         .route("/v1/benchmarks", get(benchmarks))
         .route("/v1/benchmarks/schedule", get(benchmark_schedule::schedule))
@@ -248,6 +252,21 @@ async fn health() -> &'static str {
 /// The attestation produced at boot.
 async fn attestation(State(s): State<ApiState>) -> Json<Attestation> {
     Json((*s.attestation).clone())
+}
+
+/// The vendor certificate chain and revocation list a verifier needs for the attestation's quote,
+/// as the node last fetched them. It carries no per-account data, and its integrity rests on the
+/// vendor roots the verifier pins, not on the node.
+/// Error cases:
+/// - the attestation has no collateral (404)
+/// - no fetch has succeeded yet (503)
+async fn attestation_collateral(State(s): State<ApiState>) -> Result<Response, ApiError> {
+    let served = s.collateral.as_ref().ok_or(ApiError::NotFound)?;
+    let Some(body) = served.borrow().clone() else {
+        let pending = Json(json!({ "error": "attestation collateral not fetched yet" }));
+        return Ok((StatusCode::SERVICE_UNAVAILABLE, [(RETRY_AFTER, "60")], pending).into_response());
+    };
+    Ok(([(CONTENT_TYPE, "application/json")], body).into_response())
 }
 
 /// Every market with its live state.
@@ -368,7 +387,7 @@ mod signing_bench;
 #[cfg(test)]
 mod signing_tests;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 #[cfg(test)]
 mod benchmark_tests;

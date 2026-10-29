@@ -318,6 +318,7 @@ impl Scenario {
             limits: Arc::new(ApiLimits::with_quota(&dev_config().api, unlimited, DefaultClock::default())),
             history: Reader::new(self.dir.join(INDEX_FILE), watch::channel(true).1),
             emission_budget: Some(emission_budget),
+            collateral: None,
             listing: Default::default(),
             signing: crate::test_support::signing(),
         };

@@ -125,7 +125,7 @@ async fn dev_scenario_replay_dispatch_trusts_the_attested_signer() -> anyhow::Re
 /// Locates the built `engine` binary next to this test executable (`target/<profile>/engine`).
 /// Error cases:
 /// - the path cannot be derived or the binary was not built
-fn engine_binary() -> anyhow::Result<std::path::PathBuf> {
+pub(super) fn engine_binary() -> anyhow::Result<std::path::PathBuf> {
     let exe = std::env::current_exe().context("the test executable path")?;
     let binary = exe
         .parent()

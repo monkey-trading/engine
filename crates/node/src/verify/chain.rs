@@ -28,7 +28,7 @@ pub const KDS_BASE_URL: &str = "https://kdsintf.amd.com";
 const FETCH_TIMEOUT: Duration = Duration::from_secs(15);
 const FETCH_ATTEMPTS: usize = 3;
 const FETCH_BACKOFF: Duration = Duration::from_millis(500);
-const MAX_COLLATERAL_BYTES: usize = 1024 * 1024;
+pub(super) const MAX_COLLATERAL_BYTES: usize = 1024 * 1024;
 
 /// The vendor roots compiled into the binary. Rotation adds a file here; it never removes one.
 const VENDOR_ROOT_PEMS: &[&str] =
@@ -86,6 +86,15 @@ impl QuoteChain {
     ///   parent's subject, or a signature does not verify
     pub fn verify(vcek: Vec<u8>, intermediate: Vec<u8>, root: Vec<u8>, roots: &Roots) -> anyhow::Result<Self> {
         ensure!(roots.contains(&root), "chain root is not a pinned vendor root");
+        Self::link(vcek, intermediate, root)
+    }
+
+    /// Checks the certificates link and are in date, without pinning the root: the node checks
+    /// what it relays this way, and a verifier pins through `verify`.
+    /// Error cases:
+    /// - a certificate does not parse, an issuer name does not match its parent's subject, a
+    ///   signature does not verify, or a certificate below the root is outside its validity period
+    pub(crate) fn link(vcek: Vec<u8>, intermediate: Vec<u8>, root: Vec<u8>) -> anyhow::Result<Self> {
         let chain = Self { ders: vec![vcek, intermediate, root] };
         for (child, parent) in [(0, 1), (1, 2)] {
             check_signed_by(&chain.ders[child], &chain.ders[parent])?;
@@ -255,6 +264,14 @@ impl<'a> Collateral<'a> {
             return Ok(block.contents);
         }
         Ok(body)
+    }
+
+    /// The body served at `url`, fetched like any collateral: bounded, without redirects, and
+    /// retried only on a transient failure.
+    /// Error cases:
+    /// - see `fetch`
+    pub async fn document(&self, url: &str) -> anyhow::Result<Vec<u8>> {
+        self.fetch(url).await
     }
 
     /// Fetches `url`, retrying a transient failure — a transport or body-read error, 429, or 5xx

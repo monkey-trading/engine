@@ -111,7 +111,10 @@ finished: the node builds into a reproducible SEV-SNP image and requests an atte
 through configfs-tsm, and `engine verify-attestation` verifies a quote's certificate chain,
 measurement, policy, and configuration against a release, but booting that image on SEV-SNP
 hardware and the verifier against a hardware quote are still being validated, as are live prices
-and the separate signed benchmark publisher worker. On-chain custody credits vault deposits and
+and the separate signed benchmark publisher worker. The node relays the vendor's certificate chain
+and revocation list for verifiers that cannot call the vendor; a verifier pins the vendor roots
+itself, but a host that blocks the node's fetches delays a revocation until the served list's
+`nextUpdate`. On-chain custody credits vault deposits and
 pays signed withdrawals, exercised on a local chain; production deployment remains out of scope
 for the development scenarios.
 

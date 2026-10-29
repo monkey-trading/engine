@@ -20,6 +20,8 @@ pub(super) struct TestChain {
     pub(super) vcek_key: KeyPair,
     pub(super) ark_params: CertificateParams,
     pub(super) ark_key: KeyPair,
+    pub(super) ask_params: CertificateParams,
+    pub(super) ask_key: KeyPair,
 }
 
 /// The VCEK's serial in every fixture chain, so a revocation list can name it. The high bit of
@@ -90,7 +92,18 @@ pub(super) fn test_chain_with(chip_id: [u8; 64], tcb: Tcb, variants: Variants<'_
     vcek_params.custom_extensions = vcek_extensions(chip_id, tcb, variants.struct_version, variants.tagged_hwid);
     let vcek_signer = variants.vcek_signer.unwrap_or(&ask_key);
     let vcek = vcek_params.signed_by(&vcek_key, &Issuer::from_params(&ask_params, vcek_signer)).unwrap();
-    TestChain { ark, ask, vcek, vcek_key, ark_params, ark_key }
+    TestChain { ark, ask, vcek, vcek_key, ark_params, ark_key, ask_params, ask_key }
+}
+
+/// A genuine VCEK of `chain` (signed by its intermediate) for another chip.
+pub(super) fn vcek_for(chain: &TestChain, chip_id: [u8; 64], tcb: Tcb) -> Certificate {
+    let mut params = CertificateParams::new(Vec::new()).unwrap();
+    params.serial_number = Some(SerialNumber::from(VCEK_SERIAL));
+    params.distinguished_name.push(DnType::CommonName, "VCEK-Test");
+    params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+    params.custom_extensions = vcek_extensions(chip_id, tcb, 0, false);
+    let key = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384).unwrap();
+    params.signed_by(&key, &Issuer::from_params(&chain.ask_params, &chain.ask_key)).unwrap()
 }
 
 /// The vendor's VCEK extension set for `chip_id` and `tcb`.
@@ -124,13 +137,25 @@ pub(super) fn crl_revoking(chain: &TestChain, revoked_serials: &[SerialNumber]) 
     crl_signed(chain, revoked_serials, (2024, 1, 1), (2049, 1, 1), None)
 }
 
+/// When a revocation list's `nextUpdate` falls: on a date, or a number of seconds from now.
+pub(super) enum CrlEnd {
+    Date((i32, u8, u8)),
+    SecondsFromNow(i64),
+}
+
+impl From<(i32, u8, u8)> for CrlEnd {
+    fn from(date: (i32, u8, u8)) -> Self {
+        Self::Date(date)
+    }
+}
+
 /// A revocation list with the given window and signer, in PEM. `signer` keeps the fixture
 /// root's issuer name while signing with another key, so only the signature differs.
 pub(super) fn crl_signed(
     chain: &TestChain,
     revoked_serials: &[SerialNumber],
     from: (i32, u8, u8),
-    to: (i32, u8, u8),
+    to: impl Into<CrlEnd>,
     signer: Option<&KeyPair>,
 ) -> String {
     use rcgen::{CertificateRevocationListParams, RevokedCertParams};
@@ -145,7 +170,13 @@ pub(super) fn crl_signed(
         .collect();
     let params = CertificateRevocationListParams {
         this_update: rcgen::date_time_ymd(from.0, from.1, from.2),
-        next_update: rcgen::date_time_ymd(to.0, to.1, to.2),
+        next_update: match to.into() {
+            CrlEnd::Date((year, month, day)) => rcgen::date_time_ymd(year, month, day),
+            CrlEnd::SecondsFromNow(secs) => {
+                let now = x509_parser::time::ASN1Time::now().timestamp();
+                x509_parser::time::ASN1Time::from_timestamp(now + secs).unwrap().to_datetime()
+            }
+        },
         crl_number: SerialNumber::from(1),
         issuing_distribution_point: None,
         revoked_certs: revoked,

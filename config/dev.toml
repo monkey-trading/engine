@@ -67,7 +67,7 @@ heartbeat_interval = "5s"
 level = "info"
 
 [tee]
-provider = "mock" # "configfs_tsm" on a TDX / SEV-SNP confidential VM
+provider = "mock" # "configfs_tsm" on a TDX / SEV-SNP confidential VM; SEV-SNP also needs `processor`
 use_published_mock_key = true # Public development identity; forbidden with real attestation.
 
 [operator]

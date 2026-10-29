@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use axum::Router;
 use axum::extract::Path;
+use axum::response::IntoResponse as _;
 use axum::routing::get;
 use futures_util::StreamExt as _;
 use tokio::net::TcpListener;
@@ -27,15 +28,28 @@ pub(super) struct KdsStub {
     _task: JoinHandle<()>,
 }
 
+impl KdsStub {
+    /// Stops the stand-in and waits until its listener is closed, so a later call is refused.
+    pub(super) async fn stop(self) {
+        self._task.abort();
+        let _ = self._task.await;
+    }
+}
+
 pub(super) async fn kds_stub(chain: &TestChain) -> KdsStub {
     kds_stub_with(chain, false, &[]).await
 }
 
 /// The stand-in with a PEM-encoded VCEK or a revocation list that revokes `revoked`.
 pub(super) async fn kds_stub_with(chain: &TestChain, vcek_pem: bool, revoked: &[SerialNumber]) -> KdsStub {
+    serve(kds_app(chain, vcek_pem, revoked, None)).await
+}
+
+/// The stand-in's routes, answering `crl_pem` as the list when given.
+fn kds_app(chain: &TestChain, vcek_pem: bool, revoked: &[SerialNumber], crl_pem: Option<String>) -> Router {
     let vcek = if vcek_pem { pem(&chain.vcek).into_bytes() } else { chain.vcek.der().to_vec() };
-    let crl = super::fixtures::crl_revoking(chain, revoked);
-    let app = Router::new()
+    let crl = crl_pem.unwrap_or_else(|| super::fixtures::crl_revoking(chain, revoked));
+    Router::new()
         .route("/vcek/v1/{processor}/cert_chain", {
             let ark = pem(&chain.ark);
             let ask = pem(&chain.ask);
@@ -75,8 +89,32 @@ pub(super) async fn kds_stub_with(chain: &TestChain, vcek_pem: bool, revoked: &[
                     (axum::http::StatusCode::OK, vcek)
                 }
             })
-        });
-    serve(app).await
+        })
+}
+
+/// The stand-in with a switch: while `down` is set every request is answered 503 and counted in
+/// `attempts`, as a vendor outage or a blocked network looks to the node.
+pub(super) async fn kds_stub_switched(
+    chain: &TestChain,
+    crl_pem: Option<String>,
+    down: Arc<std::sync::atomic::AtomicBool>,
+) -> KdsStub {
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let (switch, counted) = (down, attempts.clone());
+    let app = kds_app(chain, false, &[], crl_pem).layer(axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            let (switch, counted) = (switch.clone(), counted.clone());
+            async move {
+                if switch.load(Ordering::SeqCst) {
+                    counted.fetch_add(1, Ordering::SeqCst);
+                    return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+                }
+                next.run(request).await
+            }
+        },
+    ));
+    let stub = serve(app).await;
+    KdsStub { base: stub.base, attempts, _task: stub._task }
 }
 
 /// A stand-in whose one route answers `status` `failures` times, counted, then `body`.
@@ -128,5 +166,5 @@ async fn serve(app: Router) -> KdsStub {
 }
 
 pub(super) fn options<'a>(stub: &'a KdsStub, root: &'a str) -> Options<'a> {
-    Options { processor: PROCESSOR, kds_base: &stub.base, root_pem: Some(root) }
+    Options { processor: PROCESSOR, kds_base: &stub.base, root_pem: Some(root), collateral: None }
 }
