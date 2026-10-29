@@ -16,9 +16,10 @@ use tokio::sync::oneshot;
 use tokio::time::{Instant, timeout};
 
 use crate::api::Signing;
+use crate::clock::test_clock::TestClock;
 use crate::log::{CommandEntry, LogEntry, SegmentedLog, segment_seq};
 use crate::tee::EnclaveKey;
-use crate::test_support::{TestSequencer, deposit, log_entries, log_messages, scratch_dir, withdraw};
+use crate::test_support::{TestSequencer, deposit, log_entries, log_messages, scratch_dir, trusted, withdraw};
 
 const SEND_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -286,9 +287,10 @@ async fn every_arm_stays_live_while_another_is_busy() {
 async fn a_quiet_signed_subscriber_gets_a_heartbeat_at_once_and_then_exactly_each_interval() {
     let (live, feed) = live_feed(4);
     let interval = Duration::from_secs(5);
-    let signing = Signing::new(Arc::new(EnclaveKey::test_key()), 31337, AccountId([0; 20]), interval);
+    let time = trusted(Arc::new(TestClock::default()));
+    let signing = Signing::new(Arc::new(EnclaveKey::test_key()), 31337, AccountId([0; 20]), interval, time);
     let connection = Connection::new([7; 32], "/v1/stream?signed=1&challenge=07");
-    let framing = Framing::new(Arc::new(signing), connection, || 1, watch::channel(Manifest::default()).1);
+    let framing = Framing::new(Arc::new(signing), connection, watch::channel(Manifest::default()).1);
     let mut subscriber = Subscriber::default();
     let started = Instant::now();
     let _open =

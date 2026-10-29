@@ -3,7 +3,8 @@
 //! included, is stamped before the first sample. Skewing the clock past the bound halts sequencing
 //! with a Critical alert, and removing the skew resumes it. With the servers silent, sequencing
 //! runs on for the grace, then halts with a Critical alert until they answer again. Stamps never
-//! run backwards, and nothing refused reaches the log.
+//! run backwards, and nothing refused reaches the log. The API's signing clock, fed the same
+//! samples, reads a time exactly while the sequencer stamps.
 
 use std::path::PathBuf;
 
@@ -31,6 +32,8 @@ struct Node {
     tx: mpsc::Sender<Request>,
     /// How many samples the trusted time task has handed the sequencer.
     forwarded: Arc<AtomicUsize>,
+    /// The clock the API signs answers with, over the samples the task publishes.
+    signing: TrustedClock,
     dir: PathBuf,
     sequencer: JoinHandle<anyhow::Result<()>>,
     checker: JoinHandle<anyhow::Result<()>>,
@@ -46,24 +49,29 @@ async fn skew_and_outage_halt_sequencing_until_a_sample_within_the_bound_returns
     servers.iter().for_each(|s| s.garbled.store(true, Ordering::SeqCst));
     let node = Node::start("scenario", clock.clone(), servers.iter().map(server_config).collect()).await;
 
-    // Nothing, genesis included, is stamped before the first sample.
+    // Nothing, genesis included, is stamped before the first sample, and no answer signed.
     until(|| logs.count(FAILED_ROUND) > 0).await;
     assert_eq!(node.tick().await, None);
+    assert_eq!(node.signing.now_ms(), None);
     servers.iter().for_each(|s| s.garbled.store(false, Ordering::SeqCst));
     // Past the failed queries' back-off.
     clock.advance(NO_SAMPLE_GRACE);
     node.until_forwarded(1).await;
     let first = node.tick().await.expect("a stamp within the bound");
+    assert_eq!(node.signing.now_ms(), Some(clock.now_ms()));
 
-    // 1. Skew the host clock beyond the bound: sequencing halts with one Critical alert.
+    // 1. Skew the host clock beyond the bound: sequencing halts with one Critical alert, and the
+    // API signs nothing.
     clock.skew(30_000);
     assert_eq!(node.tick().await, None);
     assert_eq!(node.tick().await, None);
     assert_eq!(logs.critical("clock_drift"), 1);
+    assert_eq!(node.signing.now_ms(), None);
 
     // Corrected, it resumes.
     clock.skew(0);
     let resumed = node.tick().await.expect("resumed");
+    assert_eq!(node.signing.now_ms(), Some(clock.now_ms()));
     assert!(resumed >= first);
     assert_eq!((logs.count("sequencing started"), logs.count("sequencing resumed")), (1, 1));
 
@@ -82,6 +90,7 @@ async fn skew_and_outage_halt_sequencing_until_a_sample_within_the_bound_returns
     clock.advance(2 * SLACK);
     assert_eq!(node.tick().await, None);
     assert_eq!(logs.critical("trusted_time_unavailable"), 1);
+    assert_eq!(node.signing.now_ms(), None);
 
     // The sources answer again: a fresh sample within the bound resumes sequencing.
     let forwarded = node.forwarded.load(Ordering::SeqCst);
@@ -90,6 +99,7 @@ async fn skew_and_outage_halt_sequencing_until_a_sample_within_the_bound_returns
     node.until_forwarded(forwarded + 1).await;
     assert!(node.tick().await.expect("resumed") >= in_grace);
     assert_eq!(logs.count("sequencing resumed"), 2);
+    assert_eq!(node.signing.now_ms(), Some(clock.now_ms()));
 
     // The log holds genesis, checkpointed, then the accepted ticks only, in non-decreasing time.
     let entries = node.stop(true).await;
@@ -220,7 +230,9 @@ impl Node {
         let (tx, rx) = mpsc::channel(1024);
         let sequencer = tokio::spawn(seq.run(rx));
         let (sample_tx, mut samples) = mpsc::channel(1);
-        let checker = tokio::spawn(run(cfg.time, clock, sample_tx));
+        let (published, latest) = watch::channel(None);
+        let signing = TrustedClock::new(clock.clone(), latest, cfg.time.max_drift);
+        let checker = tokio::spawn(run(cfg.time, clock, sample_tx, published));
         let forwarded = Arc::new(AtomicUsize::new(0));
         let (count, to_sequencer) = (forwarded.clone(), tx.clone());
         let forwarder = tokio::spawn(async move {
@@ -231,7 +243,7 @@ impl Node {
                 count.fetch_add(1, Ordering::SeqCst);
             }
         });
-        Self { tx, forwarded, dir, sequencer, checker, forwarder }
+        Self { tx, forwarded, signing, dir, sequencer, checker, forwarder }
     }
 
     /// Waits until the sequencer has been handed `samples` samples in all.

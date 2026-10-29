@@ -131,6 +131,36 @@ fn a_halt_alerts_once_and_again_only_when_its_reason_changes() {
     assert_eq!(logs.count("sequencing resumed"), 1);
 }
 
+#[test]
+fn the_signing_clock_reads_the_host_clock_only_while_the_latest_sample_bounds_it() {
+    let clock = Arc::new(TestClock::at(TRUE_MS));
+    let (samples, latest) = watch::channel(None);
+    let signing = TrustedClock::new(clock.clone(), latest, MAX_DRIFT);
+    assert_eq!(signing.now_ms(), None, "before the first sample");
+    samples.send_replace(Some(sample(clock.instant())));
+    // The sample allows TRUE_MS ± 3s, so the host clock must be within 7s of TRUE_MS.
+    for (skew, read) in [(0, Some(TRUE_MS)), (7_000, Some(TRUE_MS + 7_000)), (-7_000, Some(TRUE_MS - 7_000))] {
+        clock.skew(skew);
+        assert_eq!(signing.now_ms(), read, "skewed {skew}ms");
+    }
+    for skew in [7_001, -7_001, 30_000] {
+        clock.skew(skew);
+        assert_eq!(signing.now_ms(), None, "skewed {skew}ms");
+    }
+    clock.skew(0);
+    clock.advance(NO_SAMPLE_GRACE);
+    assert_eq!(signing.now_ms(), Some(clock.now_ms()), "a sample as old as the grace");
+    clock.advance(Duration::from_millis(1));
+    assert_eq!(signing.now_ms(), None, "a sample older than the grace");
+    let true_ms = clock.true_ms();
+    samples.send_replace(Some(Sample {
+        at: clock.instant(),
+        earliest_ms: true_ms - 3_000,
+        latest_ms: true_ms + 3_000,
+    }));
+    assert_eq!(signing.now_ms(), Some(true_ms), "a fresh sample");
+}
+
 // ── Helpers ──
 
 /// A sample taken at `at`, when true time was `TRUE_MS` ± 3s.

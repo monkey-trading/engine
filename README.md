@@ -204,9 +204,14 @@ challenge and request you sent: a recorded answer then fits no other request. A 
 opened with `signed=1` and a challenge gets each message in a numbered frame chained to the one
 before it, so no frame can be dropped, repeated, or taken from another connection unnoticed, and a
 signed heartbeat every five seconds by default, so a client can tell a quiet market from a
-held-back feed. A signature proves who answered; it cannot stop someone in between from delaying or
-dropping an answer, which is why a client treats a missing heartbeat as a stale feed and an
-unsigned answer as no answer:
+held-back feed. The time an answer carries is the host's clock, which the node signs only while it
+is within the drift bound of trusted time; without trusted time, answers go out unsigned and a
+signed stream closes. A signature proves who answered; it cannot stop someone in between from
+delaying or dropping an answer, which is why a client treats a missing heartbeat as a stale feed and
+an unsigned answer as no answer. Nor does it tie an answer to one delivery of a request: someone in
+between can send the node a copy first and pass on the node's refusal of the second, so before
+showing that an order, cancel, or withdrawal was refused, a client confirms it with a signed read of
+the account under a fresh challenge:
 
 ```bash
 CHALLENGE=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')

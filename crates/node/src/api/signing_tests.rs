@@ -1,5 +1,5 @@
-//! Signed answers: what the response signature covers, which responses carry one, and that the
-//! node's signatures are the published vectors' byte for byte.
+//! Signed answers: what the response signature covers, which responses carry one, the time they
+//! carry, and that the node's signatures are the published vectors' byte for byte.
 
 use super::*;
 use std::net::SocketAddr;
@@ -18,13 +18,16 @@ use governor::Quota;
 use governor::clock::DefaultClock;
 use tower::ServiceExt;
 
+use crate::clock::Clock;
+use crate::clock::test_clock::TestClock;
 use crate::config::RateLimit;
 use crate::history::INDEX_FILE;
 use crate::tee::{AttestationBundle, EnclaveKey, MockAttestor, attest_bundle};
-use crate::test_support::{TestSequencer, dev_config, scratch_dir, signing};
+use crate::test_support::{TestSequencer, dev_config, sample_around, scratch_dir, signing_with, trusted};
+use crate::trusted_time::{NO_SAMPLE_GRACE, TrustedClock};
 
 const CHALLENGE: &str = "8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71";
-/// The time the API reads in these tests: Wed 28 Oct 2026 00:00 UTC.
+/// The time the API reads, and signs answers with, in these tests: Wed 28 Oct 2026 00:00 UTC.
 const NOW: Millis = 1_793_145_600_000;
 const VECTORS: &str = include_str!("../../../wire/tests/vectors.json");
 
@@ -182,6 +185,47 @@ async fn a_listed_origin_can_read_a_signed_answer_and_gets_its_preflight_unsigne
     assert!(to_bytes(preflight.into_body(), usize::MAX).await.unwrap().is_empty());
 }
 
+#[tokio::test]
+async fn an_answer_is_signed_at_the_host_clock_only_while_trusted_time_bounds_it() {
+    let dir = scratch_dir("signing-trusted-time");
+    let node = TestSequencer::start_legacy(&dir, 16);
+    let clock = Arc::new(TestClock::at(NOW));
+    let (samples, latest) = watch::channel(None);
+    let mut state = state(&node, &dir, &dev_config().api);
+    state.signing = signing_with(TrustedClock::new(clock.clone(), latest, dev_config().time.max_drift));
+    let app = router(state).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9))));
+    // Every status the signer signs goes out unsigned without a time to sign it at.
+    let unsigned = async |when: &str| {
+        for (target, expected) in [("/v1/markets", StatusCode::OK), ("/v1/no-such-route", StatusCode::NOT_FOUND)] {
+            let (status, headers, _) = call(&app, "GET", target, Some(CHALLENGE), Body::empty()).await;
+            assert_eq!(status, expected, "{when}: {target}");
+            for name in [SIGNATURE_HEADER, TIME_HEADER, SEQ_HEADER, CHALLENGE_HEADER] {
+                assert!(!headers.contains_key(name), "{when}: {target} carries {name}");
+            }
+        }
+    };
+    let signed_at = async |ms: Millis| {
+        let (status, headers, body) = call(&app, "GET", "/v1/markets", Some(CHALLENGE), Body::empty()).await;
+        assert_eq!(headers[TIME_HEADER], ms.to_string());
+        assert_eq!(verify(("GET", "/v1/markets", b""), parse(CHALLENGE), status, &headers, &body), Ok(()));
+    };
+    unsigned("before the first sample").await;
+    samples.send_replace(Some(sample_around(clock.as_ref())));
+    signed_at(NOW).await;
+    // The sample allows NOW ± 1s, and the dev bound is 15s: the host's reading within 14s is signed.
+    clock.skew(14_000);
+    signed_at(NOW + 14_000).await;
+    for skew in [14_001, -14_001, 3_600_000] {
+        clock.skew(skew);
+        unsigned(&format!("the host clock skewed {skew}ms")).await;
+    }
+    clock.skew(0);
+    clock.advance(NO_SAMPLE_GRACE + Duration::from_millis(1));
+    unsigned("a sample older than the grace").await;
+    samples.send_replace(Some(sample_around(clock.as_ref())));
+    signed_at(clock.now_ms()).await;
+}
+
 #[test]
 fn the_node_signs_the_published_vectors_byte_for_byte() {
     let vectors: serde_json::Value = serde_json::from_str(VECTORS).unwrap();
@@ -189,7 +233,8 @@ fn the_node_signs_the_published_vectors_byte_for_byte() {
     let signing_for = |v: &serde_json::Value| {
         let vault: AccountId = v["vault"].as_str().unwrap().parse().unwrap();
         let chain_id = v["chain_id"].as_u64().unwrap();
-        Signing::new(Arc::new(EnclaveKey::test_key()), chain_id, vault, Duration::from_secs(5))
+        let time = trusted(Arc::new(TestClock::default()));
+        Signing::new(Arc::new(EnclaveKey::test_key()), chain_id, vault, Duration::from_secs(5), time)
     };
     let valid = |v: &&serde_json::Value| v["error"].is_null();
     let responses = vectors["responses"].as_array().unwrap();
@@ -224,8 +269,8 @@ fn the_node_signs_the_published_vectors_byte_for_byte() {
 
 // ── Helpers ──
 
-/// A sequencer over the dev genesis, and its API answering at `NOW` under `api`'s bursts, which
-/// refill hourly, so only the burst counts however long the requests take.
+/// A sequencer over the dev genesis, and its API answering, and signing, at `NOW` under `api`'s
+/// bursts, which refill hourly, so only the burst counts however long the requests take.
 fn node(name: &str, api: &crate::config::ApiSection) -> (TestSequencer, Router) {
     let dir = scratch_dir(&format!("signing-{name}"));
     let node = TestSequencer::start_legacy(&dir, 16);
@@ -258,13 +303,13 @@ pub(super) fn state(node: &TestSequencer, dir: &Path, api: &crate::config::ApiSe
         emission_budget: None,
         collateral: None,
         listing: Default::default(),
-        signing: signing(),
+        signing: signing_with(trusted(Arc::new(TestClock::at(NOW)))),
     }
 }
 
 /// Serves one request, with `challenge` as its `X-Engine-Challenge` when given: the status, the
 /// headers, and the body as sent.
-async fn call(
+pub(super) async fn call(
     app: &Router,
     method: &str,
     target: &str,

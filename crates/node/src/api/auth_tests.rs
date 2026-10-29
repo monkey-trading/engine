@@ -303,28 +303,30 @@ fn the_published_signing_vectors_are_bodies_the_api_accepts() {
 }
 
 #[tokio::test]
-async fn a_nonce_conflict_is_signed_over_the_order_it_answers_so_no_one_between_can_invent_one() {
+async fn a_signed_refusal_of_a_copy_answers_the_order_and_a_fresh_account_read_shows_the_copy_filled() {
+    use super::signing_tests::{call, parse, verify};
     let node = Node::start("signed-conflict", signed()).await;
     let client = SigningKey::from_slice(&[1; 32]).unwrap();
     node.fund(&client).await;
     let challenge = "1b6d3f0a8c2e4975b1d0e6a3f8c27b4e9d05a1c3e7f2b6d48a0c9e1f3b5d7a26";
-    let order = signed_order(&client, 5, "0.1").to_string();
-    let request = HttpRequest::post("/v1/orders")
-        .header("content-type", "application/json")
-        .header(engine_wire::CHALLENGE_HEADER, challenge)
-        .body(Body::from(order.clone()));
-    let response = node.app.clone().oneshot(request.unwrap()).await.unwrap();
-    let (status, headers) = (response.status(), response.headers().clone());
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let order = signed_order(&client, 0, "0.1").to_string();
+    let post = || call(&node.app, "POST", "/v1/orders", Some(challenge), Body::from(order.clone()));
+    // Someone in between sends a copy of the order, challenge included, ahead of the client's own.
+    assert_eq!(post().await.0, StatusCode::OK);
+    let (status, headers, body) = post().await;
     assert_eq!(status, StatusCode::CONFLICT);
-    let challenge = super::signing_tests::parse(challenge);
-    let verify = |sent: &str| {
-        super::signing_tests::verify(("POST", "/v1/orders", sent.as_bytes()), challenge, status, &headers, &body)
-    };
-    assert_eq!(verify(&order), Ok(()));
+    let refusal =
+        |sent: &str| verify(("POST", "/v1/orders", sent.as_bytes()), parse(challenge), status, &headers, &body);
+    assert_eq!(refusal(&order), Ok(()), "the copy's refusal verifies as the answer to the client's order");
     // The answer does not verify for another account's order swapped in under the same challenge.
-    let other = signed_order(&SigningKey::from_slice(&[2; 32]).unwrap(), 5, "0.1").to_string();
-    assert_eq!(verify(&other), Err(engine_wire::Error::WrongSigner));
+    let other = signed_order(&SigningKey::from_slice(&[2; 32]).unwrap(), 0, "0.1").to_string();
+    assert_eq!(refusal(&other), Err(engine_wire::Error::WrongSigner));
+    // A signed read of the account under a fresh challenge shows the position the copy opened.
+    let (fresh, target) = ("5a".repeat(32), format!("/v1/accounts/{}", account_of(&client)));
+    let (status, headers, body) = call(&node.app, "GET", &target, Some(&fresh), Body::empty()).await;
+    assert_eq!(verify(("GET", &target, b""), parse(&fresh), status, &headers, &body), Ok(()));
+    let account: Value = serde_json::from_slice(&body).unwrap();
+    assert!(account["positions"].as_object().is_some_and(|positions| !positions.is_empty()), "{account}");
 }
 
 // ── Helpers ──

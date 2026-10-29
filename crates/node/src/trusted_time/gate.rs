@@ -1,10 +1,14 @@
-//! The sequencer's check of each stamp against trusted time.
+//! The checks of the host clock against trusted time: the sequencer's of each stamp, and the API's
+//! of the time it signs answers with.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use engine_core::types::Millis;
+use tokio::sync::watch;
 use tracing::{debug, error, info};
 
+use crate::clock::Clock;
 use crate::trusted_time::{Sample, ceil_millis, floor_millis};
 
 /// How long sequencing may go on after the latest trusted time sample (#15 §4).
@@ -42,6 +46,15 @@ pub struct TimeGate {
     halted: Option<Halt>,
     /// Stamps refused since sequencing halted.
     refused: u64,
+}
+
+/// The host clock, read only while the gate would admit a stamp of it: within `max_drift` of every
+/// time the latest trusted time sample allows, with that sample no older than `NO_SAMPLE_GRACE`. The
+/// API signs answers with it.
+pub struct TrustedClock {
+    clock: Arc<dyn Clock>,
+    samples: watch::Receiver<Option<Sample>>,
+    max_drift_ms: Millis,
 }
 
 impl Halt {
@@ -122,17 +135,7 @@ impl TimeGate {
         let Some(sample) = self.sample else {
             return Some(Refusal::NoSample { waited: now.saturating_duration_since(self.started), sampled: false });
         };
-        let age = now.saturating_duration_since(sample.at);
-        if age > NO_SAMPLE_GRACE {
-            return Some(Refusal::NoSample { waited: age, sampled: true });
-        }
-        // True time has moved on since the sample by the monotonic time elapsed.
-        let earliest_ms = sample.earliest_ms.saturating_add(floor_millis(age));
-        let latest_ms = sample.latest_ms.saturating_add(ceil_millis(age));
-        let within = |t: Millis| {
-            latest_ms.saturating_sub(self.max_drift_ms) <= t && t <= earliest_ms.saturating_add(self.max_drift_ms)
-        };
-        (!(within(host_ms) && within(ts))).then_some(Refusal::Drift { host_ms, earliest_ms, latest_ms })
+        check_sample(&sample, self.max_drift_ms, host_ms, ts, now)
     }
 
     /// Raises the Critical alert for a refusal that halts sequencing.
@@ -153,4 +156,35 @@ impl TimeGate {
             ),
         }
     }
+}
+
+impl TrustedClock {
+    /// Reads `clock` against the latest sample `samples` holds, within `max_drift`.
+    pub fn new(clock: Arc<dyn Clock>, samples: watch::Receiver<Option<Sample>>, max_drift: Duration) -> Self {
+        Self { clock, samples, max_drift_ms: floor_millis(max_drift) }
+    }
+
+    /// The host clock's reading, if the gate would admit a stamp of it now; `None` before the first
+    /// sample, once the latest is older than the grace, or while the reading is beyond the bound.
+    pub fn now_ms(&self) -> Option<Millis> {
+        let sample = (*self.samples.borrow())?;
+        let host_ms = self.clock.now_ms();
+        check_sample(&sample, self.max_drift_ms, host_ms, host_ms, self.clock.instant()).is_none().then_some(host_ms)
+    }
+}
+
+/// Why `ts`, stamped from `host_ms`, may not be logged at `now` under `sample`, if it may not: the
+/// sample is older than the grace, or either time is not within `max_drift_ms` of every time the
+/// sample allows.
+fn check_sample(sample: &Sample, max_drift_ms: Millis, host_ms: Millis, ts: Millis, now: Instant) -> Option<Refusal> {
+    let age = now.saturating_duration_since(sample.at);
+    if age > NO_SAMPLE_GRACE {
+        return Some(Refusal::NoSample { waited: age, sampled: true });
+    }
+    // True time has moved on since the sample by the monotonic time elapsed.
+    let earliest_ms = sample.earliest_ms.saturating_add(floor_millis(age));
+    let latest_ms = sample.latest_ms.saturating_add(ceil_millis(age));
+    let within =
+        |t: Millis| latest_ms.saturating_sub(max_drift_ms) <= t && t <= earliest_ms.saturating_add(max_drift_ms);
+    (!(within(host_ms) && within(ts))).then_some(Refusal::Drift { host_ms, earliest_ms, latest_ms })
 }

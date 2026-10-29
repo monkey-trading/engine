@@ -12,8 +12,11 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
 use crate::api::router;
 use crate::api::signing_tests::{parse, state};
+use crate::clock::Clock;
+use crate::clock::test_clock::TestClock;
 use crate::tee::EnclaveKey;
-use crate::test_support::{TestSequencer, deposit, dev_config, log_messages, scratch_dir};
+use crate::test_support::{TestSequencer, deposit, dev_config, log_messages, sample_around, scratch_dir, trusted};
+use crate::trusted_time::TrustedClock;
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -99,6 +102,30 @@ async fn heartbeats_never_cut_short_a_backfill_read() {
 }
 
 #[tokio::test]
+async fn a_signed_stream_closes_rather_than_frame_while_trusted_time_does_not_bound_the_host_clock() {
+    let dir = scratch_dir("signed-untrusted-time");
+    let node = TestSequencer::start_legacy(&dir, 16);
+    let clock = Arc::new(TestClock::default());
+    let (samples, latest) = watch::channel(None);
+    let time = TrustedClock::new(clock.clone(), latest, dev_config().time.max_drift);
+    // Hourly heartbeats: after the first, which is due at once, the next frame is a live message.
+    let addr = serve_at(&node, &dir, Duration::from_secs(3600), time).await;
+    let query = format!("signed=1&challenge={CHALLENGE}");
+    // Before the first sample, the first heartbeat is not framed.
+    assert_eq!(next_text_or_end(&mut connect(addr, &query).await).await, None);
+
+    samples.send_replace(Some(sample_around(clock.as_ref())));
+    let mut ws = connect(addr, &query).await;
+    let heartbeat: SignedFrame = serde_json::from_str(&next_text(&mut ws).await).unwrap();
+    assert_eq!(FrameVerifier::new(signer(), deployment(), opened(&query)).verify(&heartbeat), Ok(()));
+    assert_eq!(heartbeat.time, u64::try_from(clock.now_ms()).unwrap());
+    // The host clock skewed past the bound: the next message is not framed.
+    clock.skew(3_600_000);
+    node.submit(deposit(1, "dep-skewed")).await;
+    assert_eq!(next_text_or_end(&mut ws).await, None);
+}
+
+#[tokio::test]
 async fn the_stream_refuses_a_signed_flag_other_than_1_or_a_missing_or_malformed_challenge() {
     let dir = scratch_dir("signed-params");
     let node = TestSequencer::start_legacy(&dir, 16);
@@ -122,10 +149,16 @@ async fn the_stream_refuses_a_signed_flag_other_than_1_or_a_missing_or_malformed
 
 /// Serves the API for `node` on a free local port, with signed heartbeats every `heartbeat`.
 async fn serve(node: &TestSequencer, dir: &std::path::Path, heartbeat: Duration) -> SocketAddr {
+    serve_at(node, dir, heartbeat, trusted(Arc::new(TestClock::default()))).await
+}
+
+/// `serve`, signing at the times `time` reads.
+async fn serve_at(node: &TestSequencer, dir: &std::path::Path, heartbeat: Duration, time: TrustedClock) -> SocketAddr {
     let cfg = dev_config();
     let mut state = state(node, dir, &cfg.api);
     let vault = cfg.custody.vault.parse().unwrap();
-    state.signing = Arc::new(Signing::new(Arc::new(EnclaveKey::test_key()), cfg.custody.chain_id, vault, heartbeat));
+    let key = Arc::new(EnclaveKey::test_key());
+    state.signing = Arc::new(Signing::new(key, cfg.custody.chain_id, vault, heartbeat, time));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let app = router(state).into_make_service_with_connect_info::<SocketAddr>();
@@ -143,6 +176,17 @@ async fn next_text(ws: &mut Ws) -> String {
         let msg = timeout(Duration::from_secs(10), ws.next()).await.expect("a message in time");
         if let WsMessage::Text(text) = msg.expect("stream open").unwrap() {
             return text.to_string();
+        }
+    }
+}
+
+/// The next text message, or `None` once the connection closes or ends, within ten seconds.
+async fn next_text_or_end(ws: &mut Ws) -> Option<String> {
+    loop {
+        match timeout(Duration::from_secs(10), ws.next()).await.expect("a message or the end in time") {
+            Some(Ok(WsMessage::Text(text))) => return Some(text.to_string()),
+            Some(Ok(WsMessage::Close(_)) | Err(_)) | None => return None,
+            Some(Ok(_)) => {}
         }
     }
 }

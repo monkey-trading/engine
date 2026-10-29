@@ -59,7 +59,15 @@ frames.verify(&serde_json::from_str(&text)?)?; // each frame in the order receiv
 ```
 
 A client verifies with the challenge, request, and body it sent, never the challenge a response
-echoes, and sends a fresh random challenge with each request or connection it relies on.
+echoes, and sends a fresh random challenge with each request or connection it relies on. A
+signature binds the bytes of a request and its challenge, not one delivery of them: whoever relays
+the traffic can send the node a copy, and the node answers each copy, so a verified refusal of a
+state-changing request (an order, cancel, withdrawal, reissue, declaration, or admin command) can
+be the answer to a second copy after the first ran. A client confirms such a refusal with a signed
+read of the state the request changes, such as the account, under a fresh challenge sent after the
+refusal arrived, before showing it; a next nonce past the request's is not proof that it ran, since
+a request refused for its expiry uses its nonce too. The node signs the host's clock only while it is within its drift bound of trusted
+time, so a signed time is accurate to that bound; with no trusted time, the node signs nothing.
 
 ## Testing
 

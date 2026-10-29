@@ -48,8 +48,9 @@ an index: load only the rule whose hint matches the current action.
   route, the browser-origin allowlist (`api.allowed_origins`, in `api/origin.rs`), account proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
   with rate limits and connection caps), signed answers (`api/signing.rs`: every `/v1` response but
   health, the attestation and the archive carries the enclave key's signature over the request and
-  its body, the client's challenge, the node's time and log head; `api/stream/signed.rs`: `signed=1`
-  stream frames numbered per connection, chained and bound to the opening request, with heartbeats)
+  its body, the client's challenge, the node's time and log head, signed only while trusted time
+  bounds the host clock (`trusted_time::TrustedClock`); `api/stream/signed.rs`: `signed=1` stream
+  frames numbered per connection, chained and bound to the opening request, with heartbeats)
   and their offline checks, `engine
   verify-response` and `engine verify-frames` (`verify/answers.rs`), the account history index (SQLite, derived from the log),
   dated benchmark ingestion (`benchmarks/` and the separate `admin/benchmark_feed.rs` signing worker

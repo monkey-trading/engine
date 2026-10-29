@@ -8,9 +8,11 @@
 //! client's to discard. A listed origin's preflight is answered there too, unsigned: it has no body,
 //! and the browser, not the page, reads it.
 //!
-//! The time is the host clock, which the sequencer checks its stamps against trusted time; the
-//! API reads it unchecked, so a client takes freshness from its challenge, not from the time.
-//! TODO: bound the signed time by the sequencer's latest trusted time sample.
+//! The time is the host clock, signed only while it is within the drift bound of the latest trusted
+//! time sample, as the sequencer's stamps must be; without that, the answer goes out unsigned, which
+//! a client takes as no answer. The signature binds the bytes of a request and its challenge, not
+//! one delivery of them: each copy a man in the middle sends gets its own genuine answer, so a
+//! client confirms a refusal of a state-changing request with a fresh signed read of the account.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,27 +27,41 @@ use engine_wire::{
     CHALLENGE_HEADER, Connection, Deployment, SEQ_HEADER, SIGNATURE_HEADER, TIME_HEADER, frame_digest, parse_challenge,
     response_digest,
 };
-use tracing::error;
+use tracing::{debug, error};
 
 use crate::api::{ApiError, ApiState};
 use crate::tee::EnclaveKey;
+use crate::trusted_time::TrustedClock;
 
 /// Routes whose responses go unsigned; `/v1/archive/` and everything under it is unsigned too.
 const UNSIGNED_ROUTES: [&str; 3] = ["/v1/health", "/v1/attestation", "/v1/attestation/collateral"];
 const ARCHIVE: &str = "/v1/archive/";
 
-/// What the API signs answers with: the enclave key, the deployment every signature names, and how
-/// often a signed stream connection gets a heartbeat.
+/// What the API signs answers with: the enclave key, the deployment every signature names, the
+/// clock whose time it signs, and how often a signed stream connection gets a heartbeat.
 pub(crate) struct Signing {
     key: Arc<EnclaveKey>,
     deployment: Deployment,
+    time: TrustedClock,
     pub(crate) heartbeat_interval: Duration,
 }
 
 impl Signing {
-    /// Signs with `key` for the vault `vault` on `chain_id`.
-    pub(crate) fn new(key: Arc<EnclaveKey>, chain_id: u64, vault: AccountId, heartbeat_interval: Duration) -> Self {
-        Self { key, deployment: Deployment { chain_id, vault: vault.0 }, heartbeat_interval }
+    /// Signs with `key` for the vault `vault` on `chain_id`, at the times `time` reads.
+    pub(crate) fn new(
+        key: Arc<EnclaveKey>,
+        chain_id: u64,
+        vault: AccountId,
+        heartbeat_interval: Duration,
+        time: TrustedClock,
+    ) -> Self {
+        Self { key, deployment: Deployment { chain_id, vault: vault.0 }, time, heartbeat_interval }
+    }
+
+    /// The time to sign an answer with now, or `None` while trusted time does not bound the host
+    /// clock, when nothing may be signed.
+    pub(crate) fn time_ms(&self) -> Option<u64> {
+        self.time.now_ms().and_then(|ms| u64::try_from(ms).ok())
     }
 
     /// The enclave key's signature over `response`.
@@ -71,7 +87,8 @@ impl Signing {
 /// Signs the response to a `/v1` request outside `UNSIGNED_ROUTES` and the archive, and adds the
 /// signature, the time, the log head's seq, and the challenge it covers as `X-Engine-*` headers. A
 /// request without `X-Engine-Challenge` is answered under 32 zero bytes; one with a challenge that
-/// is not 64 hex characters gets an unsigned 400, since there is no challenge to sign it under.
+/// is not 64 hex characters gets an unsigned 400, since there is no challenge to sign it under. While
+/// trusted time does not bound the host clock, the response goes out as it is, unsigned.
 pub(super) async fn sign_responses(State(s): State<ApiState>, req: Request, next: Next) -> Response {
     let path = req.uri().path();
     if !path.starts_with("/v1/") || UNSIGNED_ROUTES.contains(&path) || path.starts_with(ARCHIVE) {
@@ -102,7 +119,10 @@ pub(super) async fn sign_responses(State(s): State<ApiState>, req: Request, next
         Ok(body) => body,
         Err(e) => return e.into_response(),
     };
-    let time_ms = u64::try_from((s.clock)()).expect("the node's clock reads after the epoch");
+    let Some(time_ms) = s.signing.time_ms() else {
+        debug!(status = parts.status.as_u16(), "answer unsigned: trusted time does not bound the host clock");
+        return Response::from_parts(parts, Body::from(body));
+    };
     let head_seq = s.manifest.borrow().flushed.map_or(0, |head| head.seq);
     let response = engine_wire::Response {
         challenge,
