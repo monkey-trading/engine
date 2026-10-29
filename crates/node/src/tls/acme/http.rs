@@ -18,7 +18,7 @@ use rustls::{ClientConfig, RootCertStore};
 use crate::config::AcmeTestCa;
 
 /// Every request to the CA, from connecting to its body's last byte.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+pub(super) const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// The largest response body taken from the CA; a certificate chain is a few kilobytes.
 pub(super) const MAX_RESPONSE_BYTES: usize = 1 << 20;
 

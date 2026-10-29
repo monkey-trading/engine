@@ -134,6 +134,27 @@ async fn an_attempt_past_its_deadline_drops_the_challenge_and_keeps_the_order() 
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_task_whose_attempt_the_ca_never_answers_fails_it_at_the_deadline_and_retries_after_the_backoff() {
+    let (logs, _guard) = Logs::capture();
+    let (task, ca, _) = scripted();
+    ca.state().stall = Some("new-account");
+    let not_after = task.not_after.clone();
+    let run = tokio::spawn(task.run());
+    tokio::time::sleep(ATTEMPT_TIMEOUT - Duration::from_secs(1)).await;
+    assert_eq!(ca.count("new-account"), 1, "the attempt is waiting on the CA");
+    assert_eq!(logs.warnings("certificate_pending"), 1, "only the start's: the attempt has not failed");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(logs.warnings("certificate_pending"), 2, "the attempt failed at its deadline");
+    assert_eq!(logs.count("the attempt took over"), 1);
+    assert_eq!(ca.count("new-account"), 1, "the retry waits out the backoff");
+    assert_eq!(not_after.get(), 0.0);
+    tokio::time::sleep(Duration::from_secs(60)).await;
+    assert_eq!(ca.count("new-account"), 2, "retried after a minute");
+    assert!(not_after.get() > 0.0, "and the retry's certificate serves");
+    run.abort();
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_late_certificate_is_counted_from_its_finalize_and_refused_once_its_life_ran_out() {
     // Downloaded 89 days after its finalize: one day of life left, inside the renewal window.
     let (task, ca, _) = scripted();

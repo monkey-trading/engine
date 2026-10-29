@@ -18,8 +18,8 @@
 //! every request and attempt has a deadline. Nothing here stops the host from having a CA certify a key of its own for the domain:
 //! it forwards port 443, so it can answer the CA's TLS-ALPN-01 validation itself, as can whoever
 //! controls the domain's DNS. A browser that trusts the certificate alone cannot tell; the CAA
-//! record narrows issuance to one CA and method, and Certificate Transparency monitoring is to
-//! detect such a certificate, outside the node.
+//! record narrows issuance to one CA and method, and `engine ct-watch`, outside the node, detects
+//! such a certificate.
 //!
 //! TODO: once the key survives restarts (#28), keep the account and the certificate with it, so a
 //! restart orders nothing and a CAA `accounturi` can bind issuance to the enclave's account.

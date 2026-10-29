@@ -221,8 +221,8 @@ also trusts any other certificate a CA issues for the domain. The host can obtai
 outside the enclave by answering the CA's TLS-ALPN-01 validation on the port it forwards, as can
 whoever controls the domain's DNS. The domain's CAA record narrows issuance to one CA and
 TLS-ALPN-01 but not to the enclave, since the enclave's ACME account changes at every start until
-its keys survive a restart (#28), and Certificate Transparency monitoring for such certificates
-(#299) is not yet built.
+its keys survive a restart (#28). `engine ct-watch` raises an alert for such a certificate once a
+followed Certificate Transparency log shows it, and must be running before the first one is issued.
 Databento's live gateway, one of the sources for futures and US share prices, offers no TLS, so the
 host can alter its quotes in flight; the divergence bound limits how far that moves a market priced
 from it and one TLS source, and beyond that the market has no price. Before a futures roll the host

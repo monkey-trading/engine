@@ -1452,12 +1452,12 @@ written to disk or logged.
 
 The sequencer never waits for the CA. Until the first certificate, the API serves its self-signed
 one and the node raises `certificate_pending` (Warning). It renews once `renew_before` of the
-certificate's life remains, measured on the monotonic clock from the certificate's arrival against
-its own validity period, so the host's wall clock does not move it; a CA that backdates `notBefore`
+certificate's life remains, measured on the monotonic clock from the order's finalize request
+against its own validity period, so the host's wall clock does not move it; a CA that backdates `notBefore`
 (Let's Encrypt by an hour) makes renewal that much later, which the floor of 14 days on
-`renew_before` keeps well before expiry. The life counts from the order's finalize request, so a
-certificate downloaded late is renewed sooner, and one whose life ran out before it arrived is
-refused. A failed attempt keeps the current certificate serving and
+`renew_before` keeps well before expiry. Because the life counts from the finalize request, which
+precedes the certificate's arrival, a certificate downloaded late is renewed sooner, and one whose
+life ran out before it arrived is refused. A failed attempt keeps the current certificate serving and
 retries after a minute, doubling up to an hour; once fewer than 14 days remain, each failure raises
 `certificate_expiring` (Warning). A failed attempt takes up its order again unless the CA ended it,
 so a lost answer or a passing problem (`serverInternal`, `rateLimited`, any 5xx or 429) never costs
@@ -1482,9 +1482,11 @@ Before the first production certificate:
   can answer the CA's TLS-ALPN-01 validation itself and have a certificate issued for a key of its
   own, as can whoever controls the domain's DNS. A browser that trusts the certificate alone cannot
   tell; the console's in-browser attestation check and signed answers (#292) are what bind it to the
-  enclave, and Certificate Transparency monitoring (#299) is to flag any certificate whose key is
-  not the attested one. A CAA `accounturi` would bind issuance to the enclave's account, but cannot
+  enclave, and `engine ct-watch` flags any certificate whose key is not the attested one. A CAA `accounturi` would bind issuance to the enclave's account, but cannot
   while the account changes at every start (#28).
+- Start `engine ct-watch` (`config/ct-watch.toml`) on a host independent of the node's, before the
+  first production certificate is issued: it reads each log from its current end the first time, so
+  it does not see a certificate logged before it started.
 - Run against the CA's staging directory first (for Let's Encrypt,
   `https://acme-staging-v02.api.letsencrypt.org/directory`), then its production one.
 
