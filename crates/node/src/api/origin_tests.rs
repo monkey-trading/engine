@@ -26,6 +26,15 @@ use crate::test_support::dev_config;
 const LISTED: &str = "http://localhost:3000";
 const UNLISTED: &str = "http://evil.test";
 
+/// State whose `[api]` section lists no origin, which the dev config otherwise does.
+fn unlisted_state() -> ApiState {
+    let mut api = dev_config().api;
+    api.allowed_origins.clear();
+    let (mut state, _rx) = api_state(true);
+    state.limits = Arc::new(ApiLimits::new(&api));
+    state
+}
+
 /// The router over state that lists `LISTED`, with `tighten` applied to the `[api]` section first.
 fn app(tighten: impl FnOnce(&mut ApiSection)) -> Router {
     let mut api = dev_config().api;
@@ -140,8 +149,7 @@ async fn a_rate_limited_or_oversized_refusal_from_a_listed_origin_carries_its_or
 
 #[tokio::test]
 async fn with_no_origin_listed_nothing_changes() {
-    let (state, _rx) = api_state(true);
-    let app = router(state).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9))));
+    let app = router(unlisted_state()).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9))));
     let response = send(&app, Method::GET, "/v1/health", Some(UNLISTED), "").await;
     assert_eq!(response.status(), StatusCode::OK);
     assert!(response.headers().get(ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
@@ -178,8 +186,49 @@ async fn the_stream_upgrade_is_refused_for_an_unlisted_origin_only() {
 }
 
 #[tokio::test]
-async fn with_no_origin_listed_the_stream_takes_any_origin() {
-    let (state, _rx) = api_state(true);
-    let addr = serve_state(state).await;
-    assert_eq!(stream_upgrade_status(addr, Some(UNLISTED)).await, 101);
+async fn with_no_origin_listed_the_stream_refuses_any_origin_but_takes_none() {
+    let addr = serve_state(unlisted_state()).await;
+    assert_eq!(stream_upgrade_status(addr, Some(UNLISTED)).await, 403);
+    assert_eq!(stream_upgrade_status(addr, Some(LISTED)).await, 403);
+    assert_eq!(stream_upgrade_status(addr, Some("null")).await, 403);
+    assert_eq!(stream_upgrade_status(addr, None).await, 101);
+}
+
+#[tokio::test]
+async fn with_no_origin_listed_an_origin_on_another_route_changes_nothing() {
+    let app = router(unlisted_state()).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9))));
+    let refused = send(&app, Method::GET, "/v1/stream", Some(UNLISTED), "").await;
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+    assert!(refused.headers().get(VARY).is_none());
+    assert!(refused.headers().get(ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
+}
+
+#[tokio::test]
+async fn preflights_count_against_the_per_ip_rate() {
+    let one = NonZeroU32::new(1).unwrap();
+    let app = app(|api| api.per_ip = RateLimit { per_second: one, burst: NonZeroU32::new(3).unwrap() });
+    // A flood of preflights from a listed origin runs out the burst, then is refused with 429 and
+    // the origin's headers, whichever route it names.
+    let mut statuses = Vec::new();
+    for path in ["/v1/orders", "/v1/markets", "/v1/stream", "/v1/orders", "/v1/stream"] {
+        statuses.push(send(&app, Method::OPTIONS, path, Some(LISTED), "").await.status());
+    }
+    let no_content = StatusCode::NO_CONTENT;
+    let limited = StatusCode::TOO_MANY_REQUESTS;
+    assert_eq!(statuses, [no_content, no_content, no_content, limited, limited]);
+    let response = send(&app, Method::OPTIONS, "/v1/orders", Some(LISTED), "").await;
+    assert_eq!(response.status(), limited);
+    assert_eq!(header(&response, ACCESS_CONTROL_ALLOW_ORIGIN), Some(LISTED));
+    assert!(response.headers().get("retry-after").is_some());
+    assert!(response.headers().get(ACCESS_CONTROL_ALLOW_METHODS).is_none());
+}
+
+#[tokio::test]
+async fn preflights_and_requests_share_one_per_ip_bucket() {
+    let one = NonZeroU32::new(1).unwrap();
+    let app = app(|api| api.per_ip = RateLimit { per_second: one, burst: NonZeroU32::new(2).unwrap() });
+    assert_eq!(send(&app, Method::OPTIONS, "/v1/orders", Some(LISTED), "").await.status(), StatusCode::NO_CONTENT);
+    assert_eq!(send(&app, Method::GET, "/v1/health", Some(LISTED), "").await.status(), StatusCode::OK);
+    let preflight = send(&app, Method::OPTIONS, "/v1/orders", Some(LISTED), "").await;
+    assert_eq!(preflight.status(), StatusCode::TOO_MANY_REQUESTS);
 }

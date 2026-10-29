@@ -15,7 +15,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - Dated publisher ingestion with a separate signing worker, startup synchronization, and per-date
   rollover catch-up under V18
 - Browser-origin allowlist (`api.allowed_origins`): CORS for the REST API and an `Origin` check on the
-  stream, off by default
+  stream, with no origin listed by default
 - Single-owner sequencer on a dedicated OS thread: commands are logged and synced to disk before any
   client sees their effect
 - Genesis all or nothing: the engine checks every genesis command at config load and again before
@@ -872,12 +872,13 @@ are ignored.
 
 `api.allowed_origins` lists the browser origins (`scheme://host[:port]`, exact; no `*`, path, or
 duplicate; `https` only in a production build) that may call the API. It is empty by default, which
-sends no CORS headers. A request from a listed origin gets `Access-Control-Allow-Origin` with that
+sends no CORS headers and refuses every stream upgrade that carries an `Origin`. A request from a listed origin gets `Access-Control-Allow-Origin` with that
 origin and `Vary: Origin`, on error responses too, and a preflight `OPTIONS` on any `/v1` route
 answers 204 with `GET, POST, OPTIONS`, the headers `Content-Type` and `X-Engine-Challenge`, and a
-600-second max age. `/v1/admin` never gets either. With any origin listed, `GET /v1/stream` with an
-`Origin` header not on the list gets 403 before the upgrade, since browsers do not apply CORS to
-WebSockets; a request without `Origin` is unaffected. The config is bound by the attestation, so
+600-second max age, and counts against the client's `api.per_ip` rate like any request (429 when
+over). `/v1/admin` never gets either. `GET /v1/stream` with an `Origin` header not on the list, or
+any `Origin` when the list is empty, gets 403 before the upgrade, since browsers do not apply CORS
+to WebSockets; a request without `Origin` is unaffected. The config is bound by the attestation, so
 changing the list is a new release.
 
 `GET /v1/attestation` returns `provider`, `enclave_address`, `config_sha256`,

@@ -1,11 +1,13 @@
 //! Browser access: the origins `api.allowed_origins` lists may read the REST API (CORS) and open
 //! the stream, which browsers do not subject to CORS, so the stream checks `Origin` itself. With no
-//! origin listed the layer does nothing. The operator's `/v1/admin` route is never opened to a
-//! browser. A preflight is answered without passing the rate limiter; it reads no state.
+//! origin listed no CORS header is sent and the stream refuses any upgrade that carries an `Origin`.
+//! The operator's `/v1/admin` route is never opened to a browser. A preflight reads no state but
+//! counts against the same per-client rate as any other request.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
-use axum::extract::{Request, State};
+use axum::extract::{ConnectInfo, Request, State};
 use axum::http::header::{
     ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
     ACCESS_CONTROL_EXPOSE_HEADERS, ACCESS_CONTROL_MAX_AGE, ORIGIN, VARY,
@@ -27,12 +29,18 @@ const ALLOWED_HEADERS: &str = "Content-Type, X-Engine-Challenge";
 /// Seconds a browser may cache a preflight answer.
 const PREFLIGHT_MAX_AGE: &str = "600";
 
-/// Gives a response to a listed origin its CORS headers, answers its preflight, and refuses a
-/// stream upgrade from an unlisted one. Sits outside the rate limit and the body read, so their
-/// refusals carry the headers too.
-pub(super) async fn browser_origin(State(limits): State<Arc<ApiLimits>>, req: Request, next: Next) -> Response {
+/// Gives a response to a listed origin its CORS headers, answers its preflight (once its client is
+/// within the per-client rate), and refuses a stream upgrade whose `Origin` is not listed, which is
+/// every one when none is. Sits outside the rate limit and the body read, so their refusals carry
+/// the headers too.
+pub(super) async fn browser_origin(
+    State(limits): State<Arc<ApiLimits>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    req: Request,
+    next: Next,
+) -> Response {
     let path = req.uri().path();
-    if !limits.has_allowed_origins() || path == ADMIN_PATH {
+    if path == ADMIN_PATH {
         return next.run(req).await;
     }
     let origin = req.headers().get(ORIGIN).cloned();
@@ -41,10 +49,13 @@ pub(super) async fn browser_origin(State(limits): State<Arc<ApiLimits>>, req: Re
         debug!(origin = ?origin, "stream refused: origin not allowed");
         ApiError::Forbidden("origin not allowed").into_response()
     } else if listed.is_some() && req.method() == Method::OPTIONS && path.starts_with("/v1/") {
-        preflight()
+        limits.check_ip(peer.ip()).map_or_else(IntoResponse::into_response, |()| preflight())
     } else {
         next.run(req).await
     };
+    if !limits.has_allowed_origins() {
+        return response;
+    }
     let headers = response.headers_mut();
     headers.append(VARY, HeaderValue::from_static("Origin"));
     if let Some(origin) = listed {

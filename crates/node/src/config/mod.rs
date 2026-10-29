@@ -153,7 +153,8 @@ pub struct ApiSection {
     #[serde(with = "humantime_serde")]
     pub send_timeout: Duration,
     /// Browser origins (`scheme://host[:port]`) that may read the REST API and open the stream. Empty
-    /// by default, which sends no CORS headers and leaves the stream open to any `Origin`. The
+    /// by default, which sends no CORS headers and refuses a stream upgrade that carries any `Origin`
+    /// (a client that sends none still connects). The
     /// operator's `/v1/admin` route is never opened to a browser. A production build takes only
     /// `https` origins.
     #[serde(default)]

@@ -12,9 +12,20 @@ fn with_origins(origins: &[&str]) -> NodeConfig {
 
 #[test]
 fn no_origin_is_allowed_by_default() {
-    let cfg: NodeConfig = toml::from_str(&std::fs::read_to_string(DEV).unwrap()).unwrap();
+    let text = std::fs::read_to_string(DEV).unwrap();
+    let text: String = text.lines().filter(|l| !l.starts_with("allowed_origins")).map(|l| format!("{l}\n")).collect();
+    let cfg: NodeConfig = toml::from_str(&text).unwrap();
     assert!(cfg.api.allowed_origins.is_empty());
     cfg.validate().unwrap();
+}
+
+#[test]
+fn the_dev_configs_list_the_consoles_dev_origin() {
+    for path in [DEV, "../../config/anvil.toml"] {
+        let cfg: NodeConfig = toml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(cfg.api.allowed_origins, ["http://localhost:3000"], "{path}");
+        cfg.validate().unwrap();
+    }
 }
 
 #[test]
