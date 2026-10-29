@@ -385,13 +385,20 @@ fn rotated_operator_keeps_the_bounds_and_can_rotate_again() {
 #[test]
 fn pending_notices_and_rotations_are_in_the_state_root_and_survive_a_snapshot() {
     let mut h = Harness::v35();
-    let before = h.engine.state_root();
-    announce(&mut h, Some(1_200), None);
-    let announced = h.engine.state_root();
-    assert_ne!(before, announced);
-    h.operator_admin(AdminCommand::RotateOperator { address: next_operator() });
-    let rotating = h.engine.state_root();
-    assert_ne!(announced, rotating);
+    // Engines that differ only in the pending notice, or the pending rotation, have different roots.
+    let root_after = |fee, address| {
+        let mut other = Harness::v35();
+        announce(&mut other, Some(fee), None);
+        other.operator_admin(AdminCommand::RotateOperator { address });
+        other.engine.state_root()
+    };
+    assert_ne!(root_after(1_200, next_operator()), root_after(1_300, next_operator()));
+    assert_ne!(root_after(1_200, next_operator()), root_after(1_200, acct(0x77)));
+    assert_eq!(root_after(1_200, next_operator()), {
+        announce(&mut h, Some(1_200), None);
+        h.operator_admin(AdminCommand::RotateOperator { address: next_operator() });
+        h.engine.state_root()
+    });
     // A snapshot restores the pending state, and both engines go on to the same roots.
     let mut restored: Engine = serde_json::from_slice(&serde_json::to_vec(&h.engine).unwrap()).unwrap();
     assert_eq!(restored.operator_bounds(), h.engine.operator_bounds());
