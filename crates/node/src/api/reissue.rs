@@ -1,10 +1,12 @@
 //! An account's signed request for a fresh authorization of an approval whose last one expired
 //! unclaimed.
 
+use std::net::SocketAddr;
+
 use alloy::primitives::{Address, keccak256};
 use alloy::sol_types::SolValue;
-use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{ConnectInfo, Path, State};
+use axum::{Extension, Json};
 use engine_core::eip712::{self, Signature};
 use engine_core::types::AccountId;
 use serde::Deserialize;
@@ -12,9 +14,9 @@ use serde_json::{Value, json};
 use tokio::sync::oneshot;
 use tracing::{Span, debug, field::display};
 
-use crate::api::actions::signature_domain;
+use crate::api::actions::{api_screen, signature_domain};
 use crate::api::{ApiError, ApiResult, ApiState};
-use crate::sequencer::{Reissue, Request};
+use crate::sequencer::{Reissue, ReissueScreening, Request};
 
 /// The account's request to replace the authorization of its payout `payoutNonce` that expires at
 /// `replacesExpiresAt` (0 for an approval never signed). The replaced expiry makes one signature
@@ -40,17 +42,20 @@ pub(crate) fn reissue_hash(
     keccak256([&[0x19, 0x01][..], domain.hash_struct().as_slice(), value.as_slice()].concat())
 }
 
-/// Queues the approval for signing again once the account proves control of it; the authorization
+/// Queues the approval for signing again once the account proves control of it and, once access is
+/// enforced, passes the account and peer screening a new withdrawal gets; the authorization
 /// arrives on the stream. The node never reissues on a schedule, so this is the only way an expired
-/// authorization is replaced short of a signer rotation.
+/// authorization is replaced.
 /// Error cases:
 /// - the address or nonce is invalid, the signature is not the account's, or the account is over
 ///   its rate
+/// - screening refuses the account or its peer, or the screening capacity is full
 /// - no unpaid approval is loaded under the nonce, or the request replaces an authorization other
 ///   than the latest, or the latest is still usable
 /// - there is no checkpoint gate, or the sequencer has stopped
 pub(super) async fn reissue(
     State(s): State<ApiState>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path((address, nonce)): Path<(String, String)>,
     Json(body): Json<Body>,
 ) -> ApiResult<Value> {
@@ -63,8 +68,13 @@ pub(super) async fn reissue(
         return Err(ApiError::Unauthorized("invalid signature"));
     }
     s.limits.check_account(account)?;
+    let screening = if s.access_enforced() {
+        Some(ReissueScreening { request_hash: hash, evidence: api_screen(&s, peer, account, hash).await? })
+    } else {
+        None
+    };
     let (reply, rx) = oneshot::channel();
-    let request = Request::ReissueWithdrawal { account, nonce, replaces: body.replaces_expires_at, reply };
+    let request = Request::ReissueWithdrawal { account, nonce, replaces: body.replaces_expires_at, screening, reply };
     s.tx.send(request).await.map_err(|_| ApiError::Unavailable)?;
     let outcome = rx.await.map_err(|_| ApiError::Unavailable)?;
     debug!(nonce, ?outcome, "reissue request answered");
@@ -77,6 +87,7 @@ pub(super) async fn reissue(
         Reissue::StillValid { expires_at } => {
             Err(ApiError::BadRequest(format!("the latest authorization is usable until {expires_at}")))
         }
+        Reissue::Refused { reason } => Err(ApiError::AccessRefused(reason)),
         Reissue::Unavailable => Err(ApiError::Unavailable),
     }
 }
@@ -88,6 +99,7 @@ mod tests {
     use axum::body::Body as HttpBody;
     use axum::extract::connect_info::MockConnectInfo;
     use axum::http::{Request as HttpRequest, StatusCode};
+    use engine_core::access::AccessReject;
     use k256::ecdsa::SigningKey;
     use tower::ServiceExt;
 
@@ -111,7 +123,7 @@ mod tests {
         let (state, mut requests) = api_state(true);
         let app = crate::api::router(state).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9))));
         let sequencer = tokio::spawn(async move {
-            let Some(Request::ReissueWithdrawal { account, nonce, replaces, reply }) = requests.recv().await else {
+            let Some(Request::ReissueWithdrawal { account, nonce, replaces, reply, .. }) = requests.recv().await else {
                 return None;
             };
             reply.send(outcome).unwrap();
@@ -137,6 +149,7 @@ mod tests {
             (Reissue::Unknown, StatusCode::NOT_FOUND),
             (Reissue::Stale { current: 9 }, StatusCode::BAD_REQUEST),
             (Reissue::StillValid { expires_at: 9 }, StatusCode::BAD_REQUEST),
+            (Reissue::Refused { reason: AccessReject::AccountSanctioned }, StatusCode::FORBIDDEN),
             (Reissue::Unavailable, StatusCode::SERVICE_UNAVAILABLE),
         ] {
             let path = format!("/v1/accounts/{account}/withdrawals/7/reissue");

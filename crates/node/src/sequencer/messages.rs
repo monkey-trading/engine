@@ -1,6 +1,8 @@
 //! Sequencer requests and public log stream messages.
 
+use engine_core::access::{AccessEvidence, AccessReject};
 use engine_core::command::Command;
+use engine_core::eip712::B256;
 use engine_core::event::Event;
 use engine_core::types::AccountId;
 use engine_core::{Engine, Fixed};
@@ -37,12 +39,22 @@ pub enum Request {
     },
     /// A holder, already authenticated, asks for a fresh authorization of an approval whose last one
     /// expired unclaimed. `replaces` is the expiry of the authorization being replaced, 0 if none.
+    /// `screening` is the account's and peer's screening of the signed request, once access is
+    /// enforced.
     ReissueWithdrawal {
         account: AccountId,
         nonce: u64,
         replaces: u64,
+        screening: Option<ReissueScreening>,
         reply: oneshot::Sender<Reissue>,
     },
+}
+
+/// The source's evidence for a signed reissue request, and the request's digest it must name.
+#[derive(Clone, Debug)]
+pub struct ReissueScreening {
+    pub request_hash: B256,
+    pub evidence: AccessEvidence,
 }
 
 /// The sequencer's answer to a reissue request.
@@ -57,6 +69,9 @@ pub enum Reissue {
     Stale { current: u64 },
     /// The latest authorization is still usable until `expires_at` (unix seconds).
     StillValid { expires_at: u64 },
+    /// Access screening refused the account or its peer, as it refuses a new withdrawal; the
+    /// approval stays unpaid and held.
+    Refused { reason: AccessReject },
     /// No checkpoint gate (mock custody), or no trusted time yet.
     Unavailable,
 }

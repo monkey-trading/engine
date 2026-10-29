@@ -3,14 +3,15 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context, ensure};
+use engine_core::access::AccessReject;
 use engine_core::merkle::WithdrawalApprovalProof;
 use engine_core::types::AccountId;
 use engine_core::withdrawal::WithdrawalApproval;
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::checkpoints::{APPROVAL_PAGE_SIZE, ApprovalId, LifecycleEvidence};
 use crate::log::LogEntry;
-use crate::sequencer::{Reissue, Sequencer, SignedWithdrawal};
+use crate::sequencer::{Reissue, ReissueScreening, Sequencer, SignedWithdrawal};
 use crate::withdrawals::{Authorization, LIFETIME_SECONDS};
 
 /// A signature is delivery progress; the contract's used nonce is the payment authority.
@@ -22,6 +23,8 @@ pub(super) struct Payout {
     pub observed_epoch: Option<u64>,
     /// Loaded from the recovery backlog and not yet observed at a finalized block.
     pub recovered: bool,
+    /// Its account's screened request for a fresh authorization waits to be signed.
+    pub requested: bool,
 }
 
 impl Payout {
@@ -34,6 +37,7 @@ impl Payout {
             released: None,
             observed_epoch: None,
             recovered: false,
+            requested: false,
         }
     }
 }
@@ -43,8 +47,9 @@ pub(super) const BACKLOG_WINDOW: usize = 4 * APPROVAL_PAGE_SIZE;
 
 impl Sequencer {
     /// Loads the oldest recovered approvals once the previous window was observed, so a restart
-    /// holds proofs and queries custody only for a window plus the approvals still unpaid. An
-    /// unobserved loaded head blocks every release, so no newer approval passes an unloaded one.
+    /// holds proofs and queries custody only for a window plus the approvals still unpaid. Nothing
+    /// after the oldest unloaded approval is signed, and an unobserved due one blocks every later
+    /// release, so no newer approval passes an older one that may still need a signature.
     /// Error cases:
     /// - the backlog names an approval the engine lacks, or the registry is poisoned
     pub(super) fn load_backlog(&mut self) -> anyhow::Result<()> {
@@ -71,6 +76,17 @@ impl Sequencer {
             gate.unregistered.insert(key);
             gate.unswept += 1;
         }
+        let unloaded = match gate.backlog.front() {
+            Some(&(key, index, _)) => Some((
+                self.engine
+                    .withdrawal_approval(key.0, key.1)
+                    .context("immutable approval lacks its validated event order")?
+                    .approved_seq,
+                index,
+            )),
+            None => None,
+        };
+        gate.schedule.hold_after(unloaded);
         self.register_payouts()
     }
 
@@ -162,6 +178,14 @@ impl Sequencer {
         for _ in 0..crate::checkpoints::APPROVAL_PAGE_SIZE {
             let Some((order, key)) = gate.schedule.next() else { break };
             let payout = gate.payouts.get(&key).expect("an issuance identity has a pending payout");
+            // A rotation, or a restart that finds a retired epoch, has no request to screen, so it
+            // replaces only an authorization its account can still use; an expired one waits for
+            // the account's screened request.
+            if !payout.requested && payout.released.is_some_and(|(_, expires_at)| expires_at <= issued_at) {
+                debug!(account = %key.0, nonce = key.1, "expired authorization left for its account's request");
+                gate.schedule.dismiss(order);
+                continue;
+            }
             if payout.observed_epoch != Some(evidence.signer_epoch) {
                 break;
             }
@@ -198,6 +222,7 @@ impl Sequencer {
             let gate = self.gate.as_mut().expect("checkpoint gate exists");
             let payout = gate.payouts.get_mut(&key).expect("pending payout exists");
             payout.released = Some(released);
+            payout.requested = false;
             info!(account = %approval.account, nonce = approval.nonce, approval_seq = approval.approved_seq, "durable withdrawal authorization issued");
         }
         if batch > 0 {
@@ -211,13 +236,32 @@ impl Sequencer {
 
     /// Queues an authenticated holder's request to sign an approval again once its last
     /// authorization expired unclaimed or was signed by a retired epoch; the signature follows with
-    /// the next custody evidence, in FIFO order. `replaces` must be the expiry of the latest
-    /// authorization, so one signed request is good for one reissue. Expiry alone never reissues,
-    /// so unclaimed approvals cost nothing until their holder asks.
-    pub(super) fn request_reissue(&mut self, account: AccountId, nonce: u64, replaces: u64) -> Reissue {
+    /// the next custody evidence, in FIFO order. Once access is enforced, `screening` must pass the
+    /// checks a new withdrawal gets, at this time; a refused account gets no fresh authorization and
+    /// its approval stays unpaid. `replaces` must be the expiry of the latest authorization, so one
+    /// signed request is good for one reissue. Expiry alone never reissues, so unclaimed approvals
+    /// cost nothing until their holder asks.
+    pub(super) fn request_reissue(
+        &mut self,
+        account: AccountId,
+        nonce: u64,
+        replaces: u64,
+        screening: Option<&ReissueScreening>,
+    ) -> Reissue {
         let Some(ts) = self.admitted_ts() else { return Reissue::Unavailable };
+        if self.engine.protocol_version().supports_access() {
+            let refusal = match screening {
+                Some(screening) => {
+                    self.engine.client_screening_refusal(account, screening.request_hash, &screening.evidence, ts)
+                }
+                None => Some(AccessReject::EvidenceMissing),
+            };
+            if let Some(reason) = refusal {
+                return Reissue::Refused { reason };
+            }
+        }
         let Some(gate) = &mut self.gate else { return Reissue::Unavailable };
-        let Some(payout) = gate.payouts.get(&(account, nonce)) else { return Reissue::Unknown };
+        let Some(payout) = gate.payouts.get_mut(&(account, nonce)) else { return Reissue::Unknown };
         let order = payout.order;
         let current = payout.released.map_or(0, |(_, expires_at)| expires_at);
         if replaces != current {
@@ -230,6 +274,7 @@ impl Sequencer {
         {
             return Reissue::StillValid { expires_at };
         }
+        payout.requested = true;
         if !gate.schedule.is_pending(order) {
             gate.schedule.request(order);
             info!(%account, nonce, "withdrawal reissue requested");

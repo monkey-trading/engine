@@ -126,13 +126,13 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/messages.rs` — sequencer requests, stream messages, and signed withdrawals
 - `src/sequencer/checkpoints.rs` — checkpoint creation, custody reconciliation, and signature release
 - `src/sequencer/payouts.rs` — durable unpaid delivery, finalized claim evidence, epoch reissues, and reissue requests
-- `src/sequencer/payout_schedule.rs` — complete unpaid approval order and bounded epoch and requested reissue scheduling
+- `src/sequencer/payout_schedule.rs` — complete unpaid approval order, bounded epoch and requested reissue scheduling, and the hold behind unloaded recovered approvals
 - `src/sequencer/payout_tests.rs` — release order across claim pages, durability, restart, expiry without reissue, and rotation
-- `src/sequencer/payout_tests/` — paginated replacement signature order, paused claim acknowledgement, and sealed approval recovery
+- `src/sequencer/payout_tests/` — paginated replacement signature order, paused claim acknowledgement, sealed approval recovery, FIFO signing across unloaded recovery windows, and expired authorizations a rotation leaves unsigned
 - `src/sequencer/withdrawal_scenario/` — actual Anvil/TLS/stream/custody crash and FIFO scenarios with local signed time
 - `src/withdrawals.rs` — vault EIP-712 digests and exact approval inclusion verification
 - `src/api/withdrawal_queue.rs` — public FIFO pagination and account queue positions
-- `src/api/reissue.rs` — a holder's request to sign an expired approval again
+- `src/api/reissue.rs` — a holder's screened request to sign an expired approval again
 - `src/node/signer_history.rs` — finalized accepted roots and immutable signer epochs before recovery writes
 - `src/replay_audit.rs` and `src/replay_audit/` — read-only custody-backed historical signer audits and tests
 - `src/log/segments/durability_tests.rs` — failed-fsync stream publication regression
@@ -241,6 +241,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/access_tests.rs` — deposit-first declarations, peer provenance and public access refusals
 - `src/api/access_tests/admission.rs` — admission before sequencing: never-credited signers declare only against a pending deposit, within per-client and shared budgets; expired requests and exhausted screening capacity refuse without a nonce
 - `src/api/access_tests/declarations.rs` — a declaration screened like an order: public refusals that leave its deposit pending until an allowed one is recorded
+- `src/api/access_tests/reissue.rs` — a reissue request screened like a withdrawal, by account and peer, refused with 403 before the log
 - `src/access.rs`, `src/access/tests.rs` — bounded signed-source IO and failure-path tests
 - `src/api/admin.rs` — the operator's admin route, checked before it is sequenced
 - `src/api/distributions.rs` — an account's cumulative USDC distribution with its proof against the
@@ -445,7 +446,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/cursor.rs` — the deposit cursor kept between restarts
 - `src/custody/tests/access.rs` — payer sanctions and holds across restart, cursor loss and source recovery
 - `src/custody/tests/access/replacements.rs` — canonical payer screening across startup activation and retry
-- `src/sequencer/access_tests.rs` — current access refusals, reconciliation admission and recovered signature release
+- `src/sequencer/access_tests.rs` — current access refusals, reconciliation admission, recovered signature release, and reissue screening that keeps a refused approval held
 - `src/sequencer/access.rs` — access-source failure and recovery alert episodes
 - `src/custody/tests/mod.rs` — deposit watcher tests against a fake chain and a real sequencer
 - `src/custody/tests/alerts.rs` — the watcher's alerts over time, in paused time
@@ -655,14 +656,20 @@ account asks with `POST /v1/accounts/<address>/withdrawals/<payout-nonce>/reissu
 `{"replaces_expires_at": <expiry of its latest authorization, 0 if none>, "signature": "0x…"}`.
 The signature is the account's EIP-712 signature, under the same domain as its other requests, of
 `ReissueRequest(address account,uint64 payoutNonce,uint64 replacesExpiresAt)`, so it works once.
-The node queues the approval for a new 24-hour authorization with the same nonce, in approval
-order, and answers `401` for another signer, `404` for an approval that is unknown, paid, or not
-yet loaded by a restart's recovery, and `400` while the latest authorization is usable or the
-request replaces an older one. A signer rotation reissues every unpaid approval under the new
-epoch without a request. A queued request lives in memory: after a node restart, send the same
-signed body again, which stays valid until an authorization replaces the one it names. While the
-host leaves the log intact a restart reissues nothing; recovery from a checkpoint snapshot sees
-only the authorizations after it, so an approval signed before it is signed once more.
+Under access enforcement the request is screened like a new withdrawal, by account and transport
+peer, and judged at the sequencer's trusted time. The node queues the approval for a new 24-hour
+authorization with the same nonce, in approval order, and answers `401` for another signer, `403`
+with the access reason when screening refuses the account or its peer, `404` for an approval that
+is unknown, paid, or not yet loaded by a restart's recovery, and `400` while the latest
+authorization is usable or the request replaces an older one. A refused approval stays debited and
+unpaid, and its account can ask again once screening clears it. A signer rotation reissues, without
+a request, each unpaid approval that was never signed or whose authorization is still usable; an
+expired authorization waits for its account's screened request. A queued request lives in memory:
+after a node restart, send the same signed body again, which stays valid until an authorization
+replaces the one it names. While the host leaves the log intact a restart reissues nothing, and no
+approval is signed while an older one that may still need a signature waits in an unloaded
+recovery window; recovery from a checkpoint snapshot sees only the authorizations after it, so an
+approval signed before it is signed once more.
 
 `GET /v1/withdrawals?limit=50&after=<request-seq>` returns `seq`, `queue` and `next`.
 `GET /v1/accounts/<address>/withdrawals` filters the same FIFO and reports each request's global

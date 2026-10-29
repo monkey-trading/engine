@@ -63,6 +63,8 @@ pub enum ApiError {
     Internal,
     Unauthorized(&'static str),
     Forbidden(&'static str),
+    /// Access screening refused an action the node takes without sequencing a command.
+    AccessRefused(engine_core::access::AccessReject),
     /// The node does not offer this yet.
     NotImplemented(&'static str),
     /// A signed request whose nonce is not the account's next.
@@ -163,6 +165,10 @@ impl IntoResponse for ApiError {
             ApiError::InvalidNonce { expected } => {
                 let body = json!({ "error": "invalid nonce", "expected": expected });
                 return (StatusCode::CONFLICT, Json(body)).into_response();
+            }
+            ApiError::AccessRefused(reason) => {
+                let body = json!({ "error": "access refused", "reason": reason });
+                return (StatusCode::FORBIDDEN, Json(body)).into_response();
             }
             ApiError::RateLimited(wait) => {
                 let secs = wait.as_secs() + u64::from(wait.subsec_nanos() > 0);

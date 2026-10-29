@@ -2,6 +2,7 @@
 
 mod admission;
 mod declarations;
+mod reissue;
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;

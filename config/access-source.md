@@ -2,8 +2,8 @@
 
 From V24, a trading account signs a professional or eligible-client declaration before the engine
 credits its first deposit or accepts an order. A new account deposits first: the deposit waits
-pending until the account records a declaration, then credits. Declarations, orders and withdrawals
-require fresh screening of the account and of the client's peer. US and sanctioned jurisdictions,
+pending until the account records a declaration, then credits. Declarations, orders, withdrawals
+and withdrawal reissue requests require fresh screening of the account and of the client's peer. US and sanctioned jurisdictions,
 sanctioned accounts, and unknown or unavailable classifications are refused. A direct vault call can transfer tokens; the custody adapter applies these checks
 before engine credit. Pending and held funds never enter trading balances or house NAV.
 
@@ -68,8 +68,8 @@ an old decision. The engine rejects evidence stamped more than one second after 
 time (`MAX_EVIDENCE_LEAD_MS`, the same lead venue quotes get, since the host clock that stamps
 commands may lag the source's) and evidence older than the recorded bound at sequenced time,
 including time spent waiting in queues. It verifies every required disposition
-independently. Custody checks payer and beneficiary sanctions; API orders and withdrawals check
-account sanctions and the actual peer's jurisdiction. Forwarded and X-Forwarded-For headers cannot
+independently. Custody checks payer and beneficiary sanctions; API orders, withdrawals and
+withdrawal reissue requests check account sanctions and the actual peer's jurisdiction. Forwarded and X-Forwarded-For headers cannot
 change that peer. A proxy needs a separate authenticated trust model before it can supply geography.
 The socket peer itself comes from the host's network, which a host relay or NAT can rewrite to an
 allowed address. Jurisdiction screening is therefore not yet bounded against the host; binding it
@@ -120,6 +120,12 @@ Screening at placement covers a resting limit or stop order until it fills or is
 not screened again when it triggers. Orders resting from before V24 were admitted under the rules in
 force when they were placed and are settled the same way. Liquidation and client cancellation remain
 available.
+
+A withdrawal reissue request (`POST /v1/accounts/{address}/withdrawals/{nonce}/reissue`) re-signs an
+approved payout without a command, so its screening is judged at the sequencer's trusted time and
+not logged. A refusal is a `403` carrying the access reason, the same reasons a withdrawal gets; the
+approval stays debited, unpaid and held, and the account may ask again once screening clears it. A
+signer rotation, which has no client request to screen, replaces only an authorization still usable.
 
 ## Pending retries, holds, reconciliation and monitoring
 

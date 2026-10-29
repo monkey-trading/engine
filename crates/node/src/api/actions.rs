@@ -115,7 +115,7 @@ pub(super) fn signature_domain(state: &ApiState) -> eip712::Eip712Domain {
 /// TODO: the host's network supplies the socket peer, so a relay or NAT on the host can present an
 /// allowed address for any client. Bind geography to something the host cannot rewrite, such as a
 /// signed assertion from an independent edge, before relying on the API's jurisdiction screening.
-async fn api_screen(
+pub(super) async fn api_screen(
     state: &ApiState,
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     account: engine_core::types::AccountId,

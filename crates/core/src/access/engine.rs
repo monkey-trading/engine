@@ -13,7 +13,7 @@ use crate::deposits::legacy_chain_reference;
 use crate::eip712::{self, B256, Eip712Domain, deposit_screening_hash, eligibility_hash};
 use crate::engine::Engine;
 use crate::event::{Event, Reject};
-use crate::types::AccountId;
+use crate::types::{AccountId, Millis};
 
 impl Engine {
     /// Dispatches the access-screened commands and, from `V24`, wraps raw funding ingress without
@@ -73,7 +73,22 @@ impl Engine {
     /// without its declaration requirement. A read-only preview that sequences nothing, so a caller
     /// can tell invalid or unclassified evidence from a confirmed sanction before it sequences a retry.
     pub fn screening_refusal(&self, deposit: &AccessDeposit, evidence: &AccessEvidence) -> Option<AccessReject> {
-        self.screen_access(deposit.account, deposit.payer, deposit_screening_hash(deposit), Some(evidence), true).err()
+        let hash = deposit_screening_hash(deposit);
+        self.screen_access(deposit.account, deposit.payer, hash, Some(evidence), true, self.now).err()
+    }
+
+    /// The refusal the screening checks of an access-screened withdrawal (source, request, signer,
+    /// freshness, account sanctions and peer jurisdiction) give `evidence` for `account`'s signed
+    /// request with digest `request_hash`, judged at `now`. A read-only check that sequences nothing,
+    /// for a node action no command carries, such as signing a payout again.
+    pub fn client_screening_refusal(
+        &self,
+        account: AccountId,
+        request_hash: B256,
+        evidence: &AccessEvidence,
+        now: Millis,
+    ) -> Option<AccessReject> {
+        self.screen_access(Some(account), None, request_hash, Some(evidence), false, now).err()
     }
 
     /// The account's signed eligibility declaration, if recorded.
@@ -204,7 +219,7 @@ impl Engine {
         if !self.protocol_version.supports_access() {
             return if evidence.is_some() { Err(AccessReject::ProtocolInactive) } else { Ok(()) };
         }
-        self.screen_access(account, payer, request_hash, evidence, deposit).and_then(|()| {
+        self.screen_access(account, payer, request_hash, evidence, deposit, self.now).and_then(|()| {
             if needs_declaration && account.is_some_and(|account| !self.eligibility.contains_key(&account)) {
                 Err(AccessReject::EligibilityRequired)
             } else {
@@ -213,7 +228,8 @@ impl Engine {
         })
     }
 
-    /// Applies the source's recorded classifications without consulting external policy on replay.
+    /// Applies the source's recorded classifications at `now` without consulting external policy on
+    /// replay.
     /// Error cases:
     /// - any missing, stale, mismatched or excluding classification
     fn screen_access(
@@ -223,6 +239,7 @@ impl Engine {
         request_hash: B256,
         evidence: Option<&AccessEvidence>,
         deposit: bool,
+        now: Millis,
     ) -> Result<(), AccessReject> {
         if deposit && payer.is_none() {
             return Err(AccessReject::PayerMissing);
@@ -251,8 +268,8 @@ impl Engine {
         if eip712::recover(&eip712::screening_hash(&domain, screening), &screening.signature) != Some(policy.source) {
             return Err(AccessReject::SourceInvalid);
         }
-        if screening.observed_at > self.now + MAX_EVIDENCE_LEAD_MS
-            || self.now.saturating_sub(screening.observed_at) > policy.max_age_ms
+        if screening.observed_at > now + MAX_EVIDENCE_LEAD_MS
+            || now.saturating_sub(screening.observed_at) > policy.max_age_ms
         {
             return Err(AccessReject::EvidenceStale);
         }

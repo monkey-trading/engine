@@ -84,3 +84,82 @@ fn restart_loads_approvals_in_fifo_windows_and_keeps_only_the_unpaid() {
     assert!(gate.payouts.values().all(|payout| payout.proof.is_some()));
     assert_eq!(gate.approvals.as_ref().unwrap().lock().unwrap().len(), unpaid.len() + 1);
 }
+
+#[test]
+fn a_newer_approval_waits_for_an_older_one_that_needs_a_signature_in_an_unloaded_window() {
+    // The older approval is unsigned, or holds only an authorization of the epoch custody retired.
+    for rotated in [false, true] {
+        let mut node = Node::new(if rotated { "payout-frontier-retired" } else { "payout-frontier-unsigned" });
+        node.seq.sequence(deposit(10_000, "frontier-deposit")).unwrap().unwrap();
+        let window = BACKLOG_WINDOW as u64;
+        let older = window + 1;
+        for _ in 0..older {
+            node.seq.sequence(withdraw(1)).unwrap().unwrap();
+            while node._queued.try_recv().is_ok() {}
+        }
+        // Before the restart the first window is signed by the latest epoch and `older` is not.
+        let cp = node.last_checkpoint();
+        let mut evidence = node.evidence(&cp);
+        evidence.approvals =
+            (1..=if rotated { older } else { window }).map(|nonce| status(&node, nonce, false)).collect();
+        assert_eq!(
+            nonces(release_all(&mut node, &evidence)),
+            (1..=evidence.approvals.len() as u64).collect::<Vec<_>>()
+        );
+        if rotated {
+            evidence.signer_epoch = 2;
+            evidence.approvals.pop();
+            assert_eq!(release_all(&mut node, &evidence).len(), BACKLOG_WINDOW);
+        }
+        let mut recovered = node.restart(&node.last_checkpoint());
+        let gate = recovered.seq.gate.as_ref().unwrap();
+        assert_eq!((gate.payouts.len(), gate.backlog.len()), (BACKLOG_WINDOW, 1), "`older` waits unloaded");
+
+        // A live approval is observed unpaid while claims retire all of the first window but one.
+        recovered.seq.sequence(withdraw(1)).unwrap().unwrap();
+        while node._queued.try_recv().is_ok() {}
+        let live = older + 1;
+        evidence.checkpoint_seq = Some(node.last_checkpoint().seq);
+        evidence.checkpoint_root = Some(node.last_checkpoint().root);
+        evidence.approvals = (1..window).map(|nonce| status(&recovered, nonce, true)).collect();
+        evidence.approvals.push(status(&recovered, live, false));
+        assert!(release_all(&mut recovered, &evidence).is_empty(), "the live approval passed an unloaded one");
+
+        // The last claim loads `older`, which custody has not reported yet.
+        evidence.approvals = vec![status(&recovered, window, true), status(&recovered, live, false)];
+        assert!(release_all(&mut recovered, &evidence).is_empty(), "the live approval passed an unobserved one");
+        while node._queued.try_recv().is_ok() {}
+        evidence.checkpoint_seq = Some(node.last_checkpoint().seq);
+        evidence.checkpoint_root = Some(node.last_checkpoint().root);
+        evidence.approvals = vec![status(&recovered, older, false), status(&recovered, live, false)];
+        assert_eq!(nonces(release_all(&mut recovered, &evidence)), [older, live], "approval order; rotated={rotated}");
+    }
+}
+
+/// Custody's report on `nonce`, one of the trader's approvals.
+fn status(node: &Node, nonce: u64, claimed: bool) -> ApprovalStatus {
+    let approved_seq = node.seq.engine.withdrawal_approval(TRADER, nonce).unwrap().approved_seq;
+    ApprovalStatus { approval: ApprovalId { account: TRADER, nonce, approved_seq }, claimed }
+}
+
+/// Applies `evidence` until it signs nothing more, returning what it signed in order.
+fn release_all(node: &mut Node, evidence: &LifecycleEvidence) -> Vec<SignedWithdrawal> {
+    let mut signed = Vec::new();
+    for _ in 0..16 {
+        node.seq.release_payouts(evidence).unwrap();
+        node.seq.flush().unwrap();
+        let before = signed.len();
+        while let Ok(withdrawal) = node.signed.try_recv() {
+            assert_eq!(withdrawal.authorization.as_ref().unwrap().signer_epoch, evidence.signer_epoch);
+            signed.push(withdrawal);
+        }
+        if signed.len() == before && node.seq.gate.as_ref().unwrap().schedule.next().is_none() {
+            break;
+        }
+    }
+    signed
+}
+
+fn nonces(signed: Vec<SignedWithdrawal>) -> Vec<u64> {
+    signed.into_iter().map(|withdrawal| withdrawal.nonce).collect()
+}
