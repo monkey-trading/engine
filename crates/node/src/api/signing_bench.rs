@@ -1,6 +1,7 @@
-//! The cost of signed answers, which the PR records against `hot_path_benchmark`'s 200 µs p99
-//! command budget. Signing runs on the API's tasks, never the sequencer's thread. Run it in a quiet
-//! CPU window: `cargo test -p engine-node --lib signing_bench -- --ignored --nocapture`.
+//! The cost of signed answers, for comparison with `hot_path_benchmark`'s 200 µs p99 command budget:
+//! one frame signature, a signed account read, and a live fan-out at `api.max_subscribers`. Signing
+//! runs on the API's tasks, never the sequencer's thread. Run it in a quiet CPU window:
+//! `cargo test -p engine-node --lib signing_bench -- --ignored --nocapture`.
 
 use super::*;
 use std::hint::black_box;
@@ -14,6 +15,7 @@ use axum::http::Request as HttpRequest;
 use futures_util::StreamExt;
 use tokio::net::TcpListener;
 use tokio::task::JoinSet;
+use tokio::time::timeout;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tower::ServiceExt;
@@ -39,9 +41,9 @@ async fn signed_answer_cost() {
 
     // One frame, over the largest message in the log.
     let msg = log_messages(&dir, Offset::start_of(0)).into_iter().max_by_key(String::len).unwrap();
-    let signing = signing();
-    let frame =
-        percentiles((0..1000).map(|n| timed(|| drop(black_box(signing.sign_frame(&[7; 32], n, 1, &msg))))).collect());
+    let (signing, connection) = (signing(), engine_wire::Connection::new([7; 32], "/v1/stream?signed=1&challenge=07"));
+    let sign_frame = |n| drop(black_box(signing.sign_frame(&connection, &[9; 32], n, 1, &msg)));
+    let frame = percentiles((0..1000).map(|n| timed(|| sign_frame(n))).collect());
     println!("SIGNED frame msg_bytes={} p50_us={} p99_us={}", msg.len(), frame.0, frame.1);
     let heartbeats = subscribers as f64 / api.heartbeat_interval.as_secs_f64();
     println!(
@@ -70,6 +72,7 @@ async fn signed_answer_cost() {
         status: 200,
         method: "GET",
         path_and_query: &target,
+        request_body: b"",
         body,
     };
     let sign = percentiles((0..1000).map(|_| timed(|| drop(black_box(signing.sign_response(&response))))).collect());
@@ -89,7 +92,7 @@ async fn signed_answer_cost() {
 // ── Helpers ──
 
 /// Milliseconds from the first of `LIVE_MESSAGES` deposits until `api.max_subscribers` live
-/// subscribers, signed with one-second heartbeats or unsigned, have each received all of them.
+/// subscribers, signed with one-second heartbeats or unsigned, have each received the last.
 async fn fan_out(node: &TestSequencer, mut state: ApiState, api: &crate::config::ApiSection, signed: bool) -> u128 {
     let cfg = dev_config();
     let vault = cfg.custody.vault.parse().unwrap();
@@ -102,25 +105,29 @@ async fn fan_out(node: &TestSequencer, mut state: ApiState, api: &crate::config:
     let app = router(state).into_make_service_with_connect_info::<SocketAddr>();
     let server = tokio::spawn(async move { axum::serve(listener, app).await });
     let query = if signed { format!("signed=1&challenge={CHALLENGE}") } else { String::new() };
+    let last = format!("fan-out-{signed}-{}", LIVE_MESSAGES - 1);
     let mut readers = JoinSet::new();
     for _ in 0..api.max_subscribers.get() {
         let (mut ws, _) = connect_async(format!("ws://{addr}/v1/stream?{query}")).await.unwrap();
+        let last = last.clone();
+        // Live messages, deposits and checkpoints alike, reach each subscriber in log order.
         readers.spawn(async move {
-            let mut received = 0;
-            while received < LIVE_MESSAGES {
+            loop {
                 match ws.next().await {
-                    Some(Ok(WsMessage::Text(text))) => received += usize::from(!text.contains("heartbeat")),
+                    Some(Ok(WsMessage::Text(text))) if text.contains(&last) => return,
                     Some(Ok(_)) => {}
-                    ended => panic!("the stream ended: {ended:?}"),
+                    ended => panic!("the stream ended before the last deposit: {ended:?}"),
                 }
             }
         });
     }
     let began = Instant::now();
     for n in 0..LIVE_MESSAGES {
-        node.submit(deposit(1, &format!("fan-out-{signed}-{n}"))).await;
+        let events = node.submit(deposit(1, &format!("fan-out-{signed}-{n}"))).await;
+        assert!(!events.is_empty(), "deposit {n} was refused");
     }
-    while readers.join_next().await.is_some() {}
+    let readers = timeout(Duration::from_secs(120), readers.join_all()).await;
+    readers.expect("every subscriber receives the last deposit in time");
     let elapsed = began.elapsed().as_millis();
     server.abort();
     elapsed

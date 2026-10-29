@@ -1,7 +1,8 @@
 //! Checking a node's signed answers offline, as `engine verify-response` and `engine verify-frames`
-//! do: a response saved with `curl -D <headers> -o <body>`, or a signed stream connection's frames
-//! saved one per line from its first, against the attested enclave address, the deployment, and the
-//! challenge the client sent. The digests and checks are `engine_wire`'s, which a browser runs too.
+//! do: a response saved with `curl -D <headers> -o <body>`, against the request the client sent, or
+//! a signed stream connection's frames saved one per line from its first, against the request that
+//! opened it; both against the attested enclave address, the deployment, and the client's
+//! challenge. The digests and checks are `engine_wire`'s, which a browser runs too.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -9,8 +10,8 @@ use std::path::Path;
 use anyhow::{Context, bail, ensure};
 use engine_core::types::AccountId;
 use engine_wire::{
-    CHALLENGE_HEADER, Deployment, FrameVerifier, Response, SEQ_HEADER, SIGNATURE_HEADER, SignedFrame, TIME_HEADER,
-    verify_response,
+    CHALLENGE_HEADER, Connection, Deployment, FrameVerifier, Response, SEQ_HEADER, SIGNATURE_HEADER, SignedFrame,
+    TIME_HEADER, verify_response,
 };
 
 /// Who must have signed an answer, for which deployment, and under the challenge the client sent.
@@ -43,31 +44,38 @@ pub fn parse_challenge_arg(text: &str) -> Result<[u8; 32], String> {
     engine_wire::parse_challenge(text).ok_or_else(|| "a challenge is 64 hex characters, without 0x".to_owned())
 }
 
+/// The request a saved response answers, as the client sent it.
+pub struct SentRequest<'a> {
+    pub method: &'a str,
+    pub path_and_query: &'a str,
+    /// The request body; empty when it had none.
+    pub body: &'a [u8],
+}
+
 /// Verifies the response whose status line and headers are in `headers` and whose body is in
-/// `body`, as the answer to `method` `path_and_query`.
+/// `body`, as the answer to `request`.
 /// Error cases:
 /// - either file cannot be read
 /// - see `verify_saved_response`
 pub fn verify_response_files(
     expected: &Expected,
-    method: &str,
-    path_and_query: &str,
+    request: &SentRequest<'_>,
     headers: &Path,
     body: &Path,
 ) -> anyhow::Result<VerifiedResponse> {
     let headers = std::fs::read_to_string(headers).with_context(|| format!("reading {}", headers.display()))?;
     let body = std::fs::read(body).with_context(|| format!("reading {}", body.display()))?;
-    verify_saved_response(expected, method, path_and_query, &headers, &body)
+    verify_saved_response(expected, request, &headers, &body)
 }
 
-/// Verifies the frames in `frames`, one JSON frame a line from the connection's first, and returns
-/// how many there are.
+/// Verifies the frames in `frames`, one JSON frame a line from the first of the connection that
+/// `GET` of `path_and_query` opened, and returns how many there are.
 /// Error cases:
 /// - the file cannot be read
 /// - see `verify_saved_frames`
-pub fn verify_frames_file(expected: &Expected, frames: &Path) -> anyhow::Result<u64> {
+pub fn verify_frames_file(expected: &Expected, path_and_query: &str, frames: &Path) -> anyhow::Result<u64> {
     let text = std::fs::read_to_string(frames).with_context(|| format!("reading {}", frames.display()))?;
-    verify_saved_frames(expected, &text)
+    verify_saved_frames(expected, path_and_query, &text)
 }
 
 /// Verifies a response from its headers as `curl -D` writes them and its body as sent.
@@ -79,8 +87,7 @@ pub fn verify_frames_file(expected: &Expected, frames: &Path) -> anyhow::Result<
 ///   response
 fn verify_saved_response(
     expected: &Expected,
-    method: &str,
-    path_and_query: &str,
+    request: &SentRequest<'_>,
     headers: &str,
     body: &[u8],
 ) -> anyhow::Result<VerifiedResponse> {
@@ -94,17 +101,28 @@ fn verify_saved_response(
     }
     let time_ms = header(TIME_HEADER)?.parse().context(TIME_HEADER)?;
     let head_seq = header(SEQ_HEADER)?.parse().context(SEQ_HEADER)?;
-    let response = Response { challenge: expected.challenge, time_ms, head_seq, status, method, path_and_query, body };
+    let response = Response {
+        challenge: expected.challenge,
+        time_ms,
+        head_seq,
+        status,
+        method: request.method,
+        path_and_query: request.path_and_query,
+        request_body: request.body,
+        body,
+    };
     verify_response(&expected.signer.0, &expected.deployment(), &response, header(SIGNATURE_HEADER)?)?;
     Ok(VerifiedResponse { status, time_ms, head_seq })
 }
 
-/// Verifies a connection's frames, one a line, and returns how many verified.
+/// Verifies the frames, one a line, of the connection `GET` of `path_and_query` opened, and returns
+/// how many verified.
 /// Error cases:
 /// - there are no frames
 /// - a line is not a signed frame, or its frame fails (see `FrameVerifier::verify`)
-fn verify_saved_frames(expected: &Expected, text: &str) -> anyhow::Result<u64> {
-    let mut verifier = FrameVerifier::new(expected.signer.0, expected.deployment(), expected.challenge);
+fn verify_saved_frames(expected: &Expected, path_and_query: &str, text: &str) -> anyhow::Result<u64> {
+    let connection = Connection::new(expected.challenge, path_and_query);
+    let mut verifier = FrameVerifier::new(expected.signer.0, expected.deployment(), connection);
     let mut count = 0;
     for (index, line) in text.lines().enumerate().filter(|(_, line)| !line.trim().is_empty()) {
         let frame: SignedFrame =

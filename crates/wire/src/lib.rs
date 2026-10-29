@@ -5,19 +5,22 @@
 //!
 //! A response digest is keccak-256 over, in order and at fixed widths: `engine.response.v1`, the
 //! chain id (u64 big-endian), the vault (20 bytes), the client's challenge (32 bytes), the node's
-//! time in milliseconds (u64 BE), the log head's seq (u64 BE), the status (u16 BE), SHA-256 of the
-//! method, a zero byte, and the path and query, and SHA-256 of the body as sent. A frame digest is
-//! keccak-256 over `engine.frame.v1`, the chain id, the vault, the challenge, the frame's place `n`
+//! time in milliseconds (u64 BE), the log head's seq (u64 BE), the status (u16 BE), the request
+//! hash (SHA-256 of the method, a zero byte, and the path and query), SHA-256 of the request body,
+//! and SHA-256 of the response body as sent. A frame digest is keccak-256 over `engine.frame.v1`,
+//! the chain id, the vault, the connection's challenge, the request hash of the `GET` that opened
+//! the connection, the previous frame's digest (32 zero bytes for the first), the frame's place `n`
 //! on its connection (u64 BE), the node's time (u64 BE), and SHA-256 of the message. No other digest
 //! the enclave key signs starts with either tag. A signature is 65-byte recoverable secp256k1 ECDSA,
 //! `r ‖ s ‖ v` with `v` in {27, 28}, written as `0x` hex.
 //!
 //! A client binds an answer to its own request with a fresh random challenge: the
 //! `X-Engine-Challenge` header of a request, or the `challenge` parameter of a stream connection.
-//! It verifies against the challenge it sent, never the one echoed back, so a recorded response
-//! answers no other request and a recorded frame fits no other connection or place. Without a
-//! challenge the node signs 32 zero bytes: the answer still proves where it came from, but not that
-//! it is fresh.
+//! It verifies against the challenge, request, and body it sent, never the challenge echoed back,
+//! so a recorded or substituted response answers no other request. Each frame chains to the one
+//! before it on its connection, so a frame from another connection, even one opened with the same
+//! challenge and request, fits nowhere in this one. Without a challenge the node signs a response
+//! under 32 zero bytes: the answer still proves where it came from, but not that it is fresh.
 
 use k256::ecdsa::signature::hazmat::PrehashVerifier;
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
@@ -57,8 +60,19 @@ pub struct Response<'a> {
     pub method: &'a str,
     /// The request target as sent: the path, then `?` and the query when there is one.
     pub path_and_query: &'a str,
-    /// The body as sent; empty for a `HEAD` request.
+    /// The request's body as the client sent it; empty when it sent none.
+    pub request_body: &'a [u8],
+    /// The response body as sent; empty for a `HEAD` request.
     pub body: &'a [u8],
+}
+
+/// The request that opened a signed stream connection, which every frame on it binds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Connection {
+    /// The challenge the client opened the connection with.
+    pub challenge: [u8; 32],
+    /// The request hash of the `GET` that opened it.
+    pub request: [u8; 32],
 }
 
 /// One message on a signed stream connection. `msg` is the unsigned stream's message as a JSON
@@ -74,13 +88,16 @@ pub struct SignedFrame {
 }
 
 /// Checks one connection's frames in order. Once a frame fails, every later one does too: a
-/// connection that has dropped, repeated, or altered a frame is closed, not trusted again.
+/// connection that has dropped, repeated, altered, or spliced in a frame is closed, not trusted
+/// again.
 pub struct FrameVerifier {
     signer: [u8; 20],
     deployment: Deployment,
-    challenge: [u8; 32],
+    connection: Connection,
     /// The `n` the next frame must carry; `None` once a frame has failed.
     next: Option<u64>,
+    /// The digest of the last frame verified; zero before the first.
+    previous: [u8; 32],
 }
 
 /// Why an answer does not verify.
@@ -98,20 +115,28 @@ pub enum Error {
     ConnectionFailed,
 }
 
+impl Connection {
+    /// The connection a client opened with `challenge` by `GET` of `path_and_query`, exactly as it
+    /// sent it.
+    pub fn new(challenge: [u8; 32], path_and_query: &str) -> Self {
+        Self { challenge, request: request_hash("GET", path_and_query) }
+    }
+}
+
 impl FrameVerifier {
-    /// A verifier for a connection from its first frame, which the client opened with `challenge`.
-    pub fn new(signer: [u8; 20], deployment: Deployment, challenge: [u8; 32]) -> Self {
-        Self { signer, deployment, challenge, next: Some(0) }
+    /// A verifier for `connection` from its first frame.
+    pub fn new(signer: [u8; 20], deployment: Deployment, connection: Connection) -> Self {
+        Self { signer, deployment, connection, next: Some(0), previous: [0; 32] }
     }
 
     /// Checks the connection's next frame: its version, its place, and the attested key's
-    /// signature over it.
+    /// signature over it and the frame before it.
     /// Error cases:
     /// - an earlier frame failed
     /// - the frame's version is not `FRAME_VERSION`
     /// - its `n` is not the next place: a frame was dropped, repeated, or reordered
-    /// - its signature is malformed, or not the signer's over this deployment, challenge, place,
-    ///   time, and message
+    /// - its signature is malformed, or not the signer's over this deployment, connection, previous
+    ///   frame, place, time, and message
     pub fn verify(&mut self, frame: &SignedFrame) -> Result<(), Error> {
         let expected = self.next.take().ok_or(Error::ConnectionFailed)?;
         if frame.v != FRAME_VERSION {
@@ -120,8 +145,9 @@ impl FrameVerifier {
         if frame.n != expected {
             return Err(Error::OutOfSequence { expected, got: frame.n });
         }
-        let digest = frame_digest(&self.deployment, &self.challenge, frame.n, frame.time, &frame.msg);
+        let digest = frame_digest(&self.deployment, &self.connection, &self.previous, frame.n, frame.time, &frame.msg);
         check(&self.signer, &digest, &frame.sig)?;
+        self.previous = digest;
         self.next = expected.checked_add(1);
         Ok(())
     }
@@ -136,7 +162,6 @@ pub fn parse_challenge(text: &str) -> Option<[u8; 32]> {
 
 /// The digest a response signature covers.
 pub fn response_digest(deployment: &Deployment, response: &Response<'_>) -> [u8; 32] {
-    let target = [response.method.as_bytes(), &[0], response.path_and_query.as_bytes()].concat();
     let mut h = Keccak256::new();
     h.update(RESPONSE_TAG);
     h.update(deployment.chain_id.to_be_bytes());
@@ -145,22 +170,39 @@ pub fn response_digest(deployment: &Deployment, response: &Response<'_>) -> [u8;
     h.update(response.time_ms.to_be_bytes());
     h.update(response.head_seq.to_be_bytes());
     h.update(response.status.to_be_bytes());
-    h.update(Sha256::digest(target));
+    h.update(request_hash(response.method, response.path_and_query));
+    h.update(Sha256::digest(response.request_body));
     h.update(Sha256::digest(response.body));
     h.finalize().into()
 }
 
-/// The digest a signature over frame `n` of a connection covers.
-pub fn frame_digest(deployment: &Deployment, challenge: &[u8; 32], n: u64, time_ms: u64, msg: &str) -> [u8; 32] {
+/// The digest a signature over frame `n` of `connection` covers, where `previous` is the digest of
+/// frame `n - 1`, or 32 zero bytes for frame 0.
+pub fn frame_digest(
+    deployment: &Deployment,
+    connection: &Connection,
+    previous: &[u8; 32],
+    n: u64,
+    time_ms: u64,
+    msg: &str,
+) -> [u8; 32] {
     let mut h = Keccak256::new();
     h.update(FRAME_TAG);
     h.update(deployment.chain_id.to_be_bytes());
     h.update(deployment.vault);
-    h.update(challenge);
+    h.update(connection.challenge);
+    h.update(connection.request);
+    h.update(previous);
     h.update(n.to_be_bytes());
     h.update(time_ms.to_be_bytes());
     h.update(Sha256::digest(msg.as_bytes()));
     h.finalize().into()
+}
+
+/// SHA-256 of `method`, a zero byte, and `path_and_query`; the zero byte keeps the two from
+/// trading characters.
+fn request_hash(method: &str, path_and_query: &str) -> [u8; 32] {
+    Sha256::digest([method.as_bytes(), &[0], path_and_query.as_bytes()].concat()).into()
 }
 
 /// Checks that `signature`, from `X-Engine-Signature`, is `signer`'s over `response` for

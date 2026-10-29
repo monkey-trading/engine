@@ -47,9 +47,10 @@ an index: load only the rule whose hint matches the current action.
   replay`, `engine admin` (the operator's signing client), the REST API with the operator's admin
   route, the browser-origin allowlist (`api.allowed_origins`, in `api/origin.rs`), account proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
   with rate limits and connection caps), signed answers (`api/signing.rs`: every `/v1` response but
-  health, the attestation and the archive carries the enclave key's signature over the request,
-  the client's challenge, the node's time and log head; `api/stream/signed.rs`: `signed=1` stream
-  frames numbered per connection, with heartbeats) and their offline checks, `engine
+  health, the attestation and the archive carries the enclave key's signature over the request and
+  its body, the client's challenge, the node's time and log head; `api/stream/signed.rs`: `signed=1`
+  stream frames numbered per connection, chained and bound to the opening request, with heartbeats)
+  and their offline checks, `engine
   verify-response` and `engine verify-frames` (`verify/answers.rs`), the account history index (SQLite, derived from the log),
   dated benchmark ingestion (`benchmarks/` and the separate `admin/benchmark_feed.rs` signing worker
   with bounded durable schedule watches in `admin/benchmark_watch.rs` and `api/benchmark_schedule.rs`),

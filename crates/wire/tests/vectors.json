@@ -1,179 +1,310 @@
 {
-  "about": "Known answers for engine-wire: signed API responses (X-Engine-Signature over response_digest) and signed stream connections (frames from n = 0 over frame_digest). private_key is the published mock enclave key, so signer is a development identity; other_private_key signs the refusals by another key. A vector with an error must not verify; base names the valid vector whose signature it reuses.",
+  "about": "Known answers for engine-wire: signed API responses (X-Engine-Signature over response_digest) and signed stream connections (frames from n = 0 over frame_digest, each chained to the frame before it). private_key is the published mock enclave key, so signer is a development identity; other_private_key signs the refusals by another key. A vector with an error must not verify; base and bases name the valid vectors whose signatures or frames it reuses.",
   "connections": [
     {
       "chain_id": 31337,
       "challenge": "8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
       "digests": [
-        "0x87772d03e579532286e1262e259f8902637b86906cf52ce8b6075dc113331c15",
-        "0x49f739130a4b6f4e43bd64312143053d9c857b3981fa177245d0d072638386fd",
-        "0x6548413c97f88d2381147b1e880855b3d181591b4c6528686aed5201579cb27e"
+        "0x82f986af1948d34cba9016ac8583bd7f8c5e81623dee4e43d262cd9b7a6c76e1",
+        "0xac91386b84f09a61130be3461e641605a925bff59f663a85ab37a99ce5f09e0b",
+        "0x6e76b36a4daaf936a23e17bed031f560b92b1ce37b775a160f065758833e921e"
       ],
       "error": null,
       "frames": [
         {
           "msg": "{\"type\":\"heartbeat\",\"head\":\"1204:0\"}",
           "n": 0,
-          "sig": "0x8a14a0b8fa2005dcf5cb57e93f3de19e91d73fe016f70e04ffd24f84cc73901d23dab80185065aea441f127585602230a8bc9ea9f380ff33f39fac6a38bf7b001b",
+          "sig": "0xa3e9c991c64f4241a83fa23d4f79d671b1e1c7d1effc2e5753c089a8716cfeca6d8ee06ab97c1b2d91115f471e39f8743e3ea5b3537b6c1306edc2d75af0dd411c",
           "time": 1792540800000,
           "v": 1
         },
         {
           "msg": "{\"offset\":\"1205:0\",\"type\":\"command\",\"seq\":1205,\"ts\":1792540800100,\"cmd\":{\"type\":\"tick\"},\"events\":[]}",
           "n": 1,
-          "sig": "0x6d32aeea7ff992715bcd38232ee096119ac6c4aff9589021dcf774e11abc23f30b2facb87843683f4d6064d00f7aca1ec9ab1c93de91a6087be3602bec4eb3371b",
+          "sig": "0x63fdbec300ad0d509b0b1ad698eb94ae879f557d05c5f80915738cfe51dfeea25e311445c2a253f82d72f6f4238aa5ce526c6315d8f75870c5dd9a177347fe231c",
           "time": 1792540800100,
           "v": 1
         },
         {
           "msg": "{\"offset\":\"1206:0\",\"type\":\"command\",\"seq\":1206,\"ts\":1792540800350,\"cmd\":{\"type\":\"tick\"},\"events\":[]}",
           "n": 2,
-          "sig": "0x1c9cefd587eb9791f15b36039f1c965eac2f1ecfbbea4c2b75b2aa97756845ad765fff0495f0e3a75cff134361e5aaacf8575a2360fe9ade0415c7feb00f43b41c",
+          "sig": "0x7eead4a6e079e28f23477f49631cd1f983edfdc7db7ca4f6916bdb1ffcd1da3051df2511f4c7d7e05570985b2df99c8e6295d1940c512471e520427037ec02631c",
           "time": 1792540800200,
           "v": 1
         }
       ],
       "name": "three frames",
+      "path_and_query": "/v1/stream?after=1204:0&signed=1&challenge=8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
       "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa3",
       "verified": 3
     },
     {
-      "base": "three frames",
       "chain_id": 31337,
       "challenge": "8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
       "digests": [
-        "0x87772d03e579532286e1262e259f8902637b86906cf52ce8b6075dc113331c15",
-        "0x6548413c97f88d2381147b1e880855b3d181591b4c6528686aed5201579cb27e"
+        "0x463a2bd79cca0d33046ada285cecb8d94b865d31846a34a01b3237dba92f05b0",
+        "0xd84eadbbccbbbd2ababe04ac5c78aa52ba2d8b3efb16d8ddeb8b6a711dc57418",
+        "0xdfbfc6bed7c889966ebeca9cb5d30213e73f22636f7abcfedbee29fce3248006"
+      ],
+      "error": null,
+      "frames": [
+        {
+          "msg": "{\"type\":\"heartbeat\",\"head\":\"1204:0\"}",
+          "n": 0,
+          "sig": "0x7331e3aeb3ece56c92676e8c459d006023688edde2708cb3c496a8856c5e79493cab971ae82ea323ad96c0dc776a7bafdf4ed8265a285eec32e6c89d2d854bb91c",
+          "time": 1792540800007,
+          "v": 1
+        },
+        {
+          "msg": "{\"offset\":\"1205:0\",\"type\":\"command\",\"seq\":1205,\"ts\":1792540800100,\"cmd\":{\"type\":\"tick\"},\"events\":[]}",
+          "n": 1,
+          "sig": "0x5dbd97787e59e4f5d324e146a9bc20a7bb8af7c3483a016202f1379ceb73a56a1941dd27c5f32d600bf59fd02170453f1e40472f6d1e447472a202aed1eb38f41b",
+          "time": 1792540800107,
+          "v": 1
+        },
+        {
+          "msg": "{\"offset\":\"1206:0\",\"type\":\"command\",\"seq\":1206,\"ts\":1792540800350,\"cmd\":{\"type\":\"tick\"},\"events\":[]}",
+          "n": 2,
+          "sig": "0xc9e3f7189c52d519ccddb49b5a6cd934afb881e69ee49b8e3871ac144a803e797772c06f811c28c115de43a9fb100212d5486ff2c0a50953282f646569f141591c",
+          "time": 1792540800207,
+          "v": 1
+        }
+      ],
+      "name": "three frames, opened again",
+      "path_and_query": "/v1/stream?after=1204:0&signed=1&challenge=8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
+      "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa3",
+      "verified": 3
+    },
+    {
+      "bases": [
+        "three frames"
+      ],
+      "chain_id": 31337,
+      "challenge": "8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
+      "digests": [
+        "0x82f986af1948d34cba9016ac8583bd7f8c5e81623dee4e43d262cd9b7a6c76e1",
+        "0x24fc3bca03a3bf167da257e21b71bf7c481e64ad36e56d803791f16136bbbcd4"
       ],
       "error": "out_of_sequence",
       "frames": [
         {
           "msg": "{\"type\":\"heartbeat\",\"head\":\"1204:0\"}",
           "n": 0,
-          "sig": "0x8a14a0b8fa2005dcf5cb57e93f3de19e91d73fe016f70e04ffd24f84cc73901d23dab80185065aea441f127585602230a8bc9ea9f380ff33f39fac6a38bf7b001b",
+          "sig": "0xa3e9c991c64f4241a83fa23d4f79d671b1e1c7d1effc2e5753c089a8716cfeca6d8ee06ab97c1b2d91115f471e39f8743e3ea5b3537b6c1306edc2d75af0dd411c",
           "time": 1792540800000,
           "v": 1
         },
         {
           "msg": "{\"offset\":\"1206:0\",\"type\":\"command\",\"seq\":1206,\"ts\":1792540800350,\"cmd\":{\"type\":\"tick\"},\"events\":[]}",
           "n": 2,
-          "sig": "0x1c9cefd587eb9791f15b36039f1c965eac2f1ecfbbea4c2b75b2aa97756845ad765fff0495f0e3a75cff134361e5aaacf8575a2360fe9ade0415c7feb00f43b41c",
+          "sig": "0x7eead4a6e079e28f23477f49631cd1f983edfdc7db7ca4f6916bdb1ffcd1da3051df2511f4c7d7e05570985b2df99c8e6295d1940c512471e520427037ec02631c",
           "time": 1792540800200,
           "v": 1
         }
       ],
       "name": "dropped frame",
+      "path_and_query": "/v1/stream?after=1204:0&signed=1&challenge=8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
       "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa3",
       "verified": 1
     },
     {
-      "base": "three frames",
+      "bases": [
+        "three frames"
+      ],
       "chain_id": 31337,
       "challenge": "8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
       "digests": [
-        "0x87772d03e579532286e1262e259f8902637b86906cf52ce8b6075dc113331c15",
-        "0x49f739130a4b6f4e43bd64312143053d9c857b3981fa177245d0d072638386fd",
-        "0x49f739130a4b6f4e43bd64312143053d9c857b3981fa177245d0d072638386fd"
+        "0x82f986af1948d34cba9016ac8583bd7f8c5e81623dee4e43d262cd9b7a6c76e1",
+        "0xac91386b84f09a61130be3461e641605a925bff59f663a85ab37a99ce5f09e0b",
+        "0xd0db9c1fce6b9e4a9b0c0d3038d49aef7fa1181d22bc559db1cbb0e797fb7fec"
       ],
       "error": "out_of_sequence",
       "frames": [
         {
           "msg": "{\"type\":\"heartbeat\",\"head\":\"1204:0\"}",
           "n": 0,
-          "sig": "0x8a14a0b8fa2005dcf5cb57e93f3de19e91d73fe016f70e04ffd24f84cc73901d23dab80185065aea441f127585602230a8bc9ea9f380ff33f39fac6a38bf7b001b",
+          "sig": "0xa3e9c991c64f4241a83fa23d4f79d671b1e1c7d1effc2e5753c089a8716cfeca6d8ee06ab97c1b2d91115f471e39f8743e3ea5b3537b6c1306edc2d75af0dd411c",
           "time": 1792540800000,
           "v": 1
         },
         {
           "msg": "{\"offset\":\"1205:0\",\"type\":\"command\",\"seq\":1205,\"ts\":1792540800100,\"cmd\":{\"type\":\"tick\"},\"events\":[]}",
           "n": 1,
-          "sig": "0x6d32aeea7ff992715bcd38232ee096119ac6c4aff9589021dcf774e11abc23f30b2facb87843683f4d6064d00f7aca1ec9ab1c93de91a6087be3602bec4eb3371b",
+          "sig": "0x63fdbec300ad0d509b0b1ad698eb94ae879f557d05c5f80915738cfe51dfeea25e311445c2a253f82d72f6f4238aa5ce526c6315d8f75870c5dd9a177347fe231c",
           "time": 1792540800100,
           "v": 1
         },
         {
           "msg": "{\"offset\":\"1205:0\",\"type\":\"command\",\"seq\":1205,\"ts\":1792540800100,\"cmd\":{\"type\":\"tick\"},\"events\":[]}",
           "n": 1,
-          "sig": "0x6d32aeea7ff992715bcd38232ee096119ac6c4aff9589021dcf774e11abc23f30b2facb87843683f4d6064d00f7aca1ec9ab1c93de91a6087be3602bec4eb3371b",
+          "sig": "0x63fdbec300ad0d509b0b1ad698eb94ae879f557d05c5f80915738cfe51dfeea25e311445c2a253f82d72f6f4238aa5ce526c6315d8f75870c5dd9a177347fe231c",
           "time": 1792540800100,
           "v": 1
         }
       ],
       "name": "repeated frame",
+      "path_and_query": "/v1/stream?after=1204:0&signed=1&challenge=8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
       "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa3",
       "verified": 2
     },
     {
-      "base": "three frames",
+      "bases": [
+        "three frames",
+        "three frames, opened again"
+      ],
       "chain_id": 31337,
-      "challenge": "1b6d3f0a8c2e4975b1d0e6a3f8c27b4e9d05a1c3e7f2b6d48a0c9e1f3b5d7a26",
+      "challenge": "8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
       "digests": [
-        "0x543ada2032c780cdd56498b09eb138081ce8e08522669cc924ab7629e41044cb",
-        "0x1720e60ee158fc1f17b0908759f6765369b9e16aea3ac4ce9c7b8602af60aca2",
-        "0x266458a5fdc36e40c7f34da6170bc5aed0241e65ffa3d1ef816e05f209114622"
+        "0x82f986af1948d34cba9016ac8583bd7f8c5e81623dee4e43d262cd9b7a6c76e1",
+        "0x6c08e3178fec4344ee6c35d7381cbb26cd9285847ca072483fe32c57b5f578b0",
+        "0x407f6c1f6bf1f1b335c31bb9e022e2040b0a3313d3efa26388d6faaec0504bbd"
       ],
       "error": "wrong_signer",
       "frames": [
         {
           "msg": "{\"type\":\"heartbeat\",\"head\":\"1204:0\"}",
           "n": 0,
-          "sig": "0x8a14a0b8fa2005dcf5cb57e93f3de19e91d73fe016f70e04ffd24f84cc73901d23dab80185065aea441f127585602230a8bc9ea9f380ff33f39fac6a38bf7b001b",
+          "sig": "0xa3e9c991c64f4241a83fa23d4f79d671b1e1c7d1effc2e5753c089a8716cfeca6d8ee06ab97c1b2d91115f471e39f8743e3ea5b3537b6c1306edc2d75af0dd411c",
           "time": 1792540800000,
           "v": 1
         },
         {
           "msg": "{\"offset\":\"1205:0\",\"type\":\"command\",\"seq\":1205,\"ts\":1792540800100,\"cmd\":{\"type\":\"tick\"},\"events\":[]}",
           "n": 1,
-          "sig": "0x6d32aeea7ff992715bcd38232ee096119ac6c4aff9589021dcf774e11abc23f30b2facb87843683f4d6064d00f7aca1ec9ab1c93de91a6087be3602bec4eb3371b",
+          "sig": "0x5dbd97787e59e4f5d324e146a9bc20a7bb8af7c3483a016202f1379ceb73a56a1941dd27c5f32d600bf59fd02170453f1e40472f6d1e447472a202aed1eb38f41b",
+          "time": 1792540800107,
+          "v": 1
+        },
+        {
+          "msg": "{\"offset\":\"1206:0\",\"type\":\"command\",\"seq\":1206,\"ts\":1792540800350,\"cmd\":{\"type\":\"tick\"},\"events\":[]}",
+          "n": 2,
+          "sig": "0xc9e3f7189c52d519ccddb49b5a6cd934afb881e69ee49b8e3871ac144a803e797772c06f811c28c115de43a9fb100212d5486ff2c0a50953282f646569f141591c",
+          "time": 1792540800207,
+          "v": 1
+        }
+      ],
+      "name": "spliced from a second connection",
+      "path_and_query": "/v1/stream?after=1204:0&signed=1&challenge=8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
+      "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa3",
+      "verified": 1
+    },
+    {
+      "bases": [
+        "three frames"
+      ],
+      "chain_id": 31337,
+      "challenge": "1b6d3f0a8c2e4975b1d0e6a3f8c27b4e9d05a1c3e7f2b6d48a0c9e1f3b5d7a26",
+      "digests": [
+        "0x4747f905d51fa186433ce4f899c7b3db5a275b8eaade87212790b3893c707220",
+        "0x658505b5ab2cecc06c193fab363cd86a4e56fd95568414311fec7c3922cb28e2",
+        "0xb7ec0cee5559bf4d892cd43ee6ab55c2d1a86742e32aa8f03a418313f9806842"
+      ],
+      "error": "wrong_signer",
+      "frames": [
+        {
+          "msg": "{\"type\":\"heartbeat\",\"head\":\"1204:0\"}",
+          "n": 0,
+          "sig": "0xa3e9c991c64f4241a83fa23d4f79d671b1e1c7d1effc2e5753c089a8716cfeca6d8ee06ab97c1b2d91115f471e39f8743e3ea5b3537b6c1306edc2d75af0dd411c",
+          "time": 1792540800000,
+          "v": 1
+        },
+        {
+          "msg": "{\"offset\":\"1205:0\",\"type\":\"command\",\"seq\":1205,\"ts\":1792540800100,\"cmd\":{\"type\":\"tick\"},\"events\":[]}",
+          "n": 1,
+          "sig": "0x63fdbec300ad0d509b0b1ad698eb94ae879f557d05c5f80915738cfe51dfeea25e311445c2a253f82d72f6f4238aa5ce526c6315d8f75870c5dd9a177347fe231c",
           "time": 1792540800100,
           "v": 1
         },
         {
           "msg": "{\"offset\":\"1206:0\",\"type\":\"command\",\"seq\":1206,\"ts\":1792540800350,\"cmd\":{\"type\":\"tick\"},\"events\":[]}",
           "n": 2,
-          "sig": "0x1c9cefd587eb9791f15b36039f1c965eac2f1ecfbbea4c2b75b2aa97756845ad765fff0495f0e3a75cff134361e5aaacf8575a2360fe9ade0415c7feb00f43b41c",
+          "sig": "0x7eead4a6e079e28f23477f49631cd1f983edfdc7db7ca4f6916bdb1ffcd1da3051df2511f4c7d7e05570985b2df99c8e6295d1940c512471e520427037ec02631c",
           "time": 1792540800200,
           "v": 1
         }
       ],
       "name": "another connection's challenge",
+      "path_and_query": "/v1/stream?after=1204:0&signed=1&challenge=8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
       "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa3",
       "verified": 0
     },
     {
-      "base": "three frames",
-      "chain_id": 1,
+      "bases": [
+        "three frames"
+      ],
+      "chain_id": 31337,
       "challenge": "8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
       "digests": [
-        "0x9c3c9d3b2594d40204d0d5801a007f996ce833289a76bddff4356aeadc70b4bd",
-        "0x0eeb1972e5eb5f7cd94b426c77a1fdcd1faf0e3eba247823fe8ed1cd437737c1",
-        "0xdc25144aff94571bd92384eb10bffea8c56319f2daf6e4284de9e1ae781b5d74"
+        "0x2c600cf9a63558b93ac4f1f246211754de09f8eac996b1358980d9e274fe6d1e",
+        "0x5ddf6eeafaac323be604a6098d2ab9f9e7221f6db8a1df071a2484cd85012f0a",
+        "0xeb89c593b66807a6bab2908b6ffed2997edf5100e48ee504de79f4a1b126df8a"
       ],
       "error": "wrong_signer",
       "frames": [
         {
           "msg": "{\"type\":\"heartbeat\",\"head\":\"1204:0\"}",
           "n": 0,
-          "sig": "0x8a14a0b8fa2005dcf5cb57e93f3de19e91d73fe016f70e04ffd24f84cc73901d23dab80185065aea441f127585602230a8bc9ea9f380ff33f39fac6a38bf7b001b",
+          "sig": "0xa3e9c991c64f4241a83fa23d4f79d671b1e1c7d1effc2e5753c089a8716cfeca6d8ee06ab97c1b2d91115f471e39f8743e3ea5b3537b6c1306edc2d75af0dd411c",
           "time": 1792540800000,
           "v": 1
         },
         {
           "msg": "{\"offset\":\"1205:0\",\"type\":\"command\",\"seq\":1205,\"ts\":1792540800100,\"cmd\":{\"type\":\"tick\"},\"events\":[]}",
           "n": 1,
-          "sig": "0x6d32aeea7ff992715bcd38232ee096119ac6c4aff9589021dcf774e11abc23f30b2facb87843683f4d6064d00f7aca1ec9ab1c93de91a6087be3602bec4eb3371b",
+          "sig": "0x63fdbec300ad0d509b0b1ad698eb94ae879f557d05c5f80915738cfe51dfeea25e311445c2a253f82d72f6f4238aa5ce526c6315d8f75870c5dd9a177347fe231c",
           "time": 1792540800100,
           "v": 1
         },
         {
           "msg": "{\"offset\":\"1206:0\",\"type\":\"command\",\"seq\":1206,\"ts\":1792540800350,\"cmd\":{\"type\":\"tick\"},\"events\":[]}",
           "n": 2,
-          "sig": "0x1c9cefd587eb9791f15b36039f1c965eac2f1ecfbbea4c2b75b2aa97756845ad765fff0495f0e3a75cff134361e5aaacf8575a2360fe9ade0415c7feb00f43b41c",
+          "sig": "0x7eead4a6e079e28f23477f49631cd1f983edfdc7db7ca4f6916bdb1ffcd1da3051df2511f4c7d7e05570985b2df99c8e6295d1940c512471e520427037ec02631c",
+          "time": 1792540800200,
+          "v": 1
+        }
+      ],
+      "name": "another opening request",
+      "path_and_query": "/v1/stream?after=1300:0&signed=1&challenge=8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
+      "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa3",
+      "verified": 0
+    },
+    {
+      "bases": [
+        "three frames"
+      ],
+      "chain_id": 1,
+      "challenge": "8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
+      "digests": [
+        "0x3a0f9f7f93dfb0de627a7ce8ee6442bc5975425479b6e89903ea912899573f1e",
+        "0x6ae87c78dfb7364d17e4b1f2df831a9dd616b426be47ee45849b1228bfcfcf31",
+        "0x545f1a30bc5e7f2eec65ce82118a80cd08da42340b1f258b53054360b7babd63"
+      ],
+      "error": "wrong_signer",
+      "frames": [
+        {
+          "msg": "{\"type\":\"heartbeat\",\"head\":\"1204:0\"}",
+          "n": 0,
+          "sig": "0xa3e9c991c64f4241a83fa23d4f79d671b1e1c7d1effc2e5753c089a8716cfeca6d8ee06ab97c1b2d91115f471e39f8743e3ea5b3537b6c1306edc2d75af0dd411c",
+          "time": 1792540800000,
+          "v": 1
+        },
+        {
+          "msg": "{\"offset\":\"1205:0\",\"type\":\"command\",\"seq\":1205,\"ts\":1792540800100,\"cmd\":{\"type\":\"tick\"},\"events\":[]}",
+          "n": 1,
+          "sig": "0x63fdbec300ad0d509b0b1ad698eb94ae879f557d05c5f80915738cfe51dfeea25e311445c2a253f82d72f6f4238aa5ce526c6315d8f75870c5dd9a177347fe231c",
+          "time": 1792540800100,
+          "v": 1
+        },
+        {
+          "msg": "{\"offset\":\"1206:0\",\"type\":\"command\",\"seq\":1206,\"ts\":1792540800350,\"cmd\":{\"type\":\"tick\"},\"events\":[]}",
+          "n": 2,
+          "sig": "0x7eead4a6e079e28f23477f49631cd1f983edfdc7db7ca4f6916bdb1ffcd1da3051df2511f4c7d7e05570985b2df99c8e6295d1940c512471e520427037ec02631c",
           "time": 1792540800200,
           "v": 1
         }
       ],
       "name": "another chain id",
+      "path_and_query": "/v1/stream?after=1204:0&signed=1&challenge=8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
       "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa3",
       "verified": 0
     },
@@ -181,36 +312,37 @@
       "chain_id": 31337,
       "challenge": "8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
       "digests": [
-        "0x87772d03e579532286e1262e259f8902637b86906cf52ce8b6075dc113331c15",
-        "0x49f739130a4b6f4e43bd64312143053d9c857b3981fa177245d0d072638386fd",
-        "0x6548413c97f88d2381147b1e880855b3d181591b4c6528686aed5201579cb27e"
+        "0x82f986af1948d34cba9016ac8583bd7f8c5e81623dee4e43d262cd9b7a6c76e1",
+        "0xac91386b84f09a61130be3461e641605a925bff59f663a85ab37a99ce5f09e0b",
+        "0x6e76b36a4daaf936a23e17bed031f560b92b1ce37b775a160f065758833e921e"
       ],
       "error": "wrong_signer",
       "frames": [
         {
           "msg": "{\"type\":\"heartbeat\",\"head\":\"1204:0\"}",
           "n": 0,
-          "sig": "0x181178f1f1576d8d57cdc896ff5a80a335da572fa7857131318c926bbb93cbd60c694ba951e7d6cc897a1fa730a8b3f3304f2cea07f94765b07bdea7d7ddf4ec1b",
+          "sig": "0x1f4fb9830395811f0816e6de09ce1f43623a0c7e83c36913da8a081cc8840d415e8d0931d727b419146d225449d0bafba2cf6dcd55aadee209e9dc51af7a31fe1b",
           "time": 1792540800000,
           "v": 1
         },
         {
           "msg": "{\"offset\":\"1205:0\",\"type\":\"command\",\"seq\":1205,\"ts\":1792540800100,\"cmd\":{\"type\":\"tick\"},\"events\":[]}",
           "n": 1,
-          "sig": "0x3e2e130f8d0a29c60d9f84b208666e46623d5da511380e42195c334f40b3e4e664112e1ba81ebc847cc0b40d8f5b86833eb32a8697ac83c1a5e2ee5e53930af71b",
+          "sig": "0xb3cb6d948b00687531adb08782128e4c069d8eda34b6c1fcc9d75b8ccfe6f8bd0bd852c9a8304f57b130fdd07333c5a2c030956aba838f768e522071ce0f24991b",
           "time": 1792540800100,
           "v": 1
         },
         {
           "msg": "{\"offset\":\"1206:0\",\"type\":\"command\",\"seq\":1206,\"ts\":1792540800350,\"cmd\":{\"type\":\"tick\"},\"events\":[]}",
           "n": 2,
-          "sig": "0xe55d15d632efc729be26f78fa2ead653b221b5d185fcc1db78b7652edcc23f4b186d42b6991fe81ff47b37d9d2a33ec2c9fd86efcdabb644c07a65b960f000db1c",
+          "sig": "0xe3d1ce2dd5247389ab76df6e773d5cfb38ce42ec290d4dd87c54a630e20104b0481079005209e7122b0589278bf055b725c47dfd3909c3131f489f8fca80ee091c",
           "time": 1792540800200,
           "v": 1
         }
       ],
       "name": "another key",
       "other_key": true,
+      "path_and_query": "/v1/stream?after=1204:0&signed=1&challenge=8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
       "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa3",
       "verified": 0
     }
@@ -222,13 +354,14 @@
       "body": "[{\"id\":1,\"symbol\":\"BTC-USD\",\"open\":true,\"reduce_only\":false,\"mark\":\"100000\",\"fx_mark\":null,\"stress_level\":0}]",
       "chain_id": 31337,
       "challenge": "8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
-      "digest": "0x87284e700e5d708ac7050e6abda8f02ea30a804eaed6a4574e8b4953e2c63b43",
+      "digest": "0x145a5fd859c0f207320b466cf9d0b652484804a0e0fcbaa2e3f71e13b40f47c4",
       "error": null,
       "head_seq": 1204,
       "method": "GET",
       "name": "markets",
       "path_and_query": "/v1/markets",
-      "signature": "0xfd5c9b304a7e7df18dced1b1e9cb2721d79a13d68c8a79ce846f00451790bcfa53f69cec222f31415b88483efc89b6c7e38e20ed9c4fede6c61ffff2c1fae4061c",
+      "request_body": "",
+      "signature": "0xabff4620aca16f922bafc255bfc8b808c21ad156899373c421e7d54964a74f3e36d4f3e5b3c1620a5ff796d605b09e2ebe6818f20c9b91ffd0a85dc8d03af7521b",
       "status": 200,
       "time_ms": 1792540800000,
       "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
@@ -237,13 +370,14 @@
       "body": "{\"cash\":\"1000000\",\"nav\":\"1000000\",\"gross_exposure\":\"0\"}",
       "chain_id": 31337,
       "challenge": "0000000000000000000000000000000000000000000000000000000000000000",
-      "digest": "0x338bc00a136ab949564349db85996a8e8d103619b83395451c014f1d564d7340",
+      "digest": "0x3fa4cfb19e7119c7e9edd0aae1ca35643572086f4a4e578fb73939fd1e293bb3",
       "error": null,
       "head_seq": 1204,
       "method": "GET",
       "name": "no challenge",
       "path_and_query": "/v1/house",
-      "signature": "0xa2fec41e06ab016e0bedde9196ea0e575ddc4cd9f6ec0effd0b7ec1ba4ce0162616ba4f678c5de529b2bc03059aee061326c3c4c53bf2a66097a553b1738fcc81c",
+      "request_body": "",
+      "signature": "0x37bc7ba8f41eae7e85edbec5c8adeabb0671281f4f3f78eb176c7dce986dd13e0f967357b32be5035b6684229f2e11d856a119b855c7c4bed5fc6609f464b7b41b",
       "status": 200,
       "time_ms": 1792540800005,
       "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
@@ -252,13 +386,14 @@
       "body": "{\"error\":\"invalid nonce\",\"expected\":7}",
       "chain_id": 31337,
       "challenge": "1b6d3f0a8c2e4975b1d0e6a3f8c27b4e9d05a1c3e7f2b6d48a0c9e1f3b5d7a26",
-      "digest": "0xa21b03bea4b38f57517d0faeadbb84d06412da28c766f1ce908940226ee18083",
+      "digest": "0x540d38e37e4921ff741c05da8b314503591a54164631e6d2a9f045fa35518b57",
       "error": null,
       "head_seq": 1205,
       "method": "POST",
       "name": "nonce conflict",
       "path_and_query": "/v1/orders",
-      "signature": "0xd11aff74e6fb6039f35dd2fb0ef3e0c87e331dee4f406f4750043de8a26ff346297837940f90a60a2847e1e9793e95bf1dea52b533267092881b7089e09ff1a71c",
+      "request_body": "{\"account\":\"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266\",\"client_id\":1,\"market\":1,\"side\":\"buy\",\"qty\":\"0.5\",\"kind\":{\"kind\":\"market\",\"quoted\":\"100000\",\"max_slippage_bps\":10},\"auth\":{\"nonce\":5,\"expires_at\":1792540860000,\"signature\":\"0x00\"}}",
+      "signature": "0xfe2403a1c6bf5f723afc672a427f011926502aa4c4f879fdca236953b3f50c550f184844b1e20f120203c2f00775e6db7dac5df983eff498e80786b8aea273f81c",
       "status": 409,
       "time_ms": 1792540800009,
       "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
@@ -267,13 +402,14 @@
       "body": "",
       "chain_id": 31337,
       "challenge": "8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
-      "digest": "0x17340c6e93671518b59811225d8f18810b93bf30e8a69619869ab70db92328b9",
+      "digest": "0x9f8478f1b807a7b1d7aa35e8527543e187d8eebcaf16c385a273531cc23a3cd2",
       "error": null,
       "head_seq": 1205,
       "method": "HEAD",
       "name": "query and HEAD",
       "path_and_query": "/v1/accounts/0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266/history?limit=1",
-      "signature": "0x8304398dd49d37d9aca58f69dcf4adb5c43c2d66069df5ac5d8610fa9a81e60d7f8ec7cf1333ee386e5490d52816591f468e6c8081b5f3675051a0243980ca7d1c",
+      "request_body": "",
+      "signature": "0xae26d784848dada99aa4cd0bfb9bbccf4c0f558a2e1ac44a05ca443aa356ca513d10bc70cad644ce020d56f95e1cbd787c209d06fc675bc8911f5f78097d58e01b",
       "status": 200,
       "time_ms": 1792540800012,
       "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
@@ -283,13 +419,14 @@
       "body": "[{\"id\":1,\"symbol\":\"BTC-USD\",\"open\":true,\"reduce_only\":false,\"mark\":\"100001\",\"fx_mark\":null,\"stress_level\":0}]",
       "chain_id": 31337,
       "challenge": "8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
-      "digest": "0x21f6a42f9da0e298f6130e0510d539aa0b849df9cc20c73ec0f85a97a2090b9f",
+      "digest": "0x1472e013a607c468be4c9d6b2dcfd8f9e8198b7c139b2bd37330000681648325",
       "error": "wrong_signer",
       "head_seq": 1204,
       "method": "GET",
       "name": "altered body",
       "path_and_query": "/v1/markets",
-      "signature": "0xfd5c9b304a7e7df18dced1b1e9cb2721d79a13d68c8a79ce846f00451790bcfa53f69cec222f31415b88483efc89b6c7e38e20ed9c4fede6c61ffff2c1fae4061c",
+      "request_body": "",
+      "signature": "0xabff4620aca16f922bafc255bfc8b808c21ad156899373c421e7d54964a74f3e36d4f3e5b3c1620a5ff796d605b09e2ebe6818f20c9b91ffd0a85dc8d03af7521b",
       "status": 200,
       "time_ms": 1792540800000,
       "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
@@ -299,13 +436,14 @@
       "body": "[{\"id\":1,\"symbol\":\"BTC-USD\",\"open\":true,\"reduce_only\":false,\"mark\":\"100000\",\"fx_mark\":null,\"stress_level\":0}]",
       "chain_id": 31337,
       "challenge": "8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
-      "digest": "0x6c0643624ec86a4e563a7cacc681fc3555a1760364e8d0b895cb1894a3821446",
+      "digest": "0x34b77f5d305c101a665b5b9f8e0797dbe234e55a2d2a74841b923838cba20a70",
       "error": "wrong_signer",
       "head_seq": 1204,
       "method": "GET",
       "name": "altered status",
       "path_and_query": "/v1/markets",
-      "signature": "0xfd5c9b304a7e7df18dced1b1e9cb2721d79a13d68c8a79ce846f00451790bcfa53f69cec222f31415b88483efc89b6c7e38e20ed9c4fede6c61ffff2c1fae4061c",
+      "request_body": "",
+      "signature": "0xabff4620aca16f922bafc255bfc8b808c21ad156899373c421e7d54964a74f3e36d4f3e5b3c1620a5ff796d605b09e2ebe6818f20c9b91ffd0a85dc8d03af7521b",
       "status": 500,
       "time_ms": 1792540800000,
       "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
@@ -315,13 +453,14 @@
       "body": "[{\"id\":1,\"symbol\":\"BTC-USD\",\"open\":true,\"reduce_only\":false,\"mark\":\"100000\",\"fx_mark\":null,\"stress_level\":0}]",
       "chain_id": 31337,
       "challenge": "8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
-      "digest": "0xd274b4e7e4a263b2608c9e2bde9159a4e35e9a861ed5b6d5f84cb0e4d313ffa6",
+      "digest": "0xc859428cc0445fc0fbd88899652228e792e9975d329189b83c87e7b7dec34795",
       "error": "wrong_signer",
       "head_seq": 1204,
       "method": "GET",
       "name": "altered path",
       "path_and_query": "/v1/markets?open=true",
-      "signature": "0xfd5c9b304a7e7df18dced1b1e9cb2721d79a13d68c8a79ce846f00451790bcfa53f69cec222f31415b88483efc89b6c7e38e20ed9c4fede6c61ffff2c1fae4061c",
+      "request_body": "",
+      "signature": "0xabff4620aca16f922bafc255bfc8b808c21ad156899373c421e7d54964a74f3e36d4f3e5b3c1620a5ff796d605b09e2ebe6818f20c9b91ffd0a85dc8d03af7521b",
       "status": 200,
       "time_ms": 1792540800000,
       "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
@@ -331,13 +470,14 @@
       "body": "[{\"id\":1,\"symbol\":\"BTC-USD\",\"open\":true,\"reduce_only\":false,\"mark\":\"100000\",\"fx_mark\":null,\"stress_level\":0}]",
       "chain_id": 31337,
       "challenge": "8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
-      "digest": "0x83b3b365aaf85e1df34b245e264874d6926f75ab196c17b02f868b5012f3abf3",
+      "digest": "0x16032c952b8835e89170e099d5c0c7f3e244143798d707a5195394c40f7f26bb",
       "error": "wrong_signer",
       "head_seq": 1204,
       "method": "POST",
       "name": "altered method",
       "path_and_query": "/v1/markets",
-      "signature": "0xfd5c9b304a7e7df18dced1b1e9cb2721d79a13d68c8a79ce846f00451790bcfa53f69cec222f31415b88483efc89b6c7e38e20ed9c4fede6c61ffff2c1fae4061c",
+      "request_body": "",
+      "signature": "0xabff4620aca16f922bafc255bfc8b808c21ad156899373c421e7d54964a74f3e36d4f3e5b3c1620a5ff796d605b09e2ebe6818f20c9b91ffd0a85dc8d03af7521b",
       "status": 200,
       "time_ms": 1792540800000,
       "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
@@ -347,13 +487,14 @@
       "body": "[{\"id\":1,\"symbol\":\"BTC-USD\",\"open\":true,\"reduce_only\":false,\"mark\":\"100000\",\"fx_mark\":null,\"stress_level\":0}]",
       "chain_id": 31337,
       "challenge": "1b6d3f0a8c2e4975b1d0e6a3f8c27b4e9d05a1c3e7f2b6d48a0c9e1f3b5d7a26",
-      "digest": "0xd047e9e9fefd1797868fcaf2c9829ef5185c0c8f24dcc787876d7f968d1b50e2",
+      "digest": "0x6afce00c5159fb5ab9d5b5051757b7ad1d8fbf67ca0baf910cff9a4577eb0d15",
       "error": "wrong_signer",
       "head_seq": 1204,
       "method": "GET",
       "name": "replayed under another challenge",
       "path_and_query": "/v1/markets",
-      "signature": "0xfd5c9b304a7e7df18dced1b1e9cb2721d79a13d68c8a79ce846f00451790bcfa53f69cec222f31415b88483efc89b6c7e38e20ed9c4fede6c61ffff2c1fae4061c",
+      "request_body": "",
+      "signature": "0xabff4620aca16f922bafc255bfc8b808c21ad156899373c421e7d54964a74f3e36d4f3e5b3c1620a5ff796d605b09e2ebe6818f20c9b91ffd0a85dc8d03af7521b",
       "status": 200,
       "time_ms": 1792540800000,
       "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
@@ -363,13 +504,14 @@
       "body": "[{\"id\":1,\"symbol\":\"BTC-USD\",\"open\":true,\"reduce_only\":false,\"mark\":\"100000\",\"fx_mark\":null,\"stress_level\":0}]",
       "chain_id": 1,
       "challenge": "8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
-      "digest": "0x354317ec01e0c67253379f14066e8241da3c49bc82387e623333eec58edfb27c",
+      "digest": "0x8174f0360eeca88babe7af1b5d5ff8cf70a40d96c067c4a78a5df23795747f48",
       "error": "wrong_signer",
       "head_seq": 1204,
       "method": "GET",
       "name": "another chain id",
       "path_and_query": "/v1/markets",
-      "signature": "0xfd5c9b304a7e7df18dced1b1e9cb2721d79a13d68c8a79ce846f00451790bcfa53f69cec222f31415b88483efc89b6c7e38e20ed9c4fede6c61ffff2c1fae4061c",
+      "request_body": "",
+      "signature": "0xabff4620aca16f922bafc255bfc8b808c21ad156899373c421e7d54964a74f3e36d4f3e5b3c1620a5ff796d605b09e2ebe6818f20c9b91ffd0a85dc8d03af7521b",
       "status": 200,
       "time_ms": 1792540800000,
       "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
@@ -379,29 +521,48 @@
       "body": "[{\"id\":1,\"symbol\":\"BTC-USD\",\"open\":true,\"reduce_only\":false,\"mark\":\"100000\",\"fx_mark\":null,\"stress_level\":0}]",
       "chain_id": 31337,
       "challenge": "8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
-      "digest": "0xd98ad1f2fbdf578320613a82825c260d830558c0b8fd2d22f5bf87de2fe94e56",
+      "digest": "0xc6458df46769989b5801ad7746dbed86dadeadc1e12fa5626fc3ec3961634730",
       "error": "wrong_signer",
       "head_seq": 1204,
       "method": "GET",
       "name": "another vault",
       "path_and_query": "/v1/markets",
-      "signature": "0xfd5c9b304a7e7df18dced1b1e9cb2721d79a13d68c8a79ce846f00451790bcfa53f69cec222f31415b88483efc89b6c7e38e20ed9c4fede6c61ffff2c1fae4061c",
+      "request_body": "",
+      "signature": "0xabff4620aca16f922bafc255bfc8b808c21ad156899373c421e7d54964a74f3e36d4f3e5b3c1620a5ff796d605b09e2ebe6818f20c9b91ffd0a85dc8d03af7521b",
       "status": 200,
       "time_ms": 1792540800000,
       "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa4"
     },
     {
+      "base": "nonce conflict",
+      "body": "{\"error\":\"invalid nonce\",\"expected\":7}",
+      "chain_id": 31337,
+      "challenge": "1b6d3f0a8c2e4975b1d0e6a3f8c27b4e9d05a1c3e7f2b6d48a0c9e1f3b5d7a26",
+      "digest": "0xd5348f167af31b2c9910bbbc1644aee0588ad5e3979f570a7499f7626050c59e",
+      "error": "wrong_signer",
+      "head_seq": 1205,
+      "method": "POST",
+      "name": "another request body",
+      "path_and_query": "/v1/orders",
+      "request_body": "{\"account\":\"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266\",\"client_id\":1,\"market\":1,\"side\":\"buy\",\"qty\":\"5\",\"kind\":{\"kind\":\"market\",\"quoted\":\"100000\",\"max_slippage_bps\":10},\"auth\":{\"nonce\":5,\"expires_at\":1792540860000,\"signature\":\"0x00\"}}",
+      "signature": "0xfe2403a1c6bf5f723afc672a427f011926502aa4c4f879fdca236953b3f50c550f184844b1e20f120203c2f00775e6db7dac5df983eff498e80786b8aea273f81c",
+      "status": 409,
+      "time_ms": 1792540800009,
+      "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+    },
+    {
       "body": "[{\"id\":1,\"symbol\":\"BTC-USD\",\"open\":true,\"reduce_only\":false,\"mark\":\"100000\",\"fx_mark\":null,\"stress_level\":0}]",
       "chain_id": 31337,
       "challenge": "8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
-      "digest": "0x87284e700e5d708ac7050e6abda8f02ea30a804eaed6a4574e8b4953e2c63b43",
+      "digest": "0x145a5fd859c0f207320b466cf9d0b652484804a0e0fcbaa2e3f71e13b40f47c4",
       "error": "wrong_signer",
       "head_seq": 1204,
       "method": "GET",
       "name": "another key",
       "other_key": true,
       "path_and_query": "/v1/markets",
-      "signature": "0x17cb1714608b6b5f0f4656a73a7f8a10e5e58d35ca275f7fa6d9b477315c52cd47d77c6f69d39e644b4559cb15626aed5e5e66bba87de65477f058da8fb7f97f1c",
+      "request_body": "",
+      "signature": "0x3282b0c09948efb49f31ba771481f40930d7a2f8d104bb9539e337e5ac9feb085c7020fbdddf401355afa2ffee4602a12ecf1b752c3ffb6c1d7d1d50070c5f131b",
       "status": 200,
       "time_ms": 1792540800000,
       "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
@@ -410,13 +571,14 @@
       "body": "[{\"id\":1,\"symbol\":\"BTC-USD\",\"open\":true,\"reduce_only\":false,\"mark\":\"100000\",\"fx_mark\":null,\"stress_level\":0}]",
       "chain_id": 31337,
       "challenge": "8f0e5c2a9b7d41e6a3c0f19d2e84b7c65a1d0e3f9b2c7a48e6d1f05b3a9c2e71",
-      "digest": "0x87284e700e5d708ac7050e6abda8f02ea30a804eaed6a4574e8b4953e2c63b43",
+      "digest": "0x145a5fd859c0f207320b466cf9d0b652484804a0e0fcbaa2e3f71e13b40f47c4",
       "error": "malformed_signature",
       "head_seq": 1204,
       "method": "GET",
       "name": "malformed signature",
       "path_and_query": "/v1/markets",
-      "signature": "0xfd5c9b304a7e7df18dced1b1e9cb2721d79a13d68c8a79ce846f00451790bcfa53f69cec222f31415b88483efc89b6c7e38e20ed9c4fede6c61ffff2c1fae4061d",
+      "request_body": "",
+      "signature": "0xabff4620aca16f922bafc255bfc8b808c21ad156899373c421e7d54964a74f3e36d4f3e5b3c1620a5ff796d605b09e2ebe6818f20c9b91ffd0a85dc8d03af7521d",
       "status": 200,
       "time_ms": 1792540800000,
       "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa3"

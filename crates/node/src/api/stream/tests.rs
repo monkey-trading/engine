@@ -10,11 +10,14 @@ use engine_core::Fixed;
 use engine_core::command::{Command, Sequenced};
 use engine_core::event::Event;
 use engine_core::types::AccountId;
+use engine_wire::{FrameVerifier, SignedFrame};
 use futures_util::FutureExt;
 use tokio::sync::oneshot;
-use tokio::time::timeout;
+use tokio::time::{Instant, timeout};
 
+use crate::api::Signing;
 use crate::log::{CommandEntry, LogEntry, SegmentedLog, segment_seq};
+use crate::tee::EnclaveKey;
 use crate::test_support::{TestSequencer, deposit, log_entries, log_messages, scratch_dir, withdraw};
 
 const SEND_TIMEOUT: Duration = Duration::from_secs(1);
@@ -279,6 +282,31 @@ async fn every_arm_stays_live_while_another_is_busy() {
     }
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_quiet_signed_subscriber_gets_a_heartbeat_at_once_and_then_exactly_each_interval() {
+    let (live, feed) = live_feed(4);
+    let interval = Duration::from_secs(5);
+    let signing = Signing::new(Arc::new(EnclaveKey::test_key()), 31337, AccountId([0; 20]), interval);
+    let connection = Connection::new([7; 32], "/v1/stream?signed=1&challenge=07");
+    let framing = Framing::new(Arc::new(signing), connection, || 1, watch::channel(Manifest::default()).1);
+    let mut subscriber = Subscriber::default();
+    let started = Instant::now();
+    let _open =
+        timeout(interval * 3 + Duration::from_millis(1), forward(&mut subscriber, feed, SEND_TIMEOUT, Some(framing)))
+            .await;
+    let offsets: Vec<Duration> = subscriber.sent_at.iter().map(|at| at.duration_since(started)).collect();
+    assert_eq!(offsets, [Duration::ZERO, interval, interval * 2, interval * 3]);
+    let deployment = engine_wire::Deployment { chain_id: 31337, vault: [0; 20] };
+    let mut verifier = FrameVerifier::new(EnclaveKey::test_key().address(), deployment, connection);
+    for sent in &subscriber.sent {
+        let Message::Text(text) = sent else { panic!("{sent:?}") };
+        let frame: SignedFrame = serde_json::from_str(text).unwrap();
+        assert_eq!(verifier.verify(&frame), Ok(()));
+        assert_eq!(frame.msg, r#"{"type":"heartbeat","head":null}"#);
+    }
+    drop(live);
+}
+
 #[tokio::test]
 async fn a_feed_refuses_to_go_live_past_history_missing_from_disk() {
     let dir = scratch_dir("feed-tail-gap");
@@ -333,6 +361,8 @@ struct Subscriber {
     /// Publishes a tick on the channel once this many messages of `incoming` have been read.
     publish_after: Option<(usize, broadcast::Sender<Arc<StreamMsg>>)>,
     read: usize,
+    /// When each message in `sent` was sent.
+    sent_at: Vec<Instant>,
 }
 
 impl Stream for Subscriber {
@@ -370,6 +400,7 @@ impl Sink<Message> for Subscriber {
             self.input_left_at_first_send = Some(self.incoming.len());
         }
         self.sent.push(msg);
+        self.sent_at.push(Instant::now());
         Ok(())
     }
 

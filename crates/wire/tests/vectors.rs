@@ -3,8 +3,8 @@
 //! re-derived from how the vector says it was made, so no vector can pass by accident.
 
 use engine_wire::{
-    Deployment, Error, FrameVerifier, Response, SignedFrame, frame_digest, parse_challenge, response_digest,
-    verify_response,
+    Connection, Deployment, Error, FrameVerifier, Response, SignedFrame, frame_digest, parse_challenge,
+    response_digest, verify_response,
 };
 use k256::ecdsa::SigningKey;
 use serde::Deserialize;
@@ -34,6 +34,7 @@ struct ResponseVector {
     status: u16,
     method: String,
     path_and_query: String,
+    request_body: String,
     body: String,
     digest: String,
     signature: String,
@@ -53,14 +54,16 @@ struct ConnectionVector {
     chain_id: u64,
     vault: String,
     challenge: String,
+    /// The path and query of the `GET` that opened the connection.
+    path_and_query: String,
     frames: Vec<SignedFrame>,
-    /// Each frame's digest as a verifier of this connection computes it.
+    /// Each frame's digest under this connection, each chained to the frame listed before it.
     digests: Vec<String>,
     verified: usize,
     error: Option<String>,
-    /// The valid connection whose frames these are.
+    /// The valid connections these frames are taken from.
     #[serde(default)]
-    base: Option<String>,
+    bases: Vec<String>,
     /// Signed by the other key over this connection's own digests.
     #[serde(default)]
     other_key: bool,
@@ -81,6 +84,7 @@ fn every_response_vector_digests_verifies_and_was_signed_as_it_says() {
             status: v.status,
             method: &v.method,
             path_and_query: &v.path_and_query,
+            request_body: v.request_body.as_bytes(),
             body,
         };
         let digest = response_digest(&deployment, &response);
@@ -110,36 +114,46 @@ fn every_connection_vector_digests_verifies_to_its_recorded_frame_and_was_signed
     let signer = bytes::<20>(&vectors.signer);
     for v in &vectors.connections {
         let deployment = deployment(v.chain_id, &v.vault);
-        let challenge = parse_challenge(&v.challenge).expect("a 64-hex challenge");
-        let digests: Vec<[u8; 32]> =
-            v.frames.iter().map(|f| frame_digest(&deployment, &challenge, f.n, f.time, &f.msg)).collect();
+        let connection = Connection::new(parse_challenge(&v.challenge).expect("a 64-hex challenge"), &v.path_and_query);
+        let mut previous = [0; 32];
+        let digests: Vec<[u8; 32]> = v
+            .frames
+            .iter()
+            .map(|f| {
+                previous = frame_digest(&deployment, &connection, &previous, f.n, f.time, &f.msg);
+                previous
+            })
+            .collect();
         assert_eq!(digests.iter().map(|d| hex0x(d)).collect::<Vec<_>>(), v.digests, "{}: digests", v.name);
 
-        let mut verifier = FrameVerifier::new(signer, deployment, challenge);
+        let mut verifier = FrameVerifier::new(signer, deployment, connection);
         let results: Vec<Result<(), Error>> = v.frames.iter().map(|f| verifier.verify(f)).collect();
         let verified = results.iter().take_while(|r| r.is_ok()).count();
         assert_eq!(verified, v.verified, "{}: frames verified", v.name);
         let error = results.into_iter().find_map(Result::err).map(kind);
         assert_eq!(error, v.error, "{}: error", v.name);
 
-        match (&v.base, v.other_key) {
-            (None, false) => {
+        match (v.bases.as_slice(), v.other_key) {
+            ([], false) => {
                 assert!(v.error.is_none(), "{}: a connection the key signed verifies", v.name);
                 for (frame, digest) in v.frames.iter().zip(digests) {
                     assert_eq!(sign(&key, digest), frame.sig, "{}: frame {}", v.name, frame.n);
                 }
             }
-            (None, true) => {
+            ([], true) => {
                 for (frame, digest) in v.frames.iter().zip(digests) {
                     assert_eq!(sign(&other, digest), frame.sig, "{}: frame {}", v.name, frame.n);
                 }
             }
-            (Some(base), false) => {
-                let base = vectors.connections.iter().find(|b| &b.name == base && b.error.is_none());
-                let base = base.unwrap_or_else(|| panic!("{}: no valid base connection", v.name));
-                assert!(v.frames.iter().all(|f| base.frames.contains(f)), "{}: frames from the base", v.name);
+            (bases, false) => {
+                let valid = |name: &String| vectors.connections.iter().find(|b| &b.name == name && b.error.is_none());
+                let frames: Vec<&SignedFrame> = bases
+                    .iter()
+                    .flat_map(|name| &valid(name).unwrap_or_else(|| panic!("{}: no valid base {name}", v.name)).frames)
+                    .collect();
+                assert!(v.frames.iter().all(|f| frames.contains(&f)), "{}: frames from the bases", v.name);
             }
-            (Some(_), true) => panic!("{}: a vector reuses a base or is the other key's", v.name),
+            (_, true) => panic!("{}: a vector reuses bases or is the other key's", v.name),
         }
     }
 }

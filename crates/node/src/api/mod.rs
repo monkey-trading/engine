@@ -196,7 +196,7 @@ impl IntoResponse for ApiError {
 }
 
 /// Every route, with the request span outermost, then the browser origin check, the per-client rate,
-/// the response signature, and the body read.
+/// the body read, and the response signature.
 pub fn router(state: ApiState) -> Router {
     let limits = state.limits.clone();
     Router::new()
@@ -227,8 +227,8 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/archive/{file}", get(archive::archive))
         .with_state(state.clone())
         .layer(DefaultBodyLimit::max(limits.max_body_bytes))
-        .layer(from_fn_with_state(limits.clone(), read_body))
         .layer(from_fn_with_state(state, signing::sign_responses))
+        .layer(from_fn_with_state(limits.clone(), read_body))
         .layer(from_fn_with_state(limits.clone(), limit_client))
         .layer(from_fn_with_state(limits, origin::browser_origin))
         .layer(from_fn(trace_request))

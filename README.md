@@ -192,12 +192,14 @@ fi
 
 A pinned connection still passes through machines the client does not control, so the enclave also
 signs what it says. Every API response a client relies on carries the attested key's signature over
-the request it answers, a challenge the client chose, the node's time and log head, and the status
-and body; the attestation, the archive, whose segment catalog proves it, and health are left
-unsigned. Send a fresh random challenge with each request, and check the answer with the challenge
-you sent: a recorded answer then fits no other request. A stream connection opened with `signed=1`
-gets each message in a numbered, signed frame, and a signed heartbeat at least every five seconds,
-so a client can tell a quiet market from a held-back feed. A signature proves who answered; it
+the request it answers and its body, a challenge the client chose, the node's time and log head, and
+the status and body; the attestation, the archive, whose segment catalog proves it, and health are
+left unsigned. Send a fresh random challenge with each request, and check the answer with the
+challenge and request you sent: a recorded answer then fits no other request. A stream connection
+opened with `signed=1` and a challenge gets each message in a numbered frame chained to the one
+before it, so no frame can be dropped, repeated, or taken from another connection unnoticed, and a
+signed heartbeat every five seconds by default, so a client can tell a quiet market from a
+held-back feed. A signature proves who answered; it
 cannot stop someone in between from delaying or dropping an answer, which is why a client treats a
 missing heartbeat as a stale feed and an unsigned answer as no answer:
 

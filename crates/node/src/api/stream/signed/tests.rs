@@ -1,9 +1,9 @@
 use super::*;
 use std::net::SocketAddr;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use engine_core::types::AccountId;
-use engine_wire::{Deployment, Error, FrameVerifier};
+use engine_wire::{Connection, Deployment, Error, FrameVerifier};
 use futures_util::StreamExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
@@ -27,10 +27,11 @@ async fn a_signed_stream_frames_every_message_from_zero_under_the_challenge() {
         node.submit(deposit(1, &format!("dep-{n}"))).await;
     }
     let addr = serve(&node, &dir, Duration::from_secs(5)).await;
-    let mut ws = connect(addr, &format!("from=0&signed=1&challenge={CHALLENGE}")).await;
+    let query = format!("from=0&signed=1&challenge={CHALLENGE}");
+    let mut ws = connect(addr, &query).await;
 
     let expected = log_messages(&dir, Offset::start_of(0));
-    let mut verifier = FrameVerifier::new(signer(), deployment(), parse(CHALLENGE));
+    let mut verifier = FrameVerifier::new(signer(), deployment(), opened(&query));
     let (mut frames, mut messages) = (Vec::new(), Vec::new());
     while messages.len() < expected.len() {
         let frame: SignedFrame = serde_json::from_str(&next_text(&mut ws).await).unwrap();
@@ -44,34 +45,28 @@ async fn a_signed_stream_frames_every_message_from_zero_under_the_challenge() {
     assert_eq!(messages, expected);
     assert!(frames.iter().enumerate().all(|(n, frame)| frame.n == n as u64));
 
-    // The same frames fit no other connection's challenge.
-    let mut other = FrameVerifier::new(signer(), deployment(), [0xc5; 32]);
-    assert_eq!(other.verify(&frames[0]), Err(Error::WrongSigner));
+    // The same frames fit no connection opened with another challenge or from another start.
+    let other_start = format!("after=3:0&signed=1&challenge={CHALLENGE}");
+    for other in [Connection { challenge: [0xc5; 32], ..opened(&query) }, opened(&other_start)] {
+        let mut verifier = FrameVerifier::new(signer(), deployment(), other);
+        assert_eq!(verifier.verify(&frames[0]), Err(Error::WrongSigner));
+    }
 }
 
 #[tokio::test]
-async fn a_quiet_signed_stream_gets_a_heartbeat_naming_the_log_head_each_interval() {
+async fn a_quiet_signed_stream_sends_heartbeats_naming_the_log_head() {
     let dir = scratch_dir("signed-heartbeat");
     let node = TestSequencer::start_legacy(&dir, 16);
     let addr = serve(&node, &dir, Duration::from_secs(1)).await;
-    let opened = Instant::now();
-    // Without a challenge, frames are signed under 32 zero bytes.
-    let mut ws = connect(addr, "signed=1").await;
-    let mut verifier = FrameVerifier::new(signer(), deployment(), [0; 32]);
+    let query = format!("signed=1&challenge={CHALLENGE}");
+    let mut ws = connect(addr, &query).await;
+    let mut verifier = FrameVerifier::new(signer(), deployment(), opened(&query));
     let head = node.manifest.borrow().flushed.expect("genesis is in the log");
-    let mut arrivals = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..2 {
         let frame: SignedFrame = serde_json::from_str(&next_text(&mut ws).await).unwrap();
-        arrivals.push(opened.elapsed());
         assert_eq!(verifier.verify(&frame), Ok(()));
         let msg: serde_json::Value = serde_json::from_str(&frame.msg).unwrap();
         assert_eq!(msg, serde_json::json!({ "type": "heartbeat", "head": head.to_string() }));
-    }
-    // The first comes at once, and each later one an interval after the one before, not in a burst.
-    assert!(arrivals[0] < Duration::from_secs(1), "{arrivals:?}");
-    for pair in arrivals.windows(2) {
-        let gap = pair[1] - pair[0];
-        assert!(gap >= Duration::from_millis(500) && gap < Duration::from_secs(3), "{arrivals:?}");
     }
 }
 
@@ -84,9 +79,10 @@ async fn heartbeats_never_cut_short_a_backfill_read() {
         node.submit(deposit(1, &format!("dep-{n}"))).await;
     }
     let addr = serve(&node, &dir, Duration::from_millis(1)).await;
-    let mut ws = connect(addr, &format!("from=0&signed=1&challenge={CHALLENGE}")).await;
+    let query = format!("from=0&signed=1&challenge={CHALLENGE}");
+    let mut ws = connect(addr, &query).await;
     let expected = log_messages(&dir, Offset::start_of(0));
-    let mut verifier = FrameVerifier::new(signer(), deployment(), parse(CHALLENGE));
+    let mut verifier = FrameVerifier::new(signer(), deployment(), opened(&query));
     let mut messages = Vec::new();
     // Heartbeats keep arriving whether or not the backfill moves, so the whole read has a deadline.
     let read = async {
@@ -103,7 +99,7 @@ async fn heartbeats_never_cut_short_a_backfill_read() {
 }
 
 #[tokio::test]
-async fn the_stream_refuses_a_signed_flag_other_than_1_or_a_challenge_it_cannot_sign_under() {
+async fn the_stream_refuses_a_signed_flag_other_than_1_or_a_missing_or_malformed_challenge() {
     let dir = scratch_dir("signed-params");
     let node = TestSequencer::start_legacy(&dir, 16);
     let addr = serve(&node, &dir, Duration::from_secs(5)).await;
@@ -111,6 +107,7 @@ async fn the_stream_refuses_a_signed_flag_other_than_1_or_a_challenge_it_cannot_
         "signed=0".to_owned(),
         "signed=2".to_owned(),
         "signed=true".to_owned(),
+        "signed=1".to_owned(),
         format!("challenge={CHALLENGE}"),
         format!("signed=1&challenge={}", &CHALLENGE[1..]),
         format!("signed=1&challenge=0x{}", &CHALLENGE[2..]),
@@ -157,6 +154,11 @@ fn is_heartbeat(frame: &SignedFrame) -> bool {
 /// The published mock enclave key's address, which the dev config signs with.
 fn signer() -> [u8; 20] {
     EnclaveKey::test_key().address()
+}
+
+/// The connection `GET /v1/stream?<query>` opens under `CHALLENGE`.
+fn opened(query: &str) -> Connection {
+    Connection::new(parse(CHALLENGE), &format!("/v1/stream?{query}"))
 }
 
 /// The dev config's deployment.

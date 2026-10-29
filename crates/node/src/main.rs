@@ -11,7 +11,7 @@ use engine_core::types::AccountId;
 use engine_node::admin::{self, AdminArgs, HexKey, KeyEnv};
 use engine_node::log::CheckpointDomain;
 use engine_node::{
-    ExpectedSigner, KDS_BASE_URL, NodeConfig, VerifiedAttestation, VerifyOptions, ensure_signers_verified,
+    ExpectedSigner, KDS_BASE_URL, NodeConfig, SentRequest, VerifiedAttestation, VerifyOptions, ensure_signers_verified,
     init_logging, init_telemetry, parse_challenge_arg, replay_path_with_custody, replay_path_with_trust, run_dedicated,
     verify_attestation_files, verify_frames_file, verify_response_files,
 };
@@ -82,8 +82,9 @@ enum Cmd {
         root: Option<PathBuf>,
     },
     /// Verify a response a node served, saved with `curl -D <headers> -o <body>`: its
-    /// `X-Engine-Signature` over the request, the challenge sent, the node's time and log head, and
-    /// the status and body, by the attested enclave address. Exits non-zero on any mismatch.
+    /// `X-Engine-Signature` over the request and its body, the challenge sent, the node's time and
+    /// log head, and the status and body, by the attested enclave address. Exits non-zero on any
+    /// mismatch.
     VerifyResponse {
         #[command(flatten)]
         answer: AnswerArgs,
@@ -93,6 +94,9 @@ enum Cmd {
         /// The request's path and query, exactly as sent.
         #[arg(long)]
         path: String,
+        /// The request's body, exactly as sent; none when omitted.
+        #[arg(long)]
+        request_body: Option<PathBuf>,
         /// The status line and headers, as `curl -D` saves them.
         #[arg(long)]
         headers: PathBuf,
@@ -100,12 +104,16 @@ enum Cmd {
         #[arg(long)]
         body: PathBuf,
     },
-    /// Verify a signed stream connection (`/v1/stream?signed=1`), saved one JSON frame a line from
-    /// its first: each frame in its place, under the challenge sent, by the attested enclave
-    /// address. Exits non-zero at the first frame that fails.
+    /// Verify a signed stream connection (`/v1/stream?signed=1&challenge=…`), saved one JSON frame a
+    /// line from its first: each frame in its place on the connection the request opened, under the
+    /// challenge sent, by the attested enclave address. Exits non-zero at the first frame that
+    /// fails.
     VerifyFrames {
         #[command(flatten)]
         answer: AnswerArgs,
+        /// The path and query of the request that opened the connection, exactly as sent.
+        #[arg(long)]
+        path: String,
         /// The saved frames.
         #[arg(long)]
         frames: PathBuf,
@@ -235,16 +243,19 @@ fn main() -> anyhow::Result<()> {
             );
             Ok(())
         }
-        Cmd::VerifyResponse { answer, method, path, headers, body } => {
-            let verified = verify_response_files(&answer.expected(), &method, &path, &headers, &body)?;
+        Cmd::VerifyResponse { answer, method, path, request_body, headers, body } => {
+            let request_body = request_body.map(std::fs::read).transpose().context("reading --request-body")?;
+            let request_body = request_body.as_deref().unwrap_or_default();
+            let request = SentRequest { method: &method, path_and_query: &path, body: request_body };
+            let verified = verify_response_files(&answer.expected(), &request, &headers, &body)?;
             println!(
                 "verified: status {}, signed by {} at {} ms, log head seq {}",
                 verified.status, answer.signer, verified.time_ms, verified.head_seq
             );
             Ok(())
         }
-        Cmd::VerifyFrames { answer, frames } => {
-            let count = verify_frames_file(&answer.expected(), &frames)?;
+        Cmd::VerifyFrames { answer, path, frames } => {
+            let count = verify_frames_file(&answer.expected(), &path, &frames)?;
             println!("verified: {count} frames, n 0 to {}, signed by {}", count - 1, answer.signer);
             Ok(())
         }

@@ -16,7 +16,9 @@ use sha2::Digest as _;
 use crate::tee::Attestation;
 
 mod answers;
-pub use answers::{Expected, VerifiedResponse, parse_challenge_arg, verify_frames_file, verify_response_files};
+pub use answers::{
+    Expected, SentRequest, VerifiedResponse, parse_challenge_arg, verify_frames_file, verify_response_files,
+};
 mod chain;
 use self::chain::{Collateral, QuoteChain, Roots};
 pub use chain::KDS_BASE_URL;

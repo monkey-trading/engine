@@ -3,6 +3,7 @@ use k256::ecdsa::SigningKey;
 
 const DEPLOYMENT: Deployment = Deployment { chain_id: 31337, vault: [0x5f; 20] };
 const CHALLENGE: [u8; 32] = [0xc4; 32];
+const STREAM: &str = "/v1/stream?after=1200:3&signed=1&challenge=c4";
 
 #[test]
 fn a_response_verifies_only_under_every_field_it_was_signed_over() {
@@ -13,13 +14,14 @@ fn a_response_verifies_only_under_every_field_it_was_signed_over() {
 
     let other_chain = Deployment { chain_id: 1, ..DEPLOYMENT };
     let other_vault = Deployment { vault: [0x60; 20], ..DEPLOYMENT };
-    let changed: [(&str, Deployment, Response<'_>); 10] = [
+    let changed: [(&str, Deployment, Response<'_>); 11] = [
         ("body", DEPLOYMENT, Response { body: br#"[{"id":2}]"#, ..base }),
+        ("request body", DEPLOYMENT, Response { request_body: br#"{"nonce":8}"#, ..base }),
         ("status", DEPLOYMENT, Response { status: 500, ..base }),
         ("path", DEPLOYMENT, Response { path_and_query: "/v1/house", ..base }),
-        ("method", DEPLOYMENT, Response { method: "POST", ..base }),
+        ("method", DEPLOYMENT, Response { method: "GET", ..base }),
         // The zero byte keeps the method and path from trading characters.
-        ("method and path boundary", DEPLOYMENT, Response { method: "GET/v1", path_and_query: "/markets", ..base }),
+        ("method and path boundary", DEPLOYMENT, Response { method: "POST/v1", path_and_query: "/orders", ..base }),
         ("challenge", DEPLOYMENT, Response { challenge: [0xc5; 32], ..base }),
         ("time", DEPLOYMENT, Response { time_ms: base.time_ms + 1, ..base }),
         ("head seq", DEPLOYMENT, Response { head_seq: base.head_seq + 1, ..base }),
@@ -84,8 +86,8 @@ fn a_challenge_is_exactly_64_hex_characters() {
 #[test]
 fn frames_verify_from_zero_in_order() {
     let key = key(0x43);
-    let mut verifier = FrameVerifier::new(signer(&key), DEPLOYMENT, CHALLENGE);
-    for frame in frames(&key, DEPLOYMENT, CHALLENGE, 3) {
+    let mut verifier = FrameVerifier::new(signer(&key), DEPLOYMENT, connection());
+    for frame in frames(&key, DEPLOYMENT, connection(), 3, 0) {
         assert_eq!(verifier.verify(&frame), Ok(()));
     }
 }
@@ -93,13 +95,13 @@ fn frames_verify_from_zero_in_order() {
 #[test]
 fn a_dropped_repeated_or_reordered_frame_fails_where_it_breaks_the_sequence() {
     let key = key(0x43);
-    let sent = frames(&key, DEPLOYMENT, CHALLENGE, 3);
+    let sent = frames(&key, DEPLOYMENT, connection(), 3, 0);
     for (what, order, fails_at, error) in [
         ("dropped", vec![0, 2], 1, Error::OutOfSequence { expected: 1, got: 2 }),
         ("repeated", vec![0, 1, 1], 2, Error::OutOfSequence { expected: 2, got: 1 }),
         ("reordered", vec![1, 0], 0, Error::OutOfSequence { expected: 0, got: 1 }),
     ] {
-        let mut verifier = FrameVerifier::new(signer(&key), DEPLOYMENT, CHALLENGE);
+        let mut verifier = FrameVerifier::new(signer(&key), DEPLOYMENT, connection());
         for (at, index) in order.into_iter().enumerate() {
             let result = verifier.verify(&sent[index]);
             if at < fails_at {
@@ -113,29 +115,44 @@ fn a_dropped_repeated_or_reordered_frame_fails_where_it_breaks_the_sequence() {
 }
 
 #[test]
-fn a_frame_from_another_connection_deployment_or_key_fails() {
+fn a_frame_from_another_connection_request_deployment_or_key_fails() {
     let key = key(0x43);
+    let after_another = Connection::new(CHALLENGE, "/v1/stream?after=1500:0&signed=1&challenge=c4");
     for (what, frame) in [
-        ("challenge", frames(&key, DEPLOYMENT, [0xc5; 32], 1).remove(0)),
-        ("chain id", frames(&key, Deployment { chain_id: 1, ..DEPLOYMENT }, CHALLENGE, 1).remove(0)),
-        ("vault", frames(&key, Deployment { vault: [0x60; 20], ..DEPLOYMENT }, CHALLENGE, 1).remove(0)),
-        ("key", frames(&self::key(0x44), DEPLOYMENT, CHALLENGE, 1).remove(0)),
+        ("challenge", frames(&key, DEPLOYMENT, Connection { challenge: [0xc5; 32], ..connection() }, 1, 0)),
+        ("opening request", frames(&key, DEPLOYMENT, after_another, 1, 0)),
+        ("chain id", frames(&key, Deployment { chain_id: 1, ..DEPLOYMENT }, connection(), 1, 0)),
+        ("vault", frames(&key, Deployment { vault: [0x60; 20], ..DEPLOYMENT }, connection(), 1, 0)),
+        ("key", frames(&self::key(0x44), DEPLOYMENT, connection(), 1, 0)),
     ] {
-        let mut verifier = FrameVerifier::new(signer(&key), DEPLOYMENT, CHALLENGE);
-        assert_eq!(verifier.verify(&frame), Err(Error::WrongSigner), "a frame for another {what} verified");
+        let mut verifier = FrameVerifier::new(signer(&key), DEPLOYMENT, connection());
+        assert_eq!(verifier.verify(&frame[0]), Err(Error::WrongSigner), "a frame for another {what} verified");
     }
+}
+
+#[test]
+fn a_frame_spliced_in_from_a_second_connection_with_the_same_challenge_and_request_fails() {
+    let key = key(0x43);
+    // Two connections the node opened for the same request, whose frames differ only in time.
+    let (first, second) = (frames(&key, DEPLOYMENT, connection(), 3, 0), frames(&key, DEPLOYMENT, connection(), 3, 7));
+    let mut verifier = FrameVerifier::new(signer(&key), DEPLOYMENT, connection());
+    assert_eq!(verifier.verify(&first[0]), Ok(()));
+    assert_eq!(verifier.verify(&second[1]), Err(Error::WrongSigner));
+    // The second connection still verifies on its own.
+    let mut verifier = FrameVerifier::new(signer(&key), DEPLOYMENT, connection());
+    assert!(second.iter().all(|frame| verifier.verify(frame).is_ok()));
 }
 
 #[test]
 fn a_frame_with_an_altered_message_time_or_version_fails() {
     let key = key(0x43);
-    let frame = frames(&key, DEPLOYMENT, CHALLENGE, 1).remove(0);
+    let frame = frames(&key, DEPLOYMENT, connection(), 1, 0).remove(0);
     for (what, altered, error) in [
         ("message", SignedFrame { msg: frame.msg.replace("0:0", "0:1"), ..frame.clone() }, Error::WrongSigner),
         ("time", SignedFrame { time: frame.time + 1, ..frame.clone() }, Error::WrongSigner),
         ("version", SignedFrame { v: 2, ..frame.clone() }, Error::UnsupportedVersion(2)),
     ] {
-        let mut verifier = FrameVerifier::new(signer(&key), DEPLOYMENT, CHALLENGE);
+        let mut verifier = FrameVerifier::new(signer(&key), DEPLOYMENT, connection());
         assert_eq!(verifier.verify(&altered), Err(error), "an altered {what}");
     }
 }
@@ -143,8 +160,8 @@ fn a_frame_with_an_altered_message_time_or_version_fails() {
 #[test]
 fn once_a_frame_fails_no_later_frame_verifies() {
     let key = key(0x43);
-    let sent = frames(&key, DEPLOYMENT, CHALLENGE, 2);
-    let mut verifier = FrameVerifier::new(signer(&key), DEPLOYMENT, CHALLENGE);
+    let sent = frames(&key, DEPLOYMENT, connection(), 2, 0);
+    let mut verifier = FrameVerifier::new(signer(&key), DEPLOYMENT, connection());
     let forged = SignedFrame { msg: "{}".into(), ..sent[0].clone() };
     assert_eq!(verifier.verify(&forged), Err(Error::WrongSigner));
     // The genuine frame 0, and then frame 1, would otherwise verify.
@@ -173,25 +190,41 @@ fn sign(key: &SigningKey, digest: [u8; 32]) -> String {
     format!("0x{}{:02x}", hex::encode(signature.to_bytes()), 27 + recovery_id.to_byte())
 }
 
+/// A POST answer: a nonce conflict for an order body.
 fn response(body: &[u8]) -> Response<'_> {
     Response {
         challenge: CHALLENGE,
         time_ms: 1_792_540_800_000,
         head_seq: 42,
-        status: 200,
-        method: "GET",
-        path_and_query: "/v1/markets",
+        status: 409,
+        method: "POST",
+        path_and_query: "/v1/orders",
+        request_body: br#"{"nonce":7}"#,
         body,
     }
 }
 
-/// The first `count` frames of a connection `key` signs for `deployment` and `challenge`.
-fn frames(key: &SigningKey, deployment: Deployment, challenge: [u8; 32], count: u64) -> Vec<SignedFrame> {
+/// The connection the tests open with `CHALLENGE`.
+fn connection() -> Connection {
+    Connection::new(CHALLENGE, STREAM)
+}
+
+/// The first `count` frames of `connection` that `key` signs for `deployment`, `shift` milliseconds
+/// later than a connection with no shift.
+fn frames(
+    key: &SigningKey,
+    deployment: Deployment,
+    connection: Connection,
+    count: u64,
+    shift: u64,
+) -> Vec<SignedFrame> {
+    let mut previous = [0; 32];
     (0..count)
         .map(|n| {
-            let (time, msg) = (1_792_540_800_000 + n, format!(r#"{{"offset":"{n}:0","type":"command"}}"#));
-            let sig = sign(key, frame_digest(&deployment, &challenge, n, time, &msg));
-            SignedFrame { v: FRAME_VERSION, n, time, msg, sig }
+            let (time, msg) = (1_792_540_800_000 + shift + n, format!(r#"{{"offset":"{n}:0","type":"command"}}"#));
+            let digest = frame_digest(&deployment, &connection, &previous, n, time, &msg);
+            previous = digest;
+            SignedFrame { v: FRAME_VERSION, n, time, msg, sig: sign(key, digest) }
         })
         .collect()
 }

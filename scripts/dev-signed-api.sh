@@ -6,7 +6,8 @@
 #   2. GET /v1/markets with a fresh challenge verifies with `engine verify-response`; the same body
 #      with one byte changed fails, and the same response checked under another challenge fails;
 #   3. a signed stream from the start of the log, 20 frames, verifies with `engine verify-frames`
-#      with n 0..19, and the same frames with one removed fail at the gap;
+#      with n 0..19; the same frames with one removed fail at the gap, and checked as the answer to
+#      a request from another start fail;
 #   4. a live signed stream on the quiet log gets a verifying heartbeat at least every interval.
 # Passes with `PASS: responses and frames verify; tampering, replay and gaps fail`.
 #
@@ -169,15 +170,23 @@ done
 
 step "a signed stream of 20 frames from the start of the log verifies"
 streamed="$(challenge)"
-capture "/v1/stream?from=0&signed=1&challenge=$streamed" 20 "$work/frames" "$work/frame-arrivals" \
-  || fail "the signed stream could not be read"
+from_start="/v1/stream?from=0&signed=1&challenge=$streamed"
+capture "$from_start" 20 "$work/frames" "$work/frame-arrivals" || fail "the signed stream could not be read"
 jq -se 'map(.n) == [range(0; 20)]' "$work/frames" > /dev/null || fail "frames are not n 0..19"
-"$engine" verify-frames "${answer[@]}" --challenge "$streamed" --frames "$work/frames" \
+"$engine" verify-frames "${answer[@]}" --challenge "$streamed" --path "$from_start" --frames "$work/frames" \
   || fail "the stream did not verify"
+
+step "the same frames fail as the answer to a request from another start"
+if out="$("$engine" verify-frames "${answer[@]}" --challenge "$streamed" --path "${from_start/from=0/from=5}" \
+  --frames "$work/frames" 2>&1)"; then
+  fail "frames verified as the answer to another start"
+fi
+grep -q "not the attested key's" <<< "$out" || fail "unexpected refusal of another start: $out"
 
 step "the same frames with one removed fail at the gap"
 sed '10d' "$work/frames" > "$work/frames.gap"
-if out="$("$engine" verify-frames "${answer[@]}" --challenge "$streamed" --frames "$work/frames.gap" 2>&1)"; then
+if out="$("$engine" verify-frames "${answer[@]}" --challenge "$streamed" --path "$from_start" \
+  --frames "$work/frames.gap" 2>&1)"; then
   fail "frames with a gap verified"
 fi
 grep -q "line 10" <<< "$out" && grep -q "frame 10 arrived where frame 9 was due" <<< "$out" \
@@ -185,11 +194,12 @@ grep -q "line 10" <<< "$out" && grep -q "frame 10 arrived where frame 9 was due"
 
 step "a live signed stream on the quiet log gets a heartbeat each interval"
 live="$(challenge)"
-capture "/v1/stream?signed=1&challenge=$live" 3 "$work/beats" "$work/beat-arrivals" \
-  || fail "the live signed stream could not be read"
+live_only="/v1/stream?signed=1&challenge=$live"
+capture "$live_only" 3 "$work/beats" "$work/beat-arrivals" || fail "the live signed stream could not be read"
 jq -se 'all(.[]; .msg | fromjson | .type == "heartbeat" and (.head | test("^[0-9]+:[0-9]+$")))' "$work/beats" \
   > /dev/null || fail "a live frame on the quiet log is not a heartbeat: $(cat "$work/beats")"
-"$engine" verify-frames "${answer[@]}" --challenge "$live" --frames "$work/beats" || fail "the heartbeats did not verify"
+"$engine" verify-frames "${answer[@]}" --challenge "$live" --path "$live_only" --frames "$work/beats" \
+  || fail "the heartbeats did not verify"
 # At most the one-second interval apart, with a second for a loaded machine.
 awk 'NR == 1 && $1 > 2000 { exit 1 } NR > 1 && $1 - last > 2000 { exit 1 } { last = $1 }' "$work/beat-arrivals" \
   || fail "a heartbeat came late: $(tr '\n' ' ' < "$work/beat-arrivals")ms after the upgrade"

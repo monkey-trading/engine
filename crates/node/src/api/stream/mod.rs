@@ -16,7 +16,9 @@ use anyhow::{Context, ensure};
 use axum::Error;
 use axum::extract::ws::{Message, WebSocketUpgrade};
 use axum::extract::{Query, State};
+use axum::http::Uri;
 use axum::response::Response;
+use engine_wire::Connection;
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use serde::Deserialize;
 use tokio::sync::broadcast::error::RecvError;
@@ -49,8 +51,8 @@ pub struct StreamParams {
     /// `1` sends each message in a frame the enclave key signs, with a heartbeat at least every
     /// `api.heartbeat_interval`.
     signed: Option<u8>,
-    /// With `signed=1`, the 64 hex characters every frame is signed under; 32 zero bytes when
-    /// absent.
+    /// With `signed=1`, and only with it, the client's fresh 64 hex characters, which every frame
+    /// is signed under.
     challenge: Option<String>,
 }
 
@@ -142,11 +144,13 @@ impl Feed {
 /// `api.max_body_bytes`.
 /// Error cases:
 /// - both `after` and `from` are given
-/// - `signed` is not `1`, a `challenge` comes without it, or the challenge is not 64 hex characters
+/// - `signed` is not `1`, it comes without a `challenge` or a `challenge` without it, or the
+///   challenge is not 64 hex characters
 /// - every subscriber place is taken
 pub async fn stream(
     State(s): State<ApiState>,
     Query(params): Query<StreamParams>,
+    uri: Uri,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
     let start = match (params.after, params.from) {
@@ -157,13 +161,16 @@ pub async fn stream(
     };
     let framing = match (params.signed, params.challenge.as_deref()) {
         (None, None) => None,
-        (None, Some(_)) => return Err(ApiError::BadRequest("a challenge needs signed=1".into())),
-        (Some(1), challenge) => {
-            let challenge = challenge.map_or(Some([0; 32]), engine_wire::parse_challenge);
-            let challenge =
-                challenge.ok_or_else(|| ApiError::BadRequest("challenge must be 64 hex characters".into()))?;
-            Some(Framing::new(&s, challenge))
+        (Some(1), Some(challenge)) => {
+            let challenge = engine_wire::parse_challenge(challenge)
+                .ok_or_else(|| ApiError::BadRequest("challenge must be 64 hex characters".into()))?;
+            // Frames bind the request exactly as the client sent it, start included.
+            let request = uri.path_and_query().map_or(uri.path(), |request| request.as_str());
+            let connection = Connection::new(challenge, request);
+            Some(Framing::new(s.signing.clone(), connection, s.clock, s.manifest.clone()))
         }
+        (Some(1), None) => return Err(ApiError::BadRequest("signed=1 needs a challenge".into())),
+        (None, Some(_)) => return Err(ApiError::BadRequest("a challenge needs signed=1".into())),
         (Some(_), _) => return Err(ApiError::BadRequest("signed must be 1".into())),
     };
     Span::current().record("id", display(start.map_or_else(|| "live".to_owned(), |from| from.to_string())));
