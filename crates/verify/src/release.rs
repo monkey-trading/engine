@@ -3,12 +3,11 @@
 //! hashes it runs with. A release publishes it alongside its image files.
 
 use std::collections::BTreeMap;
-use std::path::Path;
 
-use anyhow::{Context, ensure};
+use anyhow::ensure;
 use serde::Deserialize;
 
-use super::report::Tcb;
+use crate::report::Tcb;
 
 /// A release's published verification collateral.
 ///
@@ -26,7 +25,7 @@ use super::report::Tcb;
 /// [config_hashes]
 /// "node.toml" = "0x…"
 /// ```
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReleaseManifest {
     /// The release this manifest verifies, named on success.
@@ -61,15 +60,22 @@ impl From<MinimumTcb> for Tcb {
 }
 
 impl ReleaseManifest {
-    /// Loads and validates the manifest at `path`.
+    /// Parses and validates the manifest's published TOML text.
     /// Error cases:
-    /// - the file cannot be read or parsed, or a field fails its structural checks
-    pub fn load(path: &Path) -> anyhow::Result<Self> {
-        let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        let manifest: Self = toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
-        ensure!(!manifest.name.is_empty(), "release manifest names no release");
-        ensure!(!manifest.config_hashes.is_empty(), "release manifest lists no configuration hashes");
+    /// - the text does not parse, or a field fails its structural checks (see `validate`)
+    pub fn from_toml(text: &str) -> anyhow::Result<Self> {
+        let manifest: Self = toml::from_str(text)?;
+        manifest.validate()?;
         Ok(manifest)
+    }
+
+    /// The structural checks a parsed manifest must pass.
+    /// Error cases:
+    /// - the manifest names no release, or lists no configuration hash
+    pub fn validate(&self) -> anyhow::Result<()> {
+        ensure!(!self.name.is_empty(), "release manifest names no release");
+        ensure!(!self.config_hashes.is_empty(), "release manifest lists no configuration hashes");
+        Ok(())
     }
 
     /// The published configuration whose hash is `sha256`, if one matches.
@@ -169,13 +175,12 @@ microcode = 115
     }
 
     #[test]
-    fn an_empty_config_list_is_rejected_on_load() {
+    fn an_empty_config_list_or_name_is_rejected() {
         let without_configs = MANIFEST.split("[config_hashes]").next().expect("manifest has the section");
-        let dir = std::env::temp_dir().join(format!("release-manifest-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("empty.toml");
-        std::fs::write(&path, format!("{without_configs}[config_hashes]\n")).unwrap();
-        assert!(ReleaseManifest::load(&path).is_err());
-        std::fs::remove_dir_all(&dir).ok();
+        let err = ReleaseManifest::from_toml(&format!("{without_configs}[config_hashes]\n")).unwrap_err();
+        assert_eq!(err.to_string(), "release manifest lists no configuration hashes");
+        let unnamed = MANIFEST.replacen("name = \"test-release-v1\"", "name = \"\"", 1);
+        assert_eq!(ReleaseManifest::from_toml(&unnamed).unwrap_err().to_string(), "release manifest names no release");
+        assert_eq!(ReleaseManifest::from_toml(MANIFEST).unwrap().name, "test-release-v1");
     }
 }

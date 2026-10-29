@@ -5,7 +5,6 @@
 //! must bind the certificate's signed extensions to the quote), and the VCEK carries the
 //! vendor's extension OIDs for its chip id and TCB.
 
-mod fixtures;
 mod relay;
 mod relay_scenario;
 mod replay_dispatch;
@@ -16,16 +15,16 @@ use std::collections::BTreeSet;
 use std::sync::atomic::Ordering;
 
 use anyhow::Context as _;
+use engine_verify::Tcb;
+use engine_verify::fixtures::*;
 use rcgen::KeyPair;
 
-use super::chain::{Collateral, check_signed_by};
-use super::report::Tcb;
+use super::fetch::Collateral;
 use super::{
     Options, VerifiedAttestation, ensure_signers_verified, reconcile_signer, verify_attestation,
     verify_attestation_files,
 };
 use crate::tee::{Attestation, AttestationBundle};
-use fixtures::*;
 use stub::{kds_stub, kds_stub_with, options, status_stub, streamed_oversized_stub};
 
 #[tokio::test]
@@ -278,27 +277,6 @@ async fn a_not_yet_valid_vcek_fails_verification() {
     );
 
     assert!(verify_attestation(&attestation, &release(), &options(&stub, &pem(&chain.ark))).await.is_err());
-}
-
-#[test]
-fn the_pinned_vendor_intermediates_verify_against_their_roots() {
-    // The vendor's real ASK certificates are RSA-4096 and sign with RSASSA-PSS/SHA-384, the
-    // path the fixture chain cannot build; this is that path with the vendor's own keys.
-    for (ask, root) in [
-        (include_str!("ask-milan.pem"), include_str!("../roots/ark-milan.pem")),
-        (include_str!("ask-genoa.pem"), include_str!("../roots/ark-genoa.pem")),
-        (include_str!("ask-turin.pem"), include_str!("../roots/ark-turin.pem")),
-    ] {
-        let ask = pem_certificates_for_test(ask);
-        let root = pem_certificates_for_test(root);
-        check_signed_by(&ask, &root).expect("the vendor intermediate verifies against its root");
-        check_signed_by(&root, &ask).expect_err("the root does not verify against the intermediate");
-    }
-}
-
-fn pem_certificates_for_test(pem: &str) -> Vec<u8> {
-    let mut blocks = x509_parser::pem::Pem::iter_from_buffer(pem.as_bytes());
-    blocks.next().unwrap().unwrap().contents
 }
 
 #[test]

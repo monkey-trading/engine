@@ -16,6 +16,7 @@ production = []
 
 [dependencies]
 engine-core.workspace = true
+engine-verify.workspace = true
 engine-wire.workspace = true
 
 alloy.workspace = true
@@ -67,7 +68,12 @@ x509-parser.workspace = true
 nix.workspace = true
 
 [dev-dependencies]
+engine-verify = { workspace = true, features = ["test-fixtures"] }
+
 chrono.workspace = true
 chrono-tz.workspace = true
 tokio = { workspace = true, features = ["io-util", "process", "test-util"] }
 tower.workspace = true
+# ring-backed signature checks of the certificate requests the ACME tests receive; the verifier
+# itself checks signatures without this feature, which does not build for the browser.
+x509-parser = { workspace = true, features = ["verify"] }

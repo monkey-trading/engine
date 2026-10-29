@@ -5,30 +5,18 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use engine_verify::fixtures::*;
+use engine_verify::{RelayedCollateral, SnpReport, Tcb};
 use rcgen::SerialNumber;
 use tokio::time::timeout;
+use x509_parser::time::ASN1Time;
 
-use super::super::chain::Collateral;
+use super::super::fetch::Collateral;
 use super::super::refresh::{Relay, is_stale, next_wait};
-use super::super::relay::RelayedCollateral;
-use super::super::report::{SnpReport, Tcb};
 use super::super::{Options, load_relayed_collateral, verify_attestation};
-use super::fixtures::*;
 use super::stub::{kds_stub, kds_stub_swappable, kds_stub_switched};
 use crate::config::TeeSection;
 use crate::test_support::capture_alerts;
-
-/// The collateral a node would hold for `chain`, with `crl_pem` as its list.
-pub(super) fn collateral_of(chain: &TestChain, crl_pem: &str) -> RelayedCollateral {
-    let mut blocks = x509_parser::pem::Pem::iter_from_buffer(crl_pem.as_bytes());
-    RelayedCollateral {
-        vcek: chain.vcek.der().to_vec(),
-        intermediate: chain.ask.der().to_vec(),
-        root: chain.ark.der().to_vec(),
-        crl: blocks.next().unwrap().unwrap().contents,
-        fetched_at: 1,
-    }
-}
 
 fn quote_of(attestation: &crate::tee::Attestation) -> Vec<u8> {
     hex::decode(attestation.quote.trim_start_matches("0x")).unwrap()
@@ -48,8 +36,8 @@ async fn fetched_collateral_checks_and_round_trips_through_the_served_json() {
     let quote = quote_of(&attestation);
     let report = SnpReport::parse(&quote).unwrap();
 
-    let fetched = RelayedCollateral::fetch(&Collateral::new(&stub.base, PROCESSOR).unwrap(), &report).await.unwrap();
-    fetched.check(&report).expect("collateral for the node's own quote checks");
+    let fetched = Collateral::new(&stub.base, PROCESSOR).unwrap().relayed(&report).await.unwrap();
+    fetched.check(&report, ASN1Time::now()).expect("collateral for the node's own quote checks");
     assert_eq!(RelayedCollateral::from_json(&fetched.to_json()).unwrap(), fetched);
     assert!(fetched.crl_next_update().unwrap().is_some());
 }
@@ -60,54 +48,63 @@ fn the_node_refuses_collateral_that_would_not_verify_for_its_quote() {
     let quote = quote_of(&attestation);
     let report = SnpReport::parse(&quote).unwrap();
     let good = collateral_of(&chain, &crl_revoking(&chain, &[]));
-    good.check(&report).unwrap();
+    good.check(&report, ASN1Time::now()).unwrap();
 
     // A VCEK the vendor's intermediate signed for another chip or TCB, and one from another chain.
     let mut other_chip = enclave.chip_id;
     other_chip[0] ^= 1;
     let other_chip_vcek =
         RelayedCollateral { vcek: vcek_for(&chain, other_chip, REPORTED_TCB).der().to_vec(), ..good.clone() };
-    assert!(other_chip_vcek.check(&report).is_err(), "served a VCEK for another chip");
+    assert!(other_chip_vcek.check(&report, ASN1Time::now()).is_err(), "served a VCEK for another chip");
     let other_tcb = Tcb { microcode: REPORTED_TCB.microcode + 1, ..REPORTED_TCB };
     let other_tcb_vcek =
         RelayedCollateral { vcek: vcek_for(&chain, enclave.chip_id, other_tcb).der().to_vec(), ..good.clone() };
-    assert!(other_tcb_vcek.check(&report).is_err(), "served a VCEK for another TCB");
+    assert!(other_tcb_vcek.check(&report, ASN1Time::now()).is_err(), "served a VCEK for another TCB");
     let other_chain = test_chain(enclave.chip_id, REPORTED_TCB);
     let other_chain_vcek = RelayedCollateral { vcek: other_chain.vcek.der().to_vec(), ..good.clone() };
-    assert!(other_chain_vcek.check(&report).is_err(), "served a VCEK from another chain");
+    assert!(other_chain_vcek.check(&report, ASN1Time::now()).is_err(), "served a VCEK from another chain");
 
     // A list that revokes the intermediate, an expired list, and a list another key signed.
     let ask_serial = SerialNumber::from_slice(&x509_serial(chain.ask.der()));
     let revoked = collateral_of(&chain, &crl_revoking(&chain, &[ask_serial]));
-    let err = revoked.check(&report).expect_err("a list revoking the intermediate does not pass");
+    let err = revoked.check(&report, ASN1Time::now()).expect_err("a list revoking the intermediate does not pass");
     assert!(RelayedCollateral::is_revoked(&err), "{err:#}");
     let expired = collateral_of(&chain, &crl_signed(&chain, &[], (2024, 1, 1), (2025, 1, 1), None));
-    assert!(expired.check(&report).is_err(), "served an expired list");
+    assert!(expired.check(&report, ASN1Time::now()).is_err(), "served an expired list");
     let other_key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384).unwrap();
     let forged = collateral_of(&chain, &crl_signed(&chain, &[], (2024, 1, 1), (2049, 1, 1), Some(&other_key)));
-    assert!(forged.check(&report).is_err(), "served a list the root did not sign");
+    assert!(forged.check(&report, ASN1Time::now()).is_err(), "served a list the root did not sign");
 
     // A revocation outlasts its list: an authentic list naming the intermediate is a revocation
     // whatever its dates, so a skewed clock cannot turn it into an ordinary refusal.
     let ask_serial = SerialNumber::from_slice(&x509_serial(chain.ask.der()));
     let old_revoking =
         collateral_of(&chain, &crl_signed(&chain, std::slice::from_ref(&ask_serial), (2024, 1, 1), (2025, 1, 1), None));
-    assert!(RelayedCollateral::is_revoked(&old_revoking.check(&report).unwrap_err()), "an expired revoking list");
+    assert!(
+        RelayedCollateral::is_revoked(&old_revoking.check(&report, ASN1Time::now()).unwrap_err()),
+        "an expired revoking list"
+    );
     // Anything else wrong with the collateral is not an authentic revocation and is still dropped:
     // a list the root did not sign, a VCEK for another chip beside a revoking list.
     let forged_revoking = collateral_of(
         &chain,
         &crl_signed(&chain, std::slice::from_ref(&ask_serial), (2024, 1, 1), (2049, 1, 1), Some(&other_key)),
     );
-    assert!(!RelayedCollateral::is_revoked(&forged_revoking.check(&report).unwrap_err()), "a forged revocation");
+    assert!(
+        !RelayedCollateral::is_revoked(&forged_revoking.check(&report, ASN1Time::now()).unwrap_err()),
+        "a forged revocation"
+    );
     let foreign_revoking = RelayedCollateral { vcek: other_chip_vcek.vcek.clone(), ..revoked.clone() };
-    assert!(!RelayedCollateral::is_revoked(&foreign_revoking.check(&report).unwrap_err()), "a foreign VCEK");
+    assert!(
+        !RelayedCollateral::is_revoked(&foreign_revoking.check(&report, ASN1Time::now()).unwrap_err()),
+        "a foreign VCEK"
+    );
 
     // A chain whose intermediate does not link to its root, and garbage in place of a certificate.
     let unlinked = RelayedCollateral { intermediate: chain.vcek.der().to_vec(), ..good.clone() };
-    assert!(unlinked.check(&report).is_err(), "served an unlinked chain");
+    assert!(unlinked.check(&report, ASN1Time::now()).is_err(), "served an unlinked chain");
     let garbage = RelayedCollateral { root: vec![1, 2, 3], ..good };
-    assert!(garbage.check(&report).is_err(), "served a malformed certificate");
+    assert!(garbage.check(&report, ASN1Time::now()).is_err(), "served a malformed certificate");
 }
 
 #[tokio::test]
@@ -257,7 +254,7 @@ fn a_non_snp_provider_gets_no_relay_and_an_snp_quote_needs_a_supported_report_an
     let (_chain, enclave, attestation) = fixtures();
     let mut mock_quote = b"MOCK-ATTESTATION-NOT-A-TEE:".to_vec();
     mock_quote.extend_from_slice(&enclave.bundle.report_data());
-    let mut mock = super::fixtures::attestation(&enclave.bundle, &mock_quote);
+    let mut mock = engine_verify::fixtures::attestation(&enclave.bundle, &mock_quote);
     mock.provider = "mock".into();
     assert!(Relay::new(&tee("https://kds.example", "12h"), &mock).unwrap().is_none());
 
@@ -298,7 +295,7 @@ async fn a_refresh_that_fails_its_checks_leaves_nothing_served_and_pages_stale()
     other_chip[0] ^= 1;
     let foreign = test_chain(other_chip, REPORTED_TCB);
     let stub = kds_stub(&foreign).await;
-    let attestation = super::fixtures::attestation(
+    let attestation = engine_verify::fixtures::attestation(
         &enclave.bundle,
         &forged_report(&foreign, LAUNCH_DIGEST, enclave.bundle.report_data(), enclave.chip_id),
     );

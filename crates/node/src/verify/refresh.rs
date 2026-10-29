@@ -5,7 +5,7 @@
 //! The host controls the network, so every input here is untrusted and bounded:
 //! - the vendor's answers: each is capped at 1 MiB and 15 s, retried three times, with no redirect
 //!   or proxy, over TLS to the compiled-in public roots (`Collateral`), then each item is capped
-//!   again at what a vendor certificate or list can be (`RelayedCollateral`);
+//!   again at what a vendor certificate or list can be (`RelayedCollateral::ensure_bounded`);
 //! - what is fetched: a candidate replaces the served copy only if it links, binds to this
 //!   node's quote, carries a current list, and the VCEK signed the quote
 //!   (`RelayedCollateral::check`); anything else is dropped. The one candidate that fails the
@@ -22,22 +22,21 @@
 //! A blocked, slowed, or lying network therefore costs only staleness: the last good copy keeps
 //! being served until a verifier's own date checks refuse it, and `collateral_stale` pages once the
 //! list is within a day of its `nextUpdate`. It cannot make a verifier accept a chain that is not
-//! the vendor's, because a verifier pins the vendor roots itself (see `relay`). It can delay a
-//! revocation: while the node cannot refresh, or reads a skewed clock, a list that predates a new
-//! revocation stays valid until its `nextUpdate`. A revocation the node does fetch reaches
+//! the vendor's, because a verifier pins the vendor roots itself (see `engine_verify`). It can
+//! delay a revocation: while the node cannot refresh, or reads a skewed clock, a list that predates
+//! a new revocation stays valid until its `nextUpdate`. A revocation the node does fetch reaches
 //! verifiers at the next fetch.
 
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use axum::body::Bytes;
+use engine_verify::{RelayedCollateral, SnpReport};
 use tokio::sync::watch;
 use tokio::time::{Instant, sleep, timeout};
 use tracing::{error, info, warn};
 
-use super::chain::Collateral;
-use super::relay::RelayedCollateral;
-use super::report::SnpReport;
+use super::fetch::Collateral;
 use crate::config::TeeSection;
 use crate::tee::Attestation;
 
@@ -156,10 +155,11 @@ impl Relay {
     ///   authentic revocation of the intermediate, which is returned with `revoked` set
     pub(super) async fn refresh_once(&self, collateral: &Collateral<'_>) -> Result<Refreshed> {
         let report = SnpReport::parse(&self.quote)?;
-        let fetched = timeout(REFRESH_DEADLINE, RelayedCollateral::fetch(collateral, &report))
+        let fetched = timeout(REFRESH_DEADLINE, collateral.relayed(&report))
             .await
             .context("the refresh exceeded its deadline")??;
-        let revoked = match fetched.check(&report) {
+        let now = x509_parser::time::ASN1Time::from_timestamp(unix_now()).context("the host clock is out of range")?;
+        let revoked = match fetched.check(&report, now) {
             Ok(()) => false,
             Err(err) if RelayedCollateral::is_revoked(&err) => true,
             Err(err) => return Err(err.context("the fetched collateral is not valid for this node's quote")),

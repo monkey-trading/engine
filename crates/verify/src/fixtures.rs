@@ -1,72 +1,74 @@
-//! Test fixtures: a stand-in vendor chain with the real shapes, a forged report on the
-//! firmware's wire layout, the release manifest, and the key-distribution service stand-ins.
+//! Test fixtures, for this crate's tests, the node's, and the dev scenarios: a stand-in vendor
+//! chain with the real shapes, a forged report on the firmware's wire layout, the release manifest,
+//! and the collateral a node would relay for them.
 
+use p384::ecdsa::signature::Signer as _;
+use p384::pkcs8::DecodePrivateKey as _;
 use rcgen::{
     BasicConstraints, Certificate, CertificateParams, CustomExtension, DnType, IsCa, Issuer, KeyPair, KeyUsagePurpose,
     SerialNumber,
 };
 
-use super::super::ReleaseManifest;
-use super::super::report::{REPORT_LEN, Tcb};
-use crate::tee::{Attestation, AttestationBundle};
+use crate::report::REPORT_LEN;
+use crate::{Attestation, AttestationBundle, RelayedCollateral, ReleaseManifest, Tcb};
 
 /// A stand-in vendor chain with the real shape: a self-signed root, an intermediate, and the
 /// chip key that signs reports, plus the vendor's extension OIDs binding the VCEK to `chip_id`
 /// and `tcb`.
-pub(super) struct TestChain {
-    pub(super) ark: Certificate,
-    pub(super) ask: Certificate,
-    pub(super) vcek: Certificate,
-    pub(super) vcek_key: KeyPair,
-    pub(super) ark_params: CertificateParams,
-    pub(super) ark_key: KeyPair,
-    pub(super) ask_params: CertificateParams,
-    pub(super) ask_key: KeyPair,
+pub struct TestChain {
+    pub ark: Certificate,
+    pub ask: Certificate,
+    pub vcek: Certificate,
+    pub vcek_key: KeyPair,
+    pub ark_params: CertificateParams,
+    pub ark_key: KeyPair,
+    pub ask_params: CertificateParams,
+    pub ask_key: KeyPair,
 }
 
 /// The VCEK's serial in every fixture chain, so a revocation list can name it. The high bit of
 /// the first significant byte is set, so DER encodings of the serial carry a sign-padding zero.
-pub(super) const VCEK_SERIAL: u64 = 0x8A11CE;
+pub const VCEK_SERIAL: u64 = 0x8A11CE;
 
-pub(super) const PROCESSOR: &str = "TestProc";
-pub(super) const POLICY: u64 = 0x30000;
-pub(super) const REPORTED_TCB: Tcb = Tcb { boot_loader: 4, tee: 0, snp: 8, microcode: 205 };
+pub const PROCESSOR: &str = "TestProc";
+pub const POLICY: u64 = 0x30000;
+pub const REPORTED_TCB: Tcb = Tcb { boot_loader: 4, tee: 0, snp: 8, microcode: 205 };
 
 /// A DER INTEGER extension value, the encoding the vendor signs: values with the high bit set
 /// take a leading zero so the INTEGER stays positive.
-pub(super) fn der_integer(value: u8) -> Vec<u8> {
+pub fn der_integer(value: u8) -> Vec<u8> {
     if value < 0x80 { vec![0x02, 0x01, value] } else { vec![0x02, 0x02, 0x00, value] }
 }
 
 /// A DER IA5String extension value.
-pub(super) fn der_ia5(text: &str) -> Vec<u8> {
+pub fn der_ia5(text: &str) -> Vec<u8> {
     let mut value = vec![0x16, text.len() as u8];
     value.extend_from_slice(text.as_bytes());
     value
 }
 
-pub(super) fn test_chain(chip_id: [u8; 64], tcb: Tcb) -> TestChain {
+pub fn test_chain(chip_id: [u8; 64], tcb: Tcb) -> TestChain {
     test_chain_with(chip_id, tcb, Variants::default())
 }
 
 /// What differs from the vendor-shaped chain in a negative test: nothing by default.
 #[derive(Default)]
-pub(super) struct Variants<'a> {
-    pub(super) struct_version: u8,
+pub struct Variants<'a> {
+    pub struct_version: u8,
     /// Signs the VCEK with this key while keeping the intermediate's issuer name, so only the
     /// signature differs; likewise for the intermediate and the root's name.
-    pub(super) vcek_signer: Option<&'a KeyPair>,
-    pub(super) ask_signer: Option<&'a KeyPair>,
+    pub vcek_signer: Option<&'a KeyPair>,
+    pub ask_signer: Option<&'a KeyPair>,
     /// Wraps the hardware id extension in an OCTET STRING, the tagged form the vendor may adopt.
-    pub(super) tagged_hwid: bool,
+    pub tagged_hwid: bool,
     /// Issues the VCEK already expired, for the validity-window test.
-    pub(super) expired_vcek: bool,
+    pub expired_vcek: bool,
     /// Issues the VCEK with a not-before in the future, for the validity-window test.
-    pub(super) not_yet_valid_vcek: bool,
+    pub not_yet_valid_vcek: bool,
 }
 
 /// A chain with the given variations from the vendor shape, for the negative tests.
-pub(super) fn test_chain_with(chip_id: [u8; 64], tcb: Tcb, variants: Variants<'_>) -> TestChain {
+pub fn test_chain_with(chip_id: [u8; 64], tcb: Tcb, variants: Variants<'_>) -> TestChain {
     let ark_key = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384).unwrap();
     let mut ark_params = ca_params("ARK-Test");
     ark_params.serial_number = Some(SerialNumber::from(1));
@@ -96,7 +98,7 @@ pub(super) fn test_chain_with(chip_id: [u8; 64], tcb: Tcb, variants: Variants<'_
 }
 
 /// A genuine VCEK of `chain` (signed by its intermediate) for another chip.
-pub(super) fn vcek_for(chain: &TestChain, chip_id: [u8; 64], tcb: Tcb) -> Certificate {
+pub fn vcek_for(chain: &TestChain, chip_id: [u8; 64], tcb: Tcb) -> Certificate {
     let mut params = CertificateParams::new(Vec::new()).unwrap();
     params.serial_number = Some(SerialNumber::from(VCEK_SERIAL));
     params.distinguished_name.push(DnType::CommonName, "VCEK-Test");
@@ -107,12 +109,7 @@ pub(super) fn vcek_for(chain: &TestChain, chip_id: [u8; 64], tcb: Tcb) -> Certif
 }
 
 /// The vendor's VCEK extension set for `chip_id` and `tcb`.
-pub(super) fn vcek_extensions(
-    chip_id: [u8; 64],
-    tcb: Tcb,
-    struct_version: u8,
-    tagged_hwid: bool,
-) -> Vec<CustomExtension> {
+pub fn vcek_extensions(chip_id: [u8; 64], tcb: Tcb, struct_version: u8, tagged_hwid: bool) -> Vec<CustomExtension> {
     let hwid = if tagged_hwid {
         let mut tagged = vec![0x04, 64];
         tagged.extend_from_slice(&chip_id);
@@ -133,12 +130,12 @@ pub(super) fn vcek_extensions(
 }
 
 /// A CRL revoking `revoked_serials` in the vendor's usual form.
-pub(super) fn crl_revoking(chain: &TestChain, revoked_serials: &[SerialNumber]) -> String {
+pub fn crl_revoking(chain: &TestChain, revoked_serials: &[SerialNumber]) -> String {
     crl_signed(chain, revoked_serials, (2024, 1, 1), (2049, 1, 1), None)
 }
 
 /// When a revocation list's `nextUpdate` falls: on a date, or a number of seconds from now.
-pub(super) enum CrlEnd {
+pub enum CrlEnd {
     Date((i32, u8, u8)),
     SecondsFromNow(i64),
 }
@@ -151,7 +148,7 @@ impl From<(i32, u8, u8)> for CrlEnd {
 
 /// A revocation list with the given window and signer, in PEM. `signer` keeps the fixture
 /// root's issuer name while signing with another key, so only the signature differs.
-pub(super) fn crl_signed(
+pub fn crl_signed(
     chain: &TestChain,
     revoked_serials: &[SerialNumber],
     from: (i32, u8, u8),
@@ -187,7 +184,7 @@ pub(super) fn crl_signed(
     pem_wrap(crl.der().as_ref(), "X509 CRL")
 }
 
-pub(super) fn ca_params(common_name: &str) -> CertificateParams {
+pub fn ca_params(common_name: &str) -> CertificateParams {
     let mut params = CertificateParams::new(Vec::new()).unwrap();
     params.distinguished_name.push(DnType::CommonName, common_name);
     params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
@@ -197,12 +194,12 @@ pub(super) fn ca_params(common_name: &str) -> CertificateParams {
 
 /// A certificate as ASCII PEM, which the issuer-chain endpoint serves and `--root` takes; the
 /// crate builds without a PEM writer, so the DER wraps here.
-pub(super) fn pem(cert: &Certificate) -> String {
+pub fn pem(cert: &Certificate) -> String {
     pem_wrap(cert.der().as_ref(), "CERTIFICATE")
 }
 
 /// DER as a PEM block with the given label.
-pub(super) fn pem_wrap(der: &[u8], label: &str) -> String {
+pub fn pem_wrap(der: &[u8], label: &str) -> String {
     use base64::Engine as _;
     let encoded = base64::engine::general_purpose::STANDARD.encode(der);
     let body = encoded
@@ -215,12 +212,12 @@ pub(super) fn pem_wrap(der: &[u8], label: &str) -> String {
 }
 
 /// The fixture's enclave identity and configuration: what a real quote would bind.
-pub(super) struct Enclave {
-    pub(super) bundle: AttestationBundle,
-    pub(super) chip_id: [u8; 64],
+pub struct Enclave {
+    pub bundle: AttestationBundle,
+    pub chip_id: [u8; 64],
 }
 
-pub(super) fn enclave() -> Enclave {
+pub fn enclave() -> Enclave {
     Enclave {
         bundle: AttestationBundle {
             enclave_address: [0x5e; 20],
@@ -235,12 +232,7 @@ pub(super) fn enclave() -> Enclave {
 /// with the firmware's wire layout: signature scalars little-endian in each field's first 48
 /// bytes, and the TCB packed with boot_loader in byte 0, tee in byte 1, snp in byte 6, and
 /// microcode in byte 7.
-pub(super) fn forged_report(
-    chain: &TestChain,
-    measurement: [u8; 48],
-    report_data: [u8; 64],
-    chip_id: [u8; 64],
-) -> Vec<u8> {
+pub fn forged_report(chain: &TestChain, measurement: [u8; 48], report_data: [u8; 64], chip_id: [u8; 64]) -> Vec<u8> {
     let mut report = vec![0u8; REPORT_LEN];
     report[0x00..0x04].copy_from_slice(&2u32.to_le_bytes());
     report[0x08..0x10].copy_from_slice(&POLICY.to_le_bytes());
@@ -250,15 +242,9 @@ pub(super) fn forged_report(
     report[0x90..0xC0].copy_from_slice(&measurement);
     report[0x180..0x188].copy_from_slice(&REPORTED_TCB.to_packed().to_le_bytes());
     report[0x1A0..0x1E0].copy_from_slice(&chip_id);
-    let rng = ring::rand::SystemRandom::new();
-    let key = ring::signature::EcdsaKeyPair::from_pkcs8(
-        &ring::signature::ECDSA_P384_SHA384_FIXED_SIGNING,
-        &chain.vcek_key.serialize_der(),
-        &rng,
-    )
-    .unwrap();
-    let signature = key.sign(&rng, &report[..0x2A0]).unwrap();
-    let signature = signature.as_ref();
+    let key = p384::ecdsa::SigningKey::from_pkcs8_der(&chain.vcek_key.serialize_der()).unwrap();
+    let signature: p384::ecdsa::Signature = key.sign(&report[..0x2A0]);
+    let signature = signature.to_bytes();
     for (i, byte) in signature[..48].iter().rev().enumerate() {
         report[0x2A0 + i] = *byte;
     }
@@ -269,7 +255,7 @@ pub(super) fn forged_report(
 }
 
 /// The attestation JSON a node with this quote would serve for `bundle`.
-pub(super) fn attestation(bundle: &AttestationBundle, quote: &[u8]) -> Attestation {
+pub fn attestation(bundle: &AttestationBundle, quote: &[u8]) -> Attestation {
     let report_data = bundle.report_data();
     Attestation {
         provider: "sev_guest".into(),
@@ -282,11 +268,11 @@ pub(super) fn attestation(bundle: &AttestationBundle, quote: &[u8]) -> Attestati
     }
 }
 
-pub(super) const LAUNCH_DIGEST: [u8; 48] = [0x1d; 48];
+pub const LAUNCH_DIGEST: [u8; 48] = [0x1d; 48];
 
 /// The release manifest the fixture verifies against, as published text: the minimum TCB sits
 /// below the fixture's reported TCB in every component.
-pub(super) fn release_toml() -> String {
+pub fn release_toml() -> String {
     format!(
         r#"
 name = "test-release-v1"
@@ -308,12 +294,12 @@ microcode = 115
     )
 }
 
-pub(super) fn release() -> ReleaseManifest {
+pub fn release() -> ReleaseManifest {
     toml::from_str(&release_toml()).unwrap()
 }
 
 /// The standard fixtures every happy-path test shares.
-pub(super) fn fixtures() -> (TestChain, Enclave, Attestation) {
+pub fn fixtures() -> (TestChain, Enclave, Attestation) {
     let enclave = enclave();
     let chain = test_chain(enclave.chip_id, REPORTED_TCB);
     let attestation = attestation(
@@ -321,4 +307,16 @@ pub(super) fn fixtures() -> (TestChain, Enclave, Attestation) {
         &forged_report(&chain, LAUNCH_DIGEST, enclave.bundle.report_data(), enclave.chip_id),
     );
     (chain, enclave, attestation)
+}
+
+/// The collateral a node would relay for `chain`, with `crl_pem` as its list.
+pub fn collateral_of(chain: &TestChain, crl_pem: &str) -> RelayedCollateral {
+    let mut blocks = x509_parser::pem::Pem::iter_from_buffer(crl_pem.as_bytes());
+    RelayedCollateral {
+        vcek: chain.vcek.der().to_vec(),
+        intermediate: chain.ask.der().to_vec(),
+        root: chain.ark.der().to_vec(),
+        crl: blocks.next().expect("a PEM block").expect("well-formed PEM").contents,
+        fetched_at: 1,
+    }
 }

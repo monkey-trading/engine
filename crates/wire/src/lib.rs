@@ -72,6 +72,36 @@ pub struct Response<'a> {
     pub body: &'a [u8],
 }
 
+/// The request a response answers, as the client sent it.
+#[derive(Clone, Copy, Debug)]
+pub struct SentRequest<'a> {
+    pub method: &'a str,
+    pub path_and_query: &'a str,
+    /// The request body; empty when it had none.
+    pub body: &'a [u8],
+}
+
+/// A response as the client received it: its status, the value of each `X-Engine-*` header it
+/// carried (`None` when absent), and its body as sent.
+#[derive(Clone, Copy, Debug)]
+pub struct Received<'a> {
+    pub status: u16,
+    pub signature: Option<&'a str>,
+    pub time: Option<&'a str>,
+    pub seq: Option<&'a str>,
+    /// The challenge the response echoes.
+    pub challenge: Option<&'a str>,
+    pub body: &'a [u8],
+}
+
+/// What a verified response's signature vouches for besides its body.
+#[derive(Debug, PartialEq, Eq)]
+pub struct VerifiedResponse {
+    pub status: u16,
+    pub time_ms: u64,
+    pub head_seq: u64,
+}
+
 /// The request that opened a signed stream connection, which every frame on it binds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Connection {
@@ -121,6 +151,30 @@ pub enum Error {
     ConnectionFailed,
 }
 
+/// Why a received frame's text does not verify.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+pub enum FrameError {
+    /// The text is not a signed frame's JSON; the parser's reason follows.
+    #[error("not a signed frame: {0}")]
+    NotAFrame(String),
+    #[error(transparent)]
+    Refused(#[from] Error),
+}
+
+/// Why a received response does not verify.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ReceivedError {
+    /// The response lacks this header, so it is unsigned and is never relied on.
+    #[error("no {0}: the response is unsigned")]
+    Unsigned(&'static str),
+    #[error("the response echoes another challenge than the one sent")]
+    OtherChallenge,
+    #[error("{0} is not a decimal number")]
+    Malformed(&'static str),
+    #[error(transparent)]
+    Signature(#[from] Error),
+}
+
 impl Connection {
     /// The connection a client opened with `challenge` by `GET` of `path_and_query`, exactly as it
     /// sent it.
@@ -156,6 +210,24 @@ impl FrameVerifier {
         self.previous = digest;
         self.next = expected.checked_add(1);
         Ok(())
+    }
+
+    /// Checks the connection's next frame from its JSON text, as received, and returns it. Text that
+    /// is not a signed frame fails the connection like any other failed frame.
+    /// Error cases:
+    /// - an earlier frame failed
+    /// - the text is not a signed frame
+    /// - see `verify`
+    pub fn verify_text(&mut self, text: &str) -> Result<SignedFrame, FrameError> {
+        if self.next.is_none() {
+            return Err(Error::ConnectionFailed.into());
+        }
+        let frame: SignedFrame = serde_json::from_str(text).map_err(|err| {
+            self.next = None;
+            FrameError::NotAFrame(err.to_string())
+        })?;
+        self.verify(&frame)?;
+        Ok(frame)
     }
 }
 
@@ -223,6 +295,47 @@ pub fn verify_response(
     signature: &str,
 ) -> Result<(), Error> {
     check(signer, &response_digest(deployment, response), signature)
+}
+
+/// Checks a received response as `signer`'s answer to `request`, sent with `challenge`, for
+/// `deployment`. The signature is checked against the challenge the client sent, never the one the
+/// response echoes; an echoed challenge must still be the one sent.
+/// Error cases:
+/// - it echoes another challenge than `challenge`
+/// - it carries no `X-Engine-Time`, `X-Engine-Seq`, or `X-Engine-Signature`, or a time or seq that
+///   is not a decimal number
+/// - its signature is malformed, or not the signer's over this deployment, challenge, request, and
+///   response
+pub fn verify_received(
+    signer: &[u8; 20],
+    deployment: &Deployment,
+    challenge: &[u8; 32],
+    request: &SentRequest<'_>,
+    received: &Received<'_>,
+) -> Result<VerifiedResponse, ReceivedError> {
+    if let Some(echoed) = received.challenge
+        && parse_challenge(echoed) != Some(*challenge)
+    {
+        return Err(ReceivedError::OtherChallenge);
+    }
+    let number = |value: Option<&str>, header: &'static str| -> Result<u64, ReceivedError> {
+        value.ok_or(ReceivedError::Unsigned(header))?.parse().map_err(|_| ReceivedError::Malformed(header))
+    };
+    let time_ms = number(received.time, TIME_HEADER)?;
+    let head_seq = number(received.seq, SEQ_HEADER)?;
+    let signature = received.signature.ok_or(ReceivedError::Unsigned(SIGNATURE_HEADER))?;
+    let response = Response {
+        challenge: *challenge,
+        time_ms,
+        head_seq,
+        status: received.status,
+        method: request.method,
+        path_and_query: request.path_and_query,
+        request_body: request.body,
+        body: received.body,
+    };
+    verify_response(signer, deployment, &response, signature)?;
+    Ok(VerifiedResponse { status: received.status, time_ms, head_seq })
 }
 
 /// Checks that `signature` is `signer`'s over `digest`.

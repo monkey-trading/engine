@@ -1,5 +1,5 @@
 use super::*;
-use engine_wire::FRAME_VERSION;
+use engine_wire::{FRAME_VERSION, Response, SignedFrame};
 
 use crate::tee::EnclaveKey;
 use crate::test_support::{dev_config, signing};

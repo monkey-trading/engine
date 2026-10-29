@@ -226,6 +226,13 @@ cargo run -p engine-node -- verify-response --signer "$(jq -r .enclave_address <
 
 `./scripts/dev-signed-api.sh` runs the whole check against a local node, the stream included.
 
+A browser can run the same checks. [`crates/verify-wasm`](crates/verify-wasm) builds the
+attestation verifier and the signature checks into a WebAssembly package from the same Rust code
+the CLI runs; the page passes it the attestation, the release manifests it pins, the collateral the
+node serves at `/v1/attestation/collateral`, and each signed answer as received.
+`./scripts/dev-wasm-verifier.sh` checks that the package reaches the CLI's verdict, with the same
+message, on every attestation fixture and signed-answer vector.
+
 The node's metrics are at `localhost:9464/metrics` in Prometheus format, and
 [`ops/grafana/engine-node.json`](ops/grafana/engine-node.json) is a Grafana dashboard for them;
 [`ops/prometheus/engine-node-rules.yml`](ops/prometheus/engine-node-rules.yml) holds alerting rules
@@ -258,12 +265,16 @@ OPERATOR_KEY=0x4242424242424242424242424242424242424242424242424242424242424242 
 
 ## Repository layout
 
-The workspace has three crates. [`crates/core`](crates/core) (`engine-core`) is the deterministic
+The workspace has five crates. [`crates/core`](crates/core) (`engine-core`) is the deterministic
 state machine: it performs no input or output, and uses neither clocks, randomness, nor
 floating-point arithmetic. [`crates/node`](crates/node) (`engine-node`, binary `engine`) runs it,
 sequencing commands, writing and streaming the log, signing checkpoints, serving the API, and
 connecting to custody and price feeds. [`crates/wire`](crates/wire) (`engine-wire`) defines the
-signed answers the node gives and the checks a client runs on them. Node configuration lives in
+signed answers the node gives and the checks a client runs on them.
+[`crates/verify`](crates/verify) (`engine-verify`) verifies an attestation against release
+manifests with no input, output, or clock of its own, and
+[`crates/verify-wasm`](crates/verify-wasm) (`engine-verify-wasm`) builds it and `engine-wire`'s
+checks for browsers. Node configuration lives in
 [`config`](config), operator assets such as the Grafana dashboard in [`ops`](ops), the confidential
 VM image is built from [`image`](image), and each crate's README describes its files.
 [`contracts`](contracts) is a Foundry project holding the custody vault, and
@@ -276,8 +287,8 @@ provider-outage and quorum-recovery checks; production requires independent prov
 Work is tracked in GitHub issues, and pull requests against `main` are welcome. CI checks
 formatting, file length, lints, tests, and dependency advisories and licences, replays the
 committed reference logs on x86_64 and aarch64 Linux, checks the contracts' formatting, build, and
-tests and the vault deposit scenario, and builds the enclave image twice to check that it
-reproduces. Run the same checks locally before opening a pull request; the image build is slow, and
+tests and the vault deposit scenario, and builds the enclave image and the browser verifier twice
+each to check that they reproduce. Run the same checks locally before opening a pull request; the image build is slow, and
 matters when the change touches the node or `image`. The code's conventions are documented in
 [`agents/AGENTS.md`](agents/AGENTS.md).
 

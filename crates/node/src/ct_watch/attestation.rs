@@ -15,8 +15,8 @@ use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{ClientConfig, DigitallySignedStruct, SignatureScheme};
 
 use crate::ct_watch::config::WatchedNode;
-use crate::tee::{Attestation, MOCK_QUOTE_MARKER};
-use crate::verify::{CollateralUnavailable, Options, ReleaseManifest, served_bundle, verify_attestation};
+use crate::tee::Attestation;
+use crate::verify::{CollateralUnavailable, Options, ReleaseManifest, load_release, verify_attestation};
 
 /// An attestation is a few KiB of hex.
 const MAX_ATTESTATION_BYTES: usize = 1024 * 1024;
@@ -114,7 +114,7 @@ impl AttestationSource {
             .no_proxy()
             .build()
             .context("building the node HTTP client")?;
-        let release = ReleaseManifest::load(&node.release)?;
+        let release = load_release(&node.release)?;
         let root_pem = node.root.as_deref().map(read_pem).transpose()?;
         Ok(Self { http, url, release, processor: node.processor.clone(), kds: node.kds.clone(), root_pem, allow_mock })
     }
@@ -154,7 +154,7 @@ impl AttestationSource {
     /// - the quote does not verify against the release, or is a mock one the watcher does not allow
     async fn verify(&self, attestation: &Attestation) -> anyhow::Result<[u8; 32]> {
         if attestation.provider == "mock" && self.allow_mock {
-            return check_mock(attestation);
+            return Ok(engine_verify::verify_mock_attestation(attestation)?.tls_public_key_sha256);
         }
         let options = Options {
             processor: &self.processor,
@@ -174,20 +174,6 @@ pub(super) fn classify(verified: anyhow::Result<[u8; 32]>) -> Poll {
         Err(e) if e.downcast_ref::<CollateralUnavailable>().is_some() => Poll::Unreachable(e),
         Err(e) => Poll::Rejected(e),
     }
-}
-
-/// The TLS key hash of a mock attestation: its quote is the mock marker and the report data, which
-/// binds the served bundle. Dev only; nothing proves the bundle came from an enclave.
-/// Error cases:
-/// - the quote is not the mock marker and the report data, or the bundle is not bound by it
-fn check_mock(attestation: &Attestation) -> anyhow::Result<[u8; 32]> {
-    let (bundle, report_data) = served_bundle(attestation)?;
-    let quote = hex::decode(attestation.quote.strip_prefix("0x").unwrap_or(&attestation.quote)).context("quote")?;
-    ensure!(
-        quote == [MOCK_QUOTE_MARKER, &report_data[..]].concat(),
-        "the quote is not a mock quote for the report data"
-    );
-    Ok(bundle.tls_public_key_sha256)
 }
 
 /// Reads a PEM root certificate file.

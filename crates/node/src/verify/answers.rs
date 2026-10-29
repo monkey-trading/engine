@@ -10,9 +10,10 @@ use std::path::Path;
 use anyhow::{Context, bail, ensure};
 use engine_core::types::AccountId;
 use engine_wire::{
-    CHALLENGE_HEADER, Connection, Deployment, FrameVerifier, Response, SEQ_HEADER, SIGNATURE_HEADER, SignedFrame,
-    TIME_HEADER, verify_response,
+    CHALLENGE_HEADER, Connection, Deployment, FrameVerifier, Received, SEQ_HEADER, SIGNATURE_HEADER, TIME_HEADER,
+    verify_received,
 };
+pub use engine_wire::{SentRequest, VerifiedResponse};
 
 /// Who must have signed an answer, for which deployment, and under the challenge the client sent.
 pub struct Expected {
@@ -21,22 +22,6 @@ pub struct Expected {
     pub chain_id: u64,
     pub vault: AccountId,
     pub challenge: [u8; 32],
-}
-
-/// The request a saved response answers, as the client sent it.
-pub struct SentRequest<'a> {
-    pub method: &'a str,
-    pub path_and_query: &'a str,
-    /// The request body; empty when it had none.
-    pub body: &'a [u8],
-}
-
-/// What a verified response's signature vouches for besides its body.
-#[derive(Debug, PartialEq, Eq)]
-pub struct VerifiedResponse {
-    pub status: u16,
-    pub time_ms: u64,
-    pub head_seq: u64,
 }
 
 impl Expected {
@@ -78,13 +63,11 @@ pub fn verify_frames_file(expected: &Expected, path_and_query: &str, frames: &Pa
     verify_saved_frames(expected, path_and_query, &text)
 }
 
-/// Verifies a response from its headers as `curl -D` writes them and its body as sent.
+/// Verifies a response from its headers as `curl -D` writes them and its body as sent, with the
+/// checks `engine_wire::verify_received` runs for every client.
 /// Error cases:
 /// - the headers have no status line, or name a signature header twice
-/// - the response carries no signature, time, or seq: an unsigned response is never relied on
-/// - it echoes a challenge other than the one sent
-/// - the signature is malformed, or not the signer's over this deployment, challenge, request, and
-///   response
+/// - see `verify_received`
 fn verify_saved_response(
     expected: &Expected,
     request: &SentRequest<'_>,
@@ -92,42 +75,29 @@ fn verify_saved_response(
     body: &[u8],
 ) -> anyhow::Result<VerifiedResponse> {
     let (status, signed) = parse_headers(headers)?;
-    let header = |name: &str| signed.get(name).with_context(|| format!("no {name}: the response is unsigned"));
-    if let Some(echoed) = signed.get(CHALLENGE_HEADER) {
-        ensure!(
-            engine_wire::parse_challenge(echoed) == Some(expected.challenge),
-            "the response echoes another challenge than the one sent"
-        );
-    }
-    let time_ms = header(TIME_HEADER)?.parse().context(TIME_HEADER)?;
-    let head_seq = header(SEQ_HEADER)?.parse().context(SEQ_HEADER)?;
-    let response = Response {
-        challenge: expected.challenge,
-        time_ms,
-        head_seq,
+    let header = |name: &str| signed.get(name).map(String::as_str);
+    let received = Received {
         status,
-        method: request.method,
-        path_and_query: request.path_and_query,
-        request_body: request.body,
+        signature: header(SIGNATURE_HEADER),
+        time: header(TIME_HEADER),
+        seq: header(SEQ_HEADER),
+        challenge: header(CHALLENGE_HEADER),
         body,
     };
-    verify_response(&expected.signer.0, &expected.deployment(), &response, header(SIGNATURE_HEADER)?)?;
-    Ok(VerifiedResponse { status, time_ms, head_seq })
+    Ok(verify_received(&expected.signer.0, &expected.deployment(), &expected.challenge, request, &received)?)
 }
 
 /// Verifies the frames, one a line, of the connection `GET` of `path_and_query` opened, and returns
 /// how many verified.
 /// Error cases:
 /// - there are no frames
-/// - a line is not a signed frame, or its frame fails (see `FrameVerifier::verify`)
+/// - a line is not a signed frame, or its frame fails (see `FrameVerifier::verify_text`)
 fn verify_saved_frames(expected: &Expected, path_and_query: &str, text: &str) -> anyhow::Result<u64> {
     let connection = Connection::new(expected.challenge, path_and_query);
     let mut verifier = FrameVerifier::new(expected.signer.0, expected.deployment(), connection);
     let mut count = 0;
     for (index, line) in text.lines().enumerate().filter(|(_, line)| !line.trim().is_empty()) {
-        let frame: SignedFrame =
-            serde_json::from_str(line).with_context(|| format!("line {}: not a signed frame", index + 1))?;
-        verifier.verify(&frame).with_context(|| format!("line {}", index + 1))?;
+        verifier.verify_text(line).with_context(|| format!("line {}", index + 1))?;
         count += 1;
     }
     ensure!(count > 0, "no frames");
