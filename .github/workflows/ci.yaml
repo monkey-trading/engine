@@ -71,6 +71,8 @@ jobs:
                 # The test job runs the corporate-action scenario.
                 scripts/dev-corporate-actions.sh) areas+=" rust" ;;
                 scripts/dev-*) areas+=" scenarios" ;;
+                # The ACME scenario downloads its test CA under image/retry.
+                image/retry) areas+=" image scenarios" ;;
                 image/* | scripts/build-image.sh | scripts/check-image.sh | scripts/check-image-retry.sh)
                   areas+=" image" ;;
                 *) areas=$all ;;

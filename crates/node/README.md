@@ -378,8 +378,13 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/tls/acme/http.rs` — the ACME client's HTTP, against compiled-in roots or a test CA's root
 - `src/tls/acme/schedule.rs` — when the certificate is renewed, the retry backoff, and the
   `certificate_pending` and `certificate_expiring` alerts
-- `src/tls/acme/tests.rs` — the issued-certificate checks, the certificate request, and the
+- `src/tls/acme/tests/mod.rs` — the issued-certificate checks, the certificate request, and the
   schedule's renewals and alerts
+- `src/tls/acme/tests/orders.rs` — attempts against a scripted CA: validation, a reused validation,
+  and an order resumed after a lost exchange but replaced after a refusal
+- `src/tls/acme/tests/fake_ca.rs` — the scripted ACME CA behind the client's HTTP
+- `src/tls/acme/tests/http.rs` — the ACME HTTP client against a loopback HTTPS stand-in: its roots,
+  its response cap, and its refusal to follow redirects
 - `src/tls/tests/mod.rs` — the API end to end over TLS: key pinning, limits, caps, and the harness
 - `src/tls/tests/acme.rs` — TLS-ALPN-01 on the listener, and a CA certificate installed without a
   restart
@@ -1409,7 +1414,7 @@ section.
 domain = "api.example.com"
 directory_url = "https://acme-v02.api.letsencrypt.org/directory"
 contact = "mailto:ops@example.com"
-# renew_before = "30d" # one third of each certificate's life when unset
+# renew_before = "30d" # at least a day; one third of each certificate's life when unset
 ```
 
 Setting the section agrees to the CA's terms of service. The domain is in the config file whose
@@ -1428,9 +1433,12 @@ written to disk or logged.
 The sequencer never waits for the CA. Until the first certificate, the API serves its self-signed
 one and the node raises `certificate_pending` (Warning). It renews once `renew_before` of the
 certificate's life remains, measured on the monotonic clock from the certificate's arrival against
-its own validity period, so the host's wall clock does not move it. A failed attempt keeps the
-current certificate serving and retries after a minute, doubling up to an hour; once fewer than 14
-days remain, each failure raises `certificate_expiring` (Warning). Every request to the CA has a
+its own validity period, so the host's wall clock does not move it; a CA that backdates `notBefore`
+(Let's Encrypt by an hour) makes renewal that much later, which the floor of a day on
+`renew_before` keeps well before expiry. A failed attempt keeps the current certificate serving and
+retries after a minute, doubling up to an hour; once fewer than 14 days remain, each failure raises
+`certificate_expiring` (Warning). A failed attempt takes up its order again, unless the CA refused
+it, so a lost answer never costs another issuance. Every request to the CA has a
 30-second deadline and every attempt a 10-minute one, and the CA is authenticated against the
 compiled-in Mozilla roots, so the host, which resolves its name and carries the connection, can
 delay or drop the exchange but not answer it. `engine_tls_certificate_not_after_seconds` on the
@@ -1443,10 +1451,14 @@ Before the first production certificate:
   port 443 unmodified at layer 4 to `node.listen`: the CA validates by connecting to port 443, and
   TLS terminates in the enclave.
 - Publish a CAA record that allows only the chosen CA, and only TLS-ALPN-01, such as
-  `api.example.com. CAA 0 issue "letsencrypt.org; validationmethods=tls-alpn-01"`. Whoever controls
-  the domain's DNS can still have a certificate issued for another key: the CAA record narrows who
-  and how, and Certificate Transparency monitoring (#299) is to flag any certificate whose key is
-  not the attested one. An `accounturi` cannot pin the account while it changes at every start.
+  `api.example.com. CAA 0 issue "letsencrypt.org; validationmethods=tls-alpn-01"`. The CAA record
+  narrows issuance to that CA and method, but not to the enclave: the host forwards port 443, so it
+  can answer the CA's TLS-ALPN-01 validation itself and have a certificate issued for a key of its
+  own, as can whoever controls the domain's DNS. A browser that trusts the certificate alone cannot
+  tell; the console's in-browser attestation check and signed answers (#292) are what bind it to the
+  enclave, and Certificate Transparency monitoring (#299) is to flag any certificate whose key is
+  not the attested one. A CAA `accounturi` would bind issuance to the enclave's account, but cannot
+  while the account changes at every start (#28).
 - Run against the CA's staging directory first (for Let's Encrypt,
   `https://acme-staging-v02.api.letsencrypt.org/directory`), then its production one.
 

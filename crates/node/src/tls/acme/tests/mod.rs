@@ -134,6 +134,10 @@ async fn a_failed_renewal_alerts_once_fewer_than_14_days_remain() {
     assert_eq!(logs.count("alert_resolved=\"certificate_expiring\""), 2, "every issuance ends the episode");
 }
 
+mod fake_ca;
+mod http;
+mod orders;
+
 // ── Helpers ──
 
 /// A chain for `key` naming `names`, valid between two dates, issued by a fresh CA.

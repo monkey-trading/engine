@@ -253,17 +253,17 @@ node_pid=""
 
 step "build the production binary and run it on a config without [api.tls.acme]"
 (cd "$root" && cargo build -p engine-node --features production --locked --quiet)
-# config/anvil.toml with every provider real: a configfs-tsm TEE, an operator key nobody publishes
-# (the public key of private key 1, which signs nothing here), credit at latest, live venues, and the
-# checkpoints hardware custody requires. The node refuses it at load, before it reaches any of them.
-awk '
+# config/anvil.toml with every provider real: a configfs-tsm TEE, a fresh operator key nobody
+# publishes, credit at latest, live venues, and the checkpoints hardware custody requires. The node
+# refuses it at load, before it reaches any of them.
+operator_key="0x$(openssl ecparam -name secp256k1 -genkey -noout 2> /dev/null \
+  | openssl ec -pubout -conv_form uncompressed -outform DER 2> /dev/null | tail -c 65 | od -An -v -tx1 | tr -d ' \n')"
+[[ "$operator_key" =~ ^0x04[0-9a-f]{128}$ ]] || fail "no fresh operator key: '$operator_key'"
+awk -v operator_key="$operator_key" '
   /^\[/ { section = $0 }
   section == "[tee]" && /^provider = / { print "provider = \"configfs_tsm\""; next }
   section == "[tee]" && /^use_published_mock_key/ { next }
-  section == "[operator]" && /^public_key = / {
-    print "public_key = \"0x0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8\""
-    next
-  }
+  section == "[operator]" && /^public_key = / { print "public_key = \"" operator_key "\""; next }
   section == "[custody.evm]" && /^finality_tag = / { print "finality_tag = \"latest\""; next }
   section == "[feeds]" && /^provider = / { print "provider = \"venues\""; next }
   { print }

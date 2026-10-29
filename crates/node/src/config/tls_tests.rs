@@ -13,7 +13,7 @@ contact = "mailto:ops@example.com"
 "#;
 
 #[test]
-fn the_acme_section_takes_its_keys_and_renews_at_a_third_by_default() {
+fn the_acme_section_takes_its_keys_and_leaves_renew_before_unset_by_default() {
     let cfg = with(ACME);
     cfg.validate().unwrap();
     let acme = &cfg.api.tls.as_ref().expect("[api.tls] from its sub-table").acme;
@@ -21,8 +21,10 @@ fn the_acme_section_takes_its_keys_and_renews_at_a_third_by_default() {
     assert_eq!(acme.contact, "mailto:ops@example.com");
     assert_eq!(acme.renew_before, None, "a third of each certificate's life");
     assert!(acme.test_ca.is_none());
-    let acme = with(&format!("{ACME}renew_before = \"30d\"\n")).api.tls.unwrap().acme;
-    assert_eq!(acme.renew_before, Some(Duration::from_secs(30 * 86_400)));
+    let cfg = with(&format!("{ACME}renew_before = \"30d\"\n"));
+    cfg.validate().unwrap();
+    assert_eq!(cfg.api.tls.unwrap().acme.renew_before, Some(Duration::from_secs(30 * 86_400)));
+    with(&format!("{ACME}renew_before = \"1d\"\n")).validate().unwrap();
     assert!(toml::from_str::<NodeConfig>(&dev_with(&format!("{ACME}renewal = \"30d\"\n"))).is_err(), "unknown key");
     assert!(with("").api.tls.is_none(), "the dev config serves its self-signed certificate");
 }
@@ -36,11 +38,13 @@ fn acme_settings_a_ca_would_refuse_or_that_would_fail_every_renewal_are_refused(
         ("lowercase DNS name", ACME.replace("api.example.com", "localhost")),
         ("lowercase DNS name", ACME.replace("api.example.com", "192.0.2.1")),
         ("lowercase DNS name", ACME.replace("api.example.com", "api..example.com")),
+        ("lowercase DNS name", ACME.replace("api.example.com", "api.example.com.")),
         ("directory_url must be https", ACME.replace("https://acme-staging", "http://acme-staging")),
         ("api.tls.acme.directory_url", ACME.replace("https://acme-staging-v02.api.letsencrypt.org", "not a url")),
         ("contact must be a mailto: URL", ACME.replace("mailto:ops@example.com", "ops@example.com")),
         ("contact must be a mailto: URL", ACME.replace("mailto:ops@example.com", "mailto:")),
-        ("renew_before must be non-zero", format!("{ACME}renew_before = \"0s\"\n")),
+        ("renew_before must be at least a day", format!("{ACME}renew_before = \"0s\"\n")),
+        ("renew_before must be at least a day", format!("{ACME}renew_before = \"86399s\"\n")),
         ("test_ca.root must be one PEM certificate", format!("{ACME}[api.tls.acme.test_ca]\nroot = \"not a PEM\"\n")),
         (
             "test_ca.root must be one PEM certificate",

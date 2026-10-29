@@ -132,6 +132,38 @@ async fn validation_connections_are_held_to_the_connection_caps() {
     panic!("the validation was not answered once its place was freed");
 }
 
+#[tokio::test]
+async fn a_validation_that_stalls_mid_handshake_is_closed_at_the_timeout() {
+    let mut api = api();
+    api.max_connections_per_ip = NonZeroUsize::new(1).unwrap();
+    api.handshake_timeout = Duration::from_millis(200);
+    let node = TestNode::start(api, V4).await;
+    let _answer = node.key.answer(DOMAIN, DIGEST).unwrap();
+    // A ClientHello offering acme-tls/1 for the domain, then nothing: the server answers and waits
+    // for the client's Finished.
+    let mut config = ClientConfig::builder_with_provider(Arc::new(default_provider()))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(Unverified(Arc::new(default_provider()))))
+        .with_no_client_auth();
+    config.alpn_protocols = vec![ACME_TLS_ALPN.to_vec()];
+    let mut hello = Vec::new();
+    rustls::ClientConnection::new(Arc::new(config), ServerName::try_from(DOMAIN).unwrap())
+        .unwrap()
+        .write_tls(&mut hello)
+        .unwrap();
+    let mut stalled = TcpStream::connect((V4, node.port)).await.unwrap();
+    stalled.write_all(&hello).await.unwrap();
+    assert!(node.connect(V4).await.is_err(), "the stalled validation holds the only place");
+
+    let mut answered = Vec::new();
+    let closed = timeout(Duration::from_secs(5), stalled.read_to_end(&mut answered)).await;
+    closed.expect("closed by the server").unwrap();
+    assert!(!answered.is_empty(), "the server took the hello and answered it");
+    node.connect_eventually(V4).await;
+}
+
 // ── Helpers ──
 
 impl TestNode {

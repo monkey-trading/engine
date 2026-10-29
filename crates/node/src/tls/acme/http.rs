@@ -20,13 +20,13 @@ use crate::config::AcmeTestCa;
 /// Every request to the CA, from connecting to its body's last byte.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// The largest response body taken from the CA; a certificate chain is a few kilobytes.
-const MAX_RESPONSE_BYTES: usize = 1 << 20;
+pub(super) const MAX_RESPONSE_BYTES: usize = 1 << 20;
 
 /// Requests to the CA over TLS that must chain to the compiled-in Mozilla roots, or to a test CA's
 /// root alone. The host resolves the CA's name and carries the connection, so it can delay or drop
 /// requests, but not answer them. No proxy, no redirect, and a deadline on each.
 #[derive(Clone)]
-pub(super) struct AcmeHttp(Client);
+pub(crate) struct AcmeHttp(Client);
 
 impl AcmeHttp {
     /// A client trusting the compiled-in roots, or `test_ca`'s root alone.

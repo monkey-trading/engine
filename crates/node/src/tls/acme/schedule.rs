@@ -1,7 +1,8 @@
 //! When the certificate task renews, and what it alerts. Time is the monotonic clock from the moment
 //! a certificate arrived, against the certificate's own validity period, so the host's wall clock
 //! plays no part; the monotonic clock carries the TODO in `clock::Clock::instant`. A CA that
-//! backdates `notBefore` makes the schedule late by as much.
+//! backdates `notBefore` makes the schedule late by as much, which `renew_before`'s floor of a day
+//! and the default third of the certificate's life leave well before expiry.
 
 use std::time::Duration;
 
