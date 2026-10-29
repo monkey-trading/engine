@@ -70,7 +70,9 @@ commands may lag the source's) and evidence older than the recorded bound at seq
 including time spent waiting in queues. It verifies every required disposition
 independently. Custody checks payer and beneficiary sanctions; API orders, withdrawals and
 withdrawal reissue requests check account sanctions and the actual peer's jurisdiction. Forwarded and X-Forwarded-For headers cannot
-change that peer. A proxy needs a separate authenticated trust model before it can supply geography.
+change that peer. Behind a configured pass-through proxy (`[api.proxy_protocol]`) the peer is the client
+address in the PROXY protocol v2 header of a connection from the proxy's ranges, and `peer` carries that
+address. A proxy still needs a separate authenticated trust model before it can supply geography.
 The socket peer itself comes from the host's network, which a host relay or NAT can rewrite to an
 allowed address. Jurisdiction screening is therefore not yet bounded against the host; binding it
 to an assertion the host cannot alter is a promotion requirement.

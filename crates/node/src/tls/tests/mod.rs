@@ -310,6 +310,7 @@ async fn an_accept_failure_backs_off_and_alerts_unless_the_client_reset() {
 }
 
 mod acme;
+mod proxy;
 mod stream;
 
 // ── Helpers ──
@@ -421,6 +422,7 @@ fn api() -> ApiSection {
         quote_max_markets: NonZeroUsize::new(4).unwrap(),
         allowed_origins: Vec::new(),
         tls: None,
+        proxy_protocol: None,
     }
 }
 

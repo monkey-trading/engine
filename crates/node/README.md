@@ -383,6 +383,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/roughtime/testing.rs` — a Roughtime server for tests that signs with its own keys
 - `src/roughtime/tests.rs` — client tests over recorded and locally signed replies
 - `src/roughtime/fixtures/replies.json` — replies recorded from the servers in `config/dev.toml`
+- `src/tls/proxy.rs` — reading a trusted proxy's PROXY protocol v2 header before the TLS handshake
 - `src/tls/mod.rs` — the TLS key and its self-signed certificate, the choice between the API and a
   TLS-ALPN-01 validation from each ClientHello, and the server loop that applies the connection caps
   and timeouts
@@ -403,6 +404,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/tls/tests/mod.rs` — the API end to end over TLS: key pinning, limits, caps, and the harness
 - `src/tls/tests/acme.rs` — TLS-ALPN-01 on the listener, and a CA certificate installed without a
   restart
+- `src/tls/tests/proxy.rs` — the PROXY protocol header: the client it names, the trusted ranges, and every refusal
 - `src/tls/tests/stream.rs` — the stream end to end over TLS: the subscriber and message caps
 - `src/limits.rs` — request rate limits, connection caps, the stream subscriber cap, and the allowed browser origins
 - `src/config/mod.rs` — the node config schema, loading, and the config file's hash
@@ -428,6 +430,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/config/tls_tests.rs` — `[api.tls.acme]` parsing and validation, and the production refusal
 - `src/config/telemetry_tests.rs` — metrics and alert config tests: the Critical route, the dev
   config's telemetry, and webhook URLs
+- `src/config/proxy.rs` — `[api.proxy_protocol]`: the trusted proxy ranges and a production build's refusal of loopback and wide ones
+- `src/config/proxy_tests.rs` — the proxy section's parsing, matching, and refusals
 - `src/config/origins.rs` — `api.allowed_origins` validation: exact browser origins, `https` only in a production build
 - `src/config/origins_tests.rs` — the origin allowlist's accepted and refused spellings
 - `src/config/validation.rs` — the checks a parsed config must also pass, and the production
@@ -986,6 +990,21 @@ body not received within `api.read_timeout` gets 408, and a subscriber over `api
 gets 503. A connection over a connection cap or over its client's connection rate is closed before
 its TLS handshake. A client is its socket peer IP, with IPv6 counted by its /64; forwarding headers
 are ignored.
+
+`[api.proxy_protocol]` is for a layer-4 proxy that passes TLS through without decrypting, which the
+node would otherwise see as one client. `trusted` lists the proxy's address ranges (CIDR; at least
+one, and not every address). A connection from a listed range must begin with a PROXY protocol v2
+header, read before the TLS handshake and under `api.handshake_timeout`; its source address then
+replaces the socket peer for the request, connection and rate limits, connection caps, and the
+access screening, and the TLS handshake (including a TLS-ALPN-01 validation) follows. A listed peer
+whose first bytes are not a valid header for a TCP client (no header, version 1, a LOCAL command, a
+UNIX or unspecified family, over 1024 bytes) is closed, and raises the `api_proxy_header_refused`
+Warning alert except for a LOCAL header, the proxy's own check. A header from any other peer is never
+read: the bytes go to the TLS handshake, which fails, so it is closed too. Until its header arrives a
+proxy connection counts against the total connection cap only. A production build refuses a trusted
+range that holds a loopback address or is wider than /8 (IPv4) or /32 (IPv6). The host controls the
+network, so a malicious host can still present any address as the proxy's. Absent, no connection may
+carry a header.
 
 `api.allowed_origins` lists the browser origins (`scheme://host[:port]`, exact; no `*`, path, or
 duplicate; `https` only in a production build) that may call the API. It is empty by default, which
@@ -1761,6 +1780,9 @@ cargo test -p engine-node trusted_time::tests::scenario
 
 # Dev scenario: a listed browser origin gets CORS headers and the stream, any other gets neither
 ./scripts/dev-browser-origin.sh
+
+# Dev scenario: limits and screening use the client address a trusted proxy's PROXY header names
+./scripts/dev-proxy-protocol.sh
 
 # Dev scenario: a mock feed stops, the market goes stale, and a local webhook gets one page
 ./scripts/dev-metrics-alerts.sh

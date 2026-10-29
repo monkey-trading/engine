@@ -57,7 +57,7 @@ an index: load only the rule whose hint matches the current action.
   access-source screening (`access.rs`, signed decisions with bounded HTTP reads),
   sequencer, the public log with signed checkpoints (segmented, with a public archive), `engine
   replay`, `engine admin` (the operator's signing client), the REST API with the operator's admin
-  route, the browser-origin allowlist (`api.allowed_origins`, in `api/origin.rs`), account proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
+  route, the browser-origin allowlist (`api.allowed_origins`, in `api/origin.rs`), the client address from a trusted pass-through proxy's PROXY protocol v2 header (`[api.proxy_protocol]`, in `tls/proxy.rs`), account proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
   with rate limits and connection caps, and with `[api.tls.acme]` a public CA certificate for that
   key, obtained and renewed over ACME TLS-ALPN-01 answered on the API's listener, in `tls/acme/`),
   signed answers (`api/signing.rs`: every `/v1` response but
@@ -181,6 +181,7 @@ an index: load only the rule whose hint matches the current action.
   `dev-rpc-proxy.py` providing three local fault-injection endpoints; `dev-metrics-alerts.sh`,
   the metrics and alert routing dev scenario; `dev-alert-outbox.sh`, the isolated alert retry
   kill/restart scenario; `dev-browser-origin.sh`, the browser-origin allowlist scenario against a dev node;
+  `dev-proxy-protocol.sh`, the proxied client address scenario against a dev node;
   `dev-monkey-emissions.sh`, the MONKEY emissions scenario on Anvil;
   `dev-monkey-staking.sh`, the MONKEY staking and USDC distributions scenario on Anvil;
   `dev-snapshot-restart.sh`, the checkpoint snapshot restart and fallback scenario;
@@ -219,7 +220,7 @@ an index: load only the rule whose hint matches the current action.
   deposit finality scenarios, the MONKEY staking dev scenario, the signed withdrawal and FIFO dev
   scenario, the API and direct-vault access enforcement dev scenario, the metrics and alert routing
   dev scenario, the alert outbox kill/restart scenario,
-  the browser-origin scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the
+  the browser-origin scenario, the proxy protocol scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the
   signed API answers dev scenario, the public certificate dev scenario, the executable quotes dev
   scenario, the review-delta helper's test, the merge approval gate's test, the browser verifier
   (`wasm-verifier` builds its package twice on separate runners with the pinned toolchain, the
@@ -319,6 +320,9 @@ Run from the repo root:
   `curl`, and `jq`; uses loopback endpoints and private temporary data)
 - Browser-origin dev scenario: `./scripts/dev-browser-origin.sh` (needs `curl` and `jq`; runs a dev node
   with `api.allowed_origins` on private temporary data and public Roughtime servers)
+- Proxy protocol dev scenario: `./scripts/dev-proxy-protocol.sh` (needs `python3`, `curl`, and `jq`; a
+  loopback forwarder prepends PROXY v2 headers to a dev node with a synthetic access source, on private
+  temporary data and public Roughtime servers)
 - Certificate Transparency watcher: `cargo run -p engine-node -- ct-watch --config
   config/ct-watch.toml` (outside the enclave; `--allow-mock` accepts a mock node and loopback HTTP,
   dev only, refused in a `production` build); its dev scenario: `./scripts/dev-ct-watch.sh` (needs

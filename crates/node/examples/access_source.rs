@@ -36,6 +36,10 @@ struct Fixture {
     mode: String,
     jurisdictions: BTreeMap<AccountId, Jurisdiction>,
     sanctioned: BTreeSet<AccountId>,
+    /// Client addresses the scenario places in a jurisdiction, as a proxy's header names them. A peer
+    /// listed here is a client; any other peer that is not loopback is refused.
+    #[serde(default)]
+    peers: BTreeMap<IpAddr, Jurisdiction>,
 }
 
 struct Source {
@@ -70,7 +74,8 @@ async fn screen(State(source): State<Arc<Source>>, Json(query): Json<Query>) -> 
     let Ok(fixture) = serde_json::from_slice::<Fixture>(&bytes) else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
-    if fixture.mode == "unavailable" || query.peer.is_some_and(|peer| !peer.is_loopback()) {
+    let listed = query.peer.and_then(|peer| fixture.peers.get(&peer).copied());
+    if fixture.mode == "unavailable" || query.peer.is_some_and(|peer| !peer.is_loopback() && listed.is_none()) {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("Unix time").as_millis() as i64;
@@ -92,9 +97,8 @@ async fn screen(State(source): State<Arc<Source>>, Json(query): Json<Query>) -> 
         jurisdiction: if fixture.mode == "unknown" || query.peer.is_none() {
             Jurisdiction::Unknown
         } else {
-            query
-                .account
-                .and_then(|account| fixture.jurisdictions.get(&account).copied())
+            listed
+                .or_else(|| query.account.and_then(|account| fixture.jurisdictions.get(&account).copied()))
                 .unwrap_or(Jurisdiction::Allowed)
         },
         account_status: status(query.account),

@@ -1,7 +1,7 @@
 //! Limits on the public API: request and connection rates per client, request rates per account,
 //! request body size and read time, open connections, stream subscribers, and the browser origins
-//! allowed. A client is its socket peer's IP, never a forwarding header, which the untrusted host
-//! could forge; an IPv6 client counts by its /64, the block one host is usually given. Limiters live in enclave memory
+//! allowed. A client is its socket peer's IP, or the address a trusted proxy's PROXY protocol header
+//! names, never a forwarding header, which the untrusted host could forge; an IPv6 client counts by its /64, the block one host is usually given. Limiters live in enclave memory
 //! and start empty on every boot. They read the host's clock, which the host could skew; the host
 //! controls the network anyway, so the limits bound clients, not the host. Each request checks its
 //! limits on its own task, so the limiters are shared rather than owned by one task: routing every
@@ -201,10 +201,23 @@ impl ConnectionCaps {
 
     /// A place for a new connection from `ip`, or `None` when either cap is reached.
     pub fn admit(self: &Arc<Self>, ip: IpAddr) -> Option<ConnectionSlot> {
+        let total = self.admit_total()?;
+        self.claim(total, ip)
+    }
+
+    /// A place under the total cap alone, for a connection whose client is not yet known, or `None`
+    /// when it is reached.
+    pub fn admit_total(&self) -> Option<OwnedSemaphorePermit> {
         let Ok(total) = self.total.clone().try_acquire_owned() else {
             self.full.raise(&"connections");
             return None;
         };
+        Some(total)
+    }
+
+    /// Counts a connection holding `total` against its client `ip`, or `None` when the client is at
+    /// its cap.
+    pub fn claim(self: &Arc<Self>, total: OwnedSemaphorePermit, ip: IpAddr) -> Option<ConnectionSlot> {
         let client = client_key(ip);
         let mut per_client = self.per_client.lock().unwrap_or_else(PoisonError::into_inner);
         let open = per_client.entry(client).or_default();
@@ -486,6 +499,7 @@ mod tests {
             quote_max_markets: NonZeroUsize::new(4).unwrap(),
             allowed_origins: Vec::new(),
             tls: None,
+            proxy_protocol: None,
         }
     }
 }

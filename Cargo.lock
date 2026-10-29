@@ -1995,9 +1995,11 @@ dependencies = [
  "hyper",
  "hyper-util",
  "instant-acme",
+ "ipnet",
  "jmt",
  "k256 0.14.0",
  "nix",
+ "ppp",
  "prometheus-client",
  "rand 0.8.8",
  "rcgen",
@@ -2879,6 +2881,9 @@ name = "ipnet"
 version = "2.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "791930b43c0d5973160d90a8f3894509f2b273430f5c5c73b668636d0287c5c0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "is_terminal_polyfill"
@@ -3623,6 +3628,15 @@ name = "powerfmt"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a6394b9e965e73d0a289ee54f589087e2c676aedf60885baf52c76b771e4958"
+
+[[package]]
+name = "ppp"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a7a2049cd2570bd67bf0228e86bf850f8ceb5190a345c471d03a909da6049e0"
+dependencies = [
+ "thiserror 1.0.69",
+]
 
 [[package]]
 name = "ppv-lite86"

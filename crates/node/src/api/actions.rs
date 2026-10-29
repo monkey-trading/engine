@@ -110,11 +110,14 @@ pub(super) fn signature_domain(state: &ApiState) -> eip712::Eip712Domain {
     state.auth.domain().unwrap_or_else(|| eip712::domain(state.operator.chain_id, state.operator.vault))
 }
 
-/// Screens the transport peer, never a user-supplied forwarding header.
+/// Screens the client address: the socket peer, or the one a trusted proxy's PROXY protocol header
+/// names (`ConnectInfo`), never a user-supplied forwarding header.
 ///
-/// TODO: the host's network supplies the socket peer, so a relay or NAT on the host can present an
-/// allowed address for any client. Bind geography to something the host cannot rewrite, such as a
-/// signed assertion from an independent edge, before relying on the API's jurisdiction screening.
+/// TODO: the host controls the network, so a malicious host can present any address as the peer, or
+/// as the configured proxy and name any client in its header; a relay or NAT on the host can present
+/// an allowed address for any client. The console's edge geo-block and the proxy do not change
+/// that. Bind geography to something the host cannot rewrite, such as a signed assertion from an
+/// independent edge, before relying on the API's jurisdiction screening.
 pub(super) async fn api_screen(
     state: &ApiState,
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,

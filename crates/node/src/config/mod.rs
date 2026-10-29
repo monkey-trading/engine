@@ -40,6 +40,8 @@ mod checkpoints;
 pub use checkpoints::CheckpointSection;
 mod telemetry;
 pub use crate::config::telemetry::*;
+mod proxy;
+pub use proxy::ProxyProtocolSection;
 mod tls;
 pub use tls::{AcmeSection, AcmeTestCa, ApiTlsSection};
 
@@ -127,8 +129,9 @@ pub struct NodeSection {
     pub auth: AuthMode,
 }
 
-/// Limits on the public API. A client is its socket peer IP, with an IPv6 client counted by its
-/// /64; forwarding headers are ignored because the host could forge them.
+/// Limits on the public API. A client is its socket peer IP, or the address a trusted proxy's PROXY
+/// protocol header names, with an IPv6 client counted by its /64; forwarding headers are ignored
+/// because the host could forge them.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ApiSection {
@@ -179,6 +182,9 @@ pub struct ApiSection {
     /// A public CA certificate for the API's domain; without it the API serves only its
     /// self-signed certificate, which clients trust by pinning the attested key.
     pub tls: Option<ApiTlsSection>,
+    /// A pass-through proxy in front of the node, whose PROXY protocol header names each client.
+    /// Absent, the client is the socket peer.
+    pub proxy_protocol: Option<ProxyProtocolSection>,
 }
 
 /// A token bucket: `burst` requests at once, refilled at `per_second`.
@@ -335,8 +341,10 @@ impl NodeConfig {
     /// - genesis lists a market id, a market symbol, or a benchmark name twice
     /// - the engine would reject a genesis command
     /// - `[api.tls.acme]` fails validation (see `AcmeSection::validate`)
+    /// - `[api.proxy_protocol]` fails validation (see `ApiSection::validate_proxy_protocol`)
     /// - this is a production build and a TEE, custody, or feed provider is `mock`, an allowed
-    ///   origin is not `https`, or `[api.tls.acme]` is missing
+    ///   origin is not `https`, `[api.tls.acme]` is missing, or a trusted proxy range is loopback or
+    ///   too wide (see `ApiSection::refuse_unsafe_proxy`)
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         let mut cfg: NodeConfig = toml::from_str(&text)
@@ -346,6 +354,7 @@ impl NodeConfig {
         cfg.api.refuse_insecure_origins(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
         cfg.refuse_mocks(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
         cfg.api.refuse_self_signed(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
+        cfg.api.refuse_unsafe_proxy(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
         cfg.file_sha256 = Sha256::digest(text.as_bytes()).into();
         Ok(cfg)
     }
@@ -445,6 +454,8 @@ mod feeds_tests;
 mod origins_tests;
 #[cfg(test)]
 mod production_tests;
+#[cfg(test)]
+mod proxy_tests;
 #[cfg(test)]
 mod telemetry_tests;
 #[cfg(test)]
