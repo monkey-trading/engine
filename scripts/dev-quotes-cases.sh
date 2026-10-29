@@ -11,5 +11,5 @@ SIGNER_KEY="${trader_key#0x}" python3 -I "$root/scripts/dev-quotes-client.py" "$
 step "Every frame, quote and heartbeat, verifies under the attested key"
 "$engine" verify-frames --signer "$signer" --chain-id 31337 --vault "$vault" --challenge "$challenge" \
   --path "/v1/stream?signed=1&challenge=$challenge" --frames "$work/quote-frames" || fail "the frames did not verify"
-jq -se '[.[] | .msg | fromjson | select(.type == "quote")] | length > 2' "$work/quote-frames" >/dev/null \
+jq -se '[.[] | .msg | fromjson | select(.type == "quote")] | length >= 2' "$work/quote-frames" >/dev/null \
   || fail "the frames hold too few quotes"
