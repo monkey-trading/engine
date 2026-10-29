@@ -433,6 +433,7 @@ fn public_key<'de, D: Deserializer<'de>>(deserializer: D) -> Result<VerifyingKey
 
 mod origins;
 mod test_keys;
+pub(crate) use test_keys::is_published_operator;
 mod validation;
 
 #[cfg(test)]

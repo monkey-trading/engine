@@ -146,13 +146,15 @@ fn a_notice_must_name_a_rate_and_give_seven_days() {
     let at = h.ts + NOTICE_MS;
     assert_eq!(op(&mut h, notice(None, None, at)), rejected("a parameter notice names no rate"));
     let soonest = h.ts + NOTICE_MS;
+    assert_eq!(op(&mut h, notice(Some(10_000), None, soonest)), rejected("profit_fee_bps 10000 must be in 0..10000"));
+    assert_eq!(op(&mut h, notice(None, Some(0), soonest)), rejected("closeout_level_bps 0 must be in 1..=10000"));
     assert_eq!(
         op(&mut h, notice(Some(1_200), None, soonest - 1)),
         rejected(&format!("a parameter notice takes effect no sooner than {soonest}"))
     );
     assert_eq!(
         op(&mut h, notice(Some(1_200), None, engine_core::types::MAX_STAMP_MS + 1)),
-        rejected(&format!("a parameter notice takes effect no sooner than {soonest}"))
+        rejected(&format!("a parameter notice takes effect no later than {}", engine_core::types::MAX_STAMP_MS))
     );
     assert_eq!(op(&mut h, notice(Some(1_200), None, soonest)), vec![Event::AdminApplied]);
 }

@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::engine::{Engine, MarketState};
+use crate::engine::Engine;
 use crate::market::MarketSpec;
 use crate::params::{MAX_RATE_BPS, ProtocolParams};
 use crate::protocol::ProtocolVersion;
@@ -106,21 +106,33 @@ impl Engine {
         if notice.profit_fee_bps.is_none() && notice.closeout_level_bps.is_none() {
             return Err("a parameter notice names no rate".into());
         }
-        if let Some(fee) = notice.profit_fee_bps
-            && (!(0..MAX_RATE_BPS).contains(&fee) || !within_half(fee, launch.profit_fee_bps))
-        {
-            return Err(format!("profit_fee_bps {fee} is outside ±50% of its launch value {}", launch.profit_fee_bps));
+        if let Some(fee) = notice.profit_fee_bps {
+            if !(0..MAX_RATE_BPS).contains(&fee) {
+                return Err(format!("profit_fee_bps {fee} must be in 0..10000"));
+            }
+            if !within_half(fee, launch.profit_fee_bps) {
+                return Err(format!(
+                    "profit_fee_bps {fee} is outside ±50% of its launch value {}",
+                    launch.profit_fee_bps
+                ));
+            }
         }
-        if let Some(level) = notice.closeout_level_bps
-            && (!(1..=MAX_RATE_BPS).contains(&level) || !within_half(level, launch.closeout_level_bps))
-        {
-            return Err(format!(
-                "closeout_level_bps {level} is outside ±50% of its launch value {}",
-                launch.closeout_level_bps
-            ));
+        if let Some(level) = notice.closeout_level_bps {
+            if !(1..=MAX_RATE_BPS).contains(&level) {
+                return Err(format!("closeout_level_bps {level} must be in 1..=10000"));
+            }
+            if !within_half(level, launch.closeout_level_bps) {
+                return Err(format!(
+                    "closeout_level_bps {level} is outside ±50% of its launch value {}",
+                    launch.closeout_level_bps
+                ));
+            }
         }
-        if notice.effective_at < self.now + NOTICE_MS || notice.effective_at > MAX_STAMP_MS {
+        if notice.effective_at < self.now + NOTICE_MS {
             return Err(format!("a parameter notice takes effect no sooner than {}", self.now + NOTICE_MS));
+        }
+        if notice.effective_at > MAX_STAMP_MS {
+            return Err(format!("a parameter notice takes effect no later than {MAX_STAMP_MS}"));
         }
         self.operator_bounds.notice = Some(*notice);
         Ok(())
@@ -228,30 +240,34 @@ impl Engine {
         if self.protocol_version >= ProtocolVersion::V33 && new.max_age_ms > old.max_age_ms {
             relisted.drop_quotes_older_than(self.now, old.max_age_ms);
         }
-        if relisted.index(self.now).is_ok() {
-            return Ok(());
-        }
+        let index = relisted.index(self.now).ok();
         let holders = &self.hot_indexes.as_ref().expect("apply builds derived indexes").holders;
-        let accepts_risk_and_holds = |id| {
-            let held = holders.get(&id).is_some_and(|accounts| !accounts.is_empty());
-            held && self.markets.get(&id).is_some_and(|market| !self.is_reduce_only(market))
-        };
-        if accepts_risk_and_holds(spec.id) {
-            return Err(format!(
-                "market {} has open positions, so price rules it cannot price under need it reduce-only first",
-                spec.id
-            ));
-        }
-        let converts_here = |dependent: &&MarketState| {
-            dependent.spec.id != spec.id && dependent.spec.quote_currency.fx_market() == Some(spec.id)
-        };
-        if let Some(dependent) =
-            self.markets.values().filter(converts_here).find(|dependent| accepts_risk_and_holds(dependent.spec.id))
-        {
-            return Err(format!(
-                "market {} has open positions and converts at market {}, which the price rules cannot price under, so it needs to be reduce-only first",
-                dependent.spec.id, spec.id
-            ));
+        for affected in self.markets.values() {
+            let own = affected.spec.id == spec.id;
+            let converts = affected.spec.quote_currency.fx_market() == Some(spec.id);
+            if !own && !converts {
+                continue;
+            }
+            // No index prices nothing; an index too high to convert a currency prices nothing in it.
+            let unpriced = match index {
+                None => true,
+                Some(index) => converts && !affected.spec.quote_currency.converts_at(index.mid),
+            };
+            let held = holders.get(&affected.spec.id).is_some_and(|accounts| !accounts.is_empty());
+            if !unpriced || !held || self.is_reduce_only(affected) {
+                continue;
+            }
+            return Err(if own {
+                format!(
+                    "market {} has open positions, so price rules it cannot price under need it reduce-only first",
+                    spec.id
+                )
+            } else {
+                format!(
+                    "market {} has open positions and converts at market {}, which the price rules cannot price under, so it needs to be reduce-only first",
+                    affected.spec.id, spec.id
+                )
+            });
         }
         Ok(())
     }

@@ -57,6 +57,18 @@ impl NodeConfig {
     }
 }
 
+/// Whether `address` is the address of a published test key.
+/// Error cases:
+/// - a key `config/test-keys.toml` lists does not parse
+pub(crate) fn is_published_operator(address: AccountId) -> anyhow::Result<bool> {
+    for key in TestKeys::published()?.operator_public_keys {
+        if public_key_address(&key).with_context(|| format!("config/test-keys.toml: {key}"))? == address {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 impl NodeConfig {
     /// Refuses an operator rotation to a published test key unless the TEE is the mock, as
     /// `refuse_test_keys` does for `operator.public_key`.
@@ -64,13 +76,8 @@ impl NodeConfig {
     /// - `tee.provider` is not `mock` and `address` is the address of a published test key
     /// - a key `config/test-keys.toml` lists does not parse
     pub(crate) fn refuse_rotation_to_test_key(&self, address: AccountId) -> anyhow::Result<()> {
-        if self.tee.provider == TeeProvider::Mock {
-            return Ok(());
-        }
-        for key in TestKeys::published()?.operator_public_keys {
-            if public_key_address(&key).with_context(|| format!("config/test-keys.toml: {key}"))? == address {
-                bail!("{address} is a published test key (config/test-keys.toml) whose private key anyone can read");
-            }
+        if self.tee.provider != TeeProvider::Mock && is_published_operator(address)? {
+            bail!("{address} is a published test key (config/test-keys.toml) whose private key anyone can read");
         }
         Ok(())
     }

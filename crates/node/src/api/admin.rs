@@ -11,11 +11,12 @@ use tracing::{Span, debug, info};
 
 use crate::api::{ApiError, ApiResult, ApiState};
 use crate::checkpoints::emission_budget::check_budget;
+use crate::config::is_published_operator;
 
 /// Sequences an admin command the operator signed and returns the events it produced, ending in
 /// `admin_applied` or `admin_rejected`. A request stays out of the log unless the operator may send
-/// its command, it carries the signature of the operator or of a pending rotation's key (which the
-/// engine then judges at the sequenced time), its nonce is the operator's next, and it has
+/// its command, it carries the signature of the operator, or of a pending rotation's key once its
+/// time has come by the node's clock, its nonce is the operator's next, and it has
 /// not expired, so a copy sent after the original was sequenced stays out of the log. Copies that
 /// race the original all pass these checks and are sequenced; the engine, which checks all four
 /// again at the sequenced time, applies one and refuses the rest for their nonce.
@@ -23,6 +24,7 @@ use crate::checkpoints::emission_budget::check_budget;
 /// - a command only the node sequences: client auth, the operator, or a protocol activation
 /// - a signature that is neither the recorded operator's nor a pending rotation's key over this
 ///   command, nonce, and expiry
+/// - with a real enclave, a rotation to a published test key
 /// - an emission schedule whose period budget is not the one the configured vault's MONKEY cap was
 ///   derived from
 /// - a nonce other than the operator's next
@@ -37,7 +39,12 @@ pub(super) async fn admin(State(s): State<ApiState>, Json(req): Json<AdminReques
     // the sequenced time which of them applies.
     let (recorded, rotation) = s.query(|e| (e.operator().copied(), e.operator_bounds().rotation)).await?;
     let current = recorded.unwrap_or(s.operator);
-    let next = rotation.map(|rotation| Operator { address: rotation.address, ..current });
+    // The pending key only once its time has come by the node's clock, so no request the engine
+    // cannot yet authorise enters the log, where it could be copied and sent again after the handover.
+    let now = (s.clock)();
+    let next = rotation
+        .filter(|rotation| rotation.effective_at <= now)
+        .map(|rotation| Operator { address: rotation.address, ..current });
     let Some(operator) =
         [Some(current), next].into_iter().flatten().find(|signer| signer.check(&req.command, &req.auth).is_ok())
     else {
@@ -45,6 +52,14 @@ pub(super) async fn admin(State(s): State<ApiState>, Json(req): Json<AdminReques
         return Err(ApiError::Unauthorized("invalid signature"));
     };
     Span::current().record("id", display(operator.address));
+    // The vault's real attestation means a real enclave, whose operator key must not be a published one.
+    if let AdminCommand::RotateOperator { address } = &req.command
+        && s.attestation.provider != "mock"
+        && is_published_operator(*address).map_err(|_| ApiError::Internal)?
+    {
+        debug!("admin request refused: rotation to a published test key");
+        return Err(ApiError::BadRequest("the operator may not rotate to a published test key".into()));
+    }
     if let (AdminCommand::InitEmissions(schedule), Some(vault)) = (&req.command, s.emission_budget)
         && let Err(reason) = check_budget(vault, schedule.period_budget)
     {

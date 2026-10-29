@@ -244,3 +244,35 @@ fn a_futures_market_must_still_give_a_valid_adjusted_index_under_tighter_rules()
     shorter.price_rules.max_age_ms = 800;
     assert_eq!(op(&mut h, AdminCommand::UpsertMarket(shorter)), vec![Event::AdminApplied]);
 }
+
+#[test]
+fn an_index_too_high_to_convert_a_currency_leaves_its_held_markets_unpriced() {
+    use engine_core::price::SourceQuote;
+    let mut h = Harness::v21();
+    h.list_fx();
+    // EUR-USD's venues may sit 500bps apart, as they do below.
+    let mut eurusd = h.engine.markets()[&common::EURUSD].spec.clone();
+    eurusd.price_rules.max_divergence_bps = 500;
+    h.operator_admin(AdminCommand::UpsertMarket(eurusd));
+    let trader = acct(1);
+    h.deposit(trader, "100000");
+    h.quotes(common::EURUSD, &["1.1", "1.1", "1.1"]);
+    h.quotes(common::DE40, &["20000", "20000", "20000"]);
+    h.market_order(trader, common::DE40, Side::Buy, "1", "20000");
+    // Three venues at 9.9 euros to the dollar, then 750 ms later two at 10.1, past the ceiling of
+    // 10 at which a euro converts.
+    let quote =
+        |venue: &str, mid: &str, ts| SourceQuote { source: venue.into(), mid: common::f(mid), ts, contract: None };
+    let first = (0..3).map(|i| quote(&format!("venue{i}"), "9.9", h.ts)).collect();
+    h.cmd(Command::Prices { market: common::EURUSD, quotes: first });
+    h.advance(750);
+    let second = (3..5).map(|i| quote(&format!("venue{i}"), "10.1", h.ts)).collect();
+    h.cmd(Command::Prices { market: common::EURUSD, quotes: second });
+    let mut h = into_v35(h);
+    let mut shorter = h.engine.markets()[&common::EURUSD].spec.clone();
+    shorter.price_rules.max_age_ms = 500;
+    let reason = "market 6 has open positions and converts at market 4, which the price rules cannot price under, so it needs to be reduce-only first";
+    assert_eq!(op(&mut h, AdminCommand::UpsertMarket(shorter.clone())), rejected(reason));
+    shorter.price_rules.max_age_ms = 800;
+    assert_eq!(op(&mut h, AdminCommand::UpsertMarket(shorter)), vec![Event::AdminApplied]);
+}
