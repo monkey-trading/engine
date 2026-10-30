@@ -133,8 +133,10 @@ def write_report(data):
 
 
 def plots(data, statistics):
+    """Both figures; returns the plotted market labels of the ceilings figure and the hourly-tails figure."""
     rows = [row for row in data["markets"] if row["proposed_ceiling_bps"] is not None]
-    labels = [row["symbol"] for row in rows]
+    ceiling_labels = [row["symbol"] for row in rows]
+    proposed = set(ceiling_labels)
     y = np.arange(len(rows))
     fig, ax = plt.subplots(figsize=(10, 12))
     ax.barh(y, [row["proposed_ceiling_bps"] for row in rows], color=BLUE, alpha=.85, label="Proposed ceiling")
@@ -142,7 +144,7 @@ def plots(data, statistics):
     ax.scatter([row["calibration_only_ceiling_bps"] for row in rows], y, color="white", edgecolor=GREY, s=14,
                label="Calibration-only ceiling", zorder=3)
     ax.axvline(data["objective"]["floor_bps"], color=GREY, ls="--", lw=1, label="Launch close charge (floor)")
-    ax.set(yticks=y, yticklabels=labels, xlabel="basis points of the index price",
+    ax.set(yticks=y, yticklabels=ceiling_labels, xlabel="basis points of the index price",
            title="Proposed close-spread ceilings")
     ax.invert_yaxis()
     ax.grid(axis="x", alpha=.2)
@@ -151,8 +153,9 @@ def plots(data, statistics):
     fig.savefig(RESULTS / "ceilings_vs_need.png", dpi=150, metadata={"Software": "close-spread-calibration"})
     plt.close(fig)
     items = [item for item in statistics["markets"]
-             if item["calibration"].get("hourly_p99_week_block_bootstrap") is not None]
-    labels = [item["market"]["symbol"] for item in items]
+             if item["calibration"].get("hourly_p99_week_block_bootstrap") is not None
+             and item["market"]["symbol"] in proposed]
+    tail_labels = [item["market"]["symbol"] for item in items]
     y = np.arange(len(items))
     calibration = np.array([item["calibration"]["abs_hourly_p99_bps"] for item in items])
     validation = np.array([item["validation"]["abs_hourly_p99_bps"] for item in items])
@@ -162,7 +165,7 @@ def plots(data, statistics):
     ax.hlines(y, low, high, color="#5b75a6", alpha=.65, label="Calibration weekly bootstrap 2.5-97.5%")
     ax.scatter(calibration, y, label="Calibration hourly p99", s=20, color=BLUE)
     ax.scatter(validation, y, label="Validation hourly p99", s=20, marker="x", color=ORANGE)
-    ax.set(yticks=y, yticklabels=labels, xlabel="Absolute in-bar move, close against open (basis points)",
+    ax.set(yticks=y, yticklabels=tail_labels, xlabel="Absolute in-bar move, close against open (basis points)",
            title="Inherited hourly tails: the volatility input")
     ax.invert_yaxis()
     ax.grid(axis="x", alpha=.2)
@@ -172,6 +175,7 @@ def plots(data, statistics):
              ha="center", fontsize=8)
     fig.savefig(RESULTS / "hourly_tails.png", dpi=150, metadata={"Software": "close-spread-calibration"})
     plt.close(fig)
+    return ceiling_labels, tail_labels
 
 
 if __name__ == "__main__":

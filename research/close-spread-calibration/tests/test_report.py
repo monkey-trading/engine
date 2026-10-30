@@ -1,7 +1,7 @@
-"""The report builds figures when a market is blocked."""
+"""The report builds figures when a market is blocked, and both figures leave it out."""
 
-import copy
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,15 +15,18 @@ SPEC.loader.exec_module(REPORT)
 
 class ReportTests(unittest.TestCase):
     def test_blocked_market_is_left_out_of_both_figures(self):
-        import json
         data = json.loads((HERE / "results/ceilings.json").read_text())
-        statistics = copy.deepcopy(json.loads((HERE / "results/market_statistics.json").read_text()))
+        statistics = json.loads((HERE / "results/market_statistics.json").read_text())
+        blocked_symbol = data["markets"][0]["symbol"]
         data["markets"][0].update(proposed_ceiling_bps=None, status="blocked_pending_evidence")
-        statistics["markets"][0]["calibration"].pop("hourly_p99_week_block_bootstrap")
         with tempfile.TemporaryDirectory() as directory, patch.object(REPORT, "RESULTS", Path(directory)):
-            REPORT.plots(data, statistics)
+            ceiling_labels, tail_labels = REPORT.plots(data, statistics)
             self.assertTrue((Path(directory) / "ceilings_vs_need.png").exists())
             self.assertTrue((Path(directory) / "hourly_tails.png").exists())
+        for labels in (ceiling_labels, tail_labels):
+            self.assertNotIn(blocked_symbol, labels)
+        self.assertIn(data["markets"][1]["symbol"], ceiling_labels)
+        self.assertIn(data["markets"][1]["symbol"], tail_labels)
 
 
 if __name__ == "__main__":
