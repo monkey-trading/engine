@@ -148,7 +148,10 @@ impl Engine {
         exit.update_pending(&self.pending_deposits, &self.deposits, &pending);
         exit.update_held(&self.held_deposits, &holds);
         if let Some(frontier) = deposit_frontier {
-            changes.insert(exit_terms_key(), Some(exit.commit_terms(frontier)));
+            changes.insert(
+                exit_terms_key(),
+                Some(exit.commit_terms(frontier, self.custody_checkpoint.map_or(0, |c| c.deposit_count))),
+            );
         }
         let exit = &self.tree.as_ref().expect("inserted above").exit;
         changes.extend(

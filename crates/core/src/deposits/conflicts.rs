@@ -16,6 +16,7 @@ impl Engine {
     pub(super) fn reverse_conflicting_receipts(
         &mut self,
         receipt: &DepositReceipt,
+        exclude: Option<&str>,
         events: &mut Vec<Event>,
     ) -> Result<(), DepositReject> {
         if self.protocol_version < ProtocolVersion::V36
@@ -29,6 +30,11 @@ impl Engine {
             .expect("indexes initialised")
             .conflicts_at(receipt.deposit_id, &receipt.reference());
         for reference in conflicts {
+            // A replacement's orphan yields to its replacement below, not to the sweep: reversing
+            // it here would unwind its cash a second time.
+            if exclude.is_some_and(|excluded| excluded == reference) {
+                continue;
+            }
             self.reverse_live_receipt(&reference, events)?;
         }
         Ok(())

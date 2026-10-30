@@ -55,6 +55,7 @@ fn the_exit_terms_count_every_live_receipt_and_total_the_pending_and_held_princi
         proof.terms.terms,
         ExitTerms {
             deposit_cursor: 4,
+            deposit_base: 0,
             pending: f("52"),
             held: f("30"),
             unheld: Fixed::ZERO,
@@ -96,6 +97,7 @@ fn a_credited_retry_a_reversal_and_a_reinstatement_move_the_totals_and_the_curso
         terms,
         ExitTerms {
             deposit_cursor: 4,
+            deposit_base: 0,
             pending: f("12"),
             held: f("30"),
             unheld: Fixed::ZERO,
@@ -117,6 +119,7 @@ fn a_credited_retry_a_reversal_and_a_reinstatement_move_the_totals_and_the_curso
         proof.terms.terms,
         ExitTerms {
             deposit_cursor: 4,
+            deposit_base: 0,
             pending: f("12"),
             held: Fixed::ZERO,
             unheld: Fixed::ZERO,
@@ -138,6 +141,7 @@ fn a_credited_retry_a_reversal_and_a_reinstatement_move_the_totals_and_the_curso
         terms,
         ExitTerms {
             deposit_cursor: 4,
+            deposit_base: 0,
             pending: f("12"),
             held: f("30"),
             unheld: Fixed::ZERO,
@@ -167,6 +171,7 @@ fn the_cursor_counts_the_finalised_frontiers_deposits_and_each_live_receipt_abov
         proof.terms,
         ExitTerms {
             deposit_cursor: 4,
+            deposit_base: 1,
             pending: f("52"),
             held: f("30"),
             unheld: Fixed::ZERO,
@@ -203,6 +208,7 @@ fn a_replacement_sequenced_before_the_deposit_that_took_its_old_id_leaves_that_i
         terms.terms,
         ExitTerms {
             deposit_cursor: 5,
+            deposit_base: 0,
             pending: f("52"),
             held: f("30"),
             unheld: Fixed::ZERO,
@@ -241,6 +247,7 @@ fn a_live_receipt_at_an_occupied_id_reverses_the_stale_one_so_no_root_holds_both
         terms.terms,
         ExitTerms {
             deposit_cursor: 4,
+            deposit_base: 0,
             pending: f("52"),
             held: f("30"),
             unheld: Fixed::ZERO,
@@ -411,4 +418,30 @@ fn assert_root_matches_rebuild(engine: &mut Engine) {
         assert_eq!(rebuilt.exit_proof(account), engine.exit_proof(account), "{account}");
     }
     assert_eq!(rebuilt.house_pending_deposit_proofs(), engine.house_pending_deposit_proofs());
+}
+
+#[test]
+fn a_restored_snapshot_reinstating_a_reversed_receipt_matches_uninterrupted_replay() {
+    let (mut h, [client, ..], receipts) = custody();
+    // Reverse id 2, commit, and restore the engine from its serialized state: the rebuilt index
+    // must hold the same missing runs and reserved principal, so reinstating id 2 after a restore
+    // clears the reservation exactly as uninterrupted execution does.
+    let seq = h.engine.recorded_deposit(&receipts[2].reference()).unwrap().updated_at_seq;
+    let reverse = DepositUpdate::Reverse { receipt: receipts[2].clone(), observed_at_seq: seq };
+    let events = h.cmd(Command::CustodyDeposit(Box::new(reverse)));
+    assert!(!events.iter().any(|e| matches!(e, Event::CustodyDepositRejected { .. })), "{events:?}");
+    let restored: Engine = serde_json::from_slice(&serde_json::to_vec(&h.engine).unwrap()).unwrap();
+    h.engine = restored;
+    let reversed_at_seq = h.engine.recorded_deposit(&receipts[2].reference()).unwrap().updated_at_seq;
+    let reinstate = DepositUpdate::Reinstate { receipt: receipts[2].clone(), reversed_at_seq };
+    let events = h.cmd(Command::CustodyDeposit(Box::new(reinstate)));
+    assert!(!events.iter().any(|e| matches!(e, Event::CustodyDepositRejected { .. })), "{events:?}");
+    let root = B256::from(h.engine.state_root());
+    let terms = h.engine.exit_proof(client).unwrap().terms;
+    assert_eq!(
+        (terms.terms.deposit_cursor, &terms.terms.gaps, terms.terms.unheld, terms.terms.held_receipts),
+        (4, &Vec::<u64>::new(), Fixed::ZERO, f("182"))
+    );
+    assert!(terms.verify(root));
+    assert_root_matches_rebuild(&mut h.engine);
 }

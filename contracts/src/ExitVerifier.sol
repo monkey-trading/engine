@@ -52,6 +52,7 @@ contract ExitVerifier {
     /// applying leaves.
     struct ExitTerms {
         uint64 depositCursor;
+        uint64 depositBase;
         int128 pending;
         int128 held;
         int128 unheld;
@@ -138,7 +139,15 @@ contract ExitVerifier {
     {
         bytes32 key = keccak256(abi.encodePacked(EXIT_TERMS_LEAF));
         bytes32 value = keccak256(
-            abi.encode(terms.depositCursor, terms.pending, terms.held, terms.unheld, terms.heldReceipts, terms.gaps)
+            abi.encode(
+                terms.depositCursor,
+                terms.depositBase,
+                terms.pending,
+                terms.held,
+                terms.unheld,
+                terms.heldReceipts,
+                terms.gaps
+            )
         );
         return StateTree.proves(root, key, value, siblings);
     }

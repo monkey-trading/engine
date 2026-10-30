@@ -104,6 +104,7 @@ fn session(exit: &ExitProof, equity: Fixed) -> Value {
 fn terms(proof: &ExitTermsProof) -> Value {
     json!({
         "depositCursor": proof.terms.deposit_cursor.to_string(),
+        "depositBase": proof.terms.deposit_base.to_string(),
         "pending": raw(proof.terms.pending),
         "held": raw(proof.terms.held),
         "unheld": raw(proof.terms.unheld),

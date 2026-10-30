@@ -588,9 +588,13 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
             // the pools.
             unheld = _usdcCeil(terms.unheld);
         }
+        if (hasCheckpoint && terms.depositBase > cursor) revert InvalidExitProof();
         uint256 refunds = totalRefundable - (cursor == 0 ? 0 : refundableThrough[cursor - 1]);
         uint256 named;
-        uint256 below = cursor == 0 ? 0 : refundableThrough[cursor - 1];
+        // The span the exit attributes runs from the finalised frontier to the cursor: below the
+        // frontier every deposit is settled, and attributes settled deposits no term names.
+        uint256 below = (cursor == 0 ? 0 : refundableThrough[cursor - 1])
+            - (terms.depositBase == 0 ? 0 : refundableThrough[terms.depositBase - 1]);
         if (hasCheckpoint) named = _markRefundableGaps(cursor, terms.gaps);
         // Every refundable deposit below the cursor is one the root holds for a trader, a named
         // gap, or an unnamed one: attribute them and reserve the greater of the engine's estimate

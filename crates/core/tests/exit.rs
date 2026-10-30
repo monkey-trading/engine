@@ -50,6 +50,7 @@ fn the_exit_leaves_hash_as_an_evm_toolchain_encodes_them() {
     );
     let terms = ExitTerms {
         deposit_cursor: 3,
+        deposit_base: 0,
         pending: f("40"),
         held: f("30"),
         unheld: f("4"),
@@ -58,12 +59,12 @@ fn the_exit_leaves_hash_as_an_evm_toolchain_encodes_them() {
     };
     assert_eq!(
         exit_terms_hash(&terms),
-        "0x2103187dba6c9bfeb7ce69ccc963e15bfaa56279e78762f42c42645d9322508a".parse::<B256>().unwrap()
+        "0xb26d0b5933c815750a41640985551a2bc768a8526d3f168099f8e6a80ff37b35".parse::<B256>().unwrap()
     );
     let gap = ExitTerms { gaps: vec![5, 7], ..terms };
     assert_eq!(
         exit_terms_hash(&gap),
-        "0x72495183f71d1d4c94e0bfbe3f1775377c25f5603b02c7db4f90f055471824aa".parse::<B256>().unwrap()
+        "0xad481e019f29e0fef75b0be0ff29dee109ad868e2332dd9037db49d3a3a67e23".parse::<B256>().unwrap()
     );
     assert_eq!(
         exit_terms_key(),

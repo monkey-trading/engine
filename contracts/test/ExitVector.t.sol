@@ -97,6 +97,7 @@ contract ExitVectorTest is ExitTest {
         vault.startExit(
             ExitVerifier.ExitTerms(
                 uint64(vm.parseJsonUint(fixture, string.concat(terms, ".depositCursor"))),
+                uint64(vm.parseJsonUint(fixture, string.concat(terms, ".depositBase"))),
                 _int128(string.concat(terms, ".pending")),
                 _int128(string.concat(terms, ".held")),
                 _int128(string.concat(terms, ".unheld")),

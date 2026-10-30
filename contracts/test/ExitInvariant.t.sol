@@ -98,7 +98,7 @@ contract ExitHandler is ExitTest {
         // then the named gaps, so the exit reserves no canonical remainder.
         int128 heldReceipts =
             covered == 0 ? int128(0) : int128(uint128(vault.refundableThrough(covered - 1))) * int128(UNIT);
-        terms = _addTerms(cursor, pendingAmount, held, 0, heldReceipts, gaps);
+        terms = _addTerms(cursor, 0, pendingAmount, held, 0, heldReceipts, gaps);
         for (uint256 i; i < actors.length; ++i) {
             uint256 draw = uint256(keccak256(abi.encode(seed, i)));
             states[i] = _addAccount(actors[i], int128(int256(bound(draw, 0, 200_000e6))) * UNIT - 100e6 * UNIT);

@@ -34,7 +34,7 @@ abstract contract RegistryTest is GovernanceTest {
 
     function _deployRegistry() internal {
         governance = _deployGovernance();
-        vault = new Vault(new MockUSDC(), makeAddr("enclave"), governance, multisig, 1e24);
+        vault = new Vault(new MockUSDC(), makeAddr("enclave"), governance, multisig, 1e24, 7 days, 3 days, 1 days);
         monkey = vault.monkey();
         registry = new OperatorRegistry(
             monkey,

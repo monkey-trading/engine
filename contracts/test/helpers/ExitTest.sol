@@ -45,13 +45,15 @@ abstract contract ExitTest is GovernanceTest {
     }
 
     function _addTerms(uint64 cursor, int128 pending, int128 held) internal returns (ExitVerifier.ExitTerms memory) {
-        return _addTerms(cursor, pending, held, 0, 0, new uint64[](0));
+        return _addTerms(cursor, 0, pending, held, 0, 0, new uint64[](0));
     }
 
-    /// @dev Exit terms whose root does not hold the deposit ids `gaps` below `cursor`, whose
-    /// principal, with any unnamed, `unheld` carries, and whose trader receipts hold `heldReceipts`.
+    /// @dev Exit terms whose root does not hold the deposit ids `gaps` in the span from `base` to
+    /// `cursor`, whose principal, with any unnamed, `unheld` carries, and whose live receipts hold
+    /// `heldReceipts`.
     function _addTerms(
         uint64 cursor,
+        uint64 base,
         int128 pending,
         int128 held,
         int128 unheld,
@@ -60,9 +62,9 @@ abstract contract ExitTest is GovernanceTest {
     ) internal returns (ExitVerifier.ExitTerms memory) {
         _leaf(
             keccak256(abi.encodePacked(uint8(24))),
-            keccak256(abi.encode(cursor, pending, held, unheld, heldReceipts, gaps))
+            keccak256(abi.encode(cursor, base, pending, held, unheld, heldReceipts, gaps))
         );
-        return ExitVerifier.ExitTerms(cursor, pending, held, unheld, heldReceipts, gaps);
+        return ExitVerifier.ExitTerms(cursor, base, pending, held, unheld, heldReceipts, gaps);
     }
 
     /// @dev An account leaf with `balance` and no positions, toxicity, or unfinalised principal.

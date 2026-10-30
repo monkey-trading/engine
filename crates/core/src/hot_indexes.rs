@@ -31,6 +31,10 @@ pub(crate) struct HotIndexes {
     /// gaps: what the exit terms commit as the unheld principal.
     pub(crate) unheld_amounts: BTreeMap<u64, Fixed>,
     pub(crate) unheld_total: Fixed,
+    /// The reserved principal of the missing ids past the highest live id, excluded from the terms
+    /// until the cursor passes them, and the highest live id this exclusion is tracked at.
+    excluded_unheld: Fixed,
+    tracked_max: u64,
     /// Principal of the live receipts above the finalised frontier: every one corresponds to a
     /// refundable deposit, and with the named gaps the terms attribute every refundable deposit
     /// below the cursor, so the vault can reserve exactly what no term names.
@@ -128,6 +132,9 @@ impl HotIndexes {
     fn open_missing(&mut self, id: u64, amount: Fixed) {
         self.insert_run(id);
         self.unheld_total += amount;
+        if id > self.tracked_max {
+            self.excluded_unheld += amount;
+        }
         self.unheld_amounts.insert(id, amount);
     }
 
@@ -162,6 +169,9 @@ impl HotIndexes {
     fn close_missing(&mut self, id: u64) {
         if let Some(estimate) = self.unheld_amounts.remove(&id) {
             self.unheld_total -= estimate;
+            if id > self.tracked_max {
+                self.excluded_unheld -= estimate;
+            }
         }
         let Some((&s, &e)) = self.missing.range(..=id).next_back().filter(|(_, end)| **end >= id) else {
             return;
@@ -173,6 +183,33 @@ impl HotIndexes {
         if id < e {
             self.missing.insert(id + 1, e);
         }
+    }
+
+    /// The reserved principal of the missing ids past the highest live id.
+    pub(crate) fn excluded_unheld(&self) -> Fixed {
+        self.excluded_unheld
+    }
+
+    /// The highest vault deposit id a live receipt holds, or zero while none do.
+    fn live_max(&self) -> u64 {
+        self.above_frontier_by_id.last_key_value().map_or(0, |(id, _)| *id)
+    }
+
+    /// Moves the above-cursor exclusion to the current highest live id: ids the cursor passes join
+    /// the reserved principal; ids a reversal leaves past it leave. Each entry crosses once per
+    /// move of the highest live id across it.
+    pub(crate) fn track_live_max(&mut self) {
+        let max = self.live_max();
+        if max == self.tracked_max {
+            return;
+        }
+        let crossed: Fixed = if max > self.tracked_max {
+            self.unheld_amounts.range((self.tracked_max + 1)..=max).map(|(_, amount)| *amount).sum()
+        } else {
+            -self.unheld_amounts.range((max + 1)..=self.tracked_max).map(|(_, amount)| *amount).sum::<Fixed>()
+        };
+        self.excluded_unheld -= crossed;
+        self.tracked_max = max;
     }
 
     /// Forgets missing ids at or below the finalised frontier: every id below the base is settled,
@@ -270,6 +307,11 @@ impl Engine {
                 indexes.unheld_total += amount;
             }
         }
+        // The exclusion is recomputed from the restored state: the principal of the missing ids
+        // past the highest live id stays out of the terms until the cursor passes them.
+        indexes.tracked_max = indexes.live_max();
+        indexes.excluded_unheld =
+            indexes.unheld_amounts.range((indexes.tracked_max + 1)..).map(|(_, amount)| *amount).sum();
         for recorded in self.deposits.values() {
             if let Some(held) = recorded.uncredited.filter(|held| held.reason.holds_deposit()) {
                 indexes.terminal_deposit_holds.entry(recorded.receipt.transaction_reference()).or_insert(held);
