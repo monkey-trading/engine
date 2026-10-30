@@ -1,0 +1,344 @@
+[
+  {
+    "mid": "100",
+    "opening_mid": "100",
+    "current": "10",
+    "quantity": "5",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 10000,
+    "tiers": [
+      [
+        null,
+        100
+      ]
+    ],
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "name": "long-close",
+    "expected_price_raw": 99870000000,
+    "expected_quantity_raw": 5000000000,
+    "expected_spread_bps": 13
+  },
+  {
+    "mid": "100",
+    "opening_mid": "100",
+    "current": "-10",
+    "quantity": "5",
+    "buy": true,
+    "currency": "USD",
+    "fx": null,
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 10000,
+    "tiers": [
+      [
+        null,
+        100
+      ]
+    ],
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "name": "short-close",
+    "expected_price_raw": 100130000000,
+    "expected_quantity_raw": 5000000000,
+    "expected_spread_bps": 13
+  },
+  {
+    "mid": "100",
+    "opening_mid": "100",
+    "current": "10",
+    "quantity": "15",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "minimum_bps": 0,
+    "toxicity_bps": 0,
+    "multiplier_bps": 10000,
+    "tiers": [
+      [
+        null,
+        100
+      ]
+    ],
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "name": "reversal",
+    "expected_price_raw": 99666666666,
+    "expected_quantity_raw": 15000000000,
+    "expected_spread_bps": 33
+  },
+  {
+    "mid": "100",
+    "opening_mid": "100",
+    "current": "10",
+    "quantity": "15",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 10000,
+    "tiers": [
+      [
+        null,
+        100
+      ]
+    ],
+    "reduce_only": true,
+    "liquidation": false,
+    "deposit": "1000000",
+    "name": "reduce-clamps",
+    "expected_price_raw": 99870000000,
+    "expected_quantity_raw": 10000000000,
+    "expected_spread_bps": 13
+  },
+  {
+    "mid": "100.123456789",
+    "opening_mid": "100.123456789",
+    "current": "10",
+    "quantity": "15",
+    "buy": false,
+    "currency": "EUR",
+    "fx": "1.234567891",
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 15000,
+    "tiers": [
+      [
+        null,
+        100
+      ]
+    ],
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "name": "eur-reversal",
+    "expected_price_raw": 99492679010,
+    "expected_quantity_raw": 15000000000,
+    "expected_spread_bps": 63
+  },
+  {
+    "mid": "100.123456789",
+    "opening_mid": "100.123456789",
+    "current": "10",
+    "quantity": "15",
+    "buy": false,
+    "currency": "JPY",
+    "fx": "125.123456789",
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 15000,
+    "tiers": [
+      [
+        null,
+        100
+      ]
+    ],
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "name": "jpy-reversal",
+    "expected_price_raw": 99492679004,
+    "expected_quantity_raw": 15000000000,
+    "expected_spread_bps": 63
+  },
+  {
+    "mid": "0.000000333",
+    "opening_mid": "0.000000333",
+    "current": "10",
+    "quantity": "5",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "minimum_bps": 1,
+    "toxicity_bps": 0,
+    "multiplier_bps": 10000,
+    "tiers": [
+      [
+        null,
+        100
+      ]
+    ],
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "name": "raw-unit-sell",
+    "expected_price_raw": 332,
+    "expected_quantity_raw": 5000000000,
+    "expected_spread_bps": 30
+  },
+  {
+    "mid": "0.000000001",
+    "opening_mid": "0.000000001",
+    "current": "10",
+    "quantity": "5",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "minimum_bps": 1,
+    "toxicity_bps": 0,
+    "multiplier_bps": 10000,
+    "tiers": [
+      [
+        null,
+        100
+      ]
+    ],
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "name": "precision-floor-sell",
+    "expected_price_raw": 1,
+    "expected_quantity_raw": 5000000000,
+    "expected_spread_bps": 0
+  },
+  {
+    "mid": "0.000000001",
+    "opening_mid": "0.000000001",
+    "current": "-10",
+    "quantity": "5",
+    "buy": true,
+    "currency": "USD",
+    "fx": null,
+    "minimum_bps": 1,
+    "toxicity_bps": 0,
+    "multiplier_bps": 10000,
+    "tiers": [
+      [
+        null,
+        100
+      ]
+    ],
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "name": "precision-floor-buy",
+    "expected_price_raw": 2,
+    "expected_quantity_raw": 5000000000,
+    "expected_spread_bps": 10000
+  },
+  {
+    "mid": "94",
+    "opening_mid": "100",
+    "current": "10",
+    "quantity": "10",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 10000,
+    "tiers": [
+      [
+        null,
+        100
+      ]
+    ],
+    "reduce_only": false,
+    "liquidation": true,
+    "deposit": "100",
+    "name": "liquidation",
+    "expected_price_raw": 93906000000,
+    "expected_quantity_raw": 10000000000,
+    "expected_spread_bps": 10
+  },
+  {
+    "mid": "80",
+    "opening_mid": "100",
+    "current": "10",
+    "quantity": "10",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 10000,
+    "tiers": [
+      [
+        null,
+        100
+      ]
+    ],
+    "reduce_only": false,
+    "liquidation": true,
+    "deposit": "100",
+    "name": "liquidation-gap-bad-debt",
+    "expected_price_raw": 79920000000,
+    "expected_quantity_raw": 10000000000,
+    "expected_spread_bps": 10,
+    "expected_bad_debt_raw": 100800000000
+  },
+  {
+    "mid": "100",
+    "current": "10",
+    "quantity": "25",
+    "buy": false,
+    "currency": "USD",
+    "fx": null,
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 20000,
+    "tiers": [
+      [
+        "100",
+        0
+      ],
+      [
+        "300",
+        30
+      ],
+      [
+        null,
+        80
+      ]
+    ],
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "name": "banded-usd-reversal",
+    "expected_price_raw": 99054000000,
+    "expected_quantity_raw": 25000000000,
+    "expected_spread_bps": 94,
+    "opening_mid": "100"
+  },
+  {
+    "mid": "100.5",
+    "current": "10",
+    "quantity": "25",
+    "buy": false,
+    "currency": "EUR",
+    "fx": "1.25",
+    "minimum_bps": 10,
+    "toxicity_bps": 3,
+    "multiplier_bps": 40000,
+    "tiers": [
+      [
+        "100",
+        0
+      ],
+      [
+        "300",
+        30
+      ],
+      [
+        null,
+        80
+      ]
+    ],
+    "reduce_only": false,
+    "liquidation": false,
+    "deposit": "1000000",
+    "name": "banded-eur-reversal",
+    "expected_price_raw": 98670150000,
+    "expected_quantity_raw": 25000000000,
+    "expected_spread_bps": 182,
+    "opening_mid": "100.5"
+  }
+]

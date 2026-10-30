@@ -59,6 +59,8 @@ jobs:
                 agents/skills/agent-code-review/scripts/*) areas+=" agent_scripts" ;;
                 # The merge queue's approval gate and its test.
                 scripts/check-merge-approved.sh | scripts/check-merge-approved-test.sh) areas+=" merge_approval" ;;
+                # The engine-core agreement test reads the research study's shared vectors.
+                research/close-spread-calibration/fixtures/*) areas+=" rust" ;;
                 # Read by no build, test, scenario, or image.
                 agents/* | AGENTS.md | CLAUDE.md | README.md | SECURITY.md | research/* | image/README.md \
                   | crates/core/README.md | crates/node/README.md | crates/verify/README.md \

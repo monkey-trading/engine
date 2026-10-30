@@ -220,6 +220,8 @@ this crate and reproduce the signed state roots exactly.
   `tests/stress.rs` stress levels from `V13`, `tests/stress_activation.rs` the activation of
   `V13` over earlier divergence triggers and move references, `tests/quote_hours.rs` quotes from
   outside a market's hours from `V21`, and `tests/futures.rs` markets priced from futures
+- `tests/close_spread_calibration.rs` — fill, rounding and liquidation agreement vectors for the
+  research-only close-spread model; shares input fixtures with the Python study
 - `tests/access.rs`, `tests/access/` — signed declarations, source proofs, policy refusals, holds,
   resting orders covered by their placement screening, replay compatibility, and the `V24`
   reference session (`examples/reference_log/v24.rs`) with its assertions

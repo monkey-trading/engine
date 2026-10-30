@@ -1,0 +1,481 @@
+{
+  "audit_utc": "2026-10-23T22:27:27.505849+00:00",
+  "raw_manifest_sha256": "d37a2ce426dde915150fc39f6c5093d350aaaac8a139adf7a29ad32deb31db26",
+  "raw_files_modified": false,
+  "retained_body_bytes": 12647,
+  "decoded_captures": 9,
+  "incomplete_captures": 9,
+  "notes": [
+    "Metadata names translated explicitly; original manifest and bodies unchanged.",
+    "response_complete requires coordinator truncated=false and byte count below capture cap.",
+    "Kraken pair keys confirmed against retained response result keys; clock semantics remain unverified.",
+    "Binance historical candles and recent Coinbase/Kraken samples are not simultaneous.",
+    "Dukascopy scale evidence and bodies unavailable; daily format unsupported.",
+    "FRED/TrueFX decoders outside this utility; FRED truncated and TrueFX blank.",
+    "No volatility, divergence, staleness or tail estimates."
+  ],
+  "results": [
+    {
+      "name": "binance_BTC",
+      "source_record_index": 0,
+      "audit_manifest": {
+        "url": "https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1s&startTime=1735941540000&endTime=1735941544999&limit=5",
+        "retrieval_started_utc": "2026-10-23T22:18:22.874129+00:00",
+        "retrieval_finished_utc": "2026-10-23T22:18:24.252479+00:00",
+        "http_status": 200,
+        "response_complete": true,
+        "truncated": false,
+        "transport_error": null,
+        "byte_count": 795,
+        "sha256": "2112dc3ad578c0c660c8c1e602fc1a3dfcc17405ec6fcc4b4ba13e87a880e1f7",
+        "data_origin": "provider",
+        "format": "binance-rest-ms",
+        "symbol": "BTCUSDT"
+      },
+      "status": "decoded",
+      "reason": null,
+      "computed_sha256": "2112dc3ad578c0c660c8c1e602fc1a3dfcc17405ec6fcc4b4ba13e87a880e1f7",
+      "decoded_row_count": 5,
+      "provider_time_range_utc": [
+        "2025-01-03T21:59:00.000000000Z",
+        "2025-01-03T21:59:04.999000000Z"
+      ],
+      "client_arrival_utc": null,
+      "body_is_only_ascii_whitespace": false
+    },
+    {
+      "name": "coinbase_BTC",
+      "source_record_index": 1,
+      "audit_manifest": {
+        "url": "https://api.exchange.coinbase.com/products/BTC-USD/trades?limit=3",
+        "retrieval_started_utc": "2026-10-23T22:18:22.874546+00:00",
+        "retrieval_finished_utc": "2026-10-23T22:18:23.363835+00:00",
+        "http_status": 200,
+        "response_complete": true,
+        "truncated": false,
+        "transport_error": null,
+        "byte_count": 358,
+        "sha256": "c0f1c9066fa32e15fc341bcac9ec7f18918332c7c34c1563eac388804509a638",
+        "data_origin": "provider",
+        "format": "coinbase-rest-trades",
+        "symbol": "BTC-USD"
+      },
+      "status": "decoded",
+      "reason": null,
+      "computed_sha256": "c0f1c9066fa32e15fc341bcac9ec7f18918332c7c34c1563eac388804509a638",
+      "decoded_row_count": 3,
+      "provider_time_range_utc": [
+        "2026-10-23T22:18:21.775354000Z",
+        "2026-10-23T22:18:23.227497000Z"
+      ],
+      "client_arrival_utc": null,
+      "body_is_only_ascii_whitespace": false
+    },
+    {
+      "name": "binance_ETH",
+      "source_record_index": 2,
+      "audit_manifest": {
+        "url": "https://data-api.binance.vision/api/v3/klines?symbol=ETHUSDT&interval=1s&startTime=1735941540000&endTime=1735941544999&limit=5",
+        "retrieval_started_utc": "2026-10-23T22:18:22.874660+00:00",
+        "retrieval_finished_utc": "2026-10-23T22:18:24.253428+00:00",
+        "http_status": 200,
+        "response_complete": true,
+        "truncated": false,
+        "transport_error": null,
+        "byte_count": 768,
+        "sha256": "7f20bb3ecf1e750c08aff251f628a252ab8d6ddc87d17a6c9b0fe63e10046d2c",
+        "data_origin": "provider",
+        "format": "binance-rest-ms",
+        "symbol": "ETHUSDT"
+      },
+      "status": "decoded",
+      "reason": null,
+      "computed_sha256": "7f20bb3ecf1e750c08aff251f628a252ab8d6ddc87d17a6c9b0fe63e10046d2c",
+      "decoded_row_count": 5,
+      "provider_time_range_utc": [
+        "2025-01-03T21:59:00.000000000Z",
+        "2025-01-03T21:59:04.999000000Z"
+      ],
+      "client_arrival_utc": null,
+      "body_is_only_ascii_whitespace": false
+    },
+    {
+      "name": "coinbase_ETH",
+      "source_record_index": 3,
+      "audit_manifest": {
+        "url": "https://api.exchange.coinbase.com/products/ETH-USD/trades?limit=3",
+        "retrieval_started_utc": "2026-10-23T22:18:22.874712+00:00",
+        "retrieval_finished_utc": "2026-10-23T22:18:23.359587+00:00",
+        "http_status": 200,
+        "response_complete": true,
+        "truncated": false,
+        "transport_error": null,
+        "byte_count": 354,
+        "sha256": "e51c5f8e3f5b467344486072bb257472bc4c120252f62e1893eeb4443c583d6b",
+        "data_origin": "provider",
+        "format": "coinbase-rest-trades",
+        "symbol": "ETH-USD"
+      },
+      "status": "decoded",
+      "reason": null,
+      "computed_sha256": "e51c5f8e3f5b467344486072bb257472bc4c120252f62e1893eeb4443c583d6b",
+      "decoded_row_count": 3,
+      "provider_time_range_utc": [
+        "2026-10-23T22:18:20.978416000Z",
+        "2026-10-23T22:18:20.987402000Z"
+      ],
+      "client_arrival_utc": null,
+      "body_is_only_ascii_whitespace": false
+    },
+    {
+      "name": "binance_SOL",
+      "source_record_index": 4,
+      "audit_manifest": {
+        "url": "https://data-api.binance.vision/api/v3/klines?symbol=SOLUSDT&interval=1s&startTime=1735941540000&endTime=1735941544999&limit=5",
+        "retrieval_started_utc": "2026-10-23T22:18:23.359865+00:00",
+        "retrieval_finished_utc": "2026-10-23T22:18:24.536613+00:00",
+        "http_status": 200,
+        "response_complete": true,
+        "truncated": false,
+        "transport_error": null,
+        "byte_count": 764,
+        "sha256": "b0f5fc663acb05c1d61f4dda171293598e5730ce497b66f7f5caae67168e78b0",
+        "data_origin": "provider",
+        "format": "binance-rest-ms",
+        "symbol": "SOLUSDT"
+      },
+      "status": "decoded",
+      "reason": null,
+      "computed_sha256": "b0f5fc663acb05c1d61f4dda171293598e5730ce497b66f7f5caae67168e78b0",
+      "decoded_row_count": 5,
+      "provider_time_range_utc": [
+        "2025-01-03T21:59:00.000000000Z",
+        "2025-01-03T21:59:04.999000000Z"
+      ],
+      "client_arrival_utc": null,
+      "body_is_only_ascii_whitespace": false
+    },
+    {
+      "name": "coinbase_SOL",
+      "source_record_index": 5,
+      "audit_manifest": {
+        "url": "https://api.exchange.coinbase.com/products/SOL-USD/trades?limit=3",
+        "retrieval_started_utc": "2026-10-23T22:18:23.364069+00:00",
+        "retrieval_finished_utc": "2026-10-23T22:18:23.972580+00:00",
+        "http_status": 200,
+        "response_complete": true,
+        "truncated": false,
+        "transport_error": null,
+        "byte_count": 351,
+        "sha256": "0b401a7bc24d829bc40c585a2595990a9ff8308e2638a16806a610d3a022fd1c",
+        "data_origin": "provider",
+        "format": "coinbase-rest-trades",
+        "symbol": "SOL-USD"
+      },
+      "status": "decoded",
+      "reason": null,
+      "computed_sha256": "0b401a7bc24d829bc40c585a2595990a9ff8308e2638a16806a610d3a022fd1c",
+      "decoded_row_count": 3,
+      "provider_time_range_utc": [
+        "2026-10-23T22:18:20.974313000Z",
+        "2026-10-23T22:18:21.097610000Z"
+      ],
+      "client_arrival_utc": null,
+      "body_is_only_ascii_whitespace": false
+    },
+    {
+      "name": "dukascopy_EURUSD",
+      "source_record_index": 6,
+      "audit_manifest": {
+        "url": "https://datafeed.dukascopy.com/datafeed/EURUSD/2025/00/03/21h_ticks.bi5",
+        "retrieval_started_utc": "2026-10-23T22:18:23.972909+00:00",
+        "retrieval_finished_utc": "2026-10-23T22:18:36.084696+00:00",
+        "http_status": null,
+        "response_complete": false,
+        "truncated": false,
+        "transport_error": "URLError: <urlopen error _ssl.c:1064: The handshake operation timed out>",
+        "byte_count": 0,
+        "sha256": null,
+        "data_origin": "provider",
+        "format": "dukascopy-legacy-hour-lzma-alone"
+      },
+      "status": "incomplete",
+      "reason": "missing response body",
+      "computed_sha256": null,
+      "decoded_row_count": 0,
+      "provider_time_range_utc": null,
+      "client_arrival_utc": null
+    },
+    {
+      "name": "dukascopy_GBPUSD",
+      "source_record_index": 7,
+      "audit_manifest": {
+        "url": "https://datafeed.dukascopy.com/datafeed/GBPUSD/2025/00/03/21h_ticks.bi5",
+        "retrieval_started_utc": "2026-10-23T22:18:24.252783+00:00",
+        "retrieval_finished_utc": "2026-10-23T22:18:36.313855+00:00",
+        "http_status": null,
+        "response_complete": false,
+        "truncated": false,
+        "transport_error": "URLError: <urlopen error _ssl.c:1064: The handshake operation timed out>",
+        "byte_count": 0,
+        "sha256": null,
+        "data_origin": "provider",
+        "format": "dukascopy-legacy-hour-lzma-alone"
+      },
+      "status": "incomplete",
+      "reason": "missing response body",
+      "computed_sha256": null,
+      "decoded_row_count": 0,
+      "provider_time_range_utc": null,
+      "client_arrival_utc": null
+    },
+    {
+      "name": "dukascopy_USDJPY",
+      "source_record_index": 8,
+      "audit_manifest": {
+        "url": "https://datafeed.dukascopy.com/datafeed/USDJPY/2025/00/03/21h_ticks.bi5",
+        "retrieval_started_utc": "2026-10-23T22:18:24.253583+00:00",
+        "retrieval_finished_utc": "2026-10-23T22:18:36.313698+00:00",
+        "http_status": null,
+        "response_complete": false,
+        "truncated": false,
+        "transport_error": "URLError: <urlopen error _ssl.c:1064: The handshake operation timed out>",
+        "byte_count": 0,
+        "sha256": null,
+        "data_origin": "provider",
+        "format": "dukascopy-legacy-hour-lzma-alone"
+      },
+      "status": "incomplete",
+      "reason": "missing response body",
+      "computed_sha256": null,
+      "decoded_row_count": 0,
+      "provider_time_range_utc": null,
+      "client_arrival_utc": null
+    },
+    {
+      "name": "dukascopy_AUDUSD",
+      "source_record_index": 9,
+      "audit_manifest": {
+        "url": "https://datafeed.dukascopy.com/datafeed/AUDUSD/2025/00/03/21h_ticks.bi5",
+        "retrieval_started_utc": "2026-10-23T22:18:24.536864+00:00",
+        "retrieval_finished_utc": "2026-10-23T22:18:36.571030+00:00",
+        "http_status": null,
+        "response_complete": false,
+        "truncated": false,
+        "transport_error": "URLError: <urlopen error _ssl.c:1064: The handshake operation timed out>",
+        "byte_count": 0,
+        "sha256": null,
+        "data_origin": "provider",
+        "format": "dukascopy-legacy-hour-lzma-alone"
+      },
+      "status": "incomplete",
+      "reason": "missing response body",
+      "computed_sha256": null,
+      "decoded_row_count": 0,
+      "provider_time_range_utc": null,
+      "client_arrival_utc": null
+    },
+    {
+      "name": "kraken_XBTUSD",
+      "source_record_index": 10,
+      "audit_manifest": {
+        "url": "https://api.kraken.com/0/public/Depth?pair=XBTUSD&count=1",
+        "retrieval_started_utc": "2026-10-23T22:18:36.084724+00:00",
+        "retrieval_finished_utc": "2026-10-23T22:18:36.647512+00:00",
+        "http_status": 200,
+        "response_complete": true,
+        "truncated": false,
+        "transport_error": null,
+        "byte_count": 124,
+        "sha256": "e7dcdb2665b577d64ebfd3937d5fbf27f1e469e1ce7cf0b0ef0ba026c51672ee",
+        "data_origin": "provider",
+        "format": "kraken-rest-depth-seconds",
+        "pair_key": "XXBTZUSD"
+      },
+      "status": "decoded",
+      "reason": null,
+      "computed_sha256": "e7dcdb2665b577d64ebfd3937d5fbf27f1e469e1ce7cf0b0ef0ba026c51672ee",
+      "decoded_row_count": 2,
+      "provider_time_range_utc": [
+        "2026-10-23T22:18:34.000000000Z",
+        "2026-10-23T22:18:36.000000000Z"
+      ],
+      "client_arrival_utc": null,
+      "body_is_only_ascii_whitespace": false
+    },
+    {
+      "name": "kraken_USDTUSD",
+      "source_record_index": 11,
+      "audit_manifest": {
+        "url": "https://api.kraken.com/0/public/Depth?pair=USDTUSD&count=1",
+        "retrieval_started_utc": "2026-10-23T22:18:36.313720+00:00",
+        "retrieval_finished_utc": "2026-10-23T22:18:36.647431+00:00",
+        "http_status": 200,
+        "response_complete": true,
+        "truncated": false,
+        "transport_error": null,
+        "byte_count": 131,
+        "sha256": "f4db9ef212056ec154d3040f05cdd960dd12e35d71176eabf735680d75a76a99",
+        "data_origin": "provider",
+        "format": "kraken-rest-depth-seconds",
+        "pair_key": "USDTZUSD"
+      },
+      "status": "decoded",
+      "reason": null,
+      "computed_sha256": "f4db9ef212056ec154d3040f05cdd960dd12e35d71176eabf735680d75a76a99",
+      "decoded_row_count": 2,
+      "provider_time_range_utc": [
+        "2026-10-23T22:09:14.000000000Z",
+        "2026-10-23T22:18:08.000000000Z"
+      ],
+      "client_arrival_utc": null,
+      "body_is_only_ascii_whitespace": false
+    },
+    {
+      "name": "fred_fx",
+      "source_record_index": 12,
+      "audit_manifest": {
+        "url": "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DEXUSEU,DEXUSUK,DEXJPUS,DEXUSAL&cosd=2025-01-03&coed=2025-01-06",
+        "retrieval_started_utc": "2026-10-23T22:18:36.313905+00:00",
+        "retrieval_finished_utc": "2026-10-23T22:18:40.198191+00:00",
+        "http_status": 200,
+        "response_complete": false,
+        "truncated": true,
+        "transport_error": null,
+        "byte_count": 8193,
+        "sha256": "c336eff477df9c5b8c6d226f9115de432878d2eab38ff33fad260f928709888c",
+        "data_origin": "provider",
+        "format": "unsupported-fred_fx"
+      },
+      "status": "incomplete",
+      "reason": "incomplete response capture",
+      "computed_sha256": "c336eff477df9c5b8c6d226f9115de432878d2eab38ff33fad260f928709888c",
+      "decoded_row_count": 0,
+      "provider_time_range_utc": null,
+      "client_arrival_utc": null,
+      "body_is_only_ascii_whitespace": false
+    },
+    {
+      "name": "truefx",
+      "source_record_index": 13,
+      "audit_manifest": {
+        "url": "https://webrates.truefx.com/rates/connect.html?f=csv&c=EUR/USD,GBP/USD,USD/JPY,AUD/USD&s=y",
+        "retrieval_started_utc": "2026-10-23T22:18:36.571059+00:00",
+        "retrieval_finished_utc": "2026-10-23T22:18:37.183150+00:00",
+        "http_status": 200,
+        "response_complete": true,
+        "truncated": false,
+        "transport_error": null,
+        "byte_count": 2,
+        "sha256": "7eb70257593da06f682a3ddda54a9d260d4fc514f645237f5ca74b08f8da61a6",
+        "data_origin": "provider",
+        "format": "unsupported-truefx"
+      },
+      "status": "incomplete",
+      "reason": "unsupported explicit format: unsupported-truefx",
+      "computed_sha256": "7eb70257593da06f682a3ddda54a9d260d4fc514f645237f5ca74b08f8da61a6",
+      "decoded_row_count": 0,
+      "provider_time_range_utc": null,
+      "client_arrival_utc": null,
+      "body_is_only_ascii_whitespace": true
+    },
+    {
+      "name": "binance_weekend",
+      "source_record_index": 14,
+      "audit_manifest": {
+        "url": "https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1s&startTime=1735992000000&endTime=1735992004999&limit=5",
+        "retrieval_started_utc": "2026-10-23T22:18:36.647712+00:00",
+        "retrieval_finished_utc": "2026-10-23T22:18:37.696523+00:00",
+        "http_status": 200,
+        "response_complete": true,
+        "truncated": false,
+        "transport_error": null,
+        "byte_count": 807,
+        "sha256": "18ac621d3aab21744c399e6d794d1ccdc6d06edcbc7583d36dc729ed1299d7d3",
+        "data_origin": "provider",
+        "format": "binance-rest-ms",
+        "symbol": "BTCUSDT"
+      },
+      "status": "decoded",
+      "reason": null,
+      "computed_sha256": "18ac621d3aab21744c399e6d794d1ccdc6d06edcbc7583d36dc729ed1299d7d3",
+      "decoded_row_count": 5,
+      "provider_time_range_utc": [
+        "2025-01-04T12:00:00.000000000Z",
+        "2025-01-04T12:00:04.999000000Z"
+      ],
+      "client_arrival_utc": null,
+      "body_is_only_ascii_whitespace": false
+    },
+    {
+      "name": "dukascopy_weekend",
+      "source_record_index": 15,
+      "audit_manifest": {
+        "url": "https://datafeed.dukascopy.com/datafeed/EURUSD/2025/00/04/12h_ticks.bi5",
+        "retrieval_started_utc": "2026-10-23T22:18:36.647883+00:00",
+        "retrieval_finished_utc": "2026-10-23T22:18:48.707512+00:00",
+        "http_status": null,
+        "response_complete": false,
+        "truncated": false,
+        "transport_error": "URLError: <urlopen error _ssl.c:1064: The handshake operation timed out>",
+        "byte_count": 0,
+        "sha256": null,
+        "data_origin": "provider",
+        "format": "dukascopy-legacy-hour-lzma-alone"
+      },
+      "status": "incomplete",
+      "reason": "missing response body",
+      "computed_sha256": null,
+      "decoded_row_count": 0,
+      "provider_time_range_utc": null,
+      "client_arrival_utc": null
+    },
+    {
+      "name": "dukascopy_reopen",
+      "source_record_index": 16,
+      "audit_manifest": {
+        "url": "https://datafeed.dukascopy.com/datafeed/EURUSD/2025/00/05/22h_ticks.bi5",
+        "retrieval_started_utc": "2026-10-23T22:18:37.183420+00:00",
+        "retrieval_finished_utc": "2026-10-23T22:18:48.212068+00:00",
+        "http_status": null,
+        "response_complete": false,
+        "truncated": false,
+        "transport_error": "URLError: <urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1082)>",
+        "byte_count": 0,
+        "sha256": null,
+        "data_origin": "provider",
+        "format": "dukascopy-legacy-hour-lzma-alone"
+      },
+      "status": "incomplete",
+      "reason": "missing response body",
+      "computed_sha256": null,
+      "decoded_row_count": 0,
+      "provider_time_range_utc": null,
+      "client_arrival_utc": null
+    },
+    {
+      "name": "dukascopy_christmas",
+      "source_record_index": 17,
+      "audit_manifest": {
+        "url": "https://datafeed.dukascopy.com/datafeed/EURUSD/2024/11/25/12h_ticks.bi5",
+        "retrieval_started_utc": "2026-10-23T22:18:37.696763+00:00",
+        "retrieval_finished_utc": "2026-10-23T22:18:49.733982+00:00",
+        "http_status": null,
+        "response_complete": false,
+        "truncated": false,
+        "transport_error": "URLError: <urlopen error _ssl.c:1064: The handshake operation timed out>",
+        "byte_count": 0,
+        "sha256": null,
+        "data_origin": "provider",
+        "format": "dukascopy-legacy-hour-lzma-alone"
+      },
+      "status": "incomplete",
+      "reason": "missing response body",
+      "computed_sha256": null,
+      "decoded_row_count": 0,
+      "provider_time_range_utc": null,
+      "client_arrival_utc": null
+    }
+  ],
+  "scope": "source-access and format audit only; raw observations retained privately, no calibration or redistribution approval"
+}
