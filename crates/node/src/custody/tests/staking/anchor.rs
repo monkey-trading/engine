@@ -23,6 +23,7 @@ impl VaultReader for ForkReader {
                 number,
                 hash: if number == 3 { self.endpoint } else { canonical_hash(number) },
                 parent_hash: B256::ZERO,
+                timestamp: number * 12,
             })
             .collect())
     }

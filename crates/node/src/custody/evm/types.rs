@@ -43,6 +43,13 @@ pub trait VaultReader {
     /// Every staking and operator registry event in the contiguous proven hash window, in chain
     /// order. Each log query must name its proven block hash, including empty responses.
     fn staking_events(&self, blocks: &[BlockRef]) -> impl Future<Output = anyhow::Result<Vec<StakingEvent>>> + Send;
+
+    /// The registry the configured staking contract records as its deployer, in the canonical
+    /// block `at`. A reader that cannot read it refuses.
+    fn staking_registry(&self, at: BlockRef) -> impl Future<Output = anyhow::Result<Address>> + Send {
+        let _ = at;
+        async { anyhow::bail!("this reader does not read the staking contract's registry") }
+    }
 }
 
 /// A block by height and hash.

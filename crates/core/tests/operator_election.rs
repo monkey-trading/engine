@@ -47,6 +47,16 @@ fn elect_soon(h: &mut Harness, epoch: u64, admin_key: AccountId, chain_ref: &str
     elect(h, epoch, admin_key, effective_at, chain_ref)
 }
 
+/// Records the staking mirror's finalised frontier at the next block, stamped `time` on chain.
+fn finalised(h: &mut Harness, time: Millis) -> Vec<Event> {
+    let block = h.log.len() as u64;
+    h.cmd(Command::StakingProgress {
+        block,
+        block_hash: alloy_primitives::B256::repeat_byte(9),
+        block_time: Some(time),
+    })
+}
+
 /// `v37` with rotation on.
 fn rotating() -> Harness {
     let mut h = Harness::v37();
@@ -127,7 +137,14 @@ fn an_elected_key_takes_effect_at_the_elections_effective_time() {
     assert_eq!(h.engine.operator_bounds().rotation, Some(PendingRotation { address: elected(), effective_at }));
     assert_eq!(
         h.engine.operator_election().last,
-        Some(Election { epoch: 4, candidate: CANDIDATE, admin_key: elected(), effective_at, cancelled: false })
+        Some(Election {
+            epoch: 4,
+            candidate: CANDIDATE,
+            admin_key: elected(),
+            effective_at,
+            registry_effective_at: effective_at,
+            cancelled: false
+        })
     );
     // Until then the deployer's key signs and the elected one does not.
     h.advance_to(effective_at - 1);
@@ -136,8 +153,15 @@ fn an_elected_key_takes_effect_at_the_elections_effective_time() {
         Some(Event::AdminRejected { reason: "invalid signature".into() })
     );
     assert_eq!(signed_by(&mut h, common::OPERATOR_SEED, true), Some(Event::AdminApplied));
-    // From then the elected key signs and the deployer's does not.
+    // At its time the key still waits for the staking mirror's finalised frontier to reach it, so
+    // no cancellation the registry made before then can arrive after the handover.
     h.advance_to(effective_at);
+    finalised(&mut h, effective_at - 1);
+    assert_eq!(signed_by(&mut h, common::OPERATOR_SEED, true), Some(Event::AdminApplied));
+    assert_eq!(h.engine.due_rotation(h.ts), None);
+    finalised(&mut h, effective_at);
+    assert_eq!(h.engine.due_rotation(h.ts).map(|rotation| rotation.address), Some(elected()));
+    // From the next command the elected key signs and the deployer's does not.
     assert_eq!(
         signed_by(&mut h, common::OPERATOR_SEED, false),
         Some(Event::AdminRejected { reason: "invalid signature".into() })
@@ -159,6 +183,7 @@ fn an_election_logged_late_takes_effect_seven_days_after_it_is_logged() {
         Some(&Event::OperatorElected { epoch: 1, candidate: CANDIDATE, admin_key: elected(), effective_at })
     );
     h.advance_to(logged + DAY_MS);
+    finalised(&mut h, logged + DAY_MS);
     assert_eq!(signed_by(&mut h, common::OPERATOR_SEED, true), Some(Event::AdminApplied));
     h.advance_to(effective_at);
     assert_eq!(signed_by(&mut h, ELECTED_SEED, false), Some(Event::AdminApplied));
@@ -206,6 +231,18 @@ fn rotate_operator_is_refused_while_rotation_is_on_and_spends_its_nonce() {
 }
 
 #[test]
+fn turning_rotation_on_drops_a_signed_rotation_still_pending() {
+    let mut h = Harness::v37();
+    let signed = Client::new(0x67);
+    h.operator_admin(AdminCommand::RotateOperator { address: signed.account });
+    switch(&mut h, true, false, "0xon:0");
+    assert_eq!(h.engine.operator_bounds().rotation, None);
+    h.advance(NOTICE_MS + DAY_MS);
+    assert_eq!(signed_by(&mut h, 0x67, true), Some(Event::AdminRejected { reason: "invalid signature".into() }));
+    assert_eq!(signed_by(&mut h, common::OPERATOR_SEED, true), Some(Event::AdminApplied));
+}
+
+#[test]
 fn a_rotation_signed_before_rotation_turned_on_gives_way_to_an_election() {
     let mut h = Harness::v37();
     h.operator_admin(AdminCommand::RotateOperator { address: Client::new(0x67).account });
@@ -216,11 +253,14 @@ fn a_rotation_signed_before_rotation_turned_on_gives_way_to_an_election() {
 }
 
 #[test]
-fn turning_rotation_off_cancels_an_election_not_yet_in_effect() {
+fn turning_rotation_off_cancels_an_election_not_yet_in_effect_even_when_mirrored_after_its_time() {
     let mut h = rotating();
     let effective_at = h.ts + NOTICE_MS;
     elect(&mut h, 1, elected(), effective_at, "0xelect:0");
-    h.advance_to(effective_at - 1);
+    // The registry cancelled before its effective time; the mirror delivers that after the
+    // engine's, which held the key until the mirror passed the registry's time.
+    h.advance_to(effective_at + DAY_MS);
+    finalised(&mut h, effective_at - 1);
     assert_eq!(
         switch(&mut h, false, true, "0xoff:0").last(),
         Some(&Event::RotationSwitched { enabled: false, election_cancelled: true })
@@ -236,10 +276,11 @@ fn turning_rotation_off_cancels_an_election_not_yet_in_effect() {
 }
 
 #[test]
-fn a_cancel_of_an_election_already_in_effect_is_refused() {
+fn a_cancel_after_the_mirror_passed_the_effective_time_is_refused() {
     let mut h = rotating();
     let effective_at = h.ts + NOTICE_MS;
     elect(&mut h, 1, elected(), effective_at, "0xelect:0");
+    finalised(&mut h, effective_at);
     h.advance_to(effective_at);
     refused(&switch(&mut h, false, true, "0xoff:0"), "no election waits to take effect");
     assert!(h.engine.operator_election().rotation_enabled);
@@ -254,6 +295,7 @@ fn turning_rotation_off_keeps_an_election_in_effect_on_chain_but_deferred_here()
     // On chain the election took effect after a day; the engine waits out its seven days.
     h.advance_to(logged + 2 * DAY_MS);
     switch(&mut h, false, false, "0xoff:0");
+    finalised(&mut h, logged + 2 * DAY_MS);
     h.advance_to(logged + NOTICE_MS);
     assert_eq!(signed_by(&mut h, ELECTED_SEED, true), Some(Event::AdminApplied));
 }
@@ -275,6 +317,7 @@ fn the_mirrored_registry_is_in_the_state_root_and_survives_a_snapshot() {
     let mut h = rotating();
     let effective_at = h.ts + NOTICE_MS;
     elect(&mut h, 1, elected(), effective_at, "0xelect:0");
+    finalised(&mut h, effective_at);
     let mut restored: Engine = serde_json::from_slice(&serde_json::to_vec(&h.engine).unwrap()).unwrap();
     restored.restore_indexes();
     assert_eq!(restored.operator_election(), h.engine.operator_election());
@@ -299,8 +342,20 @@ fn registry_mirrors_advance_the_staking_frontier_that_progress_extends() {
     elect_soon(&mut h, 1, elected(), "0xelect:0");
     assert_eq!(h.engine.staking().unwrap().mirrored_through, Some(block));
     let hash = alloy_primitives::B256::repeat_byte(9);
-    let events = h.cmd(Command::StakingProgress { block: block - 1, block_hash: hash });
-    assert!(matches!(events.last(), Some(Event::AdminRejected { .. })), "{events:?}");
-    let events = h.cmd(Command::StakingProgress { block, block_hash: hash });
-    assert!(!events.iter().any(|event| matches!(event, Event::AdminRejected { .. })), "{events:?}");
+    let progress = |block, block_time| Command::StakingProgress { block, block_hash: hash, block_time };
+    let rejected = |events: Vec<Event>| matches!(events.last(), Some(Event::AdminRejected { .. }));
+    assert!(rejected(h.cmd(progress(block - 1, None))));
+    assert!(!rejected(h.cmd(progress(block, None))));
+    // From `V37` the frontier carries its block time, which never moves back.
+    assert!(!rejected(h.cmd(progress(block + 1, Some(h.ts)))));
+    assert!(rejected(h.cmd(progress(block + 2, Some(h.ts - 1)))));
+    assert!(!rejected(h.cmd(progress(block + 2, None))));
+    let reached = h.engine.staking().unwrap().completed_through.and_then(|checkpoint| checkpoint.time);
+    assert_eq!(reached, Some(h.ts), "a frontier without a time keeps the time reached");
+    // Before `V37` a frontier carries no time.
+    let mut older = Harness::staking(engine_core::Fixed::from_int(1_000_000), DAY_MS, 3 * DAY_MS);
+    older.admin(AdminCommand::ActivateProtocol { version: engine_core::protocol::ProtocolVersion::V27 });
+    let block = older.log.len() as u64;
+    assert!(rejected(older.cmd(progress(block, Some(older.ts)))));
+    assert!(!rejected(older.cmd(progress(block, None))));
 }

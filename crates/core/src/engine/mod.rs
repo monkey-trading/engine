@@ -341,8 +341,8 @@ impl Engine {
                 Command::Stake { account, amount, block, chain_ref } => {
                     self.stake(*account, *amount, *block, chain_ref, &mut events)
                 }
-                Command::StakingProgress { block, block_hash } => {
-                    self.staking_progress(*block, *block_hash, &mut events)
+                Command::StakingProgress { block, block_hash, block_time } => {
+                    self.staking_progress(*block, *block_hash, *block_time, &mut events)
                 }
                 Command::Unstake { account, amount, block, chain_ref } => {
                     self.unstake(*account, *amount, *block, chain_ref, &mut events)

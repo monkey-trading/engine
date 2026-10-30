@@ -12,7 +12,10 @@ use crate::common::Harness;
 pub(crate) fn session(h: &mut Harness) {
     h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V27 });
     let staker = h.signer(80);
-    assert!(h.cmd(Command::StakingProgress { block: 25_000_003, block_hash: B256::repeat_byte(27) }).is_empty());
+    assert!(
+        h.cmd(Command::StakingProgress { block: 25_000_003, block_hash: B256::repeat_byte(27), block_time: None })
+            .is_empty()
+    );
     let staked = h.cmd(Command::Stake {
         account: staker,
         amount: TokenUnits(100),
@@ -31,5 +34,8 @@ pub(crate) fn session(h: &mut Harness) {
     assert!(unstaked.iter().any(
         |event| matches!(event, Event::Unstaked { account, amount } if *account == staker && *amount == TokenUnits(100))
     ));
-    assert!(h.cmd(Command::StakingProgress { block: 27_000_001, block_hash: B256::repeat_byte(28) }).is_empty());
+    assert!(
+        h.cmd(Command::StakingProgress { block: 27_000_001, block_hash: B256::repeat_byte(28), block_time: None })
+            .is_empty()
+    );
 }

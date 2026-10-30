@@ -40,10 +40,12 @@ sol! {
     function usdc() external view returns (address);
 }
 
-// The staking contract's mirrorable events, as `contracts/src/Staking.sol` declares them.
+// The staking contract's mirrorable events, and the registry that deployed it, as
+// `contracts/src/Staking.sol` declares them.
 sol! {
     event Staked(address indexed account, uint256 amount);
     event UnstakeCompleted(address indexed account, uint256 amount);
+    function registry() external view returns (address);
 }
 
 /// Historical vault events cannot authenticate a trader's funding address.
@@ -90,7 +92,7 @@ pub(super) fn decode_header(header: Option<Header>, number: u64) -> anyhow::Resu
         return Err(anyhow::Error::new(InvalidRpcResponse)
             .context(format!("asked for block {number}, got block {}", header.number)));
     }
-    Ok(BlockLink { number, hash: header.hash, parent_hash: header.parent_hash })
+    Ok(BlockLink { number, hash: header.hash, parent_hash: header.parent_hash, timestamp: header.timestamp })
 }
 
 impl VaultReader for VaultRpc {
@@ -175,8 +177,23 @@ impl VaultReader for VaultRpc {
         decode_count(&out)
     }
 
+    /// The registry the configured staking contract records as its deployer, read in the
+    /// canonical block `at`.
+    /// Error cases:
+    /// - no staking contract is configured, the call fails or times out, or the answer does not
+    ///   decode as an address
+    async fn staking_registry(&self, at: BlockRef) -> anyhow::Result<Address> {
+        let staking = self.staking.context("no staking contract is configured")?;
+        let request = TransactionRequest::default().to(staking).input(registryCall {}.abi_encode().into());
+        let out: Bytes = self
+            .deadline("eth_call", self.client.request("eth_call", (request, BlockId::hash_canonical(at.hash))))
+            .await
+            .context("reading the staking contract's registry")?;
+        registryCall::abi_decode_returns(&out).context("decoding the staking contract's registry")
+    }
+
     /// Both mirrorable staking events from the configured contract, and the operator registry's
-    /// rotation switches and elections when one is configured, sorted by block and log index.
+    /// rotation switches and elections, sorted by block and log index.
     /// Without a staking contract the answer is empty.
     /// Error cases:
     /// - the request fails or times out
@@ -285,11 +302,7 @@ impl VaultRpc {
             url,
             vault,
             staking: cfg.staking.as_ref().map(|staking| staking.contract),
-            registry: cfg
-                .staking
-                .as_ref()
-                .and_then(|staking| staking.registry.as_ref())
-                .map(|registry| registry.contract),
+            registry: cfg.staking.as_ref().map(|staking| staking.registry.contract),
             withdrawal_finality_tag: match cfg.withdrawal_finality_tag {
                 FinalityTag::Latest => BlockNumberOrTag::Latest,
                 FinalityTag::Safe => BlockNumberOrTag::Safe,

@@ -81,9 +81,9 @@ pub struct StakingCustodySection {
     /// Where the staking cursor is kept between restarts.
     pub cursor_path: PathBuf,
     /// The operator registry that deployed the staking contract, whose rotation switches and
-    /// elections the watcher mirrors with the staking events from `V37`. Absent when the
-    /// deployment elects no operator.
-    pub registry: Option<RegistryCustodySection>,
+    /// elections the watcher mirrors with the staking events from `V37`. The watcher refuses a
+    /// staking contract whose `registry()` is not this one.
+    pub registry: RegistryCustodySection,
 }
 
 /// The operator registry the watcher mirrors.
@@ -171,9 +171,7 @@ impl NodeConfig {
             if staking.contract == evm.usdc || staking.contract == vault {
                 bail!("custody.evm.staking.contract must be the staking contract, not the token or the vault");
             }
-            if let Some(registry) = &staking.registry
-                && [evm.usdc, vault, staking.contract].contains(&registry.contract)
-            {
+            if [evm.usdc, vault, staking.contract].contains(&staking.registry.contract) {
                 bail!(
                     "custody.evm.staking.registry.contract must be the operator registry, not the token, vault, or staking contract"
                 );

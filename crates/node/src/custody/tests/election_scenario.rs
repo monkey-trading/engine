@@ -101,21 +101,23 @@ async fn dev_scenario_stakers_elect_the_key_that_signs_from_the_effective_time()
         (json!(true), json!(format!("{b:#x}")))
     );
 
-    // 5. Before the effective time the deployer's commands apply; from it they are refused and the
-    //    elected key's apply. Neither chain nor sequenced time moves between the handover and the
-    //    deployer's last request, so the request reaches the log.
+    // 5. Before the effective time the deployer's commands apply. From it, once the custody
+    //    watcher has mirrored a finalised block stamped at or after it, they are refused and the
+    //    elected key's apply. No block follows that one before the deployer's last request, so the
+    //    request reaches the log rather than being refused at the route.
     node.advance_to(EFFECTIVE_MS - 60_000, || EFFECTIVE_MS - 60_000).await;
     let block = chain.mine_at(EFFECTIVE_SECS - 60).await;
     node.wait("the mirror to settle before the effective time", move |e| completed_through(e) >= Some(block)).await;
     let reduce_only = |reduce_only| AdminCommand::SetReduceOnly { market: None, reduce_only };
     assert_eq!(node.admin(&deployer, reduce_only(true)).await, (StatusCode::OK, json!({ "type": "admin_applied" })));
     node.advance_to(EFFECTIVE_MS + 60_000, || EFFECTIVE_MS + 60_000).await;
+    let block = chain.mine_at(EFFECTIVE_SECS + 60).await;
+    node.wait("the mirror to pass the effective time", move |e| completed_through(e) >= Some(block)).await;
     let refused = json!({ "type": "admin_rejected", "reason": "invalid signature" });
     assert_eq!(node.admin(&deployer, reduce_only(false)).await, (StatusCode::OK, refused));
     assert_eq!(node.admin(&key_b, reduce_only(false)).await, (StatusCode::OK, json!({ "type": "admin_applied" })));
     let (_, view) = node.get("/v1/operator").await;
     assert_eq!((view["operator"].clone(), view["pending_rotation"].clone()), (json!(b_key), json!(null)));
-    chain.mine_at(EFFECTIVE_SECS + 60).await;
     let on_chain = chain.view(chain.registry, operatorInEffectCall {}).await;
     assert_eq!((on_chain.candidate, on_chain.adminKey), (b, address(&key_b)));
 

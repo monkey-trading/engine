@@ -110,10 +110,13 @@ pub enum Command {
     /// command is refused once any deposit or house capital is credited. Boxed: admin commands are
     /// rare, and inline this one would grow every command.
     SignedAdmin(Box<AdminRequest>),
-    /// From `V27`, the last fully verified finalized staking block, including empty ranges.
+    /// From `V27`, the last fully verified finalized staking block, including empty ranges; from
+    /// `V37` with its block time in milliseconds, which an elected key waits for.
     StakingProgress {
         block: u64,
         block_hash: B256,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        block_time: Option<Millis>,
     },
     /// From `V25`, a staking contract's `Staked` event, finalised: `amount` of MONKEY base units
     /// staked for `account`, credited once under `chain_ref`, in the finalised Ethereum `block`

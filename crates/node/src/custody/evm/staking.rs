@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 use tracing::info;
 
 use crate::custody::credit::query;
-use crate::custody::evm::{DepositWatcher, VaultReader};
+use crate::custody::evm::{BlockRef, DepositWatcher, VaultReader};
 use crate::custody::staking;
 use crate::custody::stall::PollError;
 use crate::sequencer::Request;
@@ -101,6 +101,17 @@ impl<V: VaultReader> DepositWatcher<V> {
             info!(from, to, "staking mirror is proving a bounded catch-up window");
             return Ok(());
         };
+        // The registry whose elections mirror must be the one that deployed the staking contract.
+        if let Some((registry, false)) = self.registry {
+            let hash = *hashes.get(&to).ok_or_else(|| PollError::unsettled(anyhow!("staking window lacks its end")))?;
+            let recorded = self.vault.staking_registry(BlockRef { number: to, hash }).await.map_err(PollError::rpc)?;
+            if recorded != registry {
+                return Err(PollError::inconsistent(anyhow!(
+                    "the staking contract records registry {recorded}, not the configured {registry}"
+                )));
+            }
+            self.registry = Some((registry, true));
+        }
         let (cursor, path) = self.staking.as_mut().expect("staking cursor checked above");
         staking::mirror(&self.vault, tx, cursor, path, &mut self.staking_range, from..=to, &hashes).await
     }

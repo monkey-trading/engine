@@ -15,8 +15,13 @@ async fn staking_logs_require_every_proven_hash_even_when_headers_are_canonical(
         let toml = evm_toml(&std::env::temp_dir(), 1_000)
             .replace("rpc_url = \"http://127.0.0.1:1\"", &format!("rpc_url = \"{url}\""));
         let mut cfg: EvmCustodySection = toml::from_str(&toml).unwrap();
-        cfg.staking =
-            Some(toml::from_str(&format!("contract = \"{VAULT}\"\ncursor_path = \"unused-staking-cursor\"")).unwrap());
+        cfg.staking = Some(
+            toml::from_str(&format!(
+                "contract = \"{VAULT}\"\ncursor_path = \"unused-staking-cursor\"\n[registry]\ncontract = \"{}\"",
+                Address::repeat_byte(0x6b)
+            ))
+            .unwrap(),
+        );
         let rpc = VaultRpc::new(&cfg, &cfg.providers[0].rpc_url, VAULT).unwrap();
         let blocks =
             [BlockRef { number: 6, hash: B256::repeat_byte(6) }, BlockRef { number: 7, hash: B256::repeat_byte(7) }];

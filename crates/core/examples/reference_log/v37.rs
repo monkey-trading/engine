@@ -19,8 +19,9 @@ const HOUR_MS: Millis = 60 * 60 * 1000;
 /// `V37` activates. An election before rotation is on is refused, the registry turns rotation on
 /// (a repeat of its reference is refused), and a signed rotation is refused while it is on. An
 /// election logged a day before its effective time waits seven days, and turning rotation off
-/// cancels it. Rotation turns on again, and the next election takes effect at its time: the
-/// operator's key is refused from then, and the elected key applies.
+/// cancels it. Rotation turns on again, and the next election takes effect once its time has come
+/// and the staking mirror's finalised frontier has reached it: the operator's key is refused from
+/// then, and the elected key applies.
 pub(crate) fn session(h: &mut Harness) {
     h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V37 });
     let elected = Client::new(ELECTED_SEED).account;
@@ -72,7 +73,15 @@ pub(crate) fn session(h: &mut Harness) {
     h.advance_to(effective_at - 1);
     let reduce_only = |reduce_only| AdminCommand::SetReduceOnly { market: None, reduce_only };
     assert_eq!(h.operate_as(OPERATOR_SEED, reduce_only(true)).last(), Some(&Event::AdminApplied));
+    // The key waits until the staking mirror's finalised frontier reaches the registry's time.
     h.advance_to(effective_at);
+    assert_eq!(h.operate_as(OPERATOR_SEED, reduce_only(true)).last(), Some(&Event::AdminApplied));
+    let frontier = Command::StakingProgress {
+        block: 37_000_030,
+        block_hash: alloy_primitives::B256::repeat_byte(37),
+        block_time: Some(effective_at),
+    };
+    assert!(h.cmd(frontier).is_empty());
     refused(&h.operate_as(OPERATOR_SEED, reduce_only(false)));
     assert_eq!(h.operate_as(ELECTED_SEED, reduce_only(false)).last(), Some(&Event::AdminApplied));
     assert_eq!(h.engine.operator().map(|operator| operator.address), Some(elected));

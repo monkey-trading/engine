@@ -45,12 +45,20 @@ impl Node {
         effective_at
     }
 
-    /// Moves the node's clocks past the election's notice.
-    async fn pass_the_notice(&mut self) {
+    /// Moves the node's clocks past the election's notice, and the staking mirror's finalised
+    /// frontier past the registry's effective time `effective_at`.
+    async fn pass_the_notice(&mut self, effective_at: Millis) {
         self.stamps.advance(Duration::from_millis(after_the_notice() as u64 - NOW as u64));
         let sample = sample_around(self.stamps.as_ref());
         self.state.tx.send(crate::sequencer::Request::TimeSample(sample)).await.unwrap();
         self.state.clock = after_the_notice;
+        let frontier = Command::StakingProgress {
+            block: 3,
+            block_hash: alloy::primitives::B256::repeat_byte(9),
+            block_time: Some(effective_at),
+        };
+        let events = self.state.submit(frontier).await.unwrap();
+        assert!(!events.iter().any(|event| matches!(event, Event::AdminRejected { .. })), "{events:?}");
     }
 }
 
@@ -83,6 +91,7 @@ async fn the_operator_route_reports_the_key_its_pending_rotation_and_the_last_el
                 "rotation_enabled": true,
                 "last_election": {
                     "epoch": 1, "candidate": CANDIDATE, "admin_key": elected, "effective_at": effective_at,
+                    "registry_effective_at": effective_at,
                 },
             })
         )
@@ -96,8 +105,8 @@ async fn an_elected_published_key_signs_nothing_on_a_real_enclave() {
     assert!(crate::config::is_published_operator(address).unwrap());
     for real in [true, false] {
         let mut node = Node::staking(if real { "elected-published" } else { "elected-published-mock" }).await;
-        node.elect(address).await;
-        node.pass_the_notice().await;
+        let effective_at = node.elect(address).await;
+        node.pass_the_notice(effective_at).await;
         if real {
             let mut attestation = (*node.state.attestation).clone();
             attestation.provider = "tdx".into();

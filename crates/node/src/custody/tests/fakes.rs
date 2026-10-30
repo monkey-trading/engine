@@ -16,7 +16,6 @@ use engine_core::{Engine, Fixed};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
-use tracing::subscriber::DefaultGuard;
 
 use crate::clock::now_ms;
 use crate::config::EvmCustodySection;
@@ -33,6 +32,8 @@ use crate::test_support::{dev_config, log_entries, sequencer_config, trusted_now
 pub(super) const CHAIN_ID: u64 = 42161;
 pub(super) const VAULT: Address = Address::repeat_byte(0x7a);
 pub(super) const USDC_TOKEN: Address = Address::repeat_byte(0xc0);
+/// The operator registry the fake chain's staking contract records as its deployer.
+pub(super) const REGISTRY: Address = Address::repeat_byte(0x6b);
 pub(super) const TRADER: AccountId = AccountId([0xaa; 20]);
 /// One USDC in base units.
 pub(super) const USDC: u64 = 1_000_000;
@@ -107,10 +108,6 @@ pub(super) struct Node {
     _withdrawals: mpsc::UnboundedReceiver<SignedWithdrawal>,
 }
 
-/// Log lines captured from this thread's tasks.
-#[derive(Clone, Default)]
-pub(super) struct Logs(Arc<Mutex<Vec<u8>>>);
-
 impl VaultReader for FakeChain {
     async fn identity(&self) -> anyhow::Result<VaultIdentity> {
         let mut chain = self.0.lock().unwrap();
@@ -168,7 +165,12 @@ impl VaultReader for FakeChain {
             _ => chain.hash_at(number - 1),
         };
         let mut headers: Vec<_> = (from..=to)
-            .map(|number| BlockLink { number, hash: chain.hash_at(number), parent_hash: parent(number) })
+            .map(|number| BlockLink {
+                number,
+                hash: chain.hash_at(number),
+                parent_hash: parent(number),
+                timestamp: number * 12,
+            })
             .collect();
         match chain.bad_headers {
             Some(BadHeaders::Missing) => return crate::custody::rpc::decode_header(None, from).map(|h| vec![h]),
@@ -225,16 +227,10 @@ impl VaultReader for FakeChain {
         let visible = chain.staking.iter().filter(|e| !chain.hide_logs && (from..=to.number).contains(&e.block));
         Ok(visible.cloned().collect())
     }
-}
 
-impl std::io::Write for Logs {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
+    async fn staking_registry(&self, at: BlockRef) -> anyhow::Result<Address> {
+        let _ = at;
+        Ok(REGISTRY)
     }
 }
 
@@ -348,30 +344,6 @@ impl Node {
 
     pub(super) async fn last_seq(&self) -> Option<u64> {
         self.read(|e| e.last_seq()).await
-    }
-}
-
-impl Logs {
-    /// Captures every log line emitted on this thread until the guard drops.
-    pub(super) fn capture() -> (Self, DefaultGuard) {
-        crate::test_support::keep_callsites_interested();
-        let logs = Logs::default();
-        let writer = logs.clone();
-        let subscriber = tracing_subscriber::fmt().with_ansi(false).with_writer(move || writer.clone()).finish();
-        (logs, tracing::subscriber::set_default(subscriber))
-    }
-
-    pub(super) fn count(&self, needle: &str) -> usize {
-        String::from_utf8_lossy(&self.0.lock().unwrap()).matches(needle).count()
-    }
-
-    /// The captured lines that contain `needle`.
-    pub(super) fn lines_with(&self, needle: &str) -> Vec<String> {
-        String::from_utf8_lossy(&self.0.lock().unwrap())
-            .lines()
-            .filter(|l| l.contains(needle))
-            .map(str::to_owned)
-            .collect()
     }
 }
 
@@ -492,3 +464,5 @@ pub(super) async fn wait_for_polls(chain: &FakeChain, polls: u64) {
 
 mod files;
 pub(super) use files::{evm_toml, scratch};
+mod logs;
+pub(super) use logs::Logs;

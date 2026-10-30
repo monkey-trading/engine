@@ -15,8 +15,8 @@ use crate::config::is_published_operator;
 
 /// Sequences an admin command the operator signed and returns the events it produced, ending in
 /// `admin_applied` or `admin_rejected`. A request stays out of the log unless the operator may send
-/// its command, it carries the signature of the operator, or of a pending rotation's key once its
-/// time has come by the node's clock, its nonce is the operator's next, and it has
+/// its command, it carries the signature of the operator, or of a pending rotation's key once it is
+/// due by the node's clock (see `Engine::due_rotation`), its nonce is the operator's next, and it has
 /// not expired, so a copy sent after the original was sequenced stays out of the log. Copies that
 /// race the original all pass these checks and are sequenced; the engine, which checks all four
 /// again at the sequenced time, applies one and refuses the rest for their nonce.
@@ -37,15 +37,14 @@ pub(super) async fn admin(State(s): State<ApiState>, Json(req): Json<AdminReques
         return Err(ApiError::BadRequest("the operator may not send this command".into()));
     }
     // The key the log records, and the one a pending rotation hands over to: the engine decides at
-    // the sequenced time which of them applies.
-    let (recorded, rotation) = s.query(|e| (e.operator().copied(), e.operator_bounds().rotation)).await?;
-    let current = recorded.unwrap_or(s.operator);
-    // The pending key only once its time has come by the node's clock, so no request the engine
-    // cannot yet authorise enters the log, where it could be copied and sent again after the handover.
+    // the sequenced time which of them applies. The pending key passes only once it is due by the
+    // node's clock, an elected one once the staking mirror has also reached the registry's time, so
+    // no request the engine cannot yet authorise enters the log, where it could be copied and sent
+    // again after the handover.
     let now = (s.clock)();
-    let next = rotation
-        .filter(|rotation| rotation.effective_at <= now)
-        .map(|rotation| Operator { address: rotation.address, ..current });
+    let (recorded, due) = s.query(move |e| (e.operator().copied(), e.due_rotation(now))).await?;
+    let current = recorded.unwrap_or(s.operator);
+    let next = due.map(|rotation| Operator { address: rotation.address, ..current });
     let Some(operator) =
         [Some(current), next].into_iter().flatten().find(|signer| signer.check(&req.command, &req.auth).is_ok())
     else {

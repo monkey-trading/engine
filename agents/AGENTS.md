@@ -19,7 +19,8 @@ an index: load only the rule whose hint matches the current action.
   close-out level moves within ±50% after a seven-day notice, held markets kept priced by price-rule changes, and a
   seven-day key rotation) and, from `V37`, elected (`election.rs`: the operator registry's rotation switch and
   elections mirrored on the staking mirror, the elected key in effect at the election's time or seven days after it
-  is logged, `RotateOperator` refused while rotation is on; `tests/operator_election.rs`), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
+  is logged and once the mirror's finalised block time reaches it, `RotateOperator` refused while rotation is on;
+  `tests/operator_election.rs`), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
   shared by net realised losses, halvings, and cumulative entitlements) and MONKEY staking with
   USDC distributions (`staking.rs`: stake mirroring, V27 authenticated identities and completed scan
   anchors, epoch closes at NAV above a liquidity floor, cumulative distributions proven on chain),

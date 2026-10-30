@@ -38,3 +38,35 @@ async fn registry_events_mirror_with_the_stakes_once_and_a_refused_one_stalls() 
     assert_eq!(cursor.next_block, 4, "the cursor holds for the retry");
     node.stop().await;
 }
+
+#[tokio::test]
+async fn a_staking_contract_another_registry_deployed_stalls_the_poll_before_any_mirror() {
+    let dir = scratch("registry-binding");
+    let node = Node::start_confirmed(&dir);
+    init_staking(&node).await;
+    let account = AccountId([3; 20]);
+    let chains = poll_chains(10);
+    for chain in &chains {
+        chain.0.lock().unwrap().staking.push(staked(2, 1, account, 500));
+    }
+    let toml = format!(
+        r#"{}
+        staking = {{ contract = "0x5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a", cursor_path = "{}", registry = {{ contract = "0x7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c" }} }}
+        "#,
+        evm_toml(&dir, 100),
+        dir.join("staking-cursor.json").display()
+    );
+    let cfg: EvmCustodySection = toml::from_str(&toml).unwrap();
+    let quorum =
+        Quorum::new(chains.iter().enumerate().map(|(i, chain)| (format!("p{i}"), chain.clone())).collect()).unwrap();
+    let mut watcher = DepositWatcher::start(quorum, &cfg, CHAIN_ID, VAULT, None).unwrap();
+    let error = watcher.poll(&node.tx).await.unwrap_err();
+    let PollError::Stalled(Stall::Inconsistent(cause)) = error else { panic!("{error:?}") };
+    assert!(cause.to_string().contains("records registry"), "{cause}");
+    assert!(node.read(move |engine| engine.staked_balances().is_empty()).await, "nothing mirrors");
+    // The configured registry passes, once.
+    let mut watcher = staking_watcher(&chains, &dir);
+    watcher.poll(&node.tx).await.unwrap();
+    assert_eq!(node.read(move |engine| engine.staked(account)).await, TokenUnits(500));
+    node.stop().await;
+}

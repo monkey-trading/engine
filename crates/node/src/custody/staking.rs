@@ -14,6 +14,7 @@ use engine_core::command::Command;
 use engine_core::election::RegistryElection;
 use engine_core::emissions::TokenUnits;
 use engine_core::event::Event;
+use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{AccountId, Millis};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -210,11 +211,12 @@ pub(super) async fn mirror<V: VaultReader>(
     for event in events {
         mirror_one(tx, event).await?;
     }
-    let modern = query(tx, |engine| engine.protocol_version() >= engine_core::protocol::ProtocolVersion::V27)
-        .await
-        .map_err(PollError::Fatal)?;
-    if modern {
-        let events = submit(tx, Command::StakingProgress { block: to, block_hash }).await?;
+    let version = query(tx, |engine| engine.protocol_version()).await.map_err(PollError::Fatal)?;
+    if version >= ProtocolVersion::V27 {
+        // From V37 the frontier carries its block time, which an elected key waits for.
+        let block_time =
+            if version >= ProtocolVersion::V37 { Some(block_time(reader, to, block_hash).await?) } else { None };
+        let events = submit(tx, Command::StakingProgress { block: to, block_hash, block_time }).await?;
         if events.iter().any(|event| matches!(event, Event::AdminRejected { .. })) {
             return Err(PollError::Stalled(Stall::Refused(anyhow::anyhow!("the engine refused staking progress"))));
         }
@@ -265,6 +267,23 @@ async fn mirror_one(tx: &mpsc::Sender<Request>, event: StakingEvent) -> Result<(
     }
     .instrument(span)
     .await
+}
+
+/// The time of proven block `to`, in milliseconds, from its header read through the reader.
+/// Error cases:
+/// - stalled: the read fails, answers for another block or hash, or the time passes `i64` milliseconds
+async fn block_time<V: VaultReader>(reader: &V, to: u64, hash: B256) -> Result<Millis, PollError> {
+    let links = reader.headers(to, to).await.map_err(PollError::rpc)?;
+    let [link] = links.as_slice() else {
+        return Err(PollError::unsettled(anyhow::anyhow!("staking progress has no header at block {to}")));
+    };
+    if link.number != to || link.hash != hash {
+        return Err(PollError::unsettled(anyhow::anyhow!("block {to}'s header is not the proven block")));
+    }
+    i64::try_from(link.timestamp)
+        .ok()
+        .and_then(|seconds| seconds.checked_mul(1000))
+        .ok_or_else(|| PollError::unsettled(anyhow::anyhow!("block {to}'s time {} is out of range", link.timestamp)))
 }
 
 /// MONKEY base units as the engine's `TokenUnits`, refusing amounts past u128.

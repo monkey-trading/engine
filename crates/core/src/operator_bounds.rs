@@ -208,10 +208,11 @@ impl Engine {
         Ok(())
     }
 
-    /// Hands the operator's role to the pending rotation's address once its time has come, before
-    /// the command stamped `ts` is authorised, so the old key signs nothing from then.
+    /// Hands the operator's role to the pending rotation's address once it is due (see
+    /// `Engine::due_rotation`), before the command stamped `ts` is authorised, so the old key signs
+    /// nothing from then.
     pub(crate) fn apply_due_rotation(&mut self, ts: Millis) {
-        let Some(rotation) = self.operator_bounds.rotation.filter(|rotation| rotation.effective_at <= ts) else {
+        let Some(rotation) = self.due_rotation(ts) else {
             return;
         };
         // A rotation is recorded only beside a recorded operator, which is never removed.

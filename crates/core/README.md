@@ -61,8 +61,11 @@ this crate and reproduce the signed state roots exactly.
   advancing its authenticated frontier; an `election_rejected` event refuses one that contradicts
   the state the log holds. An election naming a key other than the one in effect records a pending
   rotation that takes effect at the election's effective time, or seven days after the election is
-  logged when that is later. While rotation is on, `rotate_operator` is refused; turning rotation
-  off with an election not yet in effect cancels the election and its rotation
+  logged when that is later, and only once a `staking_progress`, which carries its block time from
+  `V37`, has reached the registry's effective time, so a cancellation always arrives first. Turning
+  rotation on drops a signed rotation still pending, and while rotation is on `rotate_operator` is
+  refused; turning rotation off with an election not yet in effect cancels the election and its
+  rotation
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
   and toxicity spreads would reach the price are refused

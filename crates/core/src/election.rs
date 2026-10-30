@@ -6,8 +6,12 @@
 //! election. An election that names a key other than the one in effect records a pending rotation
 //! (`operator_bounds::PendingRotation`), which hands over at the election's effective time, or
 //! seven days after the election is logged when that is later, so the log always gives seven days'
-//! notice. While rotation is on, `RotateOperator` is refused, so only an election moves the key.
-//! Turning rotation off with an election not yet in effect cancels it, and its pending rotation.
+//! notice, and never before the staking mirror's finalised frontier has reached the registry's
+//! effective time: the registry cancels only before then, so a cancellation is always mirrored
+//! before the key it cancels could take over. Turning rotation on drops a signed rotation still
+//! pending, and while rotation is on `RotateOperator` is refused, so only an election moves the
+//! key. Turning rotation off with an election not yet in effect cancels it, and its pending
+//! rotation.
 
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +45,9 @@ pub struct Election {
     /// When the key takes effect in sequenced time: the registry's effective time, or seven days
     /// after the election was logged when that is later.
     pub effective_at: Millis,
+    /// The registry's effective time, which the staking mirror's finalised frontier must reach
+    /// before the key takes over.
+    pub registry_effective_at: Millis,
     /// Whether turning rotation off cancelled it before it took effect.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub cancelled: bool,
@@ -86,13 +93,15 @@ impl Engine {
     ) {
         let reason = self.registry_mirror_refusal(chain_ref).or_else(|| {
             let last = self.operator_election.last.filter(|last| !last.cancelled);
+            let reached = self.finalised_chain_time();
             if enabled == self.operator_election.rotation_enabled {
                 Some(format!("rotation is already {}", if enabled { "on" } else { "off" }))
             } else if election_cancelled && enabled {
                 Some("turning rotation on cancels no election".into())
-            } else if election_cancelled && last.is_none_or(|last| self.now >= last.effective_at) {
-                // The registry cancels only an election not yet in effect on chain; one the engine
-                // has already put in effect, or none, means the mirror and the chain disagree.
+            } else if election_cancelled && last.is_none_or(|last| reached >= Some(last.registry_effective_at)) {
+                // The registry cancels only an election not yet in effect on chain, and its key
+                // waits for the mirror to pass that time; a cancel after it, or of none, means the
+                // mirror and the chain disagree.
                 Some("no election waits to take effect".into())
             } else {
                 None
@@ -104,6 +113,10 @@ impl Engine {
         }
         self.credit_registry_mirror(chain_ref, block);
         self.operator_election.rotation_enabled = enabled;
+        // A rotation the old key signed while rotation was off gives way to the elections.
+        if enabled && self.operator_bounds.rotation.is_some_and(|rotation| !self.is_elected(rotation)) {
+            self.operator_bounds.rotation = None;
+        }
         if election_cancelled {
             let last = self.operator_election.last.as_mut().expect("checked above");
             last.cancelled = true;
@@ -140,12 +153,38 @@ impl Engine {
             return;
         }
         self.credit_registry_mirror(chain_ref, block);
+        let registry_effective_at = effective_at;
         let effective_at = effective_at.max(self.now + NOTICE_MS);
         let operator = self.operator.expect("checked above").address;
         self.operator_bounds.rotation =
             (admin_key != operator).then_some(PendingRotation { address: admin_key, effective_at });
-        self.operator_election.last = Some(Election { epoch, candidate, admin_key, effective_at, cancelled: false });
+        self.operator_election.last =
+            Some(Election { epoch, candidate, admin_key, effective_at, registry_effective_at, cancelled: false });
         events.push(Event::OperatorElected { epoch, candidate, admin_key, effective_at });
+    }
+
+    /// The pending rotation that hands over before a command stamped `ts`: its time has come and,
+    /// for an elected key, the staking mirror's finalised frontier has reached the registry's
+    /// effective time.
+    pub fn due_rotation(&self, ts: Millis) -> Option<PendingRotation> {
+        let reached = self.finalised_chain_time();
+        self.operator_bounds.rotation.filter(|rotation| {
+            rotation.effective_at <= ts
+                && (!self.is_elected(*rotation)
+                    || self.operator_election.last.is_some_and(|last| reached >= Some(last.registry_effective_at)))
+        })
+    }
+
+    /// The finalised block time the staking mirror has completed through, from `V37`.
+    fn finalised_chain_time(&self) -> Option<Millis> {
+        self.staking.as_ref().and_then(|staking| staking.completed_through).and_then(|checkpoint| checkpoint.time)
+    }
+
+    /// Whether `rotation` is the one the last election, not cancelled, recorded.
+    fn is_elected(&self, rotation: PendingRotation) -> bool {
+        self.operator_election.last.is_some_and(|last| {
+            !last.cancelled && last.admin_key == rotation.address && last.effective_at == rotation.effective_at
+        })
     }
 
     /// Whether elections move the operator key, which refuses `RotateOperator`.
