@@ -110,13 +110,21 @@ async fn recover(cfg: &NodeConfig, finalized: &Checkpoint) -> anyhow::Result<Opt
     let key = EnclaveKey::test_key();
     let parent = CheckpointParent { has_checkpoint: true, seq: finalized.seq, root: finalized.root.parse()? };
     let mut anchor = None;
-    let (log, _plan) = read_log_and_history_observe(cfg, Some(AccountId(key.address())), Some(parent), |entry| {
-        if let LogEntry::Checkpoint(checkpoint) = entry
-            && checkpoint.seq == parent.seq
-        {
-            anchor = Some(checkpoint.clone());
-        }
-    })?;
+    let marks = std::rc::Rc::new(std::cell::RefCell::new(
+        crate::history::marks::Store::open_in(
+            &crate::test_support::scratch_dir("paired-anchor-marks"),
+            crate::history::marks::Retentions::defaults(),
+        )
+        .unwrap(),
+    ));
+    let (log, _plan) =
+        read_log_and_history_observe(cfg, Some(AccountId(key.address())), Some(parent), &marks, |entry| {
+            if let LogEntry::Checkpoint(checkpoint) = entry
+                && checkpoint.seq == parent.seq
+            {
+                anchor = Some(checkpoint.clone());
+            }
+        })?;
     let poster = Poster {
         registry: None,
         chain: Finalized(VaultState {

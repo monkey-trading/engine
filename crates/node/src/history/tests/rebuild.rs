@@ -181,7 +181,7 @@ async fn an_index_a_power_loss_left_behind_the_log_resumes_without_a_rebuild() {
     // A rebuild under a new retention takes the first four commands before the power fails.
     let cut = index_dir("behind-rebuild-cut");
     index_to_end(&log, &cut, RETENTION).await;
-    drop(open_history(&HistorySection { dir: cut.clone(), retention: longer }, &log).unwrap());
+    drop(open_history(&HistorySection { dir: cut.clone(), retention: longer, marks: None }, &log).unwrap());
     Writer::open(&file(&cut), ms(longer)).unwrap().0.write(&messages[..4]).unwrap();
 
     // A discard removes the database file, and the power fails before it removes the write-ahead log.
@@ -200,7 +200,7 @@ async fn an_index_a_power_loss_left_behind_the_log_resumes_without_a_rebuild() {
     ];
     for (case, index, retention, resumes) in cases {
         let (_guard, mut alerts) = capture_alerts();
-        let mut history = open_history(&HistorySection { dir: index.clone(), retention }, &log).unwrap();
+        let mut history = open_history(&HistorySection { dir: index.clone(), retention, marks: None }, &log).unwrap();
         assert_eq!(history.resume_at(), Offset::start_of(resumes), "{case}");
         assert!(discards(&mut alerts).is_empty(), "{case}");
         history.catch_up_to(None);
@@ -219,7 +219,7 @@ async fn an_index_a_power_loss_left_behind_the_log_resumes_without_a_rebuild() {
 /// index of that log would.
 async fn assert_rebuilt(log: &Path, index: &Path, retention: Duration, cause: &str, case: &str) {
     let (_guard, mut alerts) = capture_alerts();
-    let mut history = open_history(&HistorySection { dir: index.to_owned(), retention }, log).unwrap();
+    let mut history = open_history(&HistorySection { dir: index.to_owned(), retention, marks: None }, log).unwrap();
     assert_eq!(history.resume_at(), Offset::start_of(0), "{case}");
     assert_discarded(&mut alerts, cause, case);
     history.catch_up_to(None);
@@ -235,7 +235,7 @@ async fn assert_rebuilt(log: &Path, index: &Path, retention: Duration, cause: &s
 /// has taken `tip`, but does not follow the log: the caller spawns `history.run(feed)` to catch
 /// up, so the test can assert what readers see before the index has taken anything.
 fn open_unstarted(node: &TestSequencer, dir: &Path, index: &Path, tip: Option<u64>) -> (History, Reader, Offset, Feed) {
-    let cfg = HistorySection { dir: index.to_owned(), retention: RETENTION };
+    let cfg = HistorySection { dir: index.to_owned(), retention: RETENTION, marks: None };
     let mut history = open_history(&cfg, dir).unwrap();
     history.catch_up_to(tip);
     let backfills = Arc::new(Semaphore::new(MAX_BACKFILLS));

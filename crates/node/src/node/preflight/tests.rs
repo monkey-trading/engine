@@ -46,6 +46,7 @@ async fn changed_or_removed_recorded_access_policy_preserves_history_wal_and_pub
             &cfg,
             Some(AccountId(EnclaveKey::test_key().address())),
             None,
+            &test_marks(),
             |_| {},
         )
         .unwrap();
@@ -154,14 +155,15 @@ async fn replay_valid_truncated_log_cannot_discard_a_newer_valid_history_index()
     let before = files(&root);
     let key = EnclaveKey::test_key();
     let mut found = None;
-    let (_log, plan) = crate::node::read_log_and_history_observe(&cfg, Some(AccountId(key.address())), None, |entry| {
-        if let crate::log::LogEntry::Checkpoint(cp) = entry
-            && cp.seq == anchor.seq
-        {
-            found = Some(cp.clone());
-        }
-    })
-    .unwrap();
+    let (_log, plan) =
+        crate::node::read_log_and_history_observe(&cfg, Some(AccountId(key.address())), None, &test_marks(), |entry| {
+            if let crate::log::LogEntry::Checkpoint(cp) = entry
+                && cp.seq == anchor.seq
+            {
+                found = Some(cp.clone());
+            }
+        })
+        .unwrap();
     let poster = poster(
         Chain {
             state: VaultState {
@@ -215,6 +217,7 @@ async fn wrong_recovery_deployment_preserves_history_wal_and_log_bytes() {
             &cfg,
             Some(AccountId(EnclaveKey::test_key().address())),
             None,
+            &test_marks(),
             |_| {},
         )
         .unwrap();
@@ -358,6 +361,7 @@ async fn incomplete_genesis_and_missing_checkpoint_service_preserve_history_byte
             &cfg,
             Some(AccountId(EnclaveKey::test_key().address())),
             None,
+            &test_marks(),
             |_| {},
         )
         .unwrap();
@@ -437,8 +441,14 @@ async fn reserved_signature_missing_from_recovered_log_refuses_before_history_mu
         AccountId(key.address()),
     );
     let before = files(&root);
-    let (log, plan) =
-        crate::node::read_log_and_history_observe(&cfg, Some(AccountId(key.address())), Some(parent), |_| {}).unwrap();
+    let (log, plan) = crate::node::read_log_and_history_observe(
+        &cfg,
+        Some(AccountId(key.address())),
+        Some(parent),
+        &test_marks(),
+        |_| {},
+    )
+    .unwrap();
     let seq_cfg = crate::sequencer::SequencerConfig {
         checkpoints: Some(tokio::sync::mpsc::channel(64).0),
         ..crate::test_support::sequencer_config(
@@ -473,7 +483,8 @@ async fn a_genesis_no_current_config_can_name_raises_critical_and_preserves_byte
         let (_guard, mut alerts) = crate::test_support::capture_alerts();
         let before = files(&root);
         let signer = AccountId(EnclaveKey::test_key().address());
-        let (log, plan) = crate::node::read_log_and_history_observe(&cfg, Some(signer), None, |_| {}).unwrap();
+        let (log, plan) =
+            crate::node::read_log_and_history_observe(&cfg, Some(signer), None, &test_marks(), |_| {}).unwrap();
         let seq_cfg = crate::test_support::sequencer_config(
             &cfg.node.log_dir,
             tokio::sync::watch::channel(crate::log::Manifest::default()).0,
@@ -488,3 +499,14 @@ async fn a_genesis_no_current_config_can_name_raises_critical_and_preserves_byte
 }
 
 mod origin;
+
+/// A scratch marks store for recovery tests that do not assert on marks.
+fn test_marks() -> std::rc::Rc<std::cell::RefCell<crate::history::marks::Store>> {
+    std::rc::Rc::new(std::cell::RefCell::new(
+        crate::history::marks::Store::open_in(
+            &crate::test_support::scratch_dir("preflight-test-marks"),
+            crate::history::marks::Retentions::defaults(),
+        )
+        .unwrap(),
+    ))
+}

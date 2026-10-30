@@ -42,7 +42,8 @@ async fn uncovered_ordinary_tail_preserves_missing_corrupt_and_wal_history() {
         }
         let before = files(&root);
         let signer = AccountId(EnclaveKey::test_key().address());
-        let (log, plan) = crate::node::read_log_and_history_observe(&cfg, Some(signer), None, |_| {}).unwrap();
+        let (log, plan) =
+            crate::node::read_log_and_history_observe(&cfg, Some(signer), None, &test_marks(), |_| {}).unwrap();
         let seq_cfg = sequencer_config(&cfg.node.log_dir, watch::channel(Manifest::default()).0);
         let error = finish_preflight::<Chain>(plan, None, Some((&log, &seq_cfg, signer))).await.err().unwrap();
         assert!(error.to_string().contains("unauthenticated command tail"), "{error:#}");
@@ -50,4 +51,15 @@ async fn uncovered_ordinary_tail_preserves_missing_corrupt_and_wal_history() {
         assert_eq!(cfg.history.dir.exists(), history_kind > 0);
         drop(connection);
     }
+}
+
+/// A scratch marks store for recovery tests that do not assert on marks.
+fn test_marks() -> std::rc::Rc<std::cell::RefCell<crate::history::marks::Store>> {
+    std::rc::Rc::new(std::cell::RefCell::new(
+        crate::history::marks::Store::open_in(
+            &crate::test_support::scratch_dir("preflight-origin-test-marks"),
+            crate::history::marks::Retentions::defaults(),
+        )
+        .unwrap(),
+    ))
 }

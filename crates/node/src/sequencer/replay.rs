@@ -101,6 +101,11 @@ pub(super) struct Replay {
     signed: BTreeSet<(AccountId, u64)>,
     /// The latest typed authorization each approval holds in this log, as `(signer epoch, expiry)`.
     authorized: BTreeMap<(AccountId, u64), (u64, u64)>,
+    /// The recovery-time marks sink: takes each market's mark as it changes, to seed the derived
+    /// marks cache. Nothing without one: `engine replay` does not seed a cache.
+    marks: Option<Box<dyn FnMut(engine_core::types::MarketId, Millis, Fixed)>>,
+    /// The last mark taken per market, so only changes reach the sink.
+    last_marks: BTreeMap<engine_core::types::MarketId, Fixed>,
 }
 
 impl Replay {
@@ -125,6 +130,12 @@ impl Replay {
             ..Self::with_trust(domain, trusted_signer)
         }
     }
+    /// Sets the sink that takes each market's mark as it changes during this replay, which recovery
+    /// uses to seed the derived marks cache.
+    pub(crate) fn sample_marks_with(&mut self, sink: Box<dyn FnMut(engine_core::types::MarketId, Millis, Fixed)>) {
+        self.marks = Some(sink);
+    }
+
     /// Applies the log's next entry.
     /// Error cases:
     /// - a command out of sequence, with time running backwards, or stamped past the range the
@@ -156,6 +167,7 @@ impl Replay {
                 if c.events.as_ref().is_some_and(|logged| *logged != events) {
                     bail!("events logged at seq {seq} differ from the events replay gives");
                 }
+                sample_marks(&mut self.marks, &mut self.last_marks, engine, c.sequenced.ts);
                 self.accounting.apply(&c.sequenced.cmd, &events)?;
                 if !version.supports_deposit_finality()
                     && let Some(deposit) = LegacyDeposit::from_command(&c.sequenced.cmd, &events)
@@ -352,6 +364,25 @@ impl Replay {
             recovery_base,
             legacy_deposits: self.legacy_deposits,
             legacy_approvals: self.legacy_approvals,
+        }
+    }
+}
+
+/// Hands each market whose mark this command moved to the marks sink, in market order, at the
+/// command's sequenced time; unchanged marks are not re-taken, so a live cache seeded this way
+/// continues a recovery-seeded one exactly.
+fn sample_marks(
+    sink: &mut Option<Box<dyn FnMut(engine_core::types::MarketId, Millis, Fixed)>>,
+    last_marks: &mut BTreeMap<engine_core::types::MarketId, Fixed>,
+    engine: &Engine,
+    ts: Millis,
+) {
+    let Some(sink) = sink.as_mut() else { return };
+    for (id, market) in engine.markets() {
+        if let Some(mark) = market.mark {
+            if last_marks.insert(*id, mark) != Some(mark) {
+                sink(*id, ts, mark);
+            }
         }
     }
 }

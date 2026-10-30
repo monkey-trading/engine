@@ -25,6 +25,7 @@ mod store;
 pub use reader::Reader;
 #[cfg(test)]
 pub(crate) use reader::transient;
+pub mod marks;
 pub(crate) mod rebuild;
 pub(crate) mod runtime;
 pub(crate) mod startup;

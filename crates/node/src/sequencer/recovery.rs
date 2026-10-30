@@ -183,7 +183,7 @@ impl Sequencer {
         parent: Option<crate::log::CheckpointParent>,
         mut observe: impl FnMut(&LogEntry),
     ) -> anyhow::Result<ReplayedLog> {
-        Self::read_log_with_authorities(dir, domain, signer, parent, Default::default(), &mut observe)
+        Self::read_log_with_authorities(dir, domain, signer, parent, Default::default(), &mut observe, None)
     }
 
     /// Replays accepted history while requiring the current signer for the unanchored tail.
@@ -196,10 +196,14 @@ impl Sequencer {
         parent: Option<crate::log::CheckpointParent>,
         authorities: crate::checkpoints::SignerHistory,
         mut observe: impl FnMut(&LogEntry),
+        marks: Option<Box<dyn FnMut(engine_core::types::MarketId, Millis, Fixed)>>,
     ) -> anyhow::Result<ReplayedLog> {
         let mut replay = parent
             .map_or_else(|| Replay::with_trust(domain, signer), |parent| Replay::with_recovery(domain, signer, parent));
         replay.set_authorities(authorities)?;
+        if let Some(sink) = marks {
+            replay.sample_marks_with(sink);
+        }
         let log = SegmentedLog::open(dir, |entry| {
             observe(&entry);
             replay.apply(&entry)
@@ -318,6 +322,8 @@ impl Sequencer {
             snapshot_anchor_work: recovery_anchor_work.clone(),
             snapshot_signers: checkpoint_signers,
             uncaptured: None,
+            marks_tx: None,
+            last_marks: BTreeMap::new(),
         };
         {
             let _span = info_span!("command", id = sequencer.engine.last_seq()).entered();

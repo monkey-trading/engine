@@ -41,7 +41,7 @@ use engine_core::command::{AdminCommand, Command, Sequenced};
 use engine_core::deposits::LegacyDeposit;
 use engine_core::event::Event;
 use engine_core::protocol::ProtocolVersion;
-use engine_core::types::{AccountId, Millis};
+use engine_core::types::{AccountId, MarketId, Millis};
 use engine_core::{Engine, Fixed};
 use tokio::sync::{broadcast, mpsc, watch};
 use tracing::{error, info, info_span, warn};
@@ -49,6 +49,7 @@ use tracing::{error, info, info_span, warn};
 use crate::benchmarks::BenchmarkSchedule;
 use crate::checkpoints::accounting::Accounting;
 use crate::clock::Clock;
+use crate::history::marks::MarkSample;
 use crate::log::{CommandEntry, LogEntry, LogWriter, SegmentedLog};
 use crate::metrics::Metrics;
 use crate::sequencer::alerts::{BenchmarkAlerts, DeficitAlert, alert_on, reinstated_receipt, resolve_reversal};
@@ -113,6 +114,11 @@ pub struct Sequencer {
     /// The newest checkpoint, with its recovery facts as they stood then, when its capture was
     /// skipped because another was in flight.
     uncaptured: Option<snapshots::Deferred>,
+    /// Where live mark changes go for the derived marks cache, which a dropped sample costs a data
+    /// point, never a root; `None` where nothing consumes them.
+    marks_tx: Option<mpsc::Sender<MarkSample>>,
+    /// The last mark reported per market, so only changes are sent.
+    last_marks: BTreeMap<MarketId, Fixed>,
 }
 
 /// A log read from disk and replayed, before anything is written to it.
@@ -294,6 +300,12 @@ impl Sequencer {
         self.flush()
     }
 
+    /// Sends each market's mark changes to `tx` for the derived marks cache. Only changes go, at
+    /// the command's sequenced time, so a cache seeded at recovery continues exactly.
+    pub fn track_marks(&mut self, tx: mpsc::Sender<MarkSample>) {
+        self.marks_tx = Some(tx);
+    }
+
     /// The stamp for a command now, if trusted time admits it. The host clock is untrusted inside
     /// a TEE: it can't move sequenced time backwards, and nothing is logged unless the clock and the
     /// stamp are within the drift bound of trusted time.
@@ -344,6 +356,7 @@ impl Sequencer {
         self.legacy_approvals.observe(&self.engine, &sequenced, &events, true);
         let reinstated = reinstated_receipt(&sequenced.cmd, &events);
         self.access_alerts.note(&self.engine, &sequenced.cmd, &events);
+        self.report_marks(ts);
         self.next_seq += 1;
         self.last_ts = ts;
         let mut entry = CommandEntry { sequenced, events: Some(events.clone()), seal: None };
@@ -409,6 +422,20 @@ impl Sequencer {
         let offset = self.log.append(&entry)?;
         self.outbox.push(Arc::new(StreamMsg::new(offset, entry)));
         Ok(())
+    }
+
+    /// Reports each listed market whose mark moved on the command just applied, in market order,
+    /// at its sequenced time. A full queue drops the sample: the cache is derived, and the next
+    /// change or a recovery reseeds it.
+    fn report_marks(&mut self, ts: Millis) {
+        let Some(tx) = &self.marks_tx else { return };
+        for (id, market) in self.engine.markets() {
+            if let Some(mark) = market.mark {
+                if self.last_marks.insert(*id, mark) != Some(mark) {
+                    let _ = tx.try_send((*id, ts, mark));
+                }
+            }
+        }
     }
 
     /// Signs an approved withdrawal and logs it; custody and the stream get it once it is flushed.

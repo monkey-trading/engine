@@ -61,7 +61,7 @@ const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_READS: usize = 16;
 
 /// One row of `sqlite_schema`: its type, name, table, and SQL.
-type SchemaRow = (String, String, String, Option<String>);
+pub(super) type SchemaRow = (String, String, String, Option<String>);
 
 /// Takes commands into the index: the one connection that writes to it.
 pub(super) struct Writer {
@@ -322,15 +322,19 @@ pub(super) fn discard(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// A read-only connection to the index at `path`, hardened.
-/// Error cases:
-/// - the file cannot be opened, or a protection cannot be set
 fn open_reader(path: &Path) -> anyhow::Result<Connection> {
     let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
     let conn = Connection::open_with_flags(path, flags).with_context(|| format!("opening {}", path.display()))?;
     harden(&conn)?;
     conn.busy_timeout(BUSY_TIMEOUT).context("setting the busy timeout")?;
     Ok(conn)
+}
+
+/// A read-only connection to the index at `path`, hardened.
+/// Error cases:
+/// - the file cannot be opened, or a protection cannot be set
+pub(super) fn read_only(path: &Path) -> anyhow::Result<Connection> {
+    open_reader(path)
 }
 
 /// Sets what every connection to the host's file runs with: defensive mode, which refuses SQL that
@@ -357,7 +361,7 @@ pub(super) fn expected_schema() -> Vec<SchemaRow> {
 /// The schema of `conn`'s database, as `sqlite_schema` lists it.
 /// Error cases:
 /// - the schema cannot be read
-fn schema_of(conn: &Connection) -> anyhow::Result<Vec<SchemaRow>> {
+pub(super) fn schema_of(conn: &Connection) -> anyhow::Result<Vec<SchemaRow>> {
     let mut stmt = conn
         .prepare("SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name")
         .context("reading the schema")?;

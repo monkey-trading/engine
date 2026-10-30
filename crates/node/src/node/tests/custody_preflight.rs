@@ -30,11 +30,14 @@ async fn custody_refusals_preserve_log_and_all_history_images() {
                 }
                 "wal" => {
                     let source = scratch_dir(&format!("node-cursor-wal-source-{}", rand::random::<u64>()));
-                    let writer =
-                        HistoryCheck::open(&HistorySection { dir: source.clone(), retention: cfg.history.retention })
-                            .unwrap()
-                            .finish()
-                            .unwrap();
+                    let writer = HistoryCheck::open(&HistorySection {
+                        dir: source.clone(),
+                        retention: cfg.history.retention,
+                        marks: None,
+                    })
+                    .unwrap()
+                    .finish()
+                    .unwrap();
                     fs::create_dir_all(&cfg.history.dir).unwrap();
                     for entry in fs::read_dir(&source).unwrap() {
                         let entry = entry.unwrap();

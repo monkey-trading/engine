@@ -233,7 +233,7 @@ fn plan(
 ) -> Plan {
     Plan {
         snapshots: snapshots.clone(),
-        history: HistorySection { dir: cfg.history.dir.clone(), retention: cfg.history.retention },
+        history: HistorySection { dir: cfg.history.dir.clone(), retention: cfg.history.retention, marks: None },
         log_dir: cfg.node.log_dir.clone(),
         domain,
         signer,

@@ -58,7 +58,7 @@ async fn a_history_index_ahead_of_its_log_is_discarded_and_the_node_starts() {
     let alert = alerts.try_recv().expect("an alert");
     assert_eq!((alert["alert"].as_str(), alert["level"].as_str()), ("history_index_discarded", "WARN"));
     // What the node left is a fresh index, which takes the log from its start with no alert.
-    let cfg = HistorySection { dir: index, retention: RETENTION };
+    let cfg = HistorySection { dir: index, retention: RETENTION, marks: None };
     let reopened = open_history(&cfg, &kept).unwrap();
     assert_eq!(reopened.resume_at(), Offset::start_of(0));
     assert!(alerts.try_recv().is_err(), "one alert");

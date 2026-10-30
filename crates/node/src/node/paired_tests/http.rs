@@ -57,6 +57,7 @@ impl Http {
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
             limits: Arc::new(ApiLimits::new(&cfg.api)),
             history,
+            marks: crate::test_support::marks_reader(),
             emission_budget: None,
             collateral: None,
             listing: Default::default(),

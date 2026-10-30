@@ -24,7 +24,7 @@ fn valid_history_resumes_without_alert_or_byte_changes_for_absent_empty_and_comm
         let source = root.join("source");
         let target = root.join("target");
         std::fs::create_dir_all(&target).unwrap();
-        let cfg = HistorySection { dir: target.clone(), retention: Duration::from_secs(60) };
+        let cfg = HistorySection { dir: target.clone(), retention: Duration::from_secs(60), marks: None };
         let (writer, _) = Writer::open(&source.join(INDEX_FILE), cfg.retention_ms().unwrap()).unwrap();
         let mut writer = Some(writer);
         let mut engine = Engine::new();
@@ -93,7 +93,8 @@ fn empty_database_never_deletes_recovery_evidence_during_preflight() {
     std::fs::write(dir.join(format!("{INDEX_FILE}-wal")), b"original recovery evidence").unwrap();
     std::fs::write(dir.join(format!("{INDEX_FILE}-shm")), b"original shared-memory evidence").unwrap();
     let before = files(&dir);
-    let plan = HistoryPlan::open(&HistorySection { dir: dir.clone(), retention: Duration::from_secs(60) }).unwrap();
+    let plan = HistoryPlan::open(&HistorySection { dir: dir.clone(), retention: Duration::from_secs(60), marks: None })
+        .unwrap();
     assert!(plan.progress.unwrap_err().to_string().contains("empty"));
     assert_eq!(files(&dir), before);
 }
@@ -114,7 +115,9 @@ fn invalid_database_geometry_preserves_every_recovery_sidecar() {
         for suffix in ["-wal", "-shm", "-journal"] {
             std::fs::write(dir.join(format!("{INDEX_FILE}{suffix}")), suffix.as_bytes()).unwrap();
         }
-        let plan = HistoryPlan::open(&HistorySection { dir: dir.clone(), retention: Duration::from_secs(60) }).unwrap();
+        let plan =
+            HistoryPlan::open(&HistorySection { dir: dir.clone(), retention: Duration::from_secs(60), marks: None })
+                .unwrap();
         assert!(plan.progress.is_err(), "unsafe geometry must be rejected before SQLite opens");
         assert_eq!(file.metadata().unwrap().len(), size);
         file.rewind().unwrap();

@@ -48,7 +48,8 @@ async fn funded_unscanned_anchor_refuses_startup_without_changing_log_or_history
         }
         let before = files(root);
         let signer = AccountId(EnclaveKey::test_key().address());
-        let (log, plan) = crate::node::read_log_and_history_observe(&cfg, Some(signer), Some(anchor), |_| {}).unwrap();
+        let (log, plan) =
+            crate::node::read_log_and_history_observe(&cfg, Some(signer), Some(anchor), &test_marks(), |_| {}).unwrap();
         let (sink, mut work) = mpsc::channel(64);
         let seq_cfg = SequencerConfig {
             checkpoints: Some(sink),
@@ -196,4 +197,15 @@ async fn old_funded_anchor(name: &str) -> (NodeConfig, CheckpointParent) {
     assert_eq!(audit.engine.last_seq(), Some(cp.seq), "read-only root audit remains supported");
     assert!(matches!(log_entries(&cfg.node.log_dir).last(), Some(LogEntry::Checkpoint(last)) if last == &cp));
     (cfg, CheckpointParent { has_checkpoint: true, seq: cp.seq, root: cp.root.parse().unwrap() })
+}
+
+/// A scratch marks store for recovery tests that do not assert on marks.
+fn test_marks() -> std::rc::Rc<std::cell::RefCell<crate::history::marks::Store>> {
+    std::rc::Rc::new(std::cell::RefCell::new(
+        crate::history::marks::Store::open_in(
+            &crate::test_support::scratch_dir("preflight-unscanned-test-marks"),
+            crate::history::marks::Retentions::defaults(),
+        )
+        .unwrap(),
+    ))
 }

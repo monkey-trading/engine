@@ -164,6 +164,25 @@ dir = "data/dev/history"
 # Events older than this, counted back from the newest command, leave the index; the log keeps them.
 retention = "365d"
 
+# The derived marks cache every market's index-mark history is served from
+# (`GET /v1/markets/{id}/marks`). Removing the directory while the node is stopped
+# rebuilds it from the log; a provider backfill seeds the depth a fresh log cannot
+# have. With the mock feeds above there are no venue symbols to backfill; with
+# feeds.provider = "venues" the Coinbase connections' symbols backfill from the
+# venue's public candles endpoint.
+[history.marks]
+# How long each resolution's buckets stay, counted back from the newest mark.
+# retention_1s = "48h"
+# retention_1m = "60d"
+# retention_1h = "2y"
+# 1d buckets stay unbounded without retention_1d.
+# [history.marks.backfill]
+# enabled = true
+# base_url = "https://api.exchange.coinbase.com"
+# depth_1m = "60d"
+# depth_1h = "2y"
+# depth_1d = "2y"
+
 [metrics]
 listen = "127.0.0.1:9464"
 
