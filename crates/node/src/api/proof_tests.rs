@@ -179,14 +179,14 @@ async fn an_account_is_provable_from_the_first_checkpoint_that_holds_it() {
 }
 
 #[tokio::test]
-async fn an_exit_proof_serves_from_the_first_v36_checkpoint_and_the_public_log_rebuilds_it() {
+async fn an_exit_proof_serves_from_the_first_v38_checkpoint_and_the_public_log_rebuilds_it() {
     let node = Node::start("exit-route").await;
     let trader = account(9);
     node.deposit(trader, "100").await;
     node.checkpoint().await;
     let path = format!("/v1/accounts/{trader}/exit");
-    assert_eq!(node.get(&path).await.0, StatusCode::NOT_FOUND, "a root before V36 holds no exit terms");
-    let activation = Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V36 });
+    assert_eq!(node.get(&path).await.0, StatusCode::NOT_FOUND, "a root before V38 holds no exit terms");
+    let activation = Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V38 });
     node.state.submit(activation).await.unwrap();
     node.checkpoint().await;
     let (status, body) = node.get(&path).await;

@@ -15,7 +15,7 @@ use crate::api::{ApiError, ApiResult, ApiState};
 /// vault's `latestSeq` is the proof's `seq`; `engine exit-proof` builds the same from the public log.
 /// Error cases:
 /// - the address is malformed
-/// - no checkpoint under protocol `V36` exists yet
+/// - no checkpoint under protocol `V38` exists yet
 /// - the sequencer has stopped
 pub(super) async fn exit(State(s): State<ApiState>, Path(address): Path<String>) -> ApiResult<ExitProof> {
     let id: AccountId = address.parse().map_err(|e| ApiError::BadRequest(format!("{e}")))?;

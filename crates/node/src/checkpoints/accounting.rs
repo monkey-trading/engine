@@ -141,7 +141,7 @@ impl Accounting {
             };
         }
         // A live receipt displacing another at its deposit id reverses the stale one in the same
-        // command, and activating `V36` resolves surviving duplicates the same way: account for the
+        // command, and activating `V38` resolves surviving duplicates the same way: account for the
         // reversal from the event alone. Every other event must name the command's own receipt.
         let subject_matches = match command {
             Command::CustodyDeposit(update) | Command::AccessCustodyReplacement { update, .. } => {
@@ -207,7 +207,7 @@ impl Accounting {
     }
 
     /// Applies an automatic collision reversal: the engine reversed a live receipt because another
-    /// claimed its deposit id, either inside the displacing command or at `V36` activation.
+    /// claimed its deposit id, either inside the displacing command or at `V38` activation.
     /// Error cases:
     /// - the event's status or movement is not a reversal of the receipt it names
     /// - an aggregate cannot represent the result

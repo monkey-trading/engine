@@ -1,4 +1,4 @@
-//! What the vault's exit against the last posted root checks, from `V36`: the exit terms leaf, the
+//! What the vault's exit against the last posted root checks, from `V38`: the exit terms leaf, the
 //! ABI leaves of receipt-backed pending deposits, an account proof's equity at the root's marks, and
 //! the proofs an account exits with.
 
@@ -67,7 +67,7 @@ pub struct ExitTermsProof {
     pub siblings: Vec<B256>,
 }
 
-/// A receipt-backed pending deposit as its `V36` leaf holds it, with its proof, as the vault's
+/// A receipt-backed pending deposit as its `V38` leaf holds it, with its proof, as the vault's
 /// exit refunds it to its payer.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -80,7 +80,7 @@ pub struct PendingDepositProof {
     pub siblings: Vec<B256>,
 }
 
-/// What a receipt-backed pending deposit's `V36` leaf binds: the vault's deposit id, the
+/// What a receipt-backed pending deposit's `V38` leaf binds: the vault's deposit id, the
 /// beneficiary (`None` for the house), the funding address, and the principal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -147,7 +147,7 @@ impl AccountProof {
     pub fn equity(&self) -> Option<Fixed> {
         self.positions.iter().zip(&self.markets).try_fold(self.leaf.balance, |equity, (held, market)| {
             let mark = market.leaf.mark.unwrap_or(held.position.entry);
-            let pnl = held.position.unrealised(mark, ProtocolVersion::V36);
+            let pnl = held.position.unrealised(mark, ProtocolVersion::V38);
             let currency = market.leaf.quote_currency;
             let usd = match market.leaf.fx_mark {
                 _ if pnl.is_zero() || currency.fx_market().is_none() => pnl,
@@ -253,10 +253,10 @@ impl ExitLeaves {
     }
 
     /// The value hash of the pending leaf at `reference`, as the last update committed it: from
-    /// `V36` a receipt-backed deposit's ABI leaf, and otherwise the keccak-256 of `deposit`'s JSON.
+    /// `V38` a receipt-backed deposit's ABI leaf, and otherwise the keccak-256 of `deposit`'s JSON.
     pub(super) fn pending_hash(&self, reference: &str, deposit: &AccessDeposit, version: ProtocolVersion) -> B256 {
         match self.pending.get(reference) {
-            Some((_, Some(receipt))) if version >= ProtocolVersion::V36 => pending_receipt_hash(receipt),
+            Some((_, Some(receipt))) if version >= ProtocolVersion::V38 => pending_receipt_hash(receipt),
             _ => json_hash(deposit),
         }
     }
@@ -299,7 +299,7 @@ impl Engine {
     }
 
     /// Every proof `account` exits with against the last root, or `None` before the first root
-    /// under `V36`. The work is bounded by what the account itself holds: one approval for each of
+    /// under `V38`. The work is bounded by what the account itself holds: one approval for each of
     /// its withdrawal nonces, its queued requests, and the pending deposits for it.
     pub fn exit_proof(&self, account: AccountId) -> Option<ExitProof> {
         let state = self.tree.as_ref()?;
@@ -345,16 +345,16 @@ impl Engine {
     }
 
     /// The proof of the exit terms against the last root, or `None` before the first root under
-    /// `V36`.
+    /// `V38`.
     pub fn exit_terms_proof(&self) -> Option<ExitTermsProof> {
         let state = self.tree.as_ref()?;
         let terms = state.exit.terms.clone()?;
-        let siblings = state.tree.proof(exit_terms_key()).expect("the exit terms leaf is in every V36 tree");
+        let siblings = state.tree.proof(exit_terms_key()).expect("the exit terms leaf is in every V38 tree");
         Some(ExitTermsProof { seq: state.seq, root: state.root, terms, siblings })
     }
 
     /// The proofs of the house's pending deposits against the last root, which the exit refunds to
-    /// their payers, or `None` before the first root under `V36`.
+    /// their payers, or `None` before the first root under `V38`.
     pub fn house_pending_deposit_proofs(&self) -> Option<Vec<PendingDepositProof>> {
         let state = self.tree.as_ref()?;
         state.exit.terms.as_ref()?;

@@ -1,4 +1,4 @@
-//! What the vault's exit against the last posted root checks, from `V36`, through `Engine::apply`:
+//! What the vault's exit against the last posted root checks, from `V38`, through `Engine::apply`:
 //! the leaves it proves, an account proof's equity at the root's marks, and the proofs an account
 //! exits with, which follow the committed root rather than the live state.
 
@@ -39,7 +39,7 @@ fn the_exit_leaves_hash_as_an_evm_toolchain_encodes_them() {
         ticket: 3,
     };
     assert_eq!(
-        withdrawal_queue_hash(&queued, ProtocolVersion::V36),
+        withdrawal_queue_hash(&queued, ProtocolVersion::V38),
         "0x28fc9968390f1c3ba6fd06646d0cedf422cf0b53be302377516e3a4e4441e83f".parse::<B256>().unwrap()
     );
     let json = alloy_primitives::keccak256(serde_json::to_vec(&queued).unwrap());
@@ -171,11 +171,11 @@ fn a_shortfall_proves_its_approval_and_queue_against_the_root_that_committed_the
 }
 
 #[test]
-fn activating_v36_rebuilds_the_tree_under_the_exit_encodings() {
+fn activating_v38_rebuilds_the_tree_under_the_exit_encodings() {
     let (mut h, a, _) = support::trading_at(ProtocolVersion::V35);
     let before = h.engine.state_root();
-    assert!(h.engine.exit_proof(a).is_none(), "no exit terms before V36");
-    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V36 });
+    assert!(h.engine.exit_proof(a).is_none(), "no exit terms before V38");
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V38 });
     let after = h.engine.state_root();
     assert_ne!(before, after);
     let mut rebuilt: engine_core::Engine = serde_json::from_slice(&serde_json::to_vec(&h.engine).unwrap()).unwrap();
@@ -193,7 +193,7 @@ fn a_flat_account_values_at_its_balance_and_one_with_losses_beyond_it_at_below_z
     }
     h.price(USDJPY, "150");
     fill(&h.market_order(a, USDJPY, Side::Sell, "1000", "150"));
-    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V36 });
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V38 });
     h.engine.state_root();
     let proof = h.engine.account_proof(a).unwrap();
     assert!(proof.positions.is_empty() && proof.verify(proof.root));

@@ -8,7 +8,7 @@ use crate::protocol::ProtocolVersion;
 
 impl Engine {
     /// Reverses every other live receipt above the finalised frontier at `receipt`'s deposit id, so
-    /// the new canonical receipt holds the id alone. From `V36` the exit refunds pending deposits
+    /// the new canonical receipt holds the id alone. From `V38` the exit refunds pending deposits
     /// by id, which two live receipts at one id would alias. A settled (finalised) conflict refuses
     /// the new receipt: finality is final, and the custody adapter must resolve the collision.
     /// Error cases:
@@ -19,7 +19,7 @@ impl Engine {
         exclude: Option<&str>,
         events: &mut Vec<Event>,
     ) -> Result<(), DepositReject> {
-        if self.protocol_version < ProtocolVersion::V36
+        if self.protocol_version < ProtocolVersion::V38
             || self.custody_checkpoint.is_some_and(|checkpoint| receipt.block <= checkpoint.block)
         {
             return Ok(());
@@ -40,7 +40,7 @@ impl Engine {
         Ok(())
     }
 
-    /// Activation-time resolution of duplicate live receipts surviving from before `V36`: at each
+    /// Activation-time resolution of duplicate live receipts surviving from before `V38`: at each
     /// vault deposit id above the finalised frontier the earliest-recorded live receipt holds the
     /// id, and the rest reverse.
     /// Error cases:

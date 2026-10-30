@@ -348,7 +348,7 @@ impl Engine {
                     self.record_launch_rates();
                 }
                 // Queue and pending leaves take their exit encodings, and the exit terms leaf joins.
-                if self.protocol_version < ProtocolVersion::V36 && *version >= ProtocolVersion::V36 {
+                if self.protocol_version < ProtocolVersion::V38 && *version >= ProtocolVersion::V38 {
                     self.tree = None;
                 }
                 if let Some(cash) = distribution_cash {
@@ -357,7 +357,7 @@ impl Engine {
                 // The exit refunds pending deposits by id, which two live receipts at one id would
                 // alias: every duplicate above the finalised frontier resolves to its earliest live
                 // receipt, before the version this failure would refuse takes effect.
-                if self.protocol_version < ProtocolVersion::V36 && *version >= ProtocolVersion::V36 {
+                if self.protocol_version < ProtocolVersion::V38 && *version >= ProtocolVersion::V38 {
                     self.reverse_duplicate_live_receipts(events)?;
                 }
                 self.protocol_version = *version;

@@ -100,7 +100,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   `GET /v1/accounts/{address}/distributions` serves an account's cumulative USDC distribution with
   its proof against the last checkpoint's root, for the vault's `claimDistribution`; checkpoint
   reconciliation counts the USDC the vault has paid in distributions against the ledger
-- The exit against the last posted root from protocol `V36`: `GET /v1/accounts/{address}/exit`
+- The exit against the last posted root from protocol `V38`: `GET /v1/accounts/{address}/exit`
   serves every proof an account exits the vault with against the last checkpoint's root, and
   `engine exit-proof` builds the same from a published log alone, with each vault call ABI-encoded
 - Supervised tasks: any task stopping stops the node, and SIGTERM drains to a final checkpoint
@@ -1522,14 +1522,14 @@ distribution the same way (`entitled` in the 6-decimal token's base units). The 
 against its latest posted root. An account has no distribution, and gets 404, until the first
 checkpoint after an epoch in which it was allocated a share.
 
-`/v1/accounts/{address}/exit` returns, from `V36`, every proof the account exits the vault with
+`/v1/accounts/{address}/exit` returns, from `V38`, every proof the account exits the vault with
 against the state root of the last checkpoint: `terms` (the vault deposit cursor and the pending and
 held principal the exit reserves), `account` (its leaf, positions and their markets, as
 `/v1/accounts/{address}/proof` serves them), `approvals` (every approval it holds; the vault's
 `usedNonces` says which are unpaid), `queued`, `distribution`, and `pending_deposits` (deposits for
 it pending a declaration or screening, refunded to their payer). Amounts are the engine's decimal
 strings. The vault checks them against its latest posted root, so they serve the exit once the
-vault's `latestSeq` is the proof's `seq`. The route gets 404 until the first checkpoint under `V36`.
+vault's `latestSeq` is the proof's `seq`. The route gets 404 until the first checkpoint under `V38`.
 `engine exit-proof` builds the same bundle from the public log after the node is gone.
 
 The operator listener, `metrics.listen` (`127.0.0.1:9464` in `config/dev.toml`), serves

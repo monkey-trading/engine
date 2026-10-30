@@ -92,10 +92,10 @@ pub enum ExitSubject {
 /// Error cases:
 /// - the log cannot be read, or holds no checkpoint at `seq` whose root its commands reproduce (see
 ///   `engine_at_checkpoint`)
-/// - the log's protocol at `seq` predates `V36`, so its root holds no exit terms
+/// - the log's protocol at `seq` predates `V38`, so its root holds no exit terms
 pub fn exit_bundle(path: &Path, seq: u64, subject: ExitSubject) -> anyhow::Result<ExitBundle> {
     let engine = engine_at_checkpoint(path, seq)?;
-    let missing = || format!("the root at seq {seq} holds no exit terms: its protocol predates V36");
+    let missing = || format!("the root at seq {seq} holds no exit terms: its protocol predates V38");
     match subject {
         ExitSubject::Account(account) => {
             let proof = engine.exit_proof(account).with_context(missing)?;
@@ -310,7 +310,7 @@ mod tests {
 
     /// The node's reference log for the latest protocol: placeholder checkpoint signatures, and
     /// signed withdrawals, which `engine replay` refuses without a trusted signer.
-    const REFERENCE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/reference/v36.jsonl");
+    const REFERENCE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/reference/v38.jsonl");
 
     #[test]
     fn a_staker_with_no_trading_account_is_given_its_claim_call() {
@@ -354,7 +354,7 @@ mod tests {
         let bundle = exit_bundle(Path::new(REFERENCE), seq, ExitSubject::House).unwrap();
         assert_eq!(format!("{:#x}", bundle.root), root);
         assert!(bundle.house_pending_deposits.iter().all(|pending| pending.verify(bundle.root)));
-        assert!(!bundle.house_pending_deposits.is_empty(), "the V36 session leaves a house deposit pending");
+        assert!(!bundle.house_pending_deposits.is_empty(), "the V38 session leaves a house deposit pending");
         let error = exit_bundle(Path::new(REFERENCE), seq + 1, ExitSubject::House).unwrap_err();
         assert!(error.to_string().contains("no checkpoint at seq"), "{error:#}");
     }

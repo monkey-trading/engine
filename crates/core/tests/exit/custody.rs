@@ -15,13 +15,13 @@ use engine_core::{Engine, Fixed};
 use crate::access_support::{attest, evidence, setup, sign_screening};
 use crate::common::{Client, Harness, f};
 
-/// A funded and declared client, an undeclared newcomer, and a sanctioned payer, under `V36`, with
+/// A funded and declared client, an undeclared newcomer, and a sanctioned payer, under `V38`, with
 /// four receipts: one credited to the client, one pending the newcomer's declaration, one held for
 /// its sanctioned payer, and one for the house pending an unknown classification of its payer.
 pub fn custody() -> (Harness, [AccountId; 3], [DepositReceipt; 4]) {
     let (mut h, client) = setup();
     attest(&mut h, &client);
-    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V36 });
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V38 });
     let newcomer = Client::new(2).account;
     let sanctioned = AccountId([0x5a; 20]);
     let receipts = [
@@ -434,6 +434,31 @@ fn a_restored_snapshot_reinstating_a_reversed_receipt_matches_uninterrupted_repl
     h.engine = restored;
     let reversed_at_seq = h.engine.recorded_deposit(&receipts[2].reference()).unwrap().updated_at_seq;
     let reinstate = DepositUpdate::Reinstate { receipt: receipts[2].clone(), reversed_at_seq };
+    let events = h.cmd(Command::CustodyDeposit(Box::new(reinstate)));
+    assert!(!events.iter().any(|e| matches!(e, Event::CustodyDepositRejected { .. })), "{events:?}");
+    let root = B256::from(h.engine.state_root());
+    let terms = h.engine.exit_proof(client).unwrap().terms;
+    assert_eq!(
+        (terms.terms.deposit_cursor, &terms.terms.gaps, terms.terms.unheld, terms.terms.held_receipts),
+        (4, &Vec::<u64>::new(), Fixed::ZERO, f("182"))
+    );
+    assert!(terms.verify(root));
+    assert_root_matches_rebuild(&mut h.engine);
+}
+
+#[test]
+fn a_restored_tail_receipts_reinstatement_clears_its_reservation() {
+    let (mut h, [client, ..], receipts) = custody();
+    // Reverse the highest held id, restore the engine from its serialized state, and reinstate:
+    // the rebuilt index must clear the id's reserved principal exactly as uninterrupted execution
+    // does, with the same root.
+    let seq = h.engine.recorded_deposit(&receipts[3].reference()).unwrap().updated_at_seq;
+    let reverse = DepositUpdate::Reverse { receipt: receipts[3].clone(), observed_at_seq: seq };
+    let events = h.cmd(Command::CustodyDeposit(Box::new(reverse)));
+    assert!(!events.iter().any(|e| matches!(e, Event::CustodyDepositRejected { .. })), "{events:?}");
+    h.engine = serde_json::from_slice(&serde_json::to_vec(&h.engine).unwrap()).unwrap();
+    let reversed_at_seq = h.engine.recorded_deposit(&receipts[3].reference()).unwrap().updated_at_seq;
+    let reinstate = DepositUpdate::Reinstate { receipt: receipts[3].clone(), reversed_at_seq };
     let events = h.cmd(Command::CustodyDeposit(Box::new(reinstate)));
     assert!(!events.iter().any(|e| matches!(e, Event::CustodyDepositRejected { .. })), "{events:?}");
     let root = B256::from(h.engine.state_root());

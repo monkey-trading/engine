@@ -1,5 +1,5 @@
 //! V22 withdrawal approval proofs and separate leaves for public FIFO reservations, which the vault's
-//! exit checks from `V36`.
+//! exit checks from `V38`.
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolValue;
@@ -49,12 +49,12 @@ pub struct QueuedWithdrawalProof {
 }
 
 impl QueuedWithdrawalProof {
-    /// Verifies the `V36` queue leaf against the caller's trusted posted root.
+    /// Verifies the `V38` queue leaf against the caller's trusted posted root.
     pub fn verify(&self, root: B256) -> bool {
         verify(
             root,
             withdrawal_queue_key(self.queued.requested_seq),
-            withdrawal_queue_hash(&self.queued, ProtocolVersion::V36),
+            withdrawal_queue_hash(&self.queued, ProtocolVersion::V38),
             &self.siblings,
         )
     }
@@ -77,10 +77,10 @@ pub fn withdrawal_queue_key(requested_seq: u64) -> B256 {
     keccak(&[&[WITHDRAWAL_QUEUE], &requested_seq.to_be_bytes()])
 }
 
-/// The reservation's value: from `V36` `keccak256(abi.encode(address account, int128 amount, int128
+/// The reservation's value: from `V38` `keccak256(abi.encode(address account, int128 amount, int128
 /// remaining, uint64 requestedSeq, uint64 ticket))`, and before it the keccak-256 of its JSON.
 pub fn withdrawal_queue_hash(queued: &QueuedWithdrawal, version: ProtocolVersion) -> B256 {
-    if version < ProtocolVersion::V36 {
+    if version < ProtocolVersion::V38 {
         return json_hash(queued);
     }
     // Every field is named, so a field added to the reservation fails to compile until it is hashed.

@@ -26,7 +26,7 @@ an index: load only the rule whose hint matches the current action.
   anchors, epoch closes at NAV above a liquidity floor, cumulative distributions proven on chain),
   protocol versions, and the
   state tree (a keccak-256 sparse Merkle tree over the state, with account and entitlement proofs, in
-  `merkle/`; from `V36` `merkle/exit.rs` commits and proves what the vault's exit checks). It does no IO and uses no clocks,
+  `merkle/`; from `V38` `merkle/exit.rs` commits and proves what the vault's exit checks). It does no IO and uses no clocks,
   randomness, or floats. `impl Engine` is split by area (`engine/mod.rs` for state and dispatch
   with house NAV and exposure caps in `engine/house.rs`, per-market state in `engine/market.rs`, `marks.rs`, `execution/`,
   `markouts.rs`, `closeout.rs`, `funds.rs`, `deposits.rs` with legacy migration and screened canonical replacements in `deposits/`,

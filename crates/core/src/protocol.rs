@@ -175,22 +175,22 @@ pub enum ProtocolVersion {
     /// market is reduce-only. The operator key rotates only by a signed rotation that takes effect
     /// seven days after it is logged.
     V35,
-    /// The state root commits what the vault's exit against the last posted root needs: a queued
-    /// withdrawal's and a pending receipt's leaves are ABI-encoded so the vault can check them, and
-    /// one leaf holds the vault deposit cursor with the pending and held principal the exit
-    /// reserves. Activation rebuilds the tree under these encodings.
-    V36,
     /// The operator key follows the operator registry's election (`election`): the registry's
     /// finalised events turning rotation on or off and electing a candidate mirror on the staking
     /// mirror, each credited once under its chain reference, and an election naming another key
     /// hands it over at the election's effective time, or seven days after it is logged when that
     /// is later. While rotation is on, `RotateOperator` is refused.
     V37,
+    /// The state root commits what the vault's exit against the last posted root needs: a queued
+    /// withdrawal's and a pending receipt's leaves are ABI-encoded so the vault can check them, and
+    /// one leaf holds the vault deposit cursor with the pending and held principal the exit
+    /// reserves. Activation rebuilds the tree under these encodings.
+    V38,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V37;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V38;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

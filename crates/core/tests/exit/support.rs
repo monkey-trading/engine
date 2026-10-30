@@ -1,4 +1,4 @@
-//! A trading session for the exit tests, built under `V22` and moved to `V36`: a house that starts
+//! A trading session for the exit tests, built under `V22` and moved to `V38`: a house that starts
 //! with no capital, FX markets, and an account holding a position in a USD, a euro, and a yen market,
 //! whose withdrawal waits in part in the queue.
 
@@ -22,9 +22,9 @@ pub fn trading_at(version: ProtocolVersion) -> (Harness, AccountId, u64) {
     (h, a, queued)
 }
 
-/// `trading_at` under `V36`.
+/// `trading_at` under `V38`.
 pub fn trading() -> (Harness, AccountId, u64) {
-    trading_at(ProtocolVersion::V36)
+    trading_at(ProtocolVersion::V38)
 }
 
 /// A `V22` harness, whose client actions need no screening, with a house that starts with no

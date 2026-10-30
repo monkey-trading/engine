@@ -306,7 +306,7 @@ fn an_automatic_collision_reversal_in_a_credit_is_accounted() {
         };
         apply(Command::Admin(AdminCommand::SetClientAuth(ClientAuth::Unsigned)));
         apply(Command::Admin(AdminCommand::SetOperator(dev_config().operator().unwrap())));
-        apply(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V36 }));
+        apply(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V38 }));
         let credited = apply(Command::CustodyDeposit(Box::new(engine_core::deposits::DepositUpdate::Credit {
             receipt: receipt(1),
         })));
@@ -362,10 +362,10 @@ fn an_activation_that_resolves_a_surviving_duplicate_is_accounted() {
         apply(Command::Admin(AdminCommand::SetClientAuth(ClientAuth::Unsigned)));
         apply(Command::Admin(AdminCommand::SetOperator(dev_config().operator().unwrap())));
         apply(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V26 }));
-        // Pre-V36 duplicate ids record without resolution; activating V36 reverses the later one.
+        // Pre-V38 duplicate ids record without resolution; activating V38 reverses the later one.
         apply(Command::CustodyDeposit(Box::new(engine_core::deposits::DepositUpdate::Credit { receipt: receipt(1) })));
         apply(Command::CustodyDeposit(Box::new(engine_core::deposits::DepositUpdate::Credit { receipt: receipt(2) })));
-        apply(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V36 }))
+        apply(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V38 }))
     };
     assert!(
         events.iter().any(|event| matches!(

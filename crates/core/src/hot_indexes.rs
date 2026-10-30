@@ -144,6 +144,11 @@ impl HotIndexes {
         self.insert_run(id);
     }
 
+    /// Whether `id` sits in a missing run.
+    fn id_missing(&self, id: u64) -> bool {
+        self.missing.range(..=id).next_back().is_some_and(|(_, end)| *end >= id)
+    }
+
     /// Merges `id` with its adjacent missing runs.
     fn insert_run(&mut self, id: u64) {
         let mut start = id;
@@ -300,9 +305,12 @@ impl Engine {
         }
         let base = self.custody_checkpoint.map_or(0, |checkpoint| checkpoint.deposit_count);
         for (id, (_, amount)) in dropped {
-            // The high-water complement already opened the run this id sits in; attach the latest
-            // recorded principal without touching the runs.
             if id >= base && !indexes.above_frontier_by_id.contains_key(&id) {
+                // A reversed id the high-water complement never covered, above the highest live
+                // id, still needs its run, or reinstating it would keep a principal no run clears.
+                if !indexes.id_missing(id) {
+                    indexes.insert_run(id);
+                }
                 indexes.unheld_amounts.insert(id, amount);
                 indexes.unheld_total += amount;
             }

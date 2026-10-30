@@ -55,7 +55,7 @@ this crate and reproduce the signed state roots exactly.
   operator key changes only by a signed `rotate_operator`, which takes effect seven days after it is
   logged: from then the old key signs nothing, and the new one signs under the same chain and vault.
   Earlier versions keep their rules
-- From protocol `V36`, the state root commits what the vault's exit against the last posted root
+- From protocol `V38`, the state root commits what the vault's exit against the last posted root
   checks (`src/merkle/exit.rs`): a queued withdrawal's leaf and a receipt-backed pending deposit's
   leaf are ABI-encoded, and one leaf holds the vault deposit cursor, one past the highest deposit
   id in the root, with the pending and held principal the exit reserves, the principal of every id
@@ -188,10 +188,10 @@ this crate and reproduce the signed state roots exactly.
 - `src/deposits/tests/coverage.rs` — canonical coverage, partial frontiers and restored index contracts
 - `src/withdrawal.rs` — V22 FIFO reservations, bounded partial approval, the V34 minimum, and exact USDC conversion
 - `src/merkle/withdrawal.rs` — payable approval leaves, queued request leaves, and their proofs
-- `src/merkle/exit.rs` — the V36 exit terms and pending deposit leaves, the committed copies the exit
+- `src/merkle/exit.rs` — the V38 exit terms and pending deposit leaves, the committed copies the exit
   proves from, account equity at the root's marks, and `Engine::exit_proof`
 - `tests/exit.rs` — the exit leaves against `cast`, equity in every quote currency, proofs against
-  the committing root, and the V36 rebuild; `tests/exit/custody.rs` the cursor and the pending and
+  the committing root, and the V38 rebuild; `tests/exit/custody.rs` the cursor and the pending and
   held totals over receipts; `tests/exit/fixture.rs` the vault's vectors
 - `tests/withdrawal_minimum.rs` — the V34 minimum request and the waiting of sub-minimum parts, against V33
 - `tests/withdrawal_queue.rs` — reservations, partial FIFO, cash conservation, precision, and stale marks
@@ -401,9 +401,9 @@ for, paid down by later loss weight before it earns again, and judges
 emission eligibility during corporate-action catch-up at the enclosing command's stamp. Its
 session is in `examples/reference_log/v32.rs`.
 
-Protocol V36 commits what the vault's exit checks: ABI-encoded queue and pending deposit leaves, and
+Protocol V38 commits what the vault's exit checks: ABI-encoded queue and pending deposit leaves, and
 the exit terms leaf with the deposit cursor and the pending and held principal; its session is in
-`examples/reference_log/v36.rs`.
+`examples/reference_log/v38.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

@@ -19,7 +19,7 @@
 //!   entitlement snapshot, and kind 22 a retained corporate identity (UTF-8 id bytes); their values
 //!   hash the canonical JSON. From `V25`, kind 13 is an account's cumulative USDC distribution
 //!   (`address`), kind 14 its staked MONKEY balance, and from `V27` kind 15 a credited staking
-//!   mirror reference (its UTF-8 bytes). From `V36`, kind 24 holds the exit terms (no id), and the
+//!   mirror reference (its UTF-8 bytes). From `V38`, kind 24 holds the exit terms (no id), and the
 //!   queued withdrawal (33) and receipt-backed pending deposit (34) leaves are ABI-encoded for the
 //!   vault's exit (`exit.rs`).
 //! - **Paths.** The key's bits, most significant first, are the path from the root: bit `d`,

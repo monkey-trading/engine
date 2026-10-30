@@ -294,12 +294,12 @@ impl Engine {
             if self.custody_checkpoint.is_some_and(|checkpoint| receipt.block <= checkpoint.block) {
                 return Err(DepositReject::SettledReceipt);
             }
+            self.check_transaction_available(receipt)?;
             self.reverse_conflicting_receipts(receipt, None, events)?;
             if self.adopt_legacy_deposit(receipt)? {
                 self.record_deposit(receipt, DepositStatus::Unfinalised, Fixed::ZERO, None, events)?;
                 return Ok(());
             }
-            self.check_transaction_available(receipt)?;
             if let Some(uncredited) = self.receipt_refusal(receipt, screening) {
                 self.record_deposit(receipt, DepositStatus::Unfinalised, Fixed::ZERO, Some(uncredited), events)?;
                 self.track_uncredited(receipt, uncredited, true);

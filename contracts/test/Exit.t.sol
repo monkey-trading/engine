@@ -374,8 +374,10 @@ contract ExitTestCases is ExitTest {
 
     function _refuseMalformedGaps(uint64[] memory gaps) internal {
         _deposit(funder, alice, 100e6);
-        _post();
+        _deposit(funder, alice, 100e6);
+        _deposit(funder, alice, 100e6);
         _addTerms(3, 0, 0, 0, 0, 0, gaps);
+        _post();
         vm.warp(block.timestamp + PERIOD);
         vm.expectRevert(abi.encodeWithSelector(Vault.InvalidExitProof.selector));
         vault.startExit(
