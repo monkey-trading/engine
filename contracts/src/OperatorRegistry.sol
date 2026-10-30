@@ -306,7 +306,10 @@ contract OperatorRegistry {
         bytes32 release = _release(launchDigest, configHash);
         releaseApproved[keccak256(abi.encode(candidate, release))] = approved;
         emit ReleaseApprovalChanged(candidate, release, approved);
-        if (candidates[candidate].adminKey == address(0)) return;
+        Candidate memory registered = candidates[candidate];
+        // Listing follows the release the candidate registered, not any other release the timelock
+        // names for it.
+        if (registered.adminKey == address(0) || registered.release != release) return;
         if (approved) {
             if (listed[candidate] == 0) _enlist(candidate);
         } else if (listed[candidate] != 0) {

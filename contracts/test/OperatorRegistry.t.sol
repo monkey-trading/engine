@@ -214,6 +214,31 @@ contract OperatorRegistryTest is RegistryTest {
         assertFalse(registry.isEligible(alice));
     }
 
+    function test_ApprovalOfAReleaseTheCandidateDidNotRegisterNeitherListsNorDelistsIt() public {
+        _candidate(alice, MIN_BOND, 1);
+        // Approving another release neither takes a second seat nor disturbs the listed one.
+        _govern(
+            address(registry), abi.encodeCall(OperatorRegistry.setReleaseApproval, (alice, _digest(2), CONFIG, true))
+        );
+        assertEq(registry.candidateCount(), 1);
+        assertEq(registry.candidateList(0), alice);
+        // Withdrawing another release does not delist it.
+        _govern(
+            address(registry), abi.encodeCall(OperatorRegistry.setReleaseApproval, (alice, _digest(2), CONFIG, false))
+        );
+        assertEq(registry.candidateCount(), 1);
+        // Once its own release is withdrawn it is unlisted, and another release cannot list it.
+        _govern(
+            address(registry), abi.encodeCall(OperatorRegistry.setReleaseApproval, (alice, _digest(1), CONFIG, false))
+        );
+        assertEq(registry.candidateCount(), 0);
+        _govern(
+            address(registry), abi.encodeCall(OperatorRegistry.setReleaseApproval, (alice, _digest(2), CONFIG, true))
+        );
+        assertEq(registry.candidateCount(), 0);
+        assertFalse(registry.isEligible(alice));
+    }
+
     function test_AReregisteredCandidateWhoseReleaseIsStillApprovedRelistsAtOnce() public {
         _stake(alice, 2 * MIN_BOND);
         vm.prank(alice);
