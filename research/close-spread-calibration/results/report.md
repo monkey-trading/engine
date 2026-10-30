@@ -58,7 +58,7 @@ Gaps, closures and contract rolls are not in the need: a price jump is not a spr
 | AMD | equity | 10 | 436 | 18.3 | 20 | **20** | 2.0% | 0.37% | moderate |
 | ORCL | equity | 10 | 388 | 17.5 | 20 | **20** | 2.0% | 0.37% | moderate |
 
-Method and test: the method is fixed on the calibration sample (2024-10-28 to 2026-04-27) and tested on the later validation sample (to 2026-10-12). It covers every market, so the proposed value refits on the larger of the two tails (in-sample on the validation tail). Over the validation hours, the share whose need would exceed the calibration-only ceiling is at most 0.86%. The out-of-sample test could fail only for the 30 markets whose calibration-only ceiling is above the floor.
+Method and test: the method is fixed on the calibration sample (2024-10-28 to 2026-04-27) and tested on the later validation sample (to 2026-10-12). It covers every market, so the proposed value refits on the larger of the two tails (in-sample on the validation tail). Over the validation hours, the share whose need would exceed the calibration-only ceiling is at most 0.86%. A market at the floor fails the test whenever its validation need exceeds the launch charge, so the count of markets whose calibration-only ceiling is above the floor (30) is not the population that can fail it.
 
 Burden: every proposed ceiling is at most 30% of the market's smallest initial margin (limit 30%). Floor-bound ceilings (EUR-USD, GBP-USD, USD-JPY, AUD-USD, US500, US30, UK100) sit at the 13-bp floor, 26% of their 50-bp margin, so the launch parameters themselves already cost them that share of margin to close at the top stress level: an owner decision for the launch stress minimum, not for the ceiling.
 

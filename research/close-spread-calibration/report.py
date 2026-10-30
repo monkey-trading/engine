@@ -84,9 +84,10 @@ def write_report(data):
            f"{len(live)} markets; {', '.join(uncovered)} did not" if uncovered else "It covers every market")
         + ", so the proposed value refits on the larger of the two tails (in-sample on the validation tail). Over the "
         "validation hours, the share whose need would exceed the calibration-only ceiling is at most "
-        f"{max(row['validation_hours_over_calibration_ceiling'] for row in live) * 100:.2f}%. The out-of-sample test "
-        f"could fail only for the {data['objective']['markets_where_validation_could_fail']} markets whose "
-        "calibration-only ceiling is above the floor.", "",
+        f"{max(row['validation_hours_over_calibration_ceiling'] for row in live) * 100:.2f}%. A market at the floor "
+        "fails the test whenever its validation need exceeds the launch charge, so the count of markets whose "
+        f"calibration-only ceiling is above the floor ({data['objective']['markets_set_by_method']}) is not the "
+        "population that can fail it.", "",
         "Burden: every proposed ceiling is at most "
         f"{max(row['ceiling_percent_of_min_margin'] for row in live):.0f}% of the market's smallest initial margin "
         f"(limit {data['objective']['burden_limit_percent_of_min_initial_margin']}%). Floor-bound ceilings "

@@ -1,7 +1,7 @@
 {
   "inputs": {
     "genesis_inventory": "72ffcc75459ccd23ea1459d87d905746b59a0b3d55ede0fe9a1ba55865dc0e55",
-    "genesis_file_informational": "d21e3d4dbc8034883d952874e2234f95e94690b1891e859e96162e3e2af1417c",
+    "genesis_file_informational": "5d3ef4fd6b5ca7e6b68b4976879bdabb91036e9adcb6be6151aaf41ee1d2ceee",
     "bars": "d742bab6c751e97338bbb82d7801f22aec3a5bed7d01904b7dcdd9ed076ec522",
     "catalogue.py": "8426ed40b977bc18c2b80fa240b3d2c22c56b2c871363017e9b84af159cb6396",
     "derive/markets.py": "32629c08a2adcb27109f4dddd529828ccc81421fd583245e673d9108d1edd428",
@@ -11,7 +11,7 @@
   "objective": {
     "need": "(max_divergence_bps + 1) + hourly tail move * sqrt(max_age_ms / 1h)",
     "selection_statistic": "the larger of the calibration hourly p99 (upper end of its weekly block-bootstrap interval) and the validation hourly p99",
-    "markets_where_validation_could_fail": 30,
+    "markets_set_by_method": 30,
     "floor_bps": 13,
     "step_bps": 5,
     "burden_limit_percent_of_min_initial_margin": 30,
