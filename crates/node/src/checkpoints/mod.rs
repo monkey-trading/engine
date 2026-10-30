@@ -178,8 +178,6 @@ impl std::fmt::Display for Conflict {
     }
 }
 
-impl std::error::Error for Conflict {}
-
 /// Supervised checkpoint worker; work is durable in the log before it reaches this queue.
 pub(crate) struct Poster<R> {
     pub chain: R,
@@ -278,12 +276,24 @@ impl<R: CheckpointChain> Poster<R> {
                     // is still mining, so only a conflict a fresh observation repeats stops the worker.
                     let (posted, health, lifecycle) = match result {
                         Ok((posted, health, lifecycle)) => {
+                            // A retired signer or withheld collateral can reconcile successfully
+                            // forever after the vault's exit has started; the exit ends the node
+                            // regardless of how reconciliation reports.
+                            if self.chain.exit_started().await.unwrap_or(false) {
+                                let error = anyhow::anyhow!("the vault's exit has started");
+                                span.in_scope(|| error!(alert = "vault_exit_started", "no checkpoint can follow the vault's exit: {error:#}"));
+                                return Err(error.context("the vault's exit against the last posted root has started"));
+                            }
                             unconfirmed = false;
                             (posted, (health != Health::Unvalidated).then_some(health), lifecycle)
                         }
                         Err(error) if unconfirmed && error.is::<Conflict>() => {
                             span.in_scope(|| error!(alert = "checkpoint_conflict", "refusing to continue: {error:#}"));
                             return Err(error);
+                        }
+                        Err(error) if self.chain.exit_started().await.unwrap_or(false) => {
+                            span.in_scope(|| error!(alert = "vault_exit_started", "no checkpoint can follow the vault's exit: {error:#}"));
+                            return Err(error.context("the vault's exit against the last posted root has started"));
                         }
                         Err(error) => {
                             unconfirmed |= error.is::<Conflict>();
@@ -325,6 +335,7 @@ impl<R: CheckpointChain> Poster<R> {
 
 mod reconciliation;
 mod sweep;
+use reconciliation::Conflict;
 use sweep::approval_page;
 
 #[cfg(test)]

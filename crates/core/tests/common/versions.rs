@@ -194,6 +194,19 @@ impl Harness {
         h
     }
 
+    /// `v8`'s genesis with unsigned requests and a house that starts with no capital, so withdrawals
+    /// beyond the deposits wait in the queue, then `version`.
+    pub fn zero_house_operated(version: ProtocolVersion) -> Self {
+        let mut h = Harness::empty();
+        h.admin(AdminCommand::SetClientAuth(ClientAuth::Unsigned));
+        h.admin(AdminCommand::SetOperator(operator()));
+        h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V8 });
+        h.house_capital = Fixed::ZERO;
+        h.genesis();
+        h.admin(AdminCommand::ActivateProtocol { version });
+        h
+    }
+
     /// `staking` with a one-day epoch and a three-day cooldown over a 1m floor, then `V37`, whose
     /// operator key follows the operator registry's mirrored elections.
     pub fn v37() -> Self {

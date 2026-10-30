@@ -75,7 +75,13 @@ executes trades. A deposit is credited once the L2 batch holding it is posted to
 ([#22](https://github.com/0xjevons/monkeytrading/issues/22)). The vault pays a withdrawal against
 the enclave's signed approval ([#23](https://github.com/0xjevons/monkeytrading/issues/23)); one it
 cannot cover waits in a public first-in-first-out queue
-([#49](https://github.com/0xjevons/monkeytrading/issues/49)). Ownership of the house is represented
+([#49](https://github.com/0xjevons/monkeytrading/issues/49)). If the enclave stops posting
+checkpoints, the vault stops taking deposits and, after a set period, anyone can start its exit
+against the last root it posted: for a fixed window, each account registers the balance that root
+proves, its open positions valued at the root's marks, and its unpaid withdrawals, and then every
+account is paid the same share of what the vault holds, in full when it is solvent. Deposits the
+root does not hold are refunded to whoever paid them, and the proofs need nothing but the public log
+([#48](https://github.com/0xjevons/monkeytrading/issues/48)). Ownership of the house is represented
 by the MONKEY token, earned on losing trades: every ten minutes a fixed budget is shared among the
 accounts in proportion to their net realised losses, less any debt the house wrote off (carried forward, up to the weight the account earned, while the losses cannot cover it), and
 the budget halves every 182.5 days. An account claims what it earned from the vault, against the

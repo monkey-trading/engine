@@ -55,6 +55,16 @@ this crate and reproduce the signed state roots exactly.
   operator key changes only by a signed `rotate_operator`, which takes effect seven days after it is
   logged: from then the old key signs nothing, and the new one signs under the same chain and vault.
   Earlier versions keep their rules
+- From protocol `V36`, the state root commits what the vault's exit against the last posted root
+  checks (`src/merkle/exit.rs`): a queued withdrawal's leaf and a receipt-backed pending deposit's
+  leaf are ABI-encoded, and one leaf holds the vault deposit cursor, one past the highest deposit
+  id in the root, with the pending and held principal the exit reserves, the principal of every id
+  below the cursor the root does not hold, and the lowest 64 of those ids, which the vault refunds
+  by id. Activation rebuilds
+  the tree. `Engine::exit_proof` proves the terms, an account with its positions and their markets,
+  its approvals, queued requests, distribution, and the pending deposits for it, against the last
+  root, from committed copies, so a proof stays against its root after the state moves on, and
+  `AccountProof::equity` values the account at the root's marks as `Engine::equity_and_margin` does
 - From protocol `V37`, the operator key follows the operator registry's elections (`src/election.rs`).
   The registry's finalised `RotationChanged` and `Elected` events arrive as `switch_rotation` and
   `elect_operator` commands on the staking mirror, credited once under their chain references and
@@ -66,6 +76,7 @@ this crate and reproduce the signed state roots exactly.
   rotation on drops a signed rotation still pending, and while rotation is on `rotate_operator` is
   refused; turning rotation off with an election not yet in effect cancels the election and its
   rotation
+
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
   and toxicity spreads would reach the price are refused
@@ -176,7 +187,12 @@ this crate and reproduce the signed state roots exactly.
 - `src/deposits/tests.rs` — receipt transition, duplicate delivery, arithmetic and recovery tests
 - `src/deposits/tests/coverage.rs` — canonical coverage, partial frontiers and restored index contracts
 - `src/withdrawal.rs` — V22 FIFO reservations, bounded partial approval, the V34 minimum, and exact USDC conversion
-- `src/merkle/withdrawal.rs` — payable approval leaves and root inclusion proofs
+- `src/merkle/withdrawal.rs` — payable approval leaves, queued request leaves, and their proofs
+- `src/merkle/exit.rs` — the V36 exit terms and pending deposit leaves, the committed copies the exit
+  proves from, account equity at the root's marks, and `Engine::exit_proof`
+- `tests/exit.rs` — the exit leaves against `cast`, equity in every quote currency, proofs against
+  the committing root, and the V36 rebuild; `tests/exit/custody.rs` the cursor and the pending and
+  held totals over receipts; `tests/exit/fixture.rs` the vault's vectors
 - `tests/withdrawal_minimum.rs` — the V34 minimum request and the waiting of sub-minimum parts, against V33
 - `tests/withdrawal_queue.rs` — reservations, partial FIFO, cash conservation, precision, and stale marks
 - `tests/withdrawal_commitment.rs` — approval ABI, tamper rejection, serialization/replay, and incremental roots
@@ -268,6 +284,8 @@ this crate and reproduce the signed state roots exactly.
   encodings and value hashes, a root, and proofs
 - `tests/fixtures/emissions.json` — entitlement proofs the engine produced, which the vault's
   Foundry tests claim with and `tests/emissions_fixture.rs` checks
+- `tests/fixtures/exit.json` — exit proofs the engine produced, with the raw integers and the claims
+  the vault's Foundry tests register and refund with, which `tests/exit/fixture.rs` checks
 - `tests/access/emission_debt.rs` and `tests/corporate_actions/emissions.rs` — the `V32` emission debt
   (reversals in a later period, restart, root) and eligibility judged at the command's stamp during
   corporate-action catch-up.
@@ -285,7 +303,8 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V35` and `V37` parts (`v15.rs` to `v35.rs`, `v37.rs`)
+  `V15` to `V37` parts (`v15.rs` to `v37.rs`)
+
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
 
@@ -382,9 +401,15 @@ for, paid down by later loss weight before it earns again, and judges
 emission eligibility during corporate-action catch-up at the enclosing command's stamp. Its
 session is in `examples/reference_log/v32.rs`.
 
+<<<<<<< HEAD
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it
 is logged, and a signed rotation is refused; its session is in `examples/reference_log/v37.rs`.
+=======
+Protocol V36 commits what the vault's exit checks: ABI-encoded queue and pending deposit leaves, and
+the exit terms leaf with the deposit cursor and the pending and held principal; its session is in
+`examples/reference_log/v36.rs`.
+>>>>>>> 0bc28c57 ([core,node,contracts,workspace] Exit against the last posted root (V36))
 
 Protocol V35 bounds the operator: rate changes within ±50% of the launch rates after a seven-day
 notice, no price rules that leave a held market unpriced unless it is reduce-only, and an operator

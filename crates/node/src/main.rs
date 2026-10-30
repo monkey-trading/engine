@@ -1,6 +1,7 @@
-//! `engine`: runs the node, replays a published log and verifies its checkpoints, verifies an
-//! attestation against a release or a response or stream connection the attested enclave signed,
-//! or signs and submits an operator's admin command.
+//! `engine`: runs the node, replays a published log and verifies its checkpoints, builds the proofs
+//! an account exits the vault with from a published log, verifies an attestation against a release
+//! or a response or stream connection the attested enclave signed, or signs and submits an
+//! operator's admin command.
 
 use std::path::PathBuf;
 
@@ -10,6 +11,7 @@ use engine_core::auth::{ClientAuth, Operator};
 use engine_core::types::AccountId;
 use engine_node::admin::{self, AdminArgs, HexKey, KeyEnv};
 use engine_node::ct_watch::{self, CtWatchArgs};
+use engine_node::exit::{ExitSubject, exit_bundle};
 use engine_node::log::CheckpointDomain;
 use engine_node::{
     ExpectedSigner, KDS_BASE_URL, KeyStart, NodeConfig, SentRequest, VerifiedAttestation, VerifyOptions,
@@ -71,6 +73,25 @@ enum Cmd {
         /// vendor roots. Test and private chains verify against this; release chains do not need it.
         #[arg(long)]
         root: Option<PathBuf>,
+    },
+    /// Build the proofs an account, or the house, exits the vault with, from a published log alone,
+    /// against the root of its checkpoint at `--seq`, which must be the vault's `latestSeq`. Prints
+    /// them as JSON with each vault call ABI-encoded, to send in the order listed, skipping a call
+    /// the vault refuses for the reason its description names. The log's commands must reproduce
+    /// that checkpoint's root; signatures are not checked, since the vault checks every proof against
+    /// the root it accepted.
+    ExitProof {
+        #[arg(short, long)]
+        log: PathBuf,
+        /// The checkpoint the vault last posted.
+        #[arg(long)]
+        seq: u64,
+        /// The account whose proofs to build.
+        #[arg(long, conflicts_with = "house", required_unless_present = "house")]
+        account: Option<AccountId>,
+        /// Build the refunds of the house's pending deposits instead.
+        #[arg(long)]
+        house: bool,
     },
     /// Verify an attestation served by `/v1/attestation` against a release manifest: the quote's
     /// certificate chain up to a pinned vendor root, the launch measurement, guest policy, and
@@ -176,7 +197,7 @@ struct Cli {
 /// - the config cannot be loaded, an alert webhook variable is unset or invalid, or the node stops
 ///   with an error
 /// - the log is missing or cannot be read, fails its manifest check or verification, or holds no
-///   command or no checkpoint
+///   command or no checkpoint, or none at the exit's seq
 /// - an attestation does not verify against its release
 /// - a saved response or stream connection does not verify against the attested signer
 /// - an admin command cannot be signed or submitted, or the engine rejects it
@@ -256,6 +277,14 @@ fn main() -> anyhow::Result<()> {
             if pending > 0 {
                 println!("note: {} approved withdrawal(s) await signature release", pending);
             }
+            Ok(())
+        }
+        Cmd::ExitProof { log, seq, account, house: _ } => {
+            // The bundle is the output; only errors are logged.
+            init_logging("error")?;
+            let subject = account.map_or(ExitSubject::House, ExitSubject::Account);
+            let bundle = exit_bundle(&log, seq, subject)?;
+            println!("{}", serde_json::to_string_pretty(&bundle)?);
             Ok(())
         }
         Cmd::VerifyAttestation { attestation, release, processor, kds, root, collateral } => {
@@ -392,6 +421,17 @@ mod replay_cli_tests {
         ])
         .unwrap();
         assert!(matches!(cli.cmd, Cmd::Replay { custody_config: None, chain_id: Some(31337), signer: Some(_), .. }));
+    }
+
+    #[test]
+    fn exit_proof_takes_an_account_or_the_house_but_not_both() {
+        let account = "0x1111111111111111111111111111111111111111";
+        let base = ["engine", "exit-proof", "--log", "public", "--seq", "7"];
+        assert!(Cli::try_parse_from(base).is_err(), "a subject is required");
+        let cli = Cli::try_parse_from([&base[..], &["--account", account]].concat()).unwrap();
+        assert!(matches!(cli.cmd, Cmd::ExitProof { seq: 7, account: Some(_), house: false, .. }));
+        assert!(Cli::try_parse_from([&base[..], &["--house"]].concat()).is_ok());
+        assert!(Cli::try_parse_from([&base[..], &["--house", "--account", account]].concat()).is_err());
     }
 
     #[test]

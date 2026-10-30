@@ -8,6 +8,10 @@ abstract contract GovernanceTest is Test {
     TimelockController internal governance;
     address internal multisig = makeAddr("deployment multisig");
     uint256 internal constant GOVERNANCE_DELAY = 2 days;
+    /// @notice Exit timings long enough that suites about other behaviour never reach them.
+    uint64 internal constant EXIT_PERIOD = 365 days;
+    uint64 internal constant CLAIM_WINDOW = 30 days;
+    uint64 internal constant STALE_AFTER = 365 days;
     uint256 private operationCount;
 
     function _deployGovernance() internal returns (TimelockController) {

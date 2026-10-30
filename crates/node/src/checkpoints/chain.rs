@@ -125,4 +125,10 @@ pub(crate) trait CheckpointChain: Send + Sync {
         let _ = at;
         anyhow::bail!("this checkpoint chain reads no releases")
     }
+
+    /// Whether the vault's exit against the last posted root has started, after which no checkpoint
+    /// can be posted. Error cases: the chain cannot be read; a chain with no exit reads `false`.
+    async fn exit_started(&self) -> anyhow::Result<bool> {
+        Ok(false)
+    }
 }

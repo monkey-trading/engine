@@ -100,6 +100,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   `GET /v1/accounts/{address}/distributions` serves an account's cumulative USDC distribution with
   its proof against the last checkpoint's root, for the vault's `claimDistribution`; checkpoint
   reconciliation counts the USDC the vault has paid in distributions against the ledger
+- The exit against the last posted root from protocol `V36`: `GET /v1/accounts/{address}/exit`
+  serves every proof an account exits the vault with against the last checkpoint's root, and
+  `engine exit-proof` builds the same from a published log alone, with each vault call ABI-encoded
 - Supervised tasks: any task stopping stops the node, and SIGTERM drains to a final checkpoint
 - Live crypto prices from Coinbase, Kraken, and Bitstamp over WebSocket: one supervised task per
   venue connection, quotes stamped with the venue's own time, and reconnects with backoff
@@ -171,6 +174,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/payout_tests/` — paginated replacement signature order, paused claim acknowledgement, sealed approval recovery, FIFO signing across unloaded recovery windows, expired authorizations a rotation leaves unsigned, and no issuance or reissue while the vault pauses withdrawals or has a retired signer
 - `src/sequencer/withdrawal_scenario/` — actual Anvil/TLS/stream/custody crash, FIFO, and guardian pause and signer retirement scenarios with local signed time,
   and the enclave key lifecycle scenario (`keys.rs`)
+- `src/sequencer/withdrawal_scenario/` — actual Anvil/TLS/stream/custody crash, FIFO, and guardian pause and signer retirement scenarios with local signed time
+- `src/sequencer/payout_tests/` — paginated replacement signature order, paused claim acknowledgement, sealed approval recovery, FIFO signing across unloaded recovery windows, and expired authorizations a rotation leaves unsigned
+- `src/sequencer/withdrawal_scenario/` — actual Anvil/TLS/stream/custody crash and FIFO scenarios with local signed time,
+  and the exit against the last posted root (`exit.rs`)
+
 - `src/withdrawals.rs` — vault EIP-712 digests and exact approval inclusion verification
 - `src/api/withdrawal_queue.rs` — public FIFO pagination and account queue positions
 - `src/api/reissue.rs` — a holder's screened request to sign an expired approval again
@@ -288,6 +296,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/admin.rs` — the operator's admin route, checked before it is sequenced
 - `src/api/distributions.rs` — an account's cumulative USDC distribution with its proof against the
   last checkpoint's root, for the vault's `claimDistribution`
+- `src/api/exit.rs` — every proof an account exits the vault with, against the last checkpoint's root
+- `src/exit.rs` — `engine exit-proof`: a published log's commands applied through one checkpoint,
+  the exit proofs against its root, and the vault calls that carry them, ABI-encoded
 - `src/api/benchmark_schedule.rs` — capped, bounded watches of the durable rollover schedule
 - `src/api/benchmark_tests.rs` — deterministic publisher/TLS/API restart and financing dev scenario
 - `src/api/benchmark_tests/recovery.rs` — publisher retries during an in-process trusted-time halt
@@ -715,6 +726,13 @@ cargo run -p engine-node -- run --config <copy of config/dev.toml>
 # Verify a node's log directory, a downloaded archive, or a single log file
 cargo run -p engine-node -- replay --log data/dev/log
 
+# The proofs an account exits the vault with, from the log alone, at the vault's latestSeq, with
+# each vault call ABI-encoded to send in order (cast send <vault> <calldata>), skipping a call the
+# vault refuses for the reason its description names; --house builds the refunds of the house's
+# pending deposits. The log's commands must reproduce that checkpoint's root; signatures are not
+# checked, since the vault checks every proof against the root it accepted.
+cargo run -p engine-node -- exit-proof --log data/dev/log --seq <latestSeq> --account <address>
+
 # Verify a signed response: send a fresh challenge, save the headers and body, and check them
 # against the attested enclave address and the deployment (config/dev.toml's chain id and vault)
 SIGNER=$(jq -r .enclave_address <<< "$ATT")
@@ -869,7 +887,8 @@ posting emits the Warning `checkpoint_withheld`, one episode per `cause` (`colla
 `custody_prefix`, `post_diverged`, `signer_retired`) however many attempts it spans, resolved when that hold clears. A conflicting
 posted root or signer stops the node with the Critical `checkpoint_conflict` once the next retry's fresh observation
 repeats it; seen once, it retries with `checkpoint_post_failed`, since one read can be torn across a block the
-endpoint is still mining. Following decision #15 §2, withdrawals
+endpoint is still mining. A failed post once the vault's exit against the last posted root has started
+(`exitStartedAt`) stops the node with the Critical `vault_exit_started`: no checkpoint can follow it. Following decision #15 §2, withdrawals
 pause when the vault's USDC is less than the ledger requires, or the vault's deposits or payments
 differ from it: collateral reconciles when the vault's paid total is within the checkpoint's
 approvals, the vault's running deposit total through the checkpoint's last credited deposit equals
@@ -1503,6 +1522,16 @@ distribution the same way (`entitled` in the 6-decimal token's base units). The 
 against its latest posted root. An account has no distribution, and gets 404, until the first
 checkpoint after an epoch in which it was allocated a share.
 
+`/v1/accounts/{address}/exit` returns, from `V36`, every proof the account exits the vault with
+against the state root of the last checkpoint: `terms` (the vault deposit cursor and the pending and
+held principal the exit reserves), `account` (its leaf, positions and their markets, as
+`/v1/accounts/{address}/proof` serves them), `approvals` (every approval it holds; the vault's
+`usedNonces` says which are unpaid), `queued`, `distribution`, and `pending_deposits` (deposits for
+it pending a declaration or screening, refunded to their payer). Amounts are the engine's decimal
+strings. The vault checks them against its latest posted root, so they serve the exit once the
+vault's `latestSeq` is the proof's `seq`. The route gets 404 until the first checkpoint under `V36`.
+`engine exit-proof` builds the same bundle from the public log after the node is gone.
+
 The operator listener, `metrics.listen` (`127.0.0.1:9464` in `config/dev.toml`), serves
 `GET /metrics` in Prometheus text format. `ops/grafana/engine-node.json` is a Grafana dashboard
 over it, showing sequencer health and the quote freshness of each venue the config feeds (one
@@ -1994,6 +2023,10 @@ cargo test -p engine-node --features production --lib production_build
 # release, that release named again, and a second copy, on Anvil (needs Anvil, Forge, and the pinned
 # contract dependencies)
 ./scripts/dev-key-lifecycle.sh
+# Dev scenario: on Anvil, a trader's open position is checkpointed and the node stops; the exit
+# starts, registers and pays its equity at the root's mark once from proofs the log alone gives,
+# refunds a later deposit to its payer once, and releases the remainder through the timelock
+./scripts/dev-exit.sh
 ```
 
 ## Authors

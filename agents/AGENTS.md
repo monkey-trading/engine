@@ -26,7 +26,7 @@ an index: load only the rule whose hint matches the current action.
   anchors, epoch closes at NAV above a liquidity floor, cumulative distributions proven on chain),
   protocol versions, and the
   state tree (a keccak-256 sparse Merkle tree over the state, with account and entitlement proofs, in
-  `merkle/`). It does no IO and uses no clocks,
+  `merkle/`; from `V36` `merkle/exit.rs` commits and proves what the vault's exit checks). It does no IO and uses no clocks,
   randomness, or floats. `impl Engine` is split by area (`engine/mod.rs` for state and dispatch
   with house NAV and exposure caps in `engine/house.rs`, per-market state in `engine/market.rs`, `marks.rs`, `execution/`,
   `markouts.rs`, `closeout.rs`, `funds.rs`, `deposits.rs` with legacy migration and screened canonical replacements in `deposits/`,
@@ -61,8 +61,9 @@ an index: load only the rule whose hint matches the current action.
 - **crates/node/** — `engine-node`, binary `engine` (`main.rs` over `lib.rs`). Contains the
   access-source screening (`access.rs`, signed decisions with bounded HTTP reads),
   sequencer, the public log with signed checkpoints (segmented, with a public archive), `engine
-  replay`, `engine admin` (the operator's signing client), the REST API with the operator's admin
-  route, the browser-origin allowlist (`api.allowed_origins`, in `api/origin.rs`), the client address from a trusted pass-through proxy's PROXY protocol v2 header (`[api.proxy_protocol]`, in `tls/proxy.rs`), account proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
+  replay`, `engine exit-proof` (`exit.rs`: the exit's proofs and vault calls from a published log),
+  `engine admin` (the operator's signing client), the REST API with the operator's admin
+  route, the browser-origin allowlist (`api.allowed_origins`, in `api/origin.rs`), the client address from a trusted pass-through proxy's PROXY protocol v2 header (`[api.proxy_protocol]`, in `tls/proxy.rs`), account proofs, exit proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
   with rate limits and connection caps, and with `[api.tls.acme]` a public CA certificate for that
   key, obtained and renewed over ACME TLS-ALPN-01 answered on the API's listener, in `tls/acme/`),
   signed answers (`api/signing.rs`: every `/v1` response but
@@ -136,7 +137,8 @@ an index: load only the rule whose hint matches the current action.
   authorized by its attestation-verified enclave signer. Withdrawals require its current signer and
   epoch, an unused account nonce, a 24-hour authorization, and approval inclusion in an accepted root.
   The constructor takes the token, the signer, an existing OpenZeppelin timelock with a nonzero
-  delay, the guardian, and the engine's initial MONKEY emission period budget, which caps `src/MonkeyToken.sol`,
+  delay, the guardian, the exit timings below, and the engine's initial MONKEY emission period
+  budget, which caps `src/MonkeyToken.sol`,
   the ERC-20 the vault deploys and alone mints: `claimEmissions` mints an account's entitlement,
   proven against the latest posted root, less what it already claimed. `src/Staking.sol` holds
   MONKEY staked for USDC distributions, enforces the unstake cooldown — the constructor refuses a
@@ -156,7 +158,14 @@ an index: load only the rule whose hint matches the current action.
   hash, in a new `releaseGeneration` each time), and independent deposit/withdrawal pauses; the
   guardian, the same multisig acting without the delay, may only pause withdrawals for seven days
   (counted, renewed or lifted by the timelock) and retire the signer until the timelock installs
-  one.
+  one. Deposits are refused once checkpoints are stale; once none
+  has been posted for the exit period, anyone starts the permanent exit against the last posted
+  root, which ends signed withdrawals, checkpoints and distribution claims, registers claims proven
+  against that root through `src/ExitVerifier.sol` for the claim window (account equity at its
+  marks, unpaid approvals and queued remainders, then distributions), pays them pro rata, refunds
+  deposits the root does not hold or holds pending to their payers, and releases the remainder
+  through the timelock; `src/StateTree.sol` is the shared proof check. `foundry.toml` enables the
+  optimizer, without which the vault exceeds EIP-170's size limit.
 - **config/** — node configs. `dev.toml` runs the TEE, custody and feeds as mocks on one machine,
   and checks the clock against public Roughtime servers, citing each server's key source;
   `feeds.provider = "venues"` prices its crypto markets from live venues instead, leaving the others
@@ -226,7 +235,9 @@ an index: load only the rule whose hint matches the current action.
   sealed file, an edited config, an upgrade, the superseded release refused, and named again, a second
   copy);
   `dev-withdrawals.sh`, the actual Anvil/TLS withdrawal,
-  pre-log crash, unpaid redelivery, FIFO liquidity, and guardian pause and signer retirement scenario; `dev-attestation-verifier.sh`,
+  pre-log crash, unpaid redelivery, FIFO liquidity, and guardian pause and signer retirement
+  scenario; `dev-exit.sh`, the exit against the last posted root on Anvil from the stopped node's
+  public log; `dev-attestation-verifier.sh`,
   the attestation verifier dev scenario against a loopback key-distribution stand-in, with no
   hardware or vendor access, also replaying a hand-built signed-withdrawal log through
   `engine replay --attestation`, and verifying from the collateral the node's route relays after
@@ -253,7 +264,8 @@ an index: load only the rule whose hint matches the current action.
   test, the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
   deposit finality scenarios, the MONKEY staking and operator election dev scenarios, the enclave key
   lifecycle dev scenario, the signed withdrawal and FIFO dev
-  scenario, the API and direct-vault access enforcement dev scenario, the metrics and alert routing
+  scenario, the exit dev scenario, the API and direct-vault access enforcement dev scenario, the
+  metrics and alert routing
   dev scenario, the alert outbox kill/restart scenario,
   the browser-origin scenario, the proxy protocol scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the
   signed API answers dev scenario, the public certificate dev scenario, the executable quotes dev
@@ -435,6 +447,10 @@ Run from the repo root:
   new keys for a release that has none; `--predecessor <host:port>` takes them from the running
   release once the vault makes the new one current; both need the vault's current release to be
   this one, and the mock TEE also needs `--mock-launch-digest <hex>`
+- Exit dev scenario: `./scripts/dev-exit.sh` (the withdrawal scenario's requirements)
+- Exit proofs from a published log: `cargo run -p engine-node -- exit-proof --log <path> --seq
+  <the vault's latestSeq> --account <address>` (or `--house`), printing the proofs and each vault
+  call ABI-encoded; the log's commands must reproduce that checkpoint's root
 - Sign and submit an admin command as the operator: `cargo run -p engine-node -- admin --pin <the
   TLS key hash in the node's attested bundle> <command>`, with the key from `--key-file`,
   `OPERATOR_KEY_FILE`, or `OPERATOR_KEY`; `config/dev.toml` names the public key of the local test

@@ -16,6 +16,7 @@ pub mod config;
 pub use config::NodeConfig;
 pub mod ct_watch;
 mod custody;
+pub mod exit;
 mod feeds;
 mod handover;
 mod history;

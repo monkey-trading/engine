@@ -17,16 +17,17 @@ use crate::deposits::CustodyCheckpoint;
 use crate::election::OperatorElection;
 use crate::emissions::{Emissions, TokenUnits};
 use crate::engine::{Engine, Markout};
+use crate::merkle::exit::ExitLeaves;
 use crate::merkle::leaf::{
     deposit_key, deposit_transaction_key, emission_ledger_hash, emission_ledger_key, legacy_deposit_key,
 };
 use crate::merkle::{
     AccountLeaf, DistributionProof, MarketLeaf, SparseMerkleTree, account_key, corporate_action_key,
     corporate_reference_key, credited_ref_hash, credited_ref_key, distribution_hash, distribution_key, eligibility_key,
-    entitlement_hash, entitlement_key, globals_key, held_deposit_key, json_hash, market_key, markout_hash, markout_key,
-    order_hash, order_key, pending_deposit_key, period_result_hash, period_result_key, position_hash, position_key,
-    request_nonce_hash, request_nonce_key, staked_hash, staked_key, withdrawal_approval_hash, withdrawal_queue_hash,
-    withdrawal_queue_key,
+    entitlement_hash, entitlement_key, exit_terms_key, globals_key, held_deposit_key, json_hash, market_key,
+    markout_hash, markout_key, order_hash, order_key, pending_deposit_key, period_result_hash, period_result_key,
+    position_hash, position_key, request_nonce_hash, request_nonce_key, staked_hash, staked_key,
+    withdrawal_approval_hash, withdrawal_queue_hash, withdrawal_queue_key,
 };
 use crate::operator_bounds::OperatorBounds;
 use crate::params::ProtocolParams;
@@ -49,6 +50,8 @@ pub(crate) struct StateTree {
     pub(super) markets: BTreeMap<MarketId, MarketLeaf>,
     pub(super) entitlements: BTreeMap<AccountId, TokenUnits>,
     distributions: BTreeMap<AccountId, UsdcUnits>,
+    /// The queue and the pending and held deposits as the root holds them, for the exit.
+    pub(super) exit: ExitLeaves,
     work: RootWork,
 }
 
@@ -137,7 +140,17 @@ impl Engine {
             Some(_) => touched,
             None => self.every_key(),
         };
+        let version = self.protocol_version;
+        let deposit_frontier = (version >= ProtocolVersion::V36).then(|| self.exit_deposit_frontier());
         let mut changes = BTreeMap::from([(globals_key(), Some(json_hash(&self.globals())))]);
+        let exit = &mut self.tree.get_or_insert_with(StateTree::default).exit;
+        exit.update_queue(&self.withdrawal_queue, &withdrawal_queue);
+        exit.update_pending(&self.pending_deposits, &self.deposits, &pending);
+        exit.update_held(&self.held_deposits, &holds);
+        if let Some(frontier) = deposit_frontier {
+            changes.insert(exit_terms_key(), Some(exit.commit_terms(frontier)));
+        }
+        let exit = &self.tree.as_ref().expect("inserted above").exit;
         changes.extend(
             corporate_actions
                 .iter()
@@ -184,11 +197,11 @@ impl Engine {
                 .into_iter()
                 .map(|reference| (held_deposit_key(&reference), self.held_deposits.get(&reference).map(json_hash))),
         );
-        changes.extend(
-            pending.into_iter().map(|reference| {
-                (pending_deposit_key(&reference), self.pending_deposits.get(&reference).map(json_hash))
-            }),
-        );
+        changes.extend(pending.into_iter().map(|reference| {
+            let leaf =
+                self.pending_deposits.get(&reference).map(|deposit| exit.pending_hash(&reference, deposit, version));
+            (pending_deposit_key(&reference), leaf)
+        }));
         changes.extend(markouts.into_iter().map(|index| (markout_key(index), self.markout(index).map(markout_hash))));
         let position_leaves: Vec<((AccountId, MarketId), Option<Position>)> = positions
             .into_iter()
@@ -225,11 +238,9 @@ impl Engine {
         changes.extend(
             distribution_leaves.iter().map(|(id, entitled)| (distribution_key(*id), entitled.map(distribution_hash))),
         );
-        changes.extend(
-            withdrawal_queue
-                .into_iter()
-                .map(|seq| (withdrawal_queue_key(seq), self.withdrawal_queue.get(&seq).map(withdrawal_queue_hash))),
-        );
+        changes.extend(withdrawal_queue.into_iter().map(|seq| {
+            (withdrawal_queue_key(seq), self.withdrawal_queue.get(&seq).map(|q| withdrawal_queue_hash(q, version)))
+        }));
         changes.extend(
             withdrawal_approvals
                 .into_iter()

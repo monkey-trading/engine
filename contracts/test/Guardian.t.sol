@@ -13,7 +13,7 @@ contract GuardianTest is WithdrawalTest {
     function test_ConstructorRecordsTheGuardianAndRefusesAZeroOne() public {
         assertEq(vault.guardian(), multisig);
         vm.expectRevert(Vault.ZeroAddress.selector);
-        new Vault(usdc, vm.addr(KEY), governance, address(0), 1e18);
+        new Vault(usdc, vm.addr(KEY), governance, address(0), 1e18, 7 days, 3 days, 1 days);
     }
 
     function test_PauseRefusesClaimsAtOnceAndLeavesDepositsCheckpointsAndEmissions() public {

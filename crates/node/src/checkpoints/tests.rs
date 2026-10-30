@@ -44,6 +44,8 @@ pub(super) struct Chain {
     posts: Arc<Mutex<usize>>,
     /// The vault's running deposit total after each deposit, in deposit order.
     through: Arc<Mutex<Vec<Fixed>>>,
+    /// Whether the vault's exit has started.
+    exit: Arc<Mutex<bool>>,
 }
 
 impl Chain {
@@ -75,6 +77,9 @@ impl CheckpointChain for Chain {
         *self.posts.lock().unwrap() += 1;
         self.state.lock().unwrap().checkpoint = Some((cp.seq, cp.root.clone()));
         Ok(())
+    }
+    async fn exit_started(&self) -> anyhow::Result<bool> {
+        Ok(*self.exit.lock().unwrap())
     }
 }
 
@@ -149,6 +154,24 @@ async fn failed_post_is_retried_and_never_releases_a_signature_early() {
     assert_eq!(*chain.posts.lock().unwrap(), 1);
     drop(work_tx);
     task.await.unwrap().unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_failed_post_once_the_vault_exit_has_started_stops_the_worker_with_a_critical_alert() {
+    let (_guard, mut alerts) = crate::test_support::capture_alerts();
+    let (poster, work, _key) = poster();
+    *poster.chain.fails.lock().unwrap() = 1;
+    *poster.chain.exit.lock().unwrap() = true;
+    let (work_tx, work_rx) = mpsc::channel(4);
+    let (tx, _rx) = mpsc::channel(4);
+    work_tx.send(work).await.unwrap();
+    let task = tokio::spawn(poster.run(work_rx, tx));
+    let error =
+        tokio::time::timeout(Duration::from_secs(60), task).await.expect("the worker stops").unwrap().unwrap_err();
+    assert!(error.to_string().contains("exit"), "{error:#}");
+    let alert = alerts.recv().await.unwrap();
+    assert_eq!(alert.get("alert").map(String::as_str), Some("vault_exit_started"), "{alert:?}");
+    assert_eq!(alert.get("level").map(String::as_str), Some("ERROR"), "{alert:?}");
 }
 
 #[test]
@@ -244,6 +267,7 @@ async fn a_provisional_then_orphaned_approval_never_releases_a_signature() {
         fails: Arc::new(Mutex::new(0)),
         posts: Arc::new(Mutex::new(0)),
         through: Arc::new(Mutex::new(vec![work.liabilities])),
+        exit: Arc::new(Mutex::new(false)),
     };
     let poster = Poster {
         registry: None,
@@ -325,6 +349,7 @@ pub(super) fn poster() -> (Poster<Chain>, Work, EnclaveKey) {
         fails: Arc::new(Mutex::new(0)),
         posts: Arc::new(Mutex::new(0)),
         through: Arc::new(Mutex::new(vec![work.liabilities])),
+        exit: Arc::new(Mutex::new(false)),
     };
     (
         Poster {

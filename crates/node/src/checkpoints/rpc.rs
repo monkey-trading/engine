@@ -51,6 +51,7 @@ sol! {
     function balanceOf(address account) external view returns (uint256);
     function monkey() external view returns (address);
     function cap() external view returns (uint256);
+    function exitStartedAt() external view returns (uint64);
     function postCheckpoint(uint64 seq, bytes32 root, bool hasParent, uint64 parentSeq, bytes32 parentRoot, bytes signature) external;
     function currentRelease() external view returns (bytes32);
     function releaseGeneration() external view returns (uint64);
@@ -219,6 +220,16 @@ impl CheckpointChain for CheckpointRpc {
 
     async fn claims(&self, at: &LifecycleEvidence, approvals: &[ApprovalId]) -> anyhow::Result<Vec<ApprovalStatus>> {
         self.read_claims(BlockId::hash_canonical(at.block_hash), approvals).await
+    }
+
+    /// Reads the vault's exit start at the latest block.
+    /// Error cases:
+    /// - an RPC call or decoding fails
+    async fn exit_started(&self) -> anyhow::Result<bool> {
+        let vault = Address::from(self.domain.vault.0);
+        let input = exitStartedAtCall {}.abi_encode();
+        let started = exitStartedAtCall::abi_decode_returns(&self.call(vault, input, BlockId::latest()).await?)?;
+        Ok(started != 0)
     }
 
     /// Relays at a durable explicit nonce; only later canonical state reads confirm inclusion.

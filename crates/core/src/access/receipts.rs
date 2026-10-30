@@ -199,12 +199,14 @@ impl Engine {
                     *cash += recorded.receipt.amount;
                 }
                 self.track_uncredited(&recorded.receipt, pending, false);
-                self.record_deposit(&recorded.receipt, recorded.status, recorded.receipt.amount, None, events);
+                self.record_deposit(&recorded.receipt, recorded.status, recorded.receipt.amount, None, events)
+                    .expect("restoring a settled receipt's credit meets no live conflict");
             }
             Err(reason) if reason.holds_deposit() => {
                 let held = UncreditedReceipt { payer: deposit.payer, reason };
                 self.track_uncredited(&recorded.receipt, pending, false);
-                self.record_deposit(&recorded.receipt, recorded.status, Fixed::ZERO, Some(held), events);
+                self.record_deposit(&recorded.receipt, recorded.status, Fixed::ZERO, Some(held), events)
+                    .expect("restoring a held receipt meets no live conflict");
                 self.track_uncredited(&recorded.receipt, held, true);
                 self.announce_uncredited(&recorded.receipt, held, events);
             }

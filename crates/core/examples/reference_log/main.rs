@@ -32,6 +32,7 @@ mod v32;
 mod v33;
 mod v34;
 mod v35;
+mod v36;
 mod v37;
 
 use std::collections::BTreeMap;
@@ -95,8 +96,9 @@ fn main() -> anyhow::Result<()> {
 /// close, a leading venue, and an FX index ageing out, each processed before the next command acts. Then, under `V13`,
 /// stress that follows its inputs (`stress.rs`), and the parts in `v14.rs` and `v15.rs`. Then, from `V16` on, one part
 /// per version in its `v<N>.rs`: toxicity memory, the move window, dated benchmark rates, MONKEY emissions, custody
-/// finality, quote hours and futures, FIFO withdrawals, access, staking, emission debt, the operator's bounds, and the
-/// elected operator key. Every client request is signed by its account's key unless a comment says not.
+/// finality, quote hours and futures, FIFO withdrawals, access, staking, emission debt, the
+/// operator's bounds, the exit's leaves, and the elected operator key. Every client request is
+/// signed by its account's key unless a comment says not.
 fn session() -> Vec<Sequenced> {
     let mut h = Harness::signed();
     let (a, b, c, d, t, e) = (h.signer(1), h.signer(2), h.signer(3), h.signer(4), h.signer(5), h.signer(6));
@@ -495,6 +497,7 @@ fn session() -> Vec<Sequenced> {
     for session in [v29::session, v30::session, v31::session, v32::session, v33::session, v34::session, v35::session] {
         session(&mut h);
     }
+    v36::session(&mut h);
     v37::session(&mut h);
     h.log
 }

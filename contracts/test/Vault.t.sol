@@ -24,7 +24,8 @@ contract VaultTest is GovernanceTest {
     function setUp() public {
         governance = _deployGovernance();
         usdc = new MockUSDC();
-        vault = new Vault(usdc, address(0x1234), governance, multisig, 1e18);
+        vault = new Vault(usdc, address(0x1234), governance, multisig, 1e18, EXIT_PERIOD, CLAIM_WINDOW, STALE_AFTER);
+
         min = vault.MIN_DEPOSIT();
     }
 
@@ -245,12 +246,16 @@ contract VaultTest is GovernanceTest {
 
     function test_RevertWhen_TokenIsZeroAddress() public {
         vm.expectRevert(Vault.ZeroAddress.selector);
-        new Vault(IERC20(address(0)), address(0x1234), governance, multisig, 1e18);
+        new Vault(
+            IERC20(address(0)), address(0x1234), governance, multisig, 1e18, EXIT_PERIOD, CLAIM_WINDOW, STALE_AFTER
+        );
     }
 
     function test_FeeOnTransferTokenCreditsOnlyWhatArrived() public {
         FeeOnTransferToken token = new FeeOnTransferToken();
-        Vault feeVault = new Vault(token, address(0x1234), governance, multisig, 1e18);
+        Vault feeVault =
+            new Vault(token, address(0x1234), governance, multisig, 1e18, EXIT_PERIOD, CLAIM_WINDOW, STALE_AFTER);
+
         token.mint(trader, 100 * ONE_USDC);
         vm.prank(trader);
         token.approve(address(feeVault), 100 * ONE_USDC);
@@ -270,7 +275,9 @@ contract VaultTest is GovernanceTest {
             [ReentrantToken.Entry.Deposit, ReentrantToken.Entry.DepositFor, ReentrantToken.Entry.DepositToHouse];
         for (uint256 i = 0; i < entries.length; i++) {
             ReentrantToken token = new ReentrantToken();
-            Vault target = new Vault(token, address(0x1234), governance, multisig, 1e18);
+            Vault target =
+                new Vault(token, address(0x1234), governance, multisig, 1e18, EXIT_PERIOD, CLAIM_WINDOW, STALE_AFTER);
+
             token.mint(trader, min);
             vm.prank(trader);
             token.approve(address(target), min);

@@ -254,6 +254,9 @@ pub async fn assert_a_dropped_read_keeps_its_permit(permits: &Semaphore, read: i
 /// How long a test waits for work that finishes in seconds on an idle machine. A wait ends the
 /// moment its condition holds, so the ceiling only bounds a hang on a loaded runner.
 pub const LOADED_WAIT: Duration = Duration::from_secs(180);
+/// The vault's exit period, claim window and deposit staleness, in seconds, for local scenarios
+/// that do not exercise the exit: thirty days each, longer than any of them waits.
+pub const DEV_EXIT_SCHEDULE: (u64, u64, u64) = (2_592_000, 2_592_000, 2_592_000);
 
 /// Awaits `condition` for up to `LOADED_WAIT`, panicking with `what` it waited for on a miss.
 pub async fn wait_for<T>(what: &str, condition: impl Future<Output = T>) -> T {

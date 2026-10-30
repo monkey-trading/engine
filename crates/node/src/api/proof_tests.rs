@@ -179,6 +179,29 @@ async fn an_account_is_provable_from_the_first_checkpoint_that_holds_it() {
 }
 
 #[tokio::test]
+async fn an_exit_proof_serves_from_the_first_v36_checkpoint_and_the_public_log_rebuilds_it() {
+    let node = Node::start("exit-route").await;
+    let trader = account(9);
+    node.deposit(trader, "100").await;
+    node.checkpoint().await;
+    let path = format!("/v1/accounts/{trader}/exit");
+    assert_eq!(node.get(&path).await.0, StatusCode::NOT_FOUND, "a root before V36 holds no exit terms");
+    let activation = Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V36 });
+    node.state.submit(activation).await.unwrap();
+    node.checkpoint().await;
+    let (status, body) = node.get(&path).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let proof: engine_core::merkle::ExitProof = serde_json::from_value(body).unwrap();
+    let root = logged_root(&node.entries(), proof.seq);
+    let account = proof.account.as_ref().unwrap();
+    assert!(proof.terms.verify(root) && account.verify(root));
+    assert_eq!(account.equity(), Some("100".parse().unwrap()));
+    let offline = crate::exit::exit_bundle(&node.dir, proof.seq, crate::exit::ExitSubject::Account(trader)).unwrap();
+    assert_eq!(offline.calls.len(), 3, "start, register and claim");
+    assert_eq!(offline.account, Some(proof));
+}
+
+#[tokio::test]
 async fn an_entitlement_is_provable_from_the_first_checkpoint_after_its_period() {
     let node = Node::start("emissions-route").await;
     let schedule = EmissionSchedule { start_ms: NOW, period_budget: TokenUnits(1_000) };
