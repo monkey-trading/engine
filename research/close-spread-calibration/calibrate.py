@@ -129,8 +129,10 @@ def reversal_summary(rows):
 
 
 def write_csv(path, rows):
+    """Write rows whose schemas differ (a blocked market has fewer fields); missing values are empty."""
+    fieldnames = list(dict.fromkeys(key for row in rows for key in row))
     with path.open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0]), lineterminator="\n")
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator="\n", restval="")
         writer.writeheader()
         writer.writerows(rows)
 
