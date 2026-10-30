@@ -101,16 +101,22 @@ def comparisons(rows):
 
 
 def gap_comparison(rows):
-    """What an uncapped operator charge does in a 5% gap against the capped one, per EUR-USD band."""
-    by_band = {}
+    """What an uncapped operator charge does in a 5% gap against the capped one, per band of one market.
+
+    Prefers EUR-USD; a blocked EUR-USD names another market with results, and no results at all
+    skips with the reason rather than raising on an empty minimum."""
+    by_symbol = {}
     for row in rows:
-        if row["symbol"] == "EUR-USD":
-            by_band.setdefault(row["margin_band"], {})[row["case"]] = row
+        by_symbol.setdefault(row["symbol"], {}).setdefault(row["margin_band"], {})[row["case"]] = row
+    if not by_symbol:
+        return {"market": None, "skipped": "no market has effects rows"}
+    market = "EUR-USD" if "EUR-USD" in by_symbol else sorted(by_symbol)[0]
+    by_band = by_symbol[market]
     reductions = [1 - D(pair["no_cap_operator_attack"]["house_cash_shortfall_usd_zero_capital"])
                   / D(pair["at_ceiling"]["house_cash_shortfall_usd_zero_capital"]) for pair in by_band.values()]
     ratios = [pair["no_cap_operator_attack"]["close_cost_bps"] / pair["at_ceiling"]["close_cost_bps"]
               for pair in by_band.values()]
-    return {"market": "EUR-USD", "shortfall_reduction_min": float(min(reductions)),
+    return {"market": market, "shortfall_reduction_min": float(min(reductions)),
             "shortfall_reduction_max": float(max(reductions)), "trader_cost_ratio": ratios[0]}
 
 
