@@ -189,3 +189,28 @@ fn files(dir: &Path) -> BTreeMap<String, Vec<u8>> {
 }
 
 mod custody_preflight;
+
+/// Recovers before any append, checking history against that read during full replay or against
+/// its cursor's segment after authenticated snapshot recovery. A mismatched index is rebuilt.
+/// Error cases:
+/// - the history index cannot be opened, nor a fresh one in its place (see `HistoryCheck`)
+/// - the log cannot be read or replayed (see `Sequencer::read_log`)
+pub(crate) fn read_log_and_history(cfg: &NodeConfig) -> anyhow::Result<(ReplayedLog, crate::history::History)> {
+    let key = crate::tee::EnclaveKey::test_key();
+    let (log, plan) = read_log_and_history_observe(cfg, Some(AccountId(key.address())), None, |_| {})?;
+    plan.finish_with_log(log, Arc::new(key))
+}
+
+/// Replays and checks history while exposing the same entries for the on-chain anchor check.
+/// Error cases:
+/// - the log or history index cannot be read or verified
+pub(crate) fn read_log_and_history_observe(
+    cfg: &NodeConfig,
+    signer: Option<AccountId>,
+    parent: Option<crate::log::CheckpointParent>,
+    mut observe: impl FnMut(&crate::log::LogEntry),
+) -> anyhow::Result<(ReplayedLog, HistoryPlan)> {
+    // Tests that do not assert on marks seed a scratch cache they discard with the log.
+    let scratch = super::marks::startup(cfg)?.shared;
+    super::read_log_and_history_authorities(cfg, signer, parent, Default::default(), &scratch, &mut observe)
+}

@@ -19,7 +19,8 @@ use crate::config::{NodeConfig, SnapshotSection};
 use crate::history::Reader;
 use crate::history::runtime::TestState;
 use crate::log::{CheckpointDomain, CheckpointParent, LogEntry, Manifest};
-use crate::node::{preflight, read_log_and_history_observe};
+use crate::node::preflight;
+use crate::node::tests::read_log_and_history_observe;
 use crate::sequencer::{Request, Sequencer, StreamMsg, replay_path_with_trust};
 use crate::tee::EnclaveKey;
 use crate::test_support::{deposit, dev_config, log_entries, sample_around, scratch_dir, sequencer_config};
@@ -113,11 +114,7 @@ impl Node {
     ) -> Result<Self> {
         let key = Arc::new(EnclaveKey::test_key());
         let parent = gate.as_ref().map(|(parent, _)| *parent);
-        let marks = std::rc::Rc::new(std::cell::RefCell::new(crate::history::marks::Store::open_in(
-            &crate::test_support::scratch_dir("paired-harness-marks"),
-            crate::history::marks::Retentions::defaults(),
-        )?));
-        let (log, plan) = read_log_and_history_observe(&cfg, Some(AccountId(key.address())), parent, &marks, |_| {})?;
+        let (log, plan) = read_log_and_history_observe(&cfg, Some(AccountId(key.address())), parent, |_| {})?;
         let snapshot_seq = log.snapshot_sequence();
         let (stream, _) = broadcast::channel(2);
         let (withdrawals, custody) = mpsc::unbounded_channel();

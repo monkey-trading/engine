@@ -9,7 +9,7 @@ mod backfill;
 pub(crate) mod run;
 pub(crate) mod store;
 
-pub(crate) use backfill::sources;
+pub(crate) use backfill::{Source, sources};
 pub use store::Reader;
 pub(crate) use store::Store;
 

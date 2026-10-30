@@ -28,6 +28,7 @@ use crate::history::HistoryPlan;
 mod shutdown;
 use shutdown::{TaskResult, finish_history, handed_over, sequencer_outcome, supervise};
 mod keys;
+mod marks;
 pub use keys::{KeyStart, parse_launch_digest};
 mod preflight;
 mod registration;
@@ -120,24 +121,15 @@ async fn serve_node(
     let authorities = signer_history::load(checkpoint_setup.as_ref(), &cfg.node.log_dir)
         .await
         .inspect_err(|e| error!(alert = "checkpoint_startup_failed", "refusing to serve: {e:#}"))?;
-    // The derived marks cache opens before recovery: the replay seeds it through the sink as it
-    // verifies the log. A cache that cannot open, or retentions that do not parse, refuses boot.
-    let marks_retentions = crate::history::marks::Retentions::of(cfg.history.marks.as_ref())
-        .inspect_err(|e| error!(alert = "marks_cache_failed", "refusing to serve: {e:#}"))?;
-    let marks_shared = std::rc::Rc::new(std::cell::RefCell::new(
-        crate::history::marks::Store::open_in(&cfg.history.dir, marks_retentions)
-            .inspect_err(|e| error!(alert = "marks_cache_failed", "refusing to serve: {e:#}"))?,
-    ));
-    let marks_backfill =
-        cfg.history.marks.as_ref().and_then(|marks| marks.backfill.clone()).filter(|backfill| backfill.enabled);
-    let marks_sources = crate::history::marks::sources(&cfg.feeds);
-    let marks_reader = marks_shared.borrow().reader();
+    // The marks cache opens before recovery, which seeds it through the sink as it verifies the log.
+    let marks_failed = |e: &anyhow::Error| error!(alert = "marks_cache_failed", "refusing to serve: {e:#}");
+    let marks = marks::startup(&cfg).inspect_err(marks_failed)?;
     let (mut log, history_plan) = read_log_and_history_authorities(
         &cfg,
         Some(AccountId(key.address())),
         checkpoint_setup.as_ref().map(|setup| setup.parent),
         authorities,
-        &marks_shared,
+        &marks.shared,
         |entry| {
             if let crate::log::LogEntry::Checkpoint(cp) = entry
                 && checkpoint_setup.as_ref().and_then(|setup| setup.posted_seq) == Some(cp.seq)
@@ -220,27 +212,15 @@ async fn serve_node(
     }
     history.catch_up_to(seq.last_seq());
 
-    // The marks cache: the sequencer reports live mark changes over one channel, a task writes
-    // them and backfills provider history, and the API reads through the reader recovery seeded.
-    let (marks_tx, marks_rx) = mpsc::channel(crate::history::marks::run::QUEUE);
-    seq.track_marks(marks_tx);
-    let marks_store = match std::rc::Rc::try_unwrap(marks_shared) {
-        Ok(cell) => cell.into_inner(),
-        Err(_) => unreachable!("the recovery seeder is dropped with its replay"),
-    };
+    // The sequencer reports live mark changes; a supervised task writes them and backfills history.
+    let marks_rx = marks::track(&mut seq);
+    let marks_store = marks::into_task_store(marks.shared);
 
     let (tx, rx) = mpsc::channel::<Request>(CHANNEL_CAPACITY);
-    let marks_sequencer_tx = tx.downgrade();
     let recovery = seq.take_recovery_checkpoints();
     let sequencer = crate::sequencer_thread::Worker::start(seq.run(rx), cpu)?;
     let mut tasks: JoinSet<TaskResult> = JoinSet::new();
-    tasks.spawn(async move {
-        (
-            "marks",
-            crate::history::marks::run::run(marks_store, marks_rx, marks_backfill, marks_sources, marks_sequencer_tx)
-                .await,
-        )
-    });
+    tasks.spawn(marks::task(marks_store, marks_rx, marks.backfill, marks.sources, tx.downgrade()));
     if let Some(setup) = checkpoint_setup {
         let checkpoint_tx = tx.clone();
         tasks.spawn(async move {
@@ -358,7 +338,7 @@ async fn serve_node(
         backfills,
         limits: limits.clone(),
         history: history_reader,
-        marks: marks_reader,
+        marks: marks.reader,
         emission_budget,
         collateral: served,
         listing: Default::default(),
@@ -408,39 +388,8 @@ async fn serve_node(
     }
 }
 
-/// Recovers before any append, checking history against that read during full replay or against
-/// its cursor's segment after authenticated snapshot recovery. A mismatched index is rebuilt.
-/// Error cases:
-/// - the history index cannot be opened, nor a fresh one in its place (see `HistoryCheck`)
-/// - the log cannot be read or replayed (see `Sequencer::read_log`)
-#[cfg(test)]
-fn read_log_and_history(cfg: &NodeConfig) -> anyhow::Result<(ReplayedLog, crate::history::History)> {
-    let key = crate::tee::EnclaveKey::test_key();
-    let shared = std::rc::Rc::new(std::cell::RefCell::new(crate::history::marks::Store::open_in(
-        &cfg.history.dir,
-        crate::history::marks::Retentions::defaults(),
-    )?));
-    let (log, plan) = read_log_and_history_observe(cfg, Some(AccountId(key.address())), None, &shared, |_| {})?;
-    plan.finish_with_log(log, Arc::new(key))
-}
-
-/// Replays and checks history while exposing the same entries for the on-chain anchor check.
-/// Error cases:
-/// - the log or history index cannot be read or verified
-#[cfg(test)]
-fn read_log_and_history_observe(
-    cfg: &NodeConfig,
-    signer: Option<AccountId>,
-    parent: Option<crate::log::CheckpointParent>,
-    marks: &std::rc::Rc<std::cell::RefCell<crate::history::marks::Store>>,
-    mut observe: impl FnMut(&crate::log::LogEntry),
-) -> anyhow::Result<(ReplayedLog, HistoryPlan)> {
-    read_log_and_history_authorities(cfg, signer, parent, Default::default(), marks, &mut observe)
-}
-
 /// Replays with independently finalized historical signer evidence before any persisted mutation,
-/// from a verified snapshot when snapshots are configured, seeding the derived marks cache
-/// through `marks` as the replay verifies each command.
+/// from a verified snapshot when snapshots are configured, seeding the marks cache through `marks`.
 /// Error cases:
 /// - history, log, authenticated signer history, or the marks cache fails validation
 fn read_log_and_history_authorities(
@@ -460,7 +409,6 @@ fn read_log_and_history_authorities(
     }
     let history_failed = |e: &anyhow::Error| error!(alert = "history_recovery_failed", "refusing to serve: {e:#}");
     let mut check = HistoryPlan::open(&cfg.history).inspect_err(history_failed)?;
-    let mut seeder = crate::history::marks::Seeder::new(marks.clone());
     let log = Sequencer::read_log_with_authorities(
         &cfg.node.log_dir,
         Some(crate::log::CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? }),
@@ -471,8 +419,7 @@ fn read_log_and_history_authorities(
             check.observe(entry);
             observe(entry);
         },
-        Some(Box::new(move |market, ts, mark| seeder.sample((market, ts, mark)))
-            as Box<dyn FnMut(engine_core::types::MarketId, i64, engine_core::Fixed)>),
+        Some(marks::recovery_sink(marks)),
     )
     .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
     Ok((log, check))
