@@ -113,7 +113,8 @@ async fn mirror_range(
     to: u64,
 ) -> anyhow::Result<(), PollError> {
     let mut range = AdaptiveSize::new(1_000);
-    mirror(reader, &node.tx, cursor, &dir.join("staking-cursor.json"), &mut range, from..=to, &hashes_through(to)).await
+    mirror(reader, &node.tx, cursor, &dir.join("staking-cursor.json"), &mut range, from..=to, &hashes_through(to), true)
+        .await
 }
 
 #[tokio::test]

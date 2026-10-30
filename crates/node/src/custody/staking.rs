@@ -9,7 +9,7 @@
 use std::path::Path;
 
 use alloy::primitives::{B256, U256};
-use anyhow::{Context, bail};
+use anyhow::{Context, anyhow, bail};
 use engine_core::command::Command;
 use engine_core::election::RegistryElection;
 use engine_core::emissions::TokenUnits;
@@ -156,10 +156,16 @@ impl StakingCursor {
 /// and a cursor that has not moved only makes the next poll read the same blocks again. The
 /// caller proves the range's blocks before calling, and passes their hashes. The event response
 /// must match the proven endpoint even when empty; an event on an unproven block also stalls.
-/// A failed event read halves `range`; a completed chunk lets it grow back.
+/// `bound` is whether the poll has verified the configured registry as the staking contract's
+/// deployer: while it is false the poll read no staking code at `to`, and since the registry
+/// deploys the staking contract atomically no event can legitimately exist in the window, so any
+/// event is a contradiction that stalls rather than mirrors. A failed event read halves `range`;
+/// a completed chunk lets it grow back.
 /// Error cases:
-/// - stalled: a read fails, an event is on an unproven block, or the engine refuses a mirror
+/// - stalled: a read fails, an event is on an unproven block, an event arrives before the
+///   registry binding is verified, or the engine refuses a mirror
 /// - fatal: the sequencer has stopped, or the cursor cannot be stored
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn mirror<V: VaultReader>(
     reader: &V,
     tx: &mpsc::Sender<Request>,
@@ -168,6 +174,7 @@ pub(super) async fn mirror<V: VaultReader>(
     range: &mut AdaptiveSize,
     window: std::ops::RangeInclusive<u64>,
     hashes: &std::collections::BTreeMap<u64, B256>,
+    bound: bool,
 ) -> Result<(), PollError> {
     let (from, to) = (*window.start(), *window.end());
     if from > to {
@@ -207,6 +214,11 @@ pub(super) async fn mirror<V: VaultReader>(
                 event.block_hash
             )));
         }
+    }
+    if !bound && !events.is_empty() {
+        return Err(PollError::inconsistent(anyhow!(
+            "the window names staking events, but the staking contract has no code at its end: the configured contract cannot be the registry's"
+        )));
     }
     for event in events {
         mirror_one(tx, event).await?;

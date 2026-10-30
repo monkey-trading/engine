@@ -120,6 +120,7 @@ impl<V: VaultReader> DepositWatcher<V> {
             }
         }
         let (cursor, path) = self.staking.as_mut().expect("staking cursor checked above");
-        staking::mirror(&self.vault, tx, cursor, path, &mut self.staking_range, from..=to, &hashes).await
+        let bound = self.registry.is_some_and(|(_, bound)| bound);
+        staking::mirror(&self.vault, tx, cursor, path, &mut self.staking_range, from..=to, &hashes, bound).await
     }
 }

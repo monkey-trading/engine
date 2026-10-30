@@ -99,3 +99,46 @@ async fn a_staking_contract_deployed_after_the_first_window_scans_up_to_it_and_t
     assert_eq!(cursor.next_block, 8);
     node.stop().await;
 }
+
+#[tokio::test]
+async fn events_stall_until_the_registry_binding_is_verified() {
+    let dir = scratch("registry-binding-events");
+    let node = Node::start_confirmed(&dir);
+    init_staking(&node).await;
+    let account = AccountId([5; 20]);
+    let reader = StubReader(vec![staked(2, 1, account, 500)]);
+    let mut cursor = cursor_at(1);
+    // A poll that has not verified the registry binding read no staking code at the window's
+    // end, so events there cannot be legitimate: they stall the mirror instead of applying.
+    let error = mirror(
+        &reader,
+        &node.tx,
+        &mut cursor,
+        &dir.join("staking-cursor.json"),
+        &mut AdaptiveSize::new(1_000),
+        1..=3,
+        &hashes_through(3),
+        false,
+    )
+    .await
+    .unwrap_err();
+    let PollError::Stalled(Stall::Inconsistent(cause)) = error else { panic!("{error:?}") };
+    assert!(cause.to_string().contains("no code"), "{cause}");
+    assert_eq!(cursor, cursor_at(1), "the cursor holds for the retry");
+    assert_eq!(node.read(move |engine| engine.staked(account)).await, TokenUnits(0));
+    // Once the binding is verified the same window mirrors.
+    mirror(
+        &reader,
+        &node.tx,
+        &mut cursor,
+        &dir.join("staking-cursor.json"),
+        &mut AdaptiveSize::new(1_000),
+        1..=3,
+        &hashes_through(3),
+        true,
+    )
+    .await
+    .unwrap();
+    assert_eq!(node.read(move |engine| engine.staked(account)).await, TokenUnits(500));
+    node.stop().await;
+}
