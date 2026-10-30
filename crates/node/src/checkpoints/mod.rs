@@ -23,7 +23,7 @@ use engine_core::staking::UsdcUnits;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio::time::{MissedTickBehavior, interval};
-use tracing::{Instrument, error, warn};
+use tracing::{Instrument, debug, error, warn};
 
 use crate::checkpoints::accounting::Accounting;
 use crate::log::{Checkpoint, CheckpointDomain};
@@ -386,7 +386,13 @@ impl<R: CheckpointChain> Poster<R> {
                         Err(error) => {
                             unconfirmed |= error.is::<Conflict>();
                             span.in_scope(|| warn!(alert = "checkpoint_post_failed", "checkpoint remains queued: {error:#}"));
-                            (None, None, None)
+                            // A failed post must not hide a finalized pause or retired signer.
+                            let halt = if error.is::<Conflict>() { Ok(None) } else { self.observe_halt(&page).instrument(span.clone()).await };
+                            let halt = halt.unwrap_or_else(|error| {
+                                span.in_scope(|| debug!("vault halt observation failed: {error:#}"));
+                                None
+                            });
+                            (None, None, halt)
                         }
                     };
                     if lifecycle.is_some() {
@@ -416,6 +422,8 @@ impl<R: CheckpointChain> Poster<R> {
 }
 
 mod reconciliation;
+mod sweep;
+use sweep::approval_page;
 
 #[cfg(test)]
 mod emissions_scenario;
@@ -427,73 +435,3 @@ mod scenario;
 mod staking_scenario;
 #[cfg(test)]
 mod tests;
-
-/// Approval pages observed per retry interval, the first with the tick's finalized observation and
-/// the rest swept at its block.
-const SWEEP_PAGES: usize = 64;
-
-type Cursor = Option<(engine_core::types::AccountId, u64)>;
-
-impl<R: CheckpointChain> Poster<R> {
-    /// Observes further registry pages at the block of `evidence`, up to `SWEEP_PAGES` pages a
-    /// tick, so a restart that registers every historical approval observes them in minutes, not
-    /// one page per retry interval. A failed read ends this tick's sweep. Returns the new cursor.
-    /// Error cases:
-    /// - the registry is poisoned or the sequencer stopped
-    async fn sweep(
-        &self,
-        evidence: &LifecycleEvidence,
-        approvals: &ApprovalRegistry,
-        mut cursor: Cursor,
-        posted: Option<u64>,
-        health: Option<Health>,
-        tx: &mpsc::Sender<Request>,
-    ) -> anyhow::Result<Cursor> {
-        for _ in 1..SWEEP_PAGES {
-            let page = approval_page_after(approvals, cursor)?;
-            if page.is_empty() {
-                break;
-            }
-            let statuses = match self.chain.claims(evidence, &page).await.and_then(|statuses| {
-                ensure!(
-                    statuses.iter().map(|status| status.approval).eq(page.iter().copied()),
-                    "nonce-use answers differ from the queried approvals"
-                );
-                Ok(statuses)
-            }) {
-                Ok(statuses) => statuses,
-                Err(error) => {
-                    warn!("approval sweep resumes at the next retry: {error:#}");
-                    break;
-                }
-            };
-            cursor = page.last().map(|approval| (approval.account, approval.nonce));
-            let lifecycle = Some(LifecycleEvidence { approvals: statuses, ..evidence.clone() });
-            tx.send(Request::CheckpointStatus { posted, health, lifecycle })
-                .await
-                .map_err(|_| anyhow::anyhow!("sequencer stopped"))?;
-        }
-        Ok(cursor)
-    }
-}
-
-/// Selects one bounded ordered page, wrapping to the start after the last approval.
-/// Error cases:
-/// - the registry lock is poisoned
-fn approval_page(registry: &ApprovalRegistry, cursor: Cursor) -> anyhow::Result<Vec<ApprovalId>> {
-    let page = approval_page_after(registry, cursor)?;
-    if page.is_empty() { approval_page_after(registry, None) } else { Ok(page) }
-}
-
-/// Selects the bounded ordered page after `cursor` without cloning the full approval registry.
-/// Error cases:
-/// - the registry lock is poisoned
-fn approval_page_after(registry: &ApprovalRegistry, cursor: Cursor) -> anyhow::Result<Vec<ApprovalId>> {
-    use std::ops::Bound::{Excluded, Unbounded};
-    let registered = registry.lock().map_err(|_| anyhow::anyhow!("approval registry is poisoned"))?;
-    Ok(registered
-        .range((cursor.map_or(Unbounded, Excluded), Unbounded))
-        .take(APPROVAL_PAGE_SIZE)
-        .map(|(_, approval)| *approval)
-        .collect())
-}

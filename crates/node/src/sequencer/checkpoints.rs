@@ -28,6 +28,9 @@ pub(super) struct Gate {
     /// The latest finalized custody evidence shows the vault refusing withdrawal claims: they are
     /// paused, or its signer is retired. Starts clear, as signing waits for a first verdict anyway.
     pub halted: bool,
+    /// The latest finalized custody evidence shows a retired signer, so the vault accepts no
+    /// checkpoint.
+    pub retired: bool,
     pub recovery: Vec<Work>,
     pub pending: Vec<(u64, AccountId, Fixed, u64)>,
     pub payouts: crate::sequencer::payouts::Payouts,
@@ -54,6 +57,8 @@ pub enum Withheld {
     Collateral,
     /// The custody prefix awaits the canonical scan.
     CustodyPrefix,
+    /// The vault's signer is retired.
+    SignerRetired,
 }
 
 impl Withheld {
@@ -61,6 +66,7 @@ impl Withheld {
         match self {
             Withheld::Collateral => "collateral",
             Withheld::CustodyPrefix => "custody_prefix",
+            Withheld::SignerRetired => "signer_retired",
         }
     }
 }
@@ -85,6 +91,7 @@ impl Gate {
             parent,
             health: (!parent.has_checkpoint).then_some(crate::checkpoints::Health::Pending),
             halted: false,
+            retired: false,
             recovery: Vec::new(),
             pending: Vec::new(),
             payouts: Default::default(),
@@ -130,6 +137,18 @@ impl Sequencer {
             return Ok(());
         }
         if let Some(gate) = &mut self.gate {
+            // The vault accepts no checkpoint until a signer is installed, and the one signed then
+            // carries the whole state, so a long retirement leaves no backlog to post one by one.
+            if gate.retired {
+                gate.withheld.insert(Withheld::SignerRetired);
+                warn!(
+                    alert = "checkpoint_withheld",
+                    cause = Withheld::SignerRetired.cause(),
+                    "no checkpoint signed at seq {seq}: the vault's signer is retired"
+                );
+                return Ok(());
+            }
+            gate.clear_withheld(Withheld::SignerRetired, seq);
             if matches!(
                 gate.health,
                 Some(
@@ -258,6 +277,7 @@ impl Sequencer {
     ) -> anyhow::Result<()> {
         if let (Some(gate), Some(evidence)) = (&mut self.gate, &lifecycle) {
             gate.halted = evidence.halts_withdrawals();
+            gate.retired = evidence.signer_retired();
         }
         self.checkpoint_status(posted, health)?;
         match lifecycle {

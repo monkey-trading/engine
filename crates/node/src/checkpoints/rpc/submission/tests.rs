@@ -134,6 +134,20 @@ async fn a_reverted_send_moves_to_the_next_nonce_only_on_finalized_proof() {
     server.state.lock().unwrap().consumer = Some(foreign);
     let error = chain.post(&cp).await.unwrap_err();
     assert!(format!("{error:#}").contains("unrelated transaction"), "{error:#}");
+    // An accepted earlier checkpoint is a consumer only of a nonce reserved with reuse provenance.
+    let older = checkpoint(9);
+    let mut earlier = own.clone();
+    let input = crate::checkpoints::rpc::submission::posting::checkpoint_input(&older).unwrap();
+    earlier["input"] = json!(format!("0x{}", hex::encode(input)));
+    {
+        let mut state = server.state.lock().unwrap();
+        state.consumer = Some(earlier);
+        state.finalized = Some(older.clone());
+        state.accepted.insert(older.seq, (older, 1));
+    }
+    let error = chain.post(&cp).await.unwrap_err();
+    assert!(format!("{error:#}").contains("another checkpoint"), "{error:#}");
+    server.state.lock().unwrap().accepted.clear();
     {
         let mut state = server.state.lock().unwrap();
         state.consumer = Some(own.clone());

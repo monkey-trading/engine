@@ -132,14 +132,15 @@ pub(super) fn is_access_command(cmd: &Command) -> bool {
     )
 }
 
-/// Whether an unhealthy custody gate admits `cmd`, forcing a wrapped access withdrawal to record
-/// its refusal durably without debiting collateral while any other withdrawal waits. A node with
-/// no gate admits every command.
-pub(super) fn gate_withdrawal(cmd: &mut Command, gate_healthy: Option<bool>) -> bool {
-    if gate_healthy != Some(false) || !matches!(cmd, Command::Withdraw { .. } | Command::AccessWithdraw { .. }) {
+/// Whether a custody gate that admits no withdrawals, as while collateral is unreconciled or the
+/// vault halts claims, admits `cmd`, forcing a wrapped access withdrawal to record its refusal
+/// durably without debiting collateral while any other withdrawal waits. A node with no gate
+/// admits every command.
+pub(super) fn gate_withdrawal(cmd: &mut Command, gate_admits: Option<bool>) -> bool {
+    if gate_admits != Some(false) || !matches!(cmd, Command::Withdraw { .. } | Command::AccessWithdraw { .. }) {
         return true;
     }
-    warn!(alert = "withdrawals_paused", "withdrawal refused until custody reconciles");
+    warn!(alert = "withdrawals_paused", "withdrawal refused until custody reconciles and the vault admits claims");
     match cmd {
         Command::AccessWithdraw { payout_available, .. } => {
             *payout_available = false;

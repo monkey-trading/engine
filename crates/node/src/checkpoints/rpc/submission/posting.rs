@@ -185,7 +185,9 @@ impl CheckpointRpc {
         previous: &Reservation,
         nonce: u64,
     ) -> anyhow::Result<Reservation> {
-        let anchor = self.verify_consumer(previous, cp).await?;
+        let (anchor, consumed) = self.verify_consumer(previous, cp).await?;
+        // A reservation without reuse provenance was alone at its nonce; its consumer is its call.
+        ensure!(consumed == cp.seq, "the reserved nonce was consumed by another checkpoint");
         let vault = Address::from(self.domain.vault.0);
         let call = hasCheckpointAtCall { seq: cp.seq }.abi_encode();
         let accepted =

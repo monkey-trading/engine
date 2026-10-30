@@ -104,6 +104,35 @@ async fn a_deposit_a_retired_signer_cannot_checkpoint_raises_no_collateral_alert
     assert!(drained(&mut alerts).contains(&"collateral_mismatch".to_owned()));
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_failed_reconcile_still_reports_a_finalized_pause() {
+    for paused in [true, false] {
+        let (_guard, mut alerts) = capture_alerts();
+        let (poster, work) = fixture();
+        // The vault advanced to a checkpoint this worker has not received, so reconciling fails.
+        {
+            let mut latest = poster.chain.latest.lock().unwrap();
+            latest.state.checkpoint = Some((7, "0x07".to_owned()));
+            let evidence = latest.lifecycle.as_mut().unwrap();
+            (evidence.checkpoint_seq, evidence.checkpoint_root) = (Some(7), Some("0x07".to_owned()));
+        }
+        for view in [&poster.chain.latest, &poster.chain.finalized] {
+            view.lock().unwrap().lifecycle.as_mut().unwrap().withdrawals_paused = paused;
+        }
+        let (work_tx, work_rx) = mpsc::channel(4);
+        let (status_tx, mut status_rx) = mpsc::channel(4);
+        work_tx.send(work).await.unwrap();
+        let task = tokio::spawn(poster.run_with_approvals(work_rx, status_tx, Vec::new(), registry(1)));
+        let Request::CheckpointStatus { posted: None, health: None, lifecycle } = status_rx.recv().await.unwrap()
+        else {
+            panic!("a failed reconcile reports no verdict");
+        };
+        assert_eq!(lifecycle.is_some_and(|evidence| evidence.withdrawals_paused), paused, "paused={paused}");
+        assert_eq!(halts(&mut alerts), if paused { vec!["paused".to_owned()] } else { Vec::new() });
+        task.abort();
+    }
+}
+
 #[tokio::test]
 async fn a_foreign_signer_still_conflicts() {
     let (poster, work) = fixture();

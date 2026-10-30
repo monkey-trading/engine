@@ -291,7 +291,7 @@ async fn registry_polling_repeats_claims_until_sequencer_acknowledgement() {
 #[tokio::test(start_paused = true)]
 async fn each_retry_sweeps_bounded_pages_at_its_own_finalized_block() {
     let (poster, work) = fixture();
-    let approvals = registry(super::SWEEP_PAGES * APPROVAL_PAGE_SIZE + 5);
+    let approvals = registry(super::sweep::SWEEP_PAGES * APPROVAL_PAGE_SIZE + 5);
     let (work_tx, work_rx) = mpsc::channel(4);
     let (status_tx, mut status_rx) = mpsc::channel(4);
     work_tx.send(work).await.unwrap();
@@ -299,7 +299,7 @@ async fn each_retry_sweeps_bounded_pages_at_its_own_finalized_block() {
     let first = evidence(&mut status_rx).await;
     assert_eq!(first.approvals.first().unwrap().approval.nonce, 0);
     let mut next = APPROVAL_PAGE_SIZE as u64;
-    for _ in 1..super::SWEEP_PAGES {
+    for _ in 1..super::sweep::SWEEP_PAGES {
         let page = evidence(&mut status_rx).await;
         assert_eq!(page.block_hash, first.block_hash, "one tick sweeps at one finalized block");
         assert_eq!(page.approvals.len(), APPROVAL_PAGE_SIZE);

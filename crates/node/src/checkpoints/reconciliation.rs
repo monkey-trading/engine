@@ -113,6 +113,29 @@ impl<R: CheckpointChain> Poster<R> {
         Ok(matches!(verdict(&state, paid, credited, work), Health::Diverged))
     }
 
+    /// The finalized evidence for `approvals`, alerted, when the finalized vault halts withdrawal
+    /// claims under this enclave's authority and the latest block agrees: what a failed
+    /// reconciliation still reports, so a stuck post never hides a pause or a retired signer. It
+    /// halts withdrawals, so it releases nothing.
+    /// Error cases:
+    /// - an observation fails or is inconsistent
+    pub(super) async fn observe_halt(&self, approvals: &[ApprovalId]) -> anyhow::Result<Option<LifecycleEvidence>> {
+        let latest = self.chain.observe(View::Latest, &[]).await?;
+        latest.validate(&[])?;
+        let finalized = self.chain.observe(View::Finalized, approvals).await?;
+        finalized.validate(approvals)?;
+        let (Some(latest), Some(evidence)) = (latest.lifecycle, finalized.lifecycle) else { return Ok(None) };
+        let agrees = latest.signer == evidence.signer
+            && latest.signer_epoch == evidence.signer_epoch
+            && latest.withdrawals_paused == evidence.withdrawals_paused;
+        let authority = evidence.signer == self.signer || evidence.signer_retired();
+        if !(agrees && authority && evidence.halts_withdrawals()) {
+            return Ok(None);
+        }
+        report_halt(&evidence);
+        Ok(Some(evidence))
+    }
+
     /// Returns release evidence only from the finalized collateral observation. `uncredited` carries
     /// the first uncredited vault deposit between calls.
     /// Error cases:

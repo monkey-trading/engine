@@ -120,6 +120,22 @@ fn a_restarted_sequencer_applies_the_halt_before_any_release() {
 }
 
 #[test]
+fn a_retired_signer_withholds_checkpoints_until_the_timelock_installs_one() {
+    let mut node = Node::new("halt-withheld-checkpoints");
+    let cp = node.approve();
+    node.seq
+        .custody_status(Some(cp.seq), Some(Health::Healthy), Some(Halt::Retired.apply(node.evidence(&cp))))
+        .unwrap();
+    node.seq.sequence(Command::Tick).unwrap().unwrap();
+    node.seq.checkpoint().unwrap();
+    assert_eq!(node.last_checkpoint(), cp, "the vault accepts no checkpoint, so none is signed");
+    // A pause alone leaves the vault accepting checkpoints.
+    node.seq.custody_status(Some(cp.seq), Some(Health::Healthy), Some(Halt::Paused.apply(node.evidence(&cp)))).unwrap();
+    node.seq.checkpoint().unwrap();
+    assert!(node.last_checkpoint().seq > cp.seq);
+}
+
+#[test]
 fn only_a_retired_signer_differs_from_this_enclave_without_failing() {
     let mut node = Node::new("halt-foreign-signer");
     let cp = node.approve();
