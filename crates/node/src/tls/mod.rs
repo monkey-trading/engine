@@ -25,7 +25,7 @@ use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioIo, TokioTimer};
-use rcgen::{CertificateParams, DnType, KeyPair, PublicKeyData};
+use rcgen::{CertificateParams, DnType, KeyPair, PublicKeyData, SanType};
 use rustls::ServerConfig;
 use rustls::crypto::ring::default_provider;
 use rustls::server::Acceptor;
@@ -169,7 +169,9 @@ impl TlsIdentity {
     /// - the certificate or a server config cannot be built
     pub fn new(key_pair: KeyPair) -> anyhow::Result<Self> {
         let provider = Arc::new(default_provider());
-        let mut params = CertificateParams::new(Vec::<String>::new()).context("certificate parameters")?;
+        let mut params =
+            CertificateParams::new(vec!["localhost".into(), "127.0.0.1".into()]).context("certificate parameters")?;
+        params.subject_alt_names.push(SanType::IpAddress(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)));
         params.distinguished_name.push(DnType::CommonName, "engine enclave");
         let cert = params.self_signed(&key_pair).context("signing the TLS certificate")?;
         let public_key_sha256 = Sha256::digest(key_pair.subject_public_key_info()).into();
