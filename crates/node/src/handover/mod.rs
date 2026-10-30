@@ -54,7 +54,7 @@ use crate::tee::sealing::Release;
 mod evidence;
 pub(crate) use evidence::Evidence;
 mod predecessor;
-pub(crate) use predecessor::{Predecessor, Published};
+pub(crate) use predecessor::{DrainReply, Predecessor, Published};
 mod successor;
 pub(crate) use successor::take;
 

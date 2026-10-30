@@ -1,6 +1,8 @@
 //! The whole handover over loopback between two mock enclaves, against a vault whose current release
 //! the test sets and a node that answers the request to stop sequencing.
 
+mod stop;
+
 use super::*;
 
 use std::path::PathBuf;
@@ -166,18 +168,6 @@ async fn a_successor_the_vault_no_longer_names_once_the_keys_arrive_seals_nothin
 }
 
 #[tokio::test]
-async fn a_withheld_final_checkpoint_keeps_the_keys_and_ends_the_predecessor() {
-    let mut exchange = Exchange::start("handover-withheld").await;
-    exchange.make_upgrade_current();
-    let _answer = exchange.answer_drain(Err(anyhow!("the final checkpoint was withheld")));
-    let err = exchange.take().await.err().expect("keys left without a final checkpoint");
-    assert!(format!("{err:#}").contains("withheld"), "{err:#}");
-    assert!(!file_for(&exchange.successor_dir, &exchange.upgrade(), GENERATION).exists());
-    let ended = timeout(Duration::from_secs(5), exchange.run).await.expect("the predecessor ended").unwrap();
-    assert!(ended.is_err(), "a predecessor with nothing to hand over kept running");
-}
-
-#[tokio::test]
 async fn a_confirmation_by_another_key_ends_nothing_and_a_later_successor_reuses_the_stop() {
     let mut exchange = Exchange::start("handover-forged-confirm").await;
     exchange.make_upgrade_current();
@@ -242,22 +232,6 @@ async fn a_recorded_request_gets_nothing_on_another_connection() {
 }
 
 #[tokio::test]
-async fn a_predecessor_whose_checkpoints_are_withheld_goes_on_sequencing() {
-    let mut exchange = Exchange::start("handover-signing-withheld").await;
-    exchange.make_upgrade_current();
-    exchange.signing.send_replace(false);
-    let err = exchange.take().await.err().expect("a predecessor that cannot sign a final checkpoint stopped");
-    assert!(format!("{err:#}").contains("checkpoint signing is withheld"), "{err:#}");
-    assert!(exchange.drains.try_recv().is_err(), "sequencing stopped while checkpoints are withheld");
-    assert!(!exchange.run.is_finished(), "the predecessor stopped serving");
-
-    // Once signing resumes, the next successor takes the keys.
-    exchange.signing.send_replace(true);
-    let _answer = exchange.answer_drain(Ok(Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) }));
-    exchange.take().await.unwrap();
-}
-
-#[tokio::test]
 async fn a_successor_without_the_signed_acknowledgement_keeps_the_keys_sealed_but_does_not_start() {
     let (successor, successor_dir) = successor_config("handover-forged-ack");
     let old = KeySet::generate().unwrap();
@@ -296,37 +270,6 @@ async fn a_successor_without_the_signed_acknowledgement_keeps_the_keys_sealed_bu
     // The keys stay sealed here, so a later start opens them without a flag.
     let reopened = KeyStore::open(&successor_dir, &sealer, config, 2).unwrap().expect("the keys were not sealed");
     assert_eq!(reopened.keys().enclave_key().unwrap().address(), old.enclave_key().unwrap().address());
-}
-
-#[test]
-fn the_final_head_is_the_checkpoint_of_the_last_command_the_sequencer_published() {
-    let root = |byte: &str| format!("0x{}", byte.repeat(32));
-    let recovered = checkpoint(5, &root("aa"));
-
-    // Nothing published since recovery: the recovered log's last checkpoint.
-    let (tx, rx) = broadcast::channel(4);
-    let head = Published::new(rx, Some(5), Some(&recovered)).final_head().unwrap();
-    assert_eq!(head, Head { seq: 5, root: root("aa") });
-
-    // A command and then its checkpoint.
-    let rx = tx.subscribe();
-    publish(&tx, LogEntry::Command(command(6)));
-    publish(&tx, LogEntry::Checkpoint(checkpoint(6, &root("bb"))));
-    assert_eq!(Published::new(rx, Some(5), Some(&recovered)).final_head().unwrap().seq, 6);
-
-    // A last command the drain did not checkpoint, and a log with no checkpoint at all.
-    let rx = tx.subscribe();
-    publish(&tx, LogEntry::Command(command(7)));
-    let err = Published::new(rx, Some(6), Some(&checkpoint(6, &root("bb")))).final_head().unwrap_err();
-    assert!(err.to_string().contains("withheld"), "{err:#}");
-    let (_tx, rx) = broadcast::channel::<Arc<StreamMsg>>(4);
-    assert!(Published::new(rx, Some(3), None).final_head().is_err(), "a log with no checkpoint handed over");
-
-    // A receiver that fell behind still sees the newest entries.
-    let (tx, rx) = broadcast::channel(2);
-    (6..40).for_each(|seq| publish(&tx, LogEntry::Command(command(seq))));
-    publish(&tx, LogEntry::Checkpoint(checkpoint(39, &root("cc"))));
-    assert_eq!(Published::new(rx, Some(5), Some(&recovered)).final_head().unwrap().seq, 39);
 }
 
 #[test]
@@ -428,6 +371,27 @@ impl Exchange {
             while let Some(reply) = drains.recv().await {
                 answered += 1;
                 let _ = reply.send(head.clone().map_err(|e| anyhow!(e)));
+            }
+            answered
+        })
+    }
+
+    /// Answers the first stop request with the checkpoint gate's refusal of the final checkpoint —
+    /// as the node's sequencer gives it — and every later one with `head`, counting them until the
+    /// predecessor ends.
+    fn refuse_once_then_answer(&mut self, reason: &str, head: Head) -> JoinHandle<usize> {
+        let mut drains = std::mem::replace(&mut self.drains, mpsc::channel(1).1);
+        let reason = reason.to_owned();
+        tokio::spawn(async move {
+            let mut answered = 0;
+            while let Some(reply) = drains.recv().await {
+                answered += 1;
+                let result = if answered == 1 {
+                    Err(anyhow!(crate::sequencer::HandoverRefused::new(reason.clone())))
+                } else {
+                    Ok(head.clone())
+                };
+                let _ = reply.send(result);
             }
             answered
         })

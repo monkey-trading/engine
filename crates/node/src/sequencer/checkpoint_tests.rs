@@ -348,3 +348,5 @@ fn a_recovered_finalized_anchor_is_reconciled_before_any_new_signature() {
 mod unvalidated;
 
 mod bootstrap;
+
+mod handover_stop;

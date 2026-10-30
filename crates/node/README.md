@@ -155,14 +155,16 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/node/keys/tests.rs` — sealed, new, refused, and unsealed keys, the vault's current release,
   the stand-in measurement, and the first start's head check
 - `src/node/registration.rs` — serving only the attestation until the vault names the key
-- `src/node/shutdown.rs` — what follows the sequencer's drain: ending history, and waiting for a
-  successor to confirm a handover
+- `src/node/shutdown.rs` — supervising the tasks until one stops, a signal arrives, or a handover
+  stops sequencing, which commits only once the sequencer admits its final checkpoint; then ending
+  history, and waiting for a successor to confirm a handover
 - `src/node/tests.rs` — startup, history recovery, and incomplete-genesis tests
 - `src/node/preflight/unscanned.rs` — unprovable prelaunch anchors refuse writable startup before changing log or history
 - `src/node/preflight/tests/origin.rs` — integrity refusal preserves absent, corrupt, and WAL-backed history
 - `src/telemetry.rs` — the log subscriber, which feeds alert lines to the router, and the metrics
   registry, set up before the node runs
 - `src/sequencer/mod.rs` — the sequencer, checkpoints, and metrics
+- `src/sequencer/config.rs` — the sequencer's construction config
 - `src/sequencer/messages.rs` — sequencer requests, stream messages, and signed withdrawals
 - `src/sequencer/checkpoints.rs` — checkpoint creation, custody reconciliation, and signature release
 - `src/sequencer/payouts.rs` — durable unpaid delivery, finalized claim evidence, epoch reissues, and reissue requests
@@ -182,6 +184,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/checkpoint_tests.rs` — confirmed-prefix signature gating and restart tests
 - `src/sequencer/checkpoint_tests/unvalidated.rs` — worker observations preserve signing holds until collateral is compared, and an unproven finalized prefix pauses withdrawals until coverage is proven
 - `src/sequencer/checkpoint_tests/bootstrap.rs` — recovered empty anchors reconcile while nonempty unscanned checkpoints wait
+- `src/sequencer/checkpoint_tests/handover_stop.rs` — a handover's stop is the gate's call: refused
+  with its causes while it would withhold the final checkpoint, and only an admitted stop ends the
+  sequencer's loop
 - `src/sequencer/fixture_tests.rs` — test-only signing of copies of placeholder protocol fixtures,
   and logs whose genesis an older protocol applied but no current config can give
 - `src/sequencer/recovery.rs` — pure recovery validation and exact authenticated checkpoint-tail restoration
@@ -374,7 +379,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/handover/evidence.rs` — a peer's quote and its collateral, produced and verified
 - `src/handover/successor.rs` — the new release's side: request, verify, seal, confirm
 - `src/handover/predecessor.rs` — the running release's side: its listener, the current release, the
-  stop, and the final checkpoint; `src/handover/predecessor/tests.rs` runs it over loopback
+  stop, and the final checkpoint; `src/handover/predecessor/tests/` runs it over loopback, the stop
+  and final-checkpoint tests in `stop.rs`
 - `src/handover/tests.rs` — what each step binds, the encryption, the framing, and the evidence
 - `src/verify/mod.rs` — attestation verification for the CLI and replay: loading or fetching the
   attestation, release manifest, and collateral, `engine-verify` on the system clock, and the

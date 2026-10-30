@@ -130,6 +130,28 @@ impl Gate {
     pub fn admits_withdrawals(&self) -> bool {
         matches!(self.health, Some(crate::checkpoints::Health::Healthy)) && !self.halted
     }
+
+    /// Why the gate would withhold a checkpoint, for a handover's refusal.
+    fn withhold_causes(&self) -> String {
+        let mut causes: Vec<&str> = self.withheld.iter().map(|cause| cause.cause()).collect();
+        if self.backlogged {
+            causes.push("the posting queue is full");
+        }
+        if causes.is_empty() {
+            causes.push("no command has applied");
+        }
+        causes.join(", ")
+    }
+}
+
+/// A handover's stop at the checkpoint gate: admitted with a final checkpoint written, or refused
+/// with the gate's reason while it would withhold one.
+pub(super) enum HandoverGate {
+    /// A checkpoint of the last command exists to hand over.
+    Admitted,
+    /// The gate withholds or defers the final checkpoint; a `HandoverRefused` error, so the node
+    /// refuses the handover and goes on sequencing.
+    Refused(anyhow::Error),
 }
 
 impl Sequencer {
@@ -137,6 +159,28 @@ impl Sequencer {
     #[cfg(test)]
     pub fn state_root(&mut self) -> [u8; 32] {
         self.engine.state_root()
+    }
+
+    /// Attempts the checkpoint a key handover hands over as the final one. The gate's verdict owns
+    /// the stop: refused while it would withhold or defer the checkpoint, so the node refuses the
+    /// handover and goes on sequencing.
+    /// Error cases:
+    /// - the log cannot be written
+    pub(super) fn handover_checkpoint(&mut self) -> anyhow::Result<HandoverGate> {
+        let Some(seq) = self.engine.last_seq() else {
+            return Ok(HandoverGate::Refused(anyhow::anyhow!(crate::sequencer::HandoverRefused::new(
+                "no command has applied: there is no checkpoint to hand over".into(),
+            ))));
+        };
+        self.checkpoint()?;
+        if self.last_checkpoint == Some(seq) {
+            return Ok(HandoverGate::Admitted);
+        }
+        let causes = self.gate.as_ref().map_or_else(|| "no checkpoint was written".to_string(), Gate::withhold_causes);
+        Ok(HandoverGate::Refused(anyhow::anyhow!(crate::sequencer::HandoverRefused::new(format!(
+            "the final checkpoint is withheld ({causes}): the handover is refused and this node goes on \
+                 sequencing until the checkpoint_withheld alert clears"
+        ),))))
     }
 
     /// Transfers replayed durable work to the worker before admitting live commands. A deployment

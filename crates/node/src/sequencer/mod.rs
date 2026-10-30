@@ -5,6 +5,8 @@
 //! write, and each batch of fills one data sync.
 
 mod catch_up;
+mod config;
+pub use config::SequencerConfig;
 pub(crate) mod history_rebuild;
 pub(crate) mod legacy;
 mod origin;
@@ -13,9 +15,11 @@ mod replay;
 pub(crate) use replay::replay_path_with_authorities;
 pub use replay::{Replayed, replay, replay_path, replay_path_in_domain, replay_path_with_trust, replay_with_signer};
 mod checkpoints;
-use checkpoints::Gate;
+use checkpoints::{Gate, HandoverGate};
 mod messages;
-pub use messages::{Query, Reissue, ReissueScreening, Request, SignedWithdrawal, StreamBody, StreamMsg};
+pub use messages::{
+    HandoverRefused, Query, Reissue, ReissueScreening, Request, SignedWithdrawal, StreamBody, StreamMsg,
+};
 mod access;
 mod benchmark_schedule;
 mod payout_schedule;
@@ -45,7 +49,7 @@ use tracing::{error, info, info_span, warn};
 use crate::benchmarks::BenchmarkSchedule;
 use crate::checkpoints::accounting::Accounting;
 use crate::clock::Clock;
-use crate::log::{CommandEntry, LogEntry, LogWriter, Manifest, SegmentedLog};
+use crate::log::{CommandEntry, LogEntry, LogWriter, SegmentedLog};
 use crate::metrics::Metrics;
 use crate::sequencer::alerts::{BenchmarkAlerts, DeficitAlert, alert_on, reinstated_receipt, resolve_reversal};
 use crate::snapshot::{Progress, RecoveryBase};
@@ -111,37 +115,6 @@ pub struct Sequencer {
     uncaptured: Option<snapshots::Deferred>,
 }
 
-pub struct SequencerConfig<'a> {
-    pub log_dir: &'a Path,
-    pub segment_commands: u64,
-    /// Where the log writer publishes its manifest.
-    pub manifest: watch::Sender<Manifest>,
-    pub checkpoint_every: u64,
-    pub chain_id: u64,
-    pub vault: AccountId,
-    /// The clocks commands are stamped and checked with.
-    pub clock: Arc<dyn Clock>,
-    /// The most a stamp may differ from trusted time.
-    pub max_drift: Duration,
-    /// The client auth the config gives, which a log that records one must match.
-    pub client_auth: ClientAuth,
-    pub access_policy: Option<engine_core::access::AccessPolicy>,
-    /// The operator the config gives, which a log that records one must match.
-    pub operator: Operator,
-    /// Where the sequencer records its metrics.
-    pub metrics: Arc<Metrics>,
-    pub(crate) checkpoint_registry: Option<crate::checkpoints::Registry>,
-    pub(crate) approval_registry: Option<crate::checkpoints::ApprovalRegistry>,
-    pub(crate) checkpoint_parent: crate::log::CheckpointParent,
-    pub(crate) checkpoints: Option<mpsc::Sender<crate::checkpoints::Work>>,
-    /// The commands the config's genesis sequences, which the genesis the log ran must match (see
-    /// `GenesisProgress::ensure_matches`).
-    pub genesis: Vec<Command>,
-    pub(crate) history_sealing: Option<crate::snapshot::sealing::Endpoint>,
-    /// Told whether each checkpoint attempt signed (see `Gate::signing`).
-    pub(crate) checkpoint_signing: Option<watch::Sender<bool>>,
-}
-
 /// A log read from disk and replayed, before anything is written to it.
 pub struct ReplayedLog {
     log: SegmentedLog,
@@ -151,11 +124,13 @@ pub struct ReplayedLog {
 }
 
 impl Sequencer {
-    /// Sequences requests until every sender is gone, then writes a final checkpoint. Each batch,
-    /// of at most `MAX_BATCH` requests, is written and its data synced before its replies, stream
-    /// messages, and queries go out; one that carries a sync request also syncs the directory entry
-    /// naming its segment. A command trusted time refuses is dropped with its reply, which the API
-    /// answers as unavailable.
+    /// Sequences requests until every sender is gone or an admitted handover stop ends the loop,
+    /// then writes a final checkpoint. Each batch, of at most `MAX_BATCH` requests, is written and
+    /// its data synced before its replies, stream messages, and queries go out; one that carries a
+    /// sync request also syncs the directory entry naming its segment. A command trusted time
+    /// refuses is dropped with its reply, which the API answers as unavailable. A handover's final
+    /// checkpoint, once admitted, is written before the stop's reply and the loop ends, so what the
+    /// handover hands over is never behind the last sequenced command.
     /// Error cases:
     /// - the log cannot be written or synced; the node must stop rather than acknowledge
     ///   undurable commands
@@ -169,6 +144,7 @@ impl Sequencer {
             let started = self.clock.instant();
             let mut sequenced = false;
             let (mut next, mut taken) = (Some(first), 0);
+            let mut handover_stop = None;
             while let Some(req) = next.take() {
                 taken += 1;
                 match req {
@@ -189,8 +165,19 @@ impl Sequencer {
                     Request::CheckpointStatus { posted, health, lifecycle } => {
                         self.custody_status(posted, health, lifecycle)?;
                     }
+                    Request::FinalCheckpoint(reply) => {
+                        // Stopping for a handover is the checkpoint gate's call: refused, the node
+                        // goes on sequencing; admitted, nothing after this request sequences and the
+                        // loop ends once the final checkpoint is durable.
+                        match self.handover_checkpoint()? {
+                            HandoverGate::Admitted => handover_stop = Some(reply),
+                            HandoverGate::Refused(reason) => {
+                                let _ = reply.send(Err(reason));
+                            }
+                        }
+                    }
                 }
-                if taken < MAX_BATCH {
+                if taken < MAX_BATCH && handover_stop.is_none() {
                     next = rx.try_recv().ok();
                 }
             }
@@ -213,6 +200,10 @@ impl Sequencer {
                 self.metrics.batch_seconds.observe(self.clock.instant().duration_since(started).as_secs_f64());
             }
             queries.drain(..).for_each(|q| q(&self.engine));
+            if let Some(reply) = handover_stop {
+                let _ = reply.send(Ok(()));
+                break;
+            }
         }
         let final_checkpoint = self.last_checkpoint != self.engine.last_seq();
         if final_checkpoint || self.uncaptured.is_some() {
