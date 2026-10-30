@@ -217,6 +217,11 @@ pub(super) fn alert_on(event: &Event) {
         Event::StakingRejected { account, amount, chain_ref, reason } => {
             error!(alert = "staking_rejected", %account, %amount, chain_ref, ?reason, "staking event not mirrored");
         }
+        // A finalised registry event the engine will not mirror leaves the operator key diverged
+        // from the registry, and stalls the staking mirror behind it.
+        Event::ElectionRejected { chain_ref, reason } => {
+            error!(alert = "election_rejected", chain_ref, "operator registry event not mirrored: {reason}");
+        }
         Event::PricesRejected { market, reason } => {
             // The reason can carry a per-quote value, so it goes in the message, not the episode key.
             warn!(alert = "prices_rejected", market, "price update refused: {reason}");
@@ -265,6 +270,14 @@ mod tests {
         });
         assert_eq!(logs.critical("staking_rejected"), 1);
         assert_eq!(logs.count("chain_ref=\"0xstake:0\""), 1);
+    }
+
+    #[test]
+    fn a_refused_registry_mirror_raises_a_critical_alert() {
+        let (logs, _guard) = Logs::capture();
+        alert_on(&Event::ElectionRejected { chain_ref: "0xelect:0".into(), reason: "rotation is off".into() });
+        assert_eq!(logs.critical("election_rejected"), 1);
+        assert_eq!(logs.count("chain_ref=\"0xelect:0\""), 1);
     }
 }
 

@@ -36,6 +36,7 @@ use crate::test_support::{DEV_CONFIG, dev_config, log_entries, sample_around, sc
 use crate::tls::{TlsIdentity, serve};
 
 mod corporate;
+mod election;
 
 /// The dev operator key, whose public key `config/dev.toml` names.
 const DEV_KEY: [u8; 32] = [0x42; 32];
@@ -340,6 +341,11 @@ impl Node {
 
     /// `start`, under the latest protocol version instead of the legacy one when `latest`.
     async fn start_on(name: &str, latest: bool) -> Self {
+        Self::start_with(name, latest, &dev_config().genesis).await
+    }
+
+    /// `start_on`, sequencing `genesis` instead of the dev genesis.
+    async fn start_with(name: &str, latest: bool, genesis: &crate::config::Genesis) -> Self {
         let dir = scratch_dir(&format!("admin-{name}"));
         let key = Arc::new(EnclaveKey::generate());
         let (stream, _) = broadcast::channel(1024);
@@ -354,7 +360,7 @@ impl Node {
         } else {
             seq.activate_legacy_protocol().unwrap();
         }
-        seq.genesis(&dev_config().genesis).unwrap();
+        seq.genesis(genesis).unwrap();
         // Trusted time agrees with the fixed clock, so the queued activation and genesis go in now.
         seq.trust(sample_around(stamps.as_ref())).unwrap();
         let (tx, rx) = mpsc::channel(1024);

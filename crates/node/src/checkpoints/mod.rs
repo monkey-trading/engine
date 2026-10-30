@@ -430,7 +430,7 @@ mod emissions_scenario;
 #[cfg(test)]
 mod lifecycle_tests;
 #[cfg(test)]
-mod scenario;
+pub(crate) mod scenario;
 #[cfg(test)]
 mod staking_scenario;
 #[cfg(test)]

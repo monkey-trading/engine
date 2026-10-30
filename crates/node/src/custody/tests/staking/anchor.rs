@@ -23,6 +23,7 @@ impl VaultReader for ForkReader {
                 number,
                 hash: if number == 3 { self.endpoint } else { canonical_hash(number) },
                 parent_hash: B256::ZERO,
+                timestamp: number * 12,
             })
             .collect())
     }
@@ -70,6 +71,7 @@ async fn fork_bound_empty_and_partial_staking_responses_cannot_advance_canonical
             &mut AdaptiveSize::new(1_000),
             1..=3,
             &hashes_through(3),
+            true,
         )
         .await;
         assert!(result.is_err(), "a fork endpoint cannot certify canonical completeness");
@@ -118,6 +120,7 @@ async fn canonical_bound_staking_responses_apply_events_and_complete_the_proven_
         &mut AdaptiveSize::new(1_000),
         1..=3,
         &hashes_through(3),
+        true,
     )
     .await
     .unwrap();

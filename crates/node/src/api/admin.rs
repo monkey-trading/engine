@@ -15,8 +15,8 @@ use crate::config::is_published_operator;
 
 /// Sequences an admin command the operator signed and returns the events it produced, ending in
 /// `admin_applied` or `admin_rejected`. A request stays out of the log unless the operator may send
-/// its command, it carries the signature of the operator, or of a pending rotation's key once its
-/// time has come by the node's clock, its nonce is the operator's next, and it has
+/// its command, it carries the signature of the operator, or of a pending rotation's key once it is
+/// due by the node's clock (see `Engine::due_rotation`), its nonce is the operator's next, and it has
 /// not expired, so a copy sent after the original was sequenced stays out of the log. Copies that
 /// race the original all pass these checks and are sequenced; the engine, which checks all four
 /// again at the sequenced time, applies one and refuses the rest for their nonce.
@@ -24,7 +24,8 @@ use crate::config::is_published_operator;
 /// - a command only the node sequences: client auth, the operator, or a protocol activation
 /// - a signature that is neither the recorded operator's nor a pending rotation's key over this
 ///   command, nonce, and expiry
-/// - with a real enclave, a rotation to a published test key
+/// - with a real enclave, a rotation to a published test key, or a request signed by a published
+///   test key other than the configured one, as an election may name
 /// - an emission schedule whose period budget is not the one the configured vault's MONKEY cap was
 ///   derived from
 /// - a nonce other than the operator's next
@@ -36,15 +37,14 @@ pub(super) async fn admin(State(s): State<ApiState>, Json(req): Json<AdminReques
         return Err(ApiError::BadRequest("the operator may not send this command".into()));
     }
     // The key the log records, and the one a pending rotation hands over to: the engine decides at
-    // the sequenced time which of them applies.
-    let (recorded, rotation) = s.query(|e| (e.operator().copied(), e.operator_bounds().rotation)).await?;
-    let current = recorded.unwrap_or(s.operator);
-    // The pending key only once its time has come by the node's clock, so no request the engine
-    // cannot yet authorise enters the log, where it could be copied and sent again after the handover.
+    // the sequenced time which of them applies. The pending key passes only once it is due by the
+    // node's clock, an elected one once the staking mirror has also reached the registry's time, so
+    // no request the engine cannot yet authorise enters the log, where it could be copied and sent
+    // again after the handover.
     let now = (s.clock)();
-    let next = rotation
-        .filter(|rotation| rotation.effective_at <= now)
-        .map(|rotation| Operator { address: rotation.address, ..current });
+    let (recorded, due) = s.query(move |e| (e.operator().copied(), e.due_rotation(now))).await?;
+    let current = recorded.unwrap_or(s.operator);
+    let next = due.map(|rotation| Operator { address: rotation.address, ..current });
     let Some(operator) =
         [Some(current), next].into_iter().flatten().find(|signer| signer.check(&req.command, &req.auth).is_ok())
     else {
@@ -52,6 +52,15 @@ pub(super) async fn admin(State(s): State<ApiState>, Json(req): Json<AdminReques
         return Err(ApiError::Unauthorized("invalid signature"));
     };
     Span::current().record("id", display(operator.address));
+    // An election can name any key, and a real enclave takes no admin command from a published one;
+    // the configured key is checked at config load.
+    if operator.address != s.operator.address
+        && s.attestation.provider != "mock"
+        && is_published_operator(operator.address).map_err(|_| ApiError::Internal)?
+    {
+        debug!("admin request refused: signed by a published test key");
+        return Err(ApiError::Unauthorized("signed by a published test key"));
+    }
     // The vault's real attestation means a real enclave, whose operator key must not be a published one.
     if let AdminCommand::RotateOperator { address } = &req.command
         && s.attestation.provider != "mock"

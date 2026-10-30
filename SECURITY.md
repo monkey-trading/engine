@@ -186,7 +186,10 @@ which bound the host's clock with signed time, trust the guest's monotonic clock
 checking that the host cannot scale it; hardware enclave signing keys do not yet survive a restart (#28), so a hardware node cannot
 restart after a crash or a drained shutdown: its vault must name the enclave's key, and the old key's
 commands and checkpoints after the last one the vault accepted cannot be authenticated under a new
-key; the dev configurations explicitly
+key; from V37 the admin key follows the operator registry's elections, which the engine mirrors
+from finalised chain events, so the incumbent's host can delay an elected key's takeover, bounded
+only by the custody watcher's stall alerts, and the enclave keys and the vault's current release do
+not yet follow an election (#44); the dev configurations explicitly
 use a published mock-only signer, which real attestation refuses; the custody adapter requires a strict
 majority of at least three configured independent RPC providers to agree on deposits, block hashes
 and finality, with reads compared at the same block height and empty log responses requiring the

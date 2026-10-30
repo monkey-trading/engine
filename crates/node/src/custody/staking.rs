@@ -1,19 +1,21 @@
-//! Mirroring the staking contract's finalised events into the engine. The deposit watcher calls
-//! `mirror` once per confirmed poll, after the same proven window, and only through the
-//! Ethereum-finalised boundary the poll proved: a staking mirror has no reversal, so a merely
-//! confirmed event must never become a permanent engine balance. Events hold until `InitStaking`
-//! has applied, credit once under `tx:logIndex`, and advance the engine's authenticated
-//! mirrored-through frontier, so a host cursor cannot skip an event and a restart that re-reads a
-//! range mirrors nothing twice.
+//! Mirroring the staking contract's finalised events, and from `V37` the operator registry's, into
+//! the engine. The deposit watcher calls `mirror` once per confirmed poll, after the same proven
+//! window, and only through the Ethereum-finalised boundary the poll proved: a staking mirror has
+//! no reversal, so a merely confirmed event must never become a permanent engine balance or
+//! election. Events hold until `InitStaking` has applied, credit once under `tx:logIndex`, and
+//! advance the engine's authenticated mirrored-through frontier, so a host cursor cannot skip an
+//! event and a restart that re-reads a range mirrors nothing twice.
 
 use std::path::Path;
 
 use alloy::primitives::{B256, U256};
-use anyhow::{Context, bail};
+use anyhow::{Context, anyhow, bail};
 use engine_core::command::Command;
+use engine_core::election::RegistryElection;
 use engine_core::emissions::TokenUnits;
 use engine_core::event::Event;
-use engine_core::types::AccountId;
+use engine_core::protocol::ProtocolVersion;
+use engine_core::types::{AccountId, Millis};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::Instrument;
@@ -24,23 +26,28 @@ use crate::custody::evm::VaultReader;
 use crate::custody::sizing::AdaptiveSize;
 use crate::custody::stall::{PollError, Stall};
 use crate::sequencer::Request;
-/// One staking contract event: a stake, or an unstake the cooldown has passed.
+/// One mirrorable event: from the staking contract, a stake or an unstake the cooldown has passed;
+/// from the operator registry, a rotation switch or an election.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StakingEvent {
     pub block: u64,
     pub block_hash: B256,
     pub tx_hash: B256,
     pub log_index: u64,
-    pub account: AccountId,
-    /// MONKEY base units staked or unstaked.
-    pub amount: u128,
     pub kind: StakingEventKind,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StakingEventKind {
-    Staked,
-    UnstakeCompleted,
+    /// `amount` MONKEY base units staked by `account`.
+    Staked { account: AccountId, amount: u128 },
+    /// `amount` MONKEY base units returned to `account` after the cooldown.
+    UnstakeCompleted { account: AccountId, amount: u128 },
+    /// The registry turned rotation on or off, cancelling an election not yet in effect or not.
+    RotationChanged { enabled: bool, election_cancelled: bool },
+    /// The registry elected `candidate`, whose `admin_key` takes effect at `effective_at`
+    /// milliseconds.
+    Elected { epoch: u64, candidate: AccountId, admin_key: AccountId, effective_at: Millis },
 }
 
 impl StakingEvent {
@@ -52,10 +59,20 @@ impl StakingEvent {
     /// The mirror command this event carries, naming the finalised block it was read from so the
     /// engine advances the authenticated mirrored-through frontier.
     fn command(&self) -> Command {
-        let (account, amount, block, chain_ref) = (self.account, TokenUnits(self.amount), self.block, self.chain_ref());
+        let (block, chain_ref) = (self.block, self.chain_ref());
         match self.kind {
-            StakingEventKind::Staked => Command::Stake { account, amount, block, chain_ref },
-            StakingEventKind::UnstakeCompleted => Command::Unstake { account, amount, block, chain_ref },
+            StakingEventKind::Staked { account, amount } => {
+                Command::Stake { account, amount: TokenUnits(amount), block, chain_ref }
+            }
+            StakingEventKind::UnstakeCompleted { account, amount } => {
+                Command::Unstake { account, amount: TokenUnits(amount), block, chain_ref }
+            }
+            StakingEventKind::RotationChanged { enabled, election_cancelled } => {
+                Command::SwitchRotation { enabled, election_cancelled, block, chain_ref }
+            }
+            StakingEventKind::Elected { epoch, candidate, admin_key, effective_at } => {
+                Command::ElectOperator(RegistryElection { epoch, candidate, admin_key, effective_at, block, chain_ref })
+            }
         }
     }
 }
@@ -139,10 +156,16 @@ impl StakingCursor {
 /// and a cursor that has not moved only makes the next poll read the same blocks again. The
 /// caller proves the range's blocks before calling, and passes their hashes. The event response
 /// must match the proven endpoint even when empty; an event on an unproven block also stalls.
-/// A failed event read halves `range`; a completed chunk lets it grow back.
+/// `bound` is whether the poll has verified the configured registry as the staking contract's
+/// deployer: while it is false the poll read no staking code at `to`, and since the registry
+/// deploys the staking contract atomically no event can legitimately exist in the window, so any
+/// event is a contradiction that stalls rather than mirrors. A failed event read halves `range`;
+/// a completed chunk lets it grow back.
 /// Error cases:
-/// - stalled: a read fails, an event is on an unproven block, or the engine refuses a mirror
+/// - stalled: a read fails, an event is on an unproven block, an event arrives before the
+///   registry binding is verified, or the engine refuses a mirror
 /// - fatal: the sequencer has stopped, or the cursor cannot be stored
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn mirror<V: VaultReader>(
     reader: &V,
     tx: &mpsc::Sender<Request>,
@@ -151,6 +174,7 @@ pub(super) async fn mirror<V: VaultReader>(
     range: &mut AdaptiveSize,
     window: std::ops::RangeInclusive<u64>,
     hashes: &std::collections::BTreeMap<u64, B256>,
+    bound: bool,
 ) -> Result<(), PollError> {
     let (from, to) = (*window.start(), *window.end());
     if from > to {
@@ -191,14 +215,20 @@ pub(super) async fn mirror<V: VaultReader>(
             )));
         }
     }
+    if !bound && !events.is_empty() {
+        return Err(PollError::inconsistent(anyhow!(
+            "the window names staking events, but the staking contract has no code at its end: the configured contract cannot be the registry's"
+        )));
+    }
     for event in events {
         mirror_one(tx, event).await?;
     }
-    let modern = query(tx, |engine| engine.protocol_version() >= engine_core::protocol::ProtocolVersion::V27)
-        .await
-        .map_err(PollError::Fatal)?;
-    if modern {
-        let events = submit(tx, Command::StakingProgress { block: to, block_hash }).await?;
+    let version = query(tx, |engine| engine.protocol_version()).await.map_err(PollError::Fatal)?;
+    if version >= ProtocolVersion::V27 {
+        // From V37 the frontier carries its block time, which an elected key waits for.
+        let block_time =
+            if version >= ProtocolVersion::V37 { Some(block_time(reader, to, block_hash).await?) } else { None };
+        let events = submit(tx, Command::StakingProgress { block: to, block_hash, block_time }).await?;
         if events.iter().any(|event| matches!(event, Event::AdminRejected { .. })) {
             return Err(PollError::Stalled(Stall::Refused(anyhow::anyhow!("the engine refused staking progress"))));
         }
@@ -217,8 +247,8 @@ pub(super) async fn mirror<V: VaultReader>(
 }
 
 /// Sequences one event's mirror unless the engine has already credited its chain reference.
-/// The sequencer alerts a refused mirror as `staking_rejected` at Critical; the poll retries it,
-/// with the cursor unmoved, on the next pass.
+/// The sequencer alerts a refused mirror as `staking_rejected` or `election_rejected` at Critical;
+/// the poll retries it, with the cursor unmoved, on the next pass.
 /// Error cases:
 /// - stalled: the sequencer refused the mirror (it stays uncredited for the retry)
 /// - fatal: the sequencer has stopped
@@ -231,17 +261,41 @@ async fn mirror_one(tx: &mpsc::Sender<Request>, event: StakingEvent) -> Result<(
             return Ok(());
         }
         let events = submit(tx, event.command()).await?;
-        if events.iter().any(|event| matches!(event, Event::StakingRejected { .. })) {
+        if events.iter().any(|event| matches!(event, Event::StakingRejected { .. } | Event::ElectionRejected { .. })) {
             return Err(PollError::Stalled(Stall::Refused(anyhow::anyhow!(
                 "the engine refused staking mirror {}",
                 event.chain_ref()
             ))));
         }
-        info!(account = %event.account, amount = %event.amount, ?event.kind, "staking event mirrored");
+        match event.kind {
+            StakingEventKind::Staked { account, amount } | StakingEventKind::UnstakeCompleted { account, amount } => {
+                info!(%account, amount, "staking event mirrored");
+            }
+            StakingEventKind::RotationChanged { .. } | StakingEventKind::Elected { .. } => {
+                info!("operator registry event mirrored");
+            }
+        }
         Ok(())
     }
     .instrument(span)
     .await
+}
+
+/// The time of proven block `to`, in milliseconds, from its header read through the reader.
+/// Error cases:
+/// - stalled: the read fails, answers for another block or hash, or the time passes `i64` milliseconds
+async fn block_time<V: VaultReader>(reader: &V, to: u64, hash: B256) -> Result<Millis, PollError> {
+    let links = reader.headers(to, to).await.map_err(PollError::rpc)?;
+    let [link] = links.as_slice() else {
+        return Err(PollError::unsettled(anyhow::anyhow!("staking progress has no header at block {to}")));
+    };
+    if link.number != to || link.hash != hash {
+        return Err(PollError::unsettled(anyhow::anyhow!("block {to}'s header is not the proven block")));
+    }
+    i64::try_from(link.timestamp)
+        .ok()
+        .and_then(|seconds| seconds.checked_mul(1000))
+        .ok_or_else(|| PollError::unsettled(anyhow::anyhow!("block {to}'s time {} is out of range", link.timestamp)))
 }
 
 /// MONKEY base units as the engine's `TokenUnits`, refusing amounts past u128.

@@ -222,6 +222,9 @@ pub(super) fn event_kind(event: &Event) -> Result<u8> {
         | Event::EmissionPeriodsCancelled { .. }
         | Event::DistributionEpochClosed { .. }
         | Event::DistributionEpochsSkipped { .. }
+        | Event::RotationSwitched { .. }
+        | Event::OperatorElected { .. }
+        | Event::ElectionRejected { .. }
         | Event::CatchUpDeferred { .. } => bail!("event is not an account-history kind"),
     };
     kind_id(kind)

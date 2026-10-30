@@ -40,10 +40,12 @@ sol! {
     function usdc() external view returns (address);
 }
 
-// The staking contract's mirrorable events, as `contracts/src/Staking.sol` declares them.
+// The staking contract's mirrorable events, and the registry that deployed it, as
+// `contracts/src/Staking.sol` declares them.
 sol! {
     event Staked(address indexed account, uint256 amount);
     event UnstakeCompleted(address indexed account, uint256 amount);
+    function registry() external view returns (address);
 }
 
 /// Historical vault events cannot authenticate a trader's funding address.
@@ -61,6 +63,8 @@ pub struct VaultRpc {
     vault: Address,
     /// The staking contract whose events mirror into the engine; `None` without one.
     staking: Option<Address>,
+    /// The operator registry whose events mirror with the staking contract's; `None` without one.
+    registry: Option<Address>,
     finality_tag: BlockNumberOrTag,
     withdrawal_finality_tag: BlockNumberOrTag,
     rpc_timeout: Duration,
@@ -88,7 +92,7 @@ pub(super) fn decode_header(header: Option<Header>, number: u64) -> anyhow::Resu
         return Err(anyhow::Error::new(InvalidRpcResponse)
             .context(format!("asked for block {number}, got block {}", header.number)));
     }
-    Ok(BlockLink { number, hash: header.hash, parent_hash: header.parent_hash })
+    Ok(BlockLink { number, hash: header.hash, parent_hash: header.parent_hash, timestamp: header.timestamp })
 }
 
 impl VaultReader for VaultRpc {
@@ -173,12 +177,32 @@ impl VaultReader for VaultRpc {
         decode_count(&out)
     }
 
-    /// Both mirrorable staking events from the configured contract, sorted by block and log index.
+    /// The registry the configured staking contract records as its deployer, read in the
+    /// canonical block `at`; `None` where the staking contract has no code yet, before its
+    /// deployment.
+    /// Error cases:
+    /// - no staking contract is configured, the call fails or times out, or a non-empty answer does
+    ///   not decode as an address
+    async fn staking_registry(&self, at: BlockRef) -> anyhow::Result<Option<Address>> {
+        let staking = self.staking.context("no staking contract is configured")?;
+        let request = TransactionRequest::default().to(staking).input(registryCall {}.abi_encode().into());
+        let out: Bytes = self
+            .deadline("eth_call", self.client.request("eth_call", (request, BlockId::hash_canonical(at.hash))))
+            .await
+            .context("reading the staking contract's registry")?;
+        if out.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(registryCall::abi_decode_returns(&out).context("decoding the staking contract's registry")?))
+    }
+
+    /// Both mirrorable staking events from the configured contract, and the operator registry's
+    /// rotation switches and elections, sorted by block and log index.
     /// Without a staking contract the answer is empty.
     /// Error cases:
     /// - the request fails or times out
-    /// - a log is removed, lacks its position, does not decode as a staking event, or carries an
-    ///   amount past `u128`, or a returned log differs from its requested proven block
+    /// - a log is removed, lacks its position, does not decode as a staking or registry event, or
+    ///   carries an amount past `u128`, or a returned log differs from its requested proven block
     async fn staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
         ensure!(!blocks.is_empty(), "staking range is empty");
         ensure!(
@@ -188,23 +212,29 @@ impl VaultReader for VaultRpc {
         let mut events = Vec::new();
         if let Some(staking) = self.staking {
             let owned_blocks = blocks.to_vec();
-            let batches = stream::iter(owned_blocks.into_iter().map(|block| async move {
-                let filter = Filter::new()
-                    .address(staking)
-                    .event_signature(vec![Staked::SIGNATURE_HASH, UnstakeCompleted::SIGNATURE_HASH])
-                    .at_block_hash(block.hash);
-                let logs =
-                    self.deadline("eth_getLogs", self.client.request::<_, Vec<Log>>("eth_getLogs", (filter,))).await?;
-                let mut events = Vec::new();
-                for log in &logs {
-                    let event = self.decode_staking(log)?;
-                    ensure!(
-                        event.block == block.number && event.block_hash == block.hash,
-                        "staking log differs from its requested proven block"
-                    );
-                    events.push(event);
+            let addresses: Vec<Address> = [Some(staking), self.registry].into_iter().flatten().collect();
+            let mut signatures = vec![Staked::SIGNATURE_HASH, UnstakeCompleted::SIGNATURE_HASH];
+            if self.registry.is_some() {
+                signatures.extend(crate::custody::registry::SIGNATURES);
+            }
+            let batches = stream::iter(owned_blocks.into_iter().map(|block| {
+                let (addresses, signatures) = (addresses.clone(), signatures.clone());
+                async move {
+                    let filter = Filter::new().address(addresses).event_signature(signatures).at_block_hash(block.hash);
+                    let logs = self
+                        .deadline("eth_getLogs", self.client.request::<_, Vec<Log>>("eth_getLogs", (filter,)))
+                        .await?;
+                    let mut events = Vec::new();
+                    for log in &logs {
+                        let event = self.decode_staking(log)?;
+                        ensure!(
+                            event.block == block.number && event.block_hash == block.hash,
+                            "staking log differs from its requested proven block"
+                        );
+                        events.push(event);
+                    }
+                    Ok::<_, anyhow::Error>(events)
                 }
-                Ok::<_, anyhow::Error>(events)
             }))
             .buffered(8)
             .try_collect::<Vec<_>>()
@@ -276,6 +306,7 @@ impl VaultRpc {
             url,
             vault,
             staking: cfg.staking.as_ref().map(|staking| staking.contract),
+            registry: cfg.staking.as_ref().map(|staking| staking.registry.contract),
             withdrawal_finality_tag: match cfg.withdrawal_finality_tag {
                 FinalityTag::Latest => BlockNumberOrTag::Latest,
                 FinalityTag::Safe => BlockNumberOrTag::Safe,
@@ -373,32 +404,40 @@ impl VaultRpc {
         Ok(VaultDeposit { block, block_hash, tx_hash, log_index, id, beneficiary, units, payer })
     }
 
-    /// A staking event's fields; `account` is the event's only indexed topic.
+    /// A staking or registry event's fields; a staking event's `account` is its only indexed topic.
     /// Error cases:
-    /// - the log is removed, comes from another address, lacks its position, or does not decode
+    /// - the log is removed, comes from neither configured contract, lacks its position, or does
+    ///   not decode
     pub(super) fn decode_staking(&self, log: &Log) -> anyhow::Result<StakingEvent> {
         let staking = self.staking.context("a staking event without a configured staking contract")?;
-        if log.removed || log.address() != staking {
+        let from_registry = self.registry == Some(log.address());
+        if log.removed || (log.address() != staking && !from_registry) {
             bail!("unexpected log from {} (removed: {})", log.address(), log.removed);
         }
         let block = log.block_number.context("log without a block number")?;
         let block_hash = log.block_hash.context("log without a block hash")?;
         let tx_hash = log.transaction_hash.context("log without a transaction hash")?;
         let log_index = log.log_index.context("log without a log index")?;
-        let (kind, account, units) = match log.topic0() {
+        let units = |units| {
+            crate::custody::staking::monkey_units(units)
+                .with_context(|| format!("staking event amount {units} exceeds u128"))
+        };
+        let kind = match log.topic0() {
+            _ if from_registry => crate::custody::registry::decode(log)?,
             Some(&Staked::SIGNATURE_HASH) => {
                 let event = Staked::decode_log(&log.inner).context("decoding Staked")?.data;
-                (StakingEventKind::Staked, event.account, event.amount)
+                StakingEventKind::Staked { account: AccountId(event.account.into()), amount: units(event.amount)? }
             }
             Some(&UnstakeCompleted::SIGNATURE_HASH) => {
                 let event = UnstakeCompleted::decode_log(&log.inner).context("decoding UnstakeCompleted")?.data;
-                (StakingEventKind::UnstakeCompleted, event.account, event.amount)
+                StakingEventKind::UnstakeCompleted {
+                    account: AccountId(event.account.into()),
+                    amount: units(event.amount)?,
+                }
             }
             other => bail!("unexpected event {other:?}"),
         };
-        let amount = crate::custody::staking::monkey_units(units)
-            .with_context(|| format!("staking event amount {units} exceeds u128"))?;
-        Ok(StakingEvent { block, block_hash, tx_hash, log_index, account: AccountId(account.into()), amount, kind })
+        Ok(StakingEvent { block, block_hash, tx_hash, log_index, kind })
     }
 }
 

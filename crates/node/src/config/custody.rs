@@ -80,6 +80,18 @@ pub struct StakingCustodySection {
     pub contract: Address,
     /// Where the staking cursor is kept between restarts.
     pub cursor_path: PathBuf,
+    /// The operator registry that deployed the staking contract, whose rotation switches and
+    /// elections the watcher mirrors with the staking events from `V37`. The watcher refuses a
+    /// staking contract whose `registry()` is not this one.
+    pub registry: RegistryCustodySection,
+}
+
+/// The operator registry the watcher mirrors.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegistryCustodySection {
+    /// The `OperatorRegistry` contract, whose `staking()` is the staking contract above.
+    pub contract: Address,
 }
 
 /// Independently operated RPC service; its name identifies alerts without exposing credentials.
@@ -158,6 +170,11 @@ impl NodeConfig {
             let vault: Address = self.custody.vault.parse().context("custody.vault")?;
             if staking.contract == evm.usdc || staking.contract == vault {
                 bail!("custody.evm.staking.contract must be the staking contract, not the token or the vault");
+            }
+            if [evm.usdc, vault, staking.contract].contains(&staking.registry.contract) {
+                bail!(
+                    "custody.evm.staking.registry.contract must be the operator registry, not the token, vault, or staking contract"
+                );
             }
         }
         if self.genesis.house_capital != Fixed::ZERO {

@@ -12,6 +12,7 @@ use crate::auth::{ClientAuth, Operator, RequestAuth};
 use crate::benchmark::BenchmarkBatch;
 use crate::corporate::CorporateAction;
 use crate::deposits::{CustodyCheckpoint, DepositReceipt, DepositUpdate, LegacyDeposit};
+use crate::election::RegistryElection;
 use crate::emissions::{EmissionSchedule, TokenUnits};
 use crate::market::MarketSpec;
 use crate::operator_bounds::ParamsNotice;
@@ -109,10 +110,13 @@ pub enum Command {
     /// command is refused once any deposit or house capital is credited. Boxed: admin commands are
     /// rare, and inline this one would grow every command.
     SignedAdmin(Box<AdminRequest>),
-    /// From `V27`, the last fully verified finalized staking block, including empty ranges.
+    /// From `V27`, the last fully verified finalized staking block, including empty ranges; from
+    /// `V37` with its block time in milliseconds, which an elected key waits for.
     StakingProgress {
         block: u64,
         block_hash: B256,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        block_time: Option<Millis>,
     },
     /// From `V25`, a staking contract's `Staked` event, finalised: `amount` of MONKEY base units
     /// staked for `account`, credited once under `chain_ref`, in the finalised Ethereum `block`
@@ -134,6 +138,18 @@ pub enum Command {
         block: u64,
         chain_ref: String,
     },
+    /// From `V37`, the operator registry's `RotationChanged` event, finalised: rotation turned on
+    /// or off, and whether turning it off cancelled an election not yet in effect, credited once
+    /// under `chain_ref`, in the finalised Ethereum `block` it was mirrored from.
+    SwitchRotation {
+        enabled: bool,
+        election_cancelled: bool,
+        block: u64,
+        chain_ref: String,
+    },
+    /// From `V37`, the operator registry's `Elected` event, finalised, credited once under its
+    /// chain reference.
+    ElectOperator(RegistryElection),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -213,7 +229,8 @@ pub enum AdminCommand {
     /// pending notice.
     AnnounceParams(ParamsNotice),
     /// From `V35`, signed rotation of the operator key to `address`, in effect seven days after it
-    /// is logged. Replaces a pending rotation.
+    /// is logged. Replaces a pending rotation. From `V37`, refused while the operator registry has
+    /// rotation on.
     RotateOperator {
         address: AccountId,
     },

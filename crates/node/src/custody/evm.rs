@@ -57,6 +57,9 @@ pub struct DepositWatcher<V> {
     cursor_path: PathBuf,
     /// The staking mirror's cursor and store, present when the deployment has a staking contract.
     staking: Option<(crate::custody::staking::StakingCursor, PathBuf)>,
+    /// The operator registry mirrored with the staking contract, and whether the staking contract
+    /// has been read to name it as its deployer.
+    registry: Option<(Address, bool)>,
     /// Blocks the final block sits below the tagged block.
     confirmations: u64,
     pub(super) chain: ProvenChain,
@@ -132,6 +135,7 @@ impl<V: VaultReader> DepositWatcher<V> {
             cursor,
             cursor_path: cfg.cursor_path.clone(),
             staking,
+            registry: cfg.staking.as_ref().map(|staking| (staking.registry.contract, false)),
             confirmations: cfg.confirmations,
             chain,
             max_block_range: cfg.max_block_range,

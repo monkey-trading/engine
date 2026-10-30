@@ -76,23 +76,25 @@ fn only_monotonic_matching_completed_scan_anchors_enter_the_state_root() {
     stake(&mut h, "0xprogress");
     let initial = h.engine.state_root();
     let hash = B256::repeat_byte(8);
-    assert!(h.cmd(Command::StakingProgress { block: 8, block_hash: hash }).is_empty());
+    assert!(h.cmd(Command::StakingProgress { block: 8, block_hash: hash, block_time: None }).is_empty());
     assert_ne!(h.engine.state_root(), initial);
     let anchor = h.engine.staking().unwrap().completed_through.unwrap();
     assert_eq!((anchor.block, anchor.block_hash), (8, hash));
-    assert!(h.cmd(Command::StakingProgress { block: 8, block_hash: hash }).is_empty());
+    assert!(h.cmd(Command::StakingProgress { block: 8, block_hash: hash, block_time: None }).is_empty());
     for (block, block_hash) in [(7, hash), (8, B256::repeat_byte(9)), (9, B256::ZERO), (u64::MAX, hash)] {
         assert!(matches!(
-            h.cmd(Command::StakingProgress { block, block_hash }).as_slice(),
+            h.cmd(Command::StakingProgress { block, block_hash, block_time: None }).as_slice(),
             [Event::AdminRejected { .. }]
         ));
         assert_eq!(h.engine.staking().unwrap().completed_through, Some(anchor));
     }
-    assert!(h.cmd(Command::StakingProgress { block: 10, block_hash: B256::repeat_byte(10) }).is_empty());
+    assert!(
+        h.cmd(Command::StakingProgress { block: 10, block_hash: B256::repeat_byte(10), block_time: None }).is_empty()
+    );
     assert_eq!(h.engine.staking().unwrap().completed_through.unwrap().block, 10);
     let mut legacy = harness(ProtocolVersion::V25);
     assert!(matches!(
-        legacy.cmd(Command::StakingProgress { block: 8, block_hash: hash }).as_slice(),
+        legacy.cmd(Command::StakingProgress { block: 8, block_hash: hash, block_time: None }).as_slice(),
         [Event::AdminRejected { .. }]
     ));
     assert_eq!(legacy.engine.staking().unwrap().completed_through, None);

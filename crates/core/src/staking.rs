@@ -88,6 +88,10 @@ pub struct Staking {
 pub struct StakingCheckpoint {
     pub block: u64,
     pub block_hash: alloy_primitives::B256,
+    /// From `V37`, the latest finalised block time the scan has reached, in milliseconds: every
+    /// registry event stamped before it has been mirrored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time: Option<Millis>,
 }
 
 impl fmt::Display for UsdcUnits {
@@ -185,11 +189,20 @@ impl Engine {
         self.distributions.get(&account).copied().unwrap_or_default()
     }
 
-    /// Records a fully verified finalized staking range after all its events have applied.
-    pub(crate) fn staking_progress(&mut self, block: u64, block_hash: alloy_primitives::B256, events: &mut Vec<Event>) {
+    /// Records a fully verified finalized staking range after all its events have applied, and from
+    /// `V37` the block's time, which never moves back.
+    pub(crate) fn staking_progress(
+        &mut self,
+        block: u64,
+        block_hash: alloy_primitives::B256,
+        block_time: Option<Millis>,
+        events: &mut Vec<Event>,
+    ) {
+        let reached = self.staking.as_ref().and_then(|staking| staking.completed_through).and_then(|c| c.time);
         let valid = self.protocol_version >= ProtocolVersion::V27
             && block != u64::MAX
             && block_hash != alloy_primitives::B256::ZERO
+            && block_time.is_none_or(|time| self.protocol_version >= ProtocolVersion::V37 && Some(time) >= reached)
             && self.staking.as_ref().is_some_and(|staking| {
                 staking.mirrored_through.is_none_or(|through| block >= through)
                     && staking.completed_through.is_none_or(|through| {
@@ -200,7 +213,9 @@ impl Engine {
             events.push(Event::AdminRejected { reason: "invalid staking finalized frontier".into() });
             return;
         }
-        self.staking.as_mut().expect("checked above").completed_through = Some(StakingCheckpoint { block, block_hash });
+        let time = block_time.or(reached);
+        self.staking.as_mut().expect("checked above").completed_through =
+            Some(StakingCheckpoint { block, block_hash, time });
     }
 
     /// Whether a staking mirror's chain reference already credited.

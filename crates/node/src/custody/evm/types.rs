@@ -15,7 +15,7 @@ pub enum Beneficiary {
 }
 
 /// What the deposit watcher needs from the chain to mirror staking events: the events of the
-/// configured staking contract, decoded like the vault's.
+/// configured staking contract and operator registry, decoded like the vault's.
 pub use crate::custody::staking::{StakingEvent, StakingEventKind};
 
 /// What the watcher needs from the chain.
@@ -40,9 +40,17 @@ pub trait VaultReader {
     /// The vault's deposit count in block `at`, which the endpoint must hold as canonical.
     fn deposit_count(&self, at: BlockRef) -> impl Future<Output = anyhow::Result<u64>> + Send;
 
-    /// Every staking event in the contiguous proven hash window, in chain order.
-    /// Each log query must name its proven block hash, including empty responses.
+    /// Every staking and operator registry event in the contiguous proven hash window, in chain
+    /// order. Each log query must name its proven block hash, including empty responses.
     fn staking_events(&self, blocks: &[BlockRef]) -> impl Future<Output = anyhow::Result<Vec<StakingEvent>>> + Send;
+
+    /// The registry the configured staking contract records as its deployer, in the canonical
+    /// block `at`, or `None` where the staking contract has no code yet, before its deployment.
+    /// A reader that cannot read it refuses.
+    fn staking_registry(&self, at: BlockRef) -> impl Future<Output = anyhow::Result<Option<Address>>> + Send {
+        let _ = at;
+        async { anyhow::bail!("this reader does not read the staking contract's registry") }
+    }
 }
 
 /// A block by height and hash.

@@ -10,12 +10,14 @@ use std::collections::BTreeMap;
 use alloy::primitives::B256;
 use anyhow::bail;
 
-/// A block's hash and its parent's, as a header reports them.
+/// A block's hash and its parent's, and its time, as a header reports them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BlockLink {
     pub number: u64,
     pub hash: B256,
     pub parent_hash: B256,
+    /// The block's timestamp, in seconds since the epoch.
+    pub timestamp: u64,
 }
 
 /// Proven hashes at sparse heights, the top being the tagged block last proven, and every hash

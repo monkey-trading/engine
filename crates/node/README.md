@@ -80,7 +80,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   `OPERATOR_KEY`, and submit it over TLS pinned to the node's attested key; the node holds only the
   operator's public key, recorded in the log, and refuses a request before the log unless it carries
   the operator's signature, next nonce, and an unexpired expiry; from `V35` the key a logged
-  rotation hands over to also passes the route, and signs with `--rotated`
+  rotation hands over to also passes the route, and signs with `--rotated`; from `V37` that includes
+  a key the operator registry elected
 - `engine ct-watch`, a separate process outside the enclave that follows Certificate Transparency
   logs and raises a Critical `unattested_certificate` alert for any certificate for the API's domain
   whose key no verified attestation of the node names (`config/ct-watch.toml`)
@@ -114,7 +115,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   sequencer confirmation credits trading collateral, Ethereum finality unlocks withdrawal principal,
   and canonical reversals debit once with a Critical alert. From V25, the same poll mirrors the
   staking contract's finalised `Staked`/`UnstakeCompleted` events (`custody.evm.staking`) into
-  `Stake`/`Unstake` commands once each, holding them until `InitStaking` has applied; its event
+  `Stake`/`Unstake` commands once each, holding them until `InitStaking` has applied, and from V37
+  the operator registry's `RotationChanged`/`Elected` events (`custody.evm.staking.registry`, which
+  must be the registry the staking contract records as its deployer) into
+  `SwitchRotation`/`ElectOperator` commands in the same proven blocks, with each scan's finalised
+  block time; its event
   reads narrow after an RPC size or timeout failure on a range of their own, apart from deposits'
 - Mock custody and a mock price feed for local development
 - Prometheus metrics on a separate operator address, from a registry the node owns, with no
@@ -491,6 +496,13 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   principal finalization, and authenticated custody frontiers
 - `src/checkpoints/staking_scenario/claims.rs` — the scenario's on-chain steps: entitlement and
   distribution claims against posted roots, event mirroring, and balance reads
+- `src/custody/tests/election_scenario.rs` — the operator election dev scenario on isolated Anvil:
+  delegation, a close while rotation is off, an election mirrored through the custody quorum, and
+  the elected key signing from its effective time
+- `src/custody/tests/election_scenario/chain.rs` — the scenario's chain at a fixed genesis time, its
+  RPC proxies, deployments, and registry and timelock calls
+- `src/custody/tests/election_scenario/node.rs` — the scenario's sequencer on a test clock, custody
+  watcher, and API
 - `src/history/preflight.rs` — immutable history planning before authorized SQLite mutation
 - `src/history/preflight/tests.rs` — private WAL resume and malformed geometry byte-preservation regressions
 - `src/node/tests/custody_preflight.rs` — local custody refusal preserves log/history across image states
@@ -511,7 +523,13 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/evm/types.rs` — the canonical deposit, staking-event, finality and reader types
 - `src/custody/evm/staking.rs` — staking catch-up proofs anchored independently of deposit progress
 - `src/custody/tests/fakes/files.rs` — temporary directories and custody test configurations
+- `src/custody/tests/fakes/logs.rs` — log lines captured from a test's tasks, for alert assertions
 - `src/custody/evm/legacy.rs` — independent canonical finality proof before legacy signature redelivery
+- `src/custody/registry.rs` — the operator registry's rotation switch and election events, decoded for the staking mirror
+- `src/custody/tests/rpc/registry.rs` — registry logs decoded only from the configured registry, with effective times in milliseconds
+- `src/custody/tests/staking/registry.rs` — registry events mirrored once with the stakes, a refused one stalling the mirror, and the staking contract's deployer checked against the configured registry
+- `src/api/operator.rs` — `GET /v1/operator`: the key in effect, its pending rotation, whether rotation is on, and the last election
+- `src/api/admin_tests/election.rs` — the operator route and the admin route after an election, published keys included
 - `src/custody/staking.rs` — mirroring the staking contract's finalised events into `Stake`/`Unstake`
   commands once each, holding them until `InitStaking` has applied; V27 completed ranges, including
   empty ones, are authenticated by `StakingProgress` and the host cursor cannot advance them
@@ -735,6 +753,10 @@ cargo build --release -p engine-node --features production
 # above the floor paying pro-rata in USDC, an unstake through the cooldown, and an epoch below the
 # floor paying nothing
 ./scripts/dev-monkey-staking.sh
+
+# Run the operator election scenario on isolated Anvil: delegation, an election mirrored through the
+# custody quorum, and the elected key signing from its effective time
+./scripts/dev-operator-election.sh
 ```
 
 EVM custody requires at least three entries in `custody.evm.providers`, each with a unique
@@ -1002,7 +1024,7 @@ The EVM HTTP withdrawal route remains disabled until #23; this scenario proves a
 at the sequencer/core boundary and does not perform a physical payout or HTTP cash-out.
 
 Endpoints: `GET /v1/health`, `GET /v1/attestation`, `GET /v1/attestation/collateral`,
-`GET /v1/markets`, `GET /v1/house`,
+`GET /v1/markets`, `GET /v1/house`, `GET /v1/operator`,
 `GET /v1/accounts/{address}`, `GET /v1/accounts/{address}/nonce`,
 `GET /v1/accounts/{address}/history`, `GET /v1/accounts/{address}/proof`,
 `GET /v1/accounts/{address}/emissions`, `POST /v1/orders`, `POST /v1/orders/cancel`,
@@ -1413,7 +1435,14 @@ log; changing it needs a fresh log, except by a rotation: from `V35`, `engine ad
 <address>` hands the role to another key seven days after it is logged, `--rotated` signs with that
 key, and a restart accepts the log's rotated key under the config that names the original one, as
 long as the chain and vault match. `announce-params` gives the notice a profit fee or close-out level
-change needs. With real attestation, `rotate-operator` and the admin route refuse an address that `config/test-keys.toml` lists, and the route admits a pending rotation's key only once its time has come by the node's clock. `engine replay` prints the operator a log records. A node
+change needs. From `V37`, while the operator registry has rotation on, the engine refuses
+`rotate-operator`, and an election's key takes over the same way: from the election's effective
+time, or seven days after the election is logged when that is later, and once the staking mirror
+has completed a finalised block stamped at or after the registry's effective time, signing with
+`--rotated`.
+`GET /v1/operator` returns the key in effect, the pending rotation and its time, whether rotation is
+on, and the last election. A refused registry mirror raises a Critical `election_rejected` alert and
+holds the staking mirror behind it. With real attestation, `rotate-operator` and the admin route refuse an address that `config/test-keys.toml` lists, and the route refuses a request such a key signs unless it is the configured operator's, and the route admits a pending rotation's key only once its time has come by the node's clock. `engine replay` prints the operator a log records. A node
 whose `tee.provider` is not `mock` refuses to start with an operator key that
 `config/test-keys.toml` lists, in either SEC1 encoding: the repository publishes those keys' private
 keys for local nodes.

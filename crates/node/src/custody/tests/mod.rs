@@ -12,6 +12,7 @@ mod alerts;
 mod anvil_finality;
 mod confirmed;
 mod cursor;
+mod election_scenario;
 mod fakes;
 mod legacy;
 mod reorg;

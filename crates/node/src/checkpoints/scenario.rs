@@ -40,7 +40,7 @@ sol! {
     function bookSurplus() external returns (uint256);
 }
 
-pub(super) struct Anvil(pub Child);
+pub(crate) struct Anvil(pub Child);
 impl Drop for Anvil {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -416,7 +416,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     assert!(replay_path(&tampered).is_err(), "edited signature fails replay");
 }
 
-pub(super) async fn deploy(provider: &RpcClient, from: Address, artifact: &str, args: &[u8]) -> Address {
+pub(crate) async fn deploy(provider: &RpcClient, from: Address, artifact: &str, args: &[u8]) -> Address {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/out");
     let compiled: serde_json::Value =
         serde_json::from_slice(&std::fs::read(root.join(artifact)).expect("forge build first")).unwrap();
@@ -433,7 +433,7 @@ pub(super) async fn send(provider: &RpcClient, from: Address, to: Address, input
 }
 
 /// Sends through Anvil's unlocked account and polls its receipt under the scenario deadline.
-pub(super) async fn transact(provider: &RpcClient, transaction: TransactionRequest) -> TransactionReceipt {
+pub(crate) async fn transact(provider: &RpcClient, transaction: TransactionRequest) -> TransactionReceipt {
     let hash: B256 = provider.request("eth_sendTransaction", (transaction,)).await.unwrap();
     crate::test_support::wait_for("the transaction receipt", async {
         loop {

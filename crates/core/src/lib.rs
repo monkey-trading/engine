@@ -72,6 +72,7 @@ pub mod command;
 pub mod corporate;
 pub mod deposits;
 pub mod eip712;
+pub mod election;
 pub mod emissions;
 pub mod engine;
 pub use engine::{Engine, SequenceError};

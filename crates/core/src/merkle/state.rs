@@ -14,6 +14,7 @@ use crate::account::Position;
 use crate::auth::{ClientAuth, Operator};
 use crate::benchmark::BenchmarkHistory;
 use crate::deposits::CustodyCheckpoint;
+use crate::election::OperatorElection;
 use crate::emissions::{Emissions, TokenUnits};
 use crate::engine::{Engine, Markout};
 use crate::merkle::leaf::{
@@ -86,6 +87,9 @@ struct Globals<'a> {
     access_policy: &'a Option<AccessPolicy>,
     #[serde(skip_serializing_if = "OperatorBounds::is_default")]
     operator_bounds: &'a OperatorBounds,
+    /// From `V37`; omitted until the registry's first mirrored event, so earlier roots stand.
+    #[serde(skip_serializing_if = "OperatorElection::is_default")]
+    operator_election: &'a OperatorElection,
 }
 
 impl Engine {
@@ -400,6 +404,7 @@ impl Engine {
             distributions: _,
             access_policy,
             operator_bounds,
+            operator_election,
             eligibility: _,
             held_deposits: _,
             pending_deposits: _,
@@ -431,6 +436,7 @@ impl Engine {
             staking,
             access_policy,
             operator_bounds,
+            operator_election,
         }
     }
 }
