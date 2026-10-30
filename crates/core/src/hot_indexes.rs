@@ -234,6 +234,9 @@ impl HotIndexes {
         for (id, amount) in settled {
             self.unheld_amounts.remove(&id);
             self.unheld_total -= amount;
+            if id > self.tracked_max {
+                self.excluded_unheld -= amount;
+            }
         }
     }
 
