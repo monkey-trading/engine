@@ -33,9 +33,12 @@ Representation:
   `results/ceilings.csv`; the protocol carries only the number.
 - Genesis refuses a duplicate ID, an ID with no listed market, a listed market with no entry, a value outside
   0 to 9,999 (an arithmetic limit, not an economic range), and a value below the genesis parameters' largest
-  close charge (stress minimum plus top toxicity add-on, 13 bps here), so that no launch close is clamped and
-  launch behaviour is unchanged. A lower FX or index ceiling is possible under the clamp (it would clamp
-  top-stress closes); the floor is a choice the owner may revisit, not a technical constraint. Zero is a legal ceiling and means free closes: no nonzero charge meets it.
+  close charge (stress minimum plus top toxicity add-on, 13 bps here), so no launch close is clamped by more
+  than the rounding unit. At a ceiling equal to that charge, flooring the adjustment to the exact bound (choice
+  4) trims the unit the engine's upward rounding adds today, and a launch close pays one raw unit less; a
+  ceiling strictly above the charge leaves launch closes untouched. A lower FX or index ceiling is possible
+  under the clamp (it would clamp top-stress closes); the floor is a choice the owner may revisit, not a
+  technical constraint. Zero is a legal ceiling and means free closes: no nonzero charge meets it.
 - An entry follows its market ID. `UpsertMarket` must not change `asset_class` or `quote_currency` of an ID with
   an entry: the calibration is per instrument, so a different instrument is a new ID with its own entry.
 - Routine calendar corrections, price-rule edits and margin changes leave an entry alone. A price-rule or
@@ -54,8 +57,9 @@ would still decide which reversals pass (choice 3), but it would add nothing to 
 Clamping each close fill to `min(charge, ceiling)` at the pricing site keeps the per-market values meaningful
 and makes the guarantee structural: every close, whichever command changed the parameters, stress levels,
 toxicity tiers or spread tiers, pays at most its ceiling. It needs no change to what `SetParams` validates.
-Nothing about launch behaviour changes: no close pays above 13 bps at the launch parameters, and every
-ceiling is at least 13.
+Nothing about launch behaviour changes but the rounding unit: no close pays above 13 bps at the launch
+parameters, and every ceiling is at least 13. At a 13-bp ceiling, though, flooring the adjustment to the exact
+bound trims the engine's upward-rounding unit, so a launch close pays one raw unit less than it does today.
 
 The cost is a change to #344's dev scenario. A signed `SetParams` that would raise a close above its
 ceiling is accepted and the close pays the ceiling, instead of being refused as `admin_rejected`; the fill
