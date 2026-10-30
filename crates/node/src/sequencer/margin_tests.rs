@@ -4,6 +4,7 @@ use std::io::Write;
 use std::sync::Mutex;
 use std::time::Duration;
 
+use crate::log::Manifest;
 use engine_core::command::{OrderKind, OrderRequest};
 use engine_core::event::Reject;
 use engine_core::price::{PriceError, SourceQuote};

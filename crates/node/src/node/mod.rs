@@ -13,10 +13,8 @@ use anyhow::{Context, anyhow, bail};
 use engine_core::command::Command;
 use engine_core::types::AccountId;
 use tokio::net::TcpListener;
-use tokio::signal::ctrl_c;
-use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::{Semaphore, broadcast, mpsc, watch};
-use tokio::task::{JoinError, JoinSet};
+use tokio::task::JoinSet;
 use tokio::time::{interval, timeout};
 use tracing::{error, info, warn};
 
@@ -28,7 +26,7 @@ use crate::feeds;
 use crate::feeds::venue::{self, Timing};
 use crate::history::HistoryPlan;
 mod shutdown;
-use shutdown::{finish_history, handed_over};
+use shutdown::{TaskResult, finish_history, handed_over, sequencer_outcome, supervise};
 mod keys;
 pub use keys::{KeyStart, parse_launch_digest};
 mod preflight;
@@ -47,7 +45,6 @@ use preflight::{authorize, emission_preflight};
 /// How long the sequencer gets to drain and checkpoint after a shutdown signal.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 const CHANNEL_CAPACITY: usize = 65_536;
-type TaskResult = (&'static str, anyhow::Result<()>);
 
 /// Runs the node until a shutdown signal, or until the first supervised task stops, then delivers
 /// the alerts already logged, for up to `SHUTDOWN_GRACE`.
@@ -212,7 +209,7 @@ async fn serve_node(
 
     let (tx, rx) = mpsc::channel::<Request>(CHANNEL_CAPACITY);
     let recovery = seq.take_recovery_checkpoints();
-    let mut sequencer = crate::sequencer_thread::Worker::start(seq.run(rx), cpu)?;
+    let sequencer = crate::sequencer_thread::Worker::start(seq.run(rx), cpu)?;
     let mut tasks: JoinSet<TaskResult> = JoinSet::new();
     if let Some(setup) = checkpoint_setup {
         let checkpoint_tx = tx.clone();
@@ -221,10 +218,13 @@ async fn serve_node(
         });
     }
 
-    // A successor's request stops sequencing through `drain_rx`, once the vault approves it.
+    // A successor's request stops sequencing through `drain_rx`, once the vault approves it; the
+    // stop itself goes to the sequencer as a final-checkpoint request, which refuses while the
+    // checkpoint gate would withhold the checkpoint.
     let (samples, samples_rx) = watch::channel(None);
     let trusted = || trusted_time::TrustedClock::new(clock.clone(), samples_rx.clone(), cfg.time.max_drift);
     let (drain_tx, mut drain_rx) = mpsc::channel(1);
+    let handover_stop_tx = tx.clone();
     let mut handover = JoinSet::new();
     if let Some(store) = &store
         && let Some(predecessor) =
@@ -295,8 +295,8 @@ async fn serve_node(
     let history_stopper = history.stopper();
     let mut history_task = JoinSet::new();
     history_task.spawn(history.run(history_feed));
-    let mut history_finished = false;
-    let mut handing_over = None;
+    let history_finished = false;
+    let handing_over = None;
 
     let monitor_tx = tx.clone();
     let (monitor_metrics, no_price_after) = (metrics.clone(), cfg.alerts.no_price_after);
@@ -342,43 +342,36 @@ async fn serve_node(
     tasks.spawn(async move { ("api", serve(listener, tls.acceptors, app, limits, api).await) });
     tasks.spawn(async move { ("rate limits", run_retain(retained).await) });
 
-    let outcome = tokio::select! {
-        joined = tasks.join_next() => Err(stopped_task(joined)),
-        joined = history_task.join_next() => {
-            history_finished = true;
-            Err(stopped_task(joined.map(|joined| joined.map(|result| ("history", result)))))
-        }
-        err = routing.stopped() => {
-            error!(alert = "task_stopped", "{err:#}");
-            Err(err)
-        }
-        joined = &mut sequencer.outcome => {
-            tasks.shutdown().await;
-            history_task.abort_all();
-            sequencer_outcome(joined)?;
-            bail!("sequencer stopped");
-        }
-        joined = handover.join_next(), if !handover.is_empty() => {
-            Err(stopped_task(joined.map(|joined| joined.map(|result| ("handover", result)))))
-        }
-        Some(reply) = drain_rx.recv() => {
-            handing_over = Some(reply);
-            info!("handing the keys over: stopping");
-            Ok(())
-        }
-        signal = shutdown_signal() => signal.map(|()| info!("shutting down")),
-    };
+    let mut supervised = supervise(
+        shutdown::Supervised {
+            tasks,
+            history_task,
+            history_finished,
+            sequencer,
+            handover,
+            handing_over,
+            outcome: Ok(()),
+        },
+        routing,
+        &mut drain_rx,
+        &handover_stop_tx,
+    )
+    .await;
+    // The sequencer's drain waits for every request sender to drop: this one is spent.
+    drop(handover_stop_tx);
     // Stopping the other tasks drops every sender, so the sequencer drains and checkpoints.
-    tasks.shutdown().await;
-    let drained = timeout(SHUTDOWN_GRACE, &mut sequencer.outcome).await.context("sequencer did not drain in time")?;
+    supervised.tasks.shutdown().await;
+    let drained =
+        timeout(SHUTDOWN_GRACE, &mut supervised.sequencer.outcome).await.context("sequencer did not drain in time")?;
     sequencer_outcome(drained)?;
-    if !history_finished {
-        finish_history(history_task, history_stopper).await;
+    if !supervised.history_finished {
+        finish_history(supervised.history_task, history_stopper).await;
     }
-    match handing_over {
+    let outcome = supervised.outcome;
+    match supervised.handing_over {
         Some(reply) => {
             let _ = reply.send(published.final_head());
-            handed_over(handover).await
+            handed_over(supervised.handover).await
         }
         None => outcome,
     }
@@ -451,36 +444,6 @@ async fn run_ticker(tx: mpsc::Sender<Request>, every: Duration) -> anyhow::Resul
         ticks.tick().await;
         tx.send(Request::Submit { cmd: Command::Tick, reply: None }).await.map_err(|_| anyhow!("sequencer gone"))?;
     }
-}
-
-/// Resolves on SIGTERM or ctrl-c.
-/// Error cases:
-/// - a signal handler cannot be installed
-async fn shutdown_signal() -> anyhow::Result<()> {
-    let mut term = signal(SignalKind::terminate()).context("installing SIGTERM handler")?;
-    tokio::select! {
-        r = ctrl_c() => r.context("listening for ctrl-c"),
-        _ = term.recv() => Ok(()),
-    }
-}
-
-/// The error for a supervised task that stopped, raised as a critical alert.
-fn stopped_task(joined: Option<Result<TaskResult, JoinError>>) -> anyhow::Error {
-    let err = match joined {
-        Some(Ok((name, Ok(())))) => anyhow!("{name} task stopped"),
-        Some(Ok((name, Err(e)))) => e.context(format!("{name} task failed")),
-        Some(Err(e)) => anyhow!(e).context("task panicked"),
-        None => anyhow!("no tasks running"),
-    };
-    error!(alert = "task_stopped", "{err:#}");
-    err
-}
-
-/// The sequencer's own result, or its panic.
-/// Error cases:
-/// - the sequencer panicked, or returned an error (a log write failure)
-fn sequencer_outcome(joined: Result<anyhow::Result<()>, tokio::sync::oneshot::error::RecvError>) -> anyhow::Result<()> {
-    joined.context("sequencer thread panicked")?.inspect_err(|e| error!(alert = "sequencer_failed", "{e:#}"))
 }
 
 #[cfg(test)]

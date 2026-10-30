@@ -3,6 +3,7 @@
 use super::*;
 use tokio::sync::oneshot;
 
+use crate::log::Manifest;
 use crate::test_support::{log_entries, scratch_dir, sequencer_config, trusted_now};
 
 /// Reply-less commands keep the channel full, and a client's reply still goes out with the first

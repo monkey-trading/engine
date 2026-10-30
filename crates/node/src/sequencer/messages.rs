@@ -15,6 +15,27 @@ use crate::trusted_time::Sample;
 
 pub type Query = Box<dyn FnOnce(&Engine) + Send>;
 
+/// Why a handover's stop was refused at the checkpoint gate: the node goes on sequencing, so the
+/// predecessor refuses the successor and keeps serving. Distinct from a post-commit failure, where
+/// sequencing has already stopped and the node must end.
+#[derive(Debug)]
+pub struct HandoverRefused(String);
+
+impl std::fmt::Display for HandoverRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for HandoverRefused {}
+
+impl HandoverRefused {
+    /// The gate's refusal, reported to the successor.
+    pub fn new(reason: String) -> Self {
+        Self(reason)
+    }
+}
+
 // Unboxed on purpose: boxing every command would add an allocation to the hot path.
 #[allow(clippy::large_enum_variant)]
 pub enum Request {
@@ -48,6 +69,10 @@ pub enum Request {
         screening: Option<ReissueScreening>,
         reply: oneshot::Sender<Reissue>,
     },
+    /// A key handover's stop: answered once the final checkpoint the successor is handed is written
+    /// and durable, and refused with the checkpoint gate's reason while it would withhold that
+    /// checkpoint, the node going on sequencing.
+    FinalCheckpoint(oneshot::Sender<anyhow::Result<()>>),
 }
 
 /// The source's evidence for a signed reissue request, and the request's digest it must name.

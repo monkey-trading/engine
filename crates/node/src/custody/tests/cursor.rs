@@ -57,6 +57,7 @@ async fn the_cursor_moves_only_after_the_log_is_synced_past_the_credits() {
                 Request::CheckpointStatus { .. } => unreachable!("no checkpoint worker in this test"),
                 Request::WatchBenchmarkSchedule(_) => unreachable!("only the API watches benchmark schedules"),
                 Request::ReissueWithdrawal { .. } => unreachable!("only the API asks for a reissue"),
+                Request::FinalCheckpoint(_) => unreachable!("only a handover asks for the final checkpoint"),
                 Request::TimeSample(_) => unreachable!("custody sends no time samples"),
             }
         }

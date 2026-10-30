@@ -29,7 +29,10 @@ use crate::tee::{Attestor, EnclaveKey};
 use crate::trusted_time::TrustedClock;
 
 /// Asks the node to stop sequencing; it answers with the final checkpoint, or why there is none.
-pub(crate) type Drain = mpsc::Sender<oneshot::Sender<anyhow::Result<Head>>>;
+pub(crate) type Drain = mpsc::Sender<DrainReply>;
+
+/// The node's answer to a stop request: the drained final checkpoint, or why there is none.
+pub(crate) type DrainReply = oneshot::Sender<anyhow::Result<Head>>;
 
 /// The handover listener and what it hands over, reading the vault's current release through `C`.
 pub(crate) struct Predecessor<C = CheckpointRpc> {
@@ -171,14 +174,22 @@ impl<C: CheckpointChain> Predecessor<C> {
                     return Ok(refuse(&mut stream, withheld).await);
                 }
                 let stopped = self.stop().await;
-                if let Err(e) = &stopped {
-                    error!(
-                        alert = "handover_failed",
-                        "sequencing stopped with no final checkpoint to hand over, and the vault names the successor, \
-                         so this release's keys no longer open: the successor needs new keys, which the timelock \
-                         registers: {e:#}"
-                    );
-                    refuse(&mut stream, anyhow!("{e:#}")).await;
+                match &stopped {
+                    // The checkpoint gate refused the final checkpoint: the node goes on sequencing,
+                    // so this release refuses the successor and keeps serving.
+                    Err(e) if e.downcast_ref::<crate::sequencer::HandoverRefused>().is_some() => {
+                        return Ok(refuse(&mut stream, anyhow!("{e:#}")).await);
+                    }
+                    Err(e) => {
+                        error!(
+                            alert = "handover_failed",
+                            "sequencing stopped with no final checkpoint to hand over, and the vault names the successor, \
+                             so this release's keys no longer open: the successor needs new keys, which the timelock \
+                             registers: {e:#}"
+                        );
+                        refuse(&mut stream, anyhow!("{e:#}")).await;
+                    }
+                    Ok(_) => {}
                 }
                 head.insert(stopped?).clone()
             }
@@ -215,6 +226,8 @@ impl<C: CheckpointChain> Predecessor<C> {
     /// Stops sequencing and returns the final checkpoint.
     /// Error cases:
     /// - the node is already stopping, or has no final checkpoint (see `final_head`)
+    /// - the checkpoint gate refused the final checkpoint (`HandoverRefused`): the node goes on
+    ///   sequencing
     async fn stop(&self) -> anyhow::Result<Head> {
         info!("stopping sequencing to hand the keys over");
         let (tx, rx) = oneshot::channel();
@@ -311,7 +324,10 @@ impl Published {
     }
 
     /// The final checkpoint once the sequencer has drained, which publishes everything it wrote
-    /// before it returns: the checkpoint of its last command.
+    /// before it returns: the checkpoint of its last command. A withheld final checkpoint is only a
+    /// post-commit defense: the stop the node commits to already wrote one, so this error names the
+    /// real recovery — new keys through the timelock — since a restart of this release refuses
+    /// once the vault names the successor.
     /// Error cases:
     /// - no checkpoint was written, or the drain withheld the last command's (custody not yet
     ///   reconciled), so the keys stay with this release
@@ -330,8 +346,9 @@ impl Published {
         let head = self.checkpoint.context("the log has no checkpoint to hand over")?;
         ensure!(
             Some(head.seq) == self.last_seq,
-            "the final checkpoint was withheld after seq {}, so the keys stay with this release: resolve the \
-             checkpoint alert and restart it",
+            "the final checkpoint was withheld after seq {}, so the keys stay with this release: the vault \
+             already names the successor and a restart of this release refuses, so the successor needs new \
+             keys, which the timelock registers",
             head.seq
         );
         Ok(head)
