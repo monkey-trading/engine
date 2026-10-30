@@ -46,7 +46,8 @@ sol! {
     function stake(uint256 amount) external;
     function startUnstake(uint256 amount) external;
     function delegate(address candidate) external;
-    function register(Registration registration) external;
+    function registrationDigest(address candidate, address adminKey) external view returns (bytes32);
+    function register(Registration registration, bytes signature) external;
     function setReleaseApproval(address candidate, bytes launchDigest, bytes32 configHash, bool approved) external;
     function setRotation(bool enabled) external;
     function closeEpoch() external returns (uint64);
@@ -163,17 +164,32 @@ impl Chain {
         self.send(account, self.staking, stakeCall { amount }.abi_encode()).await
     }
 
-    /// Registers `candidate` with `admin_key`, a self-bond of `bond`, and the release `digest`.
-    pub(super) async fn register(&self, candidate: Address, admin_key: Address, bond: U256, digest: [u8; 48]) {
+    /// Registers `candidate` with `admin_key` — which must authorize the registration with its
+    /// EIP-712 signature, as `register` checks — a self-bond of `bond`, and the release `digest`.
+    pub(super) async fn register(
+        &self,
+        candidate: Address,
+        admin_key: &k256::ecdsa::SigningKey,
+        bond: U256,
+        digest: [u8; 48],
+    ) {
+        let admin = Address::from(engine_core::eip712::address(admin_key.verifying_key()).0);
         let registration = Registration {
-            adminKey: admin_key,
+            adminKey: admin,
             bond,
             launchDigest: Bytes::from(digest.to_vec()),
             configHash: CONFIG_HASH.into(),
             apiHostname: "api.candidate.local".into(),
             handoverEndpoint: "127.0.0.1:9443".into(),
         };
-        self.send(candidate, self.registry, registerCall { registration }.abi_encode()).await;
+        let digest: B256 = self.view(self.registry, registrationDigestCall { candidate, adminKey: admin }).await;
+        let signature = engine_core::eip712::sign(admin_key, &digest);
+        self.send(
+            candidate,
+            self.registry,
+            registerCall { registration, signature: signature.to_vec().into() }.abi_encode(),
+        )
+        .await;
     }
 
     /// Has the timelock approve `candidate` running the release `digest`.

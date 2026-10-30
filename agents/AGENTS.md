@@ -149,7 +149,9 @@ an index: load only the rule whose hint matches the current action.
   stake to one candidate, changeable at any time; votes drop at `startUnstake`, and a registered
   candidate's self-bond cannot be unstaked until one cooldown after it leaves. `src/OperatorRegistry.sol`
   deploys the staking contract and elects the operator key: candidates register a self-bond, admin
-  key, API hostname, handover endpoint and release, the timelock approves releases, switches rotation
+  key, API hostname, handover endpoint and release — the registration carrying the admin key's
+  EIP-712 authorization of the candidate, so a key is registered only for a candidate it
+  authorized — the timelock approves releases, switches rotation
   (off at deployment, the deployer in effect) and moves parameters within deployment bounds, and
   anyone closes an election epoch, electing the top eligible candidate past quorum, minimum term and
   margin to take effect seven days plus a finality margin later. Deployment gives that

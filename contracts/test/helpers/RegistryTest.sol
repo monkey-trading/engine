@@ -97,20 +97,57 @@ abstract contract RegistryTest is GovernanceTest {
         );
     }
 
+    /// @dev The admin key's private key for `candidate`: deterministic, so the derived address and
+    /// its signatures hold run to run.
+    function _adminKey(address candidate) internal pure returns (uint256) {
+        return uint256(keccak256(abi.encode("admin key", candidate)));
+    }
+
+    /// @dev The admin key's EIP-712 authorization of `candidate`'s registration, as `register` checks,
+    /// signed over the hand-built digest so computing it consumes no prank.
+    function _authorization(address candidate) internal view returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 s) =
+            vm.sign(_adminKey(candidate), _registrationDigest(registry, candidate, _key(candidate)));
+        return abi.encodePacked(r, s, v);
+    }
+
+    /// @dev The EIP-712 digest a registry's admin key signs, recomputed from the type and domain.
+    function _registrationDigest(OperatorRegistry target, address candidate, address adminKey)
+        internal
+        view
+        returns (bytes32)
+    {
+        bytes32 domain = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256("EngineOperatorRegistry"),
+                keccak256("1"),
+                block.chainid,
+                address(target)
+            )
+        );
+        bytes32 structHash = keccak256(
+            abi.encode(keccak256("RegistrationAuthorization(address candidate,address adminKey)"), candidate, adminKey)
+        );
+        return keccak256(abi.encodePacked(hex"1901", domain, structHash));
+    }
+
     /// @dev Stakes `stake` for `candidate`, registers it with a minimum bond and release `seed`, and
-    /// has the timelock approve that release.
+    /// has the timelock approve that release. The authorization is read before the prank: the view
+    /// call would otherwise consume it.
     function _candidate(address candidate, uint256 stake, uint256 seed) internal {
         _stake(candidate, stake);
+        bytes memory authorization = _authorization(candidate);
         vm.prank(candidate);
-        registry.register(_registration(_key(candidate), MIN_BOND, seed));
+        registry.register(_registration(_key(candidate), MIN_BOND, seed), authorization);
         _govern(
             address(registry),
             abi.encodeCall(OperatorRegistry.setReleaseApproval, (candidate, _digest(seed), CONFIG, true))
         );
     }
 
-    function _key(address candidate) internal pure returns (address) {
-        return address(uint160(uint256(keccak256(abi.encode("admin key", candidate)))));
+    function _key(address candidate) internal view returns (address) {
+        return vm.addr(_adminKey(candidate));
     }
 
     function _setRotation(bool enabled) internal {

@@ -3,6 +3,7 @@ pragma solidity 0.8.36;
 
 import {IERC20} from "@openzeppelin-contracts/token/ERC20/IERC20.sol";
 import {TimelockController} from "@openzeppelin-contracts/governance/TimelockController.sol";
+import {ECDSA} from "@openzeppelin-contracts/utils/cryptography/ECDSA.sol";
 
 import {Staking} from "./Staking.sol";
 
@@ -22,7 +23,9 @@ import {Staking} from "./Staking.sol";
 /// while it is off a close elects nothing. Only the timelock turns rotation on and off (turning it
 /// off cancels an election not yet in effect), approves candidates' releases, and changes the
 /// parameters within the bounds fixed at deployment. The operator in effect, and a candidate elected
-/// and waiting to take effect, cannot leave: an operator leaves by losing a vote.
+/// and waiting to take effect, cannot leave: an operator leaves by losing a vote. A candidate
+/// registers an admin key only with that key's EIP-712 authorization, so no one can reserve a key
+/// the candidate advertised before it registers.
 contract OperatorRegistry {
     /// @notice The election's adjustable values; the timelock changes them within deployment bounds.
     struct Parameters {
@@ -97,6 +100,15 @@ contract OperatorRegistry {
     /// @notice How long after its close an election takes effect, before the finality margin: the
     /// engine's notice for an operator key rotation.
     uint256 public constant NOTICE = 7 days;
+
+    /// @notice The EIP-712 type the admin key signs to authorize its registration by a candidate.
+    bytes32 public constant REGISTRATION_AUTHORIZATION_TYPEHASH =
+        keccak256("RegistrationAuthorization(address candidate,address adminKey)");
+
+    /// @dev The EIP-712 domain this registry signs registrations under, as the vault's vocabulary
+    /// builds it, without the inherited contract: the registry sits at the contract size limit.
+    bytes32 private constant DOMAIN_TYPEHASH =
+        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
     /// @notice The largest candidate cap any parameters may set: it bounds the gas of a close, which
     /// reads every candidate.
@@ -185,6 +197,7 @@ contract OperatorRegistry {
     error AdminKeyTaken(address candidate);
     error BondBelowMinimum(uint256 bond, uint256 minimum);
     error OperatorCannotLeave();
+    error UnauthorizedAdminKey();
     error RotationUnchanged(bool enabled);
     error EpochNotEnded(uint256 endsAt);
 
@@ -237,23 +250,22 @@ contract OperatorRegistry {
     }
 
     /// @notice Registers the caller as a candidate, locking `registration.bond` of its stake as its
-    /// self-bond. The candidate enters `candidateList`, and counts toward the candidate cap, once the
+    /// self-bond, with `signature` the admin key's EIP-712 authorization of this candidate under
+    /// `registrationDigest`, so a key is registered only for a candidate it authorized. The candidate
+    /// enters `candidateList`, and counts toward the candidate cap, once the
     /// timelock approves its release; until then it is registered but unlisted, cannot be elected, and
     /// does not count toward the cap, so unapproved registrations cannot fill it. A candidate that
     /// left may register again once its previous self-bond is free; it re-enters the list at once when
     /// its release is still approved, under the cap in force then.
-    function register(Registration calldata registration) external {
+    function register(Registration calldata registration, bytes calldata signature) external {
         if (candidates[msg.sender].adminKey != address(0)) revert AlreadyRegistered();
         Parameters memory p = parameters;
         address adminKey = registration.adminKey;
         if (adminKey == address(0)) revert ZeroAddress();
+        if (!_authorizedByAdminKey(msg.sender, adminKey, signature)) revert UnauthorizedAdminKey();
         if (keyHolder[adminKey] != address(0)) revert AdminKeyTaken(keyHolder[adminKey]);
         if (registration.bond < p.minSelfBond) revert BondBelowMinimum(registration.bond, p.minSelfBond);
-        uint256 hostname = bytes(registration.apiHostname).length;
-        uint256 endpoint = bytes(registration.handoverEndpoint).length;
-        if (hostname == 0 || hostname > MAX_HOSTNAME_BYTES || endpoint == 0 || endpoint > MAX_ENDPOINT_BYTES) {
-            revert InvalidEndpoint();
-        }
+        _checkEndpoint(registration);
         bytes32 release = _release(registration.launchDigest, registration.configHash);
         candidates[msg.sender] = Candidate(
             adminKey,
@@ -277,6 +289,42 @@ contract OperatorRegistry {
         staking.lockBond(msg.sender, registration.bond);
         if (releaseApproved[keccak256(abi.encode(msg.sender, release))]) _enlist(msg.sender);
         // A release approved before this registration (or while it was away) lists it at once.
+    }
+
+    /// @notice The EIP-712 digest the admin key signs to authorize `candidate`'s registration of
+    /// `adminKey`; the domain names this registry on this chain.
+    function registrationDigest(address candidate, address adminKey) public view returns (bytes32) {
+        bytes32 domain = keccak256(
+            abi.encode(
+                DOMAIN_TYPEHASH, keccak256("EngineOperatorRegistry"), keccak256("1"), block.chainid, address(this)
+            )
+        );
+        return keccak256(
+            abi.encodePacked(
+                hex"1901", domain, keccak256(abi.encode(REGISTRATION_AUTHORIZATION_TYPEHASH, candidate, adminKey))
+            )
+        );
+    }
+
+    /// @dev Reverts unless the registration names a nonempty, bounded endpoint.
+    function _checkEndpoint(Registration calldata registration) private pure {
+        uint256 hostname = bytes(registration.apiHostname).length;
+        uint256 endpoint = bytes(registration.handoverEndpoint).length;
+        if (hostname == 0 || hostname > MAX_HOSTNAME_BYTES || endpoint == 0 || endpoint > MAX_ENDPOINT_BYTES) {
+            revert InvalidEndpoint();
+        }
+    }
+
+    /// @dev Whether `signature` is the admin key's authorization of `candidate`'s registration of
+    /// `adminKey`. `tryRecover`, not `recover`: the comparison below is the refusal, and a malformed
+    /// signature recovering no one is one.
+    function _authorizedByAdminKey(address candidate, address adminKey, bytes calldata signature)
+        private
+        view
+        returns (bool)
+    {
+        (address recovered,,) = ECDSA.tryRecover(registrationDigest(candidate, adminKey), signature);
+        return recovered == adminKey;
     }
 
     /// @notice Removes the caller's candidacy; its self-bond stays locked for one cooldown. The

@@ -95,6 +95,7 @@ contract OperatorRegistryTest is RegistryTest {
     function test_RegistrationRecordsTheCandidateAndLocksItsBond() public {
         _stake(alice, 5_000e18);
         OperatorRegistry.Registration memory registration = _registration(_key(alice), 2_000e18, 1);
+        bytes memory authorization = _authorization(alice);
         vm.expectEmit(address(registry));
         emit OperatorRegistry.CandidateRegistered(
             alice,
@@ -107,7 +108,7 @@ contract OperatorRegistryTest is RegistryTest {
             registration.handoverEndpoint
         );
         vm.prank(alice);
-        registry.register(registration);
+        registry.register(registration, authorization);
         OperatorRegistry.Candidate memory candidate = registry.candidateOf(alice);
         assertEq(candidate.adminKey, _key(alice));
         assertEq(candidate.bond, 2_000e18);
@@ -128,35 +129,78 @@ contract OperatorRegistryTest is RegistryTest {
 
     function test_RegistrationRefusesEachInvalidCandidacy() public {
         _stake(alice, 5_000e18);
+        // Every check past the signature must see a valid one, so the caller's own key authorizes
+        // each registration below.
+        bytes memory authorization = _authorization(alice);
         vm.startPrank(alice);
         vm.expectRevert(OperatorRegistry.ZeroAddress.selector);
-        registry.register(_registration(address(0), MIN_BOND, 1));
+        registry.register(_registration(address(0), MIN_BOND, 1), "");
         vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.BondBelowMinimum.selector, MIN_BOND - 1, MIN_BOND));
-        registry.register(_registration(_key(alice), MIN_BOND - 1, 1));
+        registry.register(_registration(_key(alice), MIN_BOND - 1, 1), authorization);
         vm.expectRevert(abi.encodeWithSelector(Staking.InsufficientStake.selector, 5_000e18, 5_001e18));
-        registry.register(_registration(_key(alice), 5_001e18, 1));
+        registry.register(_registration(_key(alice), 5_001e18, 1), authorization);
         OperatorRegistry.Registration memory bad = _registration(_key(alice), MIN_BOND, 1);
         bad.launchDigest = new bytes(47);
         vm.expectRevert(OperatorRegistry.InvalidLaunchDigest.selector);
-        registry.register(bad);
+        registry.register(bad, authorization);
         bad = _registration(_key(alice), MIN_BOND, 1);
         bad.apiHostname = "";
         vm.expectRevert(OperatorRegistry.InvalidEndpoint.selector);
-        registry.register(bad);
+        registry.register(bad, authorization);
         bad = _registration(_key(alice), MIN_BOND, 1);
         bad.handoverEndpoint = string(new bytes(513));
         vm.expectRevert(OperatorRegistry.InvalidEndpoint.selector);
-        registry.register(bad);
-        registry.register(_registration(_key(alice), MIN_BOND, 1));
+        registry.register(bad, authorization);
+        registry.register(_registration(_key(alice), MIN_BOND, 1), authorization);
         vm.expectRevert(OperatorRegistry.AlreadyRegistered.selector);
-        registry.register(_registration(_key(bob), MIN_BOND, 1));
+        registry.register(_registration(_key(bob), MIN_BOND, 1), authorization);
         vm.stopPrank();
 
-        // Two candidates cannot share an admin key.
+        // Two candidates cannot share an admin key, even with the key's authorization: alice's key
+        // authorizes bob's registration, and the reservation still refuses the second holder. The
+        // signature is made before the expectRevert: the view call would otherwise satisfy it.
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(_adminKey(alice), registry.registrationDigest(bob, _key(alice)));
         _stake(bob, 5_000e18);
         vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.AdminKeyTaken.selector, alice));
         vm.prank(bob);
-        registry.register(_registration(_key(alice), MIN_BOND, 2));
+        registry.register(_registration(_key(alice), MIN_BOND, 2), abi.encodePacked(r, s, v));
+    }
+
+    function test_RegistrationRefusesWithoutTheAdminKeysAuthorization() public {
+        _stake(bob, 5_000e18);
+        // A staker front-running a candidate's advertised key with its own self-bond cannot register
+        // it: the signature must be the admin key's own. The signature is made before the
+        // expectRevert: the view call would otherwise satisfy it.
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(_adminKey(bob), registry.registrationDigest(bob, _key(alice)));
+        vm.expectRevert(OperatorRegistry.UnauthorizedAdminKey.selector);
+        vm.prank(bob);
+        registry.register(_registration(_key(alice), MIN_BOND, 1), abi.encodePacked(r, s, v));
+        assertEq(registry.candidateOf(bob).adminKey, address(0), "the refusal registers nothing");
+    }
+
+    function test_TheAdminKeysAuthorizationBindsTheCandidate() public {
+        _stake(bob, 5_000e18);
+        // Alice's authorization of alice's own registration does not serve bob registering the key.
+        bytes memory authorization = _authorization(alice);
+        vm.expectRevert(OperatorRegistry.UnauthorizedAdminKey.selector);
+        vm.prank(bob);
+        registry.register(_registration(_key(alice), MIN_BOND, 1), authorization);
+    }
+
+    function test_TheAdminKeysAuthorizationBindsTheRegistryAndChain() public {
+        assertEq(
+            registry.registrationDigest(alice, _key(alice)),
+            _registrationDigest(registry, alice, _key(alice)),
+            "the digest matches the hand-built typed data"
+        );
+        // A digest built for another chain or another registry does not authorize registration here.
+        _stake(bob, 5_000e18);
+        vm.chainId(block.chainid + 1);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(_adminKey(alice), registry.registrationDigest(bob, _key(alice)));
+        vm.chainId(block.chainid - 1);
+        vm.expectRevert(OperatorRegistry.UnauthorizedAdminKey.selector);
+        vm.prank(bob);
+        registry.register(_registration(_key(alice), MIN_BOND, 1), abi.encodePacked(r, s, v));
     }
 
     function test_UnapprovedRegistrationsDoNotFillTheCandidateCap() public {
@@ -165,7 +209,7 @@ contract OperatorRegistryTest is RegistryTest {
             address candidate = makeAddr(string(abi.encode(i)));
             _stake(candidate, MIN_BOND);
             vm.prank(candidate);
-            registry.register(_registration(_key(candidate), MIN_BOND, i + 1));
+            registry.register(_registration(_key(candidate), MIN_BOND, i + 1), _authorization(candidate));
             assertEq(registry.candidateCount(), 0);
         }
         // Approving fills the cap; one more approval reverts until an approval is withdrawn.
@@ -180,7 +224,7 @@ contract OperatorRegistryTest is RegistryTest {
         address extra = makeAddr(string(abi.encode(uint256(2 * MAX_CANDIDATES))));
         _stake(extra, MIN_BOND);
         vm.prank(extra);
-        registry.register(_registration(_key(extra), MIN_BOND, 99));
+        registry.register(_registration(_key(extra), MIN_BOND, 99), _authorization(extra));
         // The full cap refuses the approval; the timelock must schedule before the execute reverts.
         bytes memory approval = abi.encodeCall(OperatorRegistry.setReleaseApproval, (extra, _digest(99), CONFIG, true));
         vm.prank(multisig);
@@ -242,7 +286,7 @@ contract OperatorRegistryTest is RegistryTest {
     function test_AReregisteredCandidateWhoseReleaseIsStillApprovedRelistsAtOnce() public {
         _stake(alice, 2 * MIN_BOND);
         vm.prank(alice);
-        registry.register(_registration(_key(alice), MIN_BOND, 1));
+        registry.register(_registration(_key(alice), MIN_BOND, 1), _authorization(alice));
         _govern(
             address(registry), abi.encodeCall(OperatorRegistry.setReleaseApproval, (alice, _digest(1), CONFIG, true))
         );
@@ -250,7 +294,7 @@ contract OperatorRegistryTest is RegistryTest {
         registry.deregister();
         vm.warp(block.timestamp + COOLDOWN);
         vm.prank(alice);
-        registry.register(_registration(_key(alice), MIN_BOND, 1));
+        registry.register(_registration(_key(alice), MIN_BOND, 1), _authorization(alice));
         assertEq(registry.candidateCount(), 1);
         assertEq(registry.candidateList(0), alice);
     }
@@ -258,7 +302,7 @@ contract OperatorRegistryTest is RegistryTest {
     function test_ASelfBondCannotBeUnstakedWhileRegisteredNorForOneCooldownAfter() public {
         _stake(alice, 3_000e18);
         vm.prank(alice);
-        registry.register(_registration(_key(alice), 2_000e18, 1));
+        registry.register(_registration(_key(alice), 2_000e18, 1), _authorization(alice));
 
         vm.startPrank(alice);
         vm.expectRevert(abi.encodeWithSelector(Staking.SelfBondLocked.selector, 2_000e18));
@@ -273,7 +317,7 @@ contract OperatorRegistryTest is RegistryTest {
         // Registering again waits for the released bond too.
         vm.expectRevert(abi.encodeWithSelector(Staking.SelfBondLocked.selector, 2_000e18));
         vm.prank(alice);
-        registry.register(_registration(_key(alice), MIN_BOND, 1));
+        registry.register(_registration(_key(alice), MIN_BOND, 1), _authorization(alice));
 
         vm.warp(block.timestamp + COOLDOWN - 1);
         vm.expectRevert(abi.encodeWithSelector(Staking.SelfBondLocked.selector, 2_000e18));
@@ -325,7 +369,7 @@ contract OperatorRegistryTest is RegistryTest {
     function test_EligibilityNeedsTheCandidatesOwnApprovedReleaseBondAndShare() public {
         _stake(alice, 10_000e18);
         vm.prank(alice);
-        registry.register(_registration(_key(alice), MIN_BOND, 1));
+        registry.register(_registration(_key(alice), MIN_BOND, 1), _authorization(alice));
         _delegate(alice, alice);
         // Approving the same release for another candidate does not make this one eligible.
         _govern(address(registry), abi.encodeCall(OperatorRegistry.setReleaseApproval, (bob, _digest(1), CONFIG, true)));
