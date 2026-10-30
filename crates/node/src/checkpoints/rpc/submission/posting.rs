@@ -1,7 +1,7 @@
 //! Reservation transitions require actual vault progress, never transaction hashes or nonces alone.
 
 use alloy::eips::{BlockId, BlockNumberOrTag};
-use alloy::primitives::{Address, U64};
+use alloy::primitives::{Address, B256, U64};
 use alloy::rpc::types::TransactionRequest;
 use alloy::sol_types::SolCall;
 use anyhow::{Context, ensure};
@@ -31,11 +31,25 @@ impl CheckpointRpc {
                     match previous.reused_through.as_ref() {
                         Some(obsolete) => {
                             self.check_finalized_parent(cp, obsolete).await?;
-                            self.verify_consumer(&previous, obsolete).await?;
-                            self.reserve_after_progress(cp, latest_nonce, None).await?
+                            let (anchor, final_nonce, consumed_block, tx) = self.find_consumer(&previous).await?;
+                            let decoded = self.decode_consumer(&tx)?;
+                            // The reservation's own exact call can be the consumer whatever its
+                            // reuse provenance: a send in flight when the guardian retires the
+                            // signer reverts against the retired signer, consuming the nonce
+                            // without committing the checkpoint.
+                            let own = decoded.seq == cp.seq && decoded.root == cp.root;
+                            if own {
+                                self.authenticate_own_call(cp, anchor, final_nonce, consumed_block, &tx).await?;
+                                self.reserve_after_revert(cp, latest_nonce, anchor).await?
+                            } else {
+                                let consumed = self.obsolete_call(&tx, obsolete)?;
+                                self.authenticate_consumer(consumed, obsolete).await?;
+                                self.recheck_consumer(anchor, final_nonce, consumed_block).await?;
+                                self.reserve_after_progress(cp, latest_nonce, None).await?
+                            }
                         }
                         None => self
-                            .reserve_after_revert(cp, &previous, latest_nonce)
+                            .recover_reverted_send(cp, &previous, latest_nonce)
                             .await
                             .context("reserved nonce is consumed; await canonical checkpoint reconciliation")?,
                     }
@@ -172,22 +186,29 @@ impl CheckpointRpc {
         self.submissions()?.reserve(cp.clone(), nonce, reused_through)
     }
 
-    /// Moves a checkpoint to the next nonce once its own send consumed the reserved one without
-    /// committing it, as a send in flight when the guardian retires the signer does: finalized
-    /// history must show this exact call as the consumer, and the vault at that block must still
-    /// lack the checkpoint.
+    /// Proves the reservation's own exact call finalized as its nonce's consumer — whatever the
+    /// reservation's reuse provenance — and moves the checkpoint to the next nonce.
     /// Error cases:
     /// - the consumption is not final, its consumer is another call, the checkpoint was accepted,
     ///   or the parent, authority or nonce checks fail
-    async fn reserve_after_revert(
+    async fn recover_reverted_send(
         &self,
         cp: &Checkpoint,
         previous: &Reservation,
         nonce: u64,
     ) -> anyhow::Result<Reservation> {
-        let (anchor, consumed) = self.verify_consumer(previous, cp).await?;
-        // A reservation without reuse provenance was alone at its nonce; its consumer is its call.
-        ensure!(consumed == cp.seq, "the reserved nonce was consumed by another checkpoint");
+        let (anchor, final_nonce, consumed_block, tx) = self.find_consumer(previous).await?;
+        self.authenticate_own_call(cp, anchor, final_nonce, consumed_block, &tx).await?;
+        self.reserve_after_revert(cp, nonce, anchor).await
+    }
+
+    /// Moves a checkpoint to the next nonce once its own send consumed the reserved one without
+    /// committing it, as a send in flight when the guardian retires the signer does: whatever the
+    /// reservation's reuse provenance, the caller has proved finalized history holds this exact
+    /// call as the nonce's consumer, and the vault at that block must still lack the checkpoint.
+    /// Error cases:
+    /// - the checkpoint was accepted, or the parent, authority or nonce checks fail
+    async fn reserve_after_revert(&self, cp: &Checkpoint, nonce: u64, anchor: B256) -> anyhow::Result<Reservation> {
         let vault = Address::from(self.domain.vault.0);
         let call = hasCheckpointAtCall { seq: cp.seq }.abi_encode();
         let accepted =

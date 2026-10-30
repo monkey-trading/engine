@@ -21,15 +21,17 @@ struct ConsumingBlock {
 }
 
 impl CheckpointRpc {
-    /// Identifies a finalized nonce consumer without trusting a saved or returned transaction hash.
-    /// Returns the hash of the finalized block that proves it and the consuming checkpoint's seq.
+    /// Identifies the finalized consumer of the reserved nonce without trusting a saved or
+    /// returned transaction hash: proves finality depth, uniqueness, and canonical bracketing.
+    /// Returns the anchor block and the account nonce it proved, the consuming block, and the
+    /// unique checkpoint call the nonce paid for. Which checkpoint that call serves is the
+    /// caller's judgment.
     /// Error cases:
     /// - canonical history is absent/inconsistent, finality lags, or the consumer is unrelated
-    pub(super) async fn verify_consumer(
+    pub(super) async fn find_consumer(
         &self,
         reservation: &Reservation,
-        obsolete: &Checkpoint,
-    ) -> anyhow::Result<(B256, u64)> {
+    ) -> anyhow::Result<(B256, u64, B256, TransactionRequest)> {
         let mut anchor = self
             .deadline(self.client.request::<_, Option<Block>>("eth_getBlockByNumber", (self.finality_tag, false)))
             .await?
@@ -101,16 +103,88 @@ impl CheckpointRpc {
             full.transactions.iter().filter(|tx| tx.from == Some(self.relayer) && tx.nonce == Some(reservation.nonce));
         let consumer = matches.next().context("canonical block has no reserved nonce consumer")?;
         ensure!(matches.next().is_none(), "canonical block has duplicate nonce consumers");
-        let consumed = self.obsolete_call(consumer, obsolete)?;
+        Ok((anchor.header.hash, final_nonce, block.header.hash, consumer.clone()))
+    }
+
+    /// Reproves the consuming and anchor blocks' nonces after consumer-specific checks, so an
+    /// orphaned or reorganized history cannot authorize a reservation move.
+    /// Error cases:
+    /// - the consuming block or the finalized account nonce changed during reconciliation
+    pub(super) async fn recheck_consumer(
+        &self,
+        anchor: B256,
+        final_nonce: u64,
+        consumed_block: B256,
+    ) -> anyhow::Result<()> {
+        // An orphaned tag cannot lend its confirmation depth to a replacement by-number block.
+        self.nonce_at(consumed_block).await?;
+        ensure!(self.nonce_at(anchor).await? == final_nonce, "finalized nonce changed during reconciliation");
+        Ok(())
+    }
+
+    /// Verifies the consuming transaction's vault-call shape and decodes its checkpoint without
+    /// judging which checkpoint the call serves.
+    /// Error cases:
+    /// - the consumer is a foreign call or has noncanonical checkpoint calldata
+    pub(super) fn decode_consumer(&self, tx: &TransactionRequest) -> anyhow::Result<Checkpoint> {
+        ensure!(
+            tx.to == Some(Address::from(self.domain.vault.0).into())
+                && tx.chain_id == Some(self.domain.chain_id)
+                && tx.value == Some(U256::ZERO),
+            "reserved nonce was consumed by an unrelated transaction"
+        );
+        let input = tx.input.unique_input()?.context("nonce consumer has no checkpoint calldata")?;
+        let call = postCheckpointCall::abi_decode_validate(input)?;
+        ensure!(call.abi_encode().as_slice() == input.as_ref(), "nonce consumer has noncanonical checkpoint calldata");
+        Ok(Checkpoint {
+            seq: call.seq,
+            root: format!("{:#x}", call.root),
+            signature: format!("{:#x}", call.signature),
+            // A placeholder the caller replaces from the checkpoint it judges this call to serve.
+            signer: String::new(),
+            domain: Some(self.domain),
+            parent: Some(CheckpointParent {
+                has_checkpoint: call.hasParent,
+                seq: call.parentSeq,
+                root: engine_core::eip712::B256::from(call.parentRoot.0),
+            }),
+            deferred_withdrawals: false,
+        })
+    }
+
+    /// Identifies a finalized nonce consumer and authenticates it inside `obsolete`'s prefix.
+    /// Returns the hash of the finalized block that proves it and the consuming checkpoint's seq.
+    /// Error cases:
+    /// - canonical history is absent/inconsistent, finality lags, or the consumer is unrelated
+    pub(super) async fn verify_consumer(
+        &self,
+        reservation: &Reservation,
+        obsolete: &Checkpoint,
+    ) -> anyhow::Result<(B256, u64)> {
+        let (anchor, final_nonce, consumed_block, tx) = self.find_consumer(reservation).await?;
+        let consumed = self.obsolete_call(&tx, obsolete)?;
         let consumed_seq = consumed.seq;
         self.authenticate_consumer(consumed, obsolete).await?;
-        // An orphaned tag cannot lend its confirmation depth to a replacement by-number block.
-        self.nonce_at(block.header.hash).await?;
-        ensure!(
-            self.nonce_at(anchor.header.hash).await? == final_nonce,
-            "finalized nonce changed during reconciliation"
-        );
-        Ok((anchor.header.hash, consumed_seq))
+        self.recheck_consumer(anchor, final_nonce, consumed_block).await?;
+        Ok((anchor, consumed_seq))
+    }
+
+    /// Proves a located finalized consumer is exactly `expected`'s own call, authenticating it
+    /// against that checkpoint and reproving the anchor.
+    /// Error cases:
+    /// - the consumer is another checkpoint, a foreign call, or the anchor moved
+    pub(super) async fn authenticate_own_call(
+        &self,
+        expected: &Checkpoint,
+        anchor: B256,
+        final_nonce: u64,
+        consumed_block: B256,
+        tx: &TransactionRequest,
+    ) -> anyhow::Result<()> {
+        let consumed = self.obsolete_call(tx, expected)?;
+        ensure!(consumed.seq == expected.seq, "the reserved nonce was consumed by another checkpoint");
+        self.authenticate_consumer(consumed, expected).await?;
+        self.recheck_consumer(anchor, final_nonce, consumed_block).await
     }
 
     /// Reads an account nonce at an exact block that the endpoint must still consider canonical.
@@ -143,7 +217,11 @@ impl CheckpointRpc {
     /// history for its seq, never from the obsolete checkpoint.
     /// Error cases:
     /// - the consumer is not the vault's accepted checkpoint at its seq, or its signature is invalid
-    async fn authenticate_consumer(&self, mut consumed: Checkpoint, obsolete: &Checkpoint) -> anyhow::Result<()> {
+    pub(super) async fn authenticate_consumer(
+        &self,
+        mut consumed: Checkpoint,
+        obsolete: &Checkpoint,
+    ) -> anyhow::Result<()> {
         if consumed.seq != obsolete.seq {
             let at = self.read_observation(View::Finalized, &[]).await?;
             let accepted = self.read_accepted_checkpoints(&at, &[consumed.seq]).await?;
@@ -158,39 +236,21 @@ impl CheckpointRpc {
     /// Decodes a vault call inside a prefix already made obsolete by actual finality.
     /// Error cases:
     /// - the nonce consumer is a foreign call or a checkpoint outside the obsolete prefix
-    fn obsolete_call(&self, tx: &TransactionRequest, obsolete: &Checkpoint) -> anyhow::Result<Checkpoint> {
-        ensure!(
-            tx.to == Some(Address::from(self.domain.vault.0).into())
-                && tx.chain_id == Some(self.domain.chain_id)
-                && tx.value == Some(U256::ZERO),
-            "reserved nonce was consumed by an unrelated transaction"
-        );
-        let input = tx.input.unique_input()?.context("nonce consumer has no checkpoint calldata")?;
-        let call = postCheckpointCall::abi_decode_validate(input)?;
-        ensure!(call.abi_encode().as_slice() == input.as_ref(), "nonce consumer has noncanonical checkpoint calldata");
-        let cp = Checkpoint {
-            seq: call.seq,
-            root: format!("{:#x}", call.root),
-            signature: format!("{:#x}", call.signature),
-            signer: obsolete.signer.clone(),
-            domain: Some(self.domain),
-            parent: Some(CheckpointParent {
-                has_checkpoint: call.hasParent,
-                seq: call.parentSeq,
-                root: engine_core::eip712::B256::from(call.parentRoot.0),
-            }),
-            deferred_withdrawals: obsolete.deferred_withdrawals,
-        };
+    pub(super) fn obsolete_call(&self, tx: &TransactionRequest, obsolete: &Checkpoint) -> anyhow::Result<Checkpoint> {
+        let mut cp = self.decode_consumer(tx)?;
         ensure!(
             cp.seq <= obsolete.seq && (cp.seq != obsolete.seq || cp.root == obsolete.root),
             "reserved nonce consumer is outside the obsolete checkpoint prefix"
         );
         if cp.seq == obsolete.seq {
             ensure!(
-                input.as_ref() == checkpoint_input(obsolete)?.as_slice(),
+                tx.input.unique_input()?.context("nonce consumer has no checkpoint calldata")?.as_ref()
+                    == checkpoint_input(obsolete)?.as_slice(),
                 "nonce consumer differs from the exact obsolete checkpoint"
             );
         }
+        cp.signer = obsolete.signer.clone();
+        cp.deferred_withdrawals = obsolete.deferred_withdrawals;
         Ok(cp)
     }
 }
