@@ -15,7 +15,7 @@ import {Staking} from "./Staking.sol";
 /// @notice Anyone may close an election epoch once it has ended. While rotation is on and no
 /// election is waiting to take effect, the close elects the eligible candidate with the most
 /// delegated stake, if that is not the operator in effect, a quorum of total stake is delegated to
-/// candidates, the operator in effect has served its minimum term, and the winner's votes exceed the
+/// approved candidates, the operator in effect has served its minimum term, and the winner's votes exceed the
 /// incumbent's by the margin. The election takes effect seven days plus the finality margin after
 /// the close; the engine mirrors it and applies the winner's admin key from then.
 /// @dev Not upgradeable. Rotation starts off, with the deployment's initial operator in effect, and
@@ -37,10 +37,10 @@ contract OperatorRegistry {
         uint16 marginBps;
         /// @notice A candidate's smallest share of total stake to be eligible, in basis points.
         uint16 eligibilityBps;
-        /// @notice The smallest share of total stake delegated to candidates for the role to move, in
-        /// basis points.
+        /// @notice The smallest share of total stake delegated to approved candidates for the role to
+        /// move, in basis points.
         uint16 quorumBps;
-        /// @notice The most candidates registered at once.
+        /// @notice The most approved candidates listed at once.
         uint16 maxCandidates;
         /// @notice The smallest self-bond, in MONKEY base units.
         uint256 minSelfBond;
@@ -126,7 +126,9 @@ contract OperatorRegistry {
     uint64 public openEpoch;
     uint64 public openEpochStart;
 
-    /// @notice Registered candidates, in no fixed order.
+    /// @notice Registered candidates whose release the timelock has approved, in no fixed order. The
+    /// candidate cap bounds this list's length, so unapproved registrations cannot fill it and the
+    /// close's scan stays bounded.
     address[] public candidateList;
 
     /// @notice Each registered candidate's admin key's holder, so no two share a key.
@@ -138,7 +140,8 @@ contract OperatorRegistry {
     Operator private current;
     Election private pending;
     mapping(address candidate => Candidate) private candidates;
-    /// @notice One more than each registered candidate's index in `candidateList`, zero otherwise.
+    /// @notice One more than each approved candidate's index in `candidateList`: nonzero while it is
+    /// registered and approved, zero when it is registered but unapproved or not registered.
     mapping(address candidate => uint256 position) private listed;
     uint64 private registrations;
 
@@ -234,11 +237,14 @@ contract OperatorRegistry {
     }
 
     /// @notice Registers the caller as a candidate, locking `registration.bond` of its stake as its
-    /// self-bond. A candidate that left may register again once its previous self-bond is free.
+    /// self-bond. The candidate enters `candidateList`, and counts toward the candidate cap, once the
+    /// timelock approves its release; until then it is registered but unlisted, cannot be elected, and
+    /// does not count toward the cap, so unapproved registrations cannot fill it. A candidate that
+    /// left may register again once its previous self-bond is free; it re-enters the list at once when
+    /// its release is still approved, under the cap in force then.
     function register(Registration calldata registration) external {
-        if (listed[msg.sender] != 0) revert AlreadyRegistered();
+        if (candidates[msg.sender].adminKey != address(0)) revert AlreadyRegistered();
         Parameters memory p = parameters;
-        if (candidateList.length >= p.maxCandidates) revert CandidateCapReached(p.maxCandidates);
         address adminKey = registration.adminKey;
         if (adminKey == address(0)) revert ZeroAddress();
         if (keyHolder[adminKey] != address(0)) revert AdminKeyTaken(keyHolder[adminKey]);
@@ -257,8 +263,6 @@ contract OperatorRegistry {
             registration.apiHostname,
             registration.handoverEndpoint
         );
-        candidateList.push(msg.sender);
-        listed[msg.sender] = candidateList.length;
         keyHolder[adminKey] = msg.sender;
         emit CandidateRegistered(
             msg.sender,
@@ -271,30 +275,30 @@ contract OperatorRegistry {
             registration.handoverEndpoint
         );
         staking.lockBond(msg.sender, registration.bond);
+        if (releaseApproved[keccak256(abi.encode(msg.sender, release))]) _enlist(msg.sender);
+        // A release approved before this registration (or while it was away) lists it at once.
     }
 
     /// @notice Removes the caller's candidacy; its self-bond stays locked for one cooldown. The
     /// operator in effect, and a candidate elected and waiting to take effect, cannot leave.
     function deregister() external {
-        uint256 position = listed[msg.sender];
-        if (position == 0) revert NotRegistered();
+        Candidate memory registered = candidates[msg.sender];
+        if (registered.adminKey == address(0)) revert NotRegistered();
         _settle();
         if (msg.sender == current.candidate || (pending.effectiveAt != 0 && msg.sender == pending.candidate)) {
             revert OperatorCannotLeave();
         }
-        address last = candidateList[candidateList.length - 1];
-        candidateList[position - 1] = last;
-        listed[last] = position;
-        candidateList.pop();
-        delete listed[msg.sender];
-        delete keyHolder[candidates[msg.sender].adminKey];
+        if (listed[msg.sender] != 0) _delist(msg.sender);
+        delete keyHolder[registered.adminKey];
         delete candidates[msg.sender];
         emit CandidateDeregistered(msg.sender);
         staking.releaseBond(msg.sender);
     }
 
     /// @notice Approves, or withdraws approval of, `candidate` running the release with SEV-SNP launch
-    /// measurement `launchDigest` and config SHA-256 `configHash`.
+    /// measurement `launchDigest` and config SHA-256 `configHash`. Approving a registered candidate
+    /// adds it to `candidateList` under the candidate cap; withdrawing approval removes it from the
+    /// list while it stays registered.
     function setReleaseApproval(address candidate, bytes calldata launchDigest, bytes32 configHash, bool approved)
         external
         onlyGovernance
@@ -302,6 +306,12 @@ contract OperatorRegistry {
         bytes32 release = _release(launchDigest, configHash);
         releaseApproved[keccak256(abi.encode(candidate, release))] = approved;
         emit ReleaseApprovalChanged(candidate, release, approved);
+        if (candidates[candidate].adminKey == address(0)) return;
+        if (approved) {
+            if (listed[candidate] == 0) _enlist(candidate);
+        } else if (listed[candidate] != 0) {
+            _delist(candidate);
+        }
     }
 
     /// @notice Turns rotation on or off. Turning it off cancels an election not yet in effect.
@@ -315,7 +325,8 @@ contract OperatorRegistry {
     }
 
     /// @notice Sets the parameters, each within the bounds fixed at deployment. A lower candidate cap
-    /// removes no candidate; it refuses registrations until the count is under it.
+    /// removes no listed candidate; it refuses new approvals, and approved re-registrations, until the
+    /// count is under it.
     function setParameters(Parameters calldata parameters_) external onlyGovernance {
         _checkBounds(parameters_);
         parameters = parameters_;
@@ -363,7 +374,7 @@ contract OperatorRegistry {
         return candidates[candidate];
     }
 
-    /// @notice How many candidates are registered.
+    /// @notice How many approved candidates are registered.
     function candidateCount() external view returns (uint256) {
         return candidateList.length;
     }
@@ -377,7 +388,7 @@ contract OperatorRegistry {
 
     /// @dev The eligible candidate with the most votes, the earlier registration on a tie, when the
     /// role moves to it: it is not the operator in effect, a quorum of total stake is delegated to
-    /// candidates, the operator in effect has served its minimum term, and the winner's votes exceed
+    /// approved candidates, the operator in effect has served its minimum term, and the winner's votes exceed
     /// the incumbent's by the margin. An incumbent that is not an eligible candidate has no votes.
     /// The zero address otherwise.
     function _winner(Parameters memory p) private view returns (address winner) {
@@ -434,6 +445,25 @@ contract OperatorRegistry {
                 || p.maxCandidates > hi.maxCandidates || p.minSelfBond < lo.minSelfBond
                 || p.minSelfBond > hi.minSelfBond
         ) revert ParameterOutOfBounds();
+    }
+
+    /// @dev Adds registered `candidate` to `candidateList`, refusing a full approved cap. Only
+    /// approved candidates count toward the cap, so unapproved registrations cannot fill it.
+    function _enlist(address candidate) private {
+        Parameters memory p = parameters;
+        if (candidateList.length >= p.maxCandidates) revert CandidateCapReached(p.maxCandidates);
+        candidateList.push(candidate);
+        listed[candidate] = candidateList.length;
+    }
+
+    /// @dev Removes `candidate` from `candidateList`, keeping it registered.
+    function _delist(address candidate) private {
+        uint256 position = listed[candidate];
+        address last = candidateList[candidateList.length - 1];
+        candidateList[position - 1] = last;
+        listed[last] = position;
+        candidateList.pop();
+        delete listed[candidate];
     }
 
     /// @dev The vault's name for a release: `keccak256` of its 48-byte launch measurement and its

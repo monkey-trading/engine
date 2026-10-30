@@ -114,11 +114,16 @@ contract OperatorRegistryTest is RegistryTest {
         assertEq(candidate.release, _release(1));
         assertEq(candidate.apiHostname, "api.candidate.example");
         assertEq(candidate.handoverEndpoint, "handover.candidate.example:9443");
-        assertEq(registry.candidateCount(), 1);
+        assertEq(registry.candidateCount(), 0, "unlisted until its release is approved");
         assertEq(registry.keyHolder(_key(alice)), alice);
         assertEq(staking.lockedBond(alice), 2_000e18);
         // Registration alone is not a vote: the stake abstains until it is delegated.
         assertEq(staking.votes(alice), 0);
+        _govern(
+            address(registry), abi.encodeCall(OperatorRegistry.setReleaseApproval, (alice, _digest(1), CONFIG, true))
+        );
+        assertEq(registry.candidateCount(), 1);
+        assertEq(registry.candidateList(0), alice);
     }
 
     function test_RegistrationRefusesEachInvalidCandidacy() public {
@@ -154,17 +159,75 @@ contract OperatorRegistryTest is RegistryTest {
         registry.register(_registration(_key(alice), MIN_BOND, 2));
     }
 
-    function test_RegistrationStopsAtTheCandidateCap() public {
-        for (uint256 i = 0; i < MAX_CANDIDATES; ++i) {
+    function test_UnapprovedRegistrationsDoNotFillTheCandidateCap() public {
+        // Twice the cap registers freely while none of them counts toward it.
+        for (uint256 i = 0; i < 2 * MAX_CANDIDATES; ++i) {
             address candidate = makeAddr(string(abi.encode(i)));
             _stake(candidate, MIN_BOND);
             vm.prank(candidate);
             registry.register(_registration(_key(candidate), MIN_BOND, i + 1));
+            assertEq(registry.candidateCount(), 0);
         }
-        _stake(alice, MIN_BOND);
+        // Approving fills the cap; one more approval reverts until an approval is withdrawn.
+        for (uint256 i = 0; i < MAX_CANDIDATES; ++i) {
+            address candidate = makeAddr(string(abi.encode(i)));
+            _govern(
+                address(registry),
+                abi.encodeCall(OperatorRegistry.setReleaseApproval, (candidate, _digest(i + 1), CONFIG, true))
+            );
+        }
+        assertEq(registry.candidateCount(), MAX_CANDIDATES);
+        address extra = makeAddr(string(abi.encode(uint256(2 * MAX_CANDIDATES))));
+        _stake(extra, MIN_BOND);
+        vm.prank(extra);
+        registry.register(_registration(_key(extra), MIN_BOND, 99));
+        // The full cap refuses the approval; the timelock must schedule before the execute reverts.
+        bytes memory approval = abi.encodeCall(OperatorRegistry.setReleaseApproval, (extra, _digest(99), CONFIG, true));
+        vm.prank(multisig);
+        governance.schedule(address(registry), 0, approval, bytes32(0), bytes32("extra approval"), GOVERNANCE_DELAY);
+        vm.warp(block.timestamp + GOVERNANCE_DELAY);
         vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.CandidateCapReached.selector, MAX_CANDIDATES));
+        governance.execute(address(registry), 0, approval, bytes32(0), bytes32("extra approval"));
+        _govern(
+            address(registry),
+            abi.encodeCall(
+                OperatorRegistry.setReleaseApproval, (makeAddr(string(abi.encode(0))), _digest(1), CONFIG, false)
+            )
+        );
+        _govern(
+            address(registry), abi.encodeCall(OperatorRegistry.setReleaseApproval, (extra, _digest(99), CONFIG, true))
+        );
+        assertEq(registry.candidateCount(), MAX_CANDIDATES);
+        assertEq(registry.candidateOf(extra).adminKey, _key(extra), "unlisted candidates stay registered");
+    }
+
+    function test_WithdrawnApprovalDelistsACandidateThatStaysRegistered() public {
+        _candidate(alice, MIN_BOND, 1);
+        assertEq(registry.candidateCount(), 1);
+        _govern(
+            address(registry), abi.encodeCall(OperatorRegistry.setReleaseApproval, (alice, _digest(1), CONFIG, false))
+        );
+        assertEq(registry.candidateCount(), 0);
+        assertEq(registry.candidateOf(alice).adminKey, _key(alice));
+        // Its candidacy is no longer a vote: a close sees none.
+        _delegate(alice, alice);
+        assertFalse(registry.isEligible(alice));
+    }
+
+    function test_AReregisteredCandidateWhoseReleaseIsStillApprovedRelistsAtOnce() public {
+        _stake(alice, 2 * MIN_BOND);
         vm.prank(alice);
-        registry.register(_registration(_key(alice), MIN_BOND, 99));
+        registry.register(_registration(_key(alice), MIN_BOND, 1));
+        _govern(
+            address(registry), abi.encodeCall(OperatorRegistry.setReleaseApproval, (alice, _digest(1), CONFIG, true))
+        );
+        vm.prank(alice);
+        registry.deregister();
+        vm.warp(block.timestamp + COOLDOWN);
+        vm.prank(alice);
+        registry.register(_registration(_key(alice), MIN_BOND, 1));
+        assertEq(registry.candidateCount(), 1);
+        assertEq(registry.candidateList(0), alice);
     }
 
     function test_ASelfBondCannotBeUnstakedWhileRegisteredNorForOneCooldownAfter() public {

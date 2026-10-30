@@ -10,8 +10,13 @@
 //! effective time: the registry cancels only before then, so a cancellation is always mirrored
 //! before the key it cancels could take over. Turning rotation on drops a signed rotation still
 //! pending, and while rotation is on `RotateOperator` is refused, so only an election moves the
-//! key. Turning rotation off with an election not yet in effect cancels it, and its pending
-//! rotation.
+//! key: an incumbent key change can never race an election. Turning rotation off with an election
+//! not yet in effect cancels it, and its pending rotation.
+//!
+//! #359 §8's registry path for the operator to change its own key is not built yet; the decision
+//! recorded for it: the change takes the same seven-day notice, each change waits the full notice,
+//! and it neither resets nor holds an open election — the mirrored election stands, and where the
+//! two would name different keys the election wins.
 
 use serde::{Deserialize, Serialize};
 
