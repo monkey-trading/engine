@@ -149,7 +149,7 @@ def build():
     return {
         "inputs": statistics["input_sha256"], "engine_revision": statistics["engine_revision"],
         "objective": {
-            "need": "max_divergence_bps + hourly tail move * sqrt(max_age_ms / 1h)",
+            "need": "(max_divergence_bps + 1) + hourly tail move * sqrt(max_age_ms / 1h)",
             "selection_statistic": CEILINGS.SELECTION_STATISTIC,
             "markets_where_validation_could_fail": sum(
                 row["calibration_only_ceiling_bps"] > floor for row in rows if row["proposed_ceiling_bps"]),

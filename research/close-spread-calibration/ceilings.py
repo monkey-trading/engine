@@ -4,9 +4,11 @@ The ceiling is a fixed limit on operator power, so it is not a forecast of price
 charged only a stress minimum and a toxicity add-on (a pure close pays no size spread, and a
 liquidation waives toxicity), which exist to cover one risk: the index being stale or off the true
 price when a client closes. The engine bounds that risk per market in its price rules (a quote may be
-`max_age_ms` old, and the sources it medians may differ by `max_divergence_bps`). So the need is
+`max_age_ms` old, and the sources it medians may differ by `max_divergence_bps`). `compute_index` truncates the sources' spread to whole bps before comparing
+it with that limit, so a market limited to `max_divergence_bps` admits sources just under one bp
+beyond it; the need counts the exclusive bound:
 
-    need = max_divergence_bps + hourly tail move * sqrt(max_age_ms / 1 hour)
+    need = (max_divergence_bps + 1) + hourly tail move * sqrt(max_age_ms / 1 hour)
 
 and the ceiling is the smallest multiple of 5 bps at or above the need, never below the largest
 charge the launch parameters already allow. The method is fixed on the calibration sample and tested
@@ -53,7 +55,9 @@ def horizon_scale(max_age_ms):
 
 
 def need_bps(divergence_bps, hourly_tail_bps, max_age_ms):
-    return divergence_bps + hourly_tail_bps * horizon_scale(max_age_ms)
+    # The engine truncates the divergence to whole bps before comparing, so the limit admits
+    # sources up to just under divergence_bps + 1 apart.
+    return divergence_bps + 1 + hourly_tail_bps * horizon_scale(max_age_ms)
 
 
 def round_up(value_bps, floor_bps, step=LAUNCH_STEP_BPS):
@@ -71,7 +75,7 @@ def exceedance(rows, unit, divergence_bps, max_age_ms, ceiling_bps):
     if not len(values):
         return None
     moves = np.abs(np.expm1(values[:, 3])) * 10_000
-    needs = divergence_bps + moves * horizon_scale(max_age_ms)
+    needs = need_bps(divergence_bps, moves, max_age_ms)
     return float(np.mean(needs > ceiling_bps))
 
 

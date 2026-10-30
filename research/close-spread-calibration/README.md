@@ -43,9 +43,13 @@ it per market: a quote may be `max_age_ms` old and the sources it medians may di
 `max_divergence_bps`. So
 
 ```
-need    = max_divergence_bps + hourly tail move * sqrt(max_age_ms / 1 hour)
+need    = (max_divergence_bps + 1) + hourly tail move * sqrt(max_age_ms / 1 hour)
 ceiling = need rounded up to a multiple of 5 bps, never below the launch close charge (13 bps)
 ```
+
+The divergence limit counts whole bps: `compute_index` truncates the sources' spread before
+comparing it with `max_divergence_bps`, so a market limited to 10 admits sources 10.9 bps apart
+and the need counts the exclusive bound.
 
 The tail move is the upper end of the weekly block-bootstrap interval of the calibration sample's hourly
 p99 of the in-bar move (close against the bar's own open); the open against the previous close, which carries
@@ -55,8 +59,8 @@ overstates their tail. Different asset classes differ because their divergence l
 scale. The 13-bps floor is the stress-minimum 10 plus the top toxicity tier 3 in `production-genesis.toml`;
 a ceiling below it would clamp a launch close at the top stress level.
 
-Volatility enters only through that one-second tail, and a doubled volatility input raises 33 of 37 ceilings,
-by at most 7 bps (the floor absorbs the four calm FX markets). A price jump over a gap, a closure or a contract roll is not a spread: it moves margin and
+Volatility enters only through that one-second tail, and a doubled volatility input raises 31 of 37 ceilings,
+by at most 10 bps (the floor absorbs the four calm FX markets). A price jump over a gap, a closure or a contract roll is not a spread: it moves margin and
 close-out risk. `results/ceiling_effects.csv` shows a close spread cannot repair it: in a 5% gap on EUR-USD
 with no house capital, an uncapped 103-bp close charge cuts the house shortfall by a fifth to a third and
 costs the trader eight times as much. A volatility-responsive charged spread is a different mechanism (the
@@ -71,10 +75,10 @@ a decision). Its parameters are the floor, the step, the burden limit and the ta
 
 The chronological split is the first 78 weeks (calibration) and the last 24 (validation), fixed before any
 selection. The method is fixed on the calibration sample and tested on the validation sample: the
-calibration-only ceiling covers the validation need for 36 of 37 markets (BRENT does not: its validation
-tail is a regime shift), and over validation hours the need exceeds it in at most 1.3% of hours (BRENT; 1.0% or less for the proposed values). The proposed
+calibration-only ceiling covers the validation need for every market, and over validation hours the need
+exceeds it in at most 0.9% of hours (MSFT; 0.9% or less for the proposed values). The proposed
 value then refits on the larger of the two tails, which is in-sample on the validation tail: the out-of-sample test
-can fail only for markets whose calibration-only ceiling is above the 13-bp floor (23 of 37). The weekly bootstrap (200 resamples) describes sampling
+can fail only for markets whose calibration-only ceiling is above the 13-bp floor (30 of 37). The weekly bootstrap (200 resamples) describes sampling
 sensitivity under weekly stationarity; it does not cover proxy error, missing feeds or unseen tails.
 
 ## Engine model boundary

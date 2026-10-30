@@ -46,6 +46,7 @@ def write_report(data):
     at_floor, gap = data["reversal_summary_if_every_ceiling_were_the_floor"], data["gap_comparison"]
     floor = data["objective"]["floor_bps"]
     fx = next(row for row in live if row["asset_class"] == "fx")
+    floor_bound = ", ".join(row["symbol"] for row in live if row["proposed_ceiling_bps"] == floor)
     top_classes = ", ".join(f"{name} {value['share'] * 100:.0f}%" for name, value in reversals["top"].items()
                             if isinstance(value, dict))
     classes = ", ".join(f"{name} {low}" if low == high else f"{name} {low}-{high}"
@@ -59,7 +60,7 @@ def write_report(data):
         "charged a stress minimum plus a toxicity add-on only (no size spread on a pure close; liquidation waives",
         "toxicity), which cover one risk: the index being stale or off the true price when a client closes. The",
         "engine bounds that risk per market in its price rules, so the need is", "",
-        "`need = max_divergence_bps + hourly tail move * sqrt(max_age_ms / 1 hour)`", "",
+        "`need = (max_divergence_bps + 1) + hourly tail move * sqrt(max_age_ms / 1 hour)`", "",
         f"The ceiling is the smallest multiple of {data['objective']['step_bps']} bps at or above the need, never "
         f"below {data['objective']['floor_bps']} bps (the largest close charge the launch parameters allow, so no launch "
         "close is clamped). The tail move is the upper end of the "
@@ -86,8 +87,8 @@ def write_report(data):
         "calibration-only ceiling is above the floor.", "",
         "Burden: every proposed ceiling is at most "
         f"{max(row['ceiling_percent_of_min_margin'] for row in live):.0f}% of the market's smallest initial margin "
-        f"(limit {data['objective']['burden_limit_percent_of_min_initial_margin']}%). FX and index markets sit at "
-        f"the {floor}-bp floor, {floor / fx['min_initial_margin_bps'] * 100:.0f}% of their "
+        f"(limit {data['objective']['burden_limit_percent_of_min_initial_margin']}%). Floor-bound ceilings "
+        f"({floor_bound}) sit at the {floor}-bp floor, {floor / fx['min_initial_margin_bps'] * 100:.0f}% of their "
         f"{fx['min_initial_margin_bps']}-bp margin, so the launch parameters themselves already cost them that share "
         "of margin to close at the top stress level: an owner decision for the launch stress minimum, not for the ceiling.",
         "",

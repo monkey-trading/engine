@@ -53,14 +53,14 @@ class CeilingTests(unittest.TestCase):
         self.assertEqual(C.round_up(30.2, 13), 35)
 
     def test_need_adds_divergence_to_the_scaled_hourly_tail(self):
-        self.assertAlmostEqual(C.need_bps(10, 360, 1_000), 10 + 360 / 60)
+        self.assertAlmostEqual(C.need_bps(10, 360, 1_000), 11 + 360 / 60)
 
     def test_proposal_traces_to_its_inputs(self):
         row = C.propose(item(upper=600.0, validation_p99=100.0), PARAMS)
-        self.assertAlmostEqual(row["need_bps"], 20.0)
-        self.assertEqual((row["calibration_only_ceiling_bps"], row["proposed_ceiling_bps"]), (20, 20))
+        self.assertAlmostEqual(row["need_bps"], 21.0)
+        self.assertEqual((row["calibration_only_ceiling_bps"], row["proposed_ceiling_bps"]), (25, 25))
         self.assertEqual(row["ceiling_binding_constraint"], "reference-risk need")
-        self.assertAlmostEqual(row["ceiling_percent_of_min_margin"], 40.0)
+        self.assertAlmostEqual(row["ceiling_percent_of_min_margin"], 50.0)
         self.assertFalse(row["within_burden_limit"])
 
     def test_calm_market_takes_the_launch_charge(self):
@@ -93,9 +93,11 @@ class CeilingTests(unittest.TestCase):
     def test_exceedance_counts_active_hours_only(self):
         closed = np.iinfo(np.int32).min
         rows = np.array([[0, 0, 0, 0], [0, 0, 0, 600_000], [closed] * 4], dtype=np.int32)
-        # An hourly move of 6% (618 bps) scales to 10.3 bps over one second; the divergence of 10 adds to it.
+        # An hourly move of 6% (618 bps) scales to 10.3 bps over one second; the divergence limit of 10
+        # admits sources just under 11 bps apart, so the need counts 11.
         self.assertEqual(C.exceedance(rows, 1e7, 10, 1_000, 15), .5)
-        self.assertEqual(C.exceedance(rows, 1e7, 10, 1_000, 21), 0)
+        self.assertEqual(C.exceedance(rows, 1e7, 10, 1_000, 21), .5)
+        self.assertEqual(C.exceedance(rows, 1e7, 10, 1_000, 22), 0)
         self.assertIsNone(C.exceedance(np.array([[closed] * 4], dtype=np.int32), 1e7, 10, 1_000, 1))
         self.assertTrue(math.isfinite(C.exceedance(rows, 1e7, 10, 1_000, 0)))
 
