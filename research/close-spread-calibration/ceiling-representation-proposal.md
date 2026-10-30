@@ -17,14 +17,14 @@ Choices 1 and 2 depend on each other, as the second section says.
 
 ## 1. Per-market registry
 
-The ceilings span 13 to 35 bps by class: FX and indices 13, commodities 13 to 20, shares 13 to 20, crypto
-30 to 35. They differ because the genesis price rules do: the divergence limit is 5 bps for FX, 10 for
+The ceilings span 13 to 35 bps by class: FX 13, indices 13 to 15, commodities 15 to 20, shares 15 to 20,
+crypto 30 to 35. They differ because the genesis price rules do: the divergence limit is 5 bps for FX, 10 for
 indices, commodities and shares, and 25 for crypto, and the ceiling covers that limit plus a one-second tail.
 One global value fails whichever way it is set:
 
 - At the largest value (35 bps), 14 of 37 markets (every FX, index and commodity market) exceed the 30%-of-margin
   burden limit; EUR-USD's 50-bp minimum margin would pay 70% of itself to close.
-- At the strictest (13 bps), 23 of 37 markets may charge less than their reference-risk need.
+- At the strictest (13 bps), 30 of 37 markets may charge less than their reference-risk need.
 
 Representation:
 
@@ -47,7 +47,7 @@ Representation:
 
 A pure close's charge is the stress minimum plus the toxicity add-on, so today it is a function of the global
 parameters alone: at most 13 bps on every market. Refusing a `SetParams` whose maximum close charge exceeds the
-strictest ceiling would hold that sum at 13 for every market, whatever the registry says: for pure closes, 23 of 37
+strictest ceiling would hold that sum at 13 for every market, whatever the registry says: for pure closes, 30 of 37
 markets would have headroom they can never use (crypto 17 to 22 bps, shares and commodities up to 7). The registry
 would still decide which reversals pass (choice 3), but it would add nothing to what a close can be charged.
 
@@ -60,7 +60,7 @@ ceiling is at least 13.
 The cost is a change to #344's dev scenario. A signed `SetParams` that would raise a close above its
 ceiling is accepted and the close pays the ceiling, instead of being refused as `admin_rejected`; the fill
 records the charge actually paid. If the owner wants the refusal, it is sound, and the registry still matters for reversals: with every ceiling at
-13 bps instead, the share of grid reversals refused is 0%, 4.5% and 24.5% (calm, elevated, top), against 0%, 1.9% and 16.4%
+13 bps instead, the share of grid reversals refused is 0%, 4.5% and 24.5% (calm, elevated, top), against 0%, 1.1% and 13.1%
 with the registry.
 
 The cap protects what the house forgoes only weakly: in a 5% gap on EUR-USD with no house capital, an uncapped
@@ -71,8 +71,8 @@ the ceiling is not a gap-risk instrument (`ceiling_effects.csv`).
 
 A reversal fills at one blended price: the opening slice's size spread is divided over the whole quantity, so
 it lands on the closing slice too. Over a grid of 6 position sizes and 4 opening fractions per market, the
-share of reversals whose blended spread exceeds the market's ceiling is 0% at calm, 1.9% at the elevated stress
-level and 16.4% at the top level (shares 28%, commodities 7%, indices 4%, FX and crypto 0%). The grid is not a
+share of reversals whose blended spread exceeds the market's ceiling is 0% at calm, 1.1% at the elevated stress
+level and 13.1% at the top level (shares 23%, commodities 3%, indices 2%, FX and crypto 0%). The grid is not a
 flow distribution, but it shows refusal costs nothing in normal conditions.
 
 Recommended rule: clamp the stress and toxicity part (it applies to every fill), then refuse a reversal when
@@ -108,7 +108,7 @@ one-unit index. The floor needs neither. The truncated `Fill.spread_bps` must no
 ## 5. A listing with no ceiling: refuse
 
 #147 forbids hiding missing evidence behind a uniform fallback, and the table shows none is defensible: a
-single value is above the burden limit for 14 markets at 35 bps and below the need of 23 at 13. A class
+single value is above the burden limit for 14 markets at 35 bps and below the need of 30 at 13. A class
 fallback would extend one asset class's evidence to an instrument that was never calibrated. So a post-genesis
 `UpsertMarket` of an ID with no entry is refused.
 
@@ -121,10 +121,10 @@ bound before #344 is designed.
 ## Decisions for the owner
 
 - Adopt or amend the objective: the 13-bp floor, the 30%-of-margin burden limit, the 5-bp step and the tail statistic.
-- FX and index ceilings sit at 26% of their 50-bp margin because the launch close charge itself does: consider
-  a lower launch stress minimum for them.
+- The FX ceilings and the US500, US30 and UK100 ceilings sit at 26% of their 50-bp margin because the launch
+  close charge itself does: consider a lower launch stress minimum for them.
 - Adopt the per-market values, or ask for specific markets to wait for execution-horizon reference data
-  (DE40 and UK100 are low confidence; BRENT's value uses a refit after its validation shock).
+  (DE40 and UK100 are low confidence).
 - The five choices above, and the path for a new market's entry.
 
 ## Development, migration and promotion
