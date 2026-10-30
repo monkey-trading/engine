@@ -17,7 +17,13 @@ async fn live_marks_reach_the_cache_and_flush_when_the_sequencer_stops() {
     let (mut node, clock) = priced_node(&dir);
     let store = Store::open_in(&scratch_dir("marks-live-cache"), Retentions::defaults()).unwrap();
     let reader = store.reader();
-    let task = tokio::spawn(run::run(store, node.take_marks(), None, BTreeMap::new(), node.tx.downgrade()));
+    let task = tokio::spawn(run::run(
+        store,
+        node.tx.downgrade(),
+        None,
+        BTreeMap::new(),
+        run::Live { samples: node.take_marks(), buffered: Vec::new() },
+    ));
 
     // Two price moves two seconds apart; then the shutdown drops every sender, and the marks
     // task flushes and ends.

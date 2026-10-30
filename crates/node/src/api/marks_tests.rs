@@ -73,25 +73,33 @@ async fn a_markets_marks_page_carries_ohlc_provenance_and_the_cap() {
 async fn a_window_wider_than_the_limit_pages_by_next() {
     let mut store = Store::open_in(&scratch_dir("marks-api-pages"), Retentions::defaults()).unwrap();
     let base = 1_792_489_860_000_i64;
-    for n in 0..5 {
+    for n in 0_i64..5 {
         store.observe(&[(1, base + n * 60_000, "1".parse().unwrap())]).unwrap();
     }
     let mut state = crate::api::tests::api_state(true).0;
     state.marks = store.reader();
     let addr = serve_state(state).await;
 
-    // Three entries under a limit of two: the second page starts where `next` points.
-    let (status, first) = page(addr, "/v1/markets/1/marks?resolution=1m&limit=2").await;
-    assert_eq!(status, 200);
-    assert_eq!(first["entries"].as_array().unwrap().len(), 2);
-    let next = first["next"].as_i64().unwrap();
-    assert_eq!(next, base + 2 * 60_000);
-    let (status, second) = page(addr, &format!("/v1/markets/1/marks?resolution=1m&from_ms={next}&limit=2")).await;
-    assert_eq!(status, 200);
-    let second_entries = second["entries"].as_array().unwrap();
-    assert_eq!(second_entries.len(), 2);
-    assert_eq!(second_entries[0]["ts"].as_i64().unwrap(), base + 2 * 60_000);
-    assert_eq!(second["next"], serde_json::Value::Null);
+    // Five buckets under a limit of two page three times: `next` is the last entry's time plus
+    // one, every bucket appears exactly once, and only the last page is exhausted.
+    let mut from = i64::MIN;
+    let mut seen = Vec::new();
+    for page_no in 0..3 {
+        let query = if from == i64::MIN {
+            "/v1/markets/1/marks?resolution=1m&limit=2".to_owned()
+        } else {
+            format!("/v1/markets/1/marks?resolution=1m&from_ms={from}&limit=2")
+        };
+        let (status, got) = page(addr, &query).await;
+        assert_eq!(status, 200);
+        let entries = got["entries"].as_array().unwrap();
+        assert!(entries.len() <= 2, "{got}");
+        seen.extend(entries.iter().map(|entry| entry["ts"].as_i64().unwrap()));
+        let exhausted = got["next"].is_null();
+        assert_eq!(exhausted, page_no == 2, "{got}: exhaustion only on the last page");
+        from = got["next"].as_i64().unwrap_or(i64::MIN);
+    }
+    assert_eq!(seen, (0..5).map(|n| base + n * 60_000).collect::<Vec<_>>());
     // `to_ms` bounds the window from above.
     let (_, window) =
         page(addr, &format!("/v1/markets/1/marks?resolution=1m&from_ms={base}&to_ms={}", base + 60_000)).await;

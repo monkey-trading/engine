@@ -170,7 +170,7 @@ retention = "365d"
 # have. With the mock feeds above there are no venue symbols to backfill; with
 # feeds.provider = "venues" the Coinbase connections' symbols backfill from the
 # venue's public candles endpoint.
-[history.marks]
+# [history.marks]
 # How long each resolution's buckets stay, counted back from the newest mark.
 # retention_1s = "48h"
 # retention_1m = "60d"

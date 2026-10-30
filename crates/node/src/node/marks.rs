@@ -1,7 +1,7 @@
 //! Marks-cache startup: open the derived cache before recovery so the replay seeds it, and hand
 //! the store, the API's reader, and the backfill settings to the task and router that use them.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
@@ -50,10 +50,12 @@ pub(super) fn into_task_store(shared: Rc<RefCell<Store>>) -> Store {
     }
 }
 
-/// The sink recovery's replay hands each changed mark to; it buffers batches into the store.
-pub(super) fn recovery_sink(shared: &Rc<RefCell<Store>>) -> crate::history::marks::MarkSink {
-    let mut seeder = Seeder::new(shared.clone());
-    Box::new(move |market, ts, mark| seeder.sample((market, ts, mark)))
+/// The sink recovery's replay hands each changed mark to, with a flag that is set if any seed
+/// write failed: recovery refuses to serve on it, rather than signing a partially seeded cache.
+pub(super) fn recovery_sink(shared: &Rc<RefCell<Store>>) -> (crate::history::marks::MarkSink, Rc<Cell<bool>>) {
+    let failed = Rc::new(Cell::new(false));
+    let mut seeder = Seeder::new(shared.clone(), failed.clone());
+    (Box::new(move |market, ts, mark| seeder.sample((market, ts, mark))), failed)
 }
 
 /// Attaches the marks-sample channel to `sequencer`, returning the receiver the marks task drains.
@@ -63,13 +65,18 @@ pub(super) fn track(sequencer: &mut Sequencer) -> mpsc::Receiver<MarkSample> {
     rx
 }
 
+/// The live-sample plumbing the marks task drains.
+pub(super) fn live(rx: mpsc::Receiver<crate::history::marks::MarkSample>) -> crate::history::marks::run::Live {
+    crate::history::marks::run::Live { samples: rx, buffered: Vec::new() }
+}
+
 /// The supervised marks task: writes live mark reports and backfills provider history.
 pub(super) async fn task(
     store: Store,
-    samples: mpsc::Receiver<MarkSample>,
+    sequencer: mpsc::WeakSender<Request>,
     backfill: Option<BackfillSection>,
     sources: BTreeMap<MarketId, Source>,
-    sequencer: mpsc::WeakSender<Request>,
+    live: crate::history::marks::run::Live,
 ) -> (&'static str, anyhow::Result<()>) {
-    ("marks", crate::history::marks::run::run(store, samples, backfill, sources, sequencer).await)
+    ("marks", crate::history::marks::run::run(store, sequencer, backfill, sources, live).await)
 }

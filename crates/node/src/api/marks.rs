@@ -1,7 +1,8 @@
 //! `GET /v1/markets/{id}/marks`: a market's index-mark history from the derived marks cache, one
 //! resolution and one bounded window at a time, every entry labeled log-derived or provider-seeded
-//! so a client can weigh seeded history. Like every other read, the answer is signed; a window
-//! wider than the page cap pages by following `next` as `from_ms`.
+//! so a client can weigh seeded history: a bucket a log mark reached holds exactly what the log
+//! proves. Like every other read, the answer is signed; a window wider than the page cap pages by
+//! following `next` as `from_ms`.
 
 use axum::Json;
 use axum::extract::{Path, Query, State};

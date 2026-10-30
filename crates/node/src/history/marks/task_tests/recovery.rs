@@ -49,7 +49,8 @@ async fn recovery_seeds_the_cache_and_reseeding_matches() {
 fn seed_from_log(dir: &std::path::Path) -> Store {
     let store = Store::open_in(&scratch_dir("marks-recovery-cache"), Retentions::defaults()).unwrap();
     let shared = Rc::new(RefCell::new(store));
-    let mut seeder = Seeder::new(shared.clone());
+    let failed = Rc::new(std::cell::Cell::new(false));
+    let mut seeder = Seeder::new(shared.clone(), failed);
     Sequencer::read_log_with_authorities(
         dir,
         Some(CheckpointDomain { chain_id: 31_337, vault: AccountId([0; 20]) }),

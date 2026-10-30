@@ -6,7 +6,7 @@
 //! transaction, a schema this code did not create. Nothing here is authoritative: the log and the
 //! provider are, and either rebuilds this cache.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -18,7 +18,7 @@ use engine_core::types::{MarketId, Millis};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use tokio::sync::Semaphore;
 use tokio::task::spawn_blocking;
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::history::marks::{MarkEntry, MarkSample, MarksPage, Provenance, Resolution, Retentions};
 use crate::history::store::{self, SchemaRow, read_only};
@@ -39,11 +39,15 @@ const SCHEMA: &str = "
         provenance TEXT NOT NULL,
         PRIMARY KEY (market, resolution, bucket)
     ) WITHOUT ROWID;
+    CREATE INDEX marks_by_window ON marks (resolution, bucket);
     CREATE TABLE backfilled (
         market INTEGER PRIMARY KEY,
         venue TEXT NOT NULL,
         symbol TEXT NOT NULL,
-        at INTEGER NOT NULL
+        at INTEGER NOT NULL,
+        depth_1m INTEGER NOT NULL,
+        depth_1h INTEGER NOT NULL,
+        depth_1d INTEGER NOT NULL
     );
 ";
 /// A window read: the bucket and its OHLC, as stored.
@@ -172,8 +176,9 @@ impl Store {
     /// Takes `samples`, log-derived marks a command left, in sequenced time order. In one
     /// transaction, which holds the write lock from its start and first checks the schema: merges
     /// each sample into its bucket at every resolution — open kept, high and low widened, close
-    /// moved, the bucket now log-derived — then drops buckets older than the retention policy
-    /// allows, counted back from the newest sample.
+    /// moved, the bucket now log-derived, a provider-seeded bucket replaced by the first log mark
+    /// it receives — then drops buckets older than the retention policy allows, counted back from
+    /// the newest sample.
     /// Error cases:
     /// - the file holds a schema this code did not create
     /// - the transaction fails, or a stored price does not parse
@@ -238,32 +243,66 @@ impl Store {
         Ok(inserted)
     }
 
-    /// The markets a provider backfill has completed for, so a restart does not refetch.
+    /// Deletes every log-derived bucket, so a recovery re-derivation rebuilds exactly what the
+    /// verified log proves and nothing the host wrote into those rows while the node was stopped;
+    /// provider-seeded buckets stay until a log mark replaces them. One transaction, checked
+    /// against the schema.
     /// Error cases:
-    /// - the markets cannot be read
-    pub fn backfilled(&self) -> anyhow::Result<BTreeSet<MarketId>> {
-        let mut query = self.conn.prepare("SELECT market FROM backfilled").context("reading backfilled markets")?;
-        let rows: Vec<i64> = query
-            .query_map([], |row| row.get(0))
+    /// - the delete fails
+    pub fn reset_log_derived(&mut self) -> anyhow::Result<()> {
+        let tx =
+            self.conn.transaction_with_behavior(TransactionBehavior::Immediate).context("starting a marks reset")?;
+        store::check_schema(&tx, &self.schema, &self.path)?;
+        let removed = tx
+            .execute("DELETE FROM marks WHERE provenance = ?1", [Provenance::LogDerived.as_str()])
+            .context("resetting log-derived marks")?;
+        tx.commit().context("committing a marks reset")?;
+        debug!(removed, "log-derived marks reset for re-derivation");
+        Ok(())
+    }
+
+    /// The provider backfills completed so far, by market, with the depths each covered: a backfill
+    /// re-runs when the config asks for different depths.
+    /// Error cases:
+    /// - the markers cannot be read
+    pub fn backfilled(&self) -> anyhow::Result<BTreeMap<MarketId, (Millis, Millis, Millis)>> {
+        let mut query = self
+            .conn
+            .prepare("SELECT market, depth_1m, depth_1h, depth_1d FROM backfilled")
+            .context("reading backfilled markets")?;
+        let rows: Vec<(i64, Millis, Millis, Millis)> = query
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
             .context("reading backfilled markets")?
             .collect::<Result<_, _>>()
             .context("reading backfilled markets")?;
-        let markets = rows
-            .iter()
-            .map(|market| u32::try_from(*market).with_context(|| format!("a stored market {market} is out of range")))
-            .collect::<anyhow::Result<BTreeSet<_>>>()?;
-        Ok(markets)
+        rows.iter()
+            .map(|(market, m, h, d)| {
+                let market =
+                    u32::try_from(*market).with_context(|| format!("a stored market {market} is out of range"))?;
+                Ok((market, (*m, *h, *d)))
+            })
+            .collect()
     }
 
-    /// Records that `market`'s backfill from `venue` for `symbol` completed at `at`.
+    /// Records that `market`'s backfill from `venue` for `symbol` completed at `at`, covering the
+    /// configured `depths`.
     /// Error cases:
     /// - the marker cannot be written
-    pub fn mark_backfilled(&mut self, market: MarketId, venue: &str, symbol: &str, at: Millis) -> anyhow::Result<()> {
+    pub fn mark_backfilled(
+        &mut self,
+        market: MarketId,
+        venue: &str,
+        symbol: &str,
+        at: Millis,
+        depths: (Millis, Millis, Millis),
+    ) -> anyhow::Result<()> {
         self.conn
             .execute(
-                "INSERT INTO backfilled (market, venue, symbol, at) VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT (market) DO UPDATE SET venue = excluded.venue, symbol = excluded.symbol, at = excluded.at",
-                params![market, venue, symbol, at],
+                "INSERT INTO backfilled (market, venue, symbol, at, depth_1m, depth_1h, depth_1d)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT (market) DO UPDATE SET venue = excluded.venue, symbol = excluded.symbol,
+                     at = excluded.at, depth_1m = excluded.depth_1m, depth_1h = excluded.depth_1h, depth_1d = excluded.depth_1d",
+                params![i64::from(market), venue, symbol, at, depths.0, depths.1, depths.2],
             )
             .with_context(|| format!("recording the backfill of {market}"))?;
         Ok(())
@@ -285,13 +324,22 @@ fn merge(
 ) -> anyhow::Result<()> {
     let row = existing
         .query_row(params![i64::from(market), resolution as i64, bucket], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+            ))
         })
         .optional()
         .with_context(|| format!("reading the {market} {resolution:?} bucket at {bucket}"))?;
     let (open, high, low, close) = match row {
         None => (mark, mark, mark, mark),
-        Some((open, high, low, _)) => {
+        // A provider-seeded bucket the log now speaks for is rebuilt from the log mark alone, so
+        // a log-derived bucket is exactly what the public log proves.
+        Some((_, _, _, _, provenance)) if provenance != Provenance::LogDerived.as_str() => (mark, mark, mark, mark),
+        Some((open, high, low, _, _)) => {
             let fixed =
                 |text: &str| text.parse::<Fixed>().with_context(|| format!("a stored mark {text:?} does not parse"));
             let open = fixed(&open)?;

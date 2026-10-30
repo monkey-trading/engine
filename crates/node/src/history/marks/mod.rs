@@ -14,7 +14,7 @@ pub use store::Reader;
 pub(crate) use store::Store;
 
 use anyhow::Context;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -178,24 +178,36 @@ impl Retentions {
 }
 
 /// Buffers the mark samples recovery's replay takes and flushes them to the cache in batches, so
-/// seeding a long log costs a transaction per thousand samples, not per sample. A write failure
-/// alerts and leaves the cache partial: it is derived state, reseeded at the next recovery.
+/// seeding a long log costs a transaction per thousand samples, not per sample. The first sample
+/// resets the cache's log-derived content, so recovery re-derives exactly what the verified log
+/// proves and nothing a host wrote into those rows while the node was stopped. A write failure
+/// alerts and sets `failed`, which recovery treats as a refused boot: the cache must never serve
+/// partially seeded history as if it were complete.
 pub(crate) struct Seeder {
     store: Rc<RefCell<Store>>,
     buffered: Vec<MarkSample>,
+    reset: bool,
+    failed: Rc<Cell<bool>>,
 }
 
 /// How many samples `Seeder` buffers before one flush.
 const BATCH: usize = 1024;
 
 impl Seeder {
-    /// A seeder writing `store`, which recovery replays into.
-    pub fn new(store: Rc<RefCell<Store>>) -> Self {
-        Self { store, buffered: Vec::new() }
+    /// A seeder writing `store`, which recovery replays into, reporting failure through `failed`.
+    pub fn new(store: Rc<RefCell<Store>>, failed: Rc<Cell<bool>>) -> Self {
+        Self { store, buffered: Vec::new(), reset: false, failed }
     }
 
-    /// Buffers one sample, flushing at `BATCH`.
+    /// Resets the log-derived content on the first sample, then buffers it, flushing at `BATCH`.
     pub fn sample(&mut self, sample: MarkSample) {
+        if !self.reset {
+            self.reset = true;
+            if let Err(e) = self.store.borrow_mut().reset_log_derived() {
+                warn!(alert = "marks_seed_failed", "resetting the marks cache for re-derivation: {e:#}");
+                self.failed.set(true);
+            }
+        }
         self.buffered.push(sample);
         if self.buffered.len() >= BATCH {
             self.flush();
@@ -209,6 +221,7 @@ impl Seeder {
         }
         if let Err(e) = self.store.borrow_mut().observe(&self.buffered) {
             warn!(alert = "marks_seed_failed", "{e:#}");
+            self.failed.set(true);
         }
         self.buffered.clear();
     }

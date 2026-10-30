@@ -42,7 +42,7 @@ use engine_core::command::{AdminCommand, Command, Sequenced};
 use engine_core::deposits::LegacyDeposit;
 use engine_core::event::Event;
 use engine_core::protocol::ProtocolVersion;
-use engine_core::types::{AccountId, MarketId, Millis};
+use engine_core::types::{AccountId, Millis};
 use engine_core::{Engine, Fixed};
 use tokio::sync::{broadcast, mpsc, watch};
 use tracing::{error, info, info_span, warn};
@@ -50,7 +50,6 @@ use tracing::{error, info, info_span, warn};
 use crate::benchmarks::BenchmarkSchedule;
 use crate::checkpoints::accounting::Accounting;
 use crate::clock::Clock;
-use crate::history::marks::MarkSample;
 use crate::log::{CommandEntry, LogEntry, LogWriter, SegmentedLog};
 use crate::metrics::Metrics;
 use crate::sequencer::alerts::{BenchmarkAlerts, DeficitAlert, alert_on, reinstated_receipt, resolve_reversal};
@@ -115,9 +114,8 @@ pub struct Sequencer {
     /// The newest checkpoint, with its recovery facts as they stood then, when its capture was
     /// skipped because another was in flight.
     uncaptured: Option<snapshots::Deferred>,
-    /// Where live mark changes go for the derived marks cache, and the last mark per market.
-    marks_tx: Option<mpsc::Sender<MarkSample>>,
-    last_marks: BTreeMap<MarketId, Fixed>,
+    /// Live mark reporting for the derived marks cache.
+    marks: marks::Marks,
 }
 
 /// A log read from disk and replayed, before anything is written to it.
@@ -457,6 +455,7 @@ impl Sequencer {
         if std::mem::take(&mut self.benchmark_schedule_dirty) {
             self.benchmark_schedule.send_replace(BenchmarkSchedule::from_engine(&self.engine));
         }
+        self.release_marks();
         for msg in self.outbox.drain(..) {
             if let StreamBody::Withdrawal(w) = &msg.body
                 && self.withdrawals.send(w.clone()).is_err()

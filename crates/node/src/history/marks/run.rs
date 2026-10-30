@@ -7,12 +7,11 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use anyhow::Context;
-use engine_core::types::MarketId;
+use engine_core::types::{MarketId, Millis};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Instant, interval};
 use tracing::{info, warn};
 
-use crate::clock::now_ms;
 use crate::config::BackfillSection;
 use crate::history::marks::MarkSample;
 use crate::history::marks::backfill::{self, Candles, Source};
@@ -20,7 +19,7 @@ use crate::history::marks::store::Store;
 use crate::sequencer::{Query, Request};
 
 /// Samples buffered before one write.
-const BATCH: usize = 512;
+pub(crate) const BATCH: usize = 512;
 /// How many samples the sequencer may have in flight; over it, a sample is dropped, never the
 /// sequencer delayed.
 pub(crate) const QUEUE: usize = 4096;
@@ -31,41 +30,48 @@ const BACKFILL_EVERY: Duration = Duration::from_secs(10);
 /// How long after a failed backfill the market is retried.
 const RETRY_AFTER: Duration = Duration::from_secs(300);
 
+/// The live-sample plumbing the task owns: the queue's receiver and the write buffer. A backfill
+/// holds the task for minutes; it takes `&mut Live` and drains between page fetches, so the queue
+/// cannot fill and drop samples while it works.
+pub(crate) struct Live {
+    pub samples: mpsc::Receiver<MarkSample>,
+    pub buffered: Vec<MarkSample>,
+}
+
 /// Runs until the sequencer's samples end: flushing live mark reports, then backfilling each
 /// listed mapped market once per process (a restart, or the markers on disk, skip completed ones).
 /// Error cases:
 /// - a cache write fails, or the listed markets cannot be queried
 pub async fn run(
     mut store: Store,
-    mut samples: mpsc::Receiver<MarkSample>,
-    backfill: Option<BackfillSection>,
-    sources: BTreeMap<MarketId, Source>,
     // A weak sender: the task must never keep the sequencer's request channel open, or a shutdown
     // deadlocks — the sequencer would wait for this task's sender to drop while this task waits for
     // the sequencer's marks sender to drop.
     sequencer: mpsc::WeakSender<Request>,
+    backfill: Option<BackfillSection>,
+    sources: BTreeMap<MarketId, Source>,
+    mut live: Live,
 ) -> anyhow::Result<()> {
     let candles = backfill.as_ref().map(|cfg| Candles::new(&cfg.base_url)).transpose()?;
-    let mut buffered = Vec::new();
     let mut flush = interval(FLUSH_EVERY);
     let mut backfill_tick = interval(BACKFILL_EVERY);
     let mut retry_at: BTreeMap<MarketId, Instant> = BTreeMap::new();
     loop {
         tokio::select! {
-            sample = samples.recv() => {
+            sample = live.samples.recv() => {
                 // The sequencer is gone: flush and end, as a shutdown does.
                 let Some(sample) = sample else {
-                    write(&mut store, &mut buffered)?;
+                    write(&mut store, &mut live.buffered)?;
                     return Ok(());
                 };
-                buffered.push(sample);
-                if buffered.len() >= BATCH {
-                    write(&mut store, &mut buffered)?;
+                live.buffered.push(sample);
+                if live.buffered.len() >= BATCH {
+                    write(&mut store, &mut live.buffered)?;
                 }
             }
             _ = flush.tick() => {
-                if !buffered.is_empty() {
-                    write(&mut store, &mut buffered)?;
+                if !live.buffered.is_empty() {
+                    write(&mut store, &mut live.buffered)?;
                 }
             }
             _ = backfill_tick.tick(), if candles.is_some() && backfill.is_some() => {
@@ -76,6 +82,7 @@ pub async fn run(
                     &sources,
                     &sequencer,
                     &mut retry_at,
+                    &mut live,
                 )
                 .await?;
             }
@@ -92,8 +99,9 @@ fn write(store: &mut Store, buffered: &mut Vec<MarkSample>) -> anyhow::Result<()
     Ok(())
 }
 
-/// Backfills one listed, mapped, not-yet-backfilled market, and retries a failed one after
-/// `RETRY_AFTER`. Which market is unspecified: the listing order decides, one per tick.
+/// Backfills one listed, mapped market whose recorded coverage is not the depths the config asks
+/// for now, and retries a failed one after `RETRY_AFTER`. Which market is unspecified: the
+/// listing order decides, one per tick.
 /// Error cases:
 /// - the listed markets cannot be queried, or a completed backfill's marker cannot be written
 async fn backfill_due(
@@ -103,21 +111,33 @@ async fn backfill_due(
     sources: &BTreeMap<MarketId, Source>,
     sequencer: &mpsc::WeakSender<Request>,
     retry_at: &mut BTreeMap<MarketId, Instant>,
+    live: &mut Live,
 ) -> anyhow::Result<()> {
     // The sequencer is gone (shutdown): no listing to query, and nothing else to do.
     let Some(sequencer) = sequencer.upgrade() else { return Ok(()) };
-    let listed = listed_markets(&sequencer).await?;
+    let (listed, engine_now) = listed_markets(&sequencer).await?;
+    // No command sequenced yet (genesis waits for trusted time): no proven time to anchor on.
+    if engine_now == 0 {
+        return Ok(());
+    }
+    let depths = (
+        Millis::try_from(cfg.depth_1m.as_millis()).context("backfill depth_1m")?,
+        Millis::try_from(cfg.depth_1h.as_millis()).context("backfill depth_1h")?,
+        Millis::try_from(cfg.depth_1d.as_millis()).context("backfill depth_1d")?,
+    );
     let done = store.backfilled().context("reading backfilled markets")?;
     for market in listed {
-        if done.contains(&market) || retry_at.get(&market).is_some_and(|at| Instant::now() < *at) {
+        // A market is done when the recorded backfill covers the depths the config now asks for.
+        let covered = done.get(&market).is_some_and(|covered| *covered == depths);
+        if covered || retry_at.get(&market).is_some_and(|at| Instant::now() < *at) {
             continue;
         }
         let Some(source) = sources.get(&market) else { continue };
-        match backfill::seed_market(candles, source, market, cfg, now_ms(), store).await {
+        match backfill::seed_market(candles, source, market, cfg, engine_now, store, live).await {
             Ok(seeded) => {
                 info!(market, venue = source.venue.name(), symbol = %source.symbol, seeded, "marks backfilled from the provider");
                 store
-                    .mark_backfilled(market, source.venue.name(), &source.symbol, now_ms())
+                    .mark_backfilled(market, source.venue.name(), &source.symbol, engine_now, depths)
                     .context("recording the backfill")?;
                 retry_at.remove(&market);
             }
@@ -131,13 +151,14 @@ async fn backfill_due(
     Ok(())
 }
 
-/// The markets the engine lists now, in id order.
+/// The markets the engine lists now, in id order, with the engine's time: the admitted stamp the
+/// backfill anchors its windows and pruning on, never the host clock.
 /// Error cases:
 /// - the sequencer does not answer
-async fn listed_markets(sequencer: &mpsc::Sender<Request>) -> anyhow::Result<Vec<MarketId>> {
+async fn listed_markets(sequencer: &mpsc::Sender<Request>) -> anyhow::Result<(Vec<MarketId>, Millis)> {
     let (reply, rx) = oneshot::channel();
     let query: Query = Box::new(move |engine: &engine_core::Engine| {
-        let _ = reply.send(engine.markets().keys().copied().collect::<Vec<_>>());
+        let _ = reply.send((engine.markets().keys().copied().collect::<Vec<_>>(), engine.now()));
     });
     sequencer
         .send(Request::Query(query))

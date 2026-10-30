@@ -1454,8 +1454,10 @@ log`). History is public, like the log.
 `{"market", "resolution", "entries", "next", "max_limit"}`: one market's index-mark history from the
 derived marks cache, oldest first. Each entry is one bucket — its window start `ts` and its OHLC,
 prices as decimal strings — with a `provenance` of `log_derived` or `seeded_from_provider`, so a
-client can weigh seeded history against what the public log proves; a bucket a live mark has touched
-is log-derived whatever seeded it. `?limit=` is 1 to `max_limit` (2000), 500 by default, and a
+client can weigh seeded history against what the public log proves; a bucket a log mark has reached
+holds exactly what the public log proves, and every recovery re-derives the log-derived buckets from
+the verified log, so a `log_derived` label never covers provider values or rows the host wrote while
+the node was stopped. `?limit=` is 1 to `max_limit` (2000), 500 by default, and a
 window wider than that pages by passing a page's `next` as `from_ms`. The cache is derived state,
 never sequenced: recovery seeds it from the log's replay, the sequencer's live mark reports keep it
 current, and `[history.marks.backfill]`, where configured, fetches historical candles from the

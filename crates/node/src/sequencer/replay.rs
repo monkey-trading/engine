@@ -9,7 +9,7 @@ use anyhow::{Context, bail, ensure};
 use engine_core::deposits::LegacyDeposit;
 use engine_core::event::Event;
 use engine_core::protocol::ProtocolVersion;
-use engine_core::types::{AccountId, Millis};
+use engine_core::types::{AccountId, MarketId, Millis};
 use engine_core::{Engine, Fixed};
 
 use crate::checkpoints::accounting::Accounting;
@@ -58,6 +58,9 @@ pub struct Replayed {
     pub(crate) requires_checkpoint_gate: bool,
     /// Whether the log ends inside an access-source failure episode.
     pub(crate) access_failed: bool,
+    /// The last mark sampled per market, so the recovered sequencer continues change-only
+    /// reporting exactly where the replay left off. Empty without a marks sink.
+    pub last_marks: BTreeMap<MarketId, Fixed>,
 }
 
 /// Re-applies a log entry by entry, as it is read, and checks every checkpoint root, logged event,
@@ -352,6 +355,7 @@ impl Replay {
             authorized: self.authorized,
             requires_checkpoint_gate: self.requires_checkpoint_gate,
             access_failed: self.access_alerts.failed(),
+            last_marks: self.last_marks,
             last_signed_checkpoint: self.last_signed_checkpoint,
             recovery_work: self.recovery_work,
             recovery_anchor_work: self.recovery_anchor_work,

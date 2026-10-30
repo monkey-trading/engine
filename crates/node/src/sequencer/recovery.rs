@@ -254,8 +254,10 @@ impl Sequencer {
             payout_order,
             authorized,
             access_failed,
+            last_marks,
             ..
         } = replayed;
+        let replayed_last_marks = last_marks;
         let mut legacy_authorizations = legacy_authorizations;
         if ProtocolVersion::LATEST.supports_deposit_finality() {
             for (key, seq) in
@@ -322,9 +324,9 @@ impl Sequencer {
             snapshot_anchor_work: recovery_anchor_work.clone(),
             snapshot_signers: checkpoint_signers,
             uncaptured: None,
-            marks_tx: None,
-            last_marks: BTreeMap::new(),
+            marks: Default::default(),
         };
+        sequencer.marks.take_recovered(replayed_last_marks);
         {
             let _span = info_span!("command", id = sequencer.engine.last_seq()).entered();
             sequencer.deficit.note(sequencer.engine.house_nav());

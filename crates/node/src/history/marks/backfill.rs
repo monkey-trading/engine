@@ -7,16 +7,17 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+use crate::config::{BackfillSection, FeedsSection, Venue};
+use crate::history::marks::Resolution;
+use crate::history::marks::run::{BATCH, Live};
+use crate::history::marks::store::{Seed, Store};
 use anyhow::{Context, bail, ensure};
 use chrono::{DateTime, SecondsFormat, Utc};
 use engine_core::Fixed;
 use engine_core::types::{MarketId, Millis};
+use futures_util::StreamExt;
 use reqwest::{Client, redirect};
 use serde_json::Value;
-
-use crate::config::{BackfillSection, FeedsSection, Venue};
-use crate::history::marks::Resolution;
-use crate::history::marks::store::{Seed, Store};
 
 /// The most candles the endpoint returns for one request.
 const MAX_CANDLES: Millis = 300;
@@ -121,12 +122,19 @@ impl Candles {
             .with_context(|| format!("fetching candles for {span}"))?
             .error_for_status()
             .with_context(|| format!("fetching candles for {span}"))?;
-        let bytes = response.bytes().await.with_context(|| format!("reading candles for {span}"))?;
-        ensure!(
-            bytes.len() as u64 <= MAX_RESPONSE_BYTES,
-            "the candles response for {span} exceeds {MAX_RESPONSE_BYTES} bytes"
-        );
-        let text = std::str::from_utf8(&bytes).with_context(|| format!("the candles for {span} are not UTF-8"))?;
+        // Read incrementally under the byte bound, so a hostile or broken endpoint cannot grow
+        // the response without limit.
+        let mut body = Vec::new();
+        let mut chunks = response.bytes_stream();
+        while let Some(chunk) = chunks.next().await {
+            let chunk = chunk.with_context(|| format!("reading candles for {span}"))?;
+            ensure!(
+                body.len().saturating_add(chunk.len()) as u64 <= MAX_RESPONSE_BYTES,
+                "the candles response for {span} exceeds {MAX_RESPONSE_BYTES} bytes"
+            );
+            body.extend_from_slice(&chunk);
+        }
+        let text = std::str::from_utf8(&body).with_context(|| format!("the candles for {span} are not UTF-8"))?;
         parse_candles(text).with_context(|| format!("parsing candles for {span}"))
     }
 }
@@ -149,12 +157,14 @@ pub fn windows(now: Millis, depth_ms: Millis, granularity_ms: Millis) -> Vec<(Mi
     windows
 }
 
-/// Seeds every backfillable resolution of `market` from its provider, paging from `now` back
-/// `depth` and pacing requests. Returns how many buckets were added. A fetch failure stops the
-/// seeding with nothing recorded as complete: a later run inserts the missing rows over the ones
-/// already there.
+/// Seeds every backfillable resolution of `market` from its provider, paging back from `now` —
+/// the engine's admitted time, never the host clock — and pacing requests. Between pages it
+/// drains live samples into `buffered`, flushing at `BATCH`, so a long fetch cannot overflow the
+/// queue and lose marks. Returns how many buckets were added. A fetch failure stops the seeding
+/// with nothing recorded as complete: a later run inserts the missing rows over the ones already
+/// there.
 /// Error cases:
-/// - a page fetch fails, or the store rejects a seed
+/// - a page fetch fails, or the store rejects a seed or a flush
 pub async fn seed_market(
     http: &Candles,
     source: &Source,
@@ -162,6 +172,7 @@ pub async fn seed_market(
     cfg: &BackfillSection,
     now: Millis,
     store: &mut Store,
+    live: &mut Live,
 ) -> anyhow::Result<usize> {
     ensure!(source.venue == Venue::Coinbase, "no candles adapter for {}", source.venue.name());
     let mut seeded = 0;
@@ -178,6 +189,11 @@ pub async fn seed_market(
         let mut rows = Vec::new();
         for (start, end) in pages {
             for candle in http.fetch(&source.symbol, (resolution.ms() / 1_000) as u32, start, end).await? {
+                // A conforming endpoint answers within the window; a bucket past `now` is the
+                // endpoint's noise, not history, and is never seeded.
+                if candle.ts > now {
+                    continue;
+                }
                 rows.push(Seed {
                     market,
                     resolution,
@@ -189,6 +205,14 @@ pub async fn seed_market(
                 });
             }
             tokio::time::sleep(PAGE_PACE).await;
+            // Keep draining live marks while fetching, so the queue cannot fill and drop samples.
+            while let Ok(sample) = live.samples.try_recv() {
+                live.buffered.push(sample);
+            }
+            if live.buffered.len() >= BATCH {
+                store.observe(&live.buffered)?;
+                live.buffered.clear();
+            }
         }
         seeded += store.seed(&rows, now)?;
     }

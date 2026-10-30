@@ -5,12 +5,13 @@ use super::*;
 
 use crate::test_support::DEV_CONFIG as DEV;
 
+/// The dev config with `section` spliced into its `[history]` table, after `retention`, keeping
+/// the parent table's required keys.
 fn with_marks(section: &str) -> String {
     let dev = std::fs::read_to_string(DEV).unwrap();
-    let at = dev.find("[history]").expect("the dev config has a history section");
-    let rest = &dev[at..];
-    let end = rest.find("\n[").map_or(rest.len(), |n| n + 1);
-    format!("{}{section}\n{}", &dev[..at], &rest[end..])
+    let anchor = "retention = \"365d\"\n";
+    let at = dev.find(anchor).expect("the dev config's history retention") + anchor.len();
+    format!("{}{section}\n{}", &dev[..at], &dev[at..])
 }
 
 #[test]

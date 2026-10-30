@@ -220,7 +220,7 @@ async fn serve_node(
     let recovery = seq.take_recovery_checkpoints();
     let sequencer = crate::sequencer_thread::Worker::start(seq.run(rx), cpu)?;
     let mut tasks: JoinSet<TaskResult> = JoinSet::new();
-    tasks.spawn(marks::task(marks_store, marks_rx, marks.backfill, marks.sources, tx.downgrade()));
+    tasks.spawn(marks::task(marks_store, tx.downgrade(), marks.backfill, marks.sources, marks::live(marks_rx)));
     if let Some(setup) = checkpoint_setup {
         let checkpoint_tx = tx.clone();
         tasks.spawn(async move {
@@ -409,6 +409,7 @@ fn read_log_and_history_authorities(
     }
     let history_failed = |e: &anyhow::Error| error!(alert = "history_recovery_failed", "refusing to serve: {e:#}");
     let mut check = HistoryPlan::open(&cfg.history).inspect_err(history_failed)?;
+    let (sink, seeding) = marks::recovery_sink(marks);
     let log = Sequencer::read_log_with_authorities(
         &cfg.node.log_dir,
         Some(crate::log::CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? }),
@@ -419,9 +420,10 @@ fn read_log_and_history_authorities(
             check.observe(entry);
             observe(entry);
         },
-        Some(marks::recovery_sink(marks)),
+        Some(sink),
     )
     .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
+    anyhow::ensure!(!seeding.get(), "seeding the marks cache from the log failed");
     Ok((log, check))
 }
 

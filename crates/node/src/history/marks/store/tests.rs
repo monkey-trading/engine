@@ -143,20 +143,75 @@ async fn seeding_inserts_only_missing_buckets_and_never_overwrites_log_marks() {
     // The log-derived bucket is untouched: still the log mark, still log-derived.
     assert_eq!(page.entries[0], entry(base, "100", "100", "100", "100", Provenance::LogDerived));
     assert_eq!(page.entries[1], entry(base + 60_000, "3", "4", "2", "3", Provenance::SeededFromProvider));
-    // A live sample after the seed takes the seeded bucket over to log-derived.
+    // A live sample after the seed replaces the seeded bucket: a log-derived bucket holds
+    // exactly what the log proves, no provider values under a log-derived label.
     store.observe(&[(market, base + 60_000 + 1_000, fixed("3"))]).unwrap();
     let page = minute(&store, market).await;
-    assert_eq!(page.entries[1], entry(base + 60_000, "3", "4", "2", "3", Provenance::LogDerived));
+    assert_eq!(page.entries[1], entry(base + 60_000, "3", "3", "3", "3", Provenance::LogDerived));
 }
 
 #[tokio::test]
-async fn a_backfilled_marker_survives_a_reopen() {
+async fn a_second_log_sample_merges_into_the_log_derived_bucket() {
+    let mut store = fresh_store("marks-second-sample", Retentions::defaults());
+    let market = 1;
+    let base = 1_792_489_860_000;
+    // A provider-seeded minute, then two log marks inside it: the first replaces the seed, the
+    // second merges into the now log-derived bucket.
+    store
+        .seed(
+            &[Seed {
+                market,
+                resolution: Resolution::M1,
+                ts: base,
+                open: fixed("1"),
+                high: fixed("9"),
+                low: fixed("0"),
+                close: fixed("5"),
+            }],
+            base,
+        )
+        .unwrap();
+    store.observe(&[(market, base + 10_000, fixed("3"))]).unwrap();
+    store.observe(&[(market, base + 40_000, fixed("4"))]).unwrap();
+    let page = minute(&store, market).await;
+    assert_eq!(page.entries, [entry(base, "3", "4", "3", "4", Provenance::LogDerived)]);
+}
+
+#[tokio::test]
+async fn reset_log_derived_drops_only_what_the_log_proves() {
+    let mut store = fresh_store("marks-reset", Retentions::defaults());
+    let market = 1;
+    let base = 1_792_489_860_000;
+    store.observe(&[(market, base + 10_000, fixed("3"))]).unwrap();
+    store
+        .seed(
+            &[Seed {
+                market,
+                resolution: Resolution::M1,
+                ts: base + 60_000,
+                open: fixed("1"),
+                high: fixed("2"),
+                low: fixed("0"),
+                close: fixed("1"),
+            }],
+            base + 60_000,
+        )
+        .unwrap();
+    store.reset_log_derived().unwrap();
+    let page = minute(&store, market).await;
+    assert_eq!(page.entries.len(), 1, "{page:?}");
+    assert_eq!(page.entries[0].ts, base + 60_000);
+    assert_eq!(page.entries[0].provenance, Provenance::SeededFromProvider);
+}
+
+#[tokio::test]
+async fn a_backfilled_marker_records_its_depths_and_survives_a_reopen() {
     let (path, mut store) = fresh_store_at("marks-markers", Retentions::defaults());
-    store.mark_backfilled(3, "coinbase", "BTC-USD", 1_792_000_000_000).unwrap();
-    assert_eq!(store.backfilled().unwrap(), [3].into_iter().collect());
+    store.mark_backfilled(3, "coinbase", "BTC-USD", 1_792_000_000_000, (86_400_000, 86_400_000, 86_400_000)).unwrap();
+    assert_eq!(store.backfilled().unwrap(), [(3, (86_400_000, 86_400_000, 86_400_000))].into_iter().collect());
     drop(store);
     let store = Store::open(&path, Retentions::defaults()).unwrap();
-    assert_eq!(store.backfilled().unwrap(), [3].into_iter().collect());
+    assert_eq!(store.backfilled().unwrap(), [(3, (86_400_000, 86_400_000, 86_400_000))].into_iter().collect());
 }
 
 #[tokio::test]

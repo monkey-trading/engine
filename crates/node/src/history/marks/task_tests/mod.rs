@@ -15,8 +15,10 @@ use crate::sequencer::genesis_commands;
 use crate::test_support::{TestSequencer, dev_config};
 
 /// A dev-genesis sequencer on a clock the test moves, so mark samples land in distinct buckets.
+/// The clock starts on a minute boundary: which minute a sample lands in never depends on when
+/// the test runs.
 fn priced_node(dir: &std::path::Path) -> (TestSequencer, Arc<TestClock>) {
-    let clock = Arc::new(TestClock::default());
+    let clock = Arc::new(TestClock::at(1_792_489_800_000));
     let node = TestSequencer::start_at(dir, 1024, clock.clone(), genesis_commands(&dev_config().genesis));
     (node, clock)
 }
