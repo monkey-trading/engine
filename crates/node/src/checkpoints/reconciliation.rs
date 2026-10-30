@@ -8,15 +8,12 @@ use tokio::time::Instant;
 use tracing::{debug, error, info, warn};
 
 use crate::checkpoints::{
-    ApprovalId, CheckpointChain, Health, LifecycleEvidence, Poster, VaultState, View, Work, signature,
+    ApprovalId, CheckpointChain, Conflict, Health, LifecycleEvidence, Poster, VaultState, View, Work, signature,
 };
 
 /// The first vault deposit the finalized checkpoint has not credited, and since when it has been
 /// seen so.
 pub(super) type Uncredited = Option<(u64, Instant)>;
-
-#[derive(Debug)]
-pub(super) struct Conflict(&'static str);
 
 /// How the finalized vault state compares with the ledger `work` carries. The ledger's
 /// liabilities are the cumulative credits; distributions reduce house cash in the engine before
@@ -62,15 +59,6 @@ fn report_halt(evidence: &LifecycleEvidence) {
         info!(alert_resolved = "vault_withdrawals_halted", cause = "signer_retired", "the vault has a signer");
     }
 }
-
-impl std::fmt::Display for Conflict {
-    /// The commitment invariant that failed.
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(self.0)
-    }
-}
-
-impl std::error::Error for Conflict {}
 
 impl<R: CheckpointChain> Poster<R> {
     /// Verifies/extends the commitment and compares collateral to the checkpoint's ledger.

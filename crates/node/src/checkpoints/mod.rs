@@ -169,7 +169,7 @@ pub enum Health {
 }
 
 #[derive(Debug)]
-struct Conflict(&'static str);
+pub(super) struct Conflict(&'static str);
 
 impl std::fmt::Display for Conflict {
     /// The commitment invariant that failed.
@@ -177,6 +177,8 @@ impl std::fmt::Display for Conflict {
         formatter.write_str(self.0)
     }
 }
+
+impl std::error::Error for Conflict {}
 
 /// Supervised checkpoint worker; work is durable in the log before it reaches this queue.
 pub(crate) struct Poster<R> {
@@ -335,7 +337,6 @@ impl<R: CheckpointChain> Poster<R> {
 
 mod reconciliation;
 mod sweep;
-use reconciliation::Conflict;
 use sweep::approval_page;
 
 #[cfg(test)]
