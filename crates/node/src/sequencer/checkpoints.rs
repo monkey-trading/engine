@@ -9,7 +9,7 @@ use engine_core::types::AccountId;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-use crate::checkpoints::Work;
+use crate::checkpoints::{LifecycleEvidence, Work};
 use crate::log::{Checkpoint, LogEntry};
 use crate::sequencer::{Sequencer, SignedWithdrawal, legacy};
 
@@ -25,6 +25,12 @@ pub(super) struct Gate {
     /// until the first reconciliation succeeds, and a recovered deployment with posted
     /// checkpoints revalidates collateral before signing again.
     pub health: Option<crate::checkpoints::Health>,
+    /// The latest finalized custody evidence shows the vault refusing withdrawal claims: they are
+    /// paused, or its signer is retired. Starts clear, as signing waits for a first verdict anyway.
+    pub halted: bool,
+    /// The latest finalized custody evidence shows a retired signer, so the vault accepts no
+    /// checkpoint.
+    pub retired: bool,
     pub recovery: Vec<Work>,
     pub pending: Vec<(u64, AccountId, Fixed, u64)>,
     pub payouts: crate::sequencer::payouts::Payouts,
@@ -51,6 +57,8 @@ pub enum Withheld {
     Collateral,
     /// The custody prefix awaits the canonical scan.
     CustodyPrefix,
+    /// The vault's signer is retired.
+    SignerRetired,
 }
 
 impl Withheld {
@@ -58,6 +66,7 @@ impl Withheld {
         match self {
             Withheld::Collateral => "collateral",
             Withheld::CustodyPrefix => "custody_prefix",
+            Withheld::SignerRetired => "signer_retired",
         }
     }
 }
@@ -81,6 +90,8 @@ impl Gate {
             registry: None,
             parent,
             health: (!parent.has_checkpoint).then_some(crate::checkpoints::Health::Pending),
+            halted: false,
+            retired: false,
             recovery: Vec::new(),
             pending: Vec::new(),
             payouts: Default::default(),
@@ -93,6 +104,12 @@ impl Gate {
             backlogged: false,
             withheld: Default::default(),
         }
+    }
+
+    /// Whether withdrawal authorizations may be signed: collateral reconciles and the vault is not
+    /// halting withdrawal claims.
+    pub fn admits_withdrawals(&self) -> bool {
+        matches!(self.health, Some(crate::checkpoints::Health::Healthy)) && !self.halted
     }
 }
 
@@ -120,6 +137,18 @@ impl Sequencer {
             return Ok(());
         }
         if let Some(gate) = &mut self.gate {
+            // The vault accepts no checkpoint until a signer is installed, and the one signed then
+            // carries the whole state, so a long retirement leaves no backlog to post one by one.
+            if gate.retired {
+                gate.withheld.insert(Withheld::SignerRetired);
+                warn!(
+                    alert = "checkpoint_withheld",
+                    cause = Withheld::SignerRetired.cause(),
+                    "no checkpoint signed at seq {seq}: the vault's signer is retired"
+                );
+                return Ok(());
+            }
+            gate.clear_withheld(Withheld::SignerRetired, seq);
             if matches!(
                 gate.health,
                 Some(
@@ -235,6 +264,28 @@ impl Sequencer {
             .map_err(|_| anyhow::anyhow!("checkpoint {seq}: checkpoint worker unavailable or queue full"))
     }
 
+    /// Applies one custody observation: whether the vault halts withdrawal claims, which every
+    /// release below then respects, the collateral verdict, and the releases `lifecycle` proves.
+    /// Without `lifecycle`, the last halt finding stands, as a failed observation leaves the verdict.
+    /// Error cases:
+    /// - as `checkpoint_status` and `release_payouts`
+    pub(super) fn custody_status(
+        &mut self,
+        posted: Option<u64>,
+        health: Option<crate::checkpoints::Health>,
+        lifecycle: Option<LifecycleEvidence>,
+    ) -> anyhow::Result<()> {
+        if let (Some(gate), Some(evidence)) = (&mut self.gate, &lifecycle) {
+            gate.halted = evidence.halts_withdrawals();
+            gate.retired = evidence.signer_retired();
+        }
+        self.checkpoint_status(posted, health)?;
+        match lifecycle {
+            Some(evidence) => self.release_payouts(&evidence),
+            None => Ok(()),
+        }
+    }
+
     /// Releases only approvals covered by the confirmed prefix, and only after reconciliation.
     /// A `None` verdict — an observation that failed — leaves the gate's verdict unchanged, so an
     /// RPC error cannot erase a proved divergence. An `Unproven` verdict pauses a healthy gate, and
@@ -260,9 +311,7 @@ impl Sequencer {
         if let (Some(_), Some(posted)) = (health.filter(|health| *health != Health::Unvalidated), posted) {
             self.metrics.withdrawals_verdict_seq.set(i64::try_from(posted).unwrap_or(i64::MAX));
         }
-        self.metrics
-            .withdrawals_paused
-            .set(i64::from(!matches!(gate.health, Some(crate::checkpoints::Health::Healthy))));
+        self.metrics.withdrawals_paused.set(i64::from(!gate.admits_withdrawals()));
         if health != Some(crate::checkpoints::Health::Healthy) {
             return Ok(());
         }
@@ -271,6 +320,9 @@ impl Sequencer {
                 Some(crate::snapshot::RecoveryBase::Checkpoint { checkpoint: work.checkpoint.clone() });
             self.snapshot_anchor_work = Some(work.clone());
             self.snapshot_work.retain(|work| Some(work.checkpoint.seq) > posted);
+        }
+        if gate.halted {
+            return Ok(());
         }
         let needs_authorization = ProtocolVersion::LATEST.supports_deposit_finality()
             && gate.pending.iter().any(|(_, account, _, nonce)| {

@@ -59,7 +59,7 @@ contract VaultInvariantTest is GovernanceTest {
     function setUp() public {
         governance = _deployGovernance();
         usdc = new MockUSDC();
-        vault = new Vault(usdc, address(0x1234), governance, 1e18);
+        vault = new Vault(usdc, address(0x1234), governance, multisig, 1e18);
         handler = new VaultHandler(usdc, vault);
         targetContract(address(handler));
     }

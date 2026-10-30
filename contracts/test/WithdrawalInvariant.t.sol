@@ -17,11 +17,14 @@ contract WithdrawalHandler is WithdrawalTest {
     address[3] private actors = [makeAddr("alice"), makeAddr("bob"), makeAddr("carol")];
     mapping(address => uint64) private nextNonce;
     Claim[] private claims;
-    uint256 private currentKey = KEY;
+    uint256 public currentKey = KEY;
     uint256 public deposited;
     uint256 public booked;
     uint256 public paid;
     uint64 public rotations;
+    uint256 public guardianPauses;
+    uint256 public lastGuardianPause;
+    bool public retired;
 
     constructor(MockUSDC token, Vault target, TimelockController timelock) {
         usdc = token;
@@ -59,6 +62,8 @@ contract WithdrawalHandler is WithdrawalTest {
     }
 
     function approve(uint256 actorSeed, uint256 amount) external {
+        // A retired signer posts no checkpoint; `GuardianTest` covers the refusal.
+        if (retired) return;
         address actor = actors[actorSeed % actors.length];
         amount = bound(amount, 1, 1_000_000e6);
         uint64 seq = vault.hasCheckpoint() ? vault.latestSeq() + 1 : 10;
@@ -82,8 +87,8 @@ contract WithdrawalHandler is WithdrawalTest {
         uint256 before = usdc.balanceOf(address(vault));
         uint256 accountBefore = usdc.balanceOf(withdrawal.account);
         bool expected = !item.paid && !vault.withdrawalsPaused() && withdrawal.signerEpoch == vault.signerEpoch()
-            && withdrawal.issuedAt <= block.timestamp && withdrawal.expiresAt > block.timestamp
-            && withdrawal.amount <= before;
+            && vm.addr(item.key) == vault.checkpointSigner() && withdrawal.issuedAt <= block.timestamp
+            && withdrawal.expiresAt > block.timestamp && withdrawal.amount <= before;
         bytes memory signature = _sign(vault, withdrawal, item.key);
         (bool ok,) = address(vault)
             .call(abi.encodeCall(Vault.withdraw, (withdrawal, item.checkpointSeq, new bytes32[](0), signature)));
@@ -111,7 +116,28 @@ contract WithdrawalHandler is WithdrawalTest {
     function rotate() external {
         ++currentKey;
         ++rotations;
+        retired = false;
         _govern(address(vault), abi.encodeCall(Vault.setSigner, (vm.addr(currentKey))));
+    }
+
+    function guardianPause() external {
+        bool paused = vault.withdrawalsPaused();
+        vm.prank(multisig);
+        (bool ok,) = address(vault).call(abi.encodeCall(Vault.pauseWithdrawals, ()));
+        assertEq(ok, !paused);
+        if (ok) {
+            ++guardianPauses;
+            lastGuardianPause = block.timestamp;
+        }
+        assertTrue(vault.withdrawalsPaused());
+    }
+
+    function retire() external {
+        vm.prank(multisig);
+        (bool ok,) = address(vault).call(abi.encodeCall(Vault.retireSigner, ()));
+        assertEq(ok, !retired);
+        retired = true;
+        assertEq(vault.checkpointSigner(), address(0));
     }
 
     function pauses(bool deposits, bool withdrawals) external {
@@ -148,7 +174,7 @@ contract WithdrawalInvariantTest is WithdrawalTest {
         super.setUp();
         initialBalance = usdc.balanceOf(address(vault));
         handler = new WithdrawalHandler(usdc, vault, governance);
-        bytes4[] memory selectors = new bytes4[](8);
+        bytes4[] memory selectors = new bytes4[](10);
         selectors[0] = WithdrawalHandler.deposit.selector;
         selectors[1] = WithdrawalHandler.approve.selector;
         selectors[2] = WithdrawalHandler.claim.selector;
@@ -157,6 +183,8 @@ contract WithdrawalInvariantTest is WithdrawalTest {
         selectors[5] = WithdrawalHandler.pauses.selector;
         selectors[6] = WithdrawalHandler.elapse.selector;
         selectors[7] = WithdrawalHandler.book.selector;
+        selectors[8] = WithdrawalHandler.guardianPause.selector;
+        selectors[9] = WithdrawalHandler.retire.selector;
         targetContract(address(handler));
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     }
@@ -172,5 +200,16 @@ contract WithdrawalInvariantTest is WithdrawalTest {
         );
         assertEq(vault.signerEpoch(), uint256(handler.rotations()) + 1);
         handler.assertClaimsAndAcceptedRoots();
+    }
+
+    function invariant_GuardianPausesAreCountedBoundedAndRetirementLastsUntilANewSigner() public view {
+        assertEq(vault.guardianPauses(), handler.guardianPauses());
+        // A pause is the timelock's, which lasts until it lifts it, or the guardian's latest.
+        uint256 until = vault.withdrawalsPausedUntil();
+        assertTrue(
+            until == 0 || until == type(uint256).max || until == handler.lastGuardianPause() + vault.GUARDIAN_PAUSE()
+        );
+        assertEq(vault.checkpointSigner(), handler.retired() ? address(0) : vm.addr(handler.currentKey()));
+        assertEq(vault.signerAtEpoch(vault.signerEpoch()), vm.addr(handler.currentKey()));
     }
 }

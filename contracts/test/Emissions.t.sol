@@ -29,7 +29,7 @@ contract EmissionsTest is GovernanceTest {
 
     function setUp() public {
         governance = _deployGovernance();
-        vault = new Vault(IERC20(address(1)), vm.addr(KEY), governance, BUDGET);
+        vault = new Vault(IERC20(address(1)), vm.addr(KEY), governance, multisig, BUDGET);
         monkey = vault.monkey();
         fixture = vm.readFile(string.concat(vm.projectRoot(), "/../crates/core/tests/fixtures/emissions.json"));
     }
@@ -46,12 +46,14 @@ contract EmissionsTest is GovernanceTest {
 
     function testRefusesABudgetOutsideTheEngineRange() public {
         vm.expectRevert(abi.encodeWithSelector(Vault.InvalidPeriodBudget.selector, 0));
-        new Vault(IERC20(address(1)), vm.addr(KEY), governance, 0);
+        new Vault(IERC20(address(1)), vm.addr(KEY), governance, multisig, 0);
         uint256 max = vault.MAX_PERIOD_BUDGET();
         assertEq(max, type(uint128).max / (2 * 26_280));
         vm.expectRevert(abi.encodeWithSelector(Vault.InvalidPeriodBudget.selector, max + 1));
-        new Vault(IERC20(address(1)), vm.addr(KEY), governance, max + 1);
-        assertEq(new Vault(IERC20(address(1)), vm.addr(KEY), governance, max).monkey().cap(), 2 * 26_280 * max);
+        new Vault(IERC20(address(1)), vm.addr(KEY), governance, multisig, max + 1);
+        assertEq(
+            new Vault(IERC20(address(1)), vm.addr(KEY), governance, multisig, max).monkey().cap(), 2 * 26_280 * max
+        );
     }
 
     function testEngineProofMintsOnceToTheAccountWhoeverRelays() public {

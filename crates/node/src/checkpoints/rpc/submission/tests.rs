@@ -119,6 +119,55 @@ async fn dropped_transaction_reuses_nonce_but_consumed_nonce_never_allocates_ano
 }
 
 #[tokio::test]
+async fn a_reverted_send_moves_to_the_next_nonce_only_on_finalized_proof() {
+    let dir = scratch_dir("submission-reverted-send");
+    fs::create_dir_all(&dir).unwrap();
+    let server = Server::start(&dir).await;
+    let cp = checkpoint(10);
+    let chain = rpc(&server.url, &dir);
+    chain.post(&cp).await.unwrap();
+    let own = server.state.lock().unwrap().sent[0].clone();
+    server.state.lock().unwrap().latest_nonce = 8;
+    assert!(chain.post(&cp).await.unwrap_err().to_string().contains("consumed"), "consumption is not final");
+    let mut foreign = own.clone();
+    foreign["to"] = json!(Address::repeat_byte(9));
+    server.state.lock().unwrap().consumer = Some(foreign);
+    let error = chain.post(&cp).await.unwrap_err();
+    assert!(format!("{error:#}").contains("unrelated transaction"), "{error:#}");
+    // An accepted earlier checkpoint is a consumer only of a nonce reserved with reuse provenance.
+    let older = checkpoint(9);
+    let mut earlier = own.clone();
+    let input = crate::checkpoints::rpc::submission::posting::checkpoint_input(&older).unwrap();
+    earlier["input"] = json!(format!("0x{}", hex::encode(input)));
+    {
+        let mut state = server.state.lock().unwrap();
+        state.consumer = Some(earlier);
+        state.finalized = Some(older.clone());
+        state.accepted.insert(older.seq, (older, 1));
+    }
+    let error = chain.post(&cp).await.unwrap_err();
+    assert!(format!("{error:#}").contains("another checkpoint"), "{error:#}");
+    server.state.lock().unwrap().accepted.clear();
+    {
+        let mut state = server.state.lock().unwrap();
+        state.consumer = Some(own.clone());
+        state.finalized = Some(cp.clone());
+    }
+    let error = chain.post(&cp).await.unwrap_err();
+    assert!(format!("{error:#}").contains("checkpoint is accepted"), "a lagging latest view: {error:#}");
+    assert_eq!(server.state.lock().unwrap().sent.len(), 1);
+    assert_eq!(read_record(&dir)["nonce"], 7);
+
+    // The finalized vault still lacks the checkpoint its own consumed send carried: it reverted.
+    server.state.lock().unwrap().finalized = None;
+    chain.post(&cp).await.unwrap();
+    assert_eq!(read_record(&dir)["nonce"], 8);
+    let sent = server.state.lock().unwrap().sent.clone();
+    assert_eq!(sent.len(), 2);
+    assert_eq!((sent[1]["nonce"].as_str(), &sent[1]["input"]), (Some("0x8"), &own["input"]));
+}
+
+#[tokio::test]
 async fn pending_owner_blocks_siblings_and_new_work_until_finalized_progress() {
     let dir = scratch_dir("submission-competing-work");
     fs::create_dir_all(&dir).unwrap();

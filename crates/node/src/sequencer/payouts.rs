@@ -137,11 +137,15 @@ impl Sequencer {
         Ok(())
     }
 
-    /// Releases or reissues only the identities explicitly observed unpaid at a finalized block.
+    /// Releases or reissues only the identities explicitly observed unpaid at a finalized block,
+    /// and none while the vault halts withdrawal claims.
     /// Error cases:
     /// - custody evidence conflicts, the approval proof is invalid, or the log cannot be written
     pub(super) fn release_payouts(&mut self, evidence: &LifecycleEvidence) -> anyhow::Result<()> {
-        ensure!(evidence.signer == AccountId(self.key.address()), "payout signer differs from this enclave");
+        ensure!(
+            evidence.signer_retired() || evidence.signer == AccountId(self.key.address()),
+            "payout signer differs from this enclave"
+        );
         let Some(gate) = &mut self.gate else { return Ok(()) };
         for observed in &evidence.approvals {
             let key = (observed.approval.account, observed.approval.nonce);
@@ -166,7 +170,7 @@ impl Sequencer {
         self.load_backlog()?;
         self.prove_loaded()?;
         let gate = self.gate.as_ref().expect("checkpoint gate exists");
-        if !matches!(gate.health, Some(crate::checkpoints::Health::Healthy)) {
+        if !gate.admits_withdrawals() || evidence.halts_withdrawals() {
             return Ok(());
         }
         let Some(posted) = evidence.checkpoint_seq else { return Ok(()) };

@@ -24,8 +24,9 @@ import {MonkeyToken} from "./MonkeyToken.sol";
 /// stakers; the vault pays an account the USDC its cumulative distribution, proven against the
 /// latest posted checkpoint root, adds to what it was already paid.
 /// @dev The attested signer authorizes checkpoints, withdrawals, and distribution claims; the
-/// deployment's multisig controls signer rotation and pauses through its timelock. This contract
-/// is not upgradeable.
+/// deployment's multisig controls signer rotation and pauses through its timelock, and as the
+/// guardian may pause withdrawals for a week or retire the signer without the timelock's delay.
+/// This contract is not upgradeable.
 contract Vault is ReentrancyGuardTransient, EIP712 {
     using SafeERC20 for IERC20;
 
@@ -43,6 +44,10 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         "Withdrawal(address account,uint256 amount,uint64 nonce,uint64 approvedSeq,uint64 signerEpoch,uint64 issuedAt,uint64 expiresAt)"
     );
     uint256 public constant WITHDRAWAL_LIFETIME = 86400;
+
+    /// @notice How long a guardian pause holds withdrawals; the timelock renews it by pausing them
+    /// itself.
+    uint256 public constant GUARDIAN_PAUSE = 7 days;
 
     /// @notice Smallest single deposit in USDC base units: 10 USDC. Every deposit becomes a
     /// permanent entry in the engine's state, so a floor makes each one cost locked capital, not
@@ -99,8 +104,15 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     /// @notice Historical signer identity for replay; custody still requires the current signer.
     mapping(uint64 epoch => address signer) public signerAtEpoch;
     TimelockController public immutable governance;
+    /// @notice The deployment's multisig, which may pause withdrawals and retire the signer without
+    /// the timelock's delay, and nothing else.
+    address public immutable guardian;
     bool public depositsPaused;
-    bool public withdrawalsPaused;
+    /// @notice Unix seconds from which withdrawals are no longer paused: `type(uint256).max` while
+    /// the timelock pauses them, a guardian pause's end, or zero.
+    uint256 public withdrawalsPausedUntil;
+    /// @notice Guardian pauses so far.
+    uint256 public guardianPauses;
     bool public hasCheckpoint;
     uint64 public latestSeq;
     bytes32 public latestRoot;
@@ -114,6 +126,10 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     event WithdrawalPaid(address indexed account, uint256 amount, uint64 indexed nonce, uint64 approvedSeq);
     event SignerChanged(address indexed previousSigner, address indexed signer, uint64 signerEpoch);
     event PausesChanged(bool depositsPaused, bool withdrawalsPaused);
+    /// @notice The guardian paused withdrawals until `until`, its `pauses`-th pause.
+    event GuardianPausedWithdrawals(uint256 until, uint256 pauses);
+    /// @notice The guardian retired `signer`, the signer of epoch `signerEpoch`.
+    event SignerRetired(address indexed signer, uint64 signerEpoch);
 
     /// @notice `amount` USDC base units deposited to trader account `account` by `from`, the caller
     /// whose tokens the vault pulled.
@@ -142,6 +158,8 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     error UnsupportedChain();
     error InvalidGovernance();
     error UnauthorizedGovernance();
+    error UnauthorizedGuardian();
+    error NoSigner();
     error DepositsPaused();
     error WithdrawalsPaused();
     error InvalidWithdrawal();
@@ -158,13 +176,21 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     error InvalidEntitlementProof();
     error NothingToClaim(uint256 entitled, uint256 claimed);
 
-    /// @param governance_ The deployment's timelock, which alone rotates the signer and pauses.
+    /// @param governance_ The deployment's timelock, which alone rotates the signer and unpauses.
+    /// @param guardian_ The deployment's multisig, which may also pause withdrawals and retire the
+    /// signer at once.
     /// @param periodBudget_ The engine's initial emission period budget in MONKEY base units, which
     /// sets the token's cap at `2 * PERIODS_PER_HALVING * periodBudget_`.
-    constructor(IERC20 usdc_, address checkpointSigner_, TimelockController governance_, uint256 periodBudget_)
-        EIP712("EngineWithdrawal", "1")
-    {
-        if (address(usdc_) == address(0) || checkpointSigner_ == address(0)) revert ZeroAddress();
+    constructor(
+        IERC20 usdc_,
+        address checkpointSigner_,
+        TimelockController governance_,
+        address guardian_,
+        uint256 periodBudget_
+    ) EIP712("EngineWithdrawal", "1") {
+        if (address(usdc_) == address(0) || checkpointSigner_ == address(0) || guardian_ == address(0)) {
+            revert ZeroAddress();
+        }
         if (block.chainid > type(uint64).max) revert UnsupportedChain();
         if (address(governance_).code.length == 0 || governance_.getMinDelay() == 0) revert InvalidGovernance();
         if (periodBudget_ == 0 || periodBudget_ > MAX_PERIOD_BUDGET) revert InvalidPeriodBudget(periodBudget_);
@@ -172,11 +198,17 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         checkpointSigner = checkpointSigner_;
         signerAtEpoch[signerEpoch] = checkpointSigner_;
         governance = governance_;
+        guardian = guardian_;
         monkey = new MonkeyToken(2 * PERIODS_PER_HALVING * periodBudget_);
     }
 
     modifier onlyGovernance() {
         if (msg.sender != address(governance)) revert UnauthorizedGovernance();
+        _;
+    }
+
+    modifier onlyGuardian() {
+        if (msg.sender != guardian) revert UnauthorizedGuardian();
         _;
     }
 
@@ -190,11 +222,35 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         emit SignerChanged(previous, signer, signerEpoch);
     }
 
-    /// @notice Independently pauses deposits (including house capital) and withdrawal claims.
+    /// @notice Independently pauses deposits (including house capital) and withdrawal claims. A
+    /// withdrawal pause holds until the timelock lifts it, which also ends a guardian pause.
     function setPauses(bool depositsPaused_, bool withdrawalsPaused_) external onlyGovernance {
         depositsPaused = depositsPaused_;
-        withdrawalsPaused = withdrawalsPaused_;
+        withdrawalsPausedUntil = withdrawalsPaused_ ? type(uint256).max : 0;
         emit PausesChanged(depositsPaused_, withdrawalsPaused_);
+    }
+
+    /// @notice Pauses withdrawal and distribution claims for `GUARDIAN_PAUSE` from now. A pause in
+    /// force cannot be extended this way; only the timelock holds one longer.
+    function pauseWithdrawals() external onlyGuardian {
+        if (withdrawalsPaused()) revert WithdrawalsPaused();
+        uint256 until = block.timestamp + GUARDIAN_PAUSE;
+        withdrawalsPausedUntil = until;
+        emit GuardianPausedWithdrawals(until, ++guardianPauses);
+    }
+
+    /// @notice Clears the signer, so neither a withdrawal signed in the current epoch nor any
+    /// checkpoint is accepted again; installing a signer through the timelock starts the next epoch.
+    function retireSigner() external onlyGuardian {
+        address retired = checkpointSigner;
+        if (retired == address(0)) revert NoSigner();
+        checkpointSigner = address(0);
+        emit SignerRetired(retired, signerEpoch);
+    }
+
+    /// @notice Whether withdrawal and distribution claims are paused, by the timelock or the guardian.
+    function withdrawalsPaused() public view returns (bool) {
+        return block.timestamp < withdrawalsPausedUntil;
     }
 
     /// @notice Anyone may relay an enclave checkpoint. Only increasing seqs with the exact signed parent can
@@ -262,7 +318,7 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         bytes32[] calldata siblings,
         bytes calldata signature
     ) external nonReentrant {
-        if (withdrawalsPaused) revert WithdrawalsPaused();
+        if (withdrawalsPaused()) revert WithdrawalsPaused();
         if (withdrawal.account == address(0) || withdrawal.account == address(this) || withdrawal.amount == 0) {
             revert InvalidWithdrawal();
         }
@@ -315,7 +371,7 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     }
 
     function _pay(address account, uint256 amount) private {
-        if (withdrawalsPaused) revert WithdrawalsPaused();
+        if (withdrawalsPaused()) revert WithdrawalsPaused();
         uint256 vaultBefore = usdc.balanceOf(address(this));
         uint256 accountBefore = usdc.balanceOf(account);
         usdc.safeTransfer(account, amount);

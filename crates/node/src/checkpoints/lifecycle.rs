@@ -35,8 +35,11 @@ pub struct ApprovalStatus {
 pub struct LifecycleEvidence {
     pub height: u64,
     pub block_hash: B256,
+    /// Zero once the vault's guardian retired the signer, until the timelock installs one.
     pub signer: AccountId,
     pub signer_epoch: u64,
+    /// The vault refuses withdrawal claims: its timelock or its guardian paused them.
+    pub withdrawals_paused: bool,
     pub total_withdrawn: Fixed,
     pub checkpoint_seq: Option<u64>,
     pub checkpoint_root: Option<String>,
@@ -69,6 +72,7 @@ pub(crate) struct SignerHistory {
 
 impl SignerHistory {
     /// Reads only requested epochs, accepted-root epochs and the current epoch at one pinned block.
+    /// A retired current signer keeps its epoch's historical signer.
     /// Error cases:
     /// - any signer is absent, future, inconsistent, or cannot be authenticated by custody
     pub(crate) async fn authenticate_epochs(
@@ -90,13 +94,33 @@ impl SignerHistory {
             ensure!(signers.len() == page.len(), "vault lacks requested signer epoch history");
             for (&epoch, signer) in page.iter().zip(signers) {
                 ensure!(
-                    signer.0 != [0; 20] && (epoch != evidence.signer_epoch || signer == evidence.signer),
+                    signer.0 != [0; 20]
+                        && (epoch != evidence.signer_epoch || signer == evidence.signer || evidence.signer_retired()),
                     "signer epoch history differs from finalized custody"
                 );
                 self.epochs.insert(epoch, signer);
             }
         }
         Ok(())
+    }
+}
+
+impl VaultState {
+    /// Whether the vault's guardian retired its signer and the timelock has not installed one.
+    pub(crate) fn signer_retired(&self) -> bool {
+        retired(self.signer)
+    }
+}
+
+impl LifecycleEvidence {
+    /// Whether the vault's guardian retired its signer and the timelock has not installed one.
+    pub fn signer_retired(&self) -> bool {
+        retired(self.signer)
+    }
+
+    /// Whether the vault refuses every withdrawal claim: they are paused, or it has no signer.
+    pub fn halts_withdrawals(&self) -> bool {
+        self.withdrawals_paused || self.signer_retired()
     }
 }
 
@@ -136,4 +160,9 @@ impl Observation {
         }
         Ok(())
     }
+}
+
+/// Whether `signer` is the zero address a retired vault signer reads as.
+fn retired(signer: AccountId) -> bool {
+    signer.0 == [0; 20]
 }

@@ -12,7 +12,7 @@ use crate::checkpoints::rpc::{
     CheckpointRpc, balanceOfCall, checkpointEpochAtCall, checkpointRootsCall, checkpointSignerAtCall,
     checkpointSignerCall, depositCountCall, depositedThroughCall, distributionsPaidCall, hasCheckpointAtCall,
     hasCheckpointCall, latestRootCall, latestSeqCall, signerAtEpochCall, signerEpochCall, totalDepositedCall,
-    totalWithdrawnCall, usdcCall, usedNoncesCall,
+    totalWithdrawnCall, usdcCall, usedNoncesCall, withdrawalsPausedCall,
 };
 use crate::checkpoints::{
     APPROVAL_PAGE_SIZE, AcceptedCheckpoint, ApprovalId, ApprovalStatus, LifecycleEvidence, Observation, VaultState,
@@ -88,6 +88,9 @@ impl CheckpointRpc {
         let signer_epoch =
             signerEpochCall::abi_decode_returns(&self.call(vault, signerEpochCall {}.abi_encode(), at).await?)?;
         ensure!(signer_epoch > 0, "vault signer epoch is zero");
+        let withdrawals_paused = withdrawalsPausedCall::abi_decode_returns(
+            &self.call(vault, withdrawalsPausedCall {}.abi_encode(), at).await?,
+        )?;
         let paid =
             totalWithdrawnCall::abi_decode_returns(&self.call(vault, totalWithdrawnCall {}.abi_encode(), at).await?)?;
         let statuses = self.read_claims(at, approvals).await?;
@@ -96,6 +99,7 @@ impl CheckpointRpc {
             block_hash: block.header.hash,
             signer,
             signer_epoch,
+            withdrawals_paused,
             total_withdrawn: usdc_to_fixed(paid).context("vault paid total exceeds Fixed")?,
             checkpoint_seq: checkpoint.as_ref().map(|value| value.0),
             checkpoint_root: checkpoint.as_ref().map(|value| value.1.clone()),

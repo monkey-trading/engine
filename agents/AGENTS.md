@@ -125,7 +125,7 @@ an index: load only the rule whose hint matches the current action.
   authorized by its attestation-verified enclave signer. Withdrawals require its current signer and
   epoch, an unused account nonce, a 24-hour authorization, and approval inclusion in an accepted root.
   The constructor takes the token, the signer, an existing OpenZeppelin timelock with a nonzero
-  delay, and the engine's initial MONKEY emission period budget, which caps `src/MonkeyToken.sol`,
+  delay, the guardian, and the engine's initial MONKEY emission period budget, which caps `src/MonkeyToken.sol`,
   the ERC-20 the vault deploys and alone mints: `claimEmissions` mints an account's entitlement,
   proven against the latest posted root, less what it already claimed. `src/Staking.sol` holds
   MONKEY staked for USDC distributions, enforces the unstake cooldown — the constructor refuses a
@@ -134,7 +134,9 @@ an index: load only the rule whose hint matches the current action.
   its cumulative distribution, proven
   against the latest posted root, adds to what it was already paid. Deployment gives that
   timelock its multisig proposer. The timelock manages signer rotation and independent
-  deposit/withdrawal pauses.
+  deposit/withdrawal pauses; the guardian, the same multisig acting without the delay, may only
+  pause withdrawals for seven days (counted, renewed or lifted by the timelock) and retire the
+  signer until the timelock installs one.
 - **config/** — node configs. `dev.toml` runs the TEE, custody and feeds as mocks on one machine,
   and checks the clock against public Roughtime servers, citing each server's key source;
   `feeds.provider = "venues"` prices its crypto markets from live venues instead, leaving the others
@@ -198,7 +200,7 @@ an index: load only the rule whose hint matches the current action.
   vault's Anvil fixture; `dev-rwa-feeds.sh`, the RWA price feeds dev scenario against local
   stand-ins for the market-data vendors; `dev-signed-api.sh`, the signed API answers scenario:
   verified responses and stream frames, and refused tampering, replay and gaps; `dev-withdrawals.sh`, the actual Anvil/TLS withdrawal,
-  pre-log crash, unpaid redelivery, and FIFO liquidity scenario; `dev-attestation-verifier.sh`,
+  pre-log crash, unpaid redelivery, FIFO liquidity, and guardian pause and signer retirement scenario; `dev-attestation-verifier.sh`,
   the attestation verifier dev scenario against a loopback key-distribution stand-in, with no
   hardware or vendor access, also replaying a hand-built signed-withdrawal log through
   `engine replay --attestation`, and verifying from the collateral the node's route relays after
@@ -389,7 +391,8 @@ Run from the repo root:
   the cooldown, and an epoch below the floor paying nothing; needs Anvil, Forge, and installed
   Soldeer dependencies)
 - Signed withdrawal and FIFO dev scenario: `./scripts/dev-withdrawals.sh` (needs Anvil, Forge,
-  Cargo and pinned contract dependencies; uses local signed time and price servers, and preserves
+  Cargo and pinned contract dependencies; uses local signed time and price servers and a loopback
+  alert webhook, ends with the guardian pause and signer retirement flow, and preserves
   its child logs under `SCENARIO_LOG_DIR` or a fresh temporary artifact directory)
 - Sign and submit an admin command as the operator: `cargo run -p engine-node -- admin --pin <the
   TLS key hash in the node's attested bundle> <command>`, with the key from `--key-file`,

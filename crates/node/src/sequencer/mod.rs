@@ -185,10 +185,7 @@ impl Sequencer {
                         let _ = reply.send(self.request_reissue(account, nonce, replaces, screening.as_ref()));
                     }
                     Request::CheckpointStatus { posted, health, lifecycle } => {
-                        self.checkpoint_status(posted, health)?;
-                        if let Some(evidence) = lifecycle {
-                            self.release_payouts(&evidence)?;
-                        }
+                        self.custody_status(posted, health, lifecycle)?;
                     }
                 }
                 if taken < MAX_BATCH {
@@ -253,10 +250,7 @@ impl Sequencer {
             return Ok(None);
         };
         self.sequence_queued(ts)?;
-        if !access::gate_withdrawal(
-            &mut cmd,
-            self.gate.as_ref().map(|gate| matches!(gate.health, Some(crate::checkpoints::Health::Healthy))),
-        ) {
+        if !access::gate_withdrawal(&mut cmd, self.gate.as_ref().map(checkpoints::Gate::admits_withdrawals)) {
             return Ok(None);
         }
         if self.benchmark_sync && !matches!(&cmd, Command::SignedAdmin(req) if req.command.is_benchmark_snapshot()) {

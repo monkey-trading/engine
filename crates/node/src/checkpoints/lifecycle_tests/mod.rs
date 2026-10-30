@@ -29,6 +29,8 @@ struct Chain {
     blocks: Arc<Mutex<u8>>,
     /// A swept page, by its first nonce, whose nonce-use read fails once.
     fail_once: Arc<Mutex<Option<u64>>>,
+    /// Running deposit totals through earlier deposit counts than the observed one.
+    deposited_through: Arc<Mutex<BTreeMap<u64, Fixed>>>,
 }
 
 impl Chain {
@@ -74,6 +76,16 @@ impl CheckpointChain for Chain {
         drop(fail);
         self.pages.lock().unwrap().push(approvals.to_vec());
         Ok(self.statuses(approvals))
+    }
+
+    async fn deposited_through(&self, at: &Observation, count: u64) -> anyhow::Result<Fixed> {
+        match self.deposited_through.lock().unwrap().get(&count) {
+            Some(total) => Ok(*total),
+            None => {
+                anyhow::ensure!(count == at.state.deposits, "no running total for that deposit count");
+                Ok(at.state.deposited)
+            }
+        }
     }
 
     async fn accepted_checkpoints(
@@ -279,7 +291,7 @@ async fn registry_polling_repeats_claims_until_sequencer_acknowledgement() {
 #[tokio::test(start_paused = true)]
 async fn each_retry_sweeps_bounded_pages_at_its_own_finalized_block() {
     let (poster, work) = fixture();
-    let approvals = registry(super::SWEEP_PAGES * APPROVAL_PAGE_SIZE + 5);
+    let approvals = registry(super::sweep::SWEEP_PAGES * APPROVAL_PAGE_SIZE + 5);
     let (work_tx, work_rx) = mpsc::channel(4);
     let (status_tx, mut status_rx) = mpsc::channel(4);
     work_tx.send(work).await.unwrap();
@@ -287,7 +299,7 @@ async fn each_retry_sweeps_bounded_pages_at_its_own_finalized_block() {
     let first = evidence(&mut status_rx).await;
     assert_eq!(first.approvals.first().unwrap().approval.nonce, 0);
     let mut next = APPROVAL_PAGE_SIZE as u64;
-    for _ in 1..super::SWEEP_PAGES {
+    for _ in 1..super::sweep::SWEEP_PAGES {
         let page = evidence(&mut status_rx).await;
         assert_eq!(page.block_hash, first.block_hash, "one tick sweeps at one finalized block");
         assert_eq!(page.approvals.len(), APPROVAL_PAGE_SIZE);
@@ -406,6 +418,7 @@ fn fixture() -> (Poster<Chain>, Work) {
         block_hash: B256::repeat_byte(8),
         signer: state.signer,
         signer_epoch: 1,
+        withdrawals_paused: false,
         total_withdrawn: Fixed::ZERO,
         checkpoint_seq: Some(5),
         checkpoint_root: Some(checkpoint.root.clone()),
@@ -428,6 +441,7 @@ fn fixture() -> (Poster<Chain>, Work) {
         pages: Default::default(),
         blocks: Default::default(),
         fail_once: Default::default(),
+        deposited_through: Default::default(),
     };
     let work = Work {
         checkpoint,
@@ -450,3 +464,5 @@ fn fixture() -> (Poster<Chain>, Work) {
         work,
     )
 }
+
+mod halt;

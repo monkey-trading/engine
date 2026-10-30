@@ -209,7 +209,8 @@ impl Scenario {
             &(U256::from(1), vec![accounts[0]], vec![Address::ZERO], Address::ZERO).abi_encode_params(),
         )
         .await;
-        let args = (usdc, Address::from(key.address()), governance, U256::from(DEV_PERIOD_BUDGET)).abi_encode();
+        let args =
+            (usdc, Address::from(key.address()), governance, accounts[0], U256::from(DEV_PERIOD_BUDGET)).abi_encode();
         let vault = deploy(&provider, accounts[0], "Vault.sol/Vault.json", &args).await;
         let section: CheckpointSection = toml::from_str(&format!(
             "rpc_url = {url:?}\nrelayer = '{:#x}'\nretry_interval = '40ms'\nrpc_timeout = '2s'",

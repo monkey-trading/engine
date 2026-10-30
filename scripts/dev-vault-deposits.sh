@@ -178,8 +178,9 @@ governance="$(forge create --rpc-url "$rpc" --private-key "$house_key" --broadca
   dependencies/@openzeppelin-contracts-5.7.0/governance/TimelockController.sol:TimelockController \
   --constructor-args 1 "[$trader]" '[0x0000000000000000000000000000000000000000]' \
   0x0000000000000000000000000000000000000000 | jq -r '.deployedTo')"
-# The MONKEY period budget, 1 MONKEY, is a development value, not an approved production parameter.
-vault="$(create src/Vault.sol:Vault --constructor-args "$usdc" "$trader" "$governance" 1000000000000000000)"
+# The guardian is the timelock's proposer, as the deployment's multisig is. The MONKEY period
+# budget, 1 MONKEY, is a development value, not an approved production parameter.
+vault="$(create src/Vault.sol:Vault --constructor-args "$usdc" "$trader" "$governance" "$trader" 1000000000000000000)"
 export DEV_DEPOSIT_TOPIC="$(cast keccak 'Deposited(uint256,address,address,uint256)')"
 cd "$root"
 grep -qi "vault = \"$vault\"" config/anvil.toml || fail "vault deployed at $vault, not the address config/anvil.toml names"

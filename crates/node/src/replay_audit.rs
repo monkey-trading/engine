@@ -60,8 +60,16 @@ async fn build_trust(
     ensure!(signer.0 != [0; 20], "custody audit requires a nonzero independently trusted signer");
     let at = chain.observe(View::Finalized, &[]).await?;
     ensure!(at.view == View::Finalized, "custody audit requires a finalized observation");
-    ensure!(at.state.signer == signer, "finalized vault signer differs from the supplied trusted signer");
     at.validate(&[])?;
+    // While the guardian has retired the vault's signer, the current epoch's signer is the one
+    // that accepted its checkpoints.
+    let current = if at.state.signer_retired() {
+        let epoch = at.lifecycle.as_ref().context("custody audit requires lifecycle evidence")?.signer_epoch;
+        *chain.epoch_signers(&at, &[epoch]).await?.first().context("vault lacks its current signer epoch")?
+    } else {
+        at.state.signer
+    };
+    ensure!(current == signer, "finalized vault signer differs from the supplied trusted signer");
     let parent = at
         .state
         .checkpoint

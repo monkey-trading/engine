@@ -30,7 +30,7 @@ contract StakingTest is Test {
         proposers[0] = vm.addr(KEY);
         address[] memory executors = new address[](1);
         TimelockController governance = new TimelockController(2 days, proposers, executors, address(0));
-        vault = new Vault(usdc, vm.addr(KEY), governance, 1e18);
+        vault = new Vault(usdc, vm.addr(KEY), governance, proposers[0], 1e18);
         monkey = vault.monkey();
         staking = new Staking(monkey, COOLDOWN, EPOCH);
     }

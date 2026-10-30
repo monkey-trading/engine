@@ -151,6 +151,7 @@ impl Fixture {
             block_hash: B256::repeat_byte(0x88),
             signer: state.signer,
             signer_epoch: 2,
+            withdrawals_paused: false,
             total_withdrawn: Fixed::ZERO,
             checkpoint_seq: Some(second.seq),
             checkpoint_root: Some(second.root.clone()),

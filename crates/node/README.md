@@ -154,8 +154,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/payouts.rs` — durable unpaid delivery, finalized claim evidence, epoch reissues, and reissue requests
 - `src/sequencer/payout_schedule.rs` — complete unpaid approval order, bounded epoch and requested reissue scheduling, and the hold behind unloaded recovered approvals
 - `src/sequencer/payout_tests.rs` — release order across claim pages, durability, restart, expiry without reissue, and rotation
-- `src/sequencer/payout_tests/` — paginated replacement signature order, paused claim acknowledgement, sealed approval recovery, FIFO signing across unloaded recovery windows, and expired authorizations a rotation leaves unsigned
-- `src/sequencer/withdrawal_scenario/` — actual Anvil/TLS/stream/custody crash and FIFO scenarios with local signed time
+- `src/sequencer/payout_tests/` — paginated replacement signature order, paused claim acknowledgement, sealed approval recovery, FIFO signing across unloaded recovery windows, expired authorizations a rotation leaves unsigned, and no issuance or reissue while the vault pauses withdrawals or has a retired signer
+- `src/sequencer/withdrawal_scenario/` — actual Anvil/TLS/stream/custody crash, FIFO, and guardian pause and signer retirement scenarios with local signed time
 - `src/withdrawals.rs` — vault EIP-712 digests and exact approval inclusion verification
 - `src/api/withdrawal_queue.rs` — public FIFO pagination and account queue positions
 - `src/api/reissue.rs` — a holder's screened request to sign an expired approval again
@@ -442,12 +442,13 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/config/test_keys.rs` — the published test keys from `config/test-keys.toml`, which a node
   with real attestation refuses, and their tests
 - `src/checkpoints/mod.rs` — posting, retry, signed-parent commitment checks, and collateral reconciliation
+- `src/checkpoints/sweep.rs` — bounded approval pages and the sweep of further pages at one finalized block
 - `src/checkpoints/accounting.rs` — bounded custody totals and held reserves derived from computed engine events
 - `src/checkpoints/accounting/access_tests.rs` — actual pending and hold outputs against independent reconciliation totals
 - `src/checkpoints/lifecycle.rs` — pinned signer/epoch, cumulative paid amounts, and approval nonce-use evidence
 - `src/checkpoints/history.rs` — accepted history from the finalized anchor, the signed-parent chain, and signer epochs
-- `src/checkpoints/lifecycle_tests.rs` — paid cash reconciliation, bounded claim polling, and rotated authorities
-- `src/checkpoints/reconciliation.rs` — finalized collateral health: shortfalls, deposit totals, payouts, surpluses, and the credit deadline
+- `src/checkpoints/lifecycle_tests/` — paid cash reconciliation, bounded claim polling, rotated authorities, and the vault's pause and retired signer observed, alerted and finalized
+- `src/checkpoints/reconciliation.rs` — finalized collateral health: shortfalls, deposit totals, payouts, surpluses, the credit deadline, and the vault's halt
 - `src/checkpoints/rpc/observation.rs` — same-block balance, epoch, paid total, and bounded claim reads
 - `src/checkpoints/rpc/authority.rs` — accepted historical signer identities for rotated nonce journals
 - `src/checkpoints/rpc/submission/tests/lifecycle.rs` — canonical pinned history and retired journal recovery
@@ -458,7 +459,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/rpc.rs` — pinned-block vault reads and transaction relay through a signing RPC
 - `src/checkpoints/rpc/tests.rs` — sampled ancestry and durable relayer request regressions
 - `src/checkpoints/rpc/submission.rs` — bounded locked crash-durable nonce/hash reservations
-- `src/checkpoints/rpc/submission/posting.rs` — persisted reservation and exact transaction retry transitions
+- `src/checkpoints/rpc/submission/posting.rs` — persisted reservation and exact transaction retry transitions, and the next nonce for a send that reverted
 - `src/checkpoints/rpc/submission/progress.rs` — canonical finalized obsolete nonce-consumer proofs
 - `src/checkpoints/rpc/submission/tests.rs` — response-loss, restart, identity, and reservation regressions
 - `src/checkpoints/rpc/submission/tests/fakes.rs` — isolated relay and canonical transaction RPC fixtures
@@ -810,7 +811,7 @@ the worker finalizes one checkpoint at a time; while the queue is full the seque
 checkpoints with the Warning `checkpoint_backlog` and keeps sequencing, and approvals wait for the
 next checkpoint that fits. Failed posts retry after `retry_interval` and emit `checkpoint_post_failed`. Withheld signing or
 posting emits the Warning `checkpoint_withheld`, one episode per `cause` (`collateral`,
-`custody_prefix`, `post_diverged`) however many attempts it spans, resolved when that hold clears. A conflicting
+`custody_prefix`, `post_diverged`, `signer_retired`) however many attempts it spans, resolved when that hold clears. A conflicting
 posted root or signer stops the node with the Critical `checkpoint_conflict` once the next retry's fresh observation
 repeats it; seen once, it retries with `checkpoint_post_failed`, since one read can be torn across a block the
 endpoint is still mining. Following decision #15 §2, withdrawals
@@ -827,11 +828,28 @@ pauses new withdrawals (fail closed), while checkpoint signing continues, since 
 proven prefix is the way out. Withdrawals resume at the first healthy comparison of a proven
 checkpoint. A failed or absent observation never changes the gate, so it cannot erase a proved
 divergence. `engine_withdrawals_paused` is 1 in every paused state (before the first reconciliation,
-an unproven prefix, a pending catch-up past its deadline, a divergence), and
+an unproven prefix, a pending catch-up past its deadline, a divergence, a vault that pauses
+withdrawals or has no signer), and
 `engine_withdrawals_verdict_seq` is the finalized checkpoint behind the latest verdict. USDC sent to the
 vault outside a deposit pauses nothing: it emits the Warning `collateral_surplus` until anyone calls
 the vault's `bookSurplus`, which records it as a house deposit; a surplus below the 10 USDC minimum
 deposit must be topped up first.
+
+The vault's guardian, the deployment's multisig acting without the timelock's delay, may pause
+withdrawals for seven days or retire the vault's signer. Each observation reads the vault's
+withdrawal pause and signer at the latest and at the withdrawal finality block, and a change seen
+only at the latest block supplies no release evidence until it is final; a failed post still
+reports a finalized halt, without releasing anything. While the finalized vault pauses
+withdrawals or has no signer, the node signs no withdrawal authorization, first or reissued,
+refuses new withdrawals with `payout_unavailable`, sets `engine_withdrawals_paused` to 1, and
+emits the Critical `vault_withdrawals_halted`, one episode per `cause` (`paused`,
+`signer_retired`), resolved once the vault lifts it. Checkpoints keep posting during a pause.
+While the signer is retired the vault accepts no checkpoint, so the sequencer signs none
+(`checkpoint_withheld`, cause `signer_retired`), starts no deposit catch-up deadline, and keeps
+sequencing; once the timelock installs this enclave's key again, the next epoch begins, the next
+checkpoint carries the whole state, and the node reissues each authorization still usable, while
+another key stops the node with `checkpoint_conflict`. A node started while the signer is
+retired refuses to start until the timelock installs one.
 
 ```toml
 [checkpoints]
@@ -856,7 +874,10 @@ obsolete prefix. If a dropped predecessor later consumes the reused nonce, canon
 transaction history must prove it was an authorized obsolete vault call before the successor can
 move to the next free nonce. Foreign nonce consumers still refuse. The endpoint must support
 historical account-nonce reads and full consuming-block transactions; unavailable history leaves
-the reservation intact. These nonce proofs never authorize withdrawal release.
+the reservation intact. A send that reverted, as one in flight when the vault's guardian retires
+the signer does, moves to the next nonce once finalized history shows that exact call consumed
+the reserved one and the vault at that block lacks the checkpoint. These nonce proofs never
+authorize withdrawal release.
 It signs and
 pays gas for relays; only the attested enclave's signature authorizes a vault commitment. Reads
 pin signer, root, deposit count, and USDC balance to one canonical block hash. This RPC's chain view

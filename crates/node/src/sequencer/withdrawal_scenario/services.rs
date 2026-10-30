@@ -1,6 +1,6 @@
 //! Deterministic local quotes and signed Roughtime replies, with explicit task lifetimes.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -32,6 +32,9 @@ pub(super) struct Services {
     pub time: Vec<Value>,
     pub rpcs: Vec<String>,
     pub access: String,
+    /// The Critical alert webhook the node pages.
+    pub alerts: String,
+    pages: Arc<Mutex<Vec<Value>>>,
     price: watch::Sender<Fixed>,
     tasks: Vec<JoinHandle<anyhow::Result<()>>>,
 }
@@ -47,8 +50,8 @@ impl Drop for Services {
 
 impl Services {
     /// Starts two independently signed Roughtime servers, one controllable venue, a synthetic
-    /// screening source that clears every subject, and three RPC proxies whose requests never
-    /// overlap the scenario's block production.
+    /// screening source that clears every subject, a Critical alert webhook, and three RPC proxies
+    /// whose requests never overlap the scenario's block production.
     /// Error cases:
     /// - loopback sockets cannot bind
     pub async fn start(rpc: &str, mining: Arc<RwLock<()>>, domain: Eip712Domain) -> anyhow::Result<Self> {
@@ -66,6 +69,18 @@ impl Services {
             }),
         );
         tasks.push(tokio::spawn(async move { Ok(axum::serve(listener, source_app).await?) }));
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let alerts = format!("http://{}/alerts", listener.local_addr()?);
+        let pages = Arc::new(Mutex::new(Vec::new()));
+        let received = pages.clone();
+        let webhook = axum::Router::new().route(
+            "/alerts",
+            post(move |Json(page): Json<Value>| {
+                received.lock().expect("alert pages lock").push(page);
+                async { StatusCode::OK }
+            }),
+        );
+        tasks.push(tokio::spawn(async move { Ok(axum::serve(listener, webhook).await?) }));
         let mut time = Vec::new();
         let mut rpcs = Vec::new();
         for _ in 0..3 {
@@ -98,12 +113,22 @@ impl Services {
             }));
             tasks.push(tokio::spawn(roughtime(socket, server)));
         }
-        Ok(Self { feed, time, rpcs, access, price, tasks })
+        Ok(Self { feed, time, rpcs, access, alerts, pages, price, tasks })
     }
 
     /// Changes the quoted mid; the scenario waits for the actual API mark before trading.
     pub fn set_price(&self, price: i64) {
         self.price.send_replace(Fixed::from_int(price));
+    }
+
+    /// Whether the node has paged Critical alert `alert` firing with field `cause`.
+    pub fn paged(&self, alert: &str, cause: &str) -> bool {
+        self.pages.lock().expect("alert pages lock").iter().any(|page| {
+            page["status"] == "firing"
+                && page["severity"] == "critical"
+                && page["alert"] == alert
+                && page["fields"]["cause"] == cause
+        })
     }
 
     /// Fails if a required local server exited; silent background failures cannot look healthy.

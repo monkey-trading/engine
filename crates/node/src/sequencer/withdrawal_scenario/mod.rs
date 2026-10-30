@@ -2,6 +2,7 @@
 
 mod client;
 mod flows;
+mod guardian;
 mod node;
 mod rpc;
 mod services;
@@ -22,6 +23,7 @@ use crate::config::{CustodyProvider, FeedProvider, NodeConfig, TeeProvider};
 
 const CHILD_CONFIG: &str = "ENGINE_WITHDRAWAL_SCENARIO_CHILD_CONFIG";
 const CHILD_FEED: &str = "ENGINE_WITHDRAWAL_SCENARIO_CHILD_FEED";
+const CHILD_ALERTS: &str = "ENGINE_WITHDRAWAL_SCENARIO_CHILD_ALERTS";
 const CHILD_TEST: &str = "sequencer::withdrawal_scenario::node_child";
 
 #[derive(Deserialize, Serialize)]
@@ -70,7 +72,8 @@ pub(crate) fn before_approval_log(sequenced: &Sequenced, events: &[Event]) -> an
 async fn dev_scenario_signed_withdrawals_and_fifo() -> anyhow::Result<()> {
     timeout(Duration::from_secs(900), async {
         flows::payments_and_crashes().await?;
-        flows::shortfall_and_fifo().await
+        flows::shortfall_and_fifo().await?;
+        guardian::pause_and_retirement().await
     })
     .await
     .context("whole withdrawal scenario exceeded fifteen minutes")?
@@ -85,6 +88,8 @@ async fn node_child() -> anyhow::Result<()> {
     ensure!(cfg.custody.provider == CustodyProvider::Evm && cfg.custody.chain_id == 31337, "local Anvil only");
     let endpoint = std::env::var(CHILD_FEED).context("scenario feed endpoint")?;
     ensure!(endpoint.starts_with("ws://127.0.0.1:"), "scenario feed is loopback only");
+    let alerts = std::env::var(CHILD_ALERTS).context("scenario alert webhook")?;
+    ensure!(alerts.starts_with("http://127.0.0.1:"), "scenario alert webhook is loopback only");
     // Production config still enforces venue-owned WSS domains. Only this test child substitutes
     // a loopback Bitstamp server after validation, keeping the real feed parser and node wiring.
     cfg.feeds.provider = FeedProvider::Venues;
@@ -92,8 +97,7 @@ async fn node_child() -> anyhow::Result<()> {
         "timeout='5s'\nreconnect_min='40ms'\nreconnect_max='200ms'\nstale_after='3s'\n\
          [[connections]]\nvenue='bitstamp'\nurl={endpoint:?}\nsymbols=[{{market=1,symbol='btcusd'}}]"
     ))?);
-    let telemetry = crate::telemetry::init_telemetry(&cfg, |name| {
-        (name == "ENGINE_ALERTS_CRITICAL_URL").then(|| "http://127.0.0.1:9/alerts".to_owned())
-    })?;
+    let telemetry =
+        crate::telemetry::init_telemetry(&cfg, |name| (name == "ENGINE_ALERTS_CRITICAL_URL").then(|| alerts.clone()))?;
     crate::node::run(cfg, telemetry).await
 }

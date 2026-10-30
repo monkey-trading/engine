@@ -7,7 +7,7 @@ use super::*;
 use crate::checkpoints::rpc::submission::posting::checkpoint_input;
 use crate::checkpoints::rpc::{
     checkpointEpochAtCall, checkpointRootsCall, checkpointSignerAtCall, depositedThroughCall, signerAtEpochCall,
-    totalDepositedCall, usedNoncesCall,
+    totalDepositedCall, usedNoncesCall, withdrawalsPausedCall,
 };
 use crate::checkpoints::{ApprovalId, ApprovalStatus, View};
 
@@ -33,6 +33,7 @@ async fn collateral_paid_epoch_nonce_and_history_reads_use_the_same_canonical_fi
             std::collections::BTreeMap::from([(0, U256::from(40_000_000)), (1, U256::from(73_000_001))]);
         state.claimed.insert((Address::from(approval.account.0), approval.nonce));
         state.accepted.insert(cp.seq, (cp.clone(), 1));
+        state.withdrawals_paused = true;
     }
     let chain = rpc(&server.url, &dir);
     let at = chain.observe(View::Finalized, &[approval]).await.unwrap();
@@ -47,6 +48,7 @@ async fn collateral_paid_epoch_nonce_and_history_reads_use_the_same_canonical_fi
     let lifecycle = at.lifecycle.as_ref().unwrap();
     assert_eq!(lifecycle.total_withdrawn, Fixed::from_raw(3_000_001_000));
     assert_eq!(lifecycle.signer_epoch, 2);
+    assert!(lifecycle.withdrawals_paused);
     assert_eq!(lifecycle.block_hash, B256::repeat_byte(8));
     assert_eq!(lifecycle.approvals, [ApprovalStatus { approval, claimed: true }]);
     let accepted = chain.accepted_checkpoints(&at, &[cp.seq]).await.unwrap();
@@ -67,6 +69,7 @@ async fn collateral_paid_epoch_nonce_and_history_reads_use_the_same_canonical_fi
         checkpointSignerAtCall::SELECTOR,
         checkpointEpochAtCall::SELECTOR,
         signerAtEpochCall::SELECTOR,
+        withdrawalsPausedCall::SELECTOR,
     ] {
         assert!(calls.iter().any(|(actual, _)| *actual == hex::encode(selector)), "required pinned selector");
     }

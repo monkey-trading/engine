@@ -179,8 +179,8 @@ impl Metrics {
         r.register(
             "withdrawals_paused",
             "Whether the custody checkpoint gate pauses withdrawal approvals (1 paused, 0 healthy); paused until the \
-             first reconciliation, while the finalized checkpoint's custody prefix is unproven, and on a pending or \
-             diverged comparison",
+             first reconciliation, while the finalized checkpoint's custody prefix is unproven, on a pending or \
+             diverged comparison, and while the finalized vault pauses withdrawals or has no signer",
             metrics.withdrawals_paused.clone(),
         );
         r.register(

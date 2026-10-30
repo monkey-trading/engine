@@ -110,7 +110,8 @@ impl Scenario {
         }
         let governance =
             deploy(&provider, accounts[0], "TimelockController.sol/TimelockController.json", &governance_args).await;
-        let args = (usdc, Address::from(key.address()), governance, U256::from(DEV_PERIOD_BUDGET)).abi_encode();
+        let args =
+            (usdc, Address::from(key.address()), governance, accounts[0], U256::from(DEV_PERIOD_BUDGET)).abi_encode();
         let vault = deploy(&provider, accounts[0], "Vault.sol/Vault.json", &args).await;
         let monkey = {
             let request = TransactionRequest::default().to(vault).input(monkeyCall {}.abi_encode().into());

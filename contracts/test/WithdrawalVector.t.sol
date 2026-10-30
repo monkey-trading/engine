@@ -32,7 +32,7 @@ contract WithdrawalVectorTest is WithdrawalTest {
         assertEq(_root(withdrawal, siblings), root);
         address signer = vm.parseJsonAddress(fixture, ".signer");
         {
-            Vault template = new Vault(usdc, signer, governance, 1e18);
+            Vault template = new Vault(usdc, signer, governance, multisig, 1e18);
             vm.etch(verifier, address(template).code);
         }
         Vault target = Vault(verifier);
