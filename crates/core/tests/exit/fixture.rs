@@ -107,6 +107,7 @@ fn terms(proof: &ExitTermsProof) -> Value {
         "pending": raw(proof.terms.pending),
         "held": raw(proof.terms.held),
         "unheld": raw(proof.terms.unheld),
+        "heldReceipts": raw(proof.terms.held_receipts),
         "gaps": proof.terms.gaps.iter().map(u64::to_string).collect::<Vec<_>>(),
         "siblings": proof.siblings,
     })

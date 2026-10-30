@@ -49,7 +49,14 @@ pub(crate) fn session(h: &mut Harness) {
     let after = h.engine.exit_terms_proof().expect("V36 commits the exit terms").terms;
     // Its id is below the cursor and above the lowest gaps, so only the pending total moves.
     assert!(receipt.deposit_id < before.terms.deposit_cursor);
-    assert_eq!(after, ExitTerms { pending: before.terms.pending + f("25"), ..before.terms.clone() });
+    assert_eq!(
+        after,
+        ExitTerms {
+            pending: before.terms.pending + f("25"),
+            held_receipts: before.terms.held_receipts + f("25"),
+            ..before.terms.clone()
+        }
+    );
     let refunds = h.engine.house_pending_deposit_proofs().expect("V36 proves pending deposits");
     let refund = refunds.iter().find(|proof| proof.chain_ref == receipt.reference()).expect("the house receipt");
     assert!(refund.verify(root) && refund.deposit.payer == Some(payer));

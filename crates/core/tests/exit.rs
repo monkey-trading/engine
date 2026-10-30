@@ -48,15 +48,22 @@ fn the_exit_leaves_hash_as_an_evm_toolchain_encodes_them() {
         withdrawal_queue_key(42),
         "0x6a8c48defe56e7f63df69794da7955aa508559fb67a7f5fc7435db1d12e5dfb3".parse::<B256>().unwrap()
     );
-    let terms = ExitTerms { deposit_cursor: 3, pending: f("40"), held: f("30"), unheld: f("4"), gaps: vec![] };
+    let terms = ExitTerms {
+        deposit_cursor: 3,
+        pending: f("40"),
+        held: f("30"),
+        unheld: f("4"),
+        held_receipts: f("2"),
+        gaps: vec![],
+    };
     assert_eq!(
         exit_terms_hash(&terms),
-        "0xdf9255f4cc7d1e322d4c239b3a09e8b53e88de194a9d1e1d19e73d2e2e883e3b".parse::<B256>().unwrap()
+        "0x2103187dba6c9bfeb7ce69ccc963e15bfaa56279e78762f42c42645d9322508a".parse::<B256>().unwrap()
     );
     let gap = ExitTerms { gaps: vec![5, 7], ..terms };
     assert_eq!(
         exit_terms_hash(&gap),
-        "0x7eafae171a593b295d901b1d9934bbf320344e5102d7f9a358c0f21b480187ac".parse::<B256>().unwrap()
+        "0x72495183f71d1d4c94e0bfbe3f1775377c25f5603b02c7db4f90f055471824aa".parse::<B256>().unwrap()
     );
     assert_eq!(
         exit_terms_key(),

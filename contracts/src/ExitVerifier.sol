@@ -55,6 +55,7 @@ contract ExitVerifier {
         int128 pending;
         int128 held;
         int128 unheld;
+        int128 heldReceipts;
         uint64[] gaps;
     }
 
@@ -136,7 +137,9 @@ contract ExitVerifier {
         returns (bool)
     {
         bytes32 key = keccak256(abi.encodePacked(EXIT_TERMS_LEAF));
-        bytes32 value = keccak256(abi.encode(terms.depositCursor, terms.pending, terms.held, terms.unheld, terms.gaps));
+        bytes32 value = keccak256(
+            abi.encode(terms.depositCursor, terms.pending, terms.held, terms.unheld, terms.heldReceipts, terms.gaps)
+        );
         return StateTree.proves(root, key, value, siblings);
     }
 

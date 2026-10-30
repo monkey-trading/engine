@@ -94,7 +94,11 @@ contract ExitHandler is ExitTest {
         // Held principal is neither pending nor refundable, so it fits in what remains.
         uint256 spare = usdc.balanceOf(address(vault)) - uint256(int256(pendingAmount / UNIT)) - refundable;
         int128 held = int128(uint128(bound(seed >> 8, 0, spare))) * UNIT;
-        terms = _addTerms(cursor, pendingAmount, held, 0, gaps);
+        // Attribute every refundable deposit below the cursor: the trader receipts the root holds,
+        // then the named gaps, so the exit reserves no canonical remainder.
+        int128 heldReceipts =
+            covered == 0 ? int128(0) : int128(uint128(vault.refundableThrough(covered - 1))) * int128(UNIT);
+        terms = _addTerms(cursor, pendingAmount, held, 0, heldReceipts, gaps);
         for (uint256 i; i < actors.length; ++i) {
             uint256 draw = uint256(keccak256(abi.encode(seed, i)));
             states[i] = _addAccount(actors[i], int128(int256(bound(draw, 0, 200_000e6))) * UNIT - 100e6 * UNIT);

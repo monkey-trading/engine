@@ -401,15 +401,13 @@ for, paid down by later loss weight before it earns again, and judges
 emission eligibility during corporate-action catch-up at the enclosing command's stamp. Its
 session is in `examples/reference_log/v32.rs`.
 
-<<<<<<< HEAD
-Protocol V37 hands the operator key to the operator registry's elections while the registry has
-rotation on: an election takes effect at its effective time, never less than seven days after it
-is logged, and a signed rotation is refused; its session is in `examples/reference_log/v37.rs`.
-=======
 Protocol V36 commits what the vault's exit checks: ABI-encoded queue and pending deposit leaves, and
 the exit terms leaf with the deposit cursor and the pending and held principal; its session is in
 `examples/reference_log/v36.rs`.
->>>>>>> 0bc28c57 ([core,node,contracts,workspace] Exit against the last posted root (V36))
+
+Protocol V37 hands the operator key to the operator registry's elections while the registry has
+rotation on: an election takes effect at its effective time, never less than seven days after it
+is logged, and a signed rotation is refused; its session is in `examples/reference_log/v37.rs`.
 
 Protocol V35 bounds the operator: rate changes within ±50% of the launch rates after a seven-day
 notice, no price rules that leave a held market unpriced unless it is reduce-only, and an operator

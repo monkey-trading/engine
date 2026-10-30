@@ -590,12 +590,18 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         }
         uint256 refunds = totalRefundable - (cursor == 0 ? 0 : refundableThrough[cursor - 1]);
         uint256 named;
+        uint256 below = cursor == 0 ? 0 : refundableThrough[cursor - 1];
         if (hasCheckpoint) named = _markRefundableGaps(cursor, terms.gaps);
+        // Every refundable deposit below the cursor is one the root holds for a trader, a named
+        // gap, or an unnamed one: attribute them and reserve the greater of the engine's estimate
+        // and the canonical remainder, so no unnamed deposit's principal reaches the pools.
+        uint256 attributed = _usdcCeil(terms.heldReceipts) + named;
+        uint256 canonicalUnnamed = below > attributed ? below - attributed : 0;
         exitStartedAt = uint64(block.timestamp);
         exitDepositCursor = cursor;
-        exitRefundReserve = refunds + pending + named + unheld;
+        exitRefundReserve = refunds + pending + named + (unheld > canonicalUnnamed ? unheld : canonicalUnnamed);
         exitHeldReserve = held;
-        emit ExitStarted(latestSeq, latestRoot, cursor, refunds + pending + named + unheld, held);
+        emit ExitStarted(latestSeq, latestRoot, cursor, exitRefundReserve, held);
     }
 
     /// @notice Registers `account`'s equity at the exit root's marks as its claim, once. Anyone may

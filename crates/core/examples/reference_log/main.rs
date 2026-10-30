@@ -1,6 +1,5 @@
-//! Writes a protocol reference log: a session through every command and main path, with each command's state root.
-//! Run it once per protocol version and commit the output; it refuses to overwrite an existing log.
-//!
+//! Writes a protocol reference log: a session through every command and main path, with each command's state
+//! root. Run once per protocol version and commit the output; it refuses to overwrite. Usage:
 //! `cargo run -p engine-core --example reference_log -- crates/core/tests/reference/v<N>.jsonl`
 
 #[path = "../../tests/common/mod.rs"]
@@ -34,7 +33,6 @@ mod v34;
 mod v35;
 mod v36;
 mod v37;
-
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -93,12 +91,11 @@ fn main() -> anyhow::Result<()> {
 /// tree: a new account's deposit, resting order and cancel, a dollar round trip, a euro position, and a marked markout.
 /// Then, under `V10`, spreads, a margin requirement, and close-out levels that round up; and under `V11`, markouts
 /// averaged by notional and scored at a valid index. Then, under `V12`, gapped opens, quotes ageing out, a session
-/// close, a leading venue, and an FX index ageing out, each processed before the next command acts. Then, under `V13`,
-/// stress that follows its inputs (`stress.rs`), and the parts in `v14.rs` and `v15.rs`. Then, from `V16` on, one part
-/// per version in its `v<N>.rs`: toxicity memory, the move window, dated benchmark rates, MONKEY emissions, custody
-/// finality, quote hours and futures, FIFO withdrawals, access, staking, emission debt, the
-/// operator's bounds, the exit's leaves, and the elected operator key. Every client request is
-/// signed by its account's key unless a comment says not.
+/// close, a leading venue, and an FX index ageing out, each processed before the next command acts. Then, under
+/// `V13`, stress that follows its inputs (`stress.rs`), and the parts in `v14.rs` and `v15.rs`. Then, from `V16` on,
+/// one part per version in its `v<N>.rs`: toxicity memory, the move window, dated benchmarks, MONKEY emissions,
+/// custody finality, futures rolls, FIFO withdrawals, access, staking, emission debt, the operator's bounds, the
+/// exit's leaves, and the elected key.
 fn session() -> Vec<Sequenced> {
     let mut h = Harness::signed();
     let (a, b, c, d, t, e) = (h.signer(1), h.signer(2), h.signer(3), h.signer(4), h.signer(5), h.signer(6));

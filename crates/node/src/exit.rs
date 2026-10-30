@@ -44,7 +44,7 @@ sol! {
         bytes32 stateHash;
         bytes32[] siblings;
     }
-    struct ExitTerms { uint64 depositCursor; int128 pending; int128 held; int128 unheld; uint64[] gaps; }
+    struct ExitTerms { uint64 depositCursor; int128 pending; int128 held; int128 unheld; int128 heldReceipts; uint64[] gaps; }
     struct QueuedWithdrawal { address account; int128 amount; int128 remaining; uint64 requestedSeq; uint64 ticket; }
     struct PendingDeposit { uint64 depositId; address account; address payer; int128 amount; }
     struct Approval { address account; uint256 amount; uint64 nonce; uint64 approvedSeq; }
@@ -216,6 +216,7 @@ fn start(terms: &ExitTermsProof) -> ExitCall {
         pending: terms.terms.pending.raw(),
         held: terms.terms.held.raw(),
         unheld: terms.terms.unheld.raw(),
+        heldReceipts: terms.terms.held_receipts.raw(),
         gaps: terms.terms.gaps.clone(),
     };
     let calldata = startExitCall { terms: exit_terms, siblings: terms.siblings.clone() }.abi_encode();

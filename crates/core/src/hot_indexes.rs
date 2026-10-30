@@ -31,6 +31,10 @@ pub(crate) struct HotIndexes {
     /// gaps: what the exit terms commit as the unheld principal.
     pub(crate) unheld_amounts: BTreeMap<u64, Fixed>,
     pub(crate) unheld_total: Fixed,
+    /// Principal of the live receipts above the finalised frontier: every one corresponds to a
+    /// refundable deposit, and with the named gaps the terms attribute every refundable deposit
+    /// below the cursor, so the vault can reserve exactly what no term names.
+    pub(crate) held_receipts: Fixed,
     triggers: BTreeMap<MarketId, Triggers>,
     /// Pending deposit references by beneficiary; the house's are under `None`.
     pub(crate) pending: BTreeMap<Option<AccountId>, BTreeSet<String>>,
@@ -50,7 +54,10 @@ impl HotIndexes {
         let next = block.checked_add(1).expect("custody frontier excludes the maximum block");
         let kept = self.receipts_above_frontier.split_off(&format!("{next:020}:"));
         let covered = std::mem::replace(&mut self.receipts_above_frontier, kept);
-        covered.into_iter().for_each(|(reference, (id, amount))| self.drop_live_id(id, &reference, amount));
+        covered.into_iter().for_each(|(reference, (id, amount))| {
+            self.held_receipts -= amount;
+            self.drop_live_id(id, &reference, amount);
+        });
     }
 
     /// Records a live receipt above the finalised frontier, displacing any id mapping the
@@ -69,16 +76,22 @@ impl HotIndexes {
         match self.receipts_above_frontier.insert(reference.clone(), (deposit_id, amount)) {
             Some((old, _)) if old == deposit_id => {}
             Some((old, old_amount)) => {
+                self.held_receipts -= old_amount;
                 self.drop_live_id(old, &reference, old_amount);
+                self.held_receipts += amount;
                 self.add_live_id(deposit_id, reference);
             }
-            None => self.add_live_id(deposit_id, reference),
+            None => {
+                self.held_receipts += amount;
+                self.add_live_id(deposit_id, reference);
+            }
         }
     }
 
     /// Forgets a receipt above the finalised frontier, if it is recorded.
     pub(crate) fn remove_above_frontier(&mut self, reference: &str) {
         if let Some((id, amount)) = self.receipts_above_frontier.remove(reference) {
+            self.held_receipts -= amount;
             self.drop_live_id(id, reference, amount);
         }
     }

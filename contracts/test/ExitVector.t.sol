@@ -100,6 +100,7 @@ contract ExitVectorTest is ExitTest {
                 _int128(string.concat(terms, ".pending")),
                 _int128(string.concat(terms, ".held")),
                 _int128(string.concat(terms, ".unheld")),
+                _int128(string.concat(terms, ".heldReceipts")),
                 _uint64s(string.concat(terms, ".gaps"))
             ),
             vm.parseJsonBytes32Array(fixture, string.concat(terms, ".siblings"))

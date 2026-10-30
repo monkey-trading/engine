@@ -44,6 +44,10 @@ pub struct ExitTerms {
     /// own canonical reservation, and keeps the rest, which only a reorganisation deeper than
     /// [`MAX_EXIT_GAPS`] deposits leaves unnamed.
     pub unheld: Fixed,
+    /// Principal of the live receipts the root holds, every one a refundable deposit: with the named
+    /// gaps the terms attribute every refundable deposit below the cursor, so the exit can reserve
+    /// exactly what no term names.
+    pub held_receipts: Fixed,
     /// The vault deposit ids below the cursor the root does not hold, the lowest
     /// [`MAX_EXIT_GAPS`], in increasing order: empty unless a reorganisation the custody adapter is
     /// still applying left them. The exit refunds them too.
@@ -218,8 +222,18 @@ impl ExitLeaves {
 
     /// Records the terms the root holds, from the deposit cursor, the gaps below it, and the
     /// unheld principal, and the committed totals, and returns their leaf's value hash.
-    pub(super) fn commit_terms(&mut self, (deposit_cursor, gaps, unheld): (u64, Vec<u64>, Fixed)) -> B256 {
-        let terms = ExitTerms { deposit_cursor, pending: self.pending_total, held: self.held_total, unheld, gaps };
+    pub(super) fn commit_terms(
+        &mut self,
+        (deposit_cursor, gaps, unheld, held_receipts): (u64, Vec<u64>, Fixed, Fixed),
+    ) -> B256 {
+        let terms = ExitTerms {
+            deposit_cursor,
+            pending: self.pending_total,
+            held: self.held_total,
+            unheld,
+            held_receipts,
+            gaps,
+        };
         let hash = exit_terms_hash(&terms);
         self.terms = Some(terms);
         hash
@@ -252,7 +266,7 @@ impl Engine {
     /// an id passed over on the way to a higher id was never observed. Without a gap this reads the
     /// index's ends only; with one, it walks the missing runs, not the held receipts, and stops at
     /// [`MAX_EXIT_GAPS`].
-    pub(super) fn exit_deposit_frontier(&mut self) -> (u64, Vec<u64>, Fixed) {
+    pub(super) fn exit_deposit_frontier(&mut self) -> (u64, Vec<u64>, Fixed, Fixed) {
         self.ensure_hot_indexes();
         let indexes = self.hot_indexes.as_mut().expect("indexes initialised");
         let base = self.custody_checkpoint.map_or(0, |checkpoint| checkpoint.deposit_count);
@@ -276,7 +290,7 @@ impl Engine {
         // below the base every deposit is settled.
         let named = gaps.iter().filter_map(|id| indexes.unheld_amounts.get(id)).copied().sum::<Fixed>();
         let outside = indexes.unheld_amounts.range(cursor..).map(|(_, amount)| *amount).sum::<Fixed>();
-        (cursor, gaps, indexes.unheld_total - named - outside)
+        (cursor, gaps, indexes.unheld_total - named - outside, indexes.held_receipts)
     }
 
     /// Every proof `account` exits with against the last root, or `None` before the first root
@@ -359,10 +373,11 @@ pub fn exit_terms_key() -> B256 {
     keccak(&[&[EXIT_TERMS]])
 }
 
-/// `keccak256(abi.encode(uint64 depositCursor, int128 pending, int128 held, int128 unheld, uint64[] gaps))`.
+/// `keccak256(abi.encode(uint64 depositCursor, int128 pending, int128 held, int128 unheld, int128 heldReceipts, uint64[] gaps))`.
 pub fn exit_terms_hash(terms: &ExitTerms) -> B256 {
-    let ExitTerms { deposit_cursor, pending, held, unheld, gaps } = terms;
-    keccak(&[&(*deposit_cursor, pending.raw(), held.raw(), unheld.raw(), gaps.clone()).abi_encode_params()])
+    let ExitTerms { deposit_cursor, pending, held, unheld, held_receipts, gaps } = terms;
+    keccak(&[&(*deposit_cursor, pending.raw(), held.raw(), unheld.raw(), held_receipts.raw(), gaps.clone())
+        .abi_encode_params()])
 }
 
 /// `keccak256(abi.encode(uint64 depositId, address account, address payer, int128 amount))`, with

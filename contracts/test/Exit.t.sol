@@ -56,8 +56,8 @@ contract ExitTestCases is ExitTest {
         vm.warp(block.timestamp + PERIOD);
         bytes32[] memory siblings = _siblings(keccak256(abi.encodePacked(uint8(24))));
         vm.expectRevert(Vault.InvalidExitProof.selector);
-        vault.startExit(ExitVerifier.ExitTerms(3, 5 * UNIT, 0, 0, new uint64[](0)), siblings);
-        vault.startExit(ExitVerifier.ExitTerms(2, 5 * UNIT, 0, 0, new uint64[](0)), siblings);
+        vault.startExit(ExitVerifier.ExitTerms(3, 5 * UNIT, 0, 0, 0, new uint64[](0)), siblings);
+        vault.startExit(ExitVerifier.ExitTerms(2, 5 * UNIT, 0, 0, 0, new uint64[](0)), siblings);
     }
 
     function testTheExitPermanentlyStopsSignedPathsAndDeposits() public {
@@ -65,7 +65,7 @@ contract ExitTestCases is ExitTest {
         _addTerms(1, 0, 0);
         _addAccount(alice, 100e6 * UNIT);
         _post();
-        _startExit(ExitVerifier.ExitTerms(1, 0, 0, 0, new uint64[](0)));
+        _startExit(ExitVerifier.ExitTerms(1, 0, 0, 0, 0, new uint64[](0)));
 
         bytes32 latest = vault.latestRoot();
         vm.expectRevert(Vault.ExitActive.selector);
@@ -106,7 +106,7 @@ contract ExitTestCases is ExitTest {
 
     function testAnAccountRegistersItsEquityOnceAndIsPaidAfterTheWindowWhoeverRelays() public {
         _deposit(funder, alice, 300e6);
-        ExitVerifier.ExitTerms memory terms = _addTerms(1, 0, 0);
+        ExitVerifier.ExitTerms memory terms = _addTerms(1, 0, 0, 0, 300e6 * UNIT, new uint64[](0));
         ExitVerifier.AccountState memory state = _addAccount(alice, 250e6 * UNIT + 999);
         _post();
         _startExit(terms);
@@ -204,7 +204,7 @@ contract ExitTestCases is ExitTest {
 
     function testUnpaidApprovalsAndQueuedRemaindersAddToTheClaimOnceAndPaidOnesNever() public {
         _deposit(funder, alice, 1_000e6);
-        ExitVerifier.ExitTerms memory terms = _addTerms(1, 0, 0);
+        ExitVerifier.ExitTerms memory terms = _addTerms(1, 0, 0, 0, 1_000e6 * UNIT, new uint64[](0));
         ExitVerifier.AccountState memory state = _addAccount(alice, -5 * UNIT);
         ExitVerifier.Approval memory unpaid = _addApproval(alice, 40e6, 2);
         ExitVerifier.QueuedWithdrawal memory queued = _addQueued(alice, 60e6 * UNIT, 9);
@@ -234,7 +234,7 @@ contract ExitTestCases is ExitTest {
 
     function testAnApprovalTheVaultAlreadyPaidCannotRegister() public {
         _deposit(funder, alice, 100e6);
-        ExitVerifier.ExitTerms memory terms = _addTerms(1, 0, 0);
+        ExitVerifier.ExitTerms memory terms = _addTerms(1, 0, 0, 0, 100e6 * UNIT, new uint64[](0));
         ExitVerifier.Approval memory approval = _addApproval(alice, 40e6, 1);
         _post();
         uint64 issued = uint64(block.timestamp);
@@ -250,7 +250,7 @@ contract ExitTestCases is ExitTest {
     function testAShortfallPaysEveryClientTheSameFractionAndStakersOnlyWhatClientsLeave() public {
         // The vault holds 150 against client claims of 100 and 200 and a distribution of 30.
         _deposit(funder, alice, 150e6);
-        ExitVerifier.ExitTerms memory terms = _addTerms(1, 0, 0);
+        ExitVerifier.ExitTerms memory terms = _addTerms(1, 0, 0, 0, 150e6 * UNIT, new uint64[](0));
         ExitVerifier.AccountState memory a = _addAccount(alice, 100e6 * UNIT);
         ExitVerifier.AccountState memory b = _addAccount(bob, 200e6 * UNIT);
         _addDistribution(alice, 30e6);
@@ -270,7 +270,7 @@ contract ExitTestCases is ExitTest {
 
     function testASolventExitPaysClaimsInFullThenDistributionsThenReleasesTheRestThroughTheTimelock() public {
         _deposit(funder, alice, 500e6);
-        ExitVerifier.ExitTerms memory terms = _addTerms(1, 0, 0);
+        ExitVerifier.ExitTerms memory terms = _addTerms(1, 0, 0, 0, 500e6 * UNIT, new uint64[](0));
         ExitVerifier.AccountState memory a = _addAccount(alice, 100e6 * UNIT);
         _addDistribution(bob, 80e6);
         _post();
@@ -292,7 +292,7 @@ contract ExitTestCases is ExitTest {
 
     function testNeitherThePauseNorASignerRotationStopsTheExit() public {
         _deposit(funder, alice, 100e6);
-        ExitVerifier.ExitTerms memory terms = _addTerms(1, 0, 0);
+        ExitVerifier.ExitTerms memory terms = _addTerms(1, 0, 0, 0, 100e6 * UNIT, new uint64[](0));
         ExitVerifier.AccountState memory a = _addAccount(alice, 100e6 * UNIT);
         _post();
         _govern(address(vault), abi.encodeCall(Vault.setPauses, (true, true)));
@@ -306,7 +306,7 @@ contract ExitTestCases is ExitTest {
 
     function testDepositsAfterTheCursorAreRefundedToTheirPayerOnceAndSurplusesNever() public {
         _deposit(funder, alice, 100e6);
-        ExitVerifier.ExitTerms memory terms = _addTerms(1, 0, 0);
+        ExitVerifier.ExitTerms memory terms = _addTerms(1, 0, 0, 0, 100e6 * UNIT, new uint64[](0));
         _post();
         uint256 late = _deposit(funder, bob, 30e6);
         usdc.mint(address(vault), 10e6);
@@ -332,7 +332,7 @@ contract ExitTestCases is ExitTest {
         uint256 pendingId = _deposit(funder, bob, 20e6);
         uint64[] memory gaps = new uint64[](1);
         gaps[0] = uint64(gap);
-        ExitVerifier.ExitTerms memory terms = _addTerms(3, 20e6 * UNIT, 0, 0, gaps);
+        ExitVerifier.ExitTerms memory terms = _addTerms(3, 20e6 * UNIT, 0, 0, 120e6 * UNIT, gaps);
         ExitVerifier.AccountState memory a = _addAccount(alice, 100e6 * UNIT);
         bytes memory chainRef = bytes("pending past the gap");
         ExitVerifier.PendingDeposit memory pending = _addPending(chainRef, uint64(pendingId), bob, funder, 20e6 * UNIT);
@@ -364,19 +364,19 @@ contract ExitTestCases is ExitTest {
         for (uint256 i; i < 65; ++i) {
             gaps[i] = uint64(i);
         }
-        _addTerms(65, 0, 0, 0, gaps);
+        _addTerms(65, 0, 0, 0, 0, gaps);
         vm.warp(block.timestamp + PERIOD);
         vm.expectRevert(abi.encodeWithSelector(Vault.InvalidExitProof.selector));
-        vault.startExit(ExitVerifier.ExitTerms(65, 0, 0, 0, gaps), _siblings(keccak256(abi.encodePacked(uint8(24)))));
+        vault.startExit(ExitVerifier.ExitTerms(65, 0, 0, 0, 0, gaps), _siblings(keccak256(abi.encodePacked(uint8(24)))));
     }
 
     function _refuseMalformedGaps(uint64[] memory gaps) internal {
         _deposit(funder, alice, 100e6);
         _post();
-        _addTerms(3, 0, 0, 0, gaps);
+        _addTerms(3, 0, 0, 0, 0, gaps);
         vm.warp(block.timestamp + PERIOD);
         vm.expectRevert(abi.encodeWithSelector(Vault.InvalidExitProof.selector));
-        vault.startExit(ExitVerifier.ExitTerms(3, 0, 0, 0, gaps), _siblings(keccak256(abi.encodePacked(uint8(24)))));
+        vault.startExit(ExitVerifier.ExitTerms(3, 0, 0, 0, 0, gaps), _siblings(keccak256(abi.encodePacked(uint8(24)))));
     }
 
     function testAProvenTermsWithAnUnsortedGapListIsRefused() public {
@@ -404,7 +404,7 @@ contract ExitTestCases is ExitTest {
         _deposit(alice, alice, 100e6);
         uint64[] memory gaps = new uint64[](1);
         gaps[0] = uint64(gap);
-        ExitVerifier.ExitTerms memory terms = _addTerms(2, 0, 0, 30e6 * UNIT, gaps);
+        ExitVerifier.ExitTerms memory terms = _addTerms(2, 0, 0, 30e6 * UNIT, 100e6 * UNIT, gaps);
         ExitVerifier.AccountState memory a = _addAccount(alice, 100e6 * UNIT);
         _post();
         _startExit(terms);
@@ -454,7 +454,7 @@ contract ExitTestCases is ExitTest {
         uint256 first = _deposit(funder, alice, 50e6);
         uint256 second = _deposit(alice, alice, 20e6);
         vm.warp(block.timestamp + PERIOD);
-        vault.startExit(ExitVerifier.ExitTerms(9, 9, 9, 9, new uint64[](0)), new bytes32[](0));
+        vault.startExit(ExitVerifier.ExitTerms(9, 9, 9, 9, 9, new uint64[](0)), new bytes32[](0));
         assertEq(vault.exitDepositCursor(), 0);
         assertEq(vault.exitRefundReserve(), 70e6);
         assertEq(vault.exitHeldReserve(), 0);
@@ -471,7 +471,7 @@ contract ExitTestCases is ExitTest {
     function testAPendingDepositIsRefundedOnlyAsTheRootAndTheVaultRecordBothHoldIt() public {
         _deposit(funder, alice, 100e6);
         uint256 pendingId = _deposit(funder, bob, 40e6);
-        ExitVerifier.ExitTerms memory terms = _addTerms(2, 40e6 * UNIT, 0);
+        ExitVerifier.ExitTerms memory terms = _addTerms(2, 40e6 * UNIT, 0, 0, 140e6 * UNIT, new uint64[](0));
         bytes memory chainRef = bytes("00000000000000000101:0xblock:0xtx:3");
         ExitVerifier.PendingDeposit memory pending = _addPending(chainRef, uint64(pendingId), bob, funder, 40e6 * UNIT);
         _post();
@@ -509,7 +509,7 @@ contract ExitTestCases is ExitTest {
         _deposit(funder, alice, 100e6);
         _deposit(makeAddr("sanctioned"), alice, 30e6);
         uint256 pendingId = _deposit(funder, bob, 20e6);
-        ExitVerifier.ExitTerms memory terms = _addTerms(3, 20e6 * UNIT, 30e6 * UNIT);
+        ExitVerifier.ExitTerms memory terms = _addTerms(3, 20e6 * UNIT, 30e6 * UNIT, 0, 150e6 * UNIT, new uint64[](0));
         ExitVerifier.AccountState memory a = _addAccount(alice, 60e6 * UNIT);
         bytes memory chainRef = bytes("pending");
         ExitVerifier.PendingDeposit memory pending = _addPending(chainRef, uint64(pendingId), bob, funder, 20e6 * UNIT);

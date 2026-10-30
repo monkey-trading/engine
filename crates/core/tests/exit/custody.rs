@@ -53,7 +53,14 @@ fn the_exit_terms_count_every_live_receipt_and_total_the_pending_and_held_princi
     let proof = h.engine.exit_proof(client).unwrap();
     assert_eq!(
         proof.terms.terms,
-        ExitTerms { deposit_cursor: 4, pending: f("52"), held: f("30"), unheld: Fixed::ZERO, gaps: vec![] }
+        ExitTerms {
+            deposit_cursor: 4,
+            pending: f("52"),
+            held: f("30"),
+            unheld: Fixed::ZERO,
+            held_receipts: f("182"),
+            gaps: vec![]
+        }
     );
     assert!(proof.terms.verify(root));
     assert!(proof.pending_deposits.is_empty(), "the client's own deposits are credited or held");
@@ -87,7 +94,14 @@ fn a_credited_retry_a_reversal_and_a_reinstatement_move_the_totals_and_the_curso
     let terms = h.engine.exit_proof(client).unwrap().terms.terms;
     assert_eq!(
         terms,
-        ExitTerms { deposit_cursor: 4, pending: f("12"), held: f("30"), unheld: Fixed::ZERO, gaps: vec![] }
+        ExitTerms {
+            deposit_cursor: 4,
+            pending: f("12"),
+            held: f("30"),
+            unheld: Fixed::ZERO,
+            held_receipts: f("182"),
+            gaps: vec![]
+        }
     );
     assert!(h.engine.exit_proof(newcomer).unwrap().pending_deposits.is_empty());
 
@@ -101,7 +115,14 @@ fn a_credited_retry_a_reversal_and_a_reinstatement_move_the_totals_and_the_curso
     let proof = h.engine.exit_proof(client).unwrap();
     assert_eq!(
         proof.terms.terms,
-        ExitTerms { deposit_cursor: 4, pending: f("12"), held: Fixed::ZERO, unheld: Fixed::ZERO, gaps: vec![2] }
+        ExitTerms {
+            deposit_cursor: 4,
+            pending: f("12"),
+            held: Fixed::ZERO,
+            unheld: Fixed::ZERO,
+            held_receipts: f("152"),
+            gaps: vec![2]
+        }
     );
     assert!(proof.terms.verify(root));
 
@@ -115,7 +136,14 @@ fn a_credited_retry_a_reversal_and_a_reinstatement_move_the_totals_and_the_curso
     let terms = h.engine.exit_proof(client).unwrap().terms.terms;
     assert_eq!(
         terms,
-        ExitTerms { deposit_cursor: 4, pending: f("12"), held: f("30"), unheld: Fixed::ZERO, gaps: vec![] }
+        ExitTerms {
+            deposit_cursor: 4,
+            pending: f("12"),
+            held: f("30"),
+            unheld: Fixed::ZERO,
+            held_receipts: f("182"),
+            gaps: vec![]
+        }
     );
     assert_root_matches_rebuild(&mut h.engine);
 }
@@ -133,9 +161,18 @@ fn the_cursor_counts_the_finalised_frontiers_deposits_and_each_live_receipt_abov
     assert_eq!(h.engine.custody_checkpoint(), Some(frontier));
     let root = B256::from(h.engine.state_root());
     let proof = h.engine.exit_proof(client).unwrap().terms;
+    // Id 0 is finalised and covered: it settles out of the frontier index, and the vault's
+    // attribution counts it among the refundable deposits below the cursor instead.
     assert_eq!(
         proof.terms,
-        ExitTerms { deposit_cursor: 4, pending: f("52"), held: f("30"), unheld: Fixed::ZERO, gaps: vec![] }
+        ExitTerms {
+            deposit_cursor: 4,
+            pending: f("52"),
+            held: f("30"),
+            unheld: Fixed::ZERO,
+            held_receipts: f("82"),
+            gaps: vec![]
+        }
     );
     assert!(proof.verify(root));
     assert_root_matches_rebuild(&mut h.engine);
@@ -164,7 +201,14 @@ fn a_replacement_sequenced_before_the_deposit_that_took_its_old_id_leaves_that_i
     // Id 0 is a gap the exit refunds; ids 1 to 4, the moved deposit among them, are in the root.
     assert_eq!(
         terms.terms,
-        ExitTerms { deposit_cursor: 5, pending: f("52"), held: f("30"), unheld: Fixed::ZERO, gaps: vec![0] }
+        ExitTerms {
+            deposit_cursor: 5,
+            pending: f("52"),
+            held: f("30"),
+            unheld: Fixed::ZERO,
+            held_receipts: f("182"),
+            gaps: vec![0]
+        }
     );
     assert!(terms.verify(root));
     assert_root_matches_rebuild(&mut h.engine);
@@ -195,7 +239,14 @@ fn a_live_receipt_at_an_occupied_id_reverses_the_stale_one_so_no_root_holds_both
     let terms = h.engine.exit_proof(client).unwrap().terms;
     assert_eq!(
         terms.terms,
-        ExitTerms { deposit_cursor: 4, pending: f("52"), held: f("30"), unheld: Fixed::ZERO, gaps: vec![] }
+        ExitTerms {
+            deposit_cursor: 4,
+            pending: f("52"),
+            held: f("30"),
+            unheld: Fixed::ZERO,
+            held_receipts: f("182"),
+            gaps: vec![]
+        }
     );
     assert!(terms.verify(root));
     assert_root_matches_rebuild(&mut h.engine);
@@ -218,7 +269,10 @@ fn one_gap_among_many_live_receipts_names_itself_without_walking_them() {
     assert!(!events.iter().any(|e| matches!(e, Event::CustodyDepositRejected { .. })), "{events:?}");
     let root = B256::from(h.engine.state_root());
     let terms = h.engine.exit_proof(client).unwrap().terms;
-    assert_eq!((terms.terms.deposit_cursor, &terms.terms.gaps, terms.terms.unheld), (190, &vec![4], Fixed::ZERO));
+    assert_eq!(
+        (terms.terms.deposit_cursor, &terms.terms.gaps, terms.terms.unheld, terms.terms.held_receipts),
+        (190, &vec![4], Fixed::ZERO, f("367"))
+    );
     assert!(terms.verify(root));
     assert_root_matches_rebuild(&mut h.engine);
 }
@@ -249,7 +303,10 @@ fn the_terms_name_only_the_lowest_gaps_so_the_vault_starts_the_exit_in_bounded_g
     let root = B256::from(h.engine.state_root());
     let proof = h.engine.exit_proof(client).unwrap().terms;
     let lowest: Vec<u64> = (4..4 + MAX_EXIT_GAPS as u64).collect();
-    assert_eq!((proof.terms.deposit_cursor, &proof.terms.gaps, proof.terms.unheld), (201, &lowest, f("40")));
+    assert_eq!(
+        (proof.terms.deposit_cursor, &proof.terms.gaps, proof.terms.unheld, proof.terms.held_receipts),
+        (201, &lowest, f("40"), f("192"))
+    );
     assert!(proof.verify(root));
 }
 
@@ -265,8 +322,8 @@ fn ids_passed_over_on_the_way_to_a_higher_id_are_missing_with_no_principal() {
     let root = B256::from(h.engine.state_root());
     let terms = h.engine.exit_proof(client).unwrap().terms;
     assert_eq!(
-        (terms.terms.deposit_cursor, &terms.terms.gaps, terms.terms.unheld),
-        (11, &vec![4, 5, 6, 7, 8, 9], Fixed::ZERO)
+        (terms.terms.deposit_cursor, &terms.terms.gaps, terms.terms.unheld, terms.terms.held_receipts),
+        (11, &vec![4, 5, 6, 7, 8, 9], Fixed::ZERO, f("192"))
     );
     assert!(terms.verify(root));
     assert_root_matches_rebuild(&mut h.engine);
@@ -293,7 +350,10 @@ fn finalising_and_advancing_the_frontier_does_not_lose_a_later_gap() {
     assert!(!events.iter().any(|e| matches!(e, Event::CustodyDepositRejected { .. })), "{events:?}");
     let root = B256::from(h.engine.state_root());
     let terms = h.engine.exit_proof(client).unwrap().terms;
-    assert_eq!((terms.terms.deposit_cursor, &terms.terms.gaps, terms.terms.unheld), (4, &vec![1], Fixed::ZERO));
+    assert_eq!(
+        (terms.terms.deposit_cursor, &terms.terms.gaps, terms.terms.unheld, terms.terms.held_receipts),
+        (4, &vec![1], Fixed::ZERO, f("42"))
+    );
     assert!(terms.verify(root));
     assert_root_matches_rebuild(&mut h.engine);
 }

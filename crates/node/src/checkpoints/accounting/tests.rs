@@ -285,17 +285,6 @@ fn an_automatic_collision_reversal_in_a_credit_is_accounted() {
     let mut engine = Engine::new();
     let mut accounting = Accounting::default();
     let mut unpaid = Fixed::ZERO;
-    let mut apply = |cmd: Command| {
-        let sequenced = Sequenced { seq: engine.last_seq().map_or(0, |seq| seq + 1), ts: 0, cmd };
-        let events = engine.apply(&sequenced).unwrap();
-        accounting.apply(&sequenced.cmd, &events).unwrap();
-        unpaid += approved(&events);
-        assert_eq!((accounting.liabilities, accounting.deposits), recompute(&engine, unpaid), "{sequenced:?}");
-        events
-    };
-    apply(Command::Admin(AdminCommand::SetClientAuth(ClientAuth::Unsigned)));
-    apply(Command::Admin(AdminCommand::SetOperator(dev_config().operator().unwrap())));
-    apply(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V36 }));
     let receipt = |tx: u8| engine_core::deposits::DepositReceipt {
         block: 100 + u64::from(tx),
         block_hash: B256::repeat_byte(tx),
@@ -306,21 +295,42 @@ fn an_automatic_collision_reversal_in_a_credit_is_accounted() {
         beneficiary: engine_core::deposits::DepositBeneficiary::Trader { account: TRADER },
         amount: Fixed::from_int(10),
     };
-    let events =
-        apply(Command::CustodyDeposit(Box::new(engine_core::deposits::DepositUpdate::Credit { receipt: receipt(1) })));
+    let (credited, contested) = {
+        let mut apply = |cmd: Command| {
+            let sequenced = Sequenced { seq: engine.last_seq().map_or(0, |seq| seq + 1), ts: 0, cmd };
+            let events = engine.apply(&sequenced).unwrap();
+            accounting.apply(&sequenced.cmd, &events).unwrap();
+            unpaid += approved(&events);
+            assert_eq!((accounting.liabilities, accounting.deposits), recompute(&engine, unpaid), "{sequenced:?}");
+            events
+        };
+        apply(Command::Admin(AdminCommand::SetClientAuth(ClientAuth::Unsigned)));
+        apply(Command::Admin(AdminCommand::SetOperator(dev_config().operator().unwrap())));
+        apply(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V36 }));
+        let credited = apply(Command::CustodyDeposit(Box::new(engine_core::deposits::DepositUpdate::Credit {
+            receipt: receipt(1),
+        })));
+        // A reorganisation places a different deposit at id 0: the new credit reverses the stale
+        // receipt in the same command, and accounting follows both events.
+        let contested = apply(Command::CustodyDeposit(Box::new(engine_core::deposits::DepositUpdate::Credit {
+            receipt: receipt(2),
+        })));
+        (credited, contested)
+    };
     assert!(
-        events.iter().any(|event| matches!(event, Event::CustodyDepositChanged { status, .. } if *status == engine_core::deposits::DepositStatus::Unfinalised)),
-        "{events:?}"
+        credited
+            .iter()
+            .any(|event| matches!(event, Event::CustodyDepositChanged { status, .. } if *status == engine_core::deposits::DepositStatus::Unfinalised)),
+        "{credited:?}"
     );
-    // A reorganisation places a different deposit at id 0: the new credit reverses the stale
-    // receipt in the same command, and accounting follows both events.
-    let events =
-        apply(Command::CustodyDeposit(Box::new(engine_core::deposits::DepositUpdate::Credit { receipt: receipt(2) })));
     assert!(
-        events.iter().any(|event| matches!(event, Event::CustodyDepositChanged { receipt, status, .. } if *status == engine_core::deposits::DepositStatus::Reversed && receipt.tx_hash == B256::repeat_byte(0x41))),
-        "{events:?}"
+        contested.iter().any(|event| matches!(
+            event,
+            Event::CustodyDepositChanged { receipt, status, .. }
+                if *status == engine_core::deposits::DepositStatus::Reversed && receipt.tx_hash == B256::repeat_byte(0x41)
+        )),
+        "{contested:?}"
     );
-    drop(apply);
     assert_eq!(accounting.liabilities, Fixed::from_int(10));
     assert_eq!(accounting.deposits, 1);
 }
@@ -330,17 +340,6 @@ fn an_activation_that_resolves_a_surviving_duplicate_is_accounted() {
     let mut engine = Engine::new();
     let mut accounting = Accounting::default();
     let mut unpaid = Fixed::ZERO;
-    let mut apply = |cmd: Command| {
-        let sequenced = Sequenced { seq: engine.last_seq().map_or(0, |seq| seq + 1), ts: 0, cmd };
-        let events = engine.apply(&sequenced).unwrap();
-        accounting.apply(&sequenced.cmd, &events).unwrap();
-        unpaid += approved(&events);
-        assert_eq!((accounting.liabilities, accounting.deposits), recompute(&engine, unpaid), "{sequenced:?}");
-        events
-    };
-    apply(Command::Admin(AdminCommand::SetClientAuth(ClientAuth::Unsigned)));
-    apply(Command::Admin(AdminCommand::SetOperator(dev_config().operator().unwrap())));
-    apply(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V26 }));
     let receipt = |tx: u8| engine_core::deposits::DepositReceipt {
         block: 100 + u64::from(tx),
         block_hash: B256::repeat_byte(tx),
@@ -351,15 +350,31 @@ fn an_activation_that_resolves_a_surviving_duplicate_is_accounted() {
         beneficiary: engine_core::deposits::DepositBeneficiary::Trader { account: TRADER },
         amount: Fixed::from_int(10),
     };
-    // Pre-V36 duplicate ids record without resolution; activating V36 reverses the later one.
-    apply(Command::CustodyDeposit(Box::new(engine_core::deposits::DepositUpdate::Credit { receipt: receipt(1) })));
-    apply(Command::CustodyDeposit(Box::new(engine_core::deposits::DepositUpdate::Credit { receipt: receipt(2) })));
-    let events = apply(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V36 }));
+    let events = {
+        let mut apply = |cmd: Command| {
+            let sequenced = Sequenced { seq: engine.last_seq().map_or(0, |seq| seq + 1), ts: 0, cmd };
+            let events = engine.apply(&sequenced).unwrap();
+            accounting.apply(&sequenced.cmd, &events).unwrap();
+            unpaid += approved(&events);
+            assert_eq!((accounting.liabilities, accounting.deposits), recompute(&engine, unpaid), "{sequenced:?}");
+            events
+        };
+        apply(Command::Admin(AdminCommand::SetClientAuth(ClientAuth::Unsigned)));
+        apply(Command::Admin(AdminCommand::SetOperator(dev_config().operator().unwrap())));
+        apply(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V26 }));
+        // Pre-V36 duplicate ids record without resolution; activating V36 reverses the later one.
+        apply(Command::CustodyDeposit(Box::new(engine_core::deposits::DepositUpdate::Credit { receipt: receipt(1) })));
+        apply(Command::CustodyDeposit(Box::new(engine_core::deposits::DepositUpdate::Credit { receipt: receipt(2) })));
+        apply(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V36 }))
+    };
     assert!(
-        events.iter().any(|event| matches!(event, Event::CustodyDepositChanged { receipt, status, .. } if *status == engine_core::deposits::DepositStatus::Reversed && receipt.tx_hash == B256::repeat_byte(0x42))),
+        events.iter().any(|event| matches!(
+            event,
+            Event::CustodyDepositChanged { receipt, status, .. }
+                if *status == engine_core::deposits::DepositStatus::Reversed && receipt.tx_hash == B256::repeat_byte(0x42)
+        )),
         "{events:?}"
     );
-    drop(apply);
     assert_eq!(accounting.liabilities, Fixed::from_int(10));
     assert_eq!(accounting.deposits, 1);
 }
