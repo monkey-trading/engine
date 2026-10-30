@@ -212,15 +212,16 @@ async fn rotated_signer_can_recover_an_accepted_old_anchor_without_authorizing_u
 }
 
 #[tokio::test]
-async fn finalized_rollback_and_competing_fork_never_supply_lifecycle_evidence() {
+async fn a_finalized_rollback_supplies_release_free_evidence_and_a_competing_fork_still_conflicts() {
     let (poster, work) = fixture();
     poster.chain.finalized.lock().unwrap().state.checkpoint = None;
     poster.chain.finalized.lock().unwrap().lifecycle.as_mut().unwrap().checkpoint_seq = None;
     poster.chain.finalized.lock().unwrap().lifecycle.as_mut().unwrap().checkpoint_root = None;
-    assert_eq!(
-        poster.reconcile_lifecycle(&work, &[&work], &[approval(1)], &mut None).await.unwrap(),
-        (None, Health::Unvalidated, None)
-    );
+    let (posted, health, lifecycle) =
+        poster.reconcile_lifecycle(&work, &[&work], &[approval(1)], &mut None).await.unwrap();
+    assert_eq!((posted, health), (None, Health::Unvalidated));
+    let evidence = lifecycle.expect("a rollback still forwards the finalized lifecycle evidence");
+    assert!(evidence.checkpoint_seq.is_none(), "a finalized view without a checkpoint cannot release an authorization");
     let mut fork = poster.chain.latest.lock().unwrap().clone();
     fork.state.checkpoint.as_mut().unwrap().1 = format!("0x{}", "ff".repeat(32));
     fork.lifecycle.as_mut().unwrap().checkpoint_root = fork.state.checkpoint.as_ref().map(|value| value.1.clone());

@@ -133,6 +133,68 @@ async fn a_failed_reconcile_still_reports_a_finalized_pause() {
     }
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_retirement_seen_before_the_first_finalized_checkpoint_reaches_the_sequencer() {
+    let (_guard, mut alerts) = capture_alerts();
+    let (poster, work) = fixture();
+    // A fresh vault holds no finalized checkpoint when the guardian retires the signer.
+    for view in [&poster.chain.latest, &poster.chain.finalized] {
+        let mut at = view.lock().unwrap();
+        at.state.signer = RETIRED;
+        at.state.checkpoint = None;
+        let lifecycle = at.lifecycle.as_mut().unwrap();
+        lifecycle.signer = RETIRED;
+        lifecycle.checkpoint_seq = None;
+        lifecycle.checkpoint_root = None;
+    }
+    let (work_tx, work_rx) = mpsc::channel(4);
+    let (status_tx, mut status_rx) = mpsc::channel(4);
+    work_tx.send(work).await.unwrap();
+    let task = tokio::spawn(poster.run_with_approvals(work_rx, status_tx, Vec::new(), registry(1)));
+    let Request::CheckpointStatus { posted: None, health: None, lifecycle: Some(evidence) } =
+        status_rx.recv().await.unwrap()
+    else {
+        panic!("the bootstrap retirement must reach the sequencer as finalized evidence");
+    };
+    assert!(evidence.signer_retired() && evidence.halts_withdrawals());
+    assert!(evidence.checkpoint_seq.is_none(), "bootstrap evidence carries no checkpoint, so it releases nothing");
+    assert_eq!(halts(&mut alerts), ["signer_retired"]);
+    task.abort();
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_retirement_with_an_older_finalized_checkpoint_reaches_the_sequencer() {
+    let (_guard, mut alerts) = capture_alerts();
+    let (poster, work) = fixture();
+    // Latest shows the posted checkpoint; the finalized view still holds only its predecessor.
+    let older = format!("0x{}", "22".repeat(32));
+    for view in [&poster.chain.latest, &poster.chain.finalized] {
+        let mut at = view.lock().unwrap();
+        at.state.signer = RETIRED;
+        at.lifecycle.as_mut().unwrap().signer = RETIRED;
+    }
+    {
+        let mut finalized = poster.chain.finalized.lock().unwrap();
+        finalized.state.checkpoint = Some((4, older.clone()));
+        let lifecycle = finalized.lifecycle.as_mut().unwrap();
+        lifecycle.checkpoint_seq = Some(4);
+        lifecycle.checkpoint_root = Some(older);
+    }
+    let (work_tx, work_rx) = mpsc::channel(4);
+    let (status_tx, mut status_rx) = mpsc::channel(4);
+    work_tx.send(work).await.unwrap();
+    let task = tokio::spawn(poster.run_with_approvals(work_rx, status_tx, Vec::new(), registry(1)));
+    let Request::CheckpointStatus { posted: None, health: None, lifecycle: Some(evidence) } =
+        status_rx.recv().await.unwrap()
+    else {
+        panic!("the older-finalized retirement must reach the sequencer as finalized evidence");
+    };
+    assert!(evidence.signer_retired() && evidence.halts_withdrawals());
+    assert_eq!(evidence.checkpoint_seq, Some(4));
+    assert_eq!(halts(&mut alerts), ["signer_retired"]);
+    task.abort();
+}
+
 #[tokio::test]
 async fn a_foreign_signer_still_conflicts() {
     let (poster, work) = fixture();

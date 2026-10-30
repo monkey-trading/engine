@@ -257,9 +257,17 @@ impl<R: CheckpointChain> Poster<R> {
             );
             report_halt(finalized);
         }
-        let Some((seq, root)) = &state.checkpoint else { return Ok((None, Health::Unvalidated, None)) };
+        // No finalized checkpoint has reached this worker's known chain yet. The finalized
+        // lifecycle still reaches the sequencer — a retirement seen before the first finalized
+        // checkpoint must withhold signing from the first observation — but it cannot release
+        // an authorization: a bootstrap observation carries no checkpoint, so `release_payouts`
+        // returns before any release, and a known-but-older finalized checkpoint implies no
+        // confirmed checkpoint this process, so the gate's health is never Healthy.
+        let Some((seq, root)) = &state.checkpoint else {
+            return Ok((None, Health::Unvalidated, finalized_observation.lifecycle));
+        };
         if *seq < known.iter().map(|work| work.checkpoint.seq).min().unwrap_or(cp.seq) {
-            return Ok((None, Health::Unvalidated, None));
+            return Ok((None, Health::Unvalidated, finalized_observation.lifecycle));
         }
         let finalized = known
             .iter()
