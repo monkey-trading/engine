@@ -1,6 +1,7 @@
 //! The public API's server: TLS terminated inside the enclave, so the host can neither read nor
 //! alter client traffic, under the connection caps and timeouts in `[api]`. The key is generated
-//! in the enclave at boot and never leaves it; a restart makes a new one, and a new attestation.
+//! in the enclave and leaves it only sealed or encrypted to an attested successor (`tee::keys`);
+//! without `[tee.sealing]`, a restart makes a new one, and a new attestation.
 //! What makes the key trustworthy is the attestation, whose bundle carries the SHA-256 of its DER
 //! SubjectPublicKeyInfo in bytes 73..105 (see `tee::AttestationBundle`). A client that has checked
 //! the quote, and that the bundle hashes to its report data, pins that hash, which is the key pin
@@ -155,17 +156,19 @@ impl TlsConn {
 }
 
 impl TlsIdentity {
-    /// A fresh ECDSA P-256 key from the enclave's RNG and a self-signed certificate for it, served
-    /// over TLS 1.3 and HTTP/1.1 only until `key` installs a CA certificate in its place. A
-    /// validator may speak TLS 1.2 as well.
-    ///
-    /// TODO: survive restarts by sealing the key to the measurement (#28), so a restart reuses its
-    /// certificate instead of ordering a new one.
+    /// A fresh ECDSA P-256 key from the enclave's RNG (see `new`).
     /// Error cases:
-    /// - the key, the certificate, or a server config cannot be built
+    /// - the key, or see `new`
     pub fn generate() -> anyhow::Result<Self> {
+        Self::new(KeyPair::generate().context("generating the TLS key")?)
+    }
+
+    /// `key_pair` and a self-signed certificate for it, served over TLS 1.3 and HTTP/1.1 only until
+    /// `key` installs a CA certificate in its place. A validator may speak TLS 1.2 as well.
+    /// Error cases:
+    /// - the certificate or a server config cannot be built
+    pub fn new(key_pair: KeyPair) -> anyhow::Result<Self> {
         let provider = Arc::new(default_provider());
-        let key_pair = KeyPair::generate().context("generating the TLS key")?;
         let mut params = CertificateParams::new(Vec::<String>::new()).context("certificate parameters")?;
         params.distinguished_name.push(DnType::CommonName, "engine enclave");
         let cert = params.self_signed(&key_pair).context("signing the TLS certificate")?;

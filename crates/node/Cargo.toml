@@ -33,6 +33,7 @@ ed25519-dalek.workspace = true
 futures-util.workspace = true
 governor.workspace = true
 hex.workspace = true
+hpke.workspace = true
 http-body-util.workspace = true
 humantime-serde.workspace = true
 hyper.workspace = true
@@ -68,6 +69,7 @@ x509-parser.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nix.workspace = true
+sev.workspace = true
 
 [dev-dependencies]
 engine-verify = { workspace = true, features = ["test-fixtures"] }

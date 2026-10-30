@@ -139,8 +139,8 @@ fn files(dir: &std::path::Path) -> BTreeMap<PathBuf, Vec<u8>> {
         .collect()
 }
 
-/// Until enclave keys survive restarts (#28), a node under a new key refuses the old key's
-/// checkpoints that the vault never accepted, even in a drained log that ends at one.
+/// A node under a new key, as after a rotation, refuses the old key's checkpoints that the vault
+/// never accepted, even in a drained log that ends at one.
 #[test]
 fn a_new_key_refuses_old_key_checkpoints_the_vault_never_accepted() {
     let mut node = Node::new("origin-new-key-unaccepted-tail");

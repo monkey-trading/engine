@@ -3,6 +3,7 @@
 mod client;
 mod flows;
 mod guardian;
+mod keys;
 mod node;
 mod rpc;
 mod services;
@@ -24,6 +25,10 @@ use crate::config::{CustodyProvider, FeedProvider, NodeConfig, TeeProvider};
 const CHILD_CONFIG: &str = "ENGINE_WITHDRAWAL_SCENARIO_CHILD_CONFIG";
 const CHILD_FEED: &str = "ENGINE_WITHDRAWAL_SCENARIO_CHILD_FEED";
 const CHILD_ALERTS: &str = "ENGINE_WITHDRAWAL_SCENARIO_CHILD_ALERTS";
+/// `new-key`, or `predecessor=<host:port>`: the child's one-off choice of keys.
+const CHILD_KEYS: &str = "ENGINE_WITHDRAWAL_SCENARIO_CHILD_KEYS";
+/// The child's stand-in launch measurement, as `--mock-launch-digest` takes it.
+const CHILD_LAUNCH_DIGEST: &str = "ENGINE_WITHDRAWAL_SCENARIO_CHILD_LAUNCH_DIGEST";
 const CHILD_TEST: &str = "sequencer::withdrawal_scenario::node_child";
 
 #[derive(Deserialize, Serialize)]
@@ -80,11 +85,34 @@ async fn dev_scenario_signed_withdrawals_and_fifo() -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "local Anvil end-to-end; scripts/dev-key-lifecycle.sh runs the parent only"]
+async fn dev_scenario_key_lifecycle() -> anyhow::Result<()> {
+    timeout(Duration::from_secs(900), keys::key_lifecycle())
+        .await
+        .context("the key lifecycle scenario exceeded fifteen minutes")?
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "child entry point; launched only by the local withdrawal scenario"]
 async fn node_child() -> anyhow::Result<()> {
     let path = PathBuf::from(std::env::var_os(CHILD_CONFIG).context("scenario child config is required")?);
     let mut cfg = NodeConfig::load(&path)?;
-    ensure!(cfg.tee.provider == TeeProvider::Mock && cfg.tee.use_published_mock_key, "local public mock signer only");
+    ensure!(
+        cfg.tee.provider == TeeProvider::Mock && (cfg.tee.use_published_mock_key || cfg.tee.sealing.is_some()),
+        "local mock signer only: the published key, or the stand-in for sealing"
+    );
+    let mock_launch_digest = match std::env::var(CHILD_LAUNCH_DIGEST) {
+        Ok(text) => Some(crate::parse_launch_digest(&text).map_err(anyhow::Error::msg)?),
+        Err(_) => None,
+    };
+    let keys = match std::env::var(CHILD_KEYS).ok().as_deref() {
+        None => crate::KeyStart { mock_launch_digest, ..Default::default() },
+        Some("new-key") => crate::KeyStart { new_key: true, predecessor: None, mock_launch_digest },
+        Some(other) => {
+            let address = other.strip_prefix("predecessor=").context("unknown scenario key start")?;
+            crate::KeyStart { new_key: false, predecessor: Some(address.to_owned()), mock_launch_digest }
+        }
+    };
     ensure!(cfg.custody.provider == CustodyProvider::Evm && cfg.custody.chain_id == 31337, "local Anvil only");
     let endpoint = std::env::var(CHILD_FEED).context("scenario feed endpoint")?;
     ensure!(endpoint.starts_with("ws://127.0.0.1:"), "scenario feed is loopback only");
@@ -99,5 +127,5 @@ async fn node_child() -> anyhow::Result<()> {
     ))?);
     let telemetry =
         crate::telemetry::init_telemetry(&cfg, |name| (name == "ENGINE_ALERTS_CRITICAL_URL").then(|| alerts.clone()))?;
-    crate::node::run(cfg, telemetry).await
+    crate::node::run_with_cpu(cfg, telemetry, None, keys).await
 }

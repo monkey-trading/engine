@@ -27,11 +27,13 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - Command-origin seals for new entries, checked against the configured deployment and recovery signer;
   historical unsigned commands require an authorized covering checkpoint before writable recovery. A
   command after the last authenticated checkpoint that the current enclave key did not seal stops
-  recovery for operator repair. Each hardware enclave start generates a new key, and keys that
-  survive a restart are #28's: until then a hardware node cannot restart, after a crash or a drained
-  shutdown, because the vault's signer must be the enclave's key and the old key's commands and
-  checkpoints after the last one the vault accepted cannot be authenticated under a new key. With a
-  key that survives restarts, a drained shutdown ends the log at a checkpoint and restarts normally
+  recovery for operator repair. With `[tee.sealing]` the enclave's keys survive a restart, so a
+  drained shutdown ends the log at a checkpoint and restarts normally
+- Enclave keys sealed to the release, its launch measurement and config, with the SEV-SNP derived
+  key (a public stand-in under the mock TEE), opened only while the vault names that release as
+  current, handed to the next release only after the timelock makes it current and each release
+  attests the other, and a node the vault does not name as signer serving only its attestation
+  until governance registers its key (see "Enclave keys")
 - Optional checkpoint relaying, signed-parent vault commitments, startup rollback checks, and collateral
   reconciliation that pauses withdrawal signatures while trading continues
 - Attestation through Linux configfs-tsm, covering TDX and SEV-SNP, or a clearly marked mock: the
@@ -148,6 +150,13 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/ct_watch/state.rs` — the watcher's durable, locked state file
 - `src/ct_watch/tests/` — leaf, log client, tracker, state, config, and loopback poll-flow tests
 - `src/node/mod.rs` — startup, task supervision, and shutdown
+- `src/node/keys.rs` — this start's enclave keys and their attestation, and the check that the log
+  reaches the final checkpoint of the release that handed the keys over
+- `src/node/keys/tests.rs` — sealed, new, refused, and unsealed keys, the vault's current release,
+  the stand-in measurement, and the first start's head check
+- `src/node/registration.rs` — serving only the attestation until the vault names the key
+- `src/node/shutdown.rs` — what follows the sequencer's drain: ending history, and waiting for a
+  successor to confirm a handover
 - `src/node/tests.rs` — startup, history recovery, and incomplete-genesis tests
 - `src/node/preflight/unscanned.rs` — unprovable prelaunch anchors refuse writable startup before changing log or history
 - `src/node/preflight/tests/origin.rs` — integrity refusal preserves absent, corrupt, and WAL-backed history
@@ -160,7 +169,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/payout_schedule.rs` — complete unpaid approval order, bounded epoch and requested reissue scheduling, and the hold behind unloaded recovered approvals
 - `src/sequencer/payout_tests.rs` — release order across claim pages, durability, restart, expiry without reissue, and rotation
 - `src/sequencer/payout_tests/` — paginated replacement signature order, paused claim acknowledgement, sealed approval recovery, FIFO signing across unloaded recovery windows, expired authorizations a rotation leaves unsigned, and no issuance or reissue while the vault pauses withdrawals or has a retired signer
-- `src/sequencer/withdrawal_scenario/` — actual Anvil/TLS/stream/custody crash, FIFO, and guardian pause and signer retirement scenarios with local signed time
+- `src/sequencer/withdrawal_scenario/` — actual Anvil/TLS/stream/custody crash, FIFO, and guardian pause and signer retirement scenarios with local signed time,
+  and the enclave key lifecycle scenario (`keys.rs`)
 - `src/withdrawals.rs` — vault EIP-712 digests and exact approval inclusion verification
 - `src/api/withdrawal_queue.rs` — public FIFO pagination and account queue positions
 - `src/api/reissue.rs` — a holder's screened request to sign an expired approval again
@@ -352,8 +362,20 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/test_tracing.rs` — the tracing setup the test collectors share: one process-wide
   interested subscriber, so no callsite can be cached uninteresting and a collector never
   silently misses an alert or line
-- `src/tee.rs` — the enclave key, signatures, and attestation providers; the attestation and its
+- `src/tee/mod.rs` — the enclave key, signatures, and attestation providers; the attestation and its
   bundle are `engine-verify`'s
+- `src/tee/keys.rs` — the key set a restart keeps and an upgrade hands over: the signing key, the
+  TLS key, the ACME account, the certificate, and the predecessor's final checkpoint
+- `src/tee/sealing.rs` — the sealed key file, AES-256-GCM under the platform's derived key, and the
+  mock TEE's public stand-in for sealing; `src/tee/sealing/tests.rs` covers it
+- `src/tee/snp.rs` — the SEV-SNP sealing key and report through `/dev/sev-guest` (Linux)
+- `src/handover/mod.rs` — the handover's messages, framing, report data, HPKE encryption of the keys,
+  and the vault's current release check that a start and a handover share
+- `src/handover/evidence.rs` — a peer's quote and its collateral, produced and verified
+- `src/handover/successor.rs` — the new release's side: request, verify, seal, confirm
+- `src/handover/predecessor.rs` — the running release's side: its listener, the current release, the
+  stop, and the final checkpoint; `src/handover/predecessor/tests.rs` runs it over loopback
+- `src/handover/tests.rs` — what each step binds, the encryption, the framing, and the evidence
 - `src/verify/mod.rs` — attestation verification for the CLI and replay: loading or fetching the
   attestation, release manifest, and collateral, `engine-verify` on the system clock, and the
   checkpoint-signer check
@@ -408,6 +430,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/tls/acme/tests/fake_ca.rs` — the scripted ACME CA behind the client's HTTP
 - `src/tls/acme/tests/http.rs` — the ACME HTTP client against a loopback HTTPS stand-in: its roots,
   its response cap, and its refusal to follow redirects
+- `src/tls/acme/tests/sealed.rs` — the sealed account and certificate across a restart, and a
+  restored certificate's renewal by trusted time
 - `src/tls/tests/mod.rs` — the API end to end over TLS: key pinning, limits, caps, and the harness
 - `src/tls/tests/acme.rs` — TLS-ALPN-01 on the listener, and a CA certificate installed without a
   restart
@@ -436,6 +460,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/config/tls.rs` — the `[api.tls.acme]` section, and a production build's refusal of an API with
   only its self-signed certificate
 - `src/config/tls_tests.rs` — `[api.tls.acme]` parsing and validation, and the production refusal
+- `src/config/sealing.rs` — the `[tee.sealing]` section and its checks
 - `src/config/telemetry_tests.rs` — metrics and alert config tests: the Critical route, the dev
   config's telemetry, and webhook URLs
 - `src/config/proxy.rs` — `[api.proxy_protocol]`: the trusted proxy ranges and a production build's refusal of loopback and wide ones
@@ -447,6 +472,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/config/test_keys.rs` — the published test keys from `config/test-keys.toml`, which a node
   with real attestation refuses, and their tests
 - `src/checkpoints/mod.rs` — posting, retry, signed-parent commitment checks, and collateral reconciliation
+- `src/checkpoints/chain.rs` — the chain access the worker reads and posts through, the vault's current release included
 - `src/checkpoints/sweep.rs` — bounded approval pages and the sweep of further pages at one finalized block
 - `src/checkpoints/accounting.rs` — bounded custody totals and held reserves derived from computed engine events
 - `src/checkpoints/accounting/access_tests.rs` — actual pending and hold outputs against independent reconciliation totals
@@ -655,6 +681,13 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 ```bash
 # Run a local node with mock TEE, custody, and feeds (API on https://127.0.0.1:8080)
 cargo run -p engine-node -- run --config config/dev.toml
+
+# With [tee.sealing]: seal new keys for a release that has none (a first deployment, or after a
+# compromise), or take them from the running release's handover listener once the vault makes this
+# release current; under the mock TEE, name a stand-in launch measurement as well
+cargo run -p engine-node -- run --config <config> --new-key
+cargo run -p engine-node -- run --config <config> --predecessor 10.0.0.5:9471
+cargo run -p engine-node -- run --config <config> --mock-launch-digest <96 hex digits> --new-key
 
 # Watch Certificate Transparency logs for a certificate for the API's domain whose key no verified
 # attestation names (outside the enclave; see config/ct-watch.toml)
@@ -1623,21 +1656,109 @@ Before the first production certificate:
   can answer the CA's TLS-ALPN-01 validation itself and have a certificate issued for a key of its
   own, as can whoever controls the domain's DNS. A browser that trusts the certificate alone cannot
   tell; the console's in-browser attestation check and signed answers (#292) are what bind it to the
-  enclave, and `engine ct-watch` flags any certificate whose key is not the attested one. A CAA `accounturi` would bind issuance to the enclave's account, but cannot
-  while the account changes at every start (#28).
+  enclave, and `engine ct-watch` flags any certificate whose key is not the attested one. With
+  `[tee.sealing]` the ACME account is sealed with the keys, so a CAA `accounturi` naming it binds
+  issuance to the enclave's account too; the account's URL is in the node's log when it registers.
 - Start `engine ct-watch` (`config/ct-watch.toml`) on a host independent of the node's, before the
   first production certificate is issued: it reads each log from its current end the first time, so
   it does not see a certificate logged before it started.
 - Run against the CA's staging directory first (for Let's Encrypt,
   `https://acme-staging-v02.api.letsencrypt.org/directory`), then its production one.
 
-Until the enclave's keys survive a restart (#28), every start generates a new TLS key and ACME
-account and orders a new certificate, so the CA's issuance limits cap how often a production node
-can restart. Let's Encrypt publishes, among others, 5 certificates per exact set of identifiers
-every 7 days, refilling one every 34 hours with no override, which renewals of the same domain also
-count against; 10 new accounts per IP address every 3 hours; and 5 failed authorizations per
-identifier per account every hour ([rate limits](https://letsencrypt.org/docs/rate-limits/)).
-Restarts must fit within these, and rehearsals belong on the staging directory.
+With `[tee.sealing]`, the account and the certificate are sealed with the TLS key: a restart serves
+the certificate it had from the first handshake, without `certificate_pending`, and renews it on
+schedule, its age read from trusted time once a sample arrives, under the same account. An upgrade
+hands them to the next release with the keys. Without sealing, every start generates a new TLS key
+and ACME account and orders a new certificate, which the CA's issuance limits cap: Let's Encrypt
+publishes, among others, 5 certificates per exact set of identifiers every 7 days, 10 new accounts
+per IP address every 3 hours, and 5 failed authorizations per identifier per account every hour
+([rate limits](https://letsencrypt.org/docs/rate-limits/)). A host that deletes the sealed file, or
+a new key after a compromise, orders again under these limits, and rehearsals belong on the staging
+directory.
+
+### Enclave keys
+
+With `[tee.sealing]`, the enclave's keys live on the data disk, sealed to the release: its launch
+measurement and the config file it runs with, which the vault's timelock names together as the
+current release (`setCurrentRelease`), each time in a new generation (`releaseGeneration`). With
+`[checkpoints]`, a node opens or seals keys only while the vault's current release at custody
+finality is its own, and only in the vault's current generation of it, so the timelock supersedes a
+release by naming another, and a release it names again takes the keys afresh from the running
+release instead of reopening an older copy; a mock configuration without `[checkpoints]` skips
+those checks and seals in generation 0.
+
+```toml
+[tee.sealing]
+dir = "/data/keys"
+
+[tee.sealing.handover] # needs [checkpoints]
+listen = "0.0.0.0:9471"
+```
+
+- **What a restart keeps.** The signing key (the vault's signer and the attested address), the
+  API's TLS key, the ACME account, and the certificate, in one file per release and generation
+  (`<release id>-<generation>.sealed.json`, as the vault records them), encrypted with AES-256-GCM
+  under a key the SEV-SNP firmware derives from the chip's VCEK, the launch measurement, the guest
+  policy, and the TCB committed when the file was sealed, with the config's SHA-256 and the
+  generation bound to the ciphertext. Only the same code under the same config, launched under the
+  same policy on the same chip, opens it, in the same generation; a firmware update leaves the older
+  TCB derivable. A restart opens the file, so
+  the attested address, the vault's signer and epoch, the outstanding withdrawal authorizations, and
+  the certificate are unchanged, and no governance transaction is needed.
+- **What forces new keys.** A compromise, or keys lost with no release running to hand them over
+  (the file deleted, the VM moved to another chip, the firmware rolled below the sealed TCB). The
+  node then refuses to start until the operator starts it with `--new-key` (in the image, by creating
+  `/data/new-key`), which refuses beside an existing file. New keys reach the vault through the
+  timelock's `setSigner`, which raises the signer epoch: the vault rejects the retired key's
+  authorizations at once, and the node reissues those still usable under the new epoch; an expired
+  one is reissued on its account's signed request (`src/sequencer/payouts.rs`). Clients
+  see the new address in `/v1/attestation`, and `engine ct-watch` accepts the new TLS key once a
+  verified attestation names it; the console pins the release, not the address.
+- **A key the vault does not name.** While the vault's signer at its latest or finalized block is
+  another address, the node serves only `/v1/attestation` on `node.listen`, raises
+  `signer_unregistered` (Critical), and signs nothing; governance verifies that attestation and
+  registers the address, and the node then starts as usual. A first deployment passes through this.
+- **An upgrade or a config change.** The release changes, so it cannot open the old file.
+  Governance first has the timelock call `setCurrentRelease(launchDigest, configHash)` on the vault
+  with the new release's launch measurement and config hash; once that block is final, the operator
+  starts the new release with `--predecessor <host:port>` (in the image, `/data/predecessor` holding
+  the address), naming the running release's handover listener. The running release keeps
+  sequencing until then, though a restart would now refuse its keys. Setting it back as current calls
+  the upgrade off in another generation, so it then hands its keys to a fresh start of itself the same
+  way to keep them across a restart. A running release raises `release_superseded` (Critical) within
+  a minute of the vault naming another release or generation, since a restart would then find no
+  keys. On each connection the running release sends a fresh challenge, which the new one's quote
+  binds with its one-time key and config hash, so a recorded request or confirmation is refused on
+  any other connection. It checks that quote against the vendor's chain at trusted time, the
+  measurement it proves and the config hash it binds against the vault's current release at custody
+  finality, and its guest policy and TCB against its own. It refuses while its checkpoint signing is
+  withheld (`checkpoint_withheld`), since it could not sign a final checkpoint, and goes on
+  sequencing; otherwise it stops sequencing, takes its final checkpoint, and sends the keys
+  encrypted with HPKE to the new release's attested one-time key, with its own quote over them. The new release takes them only if the vault already names their signing key, so an
+  enclave the host runs cannot hand it a key of its own, and only while the vault still names it; it
+  seals them for its release in the vault's current generation and confirms with the handed-over
+  key, and the old release acknowledges with the same key and exits.
+  The new release's first start refuses a log that does not end at the old release's final
+  checkpoint, which the old release takes from its sequencer's own output rather than the disk. The
+  address, signer epoch, authorizations, and certificate carry over. Either side that misses the
+  other's signed confirmation or acknowledgement raises `handover_unconfirmed` (Critical). The old
+  release stays stopped and goes on serving new releases until one confirms, since its own copy no
+  longer opens: stopping it then loses the keys. The new one refuses to start with the keys sealed,
+  and is started again only once the old one has stopped. The old release's sealed copy stays on its disk but
+  never opens again: the vault names another release, and naming the old one again starts a later
+  generation, in which it takes the keys afresh from the running release. An upgrade that fixes a
+  flaw in it still rotates the signer, since the old release has held the key.
+- **What the host can do with the file.** Delete it: the node refuses to start, and new keys need
+  governance. Restore an older copy: it opens only for the release that sealed it, while the vault
+  names that release in the generation it was sealed in, and holds the same keys, or keys the vault has since retired, which the
+  startup signer check holds at the attestation-only wait. Rename it or rewrite its header for
+  another release: decryption fails. Alter it: decryption fails and the node refuses to start.
+  Start a second copy of the current release from a copy of the disk: both unseal the same keys, but every withdrawal waits for a checkpoint that extends the
+  vault's latest, so the copy whose checkpoint the vault rejects stops with `checkpoint_conflict`
+  and nothing pays twice; its signed API answers still verify against the attested key.
+- **Under the mock TEE** the stand-in measurement comes from `--mock-launch-digest <hex>`, never
+  from the config, and the stand-in key is a public hash of it, so anyone can open the file; a
+  production build refuses the mock TEE.
 
 ### Corporate actions operator runbook
 
@@ -1868,6 +1989,11 @@ cargo test -p engine-node --features production --lib production_build
 # Dev scenario: the Certificate Transparency watcher against a mock node and a loopback stand-in
 # log (needs python3, OpenSSL 3, curl and jq)
 ./scripts/dev-ct-watch.sh
+# Dev scenario: sealed keys only for the vault's current release, across a restart, a missing file,
+# an edited config, an upgrade governance makes current with a withdrawal outstanding, the superseded
+# release, that release named again, and a second copy, on Anvil (needs Anvil, Forge, and the pinned
+# contract dependencies)
+./scripts/dev-key-lifecycle.sh
 ```
 
 ## Authors

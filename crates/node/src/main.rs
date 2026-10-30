@@ -12,9 +12,10 @@ use engine_node::admin::{self, AdminArgs, HexKey, KeyEnv};
 use engine_node::ct_watch::{self, CtWatchArgs};
 use engine_node::log::CheckpointDomain;
 use engine_node::{
-    ExpectedSigner, KDS_BASE_URL, NodeConfig, SentRequest, VerifiedAttestation, VerifyOptions, ensure_signers_verified,
-    init_logging, init_telemetry, load_relayed_collateral, parse_challenge_arg, replay_path_with_custody,
-    replay_path_with_trust, run_dedicated, verify_attestation_files, verify_frames_file, verify_response_files,
+    ExpectedSigner, KDS_BASE_URL, KeyStart, NodeConfig, SentRequest, VerifiedAttestation, VerifyOptions,
+    ensure_signers_verified, init_logging, init_telemetry, load_relayed_collateral, parse_challenge_arg,
+    parse_launch_digest, replay_path_with_custody, replay_path_with_trust, run_dedicated, verify_attestation_files,
+    verify_frames_file, verify_response_files,
 };
 
 #[derive(Subcommand)]
@@ -23,6 +24,18 @@ enum Cmd {
     Run {
         #[arg(short, long, env = "CONFIG_PATH", default_value = "config/dev.toml")]
         config: PathBuf,
+        /// Seal new enclave keys for a release that has none sealed. The vault must then register
+        /// the new signer, so use it only for a first deployment or after a compromise.
+        #[arg(short, long, conflicts_with = "predecessor")]
+        new_key: bool,
+        /// Take a release's keys from the running release whose `[tee.sealing.handover]` listener
+        /// is at this address, once the vault makes this release current.
+        #[arg(short, long, value_name = "HOST:PORT")]
+        predecessor: Option<String>,
+        /// The mock TEE's stand-in for this release's launch measurement (48 bytes of hex), from
+        /// which its public stand-in for sealing derives the key. Development only.
+        #[arg(long, value_name = "HEX", value_parser = parse_launch_digest)]
+        mock_launch_digest: Option<[u8; 48]>,
     },
     /// Replay a published log and verify every checkpoint root and signature. `--log` is a single log file, or a
     /// directory of segments with their manifest: a node's log directory or a downloaded archive. A
@@ -170,10 +183,10 @@ struct Cli {
 /// - the CT watcher cannot start, or stops with an error
 fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
-        Cmd::Run { config } => {
+        Cmd::Run { config, new_key, predecessor, mock_launch_digest } => {
             let cfg = NodeConfig::load(&config)?;
             let telemetry = init_telemetry(&cfg, |var| std::env::var(var).ok())?;
-            run_dedicated(cfg, telemetry)
+            run_dedicated(cfg, telemetry, KeyStart { new_key, predecessor, mock_launch_digest })
         }
         Cmd::Replay {
             log: path,

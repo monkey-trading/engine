@@ -3,8 +3,10 @@
 //! `[api.tls.acme].domain`, answers the CA's TLS-ALPN-01 challenge on the API's own listener, and
 //! finalizes the order with a request signed by the API's key, so the issued certificate is for the
 //! key the attestation names. It installs the certificate without a restart, and renews it the
-//! same way. Neither key is written anywhere or logged; a restart makes both again, and so orders
-//! a new certificate.
+//! same way. Neither key is logged. With `[tee.sealing]` the account and the certificate are sealed
+//! with the API's key, so a restart serves the certificate it had and orders nothing until renewal,
+//! and a CAA `accounturi` can bind issuance to the enclave's account; without it, a restart makes
+//! both keys again and orders a new certificate.
 //!
 //! The sequencer never waits for it. Until the first certificate the API serves its self-signed
 //! one, under `certificate_pending`; a failed renewal keeps serving the current one and retries
@@ -20,30 +22,31 @@
 //! controls the domain's DNS. A browser that trusts the certificate alone cannot tell; the CAA
 //! record narrows issuance to one CA and method, and `engine ct-watch`, outside the node, detects
 //! such a certificate.
-//!
-//! TODO: once the key survives restarts (#28), keep the account and the certificate with it, so a
-//! restart orders nothing and a CAA `accounturi` can bind issuance to the enclave's account.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, anyhow, bail, ensure};
 use instant_acme::{
-    Account, AuthorizationStatus, ChallengeStatus, ChallengeType, HttpClient, Identifier, NewAccount, NewOrder, Order,
-    OrderStatus, Problem, RetryPolicy,
+    Account, AccountCredentials, AuthorizationStatus, ChallengeStatus, ChallengeType, HttpClient, Identifier,
+    NewAccount, NewOrder, Order, OrderStatus, Problem, RetryPolicy,
 };
 use prometheus_client::metrics::gauge::Gauge;
 use rustls::pki_types::CertificateDer;
 use rustls::pki_types::pem::PemObject;
 use tokio::time::{Instant, sleep, timeout};
-use tracing::{Instrument, info, info_span};
+use tracing::{Instrument, info, info_span, warn};
 use x509_parser::certificate::X509Certificate;
 use x509_parser::extensions::GeneralName;
 use x509_parser::prelude::FromDer;
 
 use crate::config::ApiSection;
 use crate::metrics::{FloatGauge, Metrics};
+use crate::tee::keys::AcmeAccount;
+use crate::tee::sealing::KeyStore;
 use crate::tls::TlsKey;
 use crate::tls::certificates::Answer;
+use crate::trusted_time::TrustedClock;
 
 pub(crate) mod http;
 use crate::tls::acme::http::AcmeHttp;
@@ -73,9 +76,28 @@ pub struct CertificateTask<H = AcmeHttp> {
     not_after: FloatGauge,
     /// 1 until the first CA certificate.
     pending: Gauge,
+    /// Where the account and the certificate are kept across restarts.
+    sealed: Option<Sealed>,
+    /// The sealed certificate, served from the start.
+    restored: Option<Restored>,
 }
 
-/// What attempts carry over: the account, once registered, and the order not yet issued.
+/// The sealed keys the task keeps its account and certificate in, and the trusted time a restored
+/// certificate's age is read at.
+pub struct Sealed {
+    pub store: Arc<KeyStore>,
+    pub trusted: TrustedClock,
+}
+
+/// A certificate restored from the sealed keys.
+#[derive(Debug)]
+struct Restored {
+    lifetime: Duration,
+    not_after_seconds: i64,
+}
+
+/// What attempts carry over: the account, once registered, the order not yet issued, and whether
+/// the sealed account is one the CA forgot.
 #[derive(Default)]
 struct Progress {
     account: Option<Account>,
@@ -83,6 +105,9 @@ struct Progress {
     order: Option<String>,
     /// When this process last sent the order's finalize request: no later than the CA issued.
     finalized: Option<Instant>,
+    /// Whether the CA no longer knows the sealed account, so registering never restores it, even
+    /// while sealing its removal fails.
+    sealed_forgotten: bool,
 }
 
 /// A certificate the CA issued and the API now serves.
@@ -97,13 +122,19 @@ struct Issued {
 
 impl CertificateTask {
     /// The task `api`'s `[api.tls.acme]` asks for, serving through `key` and exporting its gauges
-    /// to `metrics`; none without the section.
+    /// to `metrics`, and keeping its account and certificate in `sealed`; none without the section.
+    /// A sealed certificate for the domain is served from now on.
     /// Error cases:
     /// - the ACME HTTP client cannot be built (see `AcmeHttp::new`)
-    pub fn configured(api: &ApiSection, key: TlsKey, metrics: &Metrics) -> anyhow::Result<Option<Self>> {
+    pub fn configured(
+        api: &ApiSection,
+        key: TlsKey,
+        metrics: &Metrics,
+        sealed: Option<Sealed>,
+    ) -> anyhow::Result<Option<Self>> {
         let Some(tls) = &api.tls else { return Ok(None) };
         let cfg = &tls.acme;
-        Ok(Some(Self {
+        let mut task = Self {
             domain: cfg.domain.clone(),
             directory_url: cfg.directory_url.clone(),
             contact: cfg.contact.clone(),
@@ -112,7 +143,11 @@ impl CertificateTask {
             key,
             not_after: metrics.tls_certificate_not_after.clone(),
             pending: metrics.tls_certificate_pending.clone(),
-        }))
+            sealed,
+            restored: None,
+        };
+        task.restored = task.restore();
+        Ok(Some(task))
     }
 }
 
@@ -122,13 +157,33 @@ impl<H: HttpClient + Clone> CertificateTask<H> {
     /// Error cases:
     /// - none; it runs until the node stops
     pub async fn run(self) -> anyhow::Result<()> {
-        let mut schedule = Schedule::start(self.domain.clone(), self.renew_before, self.pending.clone());
+        let (mut schedule, mut wait) = match (&self.restored, &self.sealed) {
+            (Some(restored), Some(sealed)) => {
+                self.not_after.set(restored.not_after_seconds as f64);
+                let age = age_at(&sealed.trusted, restored).await;
+                let (schedule, wait) = Schedule::restored(
+                    self.domain.clone(),
+                    self.renew_before,
+                    self.pending.clone(),
+                    restored.lifetime,
+                    age,
+                    Instant::now(),
+                );
+                info!(
+                    not_after = restored.not_after_seconds,
+                    "serving the sealed CA certificate; renewing in {wait:?}"
+                );
+                (schedule, wait)
+            }
+            _ => (Schedule::start(self.domain.clone(), self.renew_before, self.pending.clone()), Duration::ZERO),
+        };
         let mut progress = Progress::default();
         let mut attempt = 0_u64;
         loop {
+            sleep(wait).await;
             attempt += 1;
             let span = info_span!("certificate", id = attempt);
-            let wait = async {
+            wait = async {
                 let issued = timeout(ATTEMPT_TIMEOUT, self.issue(&mut progress))
                     .await
                     .unwrap_or_else(|_| Err(anyhow!("the attempt took over {ATTEMPT_TIMEOUT:?}")));
@@ -144,13 +199,28 @@ impl<H: HttpClient + Clone> CertificateTask<H> {
             }
             .instrument(span)
             .await;
-            sleep(wait).await;
         }
+    }
+
+    /// The sealed certificate, installed, when the configured directory's CA issued it, it names the
+    /// domain, and it is for the key; `None` without one, or with one it drops for a new order.
+    fn restore(&self) -> Option<Restored> {
+        let chain = self.sealed.as_ref()?.store.keys().certificate_chain(&self.directory_url);
+        let restored = chain.and_then(|chain| {
+            let Some(chain) = chain else { return Ok(None) };
+            let (lifetime, not_after_seconds) = check(&chain, &self.domain)?;
+            self.key.install(chain)?;
+            Ok(Some(Restored { lifetime, not_after_seconds }))
+        });
+        restored.unwrap_or_else(|e| {
+            info!(domain = %self.domain, "not serving the sealed certificate, ordering a new one: {e:#}");
+            None
+        })
     }
 
     /// One attempt (see `attempt`). A problem the CA answers that ends the order drops it, so the
     /// next attempt places a new one, and one that names the account as unknown drops the account
-    /// too; a lost exchange or a passing problem keeps both.
+    /// too, sealed copy included; a lost exchange or a passing problem keeps both.
     /// Error cases:
     /// - see `attempt`
     async fn issue(&self, progress: &mut Progress) -> anyhow::Result<Issued> {
@@ -160,7 +230,8 @@ impl<H: HttpClient + Clone> CertificateTask<H> {
                 Some(problem)
                     if problem.r#type.as_deref() == Some("urn:ietf:params:acme:error:accountDoesNotExist") =>
                 {
-                    *progress = Progress::default();
+                    *progress = Progress { sealed_forgotten: true, ..Progress::default() };
+                    self.seal("dropping the account the CA no longer knows", |keys| keys.acme_account = None);
                 }
                 Some(problem) if ends_order(problem) => (progress.order, progress.finalized) = (None, None),
                 _ => {}
@@ -177,10 +248,10 @@ impl<H: HttpClient + Clone> CertificateTask<H> {
     /// - the certificate is not for the domain or the key (see `check` and `TlsKey::install`), or
     ///   its life ran out before it arrived
     async fn attempt(&self, progress: &mut Progress) -> anyhow::Result<Issued> {
-        let Progress { account, order: unfinished, finalized } = progress;
+        let Progress { account, order: unfinished, finalized, sealed_forgotten } = progress;
         let account = match account {
             Some(account) => account,
-            None => account.insert(self.register().await?),
+            None => account.insert(self.register(!*sealed_forgotten).await?),
         };
         let mut order = self.order(account, unfinished, finalized).await?;
         let pem = self.complete(&mut order, finalized).await?;
@@ -192,7 +263,8 @@ impl<H: HttpClient + Clone> CertificateTask<H> {
             .context("parsing the certificate chain")?;
         let (lifetime, not_after_seconds) = check(&chain, &self.domain)?;
         ensure!(finalized.elapsed() < lifetime, "the certificate's life ran out before it arrived");
-        self.key.install(chain)?;
+        self.key.install(chain.clone())?;
+        self.seal("the certificate", |keys| keys.set_certificate(&self.directory_url, &chain));
         Ok(Issued { lifetime, not_after_seconds, finalized })
     }
 
@@ -285,20 +357,58 @@ impl<H: HttpClient + Clone> CertificateTask<H> {
         }
     }
 
-    /// Registers an account under a fresh key, agreeing to the CA's terms of service.
+    /// The sealed account for this directory, when `use_sealed`, or one registered under a fresh
+    /// key, agreeing to the CA's terms of service, and sealed.
     /// Error cases:
     /// - the directory cannot be read, or the CA refuses the account
-    async fn register(&self) -> anyhow::Result<Account> {
+    /// - the sealed credentials do not parse
+    async fn register(&self, use_sealed: bool) -> anyhow::Result<Account> {
+        let builder = Account::builder_with_http(Box::new(self.http.clone()));
+        let sealed = self.sealed.as_ref().filter(|_| use_sealed).and_then(|sealed| sealed.store.keys().acme_account);
+        if let Some(sealed) = sealed.filter(|account| account.directory_url == self.directory_url) {
+            let credentials: AccountCredentials =
+                serde_json::from_value(sealed.credentials).context("the sealed ACME credentials do not parse")?;
+            let account = builder.from_credentials(credentials).await.context("restoring the sealed ACME account")?;
+            info!(account = %account.id(), "using the sealed ACME account");
+            return Ok(account);
+        }
         let contact = [self.contact.as_str()];
         let new = NewAccount { contact: &contact, terms_of_service_agreed: true, only_return_existing: false };
-        // The credentials returned beside the account carry its private key: dropped unread.
-        let (account, _) = Account::builder_with_http(Box::new(self.http.clone()))
-            .create(&new, self.directory_url.clone(), None)
-            .await
-            .context("registering the ACME account")?;
+        // The credentials carry the account's private key: sealed, never logged.
+        let (account, credentials) =
+            builder.create(&new, self.directory_url.clone(), None).await.context("registering the ACME account")?;
         info!(account = %account.id(), "ACME account registered");
+        let account_keys = AcmeAccount {
+            directory_url: self.directory_url.clone(),
+            credentials: serde_json::to_value(&credentials).context("encoding the ACME credentials")?,
+        };
+        self.seal("the ACME account", |keys| keys.acme_account = Some(account_keys));
         Ok(account)
     }
+
+    /// Seals `change` into the keys, if they are sealed. A failure keeps what this process holds
+    /// and serves, with a Warning: the next start registers or orders again.
+    fn seal(&self, what: &str, change: impl FnOnce(&mut crate::tee::keys::KeySet)) {
+        let Some(sealed) = &self.sealed else { return };
+        if let Err(e) = sealed.store.update(change) {
+            warn!(alert = "sealed_keys_write_failed", "{what} is not sealed, so a restart obtains it again: {e:#}");
+        }
+    }
+}
+
+/// How far into its life `restored` is, at the first time trusted time admits, which this waits for.
+async fn age_at(trusted: &TrustedClock, restored: &Restored) -> Duration {
+    let now_ms = loop {
+        if let Some(now_ms) = trusted.now_ms() {
+            break now_ms;
+        }
+        sleep(Duration::from_secs(1)).await;
+    };
+    let not_before_ms = restored
+        .not_after_seconds
+        .saturating_sub(i64::try_from(restored.lifetime.as_secs()).unwrap_or(i64::MAX))
+        .saturating_mul(1000);
+    Duration::from_millis(u64::try_from(now_ms.saturating_sub(not_before_ms)).unwrap_or(0))
 }
 
 /// Why the CA refused the domain's validation, as its challenge records it, for an error message;

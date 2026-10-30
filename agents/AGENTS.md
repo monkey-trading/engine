@@ -86,7 +86,13 @@ an index: load only the rule whose hint matches the current action.
   signer to have passed it; a mock quote never verifies; `verify/refresh.rs` fetches the node's own
   quote's vendor certificate chain and revocation list in the background, checks and bounds them,
   and serves them at `/v1/attestation/collateral` for a verifier that cannot call the vendor, which
-  pins the roots itself), the trusted time check against
+  pins the roots itself), the enclave key lifecycle (`tee/keys.rs` and `tee/sealing.rs`: the signing
+  key, TLS key, ACME account and certificate sealed per release with AES-256-GCM under the SEV-SNP
+  derived key in `tee/snp.rs`, or the mock TEE's public stand-in; `node/keys.rs`: sealed keys, new
+  ones only on `run --new-key`, or a predecessor's on `run --predecessor`; `node/registration.rs`:
+  a node the vault does not name serves only its attestation until governance registers it;
+  `handover/`: an upgrade the vault's timelock approved takes the keys over HPKE after each release
+  attests the other), the trusted time check against
   Roughtime servers, the custody adapter (mock, or EVM vault deposits over alloy, mirroring the
   staking contract's finalised events once `InitStaking` has applied, with V27 scan progress
   authenticated in engine state rather than trusted from the host cursor, and from V37 the operator
@@ -145,10 +151,12 @@ an index: load only the rule whose hint matches the current action.
   (off at deployment, the deployer in effect) and moves parameters within deployment bounds, and
   anyone closes an election epoch, electing the top eligible candidate past quorum, minimum term and
   margin to take effect seven days plus a finality margin later. Deployment gives that
-  timelock its multisig proposer. The timelock manages signer rotation and independent
-  deposit/withdrawal pauses; the guardian, the same multisig acting without the delay, may only
-  pause withdrawals for seven days (counted, renewed or lifted by the timelock) and retire the
-  signer until the timelock installs one.
+  timelock its multisig proposer. The timelock manages signer rotation, the current release that
+  alone holds the signer's key (`setCurrentRelease`: the keccak of a launch measurement and config
+  hash, in a new `releaseGeneration` each time), and independent deposit/withdrawal pauses; the
+  guardian, the same multisig acting without the delay, may only pause withdrawals for seven days
+  (counted, renewed or lifted by the timelock) and retire the signer until the timelock installs
+  one.
 - **config/** — node configs. `dev.toml` runs the TEE, custody and feeds as mocks on one machine,
   and checks the clock against public Roughtime servers, citing each server's key source;
   `feeds.provider = "venues"` prices its crypto markets from live venues instead, leaving the others
@@ -212,7 +220,12 @@ an index: load only the rule whose hint matches the current action.
   `dev-deposit-finality.sh`, the sequencer confirmation and Ethereum finality scenario on the
   vault's Anvil fixture; `dev-rwa-feeds.sh`, the RWA price feeds dev scenario against local
   stand-ins for the market-data vendors; `dev-signed-api.sh`, the signed API answers scenario:
-  verified responses and stream frames, and refused tampering, replay and gaps; `dev-withdrawals.sh`, the actual Anvil/TLS withdrawal,
+  verified responses and stream frames, and refused tampering, replay and gaps; `dev-key-lifecycle.sh`,
+  the enclave key lifecycle scenario on Anvil (keys only for the vault's current release,
+  registration of new keys, a restart with a withdrawal outstanding, a refused start without the
+  sealed file, an edited config, an upgrade, the superseded release refused, and named again, a second
+  copy);
+  `dev-withdrawals.sh`, the actual Anvil/TLS withdrawal,
   pre-log crash, unpaid redelivery, FIFO liquidity, and guardian pause and signer retirement scenario; `dev-attestation-verifier.sh`,
   the attestation verifier dev scenario against a loopback key-distribution stand-in, with no
   hardware or vendor access, also replaying a hand-built signed-withdrawal log through
@@ -238,7 +251,8 @@ an index: load only the rule whose hint matches the current action.
   invariant tests on x86_64 and aarch64 Linux, the unchanged-reference-log check, `cargo-deny`,
   the contracts' `forge fmt --check` / build /
   test, the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
-  deposit finality scenarios, the MONKEY staking and operator election dev scenarios, the signed withdrawal and FIFO dev
+  deposit finality scenarios, the MONKEY staking and operator election dev scenarios, the enclave key
+  lifecycle dev scenario, the signed withdrawal and FIFO dev
   scenario, the API and direct-vault access enforcement dev scenario, the metrics and alert routing
   dev scenario, the alert outbox kill/restart scenario,
   the browser-origin scenario, the proxy protocol scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the
@@ -412,6 +426,15 @@ Run from the repo root:
   Cargo and pinned contract dependencies; uses local signed time and price servers and a loopback
   alert webhook, ends with the guardian pause and signer retirement flow, and preserves
   its child logs under `SCENARIO_LOG_DIR` or a fresh temporary artifact directory)
+- Enclave key lifecycle dev scenario: `./scripts/dev-key-lifecycle.sh` (the same requirements; the
+  mock TEE's stand-in for sealing, a release the timelock makes current, a timelock-registered
+  signer, a restart, an edited config that opens nothing, an upgrade with a withdrawal outstanding,
+  the superseded release refused, that release named again taking the keys afresh, and a second copy
+  stopped by the vault's checkpoint conflict)
+- Run a node with sealed keys: `cargo run -p engine-node -- run --config <config> --new-key` seals
+  new keys for a release that has none; `--predecessor <host:port>` takes them from the running
+  release once the vault makes the new one current; both need the vault's current release to be
+  this one, and the mock TEE also needs `--mock-launch-digest <hex>`
 - Sign and submit an admin command as the operator: `cargo run -p engine-node -- admin --pin <the
   TLS key hash in the node's attested bundle> <command>`, with the key from `--key-file`,
   `OPERATOR_KEY_FILE`, or `OPERATOR_KEY`; `config/dev.toml` names the public key of the local test

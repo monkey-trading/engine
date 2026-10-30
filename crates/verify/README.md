@@ -27,6 +27,9 @@ differently from another.
   refusal
 - A mock quote never verifies; `verify_mock_attestation` reads one for development and returns only
   the bundle it binds
+- `verify_quote`: the same chain, revocation, and signature checks for a quote matched to no
+  release, returning the measurement, policy, reported TCB, and report data for the caller to judge,
+  as an enclave does with the release it hands its keys to
 - Signatures on RustCrypto (`p384`, `rsa`): RSASSA-PSS with SHA-384, which the vendor's chains use,
   and ECDSA on P-384 with SHA-384, which the report and the test chain use; any other algorithm is
   refused
@@ -40,8 +43,8 @@ differently from another.
 
 ## Repository Structure
 
-- `src/lib.rs` — `verify_attestation`, `verify_mock_attestation`, the served-bundle check, and
-  release matching
+- `src/lib.rs` — `verify_attestation`, `verify_quote`, `verify_mock_attestation`, the served-bundle
+  check, and release matching
 - `src/attestation.rs` — the attestation JSON, the bundle, and the mock quote's marker
 - `src/chain.rs` — the pinned roots, the chain's links and dates, the VCEK's binding, and the
   revocation list

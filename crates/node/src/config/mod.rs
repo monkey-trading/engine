@@ -44,6 +44,8 @@ mod proxy;
 pub use proxy::ProxyProtocolSection;
 mod tls;
 pub use tls::{AcmeSection, AcmeTestCa, ApiTlsSection};
+mod sealing;
+pub use sealing::{HandoverSection, SealingSection};
 
 /// Built with the `production` feature: mock TEE, custody, and feed providers are refused.
 #[cfg(feature = "production")]
@@ -132,7 +134,7 @@ pub struct NodeSection {
 /// Limits on the public API. A client is its socket peer IP, or the address a trusted proxy's PROXY
 /// protocol header names, with an IPv6 client counted by its /64; forwarding headers are ignored
 /// because the host could forge them.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ApiSection {
     /// Open connections, in total and from one client; one over either is closed unread. Keep the
@@ -218,6 +220,9 @@ pub struct TeeSection {
     /// How often the node refetches the collateral.
     #[serde(default = "collateral::default_refresh", with = "humantime_serde")]
     pub collateral_refresh: Duration,
+    /// Seals the enclave's keys on the data disk, so a restart keeps them and the next release can
+    /// take them over. A hardware enclave refuses to start without it.
+    pub sealing: Option<SealingSection>,
 }
 
 #[derive(Debug, Deserialize)]

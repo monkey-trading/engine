@@ -3,8 +3,10 @@
 # root and /dev read-only so the engine's state can live only on that disk, runs the engine, and
 # powers the guest off when it exits. The engine's inputs from the host are the API and metrics
 # ports, its outbound network, the clock, and the data disk, which holds the config file (its hash
-# is bound into the attestation), the event log, the history index, the alert outbox, and the
-# custody deposit cursor.
+# is bound into the attestation), the event log, the history index, the alert outbox, the custody
+# deposit cursor, the sealed keys, and the operator's one-off key choices: /data/new-key asks for new
+# keys for a release that has none sealed, and /data/predecessor holds the address of the running
+# release to take them from. Each choice is removed before the engine starts, so it applies once.
 #
 # TODO: the kernel also consumes host input the launch measurement does not cover, and nothing
 # bounds what a crafted one can do: the ext4 filesystem the host built, the ACPI tables, the
@@ -20,7 +22,17 @@ mount -t ext4 -o nosuid,nodev,noexec /dev/vda /data
 mount -o remount,ro /
 mount -o remount,bind,ro /dev
 status=0
-/engine run --config /data/config.toml || status=$?
+set -- run --config /data/config.toml
+if [ -e /data/new-key ]; then
+  rm /data/new-key
+  set -- "$@" --new-key
+fi
+if [ -e /data/predecessor ]; then
+  predecessor=$(cat /data/predecessor)
+  rm /data/predecessor
+  set -- "$@" --predecessor "$predecessor"
+fi
+/engine "$@" || status=$?
 echo "engine exited with status $status; powering off"
 sync
 poweroff -f

@@ -138,6 +138,8 @@ pub struct SequencerConfig<'a> {
     /// `GenesisProgress::ensure_matches`).
     pub genesis: Vec<Command>,
     pub(crate) history_sealing: Option<crate::snapshot::sealing::Endpoint>,
+    /// Told whether each checkpoint attempt signed (see `Gate::signing`).
+    pub(crate) checkpoint_signing: Option<watch::Sender<bool>>,
 }
 
 /// A log read from disk and replayed, before anything is written to it.

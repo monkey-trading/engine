@@ -18,7 +18,8 @@ use tokio::time::timeout;
 
 use crate::checkpoints::emission_budget::budget_from_cap;
 use crate::checkpoints::{
-    AcceptedCheckpoint, ApprovalId, ApprovalStatus, CheckpointChain, LifecycleEvidence, Observation, VaultState, View,
+    AcceptedCheckpoint, ApprovalId, ApprovalStatus, CheckpointChain, CurrentRelease, LifecycleEvidence, Observation,
+    VaultState, View,
 };
 use crate::config::{CheckpointSection, FinalityTag};
 use crate::log::{Checkpoint, CheckpointDomain};
@@ -51,6 +52,8 @@ sol! {
     function monkey() external view returns (address);
     function cap() external view returns (uint256);
     function postCheckpoint(uint64 seq, bytes32 root, bool hasParent, uint64 parentSeq, bytes32 parentRoot, bytes signature) external;
+    function currentRelease() external view returns (bytes32);
+    function releaseGeneration() external view returns (uint64);
 }
 
 pub(crate) struct CheckpointRpc {
@@ -208,6 +211,10 @@ impl CheckpointChain for CheckpointRpc {
 
     async fn deposited_through(&self, at: &Observation, count: u64) -> anyhow::Result<engine_core::Fixed> {
         self.read_deposited_through(at, count).await
+    }
+
+    async fn current_release(&self, at: &Observation) -> anyhow::Result<CurrentRelease> {
+        self.read_current_release(at).await
     }
 
     async fn claims(&self, at: &LifecycleEvidence, approvals: &[ApprovalId]) -> anyhow::Result<Vec<ApprovalStatus>> {

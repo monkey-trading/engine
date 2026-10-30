@@ -129,16 +129,21 @@ async fn compared_pending_collateral_can_release_a_signing_hold() {
 #[test]
 fn a_collateral_hold_is_one_alert_episode_that_resolves_when_signing_resumes() {
     let (mut seq, mut queued, _work) = bootstrap("collateral-withheld-episode");
+    let (signing, signed) = watch::channel(true);
+    seq.gate.as_mut().unwrap().signing = Some(signing);
     seq.checkpoint_status(None, Some(Health::Diverged)).unwrap();
     let lines = crate::alerts::capture(|| {
         for _ in 0..4 {
             seq.sequence(Command::Tick).unwrap();
         }
+        // A handover reads that signing is withheld.
+        assert!(!*signed.borrow(), "a held checkpoint reads as signed");
         // A restored view clears the hold, and the next checkpoint ends the episode.
         seq.checkpoint_status(None, Some(Health::Healthy)).unwrap();
         for _ in 0..3 {
             seq.sequence(Command::Tick).unwrap();
         }
+        assert!(*signed.borrow(), "a signed checkpoint reads as held");
         // Later checkpoints do not resolve it again.
         seq.sequence(Command::Tick).unwrap();
     });

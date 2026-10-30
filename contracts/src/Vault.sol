@@ -25,8 +25,9 @@ import {MonkeyToken} from "./MonkeyToken.sol";
 /// latest posted checkpoint root, adds to what it was already paid.
 /// @dev The attested signer authorizes checkpoints, withdrawals, and distribution claims; the
 /// deployment's multisig controls signer rotation and pauses through its timelock, and as the
-/// guardian may pause withdrawals for a week or retire the signer without the timelock's delay.
-/// This contract is not upgradeable.
+/// guardian may pause withdrawals for a week or retire the signer without the timelock's delay;
+/// the timelock also names the enclave release that holds the signer's key. This contract is not
+/// upgradeable.
 contract Vault is ReentrancyGuardTransient, EIP712 {
     using SafeERC20 for IERC20;
 
@@ -103,6 +104,15 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     uint64 public signerEpoch = 1;
     /// @notice Historical signer identity for replay; custody still requires the current signer.
     mapping(uint64 epoch => address signer) public signerAtEpoch;
+    /// @notice The enclave release that holds the signer's key: `keccak256` of its 48-byte SEV-SNP
+    /// launch measurement and the SHA-256 of the config file it runs with. A node opens its sealed
+    /// keys only while it is this release, and hands them only to this release, so no code or config
+    /// receives the key without the timelock delay, and setting another release supersedes this one.
+    bytes32 public currentRelease;
+    /// @notice Raised by every `setCurrentRelease`. A node seals its keys under the generation it
+    /// runs in and opens only a copy sealed under the current one, so a release set current again
+    /// takes the keys afresh from the running release instead of reopening an old copy.
+    uint64 public releaseGeneration;
     TimelockController public immutable governance;
     /// @notice The deployment's multisig, which may pause withdrawals and retire the signer without
     /// the timelock's delay, and nothing else.
@@ -130,6 +140,7 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     event GuardianPausedWithdrawals(uint256 until, uint256 pauses);
     /// @notice The guardian retired `signer`, the signer of epoch `signerEpoch`.
     event SignerRetired(address indexed signer, uint64 signerEpoch);
+    event CurrentReleaseChanged(bytes32 indexed release, uint64 generation, bytes launchDigest, bytes32 configHash);
 
     /// @notice `amount` USDC base units deposited to trader account `account` by `from`, the caller
     /// whose tokens the vault pulled.
@@ -175,8 +186,10 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     error NoCheckpoint();
     error InvalidEntitlementProof();
     error NothingToClaim(uint256 entitled, uint256 claimed);
+    error InvalidLaunchDigest();
 
-    /// @param governance_ The deployment's timelock, which alone rotates the signer and unpauses.
+    /// @param governance_ The deployment's timelock, which alone rotates the signer, sets the
+    /// release that holds its key, and unpauses.
     /// @param guardian_ The deployment's multisig, which may also pause withdrawals and retire the
     /// signer at once.
     /// @param periodBudget_ The engine's initial emission period budget in MONKEY base units, which
@@ -220,6 +233,17 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         signerEpoch++;
         signerAtEpoch[signerEpoch] = signer;
         emit SignerChanged(previous, signer, signerEpoch);
+    }
+
+    /// @notice Makes the release with SEV-SNP launch measurement `launchDigest`, running the config
+    /// whose SHA-256 is `configHash`, the one that holds the enclave's keys, in a new generation: the
+    /// running release hands them to it, and no copy sealed in an earlier generation opens.
+    function setCurrentRelease(bytes calldata launchDigest, bytes32 configHash) external onlyGovernance {
+        if (launchDigest.length != 48) revert InvalidLaunchDigest();
+        bytes32 release = keccak256(abi.encodePacked(launchDigest, configHash));
+        currentRelease = release;
+        uint64 generation = ++releaseGeneration;
+        emit CurrentReleaseChanged(release, generation, launchDigest, configHash);
     }
 
     /// @notice Independently pauses deposits (including house capital) and withdrawal claims. A

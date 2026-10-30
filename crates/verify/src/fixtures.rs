@@ -33,6 +33,8 @@ pub const VCEK_SERIAL: u64 = 0x8A11CE;
 pub const PROCESSOR: &str = "TestProc";
 pub const POLICY: u64 = 0x30000;
 pub const REPORTED_TCB: Tcb = Tcb { boot_loader: 4, tee: 0, snp: 8, microcode: 205 };
+/// The platform's committed TCB, below the reported one as after a firmware update not yet committed.
+pub const COMMITTED_TCB: Tcb = Tcb { boot_loader: 3, tee: 0, snp: 7, microcode: 200 };
 
 /// A DER INTEGER extension value, the encoding the vendor signs: values with the high bit set
 /// take a leading zero so the INTEGER stays positive.
@@ -242,6 +244,7 @@ pub fn forged_report(chain: &TestChain, measurement: [u8; 48], report_data: [u8;
     report[0x90..0xC0].copy_from_slice(&measurement);
     report[0x180..0x188].copy_from_slice(&REPORTED_TCB.to_packed().to_le_bytes());
     report[0x1A0..0x1E0].copy_from_slice(&chip_id);
+    report[0x1E0..0x1E8].copy_from_slice(&COMMITTED_TCB.to_packed().to_le_bytes());
     let key = p384::ecdsa::SigningKey::from_pkcs8_der(&chain.vcek_key.serialize_der()).unwrap();
     let signature: p384::ecdsa::Signature = key.sign(&report[..0x2A0]);
     let signature = signature.to_bytes();

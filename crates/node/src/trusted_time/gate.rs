@@ -171,6 +171,15 @@ impl TrustedClock {
         let host_ms = self.clock.now_ms();
         check_sample(&sample, self.max_drift_ms, host_ms, host_ms, self.clock.instant()).is_none().then_some(host_ms)
     }
+
+    /// The latest sample's upper bound moved on by the monotonic time since, however old the sample;
+    /// `None` before the first. For date checks that tolerate the monotonic clock's drift while no
+    /// fresh sample comes, as when a node has stopped sequencing to hand its keys over.
+    pub fn since_sample_ms(&self) -> Option<Millis> {
+        let sample = (*self.samples.borrow())?;
+        let elapsed = self.clock.instant().saturating_duration_since(sample.at);
+        Some(sample.latest_ms.saturating_add(ceil_millis(elapsed)))
+    }
 }
 
 /// Why `ts`, stamped from `host_ms`, may not be logged at `now` under `sample`, if it may not: the

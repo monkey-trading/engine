@@ -59,6 +59,7 @@ impl NodeConfig {
     /// - the engine would reject a genesis command (see `check_genesis`)
     /// - `[api.tls.acme]` fails validation (see `AcmeSection::validate`)
     /// - `[api.proxy_protocol]` fails validation (see `ProxyProtocolSection::validate`)
+    /// - `[tee.sealing]` fails validation (see `validate_sealing`)
     pub(super) fn validate(&self) -> anyhow::Result<()> {
         if let Some(access) = &self.access {
             access.validate()?;
@@ -70,6 +71,7 @@ impl NodeConfig {
             benchmarks.validate(self)?;
         }
         self.tee.validate()?;
+        self.validate_sealing()?;
         let filter = EnvFilter::try_new(&self.logging.level).context("logging.level")?;
         // A word that is not a level, such as "warning", parses as a target and hides every alert.
         ensure!(

@@ -54,14 +54,18 @@ impl Drop for Worker {
 /// Builds the node runtime after reserving a CPU, so its workers inherit the remaining mask.
 /// Error cases:
 /// - CPU reservation, runtime construction, node execution, or restoring the calling mask fails
-pub fn run_dedicated(cfg: crate::NodeConfig, telemetry: crate::Telemetry) -> anyhow::Result<()> {
+pub fn run_dedicated(
+    cfg: crate::NodeConfig,
+    telemetry: crate::Telemetry,
+    start: crate::KeyStart,
+) -> anyhow::Result<()> {
     #[cfg(target_os = "linux")]
     let reservation = Reservation::new()?;
     #[cfg(target_os = "linux")]
     let cpu = Some(reservation.core);
     #[cfg(not(target_os = "linux"))]
     let cpu = None;
-    let result = with_runtime(|runtime| runtime.block_on(crate::node::run_with_cpu(cfg, telemetry, cpu)));
+    let result = with_runtime(|runtime| runtime.block_on(crate::node::run_with_cpu(cfg, telemetry, cpu, start)));
     #[cfg(target_os = "linux")]
     reservation.restore()?;
     result

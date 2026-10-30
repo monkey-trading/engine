@@ -65,11 +65,59 @@ pub fn verify_attestation(
     root_pem: Option<&str>,
     now: i64,
 ) -> anyhow::Result<VerifiedAttestation> {
-    let now = ASN1Time::from_timestamp(now).map_err(|_| anyhow::anyhow!("the time {now} is out of range"))?;
     let quote = unhex(&attestation.quote).context("decoding the quote")?;
-    let report = SnpReport::parse(&quote)
-        .context("the quote is not an SEV-SNP attestation report; a mock quote never verifies")?;
+    let (report, validity) = signed_report(&quote, collateral, root_pem, now)?;
 
+    let (bundle, report_data) = served_bundle(attestation)?;
+    ensure!(report.report_data[..] == report_data[..], "the quote's report data differs from the served one");
+
+    let (release_name, config_name) = match_release(&report, &bundle, releases)?;
+    Ok(VerifiedAttestation {
+        release_name,
+        enclave_address: bundle.enclave_address,
+        config_name,
+        tls_public_key_sha256: bundle.tls_public_key_sha256,
+        validity,
+    })
+}
+
+/// Verifies that `quote` is an SEV-SNP report from a chip whose certificate chain in `collateral`
+/// verifies to the compiled-in vendor roots, plus `root_pem` when given, unrevoked at `now` in Unix
+/// seconds, and returns what it reports. Unlike `verify_attestation` it matches no release: the
+/// caller decides whether the measurement, policy, TCB, and report data are ones it accepts.
+/// Error cases:
+/// - as `verify_attestation`, up to and including the quote's signature
+pub fn verify_quote(
+    quote: &[u8],
+    collateral: &RelayedCollateral,
+    root_pem: Option<&str>,
+    now: i64,
+) -> anyhow::Result<VerifiedQuote> {
+    let (report, validity) = signed_report(quote, collateral, root_pem, now)?;
+    Ok(VerifiedQuote {
+        measurement: report.measurement,
+        policy: report.policy,
+        reported_tcb: report.reported_tcb,
+        report_data: report.report_data,
+        validity,
+    })
+}
+
+/// `quote` parsed as an SEV-SNP report once its chain, revocation list, and signature verify, and
+/// the window in which those date checks pass.
+/// Error cases:
+/// - `now` is out of the certificate time range
+/// - the quote is not an SEV-SNP attestation report, its chain does not verify to a pinned root, the
+///   list revokes it, or its signature does not verify
+fn signed_report<'a>(
+    quote: &'a [u8],
+    collateral: &RelayedCollateral,
+    root_pem: Option<&str>,
+    now: i64,
+) -> anyhow::Result<(SnpReport<'a>, Window)> {
+    let now = ASN1Time::from_timestamp(now).map_err(|_| anyhow::anyhow!("the time {now} is out of range"))?;
+    let report = SnpReport::parse(quote)
+        .context("the quote is not an SEV-SNP attestation report; a mock quote never verifies")?;
     let chain = QuoteChain::verify(
         collateral.vcek.clone(),
         collateral.intermediate.clone(),
@@ -78,19 +126,24 @@ pub fn verify_attestation(
         now,
     )?;
     let current = collateral::check_collateral(&chain, &collateral.crl, &report, now)?;
-
-    let (bundle, report_data) = served_bundle(attestation)?;
-    ensure!(report.report_data[..] == report_data[..], "the quote's report data differs from the served one");
-
-    let (release_name, config_name) = match_release(&report, &bundle, releases)?;
     let certificates = chain.validity()?;
-    Ok(VerifiedAttestation {
-        release_name,
-        enclave_address: bundle.enclave_address,
-        config_name,
-        tls_public_key_sha256: bundle.tls_public_key_sha256,
-        validity: Window { from: certificates.from.max(current.from), until: certificates.until.min(current.until) },
-    })
+    let validity = Window { from: certificates.from.max(current.from), until: certificates.until.min(current.until) };
+    Ok((report, validity))
+}
+
+/// What a verified quote reports about the enclave that produced it.
+#[derive(Debug)]
+pub struct VerifiedQuote {
+    /// The launch measurement the firmware recorded.
+    pub measurement: [u8; 48],
+    /// The guest policy the launch ran under.
+    pub policy: u64,
+    /// The TCB the report was issued under.
+    pub reported_tcb: Tcb,
+    /// The report data the quote binds.
+    pub report_data: [u8; 64],
+    /// The Unix seconds in which every date check passes (see `VerifiedAttestation::validity`).
+    pub validity: Window,
 }
 
 /// Reads a mock attestation, for development only: the bundle its report data binds, when the quote

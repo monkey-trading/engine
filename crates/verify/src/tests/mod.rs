@@ -6,7 +6,9 @@ mod releases;
 mod signature;
 
 use crate::fixtures::*;
-use crate::{Attestation, RelayedCollateral, ReleaseManifest, VerifiedAttestation, verify_attestation};
+use crate::{
+    Attestation, RelayedCollateral, ReleaseManifest, SnpReport, VerifiedAttestation, verify_attestation, verify_quote,
+};
 
 #[test]
 fn a_release_quote_verifies_names_the_release_and_carries_its_validity_window() {
@@ -22,6 +24,30 @@ fn a_release_quote_verifies_names_the_release_and_carries_its_validity_window() 
     // (rcgen's default): the window is where both are valid.
     assert_eq!(verified.validity.from, ymd(2024, 1, 1));
     assert_eq!(verified.validity.until, ymd(2049, 1, 1));
+}
+
+#[test]
+fn a_quote_alone_verifies_and_reports_what_the_chip_signed() {
+    let (chain, enclave, attestation) = fixtures();
+    let quote = hex::decode(attestation.quote.trim_start_matches("0x")).unwrap();
+    let collateral = collateral_of(&chain, &crl_revoking(&chain, &[]));
+    let root = pem_wrap(&collateral.root, "CERTIFICATE");
+
+    let verified = verify_quote(&quote, &collateral, Some(&root), now()).expect("the quote verifies");
+    assert_eq!(verified.measurement, LAUNCH_DIGEST);
+    assert_eq!(verified.policy, POLICY);
+    assert_eq!(verified.reported_tcb, REPORTED_TCB);
+    assert_eq!(verified.report_data, enclave.bundle.report_data());
+    assert_eq!(SnpReport::parse(&quote).unwrap().committed_tcb, COMMITTED_TCB.to_packed());
+
+    // A byte changed after signing, a revoked VCEK, and a chain that reaches no pinned root fail.
+    let mut altered = quote.clone();
+    altered[0x90] ^= 1;
+    assert!(verify_quote(&altered, &collateral, Some(&root), now()).is_err(), "an altered measurement verified");
+    let ask_serial = rcgen::SerialNumber::from_slice(&serial_of(chain.ask.der()));
+    let revoked = collateral_of(&chain, &crl_revoking(&chain, &[ask_serial]));
+    assert!(verify_quote(&quote, &revoked, Some(&root), now()).is_err(), "a revoked intermediate verified");
+    assert!(verify_quote(&quote, &collateral, None, now()).is_err(), "an unpinned root verified");
 }
 
 #[test]
