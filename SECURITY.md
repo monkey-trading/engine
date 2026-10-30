@@ -160,10 +160,24 @@ rotation replaces only an authorization still usable, and the vault rejects reti
 authenticates historical roots; immutable signer-epoch history independently authenticates reissues
 against older roots during recovery and custody-backed replay. The unanchored checkpoint tail still
 requires the current signer. The deployment's multisig proposes changes through its nonzero-delay
-timelock, which alone rotates the signer, lifts a withdrawal pause or changes the deposit pause. As
-the vault's immutable guardian, the same multisig may also, without the delay, pause withdrawals for
-seven days or retire the signer, which the vault then refuses for withdrawals and checkpoints until
-the timelock installs one; the node signs no withdrawal while either holds. Latest transaction
+timelock, which alone rotates the signer, lifts a withdrawal pause or changes the deposit pause, or
+sets the current release: the one launch measurement and config hash that may hold the enclave's
+keys. As the vault's immutable guardian, the same multisig may also, without the delay, pause
+withdrawals for seven days or retire the signer, which the vault then refuses for withdrawals and
+checkpoints until the timelock installs one; the node signs no withdrawal while either holds. With
+`[tee.sealing]` the keys are sealed on the host's disk under a key the SEV-SNP firmware derives from
+the chip, the launch measurement, the guest policy, and the committed TCB, with the config hash
+bound to the ciphertext, so neither the host nor another release, the same code under another
+config included, can open them. A node opens or seals keys only while the vault names its release
+as current at custody finality, and only in the vault's current generation of it, which every
+change of the current release raises, so a release the timelock has superseded never signs again
+from its old sealed file, even once it is named again; the keys move to a new release only after the timelock makes it current and
+each release attests the other over a challenge fresh to the connection, and only encrypted to the
+new release's attested one-time key, which takes them only if the vault already names their
+signing key; a release that has stopped to hand them over serves new releases until one confirms. Two copies of the current
+release that the host runs from copies of one disk can both open the keys; the vault takes one
+copy's checkpoint and the other stops on the conflict. A node the vault does not name as signer
+signs nothing and serves only its attestation. Latest transaction
 inclusion alone never authorizes withdrawal release; checkpoint startup and release use custody's
 withdrawal finality tag, independently of the latest credit tag and its confirmation depth. New
 withdrawals pause while the latest finalized checkpoint's custody prefix is unproven against canonical
@@ -183,13 +197,18 @@ account history index is read from host disk with only its schema checked, and i
 by one command, the newest it has taken, though SQLite reads it in defensive mode and each event it
 serves names its place in the log, where anyone can check it; the sequencer and the signed answers,
 which bound the host's clock with signed time, trust the guest's monotonic clock without yet
-checking that the host cannot scale it; hardware enclave signing keys do not yet survive a restart (#28), so a hardware node cannot
-restart after a crash or a drained shutdown: its vault must name the enclave's key, and the old key's
-commands and checkpoints after the last one the vault accepted cannot be authenticated under a new
-key; from V37 the admin key follows the operator registry's elections, which the engine mirrors
-from finalised chain events, so the incumbent's host can delay an elected key's takeover, bounded
-only by the custody watcher's stall alerts, and the enclave keys and the vault's current release do
-not yet follow an election (#44); the dev configurations explicitly
+checking that the host cannot scale it; the SEV-SNP sealing key and the handover's hardware quotes
+are built to the firmware's guest interface but not yet run on SEV-SNP hardware (#108), and the
+mock TEE's stand-in for sealing is a public key; two copies of one release unseal the same keys, and
+while the vault refuses the checkpoints of all but one, the other's signed API answers still verify;
+a release taking over the keys checks the running release's certificates at the host's clock, which
+the vault naming the key bounds; a superseded release refuses its own sealed copy only by reading the
+vault's current release through the checkpoint RPC endpoint, which the node trusts for the vault's
+state, and a flaw in a release that has run still needs a signer rotation; from V37 the admin key
+follows the operator registry's elections, which the engine mirrors from finalised chain events, so
+the incumbent's host can delay an elected key's takeover, bounded only by the custody watcher's
+stall alerts, and the enclave keys and the vault's current release do not yet follow an election
+(#44); the dev configurations explicitly
 use a published mock-only signer, which real attestation refuses; the custody adapter requires a strict
 majority of at least three configured independent RPC providers to agree on deposits, block hashes
 and finality, with reads compared at the same block height and empty log responses requiring the
@@ -229,8 +248,9 @@ so a browser can trust the API without checking the attestation; a browser that 
 also trusts any other certificate a CA issues for the domain. The host can obtain one for a key
 outside the enclave by answering the CA's TLS-ALPN-01 validation on the port it forwards, as can
 whoever controls the domain's DNS. The domain's CAA record narrows issuance to one CA and
-TLS-ALPN-01 but not to the enclave, since the enclave's ACME account changes at every start until
-its keys survive a restart (#28). `engine ct-watch` raises an alert for such a certificate once a
+TLS-ALPN-01, and, with sealed keys, an `accounturi` naming the enclave's ACME account narrows it to
+that account; a host that deletes the sealed keys forces new ones, which the vault must register.
+`engine ct-watch` raises an alert for such a certificate once a
 followed Certificate Transparency log shows it, and must be running before the first one is issued.
 Databento's live gateway, one of the sources for futures and US share prices, offers no TLS, so the
 host can alter its quotes in flight; the divergence bound limits how far that moves a market priced

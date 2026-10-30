@@ -1,9 +1,10 @@
-//! Node wiring: attest the enclave key, the config, and the API's TLS key, recover the engine from
-//! its log and the history index, then run the sequencer, ticker, price feeds, custody, trusted time
-//! check, history index, API, rate-limit upkeep, monitor, metrics listener, and alert routing as
-//! supervised tasks. Any task stopping stops the node. On SIGTERM or ctrl-c, every task but the
-//! sequencer is stopped; the sequencer then drains what is queued and writes a final checkpoint,
-//! and the alerts already logged are delivered.
+//! Node wiring: obtain and attest the enclave key, the config, and the API's TLS key (`keys`), wait
+//! for the vault to name the key (`registration`), recover the engine from its log and the history
+//! index, then run the sequencer, ticker, price feeds, custody, trusted time check, history index,
+//! API, rate-limit upkeep, monitor, metrics listener, and alert routing as supervised tasks. Any
+//! task stopping stops the node. On SIGTERM or ctrl-c, every task but the sequencer is stopped; the
+//! sequencer then drains what is queued and writes a final checkpoint, and the alerts already logged
+//! are delivered.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,19 +23,24 @@ use tracing::{error, info, warn};
 use crate::alerts::Routing;
 use crate::api::{ApiState, Feed, MAX_BACKFILLS, Signing, router};
 use crate::clock::{Clock, SystemClock, now_ms};
-use crate::config::{AuthMode, CustodyProvider, FeedProvider, NodeConfig, TeeProvider};
+use crate::config::{AuthMode, CustodyProvider, FeedProvider, NodeConfig};
 use crate::feeds;
 use crate::feeds::venue::{self, Timing};
 use crate::history::HistoryPlan;
+mod shutdown;
+use shutdown::{finish_history, handed_over};
+mod keys;
+pub use keys::{KeyStart, parse_launch_digest};
 mod preflight;
+mod registration;
 mod signer_history;
 use crate::limits::{ApiLimits, run_retain};
 use crate::log::Manifest;
 use crate::metrics::Metrics;
 use crate::sequencer::{ReplayedLog, Request, Sequencer, SequencerConfig, genesis_commands};
-use crate::tee::{AttestationBundle, Attestor, ConfigfsTsm, EnclaveKey, MockAttestor, attest_bundle};
 use crate::telemetry::Telemetry;
-use crate::tls::{TlsIdentity, acme::CertificateTask, serve};
+use crate::tls::acme::{CertificateTask, Sealed};
+use crate::tls::serve;
 use crate::{custody::Custody, metrics, monitor, trusted_time, verify::Relay};
 use preflight::{authorize, emission_preflight};
 
@@ -48,20 +54,26 @@ type TaskResult = (&'static str, anyhow::Result<()>);
 /// Error cases:
 /// - see `serve_node`
 pub async fn run(cfg: NodeConfig, telemetry: Telemetry) -> anyhow::Result<()> {
-    run_with_cpu(cfg, telemetry, None).await
+    run_with_cpu(cfg, telemetry, None, KeyStart::default()).await
 }
 
-/// Runs the node with the CPU reserved before its runtime was created.
+/// Runs the node with the CPU reserved before its runtime was created, and the operator's choice of
+/// keys for a release that has none sealed.
 /// Error cases:
 /// - see `run`
-pub(crate) async fn run_with_cpu(cfg: NodeConfig, telemetry: Telemetry, cpu: Option<usize>) -> anyhow::Result<()> {
+pub(crate) async fn run_with_cpu(
+    cfg: NodeConfig,
+    telemetry: Telemetry,
+    cpu: Option<usize>,
+    start: KeyStart,
+) -> anyhow::Result<()> {
     let Telemetry { metrics, alerts, pages_critical } = telemetry;
     if !pages_critical {
         warn!("no alerts.critical webhook: Critical alerts are only logged");
     }
     cfg.alerts.outbox.check_disk_location(&cfg.node.log_dir)?;
     let mut routing = alerts.spawn(cfg.alerts.episode_quiet, &cfg.alerts.outbox).await?;
-    let outcome = serve_node(cfg, metrics, &mut routing, cpu).await;
+    let outcome = serve_node(cfg, metrics, &mut routing, cpu, start).await;
     routing.drain(SHUTDOWN_GRACE).await;
     outcome
 }
@@ -71,7 +83,7 @@ pub(crate) async fn run_with_cpu(cfg: NodeConfig, telemetry: Telemetry, cpu: Opt
 /// - operator rotation is enabled
 /// - `feeds.provider = "venues"` without `[feeds.venues]`, an API key variable a venue connection
 ///   names is unset, or the TLS config or the ACME client cannot be built
-/// - generating the TLS key, attesting the keys, opening the history index (or a fresh one in place
+/// - obtaining the keys (see `keys::attested`), opening the history index (or a fresh one in place
 ///   of an index the log does not match), recovering the log (including a log that records another
 ///   client auth or operator, or whose genesis did not apply in full, is not the config's, or is one
 ///   no current config can give), connecting custody, or binding a listener fails
@@ -84,6 +96,7 @@ async fn serve_node(
     metrics: Arc<Metrics>,
     routing: &mut Routing,
     cpu: Option<usize>,
+    start: KeyStart,
 ) -> anyhow::Result<()> {
     if cfg.operator.rotation_enabled {
         bail!("operator rotation is not implemented yet; set operator.rotation_enabled = false");
@@ -92,34 +105,8 @@ async fn serve_node(
         warn!("API authentication is OFF: development only");
     }
 
-    let attestor: Box<dyn Attestor> = match cfg.tee.provider {
-        TeeProvider::Mock => {
-            warn!("mock TEE: attestation reports are not backed by hardware");
-            Box::new(MockAttestor)
-        }
-        TeeProvider::ConfigfsTsm => Box::new(ConfigfsTsm::default()),
-    };
-    let key = Arc::new(
-        EnclaveKey::for_config(&cfg.tee)
-            .inspect_err(|e| error!(alert = "enclave_key_failed", "refusing to serve: {e:#}"))?,
-    );
-    if cfg.tee.use_published_mock_key {
-        warn!("using the public development signing key: mock attestation only");
-    }
-    let tls = TlsIdentity::generate()?;
-    let bundle = AttestationBundle {
-        enclave_address: key.address(),
-        config_sha256: cfg.file_sha256,
-        tls_public_key_sha256: tls.public_key_sha256,
-    };
-    let attestation = Arc::new(attest_bundle(attestor.as_ref(), &bundle).context("attesting the enclave")?);
-    info!(
-        enclave = %key.address_hex(),
-        config_sha256 = %attestation.config_sha256,
-        tls_public_key_sha256 = %attestation.tls_public_key_sha256,
-        provider = %attestation.provider,
-        "enclave, config, and TLS key attested"
-    );
+    let keys = keys::attested(&cfg, &start).await?;
+    let keys::Keys { enclave: key, tls, store, attestor, attestation } = keys;
 
     // The relay fetches in the background, so the API serves the attestation while it is pending.
     let relay = Relay::new(&cfg.tee, &attestation)
@@ -129,7 +116,7 @@ async fn serve_node(
         info!(provider = %attestation.provider, "no attestation collateral to relay for this provider");
     }
 
-    let checkpoint_setup = crate::checkpoints::setup::connect(&cfg, &key)
+    let checkpoint_setup = registration::registered(&cfg, &key, &tls.acceptors, &attestation)
         .await
         .inspect_err(|e| error!(alert = "checkpoint_startup_failed", "refusing to serve: {e:#}"))?;
     let mut anchor = None;
@@ -149,6 +136,8 @@ async fn serve_node(
             }
         },
     )?;
+    keys::check_predecessor_head(store.as_deref(), log.last_seq(), log.last_checkpoint())
+        .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
     log.prove_legacy_withdrawals(&cfg.custody)
         .await
         .inspect_err(|e| error!(alert = "legacy_withdrawal_unproven", "refusing writable recovery: {e:#}"))?;
@@ -167,6 +156,7 @@ async fn serve_node(
     let (withdrawals_tx, withdrawals_rx) = mpsc::unbounded_channel();
     let (manifest_tx, manifest_rx) = watch::channel(Manifest::default());
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+    let (signing_tx, signing_rx) = watch::channel(true);
     let mut seq_cfg = SequencerConfig {
         access_policy: cfg.access.as_ref().map(crate::config::AccessSection::policy),
         log_dir: &cfg.node.log_dir,
@@ -186,6 +176,7 @@ async fn serve_node(
         metrics: metrics.clone(),
         genesis: genesis_commands(&cfg.genesis),
         history_sealing: None,
+        checkpoint_signing: Some(signing_tx),
     };
     let custody = Custody::connect(&cfg.custody, log.last_seq())
         .inspect_err(|e| error!(alert = "custody_connect_failed", "refusing to serve: {e:#}"))?
@@ -199,6 +190,7 @@ async fn serve_node(
         .finish_with_log(log, key.clone())
         .inspect_err(|e| error!(alert = "history_recovery_failed", "refusing to serve: {e:#}"))?;
     seq_cfg.history_sealing = history.sealing();
+    let published = crate::handover::Published::new(stream_tx.subscribe(), log.last_seq(), log.last_checkpoint());
     let mut seq = Sequencer::recover_from(log, seq_cfg, key.clone(), stream_tx.clone(), withdrawals_tx)
         .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
     if cfg.benchmarks.is_some() {
@@ -227,6 +219,25 @@ async fn serve_node(
         tasks.spawn(async move {
             ("checkpoints", setup.poster.run_with_approvals(setup.rx, checkpoint_tx, recovery, setup.approvals).await)
         });
+    }
+
+    // A successor's request stops sequencing through `drain_rx`, once the vault approves it.
+    let (samples, samples_rx) = watch::channel(None);
+    let trusted = || trusted_time::TrustedClock::new(clock.clone(), samples_rx.clone(), cfg.time.max_drift);
+    let (drain_tx, mut drain_rx) = mpsc::channel(1);
+    let mut handover = JoinSet::new();
+    if let Some(store) = &store
+        && let Some(predecessor) =
+            crate::handover::Predecessor::bind(&cfg, store, attestor, &key, trusted(), drain_tx, signing_rx).await?
+    {
+        handover.spawn(predecessor.run());
+    }
+    if let Some(store) = &store
+        && let Some(vault) = crate::handover::vault_reader(&cfg)?
+    {
+        let (release, generation) = (store.release(), store.generation());
+        let every = keys::RELEASE_CHECK_EVERY;
+        tasks.spawn(async move { ("release", keys::watch_release(vault, release, generation, every).await) });
     }
 
     let tick = cfg.node.tick;
@@ -260,8 +271,7 @@ async fn serve_node(
         }
     }
 
-    let (samples, samples_rx) = watch::channel(None);
-    let trusted_clock = trusted_time::TrustedClock::new(clock.clone(), samples_rx, cfg.time.max_drift);
+    let (trusted_clock, sealed) = (trusted(), store.clone().map(|store| Sealed { store, trusted: trusted() }));
     let time_cfg = cfg.time;
     let time_tx = tx.clone();
     tasks.spawn(async move { ("trusted_time", trusted_time::run(time_cfg, clock, time_tx, samples).await) });
@@ -286,6 +296,7 @@ async fn serve_node(
     let mut history_task = JoinSet::new();
     history_task.spawn(history.run(history_feed));
     let mut history_finished = false;
+    let mut handing_over = None;
 
     let monitor_tx = tx.clone();
     let (monitor_metrics, no_price_after) = (metrics.clone(), cfg.alerts.no_price_after);
@@ -294,8 +305,8 @@ async fn serve_node(
     let metrics_listen = cfg.metrics.listen;
     let metrics_listener =
         TcpListener::bind(metrics_listen).await.with_context(|| format!("binding {metrics_listen}"))?;
-    info!(listen = %metrics_listen, "metrics up");
-    let certificates = CertificateTask::configured(&cfg.api, tls.key, &metrics)?;
+    info!(listen = %metrics_listener.local_addr()?, "metrics up");
+    let certificates = CertificateTask::configured(&cfg.api, tls.key, &metrics, sealed)?;
     let metrics_app = metrics::router(metrics);
     tasks.spawn(async move { ("metrics", axum::serve(metrics_listener, metrics_app).await.context("metrics server")) });
 
@@ -322,7 +333,7 @@ async fn serve_node(
         listing: Default::default(),
         signing: Arc::new(Signing::new(key, cfg.custody.chain_id, vault, cfg.api.heartbeat_interval, trusted_clock)),
     });
-    info!(listen = %cfg.node.listen, "api up over TLS");
+    info!(listen = %listener.local_addr()?, "api up over TLS");
     // After the bind, so the CA's validation connections find the listener.
     if let Some(certificates) = certificates {
         tasks.spawn(async move { ("certificate", certificates.run().await) });
@@ -347,6 +358,14 @@ async fn serve_node(
             sequencer_outcome(joined)?;
             bail!("sequencer stopped");
         }
+        joined = handover.join_next(), if !handover.is_empty() => {
+            Err(stopped_task(joined.map(|joined| joined.map(|result| ("handover", result)))))
+        }
+        Some(reply) = drain_rx.recv() => {
+            handing_over = Some(reply);
+            info!("handing the keys over: stopping");
+            Ok(())
+        }
         signal = shutdown_signal() => signal.map(|()| info!("shutting down")),
     };
     // Stopping the other tasks drops every sender, so the sequencer drains and checkpoints.
@@ -356,41 +375,12 @@ async fn serve_node(
     if !history_finished {
         finish_history(history_task, history_stopper).await;
     }
-    outcome
-}
-
-/// Ends history once the sequencer has drained. Authenticated history takes the rest of the
-/// stream; the legacy index takes no captures and resumes from its own cursor, so it stops at once.
-async fn finish_history(mut history: JoinSet<anyhow::Result<()>>, stopper: Option<crate::history::runtime::Stopper>) {
-    match stopper {
-        Some(stopper) => drain_history(history, stopper).await,
-        None => history.abort_all(),
-    }
-}
-
-/// Lets history take the rest of the stream, including the shutdown checkpoint's capture. A
-/// history still behind after the shutdown grace stops at its next turn boundary, with a Warning,
-/// so no store is left mid-transaction; the next start indexes the rest from the log.
-async fn drain_history(mut history: JoinSet<anyhow::Result<()>>, stopper: crate::history::runtime::Stopper) {
-    let finished = match timeout(SHUTDOWN_GRACE, history.join_next()).await {
-        Ok(finished) => finished,
-        Err(_) => {
-            warn!(alert = "history_drain_timed_out", "history did not finish the stream in time; stopping it");
-            stopper.stop();
-            match timeout(SHUTDOWN_GRACE, history.join_next()).await {
-                Ok(finished) => finished,
-                Err(_) => {
-                    error!(alert = "task_stopped", "history did not stop in time");
-                    history.abort_all();
-                    return;
-                }
-            }
+    match handing_over {
+        Some(reply) => {
+            let _ = reply.send(published.final_head());
+            handed_over(handover).await
         }
-    };
-    match finished {
-        None | Some(Ok(Ok(()))) => {}
-        Some(Ok(Err(e))) => error!(alert = "task_stopped", "history failed while draining: {e:#}"),
-        Some(Err(e)) => error!(alert = "task_stopped", "history panicked while draining: {e}"),
+        None => outcome,
     }
 }
 
@@ -401,9 +391,9 @@ async fn drain_history(mut history: JoinSet<anyhow::Result<()>>, stopper: crate:
 /// - the log cannot be read or replayed (see `Sequencer::read_log`)
 #[cfg(test)]
 fn read_log_and_history(cfg: &NodeConfig) -> anyhow::Result<(ReplayedLog, crate::history::History)> {
-    let (log, plan) =
-        read_log_and_history_observe(cfg, Some(AccountId(EnclaveKey::test_key().address())), None, |_| {})?;
-    plan.finish_with_log(log, Arc::new(EnclaveKey::test_key()))
+    let key = crate::tee::EnclaveKey::test_key();
+    let (log, plan) = read_log_and_history_observe(cfg, Some(AccountId(key.address())), None, |_| {})?;
+    plan.finish_with_log(log, Arc::new(key))
 }
 
 /// Replays and checks history while exposing the same entries for the on-chain anchor check.

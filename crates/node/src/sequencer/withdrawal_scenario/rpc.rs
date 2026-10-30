@@ -44,8 +44,12 @@ sol! {
     function withdrawalsPaused() external view returns (bool);
     function pauseWithdrawals() external;
     function retireSigner() external;
+    function signerEpoch() external view returns (uint64);
     function setSigner(address signer) external;
     function setPauses(bool depositsPaused, bool withdrawalsPaused) external;
+    function setCurrentRelease(bytes launchDigest, bytes32 configHash) external;
+    function currentRelease() external view returns (bytes32);
+    function releaseGeneration() external view returns (uint64);
     function schedule(address target, uint256 value, bytes data, bytes32 predecessor, bytes32 salt, uint256 delay) external;
     function execute(address target, uint256 value, bytes payload, bytes32 predecessor, bytes32 salt) external payable;
     event WithdrawalPaid(address indexed account, uint256 amount, uint64 indexed nonce, uint64 approvedSeq);
@@ -59,13 +63,14 @@ pub(super) struct Chain {
     pub payer: Address,
     pub funder: Address,
     pub signer: engine_core::types::AccountId,
+    /// The deployment's timelock, with a one-second delay, which the deployer proposes to.
+    pub timelock: Address,
     /// Held for writing while a block is mined; node RPC proxies hold it for reading.
     pub mining: Arc<RwLock<()>>,
     client: reqwest::Client,
     /// Deploys, proposes to the timelock, and is the Vault's guardian, as the deployment's
     /// multisig is.
     deployer: Address,
-    timelock: Address,
     miner: JoinHandle<anyhow::Result<()>>,
     _anvil: ChildProcess,
 }
@@ -99,6 +104,7 @@ impl Chain {
             ],
             &dir.join("anvil.log"),
             &[],
+            None,
         )?;
         let mut cfg = dev_config();
         cfg.tee.use_published_mock_key = true;
@@ -240,27 +246,6 @@ impl Chain {
         self.deployer
     }
 
-    /// Runs a Vault call through the timelock: its proposer schedules it, and it executes once the
-    /// one-second delay has passed.
-    /// Error cases:
-    /// - scheduling fails, or execution still reverts at the deadline
-    pub async fn govern(&self, data: Vec<u8>) -> anyhow::Result<()> {
-        let (target, value, predecessor, salt) = (self.vault, U256::ZERO, B256::ZERO, B256::ZERO);
-        let delay = U256::from(1);
-        let schedule = scheduleCall { target, value, data: data.clone().into(), predecessor, salt, delay };
-        self.send(self.deployer, self.timelock, schedule.abi_encode()).await?;
-        let execute = executeCall { target, value, payload: data.into(), predecessor, salt }.abi_encode();
-        timeout(LOADED_WAIT, async {
-            // Ready only in a block at least the delay later; one mines every second.
-            while !self.transact(self.deployer, Some(self.timelock), execute.clone()).await?.status() {
-                sleep(Duration::from_millis(200)).await;
-            }
-            anyhow::Ok(())
-        })
-        .await
-        .context("timelock operation execution")?
-    }
-
     /// Reads a typed ABI value at latest; production canonical-finality reads run inside the node.
     /// Error cases:
     /// - RPC or ABI decoding fails
@@ -268,6 +253,60 @@ impl Chain {
         let value: String = self
             .request("eth_call", json!([{"to":to,"data":format!("0x{}",hex::encode(call.abi_encode()))},"latest"]))
             .await?;
+        Ok(C::abi_decode_returns(&hex::decode(value.trim_start_matches("0x"))?)?)
+    }
+
+    /// Has the timelock call the Vault with `data`: the deployer schedules it, and once its delay has
+    /// passed in a mined block anyone executes it.
+    /// Error cases:
+    /// - scheduling fails, or execution keeps reverting past the deadline
+    pub async fn govern(&self, data: Vec<u8>) -> anyhow::Result<()> {
+        let salt = B256::from(rand::random::<[u8; 32]>());
+        let (target, value, predecessor) = (self.vault, U256::ZERO, B256::ZERO);
+        let scheduled =
+            scheduleCall { target, value, data: data.clone().into(), predecessor, salt, delay: U256::from(1) };
+        self.send(self.deployer, self.timelock, scheduled.abi_encode()).await?;
+        let execute = executeCall { target, value, payload: data.into(), predecessor, salt }.abi_encode();
+        timeout(LOADED_WAIT, async {
+            while !self.transact(self.payer, Some(self.timelock), execute.clone()).await?.status() {
+                sleep(Duration::from_millis(250)).await;
+            }
+            anyhow::Ok(())
+        })
+        .await
+        .context("the timelock never executed the call")?
+    }
+
+    /// Has the timelock make `launch_digest` running the config whose SHA-256 is `config_sha256`
+    /// the Vault's current release, in a new generation, and waits until the finalized block, where
+    /// nodes read it, does; returns that generation.
+    /// Error cases:
+    /// - governance fails, the release is not finalized in time, or a read fails
+    pub async fn set_current_release(&self, launch_digest: &[u8; 48], config_sha256: [u8; 32]) -> anyhow::Result<u64> {
+        let generation = self.read(self.vault, releaseGenerationCall {}).await? + 1;
+        let call =
+            setCurrentReleaseCall { launchDigest: launch_digest.to_vec().into(), configHash: config_sha256.into() };
+        self.govern(call.abi_encode()).await?;
+        let release = alloy::primitives::keccak256([launch_digest.as_slice(), &config_sha256].concat());
+        timeout(LOADED_WAIT, async {
+            loop {
+                if self.read_finalized(releaseGenerationCall {}).await? == generation {
+                    ensure!(self.read_finalized(currentReleaseCall {}).await? == release, "another release was set");
+                    return anyhow::Ok(generation);
+                }
+                sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .context("the current release never reached the finalized block")?
+    }
+
+    /// The Vault's answer to `call` at the finalized block.
+    /// Error cases:
+    /// - the RPC or decoding fails
+    async fn read_finalized<C: SolCall>(&self, call: C) -> anyhow::Result<C::Return> {
+        let data = format!("0x{}", hex::encode(call.abi_encode()));
+        let value: String = self.request("eth_call", json!([{"to":self.vault,"data":data},"finalized"])).await?;
         Ok(C::abi_decode_returns(&hex::decode(value.trim_start_matches("0x"))?)?)
     }
 

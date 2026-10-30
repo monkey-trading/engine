@@ -20,7 +20,7 @@ pub use answers::{
     Expected, SentRequest, VerifiedResponse, parse_challenge_arg, verify_frames_file, verify_response_files,
 };
 mod fetch;
-use self::fetch::Collateral;
+pub(crate) use self::fetch::Collateral;
 pub(crate) use fetch::CollateralUnavailable;
 pub use fetch::KDS_BASE_URL;
 mod refresh;

@@ -195,6 +195,8 @@ fn scripted() -> (CertificateTask<FakeCa>, FakeCa, [u8; 32]) {
         key: tls.key,
         not_after: FloatGauge::default(),
         pending: Gauge::default(),
+        sealed: None,
+        restored: None,
     };
     (task, ca, tls.public_key_sha256)
 }

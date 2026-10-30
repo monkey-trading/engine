@@ -15,7 +15,7 @@ const MIN_PRODUCTION_PREFIX_V6: u8 = 32;
 
 /// Behind a layer-4 proxy that never decrypts, the node learns each client's address from the PROXY
 /// protocol v2 header the proxy sends before the TLS handshake. Absent, no connection may carry one.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProxyProtocolSection {
     /// The proxy's address ranges. A connection from one must begin with a header, which names the

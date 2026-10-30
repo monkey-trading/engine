@@ -47,6 +47,9 @@ pub(super) struct Gate {
     pub backlogged: bool,
     /// The causes (see `Withheld`) whose `checkpoint_withheld` episode is open.
     pub withheld: std::collections::BTreeSet<Withheld>,
+    /// Told whether no cause is open after each checkpoint attempt, for a handover to check
+    /// before it stops sequencing.
+    pub signing: Option<tokio::sync::watch::Sender<bool>>,
 }
 
 /// Why signing is withheld. Each is its own alert episode, keyed by the cause alone: the sequence
@@ -74,12 +77,27 @@ impl Withheld {
 impl Gate {
     /// Ends the `checkpoint_withheld` episode of `cause`, if open, now that its hold has cleared.
     fn clear_withheld(&mut self, cause: Withheld, seq: u64) {
-        if self.withheld.remove(&cause) {
+        let cleared = self.withheld.remove(&cause);
+        self.publish_signing();
+        if cleared {
             info!(
                 alert_resolved = "checkpoint_withheld",
                 cause = cause.cause(),
                 "checkpoint signing resumed at seq {seq}"
             );
+        }
+    }
+
+    /// Opens the `checkpoint_withheld` episode of `cause`, if not open, for the caller to alert.
+    fn withhold(&mut self, cause: Withheld) {
+        self.withheld.insert(cause);
+        self.publish_signing();
+    }
+
+    /// Tells `signing` whether no cause is open.
+    fn publish_signing(&self) {
+        if let Some(signing) = &self.signing {
+            signing.send_replace(self.withheld.is_empty());
         }
     }
 
@@ -103,6 +121,7 @@ impl Gate {
             unswept: 0,
             backlogged: false,
             withheld: Default::default(),
+            signing: None,
         }
     }
 
@@ -162,7 +181,7 @@ impl Sequencer {
                 // A signed checkpoint is public: anyone may relay it to the vault, and its root makes
                 // distributions claimable. Recovery must revalidate its finalized anchor before
                 // publishing any successor; proved divergence also withholds every new signature.
-                gate.withheld.insert(Withheld::Collateral);
+                gate.withhold(Withheld::Collateral);
                 warn!(
                     alert = "checkpoint_withheld",
                     cause = Withheld::Collateral.cause(),
@@ -176,7 +195,7 @@ impl Sequencer {
             if capturable {
                 gate.clear_withheld(Withheld::CustodyPrefix, seq);
             } else {
-                gate.withheld.insert(Withheld::CustodyPrefix);
+                gate.withhold(Withheld::CustodyPrefix);
                 warn!(
                     alert = "checkpoint_withheld",
                     cause = Withheld::CustodyPrefix.cause(),

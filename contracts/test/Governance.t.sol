@@ -181,4 +181,96 @@ contract GovernanceTestCases is WithdrawalTest {
         assertEq(usdc.balanceOf(trader), 10e6);
         assertTrue(vault.usedNonces(trader, 0));
     }
+
+    function test_OnlyTimelockSetsTheCurrentReleaseAfterItsDelay() public {
+        bytes memory digest = _launchDigest(0x1d);
+        bytes32 config = bytes32(uint256(0xc0));
+        address[3] memory callers = [trader, multisig, vm.addr(KEY)];
+        for (uint256 i; i < callers.length; ++i) {
+            vm.prank(callers[i]);
+            vm.expectRevert(Vault.UnauthorizedGovernance.selector);
+            vault.setCurrentRelease(digest, config);
+        }
+        bytes memory data = abi.encodeCall(Vault.setCurrentRelease, (digest, config));
+        vm.prank(multisig);
+        governance.schedule(address(vault), 0, data, bytes32(0), bytes32(0), GOVERNANCE_DELAY);
+        vm.warp(block.timestamp + GOVERNANCE_DELAY - 1);
+        vm.expectRevert();
+        governance.execute(address(vault), 0, data, bytes32(0), bytes32(0));
+        assertEq(vault.currentRelease(), bytes32(0));
+        assertEq(vault.releaseGeneration(), 0);
+        vm.warp(block.timestamp + 1);
+        bytes32 release = keccak256(abi.encodePacked(digest, config));
+        vm.expectEmit(address(vault));
+        emit Vault.CurrentReleaseChanged(release, 1, digest, config);
+        governance.execute(address(vault), 0, data, bytes32(0), bytes32(0));
+        assertEq(vault.currentRelease(), release);
+        assertEq(vault.releaseGeneration(), 1);
+        // The release moves no signer: the epoch and its withdrawals are untouched.
+        assertEq(vault.checkpointSigner(), vm.addr(KEY));
+        assertEq(vault.signerEpoch(), 1);
+    }
+
+    function test_ANewReleaseSupersedesTheCurrentOneAndTakesExactlyALaunchMeasurement() public {
+        bytes memory digest = _launchDigest(0x1d);
+        _govern(address(vault), abi.encodeCall(Vault.setCurrentRelease, (digest, bytes32(uint256(1)))));
+        bytes32 first = vault.currentRelease();
+        // The same code under another config is another release.
+        _govern(address(vault), abi.encodeCall(Vault.setCurrentRelease, (digest, bytes32(uint256(2)))));
+        assertTrue(vault.currentRelease() != first, "a config change kept the release");
+        _govern(address(vault), abi.encodeCall(Vault.setCurrentRelease, (_launchDigest(0x1e), bytes32(uint256(2)))));
+        assertEq(vault.currentRelease(), keccak256(abi.encodePacked(_launchDigest(0x1e), bytes32(uint256(2)))));
+        assertEq(vault.releaseGeneration(), 3);
+        uint256[3] memory lengths = [uint256(0), 47, 49];
+        for (uint256 i; i < lengths.length; ++i) {
+            vm.prank(address(governance));
+            vm.expectRevert(Vault.InvalidLaunchDigest.selector);
+            vault.setCurrentRelease(new bytes(lengths[i]), bytes32(uint256(1)));
+        }
+        assertEq(vault.releaseGeneration(), 3, "a refused call raised the generation");
+    }
+
+    function test_SettingAReleaseCurrentAgainStartsANewGeneration() public {
+        bytes memory digest = _launchDigest(0x1d);
+        bytes memory data = abi.encodeCall(Vault.setCurrentRelease, (digest, bytes32(uint256(1))));
+        _govern(address(vault), data);
+        bytes32 release = vault.currentRelease();
+        _govern(address(vault), abi.encodeCall(Vault.setCurrentRelease, (_launchDigest(0x1e), bytes32(uint256(1)))));
+        // Setting the first release again, or the current one again, starts a new generation.
+        vm.prank(multisig);
+        governance.schedule(address(vault), 0, data, bytes32(0), bytes32("again"), GOVERNANCE_DELAY);
+        vm.warp(block.timestamp + GOVERNANCE_DELAY);
+        vm.expectEmit(address(vault));
+        emit Vault.CurrentReleaseChanged(release, 3, digest, bytes32(uint256(1)));
+        governance.execute(address(vault), 0, data, bytes32(0), bytes32("again"));
+        assertEq(vault.currentRelease(), release);
+        assertEq(vault.releaseGeneration(), 3);
+        _govern(address(vault), data);
+        assertEq(vault.releaseGeneration(), 4);
+    }
+
+    function testFuzz_TheReleaseKeysOnTheExactMeasurementAndConfig(
+        bytes32 high,
+        bytes16 low,
+        bytes32 config,
+        uint8 flipped
+    ) public {
+        bytes memory digest = abi.encodePacked(high, low);
+        _govern(address(vault), abi.encodeCall(Vault.setCurrentRelease, (digest, config)));
+        assertEq(vault.currentRelease(), keccak256(abi.encodePacked(digest, config)));
+        bytes memory other = abi.encodePacked(digest);
+        other[flipped % 48] ^= 0x01;
+        assertTrue(vault.currentRelease() != keccak256(abi.encodePacked(other, config)), "a measurement one bit away");
+        assertTrue(
+            vault.currentRelease() != keccak256(abi.encodePacked(digest, config ^ bytes32(uint256(1)))),
+            "a config one bit away"
+        );
+    }
+
+    function _launchDigest(bytes1 fill) private pure returns (bytes memory digest) {
+        digest = new bytes(48);
+        for (uint256 i; i < 48; ++i) {
+            digest[i] = fill;
+        }
+    }
 }

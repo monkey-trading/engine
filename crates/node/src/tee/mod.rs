@@ -1,7 +1,9 @@
 //! Enclave identity and remote attestation.
 //!
-//! At boot a hardware enclave generates a secp256k1 key that never leaves it. Mock configurations
-//! can explicitly select a published development key; hardware configurations refuse that option.
+//! A hardware enclave's secp256k1 key never leaves it in plaintext: it is generated inside, sealed
+//! to the release on the host's disk (`sealing`) so a restart keeps it, and handed to the next
+//! release only encrypted to that release's attested key (`handover`). Mock configurations can
+//! explicitly select a published development key; hardware configurations refuse that option.
 //! The attestation report data carries the SHA-256 of an attestation bundle: the key's EVM address,
 //! the SHA-256 of the config file, and the hash of the API's TLS public key (see `tls`). So a
 //! hardware quote proves "this address belongs to an enclave running this measurement with this
@@ -22,6 +24,11 @@ use k256::ecdsa::SigningKey;
 use k256::elliptic_curve::Generate;
 use sha3::{Digest, Keccak256};
 
+pub(crate) mod keys;
+pub(crate) mod sealing;
+#[cfg(target_os = "linux")]
+pub(crate) mod snp;
+
 /// A source of hardware attestation quotes over caller-chosen report data.
 pub trait Attestor: Send + Sync {
     /// A quote binding `report_data`, and the provider that produced it.
@@ -30,7 +37,8 @@ pub trait Attestor: Send + Sync {
     fn attest(&self, report_data: [u8; 64]) -> anyhow::Result<(String, Vec<u8>)>;
 }
 
-/// The enclave's signing key. Generated inside the enclave and never exported.
+/// The enclave's signing key. Generated inside the enclave and leaves it only sealed or encrypted
+/// to an attested successor.
 pub struct EnclaveKey {
     key: SigningKey,
 }
@@ -83,12 +91,17 @@ impl Attestor for ConfigfsTsm {
 }
 
 impl EnclaveKey {
-    /// A fresh key from the enclave's RNG.
-    ///
-    /// TODO: survive restarts by sealing the key to the measurement (or having a KMS release it on
-    /// attestation), and hand it over between operators once rotation is on.
+    /// A fresh key from the enclave's RNG, which lasts this process only; `[tee.sealing]` keeps one
+    /// across restarts.
     pub fn generate() -> Self {
         Self { key: SigningKey::generate() }
+    }
+
+    /// The key `secret` holds, from sealed or handed-over keys.
+    /// Error cases:
+    /// - `secret` is not a valid secp256k1 scalar
+    pub(crate) fn from_secret(secret: &[u8; 32]) -> anyhow::Result<Self> {
+        Ok(Self { key: SigningKey::from_bytes(secret.into()).context("not a secp256k1 signing key")? })
     }
 
     /// Selects an explicitly configured public mock authority or generates a private fresh key.

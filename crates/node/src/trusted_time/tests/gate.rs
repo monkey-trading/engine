@@ -161,6 +161,25 @@ fn the_signing_clock_reads_the_host_clock_only_while_the_latest_sample_bounds_it
     assert_eq!(signing.now_ms(), Some(true_ms), "a fresh sample");
 }
 
+#[test]
+fn the_estimate_moves_the_last_sample_on_by_the_monotonic_clock_past_the_grace() {
+    let clock = Arc::new(TestClock::at(TRUE_MS));
+    let (samples, latest) = watch::channel(None);
+    let estimate = TrustedClock::new(clock.clone(), latest, MAX_DRIFT);
+    assert_eq!(estimate.since_sample_ms(), None, "before the first sample");
+    samples.send_replace(Some(Sample {
+        at: clock.instant(),
+        earliest_ms: TRUE_MS - 3_000,
+        latest_ms: TRUE_MS + 3_000,
+    }));
+    // The host's wall clock plays no part, only the time since the sample.
+    clock.skew(3_600_000);
+    clock.advance(10 * NO_SAMPLE_GRACE);
+    assert_eq!(estimate.now_ms(), None, "the sample is past the grace");
+    let elapsed = 10 * NO_SAMPLE_GRACE.as_millis() as Millis;
+    assert_eq!(estimate.since_sample_ms(), Some(TRUE_MS + 3_000 + elapsed), "the upper bound, moved on");
+}
+
 // ── Helpers ──
 
 /// A sample taken at `at`, when true time was `TRUE_MS` ± 3s.

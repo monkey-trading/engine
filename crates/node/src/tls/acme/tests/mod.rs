@@ -144,6 +144,7 @@ async fn a_failed_renewal_alerts_once_fewer_than_14_days_remain() {
 mod fake_ca;
 mod http;
 mod orders;
+mod sealed;
 
 // ── Helpers ──
 

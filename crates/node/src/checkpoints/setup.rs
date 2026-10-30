@@ -12,6 +12,12 @@ use crate::config::{EvmCustodySection, FinalityTag, NodeConfig};
 use crate::log::CheckpointDomain;
 use crate::tee::EnclaveKey;
 
+/// The vault names another signer than this enclave's key, at its latest or finalized block.
+#[derive(Debug)]
+pub(crate) struct Unregistered {
+    pub vault_signer: AccountId,
+}
+
 pub(crate) struct Setup {
     pub poster: Poster<CheckpointRpc>,
     pub tx: mpsc::Sender<Work>,
@@ -21,6 +27,15 @@ pub(crate) struct Setup {
     pub parent: crate::log::CheckpointParent,
     pub posted_seq: Option<u64>,
 }
+
+impl std::fmt::Display for Unregistered {
+    /// Names the vault's signer.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the vault names {} as its signer, not this enclave", self.vault_signer)
+    }
+}
+
+impl std::error::Error for Unregistered {}
 
 /// Checkpoint release follows custody withdrawal finality, independently of early credit depth.
 fn release_policy(evm: &EvmCustodySection) -> (FinalityTag, u64) {
@@ -49,10 +64,11 @@ async fn await_finality_boundary<C: CheckpointChain>(
                 !latest.state.signer_retired() && !finalized.state.signer_retired(),
                 "the vault's guardian retired its signer; the node starts once the vault's timelock installs one"
             );
-            anyhow::ensure!(
-                latest.state.signer == signer && finalized.state.signer == signer,
-                "vault signer differs from this enclave; signer recovery is required"
-            );
+            for view in [&latest, &finalized] {
+                if view.state.signer != signer {
+                    return Err(Unregistered { vault_signer: view.state.signer }.into());
+                }
+            }
             if latest.state.checkpoint == finalized.state.checkpoint
                 && latest.lifecycle.as_ref().map(|evidence| evidence.signer_epoch)
                     == finalized.lifecycle.as_ref().map(|evidence| evidence.signer_epoch)
@@ -69,6 +85,7 @@ async fn await_finality_boundary<C: CheckpointChain>(
 /// Connects the checkpoint endpoint and reads its rollback anchor before log recovery.
 /// Error cases:
 /// - configuration, transport, or vault reads fail
+/// - the vault names another signer (`Unregistered`)
 pub(crate) async fn connect(cfg: &NodeConfig, key: &Arc<EnclaveKey>) -> anyhow::Result<Option<Setup>> {
     let Some(checkpoints) = &cfg.checkpoints else { return Ok(None) };
     let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
@@ -264,6 +281,19 @@ mod tests {
             .await
             .unwrap_err();
         assert!(format!("{err:#}").contains("guardian retired its signer"), "{err:#}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_vault_that_names_another_signer_is_reported_at_once_as_unregistered() {
+        let vault_signer = AccountId([0xbb; 20]);
+        let chain = LaggingChain::new(vault_signer, 1);
+        let start = tokio::time::Instant::now();
+        let err = await_finality_boundary(&chain, AccountId([0xaa; 20]), Duration::from_secs(1), &evm("1s", "30s"))
+            .await
+            .unwrap_err();
+        let unregistered = err.downcast::<Unregistered>().expect("a typed refusal registration can wait on");
+        assert_eq!(unregistered.vault_signer, vault_signer);
+        assert!(start.elapsed() < Duration::from_secs(1), "it waited for finality first");
     }
 
     #[tokio::test(start_paused = true)]

@@ -10,6 +10,11 @@ impl ReplayedLog {
         self.snapshot_seq
     }
 
+    /// The last checkpoint the replay verified: the snapshot's it started at, or a later entry's.
+    pub(crate) fn last_checkpoint(&self) -> Option<&crate::log::Checkpoint> {
+        self.replayed.last_signed_checkpoint.as_ref()
+    }
+
     /// Last engine command authenticated by the read-only replay.
     pub(crate) fn last_seq(&self) -> Option<u64> {
         self.replayed.engine.last_seq()
@@ -295,6 +300,7 @@ impl Sequencer {
                 let mut gate = Gate::new(sink, cfg.checkpoint_parent);
                 gate.registry = cfg.checkpoint_registry;
                 gate.approvals = cfg.approval_registry;
+                gate.signing = cfg.checkpoint_signing;
                 gate
             }),
             accounting,

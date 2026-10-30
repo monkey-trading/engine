@@ -10,13 +10,13 @@ use futures_util::{StreamExt, TryStreamExt, stream};
 
 use crate::checkpoints::rpc::{
     CheckpointRpc, balanceOfCall, checkpointEpochAtCall, checkpointRootsCall, checkpointSignerAtCall,
-    checkpointSignerCall, depositCountCall, depositedThroughCall, distributionsPaidCall, hasCheckpointAtCall,
-    hasCheckpointCall, latestRootCall, latestSeqCall, signerAtEpochCall, signerEpochCall, totalDepositedCall,
-    totalWithdrawnCall, usdcCall, usedNoncesCall, withdrawalsPausedCall,
+    checkpointSignerCall, currentReleaseCall, depositCountCall, depositedThroughCall, distributionsPaidCall,
+    hasCheckpointAtCall, hasCheckpointCall, latestRootCall, latestSeqCall, releaseGenerationCall, signerAtEpochCall,
+    signerEpochCall, totalDepositedCall, totalWithdrawnCall, usdcCall, usedNoncesCall, withdrawalsPausedCall,
 };
 use crate::checkpoints::{
-    APPROVAL_PAGE_SIZE, AcceptedCheckpoint, ApprovalId, ApprovalStatus, LifecycleEvidence, Observation, VaultState,
-    View,
+    APPROVAL_PAGE_SIZE, AcceptedCheckpoint, ApprovalId, ApprovalStatus, CurrentRelease, LifecycleEvidence, Observation,
+    VaultState, View,
 };
 use crate::custody::usdc_to_fixed;
 
@@ -118,6 +118,23 @@ impl CheckpointRpc {
             },
             lifecycle: Some(lifecycle),
         })
+    }
+
+    /// The release id the vault names as holding the enclave's keys, at the exact canonical block of
+    /// a finalized observation.
+    /// Error cases:
+    /// - the observation is not finalized and pinned, or the read fails
+    pub(super) async fn read_current_release(&self, at: &Observation) -> anyhow::Result<CurrentRelease> {
+        ensure!(at.view == View::Finalized, "the current release requires a finalized observation");
+        let evidence = at.lifecycle.as_ref().context("the current release requires a pinned canonical observation")?;
+        let (block, vault) = (BlockId::hash_canonical(evidence.block_hash), Address::from(self.domain.vault.0));
+        let id = currentReleaseCall::abi_decode_returns(
+            &self.call(vault, currentReleaseCall {}.abi_encode(), block).await?,
+        )?;
+        let generation = releaseGenerationCall::abi_decode_returns(
+            &self.call(vault, releaseGenerationCall {}.abi_encode(), block).await?,
+        )?;
+        Ok(CurrentRelease { id: id.0, generation })
     }
 
     /// Reads immutable accepted metadata at the exact canonical block of a prior observation.

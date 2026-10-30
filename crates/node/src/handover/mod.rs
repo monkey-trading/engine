@@ -1,0 +1,288 @@
+//! Handing the enclave's keys to the next release. An upgrade changes the launch measurement, and a
+//! config change the config hash, so the new release cannot open the running release's sealed file;
+//! the running release hands it the keys instead, only once each has attested the other and the
+//! vault's governance has made the new release its current one.
+//!
+//! The new release (the successor, `take`) connects to the running release's handover listener
+//! (the predecessor, `Predecessor`), which answers with a fresh challenge, and sends a quote over the
+//! challenge, a fresh HPKE (RFC 9180) public key, and its config's hash. The predecessor checks the quote against the vendor's chain at trusted time; the
+//! release it proves, the measurement and that config, against the vault's current release at
+//! custody finality, which only the timelock sets; and the guest policy and TCB against its own. It
+//! then stops sequencing, takes its final checkpoint, and sends the keys and that checkpoint
+//! encrypted to the successor's key, with its own quote over the ciphertext. The successor checks
+//! that quote, opens the keys, accepts them only if the vault already names their signing key, seals
+//! them for its own release, and confirms by signing with the handed-over key; the predecessor then
+//! exits, so the two never sign at once. The successor serves only once its log reaches the
+//! predecessor's final checkpoint (`node::keys::check_predecessor_head`) and the vault names the key.
+//! It seals them in the vault's generation of its release, and once the vault names the successor,
+//! no start unseals the predecessor's copy, even if governance names that release again
+//! (`ensure_named`).
+//!
+//! The host carries the connection, so it can delay or drop it. It cannot read the keys, which only
+//! the attested successor can decrypt; substitute another successor, since the vault names the
+//! release and the quote proves it; replay an earlier request or confirmation, which bind another
+//! connection's challenge; or forge the confirmation, which only the handed-over key signs, nor its
+//! acknowledgement, which the predecessor signs with the same key. A predecessor that has stopped
+//! keeps serving successors until one confirms, since the vault names the successor and its own copy
+//! of the keys no longer opens; a successor that sees no acknowledgement keeps the keys sealed but
+//! refuses to start, since the predecessor may still hold them. The successor checks the predecessor's
+//! certificates at the host's time, before trusted time runs; an enclave the host runs can still only
+//! hand over the key the vault already names.
+//!
+//! The mock TEE's quotes and stand-in measurements prove nothing: two mock enclaves hand over to
+//! each other for development only, and a real enclave never accepts a mock one.
+
+use std::time::Duration;
+
+use anyhow::{Context, ensure};
+use hpke::aead::ChaCha20Poly1305;
+use hpke::kdf::HkdfSha256;
+use hpke::kem::X25519HkdfSha256;
+use hpke::{Deserializable, Kem, OpModeR, OpModeS};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
+use sha3::{Digest as _, Keccak256};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+
+use crate::checkpoints::{CheckpointChain, CheckpointRpc, CurrentRelease, View};
+use crate::config::NodeConfig;
+use crate::log::CheckpointDomain;
+use crate::tee::keys::KeySet;
+use crate::tee::sealing::Release;
+
+mod evidence;
+pub(crate) use evidence::Evidence;
+mod predecessor;
+pub(crate) use predecessor::{Predecessor, Published};
+mod successor;
+pub(crate) use successor::take;
+
+/// A read-only client for the vault `[checkpoints]` reads, or `None` without `[checkpoints]`.
+/// Error cases:
+/// - `[checkpoints]` is set without EVM custody, or the vault address or RPC settings are malformed
+pub(crate) fn vault_reader(cfg: &NodeConfig) -> anyhow::Result<Option<CheckpointRpc>> {
+    let Some(checkpoints) = &cfg.checkpoints else { return Ok(None) };
+    let evm = cfg.custody.evm.as_ref().context("[checkpoints] needs EVM custody")?;
+    let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
+    CheckpointRpc::read_only(checkpoints, domain, evm.usdc, evm.withdrawal_finality_tag, 0).map(Some)
+}
+
+/// The vault's current release, and its generation, at finality.
+/// Error cases:
+/// - the vault cannot be read
+pub(crate) async fn current_release(vault: &impl CheckpointChain) -> anyhow::Result<CurrentRelease> {
+    let finalized = vault.observe(View::Finalized, &[]).await?;
+    vault.current_release(&finalized).await
+}
+
+/// The generation of `current`, once it is `release`: governance names one release at a time, so
+/// an approved upgrade or config change supersedes the release before it, and naming a release
+/// again starts a new generation.
+/// Error cases:
+/// - `current` is another release
+pub(crate) fn ensure_named(current: CurrentRelease, release: &Release) -> anyhow::Result<u64> {
+    ensure!(
+        current.id == release.id(),
+        "the vault's current release is 0x{}, not 0x{} (launch measurement 0x{}, config 0x{})",
+        hex::encode(current.id),
+        hex::encode(release.id()),
+        hex::encode(release.launch_digest),
+        hex::encode(release.config_sha256)
+    );
+    Ok(current.generation)
+}
+
+/// The HPKE suite: DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, ChaCha20-Poly1305.
+type Kx = X25519HkdfSha256;
+
+/// The largest message either side reads; collateral, the largest part, stays under 300 KiB.
+const MAX_MESSAGE_BYTES: u32 = 1 << 20;
+/// How long a peer gets to send the challenge or a request, or the confirmation after the keys.
+const MESSAGE_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long the successor waits for the keys: the predecessor's drain and its vendor fetch.
+const REPLY_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// The predecessor's first message on each connection, which the successor's request binds, so a
+/// request or confirmation recorded on one connection is refused on any other.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Challenge {
+    /// 32 random bytes, hex.
+    nonce: String,
+}
+
+/// The successor's request: a one-time public key and the config it runs with, and its quote over
+/// both and the connection's challenge.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Request {
+    /// The X25519 public key the keys are encrypted to, hex.
+    public_key: String,
+    /// The SHA-256 of the successor's config file, hex: with the quote's measurement, its release.
+    config_sha256: String,
+    evidence: Evidence,
+}
+
+/// The predecessor's answers.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum Reply {
+    /// The keys, encrypted to the request's public key, and the predecessor's quote over them.
+    Keys { encapped_key: String, ciphertext: String, evidence: Evidence },
+    /// Why the predecessor keeps the keys.
+    Refused { reason: String },
+    /// The confirmation verified, signed with the handed-over key so the host cannot forge it: the
+    /// predecessor exits.
+    Confirmed { signature: String },
+}
+
+/// The successor's proof that it holds the keys: the handed-over key's signature.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Confirm {
+    signature: String,
+}
+
+/// The report data a successor's quote binds: the connection's challenge, its public key, and its
+/// config's hash, for this deployment.
+fn request_report_data(
+    domain: CheckpointDomain,
+    challenge: &[u8; 32],
+    public_key: &[u8],
+    config_sha256: &[u8; 32],
+) -> [u8; 64] {
+    let mut hash = Sha256::new();
+    hash.update(b"engine.handover.request.v1");
+    hash.update(domain.chain_id.to_be_bytes());
+    hash.update(domain.vault.0);
+    hash.update(challenge);
+    hash.update(public_key);
+    hash.update(config_sha256);
+    padded(hash.finalize().into())
+}
+
+/// The report data the predecessor's quote binds: the request it answers, and the keys it sent.
+fn keys_report_data(domain: CheckpointDomain, request: &[u8; 64], encapped_key: &[u8], ciphertext: &[u8]) -> [u8; 64] {
+    let mut hash = Sha256::new();
+    hash.update(b"engine.handover.keys.v1");
+    hash.update(domain.chain_id.to_be_bytes());
+    hash.update(domain.vault.0);
+    hash.update(request);
+    hash.update(Sha256::digest([encapped_key, ciphertext].concat()));
+    padded(hash.finalize().into())
+}
+
+/// What the successor signs with the handed-over key to confirm the request it made.
+fn confirm_digest(domain: CheckpointDomain, request: &[u8; 64]) -> [u8; 32] {
+    let mut hash = Keccak256::new();
+    hash.update(b"engine.handover.confirm.v1");
+    hash.update(domain.chain_id.to_be_bytes());
+    hash.update(domain.vault.0);
+    hash.update(request);
+    hash.finalize().into()
+}
+
+/// What the predecessor signs to acknowledge the confirmation of the request it answered.
+fn confirmed_digest(domain: CheckpointDomain, request: &[u8; 64]) -> [u8; 32] {
+    let mut hash = Keccak256::new();
+    hash.update(b"engine.handover.confirmed.v1");
+    hash.update(domain.chain_id.to_be_bytes());
+    hash.update(domain.vault.0);
+    hash.update(request);
+    hash.finalize().into()
+}
+
+/// A SHA-256 in the first half of report data, the second half zero.
+fn padded(digest: [u8; 32]) -> [u8; 64] {
+    let mut report_data = [0u8; 64];
+    report_data[..32].copy_from_slice(&digest);
+    report_data
+}
+
+/// HPKE's `info`: the deployment the keys belong to.
+fn hpke_info(domain: CheckpointDomain) -> Vec<u8> {
+    [b"engine.handover.v1".as_slice(), &domain.chain_id.to_be_bytes(), &domain.vault.0].concat()
+}
+
+/// Encrypts `keys` to `public_key` for this deployment and request: the encapsulated key and the
+/// ciphertext.
+/// Error cases:
+/// - the public key is not an X25519 key, or encryption fails
+fn seal_keys(
+    domain: CheckpointDomain,
+    public_key: &[u8],
+    request: &[u8; 64],
+    keys: &KeySet,
+) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+    let recipient = <Kx as Kem>::PublicKey::from_bytes(public_key)
+        .map_err(|e| anyhow::anyhow!("the successor's key is not an X25519 key: {e}"))?;
+    let plaintext = serde_json::to_vec(keys).context("encoding the keys")?;
+    let (encapped, ciphertext) = hpke::single_shot_seal::<ChaCha20Poly1305, HkdfSha256, Kx>(
+        &OpModeS::Base,
+        &recipient,
+        &hpke_info(domain),
+        &plaintext,
+        request,
+    )
+    .map_err(|e| anyhow::anyhow!("encrypting the keys: {e}"))?;
+    Ok((hpke::Serializable::to_bytes(&encapped).to_vec(), ciphertext))
+}
+
+/// Decrypts the keys `seal_keys` sent for this deployment and request.
+/// Error cases:
+/// - the encapsulated key is malformed, or the ciphertext does not decrypt to a key set
+fn open_keys(
+    domain: CheckpointDomain,
+    secret: &<Kx as Kem>::PrivateKey,
+    request: &[u8; 64],
+    encapped_key: &[u8],
+    ciphertext: &[u8],
+) -> anyhow::Result<KeySet> {
+    let encapped = <Kx as Kem>::EncappedKey::from_bytes(encapped_key)
+        .map_err(|e| anyhow::anyhow!("the encapsulated key is malformed: {e}"))?;
+    let plaintext = hpke::single_shot_open::<ChaCha20Poly1305, HkdfSha256, Kx>(
+        &OpModeR::Base,
+        secret,
+        &encapped,
+        &hpke_info(domain),
+        ciphertext,
+        request,
+    )
+    .map_err(|e| anyhow::anyhow!("the keys do not decrypt: {e}"))?;
+    serde_json::from_slice(&plaintext).context("the decrypted keys do not parse")
+}
+
+/// Writes `message` as a 4-byte big-endian length and its JSON, within `MESSAGE_TIMEOUT`, so a
+/// peer that stops reading cannot hold the other side.
+/// Error cases:
+/// - the write fails or takes longer
+async fn send(stream: &mut (impl AsyncWrite + Unpin), message: &impl Serialize) -> anyhow::Result<()> {
+    let body = serde_json::to_vec(message).context("encoding a handover message")?;
+    let len = u32::try_from(body.len()).ok().filter(|len| *len <= MAX_MESSAGE_BYTES).context("message too large")?;
+    let write = async {
+        stream.write_all(&len.to_be_bytes()).await?;
+        stream.write_all(&body).await?;
+        stream.flush().await
+    };
+    tokio::time::timeout(MESSAGE_TIMEOUT, write)
+        .await
+        .context("sending a handover message timed out")?
+        .context("sending a handover message")
+}
+
+/// Reads one message `send` wrote.
+/// Error cases:
+/// - the read fails or ends early, the length is over `MAX_MESSAGE_BYTES`, or the JSON is not a `T`
+async fn receive<T: DeserializeOwned>(stream: &mut (impl AsyncRead + Unpin)) -> anyhow::Result<T> {
+    let mut len = [0u8; 4];
+    stream.read_exact(&mut len).await.context("reading a handover message")?;
+    let len = u32::from_be_bytes(len);
+    ensure!(len <= MAX_MESSAGE_BYTES, "a handover message of {len} bytes is over the limit");
+    let mut body = vec![0u8; len as usize];
+    stream.read_exact(&mut body).await.context("reading a handover message")?;
+    serde_json::from_slice(&body).context("a handover message does not parse")
+}
+
+#[cfg(test)]
+mod tests;

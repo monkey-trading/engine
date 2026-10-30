@@ -132,7 +132,8 @@ impl FakeCa {
         let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
         let id = |segments: &[&str]| segments.get(1).and_then(|id| id.parse::<usize>().ok()).unwrap_or(0);
         Ok(match segments[0] {
-            "dir" => (
+            // The staging and production directories of one CA.
+            "dir" | "production" => (
                 200,
                 None,
                 json!({"newNonce": format!("{BASE}/nonce"), "newAccount": format!("{BASE}/new-account"),

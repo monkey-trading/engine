@@ -17,7 +17,7 @@ use crate::config::{ApiSection, TeeProvider};
 const MIN_RENEW_BEFORE: Duration = Duration::from_secs(14 * 86_400);
 
 /// TLS for the API beyond its in-enclave key and self-signed certificate.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ApiTlsSection {
     pub acme: AcmeSection,
@@ -25,7 +25,7 @@ pub struct ApiTlsSection {
 
 /// An ACME CA that issues the API's certificate, validated by TLS-ALPN-01 on the API's own
 /// listener. Setting it agrees to the CA's terms of service.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AcmeSection {
     /// The API's DNS name, lowercase: the certificate's only identifier. The CA connects to it on
@@ -44,7 +44,7 @@ pub struct AcmeSection {
     pub test_ca: Option<AcmeTestCa>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AcmeTestCa {
     /// The test CA's root certificate, PEM.

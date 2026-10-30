@@ -60,11 +60,14 @@ different measurement; it runs the image on mock custody and prices, without a c
 
 ## What the guest exposes
 
-The engine takes input from the host through five paths:
+The engine takes input from the host through six paths:
 
 - the API port, `node.listen` in the config, served over TLS with a key generated in the enclave,
   which also answers the CA's TLS-ALPN-01 validations for `[api.tls.acme]`, so the host forwards
   port 443 to it;
+- the handover port, `tee.sealing.handover.listen`, where the next release asks for the enclave's
+  keys; the request and the answer are attested and the keys encrypted, so the host only carries
+  them;
 - the metrics port, `metrics.listen`, which serves `GET /metrics` over plain HTTP and is reachable
   from the host only when the config puts it on a guest address rather than loopback;
 - its outbound network: venue feeds over TLS, the custody RPC providers and the checkpoint RPC
@@ -76,9 +79,14 @@ The engine takes input from the host through five paths:
   can still scale the monotonic clock that times those readings and the age of a sample;
 - the data disk, an ext4 filesystem on the first virtio disk, mounted at `/data` with `nosuid`,
   `nodev`, and `noexec`. It holds `config.toml`, read once at boot, the log, the account history
-  index, the alert outbox, and the custody deposit cursor, which `node.log_dir`, `history.dir`,
-  `alerts.outbox.dir`, and `custody.evm.cursor_path` must name under `/data`: the root filesystem
-  and `/dev` are read-only, so a path outside `/data` fails at boot.
+  index, the alert outbox, the custody deposit cursor, and the sealed keys, which `node.log_dir`,
+  `history.dir`, `alerts.outbox.dir`, `custody.evm.cursor_path`, and `tee.sealing.dir` must name
+  under `/data`: the root filesystem and `/dev` are read-only, so a path outside `/data` fails at
+  boot. The keys are sealed through `/dev/sev-guest` to this release's launch measurement and policy
+  on this chip, so the host holds only ciphertext (see `crates/node/README.md`, "Enclave keys").
+  Two files on the disk are the operator's one-off choices, which [init](init) removes before the
+  engine starts: `/data/new-key` seals new keys for a release that has none, and
+  `/data/predecessor` holds the `host:port` of the running release to take them from.
 
 The guest kernel also takes input from the host that the launch measurement does not cover, and
 nothing yet bounds what a crafted input can do to it: the ext4 filesystem on the data disk, which
@@ -182,11 +190,12 @@ support, and QEMU 9.1 or later. The launch flags must match `measurement.json`, 
 # The data disk: a config whose node.listen is 0.0.0.0:8080, tee.provider is "configfs_tsm",
 # tee.processor names the host's CPU generation (for example "Genoa"; the node refuses to start
 # without it, since it relays that generation's vendor collateral), node.log_dir, history.dir,
-# and alerts.outbox.dir are under /data, and, for the production variant, [api.tls.acme] names the
-# API's domain. The CA validates it on port 443, so forward the host's 443 to the guest's 8080 too
-# (hostfwd=tcp::443-:8080, where QEMU may bind it). The dev variant accepts mock custody and feeds,
-# and no [api.tls.acme].
-mkdir disk && cp node.toml disk/config.toml
+# alerts.outbox.dir, and [tee.sealing] dir are under /data, and, for the production variant,
+# [api.tls.acme] names the API's domain. The CA validates it on port 443, so forward the host's 443
+# to the guest's 8080 too (hostfwd=tcp::443-:8080, where QEMU may bind it). The dev variant accepts
+# mock custody and feeds, and no [api.tls.acme]. The first boot seals new keys, so it carries the
+# /data/new-key marker.
+mkdir disk && cp node.toml disk/config.toml && touch disk/new-key
 mke2fs -t ext4 -d disk data.img 1G
 
 qemu-system-x86_64 -enable-kvm -cpu EPYC-v4 -smp 4 -m 4G -nographic -no-reboot \
@@ -258,6 +267,39 @@ kernel only in an SEV-SNP launch (under plain QEMU it finds no bootable option),
 6. Before the node release goes live, ship a console build that pins this `release.toml`, beside
    the previous release's for the upgrade, and the verifier's SHA-256. The attestation binds the
    config file, so a console that does not pin the new manifest refuses the new node.
+7. Have the deployment's multisig schedule, through its timelock, the Vault's
+   `setCurrentRelease(<launch_digest>, <config_sha256>)` with `measurement.json`'s 48-byte
+   `launch_digest` and the SHA-256 of the `node.toml` the new release boots with, and execute it
+   once the timelock's delay has passed. The running release reads it at custody finality before it
+   hands the keys over, so wait until the block that executed it is finalized. From then on
+   the running release keeps sequencing but would refuse its own keys on a restart. To call the
+   upgrade off, have the timelock set the running release back as current; that starts another
+   generation, so the running release then hands its keys to a fresh boot of itself through step 8.
+8. Boot the new release's VM with a copy of the running release's data disk, its `/data/config.toml`
+   replaced by the `node.toml` whose hash the timelock named when the config changes, and the
+   running release's `tee.sealing.handover.listen` address in `/data/predecessor`. The running release
+   checks the new one's quote, stops sequencing, hands over the keys, and powers off. The copy was
+   taken while it still ran, so the new release then refuses: its log ends before the running
+   release's final checkpoint. Copy the old disk's log, history, and cursor onto the new disk beside
+   the new release's sealed keys, and boot it again without `/data/predecessor`; its first start
+   checks that the log ends at that checkpoint. If the running release reports
+   `handover_unconfirmed`, it stays stopped and serves the next attempt: boot the new release again
+   with `/data/predecessor`, and never stop the running release, whose own copy of the keys no
+   longer opens. If the new release reports it, start it again only once the running release has
+   powered off.
+9. The old release's sealed copy of the keys stays on its disk but never opens again: a node
+   checks the Vault's current release and its generation before it unseals, and a release the
+   timelock names again takes the keys afresh through steps 7 and 8. An upgrade that fixes a flaw in
+   the old release still rotates the signer: the old release has held the key.
+
+A config change is a new release too: the same image under another `node.toml` has another release
+id, so it takes the keys through steps 7 and 8 with the new config's hash.
+
+A first deployment deploys the Vault with a placeholder signer, has the timelock make the release
+and its config current, and boots with `/data/new-key`: the node seals new keys and, until the
+Vault names its address, serves only `/v1/attestation`, which governance verifies before having
+the timelock call `setSigner`. The same applies after a compromise, once the old sealed file is
+deleted.
 
 The attestation binds every byte of the config file, so a verifier can check the hash only against
 a copy it can read. A credential in the file, such as an API key in a `custody.evm.providers`

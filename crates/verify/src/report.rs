@@ -24,6 +24,7 @@ const REPORT_DATA_OFFSET: usize = 0x50;
 const MEASUREMENT_OFFSET: usize = 0x90;
 const REPORTED_TCB_OFFSET: usize = 0x180;
 const CHIP_ID_OFFSET: usize = 0x1A0;
+const COMMITTED_TCB_OFFSET: usize = 0x1E0;
 
 /// The report versions this parser implements. Every field the verifier reads sits at the same
 /// offset in each: later versions only append CPUID and firmware-version fields.
@@ -43,7 +44,8 @@ pub struct Tcb {
 }
 
 impl Tcb {
-    fn from_packed(value: u64) -> Self {
+    /// The levels a packed TCB value carries.
+    pub fn from_packed(value: u64) -> Self {
         Self {
             boot_loader: value as u8,
             tee: (value >> 8) as u8,
@@ -84,6 +86,9 @@ pub struct SnpReport<'a> {
     pub report_data: [u8; 64],
     /// The signing chip's unique identifier.
     pub chip_id: [u8; 64],
+    /// The TCB the platform has committed to, below which its firmware cannot be rolled back,
+    /// packed as the guest's derived-key request takes it.
+    pub committed_tcb: u64,
 }
 
 impl<'a> SnpReport<'a> {
@@ -114,6 +119,7 @@ impl<'a> SnpReport<'a> {
             measurement: bytes[MEASUREMENT_OFFSET..MEASUREMENT_OFFSET + 48].try_into().expect("report length checked"),
             report_data: bytes[REPORT_DATA_OFFSET..REPORT_DATA_OFFSET + 64].try_into().expect("report length checked"),
             chip_id: bytes[CHIP_ID_OFFSET..CHIP_ID_OFFSET + 64].try_into().expect("report length checked"),
+            committed_tcb: le_u64(bytes, COMMITTED_TCB_OFFSET),
         })
     }
 

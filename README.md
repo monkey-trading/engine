@@ -13,9 +13,10 @@ house, in turn, is issued to the people who trade with it.
 > their FIFO queue also run against Anvil, as do MONKEY emissions and claims; MONKEY's production
 > budget and start are still to be set. FX, index, commodity, and share prices from two market-data
 > vendors each run against local stand-ins for those vendors; live vendor feeds wait on credentials
-> and redistribution licences. MONKEY staking, USDC distribution claims and operator elections run against Anvil, and
-> the API's public certificate is issued and renewed against a local ACME test CA; hardware
-> attestation remains under construction.
+> and redistribution licences. MONKEY staking, USDC distribution claims and operator elections run against Anvil,
+> the API's public certificate is issued and renewed against a local ACME test CA, and
+> the enclave's keys survive restarts and pass to the release governance names against Anvil, with a stand-in
+> for the hardware sealing; hardware attestation and sealing remain under construction.
 > Nothing here holds real funds.
 
 ## How it works
@@ -131,8 +132,13 @@ than a set bound, or once a minute has passed without signed time.
 
 The enclave also attests to the key it signs with, to the key its API serves TLS with, and to the
 SHA-256 of the config file it runs with. Both keys are generated inside the enclave, so client
-connections end where the host cannot read them. One hash in the attestation's report data commits
-to all three: the hash of a bundle the node serves beside the quote. A production node also has a
+connections end where the host cannot read them. They are sealed on the host's disk to the
+release that runs them, its launch measurement and config file together, so a restart keeps them.
+The vault's governance timelock names one release at a time as current: a node opens its keys only
+while the vault names its release, and they pass to a new release, new code or a changed config,
+only once the timelock has made it current and the two releases attest each other. One hash in the
+attestation's report data commits to all three: the hash of a bundle the node serves beside the
+quote. A production node also has a
 public certificate authority certify that same TLS key for the API's domain, over ACME from inside
 the enclave, so a browser trusts the API while a client that checks the attestation can still pin
 the key. The local node uses a mock attestation, labelled as such. The confidential VM image for AMD SEV-SNP builds reproducibly from

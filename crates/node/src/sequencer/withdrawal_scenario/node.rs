@@ -29,12 +29,22 @@ pub(super) struct Node {
 }
 
 impl ChildProcess {
-    /// Starts a child whose output stays in the scenario artifact directory and dies on drop.
+    /// Starts a child whose output stays in the scenario artifact directory and dies on drop, in
+    /// `dir` when given.
     /// Error cases:
     /// - the log cannot open or the child cannot spawn
-    pub fn spawn(program: impl AsRef<OsStr>, args: &[&str], log: &Path, env: &[(&str, &str)]) -> anyhow::Result<Self> {
+    pub fn spawn(
+        program: impl AsRef<OsStr>,
+        args: &[&str],
+        log: &Path,
+        env: &[(&str, &str)],
+        dir: Option<&Path>,
+    ) -> anyhow::Result<Self> {
         let output = std::fs::OpenOptions::new().create(true).append(true).open(log)?;
         let mut command = Command::new(program);
+        if let Some(dir) = dir {
+            command.current_dir(dir);
+        }
         command
             .args(args)
             .envs(env.iter().copied())
@@ -50,6 +60,13 @@ impl ChildProcess {
     pub fn check(&mut self) -> anyhow::Result<()> {
         ensure!(self.0.try_wait()?.is_none(), "scenario child exited; inspect its local log");
         Ok(())
+    }
+
+    /// Waits for the child to exit on its own, and its status.
+    /// Error cases:
+    /// - it is still running after `within`, or waiting fails
+    pub async fn exited(&mut self, within: Duration) -> anyhow::Result<std::process::ExitStatus> {
+        timeout(within, self.0.wait()).await.context("the child did not exit")?.map_err(Into::into)
     }
 
     /// Sends actual SIGKILL and reaps the stopped child under a deadline.
@@ -90,7 +107,7 @@ impl Node {
         let services = Services::start(&chain.url, chain.mining.clone(), domain).await?;
         let api_port = free_port()?;
         let metrics = free_port()?;
-        write_config(&config, &dir, api_port, metrics, &chain, &services)?;
+        write_config(&config, &dir, api_port, metrics, &chain, &services, |_| Ok(()))?;
         let client = Client::new(api_port, chain.vault)?;
         let mut node = Self { dir, chain, services, client, config, metrics, child: None };
         node.restart().await?;
@@ -108,6 +125,7 @@ impl Node {
             &["--ignored", "--exact", CHILD_TEST, "--nocapture", "--test-threads=1"],
             &self.dir.join("node.log"),
             &[(CHILD_CONFIG, path), (CHILD_FEED, &self.services.feed), (CHILD_ALERTS, &self.services.alerts)],
+            None,
         )?);
         timeout(LOADED_WAIT, async {
             loop {
@@ -221,16 +239,18 @@ pub(super) fn free_port() -> anyhow::Result<u16> {
     Ok(std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port())
 }
 
-/// Rewrites only a fresh local config; all custody and API paths still use ordinary validation.
+/// Rewrites only a fresh local config, then lets `edit` change it; all custody and API paths still
+/// use ordinary validation.
 /// Error cases:
-/// - config parsing/encoding or writing the private scenario file fails
-fn write_config(
+/// - config parsing/encoding, `edit`, or writing the private scenario file fails
+pub(super) fn write_config(
     path: &Path,
     dir: &Path,
     api: u16,
     metrics: u16,
     chain: &Chain,
     services: &Services,
+    edit: impl FnOnce(&mut serde_json::Value) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let source: toml::Value = toml::from_str(&std::fs::read_to_string(ANVIL_CONFIG)?)?;
     let mut cfg = serde_json::to_value(source)?;
@@ -285,6 +305,7 @@ fn write_config(
         "max_response_bytes": 4096,
         "max_in_flight": 8,
     });
+    edit(&mut cfg)?;
     std::fs::write(path, toml::to_string(&toml::Value::try_from(cfg)?)?)?;
     Ok(())
 }
