@@ -381,13 +381,18 @@ pub fn receipt(id: u8, account: Option<AccountId>, amount: &str) -> DepositRecei
 }
 
 /// Sequences `receipt` with fresh evidence giving `payer` the status `status`.
-fn credit(h: &mut Harness, receipt: &DepositReceipt, payer: Option<AccountId>, status: SanctionsStatus) -> Vec<Event> {
+pub(crate) fn credit(
+    h: &mut Harness,
+    receipt: &DepositReceipt,
+    payer: Option<AccountId>,
+    status: SanctionsStatus,
+) -> Vec<Event> {
     let evidence = screened(h, receipt, payer, status);
     h.cmd(Command::AccessCustodyDeposit { receipt: receipt.clone(), payer, evidence })
 }
 
 /// Retries a pending receipt with fresh evidence giving its recorded payer the status `status`.
-fn retry(h: &mut Harness, receipt: &DepositReceipt, status: SanctionsStatus) -> Vec<Event> {
+pub(crate) fn retry(h: &mut Harness, receipt: &DepositReceipt, status: SanctionsStatus) -> Vec<Event> {
     let payer = h.engine.recorded_deposit(&receipt.reference()).and_then(|d| d.uncredited).and_then(|u| u.payer);
     let evidence = screened(h, receipt, payer, status);
     h.cmd(Command::RetryDepositScreening { chain_ref: receipt.reference(), evidence })
@@ -409,7 +414,7 @@ fn screened(
 }
 
 /// The incremental state root, and the exit leaves it commits, equal a rebuild's.
-fn assert_root_matches_rebuild(engine: &mut Engine) {
+pub(crate) fn assert_root_matches_rebuild(engine: &mut Engine) {
     let incremental = engine.state_root();
     let mut rebuilt: Engine = serde_json::from_slice(&serde_json::to_vec(engine).unwrap()).unwrap();
     assert_eq!(rebuilt.state_root(), incremental);

@@ -10,6 +10,8 @@ mod common;
 mod custody;
 #[path = "exit/fixture.rs"]
 mod fixture;
+#[path = "exit/root.rs"]
+mod root;
 #[path = "exit/support.rs"]
 mod support;
 
