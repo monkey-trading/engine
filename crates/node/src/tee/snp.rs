@@ -38,16 +38,23 @@ impl Sealer for SnpSealer {
     /// - the device cannot be opened, or the platform refuses the derivation (a `tcb` above the
     ///   committed one)
     fn sealing_key(&self, tcb: u64) -> anyhow::Result<[u8; 32]> {
-        let mut fields = GuestFieldSelect::default();
-        fields.set_measurement(true);
-        fields.set_guest_policy(true);
-        fields.set_tcb_version(true);
-        let request = DerivedKey::new(false, fields, VMPL, 0, tcb, None);
+        let request = key_request(tcb);
         Firmware::open()
             .context("opening /dev/sev-guest (is this an SEV-SNP guest?)")?
             .get_derived_key(Some(MESSAGE_VERSION), request)
             .map_err(|e| anyhow::anyhow!("the platform refused the sealing key at TCB {tcb:#018x}: {e}"))
     }
+}
+
+/// The derived-key request `sealing_key` makes for `tcb`: the VCEK root, with the launch
+/// measurement, the guest policy, and the TCB version mixed in, and no image or family ID, which
+/// an ID key the operator holds would set.
+fn key_request(tcb: u64) -> DerivedKey {
+    let mut fields = GuestFieldSelect::default();
+    fields.set_measurement(true);
+    fields.set_guest_policy(true);
+    fields.set_tcb_version(true);
+    DerivedKey::new(false, fields, VMPL, 0, tcb, None)
 }
 
 #[cfg(test)]
@@ -56,11 +63,7 @@ mod tests {
 
     #[test]
     fn the_key_mixes_in_the_measurement_the_policy_and_the_tcb_from_the_vcek() {
-        let mut fields = GuestFieldSelect::default();
-        fields.set_measurement(true);
-        fields.set_guest_policy(true);
-        fields.set_tcb_version(true);
-        let request = DerivedKey::new(false, fields, VMPL, 0, 7, None);
+        let request = key_request(7);
         assert_eq!(request.get_root_key_select(), 0, "not the VCEK");
         let selected = request.guest_field_select;
         assert!(selected.get_measurement() && selected.get_guest_policy() && selected.get_tcb_version());
