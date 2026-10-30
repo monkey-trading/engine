@@ -354,16 +354,16 @@ impl Engine {
                 if let Some(cash) = distribution_cash {
                     self.withdrawal_cash = Some(cash);
                 }
+                // The exit refunds pending deposits by id, which two live receipts at one id would
+                // alias: every duplicate above the finalised frontier resolves to its earliest live
+                // receipt, before the version this failure would refuse takes effect.
+                if self.protocol_version < ProtocolVersion::V36 && *version >= ProtocolVersion::V36 {
+                    self.reverse_duplicate_live_receipts(events)?;
+                }
                 self.protocol_version = *version;
                 if *version >= ProtocolVersion::V26 {
                     self.hot_indexes = None;
                     self.ensure_hot_indexes();
-                }
-                // The exit refunds pending deposits by id, which two live receipts at one id would
-                // alias: every duplicate above the finalised frontier resolves to its earliest live
-                // receipt.
-                if *version >= ProtocolVersion::V36 {
-                    self.reverse_duplicate_live_receipts(events)?;
                 }
             }
             AdminCommand::InitEmissions(schedule) => self.init_emissions(schedule)?,

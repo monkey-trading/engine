@@ -40,6 +40,7 @@ impl Engine {
     /// Error cases:
     /// - a duplicate is finalised, or a duplicate's credited principal can no longer be removed
     pub(crate) fn reverse_duplicate_live_receipts(&mut self, events: &mut Vec<Event>) -> Result<(), String> {
+        self.ensure_hot_indexes();
         let duplicates: Vec<Vec<String>> = self
             .hot_indexes
             .as_ref()

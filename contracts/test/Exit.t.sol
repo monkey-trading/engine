@@ -332,7 +332,7 @@ contract ExitTestCases is ExitTest {
         uint256 pendingId = _deposit(funder, bob, 20e6);
         uint64[] memory gaps = new uint64[](1);
         gaps[0] = uint64(gap);
-        ExitVerifier.ExitTerms memory terms = _addTerms(3, 20e6 * UNIT, 0, 40e6 * UNIT, gaps);
+        ExitVerifier.ExitTerms memory terms = _addTerms(3, 20e6 * UNIT, 0, 0, gaps);
         ExitVerifier.AccountState memory a = _addAccount(alice, 100e6 * UNIT);
         bytes memory chainRef = bytes("pending past the gap");
         ExitVerifier.PendingDeposit memory pending = _addPending(chainRef, uint64(pendingId), bob, funder, 20e6 * UNIT);
@@ -356,6 +356,47 @@ contract ExitTestCases is ExitTest {
         assertEq(usdc.balanceOf(address(vault)), 0);
     }
 
+    function testAProvenTermsWithMoreGapsThanTheBoundIsRefused() public {
+        _deposit(funder, alice, 100e6);
+        _addAccount(alice, 100e6 * UNIT);
+        _post();
+        uint64[] memory gaps = new uint64[](65);
+        for (uint256 i; i < 65; ++i) {
+            gaps[i] = uint64(i);
+        }
+        _addTerms(65, 0, 0, 0, gaps);
+        vm.warp(block.timestamp + PERIOD);
+        vm.expectRevert(abi.encodeWithSelector(Vault.InvalidExitProof.selector));
+        vault.startExit(ExitVerifier.ExitTerms(65, 0, 0, 0, gaps), _siblings(keccak256(abi.encodePacked(uint8(24)))));
+    }
+
+    function _refuseMalformedGaps(uint64[] memory gaps) internal {
+        _deposit(funder, alice, 100e6);
+        _post();
+        _addTerms(3, 0, 0, 0, gaps);
+        vm.warp(block.timestamp + PERIOD);
+        vm.expectRevert(abi.encodeWithSelector(Vault.InvalidExitProof.selector));
+        vault.startExit(ExitVerifier.ExitTerms(3, 0, 0, 0, gaps), _siblings(keccak256(abi.encodePacked(uint8(24)))));
+    }
+
+    function testAProvenTermsWithAnUnsortedGapListIsRefused() public {
+        uint64[] memory gaps = new uint64[](2);
+        (gaps[0], gaps[1]) = (2, 1);
+        _refuseMalformedGaps(gaps);
+    }
+
+    function testAProvenTermsWithADuplicateGapIsRefused() public {
+        uint64[] memory gaps = new uint64[](2);
+        (gaps[0], gaps[1]) = (1, 1);
+        _refuseMalformedGaps(gaps);
+    }
+
+    function testAProvenTermsWithAGapAtOrPastTheCursorIsRefused() public {
+        uint64[] memory gaps = new uint64[](1);
+        gaps[0] = 3;
+        _refuseMalformedGaps(gaps);
+    }
+
     function testUnheldPrincipalPastTheNamedGapsStaysInTheVault() public {
         // The root names one gap and commits more unheld principal than it holds: the gap refunds by
         // id out of the reserve, and the unnamed principal stays reserved, never entering the pools.
@@ -363,7 +404,7 @@ contract ExitTestCases is ExitTest {
         _deposit(alice, alice, 100e6);
         uint64[] memory gaps = new uint64[](1);
         gaps[0] = uint64(gap);
-        ExitVerifier.ExitTerms memory terms = _addTerms(2, 0, 0, 70e6 * UNIT, gaps);
+        ExitVerifier.ExitTerms memory terms = _addTerms(2, 0, 0, 30e6 * UNIT, gaps);
         ExitVerifier.AccountState memory a = _addAccount(alice, 100e6 * UNIT);
         _post();
         _startExit(terms);

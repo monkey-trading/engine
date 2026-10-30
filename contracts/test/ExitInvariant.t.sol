@@ -86,17 +86,15 @@ contract ExitHandler is ExitTest {
             if (hasPending && id == pending.depositId) continue;
             gaps[taken++] = uint64(id);
         }
-        int128 unheld;
+        // The named gaps reserve their canonical vault amounts; the terms' `unheld` names none here.
         for (uint256 i; i < gaps.length; ++i) {
             uint256 id = gaps[i];
-            uint256 amount = vault.refundableThrough(id) - (id == 0 ? 0 : vault.refundableThrough(id - 1));
-            refundable += amount;
-            unheld += int128(uint128(amount)) * int128(UNIT);
+            refundable += vault.refundableThrough(id) - (id == 0 ? 0 : vault.refundableThrough(id - 1));
         }
         // Held principal is neither pending nor refundable, so it fits in what remains.
         uint256 spare = usdc.balanceOf(address(vault)) - uint256(int256(pendingAmount / UNIT)) - refundable;
         int128 held = int128(uint128(bound(seed >> 8, 0, spare))) * UNIT;
-        terms = _addTerms(cursor, pendingAmount, held, unheld, gaps);
+        terms = _addTerms(cursor, pendingAmount, held, 0, gaps);
         for (uint256 i; i < actors.length; ++i) {
             uint256 draw = uint256(keccak256(abi.encode(seed, i)));
             states[i] = _addAccount(actors[i], int128(int256(bound(draw, 0, 200_000e6))) * UNIT - 100e6 * UNIT);

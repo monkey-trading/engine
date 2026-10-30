@@ -61,6 +61,7 @@ impl Engine {
             (None, Some(_)) => return Err(DepositReject::UnknownReceipt),
             (Some(_), _) => return Err(DepositReject::SettledReceipt),
         }
+        self.reverse_conflicting_receipts(replacement, events)?;
         if self.protocol_version >= ProtocolVersion::V26 {
             return self.replace_screened_deposit(orphan, replacement, uncredited, screening, events);
         }

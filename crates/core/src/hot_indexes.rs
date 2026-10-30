@@ -21,11 +21,14 @@ pub(crate) struct HotIndexes {
     pub(crate) receipts_above_frontier: BTreeMap<String, (u64, Fixed)>,
     /// The live receipts above the finalised frontier at each vault deposit id.
     pub(crate) above_frontier_by_id: BTreeMap<u64, BTreeSet<String>>,
+    /// One past the highest vault deposit id any recorded receipt ever held: ids below it that no
+    /// live receipt holds are missing, whether or not a receipt was ever recorded at them.
+    pub(crate) hwm: u64,
     /// Runs of consecutive vault deposit ids no live receipt holds, at or above the base: start to
     /// end, inclusive.
     pub(crate) missing: BTreeMap<u64, u64>,
-    /// The last recorded principal of each missing id, and their total: what the exit terms commit
-    /// as the unheld principal.
+    /// The last recorded principal of each observed missing id, and their total across the unnamed
+    /// gaps: what the exit terms commit as the unheld principal.
     pub(crate) unheld_amounts: BTreeMap<u64, Fixed>,
     pub(crate) unheld_total: Fixed,
     triggers: BTreeMap<MarketId, Triggers>,
@@ -51,8 +54,18 @@ impl HotIndexes {
     }
 
     /// Records a live receipt above the finalised frontier, displacing any id mapping the
-    /// reference held.
+    /// reference held. Ids between the high water mark and a higher new id were never observed:
+    /// they are missing too, or a reorganisation's deposit there would be neither reserved nor
+    /// refundable.
     pub(crate) fn add_above_frontier(&mut self, reference: String, deposit_id: u64, amount: Fixed) {
+        if self.receipts_above_frontier.get(&reference).is_none_or(|(old, _)| *old != deposit_id)
+            && deposit_id >= self.hwm
+        {
+            for hole in self.hwm..deposit_id {
+                self.open_missing_unknown(hole);
+            }
+            self.hwm = deposit_id.saturating_add(1);
+        }
         match self.receipts_above_frontier.insert(reference.clone(), (deposit_id, amount)) {
             Some((old, _)) if old == deposit_id => {}
             Some((old, old_amount)) => {
@@ -83,7 +96,7 @@ impl HotIndexes {
         let references = self.above_frontier_by_id.entry(id).or_default();
         let first = references.is_empty();
         references.insert(reference);
-        if first && self.unheld_amounts.contains_key(&id) {
+        if first && self.missing.range(..=id).next_back().is_some_and(|(_, end)| *end >= id) {
             self.close_missing(id);
         }
     }
@@ -100,6 +113,19 @@ impl HotIndexes {
 
     /// Marks `id`, merged with its adjacent runs, missing at its last recorded principal.
     fn open_missing(&mut self, id: u64, amount: Fixed) {
+        self.insert_run(id);
+        self.unheld_total += amount;
+        self.unheld_amounts.insert(id, amount);
+    }
+
+    /// Marks `id`, merged with its adjacent runs, missing with no recorded principal: the id was
+    /// passed over, and what occupies it at the vault is knowable only to the vault.
+    fn open_missing_unknown(&mut self, id: u64) {
+        self.insert_run(id);
+    }
+
+    /// Merges `id` with its adjacent missing runs.
+    fn insert_run(&mut self, id: u64) {
         let mut start = id;
         let mut end = id;
         if let Some((&s, &e)) = self.missing.range(..id).next_back()
@@ -116,14 +142,14 @@ impl HotIndexes {
             end = e;
         }
         self.missing.insert(start, end);
-        self.unheld_total += amount;
-        self.unheld_amounts.insert(id, amount);
     }
 
-    /// Marks `id` held again, dropping its reserved principal and splitting any run it sits in.
+    /// Marks `id` held again, dropping its reserved principal if one was recorded, and splitting
+    /// any run it sits in.
     fn close_missing(&mut self, id: u64) {
-        let estimate = self.unheld_amounts.remove(&id).expect("a closing gap held an estimate");
-        self.unheld_total -= estimate;
+        if let Some(estimate) = self.unheld_amounts.remove(&id) {
+            self.unheld_total -= estimate;
+        }
         let Some((&s, &e)) = self.missing.range(..=id).next_back().filter(|(_, end)| **end >= id) else {
             return;
         };
@@ -133,6 +159,26 @@ impl HotIndexes {
         }
         if id < e {
             self.missing.insert(id + 1, e);
+        }
+    }
+
+    /// Forgets missing ids at or below the finalised frontier: every id below the base is settled,
+    /// so neither the runs nor their reserved principal may grow with history.
+    pub(crate) fn prune_below(&mut self, base: u64) {
+        if base == 0 {
+            return;
+        }
+        let spanning: Vec<(u64, u64)> = self.missing.range(..base).map(|(s, e)| (*s, *e)).collect();
+        for (s, e) in spanning {
+            self.missing.remove(&s);
+            if e >= base {
+                self.missing.insert(base.max(s), e);
+            }
+        }
+        let settled: Vec<(u64, Fixed)> = self.unheld_amounts.range(..base).map(|(id, amount)| (*id, *amount)).collect();
+        for (id, amount) in settled {
+            self.unheld_amounts.remove(&id);
+            self.unheld_total -= amount;
         }
     }
 
@@ -202,9 +248,13 @@ impl Engine {
                 }
             }
         }
+        let base = self.custody_checkpoint.map_or(0, |checkpoint| checkpoint.deposit_count);
         for (id, (_, amount)) in dropped {
-            if !indexes.above_frontier_by_id.contains_key(&id) {
-                indexes.open_missing(id, amount);
+            // The high-water complement already opened the run this id sits in; attach the latest
+            // recorded principal without touching the runs.
+            if id >= base && !indexes.above_frontier_by_id.contains_key(&id) {
+                indexes.unheld_amounts.insert(id, amount);
+                indexes.unheld_total += amount;
             }
         }
         for recorded in self.deposits.values() {

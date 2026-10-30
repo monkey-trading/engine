@@ -582,18 +582,20 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
             cursor = terms.depositCursor < depositCount ? terms.depositCursor : uint64(depositCount);
             pending = _usdcCeil(terms.pending);
             held = _usdcCeil(terms.held);
-            // Every unheld id below the cursor reserves its principal, the named gaps included: they
-            // refund by id out of it, and a reorganisation deeper than MAX_EXIT_GAPS deposits leaves
-            // the rest unnamed, kept in the vault rather than paid out.
+            // The named gaps reserve the canonical principal of the vault's own records at their
+            // ids, and `unheld` the principal of the unnamed ids below the cursor, at the last
+            // amounts the engine saw: whatever no gap names stays in the vault rather than reaching
+            // the pools.
             unheld = _usdcCeil(terms.unheld);
         }
         uint256 refunds = totalRefundable - (cursor == 0 ? 0 : refundableThrough[cursor - 1]);
-        if (hasCheckpoint) _markRefundableGaps(cursor, terms.gaps);
+        uint256 named;
+        if (hasCheckpoint) named = _markRefundableGaps(cursor, terms.gaps);
         exitStartedAt = uint64(block.timestamp);
         exitDepositCursor = cursor;
-        exitRefundReserve = refunds + pending + unheld;
+        exitRefundReserve = refunds + pending + named + unheld;
         exitHeldReserve = held;
-        emit ExitStarted(latestSeq, latestRoot, cursor, refunds + pending, held);
+        emit ExitStarted(latestSeq, latestRoot, cursor, refunds + pending + named + unheld, held);
     }
 
     /// @notice Registers `account`'s equity at the exit root's marks as its claim, once. Anyone may
@@ -786,7 +788,11 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     /// @dev Marks each id in `gaps` below `cursor` as refundable by the exit. The list is the lowest
     /// `MAX_EXIT_GAPS` ids, strictly increasing, as the engine commits it; their principal is
     /// already reserved in `terms.unheld`.
-    function _markRefundableGaps(uint64 cursor, uint64[] calldata gaps) private {
+    /// @dev Marks each id in `gaps` below `cursor` as refundable by the exit and returns their
+    /// canonical payer-funded principal, as the vault's own records hold it: the terms' `unheld`
+    /// covers only the unnamed gaps, whose principal only the engine has seen. The list is the
+    /// lowest `MAX_EXIT_GAPS` ids, strictly increasing, as the engine commits it.
+    function _markRefundableGaps(uint64 cursor, uint64[] calldata gaps) private returns (uint256 refundable) {
         if (gaps.length > MAX_EXIT_GAPS) revert InvalidExitProof();
         uint64 previous;
         for (uint256 i; i < gaps.length; ++i) {
@@ -794,6 +800,7 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
             if (id >= cursor || (i > 0 && id <= previous)) revert InvalidExitProof();
             previous = id;
             exitRefundableGap[id] = true;
+            refundable += refundableThrough[id] - (id == 0 ? 0 : refundableThrough[id - 1]);
         }
     }
 

@@ -39,9 +39,10 @@ pub struct ExitTerms {
     pub pending: Fixed,
     /// Principal of the held deposits, which the exit never pays.
     pub held: Fixed,
-    /// Principal of the vault deposits below the cursor the root does not hold, the named gaps
-    /// included: the exit reserves it, refunds the named gaps by id, and keeps the rest, which only
-    /// a reorganisation deeper than [`MAX_EXIT_GAPS`] deposits leaves unnamed.
+    /// Principal of the unnamed vault deposits below the cursor the root does not hold, at the last
+    /// recorded receipts' amounts: the exit reserves it, refunds the named gaps by id out of their
+    /// own canonical reservation, and keeps the rest, which only a reorganisation deeper than
+    /// [`MAX_EXIT_GAPS`] deposits leaves unnamed.
     pub unheld: Fixed,
     /// The vault deposit ids below the cursor the root does not hold, the lowest
     /// [`MAX_EXIT_GAPS`], in increasing order: empty unless a reorganisation the custody adapter is
@@ -244,16 +245,18 @@ impl ExitLeaves {
 
 impl Engine {
     /// The exit's deposit cursor, one past the highest vault deposit id the engine holds a live
-    /// receipt for, the gaps below it, the lowest [`MAX_EXIT_GAPS`], and the principal of every id
-    /// below the cursor no live receipt holds. Every id below the finalised frontier's count has a
-    /// settled receipt, since the custody adapter reads deposits in id order with no gap
-    /// (`custody::evm::check_complete`); above it, a replacement sequenced before the deposit that
-    /// took its old id can leave one. Without a gap this reads the index's ends only; with one, it
-    /// walks the missing runs, not the held receipts, and stops at [`MAX_EXIT_GAPS`].
+    /// receipt for, the gaps below it, the lowest [`MAX_EXIT_GAPS`], and the principal of the
+    /// unnamed ones. Every id below the finalised frontier's count has a settled receipt, since the
+    /// custody adapter reads deposits in id order with no gap (`custody::evm::check_complete`);
+    /// above it, a replacement sequenced before the deposit that took its old id can leave one, and
+    /// an id passed over on the way to a higher id was never observed. Without a gap this reads the
+    /// index's ends only; with one, it walks the missing runs, not the held receipts, and stops at
+    /// [`MAX_EXIT_GAPS`].
     pub(super) fn exit_deposit_frontier(&mut self) -> (u64, Vec<u64>, Fixed) {
         self.ensure_hot_indexes();
-        let indexes = self.hot_indexes.as_ref().expect("indexes initialised");
+        let indexes = self.hot_indexes.as_mut().expect("indexes initialised");
         let base = self.custody_checkpoint.map_or(0, |checkpoint| checkpoint.deposit_count);
+        indexes.prune_below(base);
         let cursor =
             indexes.above_frontier_by_id.last_key_value().map_or(base, |(id, _)| base.max(id.saturating_add(1)));
         let mut gaps = Vec::new();
@@ -268,15 +271,12 @@ impl Engine {
                 break;
             }
         }
-        // The unheld principal covers the ids below the cursor only: at or past it every deposit is
-        // refunded by id, and below the base every deposit is settled.
-        let outside = indexes
-            .unheld_amounts
-            .range(..base)
-            .chain(indexes.unheld_amounts.range(cursor..))
-            .map(|(_, amount)| *amount)
-            .sum::<Fixed>();
-        (cursor, gaps, indexes.unheld_total - outside)
+        // The unheld principal covers the unnamed ids below the cursor only: at or past it every
+        // deposit is refunded by id, the named gaps reserve their canonical vault amounts, and
+        // below the base every deposit is settled.
+        let named = gaps.iter().filter_map(|id| indexes.unheld_amounts.get(id)).copied().sum::<Fixed>();
+        let outside = indexes.unheld_amounts.range(cursor..).map(|(_, amount)| *amount).sum::<Fixed>();
+        (cursor, gaps, indexes.unheld_total - named - outside)
     }
 
     /// Every proof `account` exits with against the last root, or `None` before the first root
@@ -359,7 +359,7 @@ pub fn exit_terms_key() -> B256 {
     keccak(&[&[EXIT_TERMS]])
 }
 
-/// `keccak256(abi.encode(uint64 depositCursor, int128 pending, int128 held, uint64[] gaps))`.
+/// `keccak256(abi.encode(uint64 depositCursor, int128 pending, int128 held, int128 unheld, uint64[] gaps))`.
 pub fn exit_terms_hash(terms: &ExitTerms) -> B256 {
     let ExitTerms { deposit_cursor, pending, held, unheld, gaps } = terms;
     keccak(&[&(*deposit_cursor, pending.raw(), held.raw(), unheld.raw(), gaps.clone()).abi_encode_params()])

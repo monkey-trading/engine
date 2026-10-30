@@ -101,7 +101,7 @@ fn a_credited_retry_a_reversal_and_a_reinstatement_move_the_totals_and_the_curso
     let proof = h.engine.exit_proof(client).unwrap();
     assert_eq!(
         proof.terms.terms,
-        ExitTerms { deposit_cursor: 4, pending: f("12"), held: Fixed::ZERO, unheld: f("30"), gaps: vec![2] }
+        ExitTerms { deposit_cursor: 4, pending: f("12"), held: Fixed::ZERO, unheld: Fixed::ZERO, gaps: vec![2] }
     );
     assert!(proof.terms.verify(root));
 
@@ -164,7 +164,7 @@ fn a_replacement_sequenced_before_the_deposit_that_took_its_old_id_leaves_that_i
     // Id 0 is a gap the exit refunds; ids 1 to 4, the moved deposit among them, are in the root.
     assert_eq!(
         terms.terms,
-        ExitTerms { deposit_cursor: 5, pending: f("52"), held: f("30"), unheld: receipts[0].amount, gaps: vec![0] }
+        ExitTerms { deposit_cursor: 5, pending: f("52"), held: f("30"), unheld: Fixed::ZERO, gaps: vec![0] }
     );
     assert!(terms.verify(root));
     assert_root_matches_rebuild(&mut h.engine);
@@ -218,7 +218,7 @@ fn one_gap_among_many_live_receipts_names_itself_without_walking_them() {
     assert!(!events.iter().any(|e| matches!(e, Event::CustodyDepositRejected { .. })), "{events:?}");
     let root = B256::from(h.engine.state_root());
     let terms = h.engine.exit_proof(client).unwrap().terms;
-    assert_eq!((terms.terms.deposit_cursor, &terms.terms.gaps, terms.terms.unheld), (190, &vec![4], f("1")));
+    assert_eq!((terms.terms.deposit_cursor, &terms.terms.gaps, terms.terms.unheld), (190, &vec![4], Fixed::ZERO));
     assert!(terms.verify(root));
     assert_root_matches_rebuild(&mut h.engine);
 }
@@ -226,14 +226,15 @@ fn one_gap_among_many_live_receipts_names_itself_without_walking_them() {
 #[test]
 fn the_terms_name_only_the_lowest_gaps_so_the_vault_starts_the_exit_in_bounded_gas() {
     let (mut h, [client, ..], _) = custody();
-    // A live deposit past them keeps the reversed ids below the cursor: sixty-four reversals leave
-    // sixty-four gaps, the terms name the lowest `MAX_EXIT_GAPS`, and `unheld` carries every gap's
-    // principal.
+    // A live deposit past them keeps the reversed ids below the cursor: sixty-eight reversals leave
+    // sixty-eight gaps, the terms name the lowest `MAX_EXIT_GAPS`, and `unheld` carries the four
+    // unnamed gaps' principal at the last recorded amounts, the named gaps reserving their
+    // canonical vault amounts instead.
     let far = DepositReceipt { deposit_id: 200, ..receipt(100, Some(client), "10") };
     let events = credit(&mut h, &far, Some(client), SanctionsStatus::Clear);
     assert!(!events.iter().any(|e| matches!(e, Event::CustodyDepositRejected { .. })), "{events:?}");
     let mut extra = Vec::new();
-    for id in 4..4 + MAX_EXIT_GAPS as u64 {
+    for id in 4..4 + MAX_EXIT_GAPS as u64 + 4 {
         let receipt = receipt(id as u8, Some(client), "10");
         let events = credit(&mut h, &receipt, Some(client), SanctionsStatus::Clear);
         assert!(!events.iter().any(|e| matches!(e, Event::CustodyDepositRejected { .. })), "{events:?}");
@@ -248,8 +249,53 @@ fn the_terms_name_only_the_lowest_gaps_so_the_vault_starts_the_exit_in_bounded_g
     let root = B256::from(h.engine.state_root());
     let proof = h.engine.exit_proof(client).unwrap().terms;
     let lowest: Vec<u64> = (4..4 + MAX_EXIT_GAPS as u64).collect();
-    assert_eq!((proof.terms.deposit_cursor, &proof.terms.gaps, proof.terms.unheld), (201, &lowest, f("640")));
+    assert_eq!((proof.terms.deposit_cursor, &proof.terms.gaps, proof.terms.unheld), (201, &lowest, f("40")));
     assert!(proof.verify(root));
+}
+
+#[test]
+fn ids_passed_over_on_the_way_to_a_higher_id_are_missing_with_no_principal() {
+    let (mut h, [client, ..], _) = custody();
+    // A reorganisation re-includes the client's deposit at id 10 before the custody adapter has
+    // read the deposits the new chain placed at ids 4 to 9: the terms name them as gaps with no
+    // recorded principal, which the vault refunds by id from its own records.
+    let far = DepositReceipt { deposit_id: 10, ..receipt(100, Some(client), "10") };
+    let events = credit(&mut h, &far, Some(client), SanctionsStatus::Clear);
+    assert!(!events.iter().any(|e| matches!(e, Event::CustodyDepositRejected { .. })), "{events:?}");
+    let root = B256::from(h.engine.state_root());
+    let terms = h.engine.exit_proof(client).unwrap().terms;
+    assert_eq!(
+        (terms.terms.deposit_cursor, &terms.terms.gaps, terms.terms.unheld),
+        (11, &vec![4, 5, 6, 7, 8, 9], Fixed::ZERO)
+    );
+    assert!(terms.verify(root));
+    assert_root_matches_rebuild(&mut h.engine);
+}
+
+#[test]
+fn finalising_and_advancing_the_frontier_does_not_lose_a_later_gap() {
+    let (mut h, [client, ..], receipts) = custody();
+    // Cover id 0 through a finalised frontier (base 1), then reverse id 1: the gap below the
+    // cursor survives the pruning the covered id's run would otherwise swallow.
+    let seq = h.engine.recorded_deposit(&receipts[0].reference()).unwrap().updated_at_seq;
+    let events = h.cmd(Command::CustodyDeposit(Box::new(DepositUpdate::Finalise {
+        receipt: receipts[0].clone(),
+        observed_at_seq: seq,
+    })));
+    assert!(!events.iter().any(|e| matches!(e, Event::CustodyDepositRejected { .. })), "{events:?}");
+    let frontier = CustodyCheckpoint { block: receipts[0].block, block_hash: receipts[0].block_hash, deposit_count: 1 };
+    h.cmd(Command::CustodyFinalised(frontier));
+    let seq = h.engine.recorded_deposit(&receipts[1].reference()).unwrap().updated_at_seq;
+    let events = h.cmd(Command::CustodyDeposit(Box::new(DepositUpdate::Reverse {
+        receipt: receipts[1].clone(),
+        observed_at_seq: seq,
+    })));
+    assert!(!events.iter().any(|e| matches!(e, Event::CustodyDepositRejected { .. })), "{events:?}");
+    let root = B256::from(h.engine.state_root());
+    let terms = h.engine.exit_proof(client).unwrap().terms;
+    assert_eq!((terms.terms.deposit_cursor, &terms.terms.gaps, terms.terms.unheld), (4, &vec![1], Fixed::ZERO));
+    assert!(terms.verify(root));
+    assert_root_matches_rebuild(&mut h.engine);
 }
 
 /// A trader receipt for `account`, or a house receipt, in its own block and transaction, with vault
