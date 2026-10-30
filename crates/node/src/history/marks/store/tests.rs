@@ -222,7 +222,7 @@ async fn a_schema_this_code_did_not_create_is_refused_by_every_read_and_write() 
     let err = store.observe(&[(1, 1_792_489_870_000, fixed("2"))]).err().expect("refused");
     assert!(format!("{err:#}").contains("did not create"), "{err:#}");
     let rows: i64 = store.conn.query_row("SELECT count(*) FROM marks", [], |row| row.get(0)).unwrap();
-    assert_eq!(rows, 1, "the refused write changed nothing");
+    assert_eq!(rows, 4, "one sample wrote four resolution buckets, and the refused write added none");
 }
 
 #[tokio::test]

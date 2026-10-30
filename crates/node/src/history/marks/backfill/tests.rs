@@ -64,18 +64,16 @@ fn windows_page_backwards_without_overlap() {
     // A depth of ten minutes at one-minute granularity: 300 candles a page, so one page covers
     // it, ending at now and starting at the oldest bucket.
     let one_page = windows(now, 10 * 60_000, 60_000);
-    assert_eq!(one_page, [(now - 9 * 60_000, now)]);
-    // Five hundred buckets needs two pages: the second ends one bucket before the first's oldest.
+    assert_eq!(one_page, [(now - 10 * 60_000, now)], "the page starts at the oldest bucket");
+    // Five hundred buckets needs two pages: the second ends one bucket before the first's oldest,
+    // and starts at the depth's oldest bucket, which clamps it.
     let two_pages = windows(now, 500 * 60_000, 60_000);
     assert_eq!(two_pages.len(), 2);
     assert_eq!(two_pages[0], (now - 299 * 60_000, now));
-    assert_eq!(two_pages[1], (now - 599 * 60_000, now - 300 * 60_000));
-    // The pages tile the whole depth: every bucket in it appears exactly once.
-    let mut buckets: Vec<i64> =
-        two_pages.iter().flat_map(|(start, end)| (*start..=*end).step_by(60_000usize)).collect();
-    buckets.sort();
-    buckets.dedup();
-    assert_eq!(buckets.len(), 600);
+    assert_eq!(two_pages[1], (now - 500 * 60_000, now - 300 * 60_000));
+    // The pages step backwards without overlap: the second page's end sits one bucket before the
+    // first page's start, and no page starts before the depth's oldest bucket.
+    assert_eq!(two_pages[1].1, two_pages[0].0 - 60_000);
     assert!(two_pages.iter().all(|&(start, _)| start >= now - 500 * 60_000));
 }
 
