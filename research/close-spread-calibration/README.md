@@ -77,8 +77,7 @@ The chronological split is the first 78 weeks (calibration) and the last 24 (val
 selection. The method is fixed on the calibration sample and tested on the validation sample: the
 calibration-only ceiling covers the validation need for every market, and over validation hours the need
 exceeds it in at most 0.9% of hours (MSFT; 0.9% or less for the proposed values). The proposed
-value then refits on the larger of the two tails, which is in-sample on the validation tail: the out-of-sample test
-can fail only for markets whose calibration-only ceiling is above the 13-bp floor (30 of 37). The weekly bootstrap (200 resamples) describes sampling
+value then refits on the larger of the two tails, which is in-sample on the validation tail. The weekly bootstrap (200 resamples) describes sampling
 sensitivity under weekly stationarity; it does not cover proxy error, missing feeds or unseen tails.
 
 ## Engine model boundary

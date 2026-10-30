@@ -151,7 +151,7 @@ def build():
         "objective": {
             "need": "(max_divergence_bps + 1) + hourly tail move * sqrt(max_age_ms / 1h)",
             "selection_statistic": CEILINGS.SELECTION_STATISTIC,
-            "markets_where_validation_could_fail": sum(
+            "markets_set_by_method": sum(
                 row["calibration_only_ceiling_bps"] > floor for row in rows if row["proposed_ceiling_bps"]),
             "floor_bps": CEILINGS.launch_close_charge_bps(params), "step_bps": CEILINGS.LAUNCH_STEP_BPS,
             "burden_limit_percent_of_min_initial_margin": CEILINGS.BURDEN_LIMIT_PERCENT,
