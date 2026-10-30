@@ -70,10 +70,11 @@ class CeilingTests(unittest.TestCase):
 
     def test_floor_bound_ceiling_can_fail_validation(self):
         # A 240-bp validation hourly p99 is 4 bps over one second at a 1s quote age; with a 10-bp divergence
-        # limit the validation need is 14 bps, above the 13-bp floor the calibration ceiling sits at.
+        # limit (11 counted, whole bps truncating) the validation need is 15 bps, above the 13-bp floor the
+        # calibration ceiling sits at.
         row = C.propose(item(upper=20.0, validation_p99=240.0), PARAMS)
         self.assertEqual(row["calibration_only_ceiling_bps"], 13)
-        self.assertAlmostEqual(row["validation_need_bps"], 14.0)
+        self.assertAlmostEqual(row["validation_need_bps"], 15.0)
         self.assertFalse(row["validation_covered_by_calibration_ceiling"])
         self.assertEqual(row["proposed_ceiling_bps"], 15)
 
