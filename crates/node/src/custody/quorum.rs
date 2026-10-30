@@ -212,10 +212,11 @@ impl<R: VaultReader + Sync> VaultReader for Quorum<R> {
         self.vote("deposit_count", answers).map(|v| v.0)
     }
 
-    /// The same registry at the same canonical block hash.
+    /// The same registry at the same canonical block hash, or `None` where the staking contract has
+    /// no code yet, before its deployment.
     /// Error cases:
     /// - no quorum
-    async fn staking_registry(&self, at: BlockRef) -> anyhow::Result<Address> {
+    async fn staking_registry(&self, at: BlockRef) -> anyhow::Result<Option<Address>> {
         let answers = join_all(self.providers.iter().enumerate().map(|(i, (_, r))| async move {
             self.qualified(i)?;
             r.staking_registry(at).await

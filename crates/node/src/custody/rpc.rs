@@ -178,18 +178,22 @@ impl VaultReader for VaultRpc {
     }
 
     /// The registry the configured staking contract records as its deployer, read in the
-    /// canonical block `at`.
+    /// canonical block `at`; `None` where the staking contract has no code yet, before its
+    /// deployment.
     /// Error cases:
-    /// - no staking contract is configured, the call fails or times out, or the answer does not
-    ///   decode as an address
-    async fn staking_registry(&self, at: BlockRef) -> anyhow::Result<Address> {
+    /// - no staking contract is configured, the call fails or times out, or a non-empty answer does
+    ///   not decode as an address
+    async fn staking_registry(&self, at: BlockRef) -> anyhow::Result<Option<Address>> {
         let staking = self.staking.context("no staking contract is configured")?;
         let request = TransactionRequest::default().to(staking).input(registryCall {}.abi_encode().into());
         let out: Bytes = self
             .deadline("eth_call", self.client.request("eth_call", (request, BlockId::hash_canonical(at.hash))))
             .await
             .context("reading the staking contract's registry")?;
-        registryCall::abi_decode_returns(&out).context("decoding the staking contract's registry")
+        if out.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(registryCall::abi_decode_returns(&out).context("decoding the staking contract's registry")?))
     }
 
     /// Both mirrorable staking events from the configured contract, and the operator registry's

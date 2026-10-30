@@ -253,6 +253,77 @@ fn a_rotation_signed_before_rotation_turned_on_gives_way_to_an_election() {
 }
 
 #[test]
+fn a_signed_rotation_cannot_replace_an_elected_handover_even_with_rotation_off() {
+    let mut h = rotating();
+    // The election already took effect on chain, so turning rotation off cancels nothing; its
+    // handover still waits out the local notice, and only it may move the key from then.
+    let effective_at = h.ts + NOTICE_MS;
+    elect(&mut h, 1, elected(), effective_at, "0xelect:0");
+    assert_eq!(
+        switch(&mut h, false, false, "0xoff:0"),
+        vec![Event::RotationSwitched { enabled: false, election_cancelled: false }]
+    );
+    let signed = Client::new(0x67).account;
+    assert_eq!(
+        h.operate_as(common::OPERATOR_SEED, AdminCommand::RotateOperator { address: signed }).pop(),
+        Some(Event::AdminRejected { reason: "while an elected handover waits, only it moves the operator key".into() })
+    );
+    assert_eq!(h.engine.operator_bounds().rotation, Some(PendingRotation { address: elected(), effective_at }));
+    // Once the handover has applied, a signed rotation moves the key again as V35 allows.
+    h.advance_to(effective_at);
+    finalised(&mut h, effective_at);
+    assert_eq!(signed_by(&mut h, ELECTED_SEED, true), Some(Event::AdminApplied));
+    assert_eq!(h.engine.operator_bounds().rotation, None);
+    assert_eq!(
+        h.operate_as(ELECTED_SEED, AdminCommand::RotateOperator { address: signed }).pop(),
+        Some(Event::AdminApplied)
+    );
+}
+
+#[test]
+fn cancelling_a_successor_election_restores_the_handover_it_superseded() {
+    let mut h = rotating();
+    // A catch-up mirrors both elections before either handover applies: the first took office on
+    // chain and the second was cancelled before its effective time.
+    let first_at = h.ts + NOTICE_MS;
+    elect(&mut h, 1, elected(), first_at, "0xelect:0");
+    let successor = Client::new(0x68).account;
+    let second_at = first_at + DAY_MS;
+    elect(&mut h, 2, successor, second_at, "0xelect:1");
+    assert_eq!(
+        h.engine.operator_bounds().rotation,
+        Some(PendingRotation { address: successor, effective_at: second_at })
+    );
+    // The successor's cancellation restores the handover it superseded, as the registry then
+    // names the first winner again.
+    assert_eq!(
+        switch(&mut h, false, true, "0xoff:0"),
+        vec![Event::RotationSwitched { enabled: false, election_cancelled: true }]
+    );
+    assert_eq!(
+        h.engine.operator_bounds().rotation,
+        Some(PendingRotation { address: elected(), effective_at: first_at })
+    );
+    assert_eq!(
+        h.engine.operator_election().last,
+        Some(Election {
+            epoch: 1,
+            candidate: CANDIDATE,
+            admin_key: elected(),
+            effective_at: first_at,
+            registry_effective_at: first_at,
+            cancelled: false
+        })
+    );
+    assert_eq!(h.engine.operator_election().prior, None);
+    // The restored handover takes effect at its time once the mirror passes it.
+    h.advance_to(first_at);
+    finalised(&mut h, first_at);
+    assert_eq!(signed_by(&mut h, ELECTED_SEED, true), Some(Event::AdminApplied));
+    assert_eq!(h.engine.operator().map(|o| o.address), Some(elected()));
+}
+
+#[test]
 fn turning_rotation_off_cancels_an_election_not_yet_in_effect_even_when_mirrored_after_its_time() {
     let mut h = rotating();
     let effective_at = h.ts + NOTICE_MS;

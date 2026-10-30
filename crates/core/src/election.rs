@@ -11,7 +11,10 @@
 //! before the key it cancels could take over. Turning rotation on drops a signed rotation still
 //! pending, and while rotation is on `RotateOperator` is refused, so only an election moves the
 //! key: an incumbent key change can never race an election. Turning rotation off with an election
-//! not yet in effect cancels it, and its pending rotation.
+//! not yet in effect cancels it, and its pending rotation; a signed rotation is also refused while
+//! an elected handover waits to take effect, even with rotation off. A successor election a
+//! catch-up mirrors before that handover applied supersedes it, and cancelling the successor
+//! restores it, as the registry then names its winner again.
 //!
 //! #359 §8's registry path for the operator to change its own key is not built yet; the decision
 //! recorded for it: the change takes the same seven-day notice, each change waits the full notice,
@@ -26,8 +29,9 @@ use crate::operator_bounds::{NOTICE_MS, PendingRotation};
 use crate::protocol::ProtocolVersion;
 use crate::types::{AccountId, MAX_STAMP_MS, Millis};
 
-/// The registry as the engine mirrors it: whether rotation is on, and the last election. Left out
-/// of the encoding while empty.
+/// The registry as the engine mirrors it: whether rotation is on, the last election, and the
+/// election a successor superseded before its handover applied, kept to restore if the successor
+/// is cancelled. Left out of the encoding while empty.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OperatorElection {
@@ -35,6 +39,10 @@ pub struct OperatorElection {
     pub rotation_enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last: Option<Election>,
+    /// The election the last one superseded while its handover still waited: cancelling the last
+    /// restores it, since the registry then names it again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prior: Option<Election>,
 }
 
 /// An election the registry made, as the engine applies it.
@@ -129,12 +137,22 @@ impl Engine {
             if self.operator_bounds.rotation == Some(elected) {
                 self.operator_bounds.rotation = None;
             }
+            // The registry cancels only an election not yet in effect on chain, so the one it
+            // superseded is its operator again: restore the handover it interrupted.
+            if let Some(prior) = self.operator_election.prior.take() {
+                self.operator_election.last = Some(prior);
+                let operator = self.operator.expect("checked above").address;
+                self.operator_bounds.rotation = (prior.admin_key != operator)
+                    .then_some(PendingRotation { address: prior.admin_key, effective_at: prior.effective_at });
+            }
         }
         events.push(Event::RotationSwitched { enabled, election_cancelled });
     }
 
     /// Mirrors the registry's `Elected` event: records the election, and a pending rotation to its
-    /// key when that is not the key in effect, replacing any pending rotation.
+    /// key when that is not the key in effect, replacing any pending rotation. A pending elected
+    /// handover the successor supersedes is kept as `prior`, restored if the successor is
+    /// cancelled before it takes effect.
     pub(crate) fn elect_operator(&mut self, election: &RegistryElection, events: &mut Vec<Event>) {
         let RegistryElection { epoch, candidate, admin_key, effective_at, block, ref chain_ref } = *election;
         let reason = self.registry_mirror_refusal(chain_ref).or_else(|| {
@@ -161,6 +179,10 @@ impl Engine {
         let registry_effective_at = effective_at;
         let effective_at = effective_at.max(self.now + NOTICE_MS);
         let operator = self.operator.expect("checked above").address;
+        // A successor a catch-up mirrors before this one's handover applied supersedes it; keep it
+        // so cancelling the successor restores its handover, as the registry then names it again.
+        self.operator_election.prior =
+            self.operator_election.last.filter(|_| self.operator_bounds.rotation.is_some_and(|r| self.is_elected(r)));
         self.operator_bounds.rotation =
             (admin_key != operator).then_some(PendingRotation { address: admin_key, effective_at });
         self.operator_election.last =
@@ -186,7 +208,7 @@ impl Engine {
     }
 
     /// Whether `rotation` is the one the last election, not cancelled, recorded.
-    fn is_elected(&self, rotation: PendingRotation) -> bool {
+    pub(crate) fn is_elected(&self, rotation: PendingRotation) -> bool {
         self.operator_election.last.is_some_and(|last| {
             !last.cancelled && last.admin_key == rotation.address && last.effective_at == rotation.effective_at
         })

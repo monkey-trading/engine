@@ -102,15 +102,22 @@ impl<V: VaultReader> DepositWatcher<V> {
             return Ok(());
         };
         // The registry whose elections mirror must be the one that deployed the staking contract.
+        // A window ending before the contract's deployment has no code to read and nothing that
+        // could name another registry, so the binding is checked again at the end of a later
+        // window instead of trapping the catch-up on the same range.
         if let Some((registry, false)) = self.registry {
             let hash = *hashes.get(&to).ok_or_else(|| PollError::unsettled(anyhow!("staking window lacks its end")))?;
-            let recorded = self.vault.staking_registry(BlockRef { number: to, hash }).await.map_err(PollError::rpc)?;
-            if recorded != registry {
-                return Err(PollError::inconsistent(anyhow!(
-                    "the staking contract records registry {recorded}, not the configured {registry}"
-                )));
+            match self.vault.staking_registry(BlockRef { number: to, hash }).await.map_err(PollError::rpc)? {
+                None => info!(to, "the staking contract is not deployed at this window's end"),
+                Some(recorded) => {
+                    if recorded != registry {
+                        return Err(PollError::inconsistent(anyhow!(
+                            "the staking contract records registry {recorded}, not the configured {registry}"
+                        )));
+                    }
+                    self.registry = Some((registry, true));
+                }
             }
-            self.registry = Some((registry, true));
         }
         let (cursor, path) = self.staking.as_mut().expect("staking cursor checked above");
         staking::mirror(&self.vault, tx, cursor, path, &mut self.staking_range, from..=to, &hashes).await

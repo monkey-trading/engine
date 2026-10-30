@@ -94,6 +94,9 @@ pub(super) struct ChainState {
     pub(super) log_range_cap: Option<u64>,
     /// Staking event reads refused for covering more blocks than `log_range_cap`.
     pub(super) staking_refusals: u32,
+    /// The block the staking contract deploys at; before it the endpoint answers no code. `None`
+    /// means it always exists, as in single-fixture tests.
+    pub(super) staking_deployed_at: Option<u64>,
     pub(super) failing: bool,
     /// Requests that start a poll: identity checks and final-block reads.
     pub(super) polls: u64,
@@ -228,9 +231,12 @@ impl VaultReader for FakeChain {
         Ok(visible.cloned().collect())
     }
 
-    async fn staking_registry(&self, at: BlockRef) -> anyhow::Result<Address> {
-        let _ = at;
-        Ok(REGISTRY)
+    async fn staking_registry(&self, at: BlockRef) -> anyhow::Result<Option<Address>> {
+        let chain = self.0.lock().unwrap();
+        if chain.staking_deployed_at.is_some_and(|at_deploy| at.number < at_deploy) {
+            return Ok(None);
+        }
+        Ok(Some(REGISTRY))
     }
 }
 

@@ -70,3 +70,32 @@ async fn a_staking_contract_another_registry_deployed_stalls_the_poll_before_any
     assert_eq!(node.read(move |engine| engine.staked(account)).await, TokenUnits(500));
     node.stop().await;
 }
+
+#[tokio::test]
+async fn a_staking_contract_deployed_after_the_first_window_scans_up_to_it_and_then_binds() {
+    let dir = scratch("registry-binding-late-deploy");
+    let node = Node::start_confirmed(&dir);
+    init_staking(&node).await;
+    let account = AccountId([4; 20]);
+    let chains = poll_chains(10);
+    for chain in &chains {
+        let mut state = chain.0.lock().unwrap();
+        state.staking_deployed_at = Some(5);
+        state.staking.push(staked(6, 1, account, 500));
+    }
+    let mut watcher = staking_watcher_with_range(&chains, &dir, 4);
+    // The first window ends before the deployment: no binding read can answer, and the scan
+    // advances instead of trapping on the same range. Window proofs advance per poll, so poll
+    // until the mirror credits the event; a poll that errors, as the trap did, fails the test.
+    for _ in 0..10 {
+        if node.read(move |engine| engine.staked(account)).await == TokenUnits(500) {
+            break;
+        }
+        watcher.poll(&node.tx).await.unwrap();
+    }
+    assert_eq!(node.read(move |engine| engine.staked(account)).await, TokenUnits(500));
+    let cursor: StakingCursor =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("staking-cursor.json")).unwrap()).unwrap();
+    assert_eq!(cursor.next_block, 8);
+    node.stop().await;
+}
