@@ -57,6 +57,16 @@ const EXISTING: &str = "SELECT open, high, low, close, provenance FROM marks
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 /// Pages read at once, each on its own connection.
 const MAX_READS: usize = 16;
+/// One page's market, resolution, inclusive window, and size.
+struct PageQuery {
+    market: MarketId,
+    resolution: Resolution,
+    from: Millis,
+    to: Millis,
+    limit: usize,
+    max_limit: usize,
+}
+
 /// A provider-seeded bucket.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Seed {
@@ -340,9 +350,10 @@ impl Reader {
     ) -> anyhow::Result<MarksPage> {
         let permit = self.permits.clone().acquire_owned().await.expect("the read semaphore is never closed");
         let (path, schema) = (self.path.clone(), self.schema.clone());
+        let query = PageQuery { market, resolution, from, to, limit, max_limit };
         let read = spawn_blocking(move || {
             let _permit = permit;
-            read_page(&path, &schema, market, resolution, from, to, limit, max_limit)
+            read_page(&path, &schema, &query)
         });
         read.await.context("marks reader task")?
     }
@@ -351,16 +362,8 @@ impl Reader {
 /// Reads one page from the cache at `path`, once it holds exactly `schema`.
 /// Error cases:
 /// - the cache cannot be opened or read, holds another schema, or holds a row that does not parse
-fn read_page(
-    path: &Path,
-    schema: &[SchemaRow],
-    market: MarketId,
-    resolution: Resolution,
-    from: Millis,
-    to: Millis,
-    limit: usize,
-    max_limit: usize,
-) -> anyhow::Result<MarksPage> {
+fn read_page(path: &Path, schema: &[SchemaRow], query: &PageQuery) -> anyhow::Result<MarksPage> {
+    let PageQuery { market, resolution, from, to, limit, max_limit } = *query;
     let mut conn = read_only(path)?;
     // The schema check and the page read see one snapshot of the file.
     let conn = conn.transaction().context("starting a marks read")?;

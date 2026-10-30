@@ -28,6 +28,8 @@ use crate::config::{MarksSection, default_marks_retention_1h, default_marks_rete
 /// One mark a command left: the market, the sequenced time, and the index mark it held once the
 /// command applied.
 pub(crate) type MarkSample = (MarketId, Millis, Fixed);
+/// The sink recovery's replay hands each changed mark to, to seed the cache.
+pub(crate) type MarkSink = Box<dyn FnMut(MarketId, Millis, Fixed)>;
 
 /// A bucket width the cache keeps, each with its own retention. The storage tag is the column
 /// value, so new resolutions are only ever appended.

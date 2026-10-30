@@ -103,7 +103,7 @@ pub(super) struct Replay {
     authorized: BTreeMap<(AccountId, u64), (u64, u64)>,
     /// The recovery-time marks sink: takes each market's mark as it changes, to seed the derived
     /// marks cache. Nothing without one: `engine replay` does not seed a cache.
-    marks: Option<Box<dyn FnMut(engine_core::types::MarketId, Millis, Fixed)>>,
+    marks: Option<crate::history::marks::MarkSink>,
     /// The last mark taken per market, so only changes reach the sink.
     last_marks: BTreeMap<engine_core::types::MarketId, Fixed>,
 }

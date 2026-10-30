@@ -20,10 +20,10 @@ impl Sequencer {
     pub(super) fn report_marks(&mut self, ts: Millis) {
         let Some(tx) = &self.marks_tx else { return };
         for (id, market) in self.engine.markets() {
-            if let Some(mark) = market.mark {
-                if self.last_marks.insert(*id, mark) != Some(mark) {
-                    let _ = tx.try_send((*id, ts, mark));
-                }
+            if let Some(mark) = market.mark
+                && self.last_marks.insert(*id, mark) != Some(mark)
+            {
+                let _ = tx.try_send((*id, ts, mark));
             }
         }
     }

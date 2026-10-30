@@ -164,8 +164,8 @@ async fn pages_are_oldest_first_capped_with_a_next_cursor() {
     let (path, mut store) = fresh_store_at("marks-pages", Retentions::defaults());
     let market = 1;
     let base = 1_792_489_860_000;
-    for n in 0..5 {
-        store.observe(&[(market, base + n * 60_000, Fixed::from_int(i64::from(n)))]).unwrap();
+    for n in 0_i64..5 {
+        store.observe(&[(market, base + n * 60_000, Fixed::from_int(n))]).unwrap();
     }
     drop(store);
     let reader = Reader::new(path);
@@ -219,7 +219,7 @@ async fn a_schema_this_code_did_not_create_is_refused_by_every_read_and_write() 
     assert!(format!("{err:#}").contains("did not create"), "{err:#}");
     drop(reader);
     // The writer's next write refuses too, and changes nothing; the host's trigger never runs.
-    let err = store.observe(&[(1, 1_792_489_870_000, fixed("2"))]).err().expect("refused");
+    let err = store.observe(&[(1, 1_792_489_870_000, fixed("2"))]).expect_err("refused");
     assert!(format!("{err:#}").contains("did not create"), "{err:#}");
     let rows: i64 = store.conn.query_row("SELECT count(*) FROM marks", [], |row| row.get(0)).unwrap();
     assert_eq!(rows, 4, "one sample wrote four resolution buckets, and the refused write added none");

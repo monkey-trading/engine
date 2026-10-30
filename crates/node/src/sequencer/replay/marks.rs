@@ -11,7 +11,7 @@ use crate::sequencer::replay::Replay;
 impl Replay {
     /// Sets the sink that takes each market's mark as it changes during this replay, which recovery
     /// uses to seed the derived marks cache.
-    pub(crate) fn sample_marks_with(&mut self, sink: Box<dyn FnMut(MarketId, Millis, Fixed)>) {
+    pub(crate) fn sample_marks_with(&mut self, sink: crate::history::marks::MarkSink) {
         self.marks = Some(sink);
     }
 }
@@ -20,17 +20,17 @@ impl Replay {
 /// command's sequenced time; unchanged marks are not re-taken, so a live cache seeded this way
 /// continues a recovery-seeded one exactly.
 pub(crate) fn sample_marks(
-    sink: &mut Option<Box<dyn FnMut(engine_core::types::MarketId, Millis, Fixed)>>,
-    last_marks: &mut BTreeMap<engine_core::types::MarketId, Fixed>,
+    sink: &mut Option<crate::history::marks::MarkSink>,
+    last_marks: &mut BTreeMap<MarketId, Fixed>,
     engine: &Engine,
     ts: Millis,
 ) {
     let Some(sink) = sink.as_mut() else { return };
     for (id, market) in engine.markets() {
-        if let Some(mark) = market.mark {
-            if last_marks.insert(*id, mark) != Some(mark) {
-                sink(*id, ts, mark);
-            }
+        if let Some(mark) = market.mark
+            && last_marks.insert(*id, mark) != Some(mark)
+        {
+            sink(*id, ts, mark);
         }
     }
 }

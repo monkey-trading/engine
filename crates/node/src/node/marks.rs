@@ -5,8 +5,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use engine_core::Fixed;
-use engine_core::types::{MarketId, Millis};
+use engine_core::types::MarketId;
 use tokio::sync::mpsc;
 
 use crate::config::{BackfillSection, NodeConfig};
@@ -52,7 +51,7 @@ pub(super) fn into_task_store(shared: Rc<RefCell<Store>>) -> Store {
 }
 
 /// The sink recovery's replay hands each changed mark to; it buffers batches into the store.
-pub(super) fn recovery_sink(shared: &Rc<RefCell<Store>>) -> Box<dyn FnMut(MarketId, Millis, Fixed)> {
+pub(super) fn recovery_sink(shared: &Rc<RefCell<Store>>) -> crate::history::marks::MarkSink {
     let mut seeder = Seeder::new(shared.clone());
     Box::new(move |market, ts, mark| seeder.sample((market, ts, mark)))
 }

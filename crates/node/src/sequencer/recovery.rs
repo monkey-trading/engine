@@ -196,7 +196,7 @@ impl Sequencer {
         parent: Option<crate::log::CheckpointParent>,
         authorities: crate::checkpoints::SignerHistory,
         mut observe: impl FnMut(&LogEntry),
-        marks: Option<Box<dyn FnMut(engine_core::types::MarketId, Millis, Fixed)>>,
+        marks: Option<crate::history::marks::MarkSink>,
     ) -> anyhow::Result<ReplayedLog> {
         let mut replay = parent
             .map_or_else(|| Replay::with_trust(domain, signer), |parent| Replay::with_recovery(domain, signer, parent));
