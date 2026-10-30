@@ -62,8 +62,10 @@ def write_report(data):
         "engine bounds that risk per market in its price rules, so the need is", "",
         "`need = (max_divergence_bps + 1) + hourly tail move * sqrt(max_age_ms / 1 hour)`", "",
         f"The ceiling is the smallest multiple of {data['objective']['step_bps']} bps at or above the need, never "
-        f"below {data['objective']['floor_bps']} bps (the largest close charge the launch parameters allow, so no launch "
-        "close is clamped). The tail move is the upper end of the "
+        f"below {data['objective']['floor_bps']} bps (the largest close charge the launch parameters allow, so no "
+        "launch close is clamped by more than the rounding unit: at a ceiling equal to the launch charge the "
+        "floored exact bound trims the engine's upward rounding, paying one raw unit less than today). The tail "
+        "move is the upper end of the "
         "weekly block-bootstrap interval of the calibration sample's hourly p99 of the in-bar move (the open against the previous close is left out). Hourly bars are scaled to the "
         "one-second quote age by square-root-of-time, an assumption no hourly data can test.", "",
         "Gaps, closures and contract rolls are not in the need: a price jump is not a spread. They move margin and "

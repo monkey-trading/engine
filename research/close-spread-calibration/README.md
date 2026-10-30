@@ -57,7 +57,9 @@ session gaps, is left out and reported separately. DE40 and UK100 fold their ove
 overstates their tail. Different asset classes differ because their divergence limits differ (FX 5, indices and commodities
 10, shares 10, crypto 25 bps), and a tail move over one second is small: one second is 1/60 of an hour's
 scale. The 13-bps floor is the stress-minimum 10 plus the top toxicity tier 3 in `production-genesis.toml`;
-a ceiling below it would clamp a launch close at the top stress level.
+a ceiling below it would clamp a launch close at the top stress level, and a ceiling equal to it still trims
+the rounding unit: the engine rounds the charge up, so the floored exact bound pays one raw unit less than
+today's launch close.
 
 Volatility enters only through that one-second tail, and a doubled volatility input raises 31 of 37 ceilings,
 by at most 10 bps (the floor absorbs the four calm FX markets). A price jump over a gap, a closure or a contract roll is not a spread: it moves margin and
