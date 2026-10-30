@@ -1,6 +1,7 @@
 //! Opt-in local Anvil scenario over `node::run`; no production configuration enables these hooks.
 
 mod client;
+mod exit;
 mod flows;
 mod guardian;
 mod keys;
@@ -90,6 +91,14 @@ async fn dev_scenario_key_lifecycle() -> anyhow::Result<()> {
     timeout(Duration::from_secs(900), keys::key_lifecycle())
         .await
         .context("the key lifecycle scenario exceeded fifteen minutes")?
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "local Anvil end-to-end; scripts/dev-exit.sh runs the parent only"]
+async fn dev_scenario_exit_against_the_last_posted_root() -> anyhow::Result<()> {
+    timeout(Duration::from_secs(600), exit::exit_against_the_last_posted_root())
+        .await
+        .context("the exit scenario exceeded ten minutes")?
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

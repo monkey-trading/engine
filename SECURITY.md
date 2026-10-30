@@ -63,7 +63,8 @@ the custody vault contract that will hold collateral on Arbitrum One, with the M
 deploys and alone mints against posted checkpoints, the staking contract that holds MONKEY, and
 the vault’s USDC distribution claims; and the enclave image the node runs in, together
 with the attestation that vouches for it. The vault contract takes deposits, pays signed withdrawals
-with approval inclusion proofs, and mints MONKEY entitlements, and is in scope as published here;
+with approval inclusion proofs, mints MONKEY entitlements, and, once checkpoints stop, runs the exit
+against the last posted root, and is in scope as published here;
 the enclave image, built from `image`, is in scope as published here too. A trading account must be
 able to sign requests with its own key, since the engine accepts no contract signatures: a contract
 wallet funds a key that signs for it through the vault's `depositFor`, and a balance credited to a

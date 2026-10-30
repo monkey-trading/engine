@@ -61,19 +61,20 @@ impl Engine {
             (None, Some(_)) => return Err(DepositReject::UnknownReceipt),
             (Some(_), _) => return Err(DepositReject::SettledReceipt),
         }
+        self.reverse_conflicting_receipts(replacement, Some(&orphan.reference()), events)?;
         if self.protocol_version >= ProtocolVersion::V26 {
             return self.replace_screened_deposit(orphan, replacement, uncredited, screening, events);
         }
         if let Some(uncredited) = uncredited {
             // The replacement is the same funded deposit, so it keeps the orphan's refusal.
-            self.record_deposit(orphan, DepositStatus::Reversed, Fixed::ZERO, Some(uncredited), events);
+            self.record_deposit(orphan, DepositStatus::Reversed, Fixed::ZERO, Some(uncredited), events)?;
             self.track_uncredited(orphan, uncredited, false);
-            self.record_deposit(replacement, DepositStatus::Unfinalised, Fixed::ZERO, Some(uncredited), events);
+            self.record_deposit(replacement, DepositStatus::Unfinalised, Fixed::ZERO, Some(uncredited), events)?;
             self.track_uncredited(replacement, uncredited, true);
             return Ok(());
         }
-        self.record_deposit(orphan, DepositStatus::Reversed, -orphan.amount, None, events);
-        self.record_deposit(replacement, DepositStatus::Unfinalised, replacement.amount, None, events);
+        self.record_deposit(orphan, DepositStatus::Reversed, -orphan.amount, None, events)?;
+        self.record_deposit(replacement, DepositStatus::Unfinalised, replacement.amount, None, events)?;
         Ok(())
     }
 
@@ -104,7 +105,7 @@ impl Engine {
             if old.is_none() { -orphan.amount } else { Fixed::ZERO },
             old,
             events,
-        );
+        )?;
         if let Some(old) = old {
             self.track_uncredited(orphan, old, false);
         }
@@ -114,7 +115,7 @@ impl Engine {
             if new.is_none() { replacement.amount } else { Fixed::ZERO },
             new,
             events,
-        );
+        )?;
         self.deposits.get_mut(&replacement.reference()).expect("replacement recorded").payer = screening.payer;
         if let Some(new) = new {
             self.track_uncredited(replacement, new, true);

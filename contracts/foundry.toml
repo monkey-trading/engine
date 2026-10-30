@@ -7,7 +7,10 @@ libs = ["dependencies"]
 solc_version = "0.8.36"
 # Arbitrum One supports Cancun (transient storage, used by the reentrancy guard).
 evm_version = "cancun"
-# Tests read the withdrawal vector and the engine's entitlement proof vectors.
+# The vault's exit keeps it within EIP-170's 24,576-byte runtime limit only when optimized.
+optimizer = true
+optimizer_runs = 200
+# Tests read the withdrawal vector and the engine's entitlement and exit proof vectors.
 fs_permissions = [
     { access = "read", path = "./test/fixtures" },
     { access = "read", path = "../crates/core/tests/fixtures" },

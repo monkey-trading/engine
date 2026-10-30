@@ -65,8 +65,9 @@ jobs:
                 agents/* | AGENTS.md | CLAUDE.md | README.md | SECURITY.md | research/* | image/README.md \
                   | crates/core/README.md | crates/node/README.md | crates/verify/README.md \
                   | crates/verify-wasm/README.md | crates/wire/README.md) ;;
-                # The contracts' emission tests read the engine's entitlement proof vectors.
-                crates/core/tests/fixtures/emissions.json) areas+=" rust scenarios image contracts" ;;
+                # The contracts' emission and exit tests read the engine's proof vectors.
+                crates/core/tests/fixtures/emissions.json | crates/core/tests/fixtures/exit.json)
+                  areas+=" rust scenarios image contracts" ;;
                 # The image embeds config/test-keys.toml and boots on config/dev.toml.
                 crates/* | Cargo.toml | Cargo.lock | config/dev.toml | config/test-keys.toml)
                   areas+=" rust scenarios image" ;;
@@ -307,6 +308,8 @@ jobs:
         run: ./scripts/dev-withdrawals.sh
       - name: Run the enclave key lifecycle dev scenario
         run: ./scripts/dev-key-lifecycle.sh
+      - name: Run the exit against the last posted root on Anvil
+        run: ./scripts/dev-exit.sh
       - name: Run the API and direct-vault access enforcement dev scenario
         run: ./scripts/dev-access-enforcement.sh
       - name: Run the executable quotes dev scenario

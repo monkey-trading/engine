@@ -59,18 +59,18 @@ pub(super) struct Chain {
     pub url: String,
     pub token: Address,
     pub vault: Address,
+    /// The vault's timelock, whose only proposer is `deployer` and whose delay is one second.
+    pub timelock: Address,
     pub relayer: Address,
     pub payer: Address,
     pub funder: Address,
     pub signer: engine_core::types::AccountId,
-    /// The deployment's timelock, with a one-second delay, which the deployer proposes to.
-    pub timelock: Address,
     /// Held for writing while a block is mined; node RPC proxies hold it for reading.
     pub mining: Arc<RwLock<()>>,
     client: reqwest::Client,
     /// Deploys, proposes to the timelock, and is the Vault's guardian, as the deployment's
     /// multisig is.
-    deployer: Address,
+    pub deployer: Address,
     miner: JoinHandle<anyhow::Result<()>>,
     _anvil: ChildProcess,
 }
@@ -126,11 +126,11 @@ impl Chain {
             url,
             token: Address::ZERO,
             vault: Address::ZERO,
+            timelock: Address::ZERO,
             relayer: Address::ZERO,
             payer: Address::ZERO,
             funder: Address::ZERO,
             deployer: Address::ZERO,
-            timelock: Address::ZERO,
             signer: engine_core::types::AccountId(key.address()),
             mining,
             client,
@@ -161,6 +161,9 @@ impl Chain {
                     chain.timelock,
                     deployer,
                     U256::from(10).pow(U256::from(18)),
+                    crate::test_support::DEV_EXIT_SCHEDULE.0,
+                    crate::test_support::DEV_EXIT_SCHEDULE.1,
+                    crate::test_support::DEV_EXIT_SCHEDULE.2,
                 )
                     .abi_encode(),
             )

@@ -57,7 +57,7 @@ fn replacement(h: &Harness, original: &DepositReceipt, moved: &DepositReceipt) -
 }
 
 /// Signs fresh source evidence for the canonical payer and exact replacement reference.
-fn screening_evidence(
+pub(crate) fn screening_evidence(
     h: &Harness,
     receipt: &DepositReceipt,
     payer: AccountId,

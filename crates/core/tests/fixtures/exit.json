@@ -1,0 +1,239 @@
+{
+  "custody": {
+    "account": {
+      "account": "0x1a642f0e3c3af545e7acbd38b07251b3990914f1",
+      "balance": "100000000000",
+      "openPositions": "0",
+      "siblings": [
+        "0x246b99fe11a3f64a50066ba68e66f8d2e66e2abcc21229b615faa73ebb9873fd",
+        "0xf2997cb76410646138a0bebf476a8404c98d500fc5451534bcc1defe9e775f49",
+        "0x0102494eafedc5804d0c05e7a3aff96d54df6dfe19f878cf8ce93bd1e8746081",
+        "0x880a838b0a6984e2f6916ea9e9b84c0ede51091dd11891efb5096e5d0988c992",
+        "0x4c14259f7905ab1f1c787228a29aca8379887930f7e1437d146e218e01c8e33b"
+      ],
+      "toxicityBps": "0",
+      "toxicityFraction": "0",
+      "toxicityHistory": "0",
+      "unfinalisedDeposits": "100000000000",
+      "withdrawalNonce": "0"
+    },
+    "claimUsdc": "100000000",
+    "house": {
+      "account": "0x0000000000000000000000000000000000000000",
+      "amount": "12000000000",
+      "chainRef": "00000000000000000103:0x0404040404040404040404040404040404040404040404040404040404040404:0x4343434343434343434343434343434343434343434343434343434343434343:0",
+      "depositId": "3",
+      "payer": "0x5050a4f4b3f9338c3472dcc01a87c76a144b3c9c",
+      "siblings": [
+        "0xfa733f01593c9fa17b451e5851e9eb51e69f94f0693fb536c6214711d2ac64c3",
+        "0x0f589270c3f968b7297abf9275ae8dcb61f88e24a13fdeb924f4155ad2b47594",
+        "0x46d337ec679e8d8810d501eca4a5470a4777ff71c3abe2e9181d13dc15a59491",
+        "0x0b3b09c0274d1e86bbce12fe309bc2057312050757324027e01d73c41d042665"
+      ]
+    },
+    "markets": [],
+    "pending": {
+      "account": "0x5050a4f4b3f9338c3472dcc01a87c76a144b3c9c",
+      "amount": "40000000000",
+      "chainRef": "00000000000000000101:0x0202020202020202020202020202020202020202020202020202020202020202:0x4141414141414141414141414141414141414141414141414141414141414141:0",
+      "depositId": "1",
+      "payer": "0x5050a4f4b3f9338c3472dcc01a87c76a144b3c9c",
+      "siblings": [
+        "0xfa733f01593c9fa17b451e5851e9eb51e69f94f0693fb536c6214711d2ac64c3",
+        "0x0f589270c3f968b7297abf9275ae8dcb61f88e24a13fdeb924f4155ad2b47594",
+        "0xbd471c6a1b2fb8f998465068e110707792a6bfaac250e69e626e84cd93d20476",
+        "0xcfdc95505d4702eb072c11948bffa967a94d9849f645c2389103c0aba595ac85",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xc31ce1a0317f4120704628eb21754399fbac2eafcafc44a3d5d1ca229886d739"
+      ]
+    },
+    "positions": [],
+    "root": "0x8dca247ba570d0c68d5041af1fc8d409c288e3de1f65c37a5b02c2c8db616482",
+    "seq": "17",
+    "terms": {
+      "depositBase": "0",
+      "depositCursor": "4",
+      "gaps": [],
+      "held": "30000000000",
+      "heldReceipts": "182000000000",
+      "pending": "52000000000",
+      "siblings": [
+        "0xfa733f01593c9fa17b451e5851e9eb51e69f94f0693fb536c6214711d2ac64c3",
+        "0x0f589270c3f968b7297abf9275ae8dcb61f88e24a13fdeb924f4155ad2b47594",
+        "0x46d337ec679e8d8810d501eca4a5470a4777ff71c3abe2e9181d13dc15a59491",
+        "0xf25bf1ea37036e7fb548ed4efcf8fabeb59d40cb97e46c089bb342b035b97062"
+      ],
+      "unheld": "0"
+    }
+  },
+  "trading": {
+    "account": {
+      "account": "0x0101010101010101010101010101010101010101",
+      "balance": "129855280000000",
+      "openPositions": "3",
+      "siblings": [
+        "0xf1b00c5b25035f6e0cced9ec85f13a141115cf2f8f2d9c73c59f2ffeea9321c4",
+        "0x0c93dc073dd4d11a248aac9c466f06a8d58599eecd23ad18bcdc88a1365f74f0",
+        "0x860f0edec4b0b096b87221e9ba664b42c537a8b2dd403bbf1069d23a67bc57a3",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0x4d325851698cb2130d9775bf956fb558a25ff6150171c9abdd90dad8533992e8",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0x1e7f2821a7c256b47b08e8e04694936c72ad835295013a605de60249b0b20386"
+      ],
+      "toxicityBps": "90",
+      "toxicityFraction": "909090910",
+      "toxicityHistory": "11000000000000",
+      "unfinalisedDeposits": "0",
+      "withdrawalNonce": "1"
+    },
+    "approval": {
+      "account": "0x0101010101010101010101010101010101010101",
+      "amountUsdc": "100000000000",
+      "approvedSeq": "27",
+      "nonce": "1",
+      "siblings": [
+        "0xf1b00c5b25035f6e0cced9ec85f13a141115cf2f8f2d9c73c59f2ffeea9321c4",
+        "0xd01d1dbd518e5eef3d3ba6fe1ff51e152ef72230101090ffb11a73aef1031162",
+        "0xdd33d930df7d4d9dd8d984260cfd7860b3551ceac7ef175f7fb269f605f48e1a",
+        "0x4ab8105ac6c45d76e10eb392085bbf8c614358a86170977446370947e9f294f5"
+      ]
+    },
+    "claimUsdc": "129820340000",
+    "markets": [
+      {
+        "clientCost": "26821439993294",
+        "clientQty": "1333333333",
+        "fxMark": "0",
+        "fxMarked": false,
+        "fxMarket": "0",
+        "mark": "20100000000000",
+        "marked": true,
+        "market": "1",
+        "quoteCurrency": "0",
+        "siblings": [
+          "0xf1b00c5b25035f6e0cced9ec85f13a141115cf2f8f2d9c73c59f2ffeea9321c4",
+          "0x0c93dc073dd4d11a248aac9c466f06a8d58599eecd23ad18bcdc88a1365f74f0",
+          "0x860f0edec4b0b096b87221e9ba664b42c537a8b2dd403bbf1069d23a67bc57a3",
+          "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "0x7e2986c0d578736723c3dcab2d391e30a7b2f27945a5fb36e766bc45d3c9cd6a"
+        ],
+        "stateHash": "0x9bfd2863dd59907c0f92fe6448a5d8974c61d23806d295bdb4e404b2574fbc92"
+      },
+      {
+        "clientCost": "150045000000000",
+        "clientQty": "1000000000000",
+        "fxMark": "150000000000",
+        "fxMarked": true,
+        "fxMarket": "5",
+        "mark": "150000000000",
+        "marked": true,
+        "market": "5",
+        "quoteCurrency": "3",
+        "siblings": [
+          "0xb8d58da12c46a9ba2df1927ab7dffc4b609c5a1d301a13043d65a8bd182d5144",
+          "0x3431e3d3ecb83105cbcfcc47dfa3ce4b8d5554057da3d39b9b40a2115b7b60e2",
+          "0xdb5ae9c631428672e59efb1afabae478b698abbb770752a78e805684db8913b0",
+          "0xc603bde73c91221f83218dd4568dcffea5295c84676806f8a8deae9ee441df74"
+        ],
+        "stateHash": "0x69f039fe78e11a2596b0a8aa23bda769e9047688847ead3ca73d1b153af2739a"
+      },
+      {
+        "clientCost": "-39988000000000",
+        "clientQty": "-2000000000",
+        "fxMark": "1100000000",
+        "fxMarked": true,
+        "fxMarket": "4",
+        "mark": "20000000000000",
+        "marked": true,
+        "market": "6",
+        "quoteCurrency": "1",
+        "siblings": [
+          "0xf1b00c5b25035f6e0cced9ec85f13a141115cf2f8f2d9c73c59f2ffeea9321c4",
+          "0x0c93dc073dd4d11a248aac9c466f06a8d58599eecd23ad18bcdc88a1365f74f0",
+          "0x6f914ea4076e2efb964858e4a62a0a73496fadf534d66d514740f73282ce9a8f"
+        ],
+        "stateHash": "0xa5dc241fdbcd649d36b2a64cdaafafab81af80e2e4c0c554735f92f9dbad5612"
+      }
+    ],
+    "positions": [
+      {
+        "entry": "20116080000000",
+        "market": "1",
+        "qty": "1333333333",
+        "siblings": [
+          "0xb8d58da12c46a9ba2df1927ab7dffc4b609c5a1d301a13043d65a8bd182d5144",
+          "0x3431e3d3ecb83105cbcfcc47dfa3ce4b8d5554057da3d39b9b40a2115b7b60e2",
+          "0x9d1e68cb2b17911eb71e784fc224332655d09fb34dc5357ac9f2f85293a90f06",
+          "0xdd478db90f8fb0f452018244be8728c34f0722a55d766bd959e6da60aa792e74",
+          "0x5daf9b5da99bb87c7f44c5b4fc4c5d054086b407498c17bb2ccb02c062f8f262"
+        ]
+      },
+      {
+        "entry": "150045000000",
+        "market": "5",
+        "qty": "1000000000000",
+        "siblings": [
+          "0xf1b00c5b25035f6e0cced9ec85f13a141115cf2f8f2d9c73c59f2ffeea9321c4",
+          "0xd01d1dbd518e5eef3d3ba6fe1ff51e152ef72230101090ffb11a73aef1031162",
+          "0x57334444484208ae6a80e3a735f96794b2c99b330a443b4895dc70e3ddcb1b3f",
+          "0x30e9912a19805bad7338b0dfdd1743efbb8a5da594f0e2340b4686c786b93ba4",
+          "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "0x756d9c911ae35cc66d0a518e1743bc24de4400785c792956ddaed2c5407e19b8"
+        ]
+      },
+      {
+        "entry": "19994000000000",
+        "market": "6",
+        "qty": "-2000000000",
+        "siblings": [
+          "0xb8d58da12c46a9ba2df1927ab7dffc4b609c5a1d301a13043d65a8bd182d5144",
+          "0xae12d8cd428c72753943296adbdf7175626edc16216399348b668841ea15c1c8",
+          "0xc31ce1a0317f4120704628eb21754399fbac2eafcafc44a3d5d1ca229886d739",
+          "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "0xaa6f6f8b60f2f4da7cf3088b83587bacce16dc9d7d5b5dc5d7560425eb750cf1",
+          "0x5018f9de62202eb17619851bcac27f0d7d177f8fbb0f702eec6f5d80a8c37465"
+        ]
+      }
+    ],
+    "queued": {
+      "account": "0x0101010101010101010101010101010101010101",
+      "amount": "150000000000000",
+      "remaining": "50000000000000",
+      "remainingUsdc": "50000000000",
+      "requestedSeq": "27",
+      "siblings": [
+        "0xb8d58da12c46a9ba2df1927ab7dffc4b609c5a1d301a13043d65a8bd182d5144",
+        "0x3431e3d3ecb83105cbcfcc47dfa3ce4b8d5554057da3d39b9b40a2115b7b60e2",
+        "0x9d1e68cb2b17911eb71e784fc224332655d09fb34dc5357ac9f2f85293a90f06",
+        "0xdd478db90f8fb0f452018244be8728c34f0722a55d766bd959e6da60aa792e74",
+        "0x061a3154c32629357241e2b8cae73a582af5a85787ff72c7f468d44ca6be7172"
+      ],
+      "ticket": "0"
+    },
+    "root": "0x13b3a965ed6029e047b088f0c27a89f1cff9466207ba2146a4fe995fcb5ec91c",
+    "seq": "28",
+    "terms": {
+      "depositBase": "0",
+      "depositCursor": "0",
+      "gaps": [],
+      "held": "0",
+      "heldReceipts": "0",
+      "pending": "0",
+      "siblings": [
+        "0xb8d58da12c46a9ba2df1927ab7dffc4b609c5a1d301a13043d65a8bd182d5144",
+        "0xae12d8cd428c72753943296adbdf7175626edc16216399348b668841ea15c1c8",
+        "0xc31ce1a0317f4120704628eb21754399fbac2eafcafc44a3d5d1ca229886d739",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xaa6f6f8b60f2f4da7cf3088b83587bacce16dc9d7d5b5dc5d7560425eb750cf1",
+        "0x48964ed1cfa5d7bc6219573837c48f7b3d2e85cac272cd135cdbd9579dfe0f84"
+      ],
+      "unheld": "0"
+    }
+  }
+}

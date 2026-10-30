@@ -181,11 +181,16 @@ pub enum ProtocolVersion {
     /// hands it over at the election's effective time, or seven days after it is logged when that
     /// is later. While rotation is on, `RotateOperator` is refused.
     V37,
+    /// The state root commits what the vault's exit against the last posted root needs: a queued
+    /// withdrawal's and a pending receipt's leaves are ABI-encoded so the vault can check them, and
+    /// one leaf holds the vault deposit cursor with the pending and held principal the exit
+    /// reserves. Activation rebuilds the tree under these encodings.
+    V38,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V37;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V38;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

@@ -209,8 +209,8 @@ impl Scenario {
             &(U256::from(1), vec![accounts[0]], vec![Address::ZERO], Address::ZERO).abi_encode_params(),
         )
         .await;
-        let args =
-            (usdc, Address::from(key.address()), governance, accounts[0], U256::from(DEV_PERIOD_BUDGET)).abi_encode();
+        let args = vault_args(usdc, Address::from(key.address()), governance, accounts[0]);
+
         let vault = deploy(&provider, accounts[0], "Vault.sol/Vault.json", &args).await;
         let section: CheckpointSection = toml::from_str(&format!(
             "rpc_url = {url:?}\nrelayer = '{:#x}'\nretry_interval = '40ms'\nrpc_timeout = '2s'",
@@ -489,4 +489,11 @@ fn claim_call(proof: &EntitlementProof) -> Vec<u8> {
     let siblings: Vec<B256> = proof.siblings.clone();
     claimEmissionsCall { account: proof.account.0.into(), entitled: U256::from(proof.entitled.0), siblings }
         .abi_encode()
+}
+
+/// Encodes the Vault's constructor arguments: token, signer, governance, guardian, budget, and the
+/// thirty-day exit schedule.
+fn vault_args(usdc: Address, signer: Address, governance: Address, guardian: Address) -> Vec<u8> {
+    let schedule = crate::test_support::DEV_EXIT_SCHEDULE;
+    (usdc, signer, governance, guardian, U256::from(DEV_PERIOD_BUDGET), schedule.0, schedule.1, schedule.2).abi_encode()
 }

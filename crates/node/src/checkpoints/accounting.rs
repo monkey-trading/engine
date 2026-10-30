@@ -140,6 +140,22 @@ impl Accounting {
                 _ => anyhow::bail!("custody accounting delta differs from receipt transition"),
             };
         }
+        // A live receipt displacing another at its deposit id reverses the stale one in the same
+        // command, and activating `V38` resolves surviving duplicates the same way: account for the
+        // reversal from the event alone. Every other event must name the command's own receipt.
+        let subject_matches = match command {
+            Command::CustodyDeposit(update) | Command::AccessCustodyReplacement { update, .. } => {
+                let replacement =
+                    matches!(&**update, DepositUpdate::Replace { replacement, .. } if replacement == receipt);
+                update.subject() == receipt || replacement
+            }
+            Command::AccessCustodyDeposit { receipt: subject, .. } => subject == receipt,
+            _ => false,
+        };
+        if !subject_matches {
+            ensure!(*status == DepositStatus::Reversed, "custody accounting event has no receipt command");
+            return self.collision_reversed(receipt, principal_delta, uncredited);
+        }
         let update = match command {
             Command::CustodyDeposit(update) | Command::AccessCustodyReplacement { update, .. } => {
                 update.as_ref().clone()
@@ -185,6 +201,46 @@ impl Accounting {
         if movement.is_positive() {
             self.deposits = self.deposits.checked_add(1).context("checkpoint deposit count overflow")?;
         } else if movement.is_negative() {
+            self.deposits = self.deposits.checked_sub(1).context("checkpoint deposit count underflow")?;
+        }
+        Ok(())
+    }
+
+    /// Applies an automatic collision reversal: the engine reversed a live receipt because another
+    /// claimed its deposit id, either inside the displacing command or at `V38` activation.
+    /// Error cases:
+    /// - the event's status or movement is not a reversal of the receipt it names
+    /// - an aggregate cannot represent the result
+    fn collision_reversed(
+        &mut self,
+        receipt: &DepositReceipt,
+        principal_delta: Fixed,
+        uncredited: Option<AccessReject>,
+    ) -> anyhow::Result<()> {
+        let credited = -receipt.amount;
+        let valid = match uncredited {
+            None => principal_delta == credited,
+            Some(_) => principal_delta.is_zero(),
+        };
+        ensure!(valid, "custody accounting delta differs from receipt transition");
+        let movement = match uncredited {
+            None => principal_delta,
+            Some(reason) => {
+                let reserve = if reason.holds_deposit() { &mut self.held } else { &mut self.pending };
+                *reserve = Fixed::from_raw(
+                    reserve
+                        .raw()
+                        .checked_add(credited.raw())
+                        .filter(|reserved| *reserved >= 0)
+                        .context("uncredited collateral out of range")?,
+                );
+                credited
+            }
+        };
+        self.liabilities = Fixed::from_raw(
+            self.liabilities.raw().checked_add(movement.raw()).context("checkpoint liabilities overflow")?,
+        );
+        if movement.is_negative() {
             self.deposits = self.deposits.checked_sub(1).context("checkpoint deposit count underflow")?;
         }
         Ok(())

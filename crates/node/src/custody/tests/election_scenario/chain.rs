@@ -106,9 +106,14 @@ impl Chain {
         // The MONKEY period budget, 10 MONKEY, is a development value, not an approved production
         // parameter; it caps MONKEY at 525,600, above the scenario's stakes.
         let budget = U256::from(10).pow(U256::from(19));
-        let vault =
-            deploy(&provider, from, "Vault.sol/Vault.json", &(usdc, enclave, governance, from, budget).abi_encode())
-                .await;
+        let schedule = crate::test_support::DEV_EXIT_SCHEDULE;
+        let vault = deploy(
+            &provider,
+            from,
+            "Vault.sol/Vault.json",
+            &(usdc, enclave, governance, from, budget, schedule.0, schedule.1, schedule.2).abi_encode(),
+        )
+        .await;
         let mut chain = Chain {
             _anvil: anvil,
             _proxies: proxies,

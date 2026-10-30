@@ -11,6 +11,7 @@ use crate::engine::Engine;
 use crate::event::Event;
 use crate::types::AccountId;
 mod cash;
+mod conflicts;
 mod legacy;
 mod replacement;
 pub use legacy::{LegacyDeposit, legacy_chain_reference};
@@ -276,13 +277,14 @@ impl Engine {
             }
             let uncredited = self.terminal_receipt_hold(receipt).or(recorded.uncredited);
             self.check_transaction_available(receipt)?;
+            self.reverse_conflicting_receipts(receipt, None, events)?;
             if let Some(uncredited) = uncredited {
-                self.record_deposit(receipt, DepositStatus::Unfinalised, Fixed::ZERO, Some(uncredited), events);
+                self.record_deposit(receipt, DepositStatus::Unfinalised, Fixed::ZERO, Some(uncredited), events)?;
                 self.track_uncredited(receipt, uncredited, true);
                 return Ok(());
             }
             self.move_deposit_cash(receipt, true, true)?;
-            self.record_deposit(receipt, DepositStatus::Unfinalised, receipt.amount, None, events);
+            self.record_deposit(receipt, DepositStatus::Unfinalised, receipt.amount, None, events)?;
             return Ok(());
         }
         if let DepositUpdate::Credit { .. } = update {
@@ -292,19 +294,20 @@ impl Engine {
             if self.custody_checkpoint.is_some_and(|checkpoint| receipt.block <= checkpoint.block) {
                 return Err(DepositReject::SettledReceipt);
             }
+            self.check_transaction_available(receipt)?;
+            self.reverse_conflicting_receipts(receipt, None, events)?;
             if self.adopt_legacy_deposit(receipt)? {
-                self.record_deposit(receipt, DepositStatus::Unfinalised, Fixed::ZERO, None, events);
+                self.record_deposit(receipt, DepositStatus::Unfinalised, Fixed::ZERO, None, events)?;
                 return Ok(());
             }
-            self.check_transaction_available(receipt)?;
             if let Some(uncredited) = self.receipt_refusal(receipt, screening) {
-                self.record_deposit(receipt, DepositStatus::Unfinalised, Fixed::ZERO, Some(uncredited), events);
+                self.record_deposit(receipt, DepositStatus::Unfinalised, Fixed::ZERO, Some(uncredited), events)?;
                 self.track_uncredited(receipt, uncredited, true);
                 self.announce_uncredited(receipt, uncredited, events);
                 return Ok(());
             }
             self.move_deposit_cash(receipt, true, true)?;
-            self.record_deposit(receipt, DepositStatus::Unfinalised, receipt.amount, None, events);
+            self.record_deposit(receipt, DepositStatus::Unfinalised, receipt.amount, None, events)?;
             return Ok(());
         }
         let recorded = recorded.ok_or(DepositReject::UnknownReceipt)?;
@@ -326,17 +329,17 @@ impl Engine {
                 if uncredited.is_none() {
                     self.unlock_deposit(receipt);
                 }
-                self.record_deposit(receipt, DepositStatus::Finalised, Fixed::ZERO, uncredited, events);
+                self.record_deposit(receipt, DepositStatus::Finalised, Fixed::ZERO, uncredited, events)?;
                 Ok(())
             }
             DepositUpdate::Reverse { .. } if let Some(uncredited) = uncredited => {
-                self.record_deposit(receipt, DepositStatus::Reversed, Fixed::ZERO, Some(uncredited), events);
+                self.record_deposit(receipt, DepositStatus::Reversed, Fixed::ZERO, Some(uncredited), events)?;
                 self.track_uncredited(receipt, uncredited, false);
                 Ok(())
             }
             DepositUpdate::Reverse { .. } => {
                 self.move_deposit_cash(receipt, false, true)?;
-                self.record_deposit(receipt, DepositStatus::Reversed, -receipt.amount, None, events);
+                self.record_deposit(receipt, DepositStatus::Reversed, -receipt.amount, None, events)?;
                 if let DepositBeneficiary::Trader { account } = receipt.beneficiary {
                     self.close_out_after_balance_change(account, events);
                 }
@@ -361,6 +364,10 @@ impl Engine {
     }
 
     /// Records a lifecycle transition and its exact receipt in both state and events.
+    /// Error cases:
+    /// - a different live receipt already holds the deposit's id and cannot be reversed: only one
+    ///   live receipt may hold a vault deposit id, so a reorganisation's replacement displaces the
+    ///   stale receipt before the new one records
     pub(crate) fn record_deposit(
         &mut self,
         receipt: &DepositReceipt,
@@ -368,8 +375,11 @@ impl Engine {
         principal_delta: Fixed,
         uncredited: Option<UncreditedReceipt>,
         events: &mut Vec<Event>,
-    ) {
+    ) -> Result<(), DepositReject> {
         self.ensure_hot_indexes();
+        if status != DepositStatus::Reversed {
+            self.reverse_conflicting_receipts(receipt, None, events)?;
+        }
         let indexes = self.hot_indexes.as_mut().expect("indexes initialised");
         if self.protocol_version >= crate::protocol::ProtocolVersion::V26
             && let Some(held) = uncredited.filter(|held| held.reason.holds_deposit())
@@ -385,9 +395,9 @@ impl Engine {
         if status != DepositStatus::Reversed
             && self.custody_checkpoint.is_none_or(|checkpoint| receipt.block > checkpoint.block)
         {
-            indexes.receipts_above_frontier.insert(receipt.reference());
+            indexes.add_above_frontier(receipt.reference(), receipt.deposit_id, receipt.amount);
         } else {
-            indexes.receipts_above_frontier.remove(&receipt.reference());
+            indexes.remove_above_frontier(&receipt.reference());
         }
         self.deposit_transactions.insert(receipt.transaction_reference(), receipt.reference());
         let payer = self.deposits.get(&receipt.reference()).and_then(|recorded| recorded.payer);
@@ -407,6 +417,7 @@ impl Engine {
             principal_delta,
             uncredited: uncredited.map(|uncredited| uncredited.reason),
         });
+        Ok(())
     }
 }
 

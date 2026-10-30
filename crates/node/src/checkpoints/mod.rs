@@ -169,7 +169,7 @@ pub enum Health {
 }
 
 #[derive(Debug)]
-struct Conflict(&'static str);
+pub(super) struct Conflict(&'static str);
 
 impl std::fmt::Display for Conflict {
     /// The commitment invariant that failed.
@@ -278,12 +278,24 @@ impl<R: CheckpointChain> Poster<R> {
                     // is still mining, so only a conflict a fresh observation repeats stops the worker.
                     let (posted, health, lifecycle) = match result {
                         Ok((posted, health, lifecycle)) => {
+                            // A retired signer or withheld collateral can reconcile successfully
+                            // forever after the vault's exit has started; the exit ends the node
+                            // regardless of how reconciliation reports.
+                            if self.chain.exit_started().await.unwrap_or(false) {
+                                let error = anyhow::anyhow!("the vault's exit has started");
+                                span.in_scope(|| error!(alert = "vault_exit_started", "no checkpoint can follow the vault's exit: {error:#}"));
+                                return Err(error.context("the vault's exit against the last posted root has started"));
+                            }
                             unconfirmed = false;
                             (posted, (health != Health::Unvalidated).then_some(health), lifecycle)
                         }
                         Err(error) if unconfirmed && error.is::<Conflict>() => {
                             span.in_scope(|| error!(alert = "checkpoint_conflict", "refusing to continue: {error:#}"));
                             return Err(error);
+                        }
+                        Err(error) if self.chain.exit_started().await.unwrap_or(false) => {
+                            span.in_scope(|| error!(alert = "vault_exit_started", "no checkpoint can follow the vault's exit: {error:#}"));
+                            return Err(error.context("the vault's exit against the last posted root has started"));
                         }
                         Err(error) => {
                             unconfirmed |= error.is::<Conflict>();

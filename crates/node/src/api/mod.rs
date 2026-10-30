@@ -11,6 +11,7 @@ mod admin;
 mod archive;
 mod benchmark_schedule;
 mod distributions;
+mod exit;
 mod history;
 mod operator;
 mod origin;
@@ -221,6 +222,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/accounts/{address}/proof", get(proof))
         .route("/v1/accounts/{address}/emissions", get(emissions))
         .route("/v1/accounts/{address}/distributions", get(distributions::distributions))
+        .route("/v1/accounts/{address}/exit", get(exit::exit))
         .route("/v1/eligibility", post(attest_eligibility))
         .route("/v1/orders", post(place_order))
         .route("/v1/orders/cancel", post(cancel_order))

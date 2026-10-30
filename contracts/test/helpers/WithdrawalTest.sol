@@ -15,7 +15,8 @@ abstract contract WithdrawalTest is GovernanceTest {
         vm.warp(1_800_000_000);
         governance = _deployGovernance();
         usdc = new MockUSDC();
-        vault = new Vault(usdc, vm.addr(KEY), governance, multisig, 1e18);
+        vault = new Vault(usdc, vm.addr(KEY), governance, multisig, 1e18, EXIT_PERIOD, CLAIM_WINDOW, STALE_AFTER);
+
         usdc.mint(address(vault), 1_000_000e6);
     }
 
