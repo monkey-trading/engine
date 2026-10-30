@@ -74,10 +74,10 @@ pub(super) async fn pause_and_retirement() -> anyhow::Result<()> {
     );
     node.chain.refuses(node.chain.claim(&issued)?.abi_encode()).await?;
     pay(&node, &reissued).await?;
-    let next = node.client.withdrawal(&trader, "5").await?;
+    let next = node.client.withdrawal(&trader, "20").await?;
     node.client.request_withdrawal(&next).await?;
-    pay(&node, &payout_at_epoch(&mut stream, trader.account, 5, 2).await?).await?;
-    node.client.wait_balance(&trader, "85").await?;
+    pay(&node, &payout_at_epoch(&mut stream, trader.account, 20, 2).await?).await?;
+    node.client.wait_balance(&trader, "70").await?;
     drop(stream);
     node.stop().await?;
 
@@ -96,11 +96,11 @@ pub(super) async fn pause_and_retirement() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Requires a new withdrawal request to be refused for want of a payout.
+/// Requires a new withdrawal request, of the minimum amount, to be refused for want of a payout.
 /// Error cases:
 /// - the request fails or the engine does not refuse it as unpayable
 async fn refused(node: &Node, trader: &User) -> anyhow::Result<()> {
-    let request = node.client.withdrawal(trader, "5").await?;
+    let request = node.client.withdrawal(trader, "10").await?;
     let events = node.client.request_withdrawal(&request).await?;
     ensure!(
         events.iter().any(|event| matches!(
