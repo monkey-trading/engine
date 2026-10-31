@@ -1,18 +1,10 @@
 {
  "command": [
-  "stress",
-  "--paths",
-  "4",
-  "--batch-paths",
-  "2",
-  "--workers",
-  "2",
-  "--move-hours",
-  "20"
+  "stress"
  ],
  "scenario": {
   "name": "baseline",
-  "paths": 4,
+  "paths": 2000,
   "seed": 1,
   "days": 90,
   "flow_scale": 1.0,
@@ -29,7 +21,7 @@
   "withdraw_on_exit": 0.5,
   "idle_withdraw_per_day": 0.05,
   "run_withdraw_per_day": 0.5,
-  "batch_paths": 2,
+  "batch_paths": 25,
   "utilisation_stats": false
  },
  "derived_sha256": {
@@ -44,9 +36,9 @@
   "papertrade_sizes.csv": "341fd8a0af63fdce",
   "papertrade_summary.json": "875fc6c89820321a"
  },
- "workers": 2,
- "seconds": 17,
- "move_hours": 20,
+ "workers": 4,
+ "seconds": 1160,
+ "move_hours": 400,
  "utilisation_stats": true,
  "floor_families": {
   "uniform_1M": "uniform",
