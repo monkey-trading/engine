@@ -204,6 +204,7 @@ fn fixture(name: &str) -> (Sequencer, PathBuf) {
     seq.activate_protocol().unwrap();
     let mut genesis = dev_config().genesis;
     genesis.markets.retain(|market| market.id == 1);
+    genesis.close_spread_ceilings.retain(|ceiling| ceiling.market == 1);
     genesis.benchmarks.clear();
     seq.genesis(&genesis).unwrap();
     (seq, dir)

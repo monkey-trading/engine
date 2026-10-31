@@ -17,6 +17,7 @@ use base64::engine::general_purpose::STANDARD;
 use ed25519_dalek::VerifyingKey;
 use engine_core::Fixed;
 use engine_core::auth::{ClientAuth, Operator};
+use engine_core::close_spread::CloseSpreadCeiling;
 use engine_core::eip712;
 use engine_core::market::MarketSpec;
 use engine_core::params::ProtocolParams;
@@ -321,6 +322,11 @@ pub struct Genesis {
     /// log without staking.
     #[serde(default)]
     pub staking: Option<StakingConfig>,
+    /// The per-market close-spread ceilings adopted at genesis, sequenced after the markets; the
+    /// engine refuses a registry that misses, duplicates, or misvalues an entry. Development and
+    /// Anvil values are labelled test fixtures; production's come from #147's calibration.
+    #[serde(default)]
+    pub close_spread_ceilings: Vec<CloseSpreadCeiling>,
 }
 
 #[derive(Debug, Deserialize)]

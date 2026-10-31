@@ -378,6 +378,7 @@ pub fn sequencer_config(dir: &Path, manifest: watch::Sender<Manifest>) -> Sequen
         operator: dev_config().operator().expect("the dev operator parses"),
         metrics: Arc::new(Metrics::new()),
         genesis: genesis_commands(&dev_config().genesis),
+        close_spread_ceilings: dev_config().genesis.close_spread_ceilings.clone(),
     }
 }
 

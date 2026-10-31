@@ -4,10 +4,12 @@
 
 use super::*;
 
+use engine_core::close_spread::CloseSpreadCeiling;
 use engine_core::params::NotionalWeighting;
 
 use crate::config::{CustodyProvider, Genesis, NodeConfig};
 use crate::sequencer::fixture_tests::{geneses_no_config_can_name, old_genesis_log};
+use crate::sequencer::genesis::rejection;
 use crate::test_support::ANVIL_CONFIG;
 
 #[test]
@@ -38,12 +40,15 @@ fn a_benchmark_the_engine_rejects_writes_no_genesis_and_the_fixed_config_then_li
 fn a_genesis_entry_of_any_kind_the_engine_would_reject_queues_and_writes_nothing() {
     type Edit = fn(&mut Genesis);
     // The first command, ones in the middle, and the last.
-    let cases: [(&str, Edit); 6] = [
+    let cases: [(&str, Edit); 7] = [
         ("genesis.params: the engine rejects it: profit_fee_bps", |g| g.params.profit_fee_bps = 10_000),
         ("genesis benchmark SONIA: the engine rejects it", |g| g.benchmarks[1].annual_bps = i64::MIN),
         ("genesis market EUR-USD: the engine rejects it: margin_tiers is empty", |g| g.markets[2].margin_tiers.clear()),
         ("genesis market AAPL: the engine rejects it: house_cap_bps", |g| {
             g.markets.last_mut().unwrap().house_cap_bps = 0
+        }),
+        ("genesis.close_spread_ceilings: the engine rejects it: market 1 is listed without", |g| {
+            g.close_spread_ceilings.remove(0);
         }),
         ("genesis.house_capital: the engine rejects it", |g| g.house_capital = Fixed::from_int(-1)),
         ("genesis.house_capital: the engine rejects it", |g| g.house_capital = Fixed::MAX_INPUT + Fixed::from_int(1)),
@@ -324,3 +329,5 @@ fn a_genesis_no_current_config_can_name_is_refused_and_a_fresh_log_advised() {
         }
     }
 }
+
+mod upgrade;

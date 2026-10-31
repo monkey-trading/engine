@@ -24,6 +24,7 @@ use crate::access::{AccessDeposit, AccessPolicy, CreditScreening, EligibilityCla
 use crate::account::{Account, Position};
 use crate::auth::{ClientAuth, Operator};
 use crate::benchmark::BenchmarkHistory;
+use crate::close_spread::PendingCeiling;
 use crate::command::{AdminCommand, Command, Sequenced};
 use crate::corporate::CorporateEntitlement;
 use crate::deposits::{CustodyCheckpoint, LegacyDeposit, RecordedDeposit};
@@ -156,6 +157,14 @@ pub struct Engine {
     /// From `V37`, the mirrored operator registry: whether rotation is on, and the last election.
     #[serde(default, skip_serializing_if = "OperatorElection::is_default")]
     pub(crate) operator_election: OperatorElection,
+    /// From `V40`, the most each market's closing slice may pay, in bps of the index: adopted once
+    /// (genesis, or one signed install) and changed only by a signed adoption, so `UpsertMarket`
+    /// can neither replace nor raise an entry. Absent until installed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) close_spread_ceilings: Option<BTreeMap<MarketId, i64>>,
+    /// From `V40`, a ceiling adoption waiting out its seven-day notice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) pending_ceiling: Option<PendingCeiling>,
 
     /// The screening source and freshness bound, recorded once from `V24`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -229,6 +238,8 @@ impl Engine {
         self.command_ms = sequenced.ts;
         // From `V35` a rotation whose notice has run hands over before the command is authorised.
         self.apply_due_rotation(sequenced.ts);
+        // From `V40` a ceiling adoption whose notice has run applies before the command acts.
+        self.apply_due_ceiling(sequenced.ts);
 
         let mut events = Vec::new();
         // From `V21`, a quote held across a closure could never count under the hours rules, so it
@@ -466,29 +477,6 @@ impl Engine {
         match fx.index(self.now) {
             Ok(index) if currency.converts_at(index.mid) => Ok(Some(index.mid)),
             _ => Err(no_price),
-        }
-    }
-
-    /// Updates a market's open flag from its schedule, emitting the transition. Before `V17` an
-    /// open cleared the market's move window; from `V17` the window survives the halt, so prices
-    /// observed within it before the halt still count after the reopening.
-    pub(crate) fn refresh_session(&mut self, market_id: MarketId, events: &mut Vec<Event>) {
-        let now = self.now;
-        let Some(market) = self.markets.get(&market_id) else { return };
-        let open = market.spec.schedule.is_open(now) && !market.corporate_action_blocked;
-        if open == market.open {
-            return;
-        }
-        let market = self.markets.get_mut(&market_id).expect("found above");
-        market.open = open;
-        if open {
-            if self.protocol_version < ProtocolVersion::V17 {
-                market.stress.move_ref = None;
-                market.stress.move_window.clear();
-            }
-            events.push(Event::MarketOpened { market: market_id });
-        } else {
-            events.push(Event::MarketClosed { market: market_id });
         }
     }
 }

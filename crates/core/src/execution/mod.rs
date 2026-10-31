@@ -24,6 +24,8 @@ use crate::market::staircase;
 use crate::protocol::ProtocolVersion;
 use crate::types::{AccountId, MarketId, OrderId, Side};
 
+use self::validation::{growth, profit_fee};
+
 /// What the live price is checked against before filling.
 #[derive(Clone, Copy)]
 pub(crate) enum PriceGuard {
@@ -238,7 +240,8 @@ impl Engine {
     }
 
     /// Fills one resting order if `mid` has reached its trigger. A limit the spread keeps out of
-    /// reach stays resting; any other failure cancels it.
+    /// reach stays resting; any other failure cancels it, and from `V40` a reversal the market's
+    /// close-spread ceiling refuses fills its closing slice before the cancel.
     fn trigger_order(&mut self, order_id: OrderId, account: AccountId, mid: Fixed, events: &mut Vec<Event>) {
         let Some(order) = self.accounts.get(&account).and_then(|acct| acct.orders.get(&order_id)).cloned() else {
             return;
@@ -270,6 +273,7 @@ impl Engine {
                 self.after_fill(fill, events);
             }
             Err(Reject::Slippage { .. }) => {}
+            Err(Reject::CloseSpreadCeiling { .. }) => self.fill_closing_slice(account, order_id, &order, guard, events),
             Err(_) => {
                 self.remove_order(account, order_id);
                 events.push(Event::OrderCancelled { account, order_id, reason: CancelReason::Unfillable });
@@ -318,23 +322,42 @@ impl Engine {
 
         let stress = &params.stress_levels[market.stress.level];
         let toxicity_bps = if exec.liquidation { 0 } else { params.toxicity_spread_bps(acct.toxicity_bps) };
-        // The spread per unit with every charge rounded as `charge` says. Widening the growth slice
-        // outwards can only add to its cost, and dividing the size cost by qty (not by notional) keeps
-        // full precision.
-        let spread = |charge: Rounding| {
+        // The spread per unit as its parts, every charge rounded as `charge` says: the stress and
+        // toxicity charge over the whole quantity, and the size cost per unit, charged only on the
+        // slice that grows the position. Widening the growth slice outwards can only add to its
+        // cost, and dividing the size cost by qty (not by notional) keeps full precision.
+        let parts = |charge: Rounding| {
             let (from, to) =
                 (usd(grow_from.mul(mid), Rounding::Down), usd(grow_to.mul_rounded(mid, charge), Rounding::Up));
             let size_cost_usd = staircase(&market.spec.spread_tiers, from, to, charge)
                 .mul_bps_rounded(stress.size_spread_multiplier_bps, charge);
             let size_cost = currency.from_usd(size_cost_usd, fx, Rounding::Up);
-            mid.mul_bps_rounded(stress.min_spread_bps + toxicity_bps, charge) + size_cost.div_rounded(qty, charge)
+            let base = mid.mul_bps_rounded(stress.min_spread_bps + toxicity_bps, charge);
+            (base, size_cost.div_rounded(qty, charge))
+        };
+        let spread = |charge: Rounding| {
+            let (base, size) = parts(charge);
+            base + size
         };
         // The truncated spread decides whether a spread reaches the price. From `V10` the spread rounds
         // up, and a sell's stops a unit short of the price, so rounding never makes it reach the price.
-        if spread(Rounding::TowardZero) >= mid {
+        // From `V40`, a reversal over its ceiling is classified first: its refusal fills a triggered
+        // order's closing slice, which stays executable when the blended spread reaches the price.
+        let closes = !pos.qty.is_zero() && (exec.side == Side::Buy) != pos.qty.is_positive();
+        let over_ceiling = self.protocol_version >= ProtocolVersion::V40
+            && closes
+            && increases
+            && self
+                .close_spread_ceiling(exec.market)
+                .is_some_and(|ceiling| spread(Rounding::TowardZero).raw() * 10_000 > mid.raw() * i128::from(ceiling));
+        if !over_ceiling && spread(Rounding::TowardZero) >= mid {
             return Err(Reject::InvalidOrder { reason: "spread at this size reaches the price".into() });
         }
-        let rounded = spread(self.charge_rounding());
+        let charge = self.charge_rounding();
+        let (base, size) = parts(charge);
+        // From `V40`, a close's spread cannot exceed its market's ceiling, and a reversal over it
+        // is refused.
+        let rounded = self.bounded_close_charge(exec.market, exec.side, pos.qty, increases, base + size, mid)?;
         let adjust = if exec.side == Side::Sell { rounded.min(mid - Fixed::from_raw(1)) } else { rounded };
         let price = mid + adjust.mul_int(exec.side.sign());
 
@@ -450,7 +473,7 @@ impl Engine {
     }
 
     /// Removes a resting order from its account and its market's book.
-    fn remove_order(&mut self, account: AccountId, order_id: OrderId) -> Option<RestingOrder> {
+    pub(crate) fn remove_order(&mut self, account: AccountId, order_id: OrderId) -> Option<RestingOrder> {
         let order = self.accounts.get_mut(&account)?.orders.remove(&order_id)?;
         self.index_order(account, &order, false);
         if let Some(market) = self.markets.get_mut(&order.market) {
@@ -458,31 +481,6 @@ impl Engine {
         }
         self.record_order(account, order_id);
         Some(order)
-    }
-}
-
-/// The slice of a trade that grows |position|, as `(from, to)` absolute quantities: the whole of
-/// an increase, the new side of a flip, and nothing for a pure reduction.
-fn growth(current: Fixed, delta: Fixed) -> (Fixed, Fixed) {
-    let new = current + delta;
-    if current.is_zero() || current.signum() == delta.signum() {
-        (current.abs(), new.abs())
-    } else if !new.is_zero() && new.signum() == delta.signum() {
-        (Fixed::ZERO, new.abs())
-    } else {
-        (Fixed::ZERO, Fixed::ZERO)
-    }
-}
-
-/// Losers pay nothing; winners pay `fee_bps` of realised profit, rounded up from `V5` and truncated
-/// before it.
-fn profit_fee(realised: Fixed, fee_bps: i64, version: ProtocolVersion) -> Fixed {
-    if !realised.is_positive() {
-        Fixed::ZERO
-    } else if version >= ProtocolVersion::V5 {
-        realised.mul_bps_rounded(fee_bps, Rounding::Up)
-    } else {
-        realised.mul_bps(fee_bps)
     }
 }
 

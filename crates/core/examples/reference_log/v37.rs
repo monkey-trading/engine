@@ -12,7 +12,7 @@ use crate::common::{Client, Harness};
 /// The seed of the key `V35`'s part rotated the operator to.
 const OPERATOR_SEED: u8 = 0x55;
 /// The seed of the elected candidate's admin key.
-const ELECTED_SEED: u8 = 0x56;
+pub(crate) const ELECTED_SEED: u8 = 0x56;
 const CANDIDATE: AccountId = AccountId([0xc7; 20]);
 const HOUR_MS: Millis = 60 * 60 * 1000;
 

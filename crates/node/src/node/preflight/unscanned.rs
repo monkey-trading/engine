@@ -106,6 +106,7 @@ async fn reject_outstanding(cached: bool) {
         checkpoints: Some(sink),
         checkpoint_parent: anchor,
         genesis: crate::sequencer::genesis_commands(&cfg.genesis),
+        close_spread_ceilings: cfg.genesis.close_spread_ceilings.clone(),
         ..sequencer_config(&cfg.node.log_dir, watch::channel(Manifest::default()).0)
     };
     let plan = crate::history::HistoryPlan::open(&cfg.history).unwrap();
@@ -132,6 +133,7 @@ async fn old_funded_anchor(name: &str) -> (NodeConfig, CheckpointParent) {
         checkpoints: Some(sink),
         checkpoint_every: 1,
         genesis: crate::sequencer::genesis_commands(&cfg.genesis),
+        close_spread_ceilings: cfg.genesis.close_spread_ceilings.clone(),
         ..sequencer_config(&cfg.node.log_dir, watch::channel(Manifest::default()).0)
     };
     let mut seq =

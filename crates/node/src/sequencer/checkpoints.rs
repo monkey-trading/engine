@@ -196,6 +196,12 @@ impl Sequencer {
     /// - no command has applied, or the log cannot be written
     pub(super) fn checkpoint(&mut self) -> anyhow::Result<()> {
         let seq = self.engine.last_seq().context("checkpoint before any command")?;
+        if self.dedup_checkpoint_seq == Some(seq) {
+            // A scheduled and an explicit checkpoint can meet at one seq; the earlier entry
+            // already commits this state, and two signed roots at one seq break historical
+            // signer-authority recovery.
+            return Ok(());
+        }
         if self.gate.as_ref().is_some_and(|gate| gate.parent.has_checkpoint && gate.parent.seq == seq) {
             return Ok(());
         }
@@ -299,7 +305,7 @@ impl Sequencer {
         self.progress.genesis.checkpoint();
         self.progress.checkpoints += 1;
         self.store_snapshot(cp)?;
-        self.last_checkpoint = Some(seq);
+        (self.last_checkpoint, self.dedup_checkpoint_seq) = (Some(seq), Some(seq));
         self.metrics.last_checkpoint_seconds.set(self.last_ts as f64 / 1000.0);
         Ok(())
     }

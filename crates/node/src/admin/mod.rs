@@ -148,6 +148,21 @@ pub enum AdminAction {
         #[arg(long)]
         cooldown_ms: Millis,
     },
+    /// Adopt a close-spread ceiling for a market (from V40): the most its closes may pay, whatever
+    /// the parameters do. A new market's ceiling applies from `--effective-at`, at least seven days
+    /// after the command is logged; an adopted ceiling can only be lowered, never raised.
+    AdoptCloseSpreadCeiling {
+        /// The market the ceiling applies to.
+        #[arg(short, long)]
+        market: MarketId,
+        /// The most a close pays, in bps of the index.
+        #[arg(long)]
+        max_close_spread_bps: i64,
+        /// When the adoption takes effect, in RFC 3339 (`2027-01-01T00:00:00Z`), at least seven
+        /// days after the command is logged.
+        #[arg(long)]
+        effective_at: DateTime<Utc>,
+    },
 }
 
 /// A node's API: its `https://host:port` URL, and the hash its TLS key must have.
@@ -239,6 +254,13 @@ impl AdminAction {
                     start_ms: start.timestamp_millis(),
                     cooldown_ms,
                 })
+            }
+            AdminAction::AdoptCloseSpreadCeiling { market, max_close_spread_bps, effective_at } => {
+                AdminCommand::AdoptCloseSpreadCeiling {
+                    market,
+                    max_close_spread_bps,
+                    effective_at: effective_at.timestamp_millis(),
+                }
             }
         })
     }

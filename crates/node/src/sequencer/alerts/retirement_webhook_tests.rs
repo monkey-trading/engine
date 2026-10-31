@@ -318,6 +318,7 @@ fn firing_log_before_restart(log_dir: &Path, condition: &str) -> anyhow::Result<
     }
     let mut genesis = dev_config().genesis;
     genesis.markets.retain(|market| market.id == 1);
+    genesis.close_spread_ceilings.retain(|ceiling| ceiling.market == 1);
     ensure!(genesis.markets.len() == 1 && genesis.markets[0].financing.benchmark == "SOFR", "only SOFR market");
     genesis.benchmarks.retain(|benchmark| condition == "undated" && benchmark.name == "SOFR");
     seq.genesis(&genesis)?;

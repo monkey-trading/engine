@@ -12,6 +12,7 @@ use engine_core::Fixed;
 use engine_core::command::{AdminCommand, Command, OrderKind, OrderRequest};
 use engine_core::event::{Event, Reject};
 use engine_core::price::PriceError;
+use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{AccountId, MarketId, Millis, Side};
 use k256::ecdsa::SigningKey;
 use tokio::net::TcpListener;
@@ -84,7 +85,10 @@ async fn venues_going_down_age_out_and_the_index_runs_on_the_rest() {
 #[tokio::test]
 async fn a_market_the_engine_does_not_list_is_alerted_once_and_held_back_until_it_is_listed() {
     let (_guard, mut alerts) = capture_alerts();
-    let mut node = Node::start("unlisted").await;
+    // The operator's mid-test listing is the point, and `V40` needs an adopted ceiling before a
+    // listing: this test is of the feed path, so it runs under the pre-`V40` rules.
+    let cfg = dev_config();
+    let mut node = Node::boot_at("unlisted", &cfg.genesis, ProtocolVersion::V38).await;
     // ETH/USD is mapped to a market the engine does not list.
     start_kraken(&node, &[(1, "BTC/USD"), (99, "ETH/USD")], now_ms).await;
     let unlisted = loop {
@@ -139,6 +143,12 @@ impl Node {
     /// Boots a fresh log as the node does, records client auth and activates the latest protocol,
     /// then sequences `genesis` and runs the sequencer.
     pub(super) async fn boot(name: &str, genesis: &Genesis) -> Self {
+        Self::boot_at(name, genesis, ProtocolVersion::LATEST).await
+    }
+
+    /// `boot`, activating `version`: tests of listing and quoting paths that predate the rules
+    /// `version` adds run under those rules.
+    async fn boot_at(name: &str, genesis: &Genesis, version: ProtocolVersion) -> Self {
         let dir = scratch_dir(&format!("feeds-{name}"));
         let (stream_tx, stream) = broadcast::channel(65_536);
         let (withdrawals_tx, _) = mpsc::unbounded_channel();
@@ -154,7 +164,11 @@ impl Node {
         };
         let mut seq = Sequencer::recover(seq_cfg, Arc::new(EnclaveKey::generate()), stream_tx, withdrawals_tx)
             .expect("fresh sequencer");
-        seq.activate_protocol().expect("protocol activation");
+        if version == ProtocolVersion::LATEST {
+            seq.activate_protocol().expect("protocol activation");
+        } else {
+            seq.activate_protocol_at(version).expect("protocol activation");
+        }
         seq.genesis(genesis).expect("genesis");
         // Trusted time admits stamps on the system clock, so the queued genesis goes in now.
         seq.trust(trusted_now()).expect("genesis");

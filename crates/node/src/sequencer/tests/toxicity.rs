@@ -3,6 +3,8 @@
 
 use super::*;
 
+use engine_core::close_spread::CloseSpreadCeiling;
+
 const V9_REFERENCE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/reference/v9.jsonl");
 
 #[test]
@@ -40,6 +42,14 @@ fn a_funded_log_under_the_operator_takes_the_weighting_unsigned_and_activates_th
     let stamps = Arc::new(TestClock::at(before.engine.now() + 1_000));
     let (stream, _) = broadcast::channel(16);
     let (manifest, _) = watch::channel(Manifest::default());
+    // The fixture's log lists markets its config never ceilinged; `V40` needs an adopted ceiling
+    // for each, so the config this test runs under names one per listed market.
+    let ceilings: Vec<_> = before
+        .engine
+        .markets()
+        .keys()
+        .map(|market| CloseSpreadCeiling { market: *market, max_close_spread_bps: 30 })
+        .collect();
     let cfg = SequencerConfig {
         client_auth: signed(31_337),
         operator,
@@ -47,6 +57,7 @@ fn a_funded_log_under_the_operator_takes_the_weighting_unsigned_and_activates_th
         chain_id: operator.chain_id,
         clock: stamps.clone(),
         genesis: finished_genesis(&log_entries(&dir)),
+        close_spread_ceilings: ceilings,
         ..sequencer_config(&dir, manifest)
     };
     let mut seq =
@@ -56,7 +67,8 @@ fn a_funded_log_under_the_operator_takes_the_weighting_unsigned_and_activates_th
     seq.carry_toxicity_notional(weighting).unwrap();
     seq.activate_protocol().unwrap();
     let replayed = replay(&log_entries(&dir)).unwrap();
-    let activated = before.engine.last_seq().unwrap() + 2;
+    // The weighting, the carried ceilings, and the activation each take one seq.
+    let activated = before.engine.last_seq().unwrap() + 3;
     assert_eq!(replayed.activations.last(), Some(&(ProtocolVersion::LATEST, activated)));
     assert_eq!(replayed.engine.params().and_then(|params| params.toxicity.notional), Some(weighting));
 }

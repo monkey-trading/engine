@@ -90,6 +90,27 @@ impl ReplayedLog {
         {
             bail!("the configured access policy differs from the public log");
         }
+        // A registry the `V40` upgrade carried came from the config of the restart that upgraded
+        // the log: the recorded genesis cannot be restated, so the carried entries are not part
+        // of what the genesis comparison attests. For each ceiling the config names, the log may
+        // enforce no more: the node may not attest ceilings stricter than it applies. Entries the
+        // log later gained by signed adoption need no config entry — they only added a market or
+        // lowered one.
+        if let Some(registry) = engine.close_spread_ceilings()
+            && !genesis.has_ceiling_install()
+        {
+            for ceiling in &cfg.close_spread_ceilings {
+                if let Some(&adopted) = registry.get(&ceiling.market) {
+                    anyhow::ensure!(
+                        adopted <= ceiling.max_close_spread_bps,
+                        "the log's close-spread ceiling for market {} is {adopted}bps, above this config's {}bps; \
+                         start the node under the config the upgrade carried",
+                        ceiling.market,
+                        ceiling.max_close_spread_bps,
+                    );
+                }
+            }
+        }
         genesis.ensure_closed()?;
         // So is one naming another genesis: the node would attest rules its engine does not run.
         genesis.ensure_matches(&cfg.genesis, &cfg.client_auth, cfg.operator)?;
@@ -275,6 +296,10 @@ impl Sequencer {
         cfg.metrics.access_pending_deposits.set(engine.pending_deposits().len() as i64);
         let access_alerts = AccessAlerts::recovered(access_failed);
         let benchmark_schedule = watch::channel(BenchmarkSchedule::from_engine(&engine)).0;
+        // The last checkpoint the log actually holds, for `Sequencer::checkpoint`'s
+        // one-checkpoint-per-seq dedup: the missing trailing one is written on demand.
+        let dedup_checkpoint_seq = last_signed_checkpoint.as_ref().map(|checkpoint| checkpoint.seq);
+        let close_spread_ceilings = cfg.close_spread_ceilings.clone();
         let mut sequencer = Self {
             legacy_deposits,
             legacy_approvals,
@@ -282,6 +307,7 @@ impl Sequencer {
             next_seq: engine.last_seq().map_or(0, |s| s + 1),
             last_ts: engine.now(),
             last_checkpoint: engine.last_seq(),
+            dedup_checkpoint_seq,
             engine,
             log: log.into_writer(cfg.segment_commands.max(1), cfg.manifest)?,
             key,
@@ -297,6 +323,7 @@ impl Sequencer {
             required: Vec::new(),
             client_auth: cfg.client_auth,
             access_policy: cfg.access_policy,
+            close_spread_ceilings,
             deficit: DeficitAlert::default(),
             benchmark_alerts: BenchmarkAlerts::default(),
             access_alerts,

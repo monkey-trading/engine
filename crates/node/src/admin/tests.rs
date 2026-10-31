@@ -154,6 +154,22 @@ fn each_action_builds_its_admin_command() {
                 period_budget: TokenUnits(1_000_000_000_000_000_000_000),
             }),
         ),
+        (
+            vec![
+                "adopt-close-spread-ceiling",
+                "--market",
+                "1",
+                "--max-close-spread-bps",
+                "25",
+                "--effective-at",
+                "2027-01-01T00:00:00Z",
+            ],
+            AdminCommand::AdoptCloseSpreadCeiling {
+                market: 1,
+                max_close_spread_bps: 25,
+                effective_at: 1_798_761_600_000,
+            },
+        ),
     ];
     for (args, expected) in cases {
         assert_eq!(action(&args).command().unwrap(), expected, "{args:?}");

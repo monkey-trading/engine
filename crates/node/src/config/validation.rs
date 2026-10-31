@@ -179,6 +179,15 @@ impl NodeConfig {
         if let Some(name) = repeated(self.genesis.benchmarks.iter().map(|b| b.name.as_str())) {
             bail!("genesis lists benchmark {name} twice");
         }
+        // Markets listed at genesis need an adopted close-spread ceiling each: the engine refuses
+        // an incomplete registry, and a log without one runs `V40` uncapped. (The engine's genesis
+        // check names the offending entry.)
+        if !self.genesis.markets.is_empty() && self.genesis.close_spread_ceilings.is_empty() {
+            bail!("genesis lists markets but no close-spread ceilings");
+        }
+        if let Some(id) = repeated(self.genesis.close_spread_ceilings.iter().map(|c| c.market)) {
+            bail!("genesis lists a close-spread ceiling for market {id} twice");
+        }
         // Genesis is all or nothing, so a command the engine would refuse fails the load.
         check_genesis(&self.client_auth()?, self.operator()?, &self.genesis)
     }

@@ -350,6 +350,11 @@ pub enum Reject {
         minimum: Fixed,
     },
     HouseCapacity,
+    /// From `V40`, a reversal whose blended spread would exceed the market's close-spread ceiling.
+    /// The pure close stays within the ceiling: a refused trader can close reduce-only and reopen.
+    CloseSpreadCeiling {
+        ceiling_bps: i64,
+    },
     /// A limit or stop order from an account that already rests `max`, the parameters' cap.
     TooManyOrders {
         max: usize,

@@ -37,6 +37,7 @@ use crate::tls::{TlsIdentity, serve};
 
 mod corporate;
 mod election;
+mod tls;
 
 /// The dev operator key, whose public key `config/dev.toml` names.
 const DEV_KEY: [u8; 32] = [0x42; 32];
@@ -161,7 +162,24 @@ async fn a_reused_ahead_or_expired_admin_request_stays_out_of_the_log() {
     let node = Node::start("stale").await;
     let first = node.sign(0, reduce_only(Some(1)), NOW + 60_000);
     assert_eq!(node.post("/v1/admin", serde_json::to_value(&first).unwrap()).await.0, StatusCode::OK);
-    let logged = node.entries().len();
+    // The log writer flushes behind the reply and ticks keep sequencing, so count only signed
+    // admin commands, waiting until the first is durable before counting what stays out.
+    let signed = |node: &Node| {
+        node.entries()
+            .iter()
+            .filter(|entry| {
+                matches!(entry, LogEntry::Command(command) if matches!(&command.sequenced.cmd, Command::SignedAdmin(_)))
+            })
+            .count()
+    };
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while signed(&node) == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the admin command is logged");
+    let logged = signed(&node);
 
     let invalid_nonce = (StatusCode::CONFLICT, serde_json::json!({ "error": "invalid nonce", "expected": 1 }));
     assert_eq!(node.post("/v1/admin", serde_json::to_value(&first).unwrap()).await, invalid_nonce);
@@ -171,14 +189,21 @@ async fn a_reused_ahead_or_expired_admin_request_stays_out_of_the_log() {
     let (status, body) = node.post("/v1/admin", serde_json::to_value(&expired).unwrap()).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(body["error"].as_str().unwrap().starts_with("request expired at"), "{body}");
-    assert_eq!(node.entries().len(), logged);
+    assert_eq!(signed(&node), logged);
 
     // An expiry too far ahead is the engine's to refuse, so the nonce cannot be used later.
     let too_far = node.sign(1, reduce_only(Some(2)), NOW + MAX_EXPIRY_AHEAD_MS + 60_000);
     let (status, events) = node.post("/v1/admin", serde_json::to_value(&too_far).unwrap()).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(events[0]["type"], "admin_rejected", "{events}");
-    assert_eq!(node.entries().len(), logged + 1);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while signed(&node) < logged + 1 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the refusal is logged");
+    assert_eq!(signed(&node), logged + 1);
 }
 
 #[tokio::test]
@@ -238,28 +263,6 @@ async fn engine_admin_fails_when_the_engine_rejects_the_command() {
     assert!(err.to_string().contains("rejected the command: stress level 9 does not exist"), "{err:#}");
     let logged = admin_entries(&node.entries());
     assert!(matches!(&logged[..], [(_, events)] if matches!(events[..], [Event::AdminRejected { .. }])));
-}
-
-#[tokio::test]
-async fn engine_admin_reaches_a_node_on_an_ipv6_literal() {
-    let node = Node::start("cli-ipv6").await;
-    let url = format!("https://{}", node.serve_on("[::1]:0").await);
-    assert!(url.starts_with("https://[::1]:"), "{url}");
-    let key = KeyEnv { key_file: None, key: Some(HexKey(format!("0x{}", hex::encode(DEV_KEY)))) };
-    admin::run_with_clock(node.args(&url, &["set-reduce-only", "true", "--market", "1"]), key, || NOW).await.unwrap();
-    assert!(replay(&node.entries()).unwrap().engine.markets()[&1].reduce_only);
-}
-
-#[tokio::test]
-async fn engine_admin_refuses_a_node_whose_tls_key_is_not_the_pinned_one() {
-    let node = Node::start("cli-pin").await;
-    let url = format!("https://{}", node.serve().await);
-    let key = KeyEnv { key_file: None, key: Some(HexKey(format!("0x{}", hex::encode(DEV_KEY)))) };
-    let other = hex::encode(TlsIdentity::generate().unwrap().public_key_sha256);
-    let argv = ["engine", "--config", DEV_CONFIG, "--node", &url, "--pin", &other, "set-reduce-only", "true"];
-    let err = admin::run_with_clock(Cli::try_parse_from(argv).unwrap().args, key, || NOW).await.unwrap_err();
-    assert!(format!("{err:#}").contains("not the pinned one"), "{err:#}");
-    assert!(admin_entries(&node.entries()).is_empty());
 }
 
 /// The feature's dev scenario: the operator lists a new market with `engine admin`, the same signed

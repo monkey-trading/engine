@@ -27,7 +27,10 @@ impl Replay {
                 "checkpoint signer differs from immutable epoch history"
             );
             if let Some(previous) = self.authorities.insert(authority.seq, authority.clone()) {
-                ensure!(previous == authority, "conflicting historical signer evidence");
+                // A scheduled and an explicit checkpoint can land at one seq, and a rotation can
+                // re-sign the same root: the state commitment is what history pins, so only a
+                // different root at one seq conflicts.
+                ensure!(previous.root == authority.root, "conflicting historical signer evidence");
             }
         }
         Ok(())

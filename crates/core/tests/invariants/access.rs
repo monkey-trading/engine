@@ -8,6 +8,7 @@ use engine_core::access::{
     Screening,
 };
 use engine_core::auth::RequestAuth;
+use engine_core::close_spread::CloseSpreadCeiling;
 use engine_core::command::{AdminCommand, Command, WithdrawalRequest};
 use engine_core::eip712::{self, B256, Signature};
 use engine_core::protocol::ProtocolVersion;
@@ -25,6 +26,15 @@ pub(crate) struct Clients {
 impl Clients {
     /// Funds known keys under the historical rules, then upgrades and records their declarations.
     pub(crate) fn prepare(mut h: Harness, session: &Session) -> (Harness, Self) {
+        // `V40` activation needs every listed market ceilinged; at `V7` unsigned operator commands
+        // still apply, so no signature is needed here.
+        let ceilings = h
+            .engine
+            .markets()
+            .keys()
+            .map(|market| CloseSpreadCeiling { market: *market, max_close_spread_bps: 30 })
+            .collect();
+        h.admin(AdminCommand::SetCloseSpreadCeilings { ceilings });
         let mut keys = BTreeMap::new();
         let mut accounts = BTreeMap::new();
         for seed in [1, 2, 3, 9] {

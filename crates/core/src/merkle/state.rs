@@ -13,6 +13,7 @@ use crate::access::AccessPolicy;
 use crate::account::Position;
 use crate::auth::{ClientAuth, Operator};
 use crate::benchmark::BenchmarkHistory;
+use crate::close_spread::PendingCeiling;
 use crate::deposits::CustodyCheckpoint;
 use crate::election::OperatorElection;
 use crate::emissions::{Emissions, TokenUnits};
@@ -93,6 +94,12 @@ struct Globals<'a> {
     /// From `V37`; omitted until the registry's first mirrored event, so earlier roots stand.
     #[serde(skip_serializing_if = "OperatorElection::is_default")]
     operator_election: &'a OperatorElection,
+    /// From `V40`; omitted until the registry is installed, so earlier roots stand.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    close_spread_ceilings: &'a Option<BTreeMap<MarketId, i64>>,
+    /// From `V40`; omitted while no adoption waits out its notice, so earlier roots stand.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pending_ceiling: &'a Option<PendingCeiling>,
 }
 
 impl Engine {
@@ -419,6 +426,8 @@ impl Engine {
             access_policy,
             operator_bounds,
             operator_election,
+            close_spread_ceilings,
+            pending_ceiling,
             eligibility: _,
             held_deposits: _,
             pending_deposits: _,
@@ -451,6 +460,8 @@ impl Engine {
             access_policy,
             operator_bounds,
             operator_election,
+            close_spread_ceilings,
+            pending_ceiling,
         }
     }
 }

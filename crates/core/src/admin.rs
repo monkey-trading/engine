@@ -63,6 +63,12 @@ impl Engine {
     ///   positions unpriced and not reduce-only (see `Engine::check_priceable`)
     /// - `AnnounceParams` and `RotateOperator` with any error case of `Engine::announce_params` and
     ///   `Engine::rotate_operator`
+    /// - from `V40`, `SetCloseSpreadCeilings` and `AdoptCloseSpreadCeiling` with any error case of
+    ///   `Engine::install_close_spread_ceilings` and `Engine::adopt_close_spread_ceiling`;
+    ///   `UpsertMarket` of a market the ceiling registry has no entry for, or changing the
+    ///   `asset_class` or `quote_currency` of a market with one; `ActivateProtocol` carrying a
+    ///   version past `V40` while a listed market has no adopted ceiling (see
+    ///   `Engine::check_close_spread_activation`)
     pub(crate) fn admin(&mut self, cmd: &AdminCommand, events: &mut Vec<Event>) -> Result<(), String> {
         match cmd {
             AdminCommand::ScheduleCorporateAction(action) => self.schedule_corporate_action(action, events)?,
@@ -132,6 +138,7 @@ impl Engine {
             AdminCommand::UpsertMarket(spec) => {
                 spec.validate()?;
                 self.check_corporate_listing(spec)?;
+                self.check_listing_ceilings(spec)?;
                 if spec.schedule.has_exceptions() && self.protocol_version < ProtocolVersion::V4 {
                     return Err(format!("dated closures and special sessions need protocol {:?}", ProtocolVersion::V4));
                 }
@@ -286,6 +293,7 @@ impl Engine {
                 {
                     params.check_notional_weighting()?;
                 }
+                self.check_close_spread_activation(*version)?;
                 if self.protocol_version < ProtocolVersion::V26 && *version >= ProtocolVersion::V26 {
                     self.check_terminal_receipt_holds()?;
                 }
@@ -370,6 +378,10 @@ impl Engine {
             AdminCommand::InitStaking(config) => self.init_staking(config)?,
             AdminCommand::AnnounceParams(notice) => self.announce_params(notice)?,
             AdminCommand::RotateOperator { address } => self.rotate_operator(*address)?,
+            AdminCommand::SetCloseSpreadCeilings { ceilings } => self.install_close_spread_ceilings(ceilings)?,
+            AdminCommand::AdoptCloseSpreadCeiling { market, max_close_spread_bps, effective_at } => {
+                self.adopt_close_spread_ceiling(*market, *max_close_spread_bps, *effective_at)?
+            }
         }
         Ok(())
     }

@@ -133,7 +133,15 @@ impl GenesisProgress {
                 ProtocolVersion::LATEST
             );
         }
-        if ran == genesis {
+        // Configs sequence the ceiling install at genesis; a log that predates it ran the same
+        // genesis without that command and takes its ceilings at the `V40` upgrade instead (see
+        // `Sequencer::activate_protocol`).
+        let without_install: Vec<_> = genesis
+            .iter()
+            .filter(|cmd| !matches!(cmd, Command::Admin(AdminCommand::SetCloseSpreadCeilings { .. })))
+            .cloned()
+            .collect();
+        if ran == genesis || ran == without_install {
             return Ok(());
         }
         let index = ran.iter().zip(genesis).take_while(|(got, want)| got == want).count();
@@ -148,6 +156,12 @@ impl GenesisProgress {
     #[cfg(test)]
     pub(crate) fn as_config(&self, weighting: Option<NotionalWeighting>) -> Vec<Command> {
         self.restated(weighting)
+    }
+
+    /// Whether the genesis window sequenced the ceiling install, or a log that predates ceilings
+    /// took its registry at the `V40` upgrade instead (see `Sequencer::activate_protocol`).
+    pub(crate) fn has_ceiling_install(&self) -> bool {
+        self.commands.iter().any(|cmd| matches!(cmd, Command::Admin(AdminCommand::SetCloseSpreadCeilings { .. })))
     }
 
     /// The genesis the log ran, in the form a config gives it under the latest protocol: parameters
@@ -182,6 +196,9 @@ pub fn genesis_commands(genesis: &Genesis) -> Vec<Command> {
     if let Some(staking) = &genesis.staking {
         cmds.push(Command::Admin(AdminCommand::InitStaking(*staking)));
     }
+    // Always, so a log with no markets still installs the registry: from `V40` a listing needs an
+    // adopted ceiling, and a log that never installs one would list uncapped markets.
+    cmds.push(Command::Admin(AdminCommand::SetCloseSpreadCeilings { ceilings: genesis.close_spread_ceilings.clone() }));
     cmds.push(Command::HouseCapital { amount: genesis.house_capital, chain_ref: GENESIS_REF.into() });
     cmds
 }
@@ -195,6 +212,7 @@ fn is_genesis_command(cmd: &Command) -> bool {
                 | AdminCommand::SetBenchmarkRate { .. }
                 | AdminCommand::UpsertMarket(_)
                 | AdminCommand::InitStaking(_)
+                | AdminCommand::SetCloseSpreadCeilings { .. }
         )
     ) || is_genesis_credit(cmd)
 }
@@ -244,6 +262,7 @@ fn config_entry(cmd: &Command) -> String {
         Command::Admin(AdminCommand::SetBenchmarkRate { benchmark, .. }) => format!("genesis benchmark {benchmark}"),
         Command::Admin(AdminCommand::UpsertMarket(spec)) => format!("genesis market {}", spec.symbol),
         Command::Admin(AdminCommand::InitStaking(_)) => "genesis.staking".into(),
+        Command::Admin(AdminCommand::SetCloseSpreadCeilings { .. }) => "genesis.close_spread_ceilings".into(),
         Command::HouseCapital { .. } => "genesis.house_capital".into(),
         _ => "protocol activation".into(),
     }
