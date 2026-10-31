@@ -133,7 +133,15 @@ impl GenesisProgress {
                 ProtocolVersion::LATEST
             );
         }
-        if ran == genesis {
+        // Configs sequence the ceiling install at genesis; a log that predates it ran the same
+        // genesis without that command and takes its ceilings at the `V39` upgrade instead (see
+        // `Sequencer::activate_protocol`).
+        let without_install: Vec<_> = genesis
+            .iter()
+            .filter(|cmd| !matches!(cmd, Command::Admin(AdminCommand::SetCloseSpreadCeilings { .. })))
+            .cloned()
+            .collect();
+        if ran == genesis || ran == without_install {
             return Ok(());
         }
         let index = ran.iter().zip(genesis).take_while(|(got, want)| got == want).count();
@@ -182,11 +190,9 @@ pub fn genesis_commands(genesis: &Genesis) -> Vec<Command> {
     if let Some(staking) = &genesis.staking {
         cmds.push(Command::Admin(AdminCommand::InitStaking(*staking)));
     }
-    if !genesis.close_spread_ceilings.is_empty() {
-        cmds.push(Command::Admin(AdminCommand::SetCloseSpreadCeilings {
-            ceilings: genesis.close_spread_ceilings.clone(),
-        }));
-    }
+    // Always, so a log with no markets still installs the registry: from `V39` a listing needs an
+    // adopted ceiling, and a log that never installs one would list uncapped markets.
+    cmds.push(Command::Admin(AdminCommand::SetCloseSpreadCeilings { ceilings: genesis.close_spread_ceilings.clone() }));
     cmds.push(Command::HouseCapital { amount: genesis.house_capital, chain_ref: GENESIS_REF.into() });
     cmds
 }

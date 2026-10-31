@@ -210,21 +210,21 @@ fn a_required_command_the_engine_rejects_stops_the_sequencer_at_the_first_sample
 
 #[test]
 fn an_old_log_with_markets_takes_the_configs_ceilings_before_activating_v39() {
-    // A log whose genesis predates ceilings lists markets with none adopted. Activation carries
-    // the config's ceilings, filtered to the markets the log lists, and the registry installs
-    // before the activation applies: every listed market ends with an adopted ceiling.
+    // A log whose genesis predates ceilings lists markets with none adopted: recovery under the
+    // full current config accepts its genesis (the install command it never ran is not part of
+    // what the log attests), and activation carries the config's ceilings, filtered to the markets
+    // the log lists, before the activation applies.
     let dir = scratch_dir("activation-carries-ceilings");
     let mut genesis = dev_config().genesis;
-    // A legacy genesis: no ceilings section, as older configs gave.
     genesis.close_spread_ceilings.clear();
-    let ran = genesis_commands(&genesis);
-    let mut seq = recover_with(&dir, &signed(31_337), ran.clone()).unwrap();
-    seq.activate_legacy_protocol().unwrap();
-    seq.genesis(&genesis).unwrap();
-    seq.trust(trusted_now()).unwrap();
-    drop(seq);
+    let legacy: Vec<_> = genesis_commands(&genesis)
+        .into_iter()
+        .filter(|cmd| !matches!(cmd, Command::Admin(AdminCommand::SetCloseSpreadCeilings { .. })))
+        .collect();
+    old_genesis_log(&dir, &signed(31_337), ProtocolVersion::V23, legacy, Vec::new());
 
-    let mut seq = recover_with(&dir, &signed(31_337), ran).unwrap();
+    // Recovery under the dev config, whose genesis sequences the install, accepts the log.
+    let mut seq = recover(&dir, &signed(31_337));
     seq.activate_protocol().unwrap();
     drop(seq);
     let replayed = replay(&log_entries(&dir)).unwrap();
@@ -236,24 +236,25 @@ fn an_old_log_with_markets_takes_the_configs_ceilings_before_activating_v39() {
 
 #[test]
 fn an_old_log_with_a_market_the_config_ceilingless_refuses_activation_naming_it() {
-    // The carry filters the config's ceilings to the markets the log lists, and installs only a
-    // complete registry: a listed market the config names no ceiling for refuses the activation,
-    // naming the market.
+    // The carry installs only a complete registry: a listed market the config names no ceiling
+    // for refuses the activation, naming the market, rather than activating an uncapped log.
     let dir = scratch_dir("activation-ceilingless-market");
     let mut genesis = dev_config().genesis;
     genesis.close_spread_ceilings.clear();
-    // A market the config's ceilings never name, listed after genesis.
+    // A market the config's ceilings never name, listed in the old genesis.
     genesis.markets.push(genesis.markets[0].clone());
     let extra = genesis.markets.last_mut().unwrap();
     extra.id = 77;
     extra.symbol = "TEST77".into();
-    let ran = genesis_commands(&genesis);
-    let mut seq = recover_with(&dir, &signed(31_337), ran.clone()).unwrap();
-    seq.activate_legacy_protocol().unwrap();
-    seq.genesis(&genesis).unwrap();
-    seq.trust(trusted_now()).unwrap();
-    drop(seq);
+    let legacy: Vec<_> = genesis_commands(&genesis)
+        .into_iter()
+        .filter(|cmd| !matches!(cmd, Command::Admin(AdminCommand::SetCloseSpreadCeilings { .. })))
+        .collect();
+    old_genesis_log(&dir, &signed(31_337), ProtocolVersion::V23, legacy, Vec::new());
 
+    // The config under which the node restarts names the same genesis — market 77 included — but
+    // no ceiling for it: recovery accepts the old genesis, and the activation refuses, naming 77.
+    let ran = genesis_commands(&genesis);
     let err = recover_with(&dir, &signed(31_337), ran).unwrap().activate_protocol().unwrap_err();
     assert!(format!("{err:#}").contains("without a close-spread ceiling"), "{err:#}");
 }

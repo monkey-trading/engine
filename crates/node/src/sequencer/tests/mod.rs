@@ -3,6 +3,7 @@ use crate::sequencer::fixture_tests::{finished_genesis, replay_trusted as replay
 use std::fs;
 use std::path::PathBuf;
 
+use engine_core::close_spread::CloseSpreadCeiling;
 use engine_core::command::AdminCommand;
 use engine_core::params::{ProtocolParams, StressTrigger};
 use engine_core::protocol::ProtocolVersion;
@@ -228,11 +229,11 @@ fn an_existing_v1_log_activates_at_its_next_seq_and_still_verifies() {
     seq.carry_toxicity_notional(weighting).unwrap();
     seq.activate_protocol().unwrap();
     // The original 63 commands and 3 checkpoints, then the config's notional weighting and its
-    // checkpoint, then client auth, the operator, and the activation, with the scheduled checkpoint
-    // after the operator and the activation's own.
+    // checkpoint, then client auth, the operator, the carried ceilings, and the activation, with
+    // the scheduled checkpoint after the operator and the activation's own.
     let replayed = replay(&log_entries(&dir)).unwrap();
-    assert_eq!((replayed.commands, replayed.checkpoints), (67, 6));
-    assert_eq!(replayed.activations, [(ProtocolVersion::LATEST, 66)]);
+    assert_eq!((replayed.commands, replayed.checkpoints), (68, 6));
+    assert_eq!(replayed.activations, [(ProtocolVersion::LATEST, 67)]);
     // Activation also turns its absolute divergence triggers of 15 and 20 bps into 60% and 80% of its
     // widest bound, 25 bps: the shares the dev config takes.
     let mut carried = before;
@@ -276,7 +277,7 @@ fn a_v3_log_takes_the_state_tree_at_its_next_seq_and_still_verifies() {
     let before = replay(&logged).unwrap();
     // As the node does, the log's parameters take the config's notional weighting at its next seq;
     // the operator follows, and the latest version after it.
-    let activated = before.engine.last_seq().unwrap() + 3;
+    let activated = before.engine.last_seq().unwrap() + 4;
     // The log is stamped ahead of the system clock, so the host clock and trusted time agree on a
     // time just after its last command.
     let stamps = Arc::new(TestClock::at(before.engine.now() + 1_000));
@@ -284,12 +285,21 @@ fn a_v3_log_takes_the_state_tree_at_its_next_seq_and_still_verifies() {
     let (manifest, _) = watch::channel(Manifest::default());
     let mut operator = dev_config().operator().unwrap();
     operator.vault = AccountId([0xaa; 20]);
+    // The V3 log lists markets the dev config never ceilinged; `V39` needs an adopted ceiling for
+    // each, so the config this test runs under names one per listed market.
+    let ceilings: Vec<_> = before
+        .engine
+        .markets()
+        .keys()
+        .map(|market| CloseSpreadCeiling { market: *market, max_close_spread_bps: 30 })
+        .collect();
     let cfg = SequencerConfig {
         client_auth: signed(31_337),
         vault: operator.vault,
         operator,
         clock: stamps.clone(),
         genesis: finished_genesis(&logged),
+        close_spread_ceilings: ceilings,
         ..sequencer_config(&dir, manifest)
     };
     let key = Arc::new(EnclaveKey::test_key());

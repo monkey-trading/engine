@@ -129,15 +129,10 @@ fn genesis_markets_need_a_close_spread_ceiling_each_and_one_the_engine_refuses_f
         format!("{err:#}").contains("genesis.close_spread_ceilings: the engine rejects it: a nonzero ceiling"),
         "{err:#}"
     );
-    let missing = dev.replacen(
-        "[[genesis.close_spread_ceilings]]\nmarket = 1\nmax_close_spread_bps = 30\n",
-        "",
-        1,
-    );
+    let missing = dev.replacen("[[genesis.close_spread_ceilings]]\nmarket = 1\nmax_close_spread_bps = 30\n", "", 1);
     let err = toml::from_str::<NodeConfig>(&missing).unwrap().validate().unwrap_err();
     assert!(
         format!("{err:#}").contains("genesis.close_spread_ceilings: the engine rejects it: market 1 is listed without"),
         "{err:#}"
     );
 }
-

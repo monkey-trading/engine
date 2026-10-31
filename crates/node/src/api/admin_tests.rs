@@ -161,7 +161,24 @@ async fn a_reused_ahead_or_expired_admin_request_stays_out_of_the_log() {
     let node = Node::start("stale").await;
     let first = node.sign(0, reduce_only(Some(1)), NOW + 60_000);
     assert_eq!(node.post("/v1/admin", serde_json::to_value(&first).unwrap()).await.0, StatusCode::OK);
-    let logged = node.entries().len();
+    // The log writer flushes behind the reply and ticks keep sequencing, so count only signed
+    // admin commands, waiting until the first is durable before counting what stays out.
+    let signed = |node: &Node| {
+        node.entries()
+            .iter()
+            .filter(|entry| {
+                matches!(entry, LogEntry::Command(command) if matches!(&command.sequenced.cmd, Command::SignedAdmin(_)))
+            })
+            .count()
+    };
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while signed(&node) == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the admin command is logged");
+    let logged = signed(&node);
 
     let invalid_nonce = (StatusCode::CONFLICT, serde_json::json!({ "error": "invalid nonce", "expected": 1 }));
     assert_eq!(node.post("/v1/admin", serde_json::to_value(&first).unwrap()).await, invalid_nonce);
@@ -171,14 +188,21 @@ async fn a_reused_ahead_or_expired_admin_request_stays_out_of_the_log() {
     let (status, body) = node.post("/v1/admin", serde_json::to_value(&expired).unwrap()).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(body["error"].as_str().unwrap().starts_with("request expired at"), "{body}");
-    assert_eq!(node.entries().len(), logged);
+    assert_eq!(signed(&node), logged);
 
     // An expiry too far ahead is the engine's to refuse, so the nonce cannot be used later.
     let too_far = node.sign(1, reduce_only(Some(2)), NOW + MAX_EXPIRY_AHEAD_MS + 60_000);
     let (status, events) = node.post("/v1/admin", serde_json::to_value(&too_far).unwrap()).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(events[0]["type"], "admin_rejected", "{events}");
-    assert_eq!(node.entries().len(), logged + 1);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while signed(&node) < logged + 1 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the refusal is logged");
+    assert_eq!(signed(&node), logged + 1);
 }
 
 #[tokio::test]
