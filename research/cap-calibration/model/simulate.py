@@ -61,6 +61,7 @@ class Scenario:
     idle_withdraw_per_day: float = 0.05
     run_withdraw_per_day: float = 0.5  # while NAV is below zero
     batch_paths: int = 250
+    utilisation_stats: bool = False  # record per-hour utilisation and next-hour book MTM (stress calibration)
 
 
 @dataclass
@@ -428,6 +429,13 @@ def run_batch(scenario: Scenario, markets: Markets, bars: np.ndarray, flow: Flow
     desired_by_market = np.zeros((n_paths, n_markets))
     identity_gap = 0.0
 
+    # Stress-calibration instrumentation (`scenario.utilisation_stats`): per whole-percent
+    # utilisation bucket, the open-hour count and the house's absolute exposure in USD; bucket 101
+    # holds hours whose cap is not positive, which the engine reads as full utilisation.
+    n_util_buckets = 102
+    util_hist = np.zeros((1, n_util_buckets, n_markets, n_lanes))
+    util_expo = np.zeros((1, n_util_buckets, n_markets, n_lanes))
+
     h_scale = scenario.hedged_scale
     decay = farm_decay(scenario, hours)
     directional = [c for c in flow.classes if c.kind == "directional" and c.hold_h > 0]
@@ -485,6 +493,21 @@ def run_batch(scenario: Scenario, markets: Markets, bars: np.ndarray, flow: Flow
             nav = (house - (exposure - fx[..., None] * cost)).sum(axis=1)
             cap = accounting.exposure_cap(nav[:, None, :], cap_bps, market_floors)
             total_cap = accounting.exposure_cap(nav, markets.total_cap_bps, total_floors[None])
+
+            if scenario.utilisation_stats:
+                # The stress calibration reads each market's utilisation and absolute exposure at
+                # the hour's mark.
+                util_bucket = np.where(
+                    cap > 0,
+                    np.clip((np.abs(exposure) / np.where(cap > 0, cap, 1.0) * 1e4 // 100).astype(int), 0, 100),
+                    101,
+                )
+                u_market = np.arange(n_markets)[None, :, None]
+                u_lane = np.arange(n_lanes)[None, None, :]
+                u_batch = np.zeros(util_bucket.shape, dtype=int)
+                open_now = np.broadcast_to(paths.is_open[:, t][:, :, None], util_bucket.shape)
+                np.add.at(util_hist, (u_batch, util_bucket, u_market, u_lane), open_now.astype(float))
+                np.add.at(util_expo, (u_batch, util_bucket, u_market, u_lane), np.abs(exposure))
 
             # Client long share: AR(1) around each class's measured share, leaning on the last return.
             prev_ret = log_close[:, t - 1] - log_close[:, t - 2] if t >= 2 else np.zeros((n_paths, n_markets))
@@ -649,6 +672,9 @@ def run_batch(scenario: Scenario, markets: Markets, bars: np.ndarray, flow: Flow
     out["desired_by_market"] = np.broadcast_to(desired_by_market[:, None, :], (n_paths, n_lanes, n_markets)).copy()
     out["in_positions_end"] = in_positions
     out["identity_gap"] = np.array(identity_gap)
+    if scenario.utilisation_stats:
+        out["util_hist"] = util_hist
+        out["util_expo"] = util_expo
     return out
 
 
