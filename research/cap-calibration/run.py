@@ -139,6 +139,9 @@ def stress_stage(experiments, np, scenario, markets, bars, flow, args) -> dict:
     util_rows = stress.utilisation(scenario, markets, bars, flow, floors_by_family, gaps, args.workers)
     experiments.write_rows(RESULTS / "stress_utilisation.csv", util_rows)
     util_choice = stress.choose_utilisation(util_rows, mix)
+    house_cash = floors_by_family["house_cash_1pct"]
+    floors_source = hashlib.sha256((RESULTS / "joint_p_short.csv").read_bytes()).hexdigest()[:16]
+    floors_inputs = hashlib.sha256(np.ascontiguousarray(house_cash).data).hexdigest()[:16]
 
     choice = {
         "stress_move_window_ms": move_choice["window_s"] * 1000,
@@ -161,6 +164,9 @@ def stress_stage(experiments, np, scenario, markets, bars, flow, args) -> dict:
         "stress_move_window_ms": window_s * 1000,
         "stress_cooldown_ms": cooldown_s * 1000,
         "floor_families": {name: ("uniform" if name.startswith("uniform") else "per-market") for name in floors_by_family},
+        # The house-cash family comes from the committed joint run; record its source and the
+        # effective inputs so a joint rerun cannot change the stress results silently.
+        "house_cash_floors_sha256": f"floors:{floors_inputs},source:{floors_source}",
     }
 
 

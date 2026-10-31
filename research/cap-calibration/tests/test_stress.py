@@ -326,17 +326,40 @@ def test_choose_move_rejects_on_the_level2_and_worst_market_bounds():
 
 def test_choose_utilisation_excludes_the_uniform_1m_family_from_the_bounds():
     rows = []
-    for family, rate in (("house_cash_1pct", 0.01), ("uniform_10M", 0.015), ("uniform_1M", 0.09)):
-        for level in (5000, 6000, 7000):
-            rows.append(utilisation_row(family, "BTC-USD", level, rate if level == 6000 else 0.05))
-    # Candidate 7000 passes the flow bound (1%) but one market in it is over the per-market
-    # bound; 8000-level rates would pass everything, so a per-market-only rejection is exercised.
-    rows.append(utilisation_row("house_cash_1pct", "BTC-USD", 8000, 0.001))
-    rows.append(utilisation_row("house_cash_1pct", "TSLA", 8000, 0.06))
-    rows.append(utilisation_row("uniform_10M", "BTC-USD", 8000, 0.001))
-    rows.append(utilisation_row("uniform_10M", "TSLA", 8000, 0.001))
+    for family in ("house_cash_1pct", "uniform_10M"):
+        # Candidate 6000 passes the flow bound but fails only the per-market bound (TSLA);
+        # candidate 7000 passes everything, so the per-market guard alone decides between them.
+        rows += [
+            utilisation_row(family, "BTC-USD", 6000, 0.01),
+            utilisation_row(family, "TSLA", 6000, 0.09),
+            utilisation_row(family, "BTC-USD", 7000, 0.01),
+            utilisation_row(family, "TSLA", 7000, 0.01),
+        ]
+    # uniform_1M's rates would fail the bound if it were counted; the choice ignores it.
+    rows += [
+        utilisation_row("uniform_1M", "BTC-USD", 6000, 0.5),
+        utilisation_row("uniform_1M", "BTC-USD", 7000, 0.4),
+    ]
     choice = stress.choose_utilisation(rows, {"BTC-USD": 0.99, "TSLA": 0.01})
-    # uniform_1M's 9% would fail the bound if it were counted; the choice ignores it, and the
-    # per-market bound alone rejects 8000, leaving 6000.
-    assert choice["utilisation_bps_l1"] == 6000
+    assert choice["utilisation_bps_l1"] == 7000
     assert set(choice["fire_rate_by_family"]) == {"house_cash_1pct", "uniform_10M"}
+
+
+def test_choose_divergence_handles_a_zero_minimum_spread():
+    genesis = genesis_with_bounds({"EUR-USD": 5})
+    genesis["params"] = {"stress_levels": [{}, {"min_spread_bps": 0}, {"min_spread_bps": 10}]}
+    choice = stress.choose_divergence(genesis)
+    # Level 1's zero spread makes the cost criterion vacuous: the most protective share carries
+    # it; level 2's 10-bps criterion still needs 20 bps, infeasible on a 5-bps bound.
+    assert choice["divergence_share_l1"] == 1
+    assert choice["divergence_share_l2"] == 9500
+    assert choice["level2_cost_feasible"] is False
+
+
+def test_the_move_measure_reads_the_high_side_of_a_fall():
+    # A mid that falls 2% below the window's high reads the high side, in bps of the high.
+    mids = np.full((1, 20), 1.02)  # window 10s: the high is 1.02 from t=5 on
+    mids[0, :5] = 1.0
+    mids[0, 10:] = 1.0  # back to 1.0: (high - mid)/high dominates (low side is 0)
+    measure = stress.engine_move_measures(mids, window_s=10)
+    assert measure[0, 15] == pytest.approx((1.02 - 1.0) / 1.02 * 1e4, rel=1e-9)

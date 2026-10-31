@@ -276,7 +276,11 @@ def choose_divergence(genesis: dict) -> dict:
     spread1, spread2 = level_spreads(genesis)
 
     def lowest_share(spread_bps: int) -> int | None:
-        share = (2 * spread_bps - 1) * 10_000 // tightest + 1
+        # A zero minimum spread makes the cost criterion vacuous: widening is free, so the most
+        # protective share (the lowest the engine validates) carries the level.
+        if spread_bps <= 0:
+            return 1
+        share = max(1, (2 * spread_bps - 1) * 10_000 // tightest + 1)
         return share if share <= 10_000 else None
 
     return {

@@ -260,7 +260,7 @@ memory = "10000000"
 # Level 0 is normal. Higher levels widen spreads, either automatically on
 # any trigger or when the operator raises the floor. A divergence trigger is
 # a share of each market's max_divergence_bps, so every market can reach each
-# level: 80% and 95% are 20 and 24 bps at crypto's 25 bps bound.
+# level: 60.01% and 95% fire at 16 and 24 bps at crypto's 25 bps bound.
 # Calibrated by research/cap-calibration's stress stage (#133): the level-1
 # divergence share is the lowest whose stale-fill loss at fire covers the
 # level's spread on the tightest bound (6001 is the lowest share the engine's
