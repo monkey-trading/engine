@@ -26,7 +26,6 @@ fn install_adopts_every_listed_market_once_and_refuses_a_flawed_registry() {
     // uninstalled.
     let cases: Vec<(Vec<CloseSpreadCeiling>, &str)> = vec![
         (ok[..ok.len() - 1].to_vec(), "listed without"),
-        (with(&ok, 77, 20), "not listed"),
         (duplicating(&ok, ETH, 25), "twice"),
         (with(&ok, BTC, MAX_CLOSE_SPREAD_BPS + 1), "0..=9999"),
         (with(&ok, BTC, 7), "largest close charge"),
@@ -108,7 +107,8 @@ fn a_ceilinged_market_cannot_change_instrument_identity() {
 #[test]
 fn pre_v39_closes_pay_what_they_priced_and_the_registry_is_inert() {
     let mut h = Harness::v8(ClientAuth::Unsigned);
-    install_expect(&mut h, ceilings());
+    // A zero ceiling on ETH: the close below pays 5bps anyway, which fails if the cap applies.
+    install_expect(&mut h, with(&ceilings(), ETH, 0));
     let a = acct(1);
     h.deposit(a, "1000000");
     h.price(ETH, "4000");
@@ -120,6 +120,23 @@ fn pre_v39_closes_pay_what_they_priced_and_the_registry_is_inert() {
     assert_eq!(fill.spread_bps, 5, "pre-V39 a close pays the stress minimum: {events:?}");
     // The registry is installed but inert: no ceiling applies before `V39`.
     assert_eq!(h.engine.protocol_version(), ProtocolVersion::V8);
+}
+
+#[test]
+fn install_adopts_a_ceiling_for_a_market_no_genesis_lists() {
+    let mut h = Harness::v8(ClientAuth::Unsigned);
+    // An entry for a market no genesis lists stays inert until the market is listed: an upgrade's
+    // ceilings can cover markets a legacy log listed after its genesis.
+    install_expect(&mut h, with(&ceilings(), 7, 20));
+    assert_eq!(h.engine.close_spread_ceilings().unwrap()[&7], 20);
+    into_v39(&mut h);
+    h.operator_admin(AdminCommand::UpsertMarket(market(
+        7,
+        "XAU-USD",
+        AssetClass::Commodity,
+        Schedule::AlwaysOpen,
+        500,
+    )));
 }
 
 #[test]

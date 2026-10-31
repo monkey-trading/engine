@@ -115,14 +115,12 @@ fn genesis_markets_need_a_close_spread_ceiling_each_and_one_the_engine_refuses_f
     let without = &dev[..first_ceiling];
     let err = toml::from_str::<NodeConfig>(without).unwrap().validate().unwrap_err();
     assert!(format!("{err:#}").contains("genesis lists markets but no close-spread ceilings"), "{err:#}");
-    // The engine names the entry its registry refuses: an unlisted market, a value below the
-    // launch close charge, and a listed market with no entry.
+    // An entry may name a market the genesis does not list: it stays inert until the market is
+    // listed, so an upgrade's ceilings can cover markets a legacy log listed after its genesis.
     let unlisted = dev.replacen("market = 1\n", "market = 77\n", 1);
-    let err = toml::from_str::<NodeConfig>(&unlisted).unwrap().validate().unwrap_err();
-    assert!(
-        format!("{err:#}").contains("genesis.close_spread_ceilings: the engine rejects it: market 77 is not listed"),
-        "{err:#}"
-    );
+    toml::from_str::<NodeConfig>(&unlisted).unwrap().validate().unwrap();
+    // The engine names the entry its registry refuses: a value below the launch close charge, and
+    // a listed market with no entry.
     let below = dev.replacen("max_close_spread_bps = 30", "max_close_spread_bps = 5", 1);
     let err = toml::from_str::<NodeConfig>(&below).unwrap().validate().unwrap_err();
     assert!(

@@ -87,7 +87,7 @@ impl Engine {
     /// Error cases:
     /// - once a registry is installed
     /// - before parameters are set
-    /// - an entry for a market that is not listed, or two entries for one market
+    /// - two entries for one market
     /// - a listed market with no entry
     /// - a value outside 0..=9999 bps, or a nonzero value below the parameters' largest close
     ///   charge, which would clamp a launch close by more than the rounding unit
@@ -99,9 +99,6 @@ impl Engine {
         let floor = launch_close_charge_bps(params);
         let mut registry = BTreeMap::new();
         for ceiling in ceilings {
-            if !self.markets.contains_key(&ceiling.market) {
-                return Err(format!("market {} is not listed, so it takes no close-spread ceiling", ceiling.market));
-            }
             if registry.insert(ceiling.market, ceiling.max_close_spread_bps).is_some() {
                 return Err(format!("market {} takes a close-spread ceiling twice", ceiling.market));
             }
