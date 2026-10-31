@@ -1,12 +1,18 @@
-//! The provider backfill: the venue's candles wire shape, window paging, source mapping, and the
-//! endpoint's request against a loopback stand-in.
+//! The provider backfill: the venue's candles wire shape, window paging, source mapping, the
+//! endpoint's request against a loopback stand-in, and the live-sample service a slow page
+//! cannot stall.
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use engine_core::Fixed;
 
-use super::{Candle, Candles, Source, parse_candles, sources, windows};
-use crate::config::{FeedProvider, FeedsSection, Venue, VenueConnection, VenueSymbol};
+use super::{Candle, Candles, Source, parse_candles, seed_market, service_live, sources, windows};
+use crate::config::{BackfillSection, FeedProvider, FeedsSection, Venue, VenueConnection, VenueSymbol};
+use crate::history::marks::run::{FLUSH_EVERY, Live, QUEUE};
+use crate::history::marks::store::Store;
+use crate::history::marks::{Resolution, Retentions};
+use crate::test_support::scratch_dir;
 
 /// The venue's row order: time, low, high, open, close, volume.
 const ROWS: &str = r#"[
@@ -141,7 +147,7 @@ async fn fetch_asks_the_stand_in_and_parses_its_rows() {
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let candles = Candles::new(&format!("http://{addr}")).unwrap();
-    let rows = candles.fetch("BTC-USD", 60, 1_792_489_740_000, 1_792_489_800_000).await.unwrap();
+    let rows = candles.fetch_with("BTC-USD", 60, 1_792_489_740_000, 1_792_489_800_000, None, || Ok(())).await.unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].close, fixed("2378.9"));
 }
@@ -161,10 +167,116 @@ async fn fetch_sends_a_user_agent() {
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let candles = Candles::new(&format!("http://{addr}")).unwrap();
-    let rows = candles.fetch("BTC-USD", 60, 1_792_489_740_000, 1_792_489_800_000).await.unwrap();
+    let rows = candles.fetch_with("BTC-USD", 60, 1_792_489_740_000, 1_792_489_800_000, None, || Ok(())).await.unwrap();
     assert!(rows.is_empty());
 }
 
 fn fixed(text: &str) -> Fixed {
     text.parse().unwrap()
+}
+
+/// One slow page fetch — a body that stalls between chunks for longer than the caller's service
+/// interval — cannot stall the caller's own deadline: `between` runs on chunk progress and on
+/// the interval while the body trickles.
+#[tokio::test]
+async fn fetch_with_services_the_caller_while_the_body_trickles() {
+    let app = axum::Router::new().route(
+        "/products/BTC-USD/candles",
+        axum::routing::get(|| async move {
+            let chunks: Vec<&'static [u8]> =
+                vec![br#"[ [1792489800,"2370.1","2380.5","2375.2","2378.9","12.5"]"#.as_slice(), b"]"];
+            let body = futures_util::stream::unfold((chunks, 0usize), |(chunks, n)| async move {
+                if n == 1 {
+                    // A single request stalls mid-body, past the caller's service interval.
+                    tokio::time::sleep(Duration::from_millis(400)).await;
+                }
+                if n >= chunks.len() {
+                    None
+                } else {
+                    Some((Ok::<&'static [u8], std::convert::Infallible>(chunks[n]), (chunks, n + 1)))
+                }
+            });
+            axum::body::Body::from_stream(body)
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let candles = Candles::new(&format!("http://{addr}")).unwrap();
+    let mut services = 0u32;
+    let rows = candles
+        .fetch_with("BTC-USD", 60, 1_792_489_740_000, 1_792_489_800_000, Some(Duration::from_millis(25)), || {
+            services += 1;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert!(services >= 8, "serviced {services} times across a 400ms stall at a 25ms interval, not only per chunk");
+}
+
+/// The shared service flushes at the one-second deadline and holds before it, exactly the run
+/// loop's guarantee, so a backfill keeps it without duplicating the predicate.
+#[tokio::test]
+async fn service_live_holds_the_flush_deadline() {
+    let dir = scratch_dir("backfill-service-live");
+    let mut store = Store::open_in(&dir, Retentions::defaults(), [0x42; 32]).unwrap();
+    let (tx, rx) = tokio::sync::mpsc::channel(QUEUE);
+    let mut live = Live { samples: rx, buffered: Vec::new(), flushed_at: tokio::time::Instant::now() - FLUSH_EVERY };
+    tx.send((1, 1_792_489_800_000, fixed("67000"))).await.unwrap();
+    service_live(&mut live, &mut store).unwrap();
+    assert!(live.buffered.is_empty(), "a due deadline flushes");
+    let reader = store.reader();
+    let page = reader.page(1, Resolution::S1, i64::MIN, i64::MAX, 100, 100).await.unwrap();
+    assert!(page.entries.iter().any(|entry| entry.close == fixed("67000")));
+
+    let (tx, rx) = tokio::sync::mpsc::channel(QUEUE);
+    let mut live = Live { samples: rx, buffered: Vec::new(), flushed_at: tokio::time::Instant::now() };
+    tx.send((1, 1_792_489_800_000, fixed("67100"))).await.unwrap();
+    service_live(&mut live, &mut store).unwrap();
+    assert_eq!(live.buffered.len(), 1, "before the deadline the buffer holds the sample");
+}
+
+/// End to end over `seed_market`: a queued live mark reaches the cache across a backfill's
+/// slow pages, with the deadline already due, as a quiet market's newest mark must.
+#[tokio::test]
+async fn seed_market_services_live_marks_across_its_pages() {
+    let app = axum::Router::new().route(
+        "/products/BTC-USD/candles",
+        axum::routing::get(|| async move {
+            tokio::time::sleep(Duration::from_millis(120)).await;
+            axum::Json(serde_json::json!([]))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let cfg = BackfillSection {
+        enabled: true,
+        base_url: format!("http://{addr}"),
+        depth_1m: Duration::from_secs(60),
+        depth_1h: Duration::ZERO,
+        depth_1d: Duration::ZERO,
+    };
+    let candles = Candles::new(&cfg.base_url).unwrap();
+    let mut store = Store::open_in(&scratch_dir("backfill-service-seed"), Retentions::defaults(), [0x42; 32]).unwrap();
+    let (tx, rx) = tokio::sync::mpsc::channel(QUEUE);
+    let mut live = Live { samples: rx, buffered: Vec::new(), flushed_at: tokio::time::Instant::now() - FLUSH_EVERY };
+    tx.send((1, 1_792_489_800_000, fixed("67000"))).await.unwrap();
+    drop(tx);
+    seed_market(
+        &candles,
+        &Source { venue: Venue::Coinbase, symbol: "BTC-USD".to_owned() },
+        1,
+        &cfg,
+        1_792_489_800_000,
+        &mut store,
+        &mut live,
+    )
+    .await
+    .unwrap();
+    assert!(live.buffered.is_empty(), "the queued sample drained across the backfill");
+    let reader = store.reader();
+    let page = reader.page(1, Resolution::S1, i64::MIN, i64::MAX, 100, 100).await.unwrap();
+    assert!(page.entries.iter().any(|entry| entry.close == fixed("67000")), "the live mark reached the cache");
 }
