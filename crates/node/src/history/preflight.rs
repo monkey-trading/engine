@@ -122,6 +122,7 @@ impl HistoryPlan {
         let mut check = HistoryCheck::open(&HistorySection {
             dir: self.dir,
             retention: std::time::Duration::from_millis(u64::try_from(self.retention_ms)?),
+            marks: None,
         })?;
         match self.progress {
             Err(reason) => check.opened = Err(reason),

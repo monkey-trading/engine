@@ -75,6 +75,11 @@ an index: load only the rule whose hint matches the current action.
   `Engine::quote` at most every `api.quote_interval`)
   and their offline checks, `engine
   verify-response` and `engine verify-frames` (`verify/answers.rs`), the account history index (SQLite, derived from the log),
+  the derived marks cache (SQLite beside the index, `history/marks/`: per-resolution OHLC buckets of each
+  market's index-mark history served signed and paged at `/v1/markets/{id}/marks` with per-entry
+  `log_derived`/`seeded_from_provider` provenance; recovery seeds it from the log's replay through a sink
+  in the replay, the sequencer's live mark reports keep it current, and an optional Coinbase candles
+  backfill (`[history.marks.backfill]`) seeds depth a fresh log cannot have),
   dated benchmark ingestion (`benchmarks/` and the separate `admin/benchmark_feed.rs` signing worker
   with bounded durable schedule watches in `admin/benchmark_watch.rs` and `api/benchmark_schedule.rs`),
   optional checkpoint snapshots authenticated by pinned attested signers for suffix recovery,
@@ -181,6 +186,10 @@ an index: load only the rule whose hint matches the current action.
   `custody.vault` under `eip712`, and `operator.public_key`, with the same chain id and vault, are
   recorded in the log when it first activates the protocol versions that need them, so changing
   either needs a fresh log.
+  `[history.marks]` tunes the marks cache's per-resolution retention (1s ~48h, 1m ~60d, 1h ~2y,
+  1d unbounded by default) and its optional provider backfill (`enabled`, the venue-domain
+  `base_url`, per-resolution `depth`s); only the feed venue's public candles endpoint is
+  implemented (Coinbase's, no key), and other venues' markets serve log-derived history only.
   `benchmark-publishers.toml` supplies the optional benchmark section with official publisher endpoints;
   a separate `engine admin ... sync-benchmarks --watch` worker signs daily snapshots and releases
   synchronization before startup catch-up and after trusted-time halts spanning unpaid rollovers.

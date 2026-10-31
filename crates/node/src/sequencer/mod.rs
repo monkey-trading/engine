@@ -9,6 +9,7 @@ mod config;
 pub use config::SequencerConfig;
 pub(crate) mod history_rebuild;
 pub(crate) mod legacy;
+mod marks;
 mod origin;
 mod recovery;
 mod replay;
@@ -113,6 +114,8 @@ pub struct Sequencer {
     /// The newest checkpoint, with its recovery facts as they stood then, when its capture was
     /// skipped because another was in flight.
     uncaptured: Option<snapshots::Deferred>,
+    /// Live mark reporting for the derived marks cache.
+    marks: marks::Marks,
 }
 
 /// A log read from disk and replayed, before anything is written to it.
@@ -344,6 +347,7 @@ impl Sequencer {
         self.legacy_approvals.observe(&self.engine, &sequenced, &events, true);
         let reinstated = reinstated_receipt(&sequenced.cmd, &events);
         self.access_alerts.note(&self.engine, &sequenced.cmd, &events);
+        self.report_marks(ts);
         self.next_seq += 1;
         self.last_ts = ts;
         let mut entry = CommandEntry { sequenced, events: Some(events.clone()), seal: None };
@@ -451,6 +455,7 @@ impl Sequencer {
         if std::mem::take(&mut self.benchmark_schedule_dirty) {
             self.benchmark_schedule.send_replace(BenchmarkSchedule::from_engine(&self.engine));
         }
+        self.release_marks();
         for msg in self.outbox.drain(..) {
             if let StreamBody::Withdrawal(w) = &msg.body
                 && self.withdrawals.send(w.clone()).is_err()

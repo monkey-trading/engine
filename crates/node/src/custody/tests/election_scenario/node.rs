@@ -108,6 +108,7 @@ impl Node {
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
             limits: Arc::new(ApiLimits::with_quota(&dev_config().api, unlimited, DefaultClock::default())),
             history: Reader::new(dir.join(INDEX_FILE), watch::channel(true).1),
+            marks: crate::test_support::marks_reader(),
             emission_budget: None,
             payouts_enabled: false,
             collateral: None,

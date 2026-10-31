@@ -65,6 +65,7 @@ pub struct TestSequencer {
     /// What custody receives.
     pub withdrawals: mpsc::UnboundedReceiver<SignedWithdrawal>,
     pub metrics: Arc<Metrics>,
+    marks_rx: Option<mpsc::Receiver<crate::history::marks::MarkSample>>,
     task: JoinHandle<anyhow::Result<()>>,
 }
 
@@ -125,9 +126,15 @@ impl TestSequencer {
         }
         // Trusted time admits stamps on `clock`, so the queued genesis goes in now.
         seq.trust(sample_around(clock.as_ref())).expect("dev genesis");
+        let (marks_tx, marks_rx) = mpsc::channel(crate::history::marks::run::QUEUE);
+        seq.track_marks(marks_tx);
         let (tx, rx) = mpsc::channel(64);
         let task = tokio::spawn(seq.run(rx));
-        Self { tx, stream, manifest, withdrawals, metrics, task }
+        Self { tx, stream, manifest, withdrawals, metrics, marks_rx: Some(marks_rx), task }
+    }
+
+    pub fn take_marks(&mut self) -> mpsc::Receiver<crate::history::marks::MarkSample> {
+        self.marks_rx.take().expect("taken once")
     }
 
     /// Stops the sequencer as a shutdown does: it drains and writes a final checkpoint.
@@ -187,7 +194,7 @@ impl TestHistory {
     /// Error cases:
     /// - the index cannot be opened, nor a fresh one in its place (see `HistoryCheck`)
     pub fn start_with_tip(node: &TestSequencer, dir: &Path, index: &Path, tip: Option<u64>) -> anyhow::Result<Self> {
-        let cfg = HistorySection { dir: index.to_owned(), retention: RETENTION };
+        let cfg = HistorySection { dir: index.to_owned(), retention: RETENTION, marks: None };
         let mut history = open_history(&cfg, dir)?;
         history.catch_up_to(tip);
         let backfills = Arc::new(Semaphore::new(MAX_BACKFILLS));
@@ -308,6 +315,13 @@ pub fn scratch_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("engine-node-test-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     dir
+}
+
+/// A marks-cache reader over a scratch store no test reads; one directory per calling thread.
+pub fn marks_reader() -> crate::history::marks::Reader {
+    use crate::history::marks::{Retentions, Store};
+    let dir = scratch_dir(&format!("unused-marks-{:?}", std::thread::current().id()));
+    Store::open_in(&dir, Retentions::defaults(), [0x42; 32]).expect("scratch").reader()
 }
 
 /// An operator public key nobody has published: the uncompressed SEC1 hex of a fresh random key.

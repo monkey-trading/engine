@@ -36,6 +36,9 @@ mod custody;
 pub use custody::{EvmCustodySection, FinalityTag, RpcProviderSection, SecretUrl};
 mod feeds;
 pub use feeds::*;
+mod marks;
+pub use marks::{BackfillSection, MarksSection};
+pub(crate) use marks::{default_marks_retention_1h, default_marks_retention_1m, default_marks_retention_1s};
 mod checkpoints;
 pub use checkpoints::CheckpointSection;
 mod telemetry;
@@ -280,14 +283,18 @@ pub struct RoughtimeServer {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HistorySection {
-    /// Where the node keeps the account history index, which it derives from the log alone:
-    /// removing the directory while the node is stopped rebuilds the index from the log.
+    /// Where the node keeps the account history index and the derived marks cache, both rebuilt
+    /// from the log: removing the directory while the node is stopped rebuilds them from the log.
     pub dir: PathBuf,
     /// How long an event stays in the index, counted back from the sequenced time of the newest
     /// command it holds. The log keeps every event regardless. After a change, the node discards the
     /// index and rebuilds it from the log.
     #[serde(with = "humantime_serde")]
     pub retention: Duration,
+    /// The per-market index-mark history the node serves at `/v1/markets/{id}/marks`; absent runs
+    /// the cache with its default retentions and no provider backfill.
+    #[serde(default)]
+    pub marks: Option<MarksSection>,
 }
 
 /// Optional signed recovery caches; signer pins must come from verified attestation.
@@ -456,6 +463,8 @@ mod api_tests;
 mod custody_tests;
 #[cfg(test)]
 mod feeds_tests;
+#[cfg(test)]
+mod marks_tests;
 #[cfg(test)]
 mod origins_tests;
 #[cfg(test)]

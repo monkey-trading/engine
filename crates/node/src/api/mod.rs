@@ -13,6 +13,7 @@ mod benchmark_schedule;
 mod distributions;
 mod exit;
 mod history;
+mod marks;
 mod operator;
 mod origin;
 pub(crate) mod reissue;
@@ -113,6 +114,8 @@ pub struct ApiState {
     pub backfills: Arc<Semaphore>,
     pub limits: Arc<ApiLimits>,
     pub history: Reader,
+    /// The derived marks cache every market's index-mark history is served from.
+    pub marks: crate::history::marks::Reader,
     /// The archive manifest listing proven so far, extended as segments complete.
     pub listing: Arc<tokio::sync::Mutex<Option<crate::log::catalog::CatalogListing>>>,
     /// The emission period budget the configured vault's MONKEY cap was derived from, which an
@@ -209,6 +212,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/attestation", get(attestation))
         .route("/v1/attestation/collateral", get(attestation_collateral))
         .route("/v1/markets", get(markets))
+        .route("/v1/markets/{id}/marks", get(marks::marks))
         .route("/v1/benchmarks", get(benchmarks))
         .route("/v1/benchmarks/schedule", get(benchmark_schedule::schedule))
         .route("/v1/house", get(house))
@@ -382,6 +386,8 @@ mod access_tests;
 mod admin_tests;
 #[cfg(test)]
 mod auth_tests;
+#[cfg(test)]
+mod marks_tests;
 #[cfg(test)]
 mod origin_tests;
 #[cfg(test)]

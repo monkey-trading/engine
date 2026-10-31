@@ -246,9 +246,16 @@ fn rotation_requires_accepted_historical_signers_and_reissues_with_the_current_e
     let parent = crate::log::CheckpointParent { has_checkpoint: true, seq: cp.seq, root: cp.root.parse().unwrap() };
     let domain = node.domain();
     assert!(Sequencer::read_log_with_trust(&node.dir, Some(domain), Some(signer), |_| {}).is_err());
-    let log =
-        Sequencer::read_log_with_authorities(&node.dir, Some(domain), Some(signer), Some(parent), authorities, |_| {})
-            .unwrap();
+    let log = Sequencer::read_log_with_authorities(
+        &node.dir,
+        Some(domain),
+        Some(signer),
+        Some(parent),
+        authorities,
+        |_| {},
+        None,
+    )
+    .unwrap();
     let cfg = SequencerConfig { checkpoint_parent: parent, ..node.config() };
     let (withdrawals, mut signed) = mpsc::unbounded_channel();
     let mut recovered = Sequencer::recover_from(log, cfg, key, broadcast::channel(128).0, withdrawals).unwrap();
@@ -283,9 +290,16 @@ fn rotation_requires_accepted_historical_signers_and_reissues_with_the_current_e
         epochs,
     };
     history.epochs.insert(3, next_signer);
-    let log =
-        Sequencer::read_log_with_authorities(&node.dir, Some(domain), Some(next_signer), Some(parent), history, |_| {})
-            .expect("epoch2 reissue on epoch1 root survives another rotation without an epoch2 checkpoint");
+    let log = Sequencer::read_log_with_authorities(
+        &node.dir,
+        Some(domain),
+        Some(next_signer),
+        Some(parent),
+        history,
+        |_| {},
+        None,
+    )
+    .expect("epoch2 reissue on epoch1 root survives another rotation without an epoch2 checkpoint");
     let (withdrawals, mut signed) = mpsc::unbounded_channel();
     let cfg = SequencerConfig { checkpoint_parent: parent, ..node.config() };
     let mut recovered = Sequencer::recover_from(log, cfg, next_key, broadcast::channel(128).0, withdrawals).unwrap();

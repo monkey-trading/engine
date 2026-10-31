@@ -28,6 +28,7 @@ use crate::history::HistoryPlan;
 mod shutdown;
 use shutdown::{TaskResult, finish_history, handed_over, sequencer_outcome, supervise};
 mod keys;
+mod marks;
 pub use keys::{KeyStart, parse_launch_digest};
 mod preflight;
 mod registration;
@@ -120,11 +121,15 @@ async fn serve_node(
     let authorities = signer_history::load(checkpoint_setup.as_ref(), &cfg.node.log_dir)
         .await
         .inspect_err(|e| error!(alert = "checkpoint_startup_failed", "refusing to serve: {e:#}"))?;
+    // The marks cache opens before recovery, which seeds it through the sink as it verifies the log.
+    let marks_failed = |e: &anyhow::Error| error!(alert = "marks_cache_failed", "refusing to serve: {e:#}");
+    let marks = marks::startup(&cfg, key.marks_key()).inspect_err(marks_failed)?;
     let (mut log, history_plan) = read_log_and_history_authorities(
         &cfg,
         Some(AccountId(key.address())),
         checkpoint_setup.as_ref().map(|setup| setup.parent),
         authorities,
+        marks.shared.as_ref().expect("the marks store opens at startup"),
         |entry| {
             if let crate::log::LogEntry::Checkpoint(cp) = entry
                 && checkpoint_setup.as_ref().and_then(|setup| setup.posted_seq) == Some(cp.seq)
@@ -207,10 +212,18 @@ async fn serve_node(
     }
     history.catch_up_to(seq.last_seq());
 
+    // Startup has committed through recovery: move the seeded marks cache into place, attach the
+    // sequencer's live mark reports, and start the supervised task that writes them and backfills.
+    let (marks_store, marks_reader, marks_backfill, marks_sources) =
+        marks.activate().inspect_err(|e| error!(alert = "marks_cache_failed", "refusing to serve: {e:#}"))?;
+    let marks_rx = marks::track(&mut seq);
+
     let (tx, rx) = mpsc::channel::<Request>(CHANNEL_CAPACITY);
+    let marks_task = marks::task(marks_store, tx.downgrade(), marks_backfill, marks_sources, marks::live(marks_rx));
     let recovery = seq.take_recovery_checkpoints();
     let sequencer = crate::sequencer_thread::Worker::start(seq.run(rx), cpu)?;
     let mut tasks: JoinSet<TaskResult> = JoinSet::new();
+    tasks.spawn(marks_task);
     if let Some(setup) = checkpoint_setup {
         let checkpoint_tx = tx.clone();
         tasks.spawn(async move {
@@ -328,6 +341,7 @@ async fn serve_node(
         backfills,
         limits: limits.clone(),
         history: history_reader,
+        marks: marks_reader,
         emission_budget,
         collateral: served,
         listing: Default::default(),
@@ -377,49 +391,28 @@ async fn serve_node(
     }
 }
 
-/// Recovers before any append, checking history against that read during full replay or against
-/// its cursor's segment after authenticated snapshot recovery. A mismatched index is rebuilt.
-/// Error cases:
-/// - the history index cannot be opened, nor a fresh one in its place (see `HistoryCheck`)
-/// - the log cannot be read or replayed (see `Sequencer::read_log`)
-#[cfg(test)]
-fn read_log_and_history(cfg: &NodeConfig) -> anyhow::Result<(ReplayedLog, crate::history::History)> {
-    let key = crate::tee::EnclaveKey::test_key();
-    let (log, plan) = read_log_and_history_observe(cfg, Some(AccountId(key.address())), None, |_| {})?;
-    plan.finish_with_log(log, Arc::new(key))
-}
-
-/// Replays and checks history while exposing the same entries for the on-chain anchor check.
-/// Error cases:
-/// - the log or history index cannot be read or verified
-#[cfg(test)]
-fn read_log_and_history_observe(
-    cfg: &NodeConfig,
-    signer: Option<AccountId>,
-    parent: Option<crate::log::CheckpointParent>,
-    mut observe: impl FnMut(&crate::log::LogEntry),
-) -> anyhow::Result<(ReplayedLog, HistoryPlan)> {
-    read_log_and_history_authorities(cfg, signer, parent, Default::default(), &mut observe)
-}
-
 /// Replays with independently finalized historical signer evidence before any persisted mutation,
-/// from a verified snapshot when snapshots are configured.
+/// from a verified snapshot when snapshots are configured, seeding the marks cache through `marks`.
 /// Error cases:
-/// - history, log, or authenticated signer history fails validation
+/// - history, log, authenticated signer history, or the marks cache fails validation
 fn read_log_and_history_authorities(
     cfg: &NodeConfig,
     signer: Option<AccountId>,
     parent: Option<crate::log::CheckpointParent>,
     authorities: crate::checkpoints::SignerHistory,
+    marks: &std::rc::Rc<std::cell::RefCell<crate::history::marks::Store>>,
     mut observe: impl FnMut(&crate::log::LogEntry),
 ) -> anyhow::Result<(ReplayedLog, HistoryPlan)> {
     if cfg.snapshots.is_some() {
+        // Snapshot recovery replays the authenticated suffix only; the marks cache seeds from that
+        // suffix, and the provider backfill gives the depth the suffix cannot.
         let (log, plan) = Sequencer::read_paired_log(cfg, signer, parent, authorities, observe)
             .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
         return Ok((log, HistoryPlan::authenticated(plan)?));
     }
     let history_failed = |e: &anyhow::Error| error!(alert = "history_recovery_failed", "refusing to serve: {e:#}");
     let mut check = HistoryPlan::open(&cfg.history).inspect_err(history_failed)?;
+    let (sink, seeding, reset_done) = marks::recovery_sink(marks);
     let log = Sequencer::read_log_with_authorities(
         &cfg.node.log_dir,
         Some(crate::log::CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? }),
@@ -430,8 +423,14 @@ fn read_log_and_history_authorities(
             check.observe(entry);
             observe(entry);
         },
+        Some(sink),
     )
     .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
+    // A replay that never moved a mark still resets: the cache must not serve another log's rows.
+    if !reset_done.get() {
+        marks.borrow_mut().reset_log_derived().context("resetting the marks cache for re-derivation")?;
+    }
+    anyhow::ensure!(!seeding.get(), "seeding the marks cache from the log failed");
     Ok((log, check))
 }
 

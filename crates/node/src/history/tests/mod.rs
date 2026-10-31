@@ -272,7 +272,7 @@ fn ready() -> watch::Receiver<bool> {
 /// Runs an index in `index` under `retention` over the whole log in `dir`, with no live messages
 /// after it, and returns where it resumed.
 async fn index_to_end(dir: &Path, index: &Path, retention: Duration) -> Offset {
-    let mut history = open_history(&HistorySection { dir: index.to_owned(), retention }, dir).unwrap();
+    let mut history = open_history(&HistorySection { dir: index.to_owned(), retention, marks: None }, dir).unwrap();
     history.catch_up_to(None);
     let resume_at = history.resume_at();
     follow_to_end(history, dir).await;

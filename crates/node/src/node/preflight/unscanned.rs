@@ -48,7 +48,8 @@ async fn funded_unscanned_anchor_refuses_startup_without_changing_log_or_history
         }
         let before = files(root);
         let signer = AccountId(EnclaveKey::test_key().address());
-        let (log, plan) = crate::node::read_log_and_history_observe(&cfg, Some(signer), Some(anchor), |_| {}).unwrap();
+        let (log, plan) =
+            crate::node::tests::read_log_and_history_observe(&cfg, Some(signer), Some(anchor), |_| {}).unwrap();
         let (sink, mut work) = mpsc::channel(64);
         let seq_cfg = SequencerConfig {
             checkpoints: Some(sink),

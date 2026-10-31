@@ -11,7 +11,9 @@ use tracing::{Level, enabled};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, registry};
 
-use crate::config::{AuthMode, CustodyProvider, FeedProvider, MIN_QUOTE_INTERVAL, NodeConfig, TeeProvider};
+use crate::config::{
+    AuthMode, CustodyProvider, FeedProvider, MIN_QUOTE_INTERVAL, NodeConfig, PRODUCTION_BUILD, TeeProvider,
+};
 use crate::sequencer::genesis::check_genesis;
 use crate::trusted_time::NO_SAMPLE_GRACE;
 
@@ -53,6 +55,7 @@ impl NodeConfig {
     /// - `api.allowed_origins` lists a wildcard, a malformed origin, or one twice (see
     ///   `validate_origins`)
     /// - `history.retention` is zero, or too long to count in milliseconds
+    /// - `[history.marks]` fails validation (see `MarksSection::validate`)
     /// - the custody section does not match its provider (see `validate_custody`)
     /// - `operator.public_key` or `custody.vault` does not parse
     /// - genesis lists a market id, a market symbol, or a benchmark name twice
@@ -149,6 +152,9 @@ impl NodeConfig {
         self.alerts.outbox.validate()?;
         self.alerts.outbox.validate_location(&self.node.log_dir)?;
         self.history.retention_ms().context("history.retention")?;
+        if let Some(marks) = &self.history.marks {
+            marks.validate(PRODUCTION_BUILD).context("history.marks")?;
+        }
         self.validate_custody()?;
         self.validate_checkpoints()?;
         // Without a Critical webhook, Critical alerts reach only the node's own log, so a node

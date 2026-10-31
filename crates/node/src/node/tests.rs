@@ -58,7 +58,7 @@ async fn a_history_index_ahead_of_its_log_is_discarded_and_the_node_starts() {
     let alert = alerts.try_recv().expect("an alert");
     assert_eq!((alert["alert"].as_str(), alert["level"].as_str()), ("history_index_discarded", "WARN"));
     // What the node left is a fresh index, which takes the log from its start with no alert.
-    let cfg = HistorySection { dir: index, retention: RETENTION };
+    let cfg = HistorySection { dir: index, retention: RETENTION, marks: None };
     let reopened = open_history(&cfg, &kept).unwrap();
     assert_eq!(reopened.resume_at(), Offset::start_of(0));
     assert!(alerts.try_recv().is_err(), "one alert");
@@ -189,3 +189,43 @@ fn files(dir: &Path) -> BTreeMap<String, Vec<u8>> {
 }
 
 mod custody_preflight;
+
+/// Recovers before any append, checking history against that read during full replay or against
+/// its cursor's segment after authenticated snapshot recovery. A mismatched index is rebuilt.
+/// Error cases:
+/// - the history index cannot be opened, nor a fresh one in its place (see `HistoryCheck`)
+/// - the log cannot be read or replayed (see `Sequencer::read_log`)
+pub(crate) fn read_log_and_history(cfg: &NodeConfig) -> anyhow::Result<(ReplayedLog, crate::history::History)> {
+    let key = crate::tee::EnclaveKey::test_key();
+    let (log, plan) = read_log_and_history_observe(cfg, Some(AccountId(key.address())), None, |_| {})?;
+    plan.finish_with_log(log, Arc::new(key))
+}
+
+/// Replays and checks history while exposing the same entries for the on-chain anchor check.
+/// Error cases:
+/// - the log or history index cannot be read or verified
+pub(crate) fn read_log_and_history_observe(
+    cfg: &NodeConfig,
+    signer: Option<AccountId>,
+    parent: Option<crate::log::CheckpointParent>,
+    mut observe: impl FnMut(&crate::log::LogEntry),
+) -> anyhow::Result<(ReplayedLog, HistoryPlan)> {
+    // Tests that do not assert on marks seed a scratch cache they discard with the log.
+    // Outside `cfg.history.dir`: refused-startup byte-preservation snapshots cover that dir.
+    let scratch = marks_store(cfg)?;
+    super::read_log_and_history_authorities(cfg, signer, parent, Default::default(), &scratch, &mut observe)
+}
+
+/// A scratch marks store outside `cfg.history.dir`, which refused-startup byte-preservation
+/// snapshots cover. One directory per call: tests of this binary run in parallel threads.
+fn marks_store(cfg: &NodeConfig) -> anyhow::Result<std::rc::Rc<std::cell::RefCell<crate::history::marks::Store>>> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static N: AtomicUsize = AtomicUsize::new(0);
+    let _ = cfg;
+    let dir = crate::test_support::scratch_dir(&format!("marks-observe-{}", N.fetch_add(1, Ordering::Relaxed)));
+    Ok(std::rc::Rc::new(std::cell::RefCell::new(crate::history::marks::Store::open_in(
+        &dir,
+        crate::history::marks::Retentions::defaults(),
+        crate::tee::EnclaveKey::test_key().marks_key(),
+    )?)))
+}

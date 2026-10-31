@@ -42,7 +42,7 @@ async fn changed_or_removed_recorded_access_policy_preserves_history_wal_and_pub
         Some(engine_core::access::AccessPolicy { max_age_ms: 1001, ..policy.clone() }),
     ] {
         let before = files(&root);
-        let (log, plan) = crate::node::read_log_and_history_observe(
+        let (log, plan) = crate::node::tests::read_log_and_history_observe(
             &cfg,
             Some(AccountId(EnclaveKey::test_key().address())),
             None,
@@ -154,14 +154,15 @@ async fn replay_valid_truncated_log_cannot_discard_a_newer_valid_history_index()
     let before = files(&root);
     let key = EnclaveKey::test_key();
     let mut found = None;
-    let (_log, plan) = crate::node::read_log_and_history_observe(&cfg, Some(AccountId(key.address())), None, |entry| {
-        if let crate::log::LogEntry::Checkpoint(cp) = entry
-            && cp.seq == anchor.seq
-        {
-            found = Some(cp.clone());
-        }
-    })
-    .unwrap();
+    let (_log, plan) =
+        crate::node::tests::read_log_and_history_observe(&cfg, Some(AccountId(key.address())), None, |entry| {
+            if let crate::log::LogEntry::Checkpoint(cp) = entry
+                && cp.seq == anchor.seq
+            {
+                found = Some(cp.clone());
+            }
+        })
+        .unwrap();
     let poster = poster(
         Chain {
             state: VaultState {
@@ -211,7 +212,7 @@ async fn wrong_recovery_deployment_preserves_history_wal_and_log_bytes() {
     for wrong_operator in [false, true] {
         let (_guard, mut alerts) = crate::test_support::capture_alerts();
         let before = files(&root);
-        let (log, plan) = crate::node::read_log_and_history_observe(
+        let (log, plan) = crate::node::tests::read_log_and_history_observe(
             &cfg,
             Some(AccountId(EnclaveKey::test_key().address())),
             None,
@@ -354,7 +355,7 @@ async fn incomplete_genesis_and_missing_checkpoint_service_preserve_history_byte
         )
         .unwrap();
         let before = files(&root);
-        let (log, plan) = crate::node::read_log_and_history_observe(
+        let (log, plan) = crate::node::tests::read_log_and_history_observe(
             &cfg,
             Some(AccountId(EnclaveKey::test_key().address())),
             None,
@@ -438,7 +439,8 @@ async fn reserved_signature_missing_from_recovered_log_refuses_before_history_mu
     );
     let before = files(&root);
     let (log, plan) =
-        crate::node::read_log_and_history_observe(&cfg, Some(AccountId(key.address())), Some(parent), |_| {}).unwrap();
+        crate::node::tests::read_log_and_history_observe(&cfg, Some(AccountId(key.address())), Some(parent), |_| {})
+            .unwrap();
     let seq_cfg = crate::sequencer::SequencerConfig {
         checkpoints: Some(tokio::sync::mpsc::channel(64).0),
         ..crate::test_support::sequencer_config(
@@ -473,7 +475,7 @@ async fn a_genesis_no_current_config_can_name_raises_critical_and_preserves_byte
         let (_guard, mut alerts) = crate::test_support::capture_alerts();
         let before = files(&root);
         let signer = AccountId(EnclaveKey::test_key().address());
-        let (log, plan) = crate::node::read_log_and_history_observe(&cfg, Some(signer), None, |_| {}).unwrap();
+        let (log, plan) = crate::node::tests::read_log_and_history_observe(&cfg, Some(signer), None, |_| {}).unwrap();
         let seq_cfg = crate::test_support::sequencer_config(
             &cfg.node.log_dir,
             tokio::sync::watch::channel(crate::log::Manifest::default()).0,

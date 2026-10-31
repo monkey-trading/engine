@@ -9,7 +9,7 @@ use anyhow::{Context, bail, ensure};
 use engine_core::deposits::LegacyDeposit;
 use engine_core::event::Event;
 use engine_core::protocol::ProtocolVersion;
-use engine_core::types::{AccountId, Millis};
+use engine_core::types::{AccountId, MarketId, Millis};
 use engine_core::{Engine, Fixed};
 
 use crate::checkpoints::accounting::Accounting;
@@ -58,6 +58,9 @@ pub struct Replayed {
     pub(crate) requires_checkpoint_gate: bool,
     /// Whether the log ends inside an access-source failure episode.
     pub(crate) access_failed: bool,
+    /// The last mark sampled per market, so the recovered sequencer continues change-only
+    /// reporting exactly where the replay left off. Empty without a marks sink.
+    pub last_marks: BTreeMap<MarketId, Fixed>,
 }
 
 /// Re-applies a log entry by entry, as it is read, and checks every checkpoint root, logged event,
@@ -101,6 +104,11 @@ pub(super) struct Replay {
     signed: BTreeSet<(AccountId, u64)>,
     /// The latest typed authorization each approval holds in this log, as `(signer epoch, expiry)`.
     authorized: BTreeMap<(AccountId, u64), (u64, u64)>,
+    /// The recovery-time marks sink: takes each market's mark as it changes, to seed the derived
+    /// marks cache. Nothing without one: `engine replay` does not seed a cache.
+    marks: Option<crate::history::marks::MarkSink>,
+    /// The last mark taken per market, so only changes reach the sink.
+    last_marks: BTreeMap<engine_core::types::MarketId, Fixed>,
 }
 
 impl Replay {
@@ -156,6 +164,7 @@ impl Replay {
                 if c.events.as_ref().is_some_and(|logged| *logged != events) {
                     bail!("events logged at seq {seq} differ from the events replay gives");
                 }
+                marks::sample_marks(&mut self.marks, &mut self.last_marks, engine, c.sequenced.ts);
                 self.accounting.apply(&c.sequenced.cmd, &events)?;
                 if !version.supports_deposit_finality()
                     && let Some(deposit) = LegacyDeposit::from_command(&c.sequenced.cmd, &events)
@@ -346,6 +355,7 @@ impl Replay {
             authorized: self.authorized,
             requires_checkpoint_gate: self.requires_checkpoint_gate,
             access_failed: self.access_alerts.failed(),
+            last_marks: self.last_marks,
             last_signed_checkpoint: self.last_signed_checkpoint,
             recovery_work: self.recovery_work,
             recovery_anchor_work: self.recovery_anchor_work,
@@ -473,6 +483,7 @@ pub(super) mod accounting_tests;
 #[cfg(test)]
 mod auth_tests;
 mod authorities;
+mod marks;
 mod signed;
 mod snapshot;
 use signed::ensure_signed;

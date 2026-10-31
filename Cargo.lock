@@ -2067,6 +2067,7 @@ dependencies = [
  "futures-util",
  "governor",
  "hex",
+ "hmac 0.13.0",
  "hpke",
  "http-body-util",
  "humantime-serde",

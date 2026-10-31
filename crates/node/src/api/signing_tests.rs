@@ -300,6 +300,7 @@ pub(super) fn state(node: &TestSequencer, dir: &Path, api: &crate::config::ApiSe
         backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
         limits: Arc::new(ApiLimits::with_quota(api, hourly, DefaultClock::default())),
         history: Reader::new(dir.join(INDEX_FILE), watch::channel(true).1),
+        marks: crate::test_support::marks_reader(),
         emission_budget: None,
         collateral: None,
         listing: Default::default(),

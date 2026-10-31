@@ -22,6 +22,7 @@ pub(crate) use engine_verify::MOCK_QUOTE_MARKER;
 pub use engine_verify::{Attestation, AttestationBundle};
 use k256::ecdsa::SigningKey;
 use k256::elliptic_curve::Generate;
+use sha2::Sha256;
 use sha3::{Digest, Keccak256};
 
 pub(crate) mod keys;
@@ -95,6 +96,21 @@ impl EnclaveKey {
     /// across restarts.
     pub fn generate() -> Self {
         Self { key: SigningKey::generate() }
+    }
+    /// The secret authenticating the derived marks cache's rows: SHA-256 of a domain tag and the
+    /// signing secret, stable across restarts and every release the sealed key survives, so the
+    /// cache can tell a row it wrote from one the host wrote while the node was stopped or running.
+    pub(crate) fn marks_key(&self) -> [u8; 32] {
+        // In a nested scope: the file's `Digest` import is sha3's older generation, while sha2
+        // 0.11 carries its own; sha2's re-export applies here alone.
+        fn derive(secret: &[u8]) -> [u8; 32] {
+            use sha2::Digest as _;
+            let mut hash = Sha256::new();
+            hash.update(b"engine.marks.cache.row.v1");
+            hash.update(secret);
+            hash.finalize().into()
+        }
+        derive(&self.key.to_bytes())
     }
 
     /// The key `secret` holds, from sealed or handed-over keys.

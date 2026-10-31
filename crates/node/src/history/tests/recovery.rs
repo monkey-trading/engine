@@ -39,7 +39,7 @@ async fn history_rebuilds_when_a_secondary_index_omits_events() {
             conn.query_row("SELECT count(event) FROM events NOT INDEXED", [], |row| row.get(0)).unwrap();
         assert!(retained > 0, "event data remains intact");
         drop(conn);
-        let cfg = HistorySection { dir: index, retention: RETENTION };
+        let cfg = HistorySection { dir: index, retention: RETENTION, marks: None };
         let mut history = open_history(&cfg, &dir).unwrap();
         assert_eq!(history.resume_at(), Offset::start_of(0), "{index_name} must trigger rebuilding");
         history.catch_up_to(Some(last_command_seq(&dir)));
@@ -118,7 +118,7 @@ async fn readers_wait_for_a_tip_the_index_has_not_taken() {
     let (dir, index) = (scratch_dir("history-tip"), index_dir("tip"));
     indexed_log(&dir, &index, 1).await;
     let next = last_command_seq(&dir) + 1;
-    let cfg = HistorySection { dir: index.clone(), retention: RETENTION };
+    let cfg = HistorySection { dir: index.clone(), retention: RETENTION, marks: None };
     // (tip, readers let in at once)
     for (tip, at_once) in [(Some(next - 1), true), (Some(next), false), (Some(next + 1), false)] {
         let mut history = open_history(&cfg, &dir).unwrap();
@@ -127,10 +127,11 @@ async fn readers_wait_for_a_tip_the_index_has_not_taken() {
         assert_eq!(history.is_ready(), at_once, "tip {tip:?}");
     }
     // A fresh index on an empty log has nothing to take.
-    let mut fresh = HistoryCheck::open(&HistorySection { dir: index_dir("tip-fresh"), retention: RETENTION })
-        .unwrap()
-        .finish()
-        .unwrap();
+    let mut fresh =
+        HistoryCheck::open(&HistorySection { dir: index_dir("tip-fresh"), retention: RETENTION, marks: None })
+            .unwrap()
+            .finish()
+            .unwrap();
     fresh.catch_up_to(None);
     assert!(fresh.is_ready());
 }
@@ -163,7 +164,7 @@ async fn a_history_failure_names_its_cause() {
     let (dir, index) = (scratch_dir("history-causes"), index_dir("causes"));
     let occupied = scratch_dir("history-causes-file");
     File::create(&occupied).unwrap();
-    let cfg = HistorySection { dir: occupied.join("history"), retention: RETENTION };
+    let cfg = HistorySection { dir: occupied.join("history"), retention: RETENTION, marks: None };
     let err = HistoryCheck::open(&cfg).err().expect("no directory under a file");
     assert!(format!("{err:#}").contains("creating"), "{err:#}");
 
@@ -173,7 +174,7 @@ async fn a_history_failure_names_its_cause() {
     index_to_end(&log, &stuck, RETENTION).await;
     lose_log_tail(&log);
     fs::create_dir(stuck.join(format!("{INDEX_FILE}-wal"))).unwrap();
-    let cfg = HistorySection { dir: stuck, retention: RETENTION };
+    let cfg = HistorySection { dir: stuck, retention: RETENTION, marks: None };
     let err = open_history(&cfg, &log).err().expect("the index cannot be discarded");
     assert!(format!("{err:#}").contains(&format!("removing {}", cfg.dir.join(INDEX_FILE).display())), "{err:#}");
 
@@ -182,7 +183,7 @@ async fn a_history_failure_names_its_cause() {
     let manifest = Manifest::load(&dir).unwrap();
     let first = &manifest.segments[0];
     OpenOptions::new().append(true).open(dir.join(&first.file)).unwrap().write_all(b"\n").unwrap();
-    let fresh = HistorySection { dir: index_dir("causes-fresh"), retention: RETENTION };
+    let fresh = HistorySection { dir: index_dir("causes-fresh"), retention: RETENTION, marks: None };
     let mut history = HistoryCheck::open(&fresh).unwrap().finish().unwrap();
     history.catch_up_to(None);
     let (live, subscriber) = broadcast::channel(1);

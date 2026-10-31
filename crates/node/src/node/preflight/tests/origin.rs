@@ -42,7 +42,7 @@ async fn uncovered_ordinary_tail_preserves_missing_corrupt_and_wal_history() {
         }
         let before = files(&root);
         let signer = AccountId(EnclaveKey::test_key().address());
-        let (log, plan) = crate::node::read_log_and_history_observe(&cfg, Some(signer), None, |_| {}).unwrap();
+        let (log, plan) = crate::node::tests::read_log_and_history_observe(&cfg, Some(signer), None, |_| {}).unwrap();
         let seq_cfg = sequencer_config(&cfg.node.log_dir, watch::channel(Manifest::default()).0);
         let error = finish_preflight::<Chain>(plan, None, Some((&log, &seq_cfg, signer))).await.err().unwrap();
         assert!(error.to_string().contains("unauthenticated command tail"), "{error:#}");

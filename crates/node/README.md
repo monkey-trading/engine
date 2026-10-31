@@ -46,6 +46,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   Critical alert when the host clock is beyond the drift bound, or 60 seconds after the last
   sample, and resumes once a sample is within the bound
 - REST API for orders, cancels, withdrawals, and reads, plus a WebSocket stream of the log
+- Derived marks cache: each market's index-mark history served signed at `/v1/markets/{id}/marks`,
+  paged per resolution with per-entry `log_derived`/`seeded_from_provider` provenance; recovery
+  seeds it from the log's replay, live mark reports keep it current, and an optional provider
+  backfill seeds the depth a fresh log cannot have
 - Signed answers: every `/v1` response a client relies on carries the attested enclave key's
   signature over the request and its body, the client's challenge, the node's time, which it signs
   only while trusted time bounds it, the log head, and the status and body; a `signed=1` stream
@@ -364,6 +368,17 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/history/runtime/` — the supervised history owner: indexing, checkpoint sealing, and repair
   (`mod.rs`), completing a capture into the paired cache (`capture.rs`), and signed heads,
   retained-version pins, and collection (`heads.rs`)
+- `src/history/marks/mod.rs` — the derived marks cache: resolutions, per-resolution retentions,
+  provenance, and the recovery seeder
+- `src/history/marks/store.rs` — the cache's SQLite schema, its writer (bucket merge, per-resolution
+  pruning, seeding that never overwrites log-derived rows, backfill markers), and its page reader
+  (`store/tests.rs`)
+- `src/history/marks/backfill.rs` — the provider backfill: which feed symbols map to a candles
+  adapter, the public candles client, and window paging (`tests.rs`)
+- `src/history/marks/run.rs` — the supervised marks task: flushing live mark reports and backfilling
+  listed markets one at a time
+- `src/history/marks/task_tests/` — recovery seeding from a short log and live maintenance through
+  the sequencer's reports
 - `src/history/tests/mod.rs` — history index tests: pages, filters, retention, following the log,
   and restarts
 - `src/history/tests/recovery.rs` — startup checks against the log, readiness to serve, and
@@ -1082,7 +1097,7 @@ The EVM HTTP withdrawal route remains disabled until #23; this scenario proves a
 at the sequencer/core boundary and does not perform a physical payout or HTTP cash-out.
 
 Endpoints: `GET /v1/health`, `GET /v1/attestation`, `GET /v1/attestation/collateral`,
-`GET /v1/markets`, `GET /v1/house`, `GET /v1/operator`,
+`GET /v1/markets`, `GET /v1/markets/{id}/marks`, `GET /v1/house`, `GET /v1/operator`,
 `GET /v1/accounts/{address}`, `GET /v1/accounts/{address}/nonce`,
 `GET /v1/accounts/{address}/history`, `GET /v1/accounts/{address}/proof`,
 `GET /v1/accounts/{address}/emissions`, `POST /v1/orders`, `POST /v1/orders/cancel`,
@@ -1434,6 +1449,23 @@ catching up with the log`). History is public, like the log.
 at most `limit + 1` entries, and at most 16 pages are read at once. Until the index has taken every
 command the log held when the node started, the route answers 503 (`history is catching up with the
 log`). History is public, like the log.
+
+`GET /v1/markets/{id}/marks?resolution=(1s|1m|1h|1d)&from_ms=&to_ms=&limit=` returns
+`{"market", "resolution", "entries", "next", "max_limit"}`: one market's index-mark history from the
+derived marks cache, oldest first. Each entry is one bucket — its window start `ts` and its OHLC,
+prices as decimal strings — with a `provenance` of `log_derived` or `seeded_from_provider`, so a
+client can weigh seeded history against what the public log proves; a bucket a log mark has reached
+holds exactly what the public log proves, and every recovery re-derives the log-derived buckets from
+the verified log, so a `log_derived` label never covers provider values or rows the host wrote while
+the node was stopped. `?limit=` is 1 to `max_limit` (2000), 500 by default, and a
+window wider than that pages by passing a page's `next` as `from_ms`. The cache is derived state,
+never sequenced: recovery seeds it from the log's replay, the sequencer's live mark reports keep it
+current, and `[history.marks.backfill]`, where configured, fetches historical candles from the
+feed venue's public endpoint (Coinbase's, for its markets) to seed the depth a fresh log cannot
+have; removing `history.dir` while the node is stopped rebuilds it. `[history.marks]` also tunes
+each resolution's retention — 1s for 48h, 1m for 60d, 1h for 2y, 1d unbounded by default — and
+`[history.marks.backfill]` sets whether to backfill, the endpoint's base URL (the venue's own,
+over TLS), and each resolution's depth. Markets no bucket has reached yet answer an empty page.
 
 Without `[snapshots]`, the history index is a SQLite file in `history.dir`, derived from the log
 alone. A supervised task
