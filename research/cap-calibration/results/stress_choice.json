@@ -1,7 +1,7 @@
 {
  "stress_move_window_ms": 60000,
- "move_bps_l1": 75,
- "move_bps_l2": 200,
+ "move_bps_l1": 100,
+ "move_bps_l2": 250,
  "divergence_share_bps_l1": 8000,
  "divergence_share_bps_l2": 9500,
  "utilisation_bps_l1": 6000,
@@ -9,9 +9,9 @@
  "method": {
   "move": {
    "window_s": 60,
-   "move_bps_l1": 75,
-   "move_bps_l2": 200,
-   "median_vol_pct_l1": 0.866
+   "move_bps_l1": 100,
+   "move_bps_l2": 250,
+   "median_vol_pct_l1": 0.825
   },
   "divergence": {
    "divergence_share_l1": 8000,
@@ -22,10 +22,10 @@
    "utilisation_bps_l1": 6000,
    "utilisation_bps_l2": 9500,
    "fire_rate_by_family": {
-    "house_cash_1pct": 0.01955,
-    "uniform_10M": 0.01843
+    "house_cash_1pct": 0.01885,
+    "uniform_10M": 0.01678
    },
-   "worst_market_fire_rate": 0.03723
+   "worst_market_fire_rate": 0.03414
   }
  }
 }

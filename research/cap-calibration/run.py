@@ -71,7 +71,7 @@ def simulate_stage(stage: str, args) -> None:
         rows = experiments.per_market(scenario, markets, bars, flow, args.workers)
         experiments.write_rows(RESULTS / "per_market_sweep.csv", rows)
     elif stage == "stress":
-        stress_stage(experiments, np, scenario, markets, bars, flow, args)
+        extras = stress_stage(experiments, np, scenario, markets, bars, flow, args)
     elif stage == "joint":
         sweep = read_rows(RESULTS / "per_market_sweep.csv")
         families = experiments.joint(scenario, markets, bars, flow, sweep, args.workers)
@@ -101,13 +101,16 @@ def simulate_stage(stage: str, args) -> None:
             row["base_measure"] = SENSITIVITY_MEASURE
         experiments.write_rows(RESULTS / "sensitivity.csv", out)
     record = manifest(args, scenario) | {"seconds": round(time.time() - started)}
+    if stage == "stress":
+        record |= extras
     (RESULTS / f"manifest_{stage}.json").write_text(json.dumps(record, indent=1, default=str))
 
 
-def stress_stage(experiments, np, scenario, markets, bars, flow, args) -> None:
+def stress_stage(experiments, np, scenario, markets, bars, flow, args) -> dict:
     """The stress-trigger calibration: move thresholds from minute-scale simulations of each
     market's hours, divergence shares from the stale-fill cost model, and utilisation levels from
-    the Monte Carlo's hourly books at three floor families. Writes the tables and the choice."""
+    the Monte Carlo's hourly books at three floor families. Writes the tables and the choice, and
+    returns the manifest extras recording the stage's own settings."""
     import json
 
     from catalogue import load_genesis
@@ -148,6 +151,11 @@ def stress_stage(experiments, np, scenario, markets, bars, flow, args) -> None:
         },
     }
     (RESULTS / "stress_choice.json").write_text(json.dumps(choice, indent=1))
+    return {
+        "move_hours": args.move_hours,
+        "utilisation_stats": True,
+        "floor_families": {name: ("uniform" if name.startswith("uniform") else "per-market") for name in floors_by_family},
+    }
 
 
 def stress_house_cash_floors(symbols: list[str]) -> "np.ndarray":

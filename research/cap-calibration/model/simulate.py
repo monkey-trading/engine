@@ -61,7 +61,7 @@ class Scenario:
     idle_withdraw_per_day: float = 0.05
     run_withdraw_per_day: float = 0.5  # while NAV is below zero
     batch_paths: int = 250
-    utilisation_stats: bool = False  # record per-hour utilisation and next-hour book MTM (stress calibration)
+    utilisation_stats: bool = False  # record per-hour utilisation buckets and absolute exposure (stress calibration)
 
 
 @dataclass

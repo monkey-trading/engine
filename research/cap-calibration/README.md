@@ -439,17 +439,20 @@ house exposure in bps of the market's cap at house NAV.
   The window stays at 60s: 30s and 120s give parallel fire-rate curves (a longer window raises
   every reading alike), and 60s keeps the window's dozen buckets at one-per-6s against feeds that
   publish at least a mid a second. The choice, 75 and 200 bps, fires on the volatile crypto, oil,
-  and share markets (roughly 0.06–1.1% of their time at level 1) and is silent on FX and indices
-  (their protection is the divergence trigger and the stale-price halt); the launch 150/300 fires
-  on none of them outside crashes.
+  and share markets — 0.06–1.1% of the time on those carrying at least 1% of the flow, up to 2.7%
+  on the smallest share listings, the worst market within the 5% bound — and is silent on FX and
+  indices (their protection is the divergence trigger and the stale-price halt); the launch
+  150/300 fires on none of them outside crashes.
 - **Divergence** (shares, from the stale-fill cost model). A divergence reading of `d` bps means
   the venue mids sit `d` apart. With the protocol's two fresh sources the index mid is their
   midpoint, and a fill at the index mid loses up to `d/2` bps if the mark snaps to the other venue
   (`d/4` expected, uniform); with more fresh sources the index is their median and can sit closer
   to an extreme, so `d/2` understates the worst case and the chosen shares are conservative under
   it. A share `s` of a market's bound `B` fires at `d = ceil(s·B/10000)` bps — the engine
-  truncates the share, so at a 5-bps bound both 9500 and 10000 first fire at a 5-bps reading,
-  which makes 9500 the highest distinguishable share. The chosen share is the lowest whose
+  truncates the share — so on bounds below about 21 bps the level-2 share 9500 first fires at the
+  bound itself: while the market still prices there (the stale-price rule refuses only readings
+  above the bound), it is the last widening before a halt, and on crypto's 25-bps bound it fires
+  at 24 bps, one bps inside it. The chosen share is the lowest whose
   worst-case stale-fill loss at fire covers the level's minimum spread on the tightest-bound
   market (`d/2 ≥ min_spread`): level 1 needs `d ≥ 4` bps, level 2 `d ≥ 20`. That gives 8000
   (level 1) and 9500 (level 2). The launch 6000/8000 fires on the tightest markets below the
@@ -473,7 +476,7 @@ house exposure in bps of the market's cap at house NAV.
   Under $1M floors a market's cap is so small that every level fires constantly — a property of
   those floors, reported rather than calibrated to; at the recommended floors the utilisation
   trigger is a rare event, as intended. The per-fire exposure at 6000 is the house near its cap
-  ($5.7M mean on BTC-USD), against a p99 next-mark gap of 180 bps on BTC-USD (`gap_tables`). The
+  ($6.7M mean on BTC-USD), against a p99 next-mark gap of 180 bps on BTC-USD (`gap_tables`). The
   model nets each hour's orders against the net-exposure cap and fills offsetting flow in full
   (its documented approximation, README above), so after one-sided settlement a book can briefly
   exceed the cap — the engine, checking each order, refuses more. The exposure-at-fire rows of
