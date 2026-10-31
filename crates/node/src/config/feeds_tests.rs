@@ -113,19 +113,20 @@ fn vendor_settings_that_would_fail_or_could_be_forged_are_refused() {
 }
 
 #[test]
-fn an_interval_that_outlasts_the_venue_timeout_is_refused() {
+fn a_quote_spacing_that_outlasts_the_venue_timeout_is_refused() {
     let mut cfg = NodeConfig::load(Path::new(DEV)).unwrap();
-    cfg.feeds.interval = cfg.feeds.venues.as_ref().unwrap().timeout;
+    let venues = cfg.feeds.venues.as_mut().unwrap();
+    venues.min_quote_spacing = venues.timeout;
     let err = format!("{:#}", cfg.validate().unwrap_err());
-    assert!(err.contains("feeds.interval must be shorter than feeds.venues.timeout"), "{err}");
+    assert!(err.contains("feeds.venues.min_quote_spacing must be shorter than feeds.venues.timeout"), "{err}");
 }
 
 #[test]
 fn a_venue_quote_pace_over_the_flood_bound_is_refused() {
     let mut cfg = NodeConfig::load(Path::new(DEV)).unwrap();
-    cfg.feeds.interval = Duration::from_millis(5);
+    cfg.feeds.venues.as_mut().unwrap().min_quote_spacing = Duration::from_millis(5);
     let err = format!("{:#}", cfg.validate().unwrap_err());
-    assert!(err.contains("feeds.interval must be at least 10ms with [feeds.venues]"), "{err}");
+    assert!(err.contains("feeds.venues.min_quote_spacing must be at least 10ms"), "{err}");
 }
 
 #[test]

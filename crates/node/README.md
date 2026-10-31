@@ -644,8 +644,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/feeds/venue/alerts.rs` — the venue task's alerts: outages, silent symbols, a clock ahead of
   the host's, and refused messages
 - `src/feeds/venue/emit.rs` — sequencing the newest reached quote per symbol as book updates
-  arrive, paced so updates faster than `feeds.interval` coalesce to the newest, and the emit
-  timer that releases what the host clock has not reached yet
+  arrive, paced so updates faster than `feeds.venues.min_quote_spacing` coalesce to the newest,
+  and the emit timer that releases what the host clock has not reached yet
 - `src/feeds/venue/transport.rs` — a connection's messages over a WebSocket, or in lines over TCP
 - `src/feeds/venue/validation.rs` — the checks every venue's books pass before they are sequenced
 - `src/feeds/venue/confirm.rs` — confirming every symbol with the engine each tick: which the

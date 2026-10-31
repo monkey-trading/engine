@@ -89,9 +89,7 @@ cursor_path = "data/anvil/custody-cursor.json"
 
 [feeds]
 provider = "mock"
-# The mock feed's tick, and the most often a venue feed sequences one symbol's latest quote:
-# venue feeds sequence a quote per book update, and updates closer together than this coalesce.
-interval = "10ms"
+interval = "200ms"
 mock_mids = [
   { market = 1, mid = "100000" },
   { market = 2, mid = "4000" },

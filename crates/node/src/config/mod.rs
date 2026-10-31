@@ -350,7 +350,7 @@ impl NodeConfig {
     ///   `config/test-keys.toml`
     /// - `[alerts.critical]` is missing with a TEE or custody provider other than `mock`
     /// - `feeds.venues` is missing for `provider = "venues"`, fails validation, or has a
-    ///   `feeds.interval` outside `10ms..feeds.venues.timeout`
+    ///   `min_quote_spacing` outside `10ms..feeds.venues.timeout`
     /// - `time.servers` has fewer than two servers, lists a public key twice, or has an address
     ///   that is not `host:port`
     /// - `history.retention` is zero, or too long to count in milliseconds

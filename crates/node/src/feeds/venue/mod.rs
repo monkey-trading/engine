@@ -150,10 +150,10 @@ struct VenueFeed {
 }
 
 impl Timing {
-    /// The timing from the node config.
-    pub fn new(interval: Duration, venues: &VenuesSection) -> Self {
+    /// The timing from the node config: `min_quote_spacing` is the per-symbol sequencing pace.
+    pub fn new(min_quote_spacing: Duration, venues: &VenuesSection) -> Self {
         Timing {
-            interval,
+            interval: min_quote_spacing,
             timeout: venues.timeout,
             reconnect_min: venues.reconnect_min,
             reconnect_max: venues.reconnect_max,
