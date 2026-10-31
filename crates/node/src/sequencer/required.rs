@@ -104,7 +104,10 @@ impl Sequencer {
                 ) if version >= ProtocolVersion::V39
             )
             && self.engine.close_spread_ceilings().is_none()
-            && !self.engine.markets().is_empty()
+            // A fresh log installs the registry at genesis, after its markets are listed; a
+            // completed genesis that predates ceilings takes the carry even with no markets, so
+            // no V39 log runs without a registry.
+            && !self.needs_genesis()
         {
             let ceilings: Vec<_> = self
                 .close_spread_ceilings
