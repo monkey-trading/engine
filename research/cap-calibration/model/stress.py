@@ -12,8 +12,9 @@ actually rises, not on noise:
   threshold's share of time at each stress level, with the engine's bucket window and cooldown
   hysteresis, and the volatility percentile a firing hour selects. A threshold is chosen so the
   flow-weighted time at level 1 stays under `MOVE_L1_TIME` and at level 2 under `MOVE_L2_TIME`,
-  every market's time at level 1 stays under `MOVE_L1_MAX_TIME`, and firing selects a top-decile
-  volatility hour.
+  and every market's time at level 1 stays under `MOVE_L1_MAX_TIME`; the most protective candidate
+  (lowest thresholds) passing those bounds is taken, and the median volatility percentile of the
+  firing hours is reported (it rises mechanically with the threshold, so it cannot choose).
 - *Divergence*: a reading of `d` bps means the venue mids sit `d` apart and the index mid between
   them; a fill at the index mid loses up to `d/2` bps if the mark snaps to the other venue (`d/4`
   expected, uniform). A share `s` of a market's bound `B` fires at `d = s*B/10000`. The chosen
@@ -43,7 +44,6 @@ MOVE_BUCKETS = 10  # stress.rs MOVE_BUCKETS
 MOVE_L1_TIME = 0.01
 MOVE_L2_TIME = 0.001
 MOVE_L1_MAX_TIME = 0.05
-MOVE_MIN_VOL_PCT = 0.9  # median volatility percentile a level-1 firing hour must select
 UTIL_L1_TIME = 0.02  # flow-weighted fire rate bound per launch-relevant floor family
 UTIL_L1_MAX_TIME = 0.05  # bound for any single market with at least 1% of flow
 
@@ -178,10 +178,10 @@ def move_tables(bars: np.ndarray, symbols: list[str], mix: np.ndarray, hours_per
 
 
 def choose_move(rows: list[dict], window_s: int) -> dict:
-    """The (t1, t2) at `window_s` passing every bound with the highest selection quality, then the
-    most protection (lowest t1): flow-weighted time at level 1 under MOVE_L1_TIME and level 2 under
-    MOVE_L2_TIME, every market's level-1 time under MOVE_L1_MAX_TIME, and the flow-weighted median
-    of the firing hours' volatility percentiles at least MOVE_MIN_VOL_PCT."""
+    """The most protective (t1, t2) at `window_s` passing every bound: flow-weighted time at
+    level 1 under MOVE_L1_TIME and at level 2 under MOVE_L2_TIME, and every market's level-1 time
+    under MOVE_L1_MAX_TIME. Selection quality (the volatility percentile firing hours land in) is
+    reported, not bounded: it rises mechanically with the threshold, so it cannot choose."""
     pool = [r for r in rows if r["window_s"] == window_s]
     total_mix = sum(r["mix"] for r in pool)
     candidates = sorted({(r["t1"], r["t2"]) for r in pool})
@@ -190,15 +190,18 @@ def choose_move(rows: list[dict], window_s: int) -> dict:
         l1 = sum(r["time_l1"] * r["mix"] for r in pool if (r["t1"], r["t2"]) == (t1, t2)) / total_mix
         l2 = sum(r["time_l2"] * r["mix"] for r in pool if (r["t1"], r["t2"]) == (t1, t2)) / total_mix
         worst = max(r["time_l1"] for r in pool if (r["t1"], r["t2"]) == (t1, t2))
-        pcts = sorted(r["vol_pct_l1"] for r in pool if (r["t1"], r["t2"]) == (t1, t2) and r["vol_pct_l1"] is not None and r["mix"] > 0)
-        med_pct = pcts[len(pcts) // 2] if pcts else None
-        if l1 <= MOVE_L1_TIME and l2 <= MOVE_L2_TIME and worst <= MOVE_L1_MAX_TIME and med_pct is not None and med_pct >= MOVE_MIN_VOL_PCT:
+        if l1 <= MOVE_L1_TIME and l2 <= MOVE_L2_TIME and worst <= MOVE_L1_MAX_TIME:
+            pcts = sorted(
+                r["vol_pct_l1"]
+                for r in pool
+                if (r["t1"], r["t2"]) == (t1, t2) and r["vol_pct_l1"] not in (None, "") and r["mix"] > 0
+            )
+            med_pct = pcts[len(pcts) // 2] if pcts else None
             feasible.append((t1, t2, med_pct))
     if not feasible:
         raise ValueError(f"no move candidate at window {window_s}s passes the bounds")
-    best_pct = max(c[2] for c in feasible)
-    t1, t2 = min((c[0], c[1]) for c in feasible if c[2] == best_pct)
-    return {"window_s": window_s, "move_bps_l1": t1, "move_bps_l2": t2, "median_vol_pct_l1": best_pct}
+    t1, t2, med_pct = min(feasible, key=lambda c: (c[0], c[1]))
+    return {"window_s": window_s, "move_bps_l1": t1, "move_bps_l2": t2, "median_vol_pct_l1": med_pct}
 
 
 def divergence_tables(genesis: dict, launch_shares: tuple = (6000, 8000), calibrated: dict | None = None) -> list[dict]:

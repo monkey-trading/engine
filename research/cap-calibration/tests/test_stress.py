@@ -91,12 +91,14 @@ def move_row(symbol, mix, t1, t2, time_l1, time_l2, vol_pct):
 
 def test_choose_move_takes_the_most_protective_candidate_passing_every_bound():
     rows = []
-    for t1, t2, l1, l2 in ((50, 150, 0.002, 0.0002), (60, 150, 0.001, 0.0001), (150, 300, 0.0001, 0.0)):
-        rows.append(move_row("BTC-USD", 1.0, t1, t2, l1, l2, 0.95))
+    # The loosest candidate reports the best selection quality, a metric that rises with the
+    # threshold; the choice still falls on the tightest candidate within the time bounds.
+    for t1, t2, l1, l2, pct in ((50, 150, 0.002, 0.0002, 0.8), (60, 150, 0.001, 0.0001, 0.9), (150, 300, 0.0001, 0.0, 0.99)):
+        rows.append(move_row("BTC-USD", 1.0, t1, t2, l1, l2, pct))
         rows.append(move_row("EUR-USD", 0.0, t1, t2, 0.0, 0.0, None))
     choice = stress.choose_move(rows, window_s=60)
     assert (choice["move_bps_l1"], choice["move_bps_l2"]) == (50, 150)
-    assert choice["median_vol_pct_l1"] == 0.95
+    assert choice["median_vol_pct_l1"] == 0.8
 
 
 def test_choose_move_rejects_a_candidate_over_the_time_bounds():
