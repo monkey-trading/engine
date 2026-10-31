@@ -443,13 +443,16 @@ house exposure in bps of the market's cap at house NAV.
   (their protection is the divergence trigger and the stale-price halt); the launch 150/300 fires
   on none of them outside crashes.
 - **Divergence** (shares, from the stale-fill cost model). A divergence reading of `d` bps means
-  the venue mids sit `d` apart with the index mid between them; a fill at the index mid loses up
-  to `d/2` bps if the mark snaps to the other venue (`d/4` expected, uniform). A share `s` of a
-  market's bound `B` fires at `d = s·B/10000`. The chosen share is the lowest whose worst-case
-  stale-fill loss at fire covers the level's minimum spread on the tightest-bound market
-  (`d/2 ≥ min_spread`): level 1 needs `d ≥ 4` bps, level 2 `d ≥ 20`. That gives 8000 (level 1) and,
-  capped at the highest share still short of the bound itself — at 10000 the market has already
-  halted — 9500 (level 2). The launch 6000/8000 fires on the tightest markets below the
+  the venue mids sit `d` apart. With the protocol's two fresh sources the index mid is their
+  midpoint, and a fill at the index mid loses up to `d/2` bps if the mark snaps to the other venue
+  (`d/4` expected, uniform); with more fresh sources the index is their median and can sit closer
+  to an extreme, so `d/2` understates the worst case and the chosen shares are conservative under
+  it. A share `s` of a market's bound `B` fires at `d = ceil(s·B/10000)` bps — the engine
+  truncates the share, so at a 5-bps bound both 9500 and 10000 first fire at a 5-bps reading,
+  which makes 9500 the highest distinguishable share. The chosen share is the lowest whose
+  worst-case stale-fill loss at fire covers the level's minimum spread on the tightest-bound
+  market (`d/2 ≥ min_spread`): level 1 needs `d ≥ 4` bps, level 2 `d ≥ 20`. That gives 8000
+  (level 1) and 9500 (level 2). The launch 6000/8000 fires on the tightest markets below the
   stale-fill cost of the level-1 spread; the expected-cost rule (`d/4 ≥ min_spread`) is reported
   in `stress_divergence.csv` and is unreachable at any share under 10000 on the 5-bps markets.
 - **Utilisation** (levels, from the Monte Carlo). The model records each market's hourly

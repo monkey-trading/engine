@@ -342,7 +342,7 @@ def choose_utilisation(rows: list[dict], flow_by_symbol: dict[str, float]) -> di
     total = sum(flow.values())
     families = sorted({r["family"] for r in rows} - {"uniform_1M"})
     eligible = [s for s, w in flow.items() if w / total >= 0.01]
-    for level in sorted({r["level_bps"] for r in rows if 6000 <= r["level_bps"] <= 9000}):
+    for level in sorted({r["level_bps"] for r in rows if r["level_bps"] < 9500}):
         fire = {f: 0.0 for f in families}
         worst = 0.0
         for r in rows:

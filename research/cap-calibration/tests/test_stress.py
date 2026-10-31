@@ -152,9 +152,9 @@ def test_utilisation_rows_aggregate_histograms_and_keep_levels_ordered():
         assert levels == sorted(levels)
         assert fires == sorted(fires, reverse=True)  # higher levels fire no more often
         assert all(0.0 <= f <= 1.0 for f in fires)
-        # Open hours fill the histogram; the exposure rows never exceed it.
+        # Open hours fill the histogram; exposure is recorded on open hours only.
         assert hist[:, m, 0].sum() == pytest.approx(market_rows[0]["open_hours"])
-        assert expo[:, m, 0].sum() <= 1e7 * hist[:, m, 0].sum()  # exposure never exceeds the cap
+        assert expo[:, m, 0].sum() <= 1e7 * hist[:, m, 0].sum()
         assert market_rows[0]["gap_p99_bps"] == gaps[symbol]["gap_p99_bps"]
 
 
@@ -203,3 +203,50 @@ def test_utilisation_records_exact_buckets_exposure_and_batches():
     assert expo[10, 1] == pytest.approx(200.0 * 2 * 167)
     assert hist.sum() == 2 * 2 * 168  # two lanes, every hour of the week recorded
     assert hist[21:, 0].sum() == 0 and expo[:10, 1].sum() == 0
+
+
+def utilisation_row(family, symbol, level, fire, expo=0.0, gap=100.0):
+    return {
+        "family": family,
+        "symbol": symbol,
+        "level_bps": level,
+        "open_hours": 1000,
+        "fire_rate": fire,
+        "mean_exposure_usd": float(expo),
+        "gap_p99_bps": gap,
+        "p99_hole_usd": 0.0,
+    }
+
+
+def test_choose_utilisation_takes_the_lowest_level_within_the_bounds():
+    # BTC-USD carries the flow; EUR-USD is the small market bound by UTIL_L1_MAX_TIME. uniform_1M
+    # is reported but never calibrates.
+    rows = []
+    for family in ("house_cash_1pct", "uniform_10M", "uniform_1M"):
+        for level, fire_btc, fire_eur in ((5000, 0.05, 0.01), (6000, 0.015, 0.03), (7000, 0.01, 0.06)):
+            rows.append(utilisation_row(family, "BTC-USD", level, fire_btc))
+            rows.append(utilisation_row(family, "EUR-USD", level, fire_eur))
+    choice = stress.choose_utilisation(rows, {"BTC-USD": 0.9, "EUR-USD": 0.1})
+    # 5000 fails the flow bound (0.05 > 0.02); 6000 passes it (0.015) and the per-market bound
+    # (0.03 < 0.05); the uniform_1M family is excluded from the bounds.
+    assert choice["utilisation_bps_l1"] == 6000
+    assert choice["utilisation_bps_l2"] == 9500
+    assert choice["fire_rate_by_family"]["uniform_1M" if "uniform_1M" in choice["fire_rate_by_family"] else "house_cash_1pct"] <= 0.02
+
+
+def test_choose_utilisation_rejects_every_candidate_over_the_bounds():
+    rows = [utilisation_row("house_cash_1pct", "BTC-USD", level, 0.05) for level in (5000, 6000, 7000)]
+    with pytest.raises(ValueError):
+        stress.choose_utilisation(rows, {"BTC-USD": 1.0})
+
+
+def test_choose_move_flow_weighted_bound_decides_across_markets():
+    # Every market at 3% level-1 time: the per-market bound (5%) passes, but the flow-weighted
+    # bound (3%) fails — a fivefold-deflated denominator would pass it. The choice must fall
+    # through to the candidate that is truly within the bounds.
+    rows = []
+    for t1, t2, per_market in ((75, 200, 0.03), (150, 300, 0.0002)):
+        for i in range(20):
+            rows.append(move_row(f"M{i:02d}", 0.05, t1, t2, per_market, 0.0, 0.9))
+    choice = stress.choose_move(rows, window_s=60)
+    assert (choice["move_bps_l1"], choice["move_bps_l2"]) == (150, 300)
