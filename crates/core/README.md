@@ -426,7 +426,6 @@ adoption in effect seven days after it is logged, and an entry can only be lower
 without an adopted ceiling, or one changing the instrument's identity, is refused; its session is
 in `examples/reference_log/v40.rs`.
 
-
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it
 is logged, and a signed rotation is refused; its session is in `examples/reference_log/v37.rs`.
