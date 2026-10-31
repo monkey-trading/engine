@@ -148,7 +148,7 @@ pub enum AdminAction {
         #[arg(long)]
         cooldown_ms: Millis,
     },
-    /// Adopt a close-spread ceiling for a market (from V39): the most its closes may pay, whatever
+    /// Adopt a close-spread ceiling for a market (from V40): the most its closes may pay, whatever
     /// the parameters do. A new market's ceiling applies from `--effective-at`, at least seven days
     /// after the command is logged; an adopted ceiling can only be lowered, never raised.
     AdoptCloseSpreadCeiling {

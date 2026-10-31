@@ -180,7 +180,7 @@ impl NodeConfig {
             bail!("genesis lists benchmark {name} twice");
         }
         // Markets listed at genesis need an adopted close-spread ceiling each: the engine refuses
-        // an incomplete registry, and a log without one runs `V39` uncapped. (The engine's genesis
+        // an incomplete registry, and a log without one runs `V40` uncapped. (The engine's genesis
         // check names the offending entry.)
         if !self.genesis.markets.is_empty() && self.genesis.close_spread_ceilings.is_empty() {
             bail!("genesis lists markets but no close-spread ceilings");

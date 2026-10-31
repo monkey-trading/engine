@@ -85,8 +85,8 @@ async fn venues_going_down_age_out_and_the_index_runs_on_the_rest() {
 #[tokio::test]
 async fn a_market_the_engine_does_not_list_is_alerted_once_and_held_back_until_it_is_listed() {
     let (_guard, mut alerts) = capture_alerts();
-    // The operator's mid-test listing is the point, and `V39` needs an adopted ceiling before a
-    // listing: this test is of the feed path, so it runs under the pre-`V39` rules.
+    // The operator's mid-test listing is the point, and `V40` needs an adopted ceiling before a
+    // listing: this test is of the feed path, so it runs under the pre-`V40` rules.
     let cfg = dev_config();
     let mut node = Node::boot_at("unlisted", &cfg.genesis, ProtocolVersion::V38).await;
     // ETH/USD is mapped to a market the engine does not list.

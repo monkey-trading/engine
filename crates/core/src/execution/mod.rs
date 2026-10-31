@@ -240,7 +240,7 @@ impl Engine {
     }
 
     /// Fills one resting order if `mid` has reached its trigger. A limit the spread keeps out of
-    /// reach stays resting; any other failure cancels it, and from `V39` a reversal the market's
+    /// reach stays resting; any other failure cancels it, and from `V40` a reversal the market's
     /// close-spread ceiling refuses fills its closing slice before the cancel.
     fn trigger_order(&mut self, order_id: OrderId, account: AccountId, mid: Fixed, events: &mut Vec<Event>) {
         let Some(order) = self.accounts.get(&account).and_then(|acct| acct.orders.get(&order_id)).cloned() else {
@@ -341,10 +341,10 @@ impl Engine {
         };
         // The truncated spread decides whether a spread reaches the price. From `V10` the spread rounds
         // up, and a sell's stops a unit short of the price, so rounding never makes it reach the price.
-        // From `V39`, a reversal over its ceiling is classified first: its refusal fills a triggered
+        // From `V40`, a reversal over its ceiling is classified first: its refusal fills a triggered
         // order's closing slice, which stays executable when the blended spread reaches the price.
         let closes = !pos.qty.is_zero() && (exec.side == Side::Buy) != pos.qty.is_positive();
-        let over_ceiling = self.protocol_version >= ProtocolVersion::V39
+        let over_ceiling = self.protocol_version >= ProtocolVersion::V40
             && closes
             && increases
             && self
@@ -355,7 +355,7 @@ impl Engine {
         }
         let charge = self.charge_rounding();
         let (base, size) = parts(charge);
-        // From `V39`, a close's spread cannot exceed its market's ceiling, and a reversal over it
+        // From `V40`, a close's spread cannot exceed its market's ceiling, and a reversal over it
         // is refused.
         let rounded = self.bounded_close_charge(exec.market, exec.side, pos.qty, increases, base + size, mid)?;
         let adjust = if exec.side == Side::Sell { rounded.min(mid - Fixed::from_raw(1)) } else { rounded };

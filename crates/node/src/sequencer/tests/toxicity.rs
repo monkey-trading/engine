@@ -42,7 +42,7 @@ fn a_funded_log_under_the_operator_takes_the_weighting_unsigned_and_activates_th
     let stamps = Arc::new(TestClock::at(before.engine.now() + 1_000));
     let (stream, _) = broadcast::channel(16);
     let (manifest, _) = watch::channel(Manifest::default());
-    // The fixture's log lists markets its config never ceilinged; `V39` needs an adopted ceiling
+    // The fixture's log lists markets its config never ceilinged; `V40` needs an adopted ceiling
     // for each, so the config this test runs under names one per listed market.
     let ceilings: Vec<_> = before
         .engine

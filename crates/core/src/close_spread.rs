@@ -1,4 +1,4 @@
-//! Close-spread ceilings, from `V39`.
+//! Close-spread ceilings, from `V40`.
 //!
 //! The total spread a close can pay is capped per market: a registry maps each market to the most
 //! its closing slice may ever pay, whatever an operator command does to the parameters, stress
@@ -81,8 +81,8 @@ impl Engine {
     }
 
     /// Installs the close-spread ceiling registry: one entry per listed market, adopted in a
-    /// single command so the set is complete or refused. The registry binds from `V39`; it may be
-    /// installed earlier, and a log upgrading to `V39` adopts it before activating. The node
+    /// single command so the set is complete or refused. The registry binds from `V40`; it may be
+    /// installed earlier, and a log upgrading to `V40` adopts it before activating. The node
     /// sequences it at genesis; a log records it once.
     /// Error cases:
     /// - once a registry is installed
@@ -122,7 +122,7 @@ impl Engine {
     /// Records a signed adoption of one close-spread ceiling, replacing any pending adoption: an
     /// entry for a market the registry has none for — a market not yet listed — or a strictly
     /// lower value for an adopted one, in effect from `effective_at`. The adoption binds from
-    /// `V39`, like the registry itself.
+    /// `V40`, like the registry itself.
     /// Error cases:
     /// - before the registry is installed
     /// - a value outside 0..=9999 bps, or not strictly below an adopted entry's
@@ -153,14 +153,14 @@ impl Engine {
         Ok(())
     }
 
-    /// Checks a listing against the ceiling registry, from `V39` once the registry is installed:
+    /// Checks a listing against the ceiling registry, from `V40` once the registry is installed:
     /// a market with no entry cannot be listed, and an entry follows its market id, so a listed
     /// market's `asset_class` and `quote_currency` — its instrument's identity — cannot change.
     /// Error cases:
     /// - a listing of a market the registry has no entry for
     /// - a change of `asset_class` or `quote_currency` on a market with an entry
     pub(crate) fn check_listing_ceilings(&self, spec: &MarketSpec) -> Result<(), String> {
-        if self.protocol_version < ProtocolVersion::V39 {
+        if self.protocol_version < ProtocolVersion::V40 {
             return Ok(());
         }
         let Some(ceilings) = &self.close_spread_ceilings else { return Ok(()) };
@@ -182,12 +182,12 @@ impl Engine {
         Ok(())
     }
 
-    /// Checks an activation carrying `version` past `V39`: every listed market must have an
-    /// adopted ceiling, since from `V39` a close's spread is bounded by its market's entry.
+    /// Checks an activation carrying `version` past `V40`: every listed market must have an
+    /// adopted ceiling, since from `V40` a close's spread is bounded by its market's entry.
     /// Error cases:
-    /// - activating `V39` or later while a listed market has no adopted ceiling
+    /// - activating `V40` or later while a listed market has no adopted ceiling
     pub(crate) fn check_close_spread_activation(&self, version: ProtocolVersion) -> Result<(), String> {
-        if version < ProtocolVersion::V39 {
+        if version < ProtocolVersion::V40 {
             return Ok(());
         }
         let missing: Vec<_> = self
@@ -198,7 +198,7 @@ impl Engine {
         if !missing.is_empty() {
             return Err(format!(
                 "markets {missing:?} are listed without a close-spread ceiling; adopt one for each before protocol {:?}",
-                ProtocolVersion::V39
+                ProtocolVersion::V40
             ));
         }
         Ok(())
@@ -226,7 +226,7 @@ impl Engine {
         charge: Fixed,
         mid: Fixed,
     ) -> Result<Fixed, Reject> {
-        if self.protocol_version < ProtocolVersion::V39 {
+        if self.protocol_version < ProtocolVersion::V40 {
             return Ok(charge);
         }
         let Some(ceiling) = self.close_spread_ceiling(market) else { return Ok(charge) };

@@ -1,4 +1,4 @@
-//! Shared harness for the close-spread ceiling tests: the `V39` harnesses, the access-screened
+//! Shared harness for the close-spread ceiling tests: the `V40` harnesses, the access-screened
 //! client helpers, and the registry fixture builders.
 
 use engine_core::access::{
@@ -38,18 +38,18 @@ pub fn harness() -> Harness {
     h
 }
 
-/// `harness` with access rules on and `V39` active, ready for a client to declare, fund, and
+/// `harness` with access rules on and `V40` active, ready for a client to declare, fund, and
 /// trade through the screened order commands.
 pub fn access_harness() -> (Harness, Client) {
     let mut h = harness();
     h.admin(AdminCommand::SetAccessPolicy(AccessPolicy { source: source_key(), max_age_ms: 1_000 }));
-    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V39 });
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V40 });
     (h, Client::new(1))
 }
 
-/// Activates `V39` over a `harness`.
-pub fn into_v39(h: &mut Harness) {
-    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V39 });
+/// Activates `V40` over a `harness`.
+pub fn into_v40(h: &mut Harness) {
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V40 });
 }
 
 /// Relists the genesis markets with a 100% slippage bound, so a test can quote the mid while its

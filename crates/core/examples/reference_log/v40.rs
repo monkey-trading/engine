@@ -1,4 +1,4 @@
-//! The session's `V39` part: close-spread ceilings cap what every close can pay.
+//! The session's `V40` part: close-spread ceilings cap what every close can pay.
 
 use engine_core::Fixed;
 use engine_core::access::{
@@ -21,7 +21,7 @@ use crate::v37::ELECTED_SEED;
 /// The seed of the key this part trades through.
 const CLIENT_SEED: u8 = 0x39;
 
-/// Installs the ceiling registry over the markets the session lists, then activates `V39`. A
+/// Installs the ceiling registry over the markets the session lists, then activates `V40`. A
 /// close whose charge rises above its ceiling clamps to it, floored to the exact bound; a reversal
 /// over it is refused while the reduce-only close stays open, and a triggered stop fills its
 /// closing slice and cancels the rest; a market lists only once its ceiling is adopted, an entry
@@ -45,7 +45,7 @@ pub(crate) fn session(h: &mut Harness) {
         .collect();
     // The node alone sequences the install, as it does at genesis.
     h.admin(AdminCommand::SetCloseSpreadCeilings { ceilings });
-    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V39 });
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V40 });
     // BTC's fills in this part pay spreads far above the fixture's 20bps slippage bound; the
     // relist changes no price rule or tier, only the client's guard, which the ceiling keeps.
     let mut btc = h.engine.markets()[&BTC].spec.clone();

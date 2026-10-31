@@ -1,10 +1,10 @@
-//! Upgrading a log that predates close-spread ceilings to `V39`: the carry, its refusals, and
+//! Upgrading a log that predates close-spread ceilings to `V40`: the carry, its refusals, and
 //! the config the node restarts under.
 
 use super::*;
 
 #[test]
-fn an_old_log_with_markets_takes_the_configs_ceilings_before_activating_v39() {
+fn an_old_log_with_markets_takes_the_configs_ceilings_before_activating_v40() {
     // A log whose genesis predates ceilings lists markets with none adopted: recovery under the
     // full current config accepts its genesis (the install command it never ran is not part of
     // what the log attests), and activation carries the config's ceilings, filtered to the markets
@@ -26,7 +26,7 @@ fn an_old_log_with_markets_takes_the_configs_ceilings_before_activating_v39() {
     let ceilings = replayed.engine.close_spread_ceilings().expect("the carry installs the registry");
     assert_eq!(ceilings.len(), replayed.engine.markets().len());
     assert!(replayed.engine.markets().keys().all(|id| ceilings.contains_key(id)));
-    assert!(replayed.activations.iter().any(|(version, _)| *version == ProtocolVersion::V39));
+    assert!(replayed.activations.iter().any(|(version, _)| *version == ProtocolVersion::V40));
 }
 
 #[test]
@@ -58,7 +58,7 @@ fn an_old_log_with_a_market_the_config_ceilingless_refuses_activation_naming_it(
 fn an_empty_legacy_genesis_takes_an_empty_registry_and_refuses_uncapped_listings() {
     // A log whose genesis listed no markets predates ceilings entirely: the upgrade still
     // installs the (empty) registry, so a listing without an adopted ceiling is refused from
-    // `V39` on.
+    // `V40` on.
     let dir = scratch_dir("activation-empty-legacy");
     let mut genesis = dev_config().genesis;
     genesis.markets.clear();

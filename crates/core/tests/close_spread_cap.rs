@@ -1,4 +1,4 @@
-//! Close-spread ceilings under `V39`: the registry's adoption, the governance path, and the
+//! Close-spread ceilings under `V40`: the registry's adoption, the governance path, and the
 //! listing guards. Ceilings are unequal test values at or above the harness launch close charge
 //! (8bps: a 5bps stress minimum plus the 3bps top toxicity add-on); the pricing-side behaviour —
 //! the clamp, the reversal refusal, and the triggered order's closing slice — is in
@@ -46,7 +46,7 @@ fn install_adopts_every_listed_market_once_and_refuses_a_flawed_registry() {
 #[test]
 fn adoption_adds_a_not_yet_listed_market_and_lowering_only_ever_moves_entries() {
     let mut h = harness();
-    into_v39(&mut h);
+    into_v40(&mut h);
     let due = h.ts + NOTICE_MS;
     h.operator_admin(AdminCommand::AdoptCloseSpreadCeiling { market: 7, max_close_spread_bps: 25, effective_at: due });
     // Listing waits for the adoption: no fallback ceiling exists.
@@ -89,7 +89,7 @@ fn adoption_adds_a_not_yet_listed_market_and_lowering_only_ever_moves_entries() 
 #[test]
 fn a_ceilinged_market_cannot_change_instrument_identity() {
     let mut h = harness();
-    into_v39(&mut h);
+    into_v40(&mut h);
     let mut other_class = market(ETH, "ETH-EUR", AssetClass::Fx, Schedule::AlwaysOpen, 1000);
     other_class.quote_currency = QuoteCurrency::Usd;
     let events = h.operate(AdminCommand::UpsertMarket(other_class));
@@ -105,7 +105,7 @@ fn a_ceilinged_market_cannot_change_instrument_identity() {
 }
 
 #[test]
-fn pre_v39_closes_pay_what_they_priced_and_the_registry_is_inert() {
+fn pre_v40_closes_pay_what_they_priced_and_the_registry_is_inert() {
     let mut h = Harness::v8(ClientAuth::Unsigned);
     // A zero ceiling on ETH: the close below pays 5bps anyway, which fails if the cap applies.
     install_expect(&mut h, with(&ceilings(), ETH, 0));
@@ -117,8 +117,8 @@ fn pre_v39_closes_pay_what_they_priced_and_the_registry_is_inert() {
     only_fill(&events);
     let events = h.market_order(a, ETH, Side::Sell, "1", "4000");
     let fill = only_fill(&events);
-    assert_eq!(fill.spread_bps, 5, "pre-V39 a close pays the stress minimum: {events:?}");
-    // The registry is installed but inert: no ceiling applies before `V39`.
+    assert_eq!(fill.spread_bps, 5, "pre-V40 a close pays the stress minimum: {events:?}");
+    // The registry is installed but inert: no ceiling applies before `V40`.
     assert_eq!(h.engine.protocol_version(), ProtocolVersion::V8);
 }
 
@@ -129,7 +129,7 @@ fn install_adopts_a_ceiling_for_a_market_no_genesis_lists() {
     // ceilings can cover markets a legacy log listed after its genesis.
     install_expect(&mut h, with(&ceilings(), 7, 20));
     assert_eq!(h.engine.close_spread_ceilings().unwrap()[&7], 20);
-    into_v39(&mut h);
+    into_v40(&mut h);
     h.operator_admin(AdminCommand::UpsertMarket(market(
         7,
         "XAU-USD",
@@ -142,7 +142,7 @@ fn install_adopts_a_ceiling_for_a_market_no_genesis_lists() {
 #[test]
 fn the_registry_and_pending_adoption_round_trip_through_serialization() {
     let mut h = harness();
-    into_v39(&mut h);
+    into_v40(&mut h);
     let due = h.ts + NOTICE_MS;
     h.operator_admin(AdminCommand::AdoptCloseSpreadCeiling {
         market: ETH,

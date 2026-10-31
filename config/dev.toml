@@ -404,7 +404,7 @@ windows = [
 ]
 closed_dates = ["2026-11-26", "2026-12-25", "2027-01-01"]
 
-# --- Close-spread ceilings (protocol V39, #344) -------------------------------
+# --- Close-spread ceilings (protocol V40, #344) -------------------------------
 # The most each market's closes pay, whatever the parameters do. These are
 # unequal TEST FIXTURES, not calibrated values: production's come from #147's
 # calibration. The launch close charge here (widest stress minimum 10bps plus

@@ -63,11 +63,11 @@ impl Engine {
     ///   positions unpriced and not reduce-only (see `Engine::check_priceable`)
     /// - `AnnounceParams` and `RotateOperator` with any error case of `Engine::announce_params` and
     ///   `Engine::rotate_operator`
-    /// - from `V39`, `SetCloseSpreadCeilings` and `AdoptCloseSpreadCeiling` with any error case of
+    /// - from `V40`, `SetCloseSpreadCeilings` and `AdoptCloseSpreadCeiling` with any error case of
     ///   `Engine::install_close_spread_ceilings` and `Engine::adopt_close_spread_ceiling`;
     ///   `UpsertMarket` of a market the ceiling registry has no entry for, or changing the
     ///   `asset_class` or `quote_currency` of a market with one; `ActivateProtocol` carrying a
-    ///   version past `V39` while a listed market has no adopted ceiling (see
+    ///   version past `V40` while a listed market has no adopted ceiling (see
     ///   `Engine::check_close_spread_activation`)
     pub(crate) fn admin(&mut self, cmd: &AdminCommand, events: &mut Vec<Event>) -> Result<(), String> {
         match cmd {

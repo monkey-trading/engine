@@ -203,7 +203,7 @@ this crate and reproduce the signed state roots exactly.
 - `tests/withdrawals/setup.rs` — shared Engine::apply-driven withdrawal setup
 - `src/admin.rs` — operator commands and signed admin commands
 - `src/operator_bounds.rs` — the V35 bounds: launch rates, rate notices, price-rule checks, and operator rotation
-- `src/close_spread.rs` — the V39 close-spread ceilings: the genesis registry, the seven-day
+- `src/close_spread.rs` — the V40 close-spread ceilings: the genesis registry, the seven-day
   adoption, the pricing-site clamp and reversal refusal, and the listing guards
 - `tests/operator_bounds.rs` — the V35 rate bounds, notices and rotation: each refusal and each change that takes effect after its notice
 - `tests/operator_price_rules.rs` — the V35 price-rule bound: held markets, reduce-only, FX dependents, relisting and futures
@@ -253,7 +253,7 @@ this crate and reproduce the signed state roots exactly.
   `tests/stress.rs` stress levels from `V13`, `tests/stress_activation.rs` the activation of
   `V13` over earlier divergence triggers and move references, `tests/quote_hours.rs` quotes from
   outside a market's hours from `V21`, and `tests/futures.rs` markets priced from futures
-- `tests/close_spread_cap.rs` — the V39 close-spread ceilings: the registry's adoption and
+- `tests/close_spread_cap.rs` — the V40 close-spread ceilings: the registry's adoption and
   governance path, the pricing-site clamp and reversal refusal, and the listing guards
 - `tests/close_spread_calibration.rs` — fill, rounding and liquidation agreement vectors for the
   research-only close-spread model; shares input fixtures with the Python study

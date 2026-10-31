@@ -1917,7 +1917,7 @@ closures = [
   { from = "2027-11-26T13:00:00", to = "2027-11-26T16:00:00" },
 ]
 
-# --- Close-spread ceilings (protocol V39, #344) -------------------------------
+# --- Close-spread ceilings (protocol V40, #344) -------------------------------
 # The most each market's closing slice may pay, whatever the parameters,
 # stress levels, toxicity tiers, or spread tiers do: no operator command can
 # raise a close above its ceiling (#147's per-market registry; #109's bound).

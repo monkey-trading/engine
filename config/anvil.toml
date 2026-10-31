@@ -215,7 +215,7 @@ schedule = { kind = "always_open" }
 price_rules = { max_age_ms = 1000, max_divergence_bps = 25, min_sources = 2 }
 financing = { benchmark = "SOFR", markup_bps = 500, day_basis = 365 }
 
-# --- Close-spread ceilings (protocol V39, #344) -------------------------------
+# --- Close-spread ceilings (protocol V40, #344) -------------------------------
 # Unequal TEST FIXTURES, not calibrated values: production's come from #147's
 # calibration. The launch close charge (widest stress minimum 10bps plus the
 # 3bps top toxicity add-on) is 13bps.

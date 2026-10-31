@@ -285,7 +285,7 @@ fn a_v3_log_takes_the_state_tree_at_its_next_seq_and_still_verifies() {
     let (manifest, _) = watch::channel(Manifest::default());
     let mut operator = dev_config().operator().unwrap();
     operator.vault = AccountId([0xaa; 20]);
-    // The V3 log lists markets the dev config never ceilinged; `V39` needs an adopted ceiling for
+    // The V3 log lists markets the dev config never ceilinged; `V40` needs an adopted ceiling for
     // each, so the config this test runs under names one per listed market.
     let ceilings: Vec<_> = before
         .engine

@@ -157,12 +157,12 @@ pub struct Engine {
     /// From `V37`, the mirrored operator registry: whether rotation is on, and the last election.
     #[serde(default, skip_serializing_if = "OperatorElection::is_default")]
     pub(crate) operator_election: OperatorElection,
-    /// From `V39`, the most each market's closing slice may pay, in bps of the index: adopted once
+    /// From `V40`, the most each market's closing slice may pay, in bps of the index: adopted once
     /// (genesis, or one signed install) and changed only by a signed adoption, so `UpsertMarket`
     /// can neither replace nor raise an entry. Absent until installed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) close_spread_ceilings: Option<BTreeMap<MarketId, i64>>,
-    /// From `V39`, a ceiling adoption waiting out its seven-day notice.
+    /// From `V40`, a ceiling adoption waiting out its seven-day notice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) pending_ceiling: Option<PendingCeiling>,
 
@@ -238,7 +238,7 @@ impl Engine {
         self.command_ms = sequenced.ts;
         // From `V35` a rotation whose notice has run hands over before the command is authorised.
         self.apply_due_rotation(sequenced.ts);
-        // From `V39` a ceiling adoption whose notice has run applies before the command acts.
+        // From `V40` a ceiling adoption whose notice has run applies before the command acts.
         self.apply_due_ceiling(sequenced.ts);
 
         let mut events = Vec::new();

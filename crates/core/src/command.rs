@@ -235,15 +235,15 @@ pub enum AdminCommand {
     RotateOperator {
         address: AccountId,
     },
-    /// From `V39`, installs the close-spread ceiling registry: one entry per listed market, kept
+    /// From `V40`, installs the close-spread ceiling registry: one entry per listed market, kept
     /// apart from `MarketSpec` so a listing can neither replace nor raise one. The node alone
-    /// sequences it, at genesis or carrying the config's ceilings into a log upgrading to `V39`;
+    /// sequences it, at genesis or carrying the config's ceilings into a log upgrading to `V40`;
     /// a log records it once, and later entries move only by an adopted
     /// `AdoptCloseSpreadCeiling`.
     SetCloseSpreadCeilings {
         ceilings: Vec<CloseSpreadCeiling>,
     },
-    /// From `V39`, signed adoption of one close-spread ceiling — an entry for a market not yet
+    /// From `V40`, signed adoption of one close-spread ceiling — an entry for a market not yet
     /// listed, or a strictly lower value for an adopted one — in effect from `effective_at`, at
     /// least seven days after it is logged. Replaces a pending adoption.
     AdoptCloseSpreadCeiling {

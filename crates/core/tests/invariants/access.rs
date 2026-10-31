@@ -26,7 +26,7 @@ pub(crate) struct Clients {
 impl Clients {
     /// Funds known keys under the historical rules, then upgrades and records their declarations.
     pub(crate) fn prepare(mut h: Harness, session: &Session) -> (Harness, Self) {
-        // `V39` activation needs every listed market ceilinged; at `V7` unsigned operator commands
+        // `V40` activation needs every listed market ceilinged; at `V7` unsigned operator commands
         // still apply, so no signature is needed here.
         let ceilings = h
             .engine

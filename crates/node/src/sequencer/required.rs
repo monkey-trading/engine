@@ -85,7 +85,7 @@ impl Sequencer {
         {
             cmds.push(Command::Admin(AdminCommand::SetAccessPolicy(policy.clone())));
         }
-        // A log upgrading to `V39` with markets listed before ceilings existed takes the config's
+        // A log upgrading to `V40` with markets listed before ceilings existed takes the config's
         // ceilings first: the registry is genesis state, and activation refuses a listed market
         // without one. The carried entries are the config's, filtered to the markets this log
         // lists: a market the log holds that the config names no ceiling for refuses the install,
@@ -101,12 +101,12 @@ impl Sequencer {
                 cmds[at],
                 Command::Admin(
                     AdminCommand::ActivateProtocol { version } | AdminCommand::ActivateCustodyFinality { version, .. }
-                ) if version >= ProtocolVersion::V39
+                ) if version >= ProtocolVersion::V40
             )
             && self.engine.close_spread_ceilings().is_none()
             // A fresh log installs the registry at genesis, after its markets are listed; a
             // completed genesis that predates ceilings takes the carry even with no markets, so
-            // no V39 log runs without a registry.
+            // no V40 log runs without a registry.
             && !self.needs_genesis()
         {
             let ceilings: Vec<_> = self

@@ -39,7 +39,7 @@ pub struct SequencerConfig<'a> {
     /// The commands the config's genesis sequences, which the genesis the log ran must match (see
     /// `GenesisProgress::ensure_matches`).
     pub genesis: Vec<Command>,
-    /// The close-spread ceilings the config's genesis adopts, which an upgrade to `V39` carries
+    /// The close-spread ceilings the config's genesis adopts, which an upgrade to `V40` carries
     /// into a legacy log before its activation (see `Sequencer::activate_protocol`).
     pub close_spread_ceilings: Vec<engine_core::close_spread::CloseSpreadCeiling>,
     pub(crate) history_sealing: Option<crate::snapshot::sealing::Endpoint>,

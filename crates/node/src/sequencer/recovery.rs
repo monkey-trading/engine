@@ -90,7 +90,7 @@ impl ReplayedLog {
         {
             bail!("the configured access policy differs from the public log");
         }
-        // A registry the `V39` upgrade carried came from the config of the restart that upgraded
+        // A registry the `V40` upgrade carried came from the config of the restart that upgraded
         // the log: the recorded genesis cannot be restated, so the carried entries are not part
         // of what the genesis comparison attests. For each ceiling the config names, the log may
         // enforce no more: the node may not attest ceilings stricter than it applies. Entries the
