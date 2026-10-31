@@ -45,8 +45,19 @@ def write_report(data):
     registry, reversals = data["registry_vs_global"], data["reversal_summary"]
     at_floor, gap = data["reversal_summary_if_every_ceiling_were_the_floor"], data["gap_comparison"]
     floor = data["objective"]["floor_bps"]
-    fx = next(row for row in live if row["asset_class"] == "fx")
-    floor_bound = ", ".join(row["symbol"] for row in live if row["proposed_ceiling_bps"] == floor)
+    fx = next((row for row in live if row["asset_class"] == "fx"), None)
+    floor_rows = [row for row in live if row["proposed_ceiling_bps"] == floor]
+    floor_bound = ", ".join(row["symbol"] for row in floor_rows)
+    margin_row = fx if fx is not None else (floor_rows[0] if floor_rows else None)
+    floor_note = (f" Floor-bound ceilings ({floor_bound}) sit at the {floor}-bp floor, "
+                  f"{floor / margin_row['min_initial_margin_bps'] * 100:.0f}% of their "
+                  f"{margin_row['min_initial_margin_bps']}-bp margin, so the launch parameters themselves already cost "
+                  "them that share of margin to close at the top stress level: an owner decision for the launch "
+                  "stress minimum, not for the ceiling.") if margin_row is not None else ""
+    gap_note = (f"in a 5% gap on {gap['market']}, an uncapped 103-bp close charge cuts the zero-capital house "
+                f"shortfall by {gap['shortfall_reduction_min'] * 100:.0f}% to {gap['shortfall_reduction_max'] * 100:.0f}% "
+                f"while costing the trader {gap['trader_cost_ratio']:.0f} times as much."
+                if gap["market"] is not None else f"the gap comparison is skipped ({gap['skipped']}).")
     top_classes = ", ".join(f"{name} {value['share'] * 100:.0f}%" for name, value in reversals["top"].items()
                             if isinstance(value, dict))
     classes = ", ".join(f"{name} {low}" if low == high else f"{name} {low}-{high}"
@@ -69,10 +80,7 @@ def write_report(data):
         "weekly block-bootstrap interval of the calibration sample's hourly p99 of the in-bar move (the open against the previous close is left out). Hourly bars are scaled to the "
         "one-second quote age by square-root-of-time, an assumption no hourly data can test.", "",
         "Gaps, closures and contract rolls are not in the need: a price jump is not a spread. They move margin and "
-        "close-out risk, which `ceiling_effects.csv` shows a close spread cannot repair: in a 5% gap on EUR-USD, "
-        "an uncapped 103-bp close charge cuts the zero-capital house shortfall by "
-        f"{gap['shortfall_reduction_min'] * 100:.0f}% to {gap['shortfall_reduction_max'] * 100:.0f}% while costing "
-        f"the trader {gap['trader_cost_ratio']:.0f} times as much.", "",
+        "close-out risk, which `ceiling_effects.csv` shows a close spread cannot repair: " + gap_note, "",
         "![Ceilings against the reference-risk need](ceilings_vs_need.png)", "",
         "## Per-market ceilings (basis points of the index price)", ""]
     lines += table(rows)
@@ -90,10 +98,7 @@ def write_report(data):
         "population that can fail it.", "",
         "Burden: every proposed ceiling is at most "
         f"{max(row['ceiling_percent_of_min_margin'] for row in live):.0f}% of the market's smallest initial margin "
-        f"(limit {data['objective']['burden_limit_percent_of_min_initial_margin']}%). Floor-bound ceilings "
-        f"({floor_bound}) sit at the {floor}-bp floor, {floor / fx['min_initial_margin_bps'] * 100:.0f}% of their "
-        f"{fx['min_initial_margin_bps']}-bp margin, so the launch parameters themselves already cost them that share "
-        "of margin to close at the top stress level: an owner decision for the launch stress minimum, not for the ceiling.",
+        f"(limit {data['objective']['burden_limit_percent_of_min_initial_margin']}%)." + floor_note,
         "",
         "Sensitivity: doubling the volatility input raises "
         f"{sum(row['ceiling_if_volatility_doubled_bps'] > row['proposed_ceiling_bps'] for row in live)} ceilings, by at "
