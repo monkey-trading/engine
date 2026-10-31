@@ -64,8 +64,8 @@ async fn dev_scenario_stakers_elect_the_key_that_signs_from_the_effective_time()
     for (staker, amount) in [(a, 30_000), (b, 40_000), (c, 20_000)] {
         chain.stake(staker, monkey(amount)).await;
     }
-    chain.register(a, address(&key_a), monkey(2_000), DIGEST_A).await;
-    chain.register(b, address(&key_b), monkey(2_000), DIGEST_B).await;
+    chain.register(a, &key_a, monkey(2_000), DIGEST_A).await;
+    chain.register(b, &key_b, monkey(2_000), DIGEST_B).await;
     let approvals = vec![chain.approval(a, DIGEST_A), chain.approval(b, DIGEST_B)];
     chain.govern(approvals).await;
     for (staker, candidate) in [(a, a), (b, b), (c, b)] {

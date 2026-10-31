@@ -77,18 +77,23 @@ contract RegistryHandler is Test {
         staking.delegate(choice == actors.length ? address(0) : actors[choice]);
     }
 
-    /// @dev Stakes up to the bond first, so candidacies are common.
+    /// @dev Stakes up to the bond first, so candidacies are common. The admin key is the address of
+    /// the account's value as a private key, a test stand-in for the enclave key, and it authorizes
+    /// the registration as `register` requires.
     function register(uint256 actorSeed, uint256 bond) external {
         address account = actors[actorSeed % actors.length];
         bond = bound(bond, 1_000e18, 1e22);
         if (staking.lockedBond(account) != 0 || registry.candidateOf(account).adminKey != address(0)) return;
         uint256 staked = staking.stakes(account);
         if (staked < bond) this.stake(actorSeed, bond - staked);
+        address adminKey = vm.addr(uint256(uint160(account)));
         OperatorRegistry.Registration memory registration = OperatorRegistry.Registration(
-            account, bond, _digest(actorSeed % actors.length), bytes32(0), "api.example", "handover.example:9443"
+            adminKey, bond, _digest(actorSeed % actors.length), bytes32(0), "api.example", "handover.example:9443"
         );
+        (uint8 v, bytes32 r, bytes32 s) =
+            vm.sign(uint256(uint160(account)), registry.registrationDigest(account, adminKey));
         vm.prank(account);
-        registry.register(registration);
+        registry.register(registration, abi.encodePacked(r, s, v));
     }
 
     /// @dev Acts on one call in four, so candidacies last long enough to be elected.
