@@ -41,10 +41,8 @@ pub(crate) fn session(h: &mut Harness) {
             CloseSpreadCeiling { market: market.spec.id, max_close_spread_bps: bps }
         })
         .collect();
-    assert_eq!(
-        h.operate_as(ELECTED_SEED, AdminCommand::SetCloseSpreadCeilings { ceilings }).last(),
-        Some(&Event::AdminApplied)
-    );
+    // The node alone sequences the install, as it does at genesis.
+    h.admin(AdminCommand::SetCloseSpreadCeilings { ceilings });
     h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V39 });
     // BTC's fills in this part pay spreads far above the fixture's 20bps slippage bound; the
     // relist changes no price rule or tier, only the client's guard, which the ceiling keeps.

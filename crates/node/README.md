@@ -103,6 +103,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - The exit against the last posted root from protocol `V38`: `GET /v1/accounts/{address}/exit`
   serves every proof an account exits the vault with against the last checkpoint's root, and
   `engine exit-proof` builds the same from a published log alone, with each vault call ABI-encoded
+- Close-spread ceilings from protocol `V39`: genesis adopts the most each market's closes may pay,
+  whatever the parameters do, and `engine admin adopt-close-spread-ceiling` adopts a new market's
+  ceiling — or lowers one — from seven days after it is logged; `SetParams` is never refused for a
+  spread a close would pay over a ceiling, because the fill clamps to it, floored to the exact
+  bound
 - Supervised tasks: any task stopping stops the node, and SIGTERM drains to a final checkpoint
 - Live crypto prices from Coinbase, Kraken, and Bitstamp over WebSocket: one supervised task per
   venue connection, quotes stamped with the venue's own time, and reconnects with backoff

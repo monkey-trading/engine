@@ -364,6 +364,7 @@ fn reject_kind(reason: &Reject) -> &'static str {
         Reject::InsufficientFunds { .. } => "insufficient_funds",
         Reject::BelowMinimumWithdrawal { .. } => "below_minimum_withdrawal",
         Reject::HouseCapacity => "house_capacity",
+        Reject::CloseSpreadCeiling { .. } => "close_spread_ceiling",
         Reject::TooManyOrders { .. } => "too_many_orders",
         Reject::InvalidAmount => "invalid_amount",
         Reject::DuplicateReference => "duplicate_reference",

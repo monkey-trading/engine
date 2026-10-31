@@ -31,6 +31,7 @@ pub fn every_event() -> Vec<Event> {
         Reject::InsufficientFunds { available: amount },
         Reject::BelowMinimumWithdrawal { minimum: amount },
         Reject::HouseCapacity,
+        Reject::CloseSpreadCeiling { ceiling_bps: 20 },
         Reject::TooManyOrders { max: 100 },
         Reject::InvalidAmount,
         Reject::DuplicateReference,
@@ -59,6 +60,7 @@ pub fn every_event() -> Vec<Event> {
             | Reject::InsufficientFunds { .. }
             | Reject::BelowMinimumWithdrawal { .. }
             | Reject::HouseCapacity
+            | Reject::CloseSpreadCeiling { .. }
             | Reject::TooManyOrders { .. }
             | Reject::InvalidAmount
             | Reject::DuplicateReference

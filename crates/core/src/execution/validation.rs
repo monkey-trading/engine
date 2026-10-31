@@ -5,7 +5,6 @@ use crate::account::Account;
 use crate::command::{OrderKind, OrderRequest};
 use crate::engine::{Engine, MarketState};
 use crate::event::Reject;
-use crate::execution::growth;
 use crate::fixed::Rounding;
 use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
@@ -97,5 +96,30 @@ impl Engine {
             return Err(Reject::InsufficientFunds { available: Fixed::ZERO });
         };
         Ok((params, market, acct))
+    }
+}
+
+/// The slice of a trade that grows |position|, as `(from, to)` absolute quantities: the whole of
+/// an increase, the new side of a flip, and nothing for a pure reduction.
+pub(super) fn growth(current: Fixed, delta: Fixed) -> (Fixed, Fixed) {
+    let new = current + delta;
+    if current.is_zero() || current.signum() == delta.signum() {
+        (current.abs(), new.abs())
+    } else if !new.is_zero() && new.signum() == delta.signum() {
+        (Fixed::ZERO, new.abs())
+    } else {
+        (Fixed::ZERO, Fixed::ZERO)
+    }
+}
+
+/// Losers pay nothing; winners pay `fee_bps` of realised profit, rounded up from `V5` and truncated
+/// before it.
+pub(super) fn profit_fee(realised: Fixed, fee_bps: i64, version: ProtocolVersion) -> Fixed {
+    if !realised.is_positive() {
+        Fixed::ZERO
+    } else if version >= ProtocolVersion::V5 {
+        realised.mul_bps_rounded(fee_bps, Rounding::Up)
+    } else {
+        realised.mul_bps(fee_bps)
     }
 }

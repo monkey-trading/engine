@@ -24,6 +24,8 @@ use crate::market::staircase;
 use crate::protocol::ProtocolVersion;
 use crate::types::{AccountId, MarketId, OrderId, Side};
 
+use self::validation::{growth, profit_fee};
+
 /// What the live price is checked against before filling.
 #[derive(Clone, Copy)]
 pub(crate) enum PriceGuard {
@@ -470,31 +472,6 @@ impl Engine {
         }
         self.record_order(account, order_id);
         Some(order)
-    }
-}
-
-/// The slice of a trade that grows |position|, as `(from, to)` absolute quantities: the whole of
-/// an increase, the new side of a flip, and nothing for a pure reduction.
-fn growth(current: Fixed, delta: Fixed) -> (Fixed, Fixed) {
-    let new = current + delta;
-    if current.is_zero() || current.signum() == delta.signum() {
-        (current.abs(), new.abs())
-    } else if !new.is_zero() && new.signum() == delta.signum() {
-        (Fixed::ZERO, new.abs())
-    } else {
-        (Fixed::ZERO, Fixed::ZERO)
-    }
-}
-
-/// Losers pay nothing; winners pay `fee_bps` of realised profit, rounded up from `V5` and truncated
-/// before it.
-fn profit_fee(realised: Fixed, fee_bps: i64, version: ProtocolVersion) -> Fixed {
-    if !realised.is_positive() {
-        Fixed::ZERO
-    } else if version >= ProtocolVersion::V5 {
-        realised.mul_bps_rounded(fee_bps, Rounding::Up)
-    } else {
-        realised.mul_bps(fee_bps)
     }
 }
 

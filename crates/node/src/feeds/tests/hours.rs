@@ -182,6 +182,7 @@ async fn a_contract_the_listing_does_not_name_is_alerted_once_and_held_back() {
 fn genesis(markets: Vec<MarketSpec>) -> Genesis {
     let mut genesis = dev_config().genesis;
     genesis.markets.retain(|market| [1, 2].contains(&market.id));
+    genesis.close_spread_ceilings.retain(|ceiling| [1, 2].contains(&ceiling.market));
     genesis.markets.extend(markets);
     genesis
 }

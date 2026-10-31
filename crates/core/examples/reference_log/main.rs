@@ -489,14 +489,12 @@ fn session() -> Vec<Sequenced> {
     v19::session(&mut h);
     v20::session(&mut h);
     v21::session(&mut h, a);
-    for session in [v22::session, v23::session, v24::session, v25::session, v26::session, v27::session, v28::session] {
+    for session in [
+        v22::session, v23::session, v24::session, v25::session, v26::session, v27::session, v28::session,
+        v29::session, v30::session, v31::session, v32::session, v33::session, v34::session, v35::session,
+        v37::session, v38::session, v39::session,
+    ] {
         session(&mut h);
     }
-    for session in [v29::session, v30::session, v31::session, v32::session, v33::session, v34::session, v35::session] {
-        session(&mut h);
-    }
-    v37::session(&mut h);
-    v38::session(&mut h);
-    v39::session(&mut h);
     h.log
 }

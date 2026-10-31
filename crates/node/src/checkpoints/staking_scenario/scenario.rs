@@ -221,6 +221,7 @@ impl Scenario {
             access_policy: Some(self.access.policy.clone()),
             clock: self.clock.clone(),
             genesis: genesis_commands(&self.genesis),
+            close_spread_ceilings: self.genesis.close_spread_ceilings.clone(),
             ..sequencer_config(&self.dir, manifest_tx)
         };
         let mut seq = Sequencer::recover(cfg, self.key.clone(), stream.clone(), withdrawals).unwrap();

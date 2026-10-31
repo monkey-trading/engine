@@ -1916,3 +1916,160 @@ closures = [
   { from = "2026-12-24T13:00:00", to = "2026-12-24T16:00:00" },
   { from = "2027-11-26T13:00:00", to = "2027-11-26T16:00:00" },
 ]
+
+# --- Close-spread ceilings (protocol V39, #344) -------------------------------
+# The most each market's closing slice may pay, whatever the parameters,
+# stress levels, toxicity tiers, or spread tiers do: no operator command can
+# raise a close above its ceiling (#147's per-market registry; #109's bound).
+# Values are #147's proposed ceilings (research/close-spread-calibration
+# results/ceilings.csv); #364's pending re-run may move 13 markets up one step
+# before promotion. The launch close charge (widest stress minimum 10bps plus
+# the 3bps top toxicity add-on) is 13bps, and the engine refuses a nonzero
+# ceiling below it.
+[[genesis.close_spread_ceilings]]
+market = 1
+max_close_spread_bps = 30
+
+[[genesis.close_spread_ceilings]]
+market = 2
+max_close_spread_bps = 35
+
+[[genesis.close_spread_ceilings]]
+market = 3
+max_close_spread_bps = 35
+
+[[genesis.close_spread_ceilings]]
+market = 10
+max_close_spread_bps = 13
+
+[[genesis.close_spread_ceilings]]
+market = 11
+max_close_spread_bps = 13
+
+[[genesis.close_spread_ceilings]]
+market = 12
+max_close_spread_bps = 13
+
+[[genesis.close_spread_ceilings]]
+market = 13
+max_close_spread_bps = 13
+
+[[genesis.close_spread_ceilings]]
+market = 20
+max_close_spread_bps = 13
+
+[[genesis.close_spread_ceilings]]
+market = 21
+max_close_spread_bps = 15
+
+[[genesis.close_spread_ceilings]]
+market = 22
+max_close_spread_bps = 13
+
+[[genesis.close_spread_ceilings]]
+market = 23
+max_close_spread_bps = 15
+
+[[genesis.close_spread_ceilings]]
+market = 24
+max_close_spread_bps = 13
+
+[[genesis.close_spread_ceilings]]
+market = 25
+max_close_spread_bps = 15
+
+[[genesis.close_spread_ceilings]]
+market = 30
+max_close_spread_bps = 15
+
+[[genesis.close_spread_ceilings]]
+market = 31
+max_close_spread_bps = 20
+
+[[genesis.close_spread_ceilings]]
+market = 32
+max_close_spread_bps = 20
+
+[[genesis.close_spread_ceilings]]
+market = 33
+max_close_spread_bps = 20
+
+[[genesis.close_spread_ceilings]]
+market = 40
+max_close_spread_bps = 20
+
+[[genesis.close_spread_ceilings]]
+market = 41
+max_close_spread_bps = 15
+
+[[genesis.close_spread_ceilings]]
+market = 42
+max_close_spread_bps = 20
+
+[[genesis.close_spread_ceilings]]
+market = 43
+max_close_spread_bps = 15
+
+[[genesis.close_spread_ceilings]]
+market = 44
+max_close_spread_bps = 20
+
+[[genesis.close_spread_ceilings]]
+market = 45
+max_close_spread_bps = 20
+
+[[genesis.close_spread_ceilings]]
+market = 46
+max_close_spread_bps = 20
+
+[[genesis.close_spread_ceilings]]
+market = 47
+max_close_spread_bps = 20
+
+[[genesis.close_spread_ceilings]]
+market = 48
+max_close_spread_bps = 15
+
+[[genesis.close_spread_ceilings]]
+market = 49
+max_close_spread_bps = 15
+
+[[genesis.close_spread_ceilings]]
+market = 50
+max_close_spread_bps = 15
+
+[[genesis.close_spread_ceilings]]
+market = 51
+max_close_spread_bps = 15
+
+[[genesis.close_spread_ceilings]]
+market = 52
+max_close_spread_bps = 20
+
+[[genesis.close_spread_ceilings]]
+market = 53
+max_close_spread_bps = 15
+
+[[genesis.close_spread_ceilings]]
+market = 54
+max_close_spread_bps = 15
+
+[[genesis.close_spread_ceilings]]
+market = 55
+max_close_spread_bps = 15
+
+[[genesis.close_spread_ceilings]]
+market = 56
+max_close_spread_bps = 15
+
+[[genesis.close_spread_ceilings]]
+market = 57
+max_close_spread_bps = 20
+
+[[genesis.close_spread_ceilings]]
+market = 58
+max_close_spread_bps = 20
+
+[[genesis.close_spread_ceilings]]
+market = 59
+max_close_spread_bps = 20

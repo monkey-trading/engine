@@ -269,6 +269,7 @@ impl Sequencer {
         cfg.metrics.access_pending_deposits.set(engine.pending_deposits().len() as i64);
         let access_alerts = AccessAlerts::recovered(access_failed);
         let benchmark_schedule = watch::channel(BenchmarkSchedule::from_engine(&engine)).0;
+        let close_spread_ceilings = cfg.close_spread_ceilings.clone();
         let mut sequencer = Self {
             legacy_deposits,
             legacy_approvals,
@@ -291,6 +292,7 @@ impl Sequencer {
             required: Vec::new(),
             client_auth: cfg.client_auth,
             access_policy: cfg.access_policy,
+            close_spread_ceilings,
             deficit: DeficitAlert::default(),
             benchmark_alerts: BenchmarkAlerts::default(),
             access_alerts,

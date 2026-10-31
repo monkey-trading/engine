@@ -213,6 +213,7 @@ fn benchmark_recovery_v17_activation_can_precede_the_snapshot_without_charging()
         .unwrap();
         let mut genesis = dev_config().genesis;
         genesis.markets.retain(|market| market.id == 1);
+        genesis.close_spread_ceilings.retain(|ceiling| ceiling.market == 1);
         seq.genesis(&genesis).unwrap();
         let reference = format!("{}:0", engine_core::eip712::B256::repeat_byte(17));
         assert!(seq.sequence(deposit(100, &reference)).unwrap().unwrap().iter().any(|event| {
@@ -343,6 +344,7 @@ impl Fixture {
         seq.activate_legacy_protocol().unwrap();
         let mut genesis = dev_config().genesis;
         genesis.markets.retain(|market| market.id == 1);
+        genesis.close_spread_ceilings.retain(|ceiling| ceiling.market == 1);
         genesis.benchmarks.clear();
         seq.genesis(&genesis).unwrap();
         assert!(commands(&log_entries(&dir)).is_empty(), "bootstrap waits for authenticated time");

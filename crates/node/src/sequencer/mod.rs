@@ -87,6 +87,9 @@ pub struct Sequencer {
     required: Vec<(&'static str, Vec<Command>)>,
     client_auth: ClientAuth,
     access_policy: Option<engine_core::access::AccessPolicy>,
+    /// The close-spread ceilings the config's genesis adopts, which an upgrade to `V39` carries
+    /// into a legacy log before its activation (see `Sequencer::activate_protocol`).
+    close_spread_ceilings: Vec<engine_core::close_spread::CloseSpreadCeiling>,
     /// The alert for house NAV below zero.
     deficit: DeficitAlert,
     /// Benchmark clears already emitted during this process, limited to listed names.
