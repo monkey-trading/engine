@@ -36,16 +36,27 @@ def test_the_move_measure_uses_the_larger_side():
 
 
 def test_a_bucket_holds_its_lowest_and_highest_mid():
-    # window 20s: buckets of 2s. A dip at t=1 opens bucket (0,1); the recovery at t=2 opens the
-    # next. The dip stays the window's low while its bucket lives, and the bucket outlives the
-    # dip's own 20s: at t=21 the dip is individually 20s old but the bucket's newest mid (t=1)
-    # is exactly 20s old, so the engine still reads the dip and a per-second compaction would not.
+    # window 20s: buckets of 2s. The dip at t=0 is its bucket's OLDEST sample; the recovery at
+    # t=1 is its newest. At t=21 the dip is individually expired (21 > 20) but the bucket outlives
+    # it (newest mid 20s old), so the engine still reads the dip — a per-second compaction would
+    # evict it and read zero. One second later the bucket itself has left the window.
     mids = np.ones((1, 30))
-    mids[0, 1] = 0.99
+    mids[0, 0] = 0.99
     measure = stress.engine_move_measures(mids, window_s=20)
-    assert measure[0, 2] == pytest.approx((1.0 - 0.99) / 0.99 * 1e4, rel=1e-9)
-    assert measure[0, 21] == pytest.approx((1.0 - 0.99) / 0.99 * 1e4, rel=1e-9)
-    # One second later the bucket itself has left the window (newest mid over 20s old).
+    reading = (1.0 - 0.99) / 0.99 * 1e4
+    assert measure[0, 2] == pytest.approx(reading, rel=1e-9)
+    assert measure[0, 21] == pytest.approx(reading, rel=1e-9)
+    assert measure[0, 22] == 0.0
+
+
+def test_a_bucket_holds_a_high_past_its_oldest_sample():
+    # The high side: a spike at the start of its bucket survives its own expiry by the bucket's
+    # newest sample, on the (high - mid)/high reading.
+    mids = np.ones((1, 30))
+    mids[0, 0] = 1.01
+    measure = stress.engine_move_measures(mids, window_s=20)
+    reading = (1.01 - 1.0) / 1.01 * 1e4
+    assert measure[0, 21] == pytest.approx(reading, rel=1e-9)
     assert measure[0, 22] == 0.0
 
 
@@ -358,6 +369,16 @@ def test_choose_divergence_handles_a_zero_minimum_spread():
     assert choice["divergence_share_l1"] == 0
     assert choice["divergence_share_l2"] == 9500
     assert choice["level2_cost_feasible"] is False
+
+
+def test_choose_divergence_keeps_a_zero_level2_share():
+    # A zero level-2 spread is a valid vacuous choice, not the infeasible criterion: the explicit
+    # None check must not collapse it into the fallback.
+    genesis = genesis_with_bounds({"EUR-USD": 5})
+    genesis["params"] = {"stress_levels": [{}, {"min_spread_bps": 2}, {"min_spread_bps": 0}]}
+    choice = stress.choose_divergence(genesis)
+    assert choice["divergence_share_l2"] == 0
+    assert choice["level2_cost_feasible"] is True
 
 
 def test_the_move_measure_reads_the_high_side_of_a_fall():
