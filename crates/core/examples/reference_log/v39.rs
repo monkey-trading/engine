@@ -1,12 +1,14 @@
 //! The session's `V39` part: close-spread ceilings cap what every close can pay.
 
-use engine_core::access::{AccessDeposit, AccessEvidence, EligibilityClass, EligibilityRequest, Jurisdiction, SanctionsStatus, Screening};
+use engine_core::Fixed;
+use engine_core::access::{
+    AccessDeposit, AccessEvidence, EligibilityClass, EligibilityRequest, Jurisdiction, SanctionsStatus, Screening,
+};
 use engine_core::auth::RequestAuth;
 use engine_core::close_spread::CloseSpreadCeiling;
 use engine_core::command::{AdminCommand, Command, OrderKind, OrderRequest};
 use engine_core::eip712::{self, Signature};
 use engine_core::event::{CancelReason, Event, Reject};
-use engine_core::Fixed;
 use engine_core::operator_bounds::NOTICE_MS;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::session::Schedule;
@@ -68,17 +70,24 @@ pub(crate) fn session(h: &mut Harness) {
     let events = order(h, &client, Side::Buy, "0.01", OrderKind::Market { quoted: f("80000"), max_slippage_bps: None });
     assert!(events.iter().any(|event| matches!(event, Event::Fill(fill) if fill.spread_bps == 100)));
     // The close clamps to BTC's ceiling, and the clamp floors to the exact bound.
-    let events = order(h, &client, Side::Sell, "0.01", OrderKind::Market { quoted: f("80000"), max_slippage_bps: None });
-    assert!(events.iter().any(|event| matches!(event, Event::Fill(fill) if fill.spread_bps == 30 && fill.price == f("79760"))), "{events:?}");
+    let events =
+        order(h, &client, Side::Sell, "0.01", OrderKind::Market { quoted: f("80000"), max_slippage_bps: None });
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, Event::Fill(fill) if fill.spread_bps == 30 && fill.price == f("79760"))),
+        "{events:?}"
+    );
 
     // A reversal over the ceiling is refused; the pure close stays open at the ceiling.
     let events = order(h, &client, Side::Buy, "0.01", OrderKind::Market { quoted: f("80000"), max_slippage_bps: None });
     assert!(events.iter().any(|event| matches!(event, Event::Fill(_))), "{events:?}");
-    let events = order(h, &client, Side::Sell, "0.02", OrderKind::Market { quoted: f("80000"), max_slippage_bps: None });
-    assert!(matches!(
-        events[..],
-        [Event::OrderRejected { reason: Reject::CloseSpreadCeiling { ceiling_bps: 30 }, .. }]
-    ), "{events:?}");
+    let events =
+        order(h, &client, Side::Sell, "0.02", OrderKind::Market { quoted: f("80000"), max_slippage_bps: None });
+    assert!(
+        matches!(events[..], [Event::OrderRejected { reason: Reject::CloseSpreadCeiling { ceiling_bps: 30 }, .. }]),
+        "{events:?}"
+    );
     let events = reduce(h, &client, "0.01", "80000");
     assert!(events.iter().any(|event| matches!(event, Event::Fill(fill) if fill.spread_bps == 30)), "{events:?}");
 
@@ -98,7 +107,8 @@ pub(crate) fn session(h: &mut Harness) {
     // A tiny index floors the adjustment to the exact bound: the charged spread is
     // `floor(index_raw * 30 / 10_000)`, never the unit-above value upward rounding gives.
     h.price(BTC, "0.654321987");
-    let events = order(h, &client, Side::Buy, "0.01", OrderKind::Market { quoted: f("0.654321987"), max_slippage_bps: None });
+    let events =
+        order(h, &client, Side::Buy, "0.01", OrderKind::Market { quoted: f("0.654321987"), max_slippage_bps: None });
     assert!(events.iter().any(|event| matches!(event, Event::Fill(_))), "{events:?}");
     let events = reduce(h, &client, "0.01", "0.654321987");
     let bound = f("0.654321987").raw() * 30 / 10_000;
@@ -122,7 +132,10 @@ pub(crate) fn session(h: &mut Harness) {
     );
     let silver = market(39, "XAG-USD", AssetClass::Commodity, Schedule::AlwaysOpen, 1_000);
     let refused = h.operate_as(ELECTED_SEED, AdminCommand::UpsertMarket(silver.clone()));
-    assert!(matches!(refused.last(), Some(Event::AdminRejected { reason }) if reason.contains("no adopted close-spread ceiling")), "{refused:?}");
+    assert!(
+        matches!(refused.last(), Some(Event::AdminRejected { reason }) if reason.contains("no adopted close-spread ceiling")),
+        "{refused:?}"
+    );
     h.advance_to(adopted);
     h.cmd(Command::Tick);
     assert_eq!(h.engine.close_spread_ceilings().and_then(|ceilings| ceilings.get(&39).copied()), Some(20));
@@ -131,15 +144,20 @@ pub(crate) fn session(h: &mut Harness) {
         ELECTED_SEED,
         AdminCommand::AdoptCloseSpreadCeiling { market: 39, max_close_spread_bps: 21, effective_at: h.ts + NOTICE_MS },
     );
-    assert!(matches!(raised.last(), Some(Event::AdminRejected { reason }) if reason.contains("can only be lowered")), "{raised:?}");
+    assert!(
+        matches!(raised.last(), Some(Event::AdminRejected { reason }) if reason.contains("can only be lowered")),
+        "{raised:?}"
+    );
 
     // An adopted market cannot change instrument: AAPL's asset class stays.
     let mut etf = h.engine.markets()[&AAPL].spec.clone();
     etf.asset_class = AssetClass::Etf;
     let refused = h.operate_as(ELECTED_SEED, AdminCommand::UpsertMarket(etf));
-    assert!(matches!(refused.last(), Some(Event::AdminRejected { reason }) if reason.contains("asset class")), "{refused:?}");
+    assert!(
+        matches!(refused.last(), Some(Event::AdminRejected { reason }) if reason.contains("asset class")),
+        "{refused:?}"
+    );
 }
-
 
 /// The screening source the `V24` part recorded.
 fn source() -> SigningKey {
@@ -168,7 +186,8 @@ fn screened(h: &Harness, hash: eip712::B256, account: Option<AccountId>, payer: 
 fn declare(h: &mut Harness, client: &Client) {
     let nonce = h.engine.next_request_nonce(client.account);
     let expires_at = h.ts + 60_000;
-    let hash = eip712::eligibility_hash(&client.domain, client.account, EligibilityClass::Professional, nonce, expires_at);
+    let hash =
+        eip712::eligibility_hash(&client.domain, client.account, EligibilityClass::Professional, nonce, expires_at);
     let request = EligibilityRequest {
         account: client.account,
         class: EligibilityClass::Professional,
@@ -181,7 +200,12 @@ fn declare(h: &mut Harness, client: &Client) {
 
 /// Restocks the house's capital, which the earlier parts paid out.
 fn fund_house(h: &mut Harness, payer: &Client) {
-    let deposit = AccessDeposit { account: None, payer: Some(payer.account), amount: f("2000000"), chain_ref: "0xhouse:39".into() };
+    let deposit = AccessDeposit {
+        account: None,
+        payer: Some(payer.account),
+        amount: f("2000000"),
+        chain_ref: "0xhouse:39".into(),
+    };
     let evidence = screened(h, eip712::deposit_screening_hash(&deposit), None, Some(payer.account));
     let events = h.cmd(Command::AccessDeposit { deposit, evidence });
     assert!(events.iter().any(|event| matches!(event, Event::HouseCapitalMoved { .. })), "{events:?}");
@@ -239,4 +263,3 @@ fn reduce(h: &mut Harness, client: &Client, qty: &str, quoted: &str) -> Vec<Even
     let evidence = screened(h, hash, Some(client.account), None);
     h.cmd(Command::AccessOrder { request, evidence })
 }
-

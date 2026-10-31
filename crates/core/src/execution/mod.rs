@@ -348,7 +348,7 @@ impl Engine {
         let (base, size) = parts(charge);
         // From `V39`, a close's spread cannot exceed its market's ceiling, and a reversal over it
         // is refused.
-        let rounded = self.bounded_close_charge(exec.market, exec.side, pos.qty, increases, base, size, mid)?;
+        let rounded = self.bounded_close_charge(exec.market, exec.side, pos.qty, increases, base + size, mid)?;
         let adjust = if exec.side == Side::Sell { rounded.min(mid - Fixed::from_raw(1)) } else { rounded };
         let price = mid + adjust.mul_int(exec.side.sign());
 
