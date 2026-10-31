@@ -26,13 +26,17 @@ fn the_registry_binds_from_v39_and_a_close_clamps_to_its_ceiling() {
     let client = Client::new(1);
     h.deposit(client.account, "1000000");
     h.price(BTC, "100000");
-    // Pre-V39, a close pays the stress minimum, whatever the ceiling waiting for it.
+    // Pre-V39, a close pays what it prices even above the ceiling waiting for it: a 50bps minimum
+    // against BTC's 20bps ceiling fills at 50bps, which fails if the cap applies.
+    let mut raised = common::params();
+    raised.stress_levels[1].min_spread_bps = 50;
+    h.operator_admin(AdminCommand::SetParams(raised));
     h.operator_admin(AdminCommand::SetStressFloor { market: Some(BTC), level: 1 });
     let events = h.market_order(client.account, BTC, Side::Buy, "1", "100000");
     only_fill(&events);
     let events = h.market_order(client.account, BTC, Side::Sell, "1", "100000");
     let fill = only_fill(&events);
-    assert_eq!(fill.spread_bps, 5, "pre-V39 the close pays the stress minimum: {events:?}");
+    assert_eq!(fill.spread_bps, 50, "pre-V39 the close pays what it prices: {events:?}");
     h.operator_admin(AdminCommand::SetStressFloor { market: Some(BTC), level: 0 });
 
     h.admin(AdminCommand::SetAccessPolicy(AccessPolicy { source: source_key(), max_age_ms: 1_000 }));
@@ -114,6 +118,33 @@ fn a_reversal_over_the_ceiling_is_refused_and_the_pure_close_stays_open() {
     assert_eq!(fill.spread_bps, 20, "the pure close clamps: {events:?}");
     assert!(fill.position.is_zero());
     h.assert_conserved(f("0"));
+}
+
+#[test]
+fn a_reversal_reaching_the_price_is_refused_by_its_ceiling_not_the_price_check() {
+    let (mut h, client) = funded("10000000");
+    h.price(BTC, "100000");
+    // A size tier near the price: the opening pays it at the level-0 multiplier, and the level-1
+    // multiplier doubles it past the price on the reversal's blended spread.
+    let mut spec = market(BTC, "BTC-USD", AssetClass::Crypto, Schedule::AlwaysOpen, 1000);
+    spec.max_slippage_bps = 10_000;
+    spec.spread_tiers = vec![engine_core::market::Tier { up_to: None, bps: 9_999 }];
+    h.operator_admin(AdminCommand::UpsertMarket(spec));
+    let events = trade(&mut h, &client, BTC, Side::Buy, "1", "100000");
+    let open = only_fill(&events);
+    assert_eq!(open.spread_bps, 9_999, "{events:?}");
+    h.operator_admin(AdminCommand::SetStressFloor { market: Some(BTC), level: 1 });
+    // The blended reversal spread reaches the price; `V39` classifies it by the ceiling first, so
+    // the refusal names the ceiling and a triggered order still gets its closing-slice fallback.
+    let events = trade(&mut h, &client, BTC, Side::Sell, "2", "100000");
+    assert!(matches!(common::events::rejection(&events), Reject::CloseSpreadCeiling { ceiling_bps: 20 }), "{events:?}");
+    let events = rest(&mut h, &client, BTC, Side::Sell, "2", OrderKind::Stop { price: f("99999") });
+    assert!(events.iter().any(|event| matches!(event, Event::OrderAccepted { .. })), "{events:?}");
+    let events = h.price(BTC, "99999");
+    let fill = only_fill(&events);
+    assert_eq!(fill.qty, f("1"), "{events:?}");
+    assert!(fill.position.is_zero(), "{fill:?}");
+    assert_eq!(fill.spread_bps, 5, "the slice is a pure close at the level-1 minimum, under the ceiling: {fill:?}");
 }
 
 #[test]
@@ -260,7 +291,8 @@ fn a_zero_ceiling_means_free_closes() {
 #[test]
 fn pre_v39_closes_pay_what_they_priced_and_the_registry_is_inert() {
     let mut h = Harness::v8(ClientAuth::Unsigned);
-    install_expect(&mut h, ceilings());
+    // A zero ceiling on ETH: the close below pays 5bps anyway, which fails if the cap applies.
+    install_expect(&mut h, with(&ceilings(), ETH, 0));
     let a = acct(1);
     h.deposit(a, "1000000");
     h.price(ETH, "4000");

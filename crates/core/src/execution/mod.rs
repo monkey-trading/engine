@@ -341,7 +341,16 @@ impl Engine {
         };
         // The truncated spread decides whether a spread reaches the price. From `V10` the spread rounds
         // up, and a sell's stops a unit short of the price, so rounding never makes it reach the price.
-        if spread(Rounding::TowardZero) >= mid {
+        // From `V39`, a reversal over its ceiling is classified first: its refusal fills a triggered
+        // order's closing slice, which stays executable when the blended spread reaches the price.
+        let closes = !pos.qty.is_zero() && (exec.side == Side::Buy) != pos.qty.is_positive();
+        let over_ceiling = self.protocol_version >= ProtocolVersion::V39
+            && closes
+            && increases
+            && self
+                .close_spread_ceiling(exec.market)
+                .is_some_and(|ceiling| spread(Rounding::TowardZero).raw() * 10_000 > mid.raw() * i128::from(ceiling));
+        if !over_ceiling && spread(Rounding::TowardZero) >= mid {
             return Err(Reject::InvalidOrder { reason: "spread at this size reaches the price".into() });
         }
         let charge = self.charge_rounding();

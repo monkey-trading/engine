@@ -1,5 +1,7 @@
 use super::*;
 
+mod genesis;
+
 use engine_core::types::MarketId;
 
 use crate::test_support::{ANVIL_CONFIG as ANVIL, DEV_CONFIG as DEV, own_operator_key};

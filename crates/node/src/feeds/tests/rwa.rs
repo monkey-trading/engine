@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 use chrono::{DateTime, Utc};
 use engine_core::Fixed;
+use engine_core::close_spread::CloseSpreadCeiling;
 use engine_core::command::{Command, OrderKind};
 use engine_core::event::Event;
 use engine_core::futures::FuturesContract;
@@ -103,6 +104,10 @@ fn genesis(markets: Vec<MarketSpec>) -> Genesis {
     let mut genesis = dev_config().genesis;
     genesis.markets.retain(|market| [1, 2].contains(&market.id));
     genesis.close_spread_ceilings.retain(|ceiling| [1, 2].contains(&ceiling.market));
+    // Every listed market takes a ceiling, or the genesis registry refuses to install.
+    genesis
+        .close_spread_ceilings
+        .extend(markets.iter().map(|market| CloseSpreadCeiling { market: market.id, max_close_spread_bps: 30 }));
     genesis.markets.extend(markets);
     genesis
 }
