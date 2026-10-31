@@ -164,7 +164,11 @@ fn each_action_builds_its_admin_command() {
                 "--effective-at",
                 "2027-01-01T00:00:00Z",
             ],
-            AdminCommand::AdoptCloseSpreadCeiling { market: 1, max_close_spread_bps: 25, effective_at: 1_798_761_600_000 },
+            AdminCommand::AdoptCloseSpreadCeiling {
+                market: 1,
+                max_close_spread_bps: 25,
+                effective_at: 1_798_761_600_000,
+            },
         ),
     ];
     for (args, expected) in cases {

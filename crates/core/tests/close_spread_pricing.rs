@@ -16,7 +16,7 @@ use engine_core::types::{AssetClass, Side};
 mod common;
 use common::close_spread::*;
 use common::events::only_fill;
-use common::{AAPL, BTC, ETH, Client, Harness, acct, f, market};
+use common::{AAPL, BTC, Client, ETH, Harness, acct, f, market};
 
 #[test]
 fn the_registry_binds_from_v39_and_a_close_clamps_to_its_ceiling() {
