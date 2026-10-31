@@ -180,6 +180,7 @@
    "spread1_bps": 1.8,
    "spread2_bps": 2.6,
    "climb_fills": 75,
+   "climb_fills_tier2": 150,
    "toxic_reach_bps": 1.152,
    "median_fill_usd": 100000.0,
    "burst_sensitivity": {

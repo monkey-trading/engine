@@ -144,3 +144,16 @@ def test_averaged_rounds_up_at_the_engine_scale():
     # a step of 1.5e-9 rounds up to 2e-9 at the engine's nine decimals, not 1.5e-9
     score, _ = toxicity.averaged(0.0, 1.0, 3e-9, 1.0, 1_000.0)
     assert score == pytest.approx(2e-9)
+
+
+def test_overlapping_markouts_share_path_increments():
+    # deterministic path: unit increments. At half-second cadence the horizon is 8 ticks and
+    # fills start 2 ticks apart, so consecutive markouts share 6 of 8 increments; at a
+    # horizon's cadence they share none.
+    trials, fills = 4_000, 20
+    fine = toxicity.correlated_markouts(np.random.default_rng(0), 1.0, fills, trials, cadence_s=0.5)
+    spaced = toxicity.correlated_markouts(np.random.default_rng(0), 1.0, fills, trials, cadence_s=2.0)
+    fine_corr = np.corrcoef(fine[:, 1:], fine[:, :-1], rowvar=False)[fills - 1, 0]
+    spaced_corr = np.corrcoef(spaced[:, 1:], spaced[:, :-1], rowvar=False)[fills - 1, 0]
+    assert fine_corr > 0.5  # consecutive markouts share 6 of 8 increments
+    assert abs(spaced_corr) < 0.1  # a horizon apart shares none

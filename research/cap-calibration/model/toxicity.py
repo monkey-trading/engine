@@ -144,16 +144,23 @@ def correlated_cross_probability(sigma_bps: float, notional: float, prior: float
     the horizon overlap and move together. The path steps at `TICK_S`; the horizon is
     `HORIZON_MS / 1000 / TICK_S` steps, each with scale `sigma_bps / sqrt(horizon steps)`."""
     rng = np.random.default_rng(seed)
+    markouts = correlated_markouts(rng, sigma_bps, fills, trials, cadence_s)
+    return cross_probability(markouts, notional, prior, memory, threshold)
+
+
+def correlated_markouts(rng: np.random.Generator, sigma_bps: float, fills: int, trials: int, cadence_s: float) -> np.ndarray:
+    """Each fill's markout is the horizon's return from its own entry time on one shared 0.25s
+    price path per trial: fills `cadence_s` apart start `cadence_s / TICK_S` steps apart, so
+    fills closer than the horizon overlap and share increments."""
     steps_per_horizon = int(round(HORIZON_MS / 1000 / TICK_S))
     start = int(round(cadence_s / TICK_S))
     n_steps = (fills - 1) * start + steps_per_horizon + 1
     increments = rng.standard_normal((trials, n_steps)) * sigma_bps / np.sqrt(steps_per_horizon)
     csum = np.cumsum(increments, axis=1)
-    markouts = np.stack(
+    return np.stack(
         [csum[:, i * start + steps_per_horizon] - csum[:, i * start] for i in range(fills)],
         axis=1,
     )
-    return cross_probability(markouts, notional, prior, memory, threshold)
 
 
 def cross_probability(markouts: np.ndarray, notional: float, prior: float, memory: float, threshold: float) -> float:
@@ -260,6 +267,7 @@ def choose_tiers(sigma_bps: np.ndarray, symbols: list[str], sizes: dict[str, dic
                 "spread1_bps": markout_to_reach(tier1, median, prior, memory, fills),
                 "spread2_bps": markout_to_reach(tier2, median, prior, memory, fills * 2),
                 "climb_fills": fills,
+                "climb_fills_tier2": fills * 2,  # tier 2's spread reaches its threshold over twice the fills
                 "toxic_reach_bps": round(toxic_reach, 3),
                 "median_fill_usd": median,
                 "burst_sensitivity": {str(k): round(v, 5) for k, v in burst.items()},

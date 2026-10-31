@@ -15,7 +15,7 @@
   "papertrade_sizes.csv": "341fd8a0af63fdce",
   "papertrade_summary.json": "875fc6c89820321a"
  },
- "seconds": 4,
+ "seconds": 3,
  "toxicity_mc_trials": 40000,
  "toxicity_seed": 1
 }
