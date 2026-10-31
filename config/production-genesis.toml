@@ -245,17 +245,33 @@ minute = 0
 [genesis.params.toxicity]
 horizon_ms = 2000
 ewma_weight_bps = 1000
+# Calibrated by research/cap-calibration's toxicity stage (#130): a toxic
+# account (a sustained 2 bps per-fill markout, the design level) reaches tier
+# 1 within 75 median-size fills, while a benign account filling at a market's
+# median clip, at least a horizon (2s) between fills so markouts do not
+# overlap, stays below tier 1 on each market for 200 fills — its crossing
+# probability is bounded under 0.1% at 99% confidence (the one-sided binomial
+# bound over 40,000 trials of the exact recurrence). Fills closer than the horizon share price moves: a 25-fill
+# burst at half-second cadence crosses tier 1 about 3.9% of the time on the
+# noisiest median clip (Brent; results/toxicity_choice.json reports it). The
+# spreads are the sustained markouts that reach each tier in the stated fills,
+# rounded up to whole bps (the engine stores integer bps).
 tiers = [
-  { min_score_bps = 5, extra_spread_bps = 1 },
-  { min_score_bps = 15, extra_spread_bps = 3 },
+  { min_score_bps = 1, extra_spread_bps = 2 },
+  { min_score_bps = 2, extra_spread_bps = 3 },
 ]
 
 # From protocol V11 a toxicity score is the notional-weighted average of an
 # account's markouts, from `prior` USD of neutral history and over at most
 # `memory` USD of fill notional; ewma_weight_bps applies before V11 only.
+# Calibrated (#130): memory keeps the score's sampling drift under 1 bp at
+# every market's p99 fill size (Brent binds, at its 1.06 bps markout scale);
+# prior is half of memory, enough neutral history that a new account's first
+# fills move its score only modestly while the toxic climb still lands well
+# inside the candidate fill counts.
 [genesis.params.toxicity.notional]
-prior = "10000"
-memory = "10000000"
+prior = "5629518"
+memory = "11259036"
 
 # Level 0 is normal. Higher levels widen spreads, either automatically on
 # any trigger or when the operator raises the floor. A divergence trigger is
