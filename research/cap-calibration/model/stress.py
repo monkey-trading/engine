@@ -132,10 +132,14 @@ def _levels_from_targets(targets: np.ndarray, cooldown_s: int) -> np.ndarray:
 
 
 def _crossing_events(measure: np.ndarray, t1: float, t2: float, cooldown_s: int) -> np.ndarray:
-    """`stress_levels` through `_levels_from_targets`; identical output."""
-    flat = measure.reshape(-1)
-    targets = np.where(flat >= t2, 2, np.where(flat >= t1, 1, 0)).astype(np.int8)
-    return _levels_from_targets(targets, cooldown_s).reshape(measure.shape)
+    """`stress_levels` through `_levels_from_targets`, per simulated path: each row is an
+    independent hour, so the cooldown must not leak across rows."""
+    return np.stack(
+        [
+            _levels_from_targets(np.where(row >= t2, 2, np.where(row >= t1, 1, 0)).astype(np.int8), cooldown_s)
+            for row in measure.reshape(-1, measure.shape[-1])
+        ]
+    ).reshape(measure.shape)
 
 
 def move_tables(bars: np.ndarray, symbols: list[str], mix: np.ndarray, hours_per_market: int, seed: int) -> list[dict]:
@@ -148,14 +152,18 @@ def move_tables(bars: np.ndarray, symbols: list[str], mix: np.ndarray, hours_per
     sigma_sec = parkinson / np.sqrt(3600)
     rng = np.random.default_rng(seed)
     rows = []
+    warmup_s = 2 * max(w // 1000 for w in MOVE_WINDOWS_MS)
     for m, symbol in enumerate(symbols):
         hours = np.nonzero(is_open[:, m])[0]
         take = hours[rng.integers(0, len(hours), size=min(hours_per_market, len(hours)))]
         sigma = sigma_sec[take, m]
-        mids = np.exp(np.cumsum(rng.standard_normal((len(take), 3600)) * sigma[:, None], axis=1))
+        # Two window-lengths of warm-up give every hour a full window from its first recorded
+        # second, as the engine's window persists across hours; warm-up readings are discarded.
+        draws = rng.standard_normal((len(take), warmup_s + 3600)) * sigma[:, None]
+        mids = np.exp(np.cumsum(draws, axis=1))
         sig_min = np.median(sigma) * np.sqrt(60) * BPS
         for window_s in (w // 1000 for w in MOVE_WINDOWS_MS):
-            measure = engine_move_measures(mids, window_s)
+            measure = engine_move_measures(mids, window_s)[:, warmup_s:]
             q = np.quantile(measure, [0.5, 0.9, 0.99, 0.999])
             for t1, t2 in MOVE_CANDIDATES_BPS:
                 levels = _crossing_events(measure, t1, t2, cooldown_s=300)
@@ -196,17 +204,17 @@ def choose_move(rows: list[dict], window_s: int) -> dict:
         l2 = sum(r["time_l2"] * r["mix"] for r in cand) / total_mix
         worst = max(r["time_l1"] for r in pool if (r["t1"], r["t2"]) == (t1, t2))
         if l1 <= MOVE_L1_TIME and l2 <= MOVE_L2_TIME and worst <= MOVE_L1_MAX_TIME:
-            pcts = sorted(
-                r["vol_pct_l1"]
+            pcts = [
+                (r["vol_pct_l1"], r["mix"])
                 for r in pool
                 if (r["t1"], r["t2"]) == (t1, t2) and r["vol_pct_l1"] not in (None, "") and r["mix"] > 0
-            )
-            med_pct = pcts[len(pcts) // 2] if pcts else None
-            feasible.append((t1, t2, med_pct))
+            ]
+            mean_pct = sum(p * w for p, w in pcts) / sum(w for _, w in pcts) if pcts else None
+            feasible.append((t1, t2, mean_pct))
     if not feasible:
         raise ValueError(f"no move candidate at window {window_s}s passes the bounds")
-    t1, t2, med_pct = min(feasible, key=lambda c: (c[0], c[1]))
-    return {"window_s": window_s, "move_bps_l1": t1, "move_bps_l2": t2, "median_vol_pct_l1": med_pct}
+    t1, t2, mean_pct = min(feasible, key=lambda c: (c[0], c[1]))
+    return {"window_s": window_s, "move_bps_l1": t1, "move_bps_l2": t2, "mean_vol_pct_l1": mean_pct}
 
 
 def divergence_tables(genesis: dict, launch_shares: tuple = (6000, 8000), calibrated: dict | None = None) -> list[dict]:
@@ -244,17 +252,25 @@ def divergence_tables(genesis: dict, launch_shares: tuple = (6000, 8000), calibr
 
 def choose_divergence(genesis: dict) -> dict:
     """The chosen level-1 share: the lowest whose worst-case stale-fill loss at fire covers the
-    level's minimum spread on the tightest-bound market (`d/2 >= min_spread` at `d = s*B/10000`).
-    The expected-cost rule (`d/4 >= min_spread`) is unreachable on the tightest markets (its share
-    exceeds 10000); `divergence_tables` reports both costs."""
+    level's minimum spread on the tightest-bound market. The engine truncates the share
+    (`divergence_share_bps`), so a share `s` on a bound `B` first fires at `ceil(s*B/10000)` bps;
+    the loss there is `ceil(s*B/10000)/2`, and the lowest share with `ceil(s*B/10000) >= 2*spread`
+    is `floor((2*spread-1)*10000/B) + 1`. Level 2's cost criterion is infeasible on the tightest
+    markets (it needs a 20-bps reading where no bound reaches it); the fallback is 9500, the share
+    that fires one bps inside the widest bound. The expected-cost rule (`d/4 >= min_spread`) is
+    reported in `divergence_tables` and is unreachable on the tightest markets."""
     bounds = [m["price_rules"]["max_divergence_bps"] for m in genesis["markets"] if m["price_rules"]["max_divergence_bps"] > 0]
     tightest = min(bounds)
+
+    def lowest_share(spread_bps: int) -> int | None:
+        share = (2 * spread_bps - 1) * 10_000 // tightest + 1
+        return share if share <= 10_000 else None
+
     return {
-        "divergence_share_l1": min(10_000, 2 * LEVEL_MIN_SPREAD_BPS[0] * 10_000 // tightest),
-        # A share at 10000 fires only at the bound itself, where the stale-price rule already
-        # halts the market, so the highest reachable share carries the level-2 breaker.
-        "divergence_share_l2": min(9500, 2 * LEVEL_MIN_SPREAD_BPS[1] * 10_000 // tightest),
+        "divergence_share_l1": lowest_share(LEVEL_MIN_SPREAD_BPS[0]),
+        "divergence_share_l2": lowest_share(LEVEL_MIN_SPREAD_BPS[1]) or 9500,
         "tightest_bound_bps": tightest,
+        "level2_cost_feasible": lowest_share(LEVEL_MIN_SPREAD_BPS[1]) is not None,
     }
 
 

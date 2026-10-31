@@ -98,7 +98,7 @@ def test_choose_move_takes_the_most_protective_candidate_passing_every_bound():
         rows.append(move_row("EUR-USD", 0.0, t1, t2, 0.0, 0.0, None))
     choice = stress.choose_move(rows, window_s=60)
     assert (choice["move_bps_l1"], choice["move_bps_l2"]) == (50, 150)
-    assert choice["median_vol_pct_l1"] == 0.8
+    assert choice["mean_vol_pct_l1"] == 0.8
 
 
 def test_choose_move_rejects_a_candidate_over_the_time_bounds():
@@ -114,9 +114,15 @@ def genesis_with_bounds(bounds):
 def test_choose_divergence_covers_the_spread_on_the_tightest_market():
     genesis = genesis_with_bounds({"EUR-USD": 5, "BTC-USD": 25})
     choice = stress.choose_divergence(genesis)
-    # L1: d/2 >= 2 bps needs d >= 4, a share of 4/5 of the tightest bound; L2: d/2 >= 10 needs
-    # d >= 20, 4x the tightest bound, capped at the highest reachable share, 9500.
-    assert choice == {"divergence_share_l1": 8000, "divergence_share_l2": 9500, "tightest_bound_bps": 5}
+    # L1: d/2 >= 2 bps needs a 4-bps reading; with the engine's truncated share, share 6000 fires
+    # at 3 bps and 6001 is the lowest firing at 4. L2: d/2 >= 10 needs 20 bps, unreachable where
+    # the tightest bound is 5, so the documented fallback is 9500, flagged infeasible.
+    assert choice == {
+        "divergence_share_l1": 6001,
+        "divergence_share_l2": 9500,
+        "tightest_bound_bps": 5,
+        "level2_cost_feasible": False,
+    }
 
 
 def test_divergence_tables_report_bps_costs_at_fire():
@@ -195,14 +201,15 @@ def test_utilisation_records_exact_buckets_exposure_and_batches():
     (out,) = simulate.run_many([(scenario, markets, week, flow, floors, np.array([1e15, 1e15]))], 2)
     hist = out["util_hist"].sum(axis=0)[:, 0, :]
     expo = out["util_expo"].sum(axis=0)[:, 0, :]
-    # Hour 0's book is empty; from hour 1 through the last the $200 long opened an hour earlier
-    # is open: 200/1000 = 20% on the first lane, 200/2000 = 10% on the second.
-    assert hist[0, 0] == 2 and hist[20, 0] == 2 * 167
-    assert hist[10, 1] == 2 * 167
-    assert expo[20, 0] == pytest.approx(200.0 * 2 * 167)
-    assert expo[10, 1] == pytest.approx(200.0 * 2 * 167)
+    # The recording catches the book after the hour's opens: at hour 0 the just-opened $200 long
+    # (20% of $1,000, 10% of $2,000); from hour 1 through the last, this hour's and the previous
+    # hour's longs are both open: $400 = 40% on the first lane, 20% on the second.
+    assert hist[20, 0] == 2 and hist[40, 0] == 2 * 167
+    assert hist[10, 1] == 2 and hist[20, 1] == 2 * 167
+    assert expo[40, 0] == pytest.approx(400.0 * 2 * 167)
+    assert expo[20, 1] == pytest.approx(400.0 * 2 * 167)
     assert hist.sum() == 2 * 2 * 168  # two lanes, every hour of the week recorded
-    assert hist[21:, 0].sum() == 0 and expo[:10, 1].sum() == 0
+    assert hist[41:, 0].sum() == 0 and expo[:10, 1].sum() == 0
 
 
 def utilisation_row(family, symbol, level, fire, expo=0.0, gap=100.0):
@@ -250,3 +257,77 @@ def test_choose_move_flow_weighted_bound_decides_across_markets():
             rows.append(move_row(f"M{i:02d}", 0.05, t1, t2, per_market, 0.0, 0.9))
     choice = stress.choose_move(rows, window_s=60)
     assert (choice["move_bps_l1"], choice["move_bps_l2"]) == (150, 300)
+
+
+def test_utilisation_records_one_hour_positions():
+    """A one-hour position settles at the top of the next hour, but it is outstanding for the
+    hour in between: the post-open book carries it, so the histogram must see it."""
+    from model import prices
+    from model.flow import Flow, FlowClass
+
+    week = np.zeros((prices.WEEK, 1, 4), dtype=np.int32)
+    markets = simulate.Markets(
+        symbols=["TEST"],
+        margin_rate=np.array([0.005]),
+        schedule=["S"],
+        cap_bps=np.array([5000]),
+        total_cap_bps=20000,
+        fin_long=np.array([0.0]),
+        fin_short=np.array([0.0]),
+        mix=np.array([1.0]),
+        open_hours_per_week=np.array([168.0]),
+        columns=np.array([0]),
+        fx_columns=np.array([-1]),
+        fx_invert=np.array([False]),
+    )
+    tiny = (np.array([1e-6, 1e9]), np.array([1.0, 1.0]))
+    flow = Flow(
+        classes=[FlowClass(kind="directional", hold_h=1, bucket=0, margin_share=1.0, mean_hold_h=1.0, mean_sqrt_hold_h=1.0, long_share=1.0)],
+        leverage={(kind, mapping, "S"): np.array([200.0]) for kind in simulate.KINDS for mapping in ("capped", "relative")},
+        daily_margin=np.array([24.0]),
+        sizes={(kind, mapping, "S"): tiny for kind in simulate.KINDS for mapping in ("capped", "relative")},
+        long_share_ar1=0.0,
+        long_share_resid_sd=0.0,
+        long_share_slope=0.0,
+    )
+    scenario = simulate.Scenario(name="one-hour", paths=2, batch_paths=2, days=7, utilisation_stats=True)
+    floors = np.array([[1000.0]])
+    out = simulate.run_batch(scenario, markets, week, flow, floors, np.array([1e15]), 5, 2)
+    hist = out["util_hist"].sum(axis=0)[:, 0, 0]
+    # $200 on the book after every hour's opens: 20% of the $1,000 floor, every recorded hour.
+    assert hist[20] == 2 * 168
+    assert hist.sum() == 2 * 168
+
+
+def test_the_hysteresis_level_does_not_leak_between_simulated_hours():
+    measure = np.zeros((2, 4000))
+    measure[0, 100:103] = 200  # hour 0 crosses both thresholds for 3 seconds
+    measure[1, :] = 0  # hour 1 is quiet
+    levels = stress._crossing_events(measure, t1=50, t2=150, cooldown_s=300)
+    assert levels[0, 100] == 2
+    assert levels[1].max() == 0  # no carry-over into the independent hour
+    assert (levels[0, 103:400] == 2).all()
+
+
+def test_choose_move_rejects_on_the_level2_and_worst_market_bounds():
+    rows = []
+    # Candidate A: level 1 within the flow bound but level 2 over it.
+    rows.append(move_row("BTC-USD", 1.0, 75, 200, 0.001, 0.005, 0.9))
+    # Candidate B: flow-weighted fine, but one market over the worst bound.
+    rows.append(move_row("BTC-USD", 0.5, 150, 300, 0.001, 0.0, 0.9))
+    rows.append(move_row("TSLA", 0.5, 150, 300, 0.06, 0.0, 0.9))
+    # Candidate C: within every bound.
+    rows.append(move_row("BTC-USD", 1.0, 200, 400, 0.0005, 0.0, 0.9))
+    choice = stress.choose_move(rows, window_s=60)
+    assert (choice["move_bps_l1"], choice["move_bps_l2"]) == (200, 400)
+
+
+def test_choose_utilisation_excludes_the_uniform_1m_family_from_the_bounds():
+    rows = []
+    for family, rate in (("house_cash_1pct", 0.01), ("uniform_10M", 0.015), ("uniform_1M", 0.09)):
+        for level in (5000, 6000):
+            rows.append(utilisation_row(family, "BTC-USD", level, rate if level == 6000 else 0.05))
+    choice = stress.choose_utilisation(rows, {"BTC-USD": 1.0})
+    # uniform_1M's 9% would fail the bound if it were counted; the choice ignores it.
+    assert choice["utilisation_bps_l1"] == 6000
+    assert set(choice["fire_rate_by_family"]) == {"house_cash_1pct", "uniform_10M"}

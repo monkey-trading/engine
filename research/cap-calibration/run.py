@@ -103,6 +103,7 @@ def simulate_stage(stage: str, args) -> None:
     record = manifest(args, scenario) | {"seconds": round(time.time() - started)}
     if stage == "stress":
         record |= extras
+        record["scenario"] = asdict(replace(scenario, name="utilisation", utilisation_stats=True))
     (RESULTS / f"manifest_{stage}.json").write_text(json.dumps(record, indent=1, default=str))
 
 

@@ -508,11 +508,11 @@ cd research/cap-calibration
 /tmp/cap-venv/bin/python -I run.py all          # per-market, joint, sensitivity, then results/report.md
 ```
 
-`all` reruns everything from the committed `data/derived/` with the committed results' settings:
-`DEFAULTS` in `run.py` sets each stage's paths and paths per batch, and `--workers` defaults to 4.
-Stages run alone with `per-market`, `joint`, `sensitivity`, and `report`; the stress-trigger
-calibration (below) runs with `stress`, under the same seeding and manifest conventions. Each
-batch of paths is
+`all` reruns the floor study from the committed `data/derived/` with the committed results'
+settings: `DEFAULTS` in `run.py` sets each stage's paths and paths per batch, and `--workers`
+defaults to 4. Stages run alone with `per-market`, `joint`, `sensitivity`, and `report`; the
+stress-trigger calibration (below) is not part of `all` and runs with `stress`, under the same
+seeding and manifest conventions. Each batch of paths is
 seeded from `--seed` (default 1) and its index, and its size shapes its random draws, so the same
 seed and batch size reproduce a run exactly, and another batch size gives other, equally valid
 paths. `results/manifest_<stage>.json` records the scenario, including both, the hashes of the

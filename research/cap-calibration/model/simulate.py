@@ -494,21 +494,6 @@ def run_batch(scenario: Scenario, markets: Markets, bars: np.ndarray, flow: Flow
             cap = accounting.exposure_cap(nav[:, None, :], cap_bps, market_floors)
             total_cap = accounting.exposure_cap(nav, markets.total_cap_bps, total_floors[None])
 
-            if scenario.utilisation_stats:
-                # The stress calibration reads each market's utilisation and absolute exposure at
-                # the hour's mark.
-                util_bucket = np.where(
-                    cap > 0,
-                    np.clip((np.abs(exposure) / np.where(cap > 0, cap, 1.0) * 1e4 // 100).astype(int), 0, 100),
-                    101,
-                )
-                u_market = np.arange(n_markets)[None, :, None]
-                u_lane = np.arange(n_lanes)[None, None, :]
-                u_batch = np.zeros(util_bucket.shape, dtype=int)
-                open_now = np.broadcast_to(paths.is_open[:, t][:, :, None], util_bucket.shape)
-                np.add.at(util_hist, (u_batch, util_bucket, u_market, u_lane), open_now.astype(float))
-                np.add.at(util_expo, (u_batch, util_bucket, u_market, u_lane), np.abs(exposure) * open_now)
-
             # Client long share: AR(1) around each class's measured share, leaning on the last return.
             prev_ret = log_close[:, t - 1] - log_close[:, t - 2] if t >= 2 else np.zeros((n_paths, n_markets))
             if scenario.common_direction:
@@ -654,6 +639,21 @@ def run_batch(scenario: Scenario, markets: Markets, bars: np.ndarray, flow: Flow
 
             exposure = (entry * fx)[..., None] * (longs - shorts)
             nav = (house - (exposure - fx[..., None] * cost)).sum(axis=1)
+            if scenario.utilisation_stats:
+                # The stress calibration reads the book the hour leaves behind: after its
+                # settlements and its opens, the positions outstanding until the next hour.
+                util_cap = accounting.exposure_cap(nav[:, None, :], cap_bps, market_floors)
+                util_bucket = np.where(
+                    util_cap > 0,
+                    np.clip((np.abs(exposure) / np.where(util_cap > 0, util_cap, 1.0) * 1e4 // 100).astype(int), 0, 100),
+                    101,
+                )
+                u_market = np.arange(n_markets)[None, :, None]
+                u_lane = np.arange(n_lanes)[None, None, :]
+                u_batch = np.zeros(util_bucket.shape, dtype=int)
+                open_now = np.broadcast_to(paths.is_open[:, t][:, :, None], util_bucket.shape)
+                np.add.at(util_hist, (u_batch, util_bucket, u_market, u_lane), open_now.astype(float))
+                np.add.at(util_expo, (u_batch, util_bucket, u_market, u_lane), np.abs(exposure) * open_now)
             newly = (nav < 0) & ~out["ever_negative"]
             out["first_negative_h"] = np.where(newly, t, out["first_negative_h"])
             out["ever_negative"] |= nav < 0
