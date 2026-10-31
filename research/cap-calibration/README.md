@@ -431,25 +431,37 @@ simulations of it (about 5 seconds).
   the issue's drift analysis: under 1 bp at the observed sizes unless single fills exceed about
   $5M at the launch memory. The chosen memory is the smallest that keeps the drift under 1 bp at
   every market's p99 fill: $11.26M, set by Brent (a $10M p99 clip at a 1.06 bps markout scale).
-- **Prior**: half of memory, the most neutral history that still lets a toxic account climb in
-  the stated fills. The launch's $10k lets a single $1.3M fill set the score; the calibrated
-  prior caps a first fill's weight at 1.33/(5.63+1.33) ≈ 19% on the biggest median clip.
+- **Prior**: half of memory, enough neutral history that a new account's first fills move its
+  score only modestly while the toxic climb still lands well inside the candidate fill counts.
+  The launch's $10k lets a single $1.3M fill set the score; the calibrated prior caps a first
+  fill's weight at 1.33/(5.63+1.33) ≈ 19% on the biggest median clip.
 - **Tiers and spreads** (`choose_tiers`): the design toxic level is a sustained 2 bps per-fill
   markout — above the widest size spread, so an account at it scalps the house at any size.
   Tier 1 is the highest whole-bps threshold that (a) a toxic account filling at the $100k median
-  clip reaches within the stated count of fills and (b) a benign account filling at every
-  market's median clip stays below for 200 fills with probability at least 99.9% (40,000 trials
-  of the exact recurrence per market). The first passing count wins at 75 fills, so a toxic
-  account reaches tier 1 within 75 median-size fills; tier 2 doubles the threshold. A tier's
-  spread is the sustained markout that reaches the tier in the stated fills (the house recoups
-  the marginal toxic account's edge), rounded up to the whole bps the engine stores: 1 bps at a
-  2-bps spread, 2 bps at a 3-bps spread.
+  clip reaches within the stated count of fills and (b) a benign account filling at a market's
+  median clip, at least a horizon (2s) between fills so markouts do not overlap, stays below it
+  on each market for 200 fills with probability at least 99.9% (40,000 trials of the exact
+  recurrence). The first passing count wins at 75 fills, so a toxic account reaches tier 1
+  within 75 median-size fills; tier 2 doubles the threshold. A tier's spread is the sustained
+  markout that reaches the tier in the stated fills (the house recoups the marginal toxic
+  account's edge), rounded up to the whole bps the engine stores: the calibrated 1.8 bps becomes
+  a 2-bps spread, 2.6 becomes 3.
+
+  Fills closer than the horizon share price moves, and the bound does not cover them: the burst
+  sensitivity in `results/toxicity_choice.json` reports the crossing probability for a 25-fill
+  burst at one- and half-second cadences — about 0.5% and 3.9% on the noisiest median clip
+  (Brent) at the chosen tier. The direction is stated, not hidden, and tighter cadences make
+  crossings more likely: a market-making account firing $1M clips every half-second will ping
+  the tier in about one burst in twenty-five.
 
 The median clip, not the tail, anchors the benign bound deliberately: an account filling at the
 p99 clip on every fill is already an outlier — the memory bound prices its noise at exactly the
 drift bound, so no threshold within the toxic reach could stand against it. Such accounts are
-the score's purpose, not its false positives; the README's recalibration note below covers
-revisiting this as live fill data arrives.
+the score's purpose, not its false positives. Two assumptions lean the same way and are stated
+rather than hidden: the trials price markouts at the median hour's volatility, while live fills
+cluster in livelier hours (the direction raises crossings); and the per-market bound composes
+across markets only by a union bound, so a single account trading many markets at once is
+bounded market by market, not jointly. Revisit both as live fill data arrives (below).
 
 The values proposed to `config/production-genesis.toml` (`results/toxicity_choice.json`):
 
@@ -480,7 +492,7 @@ cd research/cap-calibration
 /tmp/cap-venv/bin/python -I run.py all          # per-market, joint, sensitivity, then results/report.md
 ```
 
-`all` reruns everything from the committed `data/derived/` with the committed results' settings:
+`all` reruns the floor study from the committed `data/derived/` with the committed results' settings:
 `DEFAULTS` in `run.py` sets each stage's paths and paths per batch, and `--workers` defaults to 4.
 Stages run alone with `per-market`, `joint`, `sensitivity`, and `report`; the toxicity
 calibration (above) runs with `toxicity`. Each batch of paths is

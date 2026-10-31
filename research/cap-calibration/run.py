@@ -106,7 +106,7 @@ def simulate_stage(stage: str, args) -> None:
     (RESULTS / f"manifest_{stage}.json").write_text(json.dumps(record, indent=1, default=str))
 
 
-def toxicity_stage(experiments, np, scenario, markets, bars, flow, args) -> dict:
+def toxicity_stage(experiments, markets, bars, flow, args) -> dict:
     """The toxicity calibration: fill-size quantiles per market from the observed size
     distribution, markout scales from the bars' Parkinson volatility, then memory, prior, tier
     thresholds and spreads from the drift, climb, and benign false-positive bounds. Writes the
@@ -120,6 +120,7 @@ def toxicity_stage(experiments, np, scenario, markets, bars, flow, args) -> dict
     symbols = list(markets.symbols)
     sigma = toxicity.sigma_markout_bps(bars)
     sizes = toxicity.size_quantiles(flow.sizes, genesis)
+    toxicity.require_coverage(symbols, sizes, genesis)
     rows = []
     for m, symbol in enumerate(symbols):
         if symbol not in sizes:
@@ -153,7 +154,7 @@ def toxicity_stage(experiments, np, scenario, markets, bars, flow, args) -> dict
         "method": {"memory": memory_choice, "prior": prior_choice, "tiers": tier_choice},
     }
     (RESULTS / "toxicity_choice.json").write_text(json.dumps(choice, indent=1))
-    return {"toxicity_mc_trials": TOXICITY_MC_TRIALS}
+    return {"toxicity_mc_trials": TOXICITY_MC_TRIALS, "toxicity_seed": args.seed}
 
 
 def main() -> None:
@@ -203,7 +204,7 @@ def main() -> None:
 
         np_, sim, bars, flow, markets = inputs()
         started = time.time()
-        extras = toxicity_stage(experiments_mod, np_, None, markets, bars, flow, tox_args)
+        extras = toxicity_stage(experiments_mod, markets, bars, flow, tox_args)
         record = {
             "command": sys.argv[1:],
             "scenario": None,  # no Monte Carlo: the calibration is exact recurrences and trials

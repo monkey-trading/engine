@@ -78,3 +78,68 @@ def test_markout_to_reach_lands_on_the_target():
     m = toxicity.markout_to_reach(1.0, 100_000.0, 500_000.0, 5_000_000.0, 100)
     assert toxicity.climb_score(m, 100_000.0, 500_000.0, 5_000_000.0, 100) >= 1.0
     assert toxicity.climb_score(m - 0.2, 100_000.0, 500_000.0, 5_000_000.0, 100) < 1.0
+
+
+def test_benign_cross_probability_is_positive_with_noise_and_a_low_threshold():
+    p = toxicity.benign_cross_probability(5.0, 100_000.0, 500_000.0, 5_000_000.0, 0.5, 200, 7, 4_000)
+    assert 0.0 < p < 1.0
+
+
+def test_correlated_fills_cross_at_least_as_often_as_spaced_ones():
+    # Overlapping horizons move markouts together: fills half a second apart cross no less often
+    # than fills a horizon apart, on the same seeded paths.
+    args = (3.0, 100_000.0, 500_000.0, 5_000_000.0, 1.0, 100)
+    tight = toxicity.correlated_cross_probability(*args, seed=5, trials=4_000, cadence_s=0.5)
+    spaced = toxicity.correlated_cross_probability(*args, seed=5, trials=4_000, cadence_s=2.0)
+    assert tight >= spaced - 0.02
+
+
+def test_choose_tiers_gates_on_the_benign_bound(monkeypatch):
+    # On this noisy market no threshold in the toxic reach passes the independent-trials bound
+    # (the stated bound is for fills at least a horizon apart): the choice must raise, not stand.
+    monkeypatch.setattr(toxicity, "M_TOX_BPS", 3.0)
+    monkeypatch.setattr(toxicity, "CLIMB_CANDIDATES", (75,))  # fix the count: no escaping upward
+    symbols = ["NOISY"]
+    sigma = np.array([5.0])  # crosses 2 bps often enough to violate the bound at the reach
+    sizes = {"NOISY": {"n50": 100_000.0, "n75": 100_000.0, "n99": 100_000.0}}
+    with pytest.raises(ValueError):
+        toxicity.choose_tiers(sigma, symbols, sizes, 5_000_000.0, 2_500_000.0, seed=11, trials=40_000)
+
+
+def test_choose_tiers_reports_the_burst_sensitivity():
+    symbols = ["MKT"]
+    sigma = np.array([1.0])
+    sizes = {"MKT": {"n50": 100_000.0, "n75": 100_000.0, "n99": 100_000.0}}
+    choice = toxicity.choose_tiers(sigma, symbols, sizes, 5_000_000.0, 2_500_000.0, seed=17, trials=8_000)
+    assert set(choice["burst_sensitivity"]) == {"1.0", "0.5"}
+    assert all(0.0 <= p <= 1.0 for p in choice["burst_sensitivity"].values())
+
+
+def test_fills_a_horizon_apart_do_not_overlap():
+    # At cadence equal to the horizon, markouts share no path increments: the crossing
+    # probability matches the independent-trials bound within Monte Carlo tolerance.
+    args = (2.0, 100_000.0, 500_000.0, 5_000_000.0, 1.0, 100)
+    iid = toxicity.benign_cross_probability(*args, seed=23, trials=8_000)
+    spaced = toxicity.correlated_cross_probability(*args, seed=23, trials=8_000, cadence_s=2.0)
+    assert abs(iid - spaced) <= 0.02
+
+
+def test_choose_tiers_raises_when_no_threshold_passes():
+    symbols = ["NOISY"]
+    sigma = np.array([20.0])  # crossings are near-certain at any threshold in the reach
+    sizes = {"NOISY": {"n50": 100_000.0, "n75": 100_000.0, "n99": 100_000.0}}
+    with pytest.raises(ValueError):
+        toxicity.choose_tiers(sigma, symbols, sizes, 5_000_000.0, 4_500_000.0, seed=13, trials=2_000)
+
+
+def test_the_calibration_refuses_a_market_without_sizes():
+    genesis = {"markets": [{"symbol": "A", "margin_tiers": [{"bps": 1000}]}, {"symbol": "B", "margin_tiers": [{"bps": 1000}]}]}
+    with pytest.raises(ValueError) as err:
+        toxicity.require_coverage(["A", "B"], {"A": {}}, genesis)
+    assert "B" in str(err.value)
+
+
+def test_averaged_rounds_up_at_the_engine_scale():
+    # a step of 1.5e-9 rounds up to 2e-9 at the engine's nine decimals, not 1.5e-9
+    score, _ = toxicity.averaged(0.0, 1.0, 3e-9, 1.0, 1_000.0)
+    assert score == pytest.approx(2e-9)

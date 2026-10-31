@@ -45,6 +45,13 @@ DRIFT_BPS = 1.0  # the drift bound the issue states, at the observed fill sizes
 # fills; the search takes the first that satisfies the benign bound
 CLIMB_CANDIDATES = (25, 50, 75, 100, 150, 200, 300)
 BENIGN_FILLS = 200  # a benign account gets this many fills before the false-positive bound
+# The stated bound is for fills at least a horizon apart, so markouts do not overlap. Fills
+# closer than the horizon share price moves; the burst sensitivity reports how much more often a
+# 25-fill burst crosses (direction: more often), without gating the choice.
+BURST_FILLS = 25
+CORRELATED_TRIALS = 10_000
+CORRELATED_CADENCES_S = (1.0, 0.5)  # a burst filling this often: overlapping markouts
+TICK_S = 0.25  # the price path's step; the horizon is an integer number of steps
 BENIGN_FP = 1e-3  # allowed probability a benign account crosses tier 1 within BENIGN_FILLS
 M_TOX_BPS = 2.0  # the design toxic level: a sustained per-fill markout above this scalps the house
 TIER2_MULT = 2  # tier 2's threshold is this multiple of tier 1's
@@ -91,9 +98,9 @@ def size_quantiles(sizes: dict, genesis: dict, quantiles: tuple = SIZE_QUANTILES
 
 def averaged(score: float, history: float, markout_bps: float, notional: float, memory: float) -> tuple[float, float]:
     """One fold of the engine's notional weighting (`NotionalWeighting::averaged`): the score and
-    history after a fill, rounding up in the house's favour."""
+    history after a fill, rounding up in the house's favour at `Fixed`'s nine-decimal scale."""
     step = (markout_bps - score) * notional / (history + notional)
-    step = np.ceil(step * 1e12) / 1e12  # round up, as Fixed does
+    step = np.ceil(step * 1e9) / 1e9  # round up at the engine's Fixed scale
     return score + step, min(history + notional, memory)
 
 
@@ -106,16 +113,43 @@ def climb_score(markout_bps: float, notional: float, prior: float, memory: float
 
 
 def benign_cross_probability(sigma_bps: float, notional: float, prior: float, memory: float, threshold: float, fills: int, seed: int, trials: int) -> float:
-    """The Monte Carlo probability that a benign account (zero-mean markouts, this market's scale)
-    crosses the threshold within `fills` p99-size fills, under the exact recurrence."""
+    """The Monte Carlo probability that a benign account (independent zero-mean markouts, this
+    market's scale) crosses the threshold within `fills` same-size fills, under the exact
+    recurrence. Independent markouts are the search bound; `correlated_cross_probability`
+    verifies the chosen threshold against overlapping horizons."""
     rng = np.random.default_rng(seed)
     markouts = rng.standard_normal((trials, fills)) * sigma_bps
+    return cross_probability(markouts, notional, prior, memory, threshold)
+
+
+def correlated_cross_probability(sigma_bps: float, notional: float, prior: float, memory: float, threshold: float, fills: int, seed: int, trials: int, cadence_s: float) -> float:
+    """The crossing probability when fills arrive `cadence_s` apart on one shared price path:
+    each fill's markout is the horizon's return from its own entry time, so markouts closer than
+    the horizon overlap and move together. The path steps at `TICK_S`; the horizon is
+    `HORIZON_MS / 1000 / TICK_S` steps, each with scale `sigma_bps / sqrt(horizon steps)`."""
+    rng = np.random.default_rng(seed)
+    steps_per_horizon = int(round(HORIZON_MS / 1000 / TICK_S))
+    start = int(round(cadence_s / TICK_S))
+    n_steps = (fills - 1) * start + steps_per_horizon + 1
+    increments = rng.standard_normal((trials, n_steps)) * sigma_bps / np.sqrt(steps_per_horizon)
+    csum = np.cumsum(increments, axis=1)
+    markouts = np.stack(
+        [csum[:, i * start + steps_per_horizon] - csum[:, i * start] for i in range(fills)],
+        axis=1,
+    )
+    return cross_probability(markouts, notional, prior, memory, threshold)
+
+
+def cross_probability(markouts: np.ndarray, notional: float, prior: float, memory: float, threshold: float) -> float:
+    """The share of trials whose exact-recurrence score crosses the threshold within the fills
+    of `markouts` (rows are trials), nine-decimal round-up steps as in the engine."""
+    trials = markouts.shape[0]
     scores = np.zeros(trials)
     histories = np.full(trials, prior)
     crossed = np.zeros(trials, dtype=bool)
-    for i in range(fills):
+    for i in range(markouts.shape[1]):
         step = (markouts[:, i] - scores) * notional / (histories + notional)
-        scores = scores + np.ceil(step * 1e12) / 1e12
+        scores = scores + np.ceil(step * 1e9) / 1e9
         histories = np.minimum(histories + notional, memory)
         crossed |= scores >= threshold
     return float(crossed.mean())
@@ -124,6 +158,15 @@ def benign_cross_probability(sigma_bps: float, notional: float, prior: float, me
 def drift_bound_sigma(sigma_bps: float, notional: float, memory: float) -> float:
     """The sampling-noise scale of the bounded-memory score for `notional`-sized fills."""
     return sigma_bps * np.sqrt(notional / memory)
+
+
+def require_coverage(symbols: list[str], sizes: dict[str, dict], genesis: dict) -> None:
+    """Every launch market must have an observed size distribution: a missing schedule silently
+    dropping a market would publish global parameters that never evaluated it."""
+    missing = [s for s in symbols if s not in sizes]
+    if missing:
+        schedules = {m["symbol"]: schedule_key(m["margin_tiers"]) for m in genesis["markets"] if m["symbol"] in missing}
+        raise ValueError(f"no observed size distribution for launch markets: {schedules}")
 
 
 def choose_memory(sigma_bps: np.ndarray, symbols: list[str], sizes: dict[str, dict], drift_bps: float = DRIFT_BPS) -> dict:
@@ -141,10 +184,10 @@ def choose_memory(sigma_bps: np.ndarray, symbols: list[str], sizes: dict[str, di
 
 
 def choose_prior(memory: float, sizes: dict[str, dict], symbols: list[str]) -> dict:
-    """Half of memory: the most prior that still lets a toxic account climb within the candidate
-    fill counts, damping a new account's first fills everywhere. The engine validates
-    0 < prior <= memory; larger prior means a benign account's early fills move its score less,
-    at the price of a slower toxic climb."""
+    """Half of memory, a design choice: enough neutral history that a new account's first fills
+    move its score only modestly (at most about a fifth of the biggest median clip's markout),
+    while the toxic climb still lands well inside the candidate fill counts. The engine
+    validates 0 < prior <= memory."""
     median = np.median([sizes[s]["n50"] for s in symbols if s in sizes])
     return {"prior_usd": memory / 2, "median_fill_usd": median}
 
@@ -163,21 +206,33 @@ def choose_tiers(sigma_bps: np.ndarray, symbols: list[str], sizes: dict[str, dic
     for fills in CLIMB_CANDIDATES:
         toxic_reach = climb_score(M_TOX_BPS, median, prior, memory, fills)
         for tier1 in sorted(set(range(1, int(toxic_reach) + 1)), reverse=True):
-            if all(
+            if not all(
                 symbol not in sizes
                 or benign_cross_probability(sigma_bps[m], sizes[symbol]["n50"], prior, memory, tier1, BENIGN_FILLS, seed + m, trials) <= BENIGN_FP
                 for m, symbol in enumerate(symbols)
             ):
-                tier2 = tier1 * TIER2_MULT
-                return {
-                    "tier1_bps": tier1,
-                    "tier2_bps": tier2,
-                    "spread1_bps": markout_to_reach(tier1, median, prior, memory, fills),
-                    "spread2_bps": markout_to_reach(tier2, median, prior, memory, fills * 2),
-                    "climb_fills": fills,
-                    "toxic_reach_bps": round(toxic_reach, 3),
-                    "median_fill_usd": median,
-                }
+                continue
+            tier2 = tier1 * TIER2_MULT
+            burst = {
+                cadence: max(
+                    correlated_cross_probability(
+                        sigma_bps[m], sizes[symbol]["n50"], prior, memory, tier1, BURST_FILLS, seed + m, CORRELATED_TRIALS, cadence
+                    )
+                    for m, symbol in enumerate(symbols)
+                    if symbol in sizes
+                )
+                for cadence in CORRELATED_CADENCES_S
+            }
+            return {
+                "tier1_bps": tier1,
+                "tier2_bps": tier2,
+                "spread1_bps": markout_to_reach(tier1, median, prior, memory, fills),
+                "spread2_bps": markout_to_reach(tier2, median, prior, memory, fills * 2),
+                "climb_fills": fills,
+                "toxic_reach_bps": round(toxic_reach, 3),
+                "median_fill_usd": median,
+                "burst_sensitivity": {str(k): round(v, 5) for k, v in burst.items()},
+            }
     raise ValueError("no tier-1 threshold satisfies the benign bound within the toxic reach")
 
 
