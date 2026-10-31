@@ -423,3 +423,13 @@ def test_gap_tables_measure_the_next_open_hours_close():
     got = gaps["MKT"]
     assert got["gap_p99_bps"] == pytest.approx(390.0, abs=2.0)
     assert got["gap_p99_bps"] > 300.0  # the 2% move is the smaller of the two gaps
+
+
+def test_a_bucket_updates_its_low_when_a_dip_arrives():
+    # A dip inside an existing bucket lowers the bucket's low: bucket (0,1) holds mids 1.0 and
+    # 0.99, and the recovery at t=2 opens the next bucket, leaving the dip the window's low.
+    mids = np.ones((1, 30))
+    mids[0, 1] = 0.99
+    measure = stress.engine_move_measures(mids, window_s=20)
+    assert measure[0, 2] == pytest.approx((1.0 - 0.99) / 0.99 * 1e4, rel=1e-9)
+    assert measure[0, 12] == pytest.approx((1.0 - 0.99) / 0.99 * 1e4, rel=1e-9)
