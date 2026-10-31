@@ -150,7 +150,7 @@ def stress_stage(experiments, np, scenario, markets, bars, flow, args) -> None:
     (RESULTS / "stress_choice.json").write_text(json.dumps(choice, indent=1))
 
 
-def stress_house_cash_floors(symbols: list[str]) -> np.ndarray:
+def stress_house_cash_floors(symbols: list[str]) -> "np.ndarray":
     """The house-cash 1% family's per-market floors, from the committed joint run's binding row."""
     import json
 

@@ -507,7 +507,7 @@ def run_batch(scenario: Scenario, markets: Markets, bars: np.ndarray, flow: Flow
                 u_batch = np.zeros(util_bucket.shape, dtype=int)
                 open_now = np.broadcast_to(paths.is_open[:, t][:, :, None], util_bucket.shape)
                 np.add.at(util_hist, (u_batch, util_bucket, u_market, u_lane), open_now.astype(float))
-                np.add.at(util_expo, (u_batch, util_bucket, u_market, u_lane), np.abs(exposure))
+                np.add.at(util_expo, (u_batch, util_bucket, u_market, u_lane), np.abs(exposure) * open_now)
 
             # Client long share: AR(1) around each class's measured share, leaning on the last return.
             prev_ret = log_close[:, t - 1] - log_close[:, t - 2] if t >= 2 else np.zeros((n_paths, n_markets))

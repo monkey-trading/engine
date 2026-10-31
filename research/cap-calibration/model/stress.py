@@ -15,12 +15,15 @@ actually rises, not on noise:
   and every market's time at level 1 stays under `MOVE_L1_MAX_TIME`; the most protective candidate
   (lowest thresholds) passing those bounds is taken, and the median volatility percentile of the
   firing hours is reported (it rises mechanically with the threshold, so it cannot choose).
-- *Divergence*: a reading of `d` bps means the venue mids sit `d` apart and the index mid between
-  them; a fill at the index mid loses up to `d/2` bps if the mark snaps to the other venue (`d/4`
-  expected, uniform). A share `s` of a market's bound `B` fires at `d = s*B/10000`. The chosen
-  share is the lowest whose worst-case stale-fill loss at fire covers the level's minimum spread on
-  every market (`d/2 >= min_spread`); the expected-cost rule (`d/4 >= min_spread`) is reported too
-  and is unreachable on the tightest-bound markets.
+- *Divergence*: a reading of `d` bps means the venue mids sit `d` apart. With the protocol's two
+  fresh sources the index mid is their midpoint, and a fill at the index mid loses up to `d/2` bps
+  if the mark snaps to the other venue (`d/4` expected, uniform). With more fresh sources the index
+  is their median, which can sit closer to one extreme, so `d/2` understates the worst case — the
+  chosen shares are conservative under it. A share `s` of a market's bound `B` fires at
+  `d = ceil(s*B/10000)` (the engine truncates the share). The chosen share is the lowest whose
+  worst-case stale-fill loss at fire covers the level's minimum spread on the tightest-bound
+  market (`d/2 >= min_spread`); the expected-cost rule (`d/4 >= min_spread`) is reported too and is
+  unreachable on the tightest-bound markets.
 - *Utilisation*: the house's exposure in a market over its cap, from the Monte Carlo's hourly
   books. Each candidate level's fire rate (share of open hours at or above it, per floor family)
   and the house's mean exposure on those hours decide the levels: level 2 sits just inside the
@@ -30,6 +33,7 @@ actually rises, not on noise:
   the exposure at fire times the market's p99 next-mark gap (`gap_tables`).
 """
 
+import math
 from dataclasses import replace
 
 import numpy as np
@@ -183,12 +187,13 @@ def choose_move(rows: list[dict], window_s: int) -> dict:
     under MOVE_L1_MAX_TIME. Selection quality (the volatility percentile firing hours land in) is
     reported, not bounded: it rises mechanically with the threshold, so it cannot choose."""
     pool = [r for r in rows if r["window_s"] == window_s]
-    total_mix = sum(r["mix"] for r in pool)
     candidates = sorted({(r["t1"], r["t2"]) for r in pool})
     feasible = []
     for t1, t2 in candidates:
-        l1 = sum(r["time_l1"] * r["mix"] for r in pool if (r["t1"], r["t2"]) == (t1, t2)) / total_mix
-        l2 = sum(r["time_l2"] * r["mix"] for r in pool if (r["t1"], r["t2"]) == (t1, t2)) / total_mix
+        cand = [r for r in pool if (r["t1"], r["t2"]) == (t1, t2)]
+        total_mix = sum(r["mix"] for r in cand)
+        l1 = sum(r["time_l1"] * r["mix"] for r in cand) / total_mix
+        l2 = sum(r["time_l2"] * r["mix"] for r in cand) / total_mix
         worst = max(r["time_l1"] for r in pool if (r["t1"], r["t2"]) == (t1, t2))
         if l1 <= MOVE_L1_TIME and l2 <= MOVE_L2_TIME and worst <= MOVE_L1_MAX_TIME:
             pcts = sorted(
@@ -214,7 +219,9 @@ def divergence_tables(genesis: dict, launch_shares: tuple = (6000, 8000), calibr
         bound = market["price_rules"]["max_divergence_bps"]
         shares = ((launch_shares[0], launch_shares[1]), (calibrated["divergence_share_l1"], calibrated["divergence_share_l2"]))
         for label, (s1, s2) in (("launch", shares[0]), ("calibrated", shares[1])):
-            d1, d2 = s1 * bound / 10000, s2 * bound / 10000
+            # The engine truncates the share (stress.rs `divergence_share_bps`), so a share s
+            # first fires at ceil(s*B/10000) bps of divergence.
+            d1, d2 = math.ceil(s1 * bound / 10000), math.ceil(s2 * bound / 10000)
             rows.append(
                 {
                     "symbol": market["symbol"],

@@ -156,3 +156,50 @@ def test_utilisation_rows_aggregate_histograms_and_keep_levels_ordered():
         assert hist[:, m, 0].sum() == pytest.approx(market_rows[0]["open_hours"])
         assert expo[:, m, 0].sum() <= 1e7 * hist[:, m, 0].sum()  # exposure never exceeds the cap
         assert market_rows[0]["gap_p99_bps"] == gaps[symbol]["gap_p99_bps"]
+
+
+def test_utilisation_records_exact_buckets_exposure_and_batches():
+    """On a deterministic week — each hour 1 USD of margin opens a 200:1 long that closes two hours
+    later, a flat price, floors of $1,000 and $2,000 — every steady hour's book is $200: bucket 20
+    on the first lane, bucket 10 on the second, exact exposure sums, merged across two batches."""
+    from model import prices
+    from model.flow import Flow, FlowClass
+
+    week = np.zeros((prices.WEEK, 1, 4), dtype=np.int32)
+    markets = simulate.Markets(
+        symbols=["TEST"],
+        margin_rate=np.array([0.005]),
+        schedule=["S"],
+        cap_bps=np.array([5000]),
+        total_cap_bps=20000,
+        fin_long=np.array([0.0]),
+        fin_short=np.array([0.0]),
+        mix=np.array([1.0]),
+        open_hours_per_week=np.array([168.0]),
+        columns=np.array([0]),
+        fx_columns=np.array([-1]),
+        fx_invert=np.array([False]),
+    )
+    tiny = (np.array([1e-6, 1e9]), np.array([1.0, 1.0]))  # every order fits any positive room
+    flow = Flow(
+        classes=[FlowClass(kind="directional", hold_h=2, bucket=0, margin_share=1.0, mean_hold_h=2.0, mean_sqrt_hold_h=np.sqrt(2.0), long_share=1.0)],
+        leverage={(kind, mapping, "S"): np.array([200.0]) for kind in simulate.KINDS for mapping in ("capped", "relative")},
+        daily_margin=np.array([24.0]),
+        sizes={(kind, mapping, "S"): tiny for kind in simulate.KINDS for mapping in ("capped", "relative")},
+        long_share_ar1=0.0,
+        long_share_resid_sd=0.0,
+        long_share_slope=0.0,
+    )
+    scenario = simulate.Scenario(name="det", paths=2, batch_paths=1, days=7, utilisation_stats=True)
+    floors = np.array([[1000.0], [2000.0]])
+    (out,) = simulate.run_many([(scenario, markets, week, flow, floors, np.array([1e15, 1e15]))], 2)
+    hist = out["util_hist"].sum(axis=0)[:, 0, :]
+    expo = out["util_expo"].sum(axis=0)[:, 0, :]
+    # Hour 0's book is empty; from hour 1 through the last the $200 long opened an hour earlier
+    # is open: 200/1000 = 20% on the first lane, 200/2000 = 10% on the second.
+    assert hist[0, 0] == 2 and hist[20, 0] == 2 * 167
+    assert hist[10, 1] == 2 * 167
+    assert expo[20, 0] == pytest.approx(200.0 * 2 * 167)
+    assert expo[10, 1] == pytest.approx(200.0 * 2 * 167)
+    assert hist.sum() == 2 * 2 * 168  # two lanes, every hour of the week recorded
+    assert hist[21:, 0].sum() == 0 and expo[:10, 1].sum() == 0
