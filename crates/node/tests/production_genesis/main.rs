@@ -82,7 +82,8 @@ fn the_production_genesis_applies_the_launch_decisions() {
     // values in results/toxicity_choice.json): memory keeps the score's sampling drift under
     // 1 bp at every market's p99 fill, and a toxic account (a sustained 2 bps per-fill markout)
     // reaches tier 1 within 75 median-size fills while a benign account filling at a market's
-    // median clip stays below it on each market for 200 fills with probability at least 99.9%.
+    // median clip stays below it on each market for 200 fills, the crossing probability bounded
+    // under 0.1% at 99% confidence.
     assert_eq!(production.params.profit_fee_bps, 1_000);
     let floor = dev.params.house_total_cap_floor;
     let toxicity = dev.params.toxicity.clone();
