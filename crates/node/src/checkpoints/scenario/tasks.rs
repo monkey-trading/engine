@@ -7,6 +7,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::task::JoinHandle;
 use tokio::time::{sleep, timeout};
 
+use crate::checkpoints::{CheckpointChain, CheckpointRpc, Poster, View};
+use crate::log::Checkpoint;
 use crate::test_support::{Alert, LOADED_WAIT};
 
 /// The sequencer, checkpoint poster, and custody tasks every later wait depends on.
@@ -64,4 +66,41 @@ impl Tasks {
             "gave up after {LOADED_WAIT:?} waiting for {what}: {missing}; the poster's last alert: {poster:?}"
         );
     }
+}
+
+/// Awaits canonical inclusion explicitly; transaction RPC acknowledgment is not a mined receipt.
+/// The post is retried while awaiting, exactly as the poster worker retries, and a failed
+/// attempt mines one block: a post blocked on confirmation depth — a reverted re-send the
+/// recovery must reprove finalized, a predecessor still shy of the finalized tag — only
+/// finalizes while the chain advances, which a production chain's traffic does continuously.
+pub(super) async fn include_checkpoint(url: &str, poster: &Poster<CheckpointRpc>, checkpoint: &Checkpoint) {
+    let deadline = std::time::Instant::now() + LOADED_WAIT;
+    let mut last_error = String::new();
+    loop {
+        if poster.chain.state(View::Latest).await.unwrap().checkpoint == Some((checkpoint.seq, checkpoint.root.clone()))
+        {
+            return;
+        }
+        if let Err(error) = poster.chain.post(checkpoint).await {
+            last_error = format!("{error:#}");
+            mine_block(url).await;
+        }
+        assert!(std::time::Instant::now() < deadline, "the checkpoint was not included: {last_error}");
+        sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// Mines one empty block on the scenario's Anvil; a wait that is not itself sending keeps the
+/// confirmation depth a blocked post depends on moving.
+async fn mine_block(url: &str) {
+    let response: serde_json::Value = reqwest::Client::new()
+        .post(url)
+        .json(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"anvil_mine","params":["0x1"]}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(response.get("error").is_none(), "{response}");
 }

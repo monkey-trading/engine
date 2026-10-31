@@ -533,7 +533,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/tests/torn.rs` — conflicts read once are retried; a conflict a fresh observation repeats stops the worker
 - `src/checkpoints/scenario.rs` — isolated Anvil posting, credited/held reconciliation, tampering, truncation, surplus booking, shortfall, and reorg checks
 - `src/checkpoints/scenario/source.rs` — signed synthetic source bound to the scenario vault
-- `src/checkpoints/scenario/tasks.rs` — the scenario's node tasks, and waits that fail on a stopped task or report the poster's last alert
+- `src/checkpoints/scenario/tasks.rs` — the scenario's node tasks, and waits that fail on a stopped task, retry the checkpoint post until its inclusion, or report the poster's last alert
 - `src/checkpoints/emission_budget.rs` — the vault's MONKEY cap against the emission period budget
 - `src/checkpoints/emissions_scenario.rs` — the MONKEY emissions dev scenario on isolated Anvil: pro-rata
   allocation, cancelled periods, a restart across finalisation, the first halving, and claims that mint

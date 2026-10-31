@@ -374,7 +374,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
         coverage: crate::checkpoints::DepositCoverage::Historical,
         distributed: engine_core::UsdcUnits(0),
     };
-    include_checkpoint(&delayed, &work.checkpoint).await;
+    tasks::include_checkpoint(&url, &delayed, &work.checkpoint).await;
     assert_eq!(delayed.reconcile(&work).await.unwrap(), (None, Health::Unvalidated));
     let nonce = provider.request::<_, U64>("eth_getTransactionCount", (checkpoint_relayer, "latest")).await.unwrap();
     assert_eq!(delayed.reconcile(&work).await.unwrap(), (None, Health::Unvalidated));
@@ -393,7 +393,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
         current.checkpoint,
         "reorg removes provisional inclusion"
     );
-    include_checkpoint(&delayed, &work.checkpoint).await;
+    tasks::include_checkpoint(&url, &delayed, &work.checkpoint).await;
     assert_eq!(
         delayed.reconcile(&work).await.unwrap(),
         (None, Health::Unvalidated),
@@ -478,20 +478,4 @@ async fn local_rpc(url: &str, method: &str, params: serde_json::Value) -> serde_
         .unwrap();
     assert!(response.get("error").is_none(), "{response}");
     response.get("result").unwrap().clone()
-}
-
-/// Awaits canonical inclusion explicitly; transaction RPC acknowledgment is not a mined receipt.
-async fn include_checkpoint(poster: &Poster<CheckpointRpc>, checkpoint: &Checkpoint) {
-    poster.chain.post(checkpoint).await.unwrap();
-    crate::test_support::wait_for("the checkpoint to be included on local Anvil", async {
-        loop {
-            if poster.chain.state(View::Latest).await.unwrap().checkpoint
-                == Some((checkpoint.seq, checkpoint.root.clone()))
-            {
-                break;
-            }
-            sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await;
 }
