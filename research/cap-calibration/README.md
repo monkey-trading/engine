@@ -444,16 +444,19 @@ house exposure in bps of the market's cap at house NAV.
   The window stays at 60s: 30s and 120s give parallel fire-rate curves (a longer window raises
   every reading alike), and 60s keeps the window's dozen buckets at one-per-6s against feeds that
   publish at least a mid a second. The choice, 75 and 200 bps, fires on the volatile crypto, oil,
-  and share markets — 0.06–1.1% of the time on those carrying at least 1% of the flow, up to 3.7%
+  and share markets — 0.06–1.2% of the time on those carrying at least 1% of the flow, up to 3.7%
   on the smallest share listings, the worst market within the 5% bound — and is silent on FX and
   indices (their protection is the divergence trigger and the stale-price halt); the launch
-  150/300 fires on none of them outside crashes.
+  150/300 fires on none of them outside crashes. The hysteresis cooldown and the calibrated window
+  are read from the genesis the stage calibrates, so a parameter change there cannot silently drift
+  the tables away from the engine they model.
 - **Divergence** (shares, from the stale-fill cost model). A divergence reading of `d` bps means
   the venue mids sit `d` apart. With the protocol's two fresh sources the index mid is their
   midpoint, and a fill at the index mid loses up to `d/2` bps if the mark snaps to the other venue
-  (`d/4` expected, uniform); with more fresh sources the index is their median and can sit closer
-  to an extreme, so `d/2` understates the worst case and the chosen shares are conservative under
-  it. A share `s` of a market's bound `B` fires at `d = ceil(s·B/10000)` bps — the engine
+  (`d/4` expected, uniform). That bound is exact for the two-source midpoint index; with more fresh
+  sources the index is their median and the worst-case loss can exceed `d/2` (up to nearly `d`), so
+  the shares would need re-deriving against the true loss model if a market's source count
+  changes. A share `s` of a market's bound `B` fires at `d = ceil(s·B/10000)` bps — the engine
   truncates the share. The level-1 choice is the lowest share whose worst-case stale-fill loss at
   fire covers the level's minimum spread on the tightest-bound market (`d/2 ≥ min_spread`): it
   needs a 4-bps reading, and on the tightest 5-bps bounds share 6000 still fires at 3 bps while

@@ -117,12 +117,15 @@ def stress_stage(experiments, np, scenario, markets, bars, flow, args) -> dict:
     from catalogue import load_genesis
     from model import stress
 
-    mix = {s: float(w) for s, w in zip(markets.symbols, markets.mix)}
-    move_rows = stress.move_tables(bars, markets.symbols, markets.mix, hours_per_market=args.move_hours, seed=scenario.seed)
-    experiments.write_rows(RESULTS / "stress_moves.csv", move_rows)
-    move_choice = stress.choose_move(move_rows, window_s=60)
-
     genesis = load_genesis()
+    params = genesis["params"]
+    cooldown_s = params["stress_cooldown_ms"] // 1000
+    window_s = params["stress_move_window_ms"] // 1000
+    mix = {s: float(w) for s, w in zip(markets.symbols, markets.mix)}
+    move_rows = stress.move_tables(bars, markets.symbols, markets.mix, hours_per_market=args.move_hours, seed=scenario.seed, cooldown_s=cooldown_s)
+    experiments.write_rows(RESULTS / "stress_moves.csv", move_rows)
+    move_choice = stress.choose_move(move_rows, window_s=window_s)
+
     div_choice = stress.choose_divergence(genesis)
     div_rows = stress.divergence_tables(genesis, calibrated=div_choice)
     experiments.write_rows(RESULTS / "stress_divergence.csv", div_rows)
@@ -155,6 +158,8 @@ def stress_stage(experiments, np, scenario, markets, bars, flow, args) -> dict:
     return {
         "move_hours": args.move_hours,
         "utilisation_stats": True,
+        "stress_move_window_ms": window_s * 1000,
+        "stress_cooldown_ms": cooldown_s * 1000,
         "floor_families": {name: ("uniform" if name.startswith("uniform") else "per-market") for name in floors_by_family},
     }
 

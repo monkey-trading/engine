@@ -51,13 +51,22 @@ MOVE_L1_MAX_TIME = 0.05
 UTIL_L1_TIME = 0.02  # flow-weighted fire rate bound per launch-relevant floor family
 UTIL_L1_MAX_TIME = 0.05  # bound for any single market with at least 1% of flow
 
-# The stress levels' spreads, which this calibration takes as given (decision #1 s5).
-LEVEL_MIN_SPREAD_BPS = (2, 10)
+# The stress levels' minimum spreads this calibration assumes when the genesis names none
+# (decision #1 s5); the stage reads the production values from the genesis it calibrates.
+DEFAULT_MIN_SPREAD_BPS = (2, 10)
+
+
+def level_spreads(genesis: dict) -> tuple[int, int]:
+    """The level-1 and level-2 minimum spreads of the genesis's stress levels."""
+    levels = genesis.get("params", {}).get("stress_levels", [])
+    spreads = [level["min_spread_bps"] for level in levels[1:3]]
+    while len(spreads) < 2:
+        spreads.append(DEFAULT_MIN_SPREAD_BPS[len(spreads)])
+    return spreads[0], spreads[1]
 
 MOVE_WINDOWS_MS = (30_000, 60_000, 120_000)
 MOVE_CANDIDATES_BPS = ((50, 150), (60, 150), (75, 200), (100, 250), (150, 300))
 UTIL_CANDIDATES_BPS = (5000, 6000, 7000, 7500, 8000, 8500, 9000, 9500, 9800)
-UTIL_FAMILIES = {"uniform_1M": 1e6, "uniform_10M": 1e7}
 
 
 def engine_move_measures(mids: np.ndarray, window_s: int) -> np.ndarray:
@@ -142,7 +151,7 @@ def _crossing_events(measure: np.ndarray, t1: float, t2: float, cooldown_s: int)
     ).reshape(measure.shape)
 
 
-def move_tables(bars: np.ndarray, symbols: list[str], mix: np.ndarray, hours_per_market: int, seed: int) -> list[dict]:
+def move_tables(bars: np.ndarray, symbols: list[str], mix: np.ndarray, hours_per_market: int, seed: int, cooldown_s: int = 300) -> list[dict]:
     """Per market and candidate (window, thresholds): the share of seconds at each stress level
     with hysteresis, and the median volatility percentile of the hours a level-1 firing falls in.
     Each open hour is simulated as one minute-scale Brownian path at the hour's Parkinson vol, so
@@ -169,7 +178,7 @@ def move_tables(bars: np.ndarray, symbols: list[str], mix: np.ndarray, hours_per
                 # Hysteresis runs over the full path, warm-up included: a level a warm-up
                 # crossing raised still holds into the recorded hour, as in the engine; only the
                 # warm-up segment's levels and readings are discarded.
-                levels = _crossing_events(measure, t1, t2, cooldown_s=300)[:, warmup_s:]
+                levels = _crossing_events(measure, t1, t2, cooldown_s=cooldown_s)[:, warmup_s:]
                 fired = levels >= 1
                 vol_pct = float(np.mean([np.mean(sigma[h] > sigma) for h in np.unique(np.nonzero(fired.reshape(len(take), -1))[0])])) if fired.any() else None
                 rows.append(
@@ -205,7 +214,7 @@ def choose_move(rows: list[dict], window_s: int) -> dict:
         total_mix = sum(r["mix"] for r in cand)
         l1 = sum(r["time_l1"] * r["mix"] for r in cand) / total_mix
         l2 = sum(r["time_l2"] * r["mix"] for r in cand) / total_mix
-        worst = max(r["time_l1"] for r in pool if (r["t1"], r["t2"]) == (t1, t2))
+        worst = max(r["time_l1"] for r in cand)
         if l1 <= MOVE_L1_TIME and l2 <= MOVE_L2_TIME and worst <= MOVE_L1_MAX_TIME:
             pcts = [
                 (r["vol_pct_l1"], r["mix"])
@@ -224,7 +233,7 @@ def divergence_tables(genesis: dict, launch_shares: tuple = (6000, 8000), calibr
     """Per market: the divergence in bps, and the expected (uniform) and worst-case stale-fill loss
     at fire, for the launch and the calibrated shares of its divergence bound."""
     calibrated = calibrated or choose_divergence(genesis)
-    spread1, spread2 = LEVEL_MIN_SPREAD_BPS
+    spread1, spread2 = level_spreads(genesis)
     rows = []
     for market in genesis["markets"]:
         bound = market["price_rules"]["max_divergence_bps"]
@@ -264,16 +273,17 @@ def choose_divergence(genesis: dict) -> dict:
     reported in `divergence_tables` and is unreachable on the tightest markets."""
     bounds = [m["price_rules"]["max_divergence_bps"] for m in genesis["markets"] if m["price_rules"]["max_divergence_bps"] > 0]
     tightest = min(bounds)
+    spread1, spread2 = level_spreads(genesis)
 
     def lowest_share(spread_bps: int) -> int | None:
         share = (2 * spread_bps - 1) * 10_000 // tightest + 1
         return share if share <= 10_000 else None
 
     return {
-        "divergence_share_l1": lowest_share(LEVEL_MIN_SPREAD_BPS[0]),
-        "divergence_share_l2": lowest_share(LEVEL_MIN_SPREAD_BPS[1]) or 9500,
+        "divergence_share_l1": lowest_share(spread1),
+        "divergence_share_l2": lowest_share(spread2) or 9500,
         "tightest_bound_bps": tightest,
-        "level2_cost_feasible": lowest_share(LEVEL_MIN_SPREAD_BPS[1]) is not None,
+        "level2_cost_feasible": lowest_share(spread2) is not None,
     }
 
 
