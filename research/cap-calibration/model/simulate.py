@@ -433,8 +433,9 @@ def run_batch(scenario: Scenario, markets: Markets, bars: np.ndarray, flow: Flow
     # utilisation bucket, the open-hour count and the house's absolute exposure in USD; bucket 101
     # holds hours whose cap is not positive, which the engine reads as full utilisation.
     n_util_buckets = 102
-    util_hist = np.zeros((1, n_util_buckets, n_markets, n_lanes))
-    util_expo = np.zeros((1, n_util_buckets, n_markets, n_lanes))
+    if scenario.utilisation_stats:
+        util_hist = np.zeros((1, n_util_buckets, n_markets, n_lanes))
+        util_expo = np.zeros((1, n_util_buckets, n_markets, n_lanes))
 
     h_scale = scenario.hedged_scale
     decay = farm_decay(scenario, hours)

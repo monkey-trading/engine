@@ -37,12 +37,15 @@
   "papertrade_summary.json": "875fc6c89820321a"
  },
  "workers": 4,
- "seconds": 1249,
+ "seconds": 1279,
  "move_hours": 400,
  "utilisation_stats": true,
+ "stress_move_window_ms": 60000,
+ "stress_cooldown_ms": 300000,
  "floor_families": {
   "uniform_1M": "uniform",
   "uniform_10M": "uniform",
   "house_cash_1pct": "per-market"
- }
+ },
+ "house_cash_floors_sha256": "floors:bd650b94b167401c,source:f6609ec16606c2df"
 }

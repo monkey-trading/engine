@@ -67,6 +67,9 @@ def level_spreads(genesis: dict) -> tuple[int, int]:
 MOVE_WINDOWS_MS = (30_000, 60_000, 120_000)
 MOVE_CANDIDATES_BPS = ((50, 150), (60, 150), (75, 200), (100, 250), (150, 300))
 UTIL_CANDIDATES_BPS = (5000, 6000, 7000, 7500, 8000, 8500, 9000, 9500, 9800)
+# The family the utilisation choice reports but never calibrates to: caps so small that every
+# level fires constantly, a property of those floors, not of the level.
+EXCLUDED_FAMILY = "uniform_1M"
 
 
 def engine_move_measures(mids: np.ndarray, window_s: int) -> np.ndarray:
@@ -373,13 +376,13 @@ def choose_utilisation(rows: list[dict], flow_by_symbol: dict[str, float]) -> di
     high whatever the level, which the table reports rather than calibrates to)."""
     flow = {s: w for s, w in flow_by_symbol.items() if w > 0}
     total = sum(flow.values())
-    families = sorted({r["family"] for r in rows} - {"uniform_1M"})
+    families = sorted({r["family"] for r in rows} - {EXCLUDED_FAMILY})
     eligible = [s for s, w in flow.items() if w / total >= 0.01]
     for level in sorted({r["level_bps"] for r in rows if r["level_bps"] < 9500}):
         fire = {f: 0.0 for f in families}
         worst = 0.0
         for r in rows:
-            if r["level_bps"] != level or r["family"] == "uniform_1M" or r["symbol"] not in flow:
+            if r["level_bps"] != level or r["family"] == EXCLUDED_FAMILY or r["symbol"] not in flow:
                 continue
             fire[r["family"]] += r["fire_rate"] * flow[r["symbol"]]
             if r["symbol"] in eligible:

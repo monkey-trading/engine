@@ -268,8 +268,8 @@ memory = "10000000"
 # share is the fallback, its cost criterion infeasible on the tightest markets;
 # the move thresholds keep every market's level-1 time under 5% and the
 # flow-weighted under 1% on minute-scale simulations of the markets' own hours;
-# the utilisation levels keep the flow-weighted fire rate under 2% per floor
-# family in the Monte Carlo. See the research README.
+# the utilisation levels keep the flow-weighted fire rate under 2% per
+# launch-relevant floor family in the Monte Carlo. See the research README.
 [[genesis.params.stress_levels]]
 size_spread_multiplier_bps = 10000
 min_spread_bps = 0

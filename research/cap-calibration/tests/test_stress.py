@@ -363,3 +363,38 @@ def test_the_move_measure_reads_the_high_side_of_a_fall():
     mids[0, 10:] = 1.0  # back to 1.0: (high - mid)/high dominates (low side is 0)
     measure = stress.engine_move_measures(mids, window_s=10)
     assert measure[0, 15] == pytest.approx((1.02 - 1.0) / 1.02 * 1e4, rel=1e-9)
+
+
+def test_utilisation_rows_cover_cap_not_positive_and_empty_markets():
+    """Bucket 101 (the cap not positive, which the engine reads as full utilisation) counts
+    toward every level's fire rate; a market with no recorded hours gets no rows."""
+    out = {
+        "util_hist": np.zeros((1, 102, 2, 1)),
+        "util_expo": np.zeros((1, 102, 2, 1)),
+    }
+    out["util_hist"][0, 101, 0, 0] = 4  # four hours at a non-positive cap
+    out["util_hist"][0, 50, 0, 0] = 96  # 96 hours at a 50-51% utilisation
+    out["util_expo"][0, 101, 0, 0] = 4e6
+    out["util_expo"][0, 50, 0, 0] = 96 * 1000.0
+    gaps = {"MKT": {"gap_p99_bps": 100.0}, "EMPTY": {"gap_p99_bps": 0.0}}
+    rows = stress.utilisation_rows(out, ["MKT", "EMPTY"], ["f"], gaps)
+    assert {r["symbol"] for r in rows} == {"MKT"}  # the empty market is skipped
+    by_level = {r["level_bps"]: r for r in rows}
+    assert by_level[9500]["fire_rate"] == pytest.approx(0.04)  # the four cap-nonpositive hours
+    assert by_level[9500]["mean_exposure_usd"] == pytest.approx(1e6)
+    assert by_level[5000]["fire_rate"] == pytest.approx(1.0)  # every recorded hour reaches 50%
+
+
+def test_gap_tables_measure_the_next_open_hours_close():
+    """Three open hours with moves of +1%, -2%, +4%: the next-mark gaps are 1%, 2%, and 4%."""
+    from model import prices
+
+    bars = np.zeros((prices.WEEK, 1, 4), dtype=np.int32)
+    bars[0, 0] = [0, 0, 0, round(np.log1p(0.01) * 1e6)]
+    bars[1, 0] = [0, 0, 0, round(np.log1p(-0.02) * 1e6)]
+    bars[2, 0] = [0, 0, 0, round(np.log1p(0.04) * 1e6)]
+    bars[3:, 0, 0] = prices.CLOSED  # only the first three hours trade
+    gaps = stress.gap_tables(bars, ["MKT"])
+    got = gaps["MKT"]
+    assert got["gap_p99_bps"] == pytest.approx(390.0, abs=2.0)
+    assert got["gap_p99_bps"] > 300.0  # the 2% move is the smaller of the two gaps
