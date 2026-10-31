@@ -667,6 +667,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   checksum; `src/feeds/kraken/tests.rs` replays recorded book messages against it
 - `src/feeds/tests/mod.rs` — venue tasks against loopback venues: what they sequence, refuse,
   and alert, and how they reconnect
+- `src/feeds/tests/emission.rs` — one sequenced quote per book update: bursts sequence per
+  update, the pace coalesces what arrives faster to the newest, and the emit timer releases what
+  the host clock has not reached without further venue traffic
 - `src/feeds/tests/fake.rs` — the loopback venues, the feed harness with an engine that applies
   what the feed sequences, and the wait for the next alert
 - `src/feeds/tests/late.rs` — venue tasks against a sequencer that answers late: when a quote
