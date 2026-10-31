@@ -272,8 +272,7 @@ impl Scenario {
         let (stream, _) = broadcast::channel(1024);
         let (withdrawals, _) = mpsc::unbounded_channel();
         let (manifest_tx, manifest) = watch::channel(Manifest::default());
-        let mut genesis = dev_config().genesis;
-        genesis.house_capital = engine_core::Fixed::ZERO;
+        let genesis = crate::config::Genesis { house_capital: engine_core::Fixed::ZERO, ..dev_config().genesis };
         let cfg = SequencerConfig {
             segment_commands: 1_000,
             checkpoint_every: CHECKPOINT_EVERY,
