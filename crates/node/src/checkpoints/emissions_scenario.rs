@@ -283,7 +283,7 @@ impl Scenario {
             operator: self.operator,
             clock: self.clock.clone(),
             genesis: crate::sequencer::genesis_commands(&genesis),
-        close_spread_ceilings: genesis.close_spread_ceilings.clone(),
+            close_spread_ceilings: genesis.close_spread_ceilings.clone(),
             ..sequencer_config(&self.dir, manifest_tx)
         };
         let mut seq = Sequencer::recover(cfg, self.key.clone(), stream.clone(), withdrawals).unwrap();

@@ -136,7 +136,8 @@ impl Engine {
         max_close_spread_bps: i64,
         effective_at: Millis,
     ) -> Result<(), String> {
-        let ceilings = self.close_spread_ceilings.as_ref().ok_or("the close-spread ceiling registry is not installed")?;
+        let ceilings =
+            self.close_spread_ceilings.as_ref().ok_or("the close-spread ceiling registry is not installed")?;
         if !(0..=MAX_CLOSE_SPREAD_BPS).contains(&max_close_spread_bps) {
             return Err(format!("max_close_spread_bps must be in 0..={MAX_CLOSE_SPREAD_BPS}"));
         }
@@ -211,10 +212,10 @@ impl Engine {
         self.close_spread_ceilings.as_ref()?.get(&market).copied()
     }
 
-    /// Bounds the per-unit charge `base + size` by the market's close-spread ceiling. A trade with
-    /// no closing slice — an opening or a same-side add — pays what it priced. A pure close's
-    /// charge clamps to the ceiling, floored to the exact bound `charge_raw * 10_000 <= index_raw
-    /// * ceiling_bps`, trimming at most the unit upward rounding adds. A reversal pays the blended
+    /// Bounds the per-unit charge by the market's close-spread ceiling. A trade with no closing
+    /// slice — an opening or a same-side add — pays what it priced. A pure close's charge clamps
+    /// to the ceiling, floored to the exact bound `charge_raw * 10_000 <= index_raw *
+    /// ceiling_bps`, trimming at most the unit upward rounding adds. A reversal pays the blended
     /// charge on its closing slice, so it is refused when that exceeds the ceiling; one that
     /// passes pays what it priced, which the check keeps within the ceiling.
     /// Error cases:
@@ -225,11 +226,9 @@ impl Engine {
         side: Side,
         pos_qty: Fixed,
         increases: bool,
-        base: Fixed,
-        size: Fixed,
+        charge: Fixed,
         mid: Fixed,
     ) -> Result<Fixed, Reject> {
-        let charge = base + size;
         if self.protocol_version < ProtocolVersion::V39 {
             return Ok(charge);
         }
@@ -262,11 +261,7 @@ impl Engine {
         guard: PriceGuard,
         events: &mut Vec<Event>,
     ) {
-        let pos_qty = self
-            .accounts
-            .get(&account)
-            .map(|acct| acct.position(order.market).qty.abs())
-            .unwrap_or_default();
+        let pos_qty = self.accounts.get(&account).map(|acct| acct.position(order.market).qty.abs()).unwrap_or_default();
         let fill = if pos_qty.is_zero() {
             None
         } else {

@@ -3,16 +3,20 @@
 //! order that fills its closing slice and cancels the rest. The registry and its governance path
 //! are in `close_spread_cap.rs`.
 
-use engine_core::auth::ClientAuth;
-use engine_core::command::{AdminCommand, OrderKind};
-use engine_core::event::{CancelReason, Event, Reject};
-use engine_core::protocol::ProtocolVersion;
 use engine_core::Fixed;
+use engine_core::access::AccessPolicy;
+use engine_core::auth::ClientAuth;
+use engine_core::command::{AdminCommand, Command, OrderKind};
+use engine_core::event::{CancelReason, Event, Reject};
+use engine_core::market::QuoteCurrency;
+use engine_core::protocol::ProtocolVersion;
+use engine_core::session::Schedule;
+use engine_core::types::{AssetClass, Side};
 
 mod common;
 use common::close_spread::*;
 use common::events::only_fill;
-use common::{BTC, Client, f};
+use common::{AAPL, BTC, ETH, Client, Harness, acct, f, market};
 
 #[test]
 fn the_registry_binds_from_v39_and_a_close_clamps_to_its_ceiling() {
@@ -103,10 +107,7 @@ fn a_reversal_over_the_ceiling_is_refused_and_the_pure_close_stays_open() {
     raised.stress_levels[0].min_spread_bps = 50;
     h.operator_admin(AdminCommand::SetParams(raised));
     let events = trade(&mut h, &client, BTC, Side::Sell, "400", "100000");
-    assert!(matches!(
-        common::events::rejection(&events),
-        Reject::CloseSpreadCeiling { ceiling_bps: 20 }
-    ), "{events:?}");
+    assert!(matches!(common::events::rejection(&events), Reject::CloseSpreadCeiling { ceiling_bps: 20 }), "{events:?}");
     assert_eq!(h.engine.accounts()[&client.account].position(BTC).qty, f("150"));
     let events = reduce(&mut h, &client, BTC, Side::Sell, "150", "100000");
     let fill = only_fill(&events);
@@ -125,7 +126,10 @@ fn a_triggered_order_refused_as_a_reversal_fills_its_closing_slice() {
     raised.stress_levels[0].min_spread_bps = 50;
     h.operator_admin(AdminCommand::SetParams(raised));
     let events = rest(&mut h, &client, BTC, Side::Sell, "150", OrderKind::Stop { price: f("99999") });
-    assert!(events.contains(&Event::OrderAccepted { account: client.account, client_id: 7, order_id: 1 }), "{events:?}");
+    assert!(
+        events.contains(&Event::OrderAccepted { account: client.account, client_id: 7, order_id: 1 }),
+        "{events:?}"
+    );
     // The drop through the stop's price triggers it: the reversal is over BTC's 20bps ceiling, so
     // the engine fills the 100-unit closing slice at the clamped close and cancels the rest.
     let events = h.price(BTC, "99999");
@@ -134,7 +138,11 @@ fn a_triggered_order_refused_as_a_reversal_fills_its_closing_slice() {
     assert_eq!(fill.position, Fixed::ZERO, "{fill:?}");
     assert_eq!(fill.price, f("99799.002"), "{fill:?}");
     assert!(
-        events.contains(&Event::OrderCancelled { account: client.account, order_id: 1, reason: CancelReason::Unfillable }),
+        events.contains(&Event::OrderCancelled {
+            account: client.account,
+            order_id: 1,
+            reason: CancelReason::Unfillable
+        }),
         "{events:?}"
     );
     assert_eq!(h.engine.accounts()[&client.account].position(BTC).qty, Fixed::ZERO);
@@ -159,16 +167,28 @@ fn adoption_adds_a_not_yet_listed_market_and_lowering_only_ever_moves_entries() 
     // until the notice runs.
     let later = h.ts + NOTICE_MS;
     for bps in [26, 25] {
-        let events = h.operate(AdminCommand::AdoptCloseSpreadCeiling { market: 7, max_close_spread_bps: bps, effective_at: later });
+        let events = h.operate(AdminCommand::AdoptCloseSpreadCeiling {
+            market: 7,
+            max_close_spread_bps: bps,
+            effective_at: later,
+        });
         assert!(rejected(&events).contains("can only be lowered"), "{events:?}");
     }
-    h.operator_admin(AdminCommand::AdoptCloseSpreadCeiling { market: 7, max_close_spread_bps: 18, effective_at: later });
+    h.operator_admin(AdminCommand::AdoptCloseSpreadCeiling {
+        market: 7,
+        max_close_spread_bps: 18,
+        effective_at: later,
+    });
     assert_eq!(h.engine.close_spread_ceilings().unwrap()[&7], 25);
     h.advance_to(later);
     h.cmd(Command::Tick);
     assert_eq!(h.engine.close_spread_ceilings().unwrap()[&7], 18);
     // An adoption effective inside the notice is refused.
-    let events = h.operate(AdminCommand::AdoptCloseSpreadCeiling { market: 7, max_close_spread_bps: 10, effective_at: h.ts + 1 });
+    let events = h.operate(AdminCommand::AdoptCloseSpreadCeiling {
+        market: 7,
+        max_close_spread_bps: 10,
+        effective_at: h.ts + 1,
+    });
     assert!(rejected(&events).contains("no sooner"), "{events:?}");
 }
 
@@ -234,10 +254,7 @@ fn a_zero_ceiling_means_free_closes() {
     only_fill(&events);
     // A reversal whose opening slice pays anything is refused.
     let events = trade(&mut h, &client, BTC, Side::Sell, "200", "100000");
-    assert!(matches!(
-        common::events::rejection(&events),
-        Reject::CloseSpreadCeiling { ceiling_bps: 0 }
-    ), "{events:?}");
+    assert!(matches!(common::events::rejection(&events), Reject::CloseSpreadCeiling { ceiling_bps: 0 }), "{events:?}");
 }
 
 #[test]
@@ -262,7 +279,11 @@ fn the_registry_and_pending_adoption_round_trip_through_serialization() {
     let mut h = harness();
     into_v39(&mut h);
     let due = h.ts + NOTICE_MS;
-    h.operator_admin(AdminCommand::AdoptCloseSpreadCeiling { market: ETH, max_close_spread_bps: 10, effective_at: due });
+    h.operator_admin(AdminCommand::AdoptCloseSpreadCeiling {
+        market: ETH,
+        max_close_spread_bps: 10,
+        effective_at: due,
+    });
     let encoded = serde_json::to_vec(&h.engine).expect("engine serialises");
     let mut decoded: engine_core::Engine = serde_json::from_slice(&encoded).expect("engine deserialises");
     assert_eq!(decoded.close_spread_ceilings(), h.engine.close_spread_ceilings());
