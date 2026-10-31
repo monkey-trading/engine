@@ -93,8 +93,8 @@ fn the_production_genesis_applies_the_launch_decisions() {
             horizon_ms: 2_000,
             ewma_weight_bps: 1_000,
             notional: Some(NotionalWeighting {
-                prior: Fixed::from_int(5_629_517),
-                memory: Fixed::from_int(11_259_035)
+                prior: Fixed::from_int(5_629_518),
+                memory: Fixed::from_int(11_259_036)
             }),
             tiers: vec![
                 ToxicityTier { min_score_bps: 1, extra_spread_bps: 2 },

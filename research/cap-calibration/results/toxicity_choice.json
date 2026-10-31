@@ -1,8 +1,8 @@
 {
  "toxicity": {
   "horizon_ms": 2000,
-  "prior_usd": 5629517.87712997,
-  "memory_usd": 11259035.75425994,
+  "prior_usd": 5629518.0,
+  "memory_usd": 11259036.0,
   "tiers": [
    {
     "min_score_bps": 1,
@@ -16,7 +16,7 @@
  },
  "method": {
   "memory": {
-   "memory_usd": 11259035.75425994,
+   "memory_usd": 11259036.0,
    "bound_bps": 1.0,
    "worst_market": "BRENT",
    "per_market": {
@@ -171,7 +171,7 @@
    }
   },
   "prior": {
-   "prior_usd": 5629517.87712997,
+   "prior_usd": 5629518.0,
    "median_fill_usd": 100000.0
   },
   "tiers": {
@@ -187,155 +187,229 @@
     "0.5": 0.0389
    },
    "benign_upper_99": 0.0008,
-   "benign_counts": [
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     19,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ],
-    [
-     0,
-     40000
-    ]
+   "benign_by_market": [
+    {
+     "symbol": "BTC-USD",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "ETH-USD",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "SOL-USD",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "EUR-USD",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "GBP-USD",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "USD-JPY",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "AUD-USD",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "US500",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "US100",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "US30",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "DE40",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "UK100",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "JP225",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "XAU-USD",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "XAG-USD",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "WTI",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "BRENT",
+     "crossed": 19,
+     "trials": 40000,
+     "p": 0.000475
+    },
+    {
+     "symbol": "AAPL",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "MSFT",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "NVDA",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "AMZN",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "GOOGL",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "META",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "TSLA",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "AVGO",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "BRK.B",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "JPM",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "V",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "MA",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "LLY",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "JNJ",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "XOM",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "WMT",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "COST",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "NFLX",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "AMD",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "ORCL",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    }
    ]
   }
  }

@@ -4,30 +4,37 @@ observed fill sizes and the markets' markout volatility.
 From protocol V11 an account's toxicity score is the notional-weighted average of its fills'
 markouts at `horizon_ms`, folded over `prior` USD of neutral history and at most `memory` USD of
 fill notional (`params.rs`, `NotionalWeighting::averaged`): a fill of `n` USD with markout `m`
-moves the score from `s` toward `m` by the fraction `n / (history + n)`, and the carried history
-caps at `memory`. The score is in bps; markouts clamp at ±1000 bps.
+moves the score from `s` toward `m` by the fraction `n / (history + n)`, rounding up at `Fixed`'s
+nine decimals, and the carried history caps at `memory`. The score is in bps; markouts clamp at
+±1000 bps.
 
 The calibration, per market and in aggregate:
 
 - *Fill sizes*: papertrade's margin-weighted size distribution on the market's margin schedule
   (`papertrade_sizes.csv`), inverted at quantiles. A position opens as one order, so a fill is a
   position's notional.
-- *Markout scale*: the Parkinson volatility of the market's hourly bars gives a per-second log
-  scale; the markout of a fill held `horizon_ms` against the index is normal with standard
-  deviation `sigma_sec * sqrt(horizon_ms / 1000)` — benign flow has zero mean. Toxic flow is a
-  sustained positive mean; the design level `M_TOX_BPS` is a parameter of the study.
+- *Markout scale*: the Parkinson volatility of the market's hourly bars gives a per-hour log
+  scale (`prices.build`'s); the markout of a fill held `horizon_ms` against the index is normal
+  with standard deviation `sigma_hour / sqrt(3600) * sqrt(horizon seconds)` — benign flow has
+  zero mean. Toxic flow is a sustained positive mean; the design level `M_TOX_BPS` is a
+  parameter of the study.
 - *Memory*: the bounded-memory score is a weighted average of the last `memory` USD of fills, so
-  its sampling noise for fills of size `n` is about `sigma_markout * sqrt(n / memory)` bps. The
-  chosen memory is the smallest that keeps that noise under `DRIFT_BPS` at every market's p99
-  fill: `memory = max_market n99 * sigma_markout^2` (bps are ratios here, so the bound is exact
-  for the stated 1 bp).
-- *Prior*: the neutral history a new account starts with. It is set so a toxic account filling at
-  the median size reaches tier 1 within `CLIMB_FILLS` fills under the exact recurrence, and never
-  exceeds a small fraction of memory, so a new account's first fills are not frozen out.
-- *Tiers and spreads*: tier 1's threshold is the highest level that (a) a toxic account reaches
-  within `CLIMB_FILLS` median-size fills and (b) a benign account filling at its market's p99
-  size stays below for `BENIGN_FILLS` fills with probability at least `1 - BENIGN_FP` (checked by
-  Monte Carlo over the exact recurrence). Tier 2 doubles it. A tier's spread is the sustained
+  its sampling drift for `n`-sized fills is about `sigma_markout * sqrt(n / memory)` bps. The
+  chosen memory is the smallest that keeps that drift under `DRIFT_BPS` at every market's p99
+  fill, rounded up to whole USD so the configured value keeps the bound: about
+  `max_market ceil(n99 * sigma_markout^2)`.
+- *Prior*: half of memory, a design choice: enough neutral history that a new account's first
+  fills move its score only modestly, while the toxic climb still lands well inside the
+  candidate fill counts.
+- *Tiers and spreads*: tier 1 is the highest whole-bps threshold that (a) a toxic account
+  filling at the median clip reaches within one of the candidate fill counts and (b) on each
+  market independently, a benign account filling at that market's median clip — at least a
+  horizon between fills, so markouts do not overlap — stays below it for `BENIGN_FILLS` fills,
+  with the crossing probability's one-sided `ACCEPT_CONFIDENCE` binomial upper bound under
+  `BENIGN_FP` (`model.experiments.upper_bound`). The stated bound is per market; one account
+  trading many markets composes only by a union bound. Fills closer than the horizon share
+  price moves: `correlated_cross_probability` measures that burst sensitivity on a shared price
+  path and reports it without gating. Tier 2 doubles tier 1. A tier's spread is the sustained
   per-fill markout an account needs to reach the tier in the stated fills: the house recoups the
   marginal toxic account's edge. The engine validates tiers ascending with spreads in
   0..=10000 bps.
@@ -189,12 +196,17 @@ def choose_memory(sigma_bps: np.ndarray, symbols: list[str], sizes: dict[str, di
     per_market = {}
     for m, symbol in enumerate(symbols):
         if symbol not in sizes:
-            continue
+            raise ValueError(f"{symbol}: no observed size distribution")
         need = sizes[symbol]["n99"] * (sigma_bps[m] / drift_bps) ** 2
         per_market[symbol] = {"memory_needed_usd": round(need, 0), "sigma_markout_bps": round(float(sigma_bps[m]), 3)}
         if need > worst:
             worst, worst_symbol, bound = need, symbol, sigma_bps[m]
-    return {"memory_usd": worst, "bound_bps": drift_bps, "worst_market": worst_symbol, "per_market": per_market}
+    return {
+        "memory_usd": float(np.ceil(worst)),  # round up: the configured value must keep the bound
+        "bound_bps": drift_bps,
+        "worst_market": worst_symbol,
+        "per_market": per_market,
+    }
 
 
 def choose_prior(memory: float, sizes: dict[str, dict], symbols: list[str]) -> dict:
@@ -216,14 +228,15 @@ def choose_tiers(sigma_bps: np.ndarray, symbols: list[str], sizes: dict[str, dic
     its false positives.) The first K with a passing threshold wins; the stated number of fills
     a toxic account needs is that K. Tier 2 doubles tier 1; the spreads are the sustained
     per-fill markouts that reach each tier in the stated fills."""
-    median = np.median([sizes[s]["n50"] for s in symbols if s in sizes])
+    if any(symbol not in sizes for symbol in symbols):
+        raise ValueError(f"no observed size distributions for: {[s for s in symbols if s not in sizes]}")
+    median = np.median([sizes[s]["n50"] for s in symbols])
     for fills in CLIMB_CANDIDATES:
         toxic_reach = climb_score(M_TOX_BPS, median, prior, memory, fills)
         for tier1 in sorted(set(range(1, int(toxic_reach) + 1)), reverse=True):
             counts = [
                 benign_cross_counts(sigma_bps[m], sizes[symbol]["n50"], prior, memory, tier1, BENIGN_FILLS, seed + m, trials)
                 for m, symbol in enumerate(symbols)
-                if symbol in sizes
             ]
             from model.experiments import upper_bound
 
@@ -251,7 +264,12 @@ def choose_tiers(sigma_bps: np.ndarray, symbols: list[str], sizes: dict[str, dic
                 "median_fill_usd": median,
                 "burst_sensitivity": {str(k): round(v, 5) for k, v in burst.items()},
                 "benign_upper_99": round(worst_upper, 5),
-                "benign_counts": [[c, n] for c, n in counts],
+                "benign_by_market": [
+                    {"symbol": symbol, "crossed": c, "trials": n, "p": round(c / n, 6)}
+                    for (m, symbol), (c, n) in zip(
+                        [(m, s) for m, s in enumerate(symbols) if s in sizes], counts
+                    )
+                ],
             }
     raise ValueError("no tier-1 threshold satisfies the benign bound within the toxic reach")
 

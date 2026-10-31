@@ -270,8 +270,8 @@ tiers = [
 # fills move its score only modestly while the toxic climb still lands well
 # inside the candidate fill counts.
 [genesis.params.toxicity.notional]
-prior = "5629517"
-memory = "11259035"
+prior = "5629518"
+memory = "11259036"
 
 # Level 0 is normal. Higher levels widen spreads, either automatically on
 # any trigger or when the operator raises the floor. A divergence trigger is

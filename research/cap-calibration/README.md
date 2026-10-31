@@ -413,9 +413,9 @@ The launch toxicity parameters (`config/production-genesis.toml`, #114) are dev 
 from the observed fill sizes and the markets' markout volatility, so the score separates toxic
 flow quickly without drifting on large fills. `run.py toxicity` writes
 `results/toxicity_markets.csv` (the per-market distributions and drift), `toxicity_choice.json`
-(the values and method), and `manifest_toxicity.json`. It runs no Monte Carlo: the engine's
-notional-weighted recurrence is exact, and the one probability bound is checked by 40,000-trial
-simulations of it (about 5 seconds).
+(the values and method), and `manifest_toxicity.json`. It runs no Monte Carlo over price paths:
+the engine's notional-weighted recurrence is exact, and the one probability bound is checked by
+40,000-trial simulations of it (about 5 seconds).
 
 - **Fill sizes** (`size_quantiles`): papertrade's margin-weighted distribution of position
   notionals on each market's margin schedule, inverted at the median, p75, p90, and p99. A
@@ -467,8 +467,8 @@ The values proposed to `config/production-genesis.toml` (`results/toxicity_choic
 
 | parameter | launch | calibrated |
 |---|---|---|
-| `prior` USD | 10,000 | 5,629,517 |
-| `memory` USD | 10,000,000 | 11,259,035 |
+| `prior` USD | 10,000 | 5,629,518 |
+| `memory` USD | 10,000,000 | 11,259,036 |
 | tier 1, min score bps / spread bps | 5 / 1 | 1 / 2 |
 | tier 2, min score bps / spread bps | 15 / 3 | 2 / 3 |
 
