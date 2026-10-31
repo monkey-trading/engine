@@ -406,6 +406,91 @@ opening notional, directional flow and churn.
 - **Withdrawals.** The withdrawal and run rates are assumptions; the queue measure depends on
   them, and the house-cash measure does not.
 
+## Stress triggers
+
+The launch stress triggers (`config/production-genesis.toml`, #118) are dev values. The `stress`
+stage calibrates them — the fast-move thresholds and window, the divergence-trigger shares, and
+the utilisation levels — so each automatic level fires when the house's risk actually rises, not
+on noise. `run.py stress` writes `results/stress_moves.csv`, `stress_divergence.csv`,
+`stress_utilisation.csv`, and the chosen values with their method in `stress_choice.json`.
+
+The engine's automatic level rises at once when any reading meets a level's trigger and steps down
+only after a five-minute cooldown (`stress.rs`), and every reading is a share of a market-relative
+bound: a fast move in bps of the index mid, venue divergence in bps of `max_divergence_bps`, and
+house exposure in bps of the market's cap at house NAV.
+
+- **Fast move** (thresholds and window, from the market statistics). The trigger reads the largest
+  distance of the index mid from its trailing window's lowest or highest mid. Each market's
+  per-second volatility comes from its hourly bars' Parkinson range; one minute-scale path per
+  sampled history hour (400 hours per market), at the engine's one-second cadence, bucketed window,
+  and cooldown hysteresis, gives each candidate's share of time at each level and the volatility
+  percentile its firings select. The chosen thresholds are the most protective pair whose
+  flow-weighted time at level 1 stays under 1% (level 2 under 0.1%) and every market's level-1
+  share under 5%. At a 60s window the candidates measure:
+
+  | (t1, t2) bps | time at L1, flow-weighted | worst market at L1 | median vol pct of L1 firings |
+  |---|---|---|---|
+  | (50, 150) | 1.77% | 8.3% | 0.86 |
+  | (60, 150) | 1.00% | 5.1% | 0.85 |
+  | **(75, 200)** | **0.43%** | **2.7%** | 0.87 |
+  | (100, 250) | 0.12% | 1.2% | 0.93 |
+  | (150, 300), launch | 0.009% | 0.3% | 0.97 |
+
+  The window stays at 60s: 30s and 120s give parallel fire-rate curves (a longer window raises
+  every reading alike), and 60s keeps the window's dozen buckets at one-per-6s against feeds that
+  publish at least a mid a second. The choice, 75 and 200 bps, fires on the volatile crypto, oil,
+  and share markets (roughly 0.06–1.1% of their time at level 1) and is silent on FX and indices
+  (their protection is the divergence trigger and the stale-price halt); the launch 150/300 fires
+  on none of them outside crashes.
+- **Divergence** (shares, from the stale-fill cost model). A divergence reading of `d` bps means
+  the venue mids sit `d` apart with the index mid between them; a fill at the index mid loses up
+  to `d/2` bps if the mark snaps to the other venue (`d/4` expected, uniform). A share `s` of a
+  market's bound `B` fires at `d = s·B/10000`. The chosen share is the lowest whose worst-case
+  stale-fill loss at fire covers the level's minimum spread on the tightest-bound market
+  (`d/2 ≥ min_spread`): level 1 needs `d ≥ 4` bps, level 2 `d ≥ 20`. That gives 8000 (level 1) and,
+  capped at the highest share still short of the bound itself — at 10000 the market has already
+  halted — 9500 (level 2). The launch 6000/8000 fires on the tightest markets below the
+  stale-fill cost of the level-1 spread; the expected-cost rule (`d/4 ≥ min_spread`) is reported
+  in `stress_divergence.csv` and is unreachable at any share under 10000 on the 5-bps markets.
+- **Utilisation** (levels, from the Monte Carlo). The model records each market's hourly
+  utilisation and exposure on the same 2,000 paths as the floor study, at three floor families:
+  the house-cash 1% choice ($240M of floors, the study's recommendation), a uniform $10M, and a
+  uniform $1M. Level 2 stays at 9500: it is the last widening before refusals start. Level 1 is
+  the lowest candidate whose flow-weighted fire rate stays under 2% on the launch-relevant
+  families and under 5% on any market with at least 1% of the flow — 6000, firing 1.8–2.0%
+  flow-weighted (worst market 3.7%). The fire rates:
+
+  | level bps | house-cash 1% | uniform $10M | uniform $1M |
+  |---|---|---|---|
+  | 5000 | 7.7% | 7.2% | 50.3% |
+  | **6000 (L1)** | **2.0%** | **1.8%** | 39.4% |
+  | 8000, launch L1 | 0.11% | 0.10% | 16.7% |
+  | **9500 (L2)** | **0.00%** | **0.00%** | 2.4% |
+
+  Under $1M floors a market's cap is so small that every level fires constantly — a property of
+  those floors, reported rather than calibrated to; at the recommended floors the utilisation
+  trigger is a rare event, as intended. The per-fire exposure at 6000 is the house near its cap
+  ($5.7M mean on BTC-USD), against a p99 next-mark gap of 180 bps on BTC-USD (`gap_tables`). The
+  model nets each hour's orders against the net-exposure cap and fills offsetting flow in full
+  (its documented approximation, README above), so after one-sided settlement a book can briefly
+  exceed the cap — the engine, checking each order, refuses more. The exposure-at-fire rows of
+  `stress_utilisation.csv` inherit that; the level choice rests on the fire rates, which the
+  artifact touches only in a handful of hours per market.
+
+The values proposed to `config/production-genesis.toml` (`stress_choice.json`):
+
+| parameter | launch | calibrated |
+|---|---|---|
+| `stress_move_window_ms` | 60000 | 60000 |
+| move bps, level 1 / 2 | 150 / 300 | 75 / 200 |
+| divergence share bps, level 1 / 2 | 6000 / 8000 | 8000 / 9500 |
+| utilisation bps, level 1 / 2 | 8000 / 9500 | 6000 / 9500 |
+
+Provenance: `run.py stress` on the committed `data/derived/`, 2,000 paths in batches of 25, seed
+1, four workers, about 13 minutes (`results/manifest_stress.json`); the move tables sample 400
+history hours per market at the same seed. The same seed and batch sizes reproduce the run
+exactly.
+
 ## Re-running
 
 From a virtualenv outside the repo (Python 3.12 or newer):
@@ -419,7 +504,9 @@ cd research/cap-calibration
 
 `all` reruns everything from the committed `data/derived/` with the committed results' settings:
 `DEFAULTS` in `run.py` sets each stage's paths and paths per batch, and `--workers` defaults to 4.
-Stages run alone with `per-market`, `joint`, `sensitivity`, and `report`. Each batch of paths is
+Stages run alone with `per-market`, `joint`, `sensitivity`, and `report`; the stress-trigger
+calibration (below) runs with `stress`, under the same seeding and manifest conventions. Each
+batch of paths is
 seeded from `--seed` (default 1) and its index, and its size shapes its random draws, so the same
 seed and batch size reproduce a run exactly, and another batch size gives other, equally valid
 paths. `results/manifest_<stage>.json` records the scenario, including both, the hashes of the
@@ -436,7 +523,9 @@ To recalibrate as live data arrives:
   share) follows, and the market mix becomes the engine's own volume;
 - move the price window forward and widen it as hourly history allows;
 - set the MONKEY rate and half-life once #36 fixes them, and the benchmark rates from #33;
-- rerun `all`, and change floors through the operator channel (#47).
+- rerun `all`, and change floors through the operator channel (#47);
+- rerun `stress` after any floor, market, or bound change: the utilisation levels' fire rates
+  move with the caps, and the move thresholds with each market's volatility.
 
 ## Files
 
@@ -446,7 +535,8 @@ To recalibrate as live data arrives:
 - `derive/`: `papertrade.py` decodes positions; `markets.py` builds the hourly dataset, statistics,
   mix, and benchmark rates, into `data/derived/`.
 - `model/`: `accounting.py` (engine rules), `prices.py` (bootstrap), `flow.py` (behaviour),
-  `simulate.py` (the hourly simulation), `experiments.py` (runs and measures), `report.py`.
+  `simulate.py` (the hourly simulation), `experiments.py` (runs and measures), `stress.py` (the
+  stress-trigger calibration), `report.py`.
 - `tests/`: the engine rules, the simulation's accounting, the data derivation, and the
   estimators, on hand cases and small synthetic inputs.
 - `results/`: the stage outputs, `report.md`, and run manifests.

@@ -261,6 +261,12 @@ memory = "10000000"
 # any trigger or when the operator raises the floor. A divergence trigger is
 # a share of each market's max_divergence_bps, so every market can reach each
 # level: 60% and 80% are 15 and 20 bps at crypto's 25 bps bound.
+# Calibrated by research/cap-calibration's stress stage (#133): the divergence
+# shares are the lowest whose stale-fill loss at fire covers each level's
+# spread on the tightest bound; the move thresholds keep every market's level-1
+# time under 5% and the flow-weighted under 1% on minute-scale simulations of
+# the markets' own hours; the utilisation levels keep the flow-weighted fire
+# rate under 2% per floor family in the Monte Carlo. See the research README.
 [[genesis.params.stress_levels]]
 size_spread_multiplier_bps = 10000
 min_spread_bps = 0
@@ -268,12 +274,12 @@ min_spread_bps = 0
 [[genesis.params.stress_levels]]
 size_spread_multiplier_bps = 20000
 min_spread_bps = 2
-trigger = { divergence_share_bps = 6000, move_bps = 150, utilisation_bps = 8000 }
+trigger = { divergence_share_bps = 8000, move_bps = 75, utilisation_bps = 6000 }
 
 [[genesis.params.stress_levels]]
 size_spread_multiplier_bps = 40000
 min_spread_bps = 10
-trigger = { divergence_share_bps = 8000, move_bps = 300, utilisation_bps = 9500 }
+trigger = { divergence_share_bps = 9500, move_bps = 200, utilisation_bps = 9500 }
 
 # --- Crypto: 24/7 ---------------------------------------------------------
 
