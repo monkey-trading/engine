@@ -16,6 +16,7 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use engine_core::Fixed;
 use engine_core::types::{MarketId, Millis};
 use futures_util::StreamExt;
+use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
 use reqwest::{Client, redirect};
 use serde_json::Value;
 
@@ -78,8 +79,13 @@ impl Candles {
             .map(|cert| reqwest::Certificate::from_der(cert))
             .collect::<Result<Vec<_>, _>>()
             .context("loading candles TLS roots")?;
+        let mut headers = HeaderMap::new();
+        // The venue refuses a request without one (HTTP 400), and the client sends none by default.
+        headers
+            .insert(USER_AGENT, HeaderValue::from_static(concat!("monkeytrading-engine/", env!("CARGO_PKG_VERSION"))));
         let http = Client::builder()
             .tls_certs_only(roots)
+            .default_headers(headers)
             .no_proxy()
             .redirect(redirect::Policy::none())
             .timeout(REQUEST_TIMEOUT)

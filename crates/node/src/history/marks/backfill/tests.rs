@@ -146,6 +146,25 @@ async fn fetch_asks_the_stand_in_and_parses_its_rows() {
     assert_eq!(rows[0].close, fixed("2378.9"));
 }
 
+/// The venue refuses a request without a User-Agent (HTTP 400), so every fetch sends one.
+#[tokio::test]
+async fn fetch_sends_a_user_agent() {
+    let app = axum::Router::new().route(
+        "/products/BTC-USD/candles",
+        axum::routing::get(|headers: axum::http::HeaderMap| async move {
+            let agent = headers.get(axum::http::header::USER_AGENT).and_then(|v| v.to_str().ok());
+            assert_eq!(agent, Some(concat!("monkeytrading-engine/", env!("CARGO_PKG_VERSION"))));
+            axum::Json(serde_json::json!([]))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let candles = Candles::new(&format!("http://{addr}")).unwrap();
+    let rows = candles.fetch("BTC-USD", 60, 1_792_489_740_000, 1_792_489_800_000).await.unwrap();
+    assert!(rows.is_empty());
+}
+
 fn fixed(text: &str) -> Fixed {
     text.parse().unwrap()
 }
