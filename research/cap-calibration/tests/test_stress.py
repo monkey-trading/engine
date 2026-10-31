@@ -36,14 +36,17 @@ def test_the_move_measure_uses_the_larger_side():
 
 
 def test_a_bucket_holds_its_lowest_and_highest_mid():
-    # window 20s: buckets of 2s, so t=0 and t=1 share a bucket. A dip inside the bucket stays
-    # the window's low after the mid recovers.
+    # window 20s: buckets of 2s. A dip at t=1 opens bucket (0,1); the recovery at t=2 opens the
+    # next. The dip stays the window's low while its bucket lives, and the bucket outlives the
+    # dip's own 20s: at t=21 the dip is individually 20s old but the bucket's newest mid (t=1)
+    # is exactly 20s old, so the engine still reads the dip and a per-second compaction would not.
     mids = np.ones((1, 30))
     mids[0, 1] = 0.99
     measure = stress.engine_move_measures(mids, window_s=20)
     assert measure[0, 2] == pytest.approx((1.0 - 0.99) / 0.99 * 1e4, rel=1e-9)
-    # Once the dip's bucket leaves the window (newest mid over 20s old), the reading is zero.
-    assert measure[0, 25] == 0.0
+    assert measure[0, 21] == pytest.approx((1.0 - 0.99) / 0.99 * 1e4, rel=1e-9)
+    # One second later the bucket itself has left the window (newest mid over 20s old).
+    assert measure[0, 22] == 0.0
 
 
 def test_the_level_rises_at_once_and_steps_down_only_after_the_cooldown():
@@ -349,9 +352,10 @@ def test_choose_divergence_handles_a_zero_minimum_spread():
     genesis = genesis_with_bounds({"EUR-USD": 5})
     genesis["params"] = {"stress_levels": [{}, {"min_spread_bps": 0}, {"min_spread_bps": 10}]}
     choice = stress.choose_divergence(genesis)
-    # Level 1's zero spread makes the cost criterion vacuous: the most protective share carries
-    # it; level 2's 10-bps criterion still needs 20 bps, infeasible on a 5-bps bound.
-    assert choice["divergence_share_l1"] == 1
+    # Level 1's zero spread makes the cost criterion vacuous: widening is free, so the lowest
+    # share the engine validates (0, the trigger never needed) carries it; level 2's 10-bps
+    # criterion still needs 20 bps, infeasible on a 5-bps bound, so the fallback applies.
+    assert choice["divergence_share_l1"] == 0
     assert choice["divergence_share_l2"] == 9500
     assert choice["level2_cost_feasible"] is False
 

@@ -445,9 +445,10 @@ house exposure in bps of the market's cap at house NAV.
   every reading alike), and 60s keeps the window's dozen buckets at one-per-6s against feeds that
   publish at least a mid a second. The choice, 75 and 200 bps, fires on the volatile crypto, oil,
   and share markets — 0.06–1.2% of the time on those carrying at least 1% of the flow, up to 3.8%
-  on the smallest share listings, the worst market within the 5% bound — and is silent on FX and
-  indices (their protection is the divergence trigger and the stale-price halt); the launch
-  150/300 fires on none of them outside crashes. The hysteresis cooldown and the calibrated window
+  on the smallest share listings, the worst market within the 5% bound — and near-silent on FX
+  and indices (0.06–0.4% of the time on the index markets, zero on FX; their main protection is
+  the divergence trigger and the stale-price halt); the launch 150/300 fires on none of them
+  outside crashes. The hysteresis cooldown and the calibrated window
   are read from the genesis the stage calibrates, so a parameter change there cannot silently drift
   the tables away from the engine they model.
 - **Divergence** (shares, from the stale-fill cost model). A divergence reading of `d` bps means

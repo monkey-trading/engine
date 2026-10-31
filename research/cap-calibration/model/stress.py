@@ -279,18 +279,21 @@ def choose_divergence(genesis: dict) -> dict:
     spread1, spread2 = level_spreads(genesis)
 
     def lowest_share(spread_bps: int) -> int | None:
-        # A zero minimum spread makes the cost criterion vacuous: widening is free, so the most
-        # protective share (the lowest the engine validates) carries the level.
+        # A zero minimum spread makes the cost criterion vacuous: widening costs nothing, so the
+        # level needs no divergence trigger and the lowest share the engine validates (0) carries
+        # it.
         if spread_bps <= 0:
-            return 1
-        share = max(1, (2 * spread_bps - 1) * 10_000 // tightest + 1)
-        return share if share <= 10_000 else None
+            return 0
+        share = (2 * spread_bps - 1) * 10_000 // tightest + 1
+        return share if 0 <= share <= 10_000 else None
 
+    share1, share2 = lowest_share(spread1), lowest_share(spread2)
     return {
-        "divergence_share_l1": lowest_share(spread1),
-        "divergence_share_l2": lowest_share(spread2) or 9500,
+        "divergence_share_l1": share1,
+        # None marks the infeasible criterion; 0 is a valid vacuous choice, not the fallback.
+        "divergence_share_l2": 9500 if share2 is None else share2,
         "tightest_bound_bps": tightest,
-        "level2_cost_feasible": lowest_share(spread2) is not None,
+        "level2_cost_feasible": share2 is not None,
     }
 
 
