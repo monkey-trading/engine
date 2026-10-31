@@ -164,7 +164,8 @@ this crate and reproduce the signed state roots exactly.
 - `src/engine/house.rs` — house NAV, gross exposure, and the caps set from them
 - `src/engine/market.rs` — per-market state: quotes, marks, positions, resting orders, and futures
   roll position
-- `src/hot_indexes.rs` — derived holder, trigger, pending-receipt and above-frontier coverage indexes, rebuilt after recovery
+- `src/hot_indexes/mod.rs` — derived holder, trigger, pending-receipt and above-frontier coverage indexes, rebuilt after recovery
+- `src/hot_indexes/tests.rs` — the rebuild's coverage: the finalised base, whole skipped spans, and the runs a span merges
 - `src/marks.rs` — venue prices, and marking a market and the markets that convert at its index
 - `src/corporate/` — authenticated instruction types and scheduling (`mod.rs`), actual venue
   boundary validation (`calendar.rs`), checked dividend cash transfers and recorded-FX

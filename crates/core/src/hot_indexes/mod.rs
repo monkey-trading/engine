@@ -21,8 +21,9 @@ pub(crate) struct HotIndexes {
     pub(crate) receipts_above_frontier: BTreeMap<String, (u64, Fixed)>,
     /// The live receipts above the finalised frontier at each vault deposit id.
     pub(crate) above_frontier_by_id: BTreeMap<u64, BTreeSet<String>>,
-    /// One past the highest vault deposit id any recorded receipt ever held: ids below it that no
-    /// live receipt holds are missing, whether or not a receipt was ever recorded at them.
+    /// One past the highest vault deposit id any recorded receipt ever held, starting at the
+    /// finalised base: ids from it up that no live receipt holds are missing, whether or not a
+    /// receipt was ever recorded at them; ids below the base settled.
     pub(crate) hwm: u64,
     /// Runs of consecutive vault deposit ids no live receipt holds, at or above the base: start to
     /// end, inclusive.
@@ -46,6 +47,9 @@ pub(crate) struct HotIndexes {
     pub(crate) pending: BTreeMap<Option<AccountId>, BTreeSet<String>>,
     /// Pending references a retry could settle: the house's and declared accounts'.
     pub(crate) retryable: BTreeSet<String>,
+    /// Test-only: run insertions and extensions, bounding the rebuild's index work.
+    #[cfg(test)]
+    pub(crate) run_insertions: usize,
 }
 
 #[derive(Debug, Default)]
@@ -67,16 +71,15 @@ impl HotIndexes {
     }
 
     /// Records a live receipt above the finalised frontier, displacing any id mapping the
-    /// reference held. Ids between the high water mark and a higher new id were never observed:
+    /// reference held. Ids between the high-water mark and a higher new id were never observed:
     /// they are missing too, or a reorganisation's deposit there would be neither reserved nor
-    /// refundable.
+    /// refundable. The skipped span inserts whole; a run a reversal left inside it joins, so no
+    /// id is named twice.
     pub(crate) fn add_above_frontier(&mut self, reference: String, deposit_id: u64, amount: Fixed) {
         if self.receipts_above_frontier.get(&reference).is_none_or(|(old, _)| *old != deposit_id)
             && deposit_id >= self.hwm
         {
-            for hole in self.hwm..deposit_id {
-                self.open_missing_unknown(hole);
-            }
+            self.open_missing_span(self.hwm, deposit_id);
             self.hwm = deposit_id.saturating_add(1);
         }
         match self.receipts_above_frontier.insert(reference.clone(), (deposit_id, amount)) {
@@ -140,10 +143,32 @@ impl HotIndexes {
         self.unheld_amounts.insert(id, amount);
     }
 
-    /// Marks `id`, merged with its adjacent runs, missing with no recorded principal: the id was
-    /// passed over, and what occupies it at the vault is knowable only to the vault.
-    fn open_missing_unknown(&mut self, id: u64) {
-        self.insert_run(id);
+    /// Marks the whole span `start..end` missing with no recorded principal: ids a higher new id
+    /// passed over. A run a reversal left inside the span, or one its ends touch, joins it, so
+    /// the runs stay disjoint and no id is named twice.
+    fn open_missing_span(&mut self, start: u64, end: u64) {
+        if start >= end {
+            return;
+        }
+        #[cfg(test)]
+        {
+            self.run_insertions += 1;
+        }
+        let mut merged_start = start;
+        let mut merged_end = end - 1;
+        let mut absorbed = Vec::new();
+        for (&s, &e) in self.missing.range(..=merged_end.saturating_add(1)) {
+            if e.saturating_add(1) < merged_start {
+                continue;
+            }
+            absorbed.push(s);
+            merged_start = merged_start.min(s);
+            merged_end = merged_end.max(e);
+        }
+        for s in absorbed {
+            self.missing.remove(&s);
+        }
+        self.missing.insert(merged_start, merged_end);
     }
 
     /// Whether `id` sits in a missing run.
@@ -153,6 +178,10 @@ impl HotIndexes {
 
     /// Merges `id` with its adjacent missing runs.
     fn insert_run(&mut self, id: u64) {
+        #[cfg(test)]
+        {
+            self.run_insertions += 1;
+        }
         let mut start = id;
         let mut end = id;
         if let Some((&s, &e)) = self.missing.range(..id).next_back()
@@ -301,6 +330,11 @@ impl Engine {
             return;
         }
         let mut indexes = HotIndexes::default();
+        // Every id below the finalised base settled at the vault, so coverage starts there: a
+        // lone receipt just past a large frontier would otherwise open the settled span below it
+        // one missing id at a time.
+        let base = self.custody_checkpoint.map_or(0, |checkpoint| checkpoint.deposit_count);
+        indexes.hwm = base;
         indexes.pending_deposits.extend(self.deposits.iter().filter_map(|(reference, recorded)| {
             (recorded.status == DepositStatus::Unfinalised).then_some(reference.clone())
         }));
@@ -325,7 +359,6 @@ impl Engine {
                 }
             }
         }
-        let base = self.custody_checkpoint.map_or(0, |checkpoint| checkpoint.deposit_count);
         for (id, (_, amount)) in dropped {
             if id >= base && !indexes.above_frontier_by_id.contains_key(&id) {
                 // A reversed id the high-water complement never covered, above the highest live
@@ -417,30 +450,4 @@ impl Engine {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::account::Position;
-
-    #[test]
-    fn position_membership_tracks_open_flat_and_recovered_positions() {
-        let (a, b) = (AccountId([1; 20]), AccountId([2; 20]));
-        let mut engine = Engine::new();
-        engine.ensure_hot_indexes();
-        let position = Position { qty: Fixed::from_int(1), entry: Fixed::from_int(100) };
-        engine.accounts.entry(a).or_default().positions.insert(1, position);
-        engine.record_position(a, 1);
-        engine.accounts.entry(b).or_default().positions.insert(2, position);
-        engine.record_position(b, 2);
-        assert_eq!(engine.hot_indexes.as_ref().unwrap().holders[&1], BTreeSet::from([a]));
-        assert_eq!(engine.hot_indexes.as_ref().unwrap().holders[&2], BTreeSet::from([b]));
-        engine.accounts.get_mut(&a).unwrap().positions.remove(&1);
-        engine.record_position(a, 1);
-        assert!(engine.hot_indexes.as_ref().unwrap().holders[&1].is_empty());
-
-        let mut recovered: Engine = serde_json::from_slice(&serde_json::to_vec(&engine).unwrap()).unwrap();
-        assert!(recovered.hot_indexes.is_none());
-        recovered.ensure_hot_indexes();
-        assert!(!recovered.hot_indexes.as_ref().unwrap().holders.contains_key(&1));
-        assert_eq!(recovered.hot_indexes.as_ref().unwrap().holders[&2], BTreeSet::from([b]));
-    }
-}
+mod tests;
