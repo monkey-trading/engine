@@ -117,7 +117,8 @@ fn genesis_markets_need_a_close_spread_ceiling_each_and_one_the_engine_refuses_f
     assert!(format!("{err:#}").contains("genesis lists markets but no close-spread ceilings"), "{err:#}");
     // An entry may name a market the genesis does not list: it stays inert until the market is
     // listed, so an upgrade's ceilings can cover markets a legacy log listed after its genesis.
-    let unlisted = dev.replacen("market = 1\n", "market = 77\n", 1);
+    // Every listed market keeps its entry: the extra entry makes the registry complete.
+    let unlisted = format!("{dev}\n[[genesis.close_spread_ceilings]]\nmarket = 77\nmax_close_spread_bps = 25\n");
     toml::from_str::<NodeConfig>(&unlisted).unwrap().validate().unwrap();
     // The engine names the entry its registry refuses: a value below the launch close charge, and
     // a listed market with no entry.
