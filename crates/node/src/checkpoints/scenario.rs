@@ -351,6 +351,23 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     // Refill the shortfall, so only the confirmation policy gates this release.
     send(&provider, relayer, token, mintCall { to: vault, amount: U256::from(1_000_000) }.abi_encode()).await;
     local_rpc(&url, "anvil_mine", serde_json::json!(["0x3"])).await;
+    // A send the aborted poster had in flight can mine after the snapshot: the revert would then
+    // strand the durable reservation ahead of the account nonce ("relayer nonce is behind its
+    // reservation") and no re-post recovers. Settle the relayer's nonce first, so the snapshot
+    // captures a quiescent chain.
+    crate::test_support::wait_for("the checkpoint relayer's nonce to settle", async {
+        loop {
+            let latest: U64 =
+                provider.request("eth_getTransactionCount", (checkpoint_relayer, "latest")).await.unwrap();
+            let pending: U64 =
+                provider.request("eth_getTransactionCount", (checkpoint_relayer, "pending")).await.unwrap();
+            if latest == pending {
+                break;
+            }
+            sleep(Duration::from_millis(30)).await;
+        }
+    })
+    .await;
     let saved = local_rpc(&url, "evm_snapshot", serde_json::json!([])).await;
     let current = delayed.chain.state(View::Latest).await.unwrap();
     let (parent_seq, parent_root) = current.checkpoint.clone().unwrap();
