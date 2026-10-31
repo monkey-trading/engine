@@ -15,7 +15,7 @@ use tracing::{info, warn};
 use crate::config::BackfillSection;
 use crate::history::marks::MarkSample;
 use crate::history::marks::backfill::{self, Candles, Source};
-use crate::history::marks::store::Store;
+use crate::history::marks::store::{Coverage, Store};
 use crate::sequencer::{Query, Request};
 
 /// Samples buffered before one write.
@@ -24,7 +24,7 @@ pub(crate) const BATCH: usize = 512;
 /// sequencer delayed.
 pub(crate) const QUEUE: usize = 4096;
 /// How often buffered samples flush, so a quiet market's latest mark reaches the cache.
-const FLUSH_EVERY: Duration = Duration::from_secs(1);
+pub(crate) const FLUSH_EVERY: Duration = Duration::from_secs(1);
 /// How often a due backfill is attempted, one market at a time.
 const BACKFILL_EVERY: Duration = Duration::from_secs(10);
 /// How long after a failed backfill the market is retried.
@@ -36,6 +36,8 @@ const RETRY_AFTER: Duration = Duration::from_secs(300);
 pub(crate) struct Live {
     pub samples: mpsc::Receiver<MarkSample>,
     pub buffered: Vec<MarkSample>,
+    /// When the buffer last flushed; a backfill keeps this deadline between pages.
+    pub flushed_at: Instant,
 }
 
 /// Runs until the sequencer's samples end: flushing live mark reports, then backfilling each
@@ -67,11 +69,13 @@ pub async fn run(
                 live.buffered.push(sample);
                 if live.buffered.len() >= BATCH {
                     write(&mut store, &mut live.buffered)?;
+                    live.flushed_at = Instant::now();
                 }
             }
             _ = flush.tick() => {
                 if !live.buffered.is_empty() {
                     write(&mut store, &mut live.buffered)?;
+                    live.flushed_at = Instant::now();
                 }
             }
             _ = backfill_tick.tick(), if candles.is_some() && backfill.is_some() => {
@@ -120,15 +124,22 @@ async fn backfill_due(
     if engine_now == 0 {
         return Ok(());
     }
-    let depths = (
-        Millis::try_from(cfg.depth_1m.as_millis()).context("backfill depth_1m")?,
-        Millis::try_from(cfg.depth_1h.as_millis()).context("backfill depth_1h")?,
-        Millis::try_from(cfg.depth_1d.as_millis()).context("backfill depth_1d")?,
-    );
+    let coverage = Coverage {
+        depths: (
+            Millis::try_from(cfg.depth_1m.as_millis()).context("backfill depth_1m")?,
+            Millis::try_from(cfg.depth_1h.as_millis()).context("backfill depth_1h")?,
+            Millis::try_from(cfg.depth_1d.as_millis()).context("backfill depth_1d")?,
+        ),
+        retentions: {
+            let r = store.retentions();
+            (r.s1, r.m1, r.h1, r.d1)
+        },
+    };
     let done = store.backfilled().context("reading backfilled markets")?;
     for market in listed {
-        // A market is done when the recorded backfill covers the depths the config now asks for.
-        let covered = done.get(&market).is_some_and(|covered| *covered == depths);
+        // A market is done when the recorded backfill covers the depths and retentions the config
+        // now asks for; a wider retention re-runs it, because the original seed pruned more.
+        let covered = done.get(&market).is_some_and(|recorded| *recorded == coverage);
         if covered || retry_at.get(&market).is_some_and(|at| Instant::now() < *at) {
             continue;
         }
@@ -137,7 +148,7 @@ async fn backfill_due(
             Ok(seeded) => {
                 info!(market, venue = source.venue.name(), symbol = %source.symbol, seeded, "marks backfilled from the provider");
                 store
-                    .mark_backfilled(market, source.venue.name(), &source.symbol, engine_now, depths)
+                    .mark_backfilled(market, source.venue.name(), &source.symbol, engine_now, coverage)
                     .context("recording the backfill")?;
                 retry_at.remove(&market);
             }

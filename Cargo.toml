@@ -76,6 +76,7 @@ serde_json = "1"
 # The SEV-SNP guest's derived key and its own report, which seal the enclave's keys to its launch
 # measurement. Only the guest request types and ioctls, without OpenSSL.
 sev = { version = "8.0.0", default-features = false, features = ["snp"] }
+hmac = "0.13"
 sha2 = "0.11"
 sha3 = "0.10"
 thiserror = "2"

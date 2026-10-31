@@ -123,13 +123,13 @@ async fn serve_node(
         .inspect_err(|e| error!(alert = "checkpoint_startup_failed", "refusing to serve: {e:#}"))?;
     // The marks cache opens before recovery, which seeds it through the sink as it verifies the log.
     let marks_failed = |e: &anyhow::Error| error!(alert = "marks_cache_failed", "refusing to serve: {e:#}");
-    let marks = marks::startup(&cfg).inspect_err(marks_failed)?;
+    let marks = marks::startup(&cfg, key.marks_key()).inspect_err(marks_failed)?;
     let (mut log, history_plan) = read_log_and_history_authorities(
         &cfg,
         Some(AccountId(key.address())),
         checkpoint_setup.as_ref().map(|setup| setup.parent),
         authorities,
-        &marks.shared,
+        marks.shared.as_ref().expect("the marks store opens at startup"),
         |entry| {
             if let crate::log::LogEntry::Checkpoint(cp) = entry
                 && checkpoint_setup.as_ref().and_then(|setup| setup.posted_seq) == Some(cp.seq)
@@ -212,15 +212,18 @@ async fn serve_node(
     }
     history.catch_up_to(seq.last_seq());
 
-    // The sequencer reports live mark changes; a supervised task writes them and backfills history.
+    // Startup has committed through recovery: move the seeded marks cache into place, attach the
+    // sequencer's live mark reports, and start the supervised task that writes them and backfills.
+    let (marks_store, marks_reader, marks_backfill, marks_sources) =
+        marks.activate().inspect_err(|e| error!(alert = "marks_cache_failed", "refusing to serve: {e:#}"))?;
     let marks_rx = marks::track(&mut seq);
-    let marks_store = marks::into_task_store(marks.shared);
 
     let (tx, rx) = mpsc::channel::<Request>(CHANNEL_CAPACITY);
+    let marks_task = marks::task(marks_store, tx.downgrade(), marks_backfill, marks_sources, marks::live(marks_rx));
     let recovery = seq.take_recovery_checkpoints();
     let sequencer = crate::sequencer_thread::Worker::start(seq.run(rx), cpu)?;
     let mut tasks: JoinSet<TaskResult> = JoinSet::new();
-    tasks.spawn(marks::task(marks_store, tx.downgrade(), marks.backfill, marks.sources, marks::live(marks_rx)));
+    tasks.spawn(marks_task);
     if let Some(setup) = checkpoint_setup {
         let checkpoint_tx = tx.clone();
         tasks.spawn(async move {
@@ -338,7 +341,7 @@ async fn serve_node(
         backfills,
         limits: limits.clone(),
         history: history_reader,
-        marks: marks.reader,
+        marks: marks_reader,
         emission_budget,
         collateral: served,
         listing: Default::default(),
@@ -409,7 +412,7 @@ fn read_log_and_history_authorities(
     }
     let history_failed = |e: &anyhow::Error| error!(alert = "history_recovery_failed", "refusing to serve: {e:#}");
     let mut check = HistoryPlan::open(&cfg.history).inspect_err(history_failed)?;
-    let (sink, seeding) = marks::recovery_sink(marks);
+    let (sink, seeding, reset_done) = marks::recovery_sink(marks);
     let log = Sequencer::read_log_with_authorities(
         &cfg.node.log_dir,
         Some(crate::log::CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? }),
@@ -423,6 +426,10 @@ fn read_log_and_history_authorities(
         Some(sink),
     )
     .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
+    // A replay that never moved a mark still resets: the cache must not serve another log's rows.
+    if !reset_done.get() {
+        marks.borrow_mut().reset_log_derived().context("resetting the marks cache for re-derivation")?;
+    }
     anyhow::ensure!(!seeding.get(), "seeding the marks cache from the log failed");
     Ok((log, check))
 }

@@ -211,6 +211,21 @@ pub(crate) fn read_log_and_history_observe(
     mut observe: impl FnMut(&crate::log::LogEntry),
 ) -> anyhow::Result<(ReplayedLog, HistoryPlan)> {
     // Tests that do not assert on marks seed a scratch cache they discard with the log.
-    let scratch = super::marks::startup(cfg)?.shared;
+    // Outside `cfg.history.dir`: refused-startup byte-preservation snapshots cover that dir.
+    let scratch = marks_store(cfg)?;
     super::read_log_and_history_authorities(cfg, signer, parent, Default::default(), &scratch, &mut observe)
+}
+
+/// A scratch marks store outside `cfg.history.dir`, which refused-startup byte-preservation
+/// snapshots cover. One directory per call: tests of this binary run in parallel threads.
+fn marks_store(cfg: &NodeConfig) -> anyhow::Result<std::rc::Rc<std::cell::RefCell<crate::history::marks::Store>>> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static N: AtomicUsize = AtomicUsize::new(0);
+    let _ = cfg;
+    let dir = crate::test_support::scratch_dir(&format!("marks-observe-{}", N.fetch_add(1, Ordering::Relaxed)));
+    Ok(std::rc::Rc::new(std::cell::RefCell::new(crate::history::marks::Store::open_in(
+        &dir,
+        crate::history::marks::Retentions::defaults(),
+        crate::tee::EnclaveKey::test_key().marks_key(),
+    )?)))
 }

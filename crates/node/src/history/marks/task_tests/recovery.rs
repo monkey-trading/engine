@@ -47,10 +47,11 @@ async fn recovery_seeds_the_cache_and_reseeding_matches() {
 
 /// Opens a fresh cache and seeds it through the replay's marks sink, as recovery does.
 fn seed_from_log(dir: &std::path::Path) -> Store {
-    let store = Store::open_in(&scratch_dir("marks-recovery-cache"), Retentions::defaults()).unwrap();
+    let store = Store::open_in(&scratch_dir("marks-recovery-cache"), Retentions::defaults(), [0x42; 32]).unwrap();
     let shared = Rc::new(RefCell::new(store));
     let failed = Rc::new(std::cell::Cell::new(false));
-    let mut seeder = Seeder::new(shared.clone(), failed);
+    let reset_done = Rc::new(std::cell::Cell::new(false));
+    let mut seeder = Seeder::new(shared.clone(), failed, reset_done);
     Sequencer::read_log_with_authorities(
         dir,
         Some(CheckpointDomain { chain_id: 31_337, vault: AccountId([0; 20]) }),

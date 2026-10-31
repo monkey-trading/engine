@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use crate::config::{BackfillSection, FeedsSection, Venue};
 use crate::history::marks::Resolution;
-use crate::history::marks::run::{BATCH, Live};
+use crate::history::marks::run::{BATCH, FLUSH_EVERY, Live};
 use crate::history::marks::store::{Seed, Store};
 use anyhow::{Context, bail, ensure};
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -205,13 +205,16 @@ pub async fn seed_market(
                 });
             }
             tokio::time::sleep(PAGE_PACE).await;
-            // Keep draining live marks while fetching, so the queue cannot fill and drop samples.
+            // Keep draining live marks while fetching, so the queue cannot fill and drop samples,
+            // and keep the flush deadline: a quiet market's latest mark reaches the cache within
+            // the same second it would without a backfill running.
             while let Ok(sample) = live.samples.try_recv() {
                 live.buffered.push(sample);
             }
-            if live.buffered.len() >= BATCH {
+            if !live.buffered.is_empty() && (live.buffered.len() >= BATCH || live.flushed_at.elapsed() >= FLUSH_EVERY) {
                 store.observe(&live.buffered)?;
                 live.buffered.clear();
+                live.flushed_at = tokio::time::Instant::now();
             }
         }
         seeded += store.seed(&rows, now)?;
@@ -241,6 +244,13 @@ fn candle(row: &Value) -> anyhow::Result<Candle> {
         let owned;
         let text: &str = match &columns[column] {
             Value::String(text) => text,
+            // `Number::to_string` renders small magnitudes in exponent notation, which the fixed
+            // parser rejects; nine fractional digits is exactly its precision, so a plain decimal
+            // conversion loses nothing it could keep.
+            Value::Number(number) if number.as_f64().is_some_and(|f| f != f.trunc()) => {
+                owned = format!("{:.9}", number.as_f64().expect("checked above"));
+                &owned
+            }
             Value::Number(number) => {
                 owned = number.to_string();
                 &owned

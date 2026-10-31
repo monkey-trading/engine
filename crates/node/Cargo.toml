@@ -33,6 +33,7 @@ ed25519-dalek.workspace = true
 futures-util.workspace = true
 governor.workspace = true
 hex.workspace = true
+hmac.workspace = true
 hpke.workspace = true
 http-body-util.workspace = true
 humantime-serde.workspace = true

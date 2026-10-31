@@ -188,21 +188,26 @@ pub(crate) struct Seeder {
     buffered: Vec<MarkSample>,
     reset: bool,
     failed: Rc<Cell<bool>>,
+    /// Set once the log-derived content is reset, so a recovery with zero mark samples still
+    /// resets through the caller.
+    reset_done: Rc<Cell<bool>>,
 }
 
 /// How many samples `Seeder` buffers before one flush.
 const BATCH: usize = 1024;
 
 impl Seeder {
-    /// A seeder writing `store`, which recovery replays into, reporting failure through `failed`.
-    pub fn new(store: Rc<RefCell<Store>>, failed: Rc<Cell<bool>>) -> Self {
-        Self { store, buffered: Vec::new(), reset: false, failed }
+    /// A seeder writing `store`, which recovery replays into, reporting failure through `failed`
+    /// and reset completion through `reset_done`.
+    pub fn new(store: Rc<RefCell<Store>>, failed: Rc<Cell<bool>>, reset_done: Rc<Cell<bool>>) -> Self {
+        Self { store, buffered: Vec::new(), reset: false, failed, reset_done }
     }
 
     /// Resets the log-derived content on the first sample, then buffers it, flushing at `BATCH`.
     pub fn sample(&mut self, sample: MarkSample) {
         if !self.reset {
             self.reset = true;
+            self.reset_done.set(true);
             if let Err(e) = self.store.borrow_mut().reset_log_derived() {
                 warn!(alert = "marks_seed_failed", "resetting the marks cache for re-derivation: {e:#}");
                 self.failed.set(true);

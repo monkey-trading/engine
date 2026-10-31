@@ -65,7 +65,6 @@ pub struct TestSequencer {
     /// What custody receives.
     pub withdrawals: mpsc::UnboundedReceiver<SignedWithdrawal>,
     pub metrics: Arc<Metrics>,
-    /// The marks-sample receiver, for the test that drives the marks task.
     marks_rx: Option<mpsc::Receiver<crate::history::marks::MarkSample>>,
     task: JoinHandle<anyhow::Result<()>>,
 }
@@ -134,9 +133,8 @@ impl TestSequencer {
         Self { tx, stream, manifest, withdrawals, metrics, marks_rx: Some(marks_rx), task }
     }
 
-    /// Takes the marks-sample receiver, for the test that drives the marks task against this node.
     pub fn take_marks(&mut self) -> mpsc::Receiver<crate::history::marks::MarkSample> {
-        self.marks_rx.take().expect("the marks receiver is taken once")
+        self.marks_rx.take().expect("taken once")
     }
 
     /// Stops the sequencer as a shutdown does: it drains and writes a final checkpoint.
@@ -319,10 +317,11 @@ pub fn scratch_dir(name: &str) -> PathBuf {
     dir
 }
 
-/// A marks-cache reader over a scratch file no test writes: API tests that never call the marks
-/// endpoint need a reader that is never read.
+/// A marks-cache reader over a scratch store no test reads; one directory per calling thread.
 pub fn marks_reader() -> crate::history::marks::Reader {
-    crate::history::marks::Reader::new(scratch_dir("unused-marks").join("marks.sqlite"))
+    use crate::history::marks::{Retentions, Store};
+    let dir = scratch_dir(&format!("unused-marks-{:?}", std::thread::current().id()));
+    Store::open_in(&dir, Retentions::defaults(), [0x42; 32]).expect("scratch").reader()
 }
 
 /// An operator public key nobody has published: the uncompressed SEC1 hex of a fresh random key.

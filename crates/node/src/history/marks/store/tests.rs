@@ -6,20 +6,25 @@ use std::path::PathBuf;
 use engine_core::Fixed;
 use rusqlite::Connection;
 
-use super::{MARKS_FILE, Reader, SCHEMA, Seed, Store};
+use super::{Coverage, MARKS_FILE, Seed, Store, expected_schema};
 use crate::history::marks::{MarkEntry, MarksPage, Provenance, Resolution, Retentions};
 use crate::history::store::{read_only, schema_of};
 use crate::test_support::scratch_dir;
 
+/// The authentication key every test store derives its row tags with.
+fn mac_key() -> [u8; 32] {
+    [0x42; 32]
+}
+
 /// A store on a fresh scratch file.
 fn fresh_store(name: &str, retentions: Retentions) -> Store {
-    Store::open(&scratch_dir(name).join(MARKS_FILE), retentions).unwrap()
+    Store::open(&scratch_dir(name).join(MARKS_FILE), retentions, mac_key()).unwrap()
 }
 
 /// The store's path on a fresh scratch file.
 fn fresh_store_at(name: &str, retentions: Retentions) -> (PathBuf, Store) {
     let path = scratch_dir(name).join(MARKS_FILE);
-    (path.clone(), Store::open(&path, retentions).unwrap())
+    (path.clone(), Store::open(&path, retentions, mac_key()).unwrap())
 }
 
 /// A one-hour retention for every resolution but 1d, which stays unbounded.
@@ -207,11 +212,13 @@ async fn reset_log_derived_drops_only_what_the_log_proves() {
 #[tokio::test]
 async fn a_backfilled_marker_records_its_depths_and_survives_a_reopen() {
     let (path, mut store) = fresh_store_at("marks-markers", Retentions::defaults());
-    store.mark_backfilled(3, "coinbase", "BTC-USD", 1_792_000_000_000, (86_400_000, 86_400_000, 86_400_000)).unwrap();
-    assert_eq!(store.backfilled().unwrap(), [(3, (86_400_000, 86_400_000, 86_400_000))].into_iter().collect());
+    let coverage =
+        Coverage { depths: (86_400_000, 86_400_000, 86_400_000), retentions: (3_600_000, 3_600_000, 3_600_000, None) };
+    store.mark_backfilled(3, "coinbase", "BTC-USD", 1_792_000_000_000, coverage).unwrap();
+    assert_eq!(store.backfilled().unwrap(), [(3, coverage)].into_iter().collect());
     drop(store);
-    let store = Store::open(&path, Retentions::defaults()).unwrap();
-    assert_eq!(store.backfilled().unwrap(), [(3, (86_400_000, 86_400_000, 86_400_000))].into_iter().collect());
+    let store = Store::open(&path, Retentions::defaults(), mac_key()).unwrap();
+    assert_eq!(store.backfilled().unwrap(), [(3, coverage)].into_iter().collect());
 }
 
 #[tokio::test]
@@ -223,7 +230,7 @@ async fn pages_are_oldest_first_capped_with_a_next_cursor() {
         store.observe(&[(market, base + n * 60_000, Fixed::from_int(n))]).unwrap();
     }
     drop(store);
-    let reader = Reader::new(path);
+    let reader = Store::open(&path, Retentions::defaults(), mac_key()).unwrap().reader();
     // A window larger than the cap pages by following `next` as `from_ms`.
     let mut from = i64::MIN;
     let mut seen = Vec::new();
@@ -254,7 +261,7 @@ async fn a_file_the_host_altered_is_rebuilt_not_served() {
     drop(store);
     // The host drops a table: the next open discards the file and rebuilds it empty.
     Connection::open(&path).unwrap().execute_batch("DROP TABLE backfilled").unwrap();
-    let store = Store::open(&path, Retentions::defaults()).unwrap();
+    let store = Store::open(&path, Retentions::defaults(), mac_key()).unwrap();
     assert!(store.backfilled().unwrap().is_empty());
     let page = store.reader().page(1, Resolution::S1, i64::MIN, i64::MAX, 10, 10).await.unwrap();
     assert!(page.entries.is_empty(), "the rebuilt cache starts empty");
@@ -269,7 +276,7 @@ async fn a_schema_this_code_did_not_create_is_refused_by_every_read_and_write() 
         .unwrap()
         .execute_batch("CREATE TRIGGER wipe AFTER INSERT ON marks BEGIN DELETE FROM marks; END")
         .unwrap();
-    let reader = Reader::new(path.clone());
+    let reader = store.reader();
     let err = reader.page(1, Resolution::S1, i64::MIN, i64::MAX, 10, 10).await.unwrap_err();
     assert!(format!("{err:#}").contains("did not create"), "{err:#}");
     drop(reader);
@@ -293,10 +300,27 @@ async fn every_connection_to_the_cache_runs_defensive_with_an_untrusted_schema()
     }
 }
 
-// The schema builds and lists what `open` expects.
+// The schema a fresh file holds is exactly what `open` checks against.
 #[tokio::test]
 async fn the_schema_is_what_open_expects() {
-    let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch(SCHEMA).unwrap();
-    assert!(!schema_of(&conn).unwrap().is_empty());
+    let store = fresh_store("marks-expected-schema", Retentions::defaults());
+    let conn = Connection::open(&store.path).unwrap();
+    assert_eq!(schema_of(&conn).unwrap(), expected_schema());
+}
+
+#[tokio::test]
+async fn a_row_the_host_rewrote_fails_authentication_before_it_is_served() {
+    let (path, mut store) = fresh_store_at("marks-tampered", Retentions::defaults());
+    store.observe(&[(1, 1_792_489_860_000, "67000".parse().unwrap())]).unwrap();
+    // The host rewrites a price without the enclave key: reads and the writer's next merge refuse.
+    Connection::open(&path).unwrap().execute("UPDATE marks SET high = '99999' WHERE market = 1", []).unwrap();
+    let err = store.reader().page(1, Resolution::S1, i64::MIN, i64::MAX, 10, 10).await.expect_err("served");
+    assert!(format!("{err:#}").contains("fails authentication"), "{err:#}");
+    let err = store.observe(&[(1, 1_792_489_860_500, "67001".parse().unwrap())]).expect_err("merged");
+    assert!(format!("{err:#}").contains("fails authentication"), "{err:#}");
+    // A cache written under another key is unreadable: the tag binds rows to this enclave.
+    let other = Store::open(&path, Retentions::defaults(), [0x24; 32]).unwrap();
+    let err =
+        other.reader().page(1, Resolution::S1, i64::MIN, i64::MAX, 10, 10).await.expect_err("served under another key");
+    assert!(format!("{err:#}").contains("fails authentication"), "{err:#}");
 }
