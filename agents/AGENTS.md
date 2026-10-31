@@ -214,7 +214,11 @@ an index: load only the rule whose hint matches the current action.
   `cap-calibration/` calibrates the house exposure-cap floors by Monte Carlo (#111): scripts that
   fetch and derive its public data (raw pulls in gitignored `data/raw/`, the derived dataset in
   `data/derived/`), the Python model behind `run.py`, its tests, and `results/`. Its `README.md`
-  gives the method, sources, results, and how to re-run. Research may name the platforms whose
+  gives the method, sources, results, and how to re-run. Its `stress` stage calibrates the
+  production stress triggers (#133): fast-move thresholds and window from minute-scale
+  simulations of the markets' own hours, divergence-trigger shares from a stale-fill cost model,
+  and utilisation levels from the Monte Carlo's hourly books, proposed into
+  `config/production-genesis.toml`. Research may name the platforms whose
   public data it studies, inside `research/` and its PR only. `close-spread-calibration/` calibrates
   per-market close-spread ceilings (#147): pinned inventory and source audit, a pricing model
   checked against `Engine::apply` fills, the isolated-position sweep, per-market results, and the
