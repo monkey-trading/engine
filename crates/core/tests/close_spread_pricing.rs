@@ -270,17 +270,32 @@ fn a_zero_ceiling_means_free_closes() {
     into_v39(&mut h);
     attest(&mut h, &client);
     h.price(BTC, "100000");
+    // A reversal whose opening slice pays no size spread fills free.
     let events = trade(&mut h, &client, BTC, Side::Buy, "1", "100000");
     only_fill(&events);
-    // A reversal whose opening slice pays no size spread fills free.
     let events = trade(&mut h, &client, BTC, Side::Sell, "2", "100000");
     let fill = only_fill(&events);
     assert_eq!(fill.spread_bps, 0, "{events:?}");
     assert_eq!(fill.price, f("100000"));
-    // Back to flat, also free, then a long position big enough to pay a size spread on its next
-    // reversal's opening slice.
-    let events = trade(&mut h, &client, BTC, Side::Buy, "1", "100000");
+    // Long one unit again (closing the short and opening the long fills free) to close on each
+    // side under the stress minimum.
+    let events = trade(&mut h, &client, BTC, Side::Buy, "2", "100000");
     only_fill(&events);
+    // A positive stress minimum: the close's charge is positive, and the zero ceiling clamps it
+    // to exactly the index, on both closing sides.
+    h.operator_admin(AdminCommand::SetStressFloor { market: Some(BTC), level: 1 });
+    let events = reduce(&mut h, &client, BTC, Side::Sell, "1", "100000");
+    let fill = only_fill(&events);
+    assert_eq!(fill.spread_bps, 0, "{fill:?}");
+    assert_eq!(fill.price, f("100000"), "the zero ceiling clamps the positive charge to the index: {fill:?}");
+    // A short whose buy close clamps the same way.
+    let events = trade(&mut h, &client, BTC, Side::Sell, "100", "100000");
+    only_fill(&events);
+    let events = reduce(&mut h, &client, BTC, Side::Buy, "100", "100000");
+    let fill = only_fill(&events);
+    assert_eq!(fill.spread_bps, 0, "{fill:?}");
+    assert_eq!(fill.price, f("100000"), "{fill:?}");
+    // A long position big enough to pay a size spread on its next reversal's opening slice.
     let events = trade(&mut h, &client, BTC, Side::Buy, "100", "100000");
     only_fill(&events);
     // A reversal whose opening slice pays anything is refused.
