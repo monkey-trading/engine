@@ -11,7 +11,7 @@
    "window_s": 60,
    "move_bps_l1": 75,
    "move_bps_l2": 200,
-   "mean_vol_pct_l1": 0.9913352082701504
+   "mean_vol_pct_l1": 0.991327198162282
   },
   "divergence": {
    "divergence_share_l1": 6001,

@@ -37,7 +37,7 @@
   "papertrade_summary.json": "875fc6c89820321a"
  },
  "workers": 4,
- "seconds": 1270,
+ "seconds": 1249,
  "move_hours": 400,
  "utilisation_stats": true,
  "floor_families": {

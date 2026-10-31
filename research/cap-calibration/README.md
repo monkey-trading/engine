@@ -432,9 +432,9 @@ house exposure in bps of the market's cap at house NAV.
 
   | (t1, t2) bps | time at L1, flow-weighted | worst market at L1 | mean vol pct of L1 firings |
   |---|---|---|---|
-  | (50, 150) | 1.47% | 10.1% | 0.977 |
-  | (60, 150) | 0.79% | 6.6% | 0.986 |
-  | **(75, 200)** | **0.37%** | **3.7%** | 0.991 |
+  | (50, 150) | 1.51% | 10.1% | 0.975 |
+  | (60, 150) | 0.80% | 6.6% | 0.985 |
+  | **(75, 200)** | **0.37%** | **3.8%** | 0.991 |
   | (100, 250) | 0.14% | 1.4% | 0.994 |
   | (150, 300), launch | 0.014% | 0.39% | 0.995 |
 
@@ -444,7 +444,7 @@ house exposure in bps of the market's cap at house NAV.
   The window stays at 60s: 30s and 120s give parallel fire-rate curves (a longer window raises
   every reading alike), and 60s keeps the window's dozen buckets at one-per-6s against feeds that
   publish at least a mid a second. The choice, 75 and 200 bps, fires on the volatile crypto, oil,
-  and share markets — 0.06–1.2% of the time on those carrying at least 1% of the flow, up to 3.7%
+  and share markets — 0.06–1.2% of the time on those carrying at least 1% of the flow, up to 3.8%
   on the smallest share listings, the worst market within the 5% bound — and is silent on FX and
   indices (their protection is the divergence trigger and the stale-price halt); the launch
   150/300 fires on none of them outside crashes. The hysteresis cooldown and the calibrated window
