@@ -97,16 +97,20 @@ impl Candles {
 
     /// The candles whose buckets start in [`start`, `end`], newest first, at `granularity`
     /// seconds. The endpoint answers at most the `MAX_CANDLES` most recent; wider windows page
-    /// (see `windows`).
+    /// (see `windows`). Calls `between` after every body chunk, and at least every `service` while
+    /// the body trickles when one is given: one slow request cannot stall a caller's own deadline
+    /// (the marks task's live-sample flush) for the request's whole length.
     /// Error cases:
     /// - the request times out or fails, the status is not success, the body exceeds the byte
-    ///   bound, or a row does not parse
-    pub async fn fetch(
+    ///   bound, or a row does not parse; `between` failing fails the fetch with its error
+    pub async fn fetch_with(
         &self,
         product: &str,
         granularity: u32,
         start: Millis,
         end: Millis,
+        service: Option<Duration>,
+        mut between: impl FnMut() -> anyhow::Result<()>,
     ) -> anyhow::Result<Vec<Candle>> {
         // A symbol never carries path or query characters: it is one path segment of the request.
         ensure!(
@@ -129,16 +133,43 @@ impl Candles {
             .error_for_status()
             .with_context(|| format!("fetching candles for {span}"))?;
         // Read incrementally under the byte bound, so a hostile or broken endpoint cannot grow
-        // the response without limit.
+        // the response without limit, and service the caller on progress and on the interval: a
+        // body that stalls between chunks never delays it past `service`.
         let mut body = Vec::new();
         let mut chunks = response.bytes_stream();
-        while let Some(chunk) = chunks.next().await {
-            let chunk = chunk.with_context(|| format!("reading candles for {span}"))?;
+        let append = |body: &mut Vec<u8>, chunk: &[u8]| -> anyhow::Result<()> {
             ensure!(
                 body.len().saturating_add(chunk.len()) as u64 <= MAX_RESPONSE_BYTES,
                 "the candles response for {span} exceeds {MAX_RESPONSE_BYTES} bytes"
             );
-            body.extend_from_slice(&chunk);
+            body.extend_from_slice(chunk);
+            Ok(())
+        };
+        match service {
+            Some(period) => {
+                let mut ticks = tokio::time::interval(period);
+                ticks.tick().await;
+                loop {
+                    tokio::select! {
+                        chunk = chunks.next() => {
+                            let Some(chunk) = chunk else { break };
+                            let chunk = chunk.with_context(|| format!("reading candles for {span}"))?;
+                            append(&mut body, &chunk)?;
+                            between().with_context(|| format!("servicing while reading candles for {span}"))?;
+                        }
+                        _ = ticks.tick() => {
+                            between().with_context(|| format!("servicing while reading candles for {span}"))?
+                        }
+                    }
+                }
+            }
+            None => {
+                while let Some(chunk) = chunks.next().await {
+                    let chunk = chunk.with_context(|| format!("reading candles for {span}"))?;
+                    append(&mut body, &chunk)?;
+                    between().with_context(|| format!("servicing while reading candles for {span}"))?;
+                }
+            }
         }
         let text = std::str::from_utf8(&body).with_context(|| format!("the candles for {span} are not UTF-8"))?;
         parse_candles(text).with_context(|| format!("parsing candles for {span}"))
@@ -164,11 +195,12 @@ pub fn windows(now: Millis, depth_ms: Millis, granularity_ms: Millis) -> Vec<(Mi
 }
 
 /// Seeds every backfillable resolution of `market` from its provider, paging back from `now` —
-/// the engine's admitted time, never the host clock — and pacing requests. Between pages it
-/// drains live samples into `buffered`, flushing at `BATCH`, so a long fetch cannot overflow the
-/// queue and lose marks. Returns how many buckets were added. A fetch failure stops the seeding
-/// with nothing recorded as complete: a later run inserts the missing rows over the ones already
-/// there.
+/// the engine's admitted time, never the host clock — and pacing requests. While fetching, and
+/// between pages, it drains live samples into `buffered`, flushing at `BATCH` or the one-second
+/// deadline — a slow page cannot overflow the queue and drop marks, and cannot delay a quiet
+/// market's newest mark past the same second it would flush without a backfill. Returns how many
+/// buckets were added. A fetch failure stops the seeding with nothing recorded as complete: a
+/// later run inserts the missing rows over the ones already there.
 /// Error cases:
 /// - a page fetch fails, or the store rejects a seed or a flush
 pub async fn seed_market(
@@ -194,7 +226,12 @@ pub async fn seed_market(
         );
         let mut rows = Vec::new();
         for (start, end) in pages {
-            for candle in http.fetch(&source.symbol, (resolution.ms() / 1_000) as u32, start, end).await? {
+            for candle in http
+                .fetch_with(&source.symbol, (resolution.ms() / 1_000) as u32, start, end, Some(FLUSH_EVERY), || {
+                    service_live(live, store)
+                })
+                .await?
+            {
                 // A conforming endpoint answers within the window; a bucket past `now` is the
                 // endpoint's noise, not history, and is never seeded.
                 if candle.ts > now {
@@ -211,21 +248,30 @@ pub async fn seed_market(
                 });
             }
             tokio::time::sleep(PAGE_PACE).await;
-            // Keep draining live marks while fetching, so the queue cannot fill and drop samples,
-            // and keep the flush deadline: a quiet market's latest mark reaches the cache within
-            // the same second it would without a backfill running.
-            while let Ok(sample) = live.samples.try_recv() {
-                live.buffered.push(sample);
-            }
-            if !live.buffered.is_empty() && (live.buffered.len() >= BATCH || live.flushed_at.elapsed() >= FLUSH_EVERY) {
-                store.observe(&live.buffered)?;
-                live.buffered.clear();
-                live.flushed_at = tokio::time::Instant::now();
-            }
+            // The run loop's service between pages too, for the last page of a resolution and
+            // the pace itself.
+            service_live(live, store)?;
         }
         seeded += store.seed(&rows, now)?;
     }
     Ok(seeded)
+}
+
+/// The run loop's live-sample service, shared with a backfill's slow fetches: drain the queue
+/// into the buffer, and flush at the batch or the one-second deadline, so a quiet market's
+/// newest mark reaches the cache within the same second it would without a backfill running.
+/// Error cases:
+/// - the store rejects the flush
+fn service_live(live: &mut Live, store: &mut Store) -> anyhow::Result<()> {
+    while let Ok(sample) = live.samples.try_recv() {
+        live.buffered.push(sample);
+    }
+    if !live.buffered.is_empty() && (live.buffered.len() >= BATCH || live.flushed_at.elapsed() >= FLUSH_EVERY) {
+        store.observe(&live.buffered)?;
+        live.buffered.clear();
+        live.flushed_at = tokio::time::Instant::now();
+    }
+    Ok(())
 }
 
 /// Turns the venue's JSON — `[time, low, high, open, close, volume]` rows, newest first, prices
