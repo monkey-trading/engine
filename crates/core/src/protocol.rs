@@ -186,11 +186,21 @@ pub enum ProtocolVersion {
     /// one leaf holds the vault deposit cursor with the pending and held principal the exit
     /// reserves. Activation rebuilds the tree under these encodings.
     V38,
+    /// The total spread a close can pay is capped per market (`close_spread`): a ceiling registry
+    /// adopted at genesis — one entry per listed market, kept apart from `MarketSpec` — bounds
+    /// every close, and no operator command can raise a close's spread above its ceiling. A pure
+    /// close's charge clamps to the ceiling, floored to the exact bound; a reversal whose blended
+    /// spread would exceed the ceiling is refused while the pure close stays open, and a triggered
+    /// order refused that way fills its closing slice and cancels the rest. After genesis an entry
+    /// enters only by a signed adoption in effect seven days after it is logged, and can only be
+    /// lowered; a listing without an adopted ceiling, or one changing its instrument's identity,
+    /// is refused.
+    V39,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V38;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V39;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

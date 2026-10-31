@@ -93,6 +93,29 @@ impl Engine {
         market.reduce_only || self.global_reduce_only
     }
 
+    /// Updates a market's open flag from its schedule, emitting the transition. Before `V17` an
+    /// open cleared the market's move window; from `V17` the window survives the halt, so prices
+    /// observed within it before the halt still count after the reopening.
+    pub(crate) fn refresh_session(&mut self, market_id: MarketId, events: &mut Vec<Event>) {
+        let now = self.now;
+        let Some(market) = self.markets.get(&market_id) else { return };
+        let open = market.spec.schedule.is_open(now) && !market.corporate_action_blocked;
+        if open == market.open {
+            return;
+        }
+        let market = self.markets.get_mut(&market_id).expect("found above");
+        market.open = open;
+        if open {
+            if self.protocol_version < ProtocolVersion::V17 {
+                market.stress.move_ref = None;
+                market.stress.move_window.clear();
+            }
+            events.push(Event::MarketOpened { market: market_id });
+        } else {
+            events.push(Event::MarketClosed { market: market_id });
+        }
+    }
+
     /// From `V21`, drops the quotes each market holds from before `last_now`, the previous command's
     /// time, wherever the market was not open throughout since: a close between two commands,
     /// observed or not, leaves no quote from before it, so the first index after an open comes from

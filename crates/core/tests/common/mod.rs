@@ -42,6 +42,9 @@ pub const DE40: MarketId = 6;
 /// A market id nothing lists.
 pub const UNLISTED: MarketId = 99;
 pub const HOUSE_CAPITAL: i64 = 100_000_000;
+/// Unequal close-spread ceiling test values for the genesis markets, each at or above the harness
+/// launch close charge of 8bps (a 5bps stress minimum plus the 3bps top toxicity add-on).
+pub const CLOSE_SPREAD_CEILINGS: [(MarketId, i64); 3] = [(BTC, 20), (ETH, 30), (AAPL, 15)];
 /// The custody chain and vault the signed harness records.
 pub const CHAIN_ID: u64 = 31_337;
 pub const VAULT: AccountId = AccountId([0xaa; 20]);
