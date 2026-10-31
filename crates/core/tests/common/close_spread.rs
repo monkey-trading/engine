@@ -34,7 +34,7 @@ pub fn ceilings() -> Vec<CloseSpreadCeiling> {
 pub fn harness() -> Harness {
     let mut h = Harness::v8(ClientAuth::Unsigned);
     widen_slippage(&mut h);
-    h.operator_admin(AdminCommand::SetCloseSpreadCeilings { ceilings: ceilings() });
+    install_expect(&mut h, ceilings());
     h
 }
 
