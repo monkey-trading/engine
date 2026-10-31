@@ -272,6 +272,27 @@ impl Sequencer {
         // The last checkpoint the log actually holds, for `Sequencer::checkpoint`'s
         // one-checkpoint-per-seq dedup: the missing trailing one is written on demand.
         let dedup_checkpoint_seq = last_signed_checkpoint.as_ref().map(|checkpoint| checkpoint.seq);
+        // A registry the V39 upgrade carried came from the config of the restart that upgraded
+        // the log: the recorded genesis cannot be restated, so the carried entries are not part
+        // of what `ensure_matches` attests. Refuse a config whose ceilings sit below what the log
+        // enforces — the node may not attest ceilings stricter than it applies. Lowerings the log
+        // adopted after the carry stay under the config's values, so they pass.
+        if let Some(registry) = engine.close_spread_ceilings()
+            && !genesis.has_ceiling_install()
+        {
+            for (market, adopted) in registry {
+                let configured = cfg
+                    .close_spread_ceilings
+                    .iter()
+                    .find(|ceiling| ceiling.market == *market)
+                    .map(|ceiling| ceiling.max_close_spread_bps);
+                anyhow::ensure!(
+                    configured.is_some_and(|configured| *adopted <= configured),
+                    "the log's close-spread ceiling for market {market} is {adopted}bps, above this config's {};                      start the node under the config the upgrade carried",
+                    configured.map_or("none".to_string(), |configured| format!("{configured}bps")),
+                );
+            }
+        }
         let close_spread_ceilings = cfg.close_spread_ceilings.clone();
         let mut sequencer = Self {
             legacy_deposits,

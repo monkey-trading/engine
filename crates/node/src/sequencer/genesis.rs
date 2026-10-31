@@ -158,6 +158,12 @@ impl GenesisProgress {
         self.restated(weighting)
     }
 
+    /// Whether the genesis window sequenced the ceiling install, or a log that predates ceilings
+    /// took its registry at the `V39` upgrade instead (see `Sequencer::activate_protocol`).
+    pub(crate) fn has_ceiling_install(&self) -> bool {
+        self.commands.iter().any(|cmd| matches!(cmd, Command::Admin(AdminCommand::SetCloseSpreadCeilings { .. })))
+    }
+
     /// The genesis the log ran, in the form a config gives it under the latest protocol: parameters
     /// set before `V11` without a toxicity notional weighting take `weighting`, and absolute
     /// divergence triggers set before `V13`, which a config can no longer give, become shares of the
