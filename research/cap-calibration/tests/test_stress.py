@@ -130,12 +130,13 @@ def test_choose_divergence_covers_the_spread_on_the_tightest_market():
     choice = stress.choose_divergence(genesis)
     # L1: d/2 >= 2 bps needs a 4-bps reading; with the engine's truncated share, share 6000 fires
     # at 3 bps and 6001 is the lowest firing at 4. L2: d/2 >= 10 needs 20 bps, unreachable where
-    # the tightest bound is 5, so the documented fallback is 9500, flagged infeasible.
+    # the tightest bound is 5, so the documented fallback is 9500.
     assert choice == {
         "divergence_share_l1": 6001,
         "divergence_share_l2": 9500,
         "tightest_bound_bps": 5,
-        "level2_cost_feasible": False,
+        "level1": "share",
+        "level2": "fallback",
     }
 
 
@@ -363,12 +364,13 @@ def test_choose_divergence_handles_a_zero_minimum_spread():
     genesis = genesis_with_bounds({"EUR-USD": 5})
     genesis["params"] = {"stress_levels": [{}, {"min_spread_bps": 0}, {"min_spread_bps": 10}]}
     choice = stress.choose_divergence(genesis)
-    # Level 1's zero spread makes the cost criterion vacuous: widening is free, so the lowest
-    # share the engine validates (0, the trigger never needed) carries it; level 2's 10-bps
-    # criterion still needs 20 bps, infeasible on a 5-bps bound, so the fallback applies.
-    assert choice["divergence_share_l1"] == 0
+    # Level 1's zero spread makes the cost criterion vacuous: widening is free, so the level
+    # carries no divergence trigger (a share of 0 would fire on every reading, not never). Level
+    # 2's 10-bps criterion still needs 20 bps, infeasible on a 5-bps bound, so the fallback.
+    assert choice["divergence_share_l1"] is None
+    assert choice["level1"] == "omit"
     assert choice["divergence_share_l2"] == 9500
-    assert choice["level2_cost_feasible"] is False
+    assert choice["level2"] == "fallback"
 
 
 def test_choose_divergence_keeps_a_zero_level2_share():
@@ -377,8 +379,8 @@ def test_choose_divergence_keeps_a_zero_level2_share():
     genesis = genesis_with_bounds({"EUR-USD": 5})
     genesis["params"] = {"stress_levels": [{}, {"min_spread_bps": 2}, {"min_spread_bps": 0}]}
     choice = stress.choose_divergence(genesis)
-    assert choice["divergence_share_l2"] == 0
-    assert choice["level2_cost_feasible"] is True
+    assert choice["divergence_share_l2"] is None
+    assert choice["level2"] == "omit"
 
 
 def test_the_move_measure_reads_the_high_side_of_a_fall():

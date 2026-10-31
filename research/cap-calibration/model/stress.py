@@ -243,8 +243,10 @@ def divergence_tables(genesis: dict, launch_shares: tuple = (6000, 8000), calibr
         shares = ((launch_shares[0], launch_shares[1]), (calibrated["divergence_share_l1"], calibrated["divergence_share_l2"]))
         for label, (s1, s2) in (("launch", shares[0]), ("calibrated", shares[1])):
             # The engine truncates the share (stress.rs `divergence_share_bps`), so a share s
-            # first fires at ceil(s*B/10000) bps of divergence.
-            d1, d2 = math.ceil(s1 * bound / 10000), math.ceil(s2 * bound / 10000)
+            # first fires at ceil(s*B/10000) bps of divergence. A None share is an omitted
+            # trigger: the level fires on no divergence reading.
+            d1 = math.ceil(s1 * bound / 10000) if s1 is not None else None
+            d2 = math.ceil(s2 * bound / 10000) if s2 is not None else None
             rows.append(
                 {
                     "symbol": market["symbol"],
@@ -252,13 +254,13 @@ def divergence_tables(genesis: dict, launch_shares: tuple = (6000, 8000), calibr
                     "share": label,
                     "divergence_share_l1": s1,
                     "divergence_share_l2": s2,
-                    "divergence_bps_l1": round(d1, 2),
-                    "divergence_bps_l2": round(d2, 2),
-                    "expected_cost_l1": round(d1 / 4, 2),
-                    "worst_cost_l1": round(d1 / 2, 2),
+                    "divergence_bps_l1": None if d1 is None else round(d1, 2),
+                    "divergence_bps_l2": None if d2 is None else round(d2, 2),
+                    "expected_cost_l1": None if d1 is None else round(d1 / 4, 2),
+                    "worst_cost_l1": None if d1 is None else round(d1 / 2, 2),
                     "spread_l1": spread1,
-                    "expected_cost_l2": round(d2 / 4, 2),
-                    "worst_cost_l2": round(d2 / 2, 2),
+                    "expected_cost_l2": None if d2 is None else round(d2 / 4, 2),
+                    "worst_cost_l2": None if d2 is None else round(d2 / 2, 2),
                     "spread_l2": spread2,
                 }
             )
@@ -278,22 +280,26 @@ def choose_divergence(genesis: dict) -> dict:
     tightest = min(bounds)
     spread1, spread2 = level_spreads(genesis)
 
-    def lowest_share(spread_bps: int) -> int | None:
+    def lowest_share(spread_bps: int) -> tuple[str, int | None]:
         # A zero minimum spread makes the cost criterion vacuous: widening costs nothing, so the
-        # level needs no divergence trigger and the lowest share the engine validates (0) carries
-        # it.
+        # level needs no divergence trigger at all. In the engine a share of 0 means "fires on
+        # every reading" (is_met compares the reading against >= 0), so "no trigger" is an omitted
+        # divergence_share_bps, encoded here as ("omit", None).
         if spread_bps <= 0:
-            return 0
+            return ("omit", None)
         share = (2 * spread_bps - 1) * 10_000 // tightest + 1
-        return share if 0 <= share <= 10_000 else None
+        return ("share", share) if share <= 10_000 else ("infeasible", None)
 
-    share1, share2 = lowest_share(spread1), lowest_share(spread2)
+    kind1, share1 = lowest_share(spread1)
+    kind2, share2 = lowest_share(spread2)
     return {
+        # "omit" (None): the level carries no divergence trigger; 9500: the level-2 fallback when
+        # its cost criterion is infeasible on the tightest markets.
         "divergence_share_l1": share1,
-        # None marks the infeasible criterion; 0 is a valid vacuous choice, not the fallback.
-        "divergence_share_l2": 9500 if share2 is None else share2,
+        "divergence_share_l2": 9500 if kind2 == "infeasible" else share2,
         "tightest_bound_bps": tightest,
-        "level2_cost_feasible": share2 is not None,
+        "level1": kind1,
+        "level2": "fallback" if kind2 == "infeasible" else kind2,
     }
 
 
