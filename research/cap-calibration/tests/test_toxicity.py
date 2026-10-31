@@ -66,7 +66,8 @@ def test_choose_tiers_reaches_the_highest_passing_threshold():
     sigma = np.array([0.1])  # a quiet market: the benign bound passes everywhere
     sizes = {"A": {"n50": 50_000.0, "n75": 50_000.0, "n99": 50_000.0}}
     memory, prior = 5_000_000.0, 2_500_000.0
-    choice = toxicity.choose_tiers(sigma, symbols, sizes, memory, prior, seed=3, trials=4_000)
+    # enough trials that zero crossings bound the probability under BENIGN_FP at 99% confidence
+    choice = toxicity.choose_tiers(sigma, symbols, sizes, memory, prior, seed=3, trials=8_000)
     reach = toxicity.climb_score(toxicity.M_TOX_BPS, 50_000.0, prior, memory, choice["climb_fills"])
     assert choice["tier1_bps"] == int(reach)
     assert choice["tier2_bps"] == choice["tier1_bps"] * 2

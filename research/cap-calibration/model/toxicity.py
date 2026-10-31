@@ -52,6 +52,9 @@ BURST_FILLS = 25
 CORRELATED_TRIALS = 10_000
 CORRELATED_CADENCES_S = (1.0, 0.5)  # a burst filling this often: overlapping markouts
 TICK_S = 0.25  # the price path's step; the horizon is an integer number of steps
+# acceptance is on the one-sided confidence upper bound of the crossing probability, not the
+# point estimate: a candidate must stay under BENIGN_FP at this confidence
+ACCEPT_CONFIDENCE = 0.99
 BENIGN_FP = 1e-3  # allowed probability a benign account crosses tier 1 within BENIGN_FILLS
 M_TOX_BPS = 2.0  # the design toxic level: a sustained per-fill markout above this scalps the house
 TIER2_MULT = 2  # tier 2's threshold is this multiple of tier 1's
@@ -112,14 +115,20 @@ def climb_score(markout_bps: float, notional: float, prior: float, memory: float
     return score
 
 
-def benign_cross_probability(sigma_bps: float, notional: float, prior: float, memory: float, threshold: float, fills: int, seed: int, trials: int) -> float:
-    """The Monte Carlo probability that a benign account (independent zero-mean markouts, this
-    market's scale) crosses the threshold within `fills` same-size fills, under the exact
+def benign_cross_counts(sigma_bps: float, notional: float, prior: float, memory: float, threshold: float, fills: int, seed: int, trials: int) -> tuple[int, int]:
+    """The crossed-trial count over `trials` of a benign account (independent zero-mean markouts,
+    this market's scale) crossing the threshold within `fills` same-size fills, under the exact
     recurrence. Independent markouts are the search bound; `correlated_cross_probability`
-    verifies the chosen threshold against overlapping horizons."""
+    measures the overlapping-horizon burst sensitivity."""
     rng = np.random.default_rng(seed)
     markouts = rng.standard_normal((trials, fills)) * sigma_bps
-    return cross_probability(markouts, notional, prior, memory, threshold)
+    return cross_counts(markouts, notional, prior, memory, threshold)
+
+
+def benign_cross_probability(sigma_bps: float, notional: float, prior: float, memory: float, threshold: float, fills: int, seed: int, trials: int) -> float:
+    """The point-estimate crossing probability (the count over the trials)."""
+    crossed, n = benign_cross_counts(sigma_bps, notional, prior, memory, threshold, fills, seed, trials)
+    return crossed / n
 
 
 def correlated_cross_probability(sigma_bps: float, notional: float, prior: float, memory: float, threshold: float, fills: int, seed: int, trials: int, cadence_s: float) -> float:
@@ -143,6 +152,11 @@ def correlated_cross_probability(sigma_bps: float, notional: float, prior: float
 def cross_probability(markouts: np.ndarray, notional: float, prior: float, memory: float, threshold: float) -> float:
     """The share of trials whose exact-recurrence score crosses the threshold within the fills
     of `markouts` (rows are trials), nine-decimal round-up steps as in the engine."""
+    return cross_counts(markouts, notional, prior, memory, threshold)[0] / markouts.shape[0]
+
+
+def cross_counts(markouts: np.ndarray, notional: float, prior: float, memory: float, threshold: float) -> tuple[int, int]:
+    """The crossed-trial count and the trial count, for the binomial acceptance bound."""
     trials = markouts.shape[0]
     scores = np.zeros(trials)
     histories = np.full(trials, prior)
@@ -152,7 +166,7 @@ def cross_probability(markouts: np.ndarray, notional: float, prior: float, memor
         scores = scores + np.ceil(step * 1e9) / 1e9
         histories = np.minimum(histories + notional, memory)
         crossed |= scores >= threshold
-    return float(crossed.mean())
+    return int(crossed.sum()), trials
 
 
 def drift_bound_sigma(sigma_bps: float, notional: float, memory: float) -> float:
@@ -206,11 +220,15 @@ def choose_tiers(sigma_bps: np.ndarray, symbols: list[str], sizes: dict[str, dic
     for fills in CLIMB_CANDIDATES:
         toxic_reach = climb_score(M_TOX_BPS, median, prior, memory, fills)
         for tier1 in sorted(set(range(1, int(toxic_reach) + 1)), reverse=True):
-            if not all(
-                symbol not in sizes
-                or benign_cross_probability(sigma_bps[m], sizes[symbol]["n50"], prior, memory, tier1, BENIGN_FILLS, seed + m, trials) <= BENIGN_FP
+            counts = [
+                benign_cross_counts(sigma_bps[m], sizes[symbol]["n50"], prior, memory, tier1, BENIGN_FILLS, seed + m, trials)
                 for m, symbol in enumerate(symbols)
-            ):
+                if symbol in sizes
+            ]
+            from model.experiments import upper_bound
+
+            worst_upper = max(upper_bound(crossed, n, ACCEPT_CONFIDENCE) for crossed, n in counts)
+            if worst_upper > BENIGN_FP:
                 continue
             tier2 = tier1 * TIER2_MULT
             burst = {
@@ -232,6 +250,8 @@ def choose_tiers(sigma_bps: np.ndarray, symbols: list[str], sizes: dict[str, dic
                 "toxic_reach_bps": round(toxic_reach, 3),
                 "median_fill_usd": median,
                 "burst_sensitivity": {str(k): round(v, 5) for k, v in burst.items()},
+                "benign_upper_99": round(worst_upper, 5),
+                "benign_counts": [[c, n] for c, n in counts],
             }
     raise ValueError("no tier-1 threshold satisfies the benign bound within the toxic reach")
 
