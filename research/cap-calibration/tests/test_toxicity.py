@@ -157,3 +157,22 @@ def test_overlapping_markouts_share_path_increments():
     spaced_corr = np.corrcoef(spaced[:, 1:], spaced[:, :-1], rowvar=False)[fills - 1, 0]
     assert fine_corr > 0.5  # consecutive markouts share 6 of 8 increments
     assert abs(spaced_corr) < 0.1  # a horizon apart shares none
+
+
+def test_the_acceptance_uses_the_confidence_bound_not_the_point_estimate(monkeypatch):
+    # 8 crossings in 8,000 trials: the point estimate 0.001 meets BENIGN_FP, but the one-sided
+    # 99% upper bound is about 0.0021 and must reject the candidate — a point-estimate
+    # acceptance would let the candidate stand.
+    monkeypatch.setattr(toxicity, "M_TOX_BPS", 3.0)
+    monkeypatch.setattr(toxicity, "CLIMB_CANDIDATES", (75,))
+    monkeypatch.setattr(toxicity, "benign_cross_counts", lambda *a, **k: (8, 8_000))
+    monkeypatch.setattr(
+        toxicity,
+        "correlated_cross_probability",
+        lambda *a, **k: 0.0,
+    )
+    symbols = ["MKT"]
+    sigma = np.array([1.0])
+    sizes = {"MKT": {"n50": 100_000.0, "n75": 100_000.0, "n99": 100_000.0}}
+    with pytest.raises(ValueError):
+        toxicity.choose_tiers(sigma, symbols, sizes, 5_000_000.0, 2_500_000.0, seed=3, trials=8_000)

@@ -2,7 +2,6 @@
  "command": [
   "toxicity"
  ],
- "scenario": null,
  "derived_sha256": {
   "benchmarks.csv": "16e04c781473c39d",
   "hourly_bars.npz": "d742bab6c751e973",
@@ -15,7 +14,7 @@
   "papertrade_sizes.csv": "341fd8a0af63fdce",
   "papertrade_summary.json": "875fc6c89820321a"
  },
- "seconds": 3,
+ "seconds": 5,
  "toxicity_mc_trials": 40000,
  "toxicity_seed": 1
 }

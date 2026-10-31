@@ -207,7 +207,7 @@ def main() -> None:
         extras = toxicity_stage(experiments_mod, markets, bars, flow, tox_args)
         record = {
             "command": sys.argv[1:],
-            "scenario": None,  # no Monte Carlo: the calibration is exact recurrences and trials
+            # no scenario: the calibration is exact recurrences and trials, not a Monte Carlo
             "derived_sha256": manifest(args, None)["derived_sha256"],
             "seconds": round(time.time() - started),
         } | extras
