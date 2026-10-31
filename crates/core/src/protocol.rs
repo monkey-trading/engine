@@ -186,11 +186,16 @@ pub enum ProtocolVersion {
     /// one leaf holds the vault deposit cursor with the pending and held principal the exit
     /// reserves. Activation rebuilds the tree under these encodings.
     V38,
+    /// The exit terms name no unheld principal past the deposit cursor: with no live receipt above
+    /// the finalised frontier, a reversed deposit at vault deposit id 0 stays out of `unheld` — the
+    /// vault's cursor rule already refunds it by id, and reserving it as unheld too double-counted
+    /// it in the exit's refund reserve.
+    V39,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V38;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V39;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

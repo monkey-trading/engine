@@ -32,9 +32,11 @@ pub(crate) struct HotIndexes {
     pub(crate) unheld_amounts: BTreeMap<u64, Fixed>,
     pub(crate) unheld_total: Fixed,
     /// The reserved principal of the missing ids past the highest live id, excluded from the terms
-    /// until the cursor passes them, and the highest live id this exclusion is tracked at.
+    /// until the cursor passes them, and the highest live id this exclusion is tracked at: `None`
+    /// while no live receipt exists, when every missing id is past it — id 0 among them, which a
+    /// zero default would conflate with "empty".
     excluded_unheld: Fixed,
-    tracked_max: u64,
+    tracked_max: Option<u64>,
     /// Principal of the live receipts above the finalised frontier: every one corresponds to a
     /// refundable deposit, and with the named gaps the terms attribute every refundable deposit
     /// below the cursor, so the vault can reserve exactly what no term names.
@@ -132,7 +134,7 @@ impl HotIndexes {
     fn open_missing(&mut self, id: u64, amount: Fixed) {
         self.insert_run(id);
         self.unheld_total += amount;
-        if id > self.tracked_max {
+        if self.tracked_max.is_none_or(|max| id > max) {
             self.excluded_unheld += amount;
         }
         self.unheld_amounts.insert(id, amount);
@@ -174,7 +176,7 @@ impl HotIndexes {
     fn close_missing(&mut self, id: u64) {
         if let Some(estimate) = self.unheld_amounts.remove(&id) {
             self.unheld_total -= estimate;
-            if id > self.tracked_max {
+            if self.tracked_max.is_none_or(|max| id > max) {
                 self.excluded_unheld -= estimate;
             }
         }
@@ -195,9 +197,20 @@ impl HotIndexes {
         self.excluded_unheld
     }
 
-    /// The highest vault deposit id a live receipt holds, or zero while none do.
-    fn live_max(&self) -> u64 {
-        self.above_frontier_by_id.last_key_value().map_or(0, |(id, _)| *id)
+    /// The exclusion `V38` committed: the empty live index's high-water mark stood at zero, which
+    /// doubled as vault deposit id 0, so a missing id 0 was not excluded past the cursor and the
+    /// vault's cursor rule reserved it a second time as unheld. Only the terms commit reads this;
+    /// the incremental index keeps the corrected exclusion.
+    pub(crate) fn legacy_excluded_unheld(&self) -> Fixed {
+        match self.live_max() {
+            Some(max) => self.unheld_amounts.range((max + 1)..).map(|(_, amount)| *amount).sum(),
+            None => self.unheld_amounts.range(1..).map(|(_, amount)| *amount).sum(),
+        }
+    }
+
+    /// The highest vault deposit id a live receipt holds, or `None` while none do.
+    fn live_max(&self) -> Option<u64> {
+        self.above_frontier_by_id.last_key_value().map(|(id, _)| *id)
     }
 
     /// Moves the above-cursor exclusion to the current highest live id: ids the cursor passes join
@@ -208,10 +221,16 @@ impl HotIndexes {
         if max == self.tracked_max {
             return;
         }
-        let crossed: Fixed = if max > self.tracked_max {
-            self.unheld_amounts.range((self.tracked_max + 1)..=max).map(|(_, amount)| *amount).sum()
-        } else {
-            -self.unheld_amounts.range((max + 1)..=self.tracked_max).map(|(_, amount)| *amount).sum::<Fixed>()
+        let crossed: Fixed = match (self.tracked_max, max) {
+            (Some(old), Some(new)) if new > old => {
+                self.unheld_amounts.range((old + 1)..=new).map(|(_, amount)| *amount).sum()
+            }
+            (Some(old), Some(new)) => {
+                -self.unheld_amounts.range((new + 1)..=old).map(|(_, amount)| *amount).sum::<Fixed>()
+            }
+            (None, Some(new)) => self.unheld_amounts.range(..=new).map(|(_, amount)| *amount).sum(),
+            (Some(old), None) => -self.unheld_amounts.range(..=old).map(|(_, amount)| *amount).sum::<Fixed>(),
+            (None, None) => Fixed::ZERO,
         };
         self.excluded_unheld -= crossed;
         self.tracked_max = max;
@@ -234,7 +253,7 @@ impl HotIndexes {
         for (id, amount) in settled {
             self.unheld_amounts.remove(&id);
             self.unheld_total -= amount;
-            if id > self.tracked_max {
+            if self.tracked_max.is_none_or(|max| id > max) {
                 self.excluded_unheld -= amount;
             }
         }
@@ -319,10 +338,13 @@ impl Engine {
             }
         }
         // The exclusion is recomputed from the restored state: the principal of the missing ids
-        // past the highest live id stays out of the terms until the cursor passes them.
+        // past the highest live id stays out of the terms until the cursor passes them; with no
+        // live receipt every missing id is past it.
         indexes.tracked_max = indexes.live_max();
-        indexes.excluded_unheld =
-            indexes.unheld_amounts.range((indexes.tracked_max + 1)..).map(|(_, amount)| *amount).sum();
+        indexes.excluded_unheld = match indexes.tracked_max {
+            Some(max) => indexes.unheld_amounts.range((max + 1)..).map(|(_, amount)| *amount).sum(),
+            None => indexes.unheld_total,
+        };
         for recorded in self.deposits.values() {
             if let Some(held) = recorded.uncredited.filter(|held| held.reason.holds_deposit()) {
                 indexes.terminal_deposit_holds.entry(recorded.receipt.transaction_reference()).or_insert(held);

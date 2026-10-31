@@ -271,7 +271,7 @@ impl Engine {
     /// an id passed over on the way to a higher id was never observed. Without a gap this reads the
     /// index's ends only; with one, it walks the missing runs, not the held receipts, and stops at
     /// [`MAX_EXIT_GAPS`].
-    pub(super) fn exit_deposit_frontier(&mut self) -> (u64, Vec<u64>, Fixed, Fixed) {
+    pub(super) fn exit_deposit_frontier(&mut self, version: ProtocolVersion) -> (u64, Vec<u64>, Fixed, Fixed) {
         self.ensure_hot_indexes();
         let indexes = self.hot_indexes.as_mut().expect("indexes initialised");
         let base = self.custody_checkpoint.map_or(0, |checkpoint| checkpoint.deposit_count);
@@ -293,9 +293,13 @@ impl Engine {
         }
         // The unheld principal covers the unnamed ids below the cursor only: at or past it every
         // deposit is refunded by id, the named gaps reserve their canonical vault amounts, and
-        // below the base every deposit is settled.
+        // below the base every deposit is settled. `V38` held a missing id 0 unexcluded while no
+        // live receipt existed, reserving it against the cursor rule's refund too; from `V39` the
+        // empty index excludes every missing id.
         let named = gaps.iter().filter_map(|id| indexes.unheld_amounts.get(id)).copied().sum::<Fixed>();
-        (cursor, gaps, indexes.unheld_total - named - indexes.excluded_unheld(), indexes.held_receipts)
+        let excluded =
+            if version >= ProtocolVersion::V39 { indexes.excluded_unheld() } else { indexes.legacy_excluded_unheld() };
+        (cursor, gaps, indexes.unheld_total - named - excluded, indexes.held_receipts)
     }
 
     /// Every proof `account` exits with against the last root, or `None` before the first root

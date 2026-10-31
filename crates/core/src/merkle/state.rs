@@ -141,7 +141,7 @@ impl Engine {
             None => self.every_key(),
         };
         let version = self.protocol_version;
-        let deposit_frontier = (version >= ProtocolVersion::V38).then(|| self.exit_deposit_frontier());
+        let deposit_frontier = (version >= ProtocolVersion::V38).then(|| self.exit_deposit_frontier(version));
         let mut changes = BTreeMap::from([(globals_key(), Some(json_hash(&self.globals())))]);
         let exit = &mut self.tree.get_or_insert_with(StateTree::default).exit;
         exit.update_queue(&self.withdrawal_queue, &withdrawal_queue);

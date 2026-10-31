@@ -356,6 +356,21 @@ contract ExitTestCases is ExitTest {
         assertEq(usdc.balanceOf(address(vault)), 0);
     }
 
+    function testAReversedDepositAtIdZeroWithAnEmptyRootIsReservedOnceThroughTheCursorRule() public {
+        // The engine reversed the vault's only deposit before any root held a receipt: the terms
+        // carry an empty cursor and no unheld, so the cursor rule alone refunds id 0 — were the
+        // principal also unheld, the exit would reserve it twice.
+        uint256 sole = _deposit(funder, alice, 40e6);
+        assertEq(sole, 0);
+        ExitVerifier.ExitTerms memory terms = _addTerms(0, 0, 0, 0, 0, 0, new uint64[](0));
+        _post();
+        _startExit(terms);
+        assertEq(vault.exitRefundReserve(), 40e6, "the cursor rule's refund, reserved once");
+        vault.refundDeposit(sole);
+        assertEq(usdc.balanceOf(funder), 40e6, "the payer, not the beneficiary, is refunded");
+        assertEq(vault.exitRefundReserve(), 0);
+    }
+
     function testAProvenTermsWithMoreGapsThanTheBoundIsRefused() public {
         _deposit(funder, alice, 100e6);
         _addAccount(alice, 100e6 * UNIT);
