@@ -432,11 +432,14 @@ house exposure in bps of the market's cap at house NAV.
 
   | (t1, t2) bps | time at L1, flow-weighted | worst market at L1 | mean vol pct of L1 firings |
   |---|---|---|---|
-  | (50, 150) | 1.47% | 10.1% | 0.85 |
-  | (60, 150) | 0.79% | 6.6% | 0.87 |
-  | **(75, 200)** | **0.37%** | **3.7%** | 0.87 |
-  | (100, 250) | 0.14% | 1.4% | 0.92 |
-  | (150, 300), launch | 0.014% | 0.39% | 0.98 |
+  | (50, 150) | 1.47% | 10.1% | 0.977 |
+  | (60, 150) | 0.79% | 6.6% | 0.986 |
+  | **(75, 200)** | **0.37%** | **3.7%** | 0.991 |
+  | (100, 250) | 0.14% | 1.4% | 0.994 |
+  | (150, 300), launch | 0.014% | 0.39% | 0.995 |
+
+  The last column is the mix-weighted mean over the markets of each market's mean firing-hour
+  volatility percentile, the same aggregation `choose_move` reports.
 
   The window stays at 60s: 30s and 120s give parallel fire-rate curves (a longer window raises
   every reading alike), and 60s keeps the window's dozen buckets at one-per-6s against feeds that
@@ -451,15 +454,17 @@ house exposure in bps of the market's cap at house NAV.
   (`d/4` expected, uniform); with more fresh sources the index is their median and can sit closer
   to an extreme, so `d/2` understates the worst case and the chosen shares are conservative under
   it. A share `s` of a market's bound `B` fires at `d = ceil(s·B/10000)` bps — the engine
-  truncates the share — so on bounds below about 21 bps the level-2 share 9500 first fires at the
-  bound itself: while the market still prices there (the stale-price rule refuses only readings
-  above the bound), it is the last widening before a halt, and on crypto's 25-bps bound it fires
-  at 24 bps, one bps inside it. The chosen share is the lowest whose
-  worst-case stale-fill loss at fire covers the level's minimum spread on the tightest-bound
-  market (`d/2 ≥ min_spread`): level 1 needs `d ≥ 4` bps, level 2 `d ≥ 20`. That gives 8000
-  (level 1) and 9500 (level 2). The launch 6000/8000 fires on the tightest markets below the
-  stale-fill cost of the level-1 spread; the expected-cost rule (`d/4 ≥ min_spread`) is reported
-  in `stress_divergence.csv` and is unreachable at any share under 10000 on the 5-bps markets.
+  truncates the share. The level-1 choice is the lowest share whose worst-case stale-fill loss at
+  fire covers the level's minimum spread on the tightest-bound market (`d/2 ≥ min_spread`): it
+  needs a 4-bps reading, and on the tightest 5-bps bounds share 6000 still fires at 3 bps while
+  6001 is the lowest firing at 4 — so 6001 is the choice, firing at 16 bps on crypto's 25-bps
+  bound. Level 2 would need a 20-bps reading, infeasible where the tightest bound is 5, so 9500 is
+  the documented fallback: on bounds below about 21 bps it first fires at the bound itself (which
+  still prices — the stale-price rule refuses only readings above it), the last widening before a
+  halt, and on crypto's bound it fires at 24 bps. The launch 6000/8000 fires on the tightest
+  markets below the stale-fill cost of the level-1 spread; the expected-cost rule
+  (`d/4 ≥ min_spread`) is reported in `stress_divergence.csv` and is unreachable at any share
+  under 10000 on the 5-bps markets.
 - **Utilisation** (levels, from the Monte Carlo). The model records each market's hourly
   utilisation and exposure — the book the hour leaves behind, after its settlements and its opens,
   the positions outstanding until the next hour, the closest hourly analog of the engine's

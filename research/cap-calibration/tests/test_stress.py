@@ -302,20 +302,22 @@ def test_utilisation_records_one_hour_positions():
 def test_the_hysteresis_level_does_not_leak_between_simulated_hours():
     measure = np.zeros((2, 4000))
     measure[0, 100:103] = 200  # hour 0 crosses both thresholds for 3 seconds
+    measure[0, 3900:3903] = 200  # and again 100 seconds before its end, still holding at 4000
     measure[1, :] = 0  # hour 1 is quiet
     levels = stress._crossing_events(measure, t1=50, t2=150, cooldown_s=300)
     assert levels[0, 100] == 2
-    assert levels[1].max() == 0  # no carry-over into the independent hour
-    assert (levels[0, 103:400] == 2).all()
+    assert levels[0, 3999] == 2  # an active cooldown reaches the row's end
+    assert levels[1].max() == 0  # none of it carries into the independent hour
 
 
 def test_choose_move_rejects_on_the_level2_and_worst_market_bounds():
     rows = []
-    # Candidate A: level 1 within the flow bound but level 2 over it.
+    # Candidate A: every aggregate bound passes except level 2.
     rows.append(move_row("BTC-USD", 1.0, 75, 200, 0.001, 0.005, 0.9))
-    # Candidate B: flow-weighted fine, but one market over the worst bound.
-    rows.append(move_row("BTC-USD", 0.5, 150, 300, 0.001, 0.0, 0.9))
-    rows.append(move_row("TSLA", 0.5, 150, 300, 0.06, 0.0, 0.9))
+    # Candidate B: the flow-weighted bounds pass on every market but one, which is over the
+    # per-market bound alone.
+    rows.append(move_row("BTC-USD", 0.99, 150, 300, 0.001, 0.0, 0.9))
+    rows.append(move_row("TSLA", 0.01, 150, 300, 0.06, 0.0, 0.9))
     # Candidate C: within every bound.
     rows.append(move_row("BTC-USD", 1.0, 200, 400, 0.0005, 0.0, 0.9))
     choice = stress.choose_move(rows, window_s=60)
@@ -325,9 +327,16 @@ def test_choose_move_rejects_on_the_level2_and_worst_market_bounds():
 def test_choose_utilisation_excludes_the_uniform_1m_family_from_the_bounds():
     rows = []
     for family, rate in (("house_cash_1pct", 0.01), ("uniform_10M", 0.015), ("uniform_1M", 0.09)):
-        for level in (5000, 6000):
+        for level in (5000, 6000, 7000):
             rows.append(utilisation_row(family, "BTC-USD", level, rate if level == 6000 else 0.05))
-    choice = stress.choose_utilisation(rows, {"BTC-USD": 1.0})
-    # uniform_1M's 9% would fail the bound if it were counted; the choice ignores it.
+    # Candidate 7000 passes the flow bound (1%) but one market in it is over the per-market
+    # bound; 8000-level rates would pass everything, so a per-market-only rejection is exercised.
+    rows.append(utilisation_row("house_cash_1pct", "BTC-USD", 8000, 0.001))
+    rows.append(utilisation_row("house_cash_1pct", "TSLA", 8000, 0.06))
+    rows.append(utilisation_row("uniform_10M", "BTC-USD", 8000, 0.001))
+    rows.append(utilisation_row("uniform_10M", "TSLA", 8000, 0.001))
+    choice = stress.choose_utilisation(rows, {"BTC-USD": 0.99, "TSLA": 0.01})
+    # uniform_1M's 9% would fail the bound if it were counted; the choice ignores it, and the
+    # per-market bound alone rejects 8000, leaving 6000.
     assert choice["utilisation_bps_l1"] == 6000
     assert set(choice["fire_rate_by_family"]) == {"house_cash_1pct", "uniform_10M"}

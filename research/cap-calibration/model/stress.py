@@ -163,10 +163,13 @@ def move_tables(bars: np.ndarray, symbols: list[str], mix: np.ndarray, hours_per
         mids = np.exp(np.cumsum(draws, axis=1))
         sig_min = np.median(sigma) * np.sqrt(60) * BPS
         for window_s in (w // 1000 for w in MOVE_WINDOWS_MS):
-            measure = engine_move_measures(mids, window_s)[:, warmup_s:]
-            q = np.quantile(measure, [0.5, 0.9, 0.99, 0.999])
+            measure = engine_move_measures(mids, window_s)
+            q = np.quantile(measure[:, warmup_s:], [0.5, 0.9, 0.99, 0.999])
             for t1, t2 in MOVE_CANDIDATES_BPS:
-                levels = _crossing_events(measure, t1, t2, cooldown_s=300)
+                # Hysteresis runs over the full path, warm-up included: a level a warm-up
+                # crossing raised still holds into the recorded hour, as in the engine; only the
+                # warm-up segment's levels and readings are discarded.
+                levels = _crossing_events(measure, t1, t2, cooldown_s=300)[:, warmup_s:]
                 fired = levels >= 1
                 vol_pct = float(np.mean([np.mean(sigma[h] > sigma) for h in np.unique(np.nonzero(fired.reshape(len(take), -1))[0])])) if fired.any() else None
                 rows.append(
