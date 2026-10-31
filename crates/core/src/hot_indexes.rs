@@ -199,8 +199,8 @@ impl HotIndexes {
 
     /// The exclusion `V38` committed: the empty live index's high-water mark stood at zero, which
     /// doubled as vault deposit id 0, so a missing id 0 was not excluded past the cursor and the
-    /// vault's cursor rule reserved it a second time as unheld. Only the terms commit reads this;
-    /// the incremental index keeps the corrected exclusion.
+    /// terms reserved it as unheld — a second reservation on top of the vault's cursor-rule refund.
+    /// Only the terms commit reads this; the incremental index keeps the corrected exclusion.
     pub(crate) fn legacy_excluded_unheld(&self) -> Fixed {
         match self.live_max() {
             Some(max) => self.unheld_amounts.range((max + 1)..).map(|(_, amount)| *amount).sum(),
