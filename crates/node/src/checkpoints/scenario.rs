@@ -374,7 +374,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
         coverage: crate::checkpoints::DepositCoverage::Historical,
         distributed: engine_core::UsdcUnits(0),
     };
-    tasks::include_checkpoint(&delayed, &work.checkpoint).await;
+    tasks::include_checkpoint(&url, &delayed, &work.checkpoint).await;
     assert_eq!(delayed.reconcile(&work).await.unwrap(), (None, Health::Unvalidated));
     let nonce = provider.request::<_, U64>("eth_getTransactionCount", (checkpoint_relayer, "latest")).await.unwrap();
     assert_eq!(delayed.reconcile(&work).await.unwrap(), (None, Health::Unvalidated));
@@ -393,7 +393,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
         current.checkpoint,
         "reorg removes provisional inclusion"
     );
-    tasks::include_checkpoint(&delayed, &work.checkpoint).await;
+    tasks::include_checkpoint(&url, &delayed, &work.checkpoint).await;
     assert_eq!(
         delayed.reconcile(&work).await.unwrap(),
         (None, Health::Unvalidated),
