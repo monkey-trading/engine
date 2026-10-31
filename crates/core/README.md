@@ -189,10 +189,11 @@ this crate and reproduce the signed state roots exactly.
 - `src/withdrawal.rs` — V22 FIFO reservations, bounded partial approval, the V34 minimum, and exact USDC conversion
 - `src/merkle/withdrawal.rs` — payable approval leaves, queued request leaves, and their proofs
 - `src/merkle/exit.rs` — the V38 exit terms and pending deposit leaves, the committed copies the exit
-  proves from, account equity at the root's marks, and `Engine::exit_proof`
+  proves from, account equity at the root's marks, `Engine::exit_proof`, and the V39 empty-index
+  exclusion that names no unheld principal past the cursor
 - `tests/exit.rs` — the exit leaves against `cast`, equity in every quote currency, proofs against
   the committing root, and the V38 rebuild; `tests/exit/custody.rs` the cursor and the pending and
-  held totals over receipts; `tests/exit/fixture.rs` the vault's vectors
+  held totals over receipts, and the V39 sole reversed id-0 exclusion from `unheld`; `tests/exit/fixture.rs` the vault's vectors
 - `tests/withdrawal_minimum.rs` — the V34 minimum request and the waiting of sub-minimum parts, against V33
 - `tests/withdrawal_queue.rs` — reservations, partial FIFO, cash conservation, precision, and stale marks
 - `tests/withdrawal_commitment.rs` — approval ABI, tamper rejection, serialization/replay, and incremental roots
@@ -302,8 +303,8 @@ this crate and reproduce the signed state roots exactly.
   and distribution proofs
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
-  (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V37` parts (`v15.rs` to `v37.rs`)
+  (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), its
+  `V15` to `V37` parts (`v15.rs` to `v37.rs`), and its `V38` and `V39` parts (`v38.rs`, `v39.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -404,6 +405,11 @@ session is in `examples/reference_log/v32.rs`.
 Protocol V38 commits what the vault's exit checks: ABI-encoded queue and pending deposit leaves, and
 the exit terms leaf with the deposit cursor and the pending and held principal; its session is in
 `examples/reference_log/v38.rs`.
+
+Protocol V39 names no unheld principal past the exit terms' deposit cursor: with no live receipt
+above the finalised frontier, a reversed deposit at vault deposit id 0 is the vault's cursor-rule
+refund alone, not unheld too, so `startExit` no longer reserves it twice; its session is in
+`examples/reference_log/v39.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it
