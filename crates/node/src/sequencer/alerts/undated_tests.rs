@@ -167,6 +167,7 @@ fn signed_calendar_fallback(log_dir: &Path, restart: bool) -> anyhow::Result<(u6
     seq.activate_legacy_protocol()?; // V19 unsigned financing fixture.
     let mut genesis = dev_config().genesis;
     genesis.markets.retain(|market| market.id == 1);
+    genesis.close_spread_ceilings.retain(|ceiling| ceiling.market == 1);
     genesis.benchmarks.clear();
     genesis.params.rollover.tz = chrono_tz::Pacific::Kiritimati;
     genesis.params.rollover.hour = 0;

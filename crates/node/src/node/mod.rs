@@ -177,6 +177,7 @@ async fn serve_node(
         operator,
         metrics: metrics.clone(),
         genesis: genesis_commands(&cfg.genesis),
+        close_spread_ceilings: cfg.genesis.close_spread_ceilings.clone(),
         history_sealing: None,
         checkpoint_signing: Some(signing_tx),
     };

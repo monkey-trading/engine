@@ -38,12 +38,15 @@ fn a_benchmark_the_engine_rejects_writes_no_genesis_and_the_fixed_config_then_li
 fn a_genesis_entry_of_any_kind_the_engine_would_reject_queues_and_writes_nothing() {
     type Edit = fn(&mut Genesis);
     // The first command, ones in the middle, and the last.
-    let cases: [(&str, Edit); 6] = [
+    let cases: [(&str, Edit); 7] = [
         ("genesis.params: the engine rejects it: profit_fee_bps", |g| g.params.profit_fee_bps = 10_000),
         ("genesis benchmark SONIA: the engine rejects it", |g| g.benchmarks[1].annual_bps = i64::MIN),
         ("genesis market EUR-USD: the engine rejects it: margin_tiers is empty", |g| g.markets[2].margin_tiers.clear()),
         ("genesis market AAPL: the engine rejects it: house_cap_bps", |g| {
             g.markets.last_mut().unwrap().house_cap_bps = 0
+        }),
+        ("genesis.close_spread_ceilings: the engine rejects it: market 1 is listed without", |g| {
+            g.close_spread_ceilings.remove(0);
         }),
         ("genesis.house_capital: the engine rejects it", |g| g.house_capital = Fixed::from_int(-1)),
         ("genesis.house_capital: the engine rejects it", |g| g.house_capital = Fixed::MAX_INPUT + Fixed::from_int(1)),
@@ -203,6 +206,56 @@ fn a_required_command_the_engine_rejects_stops_the_sequencer_at_the_first_sample
     assert!(!matches!(written.last(), Some(LogEntry::Checkpoint(_))), "{written:?}");
     let err = try_recover(&dir, &signed(31_337)).0.err().expect("refused");
     assert!(format!("{err:#}").contains("the engine rejected seq"), "{err:#}");
+}
+
+#[test]
+fn an_old_log_with_markets_takes_the_configs_ceilings_before_activating_v39() {
+    // A log whose genesis predates ceilings lists markets with none adopted. Activation carries
+    // the config's ceilings, filtered to the markets the log lists, and the registry installs
+    // before the activation applies: every listed market ends with an adopted ceiling.
+    let dir = scratch_dir("activation-carries-ceilings");
+    let mut genesis = dev_config().genesis;
+    // A legacy genesis: no ceilings section, as older configs gave.
+    genesis.close_spread_ceilings.clear();
+    let ran = genesis_commands(&genesis);
+    let mut seq = recover_with(&dir, &signed(31_337), ran.clone()).unwrap();
+    seq.activate_legacy_protocol().unwrap();
+    seq.genesis(&genesis).unwrap();
+    seq.trust(trusted_now()).unwrap();
+    drop(seq);
+
+    let mut seq = recover_with(&dir, &signed(31_337), ran).unwrap();
+    seq.activate_protocol().unwrap();
+    drop(seq);
+    let replayed = replay(&log_entries(&dir)).unwrap();
+    let ceilings = replayed.engine.close_spread_ceilings().expect("the carry installs the registry");
+    assert_eq!(ceilings.len(), replayed.engine.markets().len());
+    assert!(replayed.engine.markets().keys().all(|id| ceilings.contains_key(id)));
+    assert!(replayed.activations.iter().any(|(version, _)| *version == ProtocolVersion::V39));
+}
+
+#[test]
+fn an_old_log_with_a_market_the_config_ceilingless_refuses_activation_naming_it() {
+    // The carry filters the config's ceilings to the markets the log lists, and installs only a
+    // complete registry: a listed market the config names no ceiling for refuses the activation,
+    // naming the market.
+    let dir = scratch_dir("activation-ceilingless-market");
+    let mut genesis = dev_config().genesis;
+    genesis.close_spread_ceilings.clear();
+    // A market the config's ceilings never name, listed after genesis.
+    genesis.markets.push(genesis.markets[0].clone());
+    let extra = genesis.markets.last_mut().unwrap();
+    extra.id = 77;
+    extra.symbol = "TEST77".into();
+    let ran = genesis_commands(&genesis);
+    let mut seq = recover_with(&dir, &signed(31_337), ran.clone()).unwrap();
+    seq.activate_legacy_protocol().unwrap();
+    seq.genesis(&genesis).unwrap();
+    seq.trust(trusted_now()).unwrap();
+    drop(seq);
+
+    let err = recover_with(&dir, &signed(31_337), ran).unwrap().activate_protocol().unwrap_err();
+    assert!(format!("{err:#}").contains("without a close-spread ceiling"), "{err:#}");
 }
 
 #[test]

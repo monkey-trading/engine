@@ -85,6 +85,37 @@ impl Sequencer {
         {
             cmds.push(Command::Admin(AdminCommand::SetAccessPolicy(policy.clone())));
         }
+        // A log upgrading to `V39` with markets listed before ceilings existed takes the config's
+        // ceilings first: the registry is genesis state, and activation refuses a listed market
+        // without one. The carried entries are the config's, filtered to the markets this log
+        // lists: a market the log holds that the config names no ceiling for refuses the install,
+        // naming it, rather than activating an uncapped log.
+        let activation_at = cmds.iter().position(|cmd| {
+            matches!(
+                cmd,
+                Command::Admin(AdminCommand::ActivateProtocol { .. } | AdminCommand::ActivateCustodyFinality { .. })
+            )
+        });
+        if let Some(at) = activation_at
+            && matches!(
+                cmds[at],
+                Command::Admin(
+                    AdminCommand::ActivateProtocol { version } | AdminCommand::ActivateCustodyFinality { version, .. }
+                ) if version >= ProtocolVersion::V39
+            )
+            && self.engine.close_spread_ceilings().is_none()
+            && !self.engine.markets().is_empty()
+        {
+            let ceilings: Vec<_> = self
+                .close_spread_ceilings
+                .iter()
+                .filter(|ceiling| self.engine.markets().contains_key(&ceiling.market))
+                .cloned()
+                .collect();
+            if ceilings.len() == self.engine.markets().len() {
+                cmds.insert(at, Command::Admin(AdminCommand::SetCloseSpreadCeilings { ceilings }));
+            }
+        }
         if cmds.is_empty() {
             return Ok(());
         }

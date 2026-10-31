@@ -102,6 +102,7 @@ async fn dev_scenario_rwa_price_feeds() {
 fn genesis(markets: Vec<MarketSpec>) -> Genesis {
     let mut genesis = dev_config().genesis;
     genesis.markets.retain(|market| [1, 2].contains(&market.id));
+    genesis.close_spread_ceilings.retain(|ceiling| [1, 2].contains(&ceiling.market));
     genesis.markets.extend(markets);
     genesis
 }

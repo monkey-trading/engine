@@ -236,8 +236,9 @@ pub enum AdminCommand {
         address: AccountId,
     },
     /// From `V39`, installs the close-spread ceiling registry: one entry per listed market, kept
-    /// apart from `MarketSpec` so a listing can neither replace nor raise one. The node sequences
-    /// it at genesis; a log records it once, and later entries move only by an adopted
+    /// apart from `MarketSpec` so a listing can neither replace nor raise one. The node alone
+    /// sequences it, at genesis or carrying the config's ceilings into a log upgrading to `V39`;
+    /// a log records it once, and later entries move only by an adopted
     /// `AdoptCloseSpreadCeiling`.
     SetCloseSpreadCeilings {
         ceilings: Vec<CloseSpreadCeiling>,
@@ -331,12 +332,12 @@ impl AdminCommand {
             | AdminCommand::InitStaking(_)
             | AdminCommand::AnnounceParams(_)
             | AdminCommand::RotateOperator { .. }
-            | AdminCommand::SetCloseSpreadCeilings { .. }
             | AdminCommand::AdoptCloseSpreadCeiling { .. } => true,
             AdminCommand::SetClientAuth(_)
             | AdminCommand::SetAccessPolicy(_)
             | AdminCommand::SetOperator(_)
             | AdminCommand::SetToxicityNotional(_)
+            | AdminCommand::SetCloseSpreadCeilings { .. }
             | AdminCommand::ActivateCustodyFinality { .. }
             | AdminCommand::ActivateProtocol { .. } => false,
         }

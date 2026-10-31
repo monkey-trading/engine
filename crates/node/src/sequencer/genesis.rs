@@ -182,6 +182,11 @@ pub fn genesis_commands(genesis: &Genesis) -> Vec<Command> {
     if let Some(staking) = &genesis.staking {
         cmds.push(Command::Admin(AdminCommand::InitStaking(*staking)));
     }
+    if !genesis.close_spread_ceilings.is_empty() {
+        cmds.push(Command::Admin(AdminCommand::SetCloseSpreadCeilings {
+            ceilings: genesis.close_spread_ceilings.clone(),
+        }));
+    }
     cmds.push(Command::HouseCapital { amount: genesis.house_capital, chain_ref: GENESIS_REF.into() });
     cmds
 }
@@ -195,6 +200,7 @@ fn is_genesis_command(cmd: &Command) -> bool {
                 | AdminCommand::SetBenchmarkRate { .. }
                 | AdminCommand::UpsertMarket(_)
                 | AdminCommand::InitStaking(_)
+                | AdminCommand::SetCloseSpreadCeilings { .. }
         )
     ) || is_genesis_credit(cmd)
 }
@@ -244,6 +250,7 @@ fn config_entry(cmd: &Command) -> String {
         Command::Admin(AdminCommand::SetBenchmarkRate { benchmark, .. }) => format!("genesis benchmark {benchmark}"),
         Command::Admin(AdminCommand::UpsertMarket(spec)) => format!("genesis market {}", spec.symbol),
         Command::Admin(AdminCommand::InitStaking(_)) => "genesis.staking".into(),
+        Command::Admin(AdminCommand::SetCloseSpreadCeilings { .. }) => "genesis.close_spread_ceilings".into(),
         Command::HouseCapital { .. } => "genesis.house_capital".into(),
         _ => "protocol activation".into(),
     }

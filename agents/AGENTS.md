@@ -17,7 +17,10 @@ an index: load only the rule whose hint matches the current action.
   nonces, and expiries), USD settlement of markets quoted in other currencies, admin commands signed
   by the operator key the log records and, from `V35`, bounded (`operator_bounds.rs`: profit fee and
   close-out level moves within ±50% after a seven-day notice, held markets kept priced by price-rule changes, and a
-  seven-day key rotation) and, from `V37`, elected (`election.rs`: the operator registry's rotation switch and
+  seven-day key rotation); the spread a close can pay, from `V39`, capped per market
+  (`close_spread.rs`: a ceiling registry adopted at genesis, kept apart from `MarketSpec`, clamps every close at
+  the pricing site, refuses a reversal over its ceiling while the pure close stays open, and admits a post-genesis
+  entry only by a signed seven-day adoption that can only lower it); and, from `V37`, elected (`election.rs`: the operator registry's rotation switch and
   elections mirrored on the staking mirror, the elected key in effect at the election's time or seven days after it
   is logged and once the mirror's finalised block time reaches it, `RotateOperator` refused while rotation is on;
   `tests/operator_election.rs`), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
@@ -201,8 +204,9 @@ an index: load only the rule whose hint matches the current action.
   as its operator key or access source, and a dev config or script that adds such a key lists it there.
   `production-genesis.toml` is the production `[genesis]` section alone: the launch markets with
   their venue calendars, each calendar's sources and unpublished gaps, their quote currencies, the
-  futures contracts the index and commodity markets roll through with the roll rules, and the
-  launch margins and fees; a deployment's node sections complete it into a config. Every section
+  futures contracts the index and commodity markets roll through with the roll rules, the
+  launch margins and fees, and, from `V39`, each market's close-spread ceiling (#147's calibrated
+  values); a deployment's node sections complete it into a config. Every section
   rejects unknown keys. `access-source.md` documents the optional signed screening source,
   declaration API, held collateral, local fixture scenario and promotion requirements.
 - **image/** — the reproducible confidential VM image for AMD SEV-SNP: `Dockerfile` (static

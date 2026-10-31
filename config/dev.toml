@@ -403,3 +403,37 @@ windows = [
   { open = "Fri 09:30", close = "Fri 16:00" },
 ]
 closed_dates = ["2026-11-26", "2026-12-25", "2027-01-01"]
+
+# --- Close-spread ceilings (protocol V39, #344) -------------------------------
+# The most each market's closes pay, whatever the parameters do. These are
+# unequal TEST FIXTURES, not calibrated values: production's come from #147's
+# calibration. The launch close charge here (widest stress minimum 10bps plus
+# the 3bps top toxicity add-on) is 13bps, and the engine refuses a nonzero
+# ceiling below it.
+[[genesis.close_spread_ceilings]]
+market = 1
+max_close_spread_bps = 30
+
+[[genesis.close_spread_ceilings]]
+market = 2
+max_close_spread_bps = 30
+
+[[genesis.close_spread_ceilings]]
+market = 10
+max_close_spread_bps = 13
+
+[[genesis.close_spread_ceilings]]
+market = 20
+max_close_spread_bps = 15
+
+[[genesis.close_spread_ceilings]]
+market = 23
+max_close_spread_bps = 15
+
+[[genesis.close_spread_ceilings]]
+market = 30
+max_close_spread_bps = 20
+
+[[genesis.close_spread_ceilings]]
+market = 40
+max_close_spread_bps = 20
