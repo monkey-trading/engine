@@ -135,6 +135,45 @@ fn an_old_log_with_a_post_genesis_listing_takes_its_ceiling_from_the_config() {
 }
 
 #[test]
+fn a_signed_adoption_after_the_carry_survives_restart_under_the_unchanged_config() {
+    // The drift check compares only what the config names: a market's ceiling the log later
+    // adopted through the signed notice needs no config entry, and a restart under the upgrade's
+    // unchanged config accepts it.
+    let dir = scratch_dir("activation-adoption-restart");
+    let mut genesis = dev_config().genesis;
+    genesis.close_spread_ceilings.clear();
+    let legacy: Vec<_> = genesis_commands(&genesis)
+        .into_iter()
+        .filter(|cmd| !matches!(cmd, Command::Admin(AdminCommand::SetCloseSpreadCeilings { .. })))
+        .collect();
+    old_genesis_log(&dir, &signed(31_337), ProtocolVersion::V23, legacy.clone(), Vec::new());
+    let mut seq = recover_with(&dir, &signed(31_337), legacy).unwrap();
+    seq.activate_protocol().unwrap();
+    let operator = dev_config().operator().unwrap();
+    let key = k256::ecdsa::SigningKey::from_slice(&[0x42; 32]).unwrap();
+    let notice_ms: Millis = 7 * 24 * 60 * 60 * 1000;
+    let ts = trusted_now().latest_ms;
+    let adopt = Command::SignedAdmin(Box::new(crate::admin::sign(
+        &key,
+        &operator,
+        AdminCommand::AdoptCloseSpreadCeiling { market: 77, max_close_spread_bps: 25, effective_at: ts + notice_ms },
+        0,
+        ts + 60_000,
+    )));
+    let events = seq.stamp(ts, adopt).unwrap();
+    assert!(events.contains(&Event::AdminApplied), "{events:?}");
+    drop(seq);
+
+    let mut seq = recover_with(&dir, &signed(31_337), genesis_commands(&dev_config().genesis)).unwrap();
+    seq.activate_protocol().unwrap();
+    // The tick after the notice lets the adoption apply; its catch-up events do not matter here.
+    seq.stamp(ts + notice_ms + 1, Command::Tick).unwrap();
+    drop(seq);
+    let replayed = replay(&log_entries(&dir)).unwrap();
+    assert_eq!(replayed.engine.close_spread_ceilings().unwrap()[&77], 25);
+}
+
+#[test]
 fn a_config_that_sits_below_a_carried_ceiling_is_refused_at_recovery() {
     // The upgrade carries the config's ceilings into the log; a later restart under a config that
     // lowered one below what the log enforces is refused, naming the market, rather than attesting

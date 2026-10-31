@@ -90,6 +90,27 @@ impl ReplayedLog {
         {
             bail!("the configured access policy differs from the public log");
         }
+        // A registry the `V39` upgrade carried came from the config of the restart that upgraded
+        // the log: the recorded genesis cannot be restated, so the carried entries are not part
+        // of what the genesis comparison attests. For each ceiling the config names, the log may
+        // enforce no more: the node may not attest ceilings stricter than it applies. Entries the
+        // log later gained by signed adoption need no config entry — they only added a market or
+        // lowered one.
+        if let Some(registry) = engine.close_spread_ceilings()
+            && !genesis.has_ceiling_install()
+        {
+            for ceiling in &cfg.close_spread_ceilings {
+                if let Some(&adopted) = registry.get(&ceiling.market) {
+                    anyhow::ensure!(
+                        adopted <= ceiling.max_close_spread_bps,
+                        "the log's close-spread ceiling for market {} is {adopted}bps, above this config's {}bps; \
+                         start the node under the config the upgrade carried",
+                        ceiling.market,
+                        ceiling.max_close_spread_bps,
+                    );
+                }
+            }
+        }
         genesis.ensure_closed()?;
         // So is one naming another genesis: the node would attest rules its engine does not run.
         genesis.ensure_matches(&cfg.genesis, &cfg.client_auth, cfg.operator)?;
@@ -272,27 +293,6 @@ impl Sequencer {
         // The last checkpoint the log actually holds, for `Sequencer::checkpoint`'s
         // one-checkpoint-per-seq dedup: the missing trailing one is written on demand.
         let dedup_checkpoint_seq = last_signed_checkpoint.as_ref().map(|checkpoint| checkpoint.seq);
-        // A registry the V39 upgrade carried came from the config of the restart that upgraded
-        // the log: the recorded genesis cannot be restated, so the carried entries are not part
-        // of what `ensure_matches` attests. Refuse a config whose ceilings sit below what the log
-        // enforces — the node may not attest ceilings stricter than it applies. Lowerings the log
-        // adopted after the carry stay under the config's values, so they pass.
-        if let Some(registry) = engine.close_spread_ceilings()
-            && !genesis.has_ceiling_install()
-        {
-            for (market, adopted) in registry {
-                let configured = cfg
-                    .close_spread_ceilings
-                    .iter()
-                    .find(|ceiling| ceiling.market == *market)
-                    .map(|ceiling| ceiling.max_close_spread_bps);
-                anyhow::ensure!(
-                    configured.is_some_and(|configured| *adopted <= configured),
-                    "the log's close-spread ceiling for market {market} is {adopted}bps, above this config's {};                      start the node under the config the upgrade carried",
-                    configured.map_or("none".to_string(), |configured| format!("{configured}bps")),
-                );
-            }
-        }
         let close_spread_ceilings = cfg.close_spread_ceilings.clone();
         let mut sequencer = Self {
             legacy_deposits,
