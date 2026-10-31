@@ -145,6 +145,53 @@ async fn reverted_own_send_at_reused_nonce_recovers_to_the_next_nonce() {
 }
 
 #[tokio::test]
+async fn provenanceless_reverted_own_send_recovers_through_the_poster_loop() {
+    for restart in [false, true] {
+        let dir = scratch_dir("nonce-progress-poster-recovery");
+        fs::create_dir_all(&dir).unwrap();
+        let server = Server::start(&dir).await;
+        let b = work(checkpoint(10));
+        let mut worker = poster(&server, &dir);
+        assert!(worker.reconcile(&b).await.is_err(), "B is sent but not included yet");
+        assert_eq!(read_record(&dir)["nonce"], 7);
+        assert!(read_record(&dir).get("reused_through").is_none(), "a first reservation is provenanceless");
+        // B's own send reverts on-chain — as the dev-checkpoints scenario saw under load: the
+        // vault never holds B and the reserved nonce is consumed by B's exact call. The poster
+        // must re-reserve at the current nonce and resubmit, not dead-end on the consumed nonce.
+        let b_send = server.state.lock().unwrap().sent[0].clone();
+        {
+            let mut state = server.state.lock().unwrap();
+            state.latest_nonce = 8;
+            state.pending_nonce = 8;
+            state.consumer = Some(b_send.clone());
+            state.known = true;
+        }
+        if restart {
+            worker = poster(&server, &dir);
+        }
+        assert!(
+            worker.reconcile(&b).await.unwrap_err().to_string().contains("not included"),
+            "the recovered resubmission is still not inclusion"
+        );
+        let record = read_record(&dir);
+        assert_eq!(record["nonce"], 8, "the consumed own send re-reserves at the current nonce");
+        assert!(record.get("reused_through").is_none());
+        let sent = server.state.lock().unwrap().sent.clone();
+        assert_eq!(sent.len(), 2);
+        assert_eq!((sent[1]["nonce"].as_str(), &sent[1]["input"]), (Some("0x8"), &b_send["input"]));
+        // The recovered reservation polls its known pending send without a third nonce.
+        for _ in 0..3 {
+            assert!(worker.reconcile(&b).await.unwrap_err().to_string().contains("not included"));
+        }
+        assert_eq!(server.state.lock().unwrap().sent.len(), 2);
+        server.state.lock().unwrap().latest = Some(b.checkpoint.clone());
+        assert_eq!(worker.reconcile(&b).await.unwrap(), (None, Health::Unvalidated));
+        server.state.lock().unwrap().finalized = Some(b.checkpoint.clone());
+        assert_eq!(worker.reconcile(&b).await.unwrap(), (Some(10), Health::Healthy));
+    }
+}
+
+#[tokio::test]
 async fn repeated_public_supersession_retains_bounded_provenance_for_earliest_resurfaced_call() {
     let dir = scratch_dir("nonce-progress-repeated");
     fs::create_dir_all(&dir).unwrap();

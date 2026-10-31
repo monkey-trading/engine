@@ -7,6 +7,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::task::JoinHandle;
 use tokio::time::{sleep, timeout};
 
+use crate::checkpoints::{CheckpointChain, CheckpointRpc, Poster, View};
+use crate::log::Checkpoint;
 use crate::test_support::{Alert, LOADED_WAIT};
 
 /// The sequencer, checkpoint poster, and custody tasks every later wait depends on.
@@ -63,5 +65,24 @@ impl Tasks {
             waited.is_ok(),
             "gave up after {LOADED_WAIT:?} waiting for {what}: {missing}; the poster's last alert: {poster:?}"
         );
+    }
+}
+
+/// Awaits canonical inclusion explicitly; transaction RPC acknowledgment is not a mined receipt.
+/// The post is retried while awaiting, exactly as the poster worker retries: a transient post
+/// failure — a lagging finalized view, a dropped send — must not dead-end the wait.
+pub(super) async fn include_checkpoint(poster: &Poster<CheckpointRpc>, checkpoint: &Checkpoint) {
+    let deadline = std::time::Instant::now() + LOADED_WAIT;
+    let mut last_error = String::new();
+    loop {
+        if poster.chain.state(View::Latest).await.unwrap().checkpoint == Some((checkpoint.seq, checkpoint.root.clone()))
+        {
+            return;
+        }
+        if let Err(error) = poster.chain.post(checkpoint).await {
+            last_error = format!("{error:#}");
+        }
+        assert!(std::time::Instant::now() < deadline, "the checkpoint was not included: {last_error}");
+        sleep(Duration::from_millis(20)).await;
     }
 }
