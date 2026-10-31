@@ -48,7 +48,10 @@ pub(super) type Activated = (Store, Reader, Option<BackfillSection>, BTreeMap<Ma
 pub(super) fn startup(cfg: &NodeConfig, mac_key: [u8; 32]) -> anyhow::Result<MarksStartup> {
     let retentions = Retentions::of(cfg.history.marks.as_ref())?;
     let created_dir = !cfg.history.dir.exists();
-    let store = Store::open(&cfg.history.dir.join(SEED_FILE), retentions, mac_key)?;
+    let mut store = Store::open(&cfg.history.dir.join(SEED_FILE), retentions, mac_key)?;
+    // A previous run's cache carries provider-seeded rows and backfill markers the log cannot
+    // rebuild; recovery's re-derivation resets only the log-derived content over them.
+    store.import_prior(&cfg.history.dir.join(MARKS_FILE)).context("importing the prior marks cache")?;
     let backfill =
         cfg.history.marks.as_ref().and_then(|marks| marks.backfill.clone()).filter(|backfill| backfill.enabled);
     let sources = crate::history::marks::sources(&cfg.feeds);
@@ -71,7 +74,7 @@ impl MarksStartup {
     /// - the checkpoint or rename fails
     pub(super) fn activate(mut self) -> anyhow::Result<Activated> {
         let shared = self.shared.take().expect("activate runs once");
-        let store = match Rc::try_unwrap(shared) {
+        let mut store = match Rc::try_unwrap(shared) {
             Ok(cell) => cell.into_inner(),
             Err(_) => unreachable!("the recovery seeder is dropped with its replay"),
         };
@@ -90,6 +93,7 @@ impl MarksStartup {
                 std::fs::rename(&side, &to_side).context("moving the marks cache's side files")?;
             }
         }
+        store.relocate(to);
         self.active = true;
         let reader = Store::reader(&store);
         Ok((store, reader, backfill, sources))
@@ -147,4 +151,38 @@ pub(super) async fn task(
     live: crate::history::marks::run::Live,
 ) -> (&'static str, anyhow::Result<()>) {
     ("marks", crate::history::marks::run::run(store, sequencer, backfill, sources, live).await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Activation moves the seeded cache to its final name: the store and reader it returns work
+    /// at that path, and no seed file remains.
+    #[tokio::test]
+    async fn activation_serves_reads_and_writes_at_the_final_path() {
+        let mut cfg = crate::test_support::dev_config();
+        cfg.history.dir = crate::test_support::scratch_dir("marks-activate").join("history");
+        let key = crate::tee::EnclaveKey::test_key().marks_key();
+        let marks = startup(&cfg, key).unwrap();
+        marks
+            .shared
+            .as_ref()
+            .unwrap()
+            .borrow_mut()
+            .observe(&[(1, 1_792_489_860_000, "67000".parse().unwrap())])
+            .unwrap();
+        let (mut store, reader, _, _) = marks.activate().unwrap();
+        let final_path = cfg.history.dir.join(crate::history::marks::store::MARKS_FILE);
+        assert!(final_path.exists(), "the cache moved into place");
+        assert!(!cfg.history.dir.join(SEED_FILE).exists(), "no seed file remains");
+        let page = reader.page(1, Resolution::S1, i64::MIN, i64::MAX, 10, 10).await.unwrap();
+        assert_eq!(page.entries.len(), 1, "{page:?}");
+        // The task's store still writes after the rename, and the reader sees it.
+        store.observe(&[(1, 1_792_489_860_500, "67100".parse().unwrap())]).unwrap();
+        let page = reader.page(1, Resolution::S1, i64::MIN, i64::MAX, 10, 10).await.unwrap();
+        assert_eq!(page.entries[0].close, "67100".parse().unwrap());
+    }
+
+    use crate::history::marks::Resolution;
 }

@@ -19,6 +19,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use tracing::{debug, warn};
 
 mod auth;
+mod import;
 mod reader;
 
 pub(crate) use auth::Coverage;
@@ -26,7 +27,7 @@ use auth::{Row, tag};
 pub use reader::Reader;
 
 use crate::history::marks::{MarkSample, Provenance, Resolution, Retentions};
-use crate::history::store::{self, SchemaRow};
+use crate::history::store::{self, SchemaRow, read_only};
 
 /// The SQLite file of the cache, in `history.dir`; SQLite keeps its `-wal` and `-shm` files beside it.
 pub const MARKS_FILE: &str = "marks.sqlite";
@@ -192,17 +193,10 @@ impl Store {
         &self.path
     }
 
-    /// Checkpoints the write-ahead log into the database file, so the cache is one file that
-    /// activation can move into place.
-    /// Error cases:
-    /// - the checkpoint fails
-    pub fn checkpoint(&self) -> anyhow::Result<()> {
-        let busy: i64 = self
-            .conn
-            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
-            .context("checkpointing the marks cache")?;
-        anyhow::ensure!(busy == 0, "the marks cache checkpoint did not complete");
-        Ok(())
+    /// Points this store at its file's new path after activation renames it into place; the open
+    /// connection is unaffected, and readers built after this follow the new path.
+    pub fn relocate(&mut self, path: PathBuf) {
+        self.path = path;
     }
 
     /// Takes `samples`, log-derived marks a command left, in sequenced time order. In one

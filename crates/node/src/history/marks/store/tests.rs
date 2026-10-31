@@ -324,3 +324,44 @@ async fn a_row_the_host_rewrote_fails_authentication_before_it_is_served() {
         other.reader().page(1, Resolution::S1, i64::MIN, i64::MAX, 10, 10).await.expect_err("served under another key");
     assert!(format!("{err:#}").contains("fails authentication"), "{err:#}");
 }
+
+#[tokio::test]
+async fn import_prior_keeps_authenticated_seeded_rows_and_drops_tampered_ones() {
+    let prior_dir = scratch_dir("marks-import-prior");
+    let mut prior = Store::open(&prior_dir.join("marks.sqlite"), Retentions::defaults(), mac_key()).unwrap();
+    prior.observe(&[(1, 1_792_489_860_000, fixed("3"))]).unwrap();
+    prior
+        .seed(
+            &[Seed {
+                market: 1,
+                resolution: Resolution::M1,
+                ts: 1_792_489_920_000,
+                open: fixed("1"),
+                high: fixed("2"),
+                low: fixed("0"),
+                close: fixed("1"),
+            }],
+            1_792_489_920_000,
+        )
+        .unwrap();
+    prior.mark_backfilled(1, "coinbase", "BTC-USD", 1_792_000_000_000, COVERAGE).unwrap();
+    // The host tampers with a row after the node stops: the import drops it.
+    Connection::open(prior_dir.join("marks.sqlite"))
+        .unwrap()
+        .execute("UPDATE marks SET high = '999' WHERE bucket = 1792489920000", [])
+        .unwrap();
+    drop(prior);
+
+    let (path, mut store) = fresh_store_at("marks-import-fresh", Retentions::defaults());
+    // The one log-derived sample imports at all four resolutions; the tampered seeded row drops.
+    let imported = store.import_prior(&prior_dir.join("marks.sqlite")).unwrap();
+    assert_eq!(imported, 4);
+    let page = minute(&store, 1).await;
+    assert_eq!(page.entries.len(), 1, "{page:?}");
+    assert_eq!(page.entries[0].ts, 1_792_489_860_000);
+    assert_eq!(store.backfilled().unwrap(), [(1, COVERAGE)].into_iter().collect());
+    assert!(path.exists());
+}
+
+const COVERAGE: Coverage =
+    Coverage { depths: (86_400_000, 86_400_000, 86_400_000), retentions: (3_600_000, 3_600_000, 3_600_000, None) };

@@ -65,6 +65,17 @@ impl Resolution {
             Resolution::D1 => "1d",
         }
     }
+    /// The storage tag's resolution.
+    pub fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
+            0 => Some(Resolution::S1),
+            1 => Some(Resolution::M1),
+            2 => Some(Resolution::H1),
+            3 => Some(Resolution::D1),
+            _ => None,
+        }
+    }
+
     /// The wire name's resolution.
     pub fn parse(text: &str) -> Option<Self> {
         match text {

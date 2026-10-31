@@ -64,15 +64,23 @@ impl MarksSection {
     /// - a retention is zero, or too long to count in milliseconds
     /// - the backfill section fails validation (see `BackfillSection::validate`)
     pub fn validate(&self, production: bool) -> anyhow::Result<()> {
+        // A sub-millisecond duration converts to zero milliseconds and would prune every current
+        // bucket, so each retention must be at least one millisecond, the daily one included.
+        let millis = |name: &str, retention: Duration| -> anyhow::Result<Millis> {
+            let ms = Millis::try_from(retention.as_millis()).with_context(|| format!("history.marks.{name}"))?;
+            ensure!(ms > 0, "history.marks.{name} must be at least one millisecond");
+            Ok(ms)
+        };
         for (name, retention) in [
             ("retention_1s", self.retention_1s),
             ("retention_1m", self.retention_1m),
             ("retention_1h", self.retention_1h),
         ] {
-            ensure!(!retention.is_zero(), "history.marks.{name} must be non-zero");
-            Millis::try_from(retention.as_millis()).with_context(|| format!("history.marks.{name}"))?;
+            millis(name, retention)?;
         }
-        self.retention_1d_ms().context("history.marks.retention_1d")?;
+        if let Some(ms) = self.retention_1d_ms().context("history.marks.retention_1d")? {
+            ensure!(ms > 0, "history.marks.retention_1d must be at least one millisecond");
+        }
         if let Some(backfill) = &self.backfill {
             backfill.validate(production)?;
         }
