@@ -76,6 +76,10 @@ pub struct Sequencer {
     next_seq: u64,
     last_ts: Millis,
     last_checkpoint: Option<u64>,
+    /// The seq the last written checkpoint covers, wherever this process found or wrote it:
+    /// `checkpoint` deduplicates against it, so a scheduled and an explicit checkpoint cannot
+    /// meet at one seq.
+    dedup_checkpoint_seq: Option<u64>,
     chain_id: u64,
     vault: AccountId,
     stream: broadcast::Sender<Arc<StreamMsg>>,

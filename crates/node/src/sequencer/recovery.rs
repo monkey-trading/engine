@@ -275,9 +275,9 @@ impl Sequencer {
         cfg.metrics.access_pending_deposits.set(engine.pending_deposits().len() as i64);
         let access_alerts = AccessAlerts::recovered(access_failed);
         let benchmark_schedule = watch::channel(BenchmarkSchedule::from_engine(&engine)).0;
-        // The last checkpoint the log actually holds: the missing trailing one is written on
-        // demand, and `Sequencer::checkpoint` deduplicates against what was really written.
-        let checkpointed_seq = last_signed_checkpoint.as_ref().map(|checkpoint| checkpoint.seq);
+        // The last checkpoint the log actually holds, for `Sequencer::checkpoint`'s
+        // one-checkpoint-per-seq dedup: the missing trailing one is written on demand.
+        let dedup_checkpoint_seq = last_signed_checkpoint.as_ref().map(|checkpoint| checkpoint.seq);
         let close_spread_ceilings = cfg.close_spread_ceilings.clone();
         let mut sequencer = Self {
             legacy_deposits,
@@ -285,7 +285,8 @@ impl Sequencer {
             legacy_authorizations,
             next_seq: engine.last_seq().map_or(0, |s| s + 1),
             last_ts: engine.now(),
-            last_checkpoint: checkpointed_seq,
+            last_checkpoint: engine.last_seq(),
+            dedup_checkpoint_seq,
             engine,
             log: log.into_writer(cfg.segment_commands.max(1), cfg.manifest)?,
             key,
