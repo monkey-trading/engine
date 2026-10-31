@@ -173,11 +173,34 @@ pub fn offset_of(prev: Option<Offset>, entry: &LogEntry) -> anyhow::Result<Offse
     }
 }
 
+/// Signals an early end to a log read: `read_file` and `SegmentedLog::open` stop at the entry
+/// whose visit returns it, as if the log ended there, and propagate it. A reader that needs only
+/// a log's prefix (`engine exit-proof` at a requested checkpoint) stops at it, so a torn suffix
+/// past the prefix does not block it; such a reader catches the error by this marker and treats
+/// the read as complete.
+pub(crate) struct Stop;
+
+impl std::fmt::Debug for Stop {
+    /// The marker's name.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Stop")
+    }
+}
+
+impl std::fmt::Display for Stop {
+    /// The marker's name.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("log read stopped at the caller's request")
+    }
+}
+
+impl std::error::Error for Stop {}
+
 /// Reads a single log file a line at a time, handing each entry to `visit` in order.
 /// Error cases:
 /// - the file does not exist or cannot be read
 /// - a non-blank line is not a valid entry
-/// - `visit` fails
+/// - `visit` fails, propagating [`Stop`] for an early end
 pub fn read_file(path: &Path, mut visit: impl FnMut(LogEntry) -> anyhow::Result<()>) -> anyhow::Result<()> {
     let file = File::open(path).with_context(|| format!("opening log {}", path.display()))?;
     read_lines(BufReader::new(file), |n, line| match parse_line(n, line)? {
