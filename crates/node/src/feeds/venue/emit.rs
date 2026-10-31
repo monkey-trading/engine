@@ -60,7 +60,8 @@ impl VenueFeed {
                 let cmd = Command::Prices { market, quotes: vec![quote] };
                 self.tx.send(Request::Submit { cmd, reply: None }).await.map_err(|_| anyhow!("sequencer gone"))?;
                 paced.insert(symbol.clone(), Instant::now() + self.timing.interval);
-                continue;
+                // No `continue`: what the send left waiting — a quote ahead of the host clock —
+                // arms the wake below, or it would sit until the venue's next message.
             }
             // Nothing sequenced: arm the wake for what waits. A reached quote goes when the pace
             // frees the symbol; one the host clock has not reached goes when the clock reaches it,

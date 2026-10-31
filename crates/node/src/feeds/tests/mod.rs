@@ -56,8 +56,11 @@ async fn each_book_update_sequences_its_symbols_quote_as_it_arrives() {
     let (mut rx, _feed) = spawn_feed(Venue::Kraken, &url, &MARKETS, fast(WAIT));
     let (ws, _) = accept(&listener).await;
 
-    // One update every 20ms, a third of the pace of 10ms, so three updates inside one former
-    // 250ms interval each sequence as they arrive: nothing collapses to the newest.
+    // One update every 20ms, twice the 10ms pace, so three updates inside one former 250ms
+    // interval each sequence as they arrive: nothing collapses to the newest. (That the first
+    // update sequences before any tick could is asserted by
+    // `updates_faster_than_the_pace_coalesce_to_the_newest`, which interval batching cannot
+    // satisfy: it would sequence only the newest of the burst.)
     let step = Arc::new(AtomicUsize::new(0));
     let books = {
         let step = Arc::clone(&step);
@@ -68,10 +71,30 @@ async fn each_book_update_sequences_its_symbols_quote_as_it_arrives() {
     };
     let _serving = stream(ws, books);
     for i in 0..3 {
-        let (market, quotes) = next_prices(&mut rx).await;
+        let within = timeout(Duration::from_secs(2), next_prices(&mut rx)).await.expect("a quote per update");
+        let (market, quotes) = within;
         let mid = "100.5".parse::<Fixed>().unwrap() + Fixed::from_int(i);
         assert_eq!((market, quotes.len(), quotes[0].mid), (1, 1, mid));
     }
+}
+
+#[tokio::test]
+async fn a_quote_waiting_on_the_clock_or_the_pace_sequences_without_more_traffic() {
+    let (listener, url) = listen().await;
+    // A wide pace, so the second quote waits it out once the host clock has reached its stamp.
+    let timing = Timing { interval: Duration::from_millis(100), ..fast(WAIT) };
+    let (mut rx, _feed) = spawn_feed(Venue::Kraken, &url, &[(1, "BTC/USD")], timing);
+    let (mut ws, _) = accept(&listener).await;
+
+    // The first book sequences at once; the second, dated a little ahead, waits for the clock and
+    // then the pace — with the venue quiet, the feed's own timer releases it.
+    send(&mut ws, &[kraken_book("BTC/USD", "100", "101", now_ms())]).await;
+    let (market, first) = next_prices(&mut rx).await;
+    assert_eq!((market, first[0].mid.to_string()), (1, "100.5".into()));
+    send(&mut ws, &[kraken_book("BTC/USD", "102", "103", now_ms() + 30)]).await;
+    let (market, second) = next_prices(&mut rx).await;
+    assert_eq!((market, second[0].mid.to_string()), (1, "102.5".into()));
+    assert!(second[0].ts <= now_ms(), "sent before the host clock reached its stamp");
 }
 
 #[tokio::test]
@@ -82,8 +105,9 @@ async fn updates_faster_than_the_pace_coalesce_to_the_newest() {
     let (mut rx, _feed) = spawn_feed(Venue::Kraken, &url, &[(1, "BTC/USD")], timing);
     let (mut ws, _) = accept(&listener).await;
 
-    // The first update sequences at once; the rest arrive before the pace frees the symbol, so
-    // they coalesce, and the newest is the next quote through.
+    // The first update sequences at once — which interval batching cannot do, it would sequence
+    // only the newest of the burst; the rest arrive before the pace frees the symbol, so they
+    // coalesce, and the newest is the next quote through.
     let books: Vec<_> =
         (0..5).map(|i| kraken_book("BTC/USD", &format!("{}", 100 + i), &format!("{}", 101 + i), now_ms())).collect();
     send(&mut ws, &books).await;
