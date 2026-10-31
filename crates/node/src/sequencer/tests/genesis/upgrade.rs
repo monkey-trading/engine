@@ -171,6 +171,13 @@ fn a_signed_adoption_after_the_carry_survives_restart_under_the_unchanged_config
     drop(seq);
     let replayed = replay(&log_entries(&dir)).unwrap();
     assert_eq!(replayed.engine.close_spread_ceilings().unwrap()[&77], 25);
+    // Recovery with the adopted entry in force, under the upgrade's unchanged config: the check
+    // compares only what the config names, so the adoption passes.
+    let mut seq = recover_with(&dir, &signed(31_337), genesis_commands(&dev_config().genesis)).unwrap();
+    seq.activate_protocol().unwrap();
+    drop(seq);
+    let replayed = replay(&log_entries(&dir)).unwrap();
+    assert_eq!(replayed.engine.close_spread_ceilings().unwrap()[&77], 25);
 }
 
 #[test]
