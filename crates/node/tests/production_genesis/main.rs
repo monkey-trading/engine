@@ -19,7 +19,7 @@ use engine_core::auth::ClientAuth;
 use engine_core::command::{AdminCommand, Command, Sequenced};
 use engine_core::event::Event;
 use engine_core::market::QuoteCurrency;
-use engine_core::params::ProtocolParams;
+use engine_core::params::{NotionalWeighting, ProtocolParams, ToxicityParams, ToxicityTier};
 use engine_core::protocol::ProtocolVersion;
 use engine_core::session::{Period, Schedule};
 use engine_core::types::{AssetClass, MarketId, Millis};
@@ -76,11 +76,32 @@ fn a_dev_node_loads_the_production_genesis_and_every_market_validates() {
 fn the_production_genesis_applies_the_launch_decisions() {
     let production = production_genesis("launch-decisions");
     let dev = NodeConfig::load(Path::new(DEV)).unwrap().genesis;
-    // A 10% profit fee (#9); the other parameters, stress levels included, are dev's, except the
-    // total cap floor, whose production value is not chosen yet.
+    // A 10% profit fee (#9); the other parameters are dev's, except the total cap floor, whose
+    // production value is not chosen yet, and the toxicity parameters, which #130 calibrates
+    // from the observed flow for production (research/cap-calibration's toxicity stage; the
+    // values in results/toxicity_choice.json): memory keeps the score's sampling drift under
+    // 1 bp at every market's p99 fill, and a toxic account (a sustained 2 bps per-fill markout)
+    // reaches tier 1 within 75 median-size fills while a benign account stays below it for 200
+    // fills with probability at least 99.9%.
     assert_eq!(production.params.profit_fee_bps, 1_000);
     let floor = dev.params.house_total_cap_floor;
-    assert_eq!(ProtocolParams { house_total_cap_floor: floor, ..production.params.clone() }, dev.params);
+    let toxicity = dev.params.toxicity.clone();
+    assert_eq!(
+        production.params.toxicity,
+        ToxicityParams {
+            horizon_ms: 2_000,
+            ewma_weight_bps: 1_000,
+            notional: Some(NotionalWeighting {
+                prior: Fixed::from_int(5_629_517),
+                memory: Fixed::from_int(11_259_035)
+            }),
+            tiers: vec![
+                ToxicityTier { min_score_bps: 1, extra_spread_bps: 2 },
+                ToxicityTier { min_score_bps: 2, extra_spread_bps: 3 },
+            ],
+        }
+    );
+    assert_eq!(ProtocolParams { house_total_cap_floor: floor, toxicity, ..production.params.clone() }, dev.params);
     // The house starts with no capital and builds it from trader losses, and no benchmark rate is
     // set until the daily benchmark feed sequences one.
     assert_eq!(production.house_capital, Fixed::ZERO);

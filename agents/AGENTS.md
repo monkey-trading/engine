@@ -214,7 +214,10 @@ an index: load only the rule whose hint matches the current action.
   `cap-calibration/` calibrates the house exposure-cap floors by Monte Carlo (#111): scripts that
   fetch and derive its public data (raw pulls in gitignored `data/raw/`, the derived dataset in
   `data/derived/`), the Python model behind `run.py`, its tests, and `results/`. Its `README.md`
-  gives the method, sources, results, and how to re-run. Research may name the platforms whose
+  gives the method, sources, results, and how to re-run. Its `toxicity` stage calibrates the
+  production toxicity parameters (#130): `prior`, `memory`, tier thresholds and spreads from the
+  observed fill sizes and the markets' markout volatility, proposed into
+  `config/production-genesis.toml`. Research may name the platforms whose
   public data it studies, inside `research/` and its PR only. `close-spread-calibration/` calibrates
   per-market close-spread ceilings (#147): pinned inventory and source audit, a pricing model
   checked against `Engine::apply` fills, the isolated-position sweep, per-market results, and the

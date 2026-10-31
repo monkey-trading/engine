@@ -406,6 +406,69 @@ opening notional, directional flow and churn.
 - **Withdrawals.** The withdrawal and run rates are assumptions; the queue measure depends on
   them, and the house-cash measure does not.
 
+## Toxicity parameters
+
+The launch toxicity parameters (`config/production-genesis.toml`, #114) are dev values. The
+`toxicity` stage calibrates them — `prior`, `memory`, the tier thresholds and the tier spreads —
+from the observed fill sizes and the markets' markout volatility, so the score separates toxic
+flow quickly without drifting on large fills. `run.py toxicity` writes
+`results/toxicity_markets.csv` (the per-market distributions and drift), `toxicity_choice.json`
+(the values and method), and `manifest_toxicity.json`. It runs no Monte Carlo: the engine's
+notional-weighted recurrence is exact, and the one probability bound is checked by 40,000-trial
+simulations of it (about 5 seconds).
+
+- **Fill sizes** (`size_quantiles`): papertrade's margin-weighted distribution of position
+  notionals on each market's margin schedule, inverted at the median, p75, p90, and p99. A
+  position opens as one order, so a fill is a position's notional. The clips vary by schedule:
+  $100k median (and $3.2M p99) on the crypto and share schedules, $1.3M median ($10M p99) on
+  FX, $1M median ($10M p99) on oil.
+- **Markout scales** (`sigma_markout_bps`): the median open hour's Parkinson volatility — the
+  model's per-hour scale — scaled to the 2s horizon, in bps. A typical hour prices a typical
+  fill: 0.13–0.50 bps on FX and indices, 0.70–1.33 on crypto, up to 1.58 on the noisiest shares
+  (`results/toxicity_markets.csv` has every market).
+- **Memory**: the bounded-memory score is a weighted average of the last `memory` USD of fills,
+  so its sampling drift for `n`-sized fills is about `sigma_markout * sqrt(n / memory)` bps —
+  the issue's drift analysis: under 1 bp at the observed sizes unless single fills exceed about
+  $5M at the launch memory. The chosen memory is the smallest that keeps the drift under 1 bp at
+  every market's p99 fill: $11.26M, set by Brent (a $10M p99 clip at a 1.06 bps markout scale).
+- **Prior**: half of memory, the most neutral history that still lets a toxic account climb in
+  the stated fills. The launch's $10k lets a single $1.3M fill set the score; the calibrated
+  prior caps a first fill's weight at 1.33/(5.63+1.33) ≈ 19% on the biggest median clip.
+- **Tiers and spreads** (`choose_tiers`): the design toxic level is a sustained 2 bps per-fill
+  markout — above the widest size spread, so an account at it scalps the house at any size.
+  Tier 1 is the highest whole-bps threshold that (a) a toxic account filling at the $100k median
+  clip reaches within the stated count of fills and (b) a benign account filling at every
+  market's median clip stays below for 200 fills with probability at least 99.9% (40,000 trials
+  of the exact recurrence per market). The first passing count wins at 75 fills, so a toxic
+  account reaches tier 1 within 75 median-size fills; tier 2 doubles the threshold. A tier's
+  spread is the sustained markout that reaches the tier in the stated fills (the house recoups
+  the marginal toxic account's edge), rounded up to the whole bps the engine stores: 1 bps at a
+  2-bps spread, 2 bps at a 3-bps spread.
+
+The median clip, not the tail, anchors the benign bound deliberately: an account filling at the
+p99 clip on every fill is already an outlier — the memory bound prices its noise at exactly the
+drift bound, so no threshold within the toxic reach could stand against it. Such accounts are
+the score's purpose, not its false positives; the README's recalibration note below covers
+revisiting this as live fill data arrives.
+
+The values proposed to `config/production-genesis.toml` (`results/toxicity_choice.json`):
+
+| parameter | launch | calibrated |
+|---|---|---|
+| `prior` USD | 10,000 | 5,629,517 |
+| `memory` USD | 10,000,000 | 11,259,035 |
+| tier 1, min score bps / spread bps | 5 / 1 | 1 / 2 |
+| tier 2, min score bps / spread bps | 15 / 3 | 2 / 3 |
+
+The launch tiers sit above what a sustainedly-toxic account can reach: at a 2-bps markout the
+score asymptotes below 5 bps at any fill size, so the launch configuration detects no toxic
+account within any number of fills. The calibrated tiers detect the design level within 75
+median-size fills.
+
+Provenance: `run.py toxicity` on the committed `data/derived/`, seed 1, about 5 seconds
+(`results/manifest_toxicity.json`). The benign trials are seeded and deterministic at a fixed
+trial count.
+
 ## Re-running
 
 From a virtualenv outside the repo (Python 3.12 or newer):
@@ -419,7 +482,8 @@ cd research/cap-calibration
 
 `all` reruns everything from the committed `data/derived/` with the committed results' settings:
 `DEFAULTS` in `run.py` sets each stage's paths and paths per batch, and `--workers` defaults to 4.
-Stages run alone with `per-market`, `joint`, `sensitivity`, and `report`. Each batch of paths is
+Stages run alone with `per-market`, `joint`, `sensitivity`, and `report`; the toxicity
+calibration (above) runs with `toxicity`. Each batch of paths is
 seeded from `--seed` (default 1) and its index, and its size shapes its random draws, so the same
 seed and batch size reproduce a run exactly, and another batch size gives other, equally valid
 paths. `results/manifest_<stage>.json` records the scenario, including both, the hashes of the
@@ -446,7 +510,8 @@ To recalibrate as live data arrives:
 - `derive/`: `papertrade.py` decodes positions; `markets.py` builds the hourly dataset, statistics,
   mix, and benchmark rates, into `data/derived/`.
 - `model/`: `accounting.py` (engine rules), `prices.py` (bootstrap), `flow.py` (behaviour),
-  `simulate.py` (the hourly simulation), `experiments.py` (runs and measures), `report.py`.
+  `simulate.py` (the hourly simulation), `experiments.py` (runs and measures),
+  `toxicity.py` (the toxicity calibration), `report.py`.
 - `tests/`: the engine rules, the simulation's accounting, the data derivation, and the
   estimators, on hand cases and small synthetic inputs.
 - `results/`: the stage outputs, `report.md`, and run manifests.
