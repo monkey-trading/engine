@@ -3,7 +3,7 @@
   "stress"
  ],
  "scenario": {
-  "name": "baseline",
+  "name": "utilisation",
   "paths": 2000,
   "seed": 1,
   "days": 90,
@@ -22,7 +22,7 @@
   "idle_withdraw_per_day": 0.05,
   "run_withdraw_per_day": 0.5,
   "batch_paths": 25,
-  "utilisation_stats": false
+  "utilisation_stats": true
  },
  "derived_sha256": {
   "benchmarks.csv": "16e04c781473c39d",
@@ -37,7 +37,7 @@
   "papertrade_summary.json": "875fc6c89820321a"
  },
  "workers": 4,
- "seconds": 1160,
+ "seconds": 1270,
  "move_hours": 400,
  "utilisation_stats": true,
  "floor_families": {

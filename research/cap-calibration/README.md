@@ -424,22 +424,24 @@ house exposure in bps of the market's cap at house NAV.
   per-second volatility comes from its hourly bars' Parkinson range; one minute-scale path per
   sampled history hour (400 hours per market), at the engine's one-second cadence, bucketed window,
   and cooldown hysteresis, gives each candidate's share of time at each level and the volatility
-  percentile its firings select. The chosen thresholds are the most protective pair whose
-  flow-weighted time at level 1 stays under 1% (level 2 under 0.1%) and every market's level-1
-  share under 5%. At a 60s window the candidates measure:
+  percentile its firings select. Each simulated hour opens with two window-lengths of warm-up,
+  discarded from the tables, so every recorded second reads against a full window, and the
+  hysteresis is evaluated within each hour — no state crosses the independent paths. The chosen
+  thresholds are the most protective pair whose flow-weighted time at level 1 stays under 1% (level
+  2 under 0.1%) and every market's level-1 share under 5%. At a 60s window the candidates measure:
 
-  | (t1, t2) bps | time at L1, flow-weighted | worst market at L1 | median vol pct of L1 firings |
+  | (t1, t2) bps | time at L1, flow-weighted | worst market at L1 | mean vol pct of L1 firings |
   |---|---|---|---|
-  | (50, 150) | 1.77% | 8.3% | 0.86 |
-  | (60, 150) | 1.00% | 5.1% | 0.85 |
-  | **(75, 200)** | **0.43%** | **2.7%** | 0.87 |
-  | (100, 250) | 0.12% | 1.2% | 0.93 |
-  | (150, 300), launch | 0.009% | 0.3% | 0.97 |
+  | (50, 150) | 1.47% | 10.1% | 0.85 |
+  | (60, 150) | 0.79% | 6.6% | 0.87 |
+  | **(75, 200)** | **0.37%** | **3.7%** | 0.87 |
+  | (100, 250) | 0.14% | 1.4% | 0.92 |
+  | (150, 300), launch | 0.014% | 0.39% | 0.98 |
 
   The window stays at 60s: 30s and 120s give parallel fire-rate curves (a longer window raises
   every reading alike), and 60s keeps the window's dozen buckets at one-per-6s against feeds that
   publish at least a mid a second. The choice, 75 and 200 bps, fires on the volatile crypto, oil,
-  and share markets — 0.06–1.1% of the time on those carrying at least 1% of the flow, up to 2.7%
+  and share markets — 0.06–1.1% of the time on those carrying at least 1% of the flow, up to 3.7%
   on the smallest share listings, the worst market within the 5% bound — and is silent on FX and
   indices (their protection is the divergence trigger and the stale-price halt); the launch
   150/300 fires on none of them outside crashes.
@@ -459,24 +461,28 @@ house exposure in bps of the market's cap at house NAV.
   stale-fill cost of the level-1 spread; the expected-cost rule (`d/4 ≥ min_spread`) is reported
   in `stress_divergence.csv` and is unreachable at any share under 10000 on the 5-bps markets.
 - **Utilisation** (levels, from the Monte Carlo). The model records each market's hourly
-  utilisation and exposure on the same 2,000 paths as the floor study, at three floor families:
-  the house-cash 1% choice ($240M of floors, the study's recommendation), a uniform $10M, and a
-  uniform $1M. Level 2 stays at 9500: it is the last widening before refusals start. Level 1 is
-  the lowest candidate whose flow-weighted fire rate stays under 2% on the launch-relevant
-  families and under 5% on any market with at least 1% of the flow — 6000, firing 1.8–2.0%
-  flow-weighted (worst market 3.7%). The fire rates:
+  utilisation and exposure — the book the hour leaves behind, after its settlements and its opens,
+  the positions outstanding until the next hour, the closest hourly analog of the engine's
+  after-command re-evaluation — on the same 2,000 paths as the floor study, at three floor
+  families: the house-cash 1% choice ($240M of floors, the study's recommendation), a uniform
+  $10M, and a uniform $1M. Level 2 stays at 9500: it is the last widening before refusals start.
+  Level 1 is the lowest candidate whose flow-weighted fire rate stays under 2% on the
+  launch-relevant families and under 5% on any market with at least 1% of the flow — 7000, firing
+  1.4–1.5% flow-weighted (worst market 2.9%). The fire rates:
 
   | level bps | house-cash 1% | uniform $10M | uniform $1M |
   |---|---|---|---|
-  | 5000 | 7.7% | 7.2% | 50.3% |
-  | **6000 (L1)** | **2.0%** | **1.8%** | 39.4% |
-  | 8000, launch L1 | 0.11% | 0.10% | 16.7% |
-  | **9500 (L2)** | **0.00%** | **0.00%** | 2.4% |
+  | 5000 | 14.3% | 13.1% | 54.8% |
+  | 6000 | 5.2% | 4.9% | 45.2% |
+  | **7000 (L1)** | **1.5%** | **1.4%** | 35.4% |
+  | 8000, launch L1 | 0.45% | 0.43% | 25.7% |
+  | **9500 (L2)** | **0.02%** | **0.02%** | 10.3% |
 
   Under $1M floors a market's cap is so small that every level fires constantly — a property of
   those floors, reported rather than calibrated to; at the recommended floors the utilisation
-  trigger is a rare event, as intended. The per-fire exposure at 6000 is the house near its cap
-  ($6.7M mean on BTC-USD), against a p99 next-mark gap of 180 bps on BTC-USD (`gap_tables`). The
+  trigger is a rare event, as intended. The per-fire exposure at 7000 is the house near its cap
+  ($7.8M mean on BTC-USD at 70% of a cap near $11M), against a p99 next-mark gap of 180 bps on
+  BTC-USD (`gap_tables`). The
   model nets each hour's orders against the net-exposure cap and fills offsetting flow in full
   (its documented approximation, README above), so after one-sided settlement a book can briefly
   exceed the cap — the engine, checking each order, refuses more. The exposure-at-fire rows of
@@ -489,13 +495,14 @@ The values proposed to `config/production-genesis.toml` (`stress_choice.json`):
 |---|---|---|
 | `stress_move_window_ms` | 60000 | 60000 |
 | move bps, level 1 / 2 | 150 / 300 | 75 / 200 |
-| divergence share bps, level 1 / 2 | 6000 / 8000 | 8000 / 9500 |
-| utilisation bps, level 1 / 2 | 8000 / 9500 | 6000 / 9500 |
+| divergence share bps, level 1 / 2 | 6000 / 8000 | 6001 / 9500 |
+| utilisation bps, level 1 / 2 | 8000 / 9500 | 7000 / 9500 |
 
 Provenance: `run.py stress` on the committed `data/derived/`, 2,000 paths in batches of 25, seed
-1, four workers, about 13 minutes (`results/manifest_stress.json`); the move tables sample 400
-history hours per market at the same seed. The same seed and batch sizes reproduce the run
-exactly.
+1, four workers, about 21 minutes (`results/manifest_stress.json`, which records the stage's own
+settings: the effective scenario, the move-table hours, and the floor families); the move tables
+sample 400 history hours per market at the same seed. The same seed and batch sizes reproduce the
+run exactly.
 
 ## Re-running
 

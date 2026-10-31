@@ -80,8 +80,9 @@ fn the_production_genesis_applies_the_launch_decisions() {
     // production value is not chosen yet, and the stress triggers, which #133 calibrates from
     // data for production (research/cap-calibration's stress stage; the values in
     // results/stress_choice.json): divergence shares whose stale-fill loss at fire covers each
-    // level's spread on the tightest bound, fast moves under a minute-scale noise bound, and
-    // utilisation levels under a 2% flow-weighted fire rate in the Monte Carlo.
+    // level's spread on the tightest bound (share 6001 is the lowest the engine's truncated-share
+    // arithmetic fires at 4 bps on the 5-bps markets), fast moves under a minute-scale noise
+    // bound, and utilisation levels under a 2% flow-weighted fire rate in the Monte Carlo.
     assert_eq!(production.params.profit_fee_bps, 1_000);
     let floor = dev.params.house_total_cap_floor;
     let level = |size_spread_multiplier_bps, min_spread_bps, trigger| StressLevel {
@@ -101,7 +102,7 @@ fn the_production_genesis_applies_the_launch_decisions() {
         production.params.stress_levels,
         [
             level(10_000, 0, None),
-            level(20_000, 2, trigger(8_000, 75, 6_000)),
+            level(20_000, 2, trigger(6_001, 75, 7_000)),
             level(40_000, 10, trigger(9_500, 200, 9_500)),
         ]
     );

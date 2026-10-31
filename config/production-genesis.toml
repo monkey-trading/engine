@@ -274,7 +274,7 @@ min_spread_bps = 0
 [[genesis.params.stress_levels]]
 size_spread_multiplier_bps = 20000
 min_spread_bps = 2
-trigger = { divergence_share_bps = 8000, move_bps = 75, utilisation_bps = 6000 }
+trigger = { divergence_share_bps = 6001, move_bps = 75, utilisation_bps = 7000 }
 
 [[genesis.params.stress_levels]]
 size_spread_multiplier_bps = 40000
