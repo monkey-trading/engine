@@ -440,5 +440,6 @@ pub(crate) fn session() -> Vec<Sequenced> {
     v37::session(&mut h);
     v38::session(&mut h);
     v39::session(&mut h);
+    v40::session(&mut h);
     h.log
 }

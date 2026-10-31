@@ -67,6 +67,7 @@ pub mod account;
 mod admin;
 pub mod auth;
 pub mod benchmark;
+pub mod close_spread;
 mod closeout;
 pub mod command;
 pub mod corporate;
