@@ -308,23 +308,6 @@ fn the_committed_venue_feeds_price_both_crypto_markets_from_three_venues() {
 }
 
 #[test]
-fn an_interval_that_outlasts_the_venue_timeout_is_refused() {
-    let mut cfg = NodeConfig::load(Path::new(DEV)).unwrap();
-    cfg.feeds.interval = cfg.feeds.venues.as_ref().unwrap().timeout;
-    let err = format!("{:#}", cfg.validate().unwrap_err());
-    assert!(err.contains("feeds.interval must be shorter than feeds.venues.timeout"), "{err}");
-}
-
-#[test]
-fn venue_feeds_need_their_section() {
-    let mut cfg = NodeConfig::load(Path::new(DEV)).unwrap();
-    cfg.feeds.provider = FeedProvider::Venues;
-    cfg.feeds.venues = None;
-    let err = format!("{:#}", cfg.validate().unwrap_err());
-    assert!(err.contains("needs [feeds.venues]"), "{err}");
-}
-
-#[test]
 fn venue_settings_that_would_fail_silently_are_refused() {
     type Edit = fn(&mut VenuesSection);
     let cases: [(&str, Edit); 13] = [

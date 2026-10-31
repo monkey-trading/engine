@@ -190,6 +190,24 @@ fn a_quote_further_ahead_than_the_engine_takes_is_dropped() {
 }
 
 #[test]
+fn pending_reports_what_waits_and_when_the_clock_reaches_it() {
+    const NOW: Millis = 1_792_489_875_714;
+    let at = |ts: Millis| SourceQuote { source: "kraken".into(), mid: Fixed::from_int(100), ts, contract: None };
+    let mut pending = Pending::default();
+    assert!(!pending.reached(NOW));
+    assert_eq!(pending.next_ahead(NOW), None);
+    pending.add(at(NOW - 100), NOW).unwrap();
+    pending.add(at(NOW + 40), NOW).unwrap();
+    assert!(pending.reached(NOW));
+    assert_eq!(pending.next_ahead(NOW), Some(NOW + 40));
+    // Once the clock reaches it, the waiting quote is the reached one, and nothing stays ahead.
+    assert!(pending.reached(NOW + 40));
+    assert_eq!(pending.next_ahead(NOW + 40), None);
+    assert_eq!(pending.take(NOW + 40), Some(at(NOW + 40)));
+    assert!(!pending.reached(NOW + 40));
+}
+
+#[test]
 fn a_quote_counts_within_the_tighter_of_the_feed_and_market_bounds() {
     const AT: Millis = 1_792_489_875_714;
     assert!(counts(AT - 1_000, AT, 1_000, 1_000));

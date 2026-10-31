@@ -1,15 +1,18 @@
 //! One venue's live feed. A task connects, subscribes, and sequences the venue's top-of-book mids
-//! as `Command::Prices`, each stamped with the venue's own timestamp. It returns only when the
-//! sequencer has gone away: a failed connection is retried inside the task with backoff, and while
-//! it is down the venue's last quotes age out in the engine, which prices from the other venues.
-//! A connection that stays quiet for the read deadline — a stalled login, a dead connection — is
-//! failed and retried the same way, even while every market is closed.
+//! as `Command::Prices`, one per book update as it arrives — the newest quote the host clock has
+//! reached, never one stamped ahead of it. It returns only when the sequencer has gone away: a
+//! failed connection is retried inside the task with backoff, and while it is down the venue's
+//! last quotes age out in the engine, which prices from the other venues. A connection that stays
+//! quiet for the read deadline — a stalled login, a dead connection — is failed and retried the
+//! same way, even while every market is closed.
 //! A quote stamped while its market's schedule is closed is held back, since the engine refuses it,
 //! and a symbol whose market is closed is not counted as silent.
 
 mod alerts;
 mod confirm;
 use confirm::Confirmation;
+mod emit;
+use emit::rearm;
 mod quotes;
 use quotes::Pending;
 mod setup;
@@ -28,14 +31,13 @@ use std::time::Duration;
 
 use anyhow::{Context, anyhow, bail};
 use engine_core::Fixed;
-use engine_core::command::Command;
 use engine_core::session::Schedule;
 use engine_core::types::{MarketId, Millis};
 use futures_util::StreamExt;
 use rustls::ClientConfig;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Instant, MissedTickBehavior, interval_at, sleep, timeout, timeout_at};
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::clock::now_ms;
 use crate::config::{ApiKey, Venue, VenueConnection, VenuesSection};
@@ -86,11 +88,13 @@ pub(super) struct Book {
     pub ts: Millis,
 }
 
-/// How often a venue task sequences quotes, how it times out and reconnects, and how old a quote
-/// may be and still count as the venue quoting.
+/// How often a venue task sequences a symbol's latest quote, how it times out and reconnects, and
+/// how old a quote may be and still count as the venue quoting.
 #[derive(Debug, Clone, Copy)]
 pub struct Timing {
-    /// The most often one symbol's latest quote is sequenced.
+    /// The most often one symbol's latest quote is sequenced. A book update sequences its
+    /// symbol's quote at once; updates closer together than this coalesce to the newest, so venue
+    /// messages a hostile host floods in cannot amplify sequencer load past this rate.
     pub interval: Duration,
     /// The deadline for a read: the login, the subscription, and each message after, whatever its
     /// market's hours.
@@ -270,13 +274,13 @@ impl VenueFeed {
         }
     }
 
-    /// One connection: connect, send the opening messages, then read messages and sequence one
-    /// quote per symbol every `timing.interval`, the newest the host clock has reached (see
-    /// `Pending`). Once the sequencer has applied it, the venue counts as quoting that symbol while
-    /// the quote the engine holds from it is no older than `timing.stale_after` or the market's
-    /// `max_age_ms` (see `confirm`). Every read has `timing.timeout` to produce a message, whether
-    /// or not any market is open, so a stalled login or a dead connection is replaced instead of
-    /// hanging unseen through a closure.
+    /// One connection: connect, send the opening messages, then read messages and sequence each
+    /// symbol's newest reached quote as its book updates arrive (see `emit`), at most one per
+    /// symbol per `timing.interval`. Once the sequencer has applied it, the venue counts as
+    /// quoting that symbol while the quote the engine holds from it is no older than
+    /// `timing.stale_after` or the market's `max_age_ms` (see `confirm`). Every read has
+    /// `timing.timeout` to produce a message, whether or not any market is open, so a stalled
+    /// login or a dead connection is replaced instead of hanging unseen through a closure.
     /// Error cases:
     /// - connecting or sending the opening messages fails or takes longer than `timing.timeout`
     /// - no message arrives within `timing.timeout`, whatever its market's hours
@@ -302,11 +306,18 @@ impl VenueFeed {
         }
 
         let mut buffered: BTreeMap<String, Pending> = BTreeMap::new();
-        let mut flush = interval_at(Instant::now() + self.timing.interval, self.timing.interval);
-        flush.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let mut paced: BTreeMap<String, Instant> = BTreeMap::new();
+        // The emit timer wakes for what `emit` holds: a symbol whose updates outran the pace, and
+        // a quote the host clock has not reached yet. `emit` returns the next deadline; it idles
+        // a day out when nothing waits. Like the read deadline, it outlives each select below.
+        let mut emit_wake = Box::pin(sleep(Duration::from_secs(24 * 60 * 60)));
+        // Silence and the no-fresh-quote count are checked once an interval, as they were on the
+        // sequencing tick.
+        let mut checks = interval_at(Instant::now() + self.timing.interval, self.timing.interval);
+        checks.set_missed_tick_behavior(MissedTickBehavior::Delay);
         // The one deadline every read is judged against, whatever its market's hours: the login,
         // the subscription, and each message after must arrive within it, and any message met
-        // sets the next. It outlives each select below, which the flush arm would otherwise
+        // sets the next. It outlives each select below, which the checks arm would otherwise
         // restart it past.
         let mut read_deadline = Instant::now() + self.timing.timeout;
         loop {
@@ -315,7 +326,10 @@ impl VenueFeed {
                     let message = message.context("read timed out")?.context("connection closed")?.context("read")?;
                     read_deadline = Instant::now() + self.timing.timeout;
                     match message {
-                        Incoming::Text(text) => self.receive(&mut adapter, &mut link, &text, &mut buffered).await?,
+                        Incoming::Text(text) => {
+                            self.receive(&mut adapter, &mut link, &text, &mut buffered).await?;
+                            rearm(&mut emit_wake, self.emit(&mut buffered, &mut paced).await?);
+                        }
                         Incoming::Binary => self.refuse("binary message", ""),
                         Incoming::Closed(reason) => bail!("closed by the venue: {reason}"),
                         Incoming::Other => {}
@@ -330,8 +344,10 @@ impl VenueFeed {
                     self.confirming = None;
                     self.confirmed(answer.map_err(|_| anyhow!("sequencer gone"))?);
                 }
-                _ = flush.tick() => {
-                    self.flush(&mut buffered).await?;
+                _ = &mut emit_wake => {
+                    rearm(&mut emit_wake, self.emit(&mut buffered, &mut paced).await?);
+                }
+                _ = checks.tick() => {
                     if self.check_silent() {
                         bail!("resubscribing after a symbol went silent");
                     }
@@ -344,40 +360,13 @@ impl VenueFeed {
                     if !self.quoted && waiting_since.elapsed() >= self.timing.timeout {
                         bail!("no fresh quote for {:?}", self.timing.timeout);
                     }
+                    if self.confirming.is_none() {
+                        self.unconfirmed.clear();
+                        self.confirming = Some(self.confirm().await?);
+                    }
                 }
             }
         }
-    }
-
-    /// Sequences the newest quote each symbol has reached, unless the engine would refuse it: its
-    /// market unlisted, its contract not taken, or stamped or sent while its market is closed. Then
-    /// asks for a confirmation if none is awaited (see `confirm`).
-    /// Error cases:
-    /// - the sequencer has gone away
-    async fn flush(&mut self, buffered: &mut BTreeMap<String, Pending>) -> anyhow::Result<()> {
-        let now = now_ms();
-        for (symbol, quotes) in buffered.iter_mut() {
-            let Some(quote) = quotes.take(now) else { continue };
-            let market = self.instruments[symbol].market;
-            if self.is_held(symbol) {
-                continue;
-            }
-            // The engine needs the market open from the venue stamp to the sequencer's stamp, which
-            // may come up to an interval after this one.
-            if !self.in_session(market, quote.ts, now) {
-                let (venue, feed) = (self.conn.venue.name(), self.conn.url.as_str());
-                debug!(venue, feed, symbol, market, "quote from outside one open session held back");
-                continue;
-            }
-            self.unconfirmed.insert(symbol.clone());
-            let cmd = Command::Prices { market, quotes: vec![quote] };
-            self.tx.send(Request::Submit { cmd, reply: None }).await.map_err(|_| anyhow!("sequencer gone"))?;
-        }
-        if self.confirming.is_none() {
-            self.unconfirmed.clear();
-            self.confirming = Some(self.confirm().await?);
-        }
-        Ok(())
     }
 
     /// Reads one text message into `buffered`, refusing what does not parse or check, and sends

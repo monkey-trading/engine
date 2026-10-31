@@ -43,7 +43,10 @@ pub enum Venue {
 #[serde(deny_unknown_fields)]
 pub struct FeedsSection {
     pub provider: FeedProvider,
-    /// The mock feed's tick, and the most often a venue feed sequences one market's latest quote.
+    /// The mock feed's tick, and, for venue feeds, the most often one symbol's latest quote is
+    /// sequenced: a book update sequences its symbol's newest reached quote at once, and updates
+    /// closer together than this coalesce to the newest, bounding the sequencer load venue
+    /// messages can demand.
     #[serde(with = "humantime_serde")]
     pub interval: Duration,
     /// Starting mids for the mock feed, by market id.

@@ -17,6 +17,12 @@ use crate::config::{
 use crate::sequencer::genesis::check_genesis;
 use crate::trusted_time::NO_SAMPLE_GRACE;
 
+/// The least `feeds.interval` with live venue feeds: the most often one symbol's latest quote may
+/// be sequenced. Venue message rates stay well under it, while an injected host flooding the
+/// socket cannot make a feed sequence a symbol's quotes more often than 100 a second, whatever
+/// the config a deployment attests.
+const MIN_VENUE_QUOTE_SPACING: Duration = Duration::from_millis(10);
+
 impl NodeConfig {
     /// Refuses every mock provider when `production` is set, whatever else the config says.
     /// Error cases:
@@ -48,8 +54,8 @@ impl NodeConfig {
     /// - `tee.provider` is not `mock` and `operator.public_key` is a published test key (see
     ///   `refuse_test_keys`)
     /// - `[alerts.critical]` is missing with a TEE or custody provider other than `mock`
-    /// - `feeds.venues` is missing for `provider = "venues"`, fails validation, or has a `timeout`
-    ///   no longer than `feeds.interval`
+    /// - `feeds.venues` is missing for `provider = "venues"`, fails validation, or has a
+    ///   `feeds.interval` outside `10ms..feeds.venues.timeout`
     /// - `time.servers` has fewer than two servers, lists a public key twice, or has an address
     ///   that is not `host:port`
     /// - `api.allowed_origins` lists a wildcard, a malformed origin, or one twice (see
@@ -95,6 +101,13 @@ impl NodeConfig {
                 ensure!(
                     self.feeds.interval < venues.timeout,
                     "feeds.interval must be shorter than feeds.venues.timeout"
+                );
+                // The pace a symbol's quotes sequence at, so an injected flood of venue messages
+                // cannot amplify sequencer load past a hundred quotes a second per symbol.
+                ensure!(
+                    self.feeds.interval >= MIN_VENUE_QUOTE_SPACING,
+                    "feeds.interval must be at least {MIN_VENUE_QUOTE_SPACING:?} with [feeds.venues], \
+                     so a symbol's quotes sequence at most 100 times a second"
                 );
             }
             None if self.feeds.provider == FeedProvider::Venues => {

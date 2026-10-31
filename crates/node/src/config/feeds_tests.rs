@@ -112,6 +112,31 @@ fn vendor_settings_that_would_fail_or_could_be_forged_are_refused() {
     }
 }
 
+#[test]
+fn an_interval_that_outlasts_the_venue_timeout_is_refused() {
+    let mut cfg = NodeConfig::load(Path::new(DEV)).unwrap();
+    cfg.feeds.interval = cfg.feeds.venues.as_ref().unwrap().timeout;
+    let err = format!("{:#}", cfg.validate().unwrap_err());
+    assert!(err.contains("feeds.interval must be shorter than feeds.venues.timeout"), "{err}");
+}
+
+#[test]
+fn a_venue_quote_pace_over_the_flood_bound_is_refused() {
+    let mut cfg = NodeConfig::load(Path::new(DEV)).unwrap();
+    cfg.feeds.interval = Duration::from_millis(5);
+    let err = format!("{:#}", cfg.validate().unwrap_err());
+    assert!(err.contains("feeds.interval must be at least 10ms with [feeds.venues]"), "{err}");
+}
+
+#[test]
+fn venue_feeds_need_their_section() {
+    let mut cfg = NodeConfig::load(Path::new(DEV)).unwrap();
+    cfg.feeds.provider = FeedProvider::Venues;
+    cfg.feeds.venues = None;
+    let err = format!("{:#}", cfg.validate().unwrap_err());
+    assert!(err.contains("needs [feeds.venues]"), "{err}");
+}
+
 // ── Helpers ──
 
 /// The committed dev config with `VENDORS` after its crypto venues: Coinbase, Kraken, and Bitstamp

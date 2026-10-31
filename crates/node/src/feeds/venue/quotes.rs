@@ -1,4 +1,4 @@
-//! The quotes a venue task holds between sequencing ticks, and the rule that judges whether the
+//! The quotes a venue task holds between book updates, and the rule that judges whether the
 //! quote the engine holds counts as the venue quoting.
 
 use std::collections::BTreeMap;
@@ -16,8 +16,11 @@ use engine_core::types::Millis;
 /// the engine quotes those rules cannot use yet. Quotes ahead are kept one per venue millisecond
 /// and at most `MAX_QUOTE_LEAD_MS` ahead, which bounds how many are held.
 ///
-/// TODO: from `V12` the engine counts a quote dated ahead at once, as dated at the sequenced time,
-/// so holding one back here only delays it; send it as it arrives.
+/// A submission must never claim a venue time the host clock has not reached, though from `V12`
+/// the engine would count a quote dated ahead at once, as dated at the sequenced time: the stored
+/// stamp would be honest, but `max_age_ms` and `stale_after` police freshness against the venue
+/// stamp the log records, and the feed's own silence and outage judgements read it too. So a quote
+/// ahead waits here for the clock, and `emit` releases it the moment the clock reaches it.
 #[derive(Debug, Default)]
 pub(super) struct Pending {
     reached: Option<SourceQuote>,
@@ -48,6 +51,19 @@ impl Pending {
     pub(super) fn take(&mut self, now: Millis) -> Option<SourceQuote> {
         self.catch_up(now);
         self.reached.take()
+    }
+
+    /// Whether a quote the host clock has reached at `now` waits to be taken.
+    pub(super) fn reached(&mut self, now: Millis) -> bool {
+        self.catch_up(now);
+        self.reached.is_some()
+    }
+
+    /// The earliest venue time still ahead of the host clock at `now`: when the clock reaches the
+    /// first waiting quote.
+    pub(super) fn next_ahead(&mut self, now: Millis) -> Option<Millis> {
+        self.catch_up(now);
+        self.ahead.keys().next().copied()
     }
 
     /// Moves the quotes the host clock has reached at `now` out of `ahead`, oldest first.

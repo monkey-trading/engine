@@ -639,18 +639,21 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/feeds/mod.rs` — the feed index and the mock feed, whose walks follow scheduled splits into
   the new share units, keeping a restart's pending splits and re-anchoring to a mark when the
   engine splits without the walk following
-- `src/feeds/venue/mod.rs` — the venue task: connect, subscribe, sequence quotes, reconnect, and
-  hold back quotes the engine would refuse
+- `src/feeds/venue/mod.rs` — the venue task: connect, subscribe, sequence each symbol's newest
+  reached quote per book update, reconnect, and hold back quotes the engine would refuse
 - `src/feeds/venue/alerts.rs` — the venue task's alerts: outages, silent symbols, a clock ahead of
   the host's, and refused messages
+- `src/feeds/venue/emit.rs` — sequencing the newest reached quote per symbol as book updates
+  arrive, paced so updates faster than `feeds.interval` coalesce to the newest, and the emit
+  timer that releases what the host clock has not reached yet
 - `src/feeds/venue/transport.rs` — a connection's messages over a WebSocket, or in lines over TCP
 - `src/feeds/venue/validation.rs` — the checks every venue's books pass before they are sequenced
 - `src/feeds/venue/confirm.rs` — confirming every symbol with the engine each tick: which the
   venue is quoting, which markets it does not list, which contracts the listing does not name or
   the market does not take, and changed market hours; and settling a dropped connection's last
   quotes
-- `src/feeds/venue/quotes.rs` — the quotes held between ticks until the host clock reaches them,
-  and the rule that decides whether the quote the engine holds counts as the venue quoting
+- `src/feeds/venue/quotes.rs` — the quotes held between book updates until the host clock reaches
+  them, and the rule that decides whether the quote the engine holds counts as the venue quoting
 - `src/feeds/venue/setup.rs` — the TLS client config and reconnect backoff every connection shares
 - `src/feeds/venue/tests.rs` — venue task unit tests: alert throttling and silence windows on
   paused time, held quotes against the engine's rule, kept books for unsubscribed symbols, the

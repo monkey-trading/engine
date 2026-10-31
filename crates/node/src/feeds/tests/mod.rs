@@ -12,9 +12,10 @@ mod vendors;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
+use engine_core::Fixed;
 use engine_core::types::MarketId;
 use futures_util::SinkExt;
 use tokio::time::{sleep, timeout};
@@ -50,27 +51,61 @@ async fn quotes_are_sequenced_per_market_with_the_venue_timestamp() {
 }
 
 #[tokio::test]
-async fn only_the_newest_quote_per_market_is_sequenced_each_interval() {
+async fn each_book_update_sequences_its_symbols_quote_as_it_arrives() {
     let (listener, url) = listen().await;
-    // A wide interval, so all three land in it even on a busy runner.
-    let timing = Timing { interval: Duration::from_secs(3), ..fast(WAIT) };
-    let (mut rx, _feed) = spawn_feed(Venue::Kraken, &url, &MARKETS, timing);
+    let (mut rx, _feed) = spawn_feed(Venue::Kraken, &url, &MARKETS, fast(WAIT));
+    let (ws, _) = accept(&listener).await;
+
+    // One update every 20ms, a third of the pace of 10ms, so three updates inside one former
+    // 250ms interval each sequence as they arrive: nothing collapses to the newest.
+    let step = Arc::new(AtomicUsize::new(0));
+    let books = {
+        let step = Arc::clone(&step);
+        move || {
+            let i = step.fetch_add(1, Ordering::Relaxed) as i64;
+            vec![kraken_book("BTC/USD", &format!("{}", 100 + i), &format!("{}", 101 + i), now_ms())]
+        }
+    };
+    let _serving = stream(ws, books);
+    for i in 0..3 {
+        let (market, quotes) = next_prices(&mut rx).await;
+        let mid = "100.5".parse::<Fixed>().unwrap() + Fixed::from_int(i);
+        assert_eq!((market, quotes.len(), quotes[0].mid), (1, 1, mid));
+    }
+}
+
+#[tokio::test]
+async fn updates_faster_than_the_pace_coalesce_to_the_newest() {
+    let (listener, url) = listen().await;
+    // A wide pace, so the five updates of one read all land inside the first quote's window.
+    let timing = Timing { interval: Duration::from_millis(200), ..fast(WAIT) };
+    let (mut rx, _feed) = spawn_feed(Venue::Kraken, &url, &[(1, "BTC/USD")], timing);
     let (mut ws, _) = accept(&listener).await;
 
-    // All three arrive within one interval, the newest by venue time second, so only it is sequenced.
-    let tickers = [1_000, 1_200, 1_100].map(|ts| kraken_book("BTC/USD", "100", "101", ts));
-    send(&mut ws, &tickers).await;
-    assert_eq!(next_prices(&mut rx).await, (1, vec![quote(Venue::Kraken, "100.5", 1_200)]));
+    // The first update sequences at once; the rest arrive before the pace frees the symbol, so
+    // they coalesce, and the newest is the next quote through.
+    let books: Vec<_> =
+        (0..5).map(|i| kraken_book("BTC/USD", &format!("{}", 100 + i), &format!("{}", 101 + i), now_ms())).collect();
+    send(&mut ws, &books).await;
+
+    let (market, first) = next_prices(&mut rx).await;
+    assert_eq!((market, first[0].mid.to_string()), (1, "100.5".into()));
+    // The pace holds the symbol until the window ends, then lets the newest coalesced update
+    // through; nothing else of the burst sequences.
+    let (market, newest) = next_prices(&mut rx).await;
+    assert_eq!((market, newest[0].mid.to_string()), (1, "104.5".into()));
+    let more = timeout(Duration::from_millis(50), next_prices(&mut rx)).await;
+    assert!(more.is_err(), "a coalesced update sequenced past the pace");
 }
 
 #[tokio::test]
 async fn malformed_messages_and_books_are_refused_with_an_alert() {
     let (_guard, mut alerts) = capture_alerts();
     let (listener, url) = listen().await;
-    // Every message lands within one interval, so a refused book accepted after the valid one
-    // would replace it as the quote sequenced. Bitstamp keeps no book, so the connection carries on.
-    let timing = Timing { interval: Duration::from_secs(1), ..fast(WAIT) };
-    let (mut rx, _feed) = spawn_feed(Venue::Bitstamp, &url, &[(1, "btcusd"), (2, "ethusd")], timing);
+    // Each valid book sequences as it arrives, and a refused book accepted after it would
+    // sequence too if it could: nothing refused reaches the sequencer. Bitstamp keeps no book,
+    // so the connection carries on.
+    let (mut rx, _feed) = spawn_feed(Venue::Bitstamp, &url, &[(1, "btcusd"), (2, "ethusd")], fast(WAIT));
     let (mut ws, _) = accept(&listener).await;
 
     let messages = [
@@ -235,8 +270,9 @@ async fn quotes_a_little_ahead_of_the_host_clock_are_sequenced_once_it_reaches_t
     let (mut rx, _feed) = spawn_feed(Venue::Kraken, &url, &[(1, "BTC/USD")], fast(window));
     let (ws, _) = accept(&listener).await;
 
-    // Each quote is dated further ahead than the sequencing interval, so every tick also holds
-    // newer quotes not yet reached. Each goes once reached, and the venue counts as quoting.
+    // Each update is dated a little ahead of the host clock, so emission holds it until the
+    // clock reaches it, then sequences it: the stamp never claims a time the clock has not
+    // reached. Each goes once reached, and the venue counts as quoting.
     stream(ws, || vec![kraken_book("BTC/USD", "100", "101", now_ms() + 100)]);
     let (_, quotes) = next_prices(&mut rx).await;
     assert!(quotes[0].ts <= now_ms(), "sequenced before the host clock reached it");
