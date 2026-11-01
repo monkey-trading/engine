@@ -14,7 +14,7 @@ use crate::log::{Checkpoint, LogEntry};
 use crate::sequencer::{Sequencer, SignedWithdrawal, legacy};
 
 /// A recovered approval: its identity, event index, and latest logged `(signer epoch, expiry)`.
-pub(super) type BacklogEntry = ((AccountId, u64), usize, Option<(u64, u64)>);
+pub(super) type BacklogEntry = ((AccountId, u64), usize, Option<SignedWithdrawal>);
 
 pub(super) struct Gate {
     sink: mpsc::Sender<Work>,

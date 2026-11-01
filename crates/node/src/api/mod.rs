@@ -21,6 +21,7 @@ mod origin;
 pub(crate) mod reissue;
 mod signing;
 pub(crate) use signing::Signing;
+mod payouts;
 mod state;
 mod stream;
 mod withdrawal_queue;
@@ -255,6 +256,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/session-keys", post(register_session_key).delete(revoke_session_key))
         .route("/v1/withdrawals", get(withdrawal_queue::queue).post(withdraw))
         .route("/v1/accounts/{address}/withdrawals", get(withdrawal_queue::account))
+        .route("/v1/accounts/{address}/payouts", get(payouts::payouts))
         .route("/v1/accounts/{address}/withdrawals/{nonce}/reissue", post(reissue::reissue))
         .route("/v1/admin", post(admin::admin))
         .route("/v1/dev/deposit", post(dev_deposit))

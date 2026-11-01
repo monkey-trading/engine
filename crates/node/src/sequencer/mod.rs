@@ -22,7 +22,8 @@ mod checkpoints;
 use checkpoints::{Gate, HandoverGate};
 mod messages;
 pub use messages::{
-    HandoverRefused, Query, Reissue, ReissueScreening, Request, SignedWithdrawal, StreamBody, StreamMsg,
+    AccountPayouts, HandoverRefused, PayoutView, Query, Reissue, ReissueScreening, Request, SignedWithdrawal,
+    StreamBody, StreamMsg,
 };
 mod access;
 mod benchmark_schedule;
@@ -40,13 +41,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, bail};
+use engine_core::Engine;
+#[cfg(test)]
+use engine_core::Fixed;
 use engine_core::auth::{ClientAuth, Operator};
 use engine_core::command::{AdminCommand, Command, Sequenced};
 use engine_core::deposits::LegacyDeposit;
 use engine_core::event::Event;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{AccountId, Millis};
-use engine_core::{Engine, Fixed};
 use tokio::sync::{broadcast, mpsc, watch};
 use tracing::{error, info, info_span, warn};
 
@@ -174,6 +177,9 @@ impl Sequencer {
                     Request::WatchBenchmarkSchedule(reply) => benchmark_watches.push(reply),
                     Request::ReissueWithdrawal { account, nonce, replaces, screening, reply } => {
                         let _ = reply.send(self.request_reissue(account, nonce, replaces, screening.as_ref()));
+                    }
+                    Request::AccountPayouts { account, after, limit, reply } => {
+                        let _ = reply.send(self.account_payouts(account, after, limit));
                     }
                     Request::CheckpointStatus { posted, health, lifecycle } => {
                         self.custody_status(posted, health, lifecycle)?;
@@ -422,33 +428,6 @@ impl Sequencer {
     fn record(&mut self, entry: LogEntry) -> anyhow::Result<()> {
         let offset = self.log.append(&entry)?;
         self.outbox.push(Arc::new(StreamMsg::new(offset, entry)));
-        Ok(())
-    }
-
-    /// Signs an approved withdrawal and logs it; custody and the stream get it once it is flushed.
-    /// Error cases:
-    /// - the log cannot be written
-    fn sign_withdrawal(&mut self, account: AccountId, amount: Fixed, nonce: u64) -> anyhow::Result<()> {
-        let seq = self.engine.last_seq().context("withdrawal without approval sequence")?;
-        if self.withdrawal_release_seq(account, nonce, seq, None)?.is_none() {
-            error!(alert = "legacy_withdrawal_unproven", %account, nonce, "inherited withdrawal lacks canonical finality proof");
-            bail!("inherited withdrawal lacks canonical finality proof");
-        }
-        self.log.sync()?;
-        let signature = self.key.sign_withdrawal(self.chain_id, &self.vault.0, account, amount, nonce);
-        info!(%account, nonce, "withdrawal signed");
-        self.record(LogEntry::Withdrawal(SignedWithdrawal {
-            account,
-            amount,
-            nonce,
-            chain_id: self.chain_id,
-            vault: self.vault,
-            signature,
-            approved_seq: None,
-            authorization: None,
-        }))?;
-        self.legacy_approvals.signed(account, amount, nonce);
-        self.legacy_authorizations.remove(&(account, nonce));
         Ok(())
     }
 

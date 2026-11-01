@@ -11,7 +11,7 @@ use tracing::{debug, info};
 
 use crate::checkpoints::{APPROVAL_PAGE_SIZE, ApprovalId, LifecycleEvidence};
 use crate::log::LogEntry;
-use crate::sequencer::{Reissue, ReissueScreening, Sequencer, SignedWithdrawal};
+use crate::sequencer::{AccountPayouts, PayoutView, Reissue, ReissueScreening, Sequencer, SignedWithdrawal};
 use crate::withdrawals::{Authorization, LIFETIME_SECONDS};
 
 /// A signature is delivery progress; the contract's used nonce is the payment authority.
@@ -20,6 +20,8 @@ pub(super) struct Payout {
     pub order: (u64, usize),
     pub proof: Option<WithdrawalApprovalProof>,
     pub released: Option<(u64, u64)>,
+    /// The latest signed authorization, as the stream carried it; `released` is its epoch and expiry.
+    pub latest: Option<SignedWithdrawal>,
     pub observed_epoch: Option<u64>,
     /// Loaded from the recovery backlog and not yet observed at a finalized block.
     pub recovered: bool,
@@ -35,10 +37,18 @@ impl Payout {
             approval,
             proof: None,
             released: None,
+            latest: None,
             observed_epoch: None,
             recovered: false,
             requested: false,
         }
+    }
+
+    /// Takes a newly signed authorization, or the latest one a recovered log holds, as the one in
+    /// effect.
+    pub fn authorize(&mut self, withdrawal: SignedWithdrawal) {
+        self.released = withdrawal.authorization.as_ref().map(|auth| (auth.signer_epoch, auth.expires_at));
+        self.latest = Some(withdrawal);
     }
 }
 
@@ -58,14 +68,17 @@ impl Sequencer {
             return Ok(());
         }
         for _ in 0..BACKLOG_WINDOW {
-            let Some((key, index, released)) = gate.backlog.pop_front() else { break };
+            let Some((key, index, latest)) = gate.backlog.pop_front() else { break };
             let approval = *self
                 .engine
                 .withdrawal_approval(key.0, key.1)
                 .context("immutable approval lacks its validated event order")?;
             let mut payout = Payout::new(approval, index);
             payout.recovered = true;
-            payout.released = released;
+            if let Some(latest) = latest {
+                payout.authorize(latest);
+            }
+            let released = payout.released;
             // A signed approval waits for rotation or a request; an unsigned one, or one signed by an
             // epoch other than the latest observed, is due. The epoch scan cannot see an approval
             // loaded behind its position.
@@ -220,12 +233,10 @@ impl Sequencer {
         for (key, approval, authorization) in releases {
             let mut withdrawal = self.unsigned_payout(approval, authorization);
             withdrawal.signature = self.key.sign_payout(&withdrawal)?;
-            let auth = withdrawal.authorization.as_ref().expect("constructed typed payout");
-            let released = (auth.signer_epoch, auth.expires_at);
-            self.record(LogEntry::Withdrawal(withdrawal))?;
+            self.record(LogEntry::Withdrawal(withdrawal.clone()))?;
             let gate = self.gate.as_mut().expect("checkpoint gate exists");
             let payout = gate.payouts.get_mut(&key).expect("pending payout exists");
-            payout.released = Some(released);
+            payout.authorize(withdrawal);
             payout.requested = false;
             info!(account = %approval.account, nonce = approval.nonce, approval_seq = approval.approved_seq, "durable withdrawal authorization issued");
         }
@@ -284,6 +295,28 @@ impl Sequencer {
             info!(%account, nonce, "withdrawal reissue requested");
         }
         Reissue::Queued
+    }
+
+    /// Reads an account's unpaid payouts after nonce `after`, oldest first, at most `limit`: a range
+    /// scan of the gate's map that costs no log, disk or custody read.
+    pub(super) fn account_payouts(&self, account: AccountId, after: Option<u64>, limit: usize) -> AccountPayouts {
+        let seq = self.engine.last_seq();
+        let Some(gate) = &self.gate else {
+            return AccountPayouts { seq, loaded: false, payouts: Vec::new(), next: None };
+        };
+        let first = after.map_or(0, |after| after.saturating_add(1));
+        let mut held = gate.payouts.range((account, first)..=(account, u64::MAX));
+        let payouts = held
+            .by_ref()
+            .take(limit)
+            .map(|(&(_, nonce), payout)| PayoutView {
+                nonce,
+                amount: payout.approval.amount,
+                withdrawal: payout.latest.clone(),
+            })
+            .collect::<Vec<_>>();
+        let next = held.next().and(payouts.last().map(|last| last.nonce));
+        AccountPayouts { seq, loaded: gate.backlog.is_empty(), payouts, next }
     }
 
     /// Builds the common stream/log representation before the enclave signs it.

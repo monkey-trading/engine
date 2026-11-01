@@ -14,7 +14,7 @@ use engine_core::{Engine, Fixed};
 
 use crate::checkpoints::accounting::Accounting;
 use crate::log::{self, CheckpointDomain, LogEntry, SegmentedLog};
-use crate::sequencer::GenesisProgress;
+use crate::sequencer::{GenesisProgress, SignedWithdrawal};
 use crate::snapshot::RecoveryBase;
 
 /// The result of replaying a log.
@@ -52,9 +52,9 @@ pub struct Replayed {
     pub checkpoint_signers: BTreeSet<AccountId>,
     /// Every approval with its event index, in FIFO order.
     pub(crate) payout_order: Vec<((AccountId, u64), usize)>,
-    /// The latest authorization each signed approval holds, as `(signer epoch, expiry)`. A recovery
-    /// from a checkpoint snapshot sees only the suffix after it.
-    pub(crate) authorized: BTreeMap<(AccountId, u64), (u64, u64)>,
+    /// The latest authorization each signed approval holds. A recovery from a checkpoint snapshot
+    /// sees only the suffix after it.
+    pub(crate) authorized: BTreeMap<(AccountId, u64), SignedWithdrawal>,
     pub(crate) requires_checkpoint_gate: bool,
     /// Whether the log ends inside an access-source failure episode.
     pub(crate) access_failed: bool,
@@ -106,8 +106,8 @@ pub(super) struct Replay {
     access_alerts: crate::sequencer::access::AccessAlerts,
     /// Approvals a withdrawal entry signed, for `finish` to report the durable ones it lacks.
     signed: BTreeSet<(AccountId, u64)>,
-    /// The latest typed authorization each approval holds in this log, as `(signer epoch, expiry)`.
-    authorized: BTreeMap<(AccountId, u64), (u64, u64)>,
+    /// The latest typed authorization each approval holds in this log.
+    authorized: BTreeMap<(AccountId, u64), SignedWithdrawal>,
     /// The recovery-time marks sink: takes each market's mark as it changes, to seed the derived
     /// marks cache. Nothing without one: `engine replay` does not seed a cache.
     marks: Option<crate::history::marks::MarkSink>,
@@ -261,7 +261,7 @@ impl Replay {
                         "typed payout checkpoint is absent from the preceding log"
                     );
                     self.signed.insert((w.account, w.nonce));
-                    self.authorized.insert((w.account, w.nonce), (auth.signer_epoch, auth.expires_at));
+                    self.authorized.insert((w.account, w.nonce), w.clone());
                     return Ok(());
                 }
                 if let Some(seq) = w.approved_seq {

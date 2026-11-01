@@ -107,6 +107,7 @@ fn late_sequencer(delay: Duration) -> (mpsc::Sender<Request>, mpsc::UnboundedRec
                 Request::CheckpointStatus { .. } => unreachable!("no checkpoint worker in this test"),
                 Request::WatchBenchmarkSchedule(_) => unreachable!("only the API watches benchmark schedules"),
                 Request::ReissueWithdrawal { .. } => unreachable!("only the API asks for a reissue"),
+                Request::AccountPayouts { .. } => unreachable!("only the API asks for payouts"),
                 Request::FinalCheckpoint(_) => unreachable!("only a handover asks for the final checkpoint"),
                 Request::TimeSample(_) => unreachable!("a feed sends no time samples"),
                 Request::Sync(_) => unreachable!("only custody asks for a log sync"),

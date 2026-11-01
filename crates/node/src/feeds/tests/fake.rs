@@ -147,6 +147,7 @@ pub fn spawn_feed(
                     Some(Request::CheckpointStatus { .. }) => unreachable!("no checkpoint worker in this test"),
                     Some(Request::WatchBenchmarkSchedule(_)) => unreachable!("only the API watches benchmark schedules"),
                     Some(Request::ReissueWithdrawal { .. }) => unreachable!("only the API asks for a reissue"),
+                    Some(Request::AccountPayouts { .. }) => unreachable!("only the API asks for payouts"),
                     Some(Request::FinalCheckpoint(_)) => unreachable!("only a handover asks for the final checkpoint"),
                     Some(Request::TimeSample(_)) => unreachable!("a feed sends no time samples"),
                     Some(Request::Sync(_)) => unreachable!("only custody asks for a log sync"),

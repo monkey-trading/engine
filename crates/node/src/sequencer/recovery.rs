@@ -403,8 +403,8 @@ impl Sequencer {
                 payout_order.len() == sequencer.engine.withdrawal_approvals().count(),
                 "immutable approval lacks its validated event order"
             );
-            gate.backlog =
-                payout_order.into_iter().map(|(key, index)| (key, index, authorized.get(&key).copied())).collect();
+            let mut authorized = authorized;
+            gate.backlog = payout_order.into_iter().map(|(key, index)| (key, index, authorized.remove(&key))).collect();
         }
         sequencer.load_backlog()?;
         if let Some(gate) = &mut sequencer.gate {

@@ -69,6 +69,13 @@ pub enum Request {
         screening: Option<ReissueScreening>,
         reply: oneshot::Sender<Reissue>,
     },
+    /// An account's unpaid payouts and their latest authorizations, from the gate's memory.
+    AccountPayouts {
+        account: AccountId,
+        after: Option<u64>,
+        limit: usize,
+        reply: oneshot::Sender<AccountPayouts>,
+    },
     /// A key handover's stop: answered once the final checkpoint the successor is handed is written
     /// and durable, and refused with the checkpoint gate's reason while it would withhold that
     /// checkpoint, the node going on sequencing.
@@ -99,6 +106,27 @@ pub enum Reissue {
     Refused { reason: AccessReject },
     /// No checkpoint gate (mock custody), or no trusted time yet.
     Unavailable,
+}
+
+/// One page of an account's unpaid payouts, oldest first (nonces rise with approval order).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct AccountPayouts {
+    /// The last sequenced command the answer reflects.
+    pub seq: Option<u64>,
+    /// Whether every unpaid approval is held: false with no checkpoint gate, and while a restart is
+    /// still loading approvals, so an absent nonce says nothing then.
+    pub loaded: bool,
+    pub payouts: Vec<PayoutView>,
+    /// The nonce to pass as `after` for the rest, if the page was full.
+    pub next: Option<u64>,
+}
+
+/// An unpaid approval and its latest signed authorization, `None` until one is signed.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PayoutView {
+    pub nonce: u64,
+    pub amount: Fixed,
+    pub withdrawal: Option<SignedWithdrawal>,
 }
 
 /// What `/v1/stream` publishes: each log entry at its offset, in offset order. A standby follower
