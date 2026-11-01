@@ -153,7 +153,7 @@ impl Chain {
 
     /// The registry's open epoch's start, seconds.
     pub(crate) async fn open_epoch_start(&self) -> anyhow::Result<u64> {
-        Ok(self.read(self.registry, openEpochStartCall {}).await?)
+        self.read(self.registry, openEpochStartCall {}).await
     }
 
     /// Folds the registry-driven release change into the vault's generation, as the promoter does

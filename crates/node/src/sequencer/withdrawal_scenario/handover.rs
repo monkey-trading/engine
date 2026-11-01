@@ -91,9 +91,8 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
         Node::uninitialized(a_dir, chain, services, Client::new(a_port, vault)?, a_config_path.clone(), a_metrics);
 
     // 1. Rotation is off: A's rotation-on config refuses to start.
-    match node.restart().await {
-        Ok(()) => anyhow::bail!("A started with rotation on while the registry has rotation off"),
-        Err(_) => {}
+    if node.restart().await.is_ok() {
+        anyhow::bail!("A started with rotation on while the registry has rotation off")
     };
     let log = std::fs::read_to_string(node.dir.join("node.log"))?;
     ensure!(
@@ -247,9 +246,8 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
     );
 
     // 6. A restart refuses: its sealed copy is under a superseded release generation.
-    match node.restart_keys(None, Some(A_DIGEST)).await {
-        Ok(()) => anyhow::bail!("A opened its stale sealed keys"),
-        Err(_) => {}
+    if node.restart_keys(None, Some(A_DIGEST)).await.is_ok() {
+        anyhow::bail!("A opened its stale sealed keys")
     }
     let log = std::fs::read_to_string(node.dir.join("node.log"))?;
     ensure!(
