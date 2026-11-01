@@ -31,7 +31,6 @@ impl Chain {
         Ok(String::from_utf8_lossy(decoded.get(4..).unwrap_or(&[])).into_owned())
     }
 
-
     /// Has the timelock call `target` with `data`.
     /// Error cases:
     /// - scheduling fails, or execution keeps reverting past the deadline
