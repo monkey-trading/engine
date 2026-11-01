@@ -214,7 +214,7 @@ impl Engine {
         if scope == RequestScope::Keys || self.protocol_version < ProtocolVersion::V41 {
             return Err(Reject::InvalidSignature);
         }
-        let Some(key) = self.session_keys.get(&(account, signer)).copied() else {
+        let Some(key) = self.session_keys.get(&account).and_then(|keys| keys.get(&signer)).copied() else {
             return Err(Reject::InvalidSignature);
         };
         // The key is registered, so the request spends its nonce even when the key's state or the

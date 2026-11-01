@@ -26,7 +26,7 @@ use prometheus_client::registry::Registry;
 
 const CONTENT_TYPE_OPENMETRICS: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
 /// Every `kind` a typed rejection reason can have; see `reject_kind`.
-const REJECT_KINDS: [&str; 26] = [
+const REJECT_KINDS: [&str; 31] = [
     "access",
     "payout_unavailable",
     "unknown_market",
@@ -53,6 +53,11 @@ const REJECT_KINDS: [&str; 26] = [
     "expiry_too_far",
     "staking_not_initialised",
     "insufficient_stake",
+    "invalid_session_key",
+    "session_key_revoked",
+    "session_key_expired",
+    "session_key_scope",
+    "session_key_unsupported",
 ];
 /// Every reason a price rejection can have; see `prices_reject_reason`.
 const PRICES_REJECT_REASONS: [&str; 6] =

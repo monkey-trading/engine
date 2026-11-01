@@ -168,10 +168,10 @@ pub struct Engine {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) pending_ceiling: Option<PendingCeiling>,
     /// From `V41`, the session keys each account registered: their expiry and revocation, keyed by
-    /// the account and the key; a key's next request nonce lives in `request_nonces` under its
-    /// address.
+    /// the account and, within it, the key; a key's next request nonce lives in `request_nonces`
+    /// under its address.
     #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
-    pub(crate) session_keys: TrackedMap<(AccountId, AccountId), SessionKey>,
+    pub(crate) session_keys: TrackedMap<AccountId, BTreeMap<AccountId, SessionKey>>,
 
     /// The screening source and freshness bound, recorded once from `V24`.
     #[serde(default, skip_serializing_if = "Option::is_none")]

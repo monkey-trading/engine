@@ -40,7 +40,7 @@ pub(crate) struct Touched {
     pub(crate) emission_ledgers: BTreeSet<AccountId>,
     pub(crate) staked: BTreeSet<AccountId>,
     pub(crate) distributions: BTreeSet<AccountId>,
-    pub(crate) session_keys: BTreeSet<(AccountId, AccountId)>,
+    pub(crate) session_keys: BTreeSet<AccountId>,
     pub(crate) deposits: BTreeSet<String>,
     pub(crate) deposit_transactions: BTreeSet<String>,
     pub(crate) legacy_deposits: BTreeSet<String>,

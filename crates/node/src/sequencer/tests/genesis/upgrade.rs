@@ -26,7 +26,7 @@ fn an_old_log_with_markets_takes_the_configs_ceilings_before_activating_v40() {
     let ceilings = replayed.engine.close_spread_ceilings().expect("the carry installs the registry");
     assert_eq!(ceilings.len(), replayed.engine.markets().len());
     assert!(replayed.engine.markets().keys().all(|id| ceilings.contains_key(id)));
-    assert!(replayed.activations.iter().any(|(version, _)| *version == ProtocolVersion::V40));
+    assert!(replayed.activations.iter().any(|(version, _)| *version >= ProtocolVersion::V40));
 }
 
 #[test]

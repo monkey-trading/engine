@@ -9,6 +9,8 @@
 //! account-signed requests (see `auth`). Registrations and revocations are sequenced commands, so a
 //! log replays to its roots; each key's state is a leaf of the state tree.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::auth::{RequestAuth, RequestScope};
@@ -76,7 +78,7 @@ impl Engine {
             events.push(rejected(reason));
             return;
         }
-        self.session_keys.insert((account, session_key), SessionKey { expires_at, revoked: false });
+        self.session_keys.entry(account).or_default().insert(session_key, SessionKey { expires_at, revoked: false });
         events.push(Event::SessionKeyRegistered { account, session_key, expires_at });
     }
 
@@ -98,7 +100,7 @@ impl Engine {
             events.push(rejected(Reject::SessionKeyUnsupported));
             return;
         }
-        if self.session_keys.get(&(account, session_key)).is_none() {
+        if self.session_keys.get(&account).is_none_or(|keys| !keys.contains_key(&session_key)) {
             events.push(rejected(Reject::InvalidSessionKey));
             return;
         }
@@ -109,16 +111,15 @@ impl Engine {
             events.push(rejected(reason));
             return;
         }
-        let Some(key) = self.session_keys.get_mut(&(account, session_key)) else {
-            unreachable!("checked above")
-        };
+        let keys = self.session_keys.get_mut(&account).expect("checked above");
+        let key = keys.get_mut(&session_key).expect("checked above");
         key.revoked = true;
         events.push(Event::SessionKeyRevoked { account, session_key });
     }
 
     /// The session key `session_key` registered for `account`, whatever its state.
     pub fn session_key(&self, account: AccountId, session_key: AccountId) -> Option<SessionKey> {
-        self.session_keys.get(&(account, session_key)).copied()
+        self.session_keys.get(&account)?.get(&session_key).copied()
     }
 }
 

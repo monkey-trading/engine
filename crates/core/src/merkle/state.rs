@@ -259,9 +259,11 @@ impl Engine {
         );
         changes.extend(self.staking_reference_leaves(staking_refs));
         changes.extend(staked.into_iter().map(|id| (staked_key(id), self.staked.get(&id).map(|s| staked_hash(*s)))));
-        changes.extend(session_keys.into_iter().map(|pair| {
-            (session_key_key(pair.0, pair.1), self.session_keys.get(&pair).map(session_key_hash))
-        }));
+        changes.extend(
+            session_keys
+                .into_iter()
+                .map(|account| (session_key_key(account), self.session_keys.get(&account).map(session_key_hash))),
+        );
 
         // A seq has been applied: `V9` takes effect through a sequenced `ActivateProtocol`.
         let seq = self.last_seq.expect("a state root under V9 follows a command");

@@ -33,9 +33,9 @@
 //!   distribution in base units, from `V25`; the vault checks claims against this leaf.
 //! - **Staked balance:** `keccak256(abi.encode(uint256 staked))`, the account's staked MONKEY in
 //!   base units, from `V25`, mirroring the staking contract's finalised events.
-//! - **Session key:** the keccak-256 of the `SessionKey` JSON encoding — its expiry and revocation —
-//!   keyed by the account and the key, from `V41`; the key's next request nonce is its own
-//!   request-nonce leaf.
+//! - **Session keys:** the keccak-256 of the JSON encoding of the account's session keys — each
+//!   one's expiry and revocation — keyed by the account, from `V41`; a key's next request nonce is
+//!   its own request-nonce leaf.
 //! - **Emission period result:** `keccak256(abi.encode(int128 realised, int128 writtenOff))`, the
 //!   account's realised PnL and written-off debt in the open emission period, from `V19`, until the
 //!   period is finalised.
@@ -449,15 +449,15 @@ pub(crate) fn staking_reference_key(reference: &str) -> B256 {
     keccak(&[&[STAKING_REFERENCE], reference.as_bytes()])
 }
 
-/// The key of `session_key`'s leaf for `account`, from `V41`.
-pub(crate) fn session_key_key(account: AccountId, session_key: AccountId) -> B256 {
-    keccak(&[&[SESSION_KEY], &account.0, &session_key.0])
+/// The key of `account`'s session-keys leaf, from `V41`.
+pub(crate) fn session_key_key(account: AccountId) -> B256 {
+    keccak(&[&[SESSION_KEY], &account.0])
 }
 
-/// The value hash of a session key's leaf: the keccak-256 of its JSON encoding, whose fields name
-/// the expiry and the revocation.
-pub(crate) fn session_key_hash(key: &SessionKey) -> B256 {
-    json_hash(key)
+/// The value hash of an account's session-keys leaf: the keccak-256 of the JSON encoding of its
+/// keys, whose fields name each key's expiry and revocation.
+pub(crate) fn session_key_hash(keys: &BTreeMap<AccountId, SessionKey>) -> B256 {
+    json_hash(keys)
 }
 
 /// The value hash of a staked-balance leaf.
