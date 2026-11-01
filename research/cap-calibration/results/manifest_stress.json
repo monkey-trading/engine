@@ -1,0 +1,51 @@
+{
+ "command": [
+  "stress"
+ ],
+ "scenario": {
+  "name": "utilisation",
+  "paths": 2000,
+  "seed": 1,
+  "days": 90,
+  "flow_scale": 1.0,
+  "hedged_scale": 1.0,
+  "leverage_mapping": "capped",
+  "vol_scale": 1.0,
+  "block_weeks": 4,
+  "independent_markets": false,
+  "common_direction": false,
+  "demean": true,
+  "hold_through_closures": true,
+  "farm_half_life_days": null,
+  "gap_pair_share": 0.0,
+  "withdraw_on_exit": 0.5,
+  "idle_withdraw_per_day": 0.05,
+  "run_withdraw_per_day": 0.5,
+  "batch_paths": 25,
+  "utilisation_stats": true
+ },
+ "derived_sha256": {
+  "benchmarks.csv": "16e04c781473c39d",
+  "hourly_bars.npz": "d742bab6c751e973",
+  "market_mix.csv": "cbf00cf20cf6fde8",
+  "market_stats.csv": "5c590a0c86a90c0a",
+  "papertrade_daily.csv": "38379b23e276390f",
+  "papertrade_flow.csv": "fe24885aaaa069e5",
+  "papertrade_holding.csv": "bf066bbc49e19029",
+  "papertrade_leverage.csv": "fd05f25e9538d410",
+  "papertrade_sizes.csv": "341fd8a0af63fdce",
+  "papertrade_summary.json": "875fc6c89820321a"
+ },
+ "workers": 4,
+ "seconds": 1279,
+ "move_hours": 400,
+ "utilisation_stats": true,
+ "stress_move_window_ms": 60000,
+ "stress_cooldown_ms": 300000,
+ "floor_families": {
+  "uniform_1M": "uniform",
+  "uniform_10M": "uniform",
+  "house_cash_1pct": "per-market"
+ },
+ "house_cash_floors_sha256": "floors:bd650b94b167401c,source:f6609ec16606c2df"
+}

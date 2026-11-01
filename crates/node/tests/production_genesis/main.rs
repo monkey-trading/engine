@@ -19,7 +19,7 @@ use engine_core::auth::ClientAuth;
 use engine_core::command::{AdminCommand, Command, Sequenced};
 use engine_core::event::Event;
 use engine_core::market::QuoteCurrency;
-use engine_core::params::ProtocolParams;
+use engine_core::params::{ProtocolParams, StressLevel, StressTrigger};
 use engine_core::protocol::ProtocolVersion;
 use engine_core::session::{Period, Schedule};
 use engine_core::types::{AssetClass, MarketId, Millis};
@@ -76,11 +76,44 @@ fn a_dev_node_loads_the_production_genesis_and_every_market_validates() {
 fn the_production_genesis_applies_the_launch_decisions() {
     let production = production_genesis("launch-decisions");
     let dev = NodeConfig::load(Path::new(DEV)).unwrap().genesis;
-    // A 10% profit fee (#9); the other parameters, stress levels included, are dev's, except the
-    // total cap floor, whose production value is not chosen yet.
+    // A 10% profit fee (#9); the other parameters are dev's, except the total cap floor, whose
+    // production value is not chosen yet, and the stress triggers, which #133 calibrates from
+    // data for production (research/cap-calibration's stress stage; the values in
+    // results/stress_choice.json): divergence shares whose stale-fill loss at fire covers each
+    // level's spread on the tightest bound (share 6001 is the lowest the engine's truncated-share
+    // arithmetic fires at 4 bps on the 5-bps markets), fast moves under a minute-scale noise
+    // bound, and utilisation levels under a 2% flow-weighted fire rate in the Monte Carlo.
     assert_eq!(production.params.profit_fee_bps, 1_000);
     let floor = dev.params.house_total_cap_floor;
-    assert_eq!(ProtocolParams { house_total_cap_floor: floor, ..production.params.clone() }, dev.params);
+    let level = |size_spread_multiplier_bps, min_spread_bps, trigger| StressLevel {
+        size_spread_multiplier_bps,
+        min_spread_bps,
+        trigger,
+    };
+    let trigger = |divergence_share_bps, move_bps, utilisation_bps| {
+        Some(StressTrigger {
+            divergence_share_bps: Some(divergence_share_bps),
+            move_bps: Some(move_bps),
+            utilisation_bps: Some(utilisation_bps),
+            divergence_bps: None,
+        })
+    };
+    assert_eq!(
+        production.params.stress_levels,
+        [
+            level(10_000, 0, None),
+            level(20_000, 2, trigger(6_001, 75, 7_000)),
+            level(40_000, 10, trigger(9_500, 200, 9_500)),
+        ]
+    );
+    assert_eq!(
+        ProtocolParams {
+            house_total_cap_floor: floor,
+            stress_levels: dev.params.stress_levels.clone(),
+            ..production.params.clone()
+        },
+        dev.params
+    );
     // The house starts with no capital and builds it from trader losses, and no benchmark rate is
     // set until the daily benchmark feed sequences one.
     assert_eq!(production.house_capital, Fixed::ZERO);
