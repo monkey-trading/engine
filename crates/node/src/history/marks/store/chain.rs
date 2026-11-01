@@ -1,21 +1,78 @@
 //! The chained index over the marks cache: every bucket of one (market, resolution) pair names
 //! the bucket below it (`prev_bucket`, NULL for the chain's floor), and every row's tag binds
 //! that name, so a host that deletes, reorders, or rolls rows back breaks the chain the next
-//! read walks. The writer maintains the invariant inside each transaction — snapshotting what
-//! was there first, and refusing, never silently re-linking, when a predecessor reference no
-//! longer resolves — because a vanished predecessor the writer did not itself delete is host
-//! tampering that reads must keep seeing.
+//! read walks. The writer maintains the invariant inside each transaction — validating the
+//! touched pairs' committed floor and head before touching them, and re-linking only over what
+//! the transaction itself deleted or inserted — because a chain that no longer matches its
+//! committed anchor, or a predecessor reference the writer did not move, is host tampering that
+//! reads must keep seeing, never something the writer heals.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, bail, ensure};
 use engine_core::Fixed;
 use engine_core::types::{MarketId, Millis};
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use crate::history::marks::Resolution;
-use crate::history::marks::store::{Row, Seed, SnapRow, retag, tag, verify_row};
+use crate::history::marks::store::auth::{Row, tag};
+use crate::history::marks::store::{ChainAnchor, ChainAnchors, ChainHead, Seed, SnapRow};
 use crate::history::marks::{Provenance, Retentions};
+
+/// The tag a stored row must carry: an HMAC of every stored field, including the chain link, so
+/// a row the host rewrote fails verification before it can be served, merged, or re-linked.
+/// Error cases:
+/// - the tag does not match the stored fields
+pub(crate) fn verify_row(
+    mac: &hmac::Hmac<sha2::Sha256>,
+    market: MarketId,
+    resolution: Resolution,
+    row: &SnapRow,
+) -> anyhow::Result<()> {
+    let expected = tag(
+        mac,
+        market,
+        resolution,
+        row.bucket,
+        &Row {
+            open: &row.open,
+            high: &row.high,
+            low: &row.low,
+            close: &row.close,
+            provenance: &row.provenance,
+            prev: row.prev,
+        },
+    );
+    ensure!(row.tag == expected, "the {market} {resolution:?} bucket at {} fails authentication", row.bucket);
+    Ok(())
+}
+
+/// Re-links `row` to `prev`, keeping its content: updates the chain link and the tag that binds
+/// it, in the transaction that reasons over the chain.
+/// Error cases:
+/// - the update fails
+pub(crate) fn retag(
+    mac: &hmac::Hmac<sha2::Sha256>,
+    tx: &rusqlite::Transaction,
+    market: MarketId,
+    resolution: Resolution,
+    row: &SnapRow,
+    prev: Option<Millis>,
+) -> anyhow::Result<()> {
+    let tag = tag(
+        mac,
+        market,
+        resolution,
+        row.bucket,
+        &Row { open: &row.open, high: &row.high, low: &row.low, close: &row.close, provenance: &row.provenance, prev },
+    );
+    tx.execute(
+        "UPDATE marks SET prev_bucket = ?4, tag = ?5 WHERE market = ?1 AND resolution = ?2 AND bucket = ?3",
+        params![i64::from(market), resolution as i64, row.bucket, prev, tag],
+    )
+    .with_context(|| format!("re-linking the {market} {resolution:?} bucket at {}", row.bucket))?;
+    Ok(())
+}
 
 /// One stored row of one pair, for the merge's read of the bucket a sample lands in.
 const ROW_AT: &str = "SELECT open, high, low, close, provenance, prev_bucket, tag FROM marks
@@ -30,6 +87,174 @@ const SUCCESSOR: &str = "SELECT bucket, open, high, low, close, provenance, prev
 /// Whether a bucket holds a row, for a successor link that names a bucket below the insert.
 const EXISTS: &str =
     "SELECT EXISTS(SELECT 1 FROM marks WHERE market = :market AND resolution = :resolution AND bucket = :bucket)";
+/// One pair's floor row, half of its committed anchor.
+const FLOOR: &str = "SELECT bucket, tag FROM marks
+    WHERE market = :market AND resolution = :resolution ORDER BY bucket ASC LIMIT 1";
+/// One pair's head row, half of its committed anchor.
+const HEAD: &str = "SELECT bucket, tag FROM marks
+    WHERE market = :market AND resolution = :resolution ORDER BY bucket DESC LIMIT 1";
+
+/// The anchor updates one write publishes with its commit: `Some` for a pair's freshly committed
+/// floor and head, `None` for a pair whose every bucket the write removed.
+pub(crate) type ChainUpdates = BTreeMap<(MarketId, Resolution), Option<ChainAnchor>>;
+
+/// One resolution's planned deletion: its horizon and the (market, bucket) rows below it.
+pub(crate) type PrunePass = (Resolution, Millis, Vec<(MarketId, Millis)>);
+
+/// The buckets one prune pass will delete, per resolution: planned before any mutation so the
+/// pairs a write touches, and validates, are known up front.
+pub(crate) struct PrunePlan {
+    passes: Vec<PrunePass>,
+}
+
+impl PrunePlan {
+    /// Every (market, resolution) pair the plan deletes rows from.
+    pub(crate) fn touched_pairs(&self) -> BTreeSet<(MarketId, Resolution)> {
+        self.passes
+            .iter()
+            .flat_map(|(resolution, _, rows)| rows.iter().map(move |(market, _)| (*market, *resolution)))
+            .collect()
+    }
+}
+
+/// The committed floor and head of one pair as the file holds them now; `None` when the pair has
+/// no rows.
+/// Error cases:
+/// - the floor or head cannot be read
+pub(crate) fn pair_anchor(
+    conn: &Connection,
+    market: MarketId,
+    resolution: Resolution,
+) -> anyhow::Result<Option<ChainAnchor>> {
+    let floor: Option<(Millis, [u8; 16])> = conn
+        .query_row(FLOOR, params![i64::from(market), resolution as i64], |row| Ok((row.get(0)?, row.get(1)?)))
+        .optional()
+        .with_context(|| format!("reading the {market} {resolution:?} chain floor"))?;
+    let Some((floor_bucket, floor_tag)) = floor else { return Ok(None) };
+    let (head_bucket, head_tag): (Millis, [u8; 16]) = conn
+        .query_row(HEAD, params![i64::from(market), resolution as i64], |row| Ok((row.get(0)?, row.get(1)?)))
+        .with_context(|| format!("reading the {market} {resolution:?} chain head"))?;
+    Ok(Some(ChainAnchor {
+        floor: ChainHead { bucket: floor_bucket, tag: floor_tag },
+        head: ChainHead { bucket: head_bucket, tag: head_tag },
+    }))
+}
+
+/// Requires every touched pair's floor and head to equal its committed anchor: the write is
+/// about to build on these chains, so a file that no longer matches what this node committed is
+/// refused before anything changes, never adopted.
+/// Error cases:
+/// - a pair's floor or head does not match its committed anchor
+pub(crate) fn check_anchors(
+    tx: &Transaction,
+    prior: &ChainAnchors,
+    pairs: &BTreeSet<(MarketId, Resolution)>,
+) -> anyhow::Result<()> {
+    for (market, resolution) in pairs {
+        let current = pair_anchor(tx, *market, *resolution)?;
+        ensure!(
+            current == prior.get(&(*market, *resolution)).copied(),
+            "the {market} {resolution:?} chain no longer matches its committed anchor: its floor or head changed outside a write"
+        );
+    }
+    Ok(())
+}
+
+/// Derives the anchor updates for the touched pairs from the transaction's own post-write view,
+/// so the committed anchors describe exactly what the transaction wrote, never unvalidated disk.
+/// Error cases:
+/// - a pair's floor or head cannot be read
+pub(crate) fn anchor_updates(
+    tx: &Transaction,
+    pairs: &BTreeSet<(MarketId, Resolution)>,
+) -> anyhow::Result<ChainUpdates> {
+    pairs
+        .iter()
+        .map(|(market, resolution)| Ok(((*market, *resolution), pair_anchor(tx, *market, *resolution)?)))
+        .collect()
+}
+
+/// Plans the buckets each bounded resolution will prune, counted back from `newest`: which rows
+/// die is decided before anything mutates, so the pairs the prune touches can be validated with
+/// the rest of the write. Planning reads only; `apply_prune` does the deleting.
+/// Error cases:
+/// - the plan cannot be read
+pub(crate) fn plan_prune(tx: &Transaction, retentions: &Retentions, newest: Millis) -> anyhow::Result<PrunePlan> {
+    let mut passes = Vec::new();
+    for resolution in Resolution::ALL {
+        let Some(retention) = retentions.of_resolution(resolution) else { continue };
+        let horizon = newest.saturating_sub(retention);
+        let mut rows = tx
+            .prepare("SELECT market, bucket FROM marks WHERE resolution = ?1 AND bucket < ?2")
+            .with_context(|| format!("planning the {resolution:?} prune"))?;
+        let rows = rows
+            .query_map(params![resolution as i64, horizon], |row| {
+                Ok((row.get::<_, MarketId>(0)?, row.get::<_, Millis>(1)?))
+            })
+            .with_context(|| format!("planning the {resolution:?} prune"))?
+            .collect::<Result<Vec<_>, _>>()
+            .with_context(|| format!("planning the {resolution:?} prune"))?;
+        passes.push((resolution, horizon, rows));
+    }
+    Ok(PrunePlan { passes })
+}
+
+/// Deletes the planned buckets and re-floors each pair whose floor pruned away. A surviving
+/// floor's link may be cleared only when it names a bucket this delete removed; a link naming any
+/// other missing bucket is a host deletion this write refuses, never heals.
+/// Error cases:
+/// - the delete fails, a floor row fails authentication, or a floor link names a bucket this
+///   prune did not delete
+pub(crate) fn apply_prune(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction, plan: &PrunePlan) -> anyhow::Result<()> {
+    for (resolution, horizon, rows) in &plan.passes {
+        if rows.is_empty() {
+            continue;
+        }
+        let deleted: BTreeSet<(MarketId, Millis)> = rows.iter().copied().collect();
+        tx.execute("DELETE FROM marks WHERE resolution = ?1 AND bucket < ?2", params![*resolution as i64, horizon])
+            .with_context(|| format!("pruning {resolution:?} marks"))?;
+        // Only a pair's floor can name a pruned bucket: every other survivor's predecessor is at
+        // or above the horizon and still there.
+        let mut floors = tx.prepare(
+            "SELECT m.market, m.bucket, m.open, m.high, m.low, m.close, m.provenance, m.prev_bucket, m.tag
+             FROM marks m
+             JOIN (SELECT market, MIN(bucket) AS floor FROM marks WHERE resolution = ?1 GROUP BY market) f
+             ON m.market = f.market AND m.bucket = f.floor
+             WHERE m.resolution = ?1",
+        )?;
+        let floors = floors
+            .query_map(params![*resolution as i64], |row| {
+                Ok((
+                    row.get::<_, MarketId>(0)?,
+                    SnapRow {
+                        bucket: row.get(1)?,
+                        open: row.get(2)?,
+                        high: row.get(3)?,
+                        low: row.get(4)?,
+                        close: row.get(5)?,
+                        provenance: row.get(6)?,
+                        prev: row.get(7)?,
+                        tag: row.get(8)?,
+                    },
+                ))
+            })
+            .with_context(|| format!("reading the pruned {resolution:?} floors"))?;
+        for (market, floor) in floors
+            .collect::<Result<Vec<_>, _>>()
+            .with_context(|| format!("reading the pruned {resolution:?} floors"))?
+        {
+            let Some(prev) = floor.prev else { continue };
+            ensure!(
+                deleted.contains(&(market, prev)),
+                "the {market} {resolution:?} chain is broken at {}: its floor names the bucket {prev}, which this prune did not delete",
+                floor.bucket
+            );
+            verify_row(mac, market, *resolution, &floor)?;
+            retag(mac, tx, market, *resolution, &floor, None)?;
+        }
+    }
+    Ok(())
+}
 
 /// Merges `mark` into the `(market, resolution, bucket)` row: kept open, widened high and low,
 /// moved close, and the bucket now log-derived. A fresh bucket takes the chain link naming the
@@ -122,7 +347,9 @@ pub(crate) fn merge(
 /// After a fresh bucket `bucket`, re-links the pre-existing row above it when the insert leaves
 /// that link stale: the floor's NULL, or a gap the insert fills. Rows in `fresh`, inserted by the
 /// same transaction, are skipped: they chained to the bucket as they went in. A link naming any
-/// other vanished bucket is refused; the writer re-links only over what its own inserts explain.
+/// other bucket — including the insert itself, which a pre-existing row can only name if the
+/// bucket existed before and something deleted it — is refused; the writer re-links only over
+/// what its own inserts explain.
 /// Error cases:
 /// - the transaction fails, or the successor's row fails authentication
 fn relink_successor(
@@ -154,9 +381,6 @@ fn relink_successor(
     }
     verify_row(mac, market, resolution, &succ)?;
     match succ.prev {
-        // Already linked over the insert (only a same-transaction row can be, and those are
-        // skipped above): nothing to do.
-        Some(p) if p == bucket => Ok(()),
         // The insert is the new floor below the row, or fills the gap its link named.
         None => retag(mac, tx, market, resolution, &succ, Some(bucket)),
         Some(p) if p < bucket => {
@@ -170,111 +394,14 @@ fn relink_successor(
             );
             retag(mac, tx, market, resolution, &succ, Some(bucket))
         }
-        // A link naming a bucket above the insert names a row that cannot exist below the
-        // successor the query found: the chain was rewritten.
+        // Any other link names a bucket that cannot sit between the insert and the successor it
+        // found: either it names the insert itself — proving the bucket existed and was deleted —
+        // or the chain was rewritten. Both refuse.
         Some(p) => bail!(
             "the {market} {resolution:?} chain is broken at {}: its link names {p} above the insert at {bucket}",
             succ.bucket
         ),
     }
-}
-
-/// Drops buckets older than their resolution's retention, counted back from `newest`, then
-/// re-floors each market whose floor pruned away: the new floor's link chains from nothing.
-/// Error cases:
-/// - the transaction fails, or a floor row the prune exposed fails authentication
-pub(crate) fn prune(
-    mac: &hmac::Hmac<sha2::Sha256>,
-    tx: &Transaction,
-    retentions: &Retentions,
-    newest: Millis,
-) -> anyhow::Result<()> {
-    for resolution in Resolution::ALL {
-        let Some(retention) = retentions.of_resolution(resolution) else { continue };
-        let horizon = newest.saturating_sub(retention);
-        let removed = tx
-            .execute("DELETE FROM marks WHERE resolution = ?1 AND bucket < ?2", params![resolution as i64, horizon])
-            .with_context(|| format!("pruning {resolution:?} marks"))?;
-        if removed == 0 {
-            continue;
-        }
-        // Only a pair's floor can name a pruned bucket: every other survivor's predecessor is at
-        // or above the horizon and still there.
-        let mut floors = tx.prepare(
-            "SELECT m.market, m.bucket, m.open, m.high, m.low, m.close, m.provenance, m.prev_bucket, m.tag
-             FROM marks m
-             JOIN (SELECT market, MIN(bucket) AS floor FROM marks WHERE resolution = ?1 GROUP BY market) f
-             ON m.market = f.market AND m.bucket = f.floor
-             WHERE m.resolution = ?1",
-        )?;
-        let floors = floors
-            .query_map(params![resolution as i64], |row| {
-                Ok((
-                    row.get::<_, MarketId>(0)?,
-                    SnapRow {
-                        bucket: row.get(1)?,
-                        open: row.get(2)?,
-                        high: row.get(3)?,
-                        low: row.get(4)?,
-                        close: row.get(5)?,
-                        provenance: row.get(6)?,
-                        prev: row.get(7)?,
-                        tag: row.get(8)?,
-                    },
-                ))
-            })
-            .with_context(|| format!("reading the pruned {resolution:?} floors"))?;
-        for (market, floor) in floors
-            .collect::<Result<Vec<_>, _>>()
-            .with_context(|| format!("reading the pruned {resolution:?} floors"))?
-        {
-            if floor.prev.is_some() {
-                verify_row(mac, market, resolution, &floor)?;
-                retag(mac, tx, market, resolution, &floor, None)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Deletes every log-derived bucket and re-chains what survives, so a recovery re-derivation
-/// rebuilds exactly what the verified log proves. The snapshot the delete reasons over is taken
-/// first: a surviving row whose link names a bucket this delete removed re-links; one whose link
-/// names a bucket that vanished any other way refuses, never healing a host deletion.
-/// Error cases:
-/// - the transaction fails, a stored row fails authentication, or a link names a bucket the
-///   delete did not remove
-pub(crate) fn reset_log_derived(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction) -> anyhow::Result<usize> {
-    let snapshot = snapshot_all(mac, tx)?;
-    let deleted: BTreeSet<(MarketId, Resolution, Millis)> = snapshot
-        .iter()
-        .flat_map(|((market, resolution), rows)| {
-            rows.iter()
-                .filter(|row| row.provenance == Provenance::LogDerived.as_str())
-                .map(move |row| (*market, *resolution, row.bucket))
-        })
-        .collect();
-    let removed = tx
-        .execute("DELETE FROM marks WHERE provenance = ?1", [Provenance::LogDerived.as_str()])
-        .context("resetting log-derived marks")?;
-    for ((market, resolution), rows) in &snapshot {
-        let mut pred = None;
-        for row in rows {
-            if deleted.contains(&(*market, *resolution, row.bucket)) {
-                continue;
-            }
-            if row.prev != pred {
-                ensure!(
-                    row.prev.is_some_and(|p| deleted.contains(&(*market, *resolution, p))),
-                    "the {market} {resolution:?} chain is broken at {}: its link names a bucket no delete removed",
-                    row.bucket
-                );
-                retag(mac, tx, *market, *resolution, row, pred)?;
-            }
-            pred = Some(row.bucket);
-        }
-    }
-    Ok(removed)
 }
 
 /// Seeds `rows`, provider candles turned into buckets, keeping every row already there: seeded
@@ -344,43 +471,4 @@ pub(crate) fn seed(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction, rows: &[See
         }
     }
     Ok(inserted)
-}
-
-/// Every pair's rows, verified, in bucket order: what a whole-cache re-chain reasons over.
-/// Error cases:
-/// - the transaction fails, or a stored row fails authentication
-fn snapshot_all(
-    mac: &hmac::Hmac<sha2::Sha256>,
-    tx: &Transaction,
-) -> anyhow::Result<BTreeMap<(MarketId, Resolution), Vec<SnapRow>>> {
-    let mut pairs: BTreeMap<(MarketId, Resolution), Vec<SnapRow>> = BTreeMap::new();
-    let mut stmt = tx
-        .prepare("SELECT market, resolution, bucket, open, high, low, close, provenance, prev_bucket, tag FROM marks ORDER BY market, resolution, bucket")
-        .context("snapshotting the marks cache")?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, MarketId>(0)?,
-                row.get::<_, i64>(1)?,
-                SnapRow {
-                    bucket: row.get(2)?,
-                    open: row.get(3)?,
-                    high: row.get(4)?,
-                    low: row.get(5)?,
-                    close: row.get(6)?,
-                    provenance: row.get(7)?,
-                    prev: row.get(8)?,
-                    tag: row.get(9)?,
-                },
-            ))
-        })
-        .context("snapshotting the marks cache")?;
-    for row in rows {
-        let (market, resolution, row) = row.context("snapshotting the marks cache")?;
-        let resolution = Resolution::from_tag(u8::try_from(resolution).context("a stored resolution is out of range")?)
-            .context("a stored resolution is out of range")?;
-        verify_row(mac, market, resolution, &row)?;
-        pairs.entry((market, resolution)).or_default().push(row);
-    }
-    Ok(pairs)
 }

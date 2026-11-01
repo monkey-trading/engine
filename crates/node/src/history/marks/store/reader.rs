@@ -12,13 +12,13 @@ use rusqlite::{OptionalExtension, params};
 use tokio::sync::Semaphore;
 use tokio::task::spawn_blocking;
 
-use crate::history::marks::store::{ChainAnchors, PageQuery, Row, SchemaRow, SnapRow, WINDOW, tag, verify_row};
+use crate::history::marks::store::chain::verify_row;
+use crate::history::marks::store::{
+    ChainAnchor, ChainAnchors, ChainHead, PageQuery, Row, SchemaRow, SnapRow, WINDOW, tag,
+};
 use crate::history::marks::{MarkEntry, MarksPage, Provenance, Resolution};
 use crate::history::store::{self as store, read_only};
 
-/// The file's newest row of one pair: the chain head a page read checks before serving anything.
-const HEAD: &str = "SELECT bucket, tag FROM marks
-    WHERE market = :market AND resolution = :resolution ORDER BY bucket DESC LIMIT 1";
 /// The row just below a window: the predecessor the window's first row must name.
 const BELOW: &str = "SELECT bucket, open, high, low, close, provenance, prev_bucket, tag FROM marks
     WHERE market = :market AND resolution = :resolution AND bucket < :from ORDER BY bucket DESC LIMIT 1";
@@ -94,6 +94,36 @@ pub(super) fn read_page(
     anchors: &Arc<Mutex<ChainAnchors>>,
     query: &PageQuery,
 ) -> anyhow::Result<MarksPage> {
+    // A writer flush commits atomically with its anchor refresh, so a mismatch still means one
+    // commit landed inside the first attempt's window between its snapshot and its anchor read:
+    // re-synchronize once, with a fresh snapshot and a fresh anchor, before a mismatch is a
+    // rollback. On the second attempt a mismatch is a rollback: nothing legitimate interposes.
+    match read_page_once(path, schema, mac, anchors, query, true) {
+        Err(e) if is_stale_anchor(&e) => read_page_once(path, schema, mac, anchors, query, false),
+        result => result,
+    }
+}
+
+/// Whether `e` is the stale-anchor race, as opposed to a real rollback or a broken chain.
+fn is_stale_anchor(e: &anyhow::Error) -> bool {
+    format!("{e:#}").contains("newer than the snapshot")
+}
+
+/// One attempt at `read_page`, on one snapshot of the file. With `allow_stale`, an anchor newer
+/// than the snapshot reports the stale-anchor race so the caller can re-synchronize; otherwise a
+/// mismatch is a rollback.
+/// Error cases:
+/// - the cache cannot be opened or read, holds another schema, holds a row that does not parse,
+///   or its chain fails verification; with `allow_stale`, an anchor newer than the snapshot
+///   reports the stale-anchor race
+fn read_page_once(
+    path: &Path,
+    schema: &[SchemaRow],
+    mac: &hmac::Hmac<sha2::Sha256>,
+    anchors: &Arc<Mutex<ChainAnchors>>,
+    query: &PageQuery,
+    allow_stale: bool,
+) -> anyhow::Result<MarksPage> {
     let PageQuery { market, resolution, from, to, limit, max_limit } = *query;
     let mut conn = read_only(path)?;
     // The schema check and the page read see one snapshot of the file.
@@ -101,18 +131,41 @@ pub(super) fn read_page(
     store::check_schema(&conn, schema, path)?;
     let anchor =
         anchors.lock().expect("the marks chain anchors are never poisoned").get(&(market, resolution)).copied();
-    let head: Option<(Millis, [u8; 16])> = conn
-        .query_row(HEAD, params![i64::from(market), resolution as i64], |row| Ok((row.get(0)?, row.get(1)?)))
-        .optional()
-        .context("reading the marks chain head")?;
-    match (anchor, head) {
-        (Some(anchor), Some((bucket, tag))) => ensure!(
-            anchor.bucket == bucket && anchor.tag == tag,
-            "the {market} {resolution:?} marks were rolled back: the file's chain head does not match the committed one"
-        ),
-        (Some(_), None) => bail!("the {market} {resolution:?} marks lost every bucket below the committed chain head"),
+    let ends: Option<ChainAnchor> = conn
+        .query_row(
+            "SELECT
+                 (SELECT bucket FROM marks WHERE market = :market AND resolution = :resolution ORDER BY bucket ASC LIMIT 1),
+                 (SELECT tag FROM marks WHERE market = :market AND resolution = :resolution ORDER BY bucket ASC LIMIT 1),
+                 (SELECT bucket FROM marks WHERE market = :market AND resolution = :resolution ORDER BY bucket DESC LIMIT 1),
+                 (SELECT tag FROM marks WHERE market = :market AND resolution = :resolution ORDER BY bucket DESC LIMIT 1)",
+            params![i64::from(market), resolution as i64],
+            |row| {
+                let bucket: Option<Millis> = row.get(0)?;
+                let floor = bucket.map(|bucket| ChainHead { bucket, tag: row.get(1).expect("the floor tag reads") });
+                let bucket: Option<Millis> = row.get(2)?;
+                let head = bucket.map(|bucket| ChainHead { bucket, tag: row.get(3).expect("the head tag reads") });
+                Ok(floor.zip(head).map(|(floor, head)| ChainAnchor { floor, head }))
+            },
+        )
+        .context("reading the marks chain ends")?;
+    match (anchor, ends) {
+        (Some(anchor), Some(ends)) => {
+            // A commit publishes its anchors atomically, so a file state and an anchor from
+            // different commits can only differ with the anchor newer — the shape both a race
+            // and a rollback take. Re-synchronize once before calling a mismatch a rollback.
+            if anchor != ends && allow_stale {
+                bail!("the committed chain anchor is newer than the snapshot")
+            }
+            ensure!(
+                anchor == ends,
+                "the {market} {resolution:?} marks were rolled back: the file's chain floor or head does not match the committed anchor"
+            );
+        }
+        (Some(_), None) => {
+            bail!("the {market} {resolution:?} marks lost every bucket below the committed chain anchor")
+        }
         (None, Some(_)) => {
-            bail!("the {market} {resolution:?} cache holds rows no committed chain head names")
+            bail!("the {market} {resolution:?} cache holds rows no committed chain anchor names")
         }
         (None, None) => {}
     }
@@ -209,8 +262,12 @@ pub(super) fn read_page(
     };
     // The successor above the window closes the span this read vouches for: its link must name
     // the window's last row, or the row below an empty window, so a deletion just above `to` is
-    // refused by the same read.
-    if let Some(above) = &above {
+    // refused by the same read. A truncated page already verified its lookahead row in the loop
+    // above; the rows it did not fetch are the next page's to vouch for, so the row above `to`
+    // may name one of them.
+    if next.is_none()
+        && let Some(above) = &above
+    {
         let expected = entries.last().map(|entry| entry.ts).or(below.as_ref().map(|below| below.bucket));
         ensure!(
             above.prev == expected,

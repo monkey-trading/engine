@@ -114,7 +114,7 @@ async fn rows_no_committed_head_names_are_refused() {
         Default::default(),
     );
     let err = reader.page(1, Resolution::M1, i64::MIN, i64::MAX, 10, 10).await.expect_err("served");
-    assert!(format!("{err:#}").contains("no committed chain head"), "{err:#}");
+    assert!(format!("{err:#}").contains("no committed chain anchor"), "{err:#}");
 }
 
 #[tokio::test]
@@ -196,20 +196,19 @@ async fn a_successor_link_naming_a_deleted_bucket_refuses_the_next_write() {
     let market = 1;
     let base = 1_792_489_860_000;
     store.observe(&[(market, base, fixed("1")), (market, base + 120_000, fixed("3"))]).unwrap();
-    // The host deletes the bucket below the newest row; the next write into that row refuses to
-    // re-link over the hole instead of healing it, and the row it would have merged stays as it
-    // was — while reads keep refusing the broken chain.
+    // The host deletes the bucket below the newest row; the next write refuses before touching
+    // the chain: the pair's committed floor no longer matches. The row it would have merged stays
+    // as it was, and reads keep refusing against the committed anchor.
     Connection::open(&path)
         .unwrap()
         .execute("DELETE FROM marks WHERE market = 1 AND resolution = 1 AND bucket = ?1", [base])
         .unwrap();
     let err = store.observe(&[(market, base + 120_000, fixed("4"))]).expect_err("re-linked");
-    assert!(format!("{err:#}").contains("no longer below it"), "{err:#}");
+    assert!(format!("{err:#}").contains("no longer matches its committed anchor"), "{err:#}");
     assert_eq!(stored_close(&store, market, Resolution::M1, base + 120_000), "3");
-    // The page over the pair refuses too: the row above the hole still names the deleted bucket.
     let err =
         store.reader().page(market, Resolution::M1, i64::MIN, i64::MAX, 10, 10).await.expect_err("served over a hole");
-    assert!(format!("{err:#}").contains("breaks the chain"), "{err:#}");
+    assert!(format!("{err:#}").contains("rolled back"), "{err:#}");
 }
 
 #[tokio::test]
@@ -232,15 +231,15 @@ async fn reset_re_links_only_over_what_it_deleted() {
             base + 60_000,
         )
         .unwrap();
-    // The host deletes the log-derived floor the seed links to. The reset's own delete removes
-    // nothing (the row is already gone), so the survivor's link names a bucket no delete removed
-    // and the reset refuses, rather than re-linking over the host's deletion.
+    // The host deletes the log-derived floor the seed links to. The reset validates the pair's
+    // committed anchor first, and the floor no longer matches, so it refuses rather than re-
+    // linking over the host's deletion.
     Connection::open(&path)
         .unwrap()
         .execute("DELETE FROM marks WHERE market = 1 AND resolution = 1 AND bucket = ?1", [base])
         .unwrap();
     let err = store.reset_log_derived().expect_err("re-linked over a host deletion");
-    assert!(format!("{err:#}").contains("no delete removed"), "{err:#}");
+    assert!(format!("{err:#}").contains("no longer matches its committed anchor"), "{err:#}");
 }
 
 #[tokio::test]
@@ -271,4 +270,151 @@ async fn a_reset_deleting_the_link_re_links_the_survivor() {
     assert_eq!(stored_prev(&store, market, Resolution::M1, base + 60_000), Some(base));
     let page = minute(&store, market).await;
     assert_eq!(page.entries.len(), 2);
+}
+
+#[tokio::test]
+async fn pagination_over_a_bounded_window_serves_every_page() {
+    let (_path, mut store) = fresh_store_at("marks-chain-paged-window", Retentions::defaults());
+    let market = 1;
+    let base = 1_792_489_860_000;
+    store
+        .observe(&[
+            (market, base, fixed("1")),
+            (market, base + 60_000, fixed("2")),
+            (market, base + 120_000, fixed("3")),
+            (market, base + 180_000, fixed("4")),
+        ])
+        .unwrap();
+    // A window that truncates at `limit` mid-way, with rows above `to`: the page closes against
+    // its own last row and the next page, not against the row above the whole window.
+    let reader = store.reader();
+    let mut from = base;
+    let mut seen = Vec::new();
+    loop {
+        let page = reader.page(market, Resolution::M1, from, base + 120_000, 2, 2).await.unwrap();
+        seen.extend(page.entries.iter().map(|entry| entry.ts));
+        match page.next {
+            Some(next) => from = next,
+            None => break,
+        }
+    }
+    assert_eq!(seen, (0..3).map(|n| base + n * 60_000).collect::<Vec<_>>());
+}
+
+#[tokio::test]
+async fn a_seed_into_a_bucket_a_successor_still_names_refuses() {
+    let (path, mut store) = fresh_store_at("marks-chain-seed-refill", Retentions::defaults());
+    let market = 1;
+    let base = 1_792_489_860_000;
+    store
+        .observe(&[
+            (market, base, fixed("1")),
+            (market, base + 60_000, fixed("2")),
+            (market, base + 120_000, fixed("3")),
+        ])
+        .unwrap();
+    // The host deletes the middle bucket; a backfill that recreates it would take the link the
+    // row above still names — the seed refuses, never healing the deletion with provider prices.
+    Connection::open(&path)
+        .unwrap()
+        .execute("DELETE FROM marks WHERE market = 1 AND resolution = 1 AND bucket = ?1", [base + 60_000])
+        .unwrap();
+    let err = store
+        .seed(
+            &[Seed {
+                market,
+                resolution: Resolution::M1,
+                ts: base + 60_000,
+                open: fixed("9"),
+                high: fixed("9"),
+                low: fixed("9"),
+                close: fixed("9"),
+            }],
+            base + 120_000,
+        )
+        .expect_err("re-filled a host deletion");
+    assert!(format!("{err:#}").contains("above the insert"), "{err:#}");
+    // A live mark into the same bucket refuses the same way.
+    let err = store.observe(&[(market, base + 60_000, fixed("9"))]).expect_err("re-filled");
+    assert!(format!("{err:#}").contains("above the insert"), "{err:#}");
+}
+
+#[tokio::test]
+async fn a_prune_refuses_to_re_floor_over_a_bucket_it_did_not_delete() {
+    let (path, mut store) = fresh_store_at("marks-chain-prune-refuse", hour_retentions());
+    let base = 1_792_489_860_000;
+    store.observe(&[(1, base, fixed("1")), (1, base + 60_000, fixed("2"))]).unwrap();
+    // The host deletes market 1's floor, leaving its head naming the hole, inside the retention
+    // window. A prune anywhere at the resolution must not launder the deletion into a re-floor.
+    Connection::open(&path)
+        .unwrap()
+        .execute("DELETE FROM marks WHERE market = 1 AND resolution = 1 AND bucket = ?1", [base])
+        .unwrap();
+    let err = store
+        .observe(&[(2, base - 2 * 3_600_000, fixed("0")), (2, base, fixed("3"))])
+        .expect_err("re-floored over a host deletion");
+    assert!(format!("{err:#}").contains("this prune did not delete"), "{err:#}");
+}
+
+#[tokio::test]
+async fn an_unrelated_write_keeps_the_committed_anchor_and_reads_refuse() {
+    let (path, mut store) = fresh_store_at("marks-chain-unrelated-write", Retentions::defaults());
+    let base = 1_792_489_860_000;
+    store.observe(&[(1, base, fixed("1")), (1, base + 60_000, fixed("2"))]).unwrap();
+    store.observe(&[(2, base, fixed("5"))]).unwrap();
+    // The host deletes market 1's head; a write to market 2 commits untouched pairs' anchors
+    // unchanged, so market 1's truncated series fails its next read.
+    Connection::open(&path)
+        .unwrap()
+        .execute("DELETE FROM marks WHERE market = 1 AND resolution = 1 AND bucket = ?1", [base + 60_000])
+        .unwrap();
+    store.observe(&[(2, base + 60_000, fixed("6"))]).unwrap();
+    let err = store
+        .reader()
+        .page(1, Resolution::M1, i64::MIN, i64::MAX, 10, 10)
+        .await
+        .expect_err("served a truncated series");
+    assert!(format!("{err:#}").contains("rolled back"), "{err:#}");
+    let page = store.reader().page(2, Resolution::M1, i64::MIN, i64::MAX, 10, 10).await.unwrap();
+    assert_eq!(page.entries.len(), 2);
+}
+
+#[tokio::test]
+async fn a_restored_prefix_snapshot_fails_the_committed_floor() {
+    let (path, mut store) = fresh_store_at("marks-chain-floor-rollback", Retentions::defaults());
+    let market = 1;
+    let base = 1_792_489_860_000;
+    store.observe(&[(market, base, fixed("1")), (market, base + 60_000, fixed("2"))]).unwrap();
+    store.checkpoint().unwrap();
+    let snapshot = std::fs::read(&path).unwrap();
+    // A backfill seeds below the floor: the floor moves down and the row above re-links.
+    store
+        .seed(
+            &[Seed {
+                market,
+                resolution: Resolution::M1,
+                ts: base - 60_000,
+                open: fixed("0"),
+                high: fixed("0"),
+                low: fixed("0"),
+                close: fixed("0"),
+            }],
+            base + 60_000,
+        )
+        .unwrap();
+    // The host restores the pre-backfill file: the committed floor names the seeded bucket the
+    // snapshot no longer holds, and the read refuses.
+    store.checkpoint().unwrap();
+    std::fs::write(&path, &snapshot).unwrap();
+    for suffix in ["-wal", "-shm"] {
+        let mut side = path.clone().into_os_string();
+        side.push(suffix);
+        let _ = std::fs::remove_file(side);
+    }
+    let err = store
+        .reader()
+        .page(market, Resolution::M1, i64::MIN, i64::MAX, 10, 10)
+        .await
+        .expect_err("served a prefix rollback");
+    assert!(format!("{err:#}").contains("rolled back"), "{err:#}");
 }

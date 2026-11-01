@@ -14,13 +14,21 @@ pub(crate) struct Coverage {
     pub retentions: (Millis, Millis, Millis, Option<Millis>),
 }
 
-/// One chain's committed head: the newest bucket's window start and its authentication tag, as
-/// anchored in memory at recovery re-derivation and advanced by every write. A file whose head
-/// differs from the anchor is a rollback the reader refuses.
+/// One chain's committed end: a bucket's window start and its authentication tag, as anchored in
+/// memory and advanced by every write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ChainHead {
     pub bucket: Millis,
     pub tag: [u8; 16],
+}
+
+/// One pair's committed chain anchor: its floor and its head, both as written by this node's
+/// writes. A file whose floor or head differs from the anchor is a rollback or a deletion the
+/// reader refuses; what changed between them is bound by the per-row links.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ChainAnchor {
+    pub floor: ChainHead,
+    pub head: ChainHead,
 }
 
 /// The row fields a tag covers: the OHLC, provenance, and the chained index's predecessor bucket,

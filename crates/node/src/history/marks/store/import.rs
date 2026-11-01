@@ -9,7 +9,7 @@ use rusqlite::{TransactionBehavior, params};
 use tracing::warn;
 
 use crate::history::marks::Resolution;
-use crate::history::marks::store::{Row, Store, read_only, store, tag};
+use crate::history::marks::store::{Row, Store, chain, read_only, store, tag};
 
 impl Store {
     /// Imports the cache at `prior`, which a previous run left at `path`'s final name: provider-
@@ -85,11 +85,21 @@ impl Store {
                 .context("reading the prior backfill markers")?;
             mapped.collect::<Result<Vec<_>, _>>().context("reading the prior backfill markers")?
         };
+        let prior = self.prior_anchors();
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .context("starting the prior marks import")?;
         store::check_schema(&tx, &self.schema, &self.path)?;
+        let pairs: std::collections::BTreeSet<(u32, Resolution)> = rows
+            .iter()
+            .filter_map(|(market, resolution, _, _, _, _, _, _, _, _)| {
+                let market = u32::try_from(*market).ok()?;
+                let resolution = Resolution::from_tag(u8::try_from(*resolution).ok()?)?;
+                Some((market, resolution))
+            })
+            .collect();
+        chain::check_anchors(&tx, &prior, &pairs)?;
         let mut imported = 0;
         let mut dropped = 0;
         {
@@ -155,14 +165,16 @@ impl Store {
                     .context("importing a prior backfill marker")?;
             }
         }
+        let updates = chain::anchor_updates(&tx, &pairs)?;
+        let mut anchors = self.anchors.lock().expect("the marks chain anchors are never poisoned");
         tx.commit().context("committing the prior marks import")?;
+        super::apply_updates(&mut anchors, updates);
         if dropped > 0 {
             warn!(
                 alert = "marks_prior_rows_dropped",
                 dropped, "the prior marks cache held rows that fail authentication; they were not imported"
             );
         }
-        self.refresh_anchors()?;
         Ok(imported)
     }
 

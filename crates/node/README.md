@@ -1489,10 +1489,12 @@ client can weigh seeded history against what the public log proves; a bucket a l
 holds exactly what the public log proves, and every recovery re-derives the log-derived buckets from
 the verified log, so a `log_derived` label never covers provider values or rows the host wrote while
 the node was stopped. Every row is also chained: each bucket names the bucket below it, the row's
-authentication tag binds that name, and per-pair chain heads committed in memory at recovery
-re-derivation anchor the index, so a host that deletes, reorders, or rolls the cache back mid-run is
-refused at serve time — the next read over the broken span fails before anything is signed; what a
-bounded read never spans, the next recovery's re-derivation rewrites. `?limit=` is 1 to `max_limit`
+authentication tag binds that name, and per-pair chain anchors — the floor and the head, committed
+in memory atomically with each write — reject a host that deletes, reorders, or rolls the cache
+back mid-run: the next read over the broken span or ends fails before anything is signed, and a
+write never re-links over a deletion it did not itself make. What a bounded read never spans, the
+links it does walk bind; what no read ever spans between an unchanged floor and head is rewritten
+by the next recovery's re-derivation before it can be trusted again. `?limit=` is 1 to `max_limit`
 (2000), 500 by default, and a
 window wider than that pages by passing a page's `next` as `from_ms`. The cache is derived state,
 never sequenced: recovery seeds it from the log's replay, the sequencer's live mark reports keep it

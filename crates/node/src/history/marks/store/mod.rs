@@ -24,8 +24,9 @@ mod auth;
 mod chain;
 mod import;
 mod reader;
+mod reset;
 
-pub(crate) use auth::{ChainHead, Coverage};
+pub(crate) use auth::{ChainAnchor, ChainHead, Coverage};
 use auth::{Row, tag};
 pub use reader::Reader;
 
@@ -39,8 +40,10 @@ pub const MARKS_FILE: &str = "marks.sqlite";
 /// while the node was stopped or running — fails verification instead of being served or merged.
 /// Version 3 chains the rows of each (market, resolution) into one index: `prev_bucket` names the
 /// bucket below the row and the tag binds it, so a host that deletes, reorders, or rolls buckets
-/// back breaks the chain the next read refuses on, and per-pair chain heads committed in memory
-/// at recovery re-derivation reject a restored old snapshot before any of it is served.
+/// back breaks the chain the next read refuses on, and per-pair chain anchors — the floor and
+/// head committed in memory, atomically with each write — reject a restored old snapshot before
+/// any of it is served. Rows strictly between an unchanged floor and head are bound by the links
+/// walked per page; what a bounded read never spans, the next recovery's re-derivation rewrites.
 const SCHEMA_VERSION: i64 = 3;
 const SCHEMA: &str = "
     CREATE TABLE marks (
@@ -103,10 +106,11 @@ pub(crate) struct SnapRow {
     pub tag: [u8; 16],
 }
 
-/// The committed chain heads of every (market, resolution) pair, anchored at recovery
-/// re-derivation and advanced by every write. The store and its readers share one map: the
-/// writer replaces it after each commit, a reader checks one pair's head before serving a page.
-pub(crate) type ChainAnchors = BTreeMap<(MarketId, Resolution), ChainHead>;
+/// The committed chain anchors of every (market, resolution) pair, established at recovery
+/// re-derivation and advanced by every write, atomically with its commit. The store and its
+/// readers share one map: the writer merges in the pairs a transaction touched, a reader checks
+/// one pair's floor and head before serving a page.
+pub(crate) type ChainAnchors = BTreeMap<(MarketId, Resolution), ChainAnchor>;
 
 /// A provider-seeded bucket.
 #[derive(Debug, Clone, Copy)]
@@ -130,7 +134,7 @@ pub struct Store {
     mac: hmac::Hmac<sha2::Sha256>,
     /// What `SCHEMA` creates, which every write checks the file against.
     schema: Vec<SchemaRow>,
-    /// The committed chain heads this store advances with every write and every read checks.
+    /// The committed chain anchors this store advances with every write and every read checks.
     anchors: Arc<Mutex<ChainAnchors>>,
 }
 
@@ -201,13 +205,14 @@ impl Store {
         let mac = hmac::Hmac::new_from_slice(&mac_key).context("building the marks authenticator")?;
         let store = Self { conn, path: path.to_owned(), retentions, mac, schema, anchors: Arc::default() };
         // A leftover seed file from a refused activation opens populated: its rows carry valid
-        // tags, and re-derivation at recovery rewrites the log-derived ones before any read.
-        store.refresh_anchors()?;
+        // tags, re-derivation at recovery validates the anchors established here, and the
+        // log-derived rows are rewritten before any read.
+        store.establish_anchors()?;
         Ok(store)
     }
 
     /// A reader of this cache for the API, on its own read-only connections; the store keeps
-    /// writing for the task that owns it. The reader shares the committed chain heads, so every
+    /// writing for the task that owns it. The reader shares the committed chain anchors, so every
     /// page it serves is checked against the index this store advances.
     pub fn reader(&self) -> Reader {
         Reader::new(self.path.clone(), self.mac.clone(), self.anchors.clone())
@@ -229,38 +234,36 @@ impl Store {
         self.path = path;
     }
 
-    /// Re-commits every pair's chain head from what is on disk, replacing the anchor map. Called
-    /// at open and after every write commits: the anchors are exactly the heads of the rows this
-    /// store wrote, so a file the host rolled back fails a reader's head check before it serves.
+    /// The committed anchors as they stand: what a transaction validates the touched pairs
+    /// against before it moves them.
+    fn prior_anchors(&self) -> ChainAnchors {
+        self.anchors.lock().expect("the marks chain anchors are never poisoned").clone()
+    }
+
+    /// Establishes the committed anchors of every pair on disk. Called only at open, before any
+    /// reader exists: a fresh or crash-leftover seed file is the best available start, and the
+    /// recovery re-derivation that follows validates it before serving. Every later write merges
+    /// in only the pairs it touched, derived from its own transaction (see `publish`).
     /// Error cases:
-    /// - the heads cannot be read
-    fn refresh_anchors(&self) -> anyhow::Result<()> {
-        let mut heads = self
+    /// - the pairs or their floors and heads cannot be read
+    fn establish_anchors(&self) -> anyhow::Result<()> {
+        let mut pairs = self
             .conn
-            .prepare(
-                "SELECT m.market, m.resolution, m.bucket, m.tag FROM marks m
-                 JOIN (SELECT market, resolution, MAX(bucket) AS head FROM marks GROUP BY market, resolution) h
-                 ON m.market = h.market AND m.resolution = h.resolution AND m.bucket = h.head",
-            )
-            .context("reading the marks chain heads")?;
-        let heads = heads
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, MarketId>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, Millis>(2)?,
-                    row.get::<_, [u8; 16]>(3)?,
-                ))
-            })
-            .context("reading the marks chain heads")?
+            .prepare("SELECT market, resolution FROM marks GROUP BY market, resolution")
+            .context("reading the marks pairs")?;
+        let pairs = pairs
+            .query_map([], |row| Ok((row.get::<_, MarketId>(0)?, row.get::<_, i64>(1)?)))
+            .context("reading the marks pairs")?
             .collect::<Result<Vec<_>, _>>()
-            .context("reading the marks chain heads")?;
+            .context("reading the marks pairs")?;
         let mut anchors = BTreeMap::new();
-        for (market, resolution, bucket, tag) in heads {
+        for (market, resolution) in pairs {
             let resolution =
                 Resolution::from_tag(u8::try_from(resolution).context("a stored resolution is out of range")?)
                     .context("a stored resolution is out of range")?;
-            anchors.insert((market, resolution), ChainHead { bucket, tag });
+            if let Some(anchor) = chain::pair_anchor(&self.conn, market, resolution)? {
+                anchors.insert((market, resolution), anchor);
+            }
         }
         *self.anchors.lock().expect("the marks chain anchors are never poisoned") = anchors;
         Ok(())
@@ -277,17 +280,35 @@ impl Store {
     /// - the transaction fails, a stored price does not parse, or a chain link no longer resolves
     pub fn observe(&mut self, samples: &[MarkSample]) -> anyhow::Result<()> {
         let Some(&newest) = samples.iter().map(|(_, ts, _)| ts).max() else { return Ok(()) };
+        let prior = self.prior_anchors();
         let tx =
             self.conn.transaction_with_behavior(TransactionBehavior::Immediate).context("starting a marks write")?;
         store::check_schema(&tx, &self.schema, &self.path)?;
+        let mut touched: std::collections::BTreeSet<(MarketId, Resolution)> = samples
+            .iter()
+            .map(|&(market, _, _)| market)
+            .flat_map(|market| Resolution::ALL.map(move |resolution| (market, resolution)))
+            .collect();
+        // Validate the pre-merge state of every pair the write can touch: the pairs the samples
+        // merge, and any pair with rows a prune would delete. The prune itself is planned again
+        // after the merges: a row this batch writes below the horizon appears only then, and its
+        // pair is among the samples' pairs, already validated.
+        let planned = chain::plan_prune(&tx, &self.retentions, newest)?;
+        touched.extend(planned.touched_pairs());
+        chain::check_anchors(&tx, &prior, &touched)?;
         for &(market, ts, mark) in samples {
             for resolution in Resolution::ALL {
                 chain::merge(&self.mac, &tx, market, resolution, resolution.bucket(ts), mark)?;
             }
         }
-        chain::prune(&self.mac, &tx, &self.retentions, newest)?;
+        let plan = chain::plan_prune(&tx, &self.retentions, newest)?;
+        chain::apply_prune(&self.mac, &tx, &plan)?;
+        let updates = chain::anchor_updates(&tx, &touched)?;
+        // The commit and the anchor publication are one critical section: a reader that sees an
+        // older state than the anchor raced this flush and re-synchronizes instead of refusing.
+        let mut anchors = self.anchors.lock().expect("the marks chain anchors are never poisoned");
         tx.commit().context("committing a marks write")?;
-        self.refresh_anchors()?;
+        apply_updates(&mut anchors, updates);
         Ok(())
     }
 
@@ -298,13 +319,20 @@ impl Store {
     /// Error cases:
     /// - as for `observe`, or a stored row fails authentication
     pub fn seed(&mut self, rows: &[Seed], newest: Millis) -> anyhow::Result<usize> {
+        let prior = self.prior_anchors();
         let tx =
             self.conn.transaction_with_behavior(TransactionBehavior::Immediate).context("starting a marks seed")?;
         store::check_schema(&tx, &self.schema, &self.path)?;
+        let mut touched = chain::plan_prune(&tx, &self.retentions, newest)?.touched_pairs();
+        touched.extend(rows.iter().map(|row| (row.market, row.resolution)));
+        chain::check_anchors(&tx, &prior, &touched)?;
         let inserted = chain::seed(&self.mac, &tx, rows)?;
-        chain::prune(&self.mac, &tx, &self.retentions, newest)?;
+        let plan = chain::plan_prune(&tx, &self.retentions, newest)?;
+        chain::apply_prune(&self.mac, &tx, &plan)?;
+        let updates = chain::anchor_updates(&tx, &touched)?;
+        let mut anchors = self.anchors.lock().expect("the marks chain anchors are never poisoned");
         tx.commit().context("committing a marks seed")?;
-        self.refresh_anchors()?;
+        apply_updates(&mut anchors, updates);
         Ok(inserted)
     }
 
@@ -315,12 +343,14 @@ impl Store {
     /// Error cases:
     /// - the delete fails, or a chain link names a bucket this delete did not remove
     pub fn reset_log_derived(&mut self) -> anyhow::Result<()> {
+        let prior = self.prior_anchors();
         let tx =
             self.conn.transaction_with_behavior(TransactionBehavior::Immediate).context("starting a marks reset")?;
         store::check_schema(&tx, &self.schema, &self.path)?;
-        let removed = chain::reset_log_derived(&self.mac, &tx)?;
+        let (removed, updates) = reset::reset_log_derived(&self.mac, &tx, &prior)?;
+        let mut anchors = self.anchors.lock().expect("the marks chain anchors are never poisoned");
         tx.commit().context("committing a marks reset")?;
-        self.refresh_anchors()?;
+        apply_updates(&mut anchors, updates);
         debug!(removed, "log-derived marks reset for re-derivation");
         Ok(())
     }
@@ -405,59 +435,19 @@ impl Store {
     }
 }
 
-/// The tag a stored row must carry: an HMAC of every stored field, including the chain link, so
-/// a row the host rewrote fails verification before it can be served, merged, or re-linked.
-/// Error cases:
-/// - the tag does not match the stored fields
-pub(crate) fn verify_row(
-    mac: &hmac::Hmac<sha2::Sha256>,
-    market: MarketId,
-    resolution: Resolution,
-    row: &SnapRow,
-) -> anyhow::Result<()> {
-    let expected = tag(
-        mac,
-        market,
-        resolution,
-        row.bucket,
-        &Row {
-            open: &row.open,
-            high: &row.high,
-            low: &row.low,
-            close: &row.close,
-            provenance: &row.provenance,
-            prev: row.prev,
-        },
-    );
-    ensure!(row.tag == expected, "the {market} {resolution:?} bucket at {} fails authentication", row.bucket);
-    Ok(())
-}
-
-/// Re-links `row` to `prev`, keeping its content: updates the chain link and the tag that binds
-/// it, in the transaction that reasons over the chain.
-/// Error cases:
-/// - the update fails
-pub(crate) fn retag(
-    mac: &hmac::Hmac<sha2::Sha256>,
-    tx: &rusqlite::Transaction,
-    market: MarketId,
-    resolution: Resolution,
-    row: &SnapRow,
-    prev: Option<Millis>,
-) -> anyhow::Result<()> {
-    let tag = tag(
-        mac,
-        market,
-        resolution,
-        row.bucket,
-        &Row { open: &row.open, high: &row.high, low: &row.low, close: &row.close, provenance: &row.provenance, prev },
-    );
-    tx.execute(
-        "UPDATE marks SET prev_bucket = ?4, tag = ?5 WHERE market = ?1 AND resolution = ?2 AND bucket = ?3",
-        params![i64::from(market), resolution as i64, row.bucket, prev, tag],
-    )
-    .with_context(|| format!("re-linking the {market} {resolution:?} bucket at {}", row.bucket))?;
-    Ok(())
+/// Merges a transaction's anchor updates into the committed map: `Some` replaces the pair's
+/// anchor, `None` removes a pair whose every bucket the transaction deleted.
+fn apply_updates(anchors: &mut ChainAnchors, updates: chain::ChainUpdates) {
+    for (pair, anchor) in updates {
+        match anchor {
+            Some(anchor) => {
+                anchors.insert(pair, anchor);
+            }
+            None => {
+                anchors.remove(&pair);
+            }
+        }
+    }
 }
 
 /// What `SCHEMA` creates, as `sqlite_schema` lists it.
