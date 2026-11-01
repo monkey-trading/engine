@@ -54,6 +54,7 @@ pub(crate) fn reset_log_derived(
     prior: &ChainAnchors,
 ) -> anyhow::Result<(usize, ChainUpdates)> {
     let snapshot = snapshot_all(mac, tx)?;
+    validate_chains(mac, tx)?;
     let pairs: BTreeSet<(MarketId, Resolution)> = snapshot.keys().chain(prior.keys()).copied().collect();
     check_anchors(tx, prior, &pairs)?;
     let deleted: BTreeSet<(MarketId, Resolution, Millis)> = snapshot
