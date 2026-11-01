@@ -386,10 +386,15 @@ impl CheckpointChain for CheckpointRpc {
     async fn handover_source(&self) -> anyhow::Result<HandoverSource> {
         let vault = Address::from(self.domain.vault.0);
         let at = BlockId::latest();
-        let registry = registryCall::abi_decode_returns(&self.call(vault, registryCall {}.abi_encode(), at).await?)?;
+        let registry = registryCall::abi_decode_returns(
+            &self.call(vault, registryCall {}.abi_encode(), at).await.context("reading the vault's registry")?,
+        )?;
         ensure!(!registry.is_zero(), "the vault follows no operator registry");
         let source = handoverSourceCall::abi_decode_returns(
-            &self.call(registry, handoverSourceCall {}.abi_encode(), at).await?,
+            &self
+                .call(registry, handoverSourceCall {}.abi_encode(), at)
+                .await
+                .context("reading the registry's handover source")?,
         )?;
         Ok(HandoverSource {
             candidate: engine_core::types::AccountId(source.candidate.0.0),
