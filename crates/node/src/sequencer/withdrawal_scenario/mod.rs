@@ -131,7 +131,7 @@ async fn node_child() -> anyhow::Result<()> {
     // a loopback Bitstamp server after validation, keeping the real feed parser and node wiring.
     cfg.feeds.provider = FeedProvider::Venues;
     cfg.feeds.venues = Some(toml::from_str(&format!(
-        "timeout='5s'\nreconnect_min='40ms'\nreconnect_max='200ms'\nstale_after='3s'\n\
+        "timeout='5s'\nreconnect_min='40ms'\nreconnect_max='200ms'\nstale_after='3s'\nmin_quote_spacing='10ms'\n\
          [[connections]]\nvenue='bitstamp'\nurl={endpoint:?}\nsymbols=[{{market=1,symbol='btcusd'}}]"
     ))?);
     let telemetry =
