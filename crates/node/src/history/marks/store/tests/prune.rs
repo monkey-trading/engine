@@ -191,3 +191,38 @@ fn two_raced_attempts_resolve_on_the_third_and_a_third_race_is_refused_as_a_roll
     assert_eq!(attempts, [0, 1, 2]);
     assert!(format!("{:#}", page.unwrap_err()).contains("rolled back"));
 }
+
+#[tokio::test]
+async fn a_prune_deletes_only_from_pairs_the_write_validated() {
+    let (path, mut store) = fresh_store_at("marks-prune-validated", hour_retentions());
+    store.observe(&[(1, BASE, fixed("1"))]).unwrap();
+    // The host plants a row in idle market 1's 1m pair, below any horizon a later flush sets.
+    let planted = BASE - 3 * HOUR;
+    Connection::open(&path)
+        .unwrap()
+        .execute(
+            "INSERT INTO marks VALUES (1, 1, ?1, '1', '1', '1', '1', 'log_derived', NULL, zeroblob(16))",
+            [planted],
+        )
+        .unwrap();
+    let planted_rows = |store: &Store| -> i64 {
+        store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM marks WHERE market = 1 AND resolution = 1 AND bucket = ?1",
+                [planted],
+                |row| row.get(0),
+            )
+            .unwrap()
+    };
+    // A flush whose horizon leaves market 1's committed floor in place neither validates nor prunes
+    // that pair: the planted row is not deleted, and its readers refuse the pair.
+    store.observe(&[(2, BASE + HOUR / 2, fixed("2"))]).unwrap();
+    assert_eq!(planted_rows(&store), 1, "the prune reached a pair the write did not validate");
+    let err = store.reader().page(1, Resolution::M1, i64::MIN, i64::MAX, 10, 10).await.expect_err("served");
+    assert!(format!("{err:#}").contains("rolled back"), "{err:#}");
+    // A flush that would prune the pair validates it first, and refuses.
+    let err = store.observe(&[(2, BASE + 2 * HOUR, fixed("3"))]).expect_err("pruned an unvalidated chain");
+    assert!(format!("{err:#}").contains("no longer matches its committed anchor"), "{err:#}");
+    assert_eq!(planted_rows(&store), 1);
+}
