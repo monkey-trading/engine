@@ -66,22 +66,25 @@ sol! {
         returns (uint64 epoch, address candidate, address adminKey, bytes32 release, uint64 effectiveAt);
     function operatorInEffect() external view returns (address candidate, address adminKey, bytes32 release, uint64 since);
     function pendingPromotion() external view returns (bool);
-    function handoverSource()
-        external
-        view
-        returns (address candidate, bytes32 release, string apiHostname, string handoverEndpoint);
-    function candidateOf(address candidate)
-        external
-        view
-        returns (
-            address adminKey,
-            address enclave,
-            uint256 bond,
-            bytes32 release,
-            uint64 registration,
-            string apiHostname,
-            string handoverEndpoint
-        );
+    // A struct return with dynamic members is offset-prefixed on the wire; a named struct return
+    // decodes it, a flat tuple does not.
+    struct HandoverSourceReturn {
+        address candidate;
+        bytes32 release;
+        string apiHostname;
+        string handoverEndpoint;
+    }
+    function handoverSource() external view returns (HandoverSourceReturn memory source);
+    struct CandidateReturn {
+        address adminKey;
+        address enclave;
+        uint256 bond;
+        bytes32 release;
+        uint64 registration;
+        string apiHostname;
+        string handoverEndpoint;
+    }
+    function candidateOf(address candidate) external view returns (CandidateReturn memory);
     function parameters()
         external
         view
