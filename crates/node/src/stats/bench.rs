@@ -6,6 +6,7 @@
 
 use std::time::Instant;
 
+use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{AccountId, Side};
 use engine_core::{Engine, Fixed};
 
@@ -15,12 +16,18 @@ use crate::stats::tests::{BTC, Rig, T0, TRADER};
 const ACCOUNTS: usize = 100_000;
 const SAMPLES: usize = 30;
 
-/// The rig's engine with `ACCOUNTS` accounts, each a copy of the long trader's, half of them short.
+/// A `V29` engine with staking, where an epoch close's excess walks every account's equity, and
+/// `ACCOUNTS` accounts each holding one BTC position on 10000 of equity: 100k of notional
+/// on a 10% margin, closed out 5% from the mark, half of them short.
 fn engine_with_accounts() -> (Rig, Engine) {
-    let mut rig = Rig::new();
-    rig.trade(T0 + 1_000, TRADER, Side::Buy, 1);
+    let mut trading = Rig::new();
+    trading.trade(T0 + 1_000, TRADER, Side::Buy, 1);
+    let held = serde_json::to_value(&trading.engine).expect("fixture encoding")["accounts"][TRADER.to_string()].clone();
+    let rig = Rig::staking_at(ProtocolVersion::V29);
     let mut state = serde_json::to_value(&rig.engine).expect("fixture encoding");
-    let template = state["accounts"][TRADER.to_string()].clone();
+    // The trading rig's account, whole: a staking rig's deposits wait on access screening.
+    let mut template = held;
+    template["balance"] = serde_json::json!("10000");
     let mut accounts = serde_json::Map::new();
     for index in 0..ACCOUNTS {
         let mut address = [0; 20];
@@ -49,6 +56,7 @@ fn percentile(times: &mut [u128], per_cent: usize) -> u128 {
 fn scan_and_observe_cost() {
     let (rig, engine) = engine_with_accounts();
     assert_eq!(engine.accounts().len(), ACCOUNTS);
+    assert!(engine.distributable_excess().is_some(), "staking is initialised");
     let layout = Layout { closeout: Grid::new(2_000, 100), profit: Grid::new(5_000, 500) };
     for (name, full) in [("scan", true), ("light_scan", false)] {
         let mut scans = Vec::with_capacity(SAMPLES);

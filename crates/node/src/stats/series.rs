@@ -3,12 +3,25 @@
 
 use std::collections::BTreeMap;
 
-use engine_core::Fixed;
-use engine_core::fixed::Rounding;
+use alloy::primitives::{I256, U256};
 use engine_core::types::{MarketId, Millis};
 use serde::Serialize;
 
 use crate::history::marks::Resolution;
+
+/// A series value, wide enough for any MONKEY or USDC amount (`u128`) and any USD amount (`Fixed`'s
+/// raw `i128`), so nothing recorded is clamped.
+pub(crate) type Amount = I256;
+
+/// A USD amount's raw value as a series value.
+pub(crate) fn from_raw(raw: i128) -> Amount {
+    I256::try_from(raw).expect("an i128 fits an I256")
+}
+
+/// A token or USDC amount in base units as a series value.
+pub(crate) fn from_units(units: u128) -> Amount {
+    I256::try_from(U256::from(units)).expect("a u128 fits an I256")
+}
 
 /// The resolutions the series keep, finest first; the position of a resolution here is its slot.
 pub(crate) const KEPT: [Resolution; 3] = [Resolution::M1, Resolution::H1, Resolution::D1];
@@ -143,10 +156,11 @@ impl Unit {
         }
     }
 
-    /// `raw` as the wire text: a nine-decimal number for the USD units, whole base units otherwise.
-    pub(crate) fn text(self, raw: i128) -> String {
+    /// `raw` as the wire text: a number of nine decimals, as `Fixed` writes it, for the USD units,
+    /// whole base units otherwise.
+    pub(crate) fn text(self, raw: Amount) -> String {
         match self {
-            Unit::Usd | Unit::MonkeyPerUsd => Fixed::from_raw(raw).to_string(),
+            Unit::Usd | Unit::MonkeyPerUsd => fixed_text(raw),
             Unit::Monkey | Unit::Usdc => raw.to_string(),
         }
     }
@@ -155,9 +169,9 @@ impl Unit {
 /// What one bucket holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Bucket {
-    Level { open: i128, high: i128, low: i128, close: i128 },
-    Sum(i128),
-    Ratio { numerator: i128, denominator: i128 },
+    Level { open: Amount, high: Amount, low: Amount, close: Amount },
+    Sum(Amount),
+    Ratio { numerator: Amount, denominator: Amount },
 }
 
 /// One bucket as served.
@@ -187,7 +201,7 @@ impl SeriesStore {
     }
 
     /// Records a level sampled at `ts`.
-    pub(crate) fn level(&mut self, metric: Metric, market: Option<MarketId>, ts: Millis, value: i128) {
+    pub(crate) fn level(&mut self, metric: Metric, market: Option<MarketId>, ts: Millis, value: Amount) {
         self.record(metric, market, ts, |bucket| match bucket {
             Some(Bucket::Level { high, low, close, .. }) => {
                 *high = (*high).max(value);
@@ -199,7 +213,7 @@ impl SeriesStore {
     }
 
     /// Adds `amount` to the sum of the bucket `ts` falls in.
-    pub(crate) fn add(&mut self, metric: Metric, market: Option<MarketId>, ts: Millis, amount: i128) {
+    pub(crate) fn add(&mut self, metric: Metric, market: Option<MarketId>, ts: Millis, amount: Amount) {
         self.record(metric, market, ts, |bucket| match bucket {
             Some(Bucket::Sum(sum)) => *sum = sum.saturating_add(amount),
             _ => *bucket = Some(Bucket::Sum(amount)),
@@ -207,7 +221,7 @@ impl SeriesStore {
     }
 
     /// Adds a numerator and denominator to the ratio of the bucket `ts` falls in.
-    pub(crate) fn ratio(&mut self, metric: Metric, ts: Millis, numerator: i128, denominator: i128) {
+    pub(crate) fn ratio(&mut self, metric: Metric, ts: Millis, numerator: Amount, denominator: Amount) {
         self.record(metric, None, ts, |bucket| match bucket {
             Some(Bucket::Ratio { numerator: n, denominator: d }) => {
                 *n = n.saturating_add(numerator);
@@ -292,16 +306,16 @@ impl SeriesStore {
         resolution: Resolution,
         from: Millis,
         to: Millis,
-    ) -> i128 {
-        let Some(slot) = KEPT.iter().position(|kept| *kept == resolution) else { return 0 };
-        let Some(buckets) = self.series.get(&(metric, market)) else { return 0 };
+    ) -> Amount {
+        let Some(slot) = KEPT.iter().position(|kept| *kept == resolution) else { return Amount::ZERO };
+        let Some(buckets) = self.series.get(&(metric, market)) else { return Amount::ZERO };
         buckets[slot]
             .range(from..=to)
             .map(|(_, bucket)| match bucket {
                 Bucket::Sum(sum) => *sum,
-                _ => 0,
+                _ => Amount::ZERO,
             })
-            .fold(0i128, i128::saturating_add)
+            .fold(Amount::ZERO, Amount::saturating_add)
     }
 
     /// Each series' resolution slot as sorted `(metric, market, bucket start, text)` rows, for
@@ -323,7 +337,7 @@ impl SeriesStore {
 impl Bucket {
     /// Whether the bucket has a value to serve: a ratio needs a denominator.
     fn is_served(&self) -> bool {
-        !matches!(self, Bucket::Ratio { denominator, .. } if *denominator <= 0)
+        !matches!(self, Bucket::Ratio { denominator, .. } if !denominator.is_positive())
     }
 }
 
@@ -340,11 +354,25 @@ pub(crate) fn entry(metric: Metric, ts: Millis, bucket: Bucket) -> Option<Entry>
         },
         Bucket::Sum(sum) => Entry::Value { ts, value: unit.text(sum) },
         Bucket::Ratio { numerator, denominator } => {
-            // Base units per USD with nine decimals: `numerator * 10^9 / (denominator / 10^9)`.
-            let scale = Fixed::from_raw(1_000_000_000_000_000_000);
-            let per =
-                Fixed::from_raw(numerator).checked_mul_div(scale, Fixed::from_raw(denominator), Rounding::TowardZero);
-            Entry::Value { ts, value: unit.text(per.filter(|_| denominator > 0)?.raw()) }
+            // Base units per USD with nine decimals: `numerator * 10^9 / (denominator / 10^9)`, from the
+            // magnitudes, which a `u128` and a `Fixed` bound well inside 256 bits.
+            if !denominator.is_positive() || numerator.is_negative() {
+                return None;
+            }
+            let per = numerator.unsigned_abs() * U256::from(10u64).pow(U256::from(18)) / denominator.unsigned_abs();
+            Entry::Value { ts, value: unit.text(I256::try_from(per).ok()?) }
         }
     })
+}
+
+/// `raw` written as `Fixed` writes its raw value: nine decimals, no trailing zeros.
+fn fixed_text(raw: Amount) -> String {
+    let digits = raw.unsigned_abs().to_string();
+    let digits = format!("{digits:0>10}");
+    let (whole, fraction) = digits.split_at(digits.len() - 9);
+    let sign = if raw.is_negative() { "-" } else { "" };
+    match fraction.trim_end_matches('0') {
+        "" => format!("{sign}{whole}"),
+        fraction => format!("{sign}{whole}.{fraction}"),
+    }
 }

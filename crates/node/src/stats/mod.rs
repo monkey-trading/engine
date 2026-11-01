@@ -12,11 +12,13 @@
 
 mod activity;
 mod closeout;
+mod monkey;
 mod record;
 mod series;
 mod snapshot;
 mod view;
-pub(crate) use view::{ActivityPage, HouseFigures, MonkeyView, PositionsView, SeriesPage, SeriesQuery};
+pub(crate) use monkey::MonkeyView;
+pub(crate) use view::{ActivityPage, HouseFigures, PositionsView, SeriesPage, SeriesQuery};
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 

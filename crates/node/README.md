@@ -1529,17 +1529,19 @@ would close the account out (the account's other positions held at their marks; 
 short rises), with `due_now` and `beyond_range`, and `profit` buckets by side; no account is named,
 and the answer is 503 until the first scan. `GET /v1/monkey` answers the emission schedule and
 totals (`emissions`), the stake (`staking`) and the distribution state (`distribution`, whose
-`excess` is what the engine would distribute at the last scan). `GET /v1/monkey/activity?limit=&before=`
+`excess_usd` is what the engine would distribute at the last scan, in USD, and the amounts of USDC
+are named `_usdc_units`, whole base units). `GET /v1/monkey/activity?limit=&before=`
 pages the newest loss allocations, stakes and unstakes, newest first, with ids and `next` as decimal
 strings. `GET /v1/stats/series?metric=&market=&resolution=(1m|1h|1d)&from_ms=&to_ms=&limit=` pages a
 metric's buckets oldest first: `nav`, `cash`, `withdrawal_queue`, `total_staked`, `total_allocated`,
 `cumulative_distributed`, `long` and `short` (per market), `volume` (per market or all),
-`monkey_per_loss` and `distributed_per_epoch`. Every answer states where its data begins
-(`begins_ms`, `begins_seq`, `from_genesis`). The record is derived from the log and held in memory:
+`monkey_per_loss` and `distributed_per_epoch`. The series, activity and MONKEY answers state where their data begins
+(`begins_ms`, `begins_seq`, `from_genesis`), and positions are dated by their scan (`seq`, `snapshot_ms`);
+the activity feed also says when it has dropped older entries (`truncated`, `retained_from_ms`). The record is derived from the log and held in memory:
 recovery rebuilds it by replay, so after a recovery from a snapshot it begins at the first command
 after it. Scans of every account run on the sequencer's thread at most once per `api.stats_interval`
-of sequenced time (a scan of 100k accounts took about 20 ms, `stats::bench`), and a replay takes the
-cheaper scan for all but the last. `[stats]` sets each resolution's retention (1m 48h, 1h 90d, 1d
+of sequenced time (100k levered accounts with staking initialised took about 35 ms, p99 40 ms, and the light scan
+about 15 ms, `stats::bench`), and a replay takes the light scan for all but the last. `[stats]` sets each resolution's retention (1m 48h, 1h 90d, 1d
 unbounded by default), the activity length, and the close-out and profit buckets.
 
 `GET /v1/markets/{id}/marks?resolution=(1s|1m|1h|1d)&from_ms=&to_ms=&limit=` returns
@@ -2145,6 +2147,10 @@ cargo test -p engine-node trusted_time::tests::scenario
 
 # Dev scenario: a listed browser origin gets CORS headers and the stream, any other gets neither
 ./scripts/dev-browser-origin.sh
+
+# Dev scenario: the dashboard routes answer with the figures the accounts placed, verify, and survive
+# a restart (waits out one ten-minute MONKEY period, about twelve minutes)
+./scripts/dev-dashboard-data.sh
 
 # Dev scenario: limits and screening use the client address a trusted proxy's PROXY header names
 ./scripts/dev-proxy-protocol.sh

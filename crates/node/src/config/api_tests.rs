@@ -77,6 +77,9 @@ fn the_stats_section_defaults_refuses_unknown_keys_and_unbounded_maps() {
     assert!(toml::from_str::<NodeConfig>(&with("retention_1w = \"1d\"")).is_err(), "an unknown key is refused");
     for (bad, why) in [
         ("retention_1m = \"0s\"", "stats.retention_1m must be at least one millisecond"),
+        ("retention_1m = \"30s\"", "stats.retention_1m must cover at least one bucket"),
+        ("retention_1d = \"1h\"", "stats.retention_1d must cover at least one bucket"),
+        ("retention_1h = \"2h\"", "stats.retention_1h must cover the 24 hours"),
         ("activity_limit = 0", "stats.activity_limit"),
         ("closeout_bucket_bps = 0", "must be positive"),
         ("closeout_range_bps = 100\ncloseout_bucket_bps = 200", "must not exceed"),

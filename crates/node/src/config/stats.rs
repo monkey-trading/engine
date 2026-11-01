@@ -89,6 +89,20 @@ impl StatsSection {
                 ensure!(ms > 0, "stats.{name} must be at least one millisecond");
             }
         }
+        // A bucket is kept while it starts inside the retention, so a retention shorter than the
+        // bucket would drop a bucket as it is written.
+        for (name, retention, width) in [
+            ("retention_1m", Some(self.retention_1m), 60),
+            ("retention_1h", Some(self.retention_1h), 3_600),
+            ("retention_1d", self.retention_1d, 86_400),
+        ] {
+            if let Some(retention) = retention {
+                ensure!(
+                    retention >= Duration::from_secs(width),
+                    "stats.{name} must cover at least one bucket, {width} seconds"
+                );
+            }
+        }
         ensure!(
             self.retention_1h >= Duration::from_secs(VOLUME_WINDOW_HOURS * 3_600),
             "stats.retention_1h must cover the {VOLUME_WINDOW_HOURS} hours of volume `GET /v1/house` sums"

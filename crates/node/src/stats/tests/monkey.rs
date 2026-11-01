@@ -143,13 +143,13 @@ fn a_closed_epoch_is_reported_with_what_it_measured_and_distributed() {
     assert!(allocated.0 > 0);
     let view = json(rig.stats.monkey(&rig.engine));
     let distribution = &view["distribution"];
-    assert_eq!(distribution["last_distribution"]["allocated"], allocated.to_string());
-    assert_eq!(distribution["last_distribution"]["excess"], excess.to_string());
+    assert_eq!(distribution["last_distribution"]["allocated_usdc_units"], allocated.to_string());
+    assert_eq!(distribution["last_distribution"]["excess_usdc_units"], excess.to_string());
     assert_eq!(distribution["epoch"], 1);
     assert_eq!(distribution["last_closed_epoch"], 0);
     assert_eq!(distribution["last_closed_ms"], end);
     assert_eq!(distribution["next_close_ms"], end + 86_400_000);
-    assert_eq!(distribution["distributed"], allocated.to_string());
+    assert_eq!(distribution["distributed_usdc_units"], allocated.to_string());
     assert_eq!(distribution["liquidity_floor"], "1000");
     let query = crate::stats::SeriesQuery {
         metric: "distributed_per_epoch".into(),

@@ -8,13 +8,13 @@ use engine_core::types::Millis;
 use engine_core::{Engine, Fixed};
 
 use crate::stats::activity::{Entry, Kind, id};
-use crate::stats::series::Metric;
+use crate::stats::series::{Amount, Metric, from_raw, from_units};
 use crate::stats::snapshot::{self, MarketBook};
 use crate::stats::{Begin, Distribution, Inner, Settings, Stats};
 
-/// One MONKEY base unit count as a series value.
-fn units(amount: u128) -> i128 {
-    i128::try_from(amount).unwrap_or(i128::MAX)
+/// A base unit count as a series value.
+fn units(amount: u128) -> Amount {
+    from_units(amount)
 }
 
 /// The USD notional of a fill, or `None` for a market whose currency has no FX index.
@@ -44,13 +44,13 @@ impl Inner {
         let mut stake_moved = false;
         let queued = engine.withdrawal_cash().is_some();
         // Allocations of the period the command closes: MONKEY base units, and the weight they share.
-        let mut periods: BTreeMap<u64, (i128, i128)> = BTreeMap::new();
+        let mut periods: BTreeMap<u64, (Amount, Amount)> = BTreeMap::new();
         for (index, event) in events.iter().enumerate() {
             match event {
                 Event::Fill(fill) => {
                     if let Some(usd) = fill_usd(engine, fill) {
-                        self.series.add(Metric::Volume, Some(fill.market), ts, usd.raw());
-                        self.series.add(Metric::Volume, None, ts, usd.raw());
+                        self.series.add(Metric::Volume, Some(fill.market), ts, from_raw(usd.raw()));
+                        self.series.add(Metric::Volume, None, ts, from_raw(usd.raw()));
                     }
                 }
                 Event::WithdrawalQueued { amount, .. } => self.queue_total += *amount,
@@ -78,7 +78,7 @@ impl Inner {
                 Event::EmissionAllocated { account, period, weight, amount } => {
                     let sums = periods.entry(*period).or_default();
                     sums.0 = sums.0.saturating_add(units(amount.0));
-                    sums.1 = sums.1.saturating_add(weight.raw());
+                    sums.1 = sums.1.saturating_add(from_raw(weight.raw()));
                     self.activity.push(Entry {
                         id: id(seq, index),
                         seq,
@@ -113,8 +113,6 @@ impl Inner {
         // The first command seeds the totals from the state it left, whatever its events moved.
         if first {
             self.refresh_queue(engine);
-        }
-        if first {
             self.refresh_stakers(engine);
         } else if stake_moved {
             // Accounts leave the map when they unstake everything, so its size is the stakers.
@@ -145,9 +143,9 @@ impl Inner {
 
     /// Samples the levels every command leaves.
     fn sample_levels(&mut self, engine: &Engine, ts: Millis) {
-        self.series.level(Metric::Nav, None, ts, engine.house_nav().raw());
-        self.series.level(Metric::Cash, None, ts, engine.house_cash().raw());
-        self.series.level(Metric::WithdrawalQueue, None, ts, self.queue_total.raw());
+        self.series.level(Metric::Nav, None, ts, from_raw(engine.house_nav().raw()));
+        self.series.level(Metric::Cash, None, ts, from_raw(engine.house_cash().raw()));
+        self.series.level(Metric::WithdrawalQueue, None, ts, from_raw(self.queue_total.raw()));
         if let Some(emissions) = engine.emissions() {
             self.series.level(Metric::TotalAllocated, None, ts, units(emissions.entitled.0));
         }
@@ -159,7 +157,7 @@ impl Inner {
 
     /// Samples a market's long and short from a scan.
     fn sample_book(&mut self, market: u32, book: &MarketBook, ts: Millis) {
-        self.series.level(Metric::Long, Some(market), ts, book.long.usd.raw());
-        self.series.level(Metric::Short, Some(market), ts, book.short.usd.raw());
+        self.series.level(Metric::Long, Some(market), ts, from_raw(book.long.usd.raw()));
+        self.series.level(Metric::Short, Some(market), ts, from_raw(book.short.usd.raw()));
     }
 }

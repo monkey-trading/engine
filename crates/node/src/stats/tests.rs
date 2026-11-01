@@ -8,7 +8,7 @@ use engine_core::types::{AccountId, MarketId, Millis, Side};
 use engine_core::{Engine, Fixed};
 
 use crate::sequencer::genesis_commands;
-use crate::stats::Stats;
+use crate::stats::{SeriesQuery, Stats};
 use crate::test_support::{dev_config, stats};
 
 pub(crate) const T0: Millis = 1_792_504_800_000;
@@ -38,6 +38,11 @@ impl Rig {
     /// Its orders need signatures, so it trades nothing.
     pub(crate) fn staking() -> Self {
         Self::at(ProtocolVersion::V25, true, stats())
+    }
+
+    /// `staking`, at `version`, which can be later than the first that stakes.
+    pub(crate) fn staking_at(version: ProtocolVersion) -> Self {
+        Self::at(version, true, stats())
     }
 
     fn at(version: ProtocolVersion, staking: bool, stats: Stats) -> Self {
@@ -89,10 +94,12 @@ impl Rig {
     }
 
     pub(crate) fn price(&mut self, ts: Millis, mid: i64) -> Vec<Event> {
-        let quotes = ["a", "b"]
-            .map(|source| SourceQuote { source: source.into(), mid: Fixed::from_int(mid), ts, contract: None })
-            .to_vec();
-        self.apply(ts, Command::Prices { market: BTC, quotes })
+        self.price_in(BTC, ts, Fixed::from_int(mid))
+    }
+
+    pub(crate) fn price_in(&mut self, market: MarketId, ts: Millis, mid: Fixed) -> Vec<Event> {
+        let quotes = ["a", "b"].map(|source| SourceQuote { source: source.into(), mid, ts, contract: None }).to_vec();
+        self.apply(ts, Command::Prices { market, quotes })
     }
 
     pub(crate) fn trade(&mut self, ts: Millis, account: AccountId, side: Side, qty: i64) -> Vec<Event> {
@@ -149,23 +156,43 @@ fn a_fill_adds_its_notional_to_the_market_and_total_volume() {
 #[test]
 fn nav_is_a_level_whose_bucket_holds_the_open_high_low_and_close() {
     let mut rig = Rig::new();
-    rig.trade(T0 + 1_000, TRADER, Side::Buy, 2);
-    rig.price(T0 + 2_000, 101_000);
-    rig.price(T0 + 3_000, 99_000);
-    let query = |resolution: &str| crate::stats::SeriesQuery {
+    // A minute of its own, after the setup's: every NAV the commands in it leave is known.
+    let minute = T0 + 120_000;
+    let mut navs = Vec::new();
+    rig.apply(minute, Command::Tick);
+    // Quotes are fresh for a second, so each command follows a price.
+    rig.price(minute + 100, 100_000);
+    navs.push(rig.engine.house_nav());
+    rig.trade(minute + 300, TRADER, Side::Buy, 2);
+    navs.push(rig.engine.house_nav());
+    rig.price(minute + 900, 101_000);
+    navs.push(rig.engine.house_nav());
+    rig.price(minute + 1_500, 99_000);
+    navs.push(rig.engine.house_nav());
+    rig.price(minute + 2_000, 100_500);
+    navs.push(rig.engine.house_nav());
+    let query = |resolution: &str| SeriesQuery {
         metric: "nav".into(),
         market: None,
         resolution: resolution.into(),
-        from_ms: Some(T0),
-        to_ms: Some(T0 + 59_999),
+        from_ms: Some(minute),
+        to_ms: Some(minute + 59_999),
         limit: None,
     };
     let page = serde_json::to_value(rig.stats.series(&rig.engine, &query("1m")).unwrap().finish()).unwrap();
     let bucket = &page["entries"][0];
-    let nav = |key: &str| bucket[key].as_str().unwrap().parse::<Fixed>().unwrap();
-    assert_eq!(nav("close"), rig.engine.house_nav());
-    // The client is long two BTC: the house gains when the index falls, so its NAV peaks at 99000.
-    assert!(nav("high") > nav("open") && nav("low") < nav("high"), "{bucket}");
+    let text = |value: Fixed| value.to_string();
+    let (high, low) = (*navs.iter().max().unwrap(), *navs.iter().min().unwrap());
+    assert!(high > low, "the commands moved the NAV: {navs:?}");
+    assert_eq!(
+        (bucket["open"].as_str(), bucket["high"].as_str(), bucket["low"].as_str(), bucket["close"].as_str()),
+        (
+            Some(text(navs[0]).as_str()),
+            Some(text(high).as_str()),
+            Some(text(low).as_str()),
+            Some(text(*navs.last().unwrap()).as_str())
+        )
+    );
     assert_eq!(page["unit"], "usd");
     assert!(rig.stats.series(&rig.engine, &query("1s")).is_err());
 }
@@ -221,5 +248,6 @@ mod bounds;
 pub(super) mod closeout_map;
 mod currency;
 mod monkey;
+mod queue;
 mod recovery;
 mod replay;

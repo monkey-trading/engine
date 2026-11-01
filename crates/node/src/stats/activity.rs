@@ -39,6 +39,8 @@ pub(crate) struct Entry {
 pub(crate) struct Activity {
     capacity: usize,
     entries: VecDeque<Entry>,
+    /// Whether the ring has dropped an entry for room.
+    evicted: bool,
 }
 
 /// Serializes an id as a decimal string.
@@ -56,15 +58,21 @@ pub(crate) fn id(seq: u64, index: usize) -> u64 {
 
 impl Activity {
     pub(crate) fn new(capacity: usize) -> Self {
-        Self { capacity, entries: VecDeque::new() }
+        Self { capacity, entries: VecDeque::new(), evicted: false }
     }
 
     /// Adds the newest entry, dropping the oldest past capacity.
     pub(crate) fn push(&mut self, entry: Entry) {
         if self.entries.len() == self.capacity {
             self.entries.pop_front();
+            self.evicted = true;
         }
         self.entries.push_back(entry);
+    }
+
+    /// Whether older entries have been dropped, and the time of the oldest one held.
+    pub(crate) fn retained(&self) -> (bool, Option<Millis>) {
+        (self.evicted, self.entries.front().map(|entry| entry.ts))
     }
 
     /// Up to `limit` entries older than `before`, newest first, and the id to pass as `before` for

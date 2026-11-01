@@ -2,8 +2,6 @@
 //! `/v1/stats/series` and `/v1/monkey/activity`, each read from the record and the engine at the
 //! sequencer's last command.
 
-use engine_core::emissions::PERIOD_MS;
-use engine_core::emissions::PERIODS_PER_HALVING;
 use engine_core::fixed::Rounding;
 use engine_core::types::{MarketId, Millis};
 use engine_core::{Engine, Fixed};
@@ -106,69 +104,6 @@ struct HouseMarket {
     volume: Fixed,
 }
 
-#[derive(Serialize)]
-pub struct MonkeyView {
-    seq: Option<u64>,
-    time_ms: Millis,
-    emissions: Option<EmissionsView>,
-    staking: Option<StakingView>,
-    distribution: Option<DistributionView>,
-}
-
-#[derive(Serialize)]
-struct EmissionsView {
-    start_ms: Millis,
-    period_ms: Millis,
-    period_budget: engine_core::emissions::TokenUnits,
-    halving_periods: u64,
-    /// The period the last command fell in, `None` before the start, and its budget.
-    period: Option<u64>,
-    current_budget: Option<engine_core::emissions::TokenUnits>,
-    next_halving_ms: Option<Millis>,
-    max_supply: engine_core::emissions::TokenUnits,
-    allocated: engine_core::emissions::TokenUnits,
-    cancelled: engine_core::emissions::TokenUnits,
-}
-
-#[derive(Serialize)]
-struct StakingView {
-    total_staked: engine_core::emissions::TokenUnits,
-    stakers: u64,
-    cooldown_ms: Millis,
-}
-
-#[derive(Serialize)]
-struct DistributionView {
-    start_ms: Millis,
-    epoch_ms: Millis,
-    liquidity_floor: Fixed,
-    nav: Fixed,
-    /// What an epoch close would distribute at the last scan, in USD: house NAV and funded cash above
-    /// the floor, less reversible principal and client debts (`Engine::distributable_excess`).
-    excess: Option<Fixed>,
-    /// The seq of that scan.
-    excess_seq: Option<u64>,
-    /// The epoch the last command fell in.
-    epoch: u64,
-    last_closed_epoch: Option<u64>,
-    last_closed_ms: Option<Millis>,
-    next_close_ms: Millis,
-    /// USDC base units allocated to stakers across every closed epoch.
-    distributed: engine_core::staking::UsdcUnits,
-    /// The last close this record saw, with what it measured.
-    last_distribution: Option<LastDistribution>,
-}
-
-#[derive(Serialize)]
-struct LastDistribution {
-    epoch: u64,
-    closed_ms: Millis,
-    nav: Fixed,
-    floor: Fixed,
-    excess: engine_core::staking::UsdcUnits,
-    allocated: engine_core::staking::UsdcUnits,
-}
-
 /// A bucket's positions.
 #[derive(Serialize)]
 struct Counts {
@@ -229,7 +164,12 @@ pub struct ActivityPage {
     #[serde(serialize_with = "next_text")]
     next: Option<u64>,
     begins_ms: Option<Millis>,
+    begins_seq: Option<u64>,
     from_genesis: bool,
+    /// Whether the feed has dropped older entries for room, and the time of the oldest it holds: a
+    /// page that ends with `next` null is then the end of what is held, not of what happened.
+    truncated: bool,
+    retained_from_ms: Option<Millis>,
 }
 
 impl From<Bin> for Counts {
@@ -244,7 +184,7 @@ impl From<Bin> for Counts {
 }
 
 impl Inner {
-    fn begins_at_genesis(&self) -> bool {
+    pub(super) fn begins_at_genesis(&self) -> bool {
         self.begin.is_some_and(|begin| begin.seq == 0)
     }
 
@@ -253,7 +193,10 @@ impl Inner {
     fn volume(&self, market: Option<MarketId>, now: Millis) -> (Fixed, Millis) {
         let from = Resolution::H1.bucket(now) - (VOLUME_WINDOW_HOURS as i64 - 1) * Resolution::H1.ms();
         let sum = self.series.sum(Metric::Volume, market, Resolution::H1, from, now);
-        (Fixed::from_raw(sum), self.begin.map_or(from, |Begin { ts, .. }| from.max(ts)))
+        (
+            Fixed::from_raw(i128::try_from(sum).unwrap_or(i128::MAX)),
+            self.begin.map_or(from, |Begin { ts, .. }| from.max(ts)),
+        )
     }
 }
 
@@ -297,64 +240,6 @@ impl Stats {
             volume_since_ms,
             markets,
         }
-    }
-
-    /// The MONKEY emission schedule, staking and distribution state.
-    pub(crate) fn monkey(&self, engine: &Engine) -> MonkeyView {
-        let inner = self.lock();
-        let now = engine.now();
-        let emissions = engine.emissions().map(|emissions| {
-            let schedule = emissions.schedule;
-            let period = schedule.period_at(now);
-            EmissionsView {
-                start_ms: schedule.start_ms,
-                period_ms: PERIOD_MS,
-                period_budget: schedule.period_budget,
-                halving_periods: PERIODS_PER_HALVING,
-                period,
-                current_budget: period.map(|period| engine_core::emissions::TokenUnits(schedule.budget(period))),
-                next_halving_ms: period
-                    .and_then(|period| (period / PERIODS_PER_HALVING + 1).checked_mul(PERIODS_PER_HALVING))
-                    .and_then(|first| i64::try_from(first).ok())
-                    .and_then(|first| first.checked_mul(PERIOD_MS))
-                    .and_then(|offset| schedule.start_ms.checked_add(offset)),
-                max_supply: engine_core::emissions::TokenUnits(schedule.nominal_supply()),
-                allocated: emissions.entitled,
-                cancelled: emissions.cancelled,
-            }
-        });
-        let staking = engine.staking().map(|staking| StakingView {
-            total_staked: engine_core::emissions::TokenUnits(inner.staked),
-            stakers: inner.stakers,
-            cooldown_ms: staking.config.cooldown_ms,
-        });
-        let distribution = engine.staking().map(|staking| {
-            let config = staking.config;
-            let epoch = config.epochs_elapsed(now);
-            let nav = engine.house_nav();
-            DistributionView {
-                start_ms: config.start_ms,
-                epoch_ms: config.epoch_ms,
-                liquidity_floor: config.liquidity_floor,
-                nav,
-                excess: inner.snapshot.as_ref().and_then(|snapshot| snapshot.distribution_excess),
-                excess_seq: inner.snapshot.as_ref().map(|snapshot| snapshot.seq),
-                epoch,
-                last_closed_epoch: epoch.checked_sub(1),
-                last_closed_ms: epoch.checked_sub(1).map(|closed| config.epoch_end(closed)),
-                next_close_ms: config.epoch_end(epoch),
-                distributed: staking.distributed,
-                last_distribution: inner.distribution.map(|last| LastDistribution {
-                    epoch: last.epoch,
-                    closed_ms: last.closed_ms,
-                    nav: last.nav,
-                    floor: last.floor,
-                    excess: engine_core::staking::UsdcUnits(last.excess),
-                    allocated: engine_core::staking::UsdcUnits(last.allocated),
-                }),
-            }
-        });
-        MonkeyView { seq: engine.last_seq(), time_ms: now, emissions, staking, distribution }
     }
 
     /// A market's position map from the last scan.
@@ -446,11 +331,15 @@ impl Stats {
         }
         let inner = self.lock();
         let (entries, next) = inner.activity.page(before, limit);
+        let (truncated, retained_from_ms) = inner.activity.retained();
         Ok(ActivityPage {
             entries,
             next,
             begins_ms: inner.begin.map(|begin| begin.ts),
+            begins_seq: inner.begin.map(|begin| begin.seq),
             from_genesis: inner.begins_at_genesis(),
+            truncated,
+            retained_from_ms,
         })
     }
 }

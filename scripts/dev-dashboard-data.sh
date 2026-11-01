@@ -250,7 +250,10 @@ expect_near "BTC volume" "$btc_volume" "$(calc "5 * $btc")" "$(calc "0.02 * 5 * 
 all_volume="$(series "metric=volume&resolution=1m" | jq '[.entries[].value | tonumber] | add')"
 expect_near "total volume" "$all_volume" "$(calc "5 * $btc + 15 * $eth")" "$(calc "0.02 * (5 * $btc + 15 * $eth)")"
 long_series="$(series "metric=long&market=1&resolution=1m")"
-expect_near "BTC long series" "$(jq -r '.entries[-1].close' <<< "$long_series")" "$long_btc" "$(rel "$long_btc")"
+# The position follows the mark, which has drifted since the trades: the series' last level is two
+# BTC at a mark within the last minute's moves.
+now_btc="$(mark 1)"
+expect_near "BTC long series" "$(jq -r '.entries[-1].close' <<< "$long_series")" "$(calc "2 * $now_btc")" "$(rel "$(calc "2 * $now_btc")")"
 expect "level kind" "$(jq -r .kind <<< "$long_series")" level
 expect "series begins at genesis" "$(jq -r '.from_genesis and .begins_ms > 0' <<< "$long_series")" true
 for metric in nav cash withdrawal_queue; do

@@ -52,7 +52,17 @@ fn a_replay_scans_lightly_and_leaves_the_series_a_live_node_holds() {
     assert_eq!(json(replayed.house(&rig.engine))["snapshot_ms"], T0 + 4 * 60_000, "a light scan is the latest");
     assert_eq!(json(replayed.house(&rig.engine))["open_margin"], "0", "and takes no margin");
     assert_eq!(replayed.dump(), live.stats.dump(), "the series are the live node's");
+    // A light scan holds no position map, and the full scan at the end of recovery does.
+    let mapped = |stats: &Stats, engine: &Engine| {
+        let view = json(stats.positions(engine, BTC).unwrap().unwrap());
+        let count = |key: &str| {
+            view[key].as_array().unwrap().iter().map(|bin| bin["long_count"].as_u64().unwrap()).sum::<u64>()
+        };
+        count("closeout") + count("profit")
+    };
+    assert_eq!(mapped(&replayed, &rig.engine), 0);
     replayed.finish_recovery(&rig.engine);
+    assert!(mapped(&replayed, &rig.engine) > 0);
     let house = json(replayed.house(&rig.engine));
     assert!(house["open_margin"].as_str().unwrap().parse::<Fixed>().unwrap().is_positive(), "{house}");
     assert_eq!(json(live.stats.house(&live.engine))["open_margin"], house["open_margin"]);

@@ -136,9 +136,9 @@ impl MarketBook {
 
 /// Scans every account of `engine` at its last command, `seq` and `ts`. A light scan (`full` false)
 /// totals only each market's long and short and the open interest and positions, skipping the
-/// accounts' equity and margin and the position maps, as a replay does for the scans nothing will
-/// serve. An account with a position
-/// in a market it cannot value, a quote currency with no FX index, is left out.
+/// accounts' equity and margin, the position maps and the distributable excess, as a replay does for
+/// the scans nothing will serve. An account with a position in a market it cannot value, a quote
+/// currency with no FX index, is left out.
 pub(crate) fn scan(engine: &Engine, seq: u64, ts: Millis, layout: Layout, full: bool) -> Snapshot {
     let mut books: BTreeMap<MarketId, MarketBook> =
         engine.markets().iter().map(|(id, market)| (*id, MarketBook::new(market.mark, layout))).collect();
@@ -168,6 +168,9 @@ pub(crate) fn scan(engine: &Engine, seq: u64, ts: Millis, layout: Layout, full: 
                 book.long.add(notional)
             } else {
                 book.short.add(notional)
+            }
+            if !full {
+                continue;
             }
             if !position.entry.is_zero() && market.mark.is_some() {
                 let move_bps = (price - position.entry).bps_of(position.entry);
@@ -201,7 +204,7 @@ pub(crate) fn scan(engine: &Engine, seq: u64, ts: Millis, layout: Layout, full: 
         open_margin,
         open_positions,
         full,
-        distribution_excess: engine.distributable_excess(),
+        distribution_excess: engine.distributable_excess().filter(|_| full),
         markets: books,
     }
 }
