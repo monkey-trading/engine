@@ -299,7 +299,12 @@ impl VaultRpc {
             .map(|cert| Certificate::from_der(cert))
             .collect::<Result<Vec<_>, _>>()
             .context("loading the built-in TLS roots")?;
-        let http = Client::builder().tls_certs_only(roots).build().context("building the RPC client")?;
+        let http = Client::builder()
+            // A provider can refuse a request without one, and the client sends none by default.
+            .user_agent(concat!("engine-custody/", env!("CARGO_PKG_VERSION")))
+            .tls_certs_only(roots)
+            .build()
+            .context("building the RPC client")?;
         let client = RpcClient::new_http_with_client(http, url.clone());
         Ok(VaultRpc {
             client,

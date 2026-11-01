@@ -22,6 +22,7 @@ mod quorum;
 mod quorum_diagnostics;
 mod rpc;
 mod staking;
+mod user_agent;
 
 #[test]
 fn usdc_base_units_convert_to_fixed_exactly() {

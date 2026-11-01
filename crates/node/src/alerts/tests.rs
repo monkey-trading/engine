@@ -195,6 +195,15 @@ async fn every_delivery_outcome_is_counted_and_leaves_nothing_pending() {
 }
 
 #[tokio::test]
+async fn posts_carry_a_user_agent() {
+    let receiver = Receiver::start(vec![]).await;
+    let metrics = Arc::new(Metrics::new());
+    deliver_through_route(&receiver.url("/hook"), &metrics, FAST).await;
+    assert_eq!(delivered(&metrics, "critical", "sent"), 1);
+    assert_eq!(receiver.agents(), vec![concat!("engine-alerts/", env!("CARGO_PKG_VERSION")).to_owned()]);
+}
+
+#[tokio::test]
 async fn an_unreachable_webhook_is_given_up_counted_and_its_error_omits_the_url() {
     // Bound, then closed: nothing listens on the port.
     let port = TcpListener::bind("127.0.0.1:0").await.unwrap().local_addr().unwrap().port();
@@ -369,6 +378,7 @@ struct ReceiverState {
     failures: Vec<StatusCode>,
     requests: usize,
     bodies: Vec<Value>,
+    agents: Vec<String>,
 }
 
 impl Receiver {
@@ -390,14 +400,25 @@ impl Receiver {
         self.state.lock().unwrap().bodies.clone()
     }
 
+    fn agents(&self) -> Vec<String> {
+        self.state.lock().unwrap().agents.clone()
+    }
+
     fn requests(&self) -> usize {
         self.state.lock().unwrap().requests
     }
 }
 
-async fn accept(State(state): State<Arc<Mutex<ReceiverState>>>, Json(body): Json<Value>) -> StatusCode {
+async fn accept(
+    State(state): State<Arc<Mutex<ReceiverState>>>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<Value>,
+) -> StatusCode {
     let mut state = state.lock().unwrap();
     state.requests += 1;
+    state
+        .agents
+        .push(headers.get(axum::http::header::USER_AGENT).and_then(|v| v.to_str().ok()).unwrap_or_default().to_owned());
     if let Some(failure) = state.failures.pop() {
         return failure;
     }
