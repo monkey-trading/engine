@@ -191,7 +191,9 @@ impl Engine {
     }
 
     /// Checks a signed request's signature names `account`, or a session key of `account` allowed
-    /// by `scope`, and uses the signer's nonce.
+    /// by `scope`, and uses the signer's nonce. A request a registered session key signs spends
+    /// the key's nonce even when the key's state or the request's scope then refuses it, exactly as
+    /// an account-signed request a refusal cannot replay behaves.
     /// Error cases:
     /// - `InvalidSignature`: not signed by `account` or, from `V41`, by one of its session keys
     ///   within `scope`
