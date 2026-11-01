@@ -304,6 +304,8 @@ jobs:
         run: ./scripts/dev-operator-election.sh
       - name: Run the standby operator dev scenario
         run: ./scripts/dev-standby-operator.sh
+      - name: Run the operator handover dev scenario
+        run: ./scripts/dev-operator-handover.sh
       - name: Run sequencer confirmation and Ethereum finality dev scenario
         run: ./scripts/dev-deposit-finality.sh
       - name: Run signed withdrawals, crash recovery, and FIFO liquidity on Anvil

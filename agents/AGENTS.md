@@ -103,8 +103,10 @@ an index: load only the rule whose hint matches the current action.
   derived key in `tee/snp.rs`, or the mock TEE's public stand-in; `node/keys.rs`: sealed keys, new
   ones only on `run --new-key`, or a predecessor's on `run --predecessor`; `node/registration.rs`:
   a node the vault does not name serves only its attestation until governance registers it;
-  `handover/`: an upgrade the vault's timelock approved takes the keys over HPKE after each release
-  attests the other), the trusted time check against
+  `handover/`: an upgrade the vault's timelock approved, or an election the registry in effect
+  names, takes the keys — and the sealed tail segment, so no seq is missing — over HPKE after each
+  release attests the other; the elected successor resolves the incumbent's handover endpoint from
+  the registry's recorded source and fetches the published log first), the trusted time check against
   Roughtime servers, the custody adapter (mock, or EVM vault deposits over alloy, mirroring the
   staking contract's finalised events once `InitStaking` has applied, with V27 scan progress
   authenticated in engine state rather than trusted from the host cursor, and from V37 the operator
@@ -253,6 +255,9 @@ an index: load only the rule whose hint matches the current action.
   `dev-monkey-emissions.sh`, the MONKEY emissions scenario on Anvil;
   `dev-monkey-staking.sh`, the MONKEY staking and USDC distributions scenario on Anvil;
   `dev-operator-election.sh`, the delegated operator election scenario on Anvil;
+  `dev-operator-handover.sh`, the operator handover scenario on Anvil: an elected candidate's enclave
+  takes the keys and the log from the incumbent's at the election's effective time, a withdrawal the
+  incumbent authorized pays, a stale sealed copy refuses, and a re-election hands the keys back;
   `dev-standby-operator.sh`, the standby takeover scenario on Anvil: a failed operator, the liveness
   rule's promotion, the limited `setSigner`, and the reissued payout across the signer change;
   `dev-snapshot-restart.sh`, the checkpoint snapshot restart and fallback scenario;
@@ -295,7 +300,7 @@ an index: load only the rule whose hint matches the current action.
   invariant tests on x86_64 and aarch64 Linux, the unchanged-reference-log check, `cargo-deny`,
   the contracts' `forge fmt --check` / build /
   test, the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
-  deposit finality scenarios, the MONKEY staking and operator election dev scenarios, the enclave key
+  deposit finality scenarios, the MONKEY staking, operator election, standby and handover dev scenarios, the enclave key
   lifecycle dev scenario, the signed withdrawal and FIFO dev
   scenario, the exit dev scenario, the API and direct-vault access enforcement dev scenario, the
   metrics and alert routing
@@ -467,6 +472,11 @@ Run from the repo root:
   through the real custody quorum, sequencer and API that the deployer's key is refused and the
   elected key applies from the effective time; needs Anvil, Forge, Python 3, and installed Soldeer
   dependencies)
+- Operator handover dev scenario: `./scripts/dev-operator-handover.sh` (the same requirements; A runs
+  as the operator in effect with rotation on, an election names B and, past its effective time, B
+  takes the keys and the log from A through the handover listener, A exits, a withdrawal A
+  authorized pays, A's stale sealed copy refuses to open, and a re-election of A hands the keys back
+  from B)
 - Standby operator dev scenario: `./scripts/dev-standby-operator.sh` (the same requirements; A runs
   with rotation on and payouts paused, B follows A's stream into a copy, A fails, the registry's
   liveness rule promotes B, the timelock's `setSigner` installs only B's registered enclave, B

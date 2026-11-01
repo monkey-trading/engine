@@ -191,7 +191,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/payout_tests.rs` — release order across claim pages, durability, restart, expiry without reissue, and rotation
 - `src/sequencer/payout_tests/` — paginated replacement signature order, paused claim acknowledgement, sealed approval recovery, FIFO signing across unloaded recovery windows, expired authorizations a rotation leaves unsigned, and no issuance or reissue while the vault pauses withdrawals or has a retired signer
 - `src/sequencer/withdrawal_scenario/` — actual Anvil/TLS/stream/custody crash, FIFO, and guardian pause and signer retirement scenarios with local signed time,
-  and the enclave key lifecycle scenario (`keys.rs`)
+  the enclave key lifecycle scenario (`keys.rs`), and the elected operator's handover (`handover.rs`)
 - `src/sequencer/withdrawal_scenario/` — actual Anvil/TLS/stream/custody crash, FIFO, and guardian pause and signer retirement scenarios with local signed time
 - `src/sequencer/payout_tests/` — paginated replacement signature order, paused claim acknowledgement, sealed approval recovery, FIFO signing across unloaded recovery windows, and expired authorizations a rotation leaves unsigned
 - `src/sequencer/withdrawal_scenario/` — actual Anvil/TLS/stream/custody crash and FIFO scenarios with local signed time,
@@ -419,12 +419,15 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   mock TEE's public stand-in for sealing; `src/tee/sealing/tests.rs` covers it
 - `src/tee/snp.rs` — the SEV-SNP sealing key and report through `/dev/sev-guest` (Linux)
 - `src/handover/mod.rs` — the handover's messages, framing, report data, HPKE encryption of the keys,
-  and the vault's current release check that a start and a handover share
+  the vault's current release check that a start and a handover share, and the registry's handover
+  source an elected successor resolves the incumbent from
 - `src/handover/evidence.rs` — a peer's quote and its collateral, produced and verified
-- `src/handover/successor.rs` — the new release's side: request, verify, seal, confirm
+- `src/handover/successor.rs` — the new release's side: request, verify, take the final log segment,
+  require the log to end at the handed-over checkpoint, seal, confirm
 - `src/handover/predecessor.rs` — the running release's side: its listener, the current release, the
-  stop, and the final checkpoint; `src/handover/predecessor/tests/` runs it over loopback, the stop
-  and final-checkpoint tests in `stop.rs`
+  stop, the final checkpoint, and the sealed tail segment it sends after the keys;
+  `src/handover/predecessor/tests/` runs it over loopback, the stop and final-checkpoint tests in
+  `stop.rs`
 - `src/handover/tests.rs` — what each step binds, the encryption, the framing, and the evidence
 - `src/verify/mod.rs` — attestation verification for the CLI and replay: loading or fetching the
   attestation, release manifest, and collateral, `engine-verify` on the system clock, and the
