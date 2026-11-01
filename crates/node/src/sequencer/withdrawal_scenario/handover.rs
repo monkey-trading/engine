@@ -59,7 +59,7 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
     // after, and the timelock names A's real release while rotation is still off.
     let operator_key = SigningKey::from_slice(&OPERATOR)?;
     let operator = Address::from(engine_core::eip712::address(operator_key.verifying_key()).0);
-    let staking = chain.deploy_registry(operator, A_DIGEST, PLACEHOLDER_CONFIG, 7 * 24 * 3_600, false).await?;
+    let staking = chain.deploy_registry(operator, A_DIGEST, PLACEHOLDER_CONFIG, 3_600, false).await?;
     let staking_start = now_ms() + 30_000;
     let a_port = free_port()?;
     let a_handover = free_port()?;
@@ -183,11 +183,14 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
     let close1 = open_start + 2 * 3_600;
     let (_, effective1) = node.chain.close_epoch_at(close1).await?.context("the close elected no candidate")?;
     ensure!(effective1 == close1 + NOTICE_SECS + FINALITY_MARGIN_SECS, "the effective time moved: {effective1}");
-    wait_operator(&node.client, || node.chain.check(), Some(&format!("{b_candidate:#x}")), true).await?;
+    let b_admin_address = Address::from(engine_core::eip712::address(b_admin.verifying_key()).0);
+    // Mirrored, before the effective time: the deployer still signs; the elected key is pending.
+    wait_operator(&node.client, || node.chain.check(), Some(&format!("{operator:#x}")), true).await?;
     node.services.advance_by(Duration::from_secs(effective1 + 120 - engine_secs()));
     node.chain.warp_to(effective1 + 120).await?;
     node.chain.sync_release().await?;
-    wait_operator(&node.client, || node.chain.check(), Some(&format!("{b_candidate:#x}")), false).await?;
+    // From the effective time the elected key applies and nothing is pending.
+    wait_operator(&node.client, || node.chain.check(), Some(&format!("{b_admin_address:#x}")), false).await?;
     // The incumbent still holds the keys: it pages that the handover is overdue.
     timeout(LOADED_WAIT, async {
         loop {
@@ -249,12 +252,15 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
     let open_start = node.chain.open_epoch_start().await?;
     let close2 = open_start + 3_600;
     let (_, effective2) = node.chain.close_epoch_at(close2).await?.context("the re-election elected no candidate")?;
-    wait_operator(&b_client, &mut b_check, Some(&format!("{operator:#x}")), true).await?;
+    let a_admin_address = Address::from(engine_core::eip712::address(operator_key.verifying_key()).0);
+    // B still signs on its node; A's key is pending until the effective time.
+    wait_operator(&b_client, &mut b_check, Some(&format!("{b_admin_address:#x}")), true).await?;
     drop(b_check);
     node.services.advance_by(Duration::from_secs(effective2 + 120 - engine_secs()));
     node.chain.warp_to(effective2 + 120).await?;
     node.chain.sync_release().await?;
     node.restart_keys(None, Some(A_DIGEST)).await?;
+    wait_operator(&node.client, || node.chain.check(), Some(&format!("{a_admin_address:#x}")), false).await?;
     let status = b_child.exited(LOADED_WAIT).await?;
     ensure!(status.success(), "B exited with {status} after handing the keys back");
     println!("PASS: the re-elected operator's enclave took the keys back; the stale sealed copy never opened");
