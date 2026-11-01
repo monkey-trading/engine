@@ -96,9 +96,14 @@ fn from_v42_a_write_off_absorbs_gross_losses_and_debt_consumes_gross_weight_firs
     assert_eq!((h.engine.emission_debt(account), h.engine.emission_earned(account)), (f("20"), f("30")));
     assert_root_matches_rebuild(&mut h.engine);
 
-    // Period 2: 25 of gross loss pays the debt down first and the remaining 5 earns.
+    // Period 2: a 25 loss on one fill and a 10 win on another: the gross 25 pays the debt down
+    // first and the remaining 5 earns. Under the net rule the period's 16 would pay only 16 of
+    // the 20 debt and nothing would earn.
     credit(&mut h, &receipt(3, account, "100"));
     lose(&mut h, "100", "95");
+    lose(&mut h, "95", "97");
+    let result = h.engine.period_results()[&account];
+    assert_eq!((result.realised, result.losses), (f("-15"), f("25")));
     assert_eq!(allocations(&next_period(&mut h)), [(account, 2, f("5"), budget)]);
     assert_eq!(h.engine.emission_debt(account), Fixed::ZERO);
     assert_eq!(h.engine.entitlement(account).0, 2 * budget);

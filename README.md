@@ -83,7 +83,7 @@ account is paid the same share of what the vault holds, in full when it is solve
 root does not hold are refunded to whoever paid them, and the proofs need nothing but the public log
 ([#48](https://github.com/0xjevons/monkeytrading/issues/48)). Ownership of the house is represented
 by the MONKEY token, earned on losing trades: every ten minutes a fixed budget is shared among the
-accounts in proportion to their net realised losses, less any debt the house wrote off (carried forward, up to the weight the account earned, while the losses cannot cover it), and
+accounts in proportion to their realised losses — each losing fill's loss magnitude counts, whether or not wins in the same period offset it in cash — less any debt the house wrote off (carried forward, up to the weight the account earned, while the losses cannot cover it), and
 the budget halves every 182.5 days. An account claims what it earned from the vault, against the
 engine's latest posted checkpoint, and no entitlement mints twice
 ([#36](https://github.com/0xjevons/monkeytrading/issues/36)). Holders who stake it share, in USDC,
