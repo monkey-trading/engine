@@ -26,7 +26,7 @@ use prometheus_client::registry::Registry;
 
 const CONTENT_TYPE_OPENMETRICS: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
 /// Every `kind` a typed rejection reason can have; see `reject_kind`.
-const REJECT_KINDS: [&str; 31] = [
+const REJECT_KINDS: [&str; 32] = [
     "access",
     "payout_unavailable",
     "unknown_market",
@@ -58,6 +58,7 @@ const REJECT_KINDS: [&str; 31] = [
     "session_key_expired",
     "session_key_scope",
     "session_key_unsupported",
+    "too_many_session_keys",
 ];
 /// Every reason a price rejection can have; see `prices_reject_reason`.
 const PRICES_REJECT_REASONS: [&str; 6] =
@@ -296,6 +297,9 @@ impl Metrics {
             Event::WithdrawalRejected { reason, .. } => {
                 rejection("withdrawal_rejected", reject_kind(reason));
             }
+            Event::SessionKeyRejected { reason, .. } => {
+                rejection("session_key_rejected", reject_kind(reason));
+            }
             Event::DepositRejected { reason, .. } => {
                 rejection("deposit_rejected", reject_kind(reason));
             }
@@ -378,6 +382,7 @@ fn reject_kind(reason: &Reject) -> &'static str {
         Reject::SessionKeyExpired { .. } => "session_key_expired",
         Reject::SessionKeyScope => "session_key_scope",
         Reject::SessionKeyUnsupported => "session_key_unsupported",
+        Reject::TooManySessionKeys { .. } => "too_many_session_keys",
         Reject::DuplicateReference => "duplicate_reference",
         Reject::CustodyReceiptRequired => "custody_receipt_required",
         Reject::MissingSignature => "missing_signature",

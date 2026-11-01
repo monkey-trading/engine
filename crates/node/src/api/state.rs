@@ -38,13 +38,19 @@ impl ApiState {
     /// - the request is signed with an expiry already past by the clock or the last sequenced time
     /// - the account is over its rate
     /// - the sequencer has stopped
+    /// `authorise_request` with `session` deciding whether a registered session key's signature
+    /// may stand in for the account's: true for the requests a session key may make (orders,
+    /// cancels, and the withdrawals the engine refuses in the log as out of scope), false for key
+    /// management, which is the account key's alone at the API too, so a session key's signature
+    /// on a registration or revocation never reaches the log.
     pub(super) async fn authorise(
         &self,
         account: AccountId,
         auth: Option<RequestAuth>,
+        session: bool,
         hash: impl FnOnce(&Eip712Domain, &RequestAuth) -> B256,
     ) -> Result<Option<RequestAuth>, ApiError> {
-        self.authorise_request(account, auth, hash, false, None).await
+        self.authorise_request(account, auth, hash, session, false, None).await
     }
 
     /// `authorise`, except that a `declaration` may come from a never-credited account once a deposit
@@ -62,6 +68,7 @@ impl ApiState {
         account: AccountId,
         auth: Option<RequestAuth>,
         hash: impl FnOnce(&Eip712Domain, &RequestAuth) -> B256,
+        session: bool,
         declaration: bool,
         peer: Option<IpAddr>,
     ) -> Result<Option<RequestAuth>, ApiError> {
@@ -89,7 +96,7 @@ impl ApiState {
             *digest.get_or_insert_with(|| hash.take().expect("the digest is computed once")(domain, auth))
         };
         if let Err(reason) = rules.check(account, auth.as_ref(), &mut digest) {
-            if declaration || !matches!(reason, Reject::InvalidSignature) {
+            if declaration || !session || !matches!(reason, Reject::InvalidSignature) {
                 debug!(?reason, "request refused");
                 return Err(ApiError::Unauthorized(match reason {
                     Reject::MissingSignature => "missing signature",

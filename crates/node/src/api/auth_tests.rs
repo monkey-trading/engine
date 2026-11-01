@@ -215,8 +215,8 @@ async fn two_copies_of_a_withdrawal_that_both_pass_the_api_are_paid_once() {
         eip712::sign(&client, &withdrawal_hash(&eip712::domain(CHAIN_ID, VAULT), account, amount, 0, expires_at));
     let auth = RequestAuth { nonce: 0, expires_at, signature };
     // Both copies pass the API's checks before either is sequenced, as two racing requests can.
-    let first = node.state.authorise(account, Some(auth.clone()), hash).await.expect("passes the API");
-    let second = node.state.authorise(account, Some(auth), hash).await.expect("passes the API");
+    let first = node.state.authorise(account, Some(auth.clone()), true, hash).await.expect("passes the API");
+    let second = node.state.authorise(account, Some(auth), true, hash).await.expect("passes the API");
     let withdraw = |auth| Command::Withdraw { account, amount, auth };
     let approved = node.state.submit(withdraw(first)).await.expect("the sequencer is running");
     let refused = node.state.submit(withdraw(second)).await.expect("the sequencer is running");
@@ -450,7 +450,6 @@ impl Node {
         self.send(HttpRequest::get(path).body(Body::empty()).unwrap()).await
     }
 
-
     /// Serves one request and reads its JSON response.
     async fn send(&self, request: HttpRequest<Body>) -> (StatusCode, Value) {
         let response = self.app.clone().oneshot(request).await.unwrap();
@@ -492,4 +491,3 @@ fn signed_order_until(key: &SigningKey, nonce: u64, qty: &str, expires_at: Milli
     req.auth = Some(RequestAuth { nonce, expires_at, signature: eip712::sign(key, &hash) });
     serde_json::to_value(&req).unwrap()
 }
-

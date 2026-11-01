@@ -48,6 +48,7 @@ pub fn every_event() -> Vec<Event> {
         Reject::SessionKeyExpired { expires_at: 1_500 },
         Reject::SessionKeyScope,
         Reject::SessionKeyUnsupported,
+        Reject::TooManySessionKeys { max: 10 },
     ];
     for reason in &reasons {
         match reason {
@@ -77,6 +78,7 @@ pub fn every_event() -> Vec<Event> {
             | Reject::SessionKeyExpired { .. }
             | Reject::SessionKeyScope
             | Reject::SessionKeyUnsupported
+            | Reject::TooManySessionKeys { .. }
             | Reject::InvalidNonce { .. }
             | Reject::Expired { .. }
             | Reject::ExpiryTooFar { .. }

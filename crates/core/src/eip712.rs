@@ -217,8 +217,13 @@ pub fn session_key_revocation_hash(
     nonce: u64,
     expires_at: Millis,
 ) -> B256 {
-    typed::RevokeSessionKey { account: Address::from(account.0), nonce, expiresAt: expires_at, sessionKey: Address::from(session_key.0) }
-        .eip712_signing_hash(domain)
+    typed::RevokeSessionKey {
+        account: Address::from(account.0),
+        nonce,
+        expiresAt: expires_at,
+        sessionKey: Address::from(session_key.0),
+    }
+    .eip712_signing_hash(domain)
 }
 
 /// The digest of the exact eligibility statement, bound to deployment, account, nonce and expiry.

@@ -32,26 +32,41 @@ pub(crate) fn session(h: &mut Harness) {
     fund(h, &account);
     h.price(BTC, "80000");
 
-    // A registration expiring more than a day ahead refuses; the account's nonce is not used.
+    // A registration expiring more than a day ahead refuses and uses the account's nonce, so it
+    // cannot be replayed from the log once it would fit under the cap.
     let next = h.engine.next_request_nonce(account.account);
     let latest = h.ts + MAX_SESSION_KEY_EXPIRY_MS;
-    let refused = h.cmd(account.register_session_key(0, key.account, latest + 1));
+    let refused = h.cmd(account.register_session_key(next, key.account, latest + 1));
     assert!(
         matches!(refused[..], [Event::SessionKeyRejected { reason: Reject::ExpiryTooFar { .. }, .. }]),
         "{refused:?}"
     );
-    assert_eq!(h.engine.next_request_nonce(account.account), next);
+    assert_eq!(h.engine.next_request_nonce(account.account), next + 1);
+    // The account's own key can never be a session key.
+    let refused = h.cmd(account.register_session_key(next + 1, account.account, h.ts + 3_600_000));
+    assert!(
+        matches!(refused[..], [Event::SessionKeyRejected { reason: Reject::InvalidSessionKey, .. }]),
+        "{refused:?}"
+    );
 
     // One account signature registers the key; its orders and cancels then fill and rest on the
     // key's nonce sequence while the account's sequence stays untouched.
     let expires_at = h.ts + 3_600_000;
-    let events = h.cmd(account.register_session_key(next, key.account, expires_at));
+    let events = h.cmd(account.register_session_key(next + 2, key.account, expires_at));
     assert!(
         matches!(events[..], [Event::SessionKeyRegistered { session_key, .. }] if session_key == key.account),
         "{events:?}"
     );
-    assert_eq!(h.engine.next_request_nonce(account.account), next + 1);
-    let events = order(h, &account, &key, 0, Side::Buy, "0.01", OrderKind::Market { quoted: f("80000"), max_slippage_bps: None });
+    assert_eq!(h.engine.next_request_nonce(account.account), next + 3);
+    let events = order(
+        h,
+        &account,
+        &key,
+        0,
+        Side::Buy,
+        "0.01",
+        OrderKind::Market { quoted: f("80000"), max_slippage_bps: None },
+    );
     assert!(events.iter().any(|event| matches!(event, Event::Fill(_))), "{events:?}");
     let events = order(h, &account, &key, 1, Side::Buy, "0.01", OrderKind::Limit { price: f("79000") });
     let order_id = match events[..] {
@@ -61,30 +76,62 @@ pub(crate) fn session(h: &mut Harness) {
     let events = cancel(h, &account, &key, 2, order_id);
     assert!(events.iter().any(|event| matches!(event, Event::OrderCancelled { .. })), "{events:?}");
     assert_eq!(h.engine.next_request_nonce(key.account), 3);
-    assert_eq!(h.engine.next_request_nonce(account.account), next + 1);
+    assert_eq!(h.engine.next_request_nonce(account.account), next + 3);
 
     // The key can never move funds: the withdrawal refuses as out of scope, using the key's nonce.
     let events = withdraw(h, &account, &key, 3, "100");
-    assert!(
-        matches!(&events[..], [Event::WithdrawalRejected { reason: Reject::SessionKeyScope, .. }]),
-        "{events:?}"
-    );
+    assert!(matches!(&events[..], [Event::WithdrawalRejected { reason: Reject::SessionKeyScope, .. }]), "{events:?}");
     assert_eq!(h.engine.next_request_nonce(key.account), 4);
 
     // An account-signed revocation kills the key: its order refuses distinctly, and a fresh
     // registration revives it with the nonce still spent, so the captured order cannot replay.
-    let events = h.cmd(account.revoke_session_key(2, key.account));
+    let events = h.cmd(account.revoke_session_key(next + 3, key.account));
     assert!(matches!(events[..], [Event::SessionKeyRevoked { .. }]), "{events:?}");
-    let events =
-        order(h, &account, &key, 4, Side::Buy, "0.01", OrderKind::Market { quoted: f("80000"), max_slippage_bps: None });
+    let events = order(
+        h,
+        &account,
+        &key,
+        4,
+        Side::Buy,
+        "0.01",
+        OrderKind::Market { quoted: f("80000"), max_slippage_bps: None },
+    );
     assert_eq!(rejection(&events), &Reject::SessionKeyRevoked, "{events:?}");
-    let events = h.cmd(account.register_session_key(3, key.account, h.ts + 3_600_000));
+    let events = h.cmd(account.register_session_key(next + 4, key.account, h.ts + 3_600_000));
     assert!(matches!(events[..], [Event::SessionKeyRegistered { .. }]), "{events:?}");
-    let events =
-        order(h, &account, &key, 4, Side::Buy, "0.01", OrderKind::Market { quoted: f("80000"), max_slippage_bps: None });
+    let events = order(
+        h,
+        &account,
+        &key,
+        4,
+        Side::Buy,
+        "0.01",
+        OrderKind::Market { quoted: f("80000"), max_slippage_bps: None },
+    );
     assert_eq!(rejection(&events), &Reject::InvalidNonce { expected: 5 }, "{events:?}");
-    let events =
-        order(h, &account, &key, 5, Side::Sell, "0.01", OrderKind::Market { quoted: f("80000"), max_slippage_bps: None });
+    let events = order(
+        h,
+        &account,
+        &key,
+        5,
+        Side::Sell,
+        "0.01",
+        OrderKind::Market { quoted: f("80000"), max_slippage_bps: None },
+    );
+    assert!(events.iter().any(|event| matches!(event, Event::Fill(_))), "{events:?}");
+
+    // A second key shares the account's leaf; a key whose expiry has passed refuses distinctly
+    // until a fresh registration prunes it and revives it.
+    let second = Client { expires_at: h.ts + 60_000, ..Client::new(SESSION_SEED + 1) };
+    let events = h.cmd(account.register_session_key(next + 5, second.account, h.ts + 60_000));
+    assert!(matches!(events[..], [Event::SessionKeyRegistered { .. }]), "{events:?}");
+    h.advance(60_001);
+    h.price(BTC, "80000");
+    let events = order_at(h, &account, &second, 0, Side::Buy, "0.01", h.ts + 60_000);
+    assert_eq!(rejection(&events), &Reject::SessionKeyExpired { expires_at: h.ts - 1 }, "{events:?}");
+    let events = h.cmd(register_at(h, &account, &second, h.ts + 3_600_000, h.ts + 60_000));
+    assert!(matches!(events[..], [Event::SessionKeyRegistered { .. }]), "{events:?}");
+    let events = order_at(h, &account, &second, 1, Side::Buy, "0.01", h.ts + 60_000);
     assert!(events.iter().any(|event| matches!(event, Event::Fill(_))), "{events:?}");
 }
 
@@ -174,10 +221,55 @@ fn order(
         auth: None,
     };
     let hash = eip712::order_hash(&key.domain, &request, nonce, key.expires_at);
-    request.auth =
-        Some(RequestAuth { nonce, expires_at: key.expires_at, signature: eip712::sign(&key.key, &hash) });
+    request.auth = Some(RequestAuth { nonce, expires_at: key.expires_at, signature: eip712::sign(&key.key, &hash) });
     let evidence = screened(h, hash, Some(request.account), None);
     h.cmd(Command::AccessOrder { request, evidence })
+}
+
+/// `order` with a request expiry of `expires_at` instead of the key client's.
+fn order_at(
+    h: &mut Harness,
+    account: &Client,
+    key: &Client,
+    nonce: u64,
+    side: Side,
+    qty: &str,
+    expires_at: i64,
+) -> Vec<Event> {
+    let kind = OrderKind::Market { quoted: f("80000"), max_slippage_bps: None };
+    let mut request = OrderRequest {
+        account: account.account,
+        client_id: 40,
+        market: BTC,
+        side,
+        qty: f(qty),
+        kind,
+        reduce_only: false,
+        auth: None,
+    };
+    let hash = eip712::order_hash(&key.domain, &request, nonce, expires_at);
+    request.auth = Some(RequestAuth { nonce, expires_at, signature: eip712::sign(&key.key, &hash) });
+    let evidence = screened(h, hash, Some(request.account), None);
+    h.cmd(Command::AccessOrder { request, evidence })
+}
+
+/// `account`'s registration of `key` signed with an explicit request expiry.
+fn register_at(h: &Harness, account: &Client, key: &Client, session_expires_at: i64, expires_at: i64) -> Command {
+    let nonce = h.engine.next_request_nonce(account.account);
+    let hash = eip712::session_key_registration_hash(
+        &account.domain,
+        account.account,
+        key.account,
+        session_expires_at,
+        nonce,
+        expires_at,
+    );
+    Command::RegisterSessionKey {
+        account: account.account,
+        session_key: key.account,
+        expires_at: session_expires_at,
+        auth: Some(RequestAuth { nonce, expires_at, signature: eip712::sign(&account.key, &hash) }),
+    }
 }
 
 /// The key's signed cancel of `order_id` on the account's behalf, as the node sequences cancels.

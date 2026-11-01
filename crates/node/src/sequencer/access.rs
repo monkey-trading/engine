@@ -84,7 +84,13 @@ fn source_health(engine: &Engine, cmd: &Command, events: &[Event]) -> Option<Sou
             | Reject::InvalidNonce { .. }
             | Reject::Expired { .. }
             | Reject::ExpiryTooFar { .. }
-            | Reject::DuplicateReference => None,
+            | Reject::DuplicateReference
+            | Reject::InvalidSessionKey
+            | Reject::SessionKeyRevoked
+            | Reject::SessionKeyExpired { .. }
+            | Reject::SessionKeyScope
+            | Reject::SessionKeyUnsupported
+            | Reject::TooManySessionKeys { .. } => None,
             _ => Some(SourceHealth::Verified),
         },
         _ => None,

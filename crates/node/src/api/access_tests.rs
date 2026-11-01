@@ -3,21 +3,24 @@
 mod admission;
 mod declarations;
 mod reissue;
+mod session_keys;
+mod source;
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use axum::body::{Body, to_bytes};
 use axum::extract::{ConnectInfo, State};
 use axum::http::{Request, StatusCode};
 use axum::routing::post;
 use axum::{Extension, Json, Router};
-use engine_core::access::{EligibilityClass, EligibilityRequest, Jurisdiction, SanctionsStatus, Screening};
+use engine_core::access::{EligibilityClass, EligibilityRequest, Jurisdiction};
 use engine_core::auth::{ClientAuth, Operator, RequestAuth};
 use engine_core::command::{Command, OrderKind, OrderRequest, WithdrawalRequest};
-use engine_core::eip712::{self, Signature};
+use engine_core::eip712;
 use engine_core::event::Event;
 use engine_core::price::SourceQuote;
 use engine_core::protocol::ProtocolVersion;
@@ -37,7 +40,7 @@ use crate::config::AccessSection;
 use crate::history::{INDEX_FILE, Reader};
 use crate::limits::ApiLimits;
 use crate::log::{LogEntry, Manifest};
-use crate::sequencer::{Sequencer, SignedWithdrawal, replay, replay_with_signer};
+use crate::sequencer::{self, Sequencer, SignedWithdrawal, replay, replay_with_signer};
 use crate::tee::{AttestationBundle, EnclaveKey, MockAttestor, attest_bundle};
 use crate::test_support::{dev_config, log_entries, sample_around, scratch_dir, sequencer_config};
 
@@ -238,18 +241,12 @@ async fn a_client_can_cancel_its_resting_order_while_geo_access_is_excluded() {
     assert!(node.state.query(move |engine| engine.accounts()[&account].orders.is_empty()).await.unwrap());
 }
 
-struct Source {
-    jurisdiction: Jurisdiction,
-    sanctioned: BTreeSet<AccountId>,
-    forged: bool,
-    requests: Vec<Value>,
-}
-
 struct Node {
     app: Router,
     state: ApiState,
+    clock: Arc<TestClock>,
     dir: PathBuf,
-    source: Arc<Mutex<Source>>,
+    source: Arc<Mutex<source::Source>>,
     withdrawals: mpsc::UnboundedReceiver<SignedWithdrawal>,
     tasks: Vec<JoinHandle<()>>,
 }
@@ -268,7 +265,7 @@ impl Node {
     async fn start_with_time(name: &str, mock_custody: bool, trusted: bool) -> Self {
         let dir = scratch_dir(&format!("access-api-{name}"));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let source = Arc::new(Mutex::new(Source {
+        let source = Arc::new(Mutex::new(source::Source {
             jurisdiction: Jurisdiction::Allowed,
             sanctioned: BTreeSet::new(),
             forged: false,
@@ -280,7 +277,7 @@ impl Node {
             listener.local_addr().unwrap()
         ))
         .unwrap();
-        let source_app = Router::new().route("/", post(source_answer)).with_state(source.clone());
+        let source_app = Router::new().route("/", post(source::answer)).with_state(source.clone());
         let source_task = tokio::spawn(async move {
             axum::serve(listener, source_app).await.unwrap();
         });
@@ -352,7 +349,23 @@ impl Node {
             state.submit(Command::Prices { market: 1, quotes }).await.unwrap();
         }
         let app = router(state.clone()).layer(Extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9)))));
-        Self { app, state, dir, source, withdrawals: withdrawals_rx, tasks: vec![source_task, sequencer_task] }
+        Self {
+            app,
+            state,
+            clock: stamps,
+            dir,
+            source,
+            withdrawals: withdrawals_rx,
+            tasks: vec![source_task, sequencer_task],
+        }
+    }
+
+    /// Moves the sequencer's time forward by `ms`, re-trusting it so stamps stay admitted, and
+    /// sequences a Tick, so the last sequenced time the API's checks read catches up.
+    async fn move_time(&self, ms: u64) {
+        self.clock.advance(Duration::from_millis(ms));
+        self.state.tx.send(sequencer::Request::TimeSample(sample_around(&*self.clock))).await.unwrap();
+        self.state.submit(Command::Tick).await.unwrap();
     }
 
     async fn post(&self, path: &str, body: Value) -> (StatusCode, Value) {
@@ -360,17 +373,6 @@ impl Node {
             .header("content-type", "application/json")
             .header("x-forwarded-for", "203.0.113.99")
             .header("forwarded", "for=203.0.113.99")
-            .body(Body::from(body.to_string()))
-            .unwrap();
-        let response = self.app.clone().oneshot(request).await.unwrap();
-        let status = response.status();
-        let bytes = to_bytes(response.into_body(), 65536).await.unwrap();
-        (status, serde_json::from_slice(&bytes).unwrap_or_else(|_| json!({"error":String::from_utf8_lossy(&bytes)})))
-    }
-
-    async fn delete(&self, path: &str, body: Value) -> (StatusCode, Value) {
-        let request = Request::delete(path)
-            .header("content-type", "application/json")
             .body(Body::from(body.to_string()))
             .unwrap();
         let response = self.app.clone().oneshot(request).await.unwrap();
@@ -478,179 +480,4 @@ fn withdrawal(key: &SigningKey, nonce: u64) -> Value {
         amount,
         auth: Some(RequestAuth { nonce, expires_at: NOW + 60_000, signature: eip712::sign(key, &hash) })
     })
-}
-
-
-#[tokio::test]
-async fn a_session_key_trades_for_its_account_until_revoked() {
-    let node = Node::start("session-keys", true).await;
-    let account = key(1);
-    let session = key(7);
-    node.onboard(&account).await;
-
-    // The account registers the key with one signature; the key then trades without the wallet.
-    let register = registration(&account, &session, 1, NOW + 3_600_000);
-    let (status, events) = node.post("/v1/session-keys", register).await;
-    assert_eq!(status, StatusCode::OK, "{events}");
-    assert_eq!(events[0]["type"], "session_key_registered", "{events}");
-
-    let (status, events) = node.post("/v1/orders", session_order(&account, &session, 0)).await;
-    assert_eq!(status, StatusCode::OK, "{events}");
-    assert!(events.as_array().unwrap().iter().any(|event| event["type"] == "fill"), "{events}");
-
-    // The account key moved only for its declaration; the key's next nonce is its own.
-    let account_id = eip712::address(account.verifying_key());
-    let session_id = eip712::address(session.verifying_key());
-    assert_eq!(node.get(&format!("/v1/accounts/{account_id}/nonce")).await["next_nonce"], 2);
-    assert_eq!(node.get(&format!("/v1/accounts/{session_id}/nonce")).await["next_nonce"], 1);
-
-    // A withdrawal signed by the key reaches the log and refuses as out of scope.
-    let (status, events) = node.post("/v1/withdrawals", session_withdrawal(&account, &session, 1)).await;
-    assert_eq!(status, StatusCode::OK, "{events}");
-    let rejection = events.as_array().unwrap().iter().find(|e| e["type"] == "withdrawal_rejected").unwrap();
-    assert_eq!(rejection["reason"]["kind"], "session_key_scope", "{events}");
-
-    // An account-signed revocation kills the key at the node: its next request is unauthorized.
-    let revoke = revocation(&account, &session, 2);
-    let (status, events) = node.delete("/v1/session-keys", revoke).await;
-    assert_eq!(status, StatusCode::OK, "{events}");
-    assert_eq!(events[0]["type"], "session_key_revoked", "{events}");
-    let (status, body) = node.post("/v1/orders", session_order(&account, &session, 2)).await;
-    assert_eq!((status, body["error"].as_str()), (StatusCode::UNAUTHORIZED, Some("session key revoked")));
-
-    // An unknown key is an invalid signature.
-    let stranger = key(8);
-    let (status, body) = node.post("/v1/orders", session_order(&account, &stranger, 0)).await;
-    assert_eq!((status, body["error"].as_str()), (StatusCode::UNAUTHORIZED, Some("invalid signature")));
-}
-
-#[tokio::test]
-async fn a_session_key_cannot_register_another_key() {
-    let node = Node::start("session-key-scope", true).await;
-    let account = key(1);
-    let session = key(7);
-    node.onboard(&account).await;
-    let register = registration(&account, &session, 1, NOW + 3_600_000);
-    assert_eq!(node.post("/v1/session-keys", register).await.0, StatusCode::OK);
-
-    // The key's registration of a stranger is not the account's signature: the engine refuses it
-    // in the log and the key's nonce is not spent.
-    let stranger = key(8);
-    let mut body = registration(&account, &stranger, 0, NOW + 3_600_000);
-    body["auth"] = signed_registration_auth(&account, &stranger, 0, NOW + 3_600_000, &session);
-    let (status, events) = node.post("/v1/session-keys", body).await;
-    assert_eq!(status, StatusCode::OK, "{events}");
-    let rejection = events.as_array().unwrap().iter().find(|e| e["type"] == "session_key_rejected").unwrap();
-    assert_eq!(rejection["reason"]["kind"], "invalid_signature", "{events}");
-    let session_id = eip712::address(session.verifying_key());
-    assert_eq!(node.get(&format!("/v1/accounts/{session_id}/nonce")).await["next_nonce"], 0);
-}
-
-/// `account`'s signed registration of `session` until `session_expires_at`, as a JSON body.
-fn registration(account: &SigningKey, session: &SigningKey, nonce: u64, session_expires_at: i64) -> Value {
-    json!({
-        "account": eip712::address(account.verifying_key()),
-        "session_key": eip712::address(session.verifying_key()),
-        "expires_at": session_expires_at,
-        "auth": signed_registration_auth(account, session, nonce, session_expires_at, account),
-    })
-}
-
-/// The `signer`'s signature over registering `session` for `account`, as a JSON auth.
-fn signed_registration_auth(
-    account: &SigningKey,
-    session: &SigningKey,
-    nonce: u64,
-    session_expires_at: i64,
-    signer: &SigningKey,
-) -> Value {
-    let hash = eip712::session_key_registration_hash(
-        &eip712::domain(31_337, VAULT),
-        eip712::address(account.verifying_key()),
-        eip712::address(session.verifying_key()),
-        session_expires_at,
-        nonce,
-        NOW + 60_000,
-    );
-    json!(RequestAuth { nonce, expires_at: NOW + 60_000, signature: eip712::sign(signer, &hash) })
-}
-
-/// `account`'s signed revocation of `session`, as a JSON body.
-fn revocation(account: &SigningKey, session: &SigningKey, nonce: u64) -> Value {
-    let hash = eip712::session_key_revocation_hash(
-        &eip712::domain(31_337, VAULT),
-        eip712::address(account.verifying_key()),
-        eip712::address(session.verifying_key()),
-        nonce,
-        NOW + 60_000,
-    );
-    json!({
-        "account": eip712::address(account.verifying_key()),
-        "session_key": eip712::address(session.verifying_key()),
-        "auth": RequestAuth { nonce, expires_at: NOW + 60_000, signature: eip712::sign(account, &hash) },
-    })
-}
-
-/// A BTC market buy for `account`, signed by its session `key` with `nonce`, as a JSON body.
-fn session_order(account: &SigningKey, key: &SigningKey, nonce: u64) -> Value {
-    let mut request = OrderRequest {
-        account: eip712::address(account.verifying_key()),
-        client_id: 1,
-        market: 1,
-        side: Side::Buy,
-        qty: "0.01".parse().unwrap(),
-        kind: OrderKind::Market { quoted: Fixed::from_int(100000), max_slippage_bps: None },
-        reduce_only: false,
-        auth: None,
-    };
-    let hash = eip712::order_hash(&eip712::domain(31_337, VAULT), &request, nonce, NOW + 60_000);
-    request.auth = Some(RequestAuth { nonce, expires_at: NOW + 60_000, signature: eip712::sign(key, &hash) });
-    json!(request)
-}
-
-/// A withdrawal for `account`, signed by its session `key` with `nonce`, as a JSON body.
-fn session_withdrawal(account: &SigningKey, key: &SigningKey, nonce: u64) -> Value {
-    let amount = Fixed::from_int(10);
-    let hash = eip712::withdrawal_hash(
-        &eip712::domain(31_337, VAULT),
-        eip712::address(account.verifying_key()),
-        amount,
-        nonce,
-        NOW + 60_000,
-    );
-    json!(WithdrawalRequest {
-        account: eip712::address(account.verifying_key()),
-        amount,
-        auth: Some(RequestAuth { nonce, expires_at: NOW + 60_000, signature: eip712::sign(key, &hash) })
-    })
-}
-
-async fn source_answer(State(source): State<Arc<Mutex<Source>>>, Json(request): Json<Value>) -> Json<Screening> {
-    let mut source = source.lock().unwrap();
-    source.requests.push(request.clone());
-    let account: Option<AccountId> = serde_json::from_value(request["account"].clone()).unwrap();
-    let payer: Option<AccountId> = serde_json::from_value(request["payer"].clone()).unwrap();
-    let status = |address: Option<AccountId>| {
-        if address.is_some_and(|address| source.sanctioned.contains(&address)) {
-            SanctionsStatus::Sanctioned
-        } else {
-            SanctionsStatus::Clear
-        }
-    };
-    let mut screening = Screening {
-        source: eip712::address(key(0x77).verifying_key()),
-        request_hash: serde_json::from_value(request["request_hash"].clone()).unwrap(),
-        observed_at: NOW,
-        account,
-        payer,
-        jurisdiction: source.jurisdiction,
-        account_status: status(account),
-        payer_status: status(payer),
-        signature: Signature::ZERO,
-    };
-    if !source.forged {
-        screening.signature =
-            eip712::sign(&key(0x77), &eip712::screening_hash(&eip712::domain(31_337, VAULT), &screening));
-    }
-    Json(screening)
 }

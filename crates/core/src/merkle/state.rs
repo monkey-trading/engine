@@ -27,8 +27,8 @@ use crate::merkle::{
     corporate_reference_key, credited_ref_hash, credited_ref_key, distribution_hash, distribution_key, eligibility_key,
     entitlement_hash, entitlement_key, exit_terms_key, globals_key, held_deposit_key, json_hash, market_key,
     markout_hash, markout_key, order_hash, order_key, pending_deposit_key, period_result_hash, period_result_key,
-    position_hash, position_key, request_nonce_hash, request_nonce_key, session_key_hash, session_key_key,
-    staked_hash, staked_key, withdrawal_approval_hash, withdrawal_queue_hash, withdrawal_queue_key,
+    position_hash, position_key, request_nonce_hash, request_nonce_key, session_key_hash, session_key_key, staked_hash,
+    staked_key, withdrawal_approval_hash, withdrawal_queue_hash, withdrawal_queue_key,
 };
 use crate::operator_bounds::OperatorBounds;
 use crate::params::ProtocolParams;

@@ -423,8 +423,8 @@ Protocol V41 adds session keys (`src/session_keys.rs`): one account-signed regis
 authorises a browser-held key to place and cancel orders for the account until its expiry, capped
 at 24 hours, or an account-signed revocation; the key's requests run on the key's own nonce
 sequence under the same per-request expiry cap, a revoked or expired key and a key signing a
-withdrawal refuse with their own rejections, and the key's state is a leaf of the state tree; its
-session is in `examples/reference_log/v41.rs`.
+withdrawal refuse with their own rejections, and an account's keys are one pruned, capped leaf of
+the state tree; its session is in `examples/reference_log/v41.rs`.
 
 Protocol V40 caps the spread a close can pay (`src/close_spread.rs`): a per-market ceiling registry
 adopted at genesis, kept apart from `MarketSpec`, bounds every close whatever an operator command

@@ -6,7 +6,9 @@
 
 mod access;
 mod actions;
-use actions::{attest_eligibility, cancel_order, dev_deposit, place_order, register_session_key, revoke_session_key, withdraw};
+use actions::{
+    attest_eligibility, cancel_order, dev_deposit, place_order, register_session_key, revoke_session_key, withdraw,
+};
 mod admin;
 mod archive;
 mod benchmark_schedule;

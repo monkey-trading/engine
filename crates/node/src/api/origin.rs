@@ -26,7 +26,7 @@ const STREAM_PATH: &str = "/v1/stream";
 /// `X-Engine-*` headers a signed answer carries (`engine_wire`).
 pub(super) const EXPOSED_HEADERS: &str =
     "Retry-After, x-engine-signature, x-engine-time, x-engine-seq, x-engine-challenge";
-const ALLOWED_METHODS: &str = "GET, POST, OPTIONS";
+const ALLOWED_METHODS: &str = "GET, POST, DELETE, OPTIONS";
 const ALLOWED_HEADERS: &str = "Content-Type, X-Engine-Challenge";
 /// Seconds a browser may cache a preflight answer.
 const PREFLIGHT_MAX_AGE: &str = "600";

@@ -25,8 +25,9 @@ pub(super) async fn place_order(
     Json(mut req): Json<OrderRequest>,
 ) -> ApiResult<Vec<Event>> {
     let auth = req.auth.take();
-    req.auth =
-        s.authorise(req.account, auth, |domain, auth| order_hash(domain, &req, auth.nonce, auth.expires_at)).await?;
+    req.auth = s
+        .authorise(req.account, auth, true, |domain, auth| order_hash(domain, &req, auth.nonce, auth.expires_at))
+        .await?;
     let cmd = if s.access_enforced() {
         let auth = req.auth.as_ref().ok_or(ApiError::Unauthorized("missing signature"))?;
         let hash = order_hash(&signature_domain(&s), &req, auth.nonce, auth.expires_at);
@@ -44,7 +45,7 @@ pub(super) async fn place_order(
 /// - the sequencer has stopped, or sequencing is halted
 pub(super) async fn cancel_order(State(s): State<ApiState>, Json(b): Json<CancelRequest>) -> ApiResult<Vec<Event>> {
     let auth = s
-        .authorise(b.account, b.auth, |domain, auth| {
+        .authorise(b.account, b.auth, true, |domain, auth| {
             cancel_hash(domain, b.account, b.order_id, auth.nonce, auth.expires_at)
         })
         .await?;
@@ -60,8 +61,9 @@ pub(super) async fn register_session_key(
     State(s): State<ApiState>,
     Json(b): Json<SessionKeyRequest>,
 ) -> ApiResult<Vec<Event>> {
+    // Key management is the account key's alone: a session key's signature never reaches the log.
     let auth = s
-        .authorise(b.account, Some(b.auth), |domain, auth| {
+        .authorise(b.account, Some(b.auth), false, |domain, auth| {
             eip712::session_key_registration_hash(
                 domain,
                 b.account,
@@ -73,8 +75,13 @@ pub(super) async fn register_session_key(
         })
         .await?;
     Ok(Json(
-        s.submit(Command::RegisterSessionKey { account: b.account, session_key: b.session_key, expires_at: b.expires_at, auth })
-            .await?,
+        s.submit(Command::RegisterSessionKey {
+            account: b.account,
+            session_key: b.session_key,
+            expires_at: b.expires_at,
+            auth,
+        })
+        .await?,
     ))
 }
 
@@ -87,7 +94,7 @@ pub(super) async fn revoke_session_key(
     Json(b): Json<SessionKeyRevocationRequest>,
 ) -> ApiResult<Vec<Event>> {
     let auth = s
-        .authorise(b.account, Some(b.auth), |domain, auth| {
+        .authorise(b.account, Some(b.auth), false, |domain, auth| {
             eip712::session_key_revocation_hash(domain, b.account, b.session_key, auth.nonce, auth.expires_at)
         })
         .await?;
@@ -109,7 +116,7 @@ pub(super) async fn withdraw(
         return Err(ApiError::NotImplemented("withdrawals require the finalized checkpoint service"));
     }
     let auth = s
-        .authorise(b.account, b.auth.clone(), |domain, auth| {
+        .authorise(b.account, b.auth.clone(), true, |domain, auth| {
             withdrawal_hash(domain, b.account, b.amount, auth.nonce, auth.expires_at)
         })
         .await?;
@@ -138,6 +145,7 @@ pub(super) async fn attest_eligibility(
         request.account,
         Some(request.auth.clone()),
         |domain, auth| eligibility_hash(domain, request.account, request.class, auth.nonce, auth.expires_at),
+        false,
         true,
         peer.as_ref().map(|Extension(ConnectInfo(peer))| peer.ip()),
     )

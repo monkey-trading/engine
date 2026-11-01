@@ -9,6 +9,7 @@ pub use client::*;
 pub mod close_spread;
 pub mod emissions;
 pub mod reference;
+pub mod session_keys;
 pub mod stress;
 mod versions;
 
@@ -163,12 +164,18 @@ impl Harness {
                 let auth = auth(account, &|nonce| withdrawal_hash(&domain, account, amount, nonce, expires_at));
                 Command::Withdraw { account, amount, auth }
             }
-            Command::RegisterSessionKey { account, session_key, expires_at, auth: None } => {
-                let hash = &|nonce| {
-                    eip712::session_key_registration_hash(&domain, account, session_key, expires_at, nonce, expires_at)
-                };
-                let auth = auth(account, hash);
-                Command::RegisterSessionKey { account, session_key, expires_at, auth }
+            Command::RegisterSessionKey { account, session_key, expires_at: session_expires_at, auth: None } => {
+                let auth = auth(account, &|nonce| {
+                    eip712::session_key_registration_hash(
+                        &domain,
+                        account,
+                        session_key,
+                        session_expires_at,
+                        nonce,
+                        expires_at,
+                    )
+                });
+                Command::RegisterSessionKey { account, session_key, expires_at: session_expires_at, auth }
             }
             Command::RevokeSessionKey { account, session_key, auth: None } => {
                 let auth = auth(account, &|nonce| {

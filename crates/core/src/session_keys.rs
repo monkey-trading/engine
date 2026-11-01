@@ -7,9 +7,8 @@
 //! unexpired session key is accepted for orders and cancels only — never withdrawals — and runs on
 //! the key's own nonce sequence in `request_nonces` under the same per-request expiry cap as
 //! account-signed requests (see `auth`). Registrations and revocations are sequenced commands, so a
-//! log replays to its roots; each key's state is a leaf of the state tree.
-
-use std::collections::BTreeMap;
+//! log replays to its roots; an account's keys are one leaf of the state tree, pruned and
+//! capped so it stays bounded.
 
 use serde::{Deserialize, Serialize};
 
@@ -25,12 +24,17 @@ use crate::types::{AccountId, Millis};
 /// authorisation lapses, whatever expiry the account signed.
 pub const MAX_SESSION_KEY_EXPIRY_MS: Millis = 24 * 60 * 60 * 1000;
 
+/// How many session keys an account may hold: generous for one key per device, small enough that
+/// an account's leaf and the work a root spends on it stay bounded whatever one account sequences.
+pub const MAX_SESSION_KEYS_PER_ACCOUNT: usize = 10;
+
 /// A session key registered for an account, as the state tree holds it. The key's next request
 /// nonce lives in `Engine::request_nonces` under the key's address, as every signer's does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SessionKey {
-    /// The sequenced time from which the key's requests are refused as expired.
+    /// The sequenced time at and before which the key's requests run; later ones refuse as
+    /// expired.
     pub expires_at: Millis,
     /// Set by a revocation and cleared by a fresh registration; a revoked key stays in state so its
     /// requests refuse distinctly, and its nonce stays spent.
@@ -40,11 +44,17 @@ pub struct SessionKey {
 impl Engine {
     /// Registers `session_key` for `account` until `expires_at`, or refuses with
     /// `Event::SessionKeyRejected`. Only the account key's signature authorises a registration or a
-    /// revocation: a session key never widens its own scope.
+    /// revocation: a session key never widens its own scope. The account's nonce is spent by any
+    /// refusal after its signature checks, so a refused registration cannot be replayed from the
+    /// log once it would succeed. A registration first prunes the account's expired and revoked
+    /// keys — their nonces stay spent in `request_nonces` — and refuses past
+    /// [`MAX_SESSION_KEYS_PER_ACCOUNT`], so one account's state stays bounded.
     /// Error cases:
-    /// - before `V41`, or the registration names the account's own key or the operator's
+    /// - before `V41`
     /// - the signature, nonce, or request expiry fails (see `Engine::authorise`)
+    /// - the registration names the account's own key or the operator's
     /// - `expires_at` is not in the future, or more than `MAX_SESSION_KEY_EXPIRY_MS` ahead
+    /// - the account already holds `MAX_SESSION_KEYS_PER_ACCOUNT` live keys
     pub(crate) fn register_session_key(
         &mut self,
         account: AccountId,
@@ -58,10 +68,17 @@ impl Engine {
             events.push(rejected(Reject::SessionKeyUnsupported));
             return;
         }
+        if let Err(reason) = self.authorise(account, auth, RequestScope::Keys, |domain, auth| {
+            eip712::session_key_registration_hash(domain, account, session_key, expires_at, auth.nonce, auth.expires_at)
+        }) {
+            events.push(rejected(reason));
+            return;
+        }
         if session_key == account || self.operator.is_some_and(|operator| operator.address == session_key) {
             events.push(rejected(Reject::InvalidSessionKey));
             return;
         }
+        self.prune_session_keys(account);
         let latest = self.now.saturating_add(MAX_SESSION_KEY_EXPIRY_MS);
         if self.now >= expires_at {
             events.push(rejected(Reject::Expired { expires_at }));
@@ -71,11 +88,9 @@ impl Engine {
             events.push(rejected(Reject::ExpiryTooFar { latest }));
             return;
         }
-        let result = self.authorise(account, auth, RequestScope::Keys, |domain, auth| {
-            eip712::session_key_registration_hash(domain, account, session_key, expires_at, auth.nonce, auth.expires_at)
-        });
-        if let Err(reason) = result {
-            events.push(rejected(reason));
+        let live = self.session_keys.get(&account).map_or(0, |keys| keys.len());
+        if live >= MAX_SESSION_KEYS_PER_ACCOUNT {
+            events.push(rejected(Reject::TooManySessionKeys { max: MAX_SESSION_KEYS_PER_ACCOUNT }));
             return;
         }
         self.session_keys.entry(account).or_default().insert(session_key, SessionKey { expires_at, revoked: false });
@@ -84,10 +99,13 @@ impl Engine {
 
     /// Revokes `session_key` for `account`, refusing its later requests distinctly even where the
     /// key's expiry has not passed. The key's nonce stays spent, so a revoked key re-registered
-    /// later never replays a request it signed before the revocation.
+    /// later never replays a request it signed before the revocation; the account's nonce is spent
+    /// by any refusal after its signature checks, so a refused revocation cannot be replayed once
+    /// the key is registered.
     /// Error cases:
-    /// - before `V41`, or the key is not registered for the account
+    /// - before `V41`
     /// - the signature, nonce, or request expiry fails (see `Engine::authorise`)
+    /// - the key is not registered for the account
     pub(crate) fn revoke_session_key(
         &mut self,
         account: AccountId,
@@ -100,19 +118,20 @@ impl Engine {
             events.push(rejected(Reject::SessionKeyUnsupported));
             return;
         }
-        if self.session_keys.get(&account).is_none_or(|keys| !keys.contains_key(&session_key)) {
-            events.push(rejected(Reject::InvalidSessionKey));
-            return;
-        }
-        let result = self.authorise(account, auth, RequestScope::Keys, |domain, auth| {
+        if let Err(reason) = self.authorise(account, auth, RequestScope::Keys, |domain, auth| {
             eip712::session_key_revocation_hash(domain, account, session_key, auth.nonce, auth.expires_at)
-        });
-        if let Err(reason) = result {
+        }) {
             events.push(rejected(reason));
             return;
         }
-        let keys = self.session_keys.get_mut(&account).expect("checked above");
-        let key = keys.get_mut(&session_key).expect("checked above");
+        let Some(keys) = self.session_keys.get_mut(&account) else {
+            events.push(rejected(Reject::InvalidSessionKey));
+            return;
+        };
+        let Some(key) = keys.get_mut(&session_key) else {
+            events.push(rejected(Reject::InvalidSessionKey));
+            return;
+        };
         key.revoked = true;
         events.push(Event::SessionKeyRevoked { account, session_key });
     }
@@ -120,6 +139,17 @@ impl Engine {
     /// The session key `session_key` registered for `account`, whatever its state.
     pub fn session_key(&self, account: AccountId, session_key: AccountId) -> Option<SessionKey> {
         self.session_keys.get(&account)?.get(&session_key).copied()
+    }
+
+    /// Drops `account`'s expired and revoked session keys, removing the empty map so the state
+    /// tree drops its leaf. Spent nonces stay in `request_nonces`, so pruning never revives a
+    /// request a pruned key signed.
+    fn prune_session_keys(&mut self, account: AccountId) {
+        let Some(keys) = self.session_keys.get_mut(&account) else { return };
+        keys.retain(|_, key| !key.revoked && self.now <= key.expires_at);
+        if keys.is_empty() {
+            self.session_keys.remove(&account);
+        }
     }
 }
 

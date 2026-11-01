@@ -76,8 +76,7 @@ impl Client {
 
     /// A signed revocation of `session_key` for this account.
     pub fn revoke_session_key(&self, nonce: u64, session_key: AccountId) -> Command {
-        let hash =
-            eip712::session_key_revocation_hash(&self.domain, self.account, session_key, nonce, self.expires_at);
+        let hash = eip712::session_key_revocation_hash(&self.domain, self.account, session_key, nonce, self.expires_at);
         Command::RevokeSessionKey { account: self.account, session_key, auth: Some(self.auth(nonce, hash)) }
     }
 
