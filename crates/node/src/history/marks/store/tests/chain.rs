@@ -470,6 +470,7 @@ async fn a_raced_commit_re_synchronizes_before_a_mismatch_is_a_rollback() {
         &Arc::new(Mutex::new(anchors)),
         &query,
         true,
+        &mut || {},
     )
     .expect_err("no race reported");
     assert!(err.downcast_ref::<super::super::reader::StaleAnchor>().is_some(), "{err:#}");

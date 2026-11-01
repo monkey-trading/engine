@@ -395,7 +395,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   chain anchors, and its page reader
 - `src/history/marks/store/chain.rs` — the chained index over the cache: each row names the bucket
   below it, the writer re-links only over its own deletes and refuses the rest, and the reader
-  checks every link and chain head before serving (`tests/chain.rs`, `tests/refusals.rs`)
+  checks every link and chain head before serving; the prune plans from the committed anchors and
+  reads and deletes each pair by primary-key prefix (`tests/chain.rs`, `tests/refusals.rs`,
+  `tests/prune.rs`: the prune's query plan, and a read racing a commit)
 - `src/history/marks/store/merge.rs` — the live write path: merging a mark into its bucket and
   re-linking the row above a fresh insert (`store/chain.rs` holds the shared chain queries)
 - `src/history/marks/store/reset.rs` — the recovery reset: validating every chain, deleting the

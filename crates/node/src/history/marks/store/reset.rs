@@ -3,8 +3,10 @@
 //! reasons over is taken first: a surviving row whose link names a bucket this delete removed
 //! re-links; one whose link names a bucket that vanished any other way refuses, never healing a
 //! host deletion. Every pair is validated against its committed anchor before anything moves.
-//! The price is one verified snapshot of the whole cache per boot, linear in its size — the
-//! validation must precede the delete, and the cache is bounded by its retentions.
+//! Each call takes one verified snapshot of the whole cache, linear in its size — the validation
+//! must precede the delete, and the cache is bounded by its retentions — and walks it once for
+//! both the links and the delete. Startup's validation and the reset each read the file afresh:
+//! nothing carries a snapshot between them, because the host can rewrite the file in between.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -24,8 +26,14 @@ use crate::history::marks::store::{ChainAnchors, SnapRow};
 /// Error cases:
 /// - a stored row fails authentication, or a link names a bucket that is already missing
 pub(crate) fn validate_chains(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction) -> anyhow::Result<()> {
-    let snapshot = snapshot_all(mac, tx)?;
-    for ((market, resolution), rows) in &snapshot {
+    check_links(&snapshot_all(mac, tx)?)
+}
+
+/// Requires every link of an already verified snapshot to name the row actually below it.
+/// Error cases:
+/// - a link names a bucket that is already missing
+fn check_links(snapshot: &Snapshot) -> anyhow::Result<()> {
+    for ((market, resolution), rows) in snapshot {
         let mut actual = None;
         for row in rows {
             ensure!(
@@ -54,7 +62,7 @@ pub(crate) fn reset_log_derived(
     prior: &ChainAnchors,
 ) -> anyhow::Result<(usize, ChainUpdates)> {
     let snapshot = snapshot_all(mac, tx)?;
-    validate_chains(mac, tx)?;
+    check_links(&snapshot)?;
     let pairs: BTreeSet<(MarketId, Resolution)> = snapshot.keys().chain(prior.keys()).copied().collect();
     check_anchors(tx, prior, &pairs)?;
     let deleted: BTreeSet<(MarketId, Resolution, Millis)> = snapshot
@@ -90,13 +98,13 @@ pub(crate) fn reset_log_derived(
 }
 
 /// Every pair's rows, verified, in bucket order: what a whole-cache re-chain reasons over.
+type Snapshot = BTreeMap<(MarketId, Resolution), Vec<SnapRow>>;
+
+/// Reads the whole cache as a `Snapshot`.
 /// Error cases:
 /// - the transaction fails, or a stored row fails authentication
-fn snapshot_all(
-    mac: &hmac::Hmac<sha2::Sha256>,
-    tx: &Transaction,
-) -> anyhow::Result<BTreeMap<(MarketId, Resolution), Vec<SnapRow>>> {
-    let mut pairs: BTreeMap<(MarketId, Resolution), Vec<SnapRow>> = BTreeMap::new();
+fn snapshot_all(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction) -> anyhow::Result<Snapshot> {
+    let mut pairs = Snapshot::new();
     let mut stmt = tx
         .prepare("SELECT market, resolution, bucket, open, high, low, close, provenance, prev_bucket, tag FROM marks ORDER BY market, resolution, bucket")
         .context("snapshotting the marks cache")?;

@@ -7,7 +7,7 @@
 //! and read refuses, inside its own transaction, a schema this code did not create. Nothing here
 //! is authoritative: the log and the provider are, and either rebuilds this cache.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -199,24 +199,22 @@ impl Store {
         let tx =
             self.conn.transaction_with_behavior(TransactionBehavior::Immediate).context("starting a marks write")?;
         store::check_schema(&tx, &self.schema, &self.path)?;
-        let mut touched: std::collections::BTreeSet<(MarketId, Resolution)> = samples
+        let mut touched: BTreeSet<(MarketId, Resolution)> = samples
             .iter()
             .map(|&(market, _, _)| market)
             .flat_map(|market| Resolution::ALL.map(move |resolution| (market, resolution)))
             .collect();
         // Validate the pre-merge state of every pair the write can touch: the pairs the samples
-        // merge, and any pair with rows a prune would delete. The prune itself is planned again
-        // after the merges: a row this batch writes below the horizon appears only then, and its
-        // pair is among the samples' pairs, already validated.
-        let planned = chain::plan_prune(&tx, &self.retentions, newest)?;
-        touched.extend(planned.touched_pairs());
+        // merge, and any pair whose committed floor a prune would cut. A merge writes only the
+        // samples' pairs, so every pair with rows to prune after it is among these.
+        touched.extend(chain::expiring_pairs(&prior, &self.retentions, newest));
         chain::check_anchors(&tx, &prior, &touched)?;
         for &(market, ts, mark) in samples {
             for resolution in Resolution::ALL {
                 merge::merge(&self.mac, &tx, market, resolution, resolution.bucket(ts), mark)?;
             }
         }
-        let plan = chain::plan_prune(&tx, &self.retentions, newest)?;
+        let plan = chain::plan_prune(&tx, &self.retentions, newest, &touched)?;
         chain::apply_prune(&self.mac, &tx, &plan)?;
         let updates = chain::anchor_updates(&tx, &touched)?;
         // The commit and the anchor publication are one critical section: a reader that sees an
@@ -238,11 +236,11 @@ impl Store {
         let tx =
             self.conn.transaction_with_behavior(TransactionBehavior::Immediate).context("starting a marks seed")?;
         store::check_schema(&tx, &self.schema, &self.path)?;
-        let mut touched = chain::plan_prune(&tx, &self.retentions, newest)?.touched_pairs();
+        let mut touched = chain::expiring_pairs(&prior, &self.retentions, newest);
         touched.extend(rows.iter().map(|row| (row.market, row.resolution)));
         chain::check_anchors(&tx, &prior, &touched)?;
         let inserted = chain::seed(&self.mac, &tx, rows)?;
-        let plan = chain::plan_prune(&tx, &self.retentions, newest)?;
+        let plan = chain::plan_prune(&tx, &self.retentions, newest, &touched)?;
         chain::apply_prune(&self.mac, &tx, &plan)?;
         let updates = chain::anchor_updates(&tx, &touched)?;
         let mut anchors = self.anchors.lock().expect("the marks chain anchors are never poisoned");

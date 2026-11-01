@@ -108,26 +108,39 @@ pub(super) fn read_page(
     anchors: &Arc<Mutex<ChainAnchors>>,
     query: &PageQuery,
 ) -> anyhow::Result<MarksPage> {
+    read_page_with(path, schema, mac, anchors, query, &mut |_| {})
+}
+
+/// `read_page`, calling `after_snapshot` with the attempt's number (from 0) once the attempt holds
+/// its snapshot and before it reads the committed anchor: the window a racing commit lands in,
+/// which a test fills with a real commit.
+/// Error cases:
+/// - as for `read_page`
+pub(super) fn read_page_with(
+    path: &Path,
+    schema: &[SchemaRow],
+    mac: &hmac::Hmac<sha2::Sha256>,
+    anchors: &Arc<Mutex<ChainAnchors>>,
+    query: &PageQuery,
+    after_snapshot: &mut dyn FnMut(usize),
+) -> anyhow::Result<MarksPage> {
     // A commit publishes its anchors atomically, so a mismatch still means one commit landed
     // inside an attempt's window between its snapshot and its anchor read: re-synchronize, twice
     // if needed, with a fresh snapshot and a fresh anchor each time, before a mismatch is a
     // rollback.
-    match read_page_once(path, schema, mac, anchors, query, true) {
-        Err(e) if e.downcast_ref::<StaleAnchor>().is_some() => {
-            match read_page_once(path, schema, mac, anchors, query, true) {
-                Err(e) if e.downcast_ref::<StaleAnchor>().is_some() => {
-                    read_page_once(path, schema, mac, anchors, query, false)
-                }
-                result => result,
-            }
+    for attempt in 0..2 {
+        match read_page_once(path, schema, mac, anchors, query, true, &mut || after_snapshot(attempt)) {
+            Err(e) if e.downcast_ref::<StaleAnchor>().is_some() => {}
+            result => return result,
         }
-        result => result,
     }
+    read_page_once(path, schema, mac, anchors, query, false, &mut || after_snapshot(2))
 }
 
 /// One attempt at `read_page`, on one snapshot of the file. With `allow_stale`, an anchor and
 /// snapshot from different commits reports the stale-anchor race so the caller can re-
-/// synchronize; otherwise a mismatch is a rollback.
+/// synchronize; otherwise a mismatch is a rollback. `after_snapshot` runs once the snapshot is
+/// held.
 /// Error cases:
 /// - the cache cannot be opened or read, holds another schema, holds a row that does not parse,
 ///   or its chain fails verification; with `allow_stale`, a raced commit reports the stale-anchor
@@ -139,12 +152,14 @@ pub(crate) fn read_page_once(
     anchors: &Arc<Mutex<ChainAnchors>>,
     query: &PageQuery,
     allow_stale: bool,
+    after_snapshot: &mut dyn FnMut(),
 ) -> anyhow::Result<MarksPage> {
     let PageQuery { market, resolution, from, to, limit, max_limit } = *query;
     let mut conn = read_only(path)?;
     // The schema check and the page read see one snapshot of the file.
     let conn = conn.transaction().context("starting a marks read")?;
     store::check_schema(&conn, schema, path)?;
+    after_snapshot();
     let anchor =
         anchors.lock().expect("the marks chain anchors are never poisoned").get(&(market, resolution)).copied();
     let ends: Option<ChainAnchor> = conn
