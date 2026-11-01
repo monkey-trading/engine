@@ -278,8 +278,6 @@ impl Chain {
     /// - a local transaction fails
     pub(crate) async fn stake_from(&self, account: Address, amount: U256) -> anyhow::Result<()> {
         let monkey: Address = self.read(self.vault, monkeyCall {}).await?;
-        let minter: Address = self.read(monkey, minterCall {}).await?;
-        println!("STAKE_FROM probe: vault={:#x} monkey={:#x} minter={:#x}", self.vault, monkey, minter);
         let _: Value = self.request("anvil_impersonateAccount", json!([self.vault])).await?;
         let _: Value = self.request("anvil_setBalance", json!([self.vault, "0xde0b6b3a7640000"])).await?;
         self.send(self.vault, monkey, mintCall { to: account, amount }.abi_encode()).await?;

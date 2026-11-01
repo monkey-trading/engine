@@ -99,7 +99,6 @@ sol! {
     function closeEpoch() external returns (uint64);
     function openEpochStart() external view returns (uint64);
     function rotationEnabled() external view returns (bool);
-    function minter() external view returns (address);
     function pendingElection()
         external
         view
