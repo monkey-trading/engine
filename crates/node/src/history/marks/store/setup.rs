@@ -13,7 +13,7 @@ use tracing::warn;
 
 use crate::history::marks::Retentions;
 use crate::history::marks::store::{
-    BUSY_TIMEOUT, MARKS_FILE, Reader, SCHEMA, SCHEMA_VERSION, Store, expected_schema, reset, store,
+    BUSY_TIMEOUT, Reader, SCHEMA, SCHEMA_VERSION, Store, expected_schema, reset, store,
 };
 
 impl Store {
@@ -23,7 +23,7 @@ impl Store {
     /// - as for `open` (see `open_checked`)
     #[cfg(test)]
     pub fn open_in(dir: &Path, retentions: Retentions, mac_key: [u8; 32]) -> anyhow::Result<Self> {
-        Self::open(&dir.join(MARKS_FILE), retentions, mac_key)
+        Self::open(&dir.join(super::MARKS_FILE), retentions, mac_key)
     }
 
     /// Opens the cache at `path`, creating its directory, the file, and the schema if missing.
