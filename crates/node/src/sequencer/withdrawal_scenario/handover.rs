@@ -183,12 +183,11 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
         .await?;
     node.chain.delegate_self(b_candidate).await?;
     // Stakers must not be the relayer: its nonce reservations back checkpoint posting, and staking
-    // transactions would consume them.
+    // transactions would consume them. The stakes stay under the token's cap, 52_560 MONKEY at the
+    // vault's one-MONKEY period budget, leaving room for the re-election's delegation below.
     let accounts: Vec<Address> = node.chain.request("eth_accounts", json!([])).await?;
-    for staker in [accounts[3], accounts[4]] {
-        node.chain.stake_from(staker, monkey(20_000)).await?;
-        node.chain.delegate_from(staker, b_candidate).await?;
-    }
+    node.chain.stake_from(accounts[3], monkey(20_000)).await?;
+    node.chain.delegate_from(accounts[3], b_candidate).await?;
 
     // A signs the withdrawal's authorization and it pays while the chain and engine clocks still
     // agree: the vault's 24-hour authorization lifetime runs against chain time, which the warp
@@ -262,9 +261,11 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
 
     // 7. A re-election: fresh stake delegates to A; a close elects it; past the notice A takes the
     //    keys back from B, and B exits.
+    // The re-election's delegation must beat B's by the margin yet keep the total minted under the
+    // cap: 30_000 to A against B's 20_000.
     let accounts: Vec<Address> = node.chain.request("eth_accounts", json!([])).await?;
     let extra = accounts[5];
-    node.chain.stake_from(extra, monkey(100_000)).await?;
+    node.chain.stake_from(extra, monkey(30_000)).await?;
     node.chain.delegate_from(extra, operator).await?;
     let open_start = node.chain.open_epoch_start().await?;
     let close2 = open_start + 3_600;
