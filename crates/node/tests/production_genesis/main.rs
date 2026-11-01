@@ -19,7 +19,9 @@ use engine_core::auth::ClientAuth;
 use engine_core::command::{AdminCommand, Command, Sequenced};
 use engine_core::event::Event;
 use engine_core::market::QuoteCurrency;
-use engine_core::params::{NotionalWeighting, ProtocolParams, StressLevel, StressTrigger, ToxicityParams, ToxicityTier};
+use engine_core::params::{
+    NotionalWeighting, ProtocolParams, StressLevel, StressTrigger, ToxicityParams, ToxicityTier,
+};
 use engine_core::protocol::ProtocolVersion;
 use engine_core::session::{Period, Schedule};
 use engine_core::types::{AssetClass, MarketId, Millis};
