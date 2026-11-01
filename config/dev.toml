@@ -110,6 +110,9 @@ timeout = "10s"
 reconnect_min = "500ms"
 reconnect_max = "30s"
 stale_after = "1s"
+# The most often one symbol's latest quote is sequenced: venue feeds sequence a quote per book
+# update, and updates closer together than this coalesce to the newest.
+min_quote_spacing = "10ms"
 
 [[feeds.venues.connections]]
 venue = "coinbase"

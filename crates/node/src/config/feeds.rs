@@ -43,7 +43,7 @@ pub enum Venue {
 #[serde(deny_unknown_fields)]
 pub struct FeedsSection {
     pub provider: FeedProvider,
-    /// The mock feed's tick, and the most often a venue feed sequences one market's latest quote.
+    /// The mock feed's tick.
     #[serde(with = "humantime_serde")]
     pub interval: Duration,
     /// Starting mids for the mock feed, by market id.
@@ -75,6 +75,11 @@ pub struct VenuesSection {
     /// does not count as its venue quoting: it ends no outage or silence.
     #[serde(with = "humantime_serde")]
     pub stale_after: Duration,
+    /// The most often one symbol's latest quote is sequenced: a book update sequences its
+    /// symbol's newest reached quote at once, and updates closer together than this coalesce to
+    /// the newest, bounding the sequencer load venue messages can demand.
+    #[serde(with = "humantime_serde")]
+    pub min_quote_spacing: Duration,
     pub connections: Vec<VenueConnection>,
 }
 
@@ -204,7 +209,7 @@ impl VenuesSection {
     /// credentials, or one the host could forge.
     /// Error cases:
     /// - `timeout`, `reconnect_min`, or `stale_after` is zero, or `reconnect_min` exceeds
-    ///   `reconnect_max`
+    ///   `reconnect_max` (`min_quote_spacing`'s bounds are the config check's)
     /// - no connections, or a connection with no symbols
     /// - a URL that does not parse as `wss://` with a host on the venue's own domain (for Massive,
     ///   with one of its feed paths), or for Databento as `tcp://` on its domain with a port

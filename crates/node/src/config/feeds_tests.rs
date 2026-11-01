@@ -112,6 +112,43 @@ fn vendor_settings_that_would_fail_or_could_be_forged_are_refused() {
     }
 }
 
+#[test]
+fn a_quote_spacing_that_outlasts_the_venue_timeout_is_refused() {
+    let mut cfg = NodeConfig::load(Path::new(DEV)).unwrap();
+    let venues = cfg.feeds.venues.as_mut().unwrap();
+    venues.min_quote_spacing = venues.timeout;
+    let err = format!("{:#}", cfg.validate().unwrap_err());
+    assert!(err.contains("feeds.venues.min_quote_spacing must be shorter than feeds.venues.timeout"), "{err}");
+}
+
+#[test]
+fn a_venue_quote_pace_over_the_flood_bound_is_refused() {
+    let mut cfg = NodeConfig::load(Path::new(DEV)).unwrap();
+    cfg.feeds.venues.as_mut().unwrap().min_quote_spacing = Duration::from_millis(5);
+    let err = format!("{:#}", cfg.validate().unwrap_err());
+    assert!(err.contains("feeds.venues.min_quote_spacing must be at least 10ms"), "{err}");
+}
+
+#[test]
+fn venue_feeds_need_their_section() {
+    let mut cfg = NodeConfig::load(Path::new(DEV)).unwrap();
+    cfg.feeds.provider = FeedProvider::Venues;
+    cfg.feeds.venues = None;
+    let err = format!("{:#}", cfg.validate().unwrap_err());
+    assert!(err.contains("needs [feeds.venues]"), "{err}");
+}
+
+#[test]
+fn venue_timing_paces_from_the_quote_spacing_not_the_mock_interval() {
+    let mut cfg = NodeConfig::load(Path::new(DEV)).unwrap();
+    let timing = crate::feeds::venue::Timing::for_venues(cfg.feeds.venues.as_ref().unwrap());
+    assert_eq!(timing.interval, Duration::from_millis(10));
+    assert_ne!(timing.interval, cfg.feeds.interval, "the mock tick and the venue pace differ");
+    // The mock tick has no venue-timeout bound: the spacing alone governs venue timing.
+    cfg.feeds.interval = cfg.feeds.venues.as_ref().unwrap().timeout;
+    cfg.validate().expect("a mock tick past the venue timeout stays valid");
+}
+
 // ── Helpers ──
 
 /// The committed dev config with `VENDORS` after its crypto venues: Coinbase, Kraken, and Bitstamp

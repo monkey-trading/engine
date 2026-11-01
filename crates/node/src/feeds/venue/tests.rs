@@ -190,6 +190,48 @@ fn a_quote_further_ahead_than_the_engine_takes_is_dropped() {
 }
 
 #[test]
+fn pending_reports_what_waits_and_when_the_clock_reaches_it() {
+    const NOW: Millis = 1_792_489_875_714;
+    let at = |ts: Millis| SourceQuote { source: "kraken".into(), mid: Fixed::from_int(100), ts, contract: None };
+    let mut pending = Pending::default();
+    assert!(!pending.reached(NOW));
+    assert_eq!(pending.next_ahead(NOW), None);
+    pending.add(at(NOW - 100), NOW).unwrap();
+    pending.add(at(NOW + 40), NOW).unwrap();
+    assert!(pending.reached(NOW));
+    assert_eq!(pending.next_ahead(NOW), Some(NOW + 40));
+    // Once the clock reaches it, the waiting quote is the reached one, and nothing stays ahead.
+    assert!(pending.reached(NOW + 40));
+    assert_eq!(pending.next_ahead(NOW + 40), None);
+    assert_eq!(pending.take(NOW + 40), Some(at(NOW + 40)));
+    assert!(!pending.reached(NOW + 40));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_rejected_quote_still_arms_the_emit_timer_for_what_waits() {
+    let (tx, mut rx) = mpsc::channel(1);
+    let mut feed = kraken_feed(&[(40, "AAPL")], WAIT);
+    feed.tx = tx;
+    let now = now_ms();
+    // Apple is closed for another 20 ms: a quote stamped inside the closure is held back, and
+    // one stamped just after it, at the reopen, is still ahead of the host clock.
+    feed.schedules = Arc::new(BTreeMap::from([(40, around_the_clock(Some((now - 60_000, now + 20))))]));
+    let at = |ts: Millis| SourceQuote { source: "kraken".into(), mid: Fixed::from_int(100), ts, contract: None };
+    let mut pending = Pending::default();
+    pending.add(at(now - 30_000), now).unwrap();
+    pending.add(at(now + 25), now).unwrap();
+    let mut buffered = BTreeMap::from([("AAPL".to_owned(), pending)]);
+
+    // The held-back quote is dropped, but the survivor keeps a scheduled way out: with the
+    // venue quiet, the emit timer still fires for it — the eventual submission once the clock
+    // reaches it and the session has opened is covered by the quiet-release integration test.
+    // A rejection that skips arming strands the survivor and fails this assertion.
+    let wake = feed.emit(&mut buffered, &mut BTreeMap::new()).await.unwrap();
+    assert!(wake.is_some(), "no wake armed for the survivor");
+    assert!(rx.try_recv().is_err(), "the held-back quote sequenced");
+}
+
+#[test]
 fn a_quote_counts_within_the_tighter_of_the_feed_and_market_bounds() {
     const AT: Millis = 1_792_489_875_714;
     assert!(counts(AT - 1_000, AT, 1_000, 1_000));

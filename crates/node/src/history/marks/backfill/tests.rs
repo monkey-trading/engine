@@ -110,6 +110,7 @@ fn venue_feeds() -> FeedsSection {
             reconnect_min: std::time::Duration::from_millis(500),
             reconnect_max: std::time::Duration::from_secs(30),
             stale_after: std::time::Duration::from_secs(1),
+            min_quote_spacing: std::time::Duration::from_millis(10),
             connections: vec![
                 VenueConnection {
                     venue: Venue::Coinbase,

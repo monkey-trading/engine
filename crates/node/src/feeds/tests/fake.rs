@@ -194,14 +194,25 @@ fn rfc3339(ts: Millis) -> String {
     DateTime::from_timestamp_millis(ts).expect("time in range").to_rfc3339_opts(SecondsFormat::Micros, true)
 }
 
+/// A Kraken book snapshot carrying several of one symbol's books in one message, each with one
+/// level a side and its checksum; prices and sizes are JSON numbers, as Kraken sends them.
+pub fn kraken_books(symbol: &str, books: &[(&str, &str, Millis)]) -> String {
+    const BID_QTY: &str = "1.50000000";
+    const ASK_QTY: &str = "2.50000000";
+    let data = books.iter().map(|(bid, ask, ts)| {
+        let (bid, ask) = (*bid, *ask);
+        let (at, checksum) = (rfc3339(*ts), kraken::checksum([(ask, ASK_QTY), (bid, BID_QTY)].into_iter()));
+        format!(
+            r#"{{"symbol":"{symbol}","bids":[{{"price":{bid},"qty":{BID_QTY}}}],"asks":[{{"price":{ask},"qty":{ASK_QTY}}}],"checksum":{checksum},"timestamp":"{at}"}}"#
+        )
+    });
+    format!(r#"{{"channel":"book","type":"snapshot","data":[{}]}}"#, data.collect::<Vec<_>>().join(","))
+}
+
 /// A Kraken book snapshot with one level a side and its checksum; prices and sizes are JSON
 /// numbers, as Kraken sends them.
 pub fn kraken_book(symbol: &str, bid: &str, ask: &str, ts: Millis) -> String {
-    let (at, bid_qty, ask_qty) = (rfc3339(ts), "1.50000000", "2.50000000");
-    let checksum = kraken::checksum([(ask, ask_qty), (bid, bid_qty)].into_iter());
-    format!(
-        r#"{{"channel":"book","type":"snapshot","data":[{{"symbol":"{symbol}","bids":[{{"price":{bid},"qty":{bid_qty}}}],"asks":[{{"price":{ask},"qty":{ask_qty}}}],"checksum":{checksum},"timestamp":"{at}"}}]}}"#
-    )
+    kraken_books(symbol, &[(bid, ask, ts)])
 }
 
 /// A Bitstamp order book with one level a side.
