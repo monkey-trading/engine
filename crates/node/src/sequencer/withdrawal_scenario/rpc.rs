@@ -98,6 +98,7 @@ sol! {
     function operatorInEffect() external view returns (address candidate, address adminKey, bytes32 release, uint64 since);
     function closeEpoch() external returns (uint64);
     function openEpochStart() external view returns (uint64);
+    function rotationEnabled() external view returns (bool);
     function pendingElection()
         external
         view

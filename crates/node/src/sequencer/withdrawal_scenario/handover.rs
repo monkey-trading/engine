@@ -22,7 +22,7 @@ use crate::sequencer::withdrawal_scenario::client::{Client, User};
 use crate::sequencer::withdrawal_scenario::flows::last_seq;
 use crate::sequencer::withdrawal_scenario::node::{ChildProcess, Node, free_port, write_config};
 use crate::sequencer::withdrawal_scenario::rpc::{
-    Chain, latestSeqCall, setEnclaveCall, setRotationCall, setSignerCall,
+    Chain, latestSeqCall, rotationEnabledCall, setEnclaveCall, setRotationCall, setSignerCall,
 };
 use crate::sequencer::withdrawal_scenario::standby::{pay_b, rotation_and_staking};
 use crate::sequencer::withdrawal_scenario::{CHILD_ALERTS, CHILD_CONFIG, CHILD_FEED, CHILD_LAUNCH_DIGEST, CHILD_TEST};
@@ -113,6 +113,7 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
         )
         .await?;
     node.chain.govern_target(node.chain.registry, setRotationCall { enabled: true }.abi_encode()).await?;
+    ensure!(node.chain.read(node.chain.registry, rotationEnabledCall {}).await?, "rotation never turned on");
     node.chain.sync_release().await?;
     // A new-key start serves only its attestation until the timelock installs the enclave, so the
     // spawn and the full-API wait are separate.
