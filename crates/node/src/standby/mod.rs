@@ -283,12 +283,14 @@ async fn finalize(
     // node continues, and dropping them could conflict with a relay of the same signatures.
     let resume = resume_checkpoint(dir, takeover)?;
     // The marker makes the surgery resumable: a crash from here is repaired on restart.
+    let marker = dir.join("takeover.json");
     std::fs::write(
-        dir.join("takeover.json"),
+        &marker,
         serde_json::to_string(&Takeover { seq: resume.0, root: resume.1.clone(), signer: takeover.signer })
             .context("encoding the takeover marker")?,
     )
     .context("writing the takeover marker")?;
+    std::fs::File::open(&marker)?.sync_all().context("syncing the takeover marker")?;
     truncate_to_checkpoint(dir, resume.0, &resume.1).context("truncating the copy at the takeover")?;
     std::fs::remove_file(dir.join("takeover.json")).context("removing the takeover marker")?;
     Ok(())

@@ -75,9 +75,14 @@ pub(crate) fn truncate_to_checkpoint(dir: &Path, seq: u64, root: &str) -> anyhow
             text.push_str(&serde_json::to_string(listed).context("encoding a manifest line")?);
             text.push('\n');
         }
+        // Durably install the replacement manifest before anything is deleted: the staged file
+        // and its rename must survive a crash, or the repair marker cannot reconstruct it.
         let staged = dir.join(format!("{MANIFEST}.staging"));
         fs::write(&staged, text).with_context(|| format!("writing {}", staged.display()))?;
+        let file = fs::File::open(&staged)?;
+        file.sync_all().with_context(|| format!("syncing {}", staged.display()))?;
         fs::rename(&staged, dir.join(MANIFEST)).with_context(|| format!("linking {MANIFEST}"))?;
+        sync_dir(dir)?;
     }
     // Newest first: each deletion leaves the remaining newest file last, and unlisted files may
     // stand last. A listed file is never deleted. A deletion another run already made is not an
@@ -94,6 +99,15 @@ pub(crate) fn truncate_to_checkpoint(dir: &Path, seq: u64, root: &str) -> anyhow
         file.set_len(end).with_context(|| format!("truncating {}", target_path.display()))?;
         file.sync_all().with_context(|| format!("syncing {}", target_path.display()))?;
     }
-    fs::File::open(dir).with_context(|| format!("opening {}", dir.display()))?.sync_all().ok();
-    Ok(())
+    sync_dir(dir)
+}
+
+/// Forces the directory's entries to storage, so renames and removals survive a power loss.
+/// Error cases:
+/// - the directory cannot be opened or synced
+fn sync_dir(dir: &Path) -> anyhow::Result<()> {
+    fs::File::open(dir)
+        .with_context(|| format!("opening {}", dir.display()))?
+        .sync_all()
+        .with_context(|| format!("syncing {}", dir.display()))
 }
