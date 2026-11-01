@@ -212,7 +212,6 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
         (notice1..notice1 + 30).contains(&effective1),
         "the effective time is not the close plus the notice: {effective1}"
     );
-    let b_admin_address = Address::from(engine_core::eip712::address(b_admin.verifying_key()).0);
     // Mirrored: the deployer still signs and the elected key is pending — the engine applies the
     // election only seven days of sequenced time after it logged, which real child processes do
     // not outrun; the handover below needs only the chain-side naming.
@@ -276,9 +275,9 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
     let open_start = node.chain.open_epoch_start().await?;
     let close2 = std::cmp::max(open_start + 3_600, latest + 5);
     let (_, effective2) = node.chain.close_epoch_at(close2).await?.context("the re-election elected no candidate")?;
-    // B still signs on its node; A's key is pending, as before, until sequenced time passes the
-    // notice the scenario does not outrun.
-    wait_operator(&b_client, &mut b_check, Some(&format!("{b_admin_address:#x}")), true).await?;
+    // The deployer's key still signs on B's node; A's key is pending, as before, until sequenced
+    // time passes the notice the scenario does not outrun.
+    wait_operator(&b_client, &mut b_check, Some(&format!("{operator:#x}")), true).await?;
     drop(b_check);
     let a_release = keccak256([A_DIGEST.as_slice(), &a_config_hash].concat());
     node.chain.warp_to(effective2 + 120).await?;
