@@ -214,8 +214,17 @@ impl Sequencer {
             }
             queries.drain(..).for_each(|q| q(&self.engine));
             if let Some(reply) = handover_stop {
-                self.seal_handover_tail(reply)?;
-                break;
+                // Seal the tail before answering: a failure refuses the stop, and the node goes on
+                // sequencing; the successor's request reports the refusal and keeps serving.
+                match self.seal_handover_tail() {
+                    Ok(()) => {
+                        let _ = reply.send(Ok(()));
+                        break;
+                    }
+                    Err(e) => {
+                        let _ = reply.send(Err(e.context("sealing the log's final segment for the handover")));
+                    }
+                }
             }
         }
         let final_checkpoint = self.last_checkpoint != self.engine.last_seq();

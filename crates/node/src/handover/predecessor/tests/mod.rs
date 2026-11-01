@@ -304,7 +304,7 @@ impl Exchange {
         let quoting = Quoting { provider: TeeProvider::Mock, processor: None, kds_base: "https://kds.test" };
         let evidence = evidence::produce(&quoting, &MockAttestor, &platform, report_data).await.unwrap();
         let config_sha256 = hex::encode(self.successor.file_sha256);
-        (stream, report_data, Request { public_key: hex::encode(&public), config_sha256, evidence })
+        (stream, report_data, Request { public_key: hex::encode(&public), config_sha256, log_tip: None, evidence })
     }
 
     /// The successor's release: `UPGRADE` running its config.
@@ -396,10 +396,15 @@ fn successor_config(name: &str) -> (NodeConfig, PathBuf) {
 /// Writes a completed one-segment log ending at `head`, with its manifest, as the archive
 /// bootstrap leaves a copy.
 fn write_log_tail(dir: &std::path::Path, head: &Head) {
+    write_log_from(dir, head, 1)
+}
+
+/// Writes a one-segment log running `first..=head.seq`, with its manifest.
+fn write_log_from(dir: &std::path::Path, head: &Head, first: u64) {
     std::fs::create_dir_all(dir).unwrap();
-    let file = format!("{:020}.jsonl", 1);
+    let file = format!("{:020}.jsonl", first);
     let mut text = String::new();
-    for seq in 1..=head.seq {
+    for seq in first..=head.seq {
         text.push_str(&serde_json::to_string(&LogEntry::Command(command(seq))).unwrap());
         text.push('\n');
     }
@@ -408,7 +413,7 @@ fn write_log_tail(dir: &std::path::Path, head: &Head) {
     let bytes = text.as_bytes();
     let listed = crate::log::SegmentInfo {
         file,
-        first_seq: 1,
+        first_seq: first,
         last_seq: head.seq,
         bytes: bytes.len() as u64,
         sha256: hex::encode(sha2::Sha256::digest(bytes)),

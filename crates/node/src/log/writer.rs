@@ -296,10 +296,17 @@ impl LogWriter {
 
     /// Lists the open segment, if any, as completed: flushes and syncs it, appends its listing to
     /// the manifest, and folds it into the catalog. A handover seals the log's tail so the archive
-    /// and the successor it hands the keys to hold the segment the final checkpoint is in.
+    /// and the successor it hands the keys to hold the segment the final checkpoint is in. A full
+    /// live catalog is folded first, as rotation does; a catalog that still cannot take the
+    /// segment degrades to the plain manifest, which remains authoritative.
     /// Error cases:
     /// - the segment cannot be flushed, synced, or listed, or the manifest update fails
     pub(crate) fn seal_open_segment(&mut self) -> anyhow::Result<Option<SegmentInfo>> {
+        if self.catalog_owner.is_some()
+            && self.manifest.borrow().catalog.as_ref().is_some_and(|catalog| catalog.live_full())
+        {
+            self.fold_catalog(None)?;
+        }
         let Some((segment, out)) = self.open.take() else { return Ok(None) };
         let done = out.into_inner().map_err(|e| e.into_error()).context("flushing log segment")?;
         done.sync_all().context("syncing log segment")?;
@@ -314,14 +321,24 @@ impl LogWriter {
             "log segment completed"
         );
         let catalog = self.manifest.borrow().catalog.clone();
-        let next = catalog.map(|c| c.append(listed.clone(), segment.checkpoints.into())).transpose()?;
-        self.manifest.send_modify(|m| {
-            match next {
-                Some(next) => m.catalog = Some(Arc::new(next)),
-                None => Arc::make_mut(&mut m.segments).push(listed.clone()),
+        match catalog.map(|c| c.append(listed.clone(), segment.checkpoints.into())).transpose() {
+            Ok(next) => {
+                self.manifest.send_modify(|m| {
+                    match next {
+                        Some(next) => m.catalog = Some(Arc::new(next)),
+                        None => Arc::make_mut(&mut m.segments).push(listed.clone()),
+                    }
+                    m.active = None;
+                });
             }
-            m.active = None;
-        });
+            Err(e) => {
+                warn!(alert = "log_catalog_unavailable", "the sealed segment publishes without the catalog: {e:#}");
+                self.manifest.send_modify(|m| {
+                    Arc::make_mut(&mut m.segments).push(listed.clone());
+                    m.active = None;
+                });
+            }
+        }
         Ok(Some(listed))
     }
 

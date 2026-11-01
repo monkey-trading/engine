@@ -103,8 +103,13 @@ contract StandbyPromotionTest is RegistryTest {
         assertEq(registry.operatorRelease(), _release(1));
         assertEq(registry.operatorEnclave(), _enclave(1));
         assertEq(_inEffect(), deployerKey);
+        // The vault names the promoted standby from the moment it is made; the key waits out the
+        // notice. Hostname and release checks read `namedOperator`, not `operatorInEffect`.
+        assertEq(registry.namedOperator().candidate, alice);
+        assertEq(registry.namedOperator().release, _release(1));
         vm.warp(pending.effectiveAt);
         assertEq(_inEffect(), alice);
+        assertEq(registry.namedOperator().candidate, alice);
     }
 
     function test_PromotionBreaksVoteTiesByEarlierRegistration() public {

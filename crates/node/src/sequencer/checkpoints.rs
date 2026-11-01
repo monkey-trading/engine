@@ -161,13 +161,13 @@ impl Sequencer {
         self.engine.state_root()
     }
 
-    /// Answers an admitted handover stop and seals the log's tail: the final checkpoint is durable
+    /// Seals the log's open segment for an admitted handover stop: the final checkpoint is durable
     /// once the batch flushed, and the published archive and the successor the keys go to need the
-    /// segment it is in.
+    /// segment it is in. A full live catalog is folded first, as rotation does; a catalog that
+    /// still cannot take the segment degrades to the plain manifest, which remains authoritative.
     /// Error cases:
     /// - the tail segment cannot be sealed
-    pub(super) fn seal_handover_tail(&mut self, reply: oneshot::Sender<anyhow::Result<()>>) -> anyhow::Result<()> {
-        let _ = reply.send(Ok(()));
+    pub(super) fn seal_handover_tail(&mut self) -> anyhow::Result<()> {
         self.log.seal_open_segment().context("sealing the log's final segment for the handover")?;
         Ok(())
     }

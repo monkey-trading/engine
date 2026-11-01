@@ -10,9 +10,9 @@ async fn the_final_segment_rides_with_the_keys_into_an_empty_log() {
     let mut exchange = Exchange::start("handover-segment").await;
     exchange.make_upgrade_current();
     let head = Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) };
-    // The predecessor's drained log lists the tail; the successor's copy holds nothing yet, as a
-    // cold start the archive backfilled nothing into.
-    write_log_tail(&exchange.predecessor_log, &head);
+    // The predecessor's drained log lists the whole log; the successor's copy holds nothing yet,
+    // as a cold start the archive backfilled nothing into, so the handover carries it from seq 0.
+    write_log_from(&exchange.predecessor_log, &head, 0);
     let answer = exchange.answer_drain(Ok(head.clone()));
     let store = exchange.take().await.unwrap();
     assert_eq!(answer.await.unwrap(), 1, "sequencing stopped once");
@@ -28,7 +28,7 @@ async fn the_final_segment_rides_with_the_keys_into_an_empty_log() {
 /// A segment whose bytes differ from the listing inside the quote-bound message is refused before
 /// the confirmation goes out: the successor does not start on a log the host tampered with.
 #[tokio::test]
-async fn a_segment_that_differs_from_its_listing_is_refused_before_confirming() {
+async fn segment_bytes_that_differ_from_the_listing_inside_the_keys_are_refused_before_confirming() {
     let (successor, _successor_dir) = successor_config("handover-segment-lie");
     let head = Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) };
     let old = KeySet::generate().unwrap();
@@ -44,25 +44,25 @@ async fn a_segment_that_differs_from_its_listing_is_refused_before_confirming() 
         let request: Request = receive(&mut stream).await.unwrap();
         let public_key = hex::decode(&request.public_key).unwrap();
         let report_data = request_report_data(domain, &challenge, &public_key, &config);
-        let (encapped_key, ciphertext) = seal_keys(domain, &public_key, &report_data, &handed).unwrap();
-        let bound = keys_report_data(domain, &report_data, &encapped_key, &ciphertext);
         let platform = Platform { launch_digest: RELEASE, policy: 0, tcb: 0 };
         let quoting = Quoting { provider: TeeProvider::Mock, processor: None, kds_base: "https://kds.test" };
-        let evidence = evidence::produce(&quoting, &MockAttestor, &platform, bound).await.unwrap();
-        // A listing the host swapped for other bytes after the predecessor sealed it.
+        // The real segment, whose listing travels inside the keys, attested; the host swaps the
+        // wire bytes for others after the predecessor sealed them.
+        let text = serde_json::to_string(&LogEntry::Command(command(1))).unwrap() + "\n";
+        let bytes = text.as_bytes();
         let listed = crate::log::SegmentInfo {
             file: format!("{:020}.jsonl", 1),
             first_seq: 1,
-            last_seq: head.seq,
-            bytes: 4,
-            sha256: hex::encode(sha2::Sha256::digest(b"the predecessor's real segment")),
+            last_seq: 1,
+            bytes: bytes.len() as u64,
+            sha256: hex::encode(sha2::Sha256::digest(bytes)),
         };
-        let keys = Reply::Keys {
-            encapped_key: hex::encode(encapped_key),
-            ciphertext: hex::encode(ciphertext),
-            evidence,
-            segment: Some(listed),
-        };
+        handed.handover_tails = vec![listed];
+        let (encapped_key, ciphertext) = seal_keys(domain, &public_key, &report_data, &handed).unwrap();
+        let bound = keys_report_data(domain, &report_data, &encapped_key, &ciphertext);
+        let evidence = evidence::produce(&quoting, &MockAttestor, &platform, bound).await.unwrap();
+        let keys =
+            Reply::Keys { encapped_key: hex::encode(encapped_key), ciphertext: hex::encode(ciphertext), evidence };
         send(&mut stream, &keys).await.unwrap();
         send_bytes(&mut stream, b"lies").await.unwrap();
     });
@@ -99,12 +99,8 @@ async fn a_successor_without_the_signed_acknowledgement_keeps_the_keys_sealed_bu
         let platform = Platform { launch_digest: RELEASE, policy: 0, tcb: 0 };
         let quoting = Quoting { provider: TeeProvider::Mock, processor: None, kds_base: "https://kds.test" };
         let evidence = evidence::produce(&quoting, &MockAttestor, &platform, bound).await.unwrap();
-        let keys = Reply::Keys {
-            encapped_key: hex::encode(encapped_key),
-            ciphertext: hex::encode(ciphertext),
-            evidence,
-            segment: None,
-        };
+        let keys =
+            Reply::Keys { encapped_key: hex::encode(encapped_key), ciphertext: hex::encode(ciphertext), evidence };
         send(&mut stream, &keys).await.unwrap();
         let _: Confirm = receive(&mut stream).await.unwrap();
         let forged = EnclaveKey::generate().sign_digest(confirmed_digest(domain, &report_data));

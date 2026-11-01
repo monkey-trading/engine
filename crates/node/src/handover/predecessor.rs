@@ -167,6 +167,12 @@ impl<C: CheckpointChain> Predecessor<C> {
             Err(e) => return Ok(refuse(&mut stream, e).await),
         };
         info!(successor_release = %hex::encode(release.id()), "the vault names the successor's release");
+        // The log segments the successor lacks must each fit the handover's bound: the writer
+        // rotates by command count, not bytes, so a runaway tail is refused here, before the stop
+        // it could strand.
+        if let Some(oversized) = self.oversized_tail()? {
+            return Ok(refuse(&mut stream, anyhow!("the log segment {oversized} is over the handover's bound")).await);
+        }
         let head = match head {
             Some(head) => head.clone(),
             None => {
@@ -200,7 +206,17 @@ impl<C: CheckpointChain> Predecessor<C> {
                 head.insert(stopped?).clone()
             }
         };
-        match self.hand_over(&mut stream, &public_key, &report_data, head.clone(), self.final_segment(&head)?).await {
+        // The log past the successor's tip travels with the keys. A read failure must not end
+        // this node: the keys go with no segments, the successor's strict checks refuse the
+        // confirmation, and this release goes on serving.
+        let tails = match self.tail_frames(&head, request.log_tip) {
+            Ok(tails) => tails,
+            Err(e) => {
+                warn!("reading the log for the handover failed; sending the keys without it: {e:#}");
+                Vec::new()
+            }
+        };
+        match self.hand_over(&mut stream, &public_key, &report_data, head.clone(), tails).await {
             Ok(()) => {
                 info!(alert_resolved = "handover_unconfirmed", "the successor holds the keys; this release exits");
                 Ok(Served::Confirmed)
@@ -209,26 +225,60 @@ impl<C: CheckpointChain> Predecessor<C> {
         }
     }
 
-    /// The sealed segment the final checkpoint ends, read from the manifest the drain wrote, with
-    /// its bytes checked against the listing: the archive serves only completed segments, and the
-    /// API is already down when the successor could fetch it. `None` when the head already ends a
-    /// listed segment the successor holds from the archive.
+    /// Every segment past the successor's tip, with the sealed listing and bytes of each: any
+    /// completed between the successor's archive fetch and the stop, and the just-sealed tail from
+    /// the manifest the drain wrote. The archive serves only completed segments, and the API is
+    /// already down when the successor could fetch; sending everything past its tip leaves no seq
+    /// missing. Empty when the head already ends the successor's copy.
     /// Error cases:
-    /// - the manifest or the segment cannot be read, or the bytes differ from the listing
-    fn final_segment(&self, head: &Head) -> anyhow::Result<Option<(SegmentInfo, Vec<u8>)>> {
+    /// - the manifest or a segment cannot be read, or the bytes differ from its listing
+    fn tail_frames(&self, head: &Head, tip: Option<u64>) -> anyhow::Result<Vec<(SegmentInfo, Vec<u8>)>> {
         let manifest = Manifest::load(&self.log_dir)?;
-        let Some(listed) = manifest.segments.last().cloned() else { return Ok(None) };
-        if listed.last_seq != head.seq {
-            return Ok(None);
+        let mut frames = Vec::new();
+        for listed in manifest.segments.iter() {
+            if tip.is_some_and(|tip| listed.last_seq <= tip) {
+                continue;
+            }
+            let bytes =
+                std::fs::read(self.log_dir.join(&listed.file)).with_context(|| format!("reading {}", listed.file))?;
+            ensure!(
+                bytes.len() as u64 == listed.bytes && hex::encode(sha2::Sha256::digest(&bytes)) == listed.sha256,
+                "the log segment {} differs from its listing",
+                listed.file
+            );
+            frames.push((listed.clone(), bytes));
         }
-        let bytes =
-            std::fs::read(self.log_dir.join(&listed.file)).with_context(|| format!("reading {}", listed.file))?;
         ensure!(
-            bytes.len() as u64 == listed.bytes && hex::encode(sha2::Sha256::digest(&bytes)) == listed.sha256,
-            "the final segment {} differs from its listing",
-            listed.file
+            frames.last().is_none_or(|(listed, _)| listed.last_seq == head.seq),
+            "the log's last segment ends at seq {}, not the final seq {}",
+            frames.last().map_or(0, |(listed, _)| listed.last_seq),
+            head.seq
         );
-        Ok(Some((listed, bytes)))
+        Ok(frames)
+    }
+
+    /// The name of an unlisted (open) segment file over the handover's bound, if any: such a tail
+    /// could not be handed over, so the request is refused before the stop it would strand.
+    /// Error cases:
+    /// - the log directory cannot be read
+    fn oversized_tail(&self) -> anyhow::Result<Option<String>> {
+        let manifest = Manifest::load(&self.log_dir)?;
+        let entries = match std::fs::read_dir(&self.log_dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e).with_context(|| format!("reading {}", self.log_dir.display())),
+        };
+        for entry in entries {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if crate::log::segment_seq(&name).is_none() || manifest.segments.iter().any(|listed| listed.file == name) {
+                continue;
+            }
+            if entry.metadata()?.len() > crate::handover::MAX_SEGMENT_BYTES as u64 {
+                return Ok(Some(name));
+            }
+        }
+        Ok(None)
     }
 
     /// The successor's release, the measurement its quote proves and the config hash it binds,
@@ -265,8 +315,9 @@ impl<C: CheckpointChain> Predecessor<C> {
         Ok(head)
     }
 
-    /// Sends the keys and `head` encrypted to `public_key`, with this enclave's quote over them and
-    /// the segment the final checkpoint is in behind them, and waits for the successor to sign
+    /// Sends the keys and `head` encrypted to `public_key`, with this enclave's quote over them,
+    /// the segments past the successor's tip named inside the ciphertext, and each segment's bytes
+    /// behind them as one raw frame per listing, and waits for the successor to sign
     /// `report_data`'s confirmation with the signing key.
     /// Error cases:
     /// - encryption, quoting, or the exchange fails, or the confirmation is missing or not the key's
@@ -276,25 +327,22 @@ impl<C: CheckpointChain> Predecessor<C> {
         public_key: &[u8],
         report_data: &[u8; 64],
         head: Head,
-        segment: Option<(SegmentInfo, Vec<u8>)>,
+        tails: Vec<(SegmentInfo, Vec<u8>)>,
     ) -> anyhow::Result<()> {
         let mut keys = self.store.keys();
         keys.predecessor_head = Some(head);
+        keys.handover_tails = tails.iter().map(|(listed, _)| listed.clone()).collect();
         let (encapped_key, ciphertext) = seal_keys(self.domain, public_key, report_data, &keys)?;
         let bound = keys_report_data(self.domain, report_data, &encapped_key, &ciphertext);
         let quoting =
             Quoting { provider: self.provider, processor: self.processor.as_deref(), kds_base: &self.kds_base };
         let evidence = evidence::produce(&quoting, self.attestor.as_ref(), &self.store.platform(), bound).await?;
-        let keys = Reply::Keys {
-            encapped_key: hex::encode(encapped_key),
-            ciphertext: hex::encode(ciphertext),
-            evidence,
-            segment: segment.as_ref().map(|(listed, _)| listed.clone()),
-        };
+        let keys =
+            Reply::Keys { encapped_key: hex::encode(encapped_key), ciphertext: hex::encode(ciphertext), evidence };
         send(stream, &keys).await?;
-        if let Some((listed, bytes)) = &segment {
+        for (listed, bytes) in &tails {
             send_bytes(stream, bytes).await?;
-            info!(file = %listed.file, "sent the final log segment with the keys");
+            info!(file = %listed.file, "sent a log segment with the keys");
         }
         info!("sent the keys to the successor");
         let confirm: Confirm = timeout(MESSAGE_TIMEOUT, receive(stream)).await.context("no confirmation in time")??;

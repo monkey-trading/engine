@@ -65,6 +65,7 @@ sol! {
         view
         returns (uint64 epoch, address candidate, address adminKey, bytes32 release, uint64 effectiveAt);
     function operatorInEffect() external view returns (address candidate, address adminKey, bytes32 release, uint64 since);
+    function namedOperator() external view returns (address candidate, address adminKey, bytes32 release, uint64 since);
     function pendingPromotion() external view returns (bool);
     // A struct return with dynamic members is offset-prefixed on the wire; a named struct return
     // decodes it, a flat tuple does not.
@@ -415,11 +416,12 @@ impl CheckpointChain for CheckpointRpc {
         let at = BlockId::latest();
         let registry = registryCall::abi_decode_returns(&self.call(vault, registryCall {}.abi_encode(), at).await?)?;
         ensure!(!registry.is_zero(), "the vault follows no operator registry");
-        let in_effect = operatorInEffectCall::abi_decode_returns(
-            &self.call(registry, operatorInEffectCall {}.abi_encode(), at).await?,
-        )?;
+        // The operator the vault names, not the one in effect: a promoted standby's release moves
+        // at once, while its key waits out the notice.
+        let named =
+            namedOperatorCall::abi_decode_returns(&self.call(registry, namedOperatorCall {}.abi_encode(), at).await?)?;
         Ok(candidateOfCall::abi_decode_returns(
-            &self.call(registry, candidateOfCall { candidate: in_effect.candidate }.abi_encode(), at).await?,
+            &self.call(registry, candidateOfCall { candidate: named.candidate }.abi_encode(), at).await?,
         )?
         .apiHostname)
     }

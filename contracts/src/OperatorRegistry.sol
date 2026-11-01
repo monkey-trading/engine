@@ -514,6 +514,15 @@ contract OperatorRegistry {
         return _inEffect();
     }
 
+    /// @notice The operator the vault names while rotation is on: a pending promotion from the
+    /// moment it is made, a pending election from its effective time, else the operator in effect.
+    /// A node's hostname and release checks read this, not `operatorInEffect`: the vault names a
+    /// promoted standby's release at once, while the promoted key takes effect only after its
+    /// notice.
+    function namedOperator() external view returns (Operator memory) {
+        return _named();
+    }
+
     /// @notice The enclave address the named operator's candidate registered: the only address the
     /// vault's limited `setSigner` installs while rotation is on. A promotion names its candidate
     /// at once; an election names the winner only from its effective time. Zero when the named

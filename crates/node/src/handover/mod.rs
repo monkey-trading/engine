@@ -53,6 +53,7 @@ use sha2::{Digest as _, Sha256};
 use sha3::{Digest as _, Keccak256};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::time::timeout;
+use tracing::{info, warn};
 
 use crate::checkpoints::{CheckpointChain, CheckpointRpc, CurrentRelease, View};
 use crate::config::NodeConfig;
@@ -133,6 +134,10 @@ struct Request {
     public_key: String,
     /// The SHA-256 of the successor's config file, hex: with the quote's measurement, its release.
     config_sha256: String,
+    /// The last seq of the log copy the successor restored from the published archive, if any: the
+    /// handover carries every segment past it, so nothing sequenced up to the stop is missing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    log_tip: Option<u64>,
     evidence: Evidence,
 }
 
@@ -140,16 +145,10 @@ struct Request {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Reply {
-    /// The keys, encrypted to the request's public key, and the predecessor's quote over them.
-    /// `segment` lists the log segment the final checkpoint is in, whose bytes follow as one raw
-    /// frame; `None` when the head already ends a listed segment the successor holds.
-    Keys {
-        encapped_key: String,
-        ciphertext: String,
-        evidence: Evidence,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        segment: Option<crate::log::SegmentInfo>,
-    },
+    /// The keys, encrypted to the request's public key, and the predecessor's quote over them. The
+    /// keys name every log segment past the successor's tip (`handover_tails`), and each segment's
+    /// bytes follow as one raw frame, so the listings are bound by the attested ciphertext.
+    Keys { encapped_key: String, ciphertext: String, evidence: Evidence },
     /// Why the predecessor keeps the keys.
     Refused { reason: String },
     /// The confirmation verified, signed with the handed-over key so the host cannot forge it: the
@@ -325,16 +324,17 @@ async fn send_bytes(stream: &mut (impl AsyncWrite + Unpin), bytes: &[u8]) -> any
 /// Error cases:
 /// - the read fails or ends early, the length is over `MAX_SEGMENT_BYTES`, or the read stalls
 async fn receive_bytes(stream: &mut (impl AsyncRead + Unpin)) -> anyhow::Result<Vec<u8>> {
-    let mut len = [0u8; 4];
-    stream.read_exact(&mut len).await.context("reading the log segment's length")?;
-    let len = u32::from_be_bytes(len);
-    ensure!(len <= MAX_SEGMENT_BYTES, "a handover log segment of {len} bytes is over the limit");
-    let mut body = vec![0u8; len as usize];
-    timeout(REPLY_TIMEOUT, stream.read_exact(&mut body))
-        .await
-        .context("reading the log segment timed out")?
-        .context("reading the log segment")?;
-    Ok(body)
+    timeout(REPLY_TIMEOUT, async {
+        let mut len = [0u8; 4];
+        stream.read_exact(&mut len).await.context("reading the log segment's length")?;
+        let len = u32::from_be_bytes(len);
+        ensure!(len <= MAX_SEGMENT_BYTES, "a handover log segment of {len} bytes is over the limit");
+        let mut body = vec![0u8; len as usize];
+        stream.read_exact(&mut body).await.context("reading the log segment")?;
+        anyhow::Ok(body)
+    })
+    .await
+    .context("reading the log segment timed out")?
 }
 
 /// Where the elected successor takes the keys: the operator the election in effect replaced, as
@@ -390,24 +390,38 @@ pub(crate) async fn check_operator_hostname(cfg: &NodeConfig, vault: &impl Check
 
 /// Fetches the predecessor's published log into this node's log directory before the handover
 /// connects: the completed segments the archive lists, checked against their listings. The final
-/// segment arrives with the keys instead — the archive serves only completed segments, and this
-/// fetches while the predecessor's API is still up. Without `[tee.sealing.handover]` there is
-/// nothing to fetch from.
+/// segments arrive with the keys instead — the archive serves only completed segments, and this
+/// fetches while the predecessor's API is still up. A fetch failure is not fatal: a local copy
+/// from an earlier start may exist, and the strict tail checks at the handover decide; a fetched
+/// copy that does not replay is fatal, surfacing a poisoned mirror before the predecessor stops.
 /// Error cases:
-/// - a fetch fails, exceeds its bound, or a file differs from its listing
+/// - a fetched file differs from its listing, or the fetched copy does not replay
 pub(crate) async fn sync_predecessor_log(cfg: &NodeConfig, source: &Source) -> anyhow::Result<()> {
-    let Some(handover) = cfg.tee.sealing.as_ref().and_then(|sealing| sealing.handover.as_ref()) else {
-        return Ok(());
-    };
-    let mut origins = handover.mirrors.clone();
+    let section = cfg.tee.sealing.as_ref().and_then(|sealing| sealing.handover.as_ref());
+    let mut origins = section.map(|handover| handover.mirrors.clone()).unwrap_or_default();
     origins.push(format!("https://{}", source.api_hostname));
-    let client = crate::standby::archive::archive_client(handover.danger_accept_invalid_certs)?;
+    let client =
+        crate::standby::archive::archive_client(section.is_some_and(|handover| handover.danger_accept_invalid_certs))?;
     let dir = cfg.node.log_dir.as_path();
-    if !dir.join(crate::log::MANIFEST).exists() {
+    let synced = match if !dir.join(crate::log::MANIFEST).exists() {
         crate::standby::archive::bootstrap_archive(&client, &origins, dir).await
     } else {
         crate::standby::archive::refresh_archive(&client, &origins, dir).await
+    } {
+        Ok(()) => true,
+        Err(e) => {
+            warn!("fetching the predecessor's published log failed: {e:#}");
+            false
+        }
+    };
+    if synced && dir.join(crate::log::MANIFEST).exists() {
+        // A poisoned cold start must surface now, not after the predecessor has stopped: archive
+        // bytes were only hash-checked against the server's own manifest, and this replay, of the
+        // whole fetched copy, is the authenticity check, as the standby's cold start does.
+        crate::sequencer::replay_path(dir).context("the fetched log copy does not replay")?;
+        info!("the fetched log copy replays to its tip");
     }
+    Ok(())
 }
 
 #[cfg(test)]
