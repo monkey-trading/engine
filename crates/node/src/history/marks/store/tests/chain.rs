@@ -212,7 +212,7 @@ async fn a_successor_link_naming_a_deleted_bucket_refuses_the_next_write() {
 }
 
 #[tokio::test]
-async fn reset_re_links_only_over_what_it_deleted() {
+async fn a_refused_reset_rebuilds_the_cache_from_nothing() {
     let (path, mut store) = fresh_store_at("marks-chain-reset", Retentions::defaults());
     let market = 1;
     let base = 1_792_489_860_000;
@@ -231,15 +231,16 @@ async fn reset_re_links_only_over_what_it_deleted() {
             base + 60_000,
         )
         .unwrap();
-    // The host deletes the log-derived floor the seed links to. The reset validates the pair's
-    // committed anchor first, and the floor no longer matches, so it refuses rather than re-
-    // linking over the host's deletion.
+    // The host deletes the log-derived floor the seed links to, mid-run: the reset refuses to
+    // re-link over the hole, and the derived cache is rebuilt from nothing — the log re-derives
+    // it, a configured backfill re-seeds it.
     Connection::open(&path)
         .unwrap()
         .execute("DELETE FROM marks WHERE market = 1 AND resolution = 1 AND bucket = ?1", [base])
         .unwrap();
-    let err = store.reset_log_derived().expect_err("re-linked over a host deletion");
-    assert!(format!("{err:#}").contains("no longer matches its committed anchor"), "{err:#}");
+    store.reset_log_derived().unwrap();
+    let page = minute(&store, market).await;
+    assert!(page.entries.is_empty(), "the refused reset rebuilt the cache empty");
 }
 
 #[tokio::test]
@@ -417,4 +418,53 @@ async fn a_restored_prefix_snapshot_fails_the_committed_floor() {
         .await
         .expect_err("served a prefix rollback");
     assert!(format!("{err:#}").contains("rolled back"), "{err:#}");
+}
+
+#[tokio::test]
+async fn a_raced_commit_re_synchronizes_before_a_mismatch_is_a_rollback() {
+    use std::sync::{Arc, Mutex};
+
+    let (_path, mut store) = fresh_store_at("marks-chain-stale-retry", Retentions::defaults());
+    let market = 1;
+    let base = 1_792_489_860_000;
+    store.observe(&[(market, base, fixed("1"))]).unwrap();
+    // An anchor one commit newer than the file — the shape a racing flush leaves. The first
+    // attempts report the stale-anchor race; the last, re-synchronized, reports the rollback.
+    let mut anchors: super::super::ChainAnchors = Default::default();
+    anchors.insert(
+        (market, Resolution::M1),
+        super::super::ChainAnchor {
+            floor: super::super::ChainHead { bucket: base + 60_000, tag: [7; 16] },
+            head: super::super::ChainHead { bucket: base + 60_000, tag: [7; 16] },
+        },
+    );
+    let reader = super::super::Reader::new(
+        store.path().to_owned(),
+        hmac::Hmac::new_from_slice(&mac_key()).unwrap(),
+        Arc::new(Mutex::new(anchors.clone())),
+    );
+    let err = reader
+        .page(market, Resolution::M1, i64::MIN, i64::MAX, 10, 10)
+        .await
+        .expect_err("served against a fabricated anchor");
+    assert!(format!("{err:#}").contains("rolled back"), "{err:#}");
+    // The stale attempt alone names the race, as a typed error, not a rollback.
+    let query = super::super::PageQuery {
+        market,
+        resolution: Resolution::M1,
+        from: i64::MIN,
+        to: i64::MAX,
+        limit: 10,
+        max_limit: 10,
+    };
+    let err = super::super::reader::read_page_once(
+        store.path(),
+        &super::expected_schema(),
+        &store.mac,
+        &Arc::new(Mutex::new(anchors)),
+        &query,
+        true,
+    )
+    .expect_err("no race reported");
+    assert!(err.downcast_ref::<super::super::reader::StaleAnchor>().is_some(), "{err:#}");
 }

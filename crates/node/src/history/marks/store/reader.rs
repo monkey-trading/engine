@@ -83,6 +83,20 @@ impl Reader {
     }
 }
 
+/// The stale-anchor race: a commit published between one attempt's snapshot and its anchor
+/// read, so the two belong to different commits. `read_page` re-synchronizes with a fresh
+/// snapshot and anchor; a mismatch that survives the retries is a rollback.
+#[derive(Debug)]
+pub(crate) struct StaleAnchor;
+
+impl std::fmt::Display for StaleAnchor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the committed chain anchor and the snapshot come from different commits")
+    }
+}
+
+impl std::error::Error for StaleAnchor {}
+
 /// Reads one page from the cache at `path`, once it holds exactly `schema`.
 /// Error cases:
 /// - the cache cannot be opened or read, holds another schema, holds a row that does not parse,
@@ -94,29 +108,30 @@ pub(super) fn read_page(
     anchors: &Arc<Mutex<ChainAnchors>>,
     query: &PageQuery,
 ) -> anyhow::Result<MarksPage> {
-    // A writer flush commits atomically with its anchor refresh, so a mismatch still means one
-    // commit landed inside the first attempt's window between its snapshot and its anchor read:
-    // re-synchronize once, with a fresh snapshot and a fresh anchor, before a mismatch is a
-    // rollback. On the second attempt a mismatch is a rollback: nothing legitimate interposes.
+    // A commit publishes its anchors atomically, so a mismatch still means one commit landed
+    // inside an attempt's window between its snapshot and its anchor read: re-synchronize, with
+    // a fresh snapshot and a fresh anchor, before a mismatch is a rollback.
     match read_page_once(path, schema, mac, anchors, query, true) {
-        Err(e) if is_stale_anchor(&e) => read_page_once(path, schema, mac, anchors, query, false),
+        Err(e) if e.downcast_ref::<StaleAnchor>().is_some() => {
+            match read_page_once(path, schema, mac, anchors, query, true) {
+                Err(e) if e.downcast_ref::<StaleAnchor>().is_some() => {
+                    read_page_once(path, schema, mac, anchors, query, false)
+                }
+                result => result,
+            }
+        }
         result => result,
     }
 }
 
-/// Whether `e` is the stale-anchor race, as opposed to a real rollback or a broken chain.
-fn is_stale_anchor(e: &anyhow::Error) -> bool {
-    format!("{e:#}").contains("newer than the snapshot")
-}
-
-/// One attempt at `read_page`, on one snapshot of the file. With `allow_stale`, an anchor newer
-/// than the snapshot reports the stale-anchor race so the caller can re-synchronize; otherwise a
-/// mismatch is a rollback.
+/// One attempt at `read_page`, on one snapshot of the file. With `allow_stale`, an anchor and
+/// snapshot from different commits reports the stale-anchor race so the caller can re-
+/// synchronize; otherwise a mismatch is a rollback.
 /// Error cases:
 /// - the cache cannot be opened or read, holds another schema, holds a row that does not parse,
-///   or its chain fails verification; with `allow_stale`, an anchor newer than the snapshot
-///   reports the stale-anchor race
-fn read_page_once(
+///   or its chain fails verification; with `allow_stale`, a raced commit reports the stale-anchor
+///   race
+pub(crate) fn read_page_once(
     path: &Path,
     schema: &[SchemaRow],
     mac: &hmac::Hmac<sha2::Sha256>,
@@ -151,16 +166,21 @@ fn read_page_once(
     match (anchor, ends) {
         (Some(anchor), Some(ends)) => {
             // A commit publishes its anchors atomically, so a file state and an anchor from
-            // different commits can only differ with the anchor newer — the shape both a race
-            // and a rollback take. Re-synchronize once before calling a mismatch a rollback.
+            // different commits differ only by a commit landing inside this attempt's window —
+            // the shape both a race and a rollback take. Re-synchronize before calling a
+            // mismatch a rollback.
             if anchor != ends && allow_stale {
-                bail!("the committed chain anchor is newer than the snapshot")
+                return Err(StaleAnchor.into());
             }
             ensure!(
                 anchor == ends,
                 "the {market} {resolution:?} marks were rolled back: the file's chain floor or head does not match the committed anchor"
             );
         }
+        // Pair creation and removal publish atomically with a commit too, so these shapes are a
+        // race on a stale-tolerant attempt and tampering on the last one, as with a mismatch.
+        (Some(_), None) if allow_stale => return Err(StaleAnchor.into()),
+        (None, Some(_)) if allow_stale => return Err(StaleAnchor.into()),
         (Some(_), None) => {
             bail!("the {market} {resolution:?} marks lost every bucket below the committed chain anchor")
         }

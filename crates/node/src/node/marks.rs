@@ -12,7 +12,7 @@ use engine_core::types::MarketId;
 use tokio::sync::mpsc;
 
 use crate::config::{BackfillSection, NodeConfig};
-use crate::history::marks::store::{MARKS_FILE, Store};
+use crate::history::marks::store::{MARKS_FILE, Store, discard_file};
 use crate::history::marks::{MarkSample, Reader, Retentions, Seeder, Source};
 use crate::sequencer::{Request, Sequencer};
 
@@ -48,7 +48,13 @@ pub(super) type Activated = (Store, Reader, Option<BackfillSection>, BTreeMap<Ma
 pub(super) fn startup(cfg: &NodeConfig, mac_key: [u8; 32]) -> anyhow::Result<MarksStartup> {
     let retentions = Retentions::of(cfg.history.marks.as_ref())?;
     let created_dir = !cfg.history.dir.exists();
-    let mut store = Store::open(&cfg.history.dir.join(SEED_FILE), retentions, mac_key)?;
+    // A seed file a killed startup left behind is transient: its rows are re-imported and
+    // re-derived below, and keeping it could combine chains a prune has since moved.
+    let seed = cfg.history.dir.join(SEED_FILE);
+    if seed.exists() {
+        discard_file(&seed).with_context(|| format!("clearing the leftover marks seed at {}", seed.display()))?;
+    }
+    let mut store = Store::open(&seed, retentions, mac_key)?;
     // A previous run's cache carries provider-seeded rows and backfill markers the log cannot
     // rebuild; recovery's re-derivation resets only the log-derived content over them.
     store.import_prior(&cfg.history.dir.join(MARKS_FILE)).context("importing the prior marks cache")?;
@@ -156,6 +162,25 @@ pub(super) async fn task(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A seed file a killed startup left behind is discarded: startup rebuilds from the prior
+    /// cache and the log, never from chains a prune may have moved since.
+    #[tokio::test]
+    async fn a_leftover_seed_file_is_discarded_before_startup() {
+        let mut cfg = crate::test_support::dev_config();
+        cfg.history.dir = crate::test_support::scratch_dir("marks-leftover-seed").join("history");
+        let key = crate::tee::EnclaveKey::test_key().marks_key();
+        std::fs::create_dir_all(&cfg.history.dir).unwrap();
+        {
+            let leftover = Store::open(&cfg.history.dir.join(SEED_FILE), Retentions::defaults(), key).unwrap();
+            let mut leftover = leftover;
+            leftover.observe(&[(7, 1_792_489_860_000, "67000".parse().unwrap())]).unwrap();
+        }
+        let marks = startup(&cfg, key).unwrap();
+        let reader = marks.shared.as_ref().unwrap().borrow().reader();
+        let page = reader.page(7, Resolution::S1, i64::MIN, i64::MAX, 10, 10).await.unwrap();
+        assert!(page.entries.is_empty(), "the leftover seed's rows are not served");
+    }
 
     /// Activation moves the seeded cache to its final name: the store and reader it returns work
     /// at that path, and no seed file remains.

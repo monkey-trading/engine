@@ -4,6 +4,7 @@
 //! link or a committed head no longer matches — is tested in `chain.rs`.
 
 mod chain;
+mod refusals;
 
 use std::path::PathBuf;
 

@@ -384,6 +384,15 @@ fn relink_successor(
         // The insert is the new floor below the row, or fills the gap its link named.
         None => retag(mac, tx, market, resolution, &succ, Some(bucket)),
         Some(p) if p < bucket => {
+            // The link's old target must predate this transaction. A bucket this transaction
+            // inserted cannot be the predecessor a pre-existing row names: naming it proves the
+            // bucket existed when the row was written and something deleted it since, and
+            // re-linking over its recreation would heal that deletion.
+            ensure!(
+                !fresh.contains(&p),
+                "the {market} {resolution:?} chain is broken at {}: its link names the recreated bucket {p}",
+                succ.bucket
+            );
             let exists: i64 = tx
                 .query_row(EXISTS, params![i64::from(market), resolution as i64, p], |row| row.get(0))
                 .with_context(|| format!("reading the {market} {resolution:?} chain at {p}"))?;

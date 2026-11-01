@@ -45,17 +45,27 @@ pub(crate) fn reset_log_derived(
         .execute("DELETE FROM marks WHERE provenance = ?1", [Provenance::LogDerived.as_str()])
         .context("resetting log-derived marks")?;
     for ((market, resolution), rows) in &snapshot {
+        // Every link must name the row actually below it in the snapshot, including links on
+        // rows this delete removes: the delete also removes every reference to them, and a row
+        // whose own link already names a missing bucket would let the delete launder a host
+        // deletion into a clean re-chain.
+        let mut actual = None;
+        for row in rows {
+            ensure!(
+                row.prev == actual,
+                "the {market} {resolution:?} chain is broken at {}: its link names a bucket that is already missing",
+                row.bucket
+            );
+            actual = Some(row.bucket);
+        }
         let mut pred = None;
         for row in rows {
             if deleted.contains(&(*market, *resolution, row.bucket)) {
                 continue;
             }
             if row.prev != pred {
-                ensure!(
-                    row.prev.is_some_and(|p| deleted.contains(&(*market, *resolution, p))),
-                    "the {market} {resolution:?} chain is broken at {}: its link names a bucket no delete removed",
-                    row.bucket
-                );
+                // The only re-tag the validated snapshot allows: the row's predecessor is a row
+                // this delete removed, and the survivors close over it.
                 retag(mac, tx, *market, *resolution, row, pred)?;
             }
             pred = Some(row.bucket);

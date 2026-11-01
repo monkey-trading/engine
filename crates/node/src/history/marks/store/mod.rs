@@ -112,6 +112,14 @@ pub(crate) struct SnapRow {
 /// one pair's floor and head before serving a page.
 pub(crate) type ChainAnchors = BTreeMap<(MarketId, Resolution), ChainAnchor>;
 
+/// Removes the cache file at `path` and its write-ahead side files, as `history::store` does
+/// for the index. Startup uses it to clear a seed file a killed run left behind.
+/// Error cases:
+/// - a file exists but cannot be removed
+pub(crate) fn discard_file(path: &Path) -> anyhow::Result<()> {
+    store::discard(path)
+}
+
 /// A provider-seeded bucket.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Seed {
@@ -132,6 +140,8 @@ pub struct Store {
     retentions: Retentions,
     /// Authenticates rows on write and verifies them on read; derived from the enclave key.
     mac: hmac::Hmac<sha2::Sha256>,
+    /// The key `mac` derives from, kept to rebuild the cache after a refused reset.
+    mac_key: [u8; 32],
     /// What `SCHEMA` creates, which every write checks the file against.
     schema: Vec<SchemaRow>,
     /// The committed chain anchors this store advances with every write and every read checks.
@@ -203,7 +213,7 @@ impl Store {
         ensure!(integrity == "ok", "{} is damaged: {integrity}", path.display());
         tx.commit().context("committing the marks schema")?;
         let mac = hmac::Hmac::new_from_slice(&mac_key).context("building the marks authenticator")?;
-        let store = Self { conn, path: path.to_owned(), retentions, mac, schema, anchors: Arc::default() };
+        let store = Self { conn, path: path.to_owned(), retentions, mac, mac_key, schema, anchors: Arc::default() };
         // A leftover seed file from a refused activation opens populated: its rows carry valid
         // tags, re-derivation at recovery validates the anchors established here, and the
         // log-derived rows are rewritten before any read.
@@ -343,6 +353,25 @@ impl Store {
     /// Error cases:
     /// - the delete fails, or a chain link names a bucket this delete did not remove
     pub fn reset_log_derived(&mut self) -> anyhow::Result<()> {
+        if let Err(e) = self.try_reset_log_derived() {
+            // The cache is derived, never authoritative: a chain the reset refuses is host-altered
+            // state the verified log cannot vouch for, and the log plus a configured backfill
+            // re-derive it — discard the file and reset empty, rather than refuse the boot on
+            // rebuildable state.
+            warn!(alert = "marks_cache_rebuilt", "rebuilding the marks cache after a refused reset: {e:#}");
+            let path = self.path.clone();
+            store::discard(&path)?;
+            *self = Self::open(&path, self.retentions, self.mac_key)
+                .with_context(|| format!("rebuilding the marks cache after a refused reset: {e:#}"))?;
+        }
+        Ok(())
+    }
+
+    /// Deletes every log-derived bucket, validating the chains first (see `reset.rs`).
+    /// Error cases:
+    /// - the transaction fails, a stored row fails authentication, a chain link names a bucket
+    ///   nothing deleted, or a pair no longer matches its committed anchor
+    fn try_reset_log_derived(&mut self) -> anyhow::Result<()> {
         let prior = self.prior_anchors();
         let tx =
             self.conn.transaction_with_behavior(TransactionBehavior::Immediate).context("starting a marks reset")?;
