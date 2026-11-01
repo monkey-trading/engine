@@ -353,24 +353,6 @@ impl Chain {
         .context("the current release never reached the finalized block")?
     }
 
-    /// The revert reason of a call from the payer, if it reverts with data.
-    /// Error cases:
-    /// - the simulation itself fails
-    pub(crate) async fn revert_reason(&self, to: Address, input: &[u8]) -> anyhow::Result<String> {
-        let response: Value = self
-            .client
-            .post(&self.url)
-            .json(&json!({"jsonrpc":"2.0","id":1,"method":"eth_call",
-            "params":[{"from":self.payer,"to":to,"data":format!("0x{}",hex::encode(input))},"latest"]}))
-            .send()
-            .await?
-            .json()
-            .await?;
-        let data = response["error"]["data"].as_str().unwrap_or_default();
-        let decoded = hex::decode(data.strip_prefix("0x").unwrap_or(data)).unwrap_or_default();
-        Ok(String::from_utf8_lossy(decoded.get(4..).unwrap_or(&[])).into_owned())
-    }
-
     /// Waits until the vault's current release at the finalized block is `release`, which nodes
     /// read at startup; a just-mined promotion names it at `latest` first.
     /// Error cases:
