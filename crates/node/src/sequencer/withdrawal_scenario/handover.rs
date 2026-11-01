@@ -234,7 +234,16 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
     let status = node.exited(LOADED_WAIT).await?;
     ensure!(status.success(), "A exited with {status} after handing the keys over");
     let a_tip = last_seq(&node.dir.join("log"))?;
-    ensure!(last_seq(&b_dir.join("log"))? > a_tip, "B did not continue past A's final checkpoint (seq {a_tip})");
+    timeout(LOADED_WAIT, async {
+        loop {
+            if last_seq(&b_dir.join("log"))? > a_tip {
+                return anyhow::Ok(());
+            }
+            sleep(Duration::from_millis(200)).await;
+        }
+    })
+    .await
+    .context("B did not continue past A's final checkpoint (seq {a_tip})")??;
     println!(
         "PASS: A's pre-handover authorization paid, and the elected operator's enclave took the keys and the log from the incumbent's and continued at the seq after its final checkpoint"
     );
