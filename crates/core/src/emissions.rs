@@ -92,8 +92,9 @@ pub struct PeriodResult {
     pub realised: Fixed,
     /// The sum of the loss magnitudes those results carry, each `max(-pnl, 0)`: a win adds nothing
     /// and does not offset a loss. Accumulated under every version so a period a `V42` activation
-    /// crosses settles its earlier fills gross; only weight from `V42` reads it.
-    #[serde(default, skip_serializing_if = "Fixed::is_zero")]
+    /// crosses settles its earlier fills gross; only weight from `V42` reads it. Always serialized,
+    /// so a snapshot's engine JSON reveals whether it predates the accumulator.
+    #[serde(default)]
     pub losses: Fixed,
     /// The debt the house wrote off for it.
     pub written_off: Fixed,
