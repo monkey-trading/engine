@@ -368,5 +368,28 @@ async fn import_prior_keeps_authenticated_seeded_rows_and_drops_tampered_ones() 
     assert!(path.exists());
 }
 
+#[tokio::test]
+async fn an_unreadable_prior_cache_is_skipped_not_fatal() {
+    let prior_dir = scratch_dir("marks-import-corrupt");
+    let mut prior = Store::open(&prior_dir.join("marks.sqlite"), Retentions::defaults(), mac_key()).unwrap();
+    prior.observe(&[(1, 1_792_489_860_000, fixed("3"))]).unwrap();
+    // The host writes a value the integer column cannot decode.
+    Connection::open(prior_dir.join("marks.sqlite"))
+        .unwrap()
+        .execute("UPDATE marks SET prev_bucket = 'garbage' WHERE market = 1", [])
+        .unwrap();
+    drop(prior);
+
+    let (_path, mut store) = fresh_store_at("marks-import-corrupt-fresh", Retentions::defaults());
+    let imported = store.import_prior(&prior_dir.join("marks.sqlite")).unwrap();
+    assert_eq!(imported, 0, "the unreadable prior cache is not imported");
+    let page = minute(&store, 1).await;
+    assert!(page.entries.is_empty());
+    // A prior cache of another schema version is skipped the same way.
+    Connection::open(prior_dir.join("marks.sqlite")).unwrap().pragma_update(None, "user_version", 2).unwrap();
+    let imported = store.import_prior(&prior_dir.join("marks.sqlite")).unwrap();
+    assert_eq!(imported, 0, "the other-version prior cache is not imported");
+}
+
 const COVERAGE: Coverage =
     Coverage { depths: (86_400_000, 86_400_000, 86_400_000), retentions: (3_600_000, 3_600_000, 3_600_000, None) };

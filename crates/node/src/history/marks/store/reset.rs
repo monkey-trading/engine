@@ -3,6 +3,8 @@
 //! reasons over is taken first: a surviving row whose link names a bucket this delete removed
 //! re-links; one whose link names a bucket that vanished any other way refuses, never healing a
 //! host deletion. Every pair is validated against its committed anchor before anything moves.
+//! The price is one verified snapshot of the whole cache per boot, linear in its size — the
+//! validation must precede the delete, and the cache is bounded by its retentions.
 
 use std::collections::{BTreeMap, BTreeSet};
 

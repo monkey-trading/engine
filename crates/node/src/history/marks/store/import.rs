@@ -25,10 +25,30 @@ impl Store {
         if !prior.exists() {
             return Ok(0);
         }
-        let from = read_only(prior).with_context(|| format!("opening the prior marks cache at {}", prior.display()))?;
-        let version: i64 = from
-            .pragma_query_value(None, "user_version", |row| row.get(0))
-            .with_context(|| format!("reading the prior marks cache at {}", prior.display()))?;
+        // The prior file is derived and rebuildable: anything about it that cannot be read and
+        // authenticated — a wrong schema, undecodable columns — makes it unavailable, not a boot
+        // failure. The log re-derives what it proves, a configured backfill re-seeds the rest,
+        // and activation replaces the file.
+        let from = match read_only(prior) {
+            Ok(from) => from,
+            Err(e) => {
+                warn!(
+                    alert = "marks_prior_cache_dropped",
+                    "the prior marks cache cannot be opened and is not imported: {e:#}"
+                );
+                return Ok(0);
+            }
+        };
+        let version: i64 = match from.pragma_query_value(None, "user_version", |row| row.get(0)) {
+            Ok(version) => version,
+            Err(e) => {
+                warn!(
+                    alert = "marks_prior_cache_dropped",
+                    "the prior marks cache cannot be read and is not imported: {e:#}"
+                );
+                return Ok(0);
+            }
+        };
         if version != super::SCHEMA_VERSION {
             warn!(
                 alert = "marks_prior_cache_dropped",
@@ -56,7 +76,16 @@ impl Store {
                     ))
                 })
                 .context("reading the prior marks cache")?;
-            mapped.collect::<Result<Vec<_>, _>>().context("reading the prior marks cache")?
+            match mapped.collect::<Result<Vec<_>, _>>() {
+                Ok(rows) => rows,
+                Err(e) => {
+                    warn!(
+                        alert = "marks_prior_cache_dropped",
+                        "the prior marks cache cannot be read and is not imported: {e:#}"
+                    );
+                    return Ok(0);
+                }
+            }
         };
         let markers: Vec<(i64, String, String, [Millis; 8])> = {
             let mut stmt = from
@@ -83,9 +112,18 @@ impl Store {
                     ))
                 })
                 .context("reading the prior backfill markers")?;
-            mapped.collect::<Result<Vec<_>, _>>().context("reading the prior backfill markers")?
+            match mapped.collect::<Result<Vec<_>, _>>() {
+                Ok(markers) => markers,
+                Err(e) => {
+                    warn!(
+                        alert = "marks_prior_cache_dropped",
+                        "the prior backfill markers cannot be read and are not imported: {e:#}"
+                    );
+                    return Ok(0);
+                }
+            }
         };
-        let prior = self.prior_anchors();
+        let prior_anchors = self.prior_anchors();
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -99,7 +137,7 @@ impl Store {
                 Some((market, resolution))
             })
             .collect();
-        chain::check_anchors(&tx, &prior, &pairs)?;
+        chain::check_anchors(&tx, &prior_anchors, &pairs)?;
         let mut imported = 0;
         let mut dropped = 0;
         {

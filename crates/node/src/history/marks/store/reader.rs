@@ -109,8 +109,9 @@ pub(super) fn read_page(
     query: &PageQuery,
 ) -> anyhow::Result<MarksPage> {
     // A commit publishes its anchors atomically, so a mismatch still means one commit landed
-    // inside an attempt's window between its snapshot and its anchor read: re-synchronize, with
-    // a fresh snapshot and a fresh anchor, before a mismatch is a rollback.
+    // inside an attempt's window between its snapshot and its anchor read: re-synchronize, twice
+    // if needed, with a fresh snapshot and a fresh anchor each time, before a mismatch is a
+    // rollback.
     match read_page_once(path, schema, mac, anchors, query, true) {
         Err(e) if e.downcast_ref::<StaleAnchor>().is_some() => {
             match read_page_once(path, schema, mac, anchors, query, true) {
@@ -154,12 +155,15 @@ pub(crate) fn read_page_once(
                  (SELECT bucket FROM marks WHERE market = :market AND resolution = :resolution ORDER BY bucket DESC LIMIT 1),
                  (SELECT tag FROM marks WHERE market = :market AND resolution = :resolution ORDER BY bucket DESC LIMIT 1)",
             params![i64::from(market), resolution as i64],
+            // A malformed tag (the host can write any BLOB the loose schema accepts) fails the
+            // read like any other corruption; it never panics the node.
             |row| {
-                let bucket: Option<Millis> = row.get(0)?;
-                let floor = bucket.map(|bucket| ChainHead { bucket, tag: row.get(1).expect("the floor tag reads") });
-                let bucket: Option<Millis> = row.get(2)?;
-                let head = bucket.map(|bucket| ChainHead { bucket, tag: row.get(3).expect("the head tag reads") });
-                Ok(floor.zip(head).map(|(floor, head)| ChainAnchor { floor, head }))
+                let floor: Option<(Millis, [u8; 16])> = row.get::<_, Option<Millis>>(0)?.zip(row.get(1)?);
+                let head: Option<(Millis, [u8; 16])> = row.get::<_, Option<Millis>>(2)?.zip(row.get(3)?);
+                Ok(floor.zip(head).map(|(floor, head)| ChainAnchor {
+                    floor: ChainHead { bucket: floor.0, tag: floor.1 },
+                    head: ChainHead { bucket: head.0, tag: head.1 },
+                }))
             },
         )
         .context("reading the marks chain ends")?;

@@ -172,8 +172,7 @@ mod tests {
         let key = crate::tee::EnclaveKey::test_key().marks_key();
         std::fs::create_dir_all(&cfg.history.dir).unwrap();
         {
-            let leftover = Store::open(&cfg.history.dir.join(SEED_FILE), Retentions::defaults(), key).unwrap();
-            let mut leftover = leftover;
+            let mut leftover = Store::open(&cfg.history.dir.join(SEED_FILE), Retentions::defaults(), key).unwrap();
             leftover.observe(&[(7, 1_792_489_860_000, "67000".parse().unwrap())]).unwrap();
         }
         let marks = startup(&cfg, key).unwrap();

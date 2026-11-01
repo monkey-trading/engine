@@ -214,9 +214,8 @@ impl Store {
         tx.commit().context("committing the marks schema")?;
         let mac = hmac::Hmac::new_from_slice(&mac_key).context("building the marks authenticator")?;
         let store = Self { conn, path: path.to_owned(), retentions, mac, mac_key, schema, anchors: Arc::default() };
-        // A leftover seed file from a refused activation opens populated: its rows carry valid
-        // tags, re-derivation at recovery validates the anchors established here, and the
-        // log-derived rows are rewritten before any read.
+        // An existing file (a reopened cache in tests; production opens a fresh seed) gets its
+        // anchors established here; re-derivation at recovery validates them before any read.
         store.establish_anchors()?;
         Ok(store)
     }
@@ -361,8 +360,14 @@ impl Store {
             warn!(alert = "marks_cache_rebuilt", "rebuilding the marks cache after a refused reset: {e:#}");
             let path = self.path.clone();
             store::discard(&path)?;
+            // Readers cloned before the rebuild share this store's anchor map: keep them on one
+            // map, reset to what the fresh, empty file commits.
+            let shared = self.anchors.clone();
             *self = Self::open(&path, self.retentions, self.mac_key)
                 .with_context(|| format!("rebuilding the marks cache after a refused reset: {e:#}"))?;
+            let fresh = self.prior_anchors();
+            self.anchors = shared;
+            *self.anchors.lock().expect("the marks chain anchors are never poisoned") = fresh;
         }
         Ok(())
     }

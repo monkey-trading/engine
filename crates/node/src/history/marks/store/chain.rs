@@ -98,8 +98,9 @@ const HEAD: &str = "SELECT bucket, tag FROM marks
 /// floor and head, `None` for a pair whose every bucket the write removed.
 pub(crate) type ChainUpdates = BTreeMap<(MarketId, Resolution), Option<ChainAnchor>>;
 
-/// One resolution's planned deletion: its horizon and the (market, bucket) rows below it.
-pub(crate) type PrunePass = (Resolution, Millis, Vec<(MarketId, Millis)>);
+/// One resolution's planned deletion: its horizon and the rows below it — (market, bucket, the
+/// chain link the row carries) — in market, bucket order.
+pub(crate) type PrunePass = (Resolution, Millis, Vec<(MarketId, Millis, Option<Millis>)>);
 
 /// The buckets one prune pass will delete, per resolution: planned before any mutation so the
 /// pairs a write touches, and validates, are known up front.
@@ -112,7 +113,7 @@ impl PrunePlan {
     pub(crate) fn touched_pairs(&self) -> BTreeSet<(MarketId, Resolution)> {
         self.passes
             .iter()
-            .flat_map(|(resolution, _, rows)| rows.iter().map(move |(market, _)| (*market, *resolution)))
+            .flat_map(|(resolution, _, rows)| rows.iter().map(move |(market, _, _)| (*market, *resolution)))
             .collect()
     }
 }
@@ -185,11 +186,11 @@ pub(crate) fn plan_prune(tx: &Transaction, retentions: &Retentions, newest: Mill
         let Some(retention) = retentions.of_resolution(resolution) else { continue };
         let horizon = newest.saturating_sub(retention);
         let mut rows = tx
-            .prepare("SELECT market, bucket FROM marks WHERE resolution = ?1 AND bucket < ?2")
+            .prepare("SELECT market, bucket, prev_bucket FROM marks WHERE resolution = ?1 AND bucket < ?2 ORDER BY market, bucket")
             .with_context(|| format!("planning the {resolution:?} prune"))?;
         let rows = rows
             .query_map(params![resolution as i64, horizon], |row| {
-                Ok((row.get::<_, MarketId>(0)?, row.get::<_, Millis>(1)?))
+                Ok((row.get::<_, MarketId>(0)?, row.get::<_, Millis>(1)?, row.get::<_, Option<Millis>>(2)?))
             })
             .with_context(|| format!("planning the {resolution:?} prune"))?
             .collect::<Result<Vec<_>, _>>()
@@ -210,7 +211,23 @@ pub(crate) fn apply_prune(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction, plan
         if rows.is_empty() {
             continue;
         }
-        let deleted: BTreeSet<(MarketId, Millis)> = rows.iter().copied().collect();
+        // The expiring rows are a pair's prefix, and the delete removes them and every
+        // reference to them: each row's link must name the row actually below it in the plan,
+        // or the delete would erase the last record of a host deletion.
+        let mut market = None;
+        let mut previous = None;
+        for (row_market, bucket, prev) in rows {
+            if market != Some(*row_market) {
+                market = Some(*row_market);
+                previous = None;
+            }
+            ensure!(
+                *prev == previous,
+                "the {row_market} {resolution:?} chain is broken at {bucket}: its link names a bucket that is already missing"
+            );
+            previous = Some(*bucket);
+        }
+        let deleted: BTreeSet<(MarketId, Millis)> = rows.iter().map(|(market, bucket, _)| (*market, *bucket)).collect();
         tx.execute("DELETE FROM marks WHERE resolution = ?1 AND bucket < ?2", params![*resolution as i64, horizon])
             .with_context(|| format!("pruning {resolution:?} marks"))?;
         // Only a pair's floor can name a pruned bucket: every other survivor's predecessor is at
