@@ -349,9 +349,10 @@ impl Store {
     /// Deletes every log-derived bucket, so a recovery re-derivation rebuilds exactly what the
     /// verified log proves and nothing the host wrote into those rows while the node was stopped;
     /// provider-seeded buckets stay until a log mark replaces them, and the chains over them
-    /// re-link only over what this delete removed. One transaction, checked against the schema.
+    /// re-link only over what this delete removed. A refused reset rebuilds the derived cache
+    /// from nothing.
     /// Error cases:
-    /// - the delete fails, or a chain link names a bucket this delete did not remove
+    /// - the cache file cannot be discarded or reopened
     pub fn reset_log_derived(&mut self) -> anyhow::Result<()> {
         if let Err(e) = self.try_reset_log_derived() {
             // The cache is derived, never authoritative: a chain the reset refuses is host-altered
@@ -375,7 +376,8 @@ impl Store {
 
     /// Deletes every log-derived bucket, validating the chains first (see `reset.rs`).
     /// Error cases:
-    /// - the transaction fails, or a stored row fails authentication
+    /// - the transaction fails, a stored row fails authentication, a chain link names a bucket
+    ///   nothing deleted, or a pair no longer matches its committed anchor
     fn try_reset_log_derived(&mut self) -> anyhow::Result<()> {
         let prior = self.prior_anchors();
         let tx =

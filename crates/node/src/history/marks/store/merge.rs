@@ -100,7 +100,7 @@ pub(crate) fn merge(
     )
     .with_context(|| format!("storing the {market} {resolution:?} bucket at {bucket}"))?;
     if fresh {
-        relink_successor(mac, tx, market, resolution, bucket, pred, &BTreeSet::new())?;
+        relink_successor(mac, tx, market, resolution, bucket, &BTreeSet::from([bucket]))?;
     }
     Ok(())
 }
@@ -114,13 +114,22 @@ pub(crate) fn merge(
 /// re-links only over what its own inserts explain.
 /// Error cases:
 /// - the transaction fails, or the successor's row fails authentication
+fn pred_below(
+    tx: &Transaction,
+    market: MarketId,
+    resolution: Resolution,
+    bucket: Millis,
+) -> anyhow::Result<Option<Millis>> {
+    tx.query_row(PREDECESSOR, params![i64::from(market), resolution as i64, bucket], |row| row.get(0))
+        .with_context(|| format!("reading the {market} {resolution:?} chain below {bucket}"))
+}
+
 pub(crate) fn relink_successor(
     mac: &hmac::Hmac<sha2::Sha256>,
     tx: &Transaction,
     market: MarketId,
     resolution: Resolution,
     bucket: Millis,
-    pred: Option<Millis>,
     fresh: &BTreeSet<Millis>,
 ) -> anyhow::Result<()> {
     let succ = tx
@@ -144,12 +153,17 @@ pub(crate) fn relink_successor(
     }
     verify_row(mac, market, resolution, &succ)?;
     match succ.prev {
-        // A NULL link names the floor: genuine only when no pre-existing row sat below the
-        // insert either, so the insert (or the fresh run it belongs to) reaches down to the
-        // floor. A NULL link with pre-existing rows below is a restored snapshot refusing reads.
+        // A NULL link names the floor: genuine only when no pre-existing row sits anywhere
+        // below the successor — this transaction's fresh run included, so walk past it to the
+        // nearest pre-existing bucket. A NULL link with a pre-existing row below is a restored
+        // snapshot row refusing reads.
         None => {
+            let mut below = pred_below(tx, market, resolution, succ.bucket)?;
+            while below.is_some_and(|b| fresh.contains(&b)) {
+                below = pred_below(tx, market, resolution, below.expect("a bucket below"))?;
+            }
             ensure!(
-                pred.is_none_or(|p| fresh.contains(&p)),
+                below.is_none(),
                 "the {market} {resolution:?} chain is broken at {}: its floor link does not name the bucket below it",
                 succ.bucket
             );

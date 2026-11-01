@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use anyhow::{Context, ensure};
+use anyhow::{Context, bail, ensure};
 use engine_core::types::{MarketId, Millis};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
@@ -246,11 +246,16 @@ pub(crate) fn apply_prune(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction, plan
             );
             previous = Some(row.bucket);
         }
-        let deleted: BTreeSet<(MarketId, Millis)> = rows.iter().map(|(market, row)| (*market, row.bucket)).collect();
+        let mut last_deleted: BTreeMap<MarketId, Millis> = BTreeMap::new();
+        for (market, row) in rows {
+            last_deleted.entry(*market).and_modify(|last| *last = (*last).max(row.bucket)).or_insert(row.bucket);
+        }
         tx.execute("DELETE FROM marks WHERE resolution = ?1 AND bucket < ?2", params![*resolution as i64, horizon])
             .with_context(|| format!("pruning {resolution:?} marks"))?;
-        // Only a pair's floor can name a pruned bucket: every other survivor's predecessor is at
-        // or above the horizon and still there. Each affected pair's floor is one indexed lookup.
+        // A pair that had rows below the horizon must survive at a floor whose link names the
+        // last deleted bucket: every other survivor's predecessor is at or above the horizon and
+        // still there. A NULL link or a link skipping that bucket is a restored snapshot row,
+        // refused, not published as the new floor. Each affected pair's floor is one lookup.
         let mut floor = tx.prepare(
             "SELECT bucket, open, high, low, close, provenance, prev_bucket, tag FROM marks
              WHERE market = :market AND resolution = :resolution ORDER BY bucket ASC LIMIT 1",
@@ -272,13 +277,19 @@ pub(crate) fn apply_prune(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction, plan
                 .optional()
                 .with_context(|| format!("reading the pruned {resolution:?} floor of {market}"))?;
             let Some(floor) = floor else { continue };
-            let Some(prev) = floor.prev else { continue };
+            let last = last_deleted.get(market).copied().expect("the market had rows deleted");
+            verify_row(mac, *market, *resolution, &floor)?;
+            let Some(prev) = floor.prev else {
+                bail!(
+                    "the {market} {resolution:?} chain is broken at {}: its floor names nothing, below buckets this prune deleted",
+                    floor.bucket
+                );
+            };
             ensure!(
-                deleted.contains(&(*market, prev)),
-                "the {market} {resolution:?} chain is broken at {}: its floor names the bucket {prev}, which this prune did not delete",
+                prev == last,
+                "the {market} {resolution:?} chain is broken at {}: its floor names the bucket {prev}, not the last this prune deleted",
                 floor.bucket
             );
-            verify_row(mac, *market, *resolution, &floor)?;
             retag(mac, tx, *market, *resolution, &floor, None)?;
         }
     }
@@ -348,10 +359,7 @@ pub(crate) fn seed(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction, rows: &[See
         // Only the pre-existing row directly above an insert can have a stale link: the rows
         // this seed inserted chained to each other as they went in.
         for bucket in fresh.iter().copied() {
-            let pred: Option<Millis> = tx
-                .query_row(PREDECESSOR, params![i64::from(market), resolution as i64, bucket], |row| row.get(0))
-                .with_context(|| format!("reading the {market} {resolution:?} chain at {bucket}"))?;
-            crate::history::marks::store::merge::relink_successor(mac, tx, market, resolution, bucket, pred, &fresh)?;
+            crate::history::marks::store::merge::relink_successor(mac, tx, market, resolution, bucket, &fresh)?;
         }
     }
     Ok(inserted)

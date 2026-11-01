@@ -388,12 +388,14 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   retained-version pins, and collection (`heads.rs`)
 - `src/history/marks/mod.rs` — the derived marks cache: resolutions, per-resolution retentions,
   provenance, and the recovery seeder
-- `src/history/marks/store/mod.rs` — the cache's SQLite schema, its writer (bucket merge,
-  per-resolution pruning, seeding that never overwrites log-derived rows, backfill markers), the
-  committed chain heads, and its page reader
+- `src/history/marks/store/mod.rs` — the cache's SQLite schema, its writer (per-resolution
+  pruning, seeding that never overwrites log-derived rows, backfill markers), the committed
+  chain anchors, and its page reader
 - `src/history/marks/store/chain.rs` — the chained index over the cache: each row names the bucket
   below it, the writer re-links only over its own deletes and refuses the rest, and the reader
   checks every link and chain head before serving (`tests/chain.rs`, `tests/refusals.rs`)
+- `src/history/marks/store/merge.rs` — the live write path: merging a mark into its bucket and
+  re-linking the row above a fresh insert (`store/chain.rs` holds the shared chain queries)
 - `src/history/marks/store/reset.rs` — the recovery reset: validating every chain, deleting the
   log-derived buckets, and re-chaining the survivors
 - `src/history/marks/store/import.rs` — importing a previous run's provider-seeded rows and
