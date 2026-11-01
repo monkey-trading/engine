@@ -389,6 +389,26 @@ pub(crate) async fn check_operator_hostname(cfg: &NodeConfig, vault: &impl Check
     Ok(())
 }
 
+/// Every signer the vault has recorded, for authenticating the restored log: the current signer
+/// and each immutable signer epoch at the same finalized observation, as normal recovery uses. A
+/// log spanning a signer rotation replays as readily as a single-epoch one.
+/// Error cases:
+/// - the vault's signer epochs cannot be read
+pub(crate) async fn vault_signers(
+    vault: &impl CheckpointChain,
+    at: &crate::checkpoints::Observation,
+) -> anyhow::Result<std::collections::BTreeSet<engine_core::types::AccountId>> {
+    let mut signers = std::collections::BTreeSet::from([at.state.signer]);
+    let epochs = at.lifecycle.as_ref().map(|lifecycle| lifecycle.signer_epoch).unwrap_or(1);
+    for epoch in 1..=epochs.min(64) {
+        // Chains without canonical lifecycle evidence contribute the current signer only.
+        if let Ok(more) = vault.epoch_signers(at, &[epoch]).await {
+            signers.extend(more);
+        }
+    }
+    Ok(signers)
+}
+
 /// Fetches the predecessor's published log into this node's log directory before the handover
 /// connects: the completed segments the archive lists, checked against their listings. The final
 /// segments arrive with the keys instead — the archive serves only completed segments, and this
@@ -400,7 +420,7 @@ pub(crate) async fn check_operator_hostname(cfg: &NodeConfig, vault: &impl Check
 pub(crate) async fn sync_predecessor_log(
     cfg: &NodeConfig,
     source: &Source,
-    signer: engine_core::types::AccountId,
+    signers: std::collections::BTreeSet<engine_core::types::AccountId>,
 ) -> anyhow::Result<()> {
     let section = cfg.tee.sealing.as_ref().and_then(|sealing| sealing.handover.as_ref());
     let mut origins = section.map(|handover| handover.mirrors.clone()).unwrap_or_default();
@@ -408,25 +428,32 @@ pub(crate) async fn sync_predecessor_log(
     let client =
         crate::standby::archive::archive_client(section.is_some_and(|handover| handover.danger_accept_invalid_certs))?;
     let dir = cfg.node.log_dir.as_path();
-    let synced = match if !dir.join(crate::log::MANIFEST).exists() {
+    let fetch = if !dir.join(crate::log::MANIFEST).exists() {
         crate::standby::archive::bootstrap_archive(&client, &origins, dir).await
     } else {
         crate::standby::archive::refresh_archive(&client, &origins, dir).await
-    } {
-        Ok(()) => true,
-        Err(e) => {
-            warn!("fetching the predecessor's published log failed: {e:#}");
-            false
-        }
     };
-    if synced && dir.join(crate::log::MANIFEST).exists() {
-        // A poisoned cold start must surface now, not after the predecessor has stopped: archive
-        // bytes were only hash-checked against the server's own manifest, and this replay, of the
-        // whole fetched copy, is the authenticity check, as the standby's cold start does.
-        crate::sequencer::replay_path_with_attested(dir, None, [signer].into_iter().collect())
-            .context("the fetched log copy does not replay")?;
-        info!("the fetched log copy replays to its tip");
+    if let Err(e) = fetch {
+        // A transport failure is not fatal — a local copy from an earlier attempt may exist, and
+        // the handover's replay decides. An integrity failure (a file that differs from its
+        // listing, a copy that does not open) is: the local prefix cannot be trusted.
+        if e.downcast_ref::<reqwest::Error>().is_some() {
+            warn!("fetching the predecessor's published log failed: {e:#}");
+        } else {
+            return Err(e).context("the predecessor's published log failed integrity checks");
+        }
     }
+    let manifest = crate::log::Manifest::load(dir)?;
+    if manifest.segments.is_empty() {
+        // Nothing restored yet — the incumbent's log may still be entirely unsegmented — and the
+        // handover carries the whole log.
+        return Ok(());
+    }
+    // A poisoned copy must surface now, not after the predecessor has stopped: archive bytes were
+    // only hash-checked against the server's own manifest, and this replay, of the whole restored
+    // copy, is the authenticity check, as the standby's cold start does.
+    crate::sequencer::replay_path_with_attested(dir, None, signers).context("the restored log copy does not replay")?;
+    info!("the restored log copy replays to its tip");
     Ok(())
 }
 

@@ -8,10 +8,12 @@ use super::*;
 async fn a_stop_the_checkpoint_gate_refuses_keeps_the_keys_and_goes_on_sequencing() {
     let mut exchange = Exchange::start("handover-gate-refused").await;
     exchange.make_upgrade_current();
+    // The drained head is the fixture log's real final checkpoint; the refused stop never reads it.
+    let head = write_log_tail(&exchange.successor_log, 3, &exchange.old.enclave_key().unwrap());
     let answer = exchange.refuse_once_then_answer(
         "the final checkpoint is withheld (collateral): the handover is refused and this node goes on \
          sequencing until the checkpoint_withheld alert clears",
-        Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) },
+        head,
     );
     let err = exchange.take().await.err().expect("keys left while the gate withholds the final checkpoint");
     let err = format!("{err:#}");
@@ -23,7 +25,6 @@ async fn a_stop_the_checkpoint_gate_refuses_keeps_the_keys_and_goes_on_sequencin
     assert!(!exchange.run.is_finished(), "the refused stop ended the predecessor");
 
     // Once the gate admits the final checkpoint, the next stop takes the keys and ends it.
-    write_log_tail(&exchange.successor_log, &Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) });
     exchange.take().await.unwrap();
     timeout(Duration::from_secs(5), exchange.run).await.expect("the predecessor ended").unwrap().unwrap();
     assert_eq!(answer.await.unwrap(), 2, "the refused stop and the recovered one");
@@ -63,8 +64,7 @@ async fn a_predecessor_whose_checkpoints_are_withheld_goes_on_sequencing() {
 
     // Once signing resumes, the next successor takes the keys.
     exchange.signing.send_replace(true);
-    let head = Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) };
-    write_log_tail(&exchange.successor_log, &head);
+    let head = write_log_tail(&exchange.successor_log, 3, &exchange.old.enclave_key().unwrap());
     let _answer = exchange.answer_drain(Ok(head));
     exchange.take().await.unwrap();
 }

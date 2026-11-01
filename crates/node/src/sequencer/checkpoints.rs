@@ -168,11 +168,16 @@ impl Sequencer {
     /// segment degrades to the plain manifest, which remains authoritative.
     /// Error cases:
     /// - the tail segment cannot be sealed
-    pub(super) fn seal_handover_tail(&mut self, reply: oneshot::Sender<anyhow::Result<()>>) -> anyhow::Result<()> {
+    /// Whether an admitted handover stop sealed the log's tail: answers the stop either way, so a
+    /// failure is the refusal the predecessor reports while this node goes on sequencing. `None`
+    /// is no stop.
+    pub(super) fn seal_handover_tail(&mut self, reply: Option<oneshot::Sender<anyhow::Result<()>>>) -> bool {
+        let Some(reply) = reply else { return false };
         let sealed =
             self.log.seal_open_segment().context("sealing the log's final segment for the handover").map(|_| ());
+        let ok = sealed.is_ok();
         let _ = reply.send(sealed);
-        Ok(())
+        ok
     }
 
     /// Attempts the checkpoint a key handover hands over as the final one. The gate's verdict owns

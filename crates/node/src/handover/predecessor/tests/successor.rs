@@ -9,10 +9,9 @@ use super::*;
 async fn the_final_segment_rides_with_the_keys_into_an_empty_log() {
     let mut exchange = Exchange::start("handover-segment").await;
     exchange.make_upgrade_current();
-    let head = Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) };
     // The predecessor's drained log lists the whole log; the successor's copy holds nothing yet,
     // as a cold start the archive backfilled nothing into, so the handover carries it from seq 0.
-    write_log_from(&exchange.predecessor_log, &head, 0);
+    let head = write_log_tail(&exchange.predecessor_log, 3, &exchange.old.enclave_key().unwrap());
     let answer = exchange.answer_drain(Ok(head.clone()));
     let store = exchange.take().await.unwrap();
     assert_eq!(answer.await.unwrap(), 1, "sequencing stopped once");
@@ -78,14 +77,13 @@ async fn segment_bytes_that_differ_from_the_listing_inside_the_keys_are_refused_
 #[tokio::test]
 async fn a_successor_without_the_signed_acknowledgement_keeps_the_keys_sealed_but_does_not_start() {
     let (successor, successor_dir) = successor_config("handover-forged-ack");
-    let head = Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) };
-    write_log_tail(&successor.node.log_dir, &head);
     let old = KeySet::generate().unwrap();
+    let head = write_log_tail(&successor.node.log_dir, 3, &old.enclave_key().unwrap());
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap().to_string();
     let (domain, config) = (domain_of(&successor), successor.file_sha256);
     let mut handed = old.clone();
-    handed.predecessor_head = Some(Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) });
+    handed.predecessor_head = Some(head.clone());
     // A predecessor whose acknowledgement the host forges with a key of its own.
     let predecessor = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();

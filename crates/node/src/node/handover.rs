@@ -98,29 +98,39 @@ pub(super) async fn watch_handover(
                 }
             }
             (Episode::Elected | Episode::Overdue, Episode::None) => {
-                if let Some(last) = fired.take() {
-                    // The resolutions carry the fields the alerts fired under, so routing closes
-                    // the same episodes.
-                    let epoch = last.epoch;
-                    let elected = last.candidate;
-                    let effective_at = last.registry_effective_at;
-                    info!(
-                        alert_resolved = "operator_elected",
-                        epoch,
-                        elected = %elected,
-                        effective_at,
-                        "the election naming another operator was cancelled or superseded: this operator stays in effect"
-                    );
-                    if current == Episode::Overdue {
-                        info!(
-                            alert_resolved = "handover_overdue",
-                            epoch, effective_at, "the overdue handover episode ends with the election's end"
-                        );
-                    }
+                if current == Episode::Overdue {
+                    resolve_overdue(&fired);
                 }
+                resolve(&mut fired);
             }
             _ => {}
         }
         current = next;
+    }
+}
+
+/// Emits the `handover_overdue` resolution for an open episode, with the fields it fired under.
+fn resolve_overdue(fired: &Option<engine_core::election::Election>) {
+    if let Some(last) = fired {
+        info!(
+            alert_resolved = "handover_overdue",
+            epoch = last.epoch,
+            effective_at = last.registry_effective_at,
+            "the overdue handover episode ends"
+        );
+    }
+}
+
+/// Emits the `operator_elected` resolution with the fields it fired under and clears it, so alert
+/// routing closes the same episode the firing opened.
+fn resolve(fired: &mut Option<engine_core::election::Election>) {
+    if let Some(last) = fired.take() {
+        info!(
+            alert_resolved = "operator_elected",
+            epoch = last.epoch,
+            elected = %last.candidate,
+            effective_at = last.registry_effective_at,
+            "the election naming another operator ended: cancelled, superseded, or handed over"
+        );
     }
 }

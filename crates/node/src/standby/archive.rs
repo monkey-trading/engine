@@ -33,16 +33,19 @@ pub(crate) async fn bootstrap_archive(
         let bytes = fetch_archive_bytes(archive, origins, &listed.file, Some(listed)).await?;
         check_listing(listed, &bytes)?;
         // Stage under a name `SegmentedLog::open` ignores, then link into place: a crash leaves
-        // either the old or the new whole file, never a torn one.
+        // either the old or the new whole file, never a torn one. Syncs make the adopted copy
+        // durable: a confirmed handover must survive a VM stop, and the guest page cache is lost
+        // whenever the VM stops.
         let staged = dir.join(format!("{}.staging", listed.file));
-        std::fs::write(&staged, bytes).with_context(|| format!("writing {}", staged.display()))?;
+        write_synced(&staged, &bytes)?;
         std::fs::rename(&staged, dir.join(&listed.file)).with_context(|| format!("linking {}", listed.file))?;
         text.push_str(&serde_json::to_string(listed).context("encoding a manifest line")?);
         text.push('\n');
     }
     let staged = dir.join(format!("{MANIFEST}.staging"));
-    std::fs::write(&staged, text).with_context(|| format!("writing {}", staged.display()))?;
+    write_synced(&staged, text.as_bytes())?;
     std::fs::rename(&staged, dir.join(MANIFEST)).with_context(|| format!("linking {MANIFEST}"))?;
+    sync_dir(dir)?;
     info!(segments = listings.len(), "backfilled the copy from the operator's archive");
     Ok(())
 }
@@ -80,16 +83,17 @@ pub(crate) async fn refresh_archive(
         let bytes = fetch_archive_bytes(archive, origins, &listed.file, Some(listed)).await?;
         check_listing(listed, &bytes)?;
         let staged = dir.join(format!("{}.staging", listed.file));
-        std::fs::write(&staged, bytes).with_context(|| format!("writing {}", staged.display()))?;
+        write_synced(&staged, &bytes)?;
         std::fs::rename(&staged, &path).with_context(|| format!("linking {}", listed.file))?;
         // Commit each segment's listing as it lands: a crash then leaves the manifest naming
         // exactly the linked prefix, which opens.
         text.push_str(&serde_json::to_string(listed).context("encoding a manifest line")?);
         text.push('\n');
         let staged_manifest = dir.join(format!("{MANIFEST}.staging"));
-        std::fs::write(&staged_manifest, &text).with_context(|| format!("writing {}", staged_manifest.display()))?;
+        write_synced(&staged_manifest, text.as_bytes())?;
         std::fs::rename(&staged_manifest, dir.join(MANIFEST)).with_context(|| format!("linking {MANIFEST}"))?;
     }
+    sync_dir(dir)?;
     Ok(())
 }
 
@@ -138,6 +142,21 @@ fn check_listing(listed: &SegmentInfo, bytes: &[u8]) -> anyhow::Result<()> {
         "archive segment {} differs from its listing",
         listed.file
     );
+    Ok(())
+}
+
+/// Writes `bytes` to `path` and syncs them to storage.
+fn write_synced(path: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()> {
+    use std::io::Write as _;
+    let mut file = std::fs::File::create(path)?;
+    file.write_all(bytes).with_context(|| format!("writing {}", path.display()))?;
+    file.sync_all().with_context(|| format!("syncing {}", path.display()))?;
+    Ok(())
+}
+
+/// Syncs the directory entry naming everything written under it.
+fn sync_dir(dir: &std::path::Path) -> anyhow::Result<()> {
+    std::fs::File::open(dir)?.sync_all().with_context(|| format!("syncing {}", dir.display()))?;
     Ok(())
 }
 

@@ -305,7 +305,11 @@ impl LogWriter {
         if self.catalog_owner.is_some()
             && self.manifest.borrow().catalog.as_ref().is_some_and(|catalog| catalog.live_full())
         {
-            self.fold_catalog(None)?;
+            // A failed fold is not fatal: the append below degrades to the plain manifest, which
+            // remains authoritative.
+            if let Err(e) = self.fold_catalog(None) {
+                warn!(alert = "log_catalog_unavailable", "folding the full catalog before the seal failed: {e:#}");
+            }
         }
         let Some((segment, out)) = self.open.take() else { return Ok(None) };
         let done = out.into_inner().map_err(|e| e.into_error()).context("flushing log segment")?;

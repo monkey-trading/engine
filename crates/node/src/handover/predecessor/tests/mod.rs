@@ -127,8 +127,7 @@ async fn the_current_release_takes_the_keys_seals_them_and_the_predecessor_ends(
     let sealer = MockSealer { launch_digest: UPGRADE };
     let older = KeySet::generate().unwrap();
     KeyStore::create(&exchange.successor_dir, &sealer, exchange.successor.file_sha256, 1, older.clone()).unwrap();
-    let head = Head { seq: 9, root: format!("0x{}", "ab".repeat(32)) };
-    write_log_tail(&exchange.successor_log, &head);
+    let head = write_log_tail(&exchange.successor_log, 9, &exchange.old.enclave_key().unwrap());
     let answer = exchange.answer_drain(Ok(head.clone()));
     let store = exchange.take().await.unwrap();
     assert_eq!(answer.await.unwrap(), 1, "sequencing stopped once");
@@ -148,8 +147,7 @@ async fn the_current_release_takes_the_keys_seals_them_and_the_predecessor_ends(
 async fn a_successor_takes_only_the_key_the_vault_names() {
     let mut exchange = Exchange::start("handover-unnamed-key").await;
     exchange.make_upgrade_current();
-    let head = Head { seq: 9, root: format!("0x{}", "ab".repeat(32)) };
-    write_log_tail(&exchange.successor_log, &head);
+    let head = write_log_tail(&exchange.successor_log, 9, &exchange.old.enclave_key().unwrap());
     let _answer = exchange.answer_drain(Ok(head));
     // A host-run predecessor hands over a key the vault does not name: nothing is sealed or confirmed.
     let err = exchange.take_naming(AccountId([0xee; 20])).await.err().expect("an unnamed key was taken");
@@ -166,8 +164,7 @@ async fn a_successor_takes_only_the_key_the_vault_names() {
 async fn a_successor_the_vault_no_longer_names_once_the_keys_arrive_seals_nothing() {
     let mut exchange = Exchange::start("handover-named-another").await;
     exchange.make_upgrade_current();
-    let head = Head { seq: 9, root: format!("0x{}", "ab".repeat(32)) };
-    write_log_tail(&exchange.successor_log, &head);
+    let head = write_log_tail(&exchange.successor_log, 9, &exchange.old.enclave_key().unwrap());
     let _answer = exchange.answer_drain(Ok(head));
     // Governance names another release after the predecessor's check and before the successor's.
     let signer = AccountId(exchange.old.enclave_key().unwrap().address());
@@ -183,8 +180,7 @@ async fn a_successor_the_vault_no_longer_names_once_the_keys_arrive_seals_nothin
 async fn a_confirmation_by_another_key_ends_nothing_and_a_later_successor_reuses_the_stop() {
     let mut exchange = Exchange::start("handover-forged-confirm").await;
     exchange.make_upgrade_current();
-    let head = Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) };
-    write_log_tail(&exchange.successor_log, &head);
+    let head = write_log_tail(&exchange.successor_log, 3, &exchange.old.enclave_key().unwrap());
     let answer = exchange.answer_drain(Ok(head));
 
     // A successor that cannot sign with the handed-over key never ends the predecessor.
@@ -206,8 +202,7 @@ async fn a_stopped_predecessor_keeps_serving_until_a_successor_confirms() {
     let (_guard, mut alerts) = capture_alerts();
     let mut exchange = Exchange::start("handover-keeps-serving").await;
     exchange.make_upgrade_current();
-    let head = Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) };
-    write_log_tail(&exchange.successor_log, &head);
+    let head = write_log_tail(&exchange.successor_log, 3, &exchange.old.enclave_key().unwrap());
     let answer = exchange.answer_drain(Ok(head));
     let (mut stream, _, request) = exchange.connect(exchange.successor.file_sha256).await;
     send(&mut stream, &request).await.unwrap();
@@ -231,8 +226,7 @@ async fn a_stopped_predecessor_keeps_serving_until_a_successor_confirms() {
 async fn a_recorded_request_gets_nothing_on_another_connection() {
     let mut exchange = Exchange::start("handover-replay").await;
     exchange.make_upgrade_current();
-    let head = Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) };
-    write_log_tail(&exchange.successor_log, &head);
+    let head = write_log_tail(&exchange.successor_log, 3, &exchange.old.enclave_key().unwrap());
     let _answer = exchange.answer_drain(Ok(head));
     let (mut first, _, recorded) = exchange.connect(exchange.successor.file_sha256).await;
     send(&mut first, &recorded).await.unwrap();
@@ -395,31 +389,48 @@ fn successor_config(name: &str) -> (NodeConfig, PathBuf) {
 
 /// Writes a completed one-segment log ending at `head`, with its manifest, as the archive
 /// bootstrap leaves a copy.
-fn write_log_tail(dir: &std::path::Path, head: &Head) {
-    write_log_from(dir, head, 1)
-}
-
-/// Writes a one-segment log running `first..=head.seq`, with its manifest.
-fn write_log_from(dir: &std::path::Path, head: &Head, first: u64) {
+/// Writes a one-segment log running `0..=seq`, signed by `key`, and returns its head: the
+/// commands apply to a real engine, whose state root the fixture's final checkpoint carries,
+/// signed as real checkpoints are, so the handover's replay checks pass against fixture logs as
+/// they do against real ones.
+fn write_log_tail(dir: &std::path::Path, seq: u64, key: &crate::tee::EnclaveKey) -> Head {
     std::fs::create_dir_all(dir).unwrap();
-    let file = format!("{:020}.jsonl", first);
+    let file = format!("{:020}.jsonl", 0);
     let mut text = String::new();
-    for seq in first..=head.seq {
-        text.push_str(&serde_json::to_string(&LogEntry::Command(command(seq))).unwrap());
+    let mut engine = engine_core::Engine::new();
+    for n in 0..=seq {
+        let mut entry = CommandEntry {
+            sequenced: Sequenced { seq: n, ts: 1_000 + n as i64, cmd: Command::Tick },
+            events: Some(Vec::new()),
+            seal: None,
+        };
+        entry.events = Some(engine.apply(&entry.sequenced).unwrap());
+        text.push_str(&serde_json::to_string(&LogEntry::Command(entry)).unwrap());
         text.push('\n');
     }
-    text.push_str(&serde_json::to_string(&LogEntry::Checkpoint(checkpoint(head.seq, &head.root))).unwrap());
+    let root = engine.state_root();
+    let domain = CheckpointDomain { chain_id: 31337, vault: AccountId([0; 20]) };
+    let checkpoint: Checkpoint = serde_json::from_value(serde_json::json!({
+        "seq": seq,
+        "root": format!("0x{}", hex::encode(root)),
+        "signature": key.sign_checkpoint(domain.chain_id, &domain.vault.0, seq, &root),
+        "signer": format!("{:#x}", alloy::primitives::Address::from(key.address())),
+        "domain": { "chain_id": domain.chain_id, "vault": format!("{:#x}", alloy::primitives::Address::from(domain.vault.0)) },
+    }))
+    .unwrap();
+    text.push_str(&serde_json::to_string(&LogEntry::Checkpoint(checkpoint)).unwrap());
     text.push('\n');
     let bytes = text.as_bytes();
     let listed = crate::log::SegmentInfo {
         file,
-        first_seq: first,
-        last_seq: head.seq,
+        first_seq: 0,
+        last_seq: seq,
         bytes: bytes.len() as u64,
         sha256: hex::encode(sha2::Sha256::digest(bytes)),
     };
     std::fs::write(dir.join(&listed.file), bytes).unwrap();
     std::fs::write(dir.join(crate::log::MANIFEST), format!("{}\n", serde_json::to_string(&listed).unwrap())).unwrap();
+    Head { seq, root: format!("0x{}", hex::encode(root)) }
 }
 
 /// The deployment `cfg` names.
@@ -446,5 +457,12 @@ fn command(seq: u64) -> CommandEntry {
 }
 
 fn checkpoint(seq: u64, root: &str) -> Checkpoint {
-    serde_json::from_value(serde_json::json!({ "seq": seq, "root": root, "signature": "0x", "signer": "0x" })).unwrap()
+    serde_json::from_value(serde_json::json!({
+        "seq": seq,
+        "root": root,
+        "signature": "0x",
+        "signer": "0x",
+        "domain": { "chain_id": 31337, "vault": "0x0000000000000000000000000000000000000000" },
+    }))
+    .unwrap()
 }

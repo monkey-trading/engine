@@ -97,6 +97,21 @@ pub(crate) async fn take(
     let mut keys = open_keys(domain, &secret, &request, &encapped_key, &ciphertext)?;
     let head = keys.predecessor_head.clone().context("the keys carry no final checkpoint")?;
     let tails = std::mem::take(&mut keys.handover_tails);
+    // The vault names the key before anything is written: a handover never lands the log of a
+    // release or key the vault does not name.
+    let enclave = keys.enclave_key()?;
+    keys.tls_key()?;
+    let observation = vault.observe(View::Finalized, &[]).await?;
+    let finalized = observation.state.clone();
+    let named = finalized.signer;
+    ensure!(
+        named == AccountId(enclave.address()),
+        "the handed-over key {} is not the vault's signer {named}",
+        enclave.address_hex()
+    );
+    let release = Release { launch_digest: platform.launch_digest, config_sha256: cfg.file_sha256 };
+    let generation = ensure_named(vault.current_release(&observation).await?, &release)?;
+    let signers = crate::handover::vault_signers(vault, &observation).await?;
     let mut tip = log_tip;
     for listed in &tails {
         let bytes =
@@ -107,18 +122,17 @@ pub(crate) async fn take(
     if tails.is_empty() {
         info!("the predecessor handed no log segments over: the restored log already reaches the head");
     }
-    ensure!(tip == Some(head.seq), "the log reaches seq {:?}, not the predecessor's final seq {}", tip, head.seq);
-    let enclave = keys.enclave_key()?;
-    keys.tls_key()?;
-    let finalized = vault.observe(View::Finalized, &[]).await?;
-    let named = finalized.state.signer;
+    // The whole restored log must replay, authenticated against every signer the vault recorded,
+    // and reach the handed-over checkpoint: the confirmation ends the predecessor, so an invalid
+    // transfer must be caught here, not by the recovery that follows a successful handover.
+    let replayed = crate::sequencer::replay_path_with_attested(dir, Some(domain), signers)
+        .context("the restored log does not replay")?;
     ensure!(
-        named == AccountId(enclave.address()),
-        "the handed-over key {} is not the vault's signer {named}",
-        enclave.address_hex()
+        replayed.last_signed_checkpoint.as_ref().is_some_and(|cp| cp.seq == head.seq && cp.root == head.root),
+        "the restored log's last checkpoint is not the predecessor's final checkpoint (seq {}, root {})",
+        head.seq,
+        head.root
     );
-    let release = Release { launch_digest: platform.launch_digest, config_sha256: cfg.file_sha256 };
-    let generation = ensure_named(vault.current_release(&finalized).await?, &release)?;
     let store = KeyStore::create(&sealing.dir, sealer, cfg.file_sha256, generation, keys)?;
     info!(
         enclave = %enclave.address_hex(),
@@ -149,9 +163,7 @@ pub(crate) async fn take(
         error!(
             alert = "handover_unconfirmed",
             predecessor = address,
-            "the predecessor did not acknowledge the handover, so it may still run: the keys are not \
-             sealed here either, and this release must take them again before the predecessor stops: \
-             {e:#}"
+            "the predecessor did not acknowledge the handover, so it may still run: the keys are sealed              here, but this release must not start until the predecessor has stopped, or both may sign:              {e:#}"
         );
         bail!("the predecessor did not acknowledge the handover: {e:#}");
     }
@@ -212,19 +224,40 @@ fn ensure_segment(dir: &Path, listed: &SegmentInfo, bytes: &[u8], tip: Option<u6
     let target = dir.join(&listed.file);
     match std::fs::read(&target) {
         Ok(existing) if existing == bytes => {
-            info!(file = %listed.file, "the predecessor's segment is already here");
-        }
-        Ok(_) => bail!("{} exists with other bytes: refusing to overwrite it", target.display()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            let staged = dir.join(format!("{}.staging", listed.file));
-            write_synced(&staged, bytes)?;
-            std::fs::rename(&staged, &target).with_context(|| format!("linking {}", target.display()))?;
+            // Already here from an interrupted earlier attempt: make sure it is listed and durable
+            // before the tip advances past it.
             append_manifest(dir, listed)?;
             sync_dir(dir)?;
-            info!(file = %listed.file, first_seq = listed.first_seq, last_seq = listed.last_seq, "wrote the predecessor's segment");
+            info!(file = %listed.file, "the predecessor's segment is already here");
+        }
+        Ok(_) if !manifest_lists(dir, &listed.file) => {
+            // An unlisted leftover of an interrupted attempt is redoable: the handover's copy,
+            // hash-checked against the listing inside the keys, replaces it.
+            std::fs::remove_file(&target).with_context(|| format!("removing {}", target.display()))?;
+            write_linked(dir, listed, bytes)?;
+        }
+        Ok(_) => bail!("{} exists with other bytes and is listed: refusing to overwrite it", target.display()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            write_linked(dir, listed, bytes)?;
         }
         Err(e) => return Err(e).with_context(|| format!("reading {}", target.display())),
     }
+    Ok(())
+}
+
+/// Whether the manifest lists `file`.
+fn manifest_lists(dir: &Path, file: &str) -> bool {
+    std::fs::read_to_string(dir.join(crate::log::MANIFEST)).is_ok_and(|text| text.contains(file))
+}
+
+/// Writes one segment durably: staged and synced, linked, listed, and the directory synced.
+fn write_linked(dir: &Path, listed: &SegmentInfo, bytes: &[u8]) -> anyhow::Result<()> {
+    let staged = dir.join(format!("{}.staging", listed.file));
+    write_synced(&staged, bytes)?;
+    std::fs::rename(&staged, dir.join(&listed.file)).with_context(|| format!("linking {}", listed.file))?;
+    append_manifest(dir, listed)?;
+    sync_dir(dir)?;
+    info!(file = %listed.file, first_seq = listed.first_seq, last_seq = listed.last_seq, "wrote the predecessor's segment");
     Ok(())
 }
 

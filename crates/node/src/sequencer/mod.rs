@@ -213,8 +213,8 @@ impl Sequencer {
                 self.metrics.batch_seconds.observe(self.clock.instant().duration_since(started).as_secs_f64());
             }
             queries.drain(..).for_each(|q| q(&self.engine));
-            if let Some(reply) = handover_stop {
-                self.seal_handover_tail(reply)?;
+            // `seal_handover_tail` answers a failed seal as the stop's refusal: sequencing goes on.
+            if self.seal_handover_tail(handover_stop) {
                 break;
             }
         }

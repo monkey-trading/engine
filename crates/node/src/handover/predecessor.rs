@@ -167,11 +167,13 @@ impl<C: CheckpointChain> Predecessor<C> {
             Err(e) => return Ok(refuse(&mut stream, e).await),
         };
         info!(successor_release = %hex::encode(release.id()), "the vault names the successor's release");
-        // The log segments the successor lacks must each fit the handover's bound: the writer
-        // rotates by command count, not bytes, so a runaway tail is refused here, before the stop
-        // it could strand.
-        if let Some(oversized) = self.oversized_tail()? {
-            return Ok(refuse(&mut stream, anyhow!("the log segment {oversized} is over the handover's bound")).await);
+        // The segments the successor lacks must each fit the handover's bound, and the transfer
+        // must fit memory: the writer rotates by command count, not bytes, so a runaway tail is
+        // refused here, before the stop it could strand. A read error refuses this attempt and
+        // keeps the node serving.
+        match self.transfer_bounds(request.log_tip) {
+            Ok(()) => {}
+            Err(e) => return Ok(refuse(&mut stream, e).await),
         }
         let head = match head {
             Some(head) => head.clone(),
@@ -257,15 +259,34 @@ impl<C: CheckpointChain> Predecessor<C> {
         Ok(frames)
     }
 
-    /// The name of an unlisted (open) segment file over the handover's bound, if any: such a tail
-    /// could not be handed over, so the request is refused before the stop it would strand.
+    /// Whether the segments past `tip` can be handed over: each within the frame bound, and the
+    /// set within count and byte budgets the keys message and memory hold. The successor is
+    /// expected to hold the rest from the archive; a transfer past these bounds is refused before
+    /// the stop, with a message that says to sync the archive first.
     /// Error cases:
-    /// - the log directory cannot be read
-    fn oversized_tail(&self) -> anyhow::Result<Option<String>> {
+    /// - the manifest or the log directory cannot be read
+    fn transfer_bounds(&self, tip: Option<u64>) -> anyhow::Result<()> {
+        const MAX_TAILS: usize = 1024;
+        const MAX_TRANSFER_BYTES: u64 = 8 << 30;
         let manifest = Manifest::load(&self.log_dir)?;
+        let mut count = 0_usize;
+        let mut bytes = 0_u64;
+        for listed in manifest.segments.iter().filter(|listed| tip.is_none_or(|tip| listed.last_seq > tip)) {
+            ensure!(
+                listed.bytes <= crate::handover::MAX_SEGMENT_BYTES as u64,
+                "the log segment {} is over the handover's 64 MiB frame bound: the successor cannot take it",
+                listed.file
+            );
+            count += 1;
+            bytes += listed.bytes;
+        }
+        ensure!(
+            count <= MAX_TAILS && bytes <= MAX_TRANSFER_BYTES,
+            "the log past seq {tip:?} is {count} segments, {bytes} bytes: beyond the handover's bounds, so sync              the successor's archive copy first"
+        );
         let entries = match std::fs::read_dir(&self.log_dir) {
             Ok(entries) => entries,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(e) => return Err(e).with_context(|| format!("reading {}", self.log_dir.display())),
         };
         for entry in entries {
@@ -274,11 +295,12 @@ impl<C: CheckpointChain> Predecessor<C> {
             if crate::log::segment_seq(&name).is_none() || manifest.segments.iter().any(|listed| listed.file == name) {
                 continue;
             }
-            if entry.metadata()?.len() > crate::handover::MAX_SEGMENT_BYTES as u64 {
-                return Ok(Some(name));
-            }
+            ensure!(
+                entry.metadata()?.len() <= crate::handover::MAX_SEGMENT_BYTES as u64,
+                "the open log segment {name} is over the handover's 64 MiB frame bound: rotate it before the handover"
+            );
         }
-        Ok(None)
+        Ok(())
     }
 
     /// The successor's release, the measurement its quote proves and the config hash it binds,
