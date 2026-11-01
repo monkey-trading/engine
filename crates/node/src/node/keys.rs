@@ -190,10 +190,14 @@ async fn obtain_with(
         // release — so an election has taken effect naming this node the operator — take the keys
         // from the incumbent the election replaced, reading its handover endpoint from the
         // registry, and the published log ahead of the segment the handover itself carries.
+        info!("election handover: no sealed keys; checking the registry's rotation");
         ensure!(vault.rotation_enabled().await?, "{}", refusal(dir, generation));
+        info!("election handover: rotation is on; resolving the incumbent the election replaced");
         match crate::handover::resolve_source(vault).await? {
             Some(source) => {
+                info!(predecessor = %source.endpoint, "election handover: resolved the incumbent");
                 crate::handover::sync_predecessor_log(cfg, &source).await?;
+                info!("election handover: fetched the incumbent's published log");
                 info!(
                     predecessor = %source.endpoint,
                     incumbent = %source.candidate,
