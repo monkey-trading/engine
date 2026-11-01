@@ -309,6 +309,9 @@ this crate and reproduce the signed state roots exactly.
 - `tests/staking.rs` — MONKEY staking and USDC distributions from `V25`: stake and unstake
   mirroring, epoch closes above and below the liquidity floor, pro-rata rounding, skipped epochs,
   and distribution proofs
+- `tests/session_keys.rs` — `V41` session keys: registration and revival, per-key nonces, the
+  order/cancel-only scope, revocations and expiries, the per-account cap and its pruning, and
+  cross-account isolation, with the shared harness in `tests/common/session_keys.rs`
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its

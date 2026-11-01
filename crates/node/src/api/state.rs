@@ -40,9 +40,9 @@ impl ApiState {
     /// - the sequencer has stopped
     /// `authorise_request` with `session` deciding whether a registered session key's signature
     /// may stand in for the account's: true for the requests a session key may make (orders,
-    /// cancels, and the withdrawals the engine refuses in the log as out of scope), false for key
-    /// management, which is the account key's alone at the API too, so a session key's signature
-    /// on a registration or revocation never reaches the log.
+    ///   cancels, and the withdrawals the engine refuses in the log as out of scope), false for key
+    ///   management, which is the account key's alone at the API too, so a session key's signature
+    ///   on a registration or revocation never reaches the log.
     pub(super) async fn authorise(
         &self,
         account: AccountId,
@@ -194,7 +194,9 @@ impl ApiState {
             return Err(ApiError::Unauthorized("session key expired"));
         }
         self.check_fresh(&auth, next, last_sequenced)?;
-        self.limits.check_account(account)?;
+        // Counted against the key, not the account: a flooding key spends its own allowance and
+        // cannot starve the account's requests, the wallet's revocation above all.
+        self.limits.check_account(signer)?;
         Ok(Some(auth))
     }
 

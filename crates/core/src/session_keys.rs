@@ -36,8 +36,8 @@ pub struct SessionKey {
     /// The sequenced time at and before which the key's requests run; later ones refuse as
     /// expired.
     pub expires_at: Millis,
-    /// Set by a revocation and cleared by a fresh registration; a revoked key stays in state so its
-    /// requests refuse distinctly, and its nonce stays spent.
+    /// Set by a revocation and cleared by a fresh registration; a revoked key refuses distinctly
+    /// until the account's next registration prunes it, and its nonce stays spent.
     pub revoked: bool,
 }
 
@@ -47,8 +47,9 @@ impl Engine {
     /// revocation: a session key never widens its own scope. The account's nonce is spent by any
     /// refusal after its signature checks, so a refused registration cannot be replayed from the
     /// log once it would succeed. A registration first prunes the account's expired and revoked
-    /// keys — their nonces stay spent in `request_nonces` — and refuses past
-    /// [`MAX_SESSION_KEYS_PER_ACCOUNT`], so one account's state stays bounded.
+    /// keys — their nonces stay spent in `request_nonces` — and refuses a new key past
+    /// [`MAX_SESSION_KEYS_PER_ACCOUNT`], so one account's state stays bounded; renewing a key the
+    /// account already holds replaces it and never counts against the cap.
     /// Error cases:
     /// - before `V41`
     /// - the signature, nonce, or request expiry fails (see `Engine::authorise`)
@@ -88,8 +89,9 @@ impl Engine {
             events.push(rejected(Reject::ExpiryTooFar { latest }));
             return;
         }
+        let held = self.session_keys.get(&account).is_some_and(|keys| keys.contains_key(&session_key));
         let live = self.session_keys.get(&account).map_or(0, |keys| keys.len());
-        if live >= MAX_SESSION_KEYS_PER_ACCOUNT {
+        if !held && live >= MAX_SESSION_KEYS_PER_ACCOUNT {
             events.push(rejected(Reject::TooManySessionKeys { max: MAX_SESSION_KEYS_PER_ACCOUNT }));
             return;
         }

@@ -83,6 +83,68 @@ async fn a_session_key_cannot_register_another_key() {
     );
 }
 
+#[tokio::test]
+async fn a_session_key_cancels_and_a_stale_nonce_stays_out_of_the_log() {
+    let node = Node::start("session-key-cancel", true).await;
+    let account = key(1);
+    let session = key(7);
+    node.onboard(&account).await;
+    let register = registration(&account, &session, 1, NOW + 3_600_000);
+    assert_eq!(node.post("/v1/session-keys", register).await.0, StatusCode::OK);
+
+    // The key places and cancels a resting order with its own nonce sequence.
+    let mut limit: OrderRequest = serde_json::from_value(session_order(&account, &session, 0)).unwrap();
+    limit.kind = OrderKind::Limit { price: "90000".parse().unwrap() };
+    let hash = eip712::order_hash(&eip712::domain(31_337, VAULT), &limit, 0, NOW + 60_000);
+    limit.auth = Some(RequestAuth { nonce: 0, expires_at: NOW + 60_000, signature: eip712::sign(&session, &hash) });
+    let (status, events) = node.post("/v1/orders", serde_json::to_value(&limit).unwrap()).await;
+    assert_eq!(status, StatusCode::OK, "{events}");
+    let order_id = events[0]["order_id"].as_u64().unwrap();
+    let hash = eip712::cancel_hash(
+        &eip712::domain(31_337, VAULT),
+        eip712::address(account.verifying_key()),
+        order_id,
+        1,
+        NOW + 60_000,
+    );
+    let auth = RequestAuth { nonce: 1, expires_at: NOW + 60_000, signature: eip712::sign(&session, &hash) };
+    let body = serde_json::json!({
+        "account": eip712::address(account.verifying_key()),
+        "order_id": order_id,
+        "auth": auth,
+    });
+    let (status, events) = node.post("/v1/orders/cancel", body).await;
+    assert_eq!(status, StatusCode::OK, "{events}");
+    assert_eq!(events[0]["type"], "order_cancelled", "{events}");
+
+    // A replayed order with a used nonce conflicts and never reaches the log.
+    let replayed = session_order(&account, &session, 1);
+    let (status, body) = node.post("/v1/orders", replayed.clone()).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::CONFLICT, Some("invalid nonce")));
+    let logged = node
+        .entries()
+        .iter()
+        .filter(|entry| matches!(entry, LogEntry::Command(c) if matches!(c.sequenced.cmd, Command::AccessOrder { .. })))
+        .count();
+    assert_eq!(logged, 1, "only the first order reached the log");
+}
+
+#[tokio::test]
+async fn a_never_credited_account_cannot_register_a_session_key() {
+    let node = Node::start("session-key-uncredited", true).await;
+    let account = key(1);
+    let session = key(7);
+    // No deposit has ever credited the account, so even its own signed registration is refused
+    // before sequencing, and nothing enters the log.
+    let register = registration(&account, &session, 0, NOW + 3_600_000);
+    let (status, body) = node.post("/v1/session-keys", register).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("account has never been credited")));
+    assert!(
+        node.entries().iter().all(|entry| !matches!(entry, LogEntry::Command(c) if matches!(c.sequenced.cmd, Command::RegisterSessionKey { .. }))),
+        "the registration never reached the log"
+    );
+}
+
 /// `account`'s signed registration of `session` until `session_expires_at`, as a JSON body.
 fn registration(account: &SigningKey, session: &SigningKey, nonce: u64, session_expires_at: i64) -> Value {
     json!({

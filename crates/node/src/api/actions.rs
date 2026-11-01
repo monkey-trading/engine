@@ -63,7 +63,7 @@ pub(super) async fn register_session_key(
 ) -> ApiResult<Vec<Event>> {
     // Key management is the account key's alone: a session key's signature never reaches the log.
     let auth = s
-        .authorise(b.account, Some(b.auth), false, |domain, auth| {
+        .authorise(b.account, b.auth, false, |domain, auth| {
             eip712::session_key_registration_hash(
                 domain,
                 b.account,
@@ -94,7 +94,7 @@ pub(super) async fn revoke_session_key(
     Json(b): Json<SessionKeyRevocationRequest>,
 ) -> ApiResult<Vec<Event>> {
     let auth = s
-        .authorise(b.account, Some(b.auth), false, |domain, auth| {
+        .authorise(b.account, b.auth, false, |domain, auth| {
             eip712::session_key_revocation_hash(domain, b.account, b.session_key, auth.nonce, auth.expires_at)
         })
         .await?;

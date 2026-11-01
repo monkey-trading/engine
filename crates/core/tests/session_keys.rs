@@ -189,6 +189,14 @@ fn a_registration_past_the_per_account_cap_refuses_and_prunes_expired_keys() {
         }]
     );
     assert_eq!(h.engine.next_request_nonce(client.account), 12);
+    // Renewing a key the account already holds replaces it and is not a new key: it succeeds at
+    // the cap, where an eleventh distinct key refused.
+    let cmd = register_expiring(&h, &client, &keys[0], h.ts + 2 * HOUR_MS, h.ts + 60_000);
+    let events = h.cmd(cmd);
+    assert!(
+        matches!(events[..], [Event::SessionKeyRegistered { session_key, .. }] if session_key == keys[0].account),
+        "{events:?}"
+    );
 
     // Expired keys are pruned by the next registration, which then fits under the cap; a revoked
     // key is pruned the same way, and its nonce stays spent.
@@ -381,7 +389,6 @@ fn an_unsigned_registration_is_missing_its_signature() {
 #[test]
 fn the_account_and_operator_addresses_cannot_be_session_keys() {
     let (mut h, client, key) = funded();
-    let _ = key;
     for invalid in [client.account, Client::operator().account] {
         let events = h.cmd(register(&h, &client, &Client { account: invalid, ..Client::new(3) }, h.ts + HOUR_MS));
         assert_eq!(

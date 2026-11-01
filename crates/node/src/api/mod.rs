@@ -177,7 +177,8 @@ struct SessionKeyRequest {
     account: AccountId,
     session_key: AccountId,
     expires_at: Millis,
-    auth: RequestAuth,
+    #[serde(default)]
+    auth: Option<RequestAuth>,
 }
 
 #[derive(Deserialize)]
@@ -185,7 +186,8 @@ struct SessionKeyRequest {
 struct SessionKeyRevocationRequest {
     account: AccountId,
     session_key: AccountId,
-    auth: RequestAuth,
+    #[serde(default)]
+    auth: Option<RequestAuth>,
 }
 
 impl IntoResponse for ApiError {

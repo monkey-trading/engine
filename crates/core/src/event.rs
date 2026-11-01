@@ -311,7 +311,8 @@ pub enum Event {
         session_key: AccountId,
     },
     /// From `V41`, a registration or revocation the engine refused: before `V41`, naming a key that
-    /// cannot be a session key, or a signature, nonce, or expiry failure.
+    /// cannot be a session key, a signature, nonce, or expiry failure, or a new key past the
+    /// account's cap.
     SessionKeyRejected {
         account: AccountId,
         session_key: AccountId,
