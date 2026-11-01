@@ -206,7 +206,8 @@ fn a_registration_past_the_per_account_cap_refuses_and_prunes_expired_keys() {
     let client = Client { expires_at: h.ts + 60_000, ..Client::new(1) };
     let events = h.cmd(register_expiring(&h, &client, &key, h.ts + HOUR_MS, h.ts + 60_000));
     assert!(matches!(events[..], [Event::SessionKeyRegistered { .. }]), "{events:?}");
-    let events = h.cmd(client.revoke_session_key(13, key.account));
+    let nonce = h.engine.next_request_nonce(client.account);
+    let events = h.cmd(client.revoke_session_key(nonce, key.account));
     assert!(matches!(events[..], [Event::SessionKeyRevoked { .. }]), "{events:?}");
     let events = h.cmd(register_expiring(&h, &client, &overflow, h.ts + HOUR_MS, h.ts + 60_000));
     assert!(matches!(events[..], [Event::SessionKeyRegistered { .. }]), "{events:?}");
@@ -388,7 +389,7 @@ fn an_unsigned_registration_is_missing_its_signature() {
 
 #[test]
 fn the_account_and_operator_addresses_cannot_be_session_keys() {
-    let (mut h, client, key) = funded();
+    let (mut h, client, _) = funded();
     for invalid in [client.account, Client::operator().account] {
         let events = h.cmd(register(&h, &client, &Client { account: invalid, ..Client::new(3) }, h.ts + HOUR_MS));
         assert_eq!(

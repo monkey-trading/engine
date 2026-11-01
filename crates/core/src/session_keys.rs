@@ -55,7 +55,8 @@ impl Engine {
     /// - the signature, nonce, or request expiry fails (see `Engine::authorise`)
     /// - the registration names the account's own key or the operator's
     /// - `expires_at` is not in the future, or more than `MAX_SESSION_KEY_EXPIRY_MS` ahead
-    /// - the account already holds `MAX_SESSION_KEYS_PER_ACCOUNT` live keys
+    /// - the account already holds `MAX_SESSION_KEYS_PER_ACCOUNT` live keys and `session_key`
+    ///   is not one of them
     pub(crate) fn register_session_key(
         &mut self,
         account: AccountId,

@@ -317,7 +317,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/access_tests/admission.rs` — admission before sequencing: never-credited signers declare only against a pending deposit, within per-client and shared budgets; expired requests and exhausted screening capacity refuse without a nonce
 - `src/api/access_tests/declarations.rs` — a declaration screened like an order: public refusals that leave its deposit pending until an allowed one is recorded
 - `src/api/access_tests/reissue.rs` — a reissue request screened like a withdrawal, by account and peer, refused with 403 before the log
-- `src/api/access_tests/session_keys.rs` — a registered session key trades for its account without the wallet until revoked, a withdrawal it signs refuses as out of scope in the log, and an expired or mis-scoped key is refused before sequencing
+- `src/api/access_tests/session_keys.rs` — a registered session key trades for its account without the wallet until revoked, a withdrawal it signs refuses as out of scope in the log, and an expired, mis-scoped, uncredited, or rate-flooding key is refused before sequencing, with its cancels, stale nonces, and missing signatures
 - `src/api/access_tests/source.rs` — the mock screening source the access tests answer with
 - `src/access.rs`, `src/access/tests.rs` — bounded signed-source IO and failure-path tests
 - `src/api/admin.rs` — the operator's admin route, checked before it is sequenced

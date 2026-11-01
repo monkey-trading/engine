@@ -117,9 +117,9 @@ async fn a_session_key_cancels_and_a_stale_nonce_stays_out_of_the_log() {
     assert_eq!(status, StatusCode::OK, "{events}");
     assert_eq!(events[0]["type"], "order_cancelled", "{events}");
 
-    // A replayed order with a used nonce conflicts and never reaches the log.
-    let replayed = session_order(&account, &session, 1);
-    let (status, body) = node.post("/v1/orders", replayed.clone()).await;
+    // An order whose nonce the cancel used conflicts and never reaches the log.
+    let stale = session_order(&account, &session, 1);
+    let (status, body) = node.post("/v1/orders", stale).await;
     assert_eq!((status, body["error"].as_str()), (StatusCode::CONFLICT, Some("invalid nonce")));
     let logged = node
         .entries()
@@ -143,6 +143,70 @@ async fn a_never_credited_account_cannot_register_a_session_key() {
         node.entries().iter().all(|entry| !matches!(entry, LogEntry::Command(c) if matches!(c.sequenced.cmd, Command::RegisterSessionKey { .. }))),
         "the registration never reached the log"
     );
+}
+
+#[tokio::test]
+async fn both_session_key_routes_refuse_a_missing_signature() {
+    let node = Node::start("session-key-missing-auth", true).await;
+    let account = key(1);
+    let session = key(7);
+    node.onboard(&account).await;
+    let mut register = registration(&account, &session, 1, NOW + 3_600_000);
+    register.as_object_mut().unwrap().remove("auth");
+    let (status, body) = node.post("/v1/session-keys", register).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::UNAUTHORIZED, Some("missing signature")));
+
+    let register = registration(&account, &session, 1, NOW + 3_600_000);
+    assert_eq!(node.post("/v1/session-keys", register).await.0, StatusCode::OK);
+    let mut revoke = revocation(&account, &session, 2);
+    revoke.as_object_mut().unwrap().remove("auth");
+    let (status, body) = delete(&node, "/v1/session-keys", revoke).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::UNAUTHORIZED, Some("missing signature")));
+    let account_id = eip712::address(account.verifying_key());
+    assert_eq!(node.get(&format!("/v1/accounts/{account_id}/nonce")).await["next_nonce"], 2);
+}
+
+#[tokio::test]
+async fn a_flooding_key_cannot_starve_the_accounts_revocation() {
+    let node = Node::start("session-key-rate", true).await;
+    let account = key(1);
+    let session = key(7);
+    let other = key(8);
+    node.onboard(&account).await;
+    for (nonce, key) in [(1, &session), (2, &other)] {
+        let register = registration(&account, key, nonce, NOW + 3_600_000);
+        assert_eq!(node.post("/v1/session-keys", register).await.0, StatusCode::OK);
+    }
+    // The account's keys share one session bucket at the per-account rate, whatever key signs:
+    // exhausting it with alternating keys shows keys do not multiply the allowance.
+    let burst = u64::try_from(dev_config().api.per_account.burst.get()).unwrap();
+    let mut nonces = [0u64; 2];
+    for index in 0..burst {
+        let slot = usize::try_from(index % 2).unwrap();
+        let key = if index % 2 == 0 { &session } else { &other };
+        let (status, events) = node.post("/v1/orders", session_order(&account, key, nonces[slot])).await;
+        assert_eq!(status, StatusCode::OK, "{events}");
+        nonces[slot] += 1;
+    }
+    // The shared session bucket is empty; the refill is slower than the posts below, so most of
+    // ten more requests, whichever key signs them, are refused.
+    let mut refused = 0;
+    for index in 0..10 {
+        let slot = usize::try_from(index % 2).unwrap();
+        let key = if index % 2 == 0 { &session } else { &other };
+        let (status, _body) = node.post("/v1/orders", session_order(&account, key, nonces[slot])).await;
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            refused += 1;
+        } else {
+            nonces[slot] += 1;
+        }
+    }
+    assert!(refused >= 5, "the shared session bucket refused only {refused} of 10 flooded requests");
+    // The wallet's own allowance is untouched: its signed revocation sequences at once.
+    let revoke = revocation(&account, &session, 3);
+    let (status, events) = delete(&node, "/v1/session-keys", revoke).await;
+    assert_eq!(status, StatusCode::OK, "{events}");
+    assert_eq!(events[0]["type"], "session_key_revoked", "{events}");
 }
 
 /// `account`'s signed registration of `session` until `session_expires_at`, as a JSON body.

@@ -8,7 +8,7 @@ use engine_core::command::{AdminCommand, Command, OrderKind, OrderRequest};
 use engine_core::eip712::{self, Signature};
 use engine_core::event::{Event, Reject};
 use engine_core::protocol::ProtocolVersion;
-use engine_core::session_keys::MAX_SESSION_KEY_EXPIRY_MS;
+use engine_core::session_keys::{MAX_SESSION_KEY_EXPIRY_MS, MAX_SESSION_KEYS_PER_ACCOUNT};
 use engine_core::types::{AccountId, Side};
 use k256::ecdsa::SigningKey;
 
@@ -133,6 +133,31 @@ pub(crate) fn session(h: &mut Harness) {
     assert!(matches!(events[..], [Event::SessionKeyRegistered { .. }]), "{events:?}");
     let events = order_at(h, &account, &second, 1, Side::Buy, "0.01", h.ts + 60_000);
     assert!(events.iter().any(|event| matches!(event, Event::Fill(_))), "{events:?}");
+
+    // The cap: fill the account to MAX_SESSION_KEYS_PER_ACCOUNT live keys, refuse an eleventh,
+    // and renew a held key at the cap, which the exemption lets replace itself.
+    let live = h
+        .engine
+        .session_key(account.account, key.account)
+        .into_iter()
+        .chain(h.engine.session_key(account.account, second.account))
+        .count();
+    for seed in 0x3d..0x3d + (MAX_SESSION_KEYS_PER_ACCOUNT - live) as u8 {
+        let extra = Client { expires_at: h.ts + 60_000, ..Client::new(seed) };
+        let events = h.cmd(register_at(h, &account, &extra, h.ts + 3_600_000, h.ts + 60_000));
+        assert!(matches!(events[..], [Event::SessionKeyRegistered { .. }]), "{events:?}");
+    }
+    let eleventh = Client { expires_at: h.ts + 60_000, ..Client::new(0x50) };
+    let events = h.cmd(register_at(h, &account, &eleventh, h.ts + 3_600_000, h.ts + 60_000));
+    assert!(
+        matches!(events[..], [Event::SessionKeyRejected { reason: Reject::TooManySessionKeys { .. }, .. }]),
+        "{events:?}"
+    );
+    let events = h.cmd(register_at(h, &account, &key, h.ts + 3_600_000, h.ts + 60_000));
+    assert!(
+        matches!(events[..], [Event::SessionKeyRegistered { session_key, .. }] if session_key == key.account),
+        "{events:?}"
+    );
 }
 
 /// The screening source the `V24` part recorded.
