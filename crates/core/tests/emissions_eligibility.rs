@@ -82,7 +82,13 @@ fn a_v42_activation_crossing_a_period_settles_its_earlier_fills_gross() {
     screened_round_trip(&mut h, &[(&a, "1")], "100000", "99900");
     screened_round_trip(&mut h, &[(&a, "1")], "99900", "99920");
     screened_round_trip(&mut h, &[(&b, "0.6")], "100000", "99900");
+    h.engine.state_root();
     h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V42 });
+    // Activation rehashes every leaf under the V42 encodings: the incremental root, including the
+    // open period results, equals a rebuild's.
+    let incremental = h.engine.state_root();
+    let mut rebuilt: engine_core::Engine = serde_json::from_slice(&serde_json::to_vec(&h.engine).unwrap()).unwrap();
+    assert_eq!(rebuilt.state_root(), incremental);
     assert_eq!(
         allocations(&next_period(&mut h)),
         [(a.account, 0, f("100"), 625_000), (b.account, 0, f("60"), 375_000)]

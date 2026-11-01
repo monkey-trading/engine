@@ -97,7 +97,7 @@ fn from_v42_a_write_off_absorbs_gross_losses_and_debt_consumes_gross_weight_firs
     assert_root_matches_rebuild(&mut h.engine);
 
     // Period 2: a 25 loss on one fill and a 10 win on another: the gross 25 pays the debt down
-    // first and the remaining 5 earns. Under the net rule the period's 16 would pay only 16 of
+    // first and the remaining 5 earns. Under the net rule the period's 15 would pay only 15 of
     // the 20 debt and nothing would earn.
     credit(&mut h, &receipt(3, account, "100"));
     lose(&mut h, "100", "95");

@@ -47,6 +47,38 @@ fn authenticates_payload_and_deployment_before_loading_state() {
 }
 
 #[test]
+fn a_cache_predating_the_gross_loss_accumulator_refuses_recovery() {
+    let (cfg, key, mut snapshot) = fixture("snapshot-gross-losses");
+    // The engine a pre-V42 build serialized: an open period result with negative realised PnL
+    // and no gross-loss field, as its checkpoint attests.
+    let mut state: serde_json::Value = serde_json::from_str(&snapshot.engine).unwrap();
+    state["period_results"]["0x0101010101010101010101010101010101010101"] =
+        serde_json::json!({ "realised": "-5", "written_off": "0" });
+    let mut engine: Engine = serde_json::from_value(state.clone()).unwrap();
+    let root = engine.state_root();
+    snapshot.checkpoint.root = format!("0x{}", hex::encode(root));
+    snapshot.checkpoint.signature = key.sign_checkpoint(31337, &snapshot.vault.0, 0, &root);
+    snapshot.engine = serde_json::to_string(&engine).unwrap();
+    write(&cfg, &snapshot, &key).unwrap();
+    let path = candidates(&cfg).unwrap().remove(0);
+    let refused = read(&cfg, &path, 31337, snapshot.vault).err().unwrap();
+    assert!(refused.to_string().contains("predates the gross-loss accumulator"), "{refused:#}");
+
+    // The same result with its gross losses recorded reads back.
+    state["period_results"]["0x0101010101010101010101010101010101010101"] =
+        serde_json::json!({ "realised": "-5", "losses": "5", "written_off": "0" });
+    let mut engine: Engine = serde_json::from_value(state).unwrap();
+    let root = engine.state_root();
+    snapshot.checkpoint.root = format!("0x{}", hex::encode(root));
+    snapshot.checkpoint.signature = key.sign_checkpoint(31337, &snapshot.vault.0, 0, &root);
+    snapshot.engine = serde_json::to_string(&engine).unwrap();
+    write(&cfg, &snapshot, &key).unwrap();
+    let path = candidates(&cfg).unwrap().remove(0);
+    assert!(read(&cfg, &path, 31337, snapshot.vault).is_ok());
+    assert!(!predates_gross_losses(&engine));
+}
+
+#[test]
 fn retains_newest_caches_and_reclaims_staging_files() {
     let (cfg, key, mut snapshot) = fixture("snapshot-retain");
     for index in 1..5 {
