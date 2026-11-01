@@ -226,6 +226,10 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
     ensure!(status.success(), "A exited with {status} after handing the keys over");
     let a_tip = last_seq(&node.dir.join("log"))?;
     ensure!(last_seq(&b_dir.join("log"))? > a_tip, "B did not continue past A's final checkpoint (seq {a_tip})");
+    // B's custody must post a checkpoint covering the approval before the vault accepts the claim:
+    // serving the API comes first, the checkpoint follows.
+    let approved = issued.approved_seq.context("the issued authorization names its approval")?;
+    wait_latest_seq(&mut node.chain, approved).await?;
     pay_b(&node.chain, &issued).await?;
     println!(
         "PASS: the elected operator's enclave took the keys and the log from the incumbent's; the incumbent exited; A's pre-handover authorization pays"
