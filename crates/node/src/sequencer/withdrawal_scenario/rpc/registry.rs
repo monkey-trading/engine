@@ -28,7 +28,12 @@ impl Chain {
             .await?;
         let data = response["error"]["data"].as_str().unwrap_or_default();
         let decoded = hex::decode(data.strip_prefix("0x").unwrap_or(data)).unwrap_or_default();
-        Ok(String::from_utf8_lossy(decoded.get(4..).unwrap_or(&[])).into_owned())
+        let reason = String::from_utf8_lossy(decoded.get(4..).unwrap_or(&[]));
+        Ok(if reason.chars().any(|c| !c.is_ascii_graphic() && c != ' ') {
+            format!("0x{}", hex::encode(&decoded))
+        } else {
+            reason.into_owned()
+        })
     }
 
     /// Has the timelock call `target` with `data`.
@@ -273,6 +278,8 @@ impl Chain {
     /// - a local transaction fails
     pub(crate) async fn stake_from(&self, account: Address, amount: U256) -> anyhow::Result<()> {
         let monkey: Address = self.read(self.vault, monkeyCall {}).await?;
+        let minter: Address = self.read(monkey, minterCall {}).await?;
+        println!("STAKE_FROM probe: vault={:#x} monkey={:#x} minter={:#x}", self.vault, monkey, minter);
         let _: Value = self.request("anvil_impersonateAccount", json!([self.vault])).await?;
         let _: Value = self.request("anvil_setBalance", json!([self.vault, "0xde0b6b3a7640000"])).await?;
         self.send(self.vault, monkey, mintCall { to: account, amount }.abi_encode()).await?;
