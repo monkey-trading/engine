@@ -85,7 +85,10 @@ impl ReplayedLog {
         // identifies this node as the successor.
         let named_successor =
             engine.operator_bounds().rotation.is_some_and(|rotation| rotation.address == cfg.operator.address)
-                && engine.operator().is_some_and(&same_domain);
+                && match engine.operator() {
+                    Some(recorded) => same_domain(recorded),
+                    None => false,
+                };
         if let Some(recorded) = engine
             .operator()
             .filter(|recorded| **recorded != cfg.operator && !(rotated && same_domain(recorded)) && !named_successor)
