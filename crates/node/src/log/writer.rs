@@ -294,35 +294,44 @@ impl LogWriter {
         Ok(())
     }
 
+    /// Lists the open segment, if any, as completed: flushes and syncs it, appends its listing to
+    /// the manifest, and folds it into the catalog. A handover seals the log's tail so the archive
+    /// and the successor it hands the keys to hold the segment the final checkpoint is in.
+    /// Error cases:
+    /// - the segment cannot be flushed, synced, or listed, or the manifest update fails
+    pub(crate) fn seal_open_segment(&mut self) -> anyhow::Result<Option<SegmentInfo>> {
+        let Some((segment, out)) = self.open.take() else { return Ok(None) };
+        let done = out.into_inner().map_err(|e| e.into_error()).context("flushing log segment")?;
+        done.sync_all().context("syncing log segment")?;
+        let listed = segment.info();
+        self.list(&listed)?;
+        info!(
+            file = %listed.file,
+            first_seq = listed.first_seq,
+            last_seq = listed.last_seq,
+            bytes = listed.bytes,
+            sha256 = %listed.sha256,
+            "log segment completed"
+        );
+        let catalog = self.manifest.borrow().catalog.clone();
+        let next = catalog.map(|c| c.append(listed.clone(), segment.checkpoints.into())).transpose()?;
+        self.manifest.send_modify(|m| {
+            match next {
+                Some(next) => m.catalog = Some(Arc::new(next)),
+                None => Arc::make_mut(&mut m.segments).push(listed.clone()),
+            }
+            m.active = None;
+        });
+        Ok(Some(listed))
+    }
+
     /// Lists the open segment, if any, then links the staged file as the next segment at `path`.
     /// Error cases:
     /// - a segment by that name already exists, the open segment cannot be synced or listed, or the
     ///   link fails
     fn complete_and_link(&mut self, staged: &Path, path: &Path) -> anyhow::Result<()> {
         ensure!(!path.exists(), "{} already exists", path.display());
-        if let Some((segment, out)) = self.open.take() {
-            let done = out.into_inner().map_err(|e| e.into_error()).context("flushing log segment")?;
-            done.sync_all().context("syncing log segment")?;
-            let listed = segment.info();
-            self.list(&listed)?;
-            info!(
-                file = %listed.file,
-                first_seq = listed.first_seq,
-                last_seq = listed.last_seq,
-                bytes = listed.bytes,
-                sha256 = %listed.sha256,
-                "log segment completed"
-            );
-            let catalog = self.manifest.borrow().catalog.clone();
-            let next = catalog.map(|c| c.append(listed.clone(), segment.checkpoints.into())).transpose()?;
-            self.manifest.send_modify(|m| {
-                match next {
-                    Some(next) => m.catalog = Some(Arc::new(next)),
-                    None => Arc::make_mut(&mut m.segments).push(listed),
-                }
-                m.active = None;
-            });
-        }
+        self.seal_open_segment()?;
         // hard_link fails if an untrusted host races an existing destination into place.
         fs::hard_link(staged, path).with_context(|| format!("exclusively publishing {}", path.display()))
     }

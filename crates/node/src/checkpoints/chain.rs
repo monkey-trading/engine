@@ -19,6 +19,17 @@ pub(crate) struct CurrentRelease {
     pub generation: u64,
 }
 
+/// The operator an election replaced and the handover data its candidacy registered, as the vault's
+/// registry recorded when the election was made: the elected successor reads this to find the
+/// incumbent's handover endpoint and archive hostname.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HandoverSource {
+    pub candidate: engine_core::types::AccountId,
+    pub release: [u8; 32],
+    pub api_hostname: String,
+    pub handover_endpoint: String,
+}
+
 /// Chain access, kept separate from the authorized enclave signer lifecycle.
 pub(crate) trait CheckpointChain: Send + Sync {
     /// Reads the authenticated crash-recovery reservation without persisted mutation.
@@ -149,5 +160,19 @@ pub(crate) trait CheckpointChain: Send + Sync {
     /// cases: the chain cannot be read; a chain with no registry reads `false`.
     async fn rotation_enabled(&self) -> anyhow::Result<bool> {
         Ok(false)
+    }
+
+    /// The handover source the vault's registry recorded when the election in effect was made: the
+    /// operator it replaced and the handover endpoint its candidacy registered, which the elected
+    /// successor connects to for the keys. Error cases: the chain cannot be read, or it reads no
+    /// registry.
+    async fn handover_source(&self) -> anyhow::Result<HandoverSource> {
+        anyhow::bail!("this checkpoint chain reads no registry")
+    }
+
+    /// The API hostname the candidate the registry names as the operator in effect registered.
+    /// Error cases: the chain cannot be read, or it reads no registry.
+    async fn operator_hostname(&self) -> anyhow::Result<String> {
+        anyhow::bail!("this checkpoint chain reads no registry")
     }
 }

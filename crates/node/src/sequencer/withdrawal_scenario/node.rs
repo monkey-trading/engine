@@ -12,7 +12,9 @@ use tokio::time::{sleep, timeout};
 use crate::sequencer::withdrawal_scenario::client::Client;
 use crate::sequencer::withdrawal_scenario::rpc::Chain;
 use crate::sequencer::withdrawal_scenario::services::Services;
-use crate::sequencer::withdrawal_scenario::{CHILD_ALERTS, CHILD_CONFIG, CHILD_FEED, CHILD_TEST};
+use crate::sequencer::withdrawal_scenario::{
+    CHILD_ALERTS, CHILD_CONFIG, CHILD_FEED, CHILD_KEYS, CHILD_LAUNCH_DIGEST, CHILD_TEST,
+};
 use crate::test_support::ANVIL_CONFIG;
 use crate::test_support::LOADED_WAIT;
 
@@ -131,16 +133,37 @@ impl Node {
     /// Error cases:
     /// - child startup or the fully booted API deadline fails
     pub async fn restart(&mut self) -> anyhow::Result<()> {
+        self.restart_keys(None, None).await
+    }
+
+    /// `restart` with one-off key choices: `keys` is `new-key` or `predecessor=<host:port>`, and
+    /// `digest` the mock TEE's stand-in measurement for sealing.
+    /// Error cases:
+    /// - child startup or the fully booted API deadline fails; the child may exit at once, refused
+    pub async fn restart_keys(&mut self, keys: Option<&str>, digest: Option<[u8; 48]>) -> anyhow::Result<()> {
         ensure!(self.child.is_none(), "stop the previous scenario node first");
         let path = self.config.to_str().context("test config path is UTF-8")?;
+        let digest = digest.map(hex::encode);
+        let mut env: Vec<(&str, String)> = vec![
+            (CHILD_CONFIG, path.to_owned()),
+            (CHILD_FEED, self.services.feed.clone()),
+            (CHILD_ALERTS, self.services.alerts.clone()),
+        ];
+        if let Some(keys) = keys {
+            env.push((CHILD_KEYS, keys.to_owned()));
+        }
+        if let Some(digest) = &digest {
+            env.push((CHILD_LAUNCH_DIGEST, digest.clone()));
+        }
+        let env: Vec<(&str, &str)> = env.iter().map(|(key, value)| (*key, value.as_str())).collect();
         self.child = Some(ChildProcess::spawn(
             std::env::current_exe()?,
             &["--ignored", "--exact", CHILD_TEST, "--nocapture", "--test-threads=1"],
             &self.dir.join("node.log"),
-            &[(CHILD_CONFIG, path), (CHILD_FEED, &self.services.feed), (CHILD_ALERTS, &self.services.alerts)],
+            &env,
             None,
         )?);
-        timeout(LOADED_WAIT, async {
+        let started = timeout(LOADED_WAIT, async {
             loop {
                 self.services.check()?;
                 self.chain.check()?;
@@ -152,7 +175,11 @@ impl Node {
             }
         })
         .await
-        .context("actual node API and controlled market startup; verify test bootstrap hook is wired")??;
+        .context("actual node API and controlled market startup; verify test bootstrap hook is wired")?;
+        if let Err(e) = started {
+            drop(self.child.take());
+            return Err(e);
+        }
         Ok(())
     }
 
@@ -216,6 +243,20 @@ impl Node {
     /// - the child is absent or cannot be killed/reaped
     pub async fn crash(&mut self) -> anyhow::Result<()> {
         self.child.take().context("running node")?.kill().await
+    }
+
+    /// Waits for the running node to exit on its own — a handover ends it — and clears it.
+    /// Error cases:
+    /// - no child runs, or it stays up past `within`
+    pub async fn exited(&mut self, within: Duration) -> anyhow::Result<std::process::ExitStatus> {
+        self.child.take().context("running node")?.exited(within).await
+    }
+
+    /// Refuses to proceed if the node's child has stopped.
+    /// Error cases:
+    /// - the child exited
+    pub fn check_running(&mut self) -> anyhow::Result<()> {
+        self.child.as_mut().context("running node")?.check()
     }
 
     /// Drains the actual node before final replay and log assertions.

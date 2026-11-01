@@ -44,6 +44,18 @@ impl NodeConfig {
                 "a production build refuses standby.danger_accept_invalid_certs: stream frame signatures are the authenticity boundary, but TLS verification stays on"
             );
         }
+        if production
+            && self
+                .tee
+                .sealing
+                .as_ref()
+                .and_then(|sealing| sealing.handover.as_ref())
+                .is_some_and(|handover| handover.danger_accept_invalid_certs)
+        {
+            bail!(
+                "a production build refuses tee.sealing.handover.danger_accept_invalid_certs: the log's signed checkpoints are the authenticity boundary, but TLS verification stays on"
+            );
+        }
         Ok(())
     }
 

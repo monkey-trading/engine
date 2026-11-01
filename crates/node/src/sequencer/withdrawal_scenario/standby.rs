@@ -58,7 +58,7 @@ pub(super) async fn standby_takes_over() -> anyhow::Result<()> {
     let operator_key =
         k256::ecdsa::VerifyingKey::from_sec1_bytes(&hex::decode(operator_key.trim_start_matches("0x"))?)?;
     let operator_address = Address::from(engine_core::eip712::address(&operator_key).0);
-    let staking = chain.deploy_registry(operator_address, [0x11; 48], [0x22; 32], LIVENESS_SECS).await?;
+    let staking = chain.deploy_registry(operator_address, [0x11; 48], [0x22; 32], LIVENESS_SECS, true).await?;
     // A and B's genesis must match exactly, staking start included.
     let staking_start = now_ms() + 30_000;
 
@@ -86,7 +86,16 @@ pub(super) async fn standby_takes_over() -> anyhow::Result<()> {
     })?;
     let b_config_hash: [u8; 32] = sha2::Sha256::digest(std::fs::read(&b_config_path)?).into();
     chain
-        .register_candidate(b_candidate, &b_admin, U256::from(10_000), B_DIGEST, b_config_hash, operator_address)
+        .register_candidate(
+            b_candidate,
+            &b_admin,
+            U256::from(10_000),
+            B_DIGEST,
+            b_config_hash,
+            operator_address,
+            "api.standby.local",
+            "127.0.0.1:9444",
+        )
         .await?;
     chain.delegate_self(b_candidate).await?;
 
@@ -325,7 +334,7 @@ pub(super) async fn standby_takes_over() -> anyhow::Result<()> {
 }
 
 /// Sets `operator.rotation_enabled` and the staking mirror on a scenario config.
-fn rotation_and_staking(
+pub(super) fn rotation_and_staking(
     cfg: &mut serde_json::Value,
     chain: &Chain,
     staking: &Address,
@@ -409,7 +418,7 @@ async fn payout_at_epoch(
 }
 
 /// Pays the authorization on the chain and requires the duplicate to revert.
-async fn pay_b(chain: &Chain, signed: &SignedWithdrawal) -> anyhow::Result<()> {
+pub(super) async fn pay_b(chain: &Chain, signed: &SignedWithdrawal) -> anyhow::Result<()> {
     let signer =
         signed.authorization.as_ref().map(|auth| auth.signer).context("the reissue is a typed authorization")?;
     let claim = chain.claim_from(signed, signer)?.abi_encode();

@@ -19,8 +19,8 @@ use tokio::time::timeout;
 
 use crate::checkpoints::emission_budget::budget_from_cap;
 use crate::checkpoints::{
-    AcceptedCheckpoint, ApprovalId, ApprovalStatus, CheckpointChain, CurrentRelease, LifecycleEvidence, Observation,
-    VaultState, View,
+    AcceptedCheckpoint, ApprovalId, ApprovalStatus, CheckpointChain, CurrentRelease, HandoverSource, LifecycleEvidence,
+    Observation, VaultState, View,
 };
 use crate::config::{CheckpointSection, FinalityTag};
 use crate::log::{Checkpoint, CheckpointDomain};
@@ -66,6 +66,22 @@ sol! {
         returns (uint64 epoch, address candidate, address adminKey, bytes32 release, uint64 effectiveAt);
     function operatorInEffect() external view returns (address candidate, address adminKey, bytes32 release, uint64 since);
     function pendingPromotion() external view returns (bool);
+    function handoverSource()
+        external
+        view
+        returns (address candidate, bytes32 release, string apiHostname, string handoverEndpoint);
+    function candidateOf(address candidate)
+        external
+        view
+        returns (
+            address adminKey,
+            address enclave,
+            uint256 bond,
+            bytes32 release,
+            uint64 registration,
+            string apiHostname,
+            string handoverEndpoint
+        );
     function parameters()
         external
         view
@@ -362,6 +378,42 @@ impl CheckpointChain for CheckpointRpc {
         Ok(rotationEnabledCall::abi_decode_returns(
             &self.call(registry, rotationEnabledCall {}.abi_encode(), at).await?,
         )?)
+    }
+
+    /// The handover source the vault's registry recorded when the election in effect was made.
+    /// Error cases:
+    /// - an RPC call or decoding fails, or the vault has no registry
+    async fn handover_source(&self) -> anyhow::Result<HandoverSource> {
+        let vault = Address::from(self.domain.vault.0);
+        let at = BlockId::latest();
+        let registry = registryCall::abi_decode_returns(&self.call(vault, registryCall {}.abi_encode(), at).await?)?;
+        ensure!(!registry.is_zero(), "the vault follows no operator registry");
+        let source = handoverSourceCall::abi_decode_returns(
+            &self.call(registry, handoverSourceCall {}.abi_encode(), at).await?,
+        )?;
+        Ok(HandoverSource {
+            candidate: engine_core::types::AccountId(source.candidate.0.0),
+            release: source.release.0,
+            api_hostname: source.apiHostname,
+            handover_endpoint: source.handoverEndpoint,
+        })
+    }
+
+    /// The API hostname the candidate the registry names as the operator in effect registered.
+    /// Error cases:
+    /// - an RPC call or decoding fails, or the vault has no registry
+    async fn operator_hostname(&self) -> anyhow::Result<String> {
+        let vault = Address::from(self.domain.vault.0);
+        let at = BlockId::latest();
+        let registry = registryCall::abi_decode_returns(&self.call(vault, registryCall {}.abi_encode(), at).await?)?;
+        ensure!(!registry.is_zero(), "the vault follows no operator registry");
+        let in_effect = operatorInEffectCall::abi_decode_returns(
+            &self.call(registry, operatorInEffectCall {}.abi_encode(), at).await?,
+        )?;
+        Ok(candidateOfCall::abi_decode_returns(
+            &self.call(registry, candidateOfCall { candidate: in_effect.candidate }.abi_encode(), at).await?,
+        )?
+        .apiHostname)
     }
 
     /// Relays at a durable explicit nonce; only later canonical state reads confirm inclusion.

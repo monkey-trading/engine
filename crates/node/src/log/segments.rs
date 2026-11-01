@@ -234,6 +234,17 @@ impl SegmentedLog {
         self.manifest.active.is_some()
     }
 
+    /// The last completed segment the manifest lists, if any: a handover reads it for the final
+    /// segment the successor lacks.
+    pub fn last_listed_segment(&self) -> Option<SegmentInfo> {
+        self.manifest.segments.last().cloned()
+    }
+
+    /// The seq of the last entry the log holds, if any.
+    pub fn last_seq(&self) -> Option<u64> {
+        self.last.map(|last| last.seq)
+    }
+
     /// A writer that appends to the last segment, or starts a new one at the next command if the
     /// manifest lists the last one. It publishes the manifest on `manifest`, starting now, with
     /// everything read counted as flushed. An earlier process may have died before syncing what it

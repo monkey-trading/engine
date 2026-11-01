@@ -23,6 +23,7 @@ async fn a_stop_the_checkpoint_gate_refuses_keeps_the_keys_and_goes_on_sequencin
     assert!(!exchange.run.is_finished(), "the refused stop ended the predecessor");
 
     // Once the gate admits the final checkpoint, the next stop takes the keys and ends it.
+    write_log_tail(&exchange.successor_log, &Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) });
     exchange.take().await.unwrap();
     timeout(Duration::from_secs(5), exchange.run).await.expect("the predecessor ended").unwrap().unwrap();
     assert_eq!(answer.await.unwrap(), 2, "the refused stop and the recovered one");
@@ -62,7 +63,9 @@ async fn a_predecessor_whose_checkpoints_are_withheld_goes_on_sequencing() {
 
     // Once signing resumes, the next successor takes the keys.
     exchange.signing.send_replace(true);
-    let _answer = exchange.answer_drain(Ok(Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) }));
+    let head = Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) };
+    write_log_tail(&exchange.successor_log, &head);
+    let _answer = exchange.answer_drain(Ok(head));
     exchange.take().await.unwrap();
 }
 

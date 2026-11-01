@@ -1,6 +1,8 @@
-//! The predecessor's side: a listener that hands this release's keys to the vault's current release,
-//! after stopping sequencing, and ends the node once the successor confirms.
+//! The predecessor's side: a listener that hands this release's keys, and the log segment the
+//! final checkpoint is in, to the vault's current release, after stopping sequencing, and ends the
+//! node once the successor confirms.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, anyhow, ensure};
@@ -8,6 +10,7 @@ use engine_core::eip712::{self, B256, Signature};
 use engine_core::types::AccountId;
 use engine_verify::Tcb;
 use ring::rand::{SecureRandom, SystemRandom};
+use sha2::Digest as _;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast::{self, error::TryRecvError};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -19,9 +22,9 @@ use crate::config::{NodeConfig, TeeProvider};
 use crate::handover::evidence::{self, Peer, Quoting};
 use crate::handover::{
     Challenge, Confirm, MESSAGE_TIMEOUT, Reply, Request, confirm_digest, confirmed_digest, current_release,
-    ensure_named, keys_report_data, receive, request_report_data, seal_keys, send, vault_reader,
+    ensure_named, keys_report_data, receive, request_report_data, seal_keys, send, send_bytes, vault_reader,
 };
-use crate::log::{Checkpoint, CheckpointDomain};
+use crate::log::{Checkpoint, CheckpointDomain, Manifest, SegmentInfo};
 use crate::sequencer::{StreamBody, StreamMsg};
 use crate::tee::keys::Head;
 use crate::tee::sealing::{KeyStore, Platform, Release};
@@ -45,6 +48,8 @@ pub(crate) struct Predecessor<C = CheckpointRpc> {
     attestor: Box<dyn Attestor>,
     signer: AccountId,
     vault: C,
+    /// Where the log the final segment is read from lives.
+    log_dir: PathBuf,
     trusted: TrustedClock,
     drain: Drain,
     /// Whether the sequencer signed its last checkpoint, rather than withholding it.
@@ -92,6 +97,7 @@ impl Predecessor {
             attestor,
             signer: AccountId(key.address()),
             vault,
+            log_dir: cfg.node.log_dir.clone(),
             trusted,
             drain,
             signing,
@@ -194,13 +200,35 @@ impl<C: CheckpointChain> Predecessor<C> {
                 head.insert(stopped?).clone()
             }
         };
-        match self.hand_over(&mut stream, &public_key, &report_data, head).await {
+        match self.hand_over(&mut stream, &public_key, &report_data, head.clone(), self.final_segment(&head)?).await {
             Ok(()) => {
                 info!(alert_resolved = "handover_unconfirmed", "the successor holds the keys; this release exits");
                 Ok(Served::Confirmed)
             }
             Err(e) => Ok(unconfirmed(&format!("{e:#}"))),
         }
+    }
+
+    /// The sealed segment the final checkpoint ends, read from the manifest the drain wrote, with
+    /// its bytes checked against the listing: the archive serves only completed segments, and the
+    /// API is already down when the successor could fetch it. `None` when the head already ends a
+    /// listed segment the successor holds from the archive.
+    /// Error cases:
+    /// - the manifest or the segment cannot be read, or the bytes differ from the listing
+    fn final_segment(&self, head: &Head) -> anyhow::Result<Option<(SegmentInfo, Vec<u8>)>> {
+        let manifest = Manifest::load(&self.log_dir)?;
+        let Some(listed) = manifest.segments.last().cloned() else { return Ok(None) };
+        if listed.last_seq != head.seq {
+            return Ok(None);
+        }
+        let bytes =
+            std::fs::read(self.log_dir.join(&listed.file)).with_context(|| format!("reading {}", listed.file))?;
+        ensure!(
+            bytes.len() as u64 == listed.bytes && hex::encode(sha2::Sha256::digest(&bytes)) == listed.sha256,
+            "the final segment {} differs from its listing",
+            listed.file
+        );
+        Ok(Some((listed, bytes)))
     }
 
     /// The successor's release, the measurement its quote proves and the config hash it binds,
@@ -237,8 +265,9 @@ impl<C: CheckpointChain> Predecessor<C> {
         Ok(head)
     }
 
-    /// Sends the keys and `head` encrypted to `public_key`, with this enclave's quote over them, and
-    /// waits for the successor to sign `report_data`'s confirmation with the signing key.
+    /// Sends the keys and `head` encrypted to `public_key`, with this enclave's quote over them and
+    /// the segment the final checkpoint is in behind them, and waits for the successor to sign
+    /// `report_data`'s confirmation with the signing key.
     /// Error cases:
     /// - encryption, quoting, or the exchange fails, or the confirmation is missing or not the key's
     async fn hand_over(
@@ -247,6 +276,7 @@ impl<C: CheckpointChain> Predecessor<C> {
         public_key: &[u8],
         report_data: &[u8; 64],
         head: Head,
+        segment: Option<(SegmentInfo, Vec<u8>)>,
     ) -> anyhow::Result<()> {
         let mut keys = self.store.keys();
         keys.predecessor_head = Some(head);
@@ -255,9 +285,17 @@ impl<C: CheckpointChain> Predecessor<C> {
         let quoting =
             Quoting { provider: self.provider, processor: self.processor.as_deref(), kds_base: &self.kds_base };
         let evidence = evidence::produce(&quoting, self.attestor.as_ref(), &self.store.platform(), bound).await?;
-        let keys =
-            Reply::Keys { encapped_key: hex::encode(encapped_key), ciphertext: hex::encode(ciphertext), evidence };
+        let keys = Reply::Keys {
+            encapped_key: hex::encode(encapped_key),
+            ciphertext: hex::encode(ciphertext),
+            evidence,
+            segment: segment.as_ref().map(|(listed, _)| listed.clone()),
+        };
         send(stream, &keys).await?;
+        if let Some((listed, bytes)) = &segment {
+            send_bytes(stream, bytes).await?;
+            info!(file = %listed.file, "sent the final log segment with the keys");
+        }
         info!("sent the keys to the successor");
         let confirm: Confirm = timeout(MESSAGE_TIMEOUT, receive(stream)).await.context("no confirmation in time")??;
         let signature: Signature = confirm.signature.parse().context("the confirmation is not a signature")?;

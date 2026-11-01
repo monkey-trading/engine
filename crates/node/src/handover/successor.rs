@@ -1,10 +1,14 @@
 //! The successor's side: ask the running release for the keys, check its quote over them and that
-//! the vault names their signing key, seal them for this release, and confirm.
+//! the vault names their signing key, take the log segment the final checkpoint is in, seal the
+//! keys for this release, require the log to end at the handed-over checkpoint, and confirm.
+
+use std::path::Path;
 
 use anyhow::{Context, bail, ensure};
 use engine_core::eip712::{self, B256, Signature};
 use engine_core::types::AccountId;
 use hpke::{Kem, Serializable};
+use sha2::Digest as _;
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tracing::{error, info};
@@ -14,17 +18,20 @@ use crate::config::NodeConfig;
 use crate::handover::evidence::{self, Quoting};
 use crate::handover::{
     Challenge, Confirm, Kx, MESSAGE_TIMEOUT, REPLY_TIMEOUT, Reply, Request, confirm_digest, confirmed_digest,
-    ensure_named, keys_report_data, open_keys, receive, request_report_data, send,
+    ensure_named, keys_report_data, open_keys, receive, receive_bytes, request_report_data, send,
 };
-use crate::log::CheckpointDomain;
+use crate::log::{CheckpointDomain, LogEntry, SegmentInfo, SegmentedLog};
 use crate::tee::Attestor;
+use crate::tee::keys::Head;
 use crate::tee::sealing::{KeyStore, Release, Sealer};
 
 /// This release's keys, taken from the release whose handover listener is at `address`, reading the
 /// vault through `vault`, and sealed for this release in the vault's generation of it. The keys are
 /// accepted only if the vault already names their signing key and this release at finality: a
-/// handover moves the vault's signer, and never brings in a key a host-run enclave chose. Without
-/// the predecessor's signed acknowledgement the
+/// handover moves the vault's signer, and never brings in a key a host-run enclave chose. The log
+/// segment the final checkpoint is in rides with the keys, checked against the listing inside the
+/// quote-bound message; the log is required to end at that checkpoint before the confirmation goes
+/// out. Without the predecessor's signed acknowledgement the
 /// keys stay sealed here, but the start fails under `handover_unconfirmed`: the predecessor may
 /// still run.
 /// Error cases:
@@ -32,6 +39,7 @@ use crate::tee::sealing::{KeyStore, Release, Sealer};
 /// - the predecessor cannot be reached in time, refuses, or its quote does not bind the keys it sent
 /// - the keys do not decrypt, carry no final checkpoint, or name a signer the vault does not, or the
 ///   vault's current release is another one
+/// - the log segment differs from its listing, or the log does not end at the final checkpoint
 /// - the keys cannot be sealed, or the predecessor does not acknowledge the confirmation
 pub(crate) async fn take(
     cfg: &NodeConfig,
@@ -63,11 +71,12 @@ pub(crate) async fn take(
     send(&mut stream, &Request { public_key: hex::encode(&public), config_sha256, evidence }).await?;
     let reply =
         timeout(REPLY_TIMEOUT, receive(&mut stream)).await.context("the predecessor did not answer in time")??;
-    let (encapped_key, ciphertext, evidence) = match reply {
-        Reply::Keys { encapped_key, ciphertext, evidence } => (
+    let (encapped_key, ciphertext, evidence, segment) = match reply {
+        Reply::Keys { encapped_key, ciphertext, evidence, segment } => (
             hex::decode(encapped_key).context("encapsulated key")?,
             hex::decode(ciphertext).context("ciphertext")?,
             evidence,
+            segment,
         ),
         Reply::Refused { reason } => bail!("the predecessor keeps its keys: {reason}"),
         Reply::Confirmed { .. } => bail!("the predecessor confirmed a handover it never made"),
@@ -83,6 +92,16 @@ pub(crate) async fn take(
     )?;
     let keys = open_keys(domain, &secret, &request, &encapped_key, &ciphertext)?;
     let head = keys.predecessor_head.clone().context("the keys carry no final checkpoint")?;
+    match segment {
+        Some(listed) => {
+            let bytes = receive_bytes(&mut stream)
+                .await
+                .context("the predecessor listed the final segment but sent no bytes")?;
+            write_segment(&cfg.node.log_dir, &listed, &bytes)?;
+        }
+        None => info!("the predecessor handed no log segment over: its final checkpoint ends a listed segment"),
+    }
+    ensure_log_ends_at(&cfg.node.log_dir, &head).context("refusing to confirm the handover with an incomplete log")?;
     let enclave = keys.enclave_key()?;
     keys.tls_key()?;
     let finalized = vault.observe(View::Finalized, &[]).await?;
@@ -130,4 +149,69 @@ pub(crate) async fn take(
         bail!("the predecessor did not acknowledge the handover: {e:#}");
     }
     Ok(store)
+}
+
+/// Verifies `listed` against `bytes`, writes the segment into `dir`, and appends its listing to the
+/// manifest unless it is already there: staged and linked, so a crash leaves the old or the new
+/// whole file, never a torn one. A manifest that already lists the file is left alone, so a retried
+/// handover is idempotent.
+/// Error cases:
+/// - the listing is not canonical for its first seq, or the bytes differ from it
+/// - the directory, the file, or the manifest cannot be written
+fn write_segment(dir: &Path, listed: &SegmentInfo, bytes: &[u8]) -> anyhow::Result<()> {
+    ensure!(
+        crate::log::segment_seq(&listed.file) == Some(listed.first_seq),
+        "the predecessor's segment listing is not canonical for seq {}",
+        listed.first_seq
+    );
+    ensure!(
+        bytes.len() as u64 == listed.bytes && hex::encode(sha2::Sha256::digest(bytes)) == listed.sha256,
+        "the predecessor's segment {} differs from its listing",
+        listed.file
+    );
+    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    let staged = dir.join(format!("{}.staging", listed.file));
+    std::fs::write(&staged, bytes).with_context(|| format!("writing {}", staged.display()))?;
+    std::fs::rename(&staged, dir.join(&listed.file)).with_context(|| format!("linking {}", listed.file))?;
+    let manifest = dir.join(crate::log::MANIFEST);
+    let text = std::fs::read_to_string(&manifest).unwrap_or_default();
+    if !text.contains(&listed.file) {
+        let mut text = text;
+        text.push_str(&serde_json::to_string(listed).context("encoding the segment listing")?);
+        text.push('\n');
+        let staged = dir.join(format!("{}.staging", crate::log::MANIFEST));
+        std::fs::write(&staged, text).with_context(|| format!("writing {}", staged.display()))?;
+        std::fs::rename(&staged, &manifest).with_context(|| format!("linking {}", manifest.display()))?;
+    }
+    info!(file = %listed.file, first_seq = listed.first_seq, last_seq = listed.last_seq, "wrote the predecessor's final segment");
+    Ok(())
+}
+
+/// Requires the log in `dir` to end at the handed-over head: opened, so every listed segment is
+/// hash-checked against its manifest listing, and the last entry is the final checkpoint itself. A
+/// host that swapped the segment's bytes is caught here, before the confirmation goes out and while
+/// the predecessor still serves.
+/// Error cases:
+/// - the log cannot be opened, ends at another seq, or its last checkpoint is not the head
+fn ensure_log_ends_at(dir: &Path, head: &Head) -> anyhow::Result<()> {
+    let mut tail: Option<(u64, String)> = None;
+    let log = SegmentedLog::open(dir, |entry| {
+        if let LogEntry::Checkpoint(cp) = entry {
+            tail = Some((cp.seq, cp.root));
+        }
+        Ok(())
+    })?;
+    ensure!(
+        log.last_seq() == Some(head.seq),
+        "the log ends at seq {:?}, not the predecessor's final seq {}",
+        log.last_seq(),
+        head.seq
+    );
+    ensure!(
+        tail.as_ref().is_some_and(|(seq, root)| *seq == head.seq && *root == head.root),
+        "the log's last checkpoint is not the predecessor's final checkpoint (seq {}, root {})",
+        head.seq,
+        head.root
+    );
+    Ok(())
 }

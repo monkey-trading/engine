@@ -1,5 +1,6 @@
 //! Deterministic local quotes and signed Roughtime replies, with explicit task lifetimes.
 
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -37,6 +38,9 @@ pub(super) struct Services {
     pages: Arc<Mutex<Vec<Value>>>,
     price: watch::Sender<Fixed>,
     tasks: Vec<JoinHandle<anyhow::Result<()>>>,
+    /// A clock offset the election scenarios add to every served time, so a child process's engine
+    /// time can pass an election's seven-day notice without waiting.
+    shift: Arc<AtomicI64>,
 }
 
 impl Drop for Services {
@@ -58,7 +62,8 @@ impl Services {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let feed = format!("ws://{}", listener.local_addr()?);
         let (price, receiver) = watch::channel(Fixed::from_int(100));
-        let mut tasks = vec![tokio::spawn(venue(listener, receiver))];
+        let shift = Arc::new(AtomicI64::new(0));
+        let mut tasks = vec![tokio::spawn(venue(listener, receiver, shift.clone()))];
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let access = format!("http://{}", listener.local_addr()?);
         let source_app = axum::Router::new().route(
@@ -111,9 +116,21 @@ impl Services {
                 "name":format!("local-{seed}"), "address":socket.local_addr()?.to_string(),
                 "public_key":STANDARD.encode(server.public_key().as_bytes())
             }));
-            tasks.push(tokio::spawn(roughtime(socket, server)));
+            tasks.push(tokio::spawn(roughtime(socket, server, shift.clone())));
         }
-        Ok(Self { feed, time, rpcs, access, alerts, pages, price, tasks })
+        Ok(Self { feed, time, rpcs, access, alerts, pages, price, tasks, shift })
+    }
+
+    /// Moves every time this process serves forward by `by`: the Roughtime midpoints the nodes
+    /// sequence against and the quote timestamps the feeds stamp, so engine time and marks move
+    /// together past an election's notice.
+    pub(super) fn advance_by(&self, by: Duration) {
+        self.shift.fetch_add(i64::try_from(by.as_millis()).expect("the shift fits milliseconds"), Ordering::SeqCst);
+    }
+
+    /// The alert pages the webhook has received, oldest first.
+    pub(super) fn pages(&self) -> Vec<Value> {
+        self.pages.lock().expect("alert pages lock").clone()
     }
 
     /// Changes the quoted mid; the scenario waits for the actual API mark before trading.
@@ -162,11 +179,12 @@ fn screen(domain: &Eip712Domain, request: Value) -> Screening {
 /// Answers nonce-bound signed packets against the same system clock the real node checks.
 /// Error cases:
 /// - the loopback UDP socket fails
-async fn roughtime(socket: UdpSocket, server: TestServer) -> anyhow::Result<()> {
+async fn roughtime(socket: UdpSocket, server: TestServer, shift: Arc<AtomicI64>) -> anyhow::Result<()> {
     let mut packet = [0; 2048];
     loop {
         let (len, peer) = socket.recv_from(&mut packet).await?;
-        let reply = server.reply(&packet[..len], u64::try_from(now_ms() / 1000)?, 1);
+        let midpoint = u64::try_from((now_ms() + shift.load(Ordering::SeqCst)) / 1000)?;
+        let reply = server.reply(&packet[..len], midpoint, 1);
         socket.send_to(&reply, peer).await?;
     }
 }
@@ -174,13 +192,13 @@ async fn roughtime(socket: UdpSocket, server: TestServer) -> anyhow::Result<()> 
 /// Accepts reconnecting clients and owns every spawned connection in a JoinSet.
 /// Error cases:
 /// - the listener or a connection task fails
-async fn venue(listener: TcpListener, price: watch::Receiver<Fixed>) -> anyhow::Result<()> {
+async fn venue(listener: TcpListener, price: watch::Receiver<Fixed>, shift: Arc<AtomicI64>) -> anyhow::Result<()> {
     let mut clients = JoinSet::new();
     loop {
         tokio::select! {
             accepted = listener.accept() => {
                 let (socket, _) = accepted?;
-                clients.spawn(quote(socket, price.clone()));
+                clients.spawn(quote(socket, price.clone(), shift.clone()));
             }
             result = clients.join_next(), if !clients.is_empty() => {
                 // Node restarts close their feed socket; reconnecting is part of this scenario.
@@ -193,7 +211,7 @@ async fn venue(listener: TcpListener, price: watch::Receiver<Fixed>) -> anyhow::
 /// Publishes exact mids using ordinary Bitstamp book messages with noncrossed prices.
 /// Error cases:
 /// - the handshake fails or the client never subscribes
-async fn quote(socket: TcpStream, price: watch::Receiver<Fixed>) -> anyhow::Result<()> {
+async fn quote(socket: TcpStream, price: watch::Receiver<Fixed>, shift: Arc<AtomicI64>) -> anyhow::Result<()> {
     let mut ws = timeout(LOADED_WAIT, accept_async(socket)).await??;
     timeout(LOADED_WAIT, ws.next()).await?.context("venue client closed before subscribing")??;
     let mut tick = interval(Duration::from_millis(80));
@@ -208,7 +226,7 @@ async fn quote(socket: TcpStream, price: watch::Receiver<Fixed>) -> anyhow::Resu
                 let mid = *price.borrow();
                 let step = Fixed::from_raw(10_000_000);
                 let text = json!({"event":"data","channel":"order_book_btcusd","data":{
-                    "microtimestamp":(now_ms()*1000).to_string(),
+                    "microtimestamp":((now_ms()+shift.load(Ordering::SeqCst))*1000).to_string(),
                     "bids":[[(mid-step).to_string(),"100"]],"asks":[[(mid+step).to_string(),"100"]]
                 }}).to_string();
                 if ws.send(Message::Text(text.into())).await.is_err() { return Ok(()) }

@@ -47,6 +47,12 @@ struct Exchange {
     old: KeySet,
     successor: NodeConfig,
     successor_dir: PathBuf,
+    /// The successor's log directory: what the archive bootstrap would leave, and what the
+    /// handover's segment lands in.
+    successor_log: PathBuf,
+    /// The predecessor's log directory, whose sealed tail segment rides with the keys when it
+    /// ends at the head.
+    predecessor_log: PathBuf,
     /// The vault's current release, as both sides read it.
     current: Arc<Mutex<CurrentRelease>>,
     /// Whether the node behind the predecessor signs its checkpoints.
@@ -121,6 +127,7 @@ async fn the_current_release_takes_the_keys_seals_them_and_the_predecessor_ends(
     let older = KeySet::generate().unwrap();
     KeyStore::create(&exchange.successor_dir, &sealer, exchange.successor.file_sha256, 1, older.clone()).unwrap();
     let head = Head { seq: 9, root: format!("0x{}", "ab".repeat(32)) };
+    write_log_tail(&exchange.successor_log, &head);
     let answer = exchange.answer_drain(Ok(head.clone()));
     let store = exchange.take().await.unwrap();
     assert_eq!(answer.await.unwrap(), 1, "sequencing stopped once");
@@ -140,7 +147,9 @@ async fn the_current_release_takes_the_keys_seals_them_and_the_predecessor_ends(
 async fn a_successor_takes_only_the_key_the_vault_names() {
     let mut exchange = Exchange::start("handover-unnamed-key").await;
     exchange.make_upgrade_current();
-    let _answer = exchange.answer_drain(Ok(Head { seq: 9, root: format!("0x{}", "ab".repeat(32)) }));
+    let head = Head { seq: 9, root: format!("0x{}", "ab".repeat(32)) };
+    write_log_tail(&exchange.successor_log, &head);
+    let _answer = exchange.answer_drain(Ok(head));
     // A host-run predecessor hands over a key the vault does not name: nothing is sealed or confirmed.
     let err = exchange.take_naming(AccountId([0xee; 20])).await.err().expect("an unnamed key was taken");
     assert!(format!("{err:#}").contains("is not the vault's signer"), "{err:#}");
@@ -156,7 +165,9 @@ async fn a_successor_takes_only_the_key_the_vault_names() {
 async fn a_successor_the_vault_no_longer_names_once_the_keys_arrive_seals_nothing() {
     let mut exchange = Exchange::start("handover-named-another").await;
     exchange.make_upgrade_current();
-    let _answer = exchange.answer_drain(Ok(Head { seq: 9, root: format!("0x{}", "ab".repeat(32)) }));
+    let head = Head { seq: 9, root: format!("0x{}", "ab".repeat(32)) };
+    write_log_tail(&exchange.successor_log, &head);
+    let _answer = exchange.answer_drain(Ok(head));
     // Governance names another release after the predecessor's check and before the successor's.
     let signer = AccountId(exchange.old.enclave_key().unwrap().address());
     let named_another = CurrentRelease { id: [0x99; 32], generation: GENERATION + 1 };
@@ -171,7 +182,9 @@ async fn a_successor_the_vault_no_longer_names_once_the_keys_arrive_seals_nothin
 async fn a_confirmation_by_another_key_ends_nothing_and_a_later_successor_reuses_the_stop() {
     let mut exchange = Exchange::start("handover-forged-confirm").await;
     exchange.make_upgrade_current();
-    let answer = exchange.answer_drain(Ok(Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) }));
+    let head = Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) };
+    write_log_tail(&exchange.successor_log, &head);
+    let answer = exchange.answer_drain(Ok(head));
 
     // A successor that cannot sign with the handed-over key never ends the predecessor.
     let (mut stream, report_data, request) = exchange.connect(exchange.successor.file_sha256).await;
@@ -192,7 +205,9 @@ async fn a_stopped_predecessor_keeps_serving_until_a_successor_confirms() {
     let (_guard, mut alerts) = capture_alerts();
     let mut exchange = Exchange::start("handover-keeps-serving").await;
     exchange.make_upgrade_current();
-    let answer = exchange.answer_drain(Ok(Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) }));
+    let head = Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) };
+    write_log_tail(&exchange.successor_log, &head);
+    let answer = exchange.answer_drain(Ok(head));
     let (mut stream, _, request) = exchange.connect(exchange.successor.file_sha256).await;
     send(&mut stream, &request).await.unwrap();
     assert!(matches!(receive(&mut stream).await.unwrap(), Reply::Keys { .. }));
@@ -215,7 +230,9 @@ async fn a_stopped_predecessor_keeps_serving_until_a_successor_confirms() {
 async fn a_recorded_request_gets_nothing_on_another_connection() {
     let mut exchange = Exchange::start("handover-replay").await;
     exchange.make_upgrade_current();
-    let _answer = exchange.answer_drain(Ok(Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) }));
+    let head = Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) };
+    write_log_tail(&exchange.successor_log, &head);
+    let _answer = exchange.answer_drain(Ok(head));
     let (mut first, _, recorded) = exchange.connect(exchange.successor.file_sha256).await;
     send(&mut first, &recorded).await.unwrap();
     assert!(matches!(receive(&mut first).await.unwrap(), Reply::Keys { .. }));
@@ -231,9 +248,83 @@ async fn a_recorded_request_gets_nothing_on_another_connection() {
     exchange.take().await.unwrap();
 }
 
+/// The final segment rides with the keys: the predecessor's sealed tail lands in the successor's
+/// log, and the successor confirms only because the log then ends at the handed-over head.
+#[tokio::test]
+async fn the_final_segment_rides_with_the_keys_into_an_empty_log() {
+    let mut exchange = Exchange::start("handover-segment").await;
+    exchange.make_upgrade_current();
+    let head = Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) };
+    // The predecessor's drained log lists the tail; the successor's copy holds nothing yet, as a
+    // cold start the archive backfilled nothing into.
+    write_log_tail(&exchange.predecessor_log, &head);
+    let answer = exchange.answer_drain(Ok(head.clone()));
+    let store = exchange.take().await.unwrap();
+    assert_eq!(answer.await.unwrap(), 1, "sequencing stopped once");
+    assert_eq!(store.keys().predecessor_head, Some(head.clone()));
+    // The segment the predecessor sealed is in the successor's log, manifest and all, and the log
+    // ends at the head.
+    let log = crate::log::SegmentedLog::open(&exchange.successor_log, |_| Ok(())).unwrap();
+    assert_eq!(log.last_seq(), Some(head.seq));
+    assert_eq!(log.last_listed_segment().map(|listed| listed.last_seq), Some(head.seq));
+    timeout(Duration::from_secs(5), exchange.run).await.expect("the predecessor ended").unwrap().unwrap();
+}
+
+/// A segment whose bytes differ from the listing inside the quote-bound message is refused before
+/// the confirmation goes out: the successor does not start on a log the host tampered with.
+#[tokio::test]
+async fn a_segment_that_differs_from_its_listing_is_refused_before_confirming() {
+    let (successor, _successor_dir) = successor_config("handover-segment-lie");
+    let head = Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) };
+    let old = KeySet::generate().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap().to_string();
+    let (domain, config) = (domain_of(&successor), successor.file_sha256);
+    let mut handed = old.clone();
+    handed.predecessor_head = Some(head.clone());
+    let predecessor = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let challenge = [0x5c; 32];
+        send(&mut stream, &Challenge { nonce: hex::encode(challenge) }).await.unwrap();
+        let request: Request = receive(&mut stream).await.unwrap();
+        let public_key = hex::decode(&request.public_key).unwrap();
+        let report_data = request_report_data(domain, &challenge, &public_key, &config);
+        let (encapped_key, ciphertext) = seal_keys(domain, &public_key, &report_data, &handed).unwrap();
+        let bound = keys_report_data(domain, &report_data, &encapped_key, &ciphertext);
+        let platform = Platform { launch_digest: RELEASE, policy: 0, tcb: 0 };
+        let quoting = Quoting { provider: TeeProvider::Mock, processor: None, kds_base: "https://kds.test" };
+        let evidence = evidence::produce(&quoting, &MockAttestor, &platform, bound).await.unwrap();
+        // A listing the host swapped for other bytes after the predecessor sealed it.
+        let listed = crate::log::SegmentInfo {
+            file: format!("{:020}.jsonl", 1),
+            first_seq: 1,
+            last_seq: head.seq,
+            bytes: 4,
+            sha256: hex::encode(sha2::Sha256::digest(b"the predecessor's real segment")),
+        };
+        let keys = Reply::Keys {
+            encapped_key: hex::encode(encapped_key),
+            ciphertext: hex::encode(ciphertext),
+            evidence,
+            segment: Some(listed),
+        };
+        send(&mut stream, &keys).await.unwrap();
+        send_bytes(&mut stream, b"lies").await.unwrap();
+    });
+    let named = CurrentRelease { id: Release { launch_digest: UPGRADE, config_sha256: config }.id(), generation: 4 };
+    let vault = Vault { signer: AccountId(old.enclave_key().unwrap().address()), current: Arc::new(Mutex::new(named)) };
+    let sealer = MockSealer { launch_digest: UPGRADE };
+    let err =
+        take(&successor, &address, &sealer, &MockAttestor, &vault).await.err().expect("started on a tampered log");
+    assert!(format!("{err:#}").contains("differs from its listing"), "{err:#}");
+    predecessor.await.unwrap();
+}
+
 #[tokio::test]
 async fn a_successor_without_the_signed_acknowledgement_keeps_the_keys_sealed_but_does_not_start() {
     let (successor, successor_dir) = successor_config("handover-forged-ack");
+    let head = Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) };
+    write_log_tail(&successor.node.log_dir, &head);
     let old = KeySet::generate().unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap().to_string();
@@ -253,8 +344,12 @@ async fn a_successor_without_the_signed_acknowledgement_keeps_the_keys_sealed_bu
         let platform = Platform { launch_digest: RELEASE, policy: 0, tcb: 0 };
         let quoting = Quoting { provider: TeeProvider::Mock, processor: None, kds_base: "https://kds.test" };
         let evidence = evidence::produce(&quoting, &MockAttestor, &platform, bound).await.unwrap();
-        let keys =
-            Reply::Keys { encapped_key: hex::encode(encapped_key), ciphertext: hex::encode(ciphertext), evidence };
+        let keys = Reply::Keys {
+            encapped_key: hex::encode(encapped_key),
+            ciphertext: hex::encode(ciphertext),
+            evidence,
+            segment: None,
+        };
         send(&mut stream, &keys).await.unwrap();
         let _: Confirm = receive(&mut stream).await.unwrap();
         let forged = EnclaveKey::generate().sign_digest(confirmed_digest(domain, &report_data));
@@ -295,7 +390,7 @@ fn a_successor_runs_under_the_same_policy_and_no_lower_tcb() {
 
 impl Exchange {
     /// A predecessor sealed for `RELEASE`, behind a vault that names no current release yet, serving
-    /// on loopback.
+    /// on loopback. Neither side's log directory holds anything: tests write the tails they want.
     async fn start(name: &str) -> Self {
         let (successor, successor_dir) = successor_config(name);
 
@@ -308,6 +403,7 @@ impl Exchange {
         let address = listener.local_addr().unwrap().to_string();
         let (drain, drains) = mpsc::channel(1);
         let (signing, signing_rx) = watch::channel(true);
+        let predecessor_log = scratch_dir(&format!("{name}-old-log"));
         let predecessor = Predecessor {
             listener,
             domain: CheckpointDomain {
@@ -321,12 +417,14 @@ impl Exchange {
             store: Arc::new(store),
             attestor: Box::new(MockAttestor),
             vault: Vault { signer: AccountId([0; 20]), current: current.clone() },
+            log_dir: predecessor_log.clone(),
             trusted: TrustedClock::new(Arc::new(SystemClock), watch::channel(None).1, Duration::from_secs(1)),
             drain,
             signing: signing_rx,
         };
         let run = tokio::spawn(predecessor.run());
-        Self { address, run, drains, old, successor, successor_dir, current, signing }
+        let successor_log = successor.node.log_dir.clone();
+        Self { address, run, drains, old, successor, successor_dir, successor_log, predecessor_log, current, signing }
     }
 
     /// Connects as a successor running `UPGRADE`, takes the connection's challenge, and builds a
@@ -414,12 +512,14 @@ impl Exchange {
     }
 }
 
-/// A successor's config: the dev config, sealing into a fresh directory, with checkpoints.
+/// A successor's config: the dev config, sealing into a fresh directory, with checkpoints and a
+/// scratch log directory.
 fn successor_config(name: &str) -> (NodeConfig, PathBuf) {
     let mut successor = dev_config();
     let successor_dir = scratch_dir(&format!("{name}-new"));
     successor.tee.use_published_mock_key = false;
     successor.tee.sealing = Some(toml::from_str(&format!("dir = {:?}", successor_dir.display().to_string())).unwrap());
+    successor.node.log_dir = scratch_dir(&format!("{name}-new-log"));
     successor.checkpoints = Some(
         toml::from_str(
             "rpc_url = 'http://127.0.0.1:9'\nrelayer = '0x0000000000000000000000000000000000000001'\n\
@@ -428,6 +528,30 @@ fn successor_config(name: &str) -> (NodeConfig, PathBuf) {
         .unwrap(),
     );
     (successor, successor_dir)
+}
+
+/// Writes a completed one-segment log ending at `head`, with its manifest, as the archive
+/// bootstrap leaves a copy.
+fn write_log_tail(dir: &std::path::Path, head: &Head) {
+    std::fs::create_dir_all(dir).unwrap();
+    let file = format!("{:020}.jsonl", 1);
+    let mut text = String::new();
+    for seq in 1..=head.seq {
+        text.push_str(&serde_json::to_string(&LogEntry::Command(command(seq))).unwrap());
+        text.push('\n');
+    }
+    text.push_str(&serde_json::to_string(&LogEntry::Checkpoint(checkpoint(head.seq, &head.root))).unwrap());
+    text.push('\n');
+    let bytes = text.as_bytes();
+    let listed = crate::log::SegmentInfo {
+        file,
+        first_seq: 1,
+        last_seq: head.seq,
+        bytes: bytes.len() as u64,
+        sha256: hex::encode(sha2::Sha256::digest(bytes)),
+    };
+    std::fs::write(dir.join(&listed.file), bytes).unwrap();
+    std::fs::write(dir.join(crate::log::MANIFEST), format!("{}\n", serde_json::to_string(&listed).unwrap())).unwrap();
 }
 
 /// The deployment `cfg` names.

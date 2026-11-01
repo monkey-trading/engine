@@ -17,11 +17,14 @@ use crate::checkpoints::CheckpointChain;
 use crate::config::{NodeConfig, TeeProvider};
 use crate::handover::{current_release, ensure_named, vault_reader};
 use crate::log::Checkpoint;
+use crate::sequencer::Request;
 use crate::tee::keys::KeySet;
 use crate::tee::sealing::{KeyStore, MockSealer, Release, Sealer, file_for};
 use crate::tee::{Attestation, AttestationBundle, Attestor, ConfigfsTsm, EnclaveKey, MockAttestor, attest_bundle};
 use crate::tls::TlsIdentity;
+use crate::trusted_time::TrustedClock;
 use engine_core::types::AccountId;
+use tokio::sync::{mpsc, oneshot};
 
 /// The operator's one-off choices for a start of a release that has no sealed keys.
 #[derive(Clone, Debug, Default)]
@@ -103,10 +106,12 @@ async fn obtain(
 /// Error cases:
 /// - a flag is given without `[tee.sealing]`, or real attestation runs without it
 /// - the stand-in measurement is missing under the mock TEE, or given under real attestation
-/// - the vault cannot be read, or, without `--predecessor`, its current release is not this one
+/// - the vault cannot be read, or, without `--predecessor` or an election naming this release,
+///   its current release is not this one
 /// - the sealed keys cannot be opened, or a flag is given beside them
-/// - the release has no keys sealed in the vault's generation of it and no flag, or new keys cannot
-///   be sealed, or the handover fails
+/// - the release has no keys sealed in the vault's generation of it and no flag: refused while
+///   rotation is off or the registry names no handover source for the incumbent; new keys cannot
+///   be sealed, the predecessor's log cannot be fetched, or the handover fails
 async fn obtain_with(
     cfg: &NodeConfig,
     start: &KeyStart,
@@ -180,6 +185,26 @@ async fn obtain_with(
     } else if let Some(address) = &start.predecessor {
         let vault = vault.context("--predecessor needs [checkpoints]: the vault names the key")?;
         crate::handover::take(cfg, address, sealer.as_ref(), attestor, vault).await?
+    } else if let Some(vault) = vault {
+        // No sealed keys and no flag: while the registry has rotation on and the vault names this
+        // release — so an election has taken effect naming this node the operator — take the keys
+        // from the incumbent the election replaced, reading its handover endpoint from the
+        // registry, and the published log ahead of the segment the handover itself carries.
+        ensure!(vault.rotation_enabled().await?, "{}", refusal(dir, generation));
+        match crate::handover::resolve_source(vault).await? {
+            Some(source) => {
+                crate::handover::sync_predecessor_log(cfg, &source).await?;
+                info!(
+                    predecessor = %source.endpoint,
+                    incumbent = %source.candidate,
+                    incumbent_release = %hex::encode(source.release),
+                    "the vault names this release through an election in effect: taking the keys from the \
+                     operator it replaced"
+                );
+                crate::handover::take(cfg, &source.endpoint, sealer.as_ref(), attestor, vault).await?
+            }
+            None => bail!("{}", refusal(dir, generation)),
+        }
     } else {
         bail!(refusal(dir, generation))
     };
@@ -290,7 +315,6 @@ pub(super) async fn cut_to_finalized_anchor(cfg: &NodeConfig, key: &Arc<EnclaveK
 
 /// How often a running node with sealed keys reads the vault's current release.
 pub(super) const RELEASE_CHECK_EVERY: Duration = Duration::from_secs(60);
-
 /// Raises `release_superseded` (Critical) once the vault's current release at finality is no longer
 /// `sealed` in `generation`, the release and generation the keys are sealed in, reading it every
 /// `every`: a restart would then find no keys to open, so they must be handed to the release the
@@ -329,6 +353,78 @@ pub(super) async fn watch_release(
             info!(alert_resolved = "release_superseded", "the vault names this release again");
         }
         superseded = !named;
+    }
+}
+
+/// Watches the mirrored election an incumbent with sealed keys runs under: raises `operator_elected`
+/// (Warning) once an election names another operator, and `handover_overdue` (Critical) once trusted
+/// time passes the election's effective time with this node still running — the proof no handover
+/// happened, since a confirmed one ends the node. An election cancelled before it took effect, or
+/// naming this operator's key again, resolves the episode.
+/// Error cases:
+/// - none; it runs until the node stops
+pub(super) async fn watch_handover(
+    tx: mpsc::Sender<Request>,
+    operator: AccountId,
+    trusted: TrustedClock,
+    every: Duration,
+) -> anyhow::Result<()> {
+    let mut elected = false;
+    let mut overdue = false;
+    let mut tick = tokio::time::interval(every);
+    loop {
+        tick.tick().await;
+        let (reply, answered) = oneshot::channel();
+        if tx
+            .send(Request::Query(Box::new(move |engine| {
+                let _ = reply.send(engine.operator_election().last);
+            })))
+            .await
+            .is_err()
+        {
+            return Ok(());
+        }
+        let last = match answered.await {
+            Ok(last) => last,
+            Err(_) => return Ok(()),
+        };
+        let challenger = last.filter(|last| !last.cancelled && last.admin_key != operator);
+        match challenger {
+            Some(last) => {
+                if !elected {
+                    warn!(
+                        alert = "operator_elected",
+                        epoch = last.epoch,
+                        elected = %last.candidate,
+                        effective_at = last.effective_at,
+                        "an election names another operator: a successor enclave is expected to connect at this \
+                         node's handover endpoint by the effective time"
+                    );
+                    elected = true;
+                }
+                let due = trusted.now_ms().is_some_and(|now| now >= last.effective_at);
+                if due && !overdue {
+                    error!(
+                        alert = "handover_overdue",
+                        epoch = last.epoch,
+                        effective_at = last.effective_at,
+                        "the election's effective time passed with no successor confirmed: this node still holds \
+                         the keys the elected operator's enclave should have taken; check its handover endpoint \
+                         and archive reachability"
+                    );
+                    overdue = true;
+                }
+            }
+            None if elected => {
+                info!(
+                    alert_resolved = "operator_elected",
+                    "the election naming another operator was cancelled or superseded: this operator stays in effect"
+                );
+                elected = false;
+                overdue = false;
+            }
+            None => {}
+        }
     }
 }
 

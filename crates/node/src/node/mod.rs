@@ -9,7 +9,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, anyhow, bail};
+use anyhow::{Context, anyhow, bail, ensure};
 use engine_core::command::Command;
 use engine_core::types::AccountId;
 use tokio::net::TcpListener;
@@ -106,6 +106,18 @@ async fn serve_node(
         if on && !cfg.operator.rotation_enabled {
             warn!(
                 "the vault's registry has rotation on, but operator.rotation_enabled is false: an election naming another operator moves the admin key this node does not expect"
+            );
+        }
+        // While rotation is on, the certificate the enclave orders names the API hostname the
+        // registry records for the operator in effect: a mismatch would certify a hostname the
+        // candidate did not register, and clients of the registered one would find no attested
+        // endpoint.
+        if on && let Some(domain) = cfg.api.tls.as_ref().map(|tls| tls.acme.domain.clone()) {
+            let registered = vault.operator_hostname().await?;
+            ensure!(
+                registered == domain,
+                "the registry names {registered} as the operator in effect's API hostname, but api.tls.acme.domain \
+                 is {domain}: point the config at the registered hostname, or register the one the config serves"
             );
         }
     } else if cfg.operator.rotation_enabled {
@@ -272,6 +284,25 @@ async fn serve_node(
         let (release, generation) = (store.release(), store.generation());
         let every = keys::RELEASE_CHECK_EVERY;
         tasks.spawn(async move { ("release", keys::watch_release(vault, release, generation, every).await) });
+    }
+    if store.is_some() && cfg.operator.rotation_enabled {
+        // The incumbent pages when an election names another operator and, past the effective
+        // time, when no successor has taken the keys.
+        let operator = cfg.operator()?.address;
+        let (watch_tx, watch_clock, watch_samples, max_drift) =
+            (tx.clone(), clock.clone(), samples_rx.clone(), cfg.time.max_drift);
+        tasks.spawn(async move {
+            (
+                "handover",
+                keys::watch_handover(
+                    watch_tx,
+                    operator,
+                    trusted_time::TrustedClock::new(watch_clock, watch_samples, max_drift),
+                    keys::RELEASE_CHECK_EVERY,
+                )
+                .await,
+            )
+        });
     }
 
     let tick = cfg.node.tick;
