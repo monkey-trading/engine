@@ -23,7 +23,7 @@ use crate::tee::sealing::{KeyStore, MockSealer, Release, Sealer, file_for};
 use crate::tee::{Attestation, AttestationBundle, Attestor, ConfigfsTsm, EnclaveKey, MockAttestor, attest_bundle};
 use crate::tls::TlsIdentity;
 use crate::trusted_time::TrustedClock;
-use engine_core::types::AccountId;
+use engine_core::types::{AccountId, Millis};
 use tokio::sync::{mpsc, oneshot};
 
 /// The operator's one-off choices for a start of a release that has no sealed keys.
@@ -356,11 +356,32 @@ pub(super) async fn watch_release(
     }
 }
 
+/// The alert episode an incumbent's election implies: none while the election names this operator
+/// or is cancelled, `elected` once another operator is named, and `overdue` past the effective
+/// time — this node still running is then the proof no handover happened, since a confirmed one
+/// ends it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Episode {
+    None,
+    Elected,
+    Overdue,
+}
+
+/// Maps the mirrored election and trusted time to the episode, pure so the escalation is testable.
+fn episode(last: Option<engine_core::election::Election>, operator: AccountId, now: Option<Millis>) -> Episode {
+    let Some(last) = last.filter(|last| !last.cancelled && last.admin_key != operator) else {
+        return Episode::None;
+    };
+    match now.is_some_and(|now| now >= last.effective_at) {
+        true => Episode::Overdue,
+        false => Episode::Elected,
+    }
+}
+
 /// Watches the mirrored election an incumbent with sealed keys runs under: raises `operator_elected`
 /// (Warning) once an election names another operator, and `handover_overdue` (Critical) once trusted
-/// time passes the election's effective time with this node still running — the proof no handover
-/// happened, since a confirmed one ends the node. An election cancelled before it took effect, or
-/// naming this operator's key again, resolves the episode.
+/// time passes the election's effective time with this node still running. An election cancelled
+/// before it took effect, or naming this operator's key again, resolves the episode.
 /// Error cases:
 /// - none; it runs until the node stops
 pub(super) async fn watch_handover(
@@ -369,8 +390,7 @@ pub(super) async fn watch_handover(
     trusted: TrustedClock,
     every: Duration,
 ) -> anyhow::Result<()> {
-    let mut elected = false;
-    let mut overdue = false;
+    let mut current = Episode::None;
     let mut tick = tokio::time::interval(every);
     loop {
         tick.tick().await;
@@ -388,43 +408,32 @@ pub(super) async fn watch_handover(
             Ok(last) => last,
             Err(_) => return Ok(()),
         };
-        let challenger = last.filter(|last| !last.cancelled && last.admin_key != operator);
-        match challenger {
-            Some(last) => {
-                if !elected {
-                    warn!(
-                        alert = "operator_elected",
-                        epoch = last.epoch,
-                        elected = %last.candidate,
-                        effective_at = last.effective_at,
-                        "an election names another operator: a successor enclave is expected to connect at this \
-                         node's handover endpoint by the effective time"
-                    );
-                    elected = true;
-                }
-                let due = trusted.now_ms().is_some_and(|now| now >= last.effective_at);
-                if due && !overdue {
-                    error!(
-                        alert = "handover_overdue",
-                        epoch = last.epoch,
-                        effective_at = last.effective_at,
-                        "the election's effective time passed with no successor confirmed: this node still holds \
-                         the keys the elected operator's enclave should have taken; check its handover endpoint \
-                         and archive reachability"
-                    );
-                    overdue = true;
-                }
-            }
-            None if elected => {
-                info!(
-                    alert_resolved = "operator_elected",
-                    "the election naming another operator was cancelled or superseded: this operator stays in effect"
-                );
-                elected = false;
-                overdue = false;
-            }
-            None => {}
+        let next = episode(last, operator, trusted.now_ms());
+        match (current, next) {
+            (Episode::None, Episode::Elected) => warn!(
+                alert = "operator_elected",
+                epoch = last.map(|last| last.epoch),
+                elected = last.map(|last| last.candidate.to_string()).unwrap_or_default(),
+                effective_at = last.map(|last| last.effective_at),
+                "an election names another operator: a successor enclave is expected to connect at this \
+                 node's handover endpoint by the effective time"
+            ),
+            (Episode::Elected, Episode::Overdue) => error!(
+                alert = "handover_overdue",
+                epoch = last.map(|last| last.epoch),
+                effective_at = last.map(|last| last.effective_at),
+                "the election's effective time passed with no successor confirmed: this node still holds \
+                 the keys the elected operator's enclave should have taken; check its handover endpoint \
+                 and archive reachability"
+            ),
+            (Episode::Elected | Episode::Overdue, Episode::None) => info!(
+                alert_resolved = "operator_elected",
+                "the election naming another operator was cancelled or superseded: this operator stays in \
+                 effect"
+            ),
+            _ => {}
         }
+        current = next;
     }
 }
 

@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, U256, keccak256};
 use alloy::sol_types::SolCall;
 use anyhow::{Context, ensure};
 use engine_core::event::Event;
@@ -162,6 +162,7 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
         rotation_and_staking(cfg, &node.chain, &staking, &b_dir, staking_start, true)
     })?;
     let b_config_hash: [u8; 32] = sha2::Sha256::digest(std::fs::read(&b_config_path)?).into();
+    let b_release = keccak256([B_DIGEST.as_slice(), &b_config_hash].concat());
     node.chain
         .register_candidate(
             b_candidate,
@@ -192,30 +193,16 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
         "the effective time is not the close plus the notice: {effective1}"
     );
     let b_admin_address = Address::from(engine_core::eip712::address(b_admin.verifying_key()).0);
-    // Mirrored, before the effective time: the deployer still signs; the elected key is pending.
+    // Mirrored: the deployer still signs and the elected key is pending — the engine applies the
+    // election only seven days of sequenced time after it logged, which real child processes do
+    // not outrun; the handover below needs only the chain-side naming.
     wait_operator(&node.client, || node.chain.check(), Some(&format!("{operator:#x}")), true).await?;
-    node.services.advance_by(Duration::from_secs(effective1 + 120 - engine_secs()));
+    // The incumbent sees the election coming and raises the Warning that a handover is expected.
+    wait_log(&node.dir.join("node.log"), "operator_elected", &mut node).await?;
+    // The chain alone passes the effective time; the fold lands; the vault names B's release.
     node.chain.warp_to(effective1 + 120).await?;
     node.chain.sync_release().await?;
-    // From the effective time the elected key applies and nothing is pending.
-    wait_operator(&node.client, || node.chain.check(), Some(&format!("{b_admin_address:#x}")), false).await?;
-    // The incumbent still holds the keys: it pages that the handover is overdue.
-    timeout(LOADED_WAIT, async {
-        loop {
-            if node
-                .services
-                .pages()
-                .iter()
-                .any(|page| page["alert"] == "handover_overdue" && page["severity"] == "critical")
-            {
-                return anyhow::Ok(());
-            }
-            node.services.check()?;
-            sleep(Duration::from_millis(200)).await;
-        }
-    })
-    .await
-    .context("the incumbent never paged handover_overdue")??;
+    node.chain.wait_finalized_release(b_release).await?;
 
     // A signs the withdrawal's authorization while it still holds the keys, and a checkpoint
     // covering the approval posts before the handover.
@@ -260,15 +247,15 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
     let open_start = node.chain.open_epoch_start().await?;
     let close2 = open_start + 3_600;
     let (_, effective2) = node.chain.close_epoch_at(close2).await?.context("the re-election elected no candidate")?;
-    let a_admin_address = Address::from(engine_core::eip712::address(operator_key.verifying_key()).0);
-    // B still signs on its node; A's key is pending until the effective time.
+    // B still signs on its node; A's key is pending, as before, until sequenced time passes the
+    // notice the scenario does not outrun.
     wait_operator(&b_client, &mut b_check, Some(&format!("{b_admin_address:#x}")), true).await?;
     drop(b_check);
-    node.services.advance_by(Duration::from_secs(effective2 + 120 - engine_secs()));
+    let a_release = keccak256([A_DIGEST.as_slice(), &a_config_hash].concat());
     node.chain.warp_to(effective2 + 120).await?;
     node.chain.sync_release().await?;
+    node.chain.wait_finalized_release(a_release).await?;
     node.restart_keys(None, Some(A_DIGEST)).await?;
-    wait_operator(&node.client, || node.chain.check(), Some(&format!("{a_admin_address:#x}")), false).await?;
     let status = b_child.exited(LOADED_WAIT).await?;
     ensure!(status.success(), "B exited with {status} after handing the keys back");
     println!("PASS: the re-elected operator's enclave took the keys back; the stale sealed copy never opened");
@@ -334,9 +321,23 @@ async fn wait_latest_seq(chain: &mut Chain, seq: u64) -> anyhow::Result<()> {
     .context("no checkpoint covered the approval before the handover")?
 }
 
-/// The engine's served time in seconds: the real clock the scenario's time servers answer from.
-fn engine_secs() -> u64 {
-    u64::try_from(now_ms() / 1000).unwrap_or(0)
+/// Waits until the node's log contains `text`, requiring the child to stay up.
+async fn wait_log(path: &Path, text: &str, node: &mut Node) -> anyhow::Result<()> {
+    timeout(LOADED_WAIT, async {
+        loop {
+            if let Ok(log) = std::fs::read_to_string(path)
+                && log.contains(text)
+            {
+                return anyhow::Ok(());
+            }
+            node.services.check()?;
+            node.chain.check()?;
+            node.check_running()?;
+            sleep(Duration::from_millis(500)).await;
+        }
+    })
+    .await
+    .with_context(|| format!("the node's log never contained {text:?}"))?
 }
 
 /// Waits until `/v1/operator` shows the operator `want` with a pending rotation when `pending`,

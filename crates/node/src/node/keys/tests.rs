@@ -233,3 +233,34 @@ fn sealed_config(name: &str) -> (NodeConfig, PathBuf) {
 fn checkpoint(seq: u64, root: &str) -> Checkpoint {
     serde_json::from_value(serde_json::json!({ "seq": seq, "root": root, "signature": "0x", "signer": "0x" })).unwrap()
 }
+
+#[test]
+fn the_handover_episode_escalates_past_the_effective_time_and_resolves() {
+    let operator = AccountId([0x42; 20]);
+    let other = AccountId([0x63; 20]);
+    let election = |effective_at, cancelled| engine_core::election::Election {
+        epoch: 7,
+        candidate: other,
+        admin_key: other,
+        effective_at,
+        registry_effective_at: effective_at,
+        cancelled,
+    };
+    let past = 1_700_000_000_000;
+    let future = past + 7 * 86_400_000;
+
+    // No election: no episode. Another operator named past the effective time is already overdue.
+    assert_eq!(episode(None, operator, Some(past)), Episode::None);
+    assert_eq!(episode(Some(election(past, false)), operator, Some(past + 1)), Episode::Overdue);
+    let mut ours = election(past, false);
+    ours.admin_key = operator;
+    assert_eq!(episode(Some(ours), operator, Some(past + 1)), Episode::None);
+    assert_eq!(episode(Some(election(past, true)), operator, Some(past + 1)), Episode::None);
+
+    // Another operator named: elected before the effective time, overdue from it, resolved when
+    // the election is cancelled. Without trusted time the escalation waits.
+    assert_eq!(episode(Some(election(future, false)), operator, Some(future - 1)), Episode::Elected);
+    assert_eq!(episode(Some(election(future, false)), operator, Some(future)), Episode::Overdue);
+    assert_eq!(episode(Some(election(future, false)), operator, None), Episode::Elected);
+    assert_eq!(episode(Some(election(future, true)), operator, Some(future + 1)), Episode::None);
+}
