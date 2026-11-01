@@ -20,6 +20,7 @@ use tracing::{error, info, warn};
 
 use crate::alerts::Routing;
 use crate::api::{ApiState, Feed, MAX_BACKFILLS, Signing, router};
+use crate::checkpoints::CheckpointChain;
 use crate::clock::{Clock, SystemClock, now_ms};
 use crate::config::{AuthMode, CustodyProvider, FeedProvider, NodeConfig};
 use crate::feeds;
@@ -78,7 +79,8 @@ pub(crate) async fn run_with_cpu(
 
 /// Runs every task but alert routing, which it supervises.
 /// Error cases:
-/// - operator rotation is enabled
+/// - `operator.rotation_enabled = true` while the vault's registry has rotation off, or without
+///   `[checkpoints]` EVM custody to read it
 /// - `feeds.provider = "venues"` without `[feeds.venues]`, an API key variable a venue connection
 ///   names is unset, or the TLS config or the ACME client cannot be built
 /// - obtaining the keys (see `keys::attested`), opening the history index (or a fresh one in place
@@ -96,8 +98,18 @@ async fn serve_node(
     cpu: Option<usize>,
     start: KeyStart,
 ) -> anyhow::Result<()> {
-    if cfg.operator.rotation_enabled {
-        bail!("operator rotation is not implemented yet; set operator.rotation_enabled = false");
+    if let Some(vault) = crate::handover::vault_reader(&cfg)? {
+        let on = vault.rotation_enabled().await?;
+        if cfg.operator.rotation_enabled && !on {
+            bail!("operator.rotation_enabled = true, but the vault's registry has rotation off");
+        }
+        if on && !cfg.operator.rotation_enabled {
+            warn!(
+                "the vault's registry has rotation on, but operator.rotation_enabled is false: an election naming another operator moves the admin key this node does not expect"
+            );
+        }
+    } else if cfg.operator.rotation_enabled {
+        bail!("operator.rotation_enabled = true needs [checkpoints] with EVM custody to read the registry");
     }
     if cfg.node.auth == AuthMode::None {
         warn!("API authentication is OFF: development only");
@@ -105,6 +117,11 @@ async fn serve_node(
 
     let keys = keys::attested(&cfg, &start).await?;
     let keys::Keys { enclave: key, tls, store, attestor, attestation } = keys;
+    // A takeover's first start under the new signer cuts the log to the vault's finalized
+    // anchor: checkpoints the outgoing key signed but the vault never accepted are published
+    // history the standby kept, but once this key is the vault's signer those signatures are
+    // unpostable, and writable recovery admits only what the vault accepted.
+    keys::cut_to_finalized_anchor(&cfg, &key).await?;
 
     // The relay fetches in the background, so the API serves the attestation while it is pending.
     let relay = Relay::new(&cfg.tee, &attestation)
@@ -117,6 +134,9 @@ async fn serve_node(
     let checkpoint_setup = registration::registered(&cfg, &key, &tls.acceptors, &attestation)
         .await
         .inspect_err(|e| error!(alert = "checkpoint_startup_failed", "refusing to serve: {e:#}"))?;
+    // The takeover cut runs once the vault names this key: a promoted node's first start began
+    // while the outgoing signer was still installed, and only now is the unposted tail cut.
+    keys::cut_to_finalized_anchor(&cfg, &key).await?;
     let mut anchor = None;
     let authorities = signer_history::load(checkpoint_setup.as_ref(), &cfg.node.log_dir)
         .await

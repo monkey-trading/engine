@@ -91,6 +91,19 @@ impl ChildProcess {
 }
 
 impl Node {
+    /// A node over an already-started chain and services, for scenarios that deploy more contracts
+    /// or register candidates before the first boot; `restart` boots it.
+    pub(super) fn uninitialized(
+        dir: PathBuf,
+        chain: Chain,
+        services: Services,
+        client: Client,
+        config: PathBuf,
+        metrics: u16,
+    ) -> Self {
+        Self { dir, chain, services, client, config, metrics, child: None }
+    }
+
     /// Starts a fresh Vault deployment and an ordinary node through the ignored child entry point.
     /// Error cases:
     /// - setup, node startup, or the API/genesis deadline fails

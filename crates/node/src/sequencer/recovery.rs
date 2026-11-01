@@ -80,8 +80,18 @@ impl ReplayedLog {
         let rotated = engine.operator_bounds().rotations > 0;
         let same_domain =
             |recorded: &Operator| (recorded.chain_id, recorded.vault) == (cfg.operator.chain_id, cfg.operator.vault);
-        if let Some(recorded) =
-            engine.operator().filter(|recorded| **recorded != cfg.operator && !(rotated && same_domain(recorded)))
+        // A promoted or elected standby's config names the key its pending rotation moves to, while
+        // the log still records the incumbent: the pending rotation's key, on this deployment,
+        // identifies this node as the successor.
+        let named_successor =
+            engine.operator_bounds().rotation.is_some_and(|rotation| rotation.address == cfg.operator.address)
+                && match engine.operator() {
+                    Some(recorded) => same_domain(recorded),
+                    None => false,
+                };
+        if let Some(recorded) = engine
+            .operator()
+            .filter(|recorded| **recorded != cfg.operator && !(rotated && same_domain(recorded)) && !named_successor)
         {
             bail!("the log records operator {recorded:?}, but the config gives {:?}", cfg.operator);
         }

@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use std::io::Read as _;
 use std::path::Path;
 
-use anyhow::{Context, ensure};
+use anyhow::{Context, bail, ensure};
 use engine_core::types::AccountId;
 use engine_verify::SnpReport;
 pub use engine_verify::{RelayedCollateral, ReleaseManifest};
@@ -170,18 +170,16 @@ pub fn reconcile_signer(
     }
 }
 
-/// Requires every checkpoint `signers` to be the enclave address `verified` attested, so a log
-/// whose checkpoints any other key signed does not pass.
+/// Requires every checkpoint `signers` to be the enclave address one of `verified`'s attestations
+/// attests, so a log whose checkpoints any other key signed does not pass: one attestation per
+/// signer epoch, as a log spanning an operator change carries.
 /// Error cases:
-/// - a checkpoint signer differs from the verified enclave address
-pub fn ensure_signers_verified(signers: &BTreeSet<AccountId>, verified: &VerifiedAttestation) -> anyhow::Result<()> {
+/// - a checkpoint signer no attestation names
+pub fn ensure_signers_verified(signers: &BTreeSet<AccountId>, verified: &[VerifiedAttestation]) -> anyhow::Result<()> {
     for signer in signers {
-        ensure!(
-            *signer == verified.enclave_address,
-            "checkpoint signer {signer} did not pass attestation verification ({} attests {})",
-            verified.release_name,
-            verified.enclave_address
-        );
+        if !verified.iter().any(|attested| attested.enclave_address == *signer) {
+            bail!("checkpoint signer {signer} did not pass attestation verification");
+        }
     }
     Ok(())
 }

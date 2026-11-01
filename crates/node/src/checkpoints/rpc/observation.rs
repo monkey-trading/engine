@@ -12,7 +12,8 @@ use crate::checkpoints::rpc::{
     CheckpointRpc, balanceOfCall, checkpointEpochAtCall, checkpointRootsCall, checkpointSignerAtCall,
     checkpointSignerCall, currentReleaseCall, depositCountCall, depositedThroughCall, distributionsPaidCall,
     hasCheckpointAtCall, hasCheckpointCall, latestRootCall, latestSeqCall, releaseGenerationCall, signerAtEpochCall,
-    signerEpochCall, totalDepositedCall, totalWithdrawnCall, usdcCall, usedNoncesCall, withdrawalsPausedCall,
+    signerEpochCall, syncedReleaseCall, totalDepositedCall, totalWithdrawnCall, usdcCall, usedNoncesCall,
+    withdrawalsPausedCall,
 };
 use crate::checkpoints::{
     APPROVAL_PAGE_SIZE, AcceptedCheckpoint, ApprovalId, ApprovalStatus, CurrentRelease, LifecycleEvidence, Observation,
@@ -135,6 +136,21 @@ impl CheckpointRpc {
             &self.call(vault, releaseGenerationCall {}.abi_encode(), block).await?,
         )?;
         Ok(CurrentRelease { id: id.0, generation })
+    }
+
+    /// The release the vault's generation has folded, at the pinned block: key sealing waits for
+    /// this to equal `currentRelease()`, so a key service never seals under a generation a later
+    /// `syncRelease` would supersede.
+    /// Error cases:
+    /// - the observation is not finalized and pinned, or the RPC or decoding fails
+    pub(super) async fn read_synced_release(&self, at: &Observation) -> anyhow::Result<[u8; 32]> {
+        ensure!(at.view == View::Finalized, "the synced release requires a finalized observation");
+        let evidence = at.lifecycle.as_ref().context("the synced release requires a pinned canonical observation")?;
+        let block = BlockId::hash_canonical(evidence.block_hash);
+        let vault = Address::from(self.domain.vault.0);
+        let synced =
+            syncedReleaseCall::abi_decode_returns(&self.call(vault, syncedReleaseCall {}.abi_encode(), block).await?)?;
+        Ok(synced.0)
     }
 
     /// Reads immutable accepted metadata at the exact canonical block of a prior observation.

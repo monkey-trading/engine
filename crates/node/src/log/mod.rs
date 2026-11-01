@@ -10,6 +10,8 @@ pub use command_seal::CommandSeal;
 mod checked;
 mod commitment;
 pub(crate) use commitment::{command_digest, extend_command_prefix};
+mod truncate;
+pub(crate) use truncate::truncate_to_checkpoint;
 mod archive;
 pub(crate) use archive::open_segment_archive;
 pub mod catalog;

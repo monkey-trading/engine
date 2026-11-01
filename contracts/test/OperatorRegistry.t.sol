@@ -101,6 +101,7 @@ contract OperatorRegistryTest is RegistryTest {
             alice,
             _key(alice),
             _release(1),
+            registration.enclave,
             2_000e18,
             registration.launchDigest,
             CONFIG,
@@ -353,7 +354,7 @@ contract OperatorRegistryTest is RegistryTest {
         OperatorRegistry.Parameters memory changed = _parameters();
         changed.marginBps = 2_500;
         _govern(address(registry), abi.encodeCall(OperatorRegistry.setParameters, (changed)));
-        (,,, uint16 marginBps,,,,) = registry.parameters();
+        (,,, uint16 marginBps,,,,,) = registry.parameters();
         assertEq(marginBps, 2_500);
         changed.epochLength = _maximums().epochLength + 1;
         vm.expectRevert(OperatorRegistry.ParameterOutOfBounds.selector);

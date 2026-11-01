@@ -228,6 +228,12 @@ impl SegmentedLog {
         })
     }
 
+    /// Whether the log's last segment is unlisted and holds entries: a follower's own tail,
+    /// which no archive listing may extend across.
+    pub fn has_open_tail(&self) -> bool {
+        self.manifest.active.is_some()
+    }
+
     /// A writer that appends to the last segment, or starts a new one at the next command if the
     /// manifest lists the last one. It publishes the manifest on `manifest`, starting now, with
     /// everything read counted as flushed. An earlier process may have died before syncing what it

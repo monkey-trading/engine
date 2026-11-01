@@ -312,10 +312,10 @@ fn signers_pass_only_when_they_match_the_verified_enclave_address() {
     };
     let mut signers = BTreeSet::new();
     signers.insert(engine_core::types::AccountId(enclave.bundle.enclave_address));
-    ensure_signers_verified(&signers, &verified).expect("the attested signer passes");
+    ensure_signers_verified(&signers, std::slice::from_ref(&verified)).expect("the attested signer passes");
 
     signers.insert(engine_core::types::AccountId([0x42; 20]));
-    assert!(ensure_signers_verified(&signers, &verified).is_err(), "an unattested signer passed");
+    assert!(ensure_signers_verified(&signers, std::slice::from_ref(&verified)).is_err(), "an unattested signer passed");
 }
 
 #[tokio::test]
@@ -394,7 +394,7 @@ async fn dev_scenario_attestation_verifier() -> anyhow::Result<()> {
     );
     let mut signers = BTreeSet::new();
     signers.insert(verified.enclave_address);
-    ensure_signers_verified(&signers, &verified).context("the attested signer must pass")?;
+    ensure_signers_verified(&signers, std::slice::from_ref(&verified)).context("the attested signer must pass")?;
 
     // A mock quote fails, and so does a quote for a configuration the release does not list.
     let mut mock_quote = b"MOCK-ATTESTATION-NOT-A-TEE:".to_vec();
@@ -430,7 +430,7 @@ async fn dev_scenario_attestation_verifier() -> anyhow::Result<()> {
     // A checkpoint signer the attestation does not cover fails.
     let mut unattested = BTreeSet::new();
     unattested.insert(engine_core::types::AccountId([0x42; 20]));
-    assert!(ensure_signers_verified(&unattested, &verified).is_err());
+    assert!(ensure_signers_verified(&unattested, std::slice::from_ref(&verified)).is_err());
 
     std::fs::remove_dir_all(&dir).ok();
     println!("attestation verifier dev scenario passed");

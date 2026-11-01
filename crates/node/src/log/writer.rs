@@ -202,6 +202,12 @@ impl LogWriter {
         self.flush()
     }
 
+    /// The offset of the last entry appended, or `None` before the first: a follower resumes the
+    /// stream right after it.
+    pub fn last_offset(&self) -> Option<Offset> {
+        self.last
+    }
+
     /// How many times the open segment's bytes reached storage; tests bound sync budgets with it.
     #[cfg(test)]
     pub(crate) fn sync_count(&self) -> usize {

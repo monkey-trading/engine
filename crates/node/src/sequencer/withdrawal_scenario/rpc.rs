@@ -16,6 +16,8 @@ use tokio::task::JoinHandle;
 use tokio::time::{interval, sleep, timeout};
 
 use crate::log::CheckpointDomain;
+
+pub(super) mod registry;
 use crate::sequencer::SignedWithdrawal;
 use crate::sequencer::withdrawal_scenario::node::{ChildProcess, free_port};
 use crate::tee::EnclaveKey;
@@ -32,6 +34,27 @@ sol! {
         uint64 issuedAt;
         uint64 expiresAt;
     }
+    struct InitialOperator { address adminKey; bytes launchDigest; bytes32 configHash; }
+    struct RegistryParameters {
+        uint64 epochLength;
+        uint64 minTerm;
+        uint64 finalityMargin;
+        uint16 marginBps;
+        uint16 eligibilityBps;
+        uint16 quorumBps;
+        uint16 maxCandidates;
+        uint256 minSelfBond;
+        uint64 livenessTimeout;
+    }
+    struct CandidateRegistration {
+        address adminKey;
+        address enclave;
+        uint256 bond;
+        bytes launchDigest;
+        bytes32 configHash;
+        string apiHostname;
+        string handoverEndpoint;
+    }
     function withdraw(Withdrawal withdrawal, uint64 checkpointSeq, bytes32[] siblings, bytes signature) external;
     function mint(address to, uint256 amount) external;
     function approve(address spender, uint256 amount) external returns (bool);
@@ -40,16 +63,43 @@ sol! {
     function balanceOf(address owner) external view returns (uint256);
     function totalWithdrawn() external view returns (uint256);
     function latestSeq() external view returns (uint64);
+    function latestRoot() external view returns (bytes32);
     function usedNonces(address account, uint64 nonce) external view returns (bool);
     function withdrawalsPaused() external view returns (bool);
     function pauseWithdrawals() external;
     function retireSigner() external;
     function signerEpoch() external view returns (uint64);
     function setSigner(address signer) external;
+    function postCheckpoint(
+        uint64 seq,
+        bytes32 root,
+        bool hasParent,
+        uint64 parentSeq,
+        bytes32 parentRoot,
+        bytes signature
+    ) external;
     function setPauses(bool depositsPaused, bool withdrawalsPaused) external;
     function setCurrentRelease(bytes launchDigest, bytes32 configHash) external;
     function currentRelease() external view returns (bytes32);
     function releaseGeneration() external view returns (uint64);
+    function syncRelease() external;
+    function monkey() external view returns (address);
+    function stake(uint256 amount) external;
+    function setRegistry(address registry_) external;
+    function registrationDigest(address candidate, address adminKey) external view returns (bytes32);
+    function register(CandidateRegistration registration, bytes signature) external;
+    function setEnclave(address enclave) external;
+    function setReleaseApproval(address candidate, bytes launchDigest, bytes32 configHash, bool approved) external;
+    function setRotation(bool enabled) external;
+    function promote() external returns (uint64);
+    function setVault(address vault) external;
+    function staking() external view returns (address);
+    function delegate(address candidate) external;
+    function operatorInEffect() external view returns (address candidate, address adminKey, bytes32 release, uint64 since);
+    function pendingElection()
+        external
+        view
+        returns (uint64 epoch, address candidate, address adminKey, bytes32 release, uint64 effectiveAt);
     function schedule(address target, uint256 value, bytes data, bytes32 predecessor, bytes32 salt, uint256 delay) external;
     function execute(address target, uint256 value, bytes payload, bytes32 predecessor, bytes32 salt) external payable;
     event WithdrawalPaid(address indexed account, uint256 amount, uint64 indexed nonce, uint64 approvedSeq);
@@ -65,6 +115,8 @@ pub(super) struct Chain {
     pub payer: Address,
     pub funder: Address,
     pub signer: engine_core::types::AccountId,
+    /// The operator registry the standby scenario deploys and the vault follows.
+    pub registry: Address,
     /// Held for writing while a block is mined; node RPC proxies hold it for reading.
     pub mining: Arc<RwLock<()>>,
     client: reqwest::Client,
@@ -131,6 +183,7 @@ impl Chain {
             payer: Address::ZERO,
             funder: Address::ZERO,
             deployer: Address::ZERO,
+            registry: Address::ZERO,
             signer: engine_core::types::AccountId(key.address()),
             mining,
             client,
@@ -239,8 +292,17 @@ impl Chain {
     /// Error cases:
     /// - transaction submission or execution fails
     pub async fn send(&self, from: Address, to: Address, data: Vec<u8>) -> anyhow::Result<TransactionReceipt> {
-        let receipt = self.transact(from, Some(to), data).await?;
-        ensure!(receipt.status(), "local contract transaction reverted");
+        let selector = hex::encode(data.get(..4.min(data.len())).unwrap_or_default());
+        let receipt = self.transact(from, Some(to), data.clone()).await?;
+        let reason = if receipt.status() {
+            String::new()
+        } else {
+            self.revert_reason(to, &data).await.map(|reason| format!(": {reason}")).unwrap_or_default()
+        };
+        ensure!(
+            receipt.status(),
+            "local contract transaction to {to} reverted (selector 0x{selector}, from {from}){reason}"
+        );
         Ok(receipt)
     }
 
@@ -264,20 +326,7 @@ impl Chain {
     /// Error cases:
     /// - scheduling fails, or execution keeps reverting past the deadline
     pub async fn govern(&self, data: Vec<u8>) -> anyhow::Result<()> {
-        let salt = B256::from(rand::random::<[u8; 32]>());
-        let (target, value, predecessor) = (self.vault, U256::ZERO, B256::ZERO);
-        let scheduled =
-            scheduleCall { target, value, data: data.clone().into(), predecessor, salt, delay: U256::from(1) };
-        self.send(self.deployer, self.timelock, scheduled.abi_encode()).await?;
-        let execute = executeCall { target, value, payload: data.into(), predecessor, salt }.abi_encode();
-        timeout(LOADED_WAIT, async {
-            while !self.transact(self.payer, Some(self.timelock), execute.clone()).await?.status() {
-                sleep(Duration::from_millis(250)).await;
-            }
-            anyhow::Ok(())
-        })
-        .await
-        .context("the timelock never executed the call")?
+        self.govern_target(self.vault, data).await
     }
 
     /// Has the timelock make `launch_digest` running the config whose SHA-256 is `config_sha256`
@@ -302,6 +351,23 @@ impl Chain {
         })
         .await
         .context("the current release never reached the finalized block")?
+    }
+
+    /// Waits until the vault's current release at the finalized block is `release`, which nodes
+    /// read at startup; a just-mined promotion names it at `latest` first.
+    /// Error cases:
+    /// - the release never reaches the finalized block
+    pub(crate) async fn wait_finalized_release(&self, release: B256) -> anyhow::Result<()> {
+        timeout(LOADED_WAIT, async {
+            loop {
+                if self.read_finalized(currentReleaseCall {}).await? == release {
+                    return anyhow::Ok(());
+                }
+                sleep(Duration::from_millis(200)).await;
+            }
+        })
+        .await
+        .context("the release never reached the finalized block")?
     }
 
     /// The Vault's answer to `call` at the finalized block.
@@ -332,21 +398,7 @@ impl Chain {
     /// Error cases:
     /// - an invalid call unexpectedly succeeds
     pub async fn refuses(&self, input: Vec<u8>) -> anyhow::Result<()> {
-        let response: Value = self
-            .client
-            .post(&self.url)
-            .json(&json!({"jsonrpc":"2.0","id":1,"method":"eth_call",
-            "params":[{"from":self.payer,"to":self.vault,"data":format!("0x{}",hex::encode(input))},"latest"]}))
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-        ensure!(
-            response["error"]["message"].as_str().is_some_and(|text| text.contains("revert")),
-            "invalid claim did not return an EVM revert: {response}"
-        );
-        Ok(())
+        self.refuses_call(self.vault, input).await
     }
 
     /// Submits the duplicate claim on-chain and requires its mined receipt to revert.
@@ -365,10 +417,22 @@ impl Chain {
     /// Error cases:
     /// - typed authorization, approval sequence, or signature is malformed
     pub fn claim(&self, signed: &SignedWithdrawal) -> anyhow::Result<withdrawCall> {
+        self.claim_from(signed, self.signer)
+    }
+
+    /// `claim`, verifying the authorization against `signer` instead of the deployment's first
+    /// signer: a reissue under a new signer epoch pays under the new key.
+    /// Error cases:
+    /// - typed authorization, approval sequence, or signature is malformed
+    pub(crate) fn claim_from(
+        &self,
+        signed: &SignedWithdrawal,
+        signer: engine_core::types::AccountId,
+    ) -> anyhow::Result<withdrawCall> {
         crate::withdrawals::verify(
             signed,
             CheckpointDomain { chain_id: 31337, vault: engine_core::types::AccountId(self.vault.into()) },
-            self.signer,
+            signer,
         )?;
         let auth = signed.authorization.as_ref().context("stream authorization")?;
         Ok(withdrawCall {

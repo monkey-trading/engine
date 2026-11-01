@@ -101,8 +101,9 @@ pub enum Reissue {
     Unavailable,
 }
 
-/// What `/v1/stream` publishes: each log entry at its offset, in offset order.
-#[derive(Clone, Debug, Serialize)]
+/// What `/v1/stream` publishes: each log entry at its offset, in offset order. A standby follower
+/// deserializes what it serializes, and verifies each frame's signature before trusting it.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StreamMsg {
     pub offset: Offset,
     #[serde(flatten)]
@@ -111,12 +112,22 @@ pub struct StreamMsg {
 
 // Unboxed on purpose, like `Request`.
 #[allow(clippy::large_enum_variant)]
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum StreamBody {
     Command(CommandEntry),
     Checkpoint(Checkpoint),
     Withdrawal(SignedWithdrawal),
+}
+
+impl From<StreamBody> for LogEntry {
+    fn from(body: StreamBody) -> Self {
+        match body {
+            StreamBody::Command(command) => LogEntry::Command(command),
+            StreamBody::Checkpoint(checkpoint) => LogEntry::Checkpoint(checkpoint),
+            StreamBody::Withdrawal(withdrawal) => LogEntry::Withdrawal(withdrawal),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -7,6 +7,11 @@ import {ECDSA} from "@openzeppelin-contracts/utils/cryptography/ECDSA.sol";
 
 import {Staking} from "./Staking.sol";
 
+/// @dev The vault the liveness clock reads: the registry asks it when a checkpoint last posted.
+interface IVault {
+    function lastCheckpointAt() external view returns (uint64);
+}
+
 /// @title OperatorRegistry
 /// @notice Elects the operator, whose key signs the engine's admin commands, by delegated MONKEY
 /// stake. Anyone may register as a candidate with a self-bond of its own stake, which the staking
@@ -19,6 +24,11 @@ import {Staking} from "./Staking.sol";
 /// approved candidates, the operator in effect has served its minimum term, and the winner's votes exceed the
 /// incumbent's by the margin. The election takes effect seven days plus the finality margin after
 /// the close; the engine mirrors it and applies the winner's admin key from then.
+/// @notice Liveness: while rotation is on and no election waits, anyone may promote the top
+/// eligible standby once the vault has had no checkpoint for `parameters.livenessTimeout`. The
+/// promotion takes effect like an election, and moves the vault's current release to the standby
+/// at once; the standby's registered enclave address is the only one the vault's timelock-gated
+/// `setSigner` installs while rotation is on.
 /// @dev Not upgradeable. Rotation starts off, with the deployment's initial operator in effect, and
 /// while it is off a close elects nothing. Only the timelock turns rotation on and off (turning it
 /// off cancels an election not yet in effect), approves candidates' releases, and changes the
@@ -47,12 +57,17 @@ contract OperatorRegistry {
         uint16 maxCandidates;
         /// @notice The smallest self-bond, in MONKEY base units.
         uint256 minSelfBond;
+        /// @notice Seconds without a vault checkpoint after which anyone may promote the top
+        /// eligible standby.
+        uint64 livenessTimeout;
     }
 
     /// @notice What a candidate registers. The release is the enclave build and config it runs:
-    /// its 48-byte SEV-SNP launch measurement and the SHA-256 of its config file.
+    /// its 48-byte SEV-SNP launch measurement and the SHA-256 of its config file. The enclave is
+    /// the address its enclave's key attests, which the vault's limited `setSigner` installs.
     struct Registration {
         address adminKey;
+        address enclave;
         uint256 bond;
         bytes launchDigest;
         bytes32 configHash;
@@ -64,6 +79,7 @@ contract OperatorRegistry {
     /// vault names a release.
     struct Candidate {
         address adminKey;
+        address enclave;
         uint256 bond;
         bytes32 release;
         /// @notice Registrations so far when this one was made, which breaks a tie in votes.
@@ -80,13 +96,16 @@ contract OperatorRegistry {
         uint64 since;
     }
 
-    /// @notice An election that takes effect at `effectiveAt`.
+    /// @notice An election that takes effect at `effectiveAt`. A promotion (`promoted`) moves
+    /// the vault's release at once; an election moves it at the effective time, as #359 §10
+    /// decides.
     struct Election {
         uint64 epoch;
         address candidate;
         address adminKey;
         bytes32 release;
         uint64 effectiveAt;
+        bool promoted;
     }
 
     /// @notice The initial operator in effect: the deployment's key and release. Its candidate
@@ -123,6 +142,10 @@ contract OperatorRegistry {
 
     /// @notice The deployment's timelock.
     TimelockController public immutable governance;
+
+    /// @notice The vault whose checkpoints the liveness clock reads; set once by governance after
+    /// deployment, since the vault and the registry name each other.
+    IVault public vault;
 
     /// @notice The parameters in force.
     Parameters public parameters;
@@ -161,6 +184,7 @@ contract OperatorRegistry {
         address indexed candidate,
         address indexed adminKey,
         bytes32 indexed release,
+        address enclave,
         uint256 bond,
         bytes launchDigest,
         bytes32 configHash,
@@ -168,6 +192,7 @@ contract OperatorRegistry {
         string handoverEndpoint
     );
     event CandidateDeregistered(address indexed candidate);
+    event CandidateEnclaveChanged(address indexed candidate, address indexed enclave);
     event ReleaseApprovalChanged(address indexed candidate, bytes32 indexed release, bool approved);
 
     /// @notice Rotation turned on or off; `electionCancelled` when turning it off cancelled an
@@ -200,6 +225,12 @@ contract OperatorRegistry {
     error UnauthorizedAdminKey();
     error RotationUnchanged(bool enabled);
     error EpochNotEnded(uint256 endsAt);
+    error RotationDisabled();
+    error ElectionPending();
+    error VaultNotSet();
+    error VaultAlreadySet(address vault);
+    error LivenessNotDue(uint256 dueAt);
+    error NoQualifiedStandby();
 
     /// @param monkey_ The MONKEY token the staking contract holds.
     /// @param cooldownSeconds_ The staking contract's unstake cooldown, in seconds, which also keeps
@@ -225,8 +256,8 @@ contract OperatorRegistry {
         }
         if (initial.adminKey == address(0)) revert ZeroAddress();
         if (
-            minimums_.epochLength == 0 || minimums_.maxCandidates == 0 || maximums_.marginBps > BPS
-                || maximums_.eligibilityBps > BPS || maximums_.quorumBps > BPS
+            minimums_.epochLength == 0 || minimums_.livenessTimeout == 0 || minimums_.maxCandidates == 0
+                || maximums_.marginBps > BPS || maximums_.eligibilityBps > BPS || maximums_.quorumBps > BPS
                 || maximums_.maxCandidates > CANDIDATE_LIMIT
         ) revert InvalidBounds();
         minimums = minimums_;
@@ -259,16 +290,18 @@ contract OperatorRegistry {
     /// its release is still approved, under the cap in force then.
     function register(Registration calldata registration, bytes calldata signature) external {
         if (candidates[msg.sender].adminKey != address(0)) revert AlreadyRegistered();
-        Parameters memory p = parameters;
         address adminKey = registration.adminKey;
-        if (adminKey == address(0)) revert ZeroAddress();
+        if (adminKey == address(0) || registration.enclave == address(0)) revert ZeroAddress();
         if (!_authorizedByAdminKey(msg.sender, adminKey, signature)) revert UnauthorizedAdminKey();
         if (keyHolder[adminKey] != address(0)) revert AdminKeyTaken(keyHolder[adminKey]);
-        if (registration.bond < p.minSelfBond) revert BondBelowMinimum(registration.bond, p.minSelfBond);
+        if (registration.bond < parameters.minSelfBond) {
+            revert BondBelowMinimum(registration.bond, parameters.minSelfBond);
+        }
         _checkEndpoint(registration);
         bytes32 release = _release(registration.launchDigest, registration.configHash);
         candidates[msg.sender] = Candidate(
             adminKey,
+            registration.enclave,
             registration.bond,
             release,
             registrations++,
@@ -280,6 +313,7 @@ contract OperatorRegistry {
             msg.sender,
             adminKey,
             release,
+            registration.enclave,
             registration.bond,
             registration.launchDigest,
             registration.configHash,
@@ -343,6 +377,25 @@ contract OperatorRegistry {
         staking.releaseBond(msg.sender);
     }
 
+    /// @notice Updates the enclave address the caller's candidacy registers: the only address the
+    /// vault's limited `setSigner` installs while rotation is on. A standby promotes with fresh
+    /// enclave keys, which it registers here before the timelock installs them.
+    function setEnclave(address enclave) external {
+        Candidate storage registered = candidates[msg.sender];
+        if (registered.adminKey == address(0)) revert NotRegistered();
+        if (enclave == address(0)) revert ZeroAddress();
+        registered.enclave = enclave;
+        emit CandidateEnclaveChanged(msg.sender, enclave);
+    }
+
+    /// @notice Names the deployment's vault, whose `lastCheckpointAt` the liveness clock reads.
+    /// Set once, after both contracts deploy.
+    function setVault(address vault_) external onlyGovernance {
+        if (vault_.code.length == 0) revert ZeroAddress();
+        if (address(vault) != address(0)) revert VaultAlreadySet(address(vault));
+        vault = IVault(vault_);
+    }
+
     /// @notice Approves, or withdraws approval of, `candidate` running the release with SEV-SNP launch
     /// measurement `launchDigest` and config SHA-256 `configHash`. Approving a registered candidate
     /// adds it to `candidateList` under the candidate cap; withdrawing approval removes it from the
@@ -402,14 +455,73 @@ contract OperatorRegistry {
         if (winner == address(0)) return epoch;
         Candidate storage elected = candidates[winner];
         uint64 effectiveAt = uint64(block.timestamp + NOTICE + p.finalityMargin);
-        pending = Election(epoch, winner, elected.adminKey, elected.release, effectiveAt);
+        pending = Election(epoch, winner, elected.adminKey, elected.release, effectiveAt, false);
         emit Elected(epoch, winner, elected.adminKey, elected.release, effectiveAt);
+    }
+
+    /// @notice Promotes the top eligible standby after the liveness timeout: anyone may call once
+    /// the vault has had no checkpoint for `parameters.livenessTimeout`. The promoted candidate
+    /// becomes the pending operator in effect: the vault's current release is its at once, and its
+    /// admin key takes effect at `now + NOTICE + finalityMargin`, as an election's does. The vault
+    /// installs the standby's registered enclave address through its limited `setSigner` in that
+    /// time. Reverts when no standby qualifies, leaving the operator in effect unchanged.
+    /// @return epoch The epoch number the promotion consumes, one more than any closed or consumed.
+    function promote() external returns (uint64 epoch) {
+        if (!rotationEnabled) revert RotationDisabled();
+        _settle();
+        if (pending.effectiveAt != 0) revert ElectionPending();
+        IVault liveness = vault;
+        if (address(liveness) == address(0)) revert VaultNotSet();
+        Parameters memory p = parameters;
+        uint256 dueAt = uint256(liveness.lastCheckpointAt()) + p.livenessTimeout;
+        if (block.timestamp < dueAt) revert LivenessNotDue(dueAt);
+        address standby = _standby(p);
+        if (standby == address(0)) revert NoQualifiedStandby();
+        // Consume the epoch number a close would next assign, so every election and promotion the
+        // engine mirrors carries a strictly increasing epoch.
+        uint256 elapsed = (block.timestamp - openEpochStart) / p.epochLength;
+        epoch = openEpoch + uint64(elapsed);
+        openEpoch = epoch + 1;
+        openEpochStart = uint64(block.timestamp);
+        Candidate storage promoted = candidates[standby];
+        uint64 effectiveAt = uint64(block.timestamp + NOTICE + p.finalityMargin);
+        pending = Election(epoch, standby, promoted.adminKey, promoted.release, effectiveAt, true);
+        emit Elected(epoch, standby, promoted.adminKey, promoted.release, effectiveAt);
     }
 
     /// @notice The operator in effect: the last election once its time has come, or before it the
     /// operator it replaces.
     function operatorInEffect() external view returns (Operator memory) {
+        return _inEffect();
+    }
+
+    /// @notice The enclave address the named operator's candidate registered: the only address the
+    /// vault's limited `setSigner` installs while rotation is on. A promotion names its candidate
+    /// at once; an election names the winner only from its effective time. Zero when the named
+    /// operator is not a registered candidate.
+    function operatorEnclave() external view returns (address) {
+        return candidates[_named().candidate].enclave;
+    }
+
+    /// @notice The release the vault names while rotation is on: the named operator's. A promoted
+    /// standby's enclave unseals only under the release it runs, so a promotion names it at once;
+    /// an election's release moves at its effective time, as #359 §10 decides.
+    function operatorRelease() external view returns (bytes32) {
+        return _named().release;
+    }
+
+    /// @dev The operator in effect, pending one settled.
+    function _inEffect() private view returns (Operator memory) {
         if (pending.effectiveAt != 0 && block.timestamp >= pending.effectiveAt) {
+            return Operator(pending.candidate, pending.adminKey, pending.release, pending.effectiveAt);
+        }
+        return current;
+    }
+
+    /// @dev The operator the vault names while rotation is on: a pending promotion from the moment
+    /// it is made, a pending election from its effective time, else the operator in effect.
+    function _named() private view returns (Operator memory) {
+        if (pending.effectiveAt != 0 && (pending.promoted || block.timestamp >= pending.effectiveAt)) {
             return Operator(pending.candidate, pending.adminKey, pending.release, pending.effectiveAt);
         }
         return current;
@@ -418,6 +530,13 @@ contract OperatorRegistry {
     /// @notice The election waiting to take effect, or a zero election when none is.
     function pendingElection() external view returns (Election memory election) {
         if (block.timestamp < pending.effectiveAt) election = pending;
+    }
+
+    /// @notice Whether the election waiting to take effect is a liveness promotion: only a
+    /// promotion moves the release at once and admits a standby's takeover; an ordinary election
+    /// takes effect at its time without one.
+    function pendingPromotion() external view returns (bool) {
+        return pending.effectiveAt != 0 && pending.promoted;
     }
 
     /// @notice `candidate`'s registration, zero when it is not registered.
@@ -465,6 +584,25 @@ contract OperatorRegistry {
         if (best * BPS <= incumbent * (BPS + p.marginBps)) return address(0);
     }
 
+    /// @dev The eligible candidate with the most votes, the earlier registration on a tie, other
+    /// than the operator in effect: the standby the liveness rule promotes. Unlike `_winner`, no
+    /// quorum, margin, or minimum term: the incumbent has failed, so any eligible standby serves.
+    function _standby(Parameters memory p) private view returns (address standby) {
+        uint256 total = staking.totalStaked();
+        uint256 best = 0;
+        uint64 earliest = 0;
+        for (uint256 i = 0; i < candidateList.length; ++i) {
+            address candidate = candidateList[i];
+            if (candidate == current.candidate) continue;
+            uint256 cast = staking.votes(candidate);
+            if (!_eligible(candidate, cast, total, p)) continue;
+            uint64 registration = candidates[candidate].registration;
+            if (standby == address(0) || cast > best || (cast == best && registration < earliest)) {
+                (standby, best, earliest) = (candidate, cast, registration);
+            }
+        }
+    }
+
     /// @dev Whether registered `candidate`, with `cast` votes of `total` stake, is eligible under `p`.
     function _eligible(address candidate, uint256 cast, uint256 total, Parameters memory p)
         private
@@ -494,7 +632,8 @@ contract OperatorRegistry {
                 || p.eligibilityBps < lo.eligibilityBps || p.eligibilityBps > hi.eligibilityBps
                 || p.quorumBps < lo.quorumBps || p.quorumBps > hi.quorumBps || p.maxCandidates < lo.maxCandidates
                 || p.maxCandidates > hi.maxCandidates || p.minSelfBond < lo.minSelfBond
-                || p.minSelfBond > hi.minSelfBond
+                || p.minSelfBond > hi.minSelfBond || p.livenessTimeout < lo.livenessTimeout
+                || p.livenessTimeout > hi.livenessTimeout
         ) revert ParameterOutOfBounds();
     }
 

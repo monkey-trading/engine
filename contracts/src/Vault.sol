@@ -11,6 +11,7 @@ import {Math} from "@openzeppelin-contracts/utils/math/Math.sol";
 
 import {ExitVerifier} from "./ExitVerifier.sol";
 import {MonkeyToken} from "./MonkeyToken.sol";
+import {OperatorRegistry} from "./OperatorRegistry.sol";
 import {StateTree} from "./StateTree.sol";
 
 /// @title Vault
@@ -133,11 +134,22 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     /// launch measurement and the SHA-256 of the config file it runs with. A node opens its sealed
     /// keys only while it is this release, and hands them only to this release, so no code or config
     /// receives the key without the timelock delay, and setting another release supersedes this one.
-    bytes32 public currentRelease;
-    /// @notice Raised by every `setCurrentRelease`. A node seals its keys under the generation it
-    /// runs in and opens only a copy sealed under the current one, so a release set current again
-    /// takes the keys afresh from the running release instead of reopening an old copy.
+    /// While the operator registry has rotation on, this is instead the pending-or-current
+    /// operator's release, which `syncRelease` folds into this contract's state.
+    bytes32 public namedRelease;
+    /// @notice Raised by every `setCurrentRelease`, and by `syncRelease` when the effective release
+    /// changes on the registry's path: a node seals its keys under the generation it runs in and
+    /// opens only a copy sealed under the current one, so a release set current again takes the
+    /// keys afresh from the running release instead of reopening an old copy.
     uint64 public releaseGeneration;
+    /// @notice The effective release the generation last synced at; the first `syncRelease` after an
+    /// election or promotion takes effect bumps the generation when it differs. A node reads this
+    /// beside `currentRelease()` and refuses to seal keys until the two agree, so a key service
+    /// never seals under a generation a later sync would supersede.
+    bytes32 public syncedRelease;
+    /// @notice The operator registry this vault follows while rotation is on, set once by
+    /// governance; the zero address behaves as rotation off.
+    OperatorRegistry public registry;
     TimelockController public immutable governance;
     /// @notice The deployment's multisig, which may pause withdrawals and retire the signer without
     /// the timelock's delay, and nothing else.
@@ -216,6 +228,10 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     /// @notice The guardian retired `signer`, the signer of epoch `signerEpoch`.
     event SignerRetired(address indexed signer, uint64 signerEpoch);
     event CurrentReleaseChanged(bytes32 indexed release, uint64 generation, bytes launchDigest, bytes32 configHash);
+    /// @notice Governance named the operator registry the vault follows while rotation is on.
+    event RegistrySet(address indexed registry);
+    /// @notice The registry's path changed the effective release, raising the generation.
+    event ReleaseSynced(bytes32 indexed release, uint64 generation);
 
     /// @notice `amount` USDC base units deposited to trader account `account` by `from`, the caller
     /// whose tokens the vault pulled.
@@ -290,6 +306,9 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     error NoHouseRemainder();
     error NotRefundable(uint256 id);
     error PendingDepositMismatch();
+    error RegistryAlreadySet(address registry);
+    error RotationActive();
+    error NotTheRegisteredEnclave(address signer, address enclave);
 
     /// @param governance_ The deployment's timelock, which alone rotates the signer, sets the
     /// release that holds its key, and unpauses.
@@ -346,8 +365,15 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     }
 
     /// @notice Retires existing withdrawal authorizations, including when reusing the signer address.
+    /// While the registry has rotation on, only the enclave address the operator in effect
+    /// registered installs, so a promotion or election's standby is the only new signer.
     function setSigner(address signer) external onlyGovernance {
         if (signer == address(0)) revert ZeroAddress();
+        OperatorRegistry reg = registry;
+        if (address(reg) != address(0) && reg.rotationEnabled()) {
+            address enclave = reg.operatorEnclave();
+            if (signer != enclave) revert NotTheRegisteredEnclave(signer, enclave);
+        }
         address previous = checkpointSigner;
         checkpointSigner = signer;
         signerEpoch++;
@@ -355,13 +381,48 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         emit SignerChanged(previous, signer, signerEpoch);
     }
 
+    /// @notice Names the operator registry the vault follows while rotation is on. Set once, after
+    /// both contracts deploy.
+    function setRegistry(address registry_) external onlyGovernance {
+        if (registry_.code.length == 0) revert ZeroAddress();
+        if (address(registry) != address(0)) revert RegistryAlreadySet(address(registry));
+        registry = OperatorRegistry(registry_);
+        emit RegistrySet(registry_);
+    }
+
+    /// @notice The release that holds the enclave's keys: what governance named while rotation is
+    /// off, or the pending-or-current operator's while the registry has rotation on.
+    function currentRelease() public view returns (bytes32) {
+        OperatorRegistry reg = registry;
+        if (address(reg) != address(0) && reg.rotationEnabled()) return reg.operatorRelease();
+        return namedRelease;
+    }
+
+    /// @notice Folds a registry-driven release change into this contract's state, raising the
+    /// release generation: anyone calls it once an election or promotion moves the operator. A
+    /// standby seals its keys only after this, so they are sealed under the generation the release
+    /// change raised. Every state-changing entry point syncs first, so the generation a key
+    /// service observes can never lag the release it names for longer than one read: once the
+    /// operator acts, identity and generation move together.
+    function syncRelease() public {
+        bytes32 effective = currentRelease();
+        if (effective == syncedRelease) return;
+        syncedRelease = effective;
+        uint64 generation = ++releaseGeneration;
+        emit ReleaseSynced(effective, generation);
+    }
+
     /// @notice Makes the release with SEV-SNP launch measurement `launchDigest`, running the config
     /// whose SHA-256 is `configHash`, the one that holds the enclave's keys, in a new generation: the
-    /// running release hands them to it, and no copy sealed in an earlier generation opens.
+    /// running release hands them to it, and no copy sealed in an earlier generation opens. Applies
+    /// only while rotation is off; while it is on, the registry's operator names the release.
     function setCurrentRelease(bytes calldata launchDigest, bytes32 configHash) external onlyGovernance {
         if (launchDigest.length != 48) revert InvalidLaunchDigest();
+        OperatorRegistry reg = registry;
+        if (address(reg) != address(0) && reg.rotationEnabled()) revert RotationActive();
         bytes32 release = keccak256(abi.encodePacked(launchDigest, configHash));
-        currentRelease = release;
+        namedRelease = release;
+        syncedRelease = release;
         uint64 generation = ++releaseGeneration;
         emit CurrentReleaseChanged(release, generation, launchDigest, configHash);
     }
