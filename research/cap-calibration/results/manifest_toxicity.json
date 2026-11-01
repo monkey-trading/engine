@@ -1,0 +1,20 @@
+{
+ "command": [
+  "toxicity"
+ ],
+ "derived_sha256": {
+  "benchmarks.csv": "16e04c781473c39d",
+  "hourly_bars.npz": "d742bab6c751e973",
+  "market_mix.csv": "cbf00cf20cf6fde8",
+  "market_stats.csv": "5c590a0c86a90c0a",
+  "papertrade_daily.csv": "38379b23e276390f",
+  "papertrade_flow.csv": "fe24885aaaa069e5",
+  "papertrade_holding.csv": "bf066bbc49e19029",
+  "papertrade_leverage.csv": "fd05f25e9538d410",
+  "papertrade_sizes.csv": "341fd8a0af63fdce",
+  "papertrade_summary.json": "875fc6c89820321a"
+ },
+ "seconds": 5,
+ "toxicity_mc_trials": 40000,
+ "toxicity_seed": 1
+}
