@@ -207,11 +207,19 @@ pub enum ProtocolVersion {
     /// expiry cap; a revoked or expired key, a key signing a withdrawal, and any registration or
     /// revocation before `V41` are refused with their own rejections.
     V41,
+    /// MONKEY emission weight (`emissions`) is an account's gross realised losses in each period:
+    /// every fill's loss magnitude counts, `max(-realised_pnl, 0)` (liquidations included, the
+    /// profit fee and financing excluded, cash-in-lieu split losses as before), and wins in the
+    /// period do not offset. Before `V42` weight is the net realised loss there. The `V32`
+    /// emission-debt mechanics carry over: a period's write-off absorbs its gross losses first,
+    /// the unabsorbed remainder becomes debt charged against earned weight, and surviving weight
+    /// pays debt down before it earns.
+    V42,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V41;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V42;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

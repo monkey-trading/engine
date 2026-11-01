@@ -4,14 +4,16 @@
 //!
 //! - **Periods** are the half-open windows `[start + n·PERIOD_MS, start + (n+1)·PERIOD_MS)` of
 //!   sequenced time. A command stamped exactly at a boundary belongs to the later period.
-//! - **Weight.** An account's weight in a period is its net realised trading loss there, the sum of
-//!   its fills' `realised_pnl` (liquidations included, the profit fee and financing not) and, from
-//!   `V23`, of the cash in lieu splits realise on its positions (dividends not), less the debt the
-//!   house wrote off for it there. From `V32`, the write-off a period's losses cannot absorb
-//!   becomes a per-account emission debt, up to the weight the account earned and has not been
-//!   charged for, and later loss weight pays the debt down before any of it earns weight again. A
-//!   weight that is not positive counts as zero, and so does any weight of an account whose cash is
-//!   negative at the period's cutoff, with no later backfill.
+//! - **Weight.** An account's weight in a period is the sum of its fills' loss magnitudes there,
+//!   each `max(-realised_pnl, 0)` (liquidations included, the profit fee and financing not), and
+//!   of the cash in lieu splits realise on its positions (dividends not), less the debt the house
+//!   wrote off for it there; from `V42` wins in the period do not offset — before `V42` weight is
+//!   the net realised trading loss, the sum of the fills' `realised_pnl` with the same
+//!   exclusions. From `V32`, the write-off a period's losses cannot absorb becomes a per-account
+//!   emission debt, up to the weight the account earned and has not been charged for, and later
+//!   loss weight pays the debt down before any of it earns weight again. A weight that is not
+//!   positive counts as zero, and so does any weight of an account whose cash is negative at the
+//!   period's cutoff, with no later backfill.
 //! - **Budget.** Period `n`'s budget is the initial budget halved, rounded down, once for each whole
 //!   26,280 periods before `n`; once it reaches zero it stays zero. The nominal maximum supply is
 //!   `2 · 26,280 ·` the initial budget, and every budget and allocation rounds below it.
@@ -88,6 +90,10 @@ pub struct PeriodResult {
     /// The sum of its fills' realised PnL in USD, liquidations included, before the profit fee, and
     /// from `V23` of the cash in lieu its positions' splits realise.
     pub realised: Fixed,
+    /// From `V42`, the sum of the loss magnitudes those results carry, each `max(-pnl, 0)`: a win
+    /// adds nothing and does not offset a loss. Zero before `V42`.
+    #[serde(default, skip_serializing_if = "Fixed::is_zero")]
+    pub losses: Fixed,
     /// The debt the house wrote off for it.
     pub written_off: Fixed,
 }
@@ -195,9 +201,12 @@ impl EmissionSchedule {
 }
 
 impl PeriodResult {
-    /// The account's weight: its net realised loss less what the house wrote off, or zero.
-    fn weight(&self) -> Fixed {
-        (-self.realised - self.written_off).max(Fixed::ZERO)
+    /// The account's weight: its loss magnitude in the period — the gross loss, each fill's
+    /// `max(-realised_pnl, 0)`, from `V42`, the net realised loss before it — less what the house
+    /// wrote off, or zero.
+    fn weight(&self, version: ProtocolVersion) -> Fixed {
+        let losses = if version >= ProtocolVersion::V42 { self.losses } else { (-self.realised).max(Fixed::ZERO) };
+        (losses - self.written_off).max(Fixed::ZERO)
     }
 }
 
@@ -251,13 +260,17 @@ impl Engine {
 
     /// Adds a fill's realised PnL and any debt written off to `account`'s result in the open period,
     /// once emissions have started. From `V32` that is judged at the enclosing command's stamp, not
-    /// at the boundary a corporate catch-up has rewound the clock to.
+    /// at the boundary a corporate catch-up has rewound the clock to. From `V42` the fill's loss
+    /// magnitude joins the result's gross losses, a win nothing.
     pub(crate) fn record_period_result(&mut self, account: AccountId, realised: Fixed, written_off: Fixed) {
         let at = if self.protocol_version >= ProtocolVersion::V32 { self.command_ms } else { self.now };
         let started = self.emissions.as_ref().is_some_and(|emissions| at >= emissions.schedule.start_ms);
         if started && !(realised.is_zero() && written_off.is_zero()) {
             let result = self.period_results.entry(account).or_default();
             result.realised += realised;
+            if self.protocol_version >= ProtocolVersion::V42 {
+                result.losses += (-realised).max(Fixed::ZERO);
+            }
             result.written_off += written_off;
         }
     }
@@ -265,10 +278,18 @@ impl Engine {
     /// From `V32`: the part of `result`'s write-off that its realised losses cannot absorb becomes
     /// `account`'s emission debt, up to the weight it earned and has not been charged for. `weight`
     /// (zero for negative cash at the cutoff) then pays the debt down, and what is left earns.
-    /// Returns that weight. Total debt charged never exceeds total weight earned.
-    fn settle_emission_ledger(&mut self, account: AccountId, result: &PeriodResult, weight: Fixed) -> Fixed {
+    /// Returns that weight. Total debt charged never exceeds total weight earned. The losses a
+    /// period's write-off absorbs first are its gross from `V42`, its net before it.
+    fn settle_emission_ledger(
+        &mut self,
+        account: AccountId,
+        result: &PeriodResult,
+        weight: Fixed,
+        version: ProtocolVersion,
+    ) -> Fixed {
         let mut ledger = self.emission_ledgers.remove(&account).unwrap_or_default();
-        let unabsorbed = (result.written_off - (-result.realised).max(Fixed::ZERO)).max(Fixed::ZERO);
+        let losses = if version >= ProtocolVersion::V42 { result.losses } else { (-result.realised).max(Fixed::ZERO) };
+        let unabsorbed = (result.written_off - losses).max(Fixed::ZERO);
         let charged = unabsorbed.min(ledger.earned);
         let paid = weight.min(ledger.debt + charged);
         let earning = weight - paid;
@@ -289,13 +310,14 @@ impl Engine {
         let Some(current) = schedule.period_at(self.now).filter(|current| *current > open) else { return };
 
         let budget = schedule.budget(open);
-        let v32 = self.protocol_version >= ProtocolVersion::V32;
+        let version = self.protocol_version;
+        let v32 = version >= ProtocolVersion::V32;
         let mut weights: Vec<(AccountId, Fixed)> = Vec::new();
         for (account, result) in self.period_results.take_all() {
             let negative_cash = self.accounts.get(&account).is_some_and(|acct| acct.balance.is_negative());
             // Weight forfeited for negative cash pays no debt, while a new write-off still adds to it.
-            let weight = if negative_cash { Fixed::ZERO } else { result.weight() };
-            let weight = if v32 { self.settle_emission_ledger(account, &result, weight) } else { weight };
+            let weight = if negative_cash { Fixed::ZERO } else { result.weight(version) };
+            let weight = if v32 { self.settle_emission_ledger(account, &result, weight, version) } else { weight };
             if weight.is_positive() {
                 weights.push((account, weight));
             }

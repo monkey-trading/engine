@@ -1,12 +1,14 @@
-//! Which losses earn MONKEY from `V19`, through `Engine::apply`: netting within a period, fees and
-//! financing left out, liquidations counted less written-off debt, negative cash at the cutoff, and
-//! the signed one-time initialisation that starts the clock.
+//! Which losses earn MONKEY from `V19`, through `Engine::apply`: netting within a period before
+//! `V42` and gross loss magnitudes from `V42` on, fees and financing left out, liquidations counted
+//! less written-off debt, negative cash at the cutoff, and the signed one-time initialisation that
+//! starts the clock.
 
 mod common;
 
+use common::close_spread::{attest, fund, order};
 use common::emissions::{allocations, funded, next_period, round_trip, schedule};
 use common::events::fills;
-use common::{BTC, ETH, Harness, acct, f};
+use common::{BTC, Client, ETH, Harness, acct, f};
 use engine_core::Fixed;
 use engine_core::command::{AdminCommand, Command};
 use engine_core::emissions::{EmissionSchedule, MAX_PERIOD_BUDGET, PERIOD_MS, TokenUnits};
@@ -27,6 +29,76 @@ fn a_win_offsets_a_loss_in_the_same_period_before_the_profit_fee() {
     assert_eq!((result.realised, result.written_off), (f("-20"), Fixed::ZERO));
     // The 8 of profit fee a paid on its win does not count as loss: a's weight is 20, not 28.
     assert_eq!(allocations(&next_period(&mut h)), [(a, 0, f("20"), 250_000), (b, 0, f("60"), 750_000)]);
+}
+
+#[test]
+fn a_losing_fill_earns_weight_in_a_period_the_account_ends_net_positive() {
+    // The owner's scenario, from `V42`: an account with prior gains takes a losing fill inside a
+    // period its wins leave net positive, and that fill still earns its own weight.
+    let mut h = Harness::emitting_gross(BUDGET);
+    let (a, b) = (Client::new(1), Client::new(2));
+    attest_and_fund(&mut h, &a);
+    attest_and_fund(&mut h, &b);
+    // Period 0: a's gain is prior profit, not weight.
+    screened_round_trip(&mut h, &[(&a, "1")], "100000", "100100");
+    assert!(allocations(&next_period(&mut h)).is_empty());
+
+    // Period 1: a loses 100 on one fill and wins 150 on another, ending the period net positive
+    // 50; b loses 60. The win does not offset: a's weight is its fill's full loss magnitude.
+    screened_round_trip(&mut h, &[(&a, "1")], "100000", "99900");
+    screened_round_trip(&mut h, &[(&a, "1")], "99900", "100050");
+    screened_round_trip(&mut h, &[(&b, "0.6")], "100000", "99900");
+    let result = h.engine.period_results()[&a.account];
+    assert_eq!((result.realised, result.losses), (f("50"), f("100")));
+    assert_eq!(
+        allocations(&next_period(&mut h)),
+        [(a.account, 1, f("100"), 625_000), (b.account, 1, f("60"), 375_000)]
+    );
+}
+
+#[test]
+fn wins_never_offset_losses_in_the_same_period_from_v42() {
+    let mut h = Harness::emitting_gross(BUDGET);
+    let a = Client::new(1);
+    attest_and_fund(&mut h, &a);
+    screened_round_trip(&mut h, &[(&a, "1")], "100000", "99900");
+    screened_round_trip(&mut h, &[(&a, "1")], "99900", "99960");
+    screened_round_trip(&mut h, &[(&a, "1")], "99960", "99920");
+    let result = h.engine.period_results()[&a.account];
+    assert_eq!((result.realised, result.losses), (f("-80"), f("140")));
+    assert_eq!(allocations(&next_period(&mut h)), [(a.account, 0, f("140"), BUDGET)]);
+}
+
+#[test]
+fn before_v42_netting_still_applies() {
+    // The gross rule activates at `V42`: one version earlier a win still offsets the period's
+    // losses, exactly as every pre-`V42` log records it.
+    let mut h = Harness::emitting_at(ProtocolVersion::V41, BUDGET);
+    let (a, b) = (Client::new(1), Client::new(2));
+    attest_and_fund(&mut h, &a);
+    attest_and_fund(&mut h, &b);
+    screened_round_trip(&mut h, &[(&a, "1")], "100000", "99900");
+    screened_round_trip(&mut h, &[(&a, "1")], "99900", "99980");
+    screened_round_trip(&mut h, &[(&b, "0.6")], "100000", "99900");
+    assert_eq!(allocations(&next_period(&mut h)), [(a.account, 0, f("20"), 250_000), (b.account, 0, f("60"), 750_000)]);
+}
+
+/// Attests `client` eligible and funds it with a screened deposit, as the access rules a `V42`
+/// harness keeps require.
+fn attest_and_fund(h: &mut Harness, client: &Client) {
+    attest(h, client);
+    fund(h, client, "1000000");
+}
+
+/// Each client buys its quantity of BTC at `from` and sells it at `to`, through screened orders.
+fn screened_round_trip(h: &mut Harness, trades: &[(&Client, &str)], from: &str, to: &str) {
+    for (price, side) in [(from, Side::Buy), (to, Side::Sell)] {
+        h.price(BTC, price);
+        for (client, qty) in trades {
+            let events = order(h, client, BTC, side, qty, price, false);
+            assert_eq!(fills(&events).len(), 1, "{events:?}");
+        }
+    }
 }
 
 #[test]

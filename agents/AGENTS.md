@@ -26,7 +26,7 @@ an index: load only the rule whose hint matches the current action.
   elections mirrored on the staking mirror, the elected key in effect at the election's time or seven days after it
   is logged and once the mirror's finalised block time reaches it, `RotateOperator` refused while rotation is on;
   `tests/operator_election.rs`), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
-  shared by net realised losses, halvings, and cumulative entitlements) and MONKEY staking with
+  shared by gross realised loss magnitudes from V42, net before it, halvings, and cumulative entitlements) and MONKEY staking with
   USDC distributions (`staking.rs`: stake mirroring, V27 authenticated identities and completed scan
   anchors, epoch closes at NAV above a liquidity floor, cumulative distributions proven on chain),
   protocol versions, and the

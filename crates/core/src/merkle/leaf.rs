@@ -422,11 +422,14 @@ pub(crate) fn period_result_key(account: AccountId) -> B256 {
     keccak(&[&[PERIOD_RESULT], &account.0])
 }
 
-/// The value hash of an emission period result leaf.
+/// The value hash of an emission period result leaf. `losses` (from `V42`) enters the hash only
+/// while set, so earlier versions' leaves keep their roots; every field is named, so a field
+/// added to `PeriodResult` fails to compile until the leaf holds it.
 pub(crate) fn period_result_hash(result: &PeriodResult) -> B256 {
-    // Every field is named, so a field added to `PeriodResult` fails to compile until the leaf holds it.
-    let PeriodResult { realised, written_off } = result;
-    keccak(&[&(realised.raw(), written_off.raw()).abi_encode()])
+    let PeriodResult { realised, losses, written_off } = result;
+    let pair = (realised.raw(), written_off.raw());
+    let fields = if losses.is_zero() { pair.abi_encode() } else { (pair.0, losses.raw(), pair.1).abi_encode() };
+    keccak(&[&fields])
 }
 
 /// The key of `account`'s distribution leaf.
