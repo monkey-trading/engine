@@ -74,12 +74,13 @@ pub(crate) fn session(h: &mut Harness) {
     assert_budget_empty(&events, spent.account, &session_key(100));
 
     // The refill counts from the activation: a millisecond short of the hour nothing has
-    // returned, and at the hour one address has.
+    // returned. Half an hour past it one address has, and spending it keeps the half hour already
+    // earned toward the next, which returns at two hours.
     tick_to(h, activated + SESSION_KEY_REFILL_MS - 1);
     let spent = account(h, SPENT_SEED);
     let events = register(h, &spent, &session_key(100));
     assert_budget_empty(&events, spent.account, &session_key(100));
-    tick_to(h, activated + SESSION_KEY_REFILL_MS);
+    tick_to(h, activated + SESSION_KEY_REFILL_MS + SESSION_KEY_REFILL_MS / 2);
     let spent = account(h, SPENT_SEED);
     assert_eq!(h.engine.session_key_budget(spent.account), 1);
     let events = register(h, &spent, &session_key(100));
@@ -87,6 +88,12 @@ pub(crate) fn session(h: &mut Harness) {
     h.advance(2);
     let events = register(h, &spent, &session_key(101));
     assert_budget_empty(&events, spent.account, &session_key(101));
+    tick_to(h, activated + 2 * SESSION_KEY_REFILL_MS);
+    let spent = account(h, SPENT_SEED);
+    assert_eq!(h.engine.session_key_budget(spent.account), 1);
+    let events = register(h, &spent, &session_key(101));
+    assert!(registered(&events), "{events:?}");
+    h.advance(2);
 
     // A lapsed address the account introduced under `V41` registers again at an empty budget,
     // and a stranger's budget falls by one for a new address.
@@ -95,6 +102,23 @@ pub(crate) fn session(h: &mut Harness) {
     let fresh = account(h, FRESH_SEED);
     let events = register(h, &fresh, &session_key(200));
     assert!(registered(&events), "{events:?}");
+    h.advance(2);
     assert_eq!(h.engine.session_key_budget(fresh.account), MAX_SESSION_KEY_REGISTRATIONS - 1);
     assert_eq!(h.engine.session_key_budget(spent.account), 0);
+
+    // Left idle for a hundred and a half hours, the budget is full, and the next spend restarts
+    // its clock at that spend: the half hour past the capacity is not kept.
+    let idle_to = h.ts + 100 * SESSION_KEY_REFILL_MS + SESSION_KEY_REFILL_MS / 2;
+    while h.ts < idle_to {
+        tick_to(h, (h.ts + 24 * SESSION_KEY_REFILL_MS).min(idle_to));
+    }
+    let fresh = account(h, FRESH_SEED);
+    assert_eq!(h.engine.session_key_budget(fresh.account), MAX_SESSION_KEY_REGISTRATIONS);
+    let events = register(h, &fresh, &session_key(201));
+    assert!(registered(&events), "{events:?}");
+    assert_eq!(h.engine.session_key_budget(fresh.account), MAX_SESSION_KEY_REGISTRATIONS - 1);
+    tick_to(h, idle_to + SESSION_KEY_REFILL_MS - 1);
+    assert_eq!(h.engine.session_key_budget(fresh.account), MAX_SESSION_KEY_REGISTRATIONS - 1);
+    tick_to(h, idle_to + SESSION_KEY_REFILL_MS);
+    assert_eq!(h.engine.session_key_budget(fresh.account), MAX_SESSION_KEY_REGISTRATIONS);
 }

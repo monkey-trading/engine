@@ -16,14 +16,14 @@ pub const HOUR_MS: Millis = 60 * 60 * 1000;
 
 // ── Helpers ──
 
-/// The `V41` harness under access rules, activated at `version`: signed requests, the operator recorded, the ceiling
+/// The `V41` harness under access rules: signed requests, the operator recorded, the ceiling
 /// registry the `V40` activation check wants, a screening source whose evidence stays fresh across
 /// an hour of sequenced time, client 1 declared and holding 100000, and BTC priced at 100000.
 pub fn funded() -> (Harness, Client, Client) {
     funded_at(ProtocolVersion::V41)
 }
 
-/// `funded` under `version`.
+/// `funded` with `version` activated instead of `V41`.
 pub fn funded_at(version: ProtocolVersion) -> (Harness, Client, Client) {
     let mut h = Harness::v8(ClientAuth::Eip712 { chain_id: CHAIN_ID, vault: VAULT });
     h.cmd(Command::Admin(AdminCommand::SetCloseSpreadCeilings { ceilings: ceilings() }));

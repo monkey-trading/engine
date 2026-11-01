@@ -446,7 +446,7 @@ the state tree; its session is in `examples/reference_log/v41.rs`.
 Protocol V42 replaces V41's lifetime cap on an account's distinct session-key addresses with a
 budget that refills over sequenced time: a capacity of 100 new addresses, one returned per elapsed
 hour with the part of an hour not yet earned carried, so a client that generates a key per
-connect is never locked out for good and an account holds at most 100 plus one per elapsed hour.
+connect is never locked out for good and an account introduces at most 100 plus one per elapsed hour.
 Re-registering a known address spends nothing. Activation starts each account's budget at 100 less
 the addresses it introduced under V41, counting from the activation time; the leaf gains the
 budget only from V42, so V41 roots are unchanged. Its session is in

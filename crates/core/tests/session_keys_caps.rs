@@ -14,7 +14,7 @@ use engine_core::command::{AdminCommand, Command};
 use engine_core::event::{Event, Reject};
 use engine_core::protocol::ProtocolVersion;
 use engine_core::session_keys::{MAX_SESSION_KEY_REGISTRATIONS, MAX_SESSION_KEYS_PER_ACCOUNT, SESSION_KEY_REFILL_MS};
-use engine_core::types::Millis;
+use engine_core::types::{AccountId, Millis};
 
 #[test]
 fn a_registration_past_the_per_account_cap_refuses_and_prunes_expired_keys() {
@@ -143,7 +143,7 @@ fn registered(events: &[Event]) -> bool {
     matches!(events, [Event::SessionKeyRegistered { .. }])
 }
 
-fn budget_empty(account: engine_core::types::AccountId, session_key: engine_core::types::AccountId) -> [Event; 1] {
+fn budget_empty(account: AccountId, session_key: AccountId) -> [Event; 1] {
     [Event::SessionKeyRejected {
         account,
         session_key,
@@ -227,8 +227,8 @@ fn a_partial_hour_carries_across_registrations() {
     assert_eq!(h.engine.session_key_budget(client.account), 1);
     assert!(registered(&introduce(&mut h, &client, 101)));
 
-    // A read or a refusal in between neither loses nor adds refill: after three hours of
-    // refusals-and-reads at odd offsets, exactly one more address has returned.
+    // A read or a refusal in between neither loses nor adds refill: across one hour of
+    // refusals and reads at odd offsets, exactly one more address has returned.
     for offset in [10, HOUR_MS / 3, HOUR_MS - 1] {
         tick_to(&mut h, t0 + 2 * HOUR_MS + offset);
         assert!(!registered(&introduce(&mut h, &client, 102)), "offset {offset}");
@@ -250,6 +250,47 @@ fn a_long_idle_gap_refills_only_to_the_capacity() {
     assert_eq!(h.engine.session_key_budget(client.account), 0);
     let events = introduce(&mut h, &client, 200);
     assert_eq!(events, budget_empty(client.account, fresh_key(200).account));
+}
+
+#[test]
+fn saturating_mid_hour_restarts_the_refill_clock_at_the_spend() {
+    let (mut h, client, _) = funded_at(ProtocolVersion::V42);
+    let t0 = spend(&mut h, &client, 100);
+    // Idle to capacity plus half an hour: the partial hour is not kept, because a full budget
+    // earns nothing. One spend leaves 99, and its first refill is a whole hour after the spend.
+    let spent_at = t0 + 150 * HOUR_MS + HOUR_MS / 2;
+    idle_until(&mut h, spent_at);
+    assert!(registered(&introduce(&mut h, &client, 100)));
+    assert_eq!(h.engine.session_key_budget(client.account), MAX_SESSION_KEY_REGISTRATIONS - 1);
+    tick_to(&mut h, spent_at + HOUR_MS / 2);
+    assert_eq!(h.engine.session_key_budget(client.account), MAX_SESSION_KEY_REGISTRATIONS - 1);
+    tick_to(&mut h, spent_at + HOUR_MS - 1);
+    assert_eq!(h.engine.session_key_budget(client.account), MAX_SESSION_KEY_REGISTRATIONS - 1);
+    tick_to(&mut h, spent_at + HOUR_MS);
+    assert_eq!(h.engine.session_key_budget(client.account), MAX_SESSION_KEY_REGISTRATIONS);
+}
+
+#[test]
+fn a_refused_live_cap_spends_no_budget() {
+    let (mut h, client, _) = funded_at(ProtocolVersion::V42);
+    for index in 0..MAX_SESSION_KEYS_PER_ACCOUNT as u8 {
+        let cmd = register_expiring(&h, &client, &fresh_key(index), h.ts + HOUR_MS, h.ts + 60_000);
+        assert!(registered(&h.cmd(cmd)), "key {index}");
+    }
+    let before = h.engine.session_key_budget(client.account);
+    assert_eq!(before, MAX_SESSION_KEY_REGISTRATIONS - MAX_SESSION_KEYS_PER_ACCOUNT as u64);
+    let overflow = fresh_key(50);
+    let cmd = register_expiring(&h, &client, &overflow, h.ts + HOUR_MS, h.ts + 60_000);
+    assert_eq!(
+        h.cmd(cmd),
+        [Event::SessionKeyRejected {
+            account: client.account,
+            session_key: overflow.account,
+            reason: Reject::TooManySessionKeys { max: MAX_SESSION_KEYS_PER_ACCOUNT },
+        }]
+    );
+    assert_eq!(h.engine.session_key_budget(client.account), before);
+    assert_eq!(h.engine.session_key_registrations(client.account), MAX_SESSION_KEYS_PER_ACCOUNT as u64);
 }
 
 #[test]

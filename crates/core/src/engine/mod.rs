@@ -169,7 +169,8 @@ pub struct Engine {
     pub(crate) pending_ceiling: Option<PendingCeiling>,
     /// From `V41`, each account's session keys: their expiry and revocation, keyed by the account
     /// and, within it, the key; a key's next request nonce lives in `request_nonces` under its
-    /// address, and `total` bounds the keys an account registers over its life.
+    /// address; `total` counts the keys an account has introduced, bounding them under `V41`, and from
+    /// `V42` its `budget` does.
     #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
     pub(crate) session_keys: TrackedMap<AccountId, AccountSessionKeys>,
 

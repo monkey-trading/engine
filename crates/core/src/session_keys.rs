@@ -34,13 +34,13 @@ pub const MAX_SESSION_KEYS_PER_ACCOUNT: usize = 10;
 /// its introduction budget. Each introduction seeds the key's request-nonce entry, which stays in
 /// `request_nonces` for good so a pruned key keeps its replay protection; the budget bounds that
 /// state. Under `V41` the count was a lifetime cap; from `V42` the budget refills at one address
-/// per [`SESSION_KEY_REFILL_MS`], so an account holds at most this many plus one per elapsed
+/// per [`SESSION_KEY_REFILL_MS`], so an account introduces at most this many plus one per elapsed
 /// refill interval. Re-registering a key the account has used before — held, lapsed, or revoked —
 /// introduces nothing and spends nothing.
 pub const MAX_SESSION_KEY_REGISTRATIONS: u64 = 100;
 
 /// From `V42`, the sequenced time that returns one address to an account's introduction budget:
-/// one hour, so a client that generates a fresh key at each connect never locks itself out.
+/// one hour, so a client that generates a fresh key at each connect is never locked out for good.
 pub const SESSION_KEY_REFILL_MS: Millis = 60 * 60 * 1000;
 
 /// The session keys one account registered, and how many distinct keys it has introduced.
@@ -70,7 +70,8 @@ pub struct IntroductionBudget {
     pub available: u64,
     /// The sequenced time the refill has been counted up to. While the budget is below capacity it
     /// trails the latest refill by the part of an interval not yet earned, so a partial interval
-    /// carries; at capacity it is the time the budget was last read.
+    /// carries. A read that finds the budget full restarts the clock at that read's time, since a full
+    /// budget earns nothing.
     pub refilled_at: Millis,
 }
 
@@ -278,55 +279,62 @@ impl Engine {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use proptest::test_runner::{Config, RngSeed, TestCaseError, TestRunner};
 
-    proptest! {
-        /// Reading the budget in steps equals reading it once, so frequent registrations neither
-        /// lose nor gain refill; it never exceeds the capacity or earns more than the time allows;
-        /// and nothing overflows for any times the sequencer can stamp.
-        #[test]
-        fn the_budget_refills_by_elapsed_time_whatever_the_reads_between(
-            available in 0..=MAX_SESSION_KEY_REGISTRATIONS,
-            start in 0..=i64::MAX / 4,
-            first in 0..=150 * SESSION_KEY_REFILL_MS,
-            second in 0..=150 * SESSION_KEY_REFILL_MS,
-        ) {
+    /// Runs `test` over 4,096 cases from a fixed seed, so every run checks the same ones.
+    fn check<S: Strategy>(strategy: S, test: impl Fn(S::Value) -> Result<(), TestCaseError>) {
+        let config = Config {
+            cases: 4_096,
+            rng_seed: RngSeed::Fixed(0x5eed_0042),
+            failure_persistence: None,
+            ..Config::default()
+        };
+        if let Err(failure) = TestRunner::new(config).run(&strategy, test) {
+            panic!("{failure}");
+        }
+    }
+
+    /// Reading the budget in steps equals reading it once, so frequent registrations neither lose
+    /// nor gain refill; below the capacity it earns exactly the whole intervals elapsed and keeps
+    /// the remainder; at the capacity its clock restarts at the read.
+    #[test]
+    fn the_budget_refills_by_elapsed_time_whatever_the_reads_between() {
+        let strategy = (
+            0..=MAX_SESSION_KEY_REGISTRATIONS,
+            0..=i64::MAX / 4,
+            0..=150 * SESSION_KEY_REFILL_MS,
+            0..=150 * SESSION_KEY_REFILL_MS,
+        );
+        check(strategy, |(available, start, first, second)| {
             let budget = IntroductionBudget { available, refilled_at: start };
             let (mid, end) = (start + first, start + first + second);
-            let stepped = budget.at(mid).at(end);
             let once = budget.at(end);
-            prop_assert_eq!(stepped, once);
-            prop_assert!(once.available <= MAX_SESSION_KEY_REGISTRATIONS);
+            prop_assert_eq!(budget.at(mid).at(end), once);
             prop_assert!(once.available >= available);
-            let earned = (end - start) / SESSION_KEY_REFILL_MS;
-            prop_assert!(once.available - available <= earned as u64);
+            let earned = ((end - start) / SESSION_KEY_REFILL_MS) as u64;
             if once.available < MAX_SESSION_KEY_REGISTRATIONS {
-                prop_assert_eq!(once.available, available + earned as u64);
+                prop_assert_eq!(once.available, available + earned);
                 prop_assert!(end - once.refilled_at < SESSION_KEY_REFILL_MS);
+            } else {
+                prop_assert_eq!(once, IntroductionBudget::full(end));
             }
-        }
+            Ok(())
+        });
+    }
 
-        /// Any times the sequencer can stamp neither overflow nor leave the capacity.
-        #[test]
-        fn the_budget_stays_within_the_capacity_at_any_time(
-            available in 0..=MAX_SESSION_KEY_REGISTRATIONS,
-            refilled_at in 0..=i64::MAX,
-            now in 0..=i64::MAX,
-        ) {
+    /// Any times the sequencer can stamp neither overflow nor leave the capacity, and a reading
+    /// before the counted time earns nothing.
+    #[test]
+    fn the_budget_stays_within_the_capacity_at_any_time() {
+        let strategy = (0..=MAX_SESSION_KEY_REGISTRATIONS, 0..=i64::MAX, 0..=i64::MAX);
+        check(strategy, |(available, refilled_at, now)| {
             let read = IntroductionBudget { available, refilled_at }.at(now);
             prop_assert!(read.available <= MAX_SESSION_KEY_REGISTRATIONS);
-        }
-
-        /// A reading before the counted time earns nothing and cannot underflow.
-        #[test]
-        fn a_reading_before_the_counted_time_earns_nothing(
-            available in 0..=MAX_SESSION_KEY_REGISTRATIONS,
-            refilled_at in 0..=i64::MAX,
-            back in 0..=i64::MAX,
-        ) {
-            let budget = IntroductionBudget { available, refilled_at };
-            let read = budget.at(refilled_at.saturating_sub(back));
-            prop_assert_eq!(read.available, available);
-        }
+            if now < refilled_at {
+                prop_assert_eq!(read.available, available);
+            }
+            Ok(())
+        });
     }
 
     #[test]
