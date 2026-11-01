@@ -132,9 +132,11 @@ impl Chain {
     /// Error cases:
     /// - the warp or the close reverts
     pub(crate) async fn close_epoch_at(&self, at_secs: u64) -> anyhow::Result<Option<(Address, u64)>> {
-        let _mining = self.mining.write().await;
-        self.request::<Value>("evm_setNextBlockTimestamp", json!([at_secs])).await?;
-        self.request::<Value>("evm_mine", json!([])).await?;
+        {
+            let _mining = self.mining.write().await;
+            self.request::<Value>("evm_setNextBlockTimestamp", json!([at_secs])).await?;
+            self.request::<Value>("evm_mine", json!([])).await?;
+        }
         let receipt = self
             .transact(self.payer, Some(self.registry), closeEpochCall {}.abi_encode())
             .await
