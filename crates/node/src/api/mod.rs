@@ -22,6 +22,7 @@ pub(crate) mod reissue;
 mod signing;
 pub(crate) use signing::Signing;
 mod state;
+mod stats;
 mod stream;
 mod withdrawal_queue;
 pub(crate) use stream::{Feed, MAX_BACKFILLS};
@@ -75,6 +76,8 @@ pub enum ApiError {
     AccessRefused(engine_core::access::AccessReject),
     /// The node does not offer this yet.
     NotImplemented(&'static str),
+    /// The answer waits on something that has not happened yet; asking again later may succeed.
+    NotReady(&'static str),
     /// A signed request whose nonce is not the account's next.
     InvalidNonce {
         expected: u64,
@@ -119,6 +122,8 @@ pub struct ApiState {
     pub history: Reader,
     /// The derived marks cache every market's index-mark history is served from.
     pub marks: crate::history::marks::Reader,
+    /// The dashboard series, position maps and MONKEY activity, derived from the log in memory.
+    pub stats: crate::stats::Stats,
     /// The archive manifest listing proven so far, extended as segments complete.
     pub listing: Arc<tokio::sync::Mutex<Option<crate::log::catalog::CatalogListing>>>,
     /// The emission period budget the configured vault's MONKEY cap was derived from, which an
@@ -146,6 +151,8 @@ struct HouseView {
     cash: Fixed,
     nav: Fixed,
     gross_exposure: Fixed,
+    #[serde(flatten)]
+    figures: crate::stats::HouseFigures,
 }
 
 #[derive(Serialize)]
@@ -220,6 +227,7 @@ impl IntoResponse for ApiError {
             ApiError::BodyTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "request body too large".to_owned()),
             ApiError::BodyTimeout => (StatusCode::REQUEST_TIMEOUT, "request body not received in time".to_owned()),
             ApiError::NotImplemented(m) => (StatusCode::NOT_IMPLEMENTED, m.to_owned()),
+            ApiError::NotReady(m) => (StatusCode::SERVICE_UNAVAILABLE, m.to_owned()),
         };
         (status, Json(json!({ "error": msg }))).into_response()
     }
@@ -238,6 +246,10 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/benchmarks", get(benchmarks))
         .route("/v1/benchmarks/schedule", get(benchmark_schedule::schedule))
         .route("/v1/house", get(house))
+        .route("/v1/house/positions", get(stats::positions))
+        .route("/v1/monkey", get(stats::monkey))
+        .route("/v1/monkey/activity", get(stats::activity))
+        .route("/v1/stats/series", get(stats::series))
         .route("/v1/operator", get(operator::operator))
         .route("/v1/accounts/{address}", get(account))
         .route("/v1/accounts/{address}/nonce", get(nonce))
@@ -329,12 +341,21 @@ async fn benchmarks(State(s): State<ApiState>) -> ApiResult<engine_core::benchma
     Ok(Json(s.query(Engine::benchmark_state).await?))
 }
 
-/// House cash, NAV, and gross exposure.
+/// House cash, NAV, and gross exposure at the last command, with the open interest, margin and
+/// positions, each market's long, short and net, the unrealised result and the traded volume the
+/// stats record holds. The scan figures are those of the last scan, at most `api.stats_interval`
+/// old, and carry its seq.
 /// Error cases:
 /// - the sequencer has stopped
 async fn house(State(s): State<ApiState>) -> ApiResult<HouseView> {
+    let stats = s.stats.clone();
     let view = s
-        .query(|e| HouseView { cash: e.house_cash(), nav: e.house_nav(), gross_exposure: e.house_gross_exposure() })
+        .query(move |e| HouseView {
+            cash: e.house_cash(),
+            nav: e.house_nav(),
+            gross_exposure: e.house_gross_exposure(),
+            figures: stats.house(e),
+        })
         .await?;
     Ok(Json(view))
 }

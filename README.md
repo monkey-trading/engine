@@ -246,6 +246,20 @@ cargo run -p engine-node -- verify-response --signer "$(jq -r .enclave_address <
 
 `./scripts/dev-signed-api.sh` runs the whole check against a local node, the stream included.
 
+The House and MONKEY pages read the same signed answers. `GET /v1/house` adds open interest, open
+margin, open positions, each market's long, short and net, the house's unrealised result and the
+volume traded to the cash, NAV and gross exposure it already gives. `GET /v1/house/positions?market=`
+gives a market's positions as aggregates only: USD by the move from the mark that would close each
+account out (the account's other positions held at their marks) and by profit. `GET /v1/monkey`
+gives the emission schedule and totals, the stake, and the distribution state, and
+`GET /v1/monkey/activity` pages the newest allocations, stakes and unstakes. `GET /v1/stats/series`
+serves bucketed series (NAV, cash, each market's long and short, the withdrawal queue, volume,
+MONKEY per dollar of realised loss, stake, allocation and distributions) at 1m, 1h and 1d, each
+answer stating where its data begins. A node holds these in memory and rebuilds them from the log
+at start, so nothing is stored for a host to alter; `[stats]` and `api.stats_interval` in the
+config set retention, bucketing and how often the accounts are scanned.
+`./scripts/dev-dashboard-data.sh` runs them against a local node.
+
 A browser can run the same checks. [`crates/verify-wasm`](crates/verify-wasm) builds the
 attestation verifier and the signature checks into a WebAssembly package from the same Rust code
 the CLI runs; the page passes it the attestation, the release manifests it pins, the collateral the

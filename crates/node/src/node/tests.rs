@@ -213,7 +213,15 @@ pub(crate) fn read_log_and_history_observe(
     // Tests that do not assert on marks seed a scratch cache they discard with the log.
     // Outside `cfg.history.dir`: refused-startup byte-preservation snapshots cover that dir.
     let scratch = marks_store(cfg)?;
-    super::read_log_and_history_authorities(cfg, signer, parent, Default::default(), &scratch, &mut observe)
+    super::read_log_and_history_authorities(
+        cfg,
+        signer,
+        parent,
+        Default::default(),
+        &scratch,
+        &crate::test_support::stats(),
+        &mut observe,
+    )
 }
 
 /// A scratch marks store outside `cfg.history.dir`, which refused-startup byte-preservation

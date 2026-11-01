@@ -60,6 +60,7 @@ fn seed_from_log(dir: &std::path::Path) -> Store {
         Default::default(),
         |_| {},
         Some(Box::new(move |market, ts, mark| seeder.sample((market, ts, mark)))),
+        None,
     )
     .unwrap();
     match Rc::try_unwrap(shared) {

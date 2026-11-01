@@ -66,6 +66,11 @@ heartbeat_interval = "5s"
 # most this often (at least 100ms), for at most this many markets.
 quote_interval = "100ms"
 quote_max_markets = 4
+# The least sequenced time between two scans of every account, which feed the open interest, margin
+# and position figures of `GET /v1/house`, `GET /v1/house/positions` and the long and short series.
+# At least 1s. The scan runs on the sequencer's thread, so keep it far above the scan's cost (see
+# `cargo test -p engine-node --lib stats::bench -- --ignored --nocapture`).
+stats_interval = "60s"
 
 # A tracing filter directive; it must enable at least "error" for engine_node,
 # the level every Critical alert logs at.
@@ -185,6 +190,23 @@ retention = "365d"
 # depth_1m = "60d"
 # depth_1h = "2y"
 # depth_1d = "2y"
+
+# Dashboard series, position maps and MONKEY activity, derived from the log and held in memory
+# (`GET /v1/stats/series`, `/v1/house/positions`, `/v1/monkey/activity`). A restart rebuilds them
+# from the log's replay; nothing is written to disk. Every key is optional.
+# [stats]
+# How long each resolution's buckets stay, counted back from the newest command.
+# retention_1m = "48h"
+# retention_1h = "90d"
+# 1d buckets stay unbounded without retention_1d.
+# Most MONKEY events the activity feed keeps.
+# activity_limit = 5000
+# The close-out map reaches this far from a market's mark each way, in buckets of this width (bps).
+# closeout_range_bps = 2000
+# closeout_bucket_bps = 100
+# The profit buckets reach this far from a position's entry each way, with open ends beyond.
+# profit_range_bps = 5000
+# profit_bucket_bps = 500
 
 [metrics]
 listen = "127.0.0.1:9464"

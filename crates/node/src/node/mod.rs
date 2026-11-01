@@ -9,13 +9,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, anyhow, bail};
-use engine_core::command::Command;
+use anyhow::{Context, bail};
 use engine_core::types::AccountId;
 use tokio::net::TcpListener;
 use tokio::sync::{Semaphore, broadcast, mpsc, watch};
 use tokio::task::JoinSet;
-use tokio::time::{interval, timeout};
+use tokio::time::timeout;
 use tracing::{error, info, warn};
 
 use crate::alerts::Routing;
@@ -31,7 +30,9 @@ use shutdown::{TaskResult, finish_history, handed_over, sequencer_outcome, super
 mod handover;
 mod keys;
 mod marks;
+mod ticker;
 pub use keys::{KeyStart, parse_launch_digest};
+use ticker::run_ticker;
 mod preflight;
 mod registration;
 mod signer_history;
@@ -39,6 +40,7 @@ use crate::limits::{ApiLimits, run_retain};
 use crate::log::Manifest;
 use crate::metrics::Metrics;
 use crate::sequencer::{ReplayedLog, Request, Sequencer, SequencerConfig, genesis_commands};
+use crate::stats::Stats;
 use crate::telemetry::Telemetry;
 use crate::tls::acme::{CertificateTask, Sealed};
 use crate::tls::serve;
@@ -150,12 +152,15 @@ async fn serve_node(
     // The marks cache opens before recovery, which seeds it through the sink as it verifies the log.
     let marks_failed = |e: &anyhow::Error| error!(alert = "marks_cache_failed", "refusing to serve: {e:#}");
     let marks = marks::startup(&cfg, key.marks_key()).inspect_err(marks_failed)?;
+    // The dashboard record recovery rebuilds from the log's replay and the sequencer then continues.
+    let stats = Stats::new(&cfg).context("stats")?;
     let (mut log, history_plan) = read_log_and_history_authorities(
         &cfg,
         Some(AccountId(key.address())),
         checkpoint_setup.as_ref().map(|setup| setup.parent),
         authorities,
         marks.shared.as_ref().expect("the marks store opens at startup"),
+        &stats,
         |entry| {
             if let crate::log::LogEntry::Checkpoint(cp) = entry
                 && checkpoint_setup.as_ref().and_then(|setup| setup.posted_seq) == Some(cp.seq)
@@ -222,6 +227,8 @@ async fn serve_node(
     let published = crate::handover::Published::new(stream_tx.subscribe(), log.last_seq(), log.last_checkpoint());
     let mut seq = Sequencer::recover_from(log, seq_cfg, key.clone(), stream_tx.clone(), withdrawals_tx)
         .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
+    // Before activation and genesis sequence, so the record sees every command the log will hold.
+    seq.track_stats(stats.clone());
     if cfg.benchmarks.is_some() {
         seq.wait_for_benchmarks()
             .inspect_err(|e| error!(alert = "benchmark_sync_prerequisites_missing", "refusing to serve: {e:#}"))?;
@@ -388,6 +395,7 @@ async fn serve_node(
         limits: limits.clone(),
         history: history_reader,
         marks: marks_reader,
+        stats,
         emission_budget,
         collateral: served,
         listing: Default::default(),
@@ -447,12 +455,13 @@ fn read_log_and_history_authorities(
     parent: Option<crate::log::CheckpointParent>,
     authorities: crate::checkpoints::SignerHistory,
     marks: &std::rc::Rc<std::cell::RefCell<crate::history::marks::Store>>,
+    stats: &Stats,
     mut observe: impl FnMut(&crate::log::LogEntry),
 ) -> anyhow::Result<(ReplayedLog, HistoryPlan)> {
     if cfg.snapshots.is_some() {
         // Snapshot recovery replays the authenticated suffix only; the marks cache seeds from that
         // suffix, and the provider backfill gives the depth the suffix cannot.
-        let (log, plan) = Sequencer::read_paired_log(cfg, signer, parent, authorities, observe)
+        let (log, plan) = Sequencer::read_paired_log(cfg, signer, parent, authorities, Some(stats.clone()), observe)
             .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
         return Ok((log, HistoryPlan::authenticated(plan)?));
     }
@@ -470,6 +479,7 @@ fn read_log_and_history_authorities(
             observe(entry);
         },
         Some(sink),
+        Some(stats.clone()),
     )
     .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
     // A replay that never moved a mark still resets: the cache must not serve another log's rows.
@@ -478,17 +488,6 @@ fn read_log_and_history_authorities(
     }
     anyhow::ensure!(!seeding.get(), "seeding the marks cache from the log failed");
     Ok((log, check))
-}
-
-/// Sequences a `Tick` every `every`, so sessions and rollovers fire without other traffic.
-/// Error cases:
-/// - the sequencer has gone away
-async fn run_ticker(tx: mpsc::Sender<Request>, every: Duration) -> anyhow::Result<()> {
-    let mut ticks = interval(every);
-    loop {
-        ticks.tick().await;
-        tx.send(Request::Submit { cmd: Command::Tick, reply: None }).await.map_err(|_| anyhow!("sequencer gone"))?;
-    }
 }
 
 #[cfg(test)]

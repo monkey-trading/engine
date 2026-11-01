@@ -12,7 +12,8 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, registry};
 
 use crate::config::{
-    AuthMode, CustodyProvider, FeedProvider, MIN_QUOTE_INTERVAL, NodeConfig, PRODUCTION_BUILD, TeeProvider,
+    AuthMode, CustodyProvider, FeedProvider, MIN_QUOTE_INTERVAL, MIN_STATS_INTERVAL, NodeConfig, PRODUCTION_BUILD,
+    StatsSection, TeeProvider,
 };
 use crate::sequencer::genesis::check_genesis;
 use crate::trusted_time::NO_SAMPLE_GRACE;
@@ -67,6 +68,7 @@ impl NodeConfig {
     ///   twice `time.max_drift` is not under 60s
     /// - `api.heartbeat_interval` is under one second
     /// - `api.quote_interval` is under 100 ms
+    /// - `api.stats_interval` is under one second, or too long to count in milliseconds
     /// - `node.auth` is `none` with a TEE or custody provider other than `mock`
     /// - `tee.provider` is not `mock` and `operator.public_key` is a published test key (see
     ///   `refuse_test_keys`)
@@ -79,6 +81,7 @@ impl NodeConfig {
     ///   `validate_origins`)
     /// - `history.retention` is zero, or too long to count in milliseconds
     /// - `[history.marks]` fails validation (see `MarksSection::validate`)
+    /// - `[stats]` fails validation (see `StatsSection::validate`)
     /// - the custody section does not match its provider (see `validate_custody`)
     /// - `operator.public_key` or `custody.vault` does not parse
     /// - genesis lists a market id, a market symbol, or a benchmark name twice
@@ -141,6 +144,8 @@ impl NodeConfig {
         // Every quote read runs on the sequencer's thread, so the interval bounds how much of it
         // one connection can take.
         ensure!(self.api.quote_interval >= MIN_QUOTE_INTERVAL, "api.quote_interval must be at least 100ms");
+        ensure!(self.api.stats_interval >= MIN_STATS_INTERVAL, "api.stats_interval must be at least 1s");
+        StatsSection::millis(self.api.stats_interval).context("api.stats_interval")?;
         self.api.validate_origins()?;
         self.api.validate_proxy_protocol()?;
         if let Some(tls) = &self.api.tls {
@@ -185,6 +190,7 @@ impl NodeConfig {
         if let Some(marks) = &self.history.marks {
             marks.validate(PRODUCTION_BUILD).context("history.marks")?;
         }
+        self.stats.validate()?;
         self.validate_custody()?;
         self.validate_checkpoints()?;
         // Without a Critical webhook, Critical alerts reach only the node's own log, so a node

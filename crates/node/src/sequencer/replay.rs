@@ -113,6 +113,8 @@ pub(super) struct Replay {
     marks: Option<crate::history::marks::MarkSink>,
     /// The last mark taken per market, so only changes reach the sink.
     last_marks: BTreeMap<engine_core::types::MarketId, Fixed>,
+    /// The dashboard record recovery seeds: it takes every command this replay applies.
+    stats: Option<crate::stats::Stats>,
 }
 
 impl Replay {
@@ -177,6 +179,9 @@ impl Replay {
                     bail!("events logged at seq {seq} differ from the events replay gives");
                 }
                 marks::sample_marks(&mut self.marks, &mut self.last_marks, engine, c.sequenced.ts);
+                if let Some(stats) = &self.stats {
+                    stats.observe(engine, c.sequenced.ts, &events);
+                }
                 self.accounting.apply(&c.sequenced.cmd, &events)?;
                 if !version.supports_deposit_finality()
                     && let Some(deposit) = LegacyDeposit::from_command(&c.sequenced.cmd, &events)
@@ -456,6 +461,7 @@ mod marks;
 mod paths;
 mod signed;
 mod snapshot;
+mod stats;
 use signed::ensure_signed;
 
 #[cfg(test)]

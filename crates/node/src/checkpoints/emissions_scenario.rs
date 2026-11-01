@@ -36,8 +36,7 @@ use tokio::time::sleep;
 use crate::api::{ApiState, MAX_BACKFILLS, router};
 use crate::checkpoints::scenario::{Anvil, deploy, send};
 use crate::checkpoints::{CheckpointChain, CheckpointRpc, Health, Poster, View};
-use crate::clock::Clock;
-use crate::clock::test_clock::TestClock;
+use crate::clock::{Clock, test_clock::TestClock};
 use crate::config::{CheckpointSection, FinalityTag, RateLimit};
 use crate::history::{INDEX_FILE, Reader};
 use crate::limits::ApiLimits;
@@ -319,6 +318,7 @@ impl Scenario {
             limits: Arc::new(ApiLimits::with_quota(&dev_config().api, unlimited, DefaultClock::default())),
             history: Reader::new(self.dir.join(INDEX_FILE), watch::channel(true).1),
             marks: crate::test_support::marks_reader(),
+            stats: crate::test_support::stats(),
             emission_budget: Some(emission_budget),
             collateral: None,
             listing: Default::default(),

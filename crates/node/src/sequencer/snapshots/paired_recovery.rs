@@ -30,6 +30,7 @@ impl Sequencer {
         signer: Option<AccountId>,
         parent: Option<CheckpointParent>,
         authorities: crate::checkpoints::SignerHistory,
+        stats: Option<crate::stats::Stats>,
         mut observe: impl FnMut(&LogEntry),
     ) -> Result<(ReplayedLog, Plan)> {
         let snapshots = cfg.snapshots.as_ref().context("paired recovery requires snapshots config")?;
@@ -44,7 +45,7 @@ impl Sequencer {
         match candidates {
             Ok(paths) => {
                 for path in paths {
-                    match candidate(cfg, snapshots, &path, domain, signer, parent, &mut observe) {
+                    match candidate(cfg, snapshots, &path, domain, signer, parent, stats.as_ref(), &mut observe) {
                         Ok(recovered) => return Ok(recovered),
                         Err(error) => snapshot::rejected(&path, &error),
                     }
@@ -58,6 +59,9 @@ impl Sequencer {
         );
         // A snapshot holds only checkpoints the current key signed; full replay authenticates the rest.
         replay.set_authorities(authorities)?;
+        if let Some(stats) = stats {
+            replay.record_stats_with(stats);
+        }
         let mut fingerprint = Fingerprinter::new();
         let log = SegmentedLog::open(&cfg.node.log_dir, |entry| {
             replay.apply(&entry)?;
@@ -75,6 +79,7 @@ impl Sequencer {
 /// Accepts no later head as checkpoint C; every suffix entry still passes current strict Replay.
 /// Error cases:
 /// - certificate, fixed metadata, prefix extension, boundary bytes, replay or availability fails
+#[allow(clippy::too_many_arguments)]
 fn candidate(
     cfg: &NodeConfig,
     snapshots: &SnapshotSection,
@@ -82,6 +87,7 @@ fn candidate(
     domain: CheckpointDomain,
     signer: Option<AccountId>,
     parent: Option<CheckpointParent>,
+    stats: Option<&crate::stats::Stats>,
     observe: &mut impl FnMut(&LogEntry),
 ) -> Result<(ReplayedLog, Plan)> {
     let (snapshot, engine) = snapshot::read(snapshots, path, domain.chain_id, domain.vault)?;
@@ -115,6 +121,9 @@ fn candidate(
     let h_seq = history_h.as_ref().and_then(|(history_h, _)| history_h.head.last_seq());
     let boundary = pair.catalog.clone();
     let mut replay = Replay::from_snapshot(engine, snapshot, domain, signer, parent)?;
+    if let Some(stats) = stats {
+        replay.record_stats_with(stats.clone());
+    }
     let mut matched_h = h_seq == Some(at.seq);
     if let Some((history_h, _)) = history_h.as_ref().filter(|_| matched_h) {
         replay.verify_history_head(&history_h.head)?;

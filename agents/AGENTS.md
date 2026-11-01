@@ -90,6 +90,12 @@ an index: load only the rule whose hint matches the current action.
   below it under its row tag and committed in-memory per-pair chain heads anchor the index at recovery
   re-derivation, so a host that deletes, reorders, or rolls the cache back mid-run is refused at serve
   time),
+  the dashboard record (`stats/`, held in memory and rebuilt from the log's replay through a sink in it,
+  with no file to roll back: `series.rs` 1m/1h/1d buckets with `[stats]` retention, `snapshot.rs` and
+  `closeout.rs` the scan of every account at most once per `api.stats_interval` of sequenced time, `activity.rs`
+  the bounded MONKEY feed, `view.rs` the answers) served signed from `api/stats.rs` and `/v1/house`:
+  `/v1/house/positions`, `/v1/monkey`, `/v1/monkey/activity` and `/v1/stats/series`, each stating where its
+  data begins (`stats::bench` measures the scan at 100k accounts),
   dated benchmark ingestion (`benchmarks/` and the separate `admin/benchmark_feed.rs` signing worker
   with bounded durable schedule watches in `admin/benchmark_watch.rs` and `api/benchmark_schedule.rs`),
   optional checkpoint snapshots authenticated by pinned attested signers for suffix recovery,
@@ -204,6 +210,9 @@ an index: load only the rule whose hint matches the current action.
   `custody.vault` under `eip712`, and `operator.public_key`, with the same chain id and vault, are
   recorded in the log when it first activates the protocol versions that need them, so changing
   either needs a fresh log.
+  `api.stats_interval` (default 60 s) spaces the account scans behind the dashboard figures, and
+  `[stats]` tunes the dashboard record's retention (1m ~48h, 1h ~90d, 1d unbounded by default), its
+  activity length and its close-out and profit buckets; unknown keys are refused.
   `[history.marks]` tunes the marks cache's per-resolution retention (1s ~48h, 1m ~60d, 1h ~2y,
   1d unbounded by default) and its optional provider backfill (`enabled`, the venue-domain
   `base_url`, per-resolution `depth`s); only the feed venue's public candles endpoint is
@@ -264,6 +273,9 @@ an index: load only the rule whose hint matches the current action.
   incumbent authorized pays, a stale sealed copy refuses, and a re-election hands the keys back;
   `dev-standby-operator.sh`, the standby takeover scenario on Anvil: a failed operator, the liveness
   rule's promotion, the limited `setSigner`, and the reissued payout across the signer change;
+  `dev-dashboard-data.sh`, the dashboard data scenario: signed trades both ways in two markets and a
+  MONKEY period closing, each new route's figures checked and verified with `engine verify-response`, and
+  the series compared across a restart;
   `dev-snapshot-restart.sh`, the checkpoint snapshot restart and fallback scenario;
   `dev-ct-watch.sh`, the Certificate Transparency watcher against a mock node and a loopback
   stand-in log (`dev-ct-log.py`), a webhook stand-in, a foreign-key certificate, a restart
@@ -309,7 +321,7 @@ an index: load only the rule whose hint matches the current action.
   scenario, the exit dev scenario, the API and direct-vault access enforcement dev scenario, the
   metrics and alert routing
   dev scenario, the alert outbox kill/restart scenario,
-  the browser-origin scenario, the proxy protocol scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the
+  the browser-origin scenario, the proxy protocol scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the
   signed API answers dev scenario, the public certificate dev scenario, the executable quotes dev
   scenario, the review-delta helper's test, the merge approval gate's test, the browser verifier
   (`wasm-verifier` builds its package twice on separate runners with the pinned toolchain, the

@@ -124,7 +124,7 @@ pub struct Sequencer {
     /// The newest checkpoint, with its recovery facts as they stood then, when its capture was
     /// skipped because another was in flight.
     uncaptured: Option<snapshots::Deferred>,
-    /// Live mark reporting for the derived marks cache.
+    /// Live mark reporting for the derived marks cache, and the dashboard record fed beside it.
     marks: marks::Marks,
 }
 
@@ -357,7 +357,7 @@ impl Sequencer {
         self.legacy_approvals.observe(&self.engine, &sequenced, &events, true);
         let reinstated = reinstated_receipt(&sequenced.cmd, &events);
         self.access_alerts.note(&self.engine, &sequenced.cmd, &events);
-        self.report_marks(ts);
+        self.report_marks(ts, &events);
         self.next_seq += 1;
         self.last_ts = ts;
         let mut entry = CommandEntry { sequenced, events: Some(events.clone()), seal: None };

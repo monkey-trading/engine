@@ -2,7 +2,9 @@
 //! history index following it, and a log layer that hands every alert to the test.
 
 mod events;
+mod readers;
 pub use events::every_event;
+pub use readers::{marks_reader, stats};
 
 use std::collections::BTreeMap;
 use std::fmt::Debug;
@@ -66,6 +68,8 @@ pub struct TestSequencer {
     pub withdrawals: mpsc::UnboundedReceiver<SignedWithdrawal>,
     pub metrics: Arc<Metrics>,
     marks_rx: Option<mpsc::Receiver<crate::history::marks::MarkSample>>,
+    /// The dashboard record the sequencer adds every command to.
+    pub stats: crate::stats::Stats,
     task: JoinHandle<anyhow::Result<()>>,
 }
 
@@ -113,6 +117,8 @@ impl TestSequencer {
         let cfg = SequencerConfig { clock: clock.clone(), genesis, ..sequencer_config(dir, manifest_tx) };
         let metrics = cfg.metrics.clone();
         let mut seq = Sequencer::recover(cfg, key, stream.clone(), withdrawals_tx).expect("sequencer recovers");
+        let stats = stats();
+        seq.track_stats(stats.clone());
         // As the node does, parameters an older log set take the config's notional weighting first.
         let weighting = dev_config().genesis.params.toxicity.notional.expect("the dev config weighs by notional");
         seq.carry_toxicity_notional(weighting).expect("toxicity notional");
@@ -130,7 +136,7 @@ impl TestSequencer {
         seq.track_marks(marks_tx);
         let (tx, rx) = mpsc::channel(64);
         let task = tokio::spawn(seq.run(rx));
-        Self { tx, stream, manifest, withdrawals, metrics, marks_rx: Some(marks_rx), task }
+        Self { tx, stream, manifest, withdrawals, metrics, marks_rx: Some(marks_rx), stats, task }
     }
 
     pub fn take_marks(&mut self) -> mpsc::Receiver<crate::history::marks::MarkSample> {
@@ -315,13 +321,6 @@ pub fn scratch_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("engine-node-test-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     dir
-}
-
-/// A marks-cache reader over a scratch store no test reads; one directory per calling thread.
-pub fn marks_reader() -> crate::history::marks::Reader {
-    use crate::history::marks::{Retentions, Store};
-    let dir = scratch_dir(&format!("unused-marks-{:?}", std::thread::current().id()));
-    Store::open_in(&dir, Retentions::defaults(), [0x42; 32]).expect("scratch").reader()
 }
 
 /// An operator public key nobody has published: the uncompressed SEC1 hex of a fresh random key.

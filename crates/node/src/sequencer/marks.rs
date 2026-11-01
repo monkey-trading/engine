@@ -22,6 +22,8 @@ pub(super) struct Marks {
     last: BTreeMap<MarketId, Fixed>,
     pending: Vec<MarkSample>,
     overflow_warned: bool,
+    /// The dashboard record every applied command is added to, once the node attaches it.
+    stats: Option<crate::stats::Stats>,
 }
 
 impl Marks {
@@ -77,13 +79,26 @@ impl Sequencer {
         self.marks.tx = Some(tx);
     }
 
-    /// Buffers the mark changes of the command just applied for release with this batch's flush.
-    pub(super) fn report_marks(&mut self, ts: Millis) {
+    /// Buffers the mark changes of the command just applied for release with this batch's flush, and
+    /// adds the command, which produced `events`, to the dashboard record.
+    pub(super) fn report_marks(&mut self, ts: Millis, events: &[engine_core::event::Event]) {
         self.marks.report(&self.engine, ts);
+        if let Some(stats) = &self.marks.stats {
+            stats.observe(&self.engine, ts, events);
+        }
     }
 
     /// Releases buffered mark reports once their commands are durable in the log.
     pub(super) fn release_marks(&mut self) {
         self.marks.release();
+    }
+}
+
+impl Sequencer {
+    /// Adds every command this sequencer applies to the dashboard record `stats`, which recovery
+    /// may have seeded, and gives it the recovered state's scan if its replay took none.
+    pub fn track_stats(&mut self, stats: crate::stats::Stats) {
+        stats.finish_recovery(&self.engine);
+        self.marks.stats = Some(stats);
     }
 }

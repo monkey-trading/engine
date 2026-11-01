@@ -143,6 +143,7 @@ fn state() -> (ApiState, mpsc::Receiver<Request>) {
         limits: Arc::new(ApiLimits::new(&cfg.api)),
         history: Reader::new(PathBuf::new(), watch::channel(true).1),
         marks: crate::test_support::marks_reader(),
+        stats: crate::test_support::stats(),
         emission_budget: None,
         collateral: None,
         listing: Default::default(),
