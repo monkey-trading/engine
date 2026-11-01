@@ -44,7 +44,12 @@ async fn dev_scenario_benchmark_worker_refreshes_after_earlier_rollover_timezone
 
 /// The new two-hour deadline must not sleep behind the old 24-hour polling interval.
 async fn changed_schedule(timezone: bool) {
-    let mut scenario = Scenario::start(&format!("benchmark-reschedule-{timezone}"), EARLY, || EARLY).await;
+    let mut scenario = Scenario::start(
+        &format!("benchmark-reschedule-{timezone}"),
+        EARLY,
+        std::sync::Arc::new(crate::clock::test_clock::TestClock::at(EARLY)),
+    )
+    .await;
     let outcome = tokio::time::timeout(Duration::from_secs(15), async {
         scenario.watch();
         scenario.next_request(2).await?;
@@ -75,7 +80,12 @@ async fn changed_schedule(timezone: bool) {
 
 #[tokio::test]
 async fn benchmark_worker_discards_inflight_snapshot_after_coalesced_schedule_changes() {
-    let mut scenario = Scenario::start("benchmark-reschedule-inflight", EARLY, || EARLY).await;
+    let mut scenario = Scenario::start(
+        "benchmark-reschedule-inflight",
+        EARLY,
+        std::sync::Arc::new(crate::clock::test_clock::TestClock::at(EARLY)),
+    )
+    .await;
     let outcome = tokio::time::timeout(Duration::from_secs(15), async {
         scenario.publisher.version.store(2, Ordering::SeqCst);
         scenario.publisher.blocked.store(2, Ordering::SeqCst);
@@ -118,8 +128,8 @@ async fn benchmark_worker_discards_inflight_snapshot_after_coalesced_schedule_ch
 #[tokio::test]
 async fn benchmark_worker_attempts_late_schedule_and_holds_due_financing_until_failed_batch_completes() {
     for (name, at, api_clock) in [
-        ("inside-window", MOVED - 10_000, (|| MOVED - 10_000) as fn() -> Millis),
-        ("last-millisecond", MOVED - 1, (|| MOVED - 1) as fn() -> Millis),
+        ("inside-window", MOVED - 10_000, std::sync::Arc::new(crate::clock::test_clock::TestClock::at(MOVED - 10_000))),
+        ("last-millisecond", MOVED - 1, std::sync::Arc::new(crate::clock::test_clock::TestClock::at(MOVED - 1))),
     ] {
         let mut scenario = Scenario::start(name, at, api_clock).await;
         let outcome = tokio::time::timeout(Duration::from_secs(15), async {
@@ -168,7 +178,12 @@ async fn benchmark_worker_attempts_late_schedule_and_holds_due_financing_until_f
 
 #[tokio::test]
 async fn benchmark_worker_does_not_refresh_for_unchanged_rejected_or_unrelated_parameters() {
-    let mut scenario = Scenario::start("benchmark-reschedule-neighbors", EARLY, || EARLY).await;
+    let mut scenario = Scenario::start(
+        "benchmark-reschedule-neighbors",
+        EARLY,
+        std::sync::Arc::new(crate::clock::test_clock::TestClock::at(EARLY)),
+    )
+    .await;
     let outcome = tokio::time::timeout(Duration::from_secs(15), async {
         scenario.watch();
         scenario.next_request(2).await?;
@@ -219,14 +234,14 @@ async fn benchmark_worker_does_not_refresh_for_unchanged_rejected_or_unrelated_p
 
 impl Scenario {
     /// Starts actual pinned HTTPS administration and a position backed by a dated 1% snapshot.
-    async fn start(name: &str, at: Millis, api_clock: fn() -> Millis) -> Self {
+    async fn start(name: &str, at: Millis, api_clock: Arc<dyn Clock>) -> Self {
         Self::start_custom(name, at, api_clock, "2s", std::convert::identity).await
     }
 
     async fn start_custom(
         name: &str,
         at: Millis,
-        api_clock: fn() -> Millis,
+        api_clock: Arc<dyn Clock>,
         publisher_timeout: &str,
         wrap: impl FnOnce(Router) -> Router,
     ) -> Self {
@@ -249,8 +264,8 @@ endpoint = "{endpoint}/estr"
 "#
         ));
         fs::write(&config, text).unwrap();
-        let node = Node::start_with_router(&dir, at, api_clock, wrap).await;
-        node.sync(&config, api_clock).await;
+        let node = Node::start_with_router(&dir, at, api_clock.clone(), wrap).await;
+        node.sync(&config, move || api_clock.now_ms()).await;
         node.submit(Command::Deposit {
             account: TRADER,
             amount: fixed("100000"),

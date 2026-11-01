@@ -294,7 +294,7 @@ pub(super) fn state(node: &TestSequencer, dir: &Path, api: &crate::config::ApiSe
         operator: dev_config().operator().unwrap(),
         mock_custody: true,
         payouts_enabled: true,
-        clock: || NOW,
+        clock: Arc::new(TestClock::at(NOW)),
         log_dir: dir.to_owned(),
         manifest: node.manifest.clone(),
         backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),

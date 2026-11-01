@@ -46,6 +46,10 @@ type KeyedLimiter<K, C> = RateLimiter<K, DashMapStateStore<K>, C, NoOpMiddleware
 pub struct ApiLimits<C: Clock = DefaultClock> {
     per_ip: KeyedLimiter<IpAddr, C>,
     per_account: KeyedLimiter<AccountId, C>,
+    /// Session-key requests for an account, whatever key signs them: one bucket per account at
+    /// the per-account rate, separate from the account's own, so keys cannot multiply its
+    /// allowance and a flooding key cannot starve the wallet's requests.
+    session_accounts: KeyedLimiter<AccountId, C>,
     initial_accounts: KeyedLimiter<(), C>,
     initial_per_ip: KeyedLimiter<IpAddr, C>,
     per_ip_connections: KeyedLimiter<IpAddr, C>,
@@ -113,6 +117,7 @@ impl<C: Clock + Clone> ApiLimits<C> {
         Self {
             per_ip: RateLimiter::dashmap_with_clock(quota(cfg.per_ip), clock.clone()),
             per_account: RateLimiter::dashmap_with_clock(quota(cfg.per_account), clock.clone()),
+            session_accounts: RateLimiter::dashmap_with_clock(quota(cfg.per_account), clock.clone()),
             initial_accounts: RateLimiter::dashmap_with_clock(quota(cfg.per_ip), clock.clone()),
             initial_per_ip: RateLimiter::dashmap_with_clock(quota(cfg.per_account), clock.clone()),
             per_ip_connections: RateLimiter::dashmap_with_clock(quota(cfg.per_ip_connections), clock),
@@ -158,6 +163,15 @@ impl<C: Clock + Clone> ApiLimits<C> {
         check(&self.per_account, &account, "account")
     }
 
+    /// Counts one session-key request acting for `account`, whatever key signed it, against the
+    /// account's session bucket.
+    /// Error cases:
+    /// - the account's session keys are over their rate: `RateLimited`, with the wait until one
+    ///   may act again
+    pub(crate) fn check_session_account(&self, account: AccountId) -> Result<(), ApiError> {
+        check(&self.session_accounts, &account, "session_account")
+    }
+
     /// Counts one declaration from a never-credited account: first against its client's share, at
     /// the per-account rate, so no one client can take the whole budget, then against the budget
     /// all clients share, at the per-IP rate, so fresh signing keys cannot multiply it.
@@ -184,6 +198,7 @@ impl<C: Clock + Clone> ApiLimits<C> {
     fn retain_recent(&self) {
         self.per_ip.retain_recent();
         self.initial_per_ip.retain_recent();
+        self.session_accounts.retain_recent();
         self.per_account.retain_recent();
         self.per_ip_connections.retain_recent();
     }

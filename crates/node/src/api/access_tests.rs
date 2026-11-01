@@ -3,26 +3,31 @@
 mod admission;
 mod declarations;
 mod reissue;
+mod session_keys;
+mod source;
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use axum::body::{Body, to_bytes};
 use axum::extract::{ConnectInfo, State};
 use axum::http::{Request, StatusCode};
 use axum::routing::post;
 use axum::{Extension, Json, Router};
-use engine_core::access::{EligibilityClass, EligibilityRequest, Jurisdiction, SanctionsStatus, Screening};
+use engine_core::access::{EligibilityClass, EligibilityRequest, Jurisdiction};
 use engine_core::auth::{ClientAuth, Operator, RequestAuth};
 use engine_core::command::{Command, OrderKind, OrderRequest, WithdrawalRequest};
-use engine_core::eip712::{self, Signature};
+use engine_core::eip712;
 use engine_core::event::Event;
 use engine_core::price::SourceQuote;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{AccountId, Side};
 use engine_core::{Engine, Fixed};
+use governor::Quota;
+use governor::clock::DefaultClock;
 use k256::ecdsa::SigningKey;
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
@@ -33,11 +38,11 @@ use tower::ServiceExt;
 use crate::access::AccessClient;
 use crate::api::{ApiState, MAX_BACKFILLS, router};
 use crate::clock::test_clock::TestClock;
-use crate::config::AccessSection;
+use crate::config::{AccessSection, RateLimit};
 use crate::history::{INDEX_FILE, Reader};
 use crate::limits::ApiLimits;
 use crate::log::{LogEntry, Manifest};
-use crate::sequencer::{Sequencer, SignedWithdrawal, replay, replay_with_signer};
+use crate::sequencer::{self, Sequencer, SignedWithdrawal, replay, replay_with_signer};
 use crate::tee::{AttestationBundle, EnclaveKey, MockAttestor, attest_bundle};
 use crate::test_support::{dev_config, log_entries, sample_around, scratch_dir, sequencer_config};
 
@@ -238,18 +243,12 @@ async fn a_client_can_cancel_its_resting_order_while_geo_access_is_excluded() {
     assert!(node.state.query(move |engine| engine.accounts()[&account].orders.is_empty()).await.unwrap());
 }
 
-struct Source {
-    jurisdiction: Jurisdiction,
-    sanctioned: BTreeSet<AccountId>,
-    forged: bool,
-    requests: Vec<Value>,
-}
-
 struct Node {
     app: Router,
     state: ApiState,
+    clock: Arc<TestClock>,
     dir: PathBuf,
-    source: Arc<Mutex<Source>>,
+    source: Arc<Mutex<source::Source>>,
     withdrawals: mpsc::UnboundedReceiver<SignedWithdrawal>,
     tasks: Vec<JoinHandle<()>>,
 }
@@ -268,7 +267,7 @@ impl Node {
     async fn start_with_time(name: &str, mock_custody: bool, trusted: bool) -> Self {
         let dir = scratch_dir(&format!("access-api-{name}"));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let source = Arc::new(Mutex::new(Source {
+        let source = Arc::new(Mutex::new(source::Source {
             jurisdiction: Jurisdiction::Allowed,
             sanctioned: BTreeSet::new(),
             forged: false,
@@ -280,7 +279,7 @@ impl Node {
             listener.local_addr().unwrap()
         ))
         .unwrap();
-        let source_app = Router::new().route("/", post(source_answer)).with_state(source.clone());
+        let source_app = Router::new().route("/", post(source::answer)).with_state(source.clone());
         let source_task = tokio::spawn(async move {
             axum::serve(listener, source_app).await.unwrap();
         });
@@ -329,11 +328,16 @@ impl Node {
             operator,
             mock_custody,
             payouts_enabled: mock_custody,
-            clock: || NOW,
+            clock: stamps.clone(),
             log_dir: dir.clone(),
             manifest,
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
-            limits: Arc::new(ApiLimits::new(&dev_config().api)),
+            // Buckets that refill once an hour, so no test depends on its speed.
+            limits: Arc::new(ApiLimits::with_quota(
+                &dev_config().api,
+                |rate: RateLimit| Quota::with_period(Duration::from_secs(3600)).unwrap().allow_burst(rate.burst),
+                DefaultClock::default(),
+            )),
             history: Reader::new(dir.join(INDEX_FILE), watch::channel(true).1),
             marks: crate::test_support::marks_reader(),
             emission_budget: None,
@@ -352,7 +356,29 @@ impl Node {
             state.submit(Command::Prices { market: 1, quotes }).await.unwrap();
         }
         let app = router(state.clone()).layer(Extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9)))));
-        Self { app, state, dir, source, withdrawals: withdrawals_rx, tasks: vec![source_task, sequencer_task] }
+        Self {
+            app,
+            state,
+            clock: stamps,
+            dir,
+            source,
+            withdrawals: withdrawals_rx,
+            tasks: vec![source_task, sequencer_task],
+        }
+    }
+
+    /// Re-trusts the advanced clock so stamps and queries stay admitted, without sequencing
+    /// anything: the last sequenced time is left where it was.
+    async fn retrust(&self) {
+        self.state.tx.send(sequencer::Request::TimeSample(sample_around(&*self.clock))).await.unwrap();
+    }
+
+    /// Moves the sequencer's time forward by `ms`, re-trusting it so stamps stay admitted, and
+    /// sequences a Tick, so the last sequenced time the API's checks read catches up.
+    async fn move_time(&self, ms: u64) {
+        self.clock.advance(Duration::from_millis(ms));
+        self.retrust().await;
+        self.state.submit(Command::Tick).await.unwrap();
     }
 
     async fn post(&self, path: &str, body: Value) -> (StatusCode, Value) {
@@ -467,34 +493,4 @@ fn withdrawal(key: &SigningKey, nonce: u64) -> Value {
         amount,
         auth: Some(RequestAuth { nonce, expires_at: NOW + 60_000, signature: eip712::sign(key, &hash) })
     })
-}
-
-async fn source_answer(State(source): State<Arc<Mutex<Source>>>, Json(request): Json<Value>) -> Json<Screening> {
-    let mut source = source.lock().unwrap();
-    source.requests.push(request.clone());
-    let account: Option<AccountId> = serde_json::from_value(request["account"].clone()).unwrap();
-    let payer: Option<AccountId> = serde_json::from_value(request["payer"].clone()).unwrap();
-    let status = |address: Option<AccountId>| {
-        if address.is_some_and(|address| source.sanctioned.contains(&address)) {
-            SanctionsStatus::Sanctioned
-        } else {
-            SanctionsStatus::Clear
-        }
-    };
-    let mut screening = Screening {
-        source: eip712::address(key(0x77).verifying_key()),
-        request_hash: serde_json::from_value(request["request_hash"].clone()).unwrap(),
-        observed_at: NOW,
-        account,
-        payer,
-        jurisdiction: source.jurisdiction,
-        account_status: status(account),
-        payer_status: status(payer),
-        signature: Signature::ZERO,
-    };
-    if !source.forged {
-        screening.signature =
-            eip712::sign(&key(0x77), &eip712::screening_hash(&eip712::domain(31_337, VAULT), &screening));
-    }
-    Json(screening)
 }

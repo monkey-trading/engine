@@ -6,7 +6,9 @@
 
 mod access;
 mod actions;
-use actions::{attest_eligibility, cancel_order, dev_deposit, place_order, withdraw};
+use actions::{
+    attest_eligibility, cancel_order, dev_deposit, place_order, register_session_key, revoke_session_key, withdraw,
+};
 mod admin;
 mod archive;
 mod benchmark_schedule;
@@ -37,7 +39,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use engine_core::account::{Position, RestingOrder};
-use engine_core::auth::{ClientAuth, Operator};
+use engine_core::auth::{ClientAuth, Operator, RequestAuth};
 use engine_core::emissions::TokenUnits;
 use engine_core::market::MarketSpec;
 use engine_core::merkle::{AccountProof, EntitlementProof};
@@ -49,6 +51,7 @@ use tokio::sync::{Semaphore, broadcast, mpsc, watch};
 use tracing::field::{Empty, display};
 use tracing::{Instrument, Span, info_span};
 
+use crate::clock::Clock;
 use crate::history::Reader;
 use crate::limits::{ApiLimits, limit_client, read_body};
 use crate::log::Manifest;
@@ -106,7 +109,7 @@ pub struct ApiState {
     pub payouts_enabled: bool,
     /// The clock a signed request's expiry is checked against; the node gives the sequencer the same
     /// one to stamp commands with.
-    pub clock: fn() -> Millis,
+    pub clock: Arc<dyn Clock>,
     pub log_dir: PathBuf,
     /// The log writer's manifest, held in enclave memory.
     pub manifest: watch::Receiver<Manifest>,
@@ -167,6 +170,25 @@ struct NonceView {
 struct AmountBody {
     account: AccountId,
     amount: Fixed,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionKeyRequest {
+    account: AccountId,
+    session_key: AccountId,
+    expires_at: Millis,
+    #[serde(default)]
+    auth: Option<RequestAuth>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionKeyRevocationRequest {
+    account: AccountId,
+    session_key: AccountId,
+    #[serde(default)]
+    auth: Option<RequestAuth>,
 }
 
 impl IntoResponse for ApiError {
@@ -230,6 +252,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/eligibility", post(attest_eligibility))
         .route("/v1/orders", post(place_order))
         .route("/v1/orders/cancel", post(cancel_order))
+        .route("/v1/session-keys", post(register_session_key).delete(revoke_session_key))
         .route("/v1/withdrawals", get(withdrawal_queue::queue).post(withdraw))
         .route("/v1/accounts/{address}/withdrawals", get(withdrawal_queue::account))
         .route("/v1/accounts/{address}/withdrawals/{nonce}/reissue", post(reissue::reissue))

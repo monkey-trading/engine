@@ -21,7 +21,7 @@ use tracing::{error, info, warn};
 use crate::alerts::Routing;
 use crate::api::{ApiState, Feed, MAX_BACKFILLS, Signing, router};
 use crate::checkpoints::CheckpointChain;
-use crate::clock::{Clock, SystemClock, now_ms};
+use crate::clock::{Clock, SystemClock};
 use crate::config::{AuthMode, CustodyProvider, FeedProvider, NodeConfig};
 use crate::feeds;
 use crate::feeds::venue::{self, Timing};
@@ -356,7 +356,7 @@ async fn serve_node(
         operator,
         mock_custody,
         payouts_enabled: mock_custody || cfg.checkpoints.is_some(),
-        clock: now_ms,
+        clock: Arc::new(SystemClock),
         log_dir: cfg.node.log_dir.clone(),
         manifest: manifest_rx,
         backfills,

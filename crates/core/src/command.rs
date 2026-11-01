@@ -151,6 +151,24 @@ pub enum Command {
     /// From `V37`, the operator registry's `Elected` event, finalised, credited once under its
     /// chain reference.
     ElectOperator(RegistryElection),
+    /// From `V41`, registers `session_key` to place and cancel orders for `account` until
+    /// `expires_at`, capped at `MAX_SESSION_KEY_EXPIRY_MS` ahead, or until revoked; only the
+    /// account key's signature authorises it.
+    RegisterSessionKey {
+        account: AccountId,
+        session_key: AccountId,
+        expires_at: Millis,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        auth: Option<RequestAuth>,
+    },
+    /// From `V41`, revokes `session_key` for `account`, refusing its later requests distinctly; only
+    /// the account key's signature authorises it.
+    RevokeSessionKey {
+        account: AccountId,
+        session_key: AccountId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        auth: Option<RequestAuth>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

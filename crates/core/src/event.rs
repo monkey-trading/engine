@@ -298,6 +298,26 @@ pub enum Event {
         chain_ref: String,
         reason: String,
     },
+    /// From `V41`, a session key the account registered: the key may place and cancel orders for
+    /// the account until `expires_at` or an account-signed revocation.
+    SessionKeyRegistered {
+        account: AccountId,
+        session_key: AccountId,
+        expires_at: Millis,
+    },
+    /// From `V41`, a session key the account revoked: its later requests refuse distinctly.
+    SessionKeyRevoked {
+        account: AccountId,
+        session_key: AccountId,
+    },
+    /// From `V41`, a registration or revocation the engine refused: before `V41`, naming a key that
+    /// cannot be a session key, a signature, nonce, or expiry failure, or a new key past the
+    /// account's cap.
+    SessionKeyRejected {
+        account: AccountId,
+        session_key: AccountId,
+        reason: Reject,
+    },
     /// From `V33`, a command stamped more than `MAX_CATCH_UP_BOUNDARIES` rollover or
     /// corporate-action boundaries past the engine's schedule caught up on that many and did
     /// nothing else, but for the outcome of a benchmark batch it had already applied. `due` is the
@@ -385,6 +405,25 @@ pub enum Reject {
     /// A signed request whose expiry lies more than `MAX_EXPIRY_AHEAD_MS` past the sequenced time.
     ExpiryTooFar {
         latest: Millis,
+    },
+    /// From `V41`, a registration naming a key that cannot be a session key: the account's own, the
+    /// recorded operator's, or, for a revocation, a key the account never registered.
+    InvalidSessionKey,
+    /// From `V41`, a request signed by a session key the account revoked.
+    SessionKeyRevoked,
+    /// From `V41`, a request signed by a session key past its registration's expiry.
+    SessionKeyExpired {
+        expires_at: Millis,
+    },
+    /// From `V41`, a funds request signed by a live session key: session keys place and cancel
+    /// orders only, and can never move collateral.
+    SessionKeyScope,
+    /// From `V41`, a registration or revocation sequenced before `V41` activated.
+    SessionKeyUnsupported,
+    /// From `V41`, a registration that would hold more than `max` live session keys; a
+    /// registration prunes the account's expired and revoked keys first.
+    TooManySessionKeys {
+        max: usize,
     },
 }
 

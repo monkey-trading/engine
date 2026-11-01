@@ -312,7 +312,7 @@ impl Scenario {
             operator: self.operator,
             mock_custody: false,
             payouts_enabled: true,
-            clock: || NOW,
+            clock: Arc::new(TestClock::at(NOW)),
             log_dir: self.dir.clone(),
             manifest,
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),

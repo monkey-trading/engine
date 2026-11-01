@@ -292,7 +292,7 @@ impl Node {
             operator: dev_config().operator().unwrap(),
             mock_custody: true,
             payouts_enabled: true,
-            clock: || NOW,
+            clock: Arc::new(TestClock::at(NOW)),
             log_dir: dir.clone(),
             manifest,
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),

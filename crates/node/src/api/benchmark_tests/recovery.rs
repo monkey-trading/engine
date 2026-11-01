@@ -56,7 +56,7 @@ endpoint = "{publisher}/estr"
     ));
     fs::write(&cfg_path, text).unwrap();
     // The sequencer's moving clock checks expiry authoritatively; the API clock stays test-local.
-    let node = Node::start(&dir, START, || START).await;
+    let node = Node::start(&dir, START, std::sync::Arc::new(crate::clock::test_clock::TestClock::at(START))).await;
     let mut worker = None;
     let scenario = tokio::time::timeout(Duration::from_secs(10), async {
         node.sync(&cfg_path, || START).await;

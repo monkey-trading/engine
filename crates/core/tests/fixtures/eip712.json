@@ -351,6 +351,138 @@
         }
       },
       "signature": "0x5dc1e1e312cc94561bf160507af321ed6f99df50595e97e0a398a794abe572e700cc0e3002935c8a6961144c2d038f43924a86e3459ebfc1d4f50121be26fc991c"
+    },
+    {
+      "kind": "register_session_key",
+      "nonce": 4,
+      "expires_at": 1792540800000,
+      "body": {
+        "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        "session_key": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+        "expires_at": 1792627200000
+      },
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "RegisterSessionKey": [
+            {
+              "name": "account",
+              "type": "address"
+            },
+            {
+              "name": "nonce",
+              "type": "uint64"
+            },
+            {
+              "name": "expiresAt",
+              "type": "int64"
+            },
+            {
+              "name": "sessionKey",
+              "type": "address"
+            },
+            {
+              "name": "sessionExpiresAt",
+              "type": "int64"
+            }
+          ]
+        },
+        "primaryType": "RegisterSessionKey",
+        "domain": {
+          "name": "monkeytrading",
+          "version": "1",
+          "chainId": 31337,
+          "verifyingContract": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+        },
+        "message": {
+          "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+          "nonce": 4,
+          "expiresAt": 1792540800000,
+          "sessionKey": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+          "sessionExpiresAt": 1792627200000
+        }
+      },
+      "signature": "0x9b5984d4d7268acada7f8a0ab7c49f6c478b5fbd3a7a41f9d159b31fb030101763feecac381e11532422cd9d61818836ba2e9a373747c5163ae944f3aef8ab981b"
+    },
+    {
+      "kind": "revoke_session_key",
+      "nonce": 5,
+      "expires_at": 1792540800000,
+      "body": {
+        "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        "session_key": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8"
+      },
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "RevokeSessionKey": [
+            {
+              "name": "account",
+              "type": "address"
+            },
+            {
+              "name": "nonce",
+              "type": "uint64"
+            },
+            {
+              "name": "expiresAt",
+              "type": "int64"
+            },
+            {
+              "name": "sessionKey",
+              "type": "address"
+            }
+          ]
+        },
+        "primaryType": "RevokeSessionKey",
+        "domain": {
+          "name": "monkeytrading",
+          "version": "1",
+          "chainId": 31337,
+          "verifyingContract": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+        },
+        "message": {
+          "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+          "nonce": 5,
+          "expiresAt": 1792540800000,
+          "sessionKey": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8"
+        }
+      },
+      "signature": "0xc97a70cb4d1cecf490b48c5d76a80273703be05b15cfa5a57838aefe3c7805ce347a03d40b7cbf89d8e38c6ffe3aeff4c3e73f1db44dde6ededbb7f2c78cc8431c"
     }
   ]
 }

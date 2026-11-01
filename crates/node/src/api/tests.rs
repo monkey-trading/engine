@@ -14,8 +14,9 @@ use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
+use crate::clock::Clock;
+use crate::clock::SystemClock;
 use crate::clock::test_clock::TestClock;
-use crate::clock::{Clock, now_ms};
 use crate::config::RateLimit;
 use crate::history::{HistoryEvent, INDEX_FILE, account_of};
 use crate::log::{LogEntry, MANIFEST, Manifest, Offset, SegmentedLog, segment_seq};
@@ -321,7 +322,7 @@ async fn serve_with(node: &TestSequencer, dir: &Path, manifest: watch::Receiver<
         operator: dev_config().operator().unwrap(),
         mock_custody: true,
         payouts_enabled: true,
-        clock: now_ms,
+        clock: Arc::new(SystemClock),
         log_dir: dir.to_owned(),
         manifest,
         backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
@@ -352,7 +353,7 @@ async fn serve_history(history: Reader) -> SocketAddr {
         operator: dev_config().operator().unwrap(),
         mock_custody: false,
         payouts_enabled: false,
-        clock: now_ms,
+        clock: Arc::new(SystemClock),
         log_dir: PathBuf::new(),
         manifest: watch::channel(Manifest::default()).1,
         backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
@@ -463,7 +464,7 @@ pub(crate) fn api_state(mock_custody: bool) -> (ApiState, mpsc::Receiver<sequenc
         operator: dev_config().operator().unwrap(),
         mock_custody,
         payouts_enabled: mock_custody,
-        clock: now_ms,
+        clock: Arc::new(SystemClock),
         log_dir: scratch_dir("api-state"),
         manifest,
         backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),

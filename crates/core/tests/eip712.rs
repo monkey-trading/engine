@@ -9,7 +9,10 @@
 use alloy_dyn_abi::TypedData;
 use alloy_primitives::hex;
 use engine_core::command::{AdminCommand, CancelRequest, OrderKind, OrderRequest, WithdrawalRequest};
-use engine_core::eip712::{self, Signature, admin_hash, cancel_hash, order_hash, withdrawal_hash};
+use engine_core::eip712::{
+    self, Signature, admin_hash, cancel_hash, order_hash, session_key_registration_hash, session_key_revocation_hash,
+    withdrawal_hash,
+};
 use engine_core::types::{AccountId, Millis};
 use k256::ecdsa::SigningKey;
 use serde::Deserialize;
@@ -24,6 +27,15 @@ struct Vectors {
     chain_id: u64,
     vault: AccountId,
     requests: Vec<Vector>,
+}
+
+/// A session-key registration or revocation body, as the API takes it.
+#[derive(Deserialize)]
+struct SessionKeyBody {
+    account: AccountId,
+    session_key: AccountId,
+    #[serde(default)]
+    expires_at: Millis,
 }
 
 #[derive(Deserialize)]
@@ -77,6 +89,32 @@ fn the_engine_reproduces_each_vector_signature_from_its_request_body() {
                     "amount": body.amount.raw().to_string(),
                 });
                 (withdrawal_hash(&domain, body.account, body.amount, nonce, expires_at), message)
+            }
+            "register_session_key" => {
+                let body: SessionKeyBody = serde_json::from_value(vector.body.clone()).unwrap();
+                let message = json!({
+                    "account": body.account.to_string(), "nonce": nonce, "expiresAt": expires_at,
+                    "sessionKey": body.session_key.to_string(), "sessionExpiresAt": body.expires_at,
+                });
+                (
+                    session_key_registration_hash(
+                        &domain,
+                        body.account,
+                        body.session_key,
+                        body.expires_at,
+                        nonce,
+                        expires_at,
+                    ),
+                    message,
+                )
+            }
+            "revoke_session_key" => {
+                let body: SessionKeyBody = serde_json::from_value(vector.body.clone()).unwrap();
+                let message = json!({
+                    "account": body.account.to_string(), "nonce": nonce, "expiresAt": expires_at,
+                    "sessionKey": body.session_key.to_string(),
+                });
+                (session_key_revocation_hash(&domain, body.account, body.session_key, nonce, expires_at), message)
             }
             other => panic!("unknown request kind {other}"),
         };

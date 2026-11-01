@@ -14,7 +14,7 @@ use std::cell::OnceCell;
 use crate::Fixed;
 use crate::access::AccessEvidence;
 use crate::account::{Account, RestingOrder};
-use crate::auth::RequestAuth;
+use crate::auth::{RequestAuth, RequestScope};
 use crate::command::{OrderKind, OrderRequest};
 use crate::eip712::{cancel_hash, order_hash};
 use crate::engine::{Engine, Markout};
@@ -94,7 +94,7 @@ impl Engine {
         let reject = |reason, events: &mut Vec<Event>| {
             events.push(Event::OrderRejected { account: req.account, client_id: req.client_id, reason })
         };
-        let authorised = self.authorise(req.account, req.auth.as_ref(), |domain, auth| {
+        let authorised = self.authorise(req.account, req.auth.as_ref(), RequestScope::Trade, |domain, auth| {
             order_hash(domain, req, auth.nonce, auth.expires_at)
         });
         let request_hash = self
@@ -170,7 +170,7 @@ impl Engine {
         auth: Option<&RequestAuth>,
         events: &mut Vec<Event>,
     ) {
-        if let Err(reason) = self.authorise(account, auth, |domain, auth| {
+        if let Err(reason) = self.authorise(account, auth, RequestScope::Trade, |domain, auth| {
             cancel_hash(domain, account, order_id, auth.nonce, auth.expires_at)
         }) {
             events.push(Event::OrderRejected { account, client_id: 0, reason });

@@ -178,7 +178,7 @@ async fn an_expired_request_stays_out_of_the_log_and_a_too_far_one_uses_its_nonc
 #[tokio::test]
 async fn a_request_expired_by_the_clock_stays_out_of_the_log_though_sequenced_time_lags() {
     // The API's clock runs a minute and a millisecond past the last sequenced time.
-    let node = Node::start_with_clock("clock", signed(), || NOW + 60_001).await;
+    let node = Node::start_with_clock("clock", signed(), Arc::new(TestClock::at(NOW + 60_001))).await;
     let client = SigningKey::from_slice(&[1; 32]).unwrap();
     node.fund(&client).await;
     let logged = node.entries().len();
@@ -191,7 +191,7 @@ async fn a_request_expired_by_the_clock_stays_out_of_the_log_though_sequenced_ti
 #[tokio::test]
 async fn a_request_expired_by_sequenced_time_stays_out_of_the_log_though_the_clock_lags() {
     // The API's clock reads the epoch, far behind sequenced time.
-    let node = Node::start_with_clock("lagging-clock", signed(), || 0).await;
+    let node = Node::start_with_clock("lagging-clock", signed(), Arc::new(TestClock::at(0))).await;
     let client = SigningKey::from_slice(&[1; 32]).unwrap();
     node.fund(&client).await;
     let last_sequenced = node.state.query(|e| e.now()).await.expect("the sequencer is running");
@@ -215,8 +215,8 @@ async fn two_copies_of_a_withdrawal_that_both_pass_the_api_are_paid_once() {
         eip712::sign(&client, &withdrawal_hash(&eip712::domain(CHAIN_ID, VAULT), account, amount, 0, expires_at));
     let auth = RequestAuth { nonce: 0, expires_at, signature };
     // Both copies pass the API's checks before either is sequenced, as two racing requests can.
-    let first = node.state.authorise(account, Some(auth.clone()), hash).await.expect("passes the API");
-    let second = node.state.authorise(account, Some(auth), hash).await.expect("passes the API");
+    let first = node.state.authorise(account, Some(auth.clone()), true, hash).await.expect("passes the API");
+    let second = node.state.authorise(account, Some(auth), true, hash).await.expect("passes the API");
     let withdraw = |auth| Command::Withdraw { account, amount, auth };
     let approved = node.state.submit(withdraw(first)).await.expect("the sequencer is running");
     let refused = node.state.submit(withdraw(second)).await.expect("the sequencer is running");
@@ -296,6 +296,8 @@ fn the_published_signing_vectors_are_bodies_the_api_accepts() {
             "order" => serde_json::from_value::<OrderRequest>(body).map(drop),
             "cancel" => serde_json::from_value::<CancelRequest>(body).map(drop),
             "withdrawal" => serde_json::from_value::<WithdrawalRequest>(body).map(drop),
+            "register_session_key" => serde_json::from_value::<super::SessionKeyRequest>(body).map(drop),
+            "revoke_session_key" => serde_json::from_value::<super::SessionKeyRevocationRequest>(body).map(drop),
             other => panic!("unknown request kind {other}"),
         };
         assert!(parsed.is_ok(), "{}: {parsed:?}", vector["kind"]);
@@ -343,11 +345,11 @@ impl Node {
     /// Recovers a sequencer on a fresh log named after `name`, activates the protocol, sequences
     /// the dev genesis, and serves the API over it.
     async fn start(name: &str, auth: ClientAuth) -> Self {
-        Node::start_with_clock(name, auth, || NOW).await
+        Node::start_with_clock(name, auth, Arc::new(TestClock::at(NOW))).await
     }
 
     /// `start`, with the API checking expiries against `clock` while the sequencer stamps `NOW`.
-    async fn start_with_clock(name: &str, auth: ClientAuth, clock: fn() -> Millis) -> Self {
+    async fn start_with_clock(name: &str, auth: ClientAuth, clock: Arc<TestClock>) -> Self {
         let dir = scratch_dir(&format!("auth-{name}"));
         let key = Arc::new(EnclaveKey::generate());
         let (stream, _) = broadcast::channel(1024);

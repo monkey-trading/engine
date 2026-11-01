@@ -27,8 +27,8 @@ use crate::merkle::{
     corporate_reference_key, credited_ref_hash, credited_ref_key, distribution_hash, distribution_key, eligibility_key,
     entitlement_hash, entitlement_key, exit_terms_key, globals_key, held_deposit_key, json_hash, market_key,
     markout_hash, markout_key, order_hash, order_key, pending_deposit_key, period_result_hash, period_result_key,
-    position_hash, position_key, request_nonce_hash, request_nonce_key, staked_hash, staked_key,
-    withdrawal_approval_hash, withdrawal_queue_hash, withdrawal_queue_key,
+    position_hash, position_key, request_nonce_hash, request_nonce_key, session_key_hash, session_key_key, staked_hash,
+    staked_key, withdrawal_approval_hash, withdrawal_queue_hash, withdrawal_queue_key,
 };
 use crate::operator_bounds::OperatorBounds;
 use crate::params::ProtocolParams;
@@ -132,6 +132,7 @@ impl Engine {
             emission_ledgers,
             staked,
             distributions,
+            session_keys,
             deposits,
             deposit_transactions,
             legacy_deposits,
@@ -258,6 +259,11 @@ impl Engine {
         );
         changes.extend(self.staking_reference_leaves(staking_refs));
         changes.extend(staked.into_iter().map(|id| (staked_key(id), self.staked.get(&id).map(|s| staked_hash(*s)))));
+        changes.extend(
+            session_keys
+                .into_iter()
+                .map(|account| (session_key_key(account), self.session_keys.get(&account).map(session_key_hash))),
+        );
 
         // A seq has been applied: `V9` takes effect through a sequenced `ActivateProtocol`.
         let seq = self.last_seq.expect("a state root under V9 follows a command");
@@ -428,6 +434,7 @@ impl Engine {
             operator_election,
             close_spread_ceilings,
             pending_ceiling,
+            session_keys: _,
             eligibility: _,
             held_deposits: _,
             pending_deposits: _,

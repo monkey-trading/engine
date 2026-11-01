@@ -3,7 +3,11 @@
 //! account's signature over the request, the account's next nonce, and an expiry the request has
 //! not passed, so a replay of the log proves each request was the account's and ran in time. `V2`
 //! logs, and dev logs that record `Unsigned`, accept unsigned requests. From `V8`, the operator
-//! signs admin commands the same way, with the key the log's `Operator` records.
+//! signs admin commands the same way, with the key the log's `Operator` records. From `V41`, an
+//! account's registered session key may sign orders and cancels within its expiry, on the key's
+//! own nonce sequence; a revoked or expired key and a key signing a withdrawal refuse with their
+//! own rejections, and any registration or revocation not signed by the account key refuses as an
+//! invalid signature (see `session_keys`).
 
 use serde::{Deserialize, Serialize};
 
@@ -32,6 +36,17 @@ pub enum ClientAuth {
     /// Each request carries the account's EIP-712 signature under the domain of `vault` on
     /// `chain_id`, the account's next nonce, and an expiry.
     Eip712 { chain_id: u64, vault: AccountId },
+}
+
+/// What a client request may do, which decides whether a session key may sign it: from `V41`, a
+/// registered, unexpired session key may sign `Trade` requests only; `Funds` requests refuse it as
+/// out of scope, and `Keys` requests (registrations and revocations) never admit one, so a session
+/// key cannot widen its own scope.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RequestScope {
+    Trade,
+    Funds,
+    Keys,
 }
 
 /// The key that signs admin commands from `V8`, by its address, and the domain it signs under: the
@@ -123,24 +138,28 @@ impl Engine {
     /// Checks a client request may act for `account` under the rules in force, and uses its nonce
     /// when it is signed. Nothing changes when the signature or nonce fails. A request that passes
     /// both uses its nonce even if it is then refused, for its expiry or by the engine, so it
-    /// cannot be replayed from the log once it would succeed.
+    /// cannot be replayed from the log once it would succeed. From `V41`, under a signature-based
+    /// ruleset, a request signed by a registered, unexpired session key is accepted for
+    /// [`RequestScope::Trade`] under the key's own nonce sequence; `Funds` and `Keys` requests and
+    /// dead keys refuse with their own rejections.
     /// Error cases:
     /// - `MissingSignature` or `InvalidSignature`: see `ClientAuth::check`
-    /// - `InvalidNonce`: a nonce other than the account's next
+    /// - `InvalidNonce`: a nonce other than the signer's next
     /// - `Expired` or `ExpiryTooFar`: see `RequestAuth::check_expiry`
+    /// - `SessionKeyRevoked` or `SessionKeyExpired`: a session key the account revoked, or one past
+    ///   its registration's expiry
+    /// - `SessionKeyScope`: a session key signed a `Funds` request
     pub(crate) fn authorise(
         &mut self,
         account: AccountId,
         auth: Option<&RequestAuth>,
+        scope: RequestScope,
         hash: impl FnOnce(&Eip712Domain, &RequestAuth) -> B256,
     ) -> Result<(), Reject> {
         if self.protocol_version.supports_access() {
             let domain = self.access_domain().ok_or(Reject::InvalidSignature)?;
             let auth = auth.ok_or(Reject::MissingSignature)?;
-            if eip712::recover(&hash(&domain, auth), &auth.signature) != Some(account) {
-                return Err(Reject::InvalidSignature);
-            }
-            return self.use_nonce(account, auth);
+            return self.authorise_signer(account, auth, scope, |auth| hash(&domain, auth));
         }
         const ORIGINAL: ClientAuth = ClientAuth::Unsigned;
         let rules = if self.protocol_version >= ProtocolVersion::V3 {
@@ -149,23 +168,12 @@ impl Engine {
         } else {
             &ORIGINAL
         };
-        rules.check(account, auth, hash)?;
-        match auth {
-            Some(auth) => self.use_nonce(account, auth),
-            None => Ok(()),
+        match (rules.domain(), auth) {
+            (None, None) => Ok(()),
+            (Some(_), None) => Err(Reject::MissingSignature),
+            (Some(domain), Some(auth)) => self.authorise_signer(account, auth, scope, |a| hash(&domain, a)),
+            (None, Some(_)) => Err(Reject::InvalidSignature),
         }
-    }
-
-    /// Checks an admin command is signed by the operator the log records, and uses the operator's
-    /// nonce, as `authorise` does for a client request.
-    /// Error cases:
-    /// - `InvalidSignature`: see `Operator::check`
-    /// - `InvalidNonce`, `Expired`, or `ExpiryTooFar`: see `use_nonce`
-    pub(crate) fn authorise_admin(&mut self, command: &AdminCommand, auth: &RequestAuth) -> Result<(), Reject> {
-        // `ActivateProtocol` refuses `V8` until the operator is recorded, and callers check `V8`.
-        let operator = self.operator.expect("the operator is recorded before V8");
-        operator.check(command, auth)?;
-        self.use_nonce(operator.address, auth)
     }
 
     /// Uses `signer`'s next nonce if the request carries it, then checks the request's expiry.
@@ -180,5 +188,70 @@ impl Engine {
         // One nonce per request: 2^64 requests from one signer cannot happen.
         self.request_nonces.insert(signer, expected + 1);
         auth.check_expiry(self.now)
+    }
+
+    /// Checks a signed request's signature names `account`, or a session key of `account` allowed
+    /// by `scope`, and uses the signer's nonce. A request a registered session key signs spends
+    /// the key's nonce even when the key's state or the request's scope then refuses it, exactly as
+    /// an account-signed request a refusal cannot replay behaves.
+    /// Error cases:
+    /// - `InvalidSignature`: not signed by `account` or, from `V41`, by one of its session keys
+    ///   within `scope`
+    /// - the rejections of `use_nonce`
+    /// - `SessionKeyRevoked` or `SessionKeyExpired`: the key's state refuses it
+    /// - `SessionKeyScope`: a live session key signed a `Funds` request
+    fn authorise_signer(
+        &mut self,
+        account: AccountId,
+        auth: &RequestAuth,
+        scope: RequestScope,
+        hash: impl FnOnce(&RequestAuth) -> B256,
+    ) -> Result<(), Reject> {
+        let signer = eip712::recover(&hash(auth), &auth.signature).ok_or(Reject::InvalidSignature)?;
+        if signer == account {
+            return self.use_nonce(account, auth);
+        }
+        if scope == RequestScope::Keys || self.protocol_version < ProtocolVersion::V41 {
+            return Err(Reject::InvalidSignature);
+        }
+        let Some(key) = self.session_keys.get(&account).and_then(|keys| keys.keys.get(&signer)).copied() else {
+            // A signer that has spent request nonces before — a pruned session key — keeps its
+            // replay protection after pruning: the refusal still spends its nonce, so a captured
+            // request cannot replay once the key is re-registered. The operator's sequence is
+            // the admin channel's, never a session key's, and is never spent here.
+            if self.protocol_version >= ProtocolVersion::V41
+                && self.operator.is_none_or(|operator| operator.address != signer)
+                && self.request_nonces.contains_key(&signer)
+            {
+                self.use_nonce(signer, auth)?;
+            }
+            return Err(Reject::InvalidSignature);
+        };
+        // The key is registered, so the request spends its nonce even when the key's state or the
+        // request's scope then refuses it: a captured request cannot replay across a revocation
+        // and re-registration, exactly as an account-signed request behaves.
+        self.use_nonce(signer, auth)?;
+        if key.revoked {
+            return Err(Reject::SessionKeyRevoked);
+        }
+        if self.now > key.expires_at {
+            return Err(Reject::SessionKeyExpired { expires_at: key.expires_at });
+        }
+        if scope == RequestScope::Funds {
+            return Err(Reject::SessionKeyScope);
+        }
+        Ok(())
+    }
+
+    /// Checks an admin command is signed by the operator the log records, and uses the operator's
+    /// nonce, as `authorise` does for a client request.
+    /// Error cases:
+    /// - `InvalidSignature`: see `Operator::check`
+    /// - `InvalidNonce`, `Expired`, or `ExpiryTooFar`: see `use_nonce`
+    pub(crate) fn authorise_admin(&mut self, command: &AdminCommand, auth: &RequestAuth) -> Result<(), Reject> {
+        // `ActivateProtocol` refuses `V8` until the operator is recorded, and callers check `V8`.
+        let operator = self.operator.expect("the operator is recorded before V8");
+        operator.check(command, auth)?;
+        self.use_nonce(operator.address, auth)
     }
 }

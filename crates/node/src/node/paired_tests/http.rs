@@ -13,7 +13,7 @@ use tokio::sync::{Semaphore, broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
 use crate::api::{ApiState, MAX_BACKFILLS, router};
-use crate::clock::now_ms;
+use crate::clock::SystemClock;
 use crate::history::Reader;
 use crate::limits::ApiLimits;
 use crate::log::Manifest;
@@ -51,7 +51,7 @@ impl Http {
             operator: cfg.operator().unwrap(),
             mock_custody: false,
             payouts_enabled: false,
-            clock: now_ms,
+            clock: Arc::new(SystemClock),
             log_dir: PathBuf::new(),
             manifest: watch::channel(Manifest::default()).1,
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),

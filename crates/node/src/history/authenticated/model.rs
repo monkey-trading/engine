@@ -201,6 +201,9 @@ pub(super) fn event_kind(event: &Event) -> Result<u8> {
         Event::EligibilityRejected { .. } => "eligibility_rejected",
         Event::DepositPending { .. } => "deposit_pending",
         Event::DepositHeld { .. } => "deposit_held",
+        Event::SessionKeyRegistered { .. } => "session_key_registered",
+        Event::SessionKeyRevoked { .. } => "session_key_revoked",
+        Event::SessionKeyRejected { .. } => "session_key_rejected",
         // Listed, not matched by a wildcard, so a new event does not compile until it is classified.
         Event::HouseCapitalMoved { .. }
         | Event::CorporateActionScheduled { .. }

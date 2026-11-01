@@ -95,11 +95,11 @@ async fn a_post_from_a_listed_origin_carries_its_origin_on_the_refusal() {
 #[tokio::test]
 async fn a_preflight_from_a_listed_origin_answers_204_and_others_get_no_grant() {
     let app = app(|_| {});
-    for path in ["/v1/orders", "/v1/markets", "/v1/accounts/0x00/nonce", "/v1/stream"] {
+    for path in ["/v1/orders", "/v1/session-keys", "/v1/markets", "/v1/accounts/0x00/nonce", "/v1/stream"] {
         let response = send(&app, Method::OPTIONS, path, Some(LISTED), "").await;
         assert_eq!(response.status(), StatusCode::NO_CONTENT, "{path}");
         assert_eq!(header(&response, ACCESS_CONTROL_ALLOW_ORIGIN), Some(LISTED));
-        assert_eq!(header(&response, ACCESS_CONTROL_ALLOW_METHODS), Some("GET, POST, OPTIONS"));
+        assert_eq!(header(&response, ACCESS_CONTROL_ALLOW_METHODS), Some("GET, POST, DELETE, OPTIONS"));
         assert_eq!(header(&response, ACCESS_CONTROL_ALLOW_HEADERS), Some("Content-Type, X-Engine-Challenge"));
         assert_eq!(header(&response, ACCESS_CONTROL_MAX_AGE), Some("600"));
         assert_eq!(header(&response, VARY), Some("Origin"));

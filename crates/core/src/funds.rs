@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use crate::Fixed;
 use crate::access::AccessEvidence;
 use crate::account::Position;
-use crate::auth::RequestAuth;
+use crate::auth::{RequestAuth, RequestScope};
 use crate::deposits::legacy_chain_reference;
 use crate::eip712::withdrawal_hash;
 use crate::engine::Engine;
@@ -56,7 +56,7 @@ impl Engine {
         access: Option<(&AccessEvidence, bool)>,
         events: &mut Vec<Event>,
     ) {
-        let authorised = self.authorise(account, auth, |domain, auth| {
+        let authorised = self.authorise(account, auth, RequestScope::Funds, |domain, auth| {
             withdrawal_hash(domain, account, amount, auth.nonce, auth.expires_at)
         });
         let request_hash = self

@@ -102,7 +102,7 @@ impl Node {
             access: None,
             operator,
             mock_custody: false,
-            clock: || T0_SECS as Millis * 1000,
+            clock: Arc::new(TestClock::at(T0_SECS as Millis * 1000)),
             log_dir: dir.clone(),
             manifest,
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
@@ -123,7 +123,7 @@ impl Node {
         let by = u64::try_from(ms - self.clock.now_ms()).expect("time only moves forward");
         self.clock.advance(Duration::from_millis(by));
         self.state.tx.send(Request::TimeSample(sample_around(self.clock.as_ref()))).await.unwrap();
-        self.state.clock = api;
+        self.state.clock = Arc::new(crate::clock::test_clock::TestClock::at(api()));
     }
 
     /// Reads the engine between batches.
@@ -156,7 +156,7 @@ impl Node {
     pub(super) async fn admin(&self, key: &SigningKey, command: AdminCommand) -> (StatusCode, Value) {
         let address = engine_core::eip712::address(key.verifying_key());
         let nonce = self.query(move |engine| engine.next_request_nonce(address)).await;
-        let expires_at = (self.state.clock)() + 60_000;
+        let expires_at = self.state.clock.now_ms() + 60_000;
         let request = crate::admin::sign(key, &self.state.operator, command, nonce, expires_at);
         let body = serde_json::to_string(&request).unwrap();
         let request = HttpRequest::post("/v1/admin").header("content-type", "application/json").body(Body::from(body));

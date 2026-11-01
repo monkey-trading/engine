@@ -29,7 +29,7 @@ async fn benchmark_worker_reconnects_during_download_and_fences_missed_schedule_
     let mut scenario = Scenario::start_custom(
         "benchmark-watch-reconnect",
         EARLY,
-        || EARLY,
+        std::sync::Arc::new(crate::clock::test_clock::TestClock::at(EARLY)),
         "20s",
         move |app| app.layer(from_fn_with_state(fault, watch_fault)),
     )

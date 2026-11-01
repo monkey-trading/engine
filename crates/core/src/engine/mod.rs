@@ -4,7 +4,8 @@
 //! the state, dispatch, time, sessions, and USD valuation; house NAV and the exposure caps set
 //! from it live in `house.rs`; per-market state lives in `market.rs`,
 //! venue prices and marks in `marks.rs`, funds and financing in `funds.rs`, admin in `admin.rs`,
-//! stress levels in `stress.rs`, client request auth in `auth.rs`, orders and pricing in
+//! stress levels in `stress.rs`, client request auth in `auth.rs`, session-key registrations and
+//! revocations in `session_keys.rs`, orders and pricing in
 //! `execution/`, close-outs in `closeout.rs`, markouts in `markouts.rs`, reserved FIFO
 //! withdrawals in `withdrawal.rs`, MONKEY staking and USDC distributions in `staking.rs`, and the
 //! elected operator key in `election.rs`.
@@ -36,6 +37,7 @@ use crate::merkle::state::{Changed, StateTree, is_zero};
 use crate::operator_bounds::OperatorBounds;
 use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
+use crate::session_keys::AccountSessionKeys;
 use crate::staking::{Staking, UsdcUnits};
 pub use crate::stress::{MoveBucket, StressState};
 use crate::tracked::{TrackedMap, TrackedSet};
@@ -165,6 +167,11 @@ pub struct Engine {
     /// From `V40`, a ceiling adoption waiting out its seven-day notice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) pending_ceiling: Option<PendingCeiling>,
+    /// From `V41`, each account's session keys: their expiry and revocation, keyed by the account
+    /// and, within it, the key; a key's next request nonce lives in `request_nonces` under its
+    /// address, and `total` bounds the keys an account registers over its life.
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) session_keys: TrackedMap<AccountId, AccountSessionKeys>,
 
     /// The screening source and freshness bound, recorded once from `V24`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -362,6 +369,12 @@ impl Engine {
                     self.switch_rotation(*enabled, *election_cancelled, *block, chain_ref, &mut events)
                 }
                 Command::ElectOperator(election) => self.elect_operator(election, &mut events),
+                Command::RegisterSessionKey { account, session_key, expires_at, auth } => {
+                    self.register_session_key(*account, *session_key, *expires_at, auth.as_ref(), &mut events)
+                }
+                Command::RevokeSessionKey { account, session_key, auth } => {
+                    self.revoke_session_key(*account, *session_key, auth.as_ref(), &mut events)
+                }
                 // The access variants always dispatch to `access_dispatch` first.
                 _ => unreachable!("access command dispatched above"),
             }
