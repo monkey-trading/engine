@@ -45,23 +45,24 @@ impl VenueFeed {
                 && let Some(quote) = quotes.take(now)
             {
                 let market = self.instruments[symbol].market;
-                if self.is_held(symbol) {
-                    continue;
-                }
-                // The engine needs the market open from the venue stamp to the sequencer's stamp,
-                // which may come up to an interval after this one, when the pace holds a symbol's
-                // next quote.
-                if !self.in_session(market, quote.ts, now) {
+                // Held and out-of-session quotes are dropped, not sequenced for the engine to
+                // refuse; an out-of-session one is logged. The engine needs the market open from
+                // the venue stamp to the sequencer's stamp, which may come up to an interval
+                // after this one, when the pace holds a symbol's next quote. No path skips the
+                // arming below: what any of them leaves waiting, a quote ahead of the host
+                // clock, must have a scheduled way out, or with the venue quiet it would sit
+                // until the venue's next message.
+                let held = self.is_held(symbol);
+                if !held && !self.in_session(market, quote.ts, now) {
                     let (venue, feed) = (self.conn.venue.name(), self.conn.url.as_str());
                     debug!(venue, feed, symbol, market, "quote from outside one open session held back");
-                    continue;
                 }
-                self.unconfirmed.insert(symbol.clone());
-                let cmd = Command::Prices { market, quotes: vec![quote] };
-                self.tx.send(Request::Submit { cmd, reply: None }).await.map_err(|_| anyhow!("sequencer gone"))?;
-                paced.insert(symbol.clone(), Instant::now() + self.timing.interval);
-                // No `continue`: what the send left waiting — a quote ahead of the host clock —
-                // arms the wake below, or it would sit until the venue's next message.
+                if !held && self.in_session(market, quote.ts, now) {
+                    self.unconfirmed.insert(symbol.clone());
+                    let cmd = Command::Prices { market, quotes: vec![quote] };
+                    self.tx.send(Request::Submit { cmd, reply: None }).await.map_err(|_| anyhow!("sequencer gone"))?;
+                    paced.insert(symbol.clone(), Instant::now() + self.timing.interval);
+                }
             }
             // Nothing sequenced: arm the wake for what waits. A reached quote goes when the pace
             // frees the symbol; one the host clock has not reached goes when the clock reaches it,

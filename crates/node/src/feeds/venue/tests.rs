@@ -207,6 +207,28 @@ fn pending_reports_what_waits_and_when_the_clock_reaches_it() {
     assert!(!pending.reached(NOW + 40));
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_rejected_quote_still_arms_the_emit_timer_for_what_waits() {
+    let (tx, mut rx) = mpsc::channel(1);
+    let mut feed = kraken_feed(&[(40, "AAPL")], WAIT);
+    feed.tx = tx;
+    let now = now_ms();
+    // Apple is closed for another 40 ms: a quote stamped inside the closure is held back, and
+    // one stamped just after it is still ahead of the host clock.
+    feed.schedules = Arc::new(BTreeMap::from([(40, around_the_clock(Some((now - 60_000, now + 40))))]));
+    let at = |ts: Millis| SourceQuote { source: "kraken".into(), mid: Fixed::from_int(100), ts, contract: None };
+    let mut pending = Pending::default();
+    pending.add(at(now - 30_000), now).unwrap();
+    pending.add(at(now + 25), now).unwrap();
+    let mut buffered = BTreeMap::from([("AAPL".to_owned(), pending)]);
+
+    // The held-back quote is dropped, but the survivor keeps a scheduled way out: with the
+    // venue quiet, the emit timer still fires for it. A rejection that skips arming strands it.
+    let wake = feed.emit(&mut buffered, &mut BTreeMap::new()).await.unwrap();
+    assert!(wake.is_some(), "no wake armed for the survivor");
+    assert!(rx.try_recv().is_err(), "the held-back quote sequenced");
+}
+
 #[test]
 fn a_quote_counts_within_the_tighter_of_the_feed_and_market_bounds() {
     const AT: Millis = 1_792_489_875_714;
