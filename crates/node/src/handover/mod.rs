@@ -396,8 +396,12 @@ pub(crate) async fn check_operator_hostname(cfg: &NodeConfig, vault: &impl Check
 /// from an earlier start may exist, and the strict tail checks at the handover decide; a fetched
 /// copy that does not replay is fatal, surfacing a poisoned mirror before the predecessor stops.
 /// Error cases:
-/// - a fetched file differs from its listing, or the fetched copy does not replay
-pub(crate) async fn sync_predecessor_log(cfg: &NodeConfig, source: &Source) -> anyhow::Result<()> {
+/// - a fetched file differs from its listing, or the fetched copy does not replay against `signer`
+pub(crate) async fn sync_predecessor_log(
+    cfg: &NodeConfig,
+    source: &Source,
+    signer: engine_core::types::AccountId,
+) -> anyhow::Result<()> {
     let section = cfg.tee.sealing.as_ref().and_then(|sealing| sealing.handover.as_ref());
     let mut origins = section.map(|handover| handover.mirrors.clone()).unwrap_or_default();
     origins.push(format!("https://{}", source.api_hostname));
@@ -419,7 +423,8 @@ pub(crate) async fn sync_predecessor_log(cfg: &NodeConfig, source: &Source) -> a
         // A poisoned cold start must surface now, not after the predecessor has stopped: archive
         // bytes were only hash-checked against the server's own manifest, and this replay, of the
         // whole fetched copy, is the authenticity check, as the standby's cold start does.
-        crate::sequencer::replay_path(dir).context("the fetched log copy does not replay")?;
+        crate::sequencer::replay_path_with_attested(dir, None, [signer].into_iter().collect())
+            .context("the fetched log copy does not replay")?;
         info!("the fetched log copy replays to its tip");
     }
     Ok(())

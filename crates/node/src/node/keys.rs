@@ -193,7 +193,8 @@ async fn obtain_with(
         match crate::handover::resolve_source(vault).await? {
             Some(source) => {
                 info!(predecessor = %source.endpoint, "election handover: resolved the incumbent");
-                crate::handover::sync_predecessor_log(cfg, &source).await?;
+                let signer = vault.state(crate::checkpoints::View::Finalized).await?.signer;
+                crate::handover::sync_predecessor_log(cfg, &source, signer).await?;
                 info!("election handover: fetched the incumbent's published log");
                 info!(
                     predecessor = %source.endpoint,
