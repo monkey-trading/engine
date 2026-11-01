@@ -107,16 +107,6 @@ pub(crate) struct PrunePlan {
     passes: Vec<PrunePass>,
 }
 
-impl PrunePlan {
-    /// Every (market, resolution) pair the plan deletes rows from.
-    pub(crate) fn touched_pairs(&self) -> BTreeSet<(MarketId, Resolution)> {
-        self.passes
-            .iter()
-            .flat_map(|(resolution, _, _, markets)| markets.iter().map(move |market| (*market, *resolution)))
-            .collect()
-    }
-}
-
 /// The committed floor and head of one pair as the file holds them now; `None` when the pair has
 /// no rows.
 /// Error cases:

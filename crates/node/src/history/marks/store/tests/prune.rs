@@ -119,3 +119,58 @@ async fn a_seed_refuses_a_prune_that_names_a_pair_it_did_not_validate() {
     let err = store.seed(&[], base + 3_630_000).expect_err("pruned an unvalidated pair");
     assert!(format!("{err:#}").contains("did not validate"), "{err:#}");
 }
+
+#[tokio::test]
+async fn a_seed_pruning_an_unsampled_pair_validates_it_first() {
+    let (_path, mut store) = fresh_store_at("marks-chain-seed-unsampled", hour_retentions());
+    let base = 1_792_489_860_000;
+    store.observe(&[(1, base, fixed("1")), (1, base + 3_600_000, fixed("2"))]).unwrap();
+    store.observe(&[(2, base + 3_600_000 + 60_000, fixed("5"))]).unwrap();
+    // A backfill for market 2 whose newest sweeps past market 1's floor prunes market 1.
+    store
+        .seed(
+            &[Seed {
+                market: 2,
+                resolution: Resolution::M1,
+                ts: base + 2 * 3_600_000,
+                open: fixed("6"),
+                high: fixed("6"),
+                low: fixed("6"),
+                close: fixed("6"),
+            }],
+            base + 2 * 3_600_000,
+        )
+        .unwrap();
+    let page = store.reader().page(1, Resolution::M1, i64::MIN, i64::MAX, 10, 10).await.unwrap();
+    assert_eq!(page.entries.len(), 1);
+    store.observe(&[(1, base + 3_600_000, fixed("9"))]).unwrap();
+}
+
+#[tokio::test]
+async fn a_seed_refuses_an_unsampled_pair_with_a_tampered_head() {
+    let (path, mut store) = fresh_store_at("marks-chain-seed-unsampled-tampered", hour_retentions());
+    let base = 1_792_489_860_000;
+    store.observe(&[(1, base + 3_600_000, fixed("1")), (1, base + 3_660_000, fixed("2"))]).unwrap();
+    store.observe(&[(2, base + 60_000, fixed("5"))]).unwrap();
+    // The host deletes market 1's head; the seed's probe alone must put market 1 in the
+    // validated set, and the seed must refuse.
+    Connection::open(&path)
+        .unwrap()
+        .execute("DELETE FROM marks WHERE market = 1 AND resolution = 1 AND bucket = ?1", [base + 3_660_000])
+        .unwrap();
+    let err = store
+        .seed(
+            &[Seed {
+                market: 2,
+                resolution: Resolution::M1,
+                ts: base + 3_660_000 + 3_600_000 + 60_000,
+                open: fixed("6"),
+                high: fixed("6"),
+                low: fixed("6"),
+                close: fixed("6"),
+            }],
+            base + 3_660_000 + 3_600_000 + 60_000,
+        )
+        .expect_err("validated nothing before pruning");
+    assert!(format!("{err:#}").contains("no longer matches its committed anchor"), "{err:#}");
+}
