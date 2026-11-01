@@ -244,7 +244,9 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
     // B's custody posts the checkpoints it recovered and continues: the vault accepts them past
     // A's tip, and the combined log replays across the handover.
     wait_latest_seq(&mut node.chain, a_tip + 1).await?;
-    let replayed = crate::sequencer::replay_path(&b_dir.join("log"))?;
+    let signer = engine_core::types::AccountId(a_enclave.into());
+    let replayed =
+        crate::sequencer::replay_path_with_attested(&b_dir.join("log"), None, [signer].into_iter().collect())?;
     ensure!(
         replayed.last_signed_checkpoint.as_ref().is_some_and(|cp| cp.seq >= a_tip),
         "the replayed log has no checkpoint at or past A's final checkpoint"
