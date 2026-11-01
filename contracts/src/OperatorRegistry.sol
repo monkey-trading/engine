@@ -532,6 +532,13 @@ contract OperatorRegistry {
         if (block.timestamp < pending.effectiveAt) election = pending;
     }
 
+    /// @notice Whether the election waiting to take effect is a liveness promotion: only a
+    /// promotion moves the release at once and admits a standby's takeover; an ordinary election
+    /// takes effect at its time without one.
+    function pendingPromotion() external view returns (bool) {
+        return pending.effectiveAt != 0 && pending.promoted;
+    }
+
     /// @notice `candidate`'s registration, zero when it is not registered.
     function candidateOf(address candidate) external view returns (Candidate memory) {
         return candidates[candidate];

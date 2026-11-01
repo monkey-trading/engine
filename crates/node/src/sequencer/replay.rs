@@ -309,38 +309,10 @@ impl Replay {
                     );
                 }
                 if self.trusted_signer.is_some_and(|trusted| trusted != signer) {
-                    if let Some(accepted) = self.authorities.get(&cp.seq) {
-                        accepted.verify(cp)?;
-                    } else {
-                        // A checkpoint custody has not authenticated: the outgoing operator's
-                        // last published checkpoints past the vault's latest. Accept only the
-                        // linear extension of the last authenticated checkpoint, signed by the
-                        // same signer: the signature above binds the root, the parent binds the
-                        // chain, and a key the vault never named cannot pass.
-                        let previous = self
-                            .authorities
-                            .range(..cp.seq)
-                            .next_back()
-                            .map(|(_, accepted)| accepted)
-                            .context("checkpoint signer differs from trusted recovery authority")?;
-                        let parent = cp.parent.context("unauthenticated checkpoint lacks its signed parent")?;
-                        ensure!(
-                            previous.signer == signer
-                                && parent.has_checkpoint
-                                && parent.seq == previous.seq
-                                && parent.root.to_string() == previous.root,
-                            "checkpoint signer differs from trusted recovery authority"
-                        );
-                        self.authorities.insert(
-                            cp.seq,
-                            crate::checkpoints::AcceptedCheckpoint {
-                                seq: cp.seq,
-                                root: cp.root.clone(),
-                                signer,
-                                signer_epoch: previous.signer_epoch,
-                            },
-                        );
-                    }
+                    self.authorities
+                        .get(&cp.seq)
+                        .context("checkpoint signer differs from trusted recovery authority")?
+                        .verify(cp)?;
                 }
                 self.checkpoint_signers.insert(signer);
                 if self.recovery_origin.is_some_and(|parent| {
@@ -356,12 +328,7 @@ impl Replay {
                     && (!parent.has_checkpoint || cp.seq > parent.seq)
                 {
                     ensure!(cp.parent == Some(parent), "outstanding checkpoint has a divergent signed parent");
-                    // Only the pinned authority's outstanding checkpoints queue as posting work:
-                    // a takeover keeps the outgoing operator's later published checkpoints as
-                    // replayed history, but the vault accepts only the current signer's posts.
-                    if self.trusted_signer.is_none_or(|trusted| trusted == signer) {
-                        self.recovery_work.push(crate::checkpoints::Work::capture(cp.clone(), self.accounting, engine));
-                    }
+                    self.recovery_work.push(crate::checkpoints::Work::capture(cp.clone(), self.accounting, engine));
                     self.recovery_parent = Some(crate::log::CheckpointParent {
                         has_checkpoint: true,
                         seq: cp.seq,

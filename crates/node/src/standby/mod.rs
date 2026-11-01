@@ -46,7 +46,7 @@ const STINT: Duration = Duration::from_secs(15);
 /// The most archive bytes one fetch reads, bounding memory for a manifest or segment.
 pub(super) const MAX_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
 /// The most segments one manifest may list.
-pub(super) const MAX_ARCHIVE_LISTINGS: usize = 4096;
+pub(super) const MAX_ARCHIVE_LISTINGS: usize = 65_536;
 /// How long one archive GET's connection or a WebSocket connect waits.
 pub(super) const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long one archive body may take end to end.
@@ -86,6 +86,12 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
     let dir = cfg.node.log_dir.as_path();
     if !dir.join(MANIFEST).exists() {
         archive::bootstrap_archive(&archive, standby, dir).await?;
+        // A poisoned cold start must surface now, not when the operator is already gone:
+        // replay what was backfilled; a fresh deployment with no checkpoint yet has nothing
+        // to verify, which is fine.
+        if let Err(e) = crate::sequencer::replay_path(dir) {
+            warn!("the backfilled copy does not replay: {e:#}");
+        }
     }
     let mut writer = open_copy(dir, cfg.node.segment_commands.max(1))?;
     info!(operator = %standby.operator, enclave = %standby.enclave, "standby following the operator in effect");
@@ -138,6 +144,9 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
         } else if follow_failed {
             info!(alert_resolved = "standby_follow_failed", "following works again");
             follow_failed = false;
+        } else {
+            // A host that closes every connection at once must not spin this loop.
+            sleep(Duration::from_secs(1)).await;
         }
     }
 }

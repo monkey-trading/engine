@@ -132,6 +132,11 @@ pub(crate) trait CheckpointChain: Send + Sync {
         Ok(false)
     }
 
+    /// Whether this chain can read the vault's folded release; false for stand-in chains.
+    fn reads_release_fold(&self) -> bool {
+        false
+    }
+
     /// The release the vault's generation has folded, at the already pinned finalized observation.
     /// Error cases: the observation is not finalized and pinned, the read fails, or the chain
     /// reads no releases

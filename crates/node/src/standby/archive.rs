@@ -33,7 +33,7 @@ pub(super) async fn bootstrap_archive(
     std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     let mut text = String::new();
     for listed in &listings {
-        let bytes = fetch_archive_bytes(archive, standby, &listed.file).await?;
+        let bytes = fetch_archive_bytes(archive, standby, &listed.file, Some(listed)).await?;
         check_listing(listed, &bytes)?;
         // Stage under a name `SegmentedLog::open` ignores, then link into place: a crash leaves
         // either the old or the new whole file, never a torn one.
@@ -65,25 +65,34 @@ pub(super) async fn refresh_archive(
 ) -> anyhow::Result<()> {
     let listings = fetch_manifest(archive, standby).await.context("fetching the published manifest")?;
     let manifest = std::fs::read_to_string(dir.join(MANIFEST)).unwrap_or_default();
+    // The copy's own stream-fed tail wins: with an open (unlisted) segment holding entries, the
+    // follower's segmentation may differ from the operator's, so no later listing can be
+    // adopted safely. Only a copy whose tail is entirely listed backfills.
+    let open_entries = crate::log::SegmentedLog::open(dir, |_| Ok(()))?.has_open_tail();
+    if open_entries {
+        warn!("the copy has an unlisted tail; the archive refresh is skipped");
+        return Ok(());
+    }
     let mut text = manifest.clone();
     for listed in &listings {
         validate_listing(listed)?;
         let path = dir.join(&listed.file);
-        if path.exists() {
-            // The follower's own bytes win; only a listing for a file we lack is adopted.
+        if path.exists() || text.contains(&listed.file) {
             continue;
         }
-        let bytes = fetch_archive_bytes(archive, standby, &listed.file).await?;
+        let bytes = fetch_archive_bytes(archive, standby, &listed.file, Some(listed)).await?;
         check_listing(listed, &bytes)?;
         let staged = dir.join(format!("{}.staging", listed.file));
         std::fs::write(&staged, bytes).with_context(|| format!("writing {}", staged.display()))?;
         std::fs::rename(&staged, &path).with_context(|| format!("linking {}", listed.file))?;
+        // Commit each segment's listing as it lands: a crash then leaves the manifest naming
+        // exactly the linked prefix, which opens.
         text.push_str(&serde_json::to_string(listed).context("encoding a manifest line")?);
         text.push('\n');
+        let staged_manifest = dir.join(format!("{MANIFEST}.staging"));
+        std::fs::write(&staged_manifest, &text).with_context(|| format!("writing {}", staged_manifest.display()))?;
+        std::fs::rename(&staged_manifest, dir.join(MANIFEST)).with_context(|| format!("linking {MANIFEST}"))?;
     }
-    let staged = dir.join(format!("{MANIFEST}.staging"));
-    std::fs::write(&staged, text).with_context(|| format!("writing {}", staged.display()))?;
-    std::fs::rename(&staged, dir.join(MANIFEST)).with_context(|| format!("linking {MANIFEST}"))?;
     Ok(())
 }
 
@@ -108,7 +117,7 @@ pub(super) async fn fetch_manifest(
     archive: &reqwest::Client,
     standby: &StandbySection,
 ) -> anyhow::Result<Vec<SegmentInfo>> {
-    let bytes = fetch_archive_bytes(archive, standby, MANIFEST).await?;
+    let bytes = fetch_archive_bytes(archive, standby, MANIFEST, None).await?;
     let listings: Vec<SegmentInfo> = bytes
         .split(|b| *b == b'\n')
         .filter(|line| !line.trim_ascii().is_empty())
@@ -145,6 +154,7 @@ async fn fetch_archive_bytes(
     archive: &reqwest::Client,
     standby: &StandbySection,
     file: &str,
+    listed: Option<&SegmentInfo>,
 ) -> anyhow::Result<Vec<u8>> {
     let mut last = None;
     for origin in standby.mirrors.iter().map(String::as_str).chain(std::iter::once(standby.operator.as_str())) {
@@ -172,9 +182,19 @@ async fn fetch_archive_bytes(
             anyhow::Ok(bytes)
         };
         match timeout(BODY_TIMEOUT, body).await {
-            Ok(Ok(bytes)) => return Ok(bytes),
-            Ok(Err(e)) => return Err(e),
-            Err(_) => return Err(anyhow::anyhow!("reading {url} timed out")),
+            Ok(Ok(bytes)) => {
+                if let Some(listed) = listed {
+                    // A bad mirror must not block the rest: its bytes are only adopted when
+                    // they match the listing.
+                    if let Err(e) = check_listing(listed, &bytes) {
+                        last = Some(e);
+                        continue;
+                    }
+                }
+                return Ok(bytes);
+            }
+            Ok(Err(e)) => last = Some(e),
+            Err(_) => last = Some(anyhow::anyhow!("reading {url} timed out")),
         }
     }
     Err(last.expect("at least one archive origin")).context("every archive origin failed")
@@ -183,7 +203,14 @@ async fn fetch_archive_bytes(
 /// The TLS client config for archive fetches: public roots, or no verification when the config
 /// says so. The stream's frame signatures are the authenticity boundary either way.
 pub(super) fn archive_client(standby: &StandbySection) -> anyhow::Result<reqwest::Client> {
-    let mut builder = reqwest::Client::builder().timeout(BODY_TIMEOUT);
+    let roots = webpki_root_certs::TLS_SERVER_ROOT_CERTS
+        .iter()
+        .map(|cert| reqwest::Certificate::from_der(cert.as_ref()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut builder = reqwest::Client::builder()
+        .timeout(BODY_TIMEOUT)
+        .tls_certs_only(roots)
+        .redirect(reqwest::redirect::Policy::none());
     if standby.danger_accept_invalid_certs {
         warn!("standby.danger_accept_invalid_certs: the operator's TLS certificate is not verified");
         builder = builder.danger_accept_invalid_certs(true);

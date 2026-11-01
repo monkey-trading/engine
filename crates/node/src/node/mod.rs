@@ -117,6 +117,11 @@ async fn serve_node(
 
     let keys = keys::attested(&cfg, &start).await?;
     let keys::Keys { enclave: key, tls, store, attestor, attestation } = keys;
+    // A takeover's first start under the new signer cuts the log to the vault's finalized
+    // anchor: checkpoints the outgoing key signed but the vault never accepted are published
+    // history the standby kept, but once this key is the vault's signer those signatures are
+    // unpostable, and writable recovery admits only what the vault accepted.
+    keys::cut_to_finalized_anchor(&cfg, &key).await?;
 
     // The relay fetches in the background, so the API serves the attestation while it is pending.
     let relay = Relay::new(&cfg.tee, &attestation)

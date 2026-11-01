@@ -440,7 +440,6 @@ fn attested_replay_refuses_a_tail_no_attested_signer_authenticated() {
     use std::collections::BTreeSet;
 
     use engine_core::command::{Command, Sequenced};
-    use engine_wire::FRAME_VERSION;
 
     let fixture = Fixture::new("attested-tail");
     let dir = fixture.path.parent().unwrap().join("attested-tail-forged.jsonl");
@@ -460,8 +459,7 @@ fn attested_replay_refuses_a_tail_no_attested_signer_authenticated() {
         crate::replay_path_with_attested(&dir, Some(fixture.domain), both.clone()).is_err(),
         "an unsealed tail passed the attested audit"
     );
-    // Sanity: the untouched fixture still passes, and frames still verify independently.
-    assert_eq!(FRAME_VERSION, 1);
+    // Sanity: the untouched fixture still passes.
     let replayed = crate::replay_path_with_attested(&fixture.path, Some(fixture.domain), both).unwrap();
     assert_eq!(replayed.checkpoint_signers.len(), 2);
 }

@@ -75,7 +75,9 @@ pub(crate) fn truncate_to_checkpoint(dir: &Path, seq: u64, root: &str) -> anyhow
             text.push_str(&serde_json::to_string(listed).context("encoding a manifest line")?);
             text.push('\n');
         }
-        fs::write(dir.join(MANIFEST), text).with_context(|| format!("writing {MANIFEST}"))?;
+        let staged = dir.join(format!("{MANIFEST}.staging"));
+        fs::write(&staged, text).with_context(|| format!("writing {}", staged.display()))?;
+        fs::rename(&staged, dir.join(MANIFEST)).with_context(|| format!("linking {MANIFEST}"))?;
     }
     // Newest first: each deletion leaves the remaining newest file last, and unlisted files may
     // stand last. A listed file is never deleted. A deletion another run already made is not an

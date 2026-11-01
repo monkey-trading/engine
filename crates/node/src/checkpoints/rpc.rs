@@ -65,6 +65,7 @@ sol! {
         view
         returns (uint64 epoch, address candidate, address adminKey, bytes32 release, uint64 effectiveAt);
     function operatorInEffect() external view returns (address candidate, address adminKey, bytes32 release, uint64 since);
+    function pendingPromotion() external view returns (bool);
     function parameters()
         external
         view
@@ -319,6 +320,10 @@ impl CheckpointChain for CheckpointRpc {
 
     async fn current_release(&self, at: &Observation) -> anyhow::Result<CurrentRelease> {
         self.read_current_release(at).await
+    }
+
+    fn reads_release_fold(&self) -> bool {
+        true
     }
 
     async fn synced_release(&self, at: &Observation) -> anyhow::Result<[u8; 32]> {

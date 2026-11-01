@@ -21,6 +21,7 @@ use crate::tee::keys::KeySet;
 use crate::tee::sealing::{KeyStore, MockSealer, Release, Sealer, file_for};
 use crate::tee::{Attestation, AttestationBundle, Attestor, ConfigfsTsm, EnclaveKey, MockAttestor, attest_bundle};
 use crate::tls::TlsIdentity;
+use engine_core::types::AccountId;
 
 /// The operator's one-off choices for a start of a release that has no sealed keys.
 #[derive(Clone, Debug, Default)]
@@ -126,27 +127,34 @@ async fn obtain_with(
     let sealer = sealer(cfg.tee.provider, start)?;
     let release = Release { launch_digest: sealer.platform()?.launch_digest, config_sha256: cfg.file_sha256 };
     let dir = sealing.dir.as_path();
-    let current = match vault {
-        Some(vault) => Some(current_release(vault).await?),
-        None => None,
-    };
     // Seal or open keys only under a folded release change: while `syncedRelease` trails
     // `currentRelease()`, anyone's `syncRelease` would raise the generation and supersede a file
-    // sealed now, so the promoter must fold the change first (runbook), and this start waits.
-    if let (Some(vault), Some(current)) = (vault, current.as_ref()) {
-        let folded = tokio::time::timeout(std::time::Duration::from_secs(60), async {
-            loop {
-                let at = vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
-                if vault.synced_release(&at).await? == current.id {
-                    return anyhow::Ok(());
+    // sealed now, so the promoter must fold the change first (runbook), and this start waits,
+    // re-reading the release from the same observation that shows the fold, so the generation
+    // always matches the release it sealed under.
+    let current = match vault {
+        Some(vault) if vault.reads_release_fold() => {
+            let folded = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+                loop {
+                    let at = vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
+                    let release = vault.current_release(&at).await?;
+                    if vault.synced_release(&at).await? == release.id {
+                        return anyhow::Ok(release);
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 }
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            }
-        })
-        .await
-        .context("the vault never folded the release change into its generation; have the promoter call syncRelease")?;
-        folded?;
-    }
+            })
+            .await
+            .context(
+                "the vault never folded the release change into its generation; have the promoter call syncRelease",
+            )??;
+            Some(folded)
+        }
+        vault => match vault {
+            Some(vault) => Some(current_release(vault).await?),
+            None => None,
+        },
+    };
     let generation = current.map_or(0, |current| current.generation);
     let sealed = file_for(dir, &release, generation).exists();
     ensure!(
@@ -199,6 +207,85 @@ fn sealer(provider: TeeProvider, start: &KeyStart) -> anyhow::Result<Box<dyn Sea
     return Ok(Box::new(crate::tee::snp::SnpSealer));
     #[cfg(not(target_os = "linux"))]
     bail!("SEV-SNP sealing needs a Linux guest")
+}
+
+/// On a takeover's first start under the new signer, cuts the log to the vault's finalized
+/// checkpoint. The standby's copy kept the outgoing operator's later published checkpoints past
+/// the vault's latest; their signatures are unpostable now, and writable recovery admits only
+/// what the vault accepted, so the unposted tail goes before recovery opens the log. A
+/// `takeover.json` marker makes the cut resumable: a crash mid-cut is repaired on the next start.
+/// Error cases:
+/// - the chain or log cannot be read, or the cut cannot complete
+pub(super) async fn cut_to_finalized_anchor(cfg: &NodeConfig, key: &Arc<EnclaveKey>) -> anyhow::Result<()> {
+    use crate::checkpoints::{CheckpointChain, View};
+    let Some(chain) = crate::handover::vault_reader(cfg)? else { return Ok(()) };
+    let dir = cfg.node.log_dir.as_path();
+    let marker = dir.join("takeover.json");
+    let repair = |e: &anyhow::Error| -> anyhow::Error {
+        match std::fs::read(&marker) {
+            Ok(bytes) => match serde_json::from_slice::<crate::checkpoints::Takeover>(&bytes) {
+                Ok(takeover) => {
+                    if let Err(cut) = crate::log::truncate_to_checkpoint(dir, takeover.seq, &takeover.root) {
+                        return anyhow::anyhow!("{e:#}; and repairing the interrupted cut failed: {cut:#}");
+                    }
+                    let _ = std::fs::remove_file(&marker);
+                    anyhow::anyhow!("{e:#}; repaired the interrupted cut: start again")
+                }
+                Err(_) => anyhow::anyhow!("{e:#}"),
+            },
+            Err(_) => anyhow::anyhow!("{e:#}"),
+        }
+    };
+    let state = chain.state(View::Finalized).await.map_err(|e| repair(&e))?;
+    if state.signer != AccountId(key.address()) {
+        return Ok(());
+    }
+    let Some((anchor_seq, anchor_root)) = state.checkpoint else { return Ok(()) };
+    // Only a tail another key signed is cut: a node's own unposted checkpoints are its poster's
+    // queued work, which an ordinary restart must keep.
+    let mut last: Option<(u64, String, AccountId)> = None;
+    let scan = crate::log::SegmentedLog::open(dir, |entry| {
+        if let crate::log::LogEntry::Checkpoint(checkpoint) = &entry {
+            last = Some((checkpoint.seq, checkpoint.root.clone(), checkpoint.signer.parse()?));
+        }
+        Ok(())
+    });
+    let last = match scan {
+        Ok(_) => last,
+        Err(e) => {
+            let repaired = repair(&e);
+            // Retry once after the repair.
+            crate::log::SegmentedLog::open(dir, |entry| {
+                if let crate::log::LogEntry::Checkpoint(checkpoint) = &entry {
+                    last = Some((checkpoint.seq, checkpoint.root.clone(), checkpoint.signer.parse()?));
+                }
+                Ok(())
+            })?;
+            if last.is_none() {
+                return Err(repaired);
+            }
+            last
+        }
+    };
+    let last = last.as_ref();
+    if last.is_some_and(|(_, _, signer)| *signer == state.signer) {
+        return Ok(());
+    }
+    if last.is_some_and(|(seq, root, _)| *seq > anchor_seq || *root != anchor_root) {
+        std::fs::write(
+            &marker,
+            serde_json::to_string(&crate::checkpoints::Takeover {
+                seq: anchor_seq,
+                root: anchor_root.clone(),
+                signer: state.signer,
+            })
+            .context("encoding the takeover marker")?,
+        )
+        .context("writing the takeover marker")?;
+        crate::log::truncate_to_checkpoint(dir, anchor_seq, &anchor_root).map_err(|e| repair(&e))?;
+        std::fs::remove_file(&marker).context("removing the takeover marker")?;
+    }
+    Ok(())
 }
 
 /// How often a running node with sealed keys reads the vault's current release.

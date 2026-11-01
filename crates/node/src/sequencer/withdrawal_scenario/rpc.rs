@@ -70,6 +70,14 @@ sol! {
     function retireSigner() external;
     function signerEpoch() external view returns (uint64);
     function setSigner(address signer) external;
+    function postCheckpoint(
+        uint64 seq,
+        bytes32 root,
+        bool hasParent,
+        uint64 parentSeq,
+        bytes32 parentRoot,
+        bytes signature
+    ) external;
     function setPauses(bool depositsPaused, bool withdrawalsPaused) external;
     function setCurrentRelease(bytes launchDigest, bytes32 configHash) external;
     function currentRelease() external view returns (bytes32);
