@@ -20,7 +20,9 @@ pub(crate) enum Kind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct Entry {
     /// Orders entries in time: the command's seq and the event's index in it. A client passes the
-    /// last it has as `before` to page back.
+    /// last it has as `before` to page back. A decimal string, since the number passes what a
+    /// JavaScript number holds exactly.
+    #[serde(serialize_with = "as_text")]
     pub id: u64,
     pub seq: u64,
     pub ts: Millis,
@@ -37,6 +39,11 @@ pub(crate) struct Entry {
 pub(crate) struct Activity {
     capacity: usize,
     entries: VecDeque<Entry>,
+}
+
+/// Serializes an id as a decimal string.
+pub(crate) fn as_text<S: serde::Serializer>(id: &u64, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.collect_str(id)
 }
 
 /// The bits of an id that count the event within its command.
@@ -61,9 +68,10 @@ impl Activity {
     }
 
     /// Up to `limit` entries older than `before`, newest first, and the id to pass as `before` for
-    /// the page after them when more are held.
+    /// the page after them when more are held. Entries are held in id order, so this seeks.
     pub(crate) fn page(&self, before: Option<u64>, limit: usize) -> (Vec<Entry>, Option<u64>) {
-        let mut older = self.entries.iter().rev().filter(|entry| before.is_none_or(|before| entry.id < before));
+        let end = before.map_or(self.entries.len(), |before| self.entries.partition_point(|entry| entry.id < before));
+        let mut older = self.entries.range(..end).rev();
         let page: Vec<Entry> = older.by_ref().take(limit).cloned().collect();
         let next = older.next().and(page.last()).map(|last| last.id);
         (page, next)

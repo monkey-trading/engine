@@ -50,18 +50,20 @@ fn scan_and_observe_cost() {
     let (rig, engine) = engine_with_accounts();
     assert_eq!(engine.accounts().len(), ACCOUNTS);
     let layout = Layout { closeout: Grid::new(2_000, 100), profit: Grid::new(5_000, 500) };
-    let mut scans = Vec::with_capacity(SAMPLES);
-    for _ in 0..SAMPLES {
-        let began = Instant::now();
-        let snapshot = scan(&engine, 0, T0, layout);
-        scans.push(began.elapsed().as_micros());
-        assert!(snapshot.open_positions >= ACCOUNTS as u64);
+    for (name, full) in [("scan", true), ("light_scan", false)] {
+        let mut scans = Vec::with_capacity(SAMPLES);
+        for _ in 0..SAMPLES {
+            let began = Instant::now();
+            let snapshot = scan(&engine, 0, T0, layout, full);
+            scans.push(began.elapsed().as_micros());
+            assert!(snapshot.open_positions >= ACCOUNTS as u64);
+        }
+        println!(
+            "STATS {name} accounts={ACCOUNTS} samples={SAMPLES} p50_us={} p99_us={}",
+            percentile(&mut scans.clone(), 50),
+            percentile(&mut scans, 99)
+        );
     }
-    println!(
-        "STATS scan accounts={ACCOUNTS} samples={SAMPLES} p50_us={} p99_us={}",
-        percentile(&mut scans.clone(), 50),
-        percentile(&mut scans, 99)
-    );
     // What every command pays: the record's `observe` with no scan due.
     let mut observed = Vec::with_capacity(1000);
     for step in 0..1000 {

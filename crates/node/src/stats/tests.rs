@@ -9,7 +9,6 @@ use engine_core::{Engine, Fixed};
 
 use crate::sequencer::genesis_commands;
 use crate::stats::Stats;
-use crate::stats::series::Metric;
 use crate::test_support::{dev_config, stats};
 
 pub(crate) const T0: Millis = 1_792_504_800_000;
@@ -27,18 +26,23 @@ pub(crate) struct Rig {
 impl Rig {
     /// Trading at `V23`, the last version that takes unsigned orders, with emissions from `T0`.
     pub(crate) fn new() -> Self {
-        Self::at(ProtocolVersion::V23, false)
+        Self::at(ProtocolVersion::V23, false, stats())
+    }
+
+    /// `new`, adding every command to `stats` instead of an empty record.
+    pub(crate) fn recording_into(stats: Stats) -> Self {
+        Self::at(ProtocolVersion::V23, false, stats)
     }
 
     /// `V25`, with staking from `T0` over a day-long epoch, a floor of 1000 and a three-day cooldown.
     /// Its orders need signatures, so it trades nothing.
     pub(crate) fn staking() -> Self {
-        Self::at(ProtocolVersion::V25, true)
+        Self::at(ProtocolVersion::V25, true, stats())
     }
 
-    fn at(version: ProtocolVersion, staking: bool) -> Self {
+    fn at(version: ProtocolVersion, staking: bool, stats: Stats) -> Self {
         let cfg = dev_config();
-        let mut rig = Self { engine: Engine::new(), stats: stats() };
+        let mut rig = Self { engine: Engine::new(), stats };
         let mut activation = vec![
             AdminCommand::SetClientAuth(engine_core::auth::ClientAuth::Unsigned),
             AdminCommand::SetOperator(cfg.operator().unwrap()),
@@ -92,13 +96,24 @@ impl Rig {
     }
 
     pub(crate) fn trade(&mut self, ts: Millis, account: AccountId, side: Side, qty: i64) -> Vec<Event> {
+        self.trade_in(BTC, ts, account, side, qty)
+    }
+
+    pub(crate) fn trade_in(
+        &mut self,
+        market: MarketId,
+        ts: Millis,
+        account: AccountId,
+        side: Side,
+        qty: i64,
+    ) -> Vec<Event> {
         let order = OrderRequest {
             account,
             client_id: ts as u64,
-            market: BTC,
+            market,
             side,
             qty: Fixed::from_int(qty),
-            kind: OrderKind::Market { quoted: self.engine.markets()[&BTC].mark.unwrap(), max_slippage_bps: None },
+            kind: OrderKind::Market { quoted: self.engine.markets()[&market].mark.unwrap(), max_slippage_bps: None },
             reduce_only: false,
             auth: None,
         };
@@ -120,7 +135,7 @@ fn a_fill_adds_its_notional_to_the_market_and_total_volume() {
             to_ms: None,
             limit: None,
         };
-        serde_json::to_value(rig.stats.series(&rig.engine, &query).unwrap()).unwrap()
+        serde_json::to_value(rig.stats.series(&rig.engine, &query).unwrap().finish()).unwrap()
     };
     let (all, btc) = (page(None), page(Some(BTC)));
     assert_eq!(all["entries"], btc["entries"]);
@@ -145,7 +160,7 @@ fn nav_is_a_level_whose_bucket_holds_the_open_high_low_and_close() {
         to_ms: Some(T0 + 59_999),
         limit: None,
     };
-    let page = serde_json::to_value(rig.stats.series(&rig.engine, &query("1m")).unwrap()).unwrap();
+    let page = serde_json::to_value(rig.stats.series(&rig.engine, &query("1m")).unwrap().finish()).unwrap();
     let bucket = &page["entries"][0];
     let nav = |key: &str| bucket[key].as_str().unwrap().parse::<Fixed>().unwrap();
     assert_eq!(nav("close"), rig.engine.house_nav());
@@ -169,16 +184,16 @@ fn a_series_names_where_its_data_begins_and_pages_oldest_first() {
         to_ms: None,
         limit,
     };
-    let first = serde_json::to_value(rig.stats.series(&rig.engine, &query(None, Some(2))).unwrap()).unwrap();
+    let first = serde_json::to_value(rig.stats.series(&rig.engine, &query(None, Some(2))).unwrap().finish()).unwrap();
     assert_eq!(first["begins_seq"], 0);
     assert_eq!(first["begins_ms"], T0);
     assert_eq!(first["entries"].as_array().unwrap().len(), 2);
     let next = first["next"].as_i64().unwrap();
-    let second = serde_json::to_value(rig.stats.series(&rig.engine, &query(Some(next), Some(2))).unwrap()).unwrap();
+    let second =
+        serde_json::to_value(rig.stats.series(&rig.engine, &query(Some(next), Some(2))).unwrap().finish()).unwrap();
     assert_eq!(second["entries"][0]["ts"], next);
     assert!(second["entries"][0]["ts"].as_i64() > first["entries"][1]["ts"].as_i64());
     assert!(rig.stats.series(&rig.engine, &query(None, Some(0))).is_err());
-    let _ = Metric::Cash;
 }
 
 #[test]
@@ -202,6 +217,9 @@ fn a_series_rejects_a_market_it_does_not_take_and_one_it_needs() {
     assert!(ask("bogus", None).unwrap_err().contains("nav"));
 }
 
-mod closeout_map;
+mod bounds;
+pub(super) mod closeout_map;
+mod currency;
 mod monkey;
+mod recovery;
 mod replay;

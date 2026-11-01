@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use engine_core::fixed::Rounding;
 use engine_core::types::{MarketId, Millis};
 use engine_core::{Engine, Fixed};
+use serde::Serialize;
 
 use crate::stats::closeout::{self, Reach, Standing};
 
@@ -18,7 +19,7 @@ pub(crate) struct Grid {
 }
 
 /// One side of a bucket: USD of positions and how many.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub(crate) struct Cell {
     pub usd: Fixed,
     pub count: u64,
@@ -66,6 +67,10 @@ pub(crate) struct Snapshot {
     /// The margin the accounts holding positions require.
     pub open_margin: Fixed,
     pub open_positions: u64,
+    /// Whether the margin and the position maps were taken, which a light scan skips.
+    pub full: bool,
+    /// What an epoch close would distribute at this scan, once staking is initialised.
+    pub distribution_excess: Option<Fixed>,
     pub markets: BTreeMap<MarketId, MarketBook>,
 }
 
@@ -129,9 +134,12 @@ impl MarketBook {
     }
 }
 
-/// Scans every account of `engine` at its last command, `seq` and `ts`. An account with a position
+/// Scans every account of `engine` at its last command, `seq` and `ts`. A light scan (`full` false)
+/// totals only each market's long and short and the open interest and positions, skipping the
+/// accounts' equity and margin and the position maps, as a replay does for the scans nothing will
+/// serve. An account with a position
 /// in a market it cannot value, a quote currency with no FX index, is left out.
-pub(crate) fn scan(engine: &Engine, seq: u64, ts: Millis, layout: Layout) -> Snapshot {
+pub(crate) fn scan(engine: &Engine, seq: u64, ts: Millis, layout: Layout, full: bool) -> Snapshot {
     let mut books: BTreeMap<MarketId, MarketBook> =
         engine.markets().iter().map(|(id, market)| (*id, MarketBook::new(market.mark, layout))).collect();
     let (mut open_interest, mut open_margin, mut open_positions) = (Fixed::ZERO, Fixed::ZERO, 0);
@@ -146,7 +154,7 @@ pub(crate) fn scan(engine: &Engine, seq: u64, ts: Millis, layout: Layout) -> Sna
         if account.positions.is_empty() || !valued {
             continue;
         }
-        let (equity, margin) = engine.equity_and_margin(account, None);
+        let (equity, margin) = if full { engine.equity_and_margin(account, None) } else { Default::default() };
         open_margin += margin;
         for (id, position) in &account.positions {
             let market = &engine.markets()[id];
@@ -167,6 +175,11 @@ pub(crate) fn scan(engine: &Engine, seq: u64, ts: Millis, layout: Layout) -> Sna
                 book.profit[layout.profit.profit_bucket(profit_bps)].add(long, notional);
             }
             let reach = match level_bps.filter(|_| notional.is_positive()) {
+                Some(level_bps) if market.spec.quote_currency.fx_market() == Some(*id) => {
+                    let standing = Standing { equity, margin, level_bps };
+                    let (quantity, range) = (position.qty.abs(), layout.closeout.range_bps());
+                    closeout::reach_self_converting(standing, long, quantity, position.entry, price, range)
+                }
                 Some(level_bps) => closeout::reach(
                     Standing { equity, margin, level_bps },
                     closeout::Position { notional, long, spec: &market.spec },
@@ -181,5 +194,14 @@ pub(crate) fn scan(engine: &Engine, seq: u64, ts: Millis, layout: Layout) -> Sna
             }
         }
     }
-    Snapshot { seq, ts, open_interest, open_margin, open_positions, markets: books }
+    Snapshot {
+        seq,
+        ts,
+        open_interest,
+        open_margin,
+        open_positions,
+        full,
+        distribution_excess: engine.distributable_excess(),
+        markets: books,
+    }
 }

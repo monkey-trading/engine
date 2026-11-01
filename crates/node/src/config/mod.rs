@@ -44,6 +44,7 @@ pub use marks::{BackfillSection, MarksSection};
 mod stats;
 pub(crate) use marks::{default_marks_retention_1h, default_marks_retention_1m, default_marks_retention_1s};
 pub use stats::StatsSection;
+pub(crate) use stats::VOLUME_WINDOW_HOURS;
 use stats::{MIN_STATS_INTERVAL, default_stats_interval};
 mod api_defaults;
 use api_defaults::{default_heartbeat_interval, default_quote_interval, default_quote_max_markets};

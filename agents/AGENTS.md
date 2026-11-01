@@ -29,7 +29,7 @@ an index: load only the rule whose hint matches the current action.
   `tests/operator_election.rs`), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
   shared by net realised losses, halvings, and cumulative entitlements) and MONKEY staking with
   USDC distributions (`staking.rs`: stake mirroring, V27 authenticated identities and completed scan
-  anchors, epoch closes at NAV above a liquidity floor, cumulative distributions proven on chain),
+  anchors, epoch closes at NAV above a liquidity floor, cumulative distributions proven on chain; `Engine::distributable_excess` reads what a close would distribute),
   protocol versions, and the
   state tree (a keccak-256 sparse Merkle tree over the state, with account and entitlement proofs, in
   `merkle/`; from `V38` `merkle/exit.rs` commits and proves what the vault's exit checks). It does no IO and uses no clocks,
@@ -422,6 +422,12 @@ Run from the repo root:
   `curl`, and `jq`; uses loopback endpoints and private temporary data)
 - Browser-origin dev scenario: `./scripts/dev-browser-origin.sh` (needs `curl` and `jq`; runs a dev node
   with `api.allowed_origins` on private temporary data and public Roughtime servers)
+- Dashboard data dev scenario: `./scripts/dev-dashboard-data.sh` (needs `python3`, `curl`, and `jq`;
+  a dev node with a one-second account scan, a synthetic signed access source and free ports on private
+  temporary data trades both ways in BTC-USD and ETH-USD, waits one ten-minute MONKEY period out
+  (about twelve minutes in all), checks every new route's figures against the accounts and verifies
+  each answer with `engine verify-response`, then restarts the node and compares the series); the
+  scan's cost at 100k accounts: `cargo test -p engine-node --lib stats::bench -- --ignored --nocapture`
 - Proxy protocol dev scenario: `./scripts/dev-proxy-protocol.sh` (needs `python3`, `curl`, and `jq`; a
   loopback forwarder prepends PROXY v2 (and LOCAL) headers to a dev node with a synthetic access source, on private
   temporary data and public Roughtime servers)

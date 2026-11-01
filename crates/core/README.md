@@ -212,7 +212,8 @@ this crate and reproduce the signed state roots exactly.
 - `src/emissions.rs` — MONKEY emissions: the schedule, period results, finalisation, and
   entitlements
 - `src/staking.rs` — MONKEY staking and USDC distributions: the config, stake and unstake
-  mirroring, epoch finalisation, and claimable distributions
+  mirroring, epoch finalisation, claimable distributions, and `distributable_excess`, the read-only
+  figure an epoch close would distribute
 - `src/staking/tests.rs` — staking tests: initialisation and validation, mirror crediting and
   refusals, epoch closes above and below the floor, rounding, skipped epochs, and the
   floor-preserving and principal locks

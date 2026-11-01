@@ -44,6 +44,10 @@ pub struct StatsSection {
 pub(super) const MIN_STATS_INTERVAL: Duration = Duration::from_secs(1);
 /// The most buckets either position map may have, so a setting cannot make a snapshot unbounded.
 pub(crate) const MAX_BUCKETS: u32 = 400;
+/// The hours of hourly volume buckets `GET /v1/house` sums.
+pub(crate) const VOLUME_WINDOW_HOURS: u64 = 24;
+/// The farthest, in basis points, a position map's buckets may reach from its centre.
+pub(crate) const MAX_COVERED_BPS: u64 = 1_000_000;
 /// The most activity entries the feed may keep.
 pub(crate) const MAX_ACTIVITY: usize = 100_000;
 
@@ -85,6 +89,10 @@ impl StatsSection {
                 ensure!(ms > 0, "stats.{name} must be at least one millisecond");
             }
         }
+        ensure!(
+            self.retention_1h >= Duration::from_secs(VOLUME_WINDOW_HOURS * 3_600),
+            "stats.retention_1h must cover the {VOLUME_WINDOW_HOURS} hours of volume `GET /v1/house` sums"
+        );
         ensure!((1..=MAX_ACTIVITY).contains(&self.activity_limit), "stats.activity_limit must be 1 to {MAX_ACTIVITY}");
         for (name, range, bucket) in [
             ("closeout", self.closeout_range_bps, self.closeout_bucket_bps),
@@ -96,8 +104,16 @@ impl StatsSection {
                 range.div_ceil(bucket) <= MAX_BUCKETS,
                 "stats.{name}_range_bps holds more than {MAX_BUCKETS} buckets of stats.{name}_bucket_bps"
             );
+            // The buckets cover a whole number of widths, which may reach past the range asked for.
+            let covered = u64::from(range.div_ceil(bucket)) * u64::from(bucket);
+            ensure!(
+                covered <= MAX_COVERED_BPS,
+                "stats.{name}_bucket_bps rounds stats.{name}_range_bps up to {covered}, past {MAX_COVERED_BPS}"
+            );
         }
-        ensure!(self.closeout_range_bps < 10_000, "stats.closeout_range_bps must be under 10000, a fall to zero");
+        let covered =
+            u64::from(self.closeout_range_bps.div_ceil(self.closeout_bucket_bps)) * u64::from(self.closeout_bucket_bps);
+        ensure!(covered < 10_000, "stats.closeout_range_bps rounds up to {covered} with its bucket, a fall to zero");
         Ok(())
     }
 }

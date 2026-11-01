@@ -42,8 +42,8 @@ pub(super) struct PositionsParams {
 #[serde(deny_unknown_fields)]
 pub(super) struct ActivityParams {
     limit: Option<usize>,
-    /// Only entries older than this id, as a previous page's `next`.
-    before: Option<u64>,
+    /// Only entries older than this id, as a previous page's `next`: a decimal string.
+    before: Option<String>,
 }
 
 /// One page of a metric's series, oldest first, with where its data begins.
@@ -61,8 +61,8 @@ pub(super) async fn series(State(s): State<ApiState>, Query(params): Query<Serie
         limit: params.limit,
     };
     let stats = s.stats.clone();
-    let page = s.query(move |engine| stats.series(engine, &query)).await?;
-    page.map(Json).map_err(ApiError::BadRequest)
+    let rows = s.query(move |engine| stats.series(engine, &query)).await?.map_err(ApiError::BadRequest)?;
+    Ok(Json(rows.finish()))
 }
 
 /// The emission schedule and MONKEY totals, staking, and the distribution state.
@@ -100,7 +100,12 @@ pub(super) async fn activity(
     Query(params): Query<ActivityParams>,
 ) -> ApiResult<ActivityPage> {
     let limit = params.limit.unwrap_or(DEFAULT_ACTIVITY_LIMIT);
+    let before = params
+        .before
+        .map(|before| before.parse::<u64>())
+        .transpose()
+        .map_err(|_| ApiError::BadRequest("before must be an id from a previous page".to_owned()))?;
     let stats = s.stats.clone();
-    let page = s.query(move |_| stats.activity(params.before, limit)).await?;
+    let page = s.query(move |_| stats.activity(before, limit)).await?;
     page.map(Json).map_err(ApiError::BadRequest)
 }

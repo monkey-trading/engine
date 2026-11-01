@@ -37,18 +37,37 @@ async fn recovery_rebuilds_the_record_the_sequencer_built() {
     .unwrap();
     assert_eq!(rebuilt.dump(), live.dump());
     assert!(live.dump().contains("Nav"), "the record holds the NAV series");
-    let _ = Side::Buy;
 }
 
-/// A recovery attempt that fails part way and is retried must not count a command twice.
+/// What the tests below do to a rig: a trade and its round trip, so volume, levels and the activity
+/// all hold something.
+fn script(rig: &mut Rig) {
+    rig.trade(T0 + 1_000, TRADER, Side::Buy, 2);
+    rig.price(T0 + 1_500, 99_000);
+    rig.trade(T0 + 2_000, TRADER, Side::Sell, 2);
+    rig.apply(T0 + 600_000, Command::Tick);
+}
+
+/// A recovery attempt that fails part way and is retried must not count a command twice: after a
+/// restart the same record, replayed again, holds exactly what one clean replay holds.
 #[test]
-fn a_restarted_record_forgets_what_a_failed_attempt_recorded() {
-    let mut rig = Rig::new();
-    rig.price(T0 + 1_000, 101_000);
-    let once = rig.stats.dump();
-    rig.stats.restart();
-    assert_ne!(rig.stats.dump(), once);
-    let mut again = Rig::new();
-    again.price(T0 + 1_000, 101_000);
-    assert_eq!(again.stats.dump(), once);
+fn a_restarted_record_replayed_again_holds_what_one_replay_holds() {
+    let mut first = Rig::new();
+    script(&mut first);
+    let attempt = first.stats.clone();
+    let once = {
+        let mut clean = Rig::new();
+        script(&mut clean);
+        clean.stats.dump()
+    };
+    assert_eq!(attempt.dump(), once, "the script is deterministic");
+    assert!(
+        attempt.dump().contains("Volume") && attempt.dump().contains("LossClose"),
+        "the record holds flows and activity"
+    );
+    attempt.restart();
+    assert_ne!(attempt.dump(), once, "a restart empties the record");
+    let mut again = Rig::recording_into(attempt.clone());
+    script(&mut again);
+    assert_eq!(attempt.dump(), once);
 }

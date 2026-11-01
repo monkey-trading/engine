@@ -9,9 +9,10 @@ use engine_core::types::{MarketId, Millis};
 use engine_core::{Engine, Fixed};
 use serde::Serialize;
 
+use crate::config::VOLUME_WINDOW_HOURS;
 use crate::history::marks::Resolution;
 use crate::stats::activity::Entry as ActivityEntry;
-use crate::stats::series::{Entry, KEPT, Metric, Scope};
+use crate::stats::series::{Bucket, Entry, KEPT, Metric, Scope, entry};
 use crate::stats::snapshot::{Bin, Cell, Grid, MarketBook};
 use crate::stats::{Begin, Inner, Stats};
 
@@ -21,8 +22,6 @@ pub(crate) const DEFAULT_LIMIT: usize = 500;
 pub(crate) const MAX_LIMIT: usize = 2000;
 /// Most activity entries per page.
 pub(crate) const MAX_ACTIVITY_PAGE: usize = 200;
-/// The window `volume` covers: the hourly buckets back from the current one.
-const VOLUME_HOURS: i64 = 24;
 
 /// A series request.
 pub(crate) struct SeriesQuery {
@@ -32,6 +31,23 @@ pub(crate) struct SeriesQuery {
     pub from_ms: Option<Millis>,
     pub to_ms: Option<Millis>,
     pub limit: Option<usize>,
+}
+
+/// A series page read from the record, its buckets not yet formatted: the formatting happens in the
+/// request's task, off the thread that reads the record.
+pub struct SeriesRows {
+    page: SeriesPage,
+    metric: Metric,
+    rows: Vec<(Millis, Bucket)>,
+}
+
+impl SeriesRows {
+    /// The page with its buckets formatted.
+    pub fn finish(self) -> SeriesPage {
+        let Self { mut page, metric, rows } = self;
+        page.entries = rows.into_iter().filter_map(|(ts, bucket)| entry(metric, ts, bucket)).collect();
+        page
+    }
 }
 
 /// One page of a series, oldest first.
@@ -127,8 +143,11 @@ struct DistributionView {
     epoch_ms: Millis,
     liquidity_floor: Fixed,
     nav: Fixed,
-    /// House NAV above the floor now, in USD: what the next close distributes if it held.
-    excess: Fixed,
+    /// What an epoch close would distribute at the last scan, in USD: house NAV and funded cash above
+    /// the floor, less reversible principal and client debts (`Engine::distributable_excess`).
+    excess: Option<Fixed>,
+    /// The seq of that scan.
+    excess_seq: Option<u64>,
     /// The epoch the last command fell in.
     epoch: u64,
     last_closed_epoch: Option<u64>,
@@ -193,8 +212,8 @@ pub struct PositionsView {
     closeout_bucket_bps: u32,
     profit_range_bps: u32,
     profit_bucket_bps: u32,
-    long: Cell2,
-    short: Cell2,
+    long: Cell,
+    short: Cell,
     /// Positions whose accounts are below the close-out level at the marks already.
     due_now: Counts,
     closeout: Vec<CloseoutBucket>,
@@ -204,15 +223,10 @@ pub struct PositionsView {
 }
 
 #[derive(Serialize)]
-struct Cell2 {
-    usd: Fixed,
-    count: u64,
-}
-
-#[derive(Serialize)]
 pub struct ActivityPage {
     entries: Vec<ActivityEntry>,
-    /// The `before` for the page after this one; `None` when none is held.
+    /// The `before` for the page after this one, as a decimal string; `None` when none is held.
+    #[serde(serialize_with = "next_text")]
     next: Option<u64>,
     begins_ms: Option<Millis>,
     from_genesis: bool,
@@ -229,12 +243,6 @@ impl From<Bin> for Counts {
     }
 }
 
-impl From<Cell> for Cell2 {
-    fn from(cell: Cell) -> Self {
-        Self { usd: cell.usd, count: cell.count }
-    }
-}
-
 impl Inner {
     fn begins_at_genesis(&self) -> bool {
         self.begin.is_some_and(|begin| begin.seq == 0)
@@ -243,7 +251,7 @@ impl Inner {
     /// The USD traded in the hourly buckets back from the one `now` falls in, and where that
     /// window starts: no earlier than the record began.
     fn volume(&self, market: Option<MarketId>, now: Millis) -> (Fixed, Millis) {
-        let from = Resolution::H1.bucket(now) - (VOLUME_HOURS - 1) * Resolution::H1.ms();
+        let from = Resolution::H1.bucket(now) - (VOLUME_WINDOW_HOURS as i64 - 1) * Resolution::H1.ms();
         let sum = self.series.sum(Metric::Volume, market, Resolution::H1, from, now);
         (Fixed::from_raw(sum), self.begin.map_or(from, |Begin { ts, .. }| from.max(ts)))
     }
@@ -329,7 +337,8 @@ impl Stats {
                 epoch_ms: config.epoch_ms,
                 liquidity_floor: config.liquidity_floor,
                 nav,
-                excess: (nav - config.liquidity_floor).max(Fixed::ZERO),
+                excess: inner.snapshot.as_ref().and_then(|snapshot| snapshot.distribution_excess),
+                excess_seq: inner.snapshot.as_ref().map(|snapshot| snapshot.seq),
                 epoch,
                 last_closed_epoch: epoch.checked_sub(1),
                 last_closed_ms: epoch.checked_sub(1).map(|closed| config.epoch_end(closed)),
@@ -369,8 +378,8 @@ impl Stats {
             closeout_bucket_bps: layout.closeout.width,
             profit_range_bps: layout.profit.range_bps(),
             profit_bucket_bps: layout.profit.width,
-            long: book.long.into(),
-            short: book.short.into(),
+            long: book.long,
+            short: book.short,
             due_now: book.due.into(),
             closeout: closeout_buckets(book, layout.closeout),
             beyond_range: book.beyond.into(),
@@ -383,7 +392,7 @@ impl Stats {
     /// - the metric or resolution is unknown, or `market` is missing, unlisted, or one the metric
     ///   does not take
     /// - the limit is outside 1 to `MAX_LIMIT`, or `from_ms` is after `to_ms`
-    pub(crate) fn series(&self, engine: &Engine, query: &SeriesQuery) -> Result<SeriesPage, String> {
+    pub(crate) fn series(&self, engine: &Engine, query: &SeriesQuery) -> Result<SeriesRows, String> {
         let metric =
             Metric::parse(&query.metric).ok_or_else(|| format!("metric must be one of {}", Metric::names()))?;
         let resolution = Resolution::parse(&query.resolution)
@@ -406,8 +415,8 @@ impl Stats {
             return Err("from_ms must not be after to_ms".to_owned());
         }
         let inner = self.lock();
-        let (entries, next) = inner.series.page(metric, query.market, resolution, from, to, limit);
-        Ok(SeriesPage {
+        let (rows, next) = inner.series.page(metric, query.market, resolution, from, to, limit);
+        let page = SeriesPage {
             metric: metric.name(),
             market: query.market,
             resolution: resolution.as_str(),
@@ -421,10 +430,11 @@ impl Stats {
             begins_seq: inner.begin.map(|begin| begin.seq),
             from_genesis: inner.begins_at_genesis(),
             retained_from_ms: inner.series.retained_from(metric, query.market, resolution),
-            entries,
+            entries: Vec::new(),
             next,
             max_limit: MAX_LIMIT,
-        })
+        };
+        Ok(SeriesRows { page, metric, rows })
     }
 
     /// The newest MONKEY events older than `before`, newest first.
@@ -479,4 +489,12 @@ fn profit_buckets(book: &MarketBook, grid: Grid) -> Vec<ProfitBucket> {
             ProfitBucket { from_bps, to_bps, positions: (*bin).into() }
         })
         .collect()
+}
+
+/// Serializes an optional id as a decimal string.
+fn next_text<S: serde::Serializer>(next: &Option<u64>, serializer: S) -> Result<S::Ok, S::Error> {
+    match next {
+        Some(id) => serializer.collect_str(id),
+        None => serializer.serialize_none(),
+    }
 }

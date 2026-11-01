@@ -61,6 +61,26 @@ fn stake_and_unstake_refuse_until_initialised() {
 }
 
 #[test]
+fn the_distributable_excess_is_what_the_next_close_reports_and_none_before_staking() {
+    let mut engine = engine(1_000);
+    assert_eq!(engine.distributable_excess(), None);
+    engine.init_staking(&config(1_000)).unwrap();
+    engine.house_cash = Fixed::from_int(100);
+    assert_eq!(engine.distributable_excess(), Some(Fixed::ZERO), "cash at the floor of 100 leaves nothing");
+    engine.house_cash = Fixed::from_int(1_000);
+    let predicted = engine.distributable_excess().unwrap();
+    assert_eq!(predicted, Fixed::from_int(900));
+    let mut events = Vec::new();
+    engine.now = config(1_000).epoch_end(0);
+    engine.finalise_staking(&mut events);
+    assert!(
+        events.iter().any(|e| matches!(e, Event::DistributionEpochClosed { epoch: 0, excess, .. }
+            if excess.0 == (predicted.raw() / USDC_SCALE) as u128)),
+        "{events:?}"
+    );
+}
+
+#[test]
 fn an_epoch_above_the_floor_pays_stakers_pro_rata_and_reduces_house_cash() {
     let mut engine = engine(1_000);
     engine.init_staking(&config(1_000)).unwrap();

@@ -68,6 +68,8 @@ pub(crate) struct Inner {
     staked: u128,
     stakers: u64,
     distribution: Option<Distribution>,
+    /// Set while a replay feeds the record, whose scans are light: only the last one is served.
+    recovering: bool,
 }
 
 /// The dashboard statistics of one node. Clones share one record: the sequencer writes it, and a
@@ -114,6 +116,7 @@ impl Inner {
             staked: 0,
             stakers: 0,
             distribution: None,
+            recovering: false,
         }
     }
 }
@@ -134,17 +137,25 @@ impl Stats {
     /// Forgets everything recorded: a replay starts over, so a recovery attempt that failed part
     /// way leaves nothing behind.
     pub(crate) fn restart(&self) {
-        *self.lock() = Inner::new(&self.settings);
+        let mut fresh = Inner::new(&self.settings);
+        fresh.recovering = true;
+        *self.lock() = fresh;
     }
 
-    /// Ends a recovery: when no scan has run yet, takes one for the answers that read it, without
-    /// recording it in a series, so a restart's series stay those the log gives.
+    /// Ends a recovery: takes the totals the first command would have, when no command was replayed,
+    /// and a full scan for the answers that read one, without recording it in a series, so a
+    /// restart's series stay those the log gives.
     pub(crate) fn finish_recovery(&self, engine: &Engine) {
         let mut inner = self.lock();
-        if inner.snapshot.is_none()
+        inner.recovering = false;
+        if inner.begin.is_none() {
+            inner.refresh_queue(engine);
+            inner.refresh_stakers(engine);
+        }
+        if inner.snapshot.as_ref().is_none_or(|snapshot| !snapshot.full)
             && let Some(seq) = engine.last_seq()
         {
-            inner.snapshot = Some(snapshot::scan(engine, seq, engine.now(), self.settings.layout));
+            inner.snapshot = Some(snapshot::scan(engine, seq, engine.now(), self.settings.layout, true));
         }
     }
 }
@@ -162,4 +173,4 @@ impl Stats {
 #[cfg(test)]
 mod bench;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

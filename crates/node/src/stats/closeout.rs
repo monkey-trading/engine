@@ -78,3 +78,33 @@ pub(crate) fn reach(standing: Standing, position: Position<'_>, range_bps: u32) 
     }
     unreachable!("the slack is negative at the edge, so the walk crosses zero by it")
 }
+
+/// As `reach`, for a position in the market that converts its own quote currency, USD-JPY: its USD
+/// notional stays the quantity whatever the price, so its margin does not move, and its USD profit
+/// is `quantity * entry * (1/mark - 1/price)` for a long, which falls faster than the price does.
+/// `quantity` is the position's absolute size.
+pub(crate) fn reach_self_converting(
+    standing: Standing,
+    long: bool,
+    quantity: Fixed,
+    entry: Fixed,
+    mark: Fixed,
+    range_bps: u32,
+) -> Reach {
+    let slack = standing.equity - standing.margin.mul_bps_rounded(standing.level_bps, Rounding::Up);
+    if slack.is_negative() {
+        return Reach::Due;
+    }
+    // The close-out price over the mark is `1 / (1 + t)` for a long and `1 / (1 - t)` for a short,
+    // with `t = slack * mark / (quantity * entry)`.
+    let Some(t) = slack.checked_mul_div(mark, quantity.mul(entry), Rounding::TowardZero) else { return Reach::Beyond };
+    let divisor = if long { Fixed::ONE + t } else { Fixed::ONE - t };
+    if !divisor.is_positive() {
+        return Reach::Beyond;
+    }
+    let offset = Fixed::ONE.div(divisor).bps_of(Fixed::ONE) - 10_000;
+    if offset.unsigned_abs() > u64::from(range_bps) { Reach::Beyond } else { Reach::At(offset) }
+}
+
+#[cfg(test)]
+mod tests;

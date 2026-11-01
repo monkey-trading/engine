@@ -81,7 +81,9 @@ fn the_stats_section_defaults_refuses_unknown_keys_and_unbounded_maps() {
         ("closeout_bucket_bps = 0", "must be positive"),
         ("closeout_range_bps = 100\ncloseout_bucket_bps = 200", "must not exceed"),
         ("closeout_range_bps = 5000\ncloseout_bucket_bps = 1", "more than 400 buckets"),
-        ("closeout_range_bps = 10000", "under 10000"),
+        ("closeout_range_bps = 10000", "a fall to zero"),
+        ("closeout_range_bps = 9000\ncloseout_bucket_bps = 6000", "a fall to zero"),
+        ("profit_range_bps = 4294967295\nprofit_bucket_bps = 4294967294", "past 1000000"),
     ] {
         let err = load(&with(bad)).unwrap_err();
         assert!(format!("{err:#}").contains(why), "{bad}: {err:#}");

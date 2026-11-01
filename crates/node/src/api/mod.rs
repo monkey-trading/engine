@@ -227,7 +227,10 @@ impl IntoResponse for ApiError {
             ApiError::BodyTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "request body too large".to_owned()),
             ApiError::BodyTimeout => (StatusCode::REQUEST_TIMEOUT, "request body not received in time".to_owned()),
             ApiError::NotImplemented(m) => (StatusCode::NOT_IMPLEMENTED, m.to_owned()),
-            ApiError::NotReady(m) => (StatusCode::SERVICE_UNAVAILABLE, m.to_owned()),
+            ApiError::NotReady(m) => {
+                let body = Json(json!({ "error": m }));
+                return (StatusCode::SERVICE_UNAVAILABLE, [(RETRY_AFTER, "5")], body).into_response();
+            }
         };
         (status, Json(json!({ "error": msg }))).into_response()
     }
@@ -440,6 +443,8 @@ mod proof_tests;
 mod signing_bench;
 #[cfg(test)]
 mod signing_tests;
+#[cfg(test)]
+mod stats_tests;
 #[cfg(test)]
 pub(crate) mod tests;
 

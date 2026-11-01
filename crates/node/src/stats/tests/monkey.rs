@@ -46,7 +46,7 @@ fn a_closed_period_shows_in_the_activity_the_ratio_and_the_totals() {
         to_ms: None,
         limit: None,
     };
-    let series = json(rig.stats.series(&rig.engine, &query).unwrap());
+    let series = json(rig.stats.series(&rig.engine, &query).unwrap().finish());
     // One period, one allocation: the ratio is the amount over the weight, in base units per USD.
     let per: Fixed = series["entries"][0]["value"].as_str().unwrap().parse().unwrap();
     let expected = Fixed::from_int(i64::try_from(amount.0).unwrap()).div(weight);
@@ -78,7 +78,7 @@ fn activity_pages_newest_first_and_the_cursor_continues_where_a_page_stopped() {
     let amounts: Vec<_> = first["entries"].as_array().unwrap().iter().map(|e| e["amount"].clone()).collect();
     assert_eq!(amounts, ["300", "200"]);
     assert!(first["entries"].as_array().unwrap().iter().all(|e| e["type"] == "stake"));
-    let second = json(rig.stats.activity(first["next"].as_u64(), 2).unwrap());
+    let second = json(rig.stats.activity(first["next"].as_str().map(|id| id.parse().unwrap()), 2).unwrap());
     assert_eq!(second["entries"][0]["amount"], "100");
     assert!(second["next"].is_null());
     assert!(rig.stats.activity(None, 0).is_err() && rig.stats.activity(None, 201).is_err());
@@ -115,7 +115,7 @@ fn stakes_and_unstakes_move_the_totals_the_view_and_the_series_report() {
         to_ms: None,
         limit: None,
     };
-    let series = json(rig.stats.series(&rig.engine, &query).unwrap());
+    let series = json(rig.stats.series(&rig.engine, &query).unwrap().finish());
     let bucket = &series["entries"][0];
     assert_eq!(
         (bucket["high"].as_str(), bucket["close"].as_str(), bucket["unit"].as_str()),
@@ -159,7 +159,7 @@ fn a_closed_epoch_is_reported_with_what_it_measured_and_distributed() {
         to_ms: None,
         limit: None,
     };
-    let series = json(rig.stats.series(&rig.engine, &query).unwrap());
+    let series = json(rig.stats.series(&rig.engine, &query).unwrap().finish());
     assert_eq!(series["entries"][0]["value"], allocated.to_string());
     assert_eq!(series["unit"], "usdc_base_units");
 }

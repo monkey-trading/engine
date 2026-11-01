@@ -154,7 +154,7 @@ impl Unit {
 
 /// What one bucket holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Bucket {
+pub(crate) enum Bucket {
     Level { open: i128, high: i128, low: i128, close: i128 },
     Sum(i128),
     Ratio { numerator: i128, denominator: i128 },
@@ -175,13 +175,15 @@ type Buckets = [BTreeMap<Millis, Bucket>; 3];
 pub(crate) struct SeriesStore {
     retention: [Option<Millis>; 3],
     newest: Millis,
+    /// The minute the series were last pruned at.
+    pruned_minute: Millis,
     series: BTreeMap<(Metric, Option<MarketId>), Buckets>,
 }
 
 impl SeriesStore {
     /// An empty store keeping each resolution for its retention, `None` for ever.
     pub(crate) fn new(retention: [Option<Millis>; 3]) -> Self {
-        Self { retention, newest: Millis::MIN, series: BTreeMap::new() }
+        Self { retention, newest: Millis::MIN, pruned_minute: Millis::MIN, series: BTreeMap::new() }
     }
 
     /// Records a level sampled at `ts`.
@@ -226,23 +228,31 @@ impl SeriesStore {
             update(&mut bucket);
             map.insert(resolution.bucket(ts), bucket.expect("an update leaves a bucket"));
         }
-        self.prune_series(metric, market);
-    }
-
-    /// Drops the buckets of one series that fall before its resolutions' retention.
-    fn prune_series(&mut self, metric: Metric, market: Option<MarketId>) {
-        let Some(buckets) = self.series.get_mut(&(metric, market)) else { return };
-        for (slot, retention) in self.retention.into_iter().enumerate() {
-            let Some(retention) = retention else { continue };
-            let cutoff = self.newest.saturating_sub(retention);
-            while buckets[slot].first_key_value().is_some_and(|(start, _)| *start < cutoff) {
-                buckets[slot].pop_first();
-            }
+        let minute = self.newest.div_euclid(60_000);
+        if minute != self.pruned_minute {
+            self.pruned_minute = minute;
+            self.prune();
         }
     }
 
+    /// Drops the buckets of every series that fall before their resolution's retention, counted back
+    /// from the newest time recorded, so a series nothing is recorded to still ages out.
+    fn prune(&mut self) {
+        for buckets in self.series.values_mut() {
+            for (slot, retention) in self.retention.into_iter().enumerate() {
+                let Some(retention) = retention else { continue };
+                let cutoff = self.newest.saturating_sub(retention);
+                while buckets[slot].first_key_value().is_some_and(|(start, _)| *start < cutoff) {
+                    buckets[slot].pop_first();
+                }
+            }
+        }
+        self.series.retain(|_, buckets| buckets.iter().any(|map| !map.is_empty()));
+    }
+
     /// Buckets of a series within [`from`, `to`], oldest first, at most `limit`, and the start of
-    /// the first bucket left out. A bucket of a ratio with no denominator is left out.
+    /// the first bucket left out. A bucket of a ratio with no denominator is left out. The buckets
+    /// are copied as they are held, for the caller to format off the thread that holds the record.
     pub(crate) fn page(
         &self,
         metric: Metric,
@@ -251,18 +261,15 @@ impl SeriesStore {
         from: Millis,
         to: Millis,
         limit: usize,
-    ) -> (Vec<Entry>, Option<Millis>) {
+    ) -> (Vec<(Millis, Bucket)>, Option<Millis>) {
         let Some(slot) = KEPT.iter().position(|kept| *kept == resolution) else { return (Vec::new(), None) };
         let Some(buckets) = self.series.get(&(metric, market)) else { return (Vec::new(), None) };
         if from > to {
             return (Vec::new(), None);
         }
-        let mut found = buckets[slot].range(from..=to).filter_map(|(ts, bucket)| entry(metric, *ts, *bucket));
-        let entries: Vec<Entry> = found.by_ref().take(limit).collect();
-        let next = found.next().map(|entry| match entry {
-            Entry::Level { ts, .. } | Entry::Value { ts, .. } => ts,
-        });
-        (entries, next)
+        let mut found = buckets[slot].range(from..=to).filter(|(_, bucket)| bucket.is_served());
+        let rows: Vec<(Millis, Bucket)> = found.by_ref().take(limit).map(|(ts, bucket)| (*ts, *bucket)).collect();
+        (rows, found.next().map(|(ts, _)| *ts))
     }
 
     /// The start of the oldest bucket a series still holds at `resolution`.
@@ -313,8 +320,15 @@ impl SeriesStore {
     }
 }
 
-/// A bucket as served, or `None` for a ratio with no denominator.
-fn entry(metric: Metric, ts: Millis, bucket: Bucket) -> Option<Entry> {
+impl Bucket {
+    /// Whether the bucket has a value to serve: a ratio needs a denominator.
+    fn is_served(&self) -> bool {
+        !matches!(self, Bucket::Ratio { denominator, .. } if *denominator <= 0)
+    }
+}
+
+/// A bucket as served, or `None` for a ratio whose quotient does not fit.
+pub(crate) fn entry(metric: Metric, ts: Millis, bucket: Bucket) -> Option<Entry> {
     let unit = metric.unit();
     Some(match bucket {
         Bucket::Level { open, high, low, close } => Entry::Level {

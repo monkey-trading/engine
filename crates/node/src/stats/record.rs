@@ -17,11 +17,6 @@ fn units(amount: u128) -> i128 {
     i128::try_from(amount).unwrap_or(i128::MAX)
 }
 
-/// The start of the scan window after the one `ts` falls in.
-fn next_boundary(ts: Millis, interval_ms: Millis) -> Millis {
-    (ts.div_euclid(interval_ms) + 1).saturating_mul(interval_ms)
-}
-
 /// The USD notional of a fill, or `None` for a market whose currency has no FX index.
 fn fill_usd(engine: &Engine, fill: &Fill) -> Option<Fixed> {
     let market = engine.markets().get(&fill.market)?;
@@ -41,13 +36,13 @@ impl Stats {
 impl Inner {
     fn observe(&mut self, settings: &Settings, engine: &Engine, ts: Millis, events: &[Event]) {
         let seq = engine.last_seq().unwrap_or(0);
-        if self.begin.is_none() {
+        let first = self.begin.is_none();
+        if first {
             self.begin = Some(Begin { ts, seq });
-            self.next_scan = Some(next_boundary(ts, settings.interval_ms));
-            self.refresh_queue(engine);
-            self.refresh_stakers(engine);
+            self.next_scan = Some(ts.saturating_add(settings.interval_ms));
         }
-        let (mut queue_changed, mut stake_changed) = (false, false);
+        let mut stake_moved = false;
+        let queued = engine.withdrawal_cash().is_some();
         // Allocations of the period the command closes: MONKEY base units, and the weight they share.
         let mut periods: BTreeMap<u64, (i128, i128)> = BTreeMap::new();
         for (index, event) in events.iter().enumerate() {
@@ -58,12 +53,18 @@ impl Inner {
                         self.series.add(Metric::Volume, None, ts, usd.raw());
                     }
                 }
-                Event::WithdrawalQueued { .. }
-                | Event::WithdrawalQueueUpdated { .. }
-                | Event::WithdrawalApproved { .. } => queue_changed = true,
+                Event::WithdrawalQueued { amount, .. } => self.queue_total += *amount,
+                // From V22 every approval takes its amount from the queue.
+                Event::WithdrawalApproved { amount, .. } if queued => self.queue_total -= *amount,
                 Event::Staked { account, amount } | Event::Unstaked { account, amount } => {
-                    stake_changed = true;
-                    let kind = if matches!(event, Event::Staked { .. }) { Kind::Stake } else { Kind::Unstake };
+                    let staked = matches!(event, Event::Staked { .. });
+                    stake_moved = true;
+                    self.staked = if staked {
+                        self.staked.saturating_add(amount.0)
+                    } else {
+                        self.staked.saturating_sub(amount.0)
+                    };
+                    let kind = if staked { Kind::Stake } else { Kind::Unstake };
                     self.activity.push(Entry {
                         id: id(seq, index),
                         seq,
@@ -109,16 +110,20 @@ impl Inner {
                 _ => {}
             }
         }
-        if queue_changed {
+        // The first command seeds the totals from the state it left, whatever its events moved.
+        if first {
             self.refresh_queue(engine);
         }
-        if stake_changed {
+        if first {
             self.refresh_stakers(engine);
+        } else if stake_moved {
+            // Accounts leave the map when they unstake everything, so its size is the stakers.
+            self.stakers = engine.staked_balances().len() as u64;
         }
         self.sample_levels(engine, ts);
         if self.next_scan.is_some_and(|due| ts >= due) {
-            self.next_scan = Some(next_boundary(ts, settings.interval_ms));
-            let snapshot = snapshot::scan(engine, seq, ts, settings.layout);
+            self.next_scan = Some(ts.saturating_add(settings.interval_ms));
+            let snapshot = snapshot::scan(engine, seq, ts, settings.layout, !self.recovering);
             for (market, book) in &snapshot.markets {
                 self.sample_book(*market, book, ts);
             }
@@ -127,15 +132,15 @@ impl Inner {
     }
 
     /// Re-reads the withdrawal queue's total from the engine.
-    fn refresh_queue(&mut self, engine: &Engine) {
+    pub(super) fn refresh_queue(&mut self, engine: &Engine) {
         self.queue_total = engine.withdrawal_queue().map(|request| request.remaining).sum();
     }
 
     /// Re-reads the total staked and the stakers from the engine.
-    fn refresh_stakers(&mut self, engine: &Engine) {
+    pub(super) fn refresh_stakers(&mut self, engine: &Engine) {
         let balances = engine.staked_balances();
         self.staked = balances.values().map(|staked| staked.0).fold(0u128, u128::saturating_add);
-        self.stakers = balances.values().filter(|staked| staked.0 > 0).count() as u64;
+        self.stakers = balances.len() as u64;
     }
 
     /// Samples the levels every command leaves.
