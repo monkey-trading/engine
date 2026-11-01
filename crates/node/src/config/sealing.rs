@@ -19,11 +19,23 @@ pub struct SealingSection {
     pub handover: Option<HandoverSection>,
 }
 
-/// Where a successor release asks this one for its keys.
+/// Where a successor release asks this one for its keys, and where this release finds the
+/// predecessor's published log when an election names it the operator.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HandoverSection {
+    /// This release's handover listener, which the release the vault names connects to for the
+    /// keys.
     pub listen: SocketAddr,
+    /// Archive mirrors (#48's) of the incumbent's published log, tried in order before the
+    /// incumbent's own registered API hostname when this node takes the keys over an election.
+    #[serde(default)]
+    pub mirrors: Vec<String>,
+    /// Accept the predecessor's self-signed or private-CA TLS certificate when fetching its
+    /// archive. Development only: the enclave-keyed checkpoint inside the log, not the transport,
+    /// is the authenticity boundary; a production build refuses this.
+    #[serde(default)]
+    pub danger_accept_invalid_certs: bool,
 }
 
 impl NodeConfig {

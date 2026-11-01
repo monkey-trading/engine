@@ -19,8 +19,8 @@ use tokio::time::timeout;
 
 use crate::checkpoints::emission_budget::budget_from_cap;
 use crate::checkpoints::{
-    AcceptedCheckpoint, ApprovalId, ApprovalStatus, CheckpointChain, CurrentRelease, LifecycleEvidence, Observation,
-    VaultState, View,
+    AcceptedCheckpoint, ApprovalId, ApprovalStatus, CheckpointChain, CurrentRelease, HandoverSource, LifecycleEvidence,
+    Observation, VaultState, View,
 };
 use crate::config::{CheckpointSection, FinalityTag};
 use crate::log::{Checkpoint, CheckpointDomain};
@@ -65,7 +65,27 @@ sol! {
         view
         returns (uint64 epoch, address candidate, address adminKey, bytes32 release, uint64 effectiveAt);
     function operatorInEffect() external view returns (address candidate, address adminKey, bytes32 release, uint64 since);
+    function namedOperator() external view returns (address candidate, address adminKey, bytes32 release, uint64 since);
     function pendingPromotion() external view returns (bool);
+    // A struct return with dynamic members is offset-prefixed on the wire; a named struct return
+    // decodes it, a flat tuple does not.
+    struct HandoverSourceReturn {
+        address candidate;
+        bytes32 release;
+        string apiHostname;
+        string handoverEndpoint;
+    }
+    function handoverSource() external view returns (HandoverSourceReturn memory source);
+    struct CandidateReturn {
+        address adminKey;
+        address enclave;
+        uint256 bond;
+        bytes32 release;
+        uint64 registration;
+        string apiHostname;
+        string handoverEndpoint;
+    }
+    function candidateOf(address candidate) external view returns (CandidateReturn memory);
     function parameters()
         external
         view
@@ -362,6 +382,48 @@ impl CheckpointChain for CheckpointRpc {
         Ok(rotationEnabledCall::abi_decode_returns(
             &self.call(registry, rotationEnabledCall {}.abi_encode(), at).await?,
         )?)
+    }
+
+    /// The handover source the vault's registry recorded when the election in effect was made.
+    /// Error cases:
+    /// - an RPC call or decoding fails, or the vault has no registry
+    async fn handover_source(&self) -> anyhow::Result<HandoverSource> {
+        let vault = Address::from(self.domain.vault.0);
+        let at = BlockId::latest();
+        let registry = registryCall::abi_decode_returns(
+            &self.call(vault, registryCall {}.abi_encode(), at).await.context("reading the vault's registry")?,
+        )
+        .context("decoding the vault's registry")?;
+        ensure!(!registry.is_zero(), "the vault follows no operator registry");
+        let raw = self
+            .call(registry, handoverSourceCall {}.abi_encode(), at)
+            .await
+            .context("reading the registry's handover source")?;
+        let source = handoverSourceCall::abi_decode_returns(&raw).context("decoding the registry's handover source")?;
+        Ok(HandoverSource {
+            candidate: engine_core::types::AccountId(source.candidate.0.0),
+            release: source.release.0,
+            api_hostname: source.apiHostname,
+            handover_endpoint: source.handoverEndpoint,
+        })
+    }
+
+    /// The API hostname the candidate the registry names as the operator in effect registered.
+    /// Error cases:
+    /// - an RPC call or decoding fails, or the vault has no registry
+    async fn operator_hostname(&self) -> anyhow::Result<String> {
+        let vault = Address::from(self.domain.vault.0);
+        let at = BlockId::latest();
+        let registry = registryCall::abi_decode_returns(&self.call(vault, registryCall {}.abi_encode(), at).await?)?;
+        ensure!(!registry.is_zero(), "the vault follows no operator registry");
+        // The operator the vault names, not the one in effect: a promoted standby's release moves
+        // at once, while its key waits out the notice.
+        let named =
+            namedOperatorCall::abi_decode_returns(&self.call(registry, namedOperatorCall {}.abi_encode(), at).await?)?;
+        Ok(candidateOfCall::abi_decode_returns(
+            &self.call(registry, candidateOfCall { candidate: named.candidate }.abi_encode(), at).await?,
+        )?
+        .apiHostname)
     }
 
     /// Relays at a durable explicit nonce; only later canonical state reads confirm inclusion.

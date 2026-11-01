@@ -32,6 +32,11 @@ pub(crate) struct KeySet {
     /// must contain before it serves.
     #[serde(default)]
     pub predecessor_head: Option<Head>,
+    /// Every log segment past the successor's tip the handover carries, newest last, with the
+    /// listings the predecessor sealed them under: inside the ciphertext, they bind the raw
+    /// segment frames that follow the keys.
+    #[serde(default)]
+    pub handover_tails: Vec<crate::log::SegmentInfo>,
 }
 
 /// An ACME account and the directory it is registered with.
@@ -84,6 +89,7 @@ impl KeySet {
             acme_account: None,
             certificate: None,
             predecessor_head: None,
+            handover_tails: Vec::new(),
         })
     }
 

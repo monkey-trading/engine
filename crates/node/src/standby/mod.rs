@@ -32,7 +32,7 @@ use tracing::{error, info, warn};
 
 use crate::checkpoints::Takeover;
 
-pub(super) mod archive;
+pub(crate) mod archive;
 
 use crate::config::{CustodyProvider, NodeConfig, StandbySection};
 use crate::log::{LogEntry, LogWriter, MANIFEST, Manifest, Offset, SegmentedLog, offset_of, truncate_to_checkpoint};
@@ -78,12 +78,12 @@ pub async fn run(cfg: NodeConfig, telemetry: Telemetry) -> anyhow::Result<()> {
 async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()> {
     let my_key: AccountId = cfg.operator()?.address;
     let chain = crate::handover::vault_reader(cfg)?.context("standby mode needs [checkpoints]")?;
-    let archive = archive::archive_client(standby)?;
+    let archive = archive::archive_client(standby.danger_accept_invalid_certs)?;
     // A cold start backfills completed segments from the archive; a restart resumes the stream
     // after its own last entry, which backfills anything in between.
     let dir = cfg.node.log_dir.as_path();
     if !dir.join(MANIFEST).exists() {
-        archive::bootstrap_archive(&archive, standby, dir).await?;
+        archive::bootstrap_archive(&archive, &origins(standby), dir).await?;
         // A poisoned cold start must surface now, not when the operator is already gone:
         // replay what was backfilled; a fresh deployment with no checkpoint yet has nothing
         // to verify, which is fine.
@@ -267,7 +267,7 @@ async fn finalize(
     dir: &std::path::Path,
     takeover: &Takeover,
 ) -> anyhow::Result<()> {
-    if let Err(e) = archive::refresh_archive(archive, standby, dir).await {
+    if let Err(e) = archive::refresh_archive(archive, &origins(standby), dir).await {
         warn!("refreshing the archive before the takeover failed: {e:#}");
     }
     // The whole copy must replay before any history is dropped: archive-fetched bytes were only
@@ -425,6 +425,12 @@ fn stream_url(origin: &str, path_and_query: &str) -> anyhow::Result<String> {
 pub(super) fn sha256(bytes: &[u8]) -> String {
     use sha2::Digest as _;
     hex::encode(sha2::Sha256::digest(bytes))
+}
+
+/// The archive origins in fetch order: the mirrors first, the operator itself last, since the
+/// operator may be dead exactly when the archive matters.
+pub(super) fn origins(standby: &StandbySection) -> Vec<String> {
+    standby.mirrors.iter().cloned().chain(std::iter::once(standby.operator.clone())).collect()
 }
 
 #[cfg(test)]

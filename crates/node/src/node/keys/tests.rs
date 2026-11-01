@@ -1,4 +1,5 @@
 use super::*;
+use crate::node::handover::{Episode, episode};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -232,4 +233,37 @@ fn sealed_config(name: &str) -> (NodeConfig, PathBuf) {
 
 fn checkpoint(seq: u64, root: &str) -> Checkpoint {
     serde_json::from_value(serde_json::json!({ "seq": seq, "root": root, "signature": "0x", "signer": "0x" })).unwrap()
+}
+
+#[test]
+fn the_handover_episode_escalates_past_the_registry_effective_time_and_resolves() {
+    let operator = AccountId([0x42; 20]);
+    let other = AccountId([0x63; 20]);
+    let election = |registry_effective_at, cancelled| engine_core::election::Election {
+        epoch: 7,
+        candidate: other,
+        admin_key: other,
+        effective_at: registry_effective_at + 86_400_000,
+        registry_effective_at,
+        cancelled,
+    };
+    let past = 1_700_000_000_000;
+    let future = past + 7 * 86_400_000;
+
+    // No election: no episode. Another operator named past the registry's effective time is
+    // already overdue, even as the first episode observed; the engine's later deferral does not
+    // delay the page.
+    assert_eq!(episode(None, operator, Some(past)), Episode::None);
+    assert_eq!(episode(Some(election(past, false)), operator, Some(past + 1)), Episode::Overdue);
+    let mut ours = election(past, false);
+    ours.admin_key = operator;
+    assert_eq!(episode(Some(ours), operator, Some(past + 1)), Episode::None);
+    assert_eq!(episode(Some(election(past, true)), operator, Some(past + 1)), Episode::None);
+
+    // Another operator named: elected before the registry's effective time, overdue from it, and
+    // waiting when trusted time is absent. A cancelled election resolves.
+    assert_eq!(episode(Some(election(future, false)), operator, Some(future - 1)), Episode::Elected);
+    assert_eq!(episode(Some(election(future, false)), operator, Some(future)), Episode::Overdue);
+    assert_eq!(episode(Some(election(future, false)), operator, None), Episode::Elected);
+    assert_eq!(episode(Some(election(future, true)), operator, Some(future + 1)), Episode::None);
 }

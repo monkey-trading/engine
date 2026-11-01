@@ -103,10 +103,12 @@ async fn obtain(
 /// Error cases:
 /// - a flag is given without `[tee.sealing]`, or real attestation runs without it
 /// - the stand-in measurement is missing under the mock TEE, or given under real attestation
-/// - the vault cannot be read, or, without `--predecessor`, its current release is not this one
+/// - the vault cannot be read, or, without `--predecessor` or an election naming this release,
+///   its current release is not this one
 /// - the sealed keys cannot be opened, or a flag is given beside them
-/// - the release has no keys sealed in the vault's generation of it and no flag, or new keys cannot
-///   be sealed, or the handover fails
+/// - the release has no keys sealed in the vault's generation of it and no flag: refused while
+///   rotation is off or the registry names no handover source for the incumbent; new keys cannot
+///   be sealed, the predecessor's log cannot be fetched, or the handover fails
 async fn obtain_with(
     cfg: &NodeConfig,
     start: &KeyStart,
@@ -180,6 +182,32 @@ async fn obtain_with(
     } else if let Some(address) = &start.predecessor {
         let vault = vault.context("--predecessor needs [checkpoints]: the vault names the key")?;
         crate::handover::take(cfg, address, sealer.as_ref(), attestor, vault).await?
+    } else if let Some(vault) = vault {
+        // No sealed keys and no flag: while the registry has rotation on and the vault names this
+        // release — so an election has taken effect naming this node the operator — take the keys
+        // from the incumbent the election replaced, reading its handover endpoint from the
+        // registry, and the published log ahead of the segment the handover itself carries.
+        info!("election handover: no sealed keys; checking the registry's rotation");
+        ensure!(vault.rotation_enabled().await?, "{}", refusal(dir, generation));
+        info!("election handover: rotation is on; resolving the incumbent the election replaced");
+        match crate::handover::resolve_source(vault).await? {
+            Some(source) => {
+                info!(predecessor = %source.endpoint, "election handover: resolved the incumbent");
+                let at = vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
+                let signers = crate::handover::vault_signers(vault, &at).await?;
+                crate::handover::sync_predecessor_log(cfg, &source, signers).await?;
+                info!("election handover: fetched the incumbent's published log");
+                info!(
+                    predecessor = %source.endpoint,
+                    incumbent = %source.candidate,
+                    incumbent_release = %hex::encode(source.release),
+                    "the vault names this release through an election in effect: taking the keys from the \
+                     operator it replaced"
+                );
+                crate::handover::take(cfg, &source.endpoint, sealer.as_ref(), attestor, vault).await?
+            }
+            None => bail!("{}", refusal(dir, generation)),
+        }
     } else {
         bail!(refusal(dir, generation))
     };
@@ -290,7 +318,6 @@ pub(super) async fn cut_to_finalized_anchor(cfg: &NodeConfig, key: &Arc<EnclaveK
 
 /// How often a running node with sealed keys reads the vault's current release.
 pub(super) const RELEASE_CHECK_EVERY: Duration = Duration::from_secs(60);
-
 /// Raises `release_superseded` (Critical) once the vault's current release at finality is no longer
 /// `sealed` in `generation`, the release and generation the keys are sealed in, reading it every
 /// `every`: a restart would then find no keys to open, so they must be handed to the release the
@@ -367,5 +394,6 @@ fn refusal(dir: &Path, generation: u64) -> String {
     )
 }
 
+#[cfg(test)]
 #[cfg(test)]
 mod tests;

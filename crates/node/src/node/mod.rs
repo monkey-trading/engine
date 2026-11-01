@@ -28,6 +28,7 @@ use crate::feeds::venue::{self, Timing};
 use crate::history::HistoryPlan;
 mod shutdown;
 use shutdown::{TaskResult, finish_history, handed_over, sequencer_outcome, supervise};
+mod handover;
 mod keys;
 mod marks;
 pub use keys::{KeyStart, parse_launch_digest};
@@ -107,6 +108,11 @@ async fn serve_node(
             warn!(
                 "the vault's registry has rotation on, but operator.rotation_enabled is false: an election naming another operator moves the admin key this node does not expect"
             );
+        }
+        // While rotation is on, the certificate the enclave orders names the API hostname the
+        // registry records for the operator in effect.
+        if on {
+            crate::handover::check_operator_hostname(&cfg, &vault).await?;
         }
     } else if cfg.operator.rotation_enabled {
         bail!("operator.rotation_enabled = true needs [checkpoints] with EVM custody to read the registry");
@@ -272,6 +278,25 @@ async fn serve_node(
         let (release, generation) = (store.release(), store.generation());
         let every = keys::RELEASE_CHECK_EVERY;
         tasks.spawn(async move { ("release", keys::watch_release(vault, release, generation, every).await) });
+    }
+    if store.is_some() && cfg.operator.rotation_enabled {
+        // The incumbent pages when an election names another operator and, past the effective
+        // time, when no successor has taken the keys.
+        let operator = cfg.operator()?.address;
+        let (watch_tx, watch_clock, watch_samples, max_drift) =
+            (tx.clone(), clock.clone(), samples_rx.clone(), cfg.time.max_drift);
+        tasks.spawn(async move {
+            (
+                "handover",
+                handover::watch_handover(
+                    watch_tx,
+                    operator,
+                    trusted_time::TrustedClock::new(watch_clock, watch_samples, max_drift),
+                    keys::RELEASE_CHECK_EVERY,
+                )
+                .await,
+            )
+        });
     }
 
     let tick = cfg.node.tick;

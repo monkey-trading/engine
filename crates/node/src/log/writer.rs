@@ -294,35 +294,71 @@ impl LogWriter {
         Ok(())
     }
 
+    /// Lists the open segment, if any, as completed: flushes and syncs it, appends its listing to
+    /// the manifest, and folds it into the catalog. A handover seals the log's tail so the archive
+    /// and the successor it hands the keys to hold the segment the final checkpoint is in. A full
+    /// live catalog is folded first, as rotation does; a catalog that still cannot take the
+    /// segment degrades to the plain manifest, which remains authoritative.
+    /// Error cases:
+    /// - the segment cannot be flushed, synced, or listed, or the manifest update fails
+    pub(crate) fn seal_open_segment(&mut self) -> anyhow::Result<Option<SegmentInfo>> {
+        if self.catalog_owner.is_some()
+            && self.manifest.borrow().catalog.as_ref().is_some_and(|catalog| catalog.live_full())
+        {
+            // A failed fold is not fatal: the append below degrades to the plain manifest, which
+            // remains authoritative.
+            if let Err(e) = self.fold_catalog(None) {
+                warn!(alert = "log_catalog_unavailable", "folding the full catalog before the seal failed: {e:#}");
+            }
+        }
+        let Some((segment, out)) = self.open.as_mut() else { return Ok(None) };
+        out.flush().context("flushing log segment")?;
+        out.get_ref().sync_all().context("syncing log segment")?;
+        let listed = segment.info();
+        // List before taking the open segment: a failure leaves the segment open, so sequencing
+        // goes on with a log that still opens.
+        self.list(&listed)?;
+        let (segment, _) = self.open.take().expect("the open segment is listed");
+        info!(
+            file = %listed.file,
+            first_seq = listed.first_seq,
+            last_seq = listed.last_seq,
+            bytes = listed.bytes,
+            sha256 = %listed.sha256,
+            "log segment completed"
+        );
+        let catalog = self.manifest.borrow().catalog.clone();
+        match catalog.map(|c| c.append(listed.clone(), segment.checkpoints.into())).transpose() {
+            Ok(next) => {
+                self.manifest.send_modify(|m| {
+                    match next {
+                        Some(next) => m.catalog = Some(Arc::new(next)),
+                        None => Arc::make_mut(&mut m.segments).push(listed.clone()),
+                    }
+                    m.active = None;
+                });
+            }
+            Err(e) => {
+                warn!(alert = "log_catalog_unavailable", "the sealed segment publishes without the catalog: {e:#}");
+                // The archive serves the catalog when one is present: drop it so the plain manifest
+                // lists the sealed segment until the catalog recovers.
+                self.manifest.send_modify(|m| {
+                    m.catalog = None;
+                    Arc::make_mut(&mut m.segments).push(listed.clone());
+                    m.active = None;
+                });
+            }
+        }
+        Ok(Some(listed))
+    }
+
     /// Lists the open segment, if any, then links the staged file as the next segment at `path`.
     /// Error cases:
     /// - a segment by that name already exists, the open segment cannot be synced or listed, or the
     ///   link fails
     fn complete_and_link(&mut self, staged: &Path, path: &Path) -> anyhow::Result<()> {
         ensure!(!path.exists(), "{} already exists", path.display());
-        if let Some((segment, out)) = self.open.take() {
-            let done = out.into_inner().map_err(|e| e.into_error()).context("flushing log segment")?;
-            done.sync_all().context("syncing log segment")?;
-            let listed = segment.info();
-            self.list(&listed)?;
-            info!(
-                file = %listed.file,
-                first_seq = listed.first_seq,
-                last_seq = listed.last_seq,
-                bytes = listed.bytes,
-                sha256 = %listed.sha256,
-                "log segment completed"
-            );
-            let catalog = self.manifest.borrow().catalog.clone();
-            let next = catalog.map(|c| c.append(listed.clone(), segment.checkpoints.into())).transpose()?;
-            self.manifest.send_modify(|m| {
-                match next {
-                    Some(next) => m.catalog = Some(Arc::new(next)),
-                    None => Arc::make_mut(&mut m.segments).push(listed),
-                }
-                m.active = None;
-            });
-        }
+        self.seal_open_segment()?;
         // hard_link fails if an untrusted host races an existing destination into place.
         fs::hard_link(staged, path).with_context(|| format!("exclusively publishing {}", path.display()))
     }

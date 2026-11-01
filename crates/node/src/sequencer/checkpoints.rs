@@ -6,7 +6,7 @@ use anyhow::Context;
 use engine_core::Fixed;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::AccountId;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
 use crate::checkpoints::{LifecycleEvidence, Work};
@@ -159,6 +159,21 @@ impl Sequencer {
     #[cfg(test)]
     pub fn state_root(&mut self) -> [u8; 32] {
         self.engine.state_root()
+    }
+
+    /// Seals the log's open segment for an admitted handover stop, then answers it: the published
+    /// archive and the successor the keys go to need the segment the final checkpoint is in, so it
+    /// seals before the stop commits, and a failure is the refusal the predecessor reports while
+    /// this node goes on sequencing, not a stop. A full live catalog is folded first, as rotation
+    /// does; a catalog that still cannot take the segment degrades to the plain manifest, which
+    /// remains authoritative. With no stop the answer is `false` and nothing seals.
+    pub(super) fn seal_handover_tail(&mut self, reply: Option<oneshot::Sender<anyhow::Result<()>>>) -> bool {
+        let Some(reply) = reply else { return false };
+        let sealed =
+            self.log.seal_open_segment().context("sealing the log's final segment for the handover").map(|_| ());
+        let ok = sealed.is_ok();
+        let _ = reply.send(sealed);
+        ok
     }
 
     /// Attempts the checkpoint a key handover hands over as the final one. The gate's verdict owns

@@ -8,10 +8,12 @@ use super::*;
 async fn a_stop_the_checkpoint_gate_refuses_keeps_the_keys_and_goes_on_sequencing() {
     let mut exchange = Exchange::start("handover-gate-refused").await;
     exchange.make_upgrade_current();
+    // The drained head is the fixture log's real final checkpoint; the refused stop never reads it.
+    let head = write_log_tail(&exchange.successor_log, 3, &exchange.old.enclave_key().unwrap());
     let answer = exchange.refuse_once_then_answer(
         "the final checkpoint is withheld (collateral): the handover is refused and this node goes on \
          sequencing until the checkpoint_withheld alert clears",
-        Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) },
+        head,
     );
     let err = exchange.take().await.err().expect("keys left while the gate withholds the final checkpoint");
     let err = format!("{err:#}");
@@ -62,7 +64,8 @@ async fn a_predecessor_whose_checkpoints_are_withheld_goes_on_sequencing() {
 
     // Once signing resumes, the next successor takes the keys.
     exchange.signing.send_replace(true);
-    let _answer = exchange.answer_drain(Ok(Head { seq: 3, root: format!("0x{}", "cd".repeat(32)) }));
+    let head = write_log_tail(&exchange.successor_log, 3, &exchange.old.enclave_key().unwrap());
+    let _answer = exchange.answer_drain(Ok(head));
     exchange.take().await.unwrap();
 }
 

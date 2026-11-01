@@ -275,18 +275,19 @@ kernel only in an SEV-SNP launch (under plain QEMU it finds no bootable option),
    the running release keeps sequencing but would refuse its own keys on a restart. To call the
    upgrade off, have the timelock set the running release back as current; that starts another
    generation, so the running release then hands its keys to a fresh boot of itself through step 8.
-8. Boot the new release's VM with a copy of the running release's data disk, its `/data/config.toml`
-   replaced by the `node.toml` whose hash the timelock named when the config changes, and the
-   running release's `tee.sealing.handover.listen` address in `/data/predecessor`. The running release
-   checks the new one's quote, stops sequencing, hands over the keys, and powers off. The copy was
-   taken while it still ran, so the new release then refuses: its log ends before the running
-   release's final checkpoint. Copy the old disk's log, history, and cursor onto the new disk beside
-   the new release's sealed keys, and boot it again without `/data/predecessor`; its first start
-   checks that the log ends at that checkpoint. If the running release reports
-   `handover_unconfirmed`, it stays stopped and serves the next attempt: boot the new release again
-   with `/data/predecessor`, and never stop the running release, whose own copy of the keys no
-   longer opens. If the new release reports it, start it again only once the running release has
-   powered off.
+8. Boot the new release's VM with the running release's `tee.sealing.handover.listen` address in
+   `/data/predecessor` (or, when an election names it, with no flag at all: it then resolves the
+   incumbent's endpoint from the registry itself, fetches the published log from the incumbent's
+   registered hostname or the mirrors `tee.sealing.handover.mirrors` names, and takes the keys with
+   no `--predecessor`). The running release checks the new one's quote, stops sequencing, seals the
+   log's tail, and hands over the keys and every log segment past the new release's tip; the new
+   release writes them durably, requires the log to reach the handed-over final checkpoint, and
+   only then confirms, so the running release powers off only with the whole log transferred. A
+   failed transfer — the archive unreachable, a segment over the 64 MiB bound — refuses before the
+   confirmation: the running release stays stopped and serves the next attempt, and the new release
+   retries its start; never stop the running release, whose own copy of the keys no longer opens.
+   If the new release reports `handover_unconfirmed`, start it again only once the running release
+   has powered off.
 9. The old release's sealed copy of the keys stays on its disk but never opens again: a node
    checks the Vault's current release and its generation before it unseals, and a release the
    timelock names again takes the keys afresh through steps 7 and 8. An upgrade that fixes a flaw in
