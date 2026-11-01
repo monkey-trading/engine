@@ -293,8 +293,16 @@ impl Chain {
     /// - transaction submission or execution fails
     pub async fn send(&self, from: Address, to: Address, data: Vec<u8>) -> anyhow::Result<TransactionReceipt> {
         let selector = hex::encode(data.get(..4.min(data.len())).unwrap_or_default());
-        let receipt = self.transact(from, Some(to), data).await?;
-        ensure!(receipt.status(), "local contract transaction to {to} reverted (selector 0x{selector}, from {from})");
+        let receipt = self.transact(from, Some(to), data.clone()).await?;
+        let reason = if receipt.status() {
+            String::new()
+        } else {
+            self.revert_reason(to, &data).await.map(|reason| format!(": {reason}")).unwrap_or_default()
+        };
+        ensure!(
+            receipt.status(),
+            "local contract transaction to {to} reverted (selector 0x{selector}, from {from}){reason}"
+        );
         Ok(receipt)
     }
 
@@ -360,7 +368,7 @@ impl Chain {
             .await?;
         let data = response["error"]["data"].as_str().unwrap_or_default();
         let decoded = hex::decode(data.strip_prefix("0x").unwrap_or(data)).unwrap_or_default();
-        Ok(String::from_utf8_lossy(&decoded.get(4..).unwrap_or(&[])).into_owned())
+        Ok(String::from_utf8_lossy(decoded.get(4..).unwrap_or(&[])).into_owned())
     }
 
     /// Waits until the vault's current release at the finalized block is `release`, which nodes

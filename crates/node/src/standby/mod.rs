@@ -35,9 +35,7 @@ use crate::checkpoints::Takeover;
 pub(super) mod archive;
 
 use crate::config::{CustodyProvider, NodeConfig, StandbySection};
-use crate::log::{
-    LogEntry, LogWriter, MANIFEST, Manifest, Offset, SegmentInfo, SegmentedLog, offset_of, truncate_to_checkpoint,
-};
+use crate::log::{LogEntry, LogWriter, MANIFEST, Manifest, Offset, SegmentedLog, offset_of, truncate_to_checkpoint};
 use crate::telemetry::Telemetry;
 
 /// How long one follow stint runs before the standby re-checks the chain for its promotion: the

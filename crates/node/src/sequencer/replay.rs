@@ -131,7 +131,7 @@ impl Replay {
     /// them, and each authenticated checkpoint covers the commands before it.
     pub(super) fn with_attested(domain: Option<CheckpointDomain>, attested: BTreeSet<AccountId>) -> Self {
         let origin = crate::sequencer::origin::Origin::with_attested(domain, attested.clone());
-        Self { attested: Some(attested), domain: domain, trusted_signer: None, origin, ..Self::default() }
+        Self { attested: Some(attested), domain, trusted_signer: None, origin, ..Self::default() }
     }
     /// Retains only the authenticated outstanding tail after the independently finalized anchor.
     pub(super) fn with_recovery(

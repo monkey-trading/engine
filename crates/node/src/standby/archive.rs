@@ -1,16 +1,14 @@
 //! The standby's archive reads: the cold-start bootstrap, the takeover's refresh, and the
 //! bounded, validated fetches behind both.
 
-use std::path::Path;
-
 use anyhow::{Context, ensure};
-use reqwest::StatusCode;
 use tokio::time::timeout;
 use tracing::{info, warn};
 
 use super::{BODY_TIMEOUT, FETCH_TIMEOUT, MAX_ARCHIVE_BYTES, MAX_ARCHIVE_LISTINGS, sha256};
 use crate::config::StandbySection;
-use crate::log::{MANIFEST, SegmentInfo};
+use crate::log::MANIFEST;
+use crate::log::SegmentInfo;
 
 /// A cold start: fetches the published manifest and every completed segment it lists into the
 /// empty copy, checking each file against its listing, and writes the manifest. A missing

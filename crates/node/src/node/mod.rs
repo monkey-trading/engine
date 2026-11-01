@@ -134,6 +134,9 @@ async fn serve_node(
     let checkpoint_setup = registration::registered(&cfg, &key, &tls.acceptors, &attestation)
         .await
         .inspect_err(|e| error!(alert = "checkpoint_startup_failed", "refusing to serve: {e:#}"))?;
+    // The takeover cut runs once the vault names this key: a promoted node's first start began
+    // while the outgoing signer was still installed, and only now is the unposted tail cut.
+    keys::cut_to_finalized_anchor(&cfg, &key).await?;
     let mut anchor = None;
     let authorities = signer_history::load(checkpoint_setup.as_ref(), &cfg.node.log_dir)
         .await
