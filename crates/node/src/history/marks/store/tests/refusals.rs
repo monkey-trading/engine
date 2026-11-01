@@ -51,7 +51,7 @@ async fn a_seed_batch_recreating_a_deleted_bucket_and_filling_above_it_refuses()
             base + 180_000,
         )
         .expect_err("healed a deletion through a batch");
-    assert!(format!("{err:#}").contains("recreated bucket"), "{err:#}");
+    assert!(format!("{err:#}").contains("does not name the bucket below it"), "{err:#}");
 }
 
 #[tokio::test]
@@ -242,7 +242,7 @@ async fn a_backfill_refuses_to_relink_a_restored_floor_row() {
             base + 180_000,
         )
         .expect_err("re-linked a restored floor row");
-    assert!(format!("{err:#}").contains("floor link"), "{err:#}");
+    assert!(format!("{err:#}").contains("does not name the bucket below it"), "{err:#}");
 }
 
 #[tokio::test]
@@ -334,7 +334,7 @@ async fn a_seed_batch_relinking_past_a_surviving_older_row_refuses() {
             base + 180_000,
         )
         .expect_err("re-linked over a surviving older row");
-    assert!(format!("{err:#}").contains("floor link"), "{err:#}");
+    assert!(format!("{err:#}").contains("does not name the bucket below it"), "{err:#}");
 }
 
 #[tokio::test]
@@ -414,5 +414,37 @@ async fn a_prune_refuses_a_floor_that_skips_the_last_deleted_bucket() {
         .unwrap();
     let err =
         store.observe(&[(market, base + 3_660_000, fixed("5"))]).expect_err("re-floored over a hole below the horizon");
+    assert!(format!("{err:#}").contains("not the last this prune deleted"), "{err:#}");
+}
+
+#[tokio::test]
+async fn a_prune_refuses_a_floor_linking_an_earlier_deleted_bucket() {
+    let (path, mut store) = fresh_store_at("marks-chain-prune-earlier-link", hour_retentions());
+    let market = 1;
+    let base = 1_792_489_860_000;
+    // A and C first: C's authentic row links to A. Then B between them: C re-links to B.
+    store.observe(&[(market, base, fixed("1")), (market, base + 120_000, fixed("3"))]).unwrap();
+    let old_tag: Vec<u8> = Connection::open(&path)
+        .unwrap()
+        .query_row(
+            "SELECT tag FROM marks WHERE market = 1 AND resolution = 1 AND bucket = ?1",
+            [base + 120_000],
+            |row| row.get(0),
+        )
+        .unwrap();
+    store.observe(&[(market, base + 180_000, fixed("4"))]).unwrap();
+    store.observe(&[(market, base + 60_000, fixed("2"))]).unwrap();
+    // The host restores C's captured A-link row while B survives. A flush whose horizon sweeps
+    // A and B must refuse: C's authentic link names an earlier bucket than the last deleted.
+    let host = Connection::open(&path).unwrap();
+    host.execute(
+        "UPDATE marks SET prev_bucket = ?1, tag = ?2 WHERE market = 1 AND resolution = 1 AND bucket = ?3",
+        rusqlite::params![base, old_tag, base + 120_000],
+    )
+    .unwrap();
+    drop(host);
+    let err = store
+        .observe(&[(market, base + 3_720_000, fixed("5"))])
+        .expect_err("published a floor linking an earlier bucket");
     assert!(format!("{err:#}").contains("not the last this prune deleted"), "{err:#}");
 }

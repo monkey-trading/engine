@@ -334,10 +334,10 @@ async fn a_seed_into_a_bucket_a_successor_still_names_refuses() {
             base + 120_000,
         )
         .expect_err("re-filled a host deletion");
-    assert!(format!("{err:#}").contains("above the insert"), "{err:#}");
+    assert!(format!("{err:#}").contains("does not name the bucket below it"), "{err:#}");
     // A live mark into the same bucket refuses the same way.
     let err = store.observe(&[(market, base + 60_000, fixed("9"))]).expect_err("re-filled");
-    assert!(format!("{err:#}").contains("above the insert"), "{err:#}");
+    assert!(format!("{err:#}").contains("does not name the bucket below it"), "{err:#}");
 }
 
 #[tokio::test]

@@ -18,6 +18,27 @@ use crate::history::marks::Resolution;
 use crate::history::marks::store::chain::{ChainUpdates, anchor_updates, check_anchors, retag, verify_row};
 use crate::history::marks::store::{ChainAnchors, SnapRow};
 
+/// Validates every pair's chain as the file holds it: every row authenticates, and every link
+/// names the row actually below it. What a delete later removes is validated through the same
+/// walk, so a hole the file already carries is refused here, before any mutation.
+/// Error cases:
+/// - a stored row fails authentication, or a link names a bucket that is already missing
+pub(crate) fn validate_chains(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction) -> anyhow::Result<()> {
+    let snapshot = snapshot_all(mac, tx)?;
+    for ((market, resolution), rows) in &snapshot {
+        let mut actual = None;
+        for row in rows {
+            ensure!(
+                row.prev == actual,
+                "the {market} {resolution:?} chain is broken at {}: its link names a bucket that is already missing",
+                row.bucket
+            );
+            actual = Some(row.bucket);
+        }
+    }
+    Ok(())
+}
+
 /// Deletes every log-derived bucket and re-chains what survives, so a recovery re-derivation
 /// rebuilds exactly what the verified log proves. The snapshot the delete reasons over is taken
 /// first: a surviving row whose link names a bucket this delete removed re-links; one whose link
@@ -47,19 +68,9 @@ pub(crate) fn reset_log_derived(
         .execute("DELETE FROM marks WHERE provenance = ?1", [Provenance::LogDerived.as_str()])
         .context("resetting log-derived marks")?;
     for ((market, resolution), rows) in &snapshot {
-        // Every link must name the row actually below it in the snapshot, including links on
-        // rows this delete removes: the delete also removes every reference to them, and a row
-        // whose own link already names a missing bucket would let the delete launder a host
-        // deletion into a clean re-chain.
-        let mut actual = None;
-        for row in rows {
-            ensure!(
-                row.prev == actual,
-                "the {market} {resolution:?} chain is broken at {}: its link names a bucket that is already missing",
-                row.bucket
-            );
-            actual = Some(row.bucket);
-        }
+        // validate_chains checked every link, including links on rows this delete removes: the
+        // delete also removes every reference to them, and a row whose own link names a missing
+        // bucket would let the delete launder a host deletion into a clean re-chain.
         let mut pred = None;
         for row in rows {
             if deleted.contains(&(*market, *resolution, row.bucket)) {

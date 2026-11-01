@@ -7,6 +7,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use tracing::warn;
 
 use engine_core::types::MarketId;
 use tokio::sync::mpsc;
@@ -58,6 +59,15 @@ pub(super) fn startup(cfg: &NodeConfig, mac_key: [u8; 32]) -> anyhow::Result<Mar
     // A previous run's cache carries provider-seeded rows and backfill markers the log cannot
     // rebuild; recovery's re-derivation resets only the log-derived content over them.
     store.import_prior(&cfg.history.dir.join(MARKS_FILE)).context("importing the prior marks cache")?;
+    if let Err(e) = store.validate_chains() {
+        // A chain the import committed that does not validate is host-altered: rebuild from
+        // nothing. The log re-derives what it proves (a full recovery), a configured backfill
+        // re-seeds the rest, and snapshot-recovery deployments — which replay no log prefix into
+        // the cache — never inherit the hole.
+        warn!(alert = "marks_cache_rebuilt", "the prior marks cache fails validation and is rebuilt: {e:#}");
+        discard_file(&seed).with_context(|| format!("clearing the invalid marks seed at {}", seed.display()))?;
+        store = Store::open(&seed, retentions, mac_key)?;
+    }
     let backfill =
         cfg.history.marks.as_ref().and_then(|marks| marks.backfill.clone()).filter(|backfill| backfill.enabled);
     let sources = crate::history::marks::sources(&cfg.feeds);
@@ -162,6 +172,47 @@ pub(super) async fn task(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A prior cache the host altered while the node was stopped — a hole the import would
+    /// otherwise commit — fails startup's validation and is rebuilt from nothing, on both
+    /// recovery paths, instead of refusing reads or stopping the node on a later write.
+    #[tokio::test]
+    async fn an_invalid_prior_cache_is_rebuilt_at_startup() {
+        let mut cfg = crate::test_support::dev_config();
+        cfg.history.dir = crate::test_support::scratch_dir("marks-invalid-prior").join("history");
+        let key = crate::tee::EnclaveKey::test_key().marks_key();
+        std::fs::create_dir_all(&cfg.history.dir).unwrap();
+        {
+            let mut prior = Store::open(&cfg.history.dir.join(MARKS_FILE), Retentions::defaults(), key).unwrap();
+            let base = 1_792_489_860_000;
+            prior
+                .observe(&[
+                    (1, base, "67000".parse().unwrap()),
+                    (1, base + 60_000, "67100".parse().unwrap()),
+                    (1, base + 120_000, "67200".parse().unwrap()),
+                ])
+                .unwrap();
+            // The host deletes an interior bucket while the node is stopped.
+            rusqlite::Connection::open(cfg.history.dir.join(MARKS_FILE))
+                .unwrap()
+                .execute("DELETE FROM marks WHERE market = 1 AND resolution = 1 AND bucket = ?1", [base + 60_000])
+                .unwrap();
+        }
+        let marks = startup(&cfg, key).unwrap();
+        let reader = marks.shared.as_ref().unwrap().borrow().reader();
+        let page = reader.page(1, Resolution::M1, i64::MIN, i64::MAX, 10, 10).await.unwrap();
+        assert!(page.entries.is_empty(), "the invalid prior cache is not served");
+        // The rebuilt cache accepts live writes.
+        marks
+            .shared
+            .as_ref()
+            .unwrap()
+            .borrow_mut()
+            .observe(&[(1, 1_792_489_860_000, "67000".parse().unwrap())])
+            .unwrap();
+        let page = reader.page(1, Resolution::M1, i64::MIN, i64::MAX, 10, 10).await.unwrap();
+        assert_eq!(page.entries.len(), 1);
+    }
 
     /// A seed file a killed startup left behind is discarded: startup rebuilds from the prior
     /// cache and the log, never from chains a prune may have moved since.
