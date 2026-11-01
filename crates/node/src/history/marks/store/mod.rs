@@ -1,40 +1,47 @@
 //! The marks cache on disk: one SQLite file beside the history index. `marks` holds one row per
-//! `(market, resolution, bucket)`: the window's OHLC and its provenance, so a re-taken sample
-//! rewrites the same row. `backfilled` records which markets a provider backfill completed, so a
-//! restart does not refetch. The host can rewrite the file, so every connection runs SQLite in
-//! defensive mode with triggers and views off, and every write and read refuses, inside its own
-//! transaction, a schema this code did not create. Nothing here is authoritative: the log and the
-//! provider are, and either rebuilds this cache.
+//! `(market, resolution, bucket)`: the window's OHLC, its provenance, and its chained-index link
+//! naming the bucket below it, so a re-taken sample rewrites the same row and a host that deletes
+//! or rolls rows back breaks the chain the next read walks. `backfilled` records which markets a
+//! provider backfill completed, so a restart does not refetch. The host can rewrite the file, so
+//! every connection runs SQLite in defensive mode with triggers and views off, and every write
+//! and read refuses, inside its own transaction, a schema this code did not create. Nothing here
+//! is authoritative: the log and the provider are, and either rebuilds this cache.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, bail, ensure};
 use engine_core::Fixed;
 use engine_core::types::{MarketId, Millis};
 use hmac::digest::KeyInit as _;
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use rusqlite::{Connection, TransactionBehavior, params};
 use tracing::{debug, warn};
 
 mod auth;
+mod chain;
 mod import;
 mod reader;
 
-pub(crate) use auth::Coverage;
+pub(crate) use auth::{ChainHead, Coverage};
 use auth::{Row, tag};
 pub use reader::Reader;
 
-use crate::history::marks::{MarkSample, Provenance, Resolution, Retentions};
+use crate::history::marks::{MarkSample, Resolution, Retentions};
 use crate::history::store::{self, SchemaRow, read_only};
 
 /// The SQLite file of the cache, in `history.dir`; SQLite keeps its `-wal` and `-shm` files beside it.
 pub const MARKS_FILE: &str = "marks.sqlite";
-/// The schema this code writes, kept in the file's `user_version`. Version 2 authenticates every
+/// The schema this code writes, kept in the file's `user_version`. Version 2 authenticated every
 /// row: `tag` is an HMAC of the row's fields under the enclave key, so a row the host rewrote —
 /// while the node was stopped or running — fails verification instead of being served or merged.
-const SCHEMA_VERSION: i64 = 2;
+/// Version 3 chains the rows of each (market, resolution) into one index: `prev_bucket` names the
+/// bucket below the row and the tag binds it, so a host that deletes, reorders, or rolls buckets
+/// back breaks the chain the next read refuses on, and per-pair chain heads committed in memory
+/// at recovery re-derivation reject a restored old snapshot before any of it is served.
+const SCHEMA_VERSION: i64 = 3;
 const SCHEMA: &str = "
     CREATE TABLE marks (
         market INTEGER NOT NULL,
@@ -45,6 +52,7 @@ const SCHEMA: &str = "
         low TEXT NOT NULL,
         close TEXT NOT NULL,
         provenance TEXT NOT NULL,
+        prev_bucket INTEGER,
         tag BLOB NOT NULL,
         PRIMARY KEY (market, resolution, bucket)
     ) WITHOUT ROWID;
@@ -63,13 +71,10 @@ const SCHEMA: &str = "
         retention_1d INTEGER NOT NULL
     );
 ";
-/// A window read: the bucket, its OHLC, and its authentication tag, as stored.
-const WINDOW: &str = "SELECT bucket, open, high, low, close, provenance, tag FROM marks
+/// A window read: the bucket, its OHLC, its chain link, and its authentication tag, as stored.
+const WINDOW: &str = "SELECT bucket, open, high, low, close, provenance, prev_bucket, tag FROM marks
     WHERE market = :market AND resolution = :resolution AND bucket >= :from AND bucket <= :to
     ORDER BY bucket ASC LIMIT :limit";
-/// A row's stored prices, provenance, and tag, for merging a sample into an existing bucket.
-const EXISTING: &str = "SELECT open, high, low, close, provenance, tag FROM marks
-    WHERE market = :market AND resolution = :resolution AND bucket = :bucket";
 /// How long a connection waits on another's lock before it fails.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 /// Pages read at once, each on its own connection.
@@ -84,6 +89,24 @@ struct PageQuery {
     limit: usize,
     max_limit: usize,
 }
+
+/// One stored row as the chain maintenance reasons over it: its bucket, its stored content and
+/// chain link, and its authentication tag.
+pub(crate) struct SnapRow {
+    pub bucket: Millis,
+    pub open: String,
+    pub high: String,
+    pub low: String,
+    pub close: String,
+    pub provenance: String,
+    pub prev: Option<Millis>,
+    pub tag: [u8; 16],
+}
+
+/// The committed chain heads of every (market, resolution) pair, anchored at recovery
+/// re-derivation and advanced by every write. The store and its readers share one map: the
+/// writer replaces it after each commit, a reader checks one pair's head before serving a page.
+pub(crate) type ChainAnchors = BTreeMap<(MarketId, Resolution), ChainHead>;
 
 /// A provider-seeded bucket.
 #[derive(Debug, Clone, Copy)]
@@ -107,6 +130,8 @@ pub struct Store {
     mac: hmac::Hmac<sha2::Sha256>,
     /// What `SCHEMA` creates, which every write checks the file against.
     schema: Vec<SchemaRow>,
+    /// The committed chain heads this store advances with every write and every read checks.
+    anchors: Arc<Mutex<ChainAnchors>>,
 }
 
 impl Store {
@@ -174,13 +199,18 @@ impl Store {
         ensure!(integrity == "ok", "{} is damaged: {integrity}", path.display());
         tx.commit().context("committing the marks schema")?;
         let mac = hmac::Hmac::new_from_slice(&mac_key).context("building the marks authenticator")?;
-        Ok(Self { conn, path: path.to_owned(), retentions, mac, schema })
+        let store = Self { conn, path: path.to_owned(), retentions, mac, schema, anchors: Arc::default() };
+        // A leftover seed file from a refused activation opens populated: its rows carry valid
+        // tags, and re-derivation at recovery rewrites the log-derived ones before any read.
+        store.refresh_anchors()?;
+        Ok(store)
     }
 
     /// A reader of this cache for the API, on its own read-only connections; the store keeps
-    /// writing for the task that owns it.
+    /// writing for the task that owns it. The reader shares the committed chain heads, so every
+    /// page it serves is checked against the index this store advances.
     pub fn reader(&self) -> Reader {
-        Reader::new(self.path.clone(), self.mac.clone())
+        Reader::new(self.path.clone(), self.mac.clone(), self.anchors.clone())
     }
 
     /// This cache's retention policy, recorded with backfill completion.
@@ -199,6 +229,43 @@ impl Store {
         self.path = path;
     }
 
+    /// Re-commits every pair's chain head from what is on disk, replacing the anchor map. Called
+    /// at open and after every write commits: the anchors are exactly the heads of the rows this
+    /// store wrote, so a file the host rolled back fails a reader's head check before it serves.
+    /// Error cases:
+    /// - the heads cannot be read
+    fn refresh_anchors(&self) -> anyhow::Result<()> {
+        let mut heads = self
+            .conn
+            .prepare(
+                "SELECT m.market, m.resolution, m.bucket, m.tag FROM marks m
+                 JOIN (SELECT market, resolution, MAX(bucket) AS head FROM marks GROUP BY market, resolution) h
+                 ON m.market = h.market AND m.resolution = h.resolution AND m.bucket = h.head",
+            )
+            .context("reading the marks chain heads")?;
+        let heads = heads
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, MarketId>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Millis>(2)?,
+                    row.get::<_, [u8; 16]>(3)?,
+                ))
+            })
+            .context("reading the marks chain heads")?
+            .collect::<Result<Vec<_>, _>>()
+            .context("reading the marks chain heads")?;
+        let mut anchors = BTreeMap::new();
+        for (market, resolution, bucket, tag) in heads {
+            let resolution =
+                Resolution::from_tag(u8::try_from(resolution).context("a stored resolution is out of range")?)
+                    .context("a stored resolution is out of range")?;
+            anchors.insert((market, resolution), ChainHead { bucket, tag });
+        }
+        *self.anchors.lock().expect("the marks chain anchors are never poisoned") = anchors;
+        Ok(())
+    }
+
     /// Takes `samples`, log-derived marks a command left, in sequenced time order. In one
     /// transaction, which holds the write lock from its start and first checks the schema: merges
     /// each sample into its bucket at every resolution — open kept, high and low widened, close
@@ -207,27 +274,20 @@ impl Store {
     /// the newest sample.
     /// Error cases:
     /// - the file holds a schema this code did not create
-    /// - the transaction fails, or a stored price does not parse
+    /// - the transaction fails, a stored price does not parse, or a chain link no longer resolves
     pub fn observe(&mut self, samples: &[MarkSample]) -> anyhow::Result<()> {
         let Some(&newest) = samples.iter().map(|(_, ts, _)| ts).max() else { return Ok(()) };
         let tx =
             self.conn.transaction_with_behavior(TransactionBehavior::Immediate).context("starting a marks write")?;
         store::check_schema(&tx, &self.schema, &self.path)?;
-        let mut existing = tx.prepare(EXISTING).context("preparing a marks merge")?;
-        let mut replace = tx
-            .prepare(
-                "INSERT OR REPLACE INTO marks (market, resolution, bucket, open, high, low, close, provenance, tag)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            )
-            .context("preparing a marks store")?;
         for &(market, ts, mark) in samples {
             for resolution in Resolution::ALL {
-                merge(&self.mac, &mut existing, &mut replace, market, resolution, resolution.bucket(ts), mark)?;
+                chain::merge(&self.mac, &tx, market, resolution, resolution.bucket(ts), mark)?;
             }
         }
-        drop((existing, replace));
-        prune(&tx, &self.retentions, newest)?;
+        chain::prune(&self.mac, &tx, &self.retentions, newest)?;
         tx.commit().context("committing a marks write")?;
+        self.refresh_anchors()?;
         Ok(())
     }
 
@@ -236,63 +296,31 @@ impl Store {
     /// added. Drops seeded buckets older than the retention policy allows, counted back from
     /// `newest`.
     /// Error cases:
-    /// - as for `observe`
+    /// - as for `observe`, or a stored row fails authentication
     pub fn seed(&mut self, rows: &[Seed], newest: Millis) -> anyhow::Result<usize> {
         let tx =
             self.conn.transaction_with_behavior(TransactionBehavior::Immediate).context("starting a marks seed")?;
         store::check_schema(&tx, &self.schema, &self.path)?;
-        let mut inserted = 0;
-        {
-            let mut insert = tx
-                .prepare(
-                    "INSERT OR IGNORE INTO marks (market, resolution, bucket, open, high, low, close, provenance, tag)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                )
-                .context("preparing a marks seed")?;
-            for row in rows {
-                let provenance = Provenance::SeededFromProvider.as_str();
-                let (open, high, low, close) =
-                    (row.open.to_string(), row.high.to_string(), row.low.to_string(), row.close.to_string());
-                let tag = tag(
-                    &self.mac,
-                    row.market,
-                    row.resolution,
-                    row.ts,
-                    &Row { open: &open, high: &high, low: &low, close: &close, provenance },
-                );
-                let values = params![
-                    i64::from(row.market),
-                    row.resolution as i64,
-                    row.ts,
-                    open,
-                    high,
-                    low,
-                    close,
-                    provenance,
-                    tag,
-                ];
-                inserted += insert.execute(values).with_context(|| format!("seeding {}", row.market))?;
-            }
-        }
-        prune(&tx, &self.retentions, newest)?;
+        let inserted = chain::seed(&self.mac, &tx, rows)?;
+        chain::prune(&self.mac, &tx, &self.retentions, newest)?;
         tx.commit().context("committing a marks seed")?;
+        self.refresh_anchors()?;
         Ok(inserted)
     }
 
     /// Deletes every log-derived bucket, so a recovery re-derivation rebuilds exactly what the
     /// verified log proves and nothing the host wrote into those rows while the node was stopped;
-    /// provider-seeded buckets stay until a log mark replaces them. One transaction, checked
-    /// against the schema.
+    /// provider-seeded buckets stay until a log mark replaces them, and the chains over them
+    /// re-link only over what this delete removed. One transaction, checked against the schema.
     /// Error cases:
-    /// - the delete fails
+    /// - the delete fails, or a chain link names a bucket this delete did not remove
     pub fn reset_log_derived(&mut self) -> anyhow::Result<()> {
         let tx =
             self.conn.transaction_with_behavior(TransactionBehavior::Immediate).context("starting a marks reset")?;
         store::check_schema(&tx, &self.schema, &self.path)?;
-        let removed = tx
-            .execute("DELETE FROM marks WHERE provenance = ?1", [Provenance::LogDerived.as_str()])
-            .context("resetting log-derived marks")?;
+        let removed = chain::reset_log_derived(&self.mac, &tx)?;
         tx.commit().context("committing a marks reset")?;
+        self.refresh_anchors()?;
         debug!(removed, "log-derived marks reset for re-derivation");
         Ok(())
     }
@@ -377,83 +405,58 @@ impl Store {
     }
 }
 
-/// Merges `mark` into the `(market, resolution, bucket)` row: kept open, widened high and low,
-/// moved close, and the bucket now log-derived. A row the host altered — to other prices, another
-/// provenance, or an unparseable value — fails the write, which then changes nothing.
+/// The tag a stored row must carry: an HMAC of every stored field, including the chain link, so
+/// a row the host rewrote fails verification before it can be served, merged, or re-linked.
 /// Error cases:
-/// - the transaction fails, or a stored price does not parse
-fn merge(
+/// - the tag does not match the stored fields
+pub(crate) fn verify_row(
     mac: &hmac::Hmac<sha2::Sha256>,
-    existing: &mut rusqlite::Statement,
-    replace: &mut rusqlite::Statement,
     market: MarketId,
     resolution: Resolution,
-    bucket: Millis,
-    mark: Fixed,
+    row: &SnapRow,
 ) -> anyhow::Result<()> {
-    let row = existing
-        .query_row(params![i64::from(market), resolution as i64, bucket], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, [u8; 16]>(5)?,
-            ))
-        })
-        .optional()
-        .with_context(|| format!("reading the {market} {resolution:?} bucket at {bucket}"))?;
-    let (open, high, low, close) = match row {
-        None => (mark.to_string(), mark.to_string(), mark.to_string(), mark.to_string()),
-        Some((open, high, low, close, provenance, stored)) => {
-            // A row whose tag does not match its stored fields was rewritten; refuse to build on
-            // it, so host edits never reach a merge or a signed answer.
-            let expected = tag(
-                mac,
-                market,
-                resolution,
-                bucket,
-                &Row { open: &open, high: &high, low: &low, close: &close, provenance: &provenance },
-            );
-            ensure!(stored == expected, "the {market} {resolution:?} bucket at {bucket} fails authentication");
-            if provenance != Provenance::LogDerived.as_str() {
-                // A provider-seeded bucket the log now speaks for is rebuilt from the log mark
-                // alone, so a log-derived bucket is exactly what the public log proves.
-                (mark.to_string(), mark.to_string(), mark.to_string(), mark.to_string())
-            } else {
-                let fixed = |text: &str| {
-                    text.parse::<Fixed>().with_context(|| format!("a stored mark {text:?} does not parse"))
-                };
-                (
-                    fixed(&open)?.to_string(),
-                    fixed(&high)?.max(mark).to_string(),
-                    fixed(&low)?.min(mark).to_string(),
-                    mark.to_string(),
-                )
-            }
-        }
-    };
-    let provenance = Provenance::LogDerived.as_str();
-    let tag =
-        tag(mac, market, resolution, bucket, &Row { open: &open, high: &high, low: &low, close: &close, provenance });
-    replace
-        .execute(params![i64::from(market), resolution as i64, bucket, open, high, low, close, provenance, tag,])
-        .with_context(|| format!("storing the {market} {resolution:?} bucket at {bucket}"))?;
+    let expected = tag(
+        mac,
+        market,
+        resolution,
+        row.bucket,
+        &Row {
+            open: &row.open,
+            high: &row.high,
+            low: &row.low,
+            close: &row.close,
+            provenance: &row.provenance,
+            prev: row.prev,
+        },
+    );
+    ensure!(row.tag == expected, "the {market} {resolution:?} bucket at {} fails authentication", row.bucket);
     Ok(())
 }
 
-/// Drops buckets older than their resolution's retention, counted back from `newest`.
+/// Re-links `row` to `prev`, keeping its content: updates the chain link and the tag that binds
+/// it, in the transaction that reasons over the chain.
 /// Error cases:
-/// - the prune fails
-fn prune(tx: &rusqlite::Transaction, retentions: &Retentions, newest: Millis) -> anyhow::Result<()> {
-    for resolution in Resolution::ALL {
-        if let Some(retention) = retentions.of_resolution(resolution) {
-            let horizon = newest.saturating_sub(retention);
-            tx.execute("DELETE FROM marks WHERE resolution = ?1 AND bucket < ?2", params![resolution as i64, horizon])
-                .with_context(|| format!("pruning {resolution:?} marks"))?;
-        }
-    }
+/// - the update fails
+pub(crate) fn retag(
+    mac: &hmac::Hmac<sha2::Sha256>,
+    tx: &rusqlite::Transaction,
+    market: MarketId,
+    resolution: Resolution,
+    row: &SnapRow,
+    prev: Option<Millis>,
+) -> anyhow::Result<()> {
+    let tag = tag(
+        mac,
+        market,
+        resolution,
+        row.bucket,
+        &Row { open: &row.open, high: &row.high, low: &row.low, close: &row.close, provenance: &row.provenance, prev },
+    );
+    tx.execute(
+        "UPDATE marks SET prev_bucket = ?4, tag = ?5 WHERE market = ?1 AND resolution = ?2 AND bucket = ?3",
+        params![i64::from(market), resolution as i64, row.bucket, prev, tag],
+    )
+    .with_context(|| format!("re-linking the {market} {resolution:?} bucket at {}", row.bucket))?;
     Ok(())
 }
 

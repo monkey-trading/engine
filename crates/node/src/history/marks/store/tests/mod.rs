@@ -1,5 +1,9 @@
 //! The marks cache on disk: bucketing, per-resolution retention, seeding that never overwrites
-//! log-derived rows, backfill markers, paging, and a rebuild of a file the host altered.
+//! log-derived rows, backfill markers, paging, and a rebuild of a file the host altered. The
+//! chained index over the rows — what each row links below it, and what each read refuses when a
+//! link or a committed head no longer matches — is tested in `chain.rs`.
+
+mod chain;
 
 use std::path::PathBuf;
 

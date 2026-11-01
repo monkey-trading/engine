@@ -388,9 +388,14 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   retained-version pins, and collection (`heads.rs`)
 - `src/history/marks/mod.rs` — the derived marks cache: resolutions, per-resolution retentions,
   provenance, and the recovery seeder
-- `src/history/marks/store.rs` — the cache's SQLite schema, its writer (bucket merge, per-resolution
-  pruning, seeding that never overwrites log-derived rows, backfill markers), and its page reader
-  (`store/tests.rs`)
+- `src/history/marks/store/mod.rs` — the cache's SQLite schema, its writer (bucket merge,
+  per-resolution pruning, seeding that never overwrites log-derived rows, backfill markers), the
+  committed chain heads, and its page reader
+- `src/history/marks/store/chain.rs` — the chained index over the cache: each row names the bucket
+  below it, the writer re-links only over its own deletes and refuses the rest, and the reader
+  checks every link and chain head before serving (`tests/chain.rs`)
+- `src/history/marks/store/import.rs` — importing a previous run's provider-seeded rows and
+  backfill markers into the seed file
 - `src/history/marks/backfill.rs` — the provider backfill: which feed symbols map to a candles
   adapter, the public candles client, and window paging (`tests.rs`)
 - `src/history/marks/run.rs` — the supervised marks task: flushing live mark reports and backfilling
@@ -1483,12 +1488,19 @@ prices as decimal strings — with a `provenance` of `log_derived` or `seeded_fr
 client can weigh seeded history against what the public log proves; a bucket a log mark has reached
 holds exactly what the public log proves, and every recovery re-derives the log-derived buckets from
 the verified log, so a `log_derived` label never covers provider values or rows the host wrote while
-the node was stopped. `?limit=` is 1 to `max_limit` (2000), 500 by default, and a
+the node was stopped. Every row is also chained: each bucket names the bucket below it, the row's
+authentication tag binds that name, and per-pair chain heads committed in memory at recovery
+re-derivation anchor the index, so a host that deletes, reorders, or rolls the cache back mid-run is
+refused at serve time — the next read over the broken span fails before anything is signed; what a
+bounded read never spans, the next recovery's re-derivation rewrites. `?limit=` is 1 to `max_limit`
+(2000), 500 by default, and a
 window wider than that pages by passing a page's `next` as `from_ms`. The cache is derived state,
 never sequenced: recovery seeds it from the log's replay, the sequencer's live mark reports keep it
 current, and `[history.marks.backfill]`, where configured, fetches historical candles from the
 feed venue's public endpoint (Coinbase's, for its markets) to seed the depth a fresh log cannot
-have; removing `history.dir` while the node is stopped rebuilds it. `[history.marks]` also tunes
+have; removing `history.dir` while the node is stopped rebuilds it. A cache file written by an
+older version is not imported: the log re-derives what it proves and a configured backfill re-seeds
+the rest. `[history.marks]` also tunes
 each resolution's retention — 1s for 48h, 1m for 60d, 1h for 2y, 1d unbounded by default — and
 `[history.marks.backfill]` sets whether to backfill, the endpoint's base URL (the venue's own,
 over TLS), and each resolution's depth. Markets no bucket has reached yet answer an empty page.

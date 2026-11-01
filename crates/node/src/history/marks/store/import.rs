@@ -15,8 +15,10 @@ impl Store {
     /// Imports the cache at `prior`, which a previous run left at `path`'s final name: provider-
     /// seeded rows whose authentication tags verify, and backfill markers, both with INSERT OR
     /// IGNORE, so log-derived rows the replay will re-derive never overwrite what the log proves.
-    /// Rows the host altered fail verification and are dropped with a warning, never imported.
-    /// One transaction; the prior file is opened read-only and never modified.
+    /// Rows the host altered fail verification and are dropped with a warning, never imported. A
+    /// prior file of another schema version is skipped: this build cannot authenticate its rows,
+    /// and the log re-derives what it proves while a configured backfill re-seeds the rest. One
+    /// transaction; the prior file is opened read-only and never modified.
     /// Error cases:
     /// - the prior file cannot be read
     pub fn import_prior(&mut self, prior: &Path) -> anyhow::Result<usize> {
@@ -24,9 +26,19 @@ impl Store {
             return Ok(0);
         }
         let from = read_only(prior).with_context(|| format!("opening the prior marks cache at {}", prior.display()))?;
+        let version: i64 = from
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .with_context(|| format!("reading the prior marks cache at {}", prior.display()))?;
+        if version != super::SCHEMA_VERSION {
+            warn!(
+                alert = "marks_prior_cache_dropped",
+                version, "the prior marks cache holds another schema; it is not imported and will be rebuilt"
+            );
+            return Ok(0);
+        }
         let rows = {
             let mut stmt = from
-                .prepare("SELECT market, resolution, bucket, open, high, low, close, provenance, tag FROM marks")
+                .prepare("SELECT market, resolution, bucket, open, high, low, close, provenance, prev_bucket, tag FROM marks")
                 .context("reading the prior marks cache")?;
             let mapped = stmt
                 .query_map([], |row| {
@@ -39,7 +51,8 @@ impl Store {
                         row.get::<_, String>(5)?,
                         row.get::<_, String>(6)?,
                         row.get::<_, String>(7)?,
-                        row.get::<_, [u8; 16]>(8)?,
+                        row.get::<_, Option<Millis>>(8)?,
+                        row.get::<_, [u8; 16]>(9)?,
                     ))
                 })
                 .context("reading the prior marks cache")?;
@@ -82,11 +95,11 @@ impl Store {
         {
             let mut insert = tx
                 .prepare(
-                    "INSERT OR IGNORE INTO marks (market, resolution, bucket, open, high, low, close, provenance, tag)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    "INSERT OR IGNORE INTO marks (market, resolution, bucket, open, high, low, close, provenance, prev_bucket, tag)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 )
                 .context("preparing the prior marks import")?;
-            for (market, resolution, bucket, open, high, low, close, provenance, stored) in rows {
+            for (market, resolution, bucket, open, high, low, close, provenance, prev, stored) in rows {
                 let resolution = match u8::try_from(resolution).ok().and_then(Resolution::from_tag) {
                     Some(resolution) => resolution,
                     None => {
@@ -106,7 +119,7 @@ impl Store {
                     market,
                     resolution,
                     bucket,
-                    &Row { open: &open, high: &high, low: &low, close: &close, provenance: &provenance },
+                    &Row { open: &open, high: &high, low: &low, close: &close, provenance: &provenance, prev },
                 );
                 if stored != expected {
                     dropped += 1;
@@ -122,6 +135,7 @@ impl Store {
                         low,
                         close,
                         provenance,
+                        prev,
                         stored
                     ])
                     .with_context(|| format!("importing the prior {market} {resolution:?} bucket at {bucket}"))?;
@@ -148,6 +162,7 @@ impl Store {
                 dropped, "the prior marks cache held rows that fail authentication; they were not imported"
             );
         }
+        self.refresh_anchors()?;
         Ok(imported)
     }
 

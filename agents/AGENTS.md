@@ -85,7 +85,10 @@ an index: load only the rule whose hint matches the current action.
   market's index-mark history served signed and paged at `/v1/markets/{id}/marks` with per-entry
   `log_derived`/`seeded_from_provider` provenance; recovery seeds it from the log's replay through a sink
   in the replay, the sequencer's live mark reports keep it current, and an optional Coinbase candles
-  backfill (`[history.marks.backfill]`) seeds depth a fresh log cannot have),
+  backfill (`[history.marks.backfill]`) seeds depth a fresh log cannot have; each bucket names the one
+  below it under its row tag and committed in-memory per-pair chain heads anchor the index at recovery
+  re-derivation, so a host that deletes, reorders, or rolls the cache back mid-run is refused at serve
+  time),
   dated benchmark ingestion (`benchmarks/` and the separate `admin/benchmark_feed.rs` signing worker
   with bounded durable schedule watches in `admin/benchmark_watch.rs` and `api/benchmark_schedule.rs`),
   optional checkpoint snapshots authenticated by pinned attested signers for suffix recovery,
