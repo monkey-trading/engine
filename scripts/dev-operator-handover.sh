@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Runs the operator handover scenario against an isolated Anvil: A runs as the operator in effect
-# with rotation on; an election names B and, past its effective time, B reads A's handover endpoint
-# from the registry, fetches the published log, takes the keys and the final log segment, and
-# continues at the seq after A's final checkpoint; A exits; a withdrawal A authorized before the
-# handover pays; A's stale sealed copy refuses to open; a re-election of A hands the keys back.
+# with rotation on and authorizes a withdrawal, which pays before the election warp (the vault's
+# 24-hour authorization lifetime runs at chain time, which the seven-day election notice outruns);
+# an election names B and, past its effective time, B reads A's handover endpoint from the
+# registry, fetches the published log, takes the keys and the final log segments, and continues at
+# the seq after A's final checkpoint while the vault accepts B's checkpoints; A exits; A's stale
+# sealed copy refuses to open; a re-election of A hands the keys back.
 # Needs Anvil, Forge, Python 3, Cargo, and installed Soldeer dependencies. No external RPC or keys
 # are used.
 set -euo pipefail

@@ -13,7 +13,7 @@ use hpke::{Kem, Serializable};
 use sha2::Digest as _;
 use tokio::net::TcpStream;
 use tokio::time::timeout;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 use crate::checkpoints::{CheckpointChain, View};
 use crate::config::NodeConfig;

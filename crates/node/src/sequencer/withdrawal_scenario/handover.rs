@@ -241,6 +241,14 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
     })
     .await
     .context("B did not continue past A's final checkpoint (seq {a_tip})")??;
+    // B's custody posts the checkpoints it recovered and continues: the vault accepts them past
+    // A's tip, and the combined log replays across the handover.
+    wait_latest_seq(&mut node.chain, a_tip + 1).await?;
+    let replayed = crate::sequencer::replay_path(&b_dir.join("log"))?;
+    ensure!(
+        replayed.last_signed_checkpoint.as_ref().is_some_and(|cp| cp.seq >= a_tip),
+        "the replayed log has no checkpoint at or past A's final checkpoint"
+    );
     println!(
         "PASS: A's pre-handover authorization paid, and the elected operator's enclave took the keys and the log from the incumbent's and continued at the seq after its final checkpoint"
     );

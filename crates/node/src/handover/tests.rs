@@ -3,6 +3,8 @@
 
 use super::*;
 
+use crate::config::NodeConfig;
+
 use engine_core::types::AccountId;
 use engine_verify::fixtures::{
     LAUNCH_DIGEST, POLICY, REPORTED_TCB, collateral_of, crl_revoking, forged_report, pem_wrap, test_chain,
@@ -131,4 +133,86 @@ fn hardware_evidence_verifies_against_the_vendor_chain_and_binds_its_data() {
     assert!(verify(TeeProvider::ConfigfsTsm, &evidence, &report_data, None, Some(&root)).is_err(), "no time");
     let err = verify(TeeProvider::Mock, &evidence, &report_data, None, None).unwrap_err();
     assert!(err.to_string().contains("mock enclaves only"), "{err:#}");
+}
+
+/// A chain whose handover source and named hostname the test holds.
+struct Registry {
+    source: crate::checkpoints::HandoverSource,
+    hostname: String,
+}
+
+impl CheckpointChain for Registry {
+    async fn state(&self, _view: crate::checkpoints::View) -> anyhow::Result<crate::checkpoints::VaultState> {
+        anyhow::bail!("this chain reads no vault state")
+    }
+
+    async fn post(&self, _checkpoint: &crate::log::Checkpoint) -> anyhow::Result<()> {
+        anyhow::bail!("this chain posts nothing")
+    }
+
+    async fn handover_source(&self) -> anyhow::Result<crate::checkpoints::HandoverSource> {
+        Ok(self.source.clone())
+    }
+
+    async fn operator_hostname(&self) -> anyhow::Result<String> {
+        Ok(self.hostname.clone())
+    }
+}
+
+fn registry(source: crate::checkpoints::HandoverSource, hostname: &str) -> Registry {
+    Registry { source, hostname: hostname.to_owned() }
+}
+
+fn source(candidate: AccountId, endpoint: &str) -> crate::checkpoints::HandoverSource {
+    crate::checkpoints::HandoverSource {
+        candidate,
+        release: [0x22; 32],
+        api_hostname: "api.operator.example".into(),
+        handover_endpoint: endpoint.into(),
+    }
+}
+
+#[test]
+fn resolve_source_maps_the_registry_snapshot_and_refuses_the_unregistered() {
+    let nobody = AccountId([0; 20]);
+    let operator = AccountId([0x42; 20]);
+    // No election yet: the start falls through to the usual refusal, not a handover.
+    let none =
+        tokio::runtime::Runtime::new().unwrap().block_on(resolve_source(&registry(source(nobody, ""), ""))).unwrap();
+    assert!(none.is_none(), "an election the registry never made is not a handover source");
+    // An election whose incumbent registered no endpoint cannot hand over: the runbook's step.
+    let unregistered = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(resolve_source(&registry(source(operator, ""), "")))
+        .unwrap_err();
+    assert!(format!("{unregistered:#}").contains("no handover endpoint"), "{unregistered:#}");
+    // A recorded source resolves.
+    let resolved = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(resolve_source(&registry(source(operator, "host:9443"), "")))
+        .unwrap()
+        .expect("a recorded handover source resolves");
+    assert_eq!(resolved.endpoint, "host:9443");
+    assert_eq!(resolved.api_hostname, "api.operator.example");
+    assert_eq!(resolved.candidate, operator);
+    assert_eq!(resolved.release, [0x22; 32]);
+}
+
+#[tokio::test]
+async fn check_operator_hostname_refuses_a_mismatch_and_skips_without_acme() {
+    // The dev config has no [api.tls.acme]: no certificate to check.
+    let cfg = crate::test_support::dev_config();
+    check_operator_hostname(&cfg, &registry(source(AccountId([0x42; 20]), ""), "other.example")).await.unwrap();
+    let mut value: toml::Value =
+        toml::from_str(&std::fs::read_to_string(crate::test_support::DEV_CONFIG).unwrap()).unwrap();
+    let tls = toml::Value::try_from(
+        serde_json::json!({ "acme": { "domain": "api.operator.example", "directory_url": "https://ca.example/dir", "contact": "mailto:ops@example.com" } }),
+    )
+    .unwrap();
+    value.get_mut("api").expect("the dev config's api table").as_table_mut().unwrap().insert("tls".into(), tls);
+    let cfg: NodeConfig = toml::from_str(&toml::to_string(&value).unwrap()).unwrap();
+    check_operator_hostname(&cfg, &registry(source(AccountId([0x42; 20]), ""), "api.operator.example")).await.unwrap();
+    let err =
+        check_operator_hostname(&cfg, &registry(source(AccountId([0x42; 20]), ""), "other.example")).await.unwrap_err();
+    assert!(format!("{err:#}").contains("other.example"), "{err:#}");
 }

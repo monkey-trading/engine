@@ -340,6 +340,7 @@ async fn receive_bytes(stream: &mut (impl AsyncRead + Unpin)) -> anyhow::Result<
 /// Where the elected successor takes the keys: the operator the election in effect replaced, as
 /// the vault's registry recorded when the election was made, with the handover endpoint and API
 /// hostname its candidacy registered.
+#[derive(Debug)]
 pub(crate) struct Source {
     pub endpoint: String,
     pub api_hostname: String,

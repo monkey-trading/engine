@@ -419,15 +419,17 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   mock TEE's public stand-in for sealing; `src/tee/sealing/tests.rs` covers it
 - `src/tee/snp.rs` — the SEV-SNP sealing key and report through `/dev/sev-guest` (Linux)
 - `src/handover/mod.rs` — the handover's messages, framing, report data, HPKE encryption of the keys,
-  the vault's current release check that a start and a handover share, and the registry's handover
-  source an elected successor resolves the incumbent from
+  the vault's current release check that a start and a handover share, the registry's handover
+  source an elected successor resolves the incumbent from, and the predecessor's published-log
+  fetch that precedes it
 - `src/handover/evidence.rs` — a peer's quote and its collateral, produced and verified
-- `src/handover/successor.rs` — the new release's side: request, verify, take the final log segment,
-  require the log to end at the handed-over checkpoint, seal, confirm
+- `src/handover/successor.rs` — the new release's side: request with the restored tip, verify, take
+  every log segment past it, each bound to its listing inside the keys, require the chain to reach
+  the handed-over checkpoint, seal, confirm
 - `src/handover/predecessor.rs` — the running release's side: its listener, the current release, the
-  stop, the final checkpoint, and the sealed tail segment it sends after the keys;
+  stop, the final checkpoint, and the sealed tail segments it sends after the keys;
   `src/handover/predecessor/tests/` runs it over loopback, the stop and final-checkpoint tests in
-  `stop.rs`
+  `stop.rs`, the successor-side transfer tests in `successor.rs`
 - `src/handover/tests.rs` — what each step binds, the encryption, the framing, and the evidence
 - `src/verify/mod.rs` — attestation verification for the CLI and replay: loading or fetching the
   attestation, release manifest, and collateral, `engine-verify` on the system clock, and the
@@ -1789,7 +1791,17 @@ dir = "/data/keys"
 
 [tee.sealing.handover] # needs [checkpoints]
 listen = "0.0.0.0:9471"
+# Archive mirrors of the incumbent's published log, tried in order before the incumbent's
+# registered API hostname when an election names this release the successor; TLS verification
+# stays on unless danger_accept_invalid_certs = true (development only).
+# mirrors = ["https://mirror.example.com"]
+# danger_accept_invalid_certs = false
 ```
+
+An election handover needs the operator in effect registered as a candidate with the handover
+endpoint and API hostname its candidacy registered: the registry records them when the election is
+made, and a successor whose incumbent left nothing on chain refuses to start with a clear error.
+The runbook registers the operator in effect as a candidate before rotation's first election.
 
 - **What a restart keeps.** The signing key (the vault's signer and the attested address), the
   API's TLS key, the ACME account, and the certificate, in one file per release and generation

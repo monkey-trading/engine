@@ -28,6 +28,7 @@ use crate::feeds::venue::{self, Timing};
 use crate::history::HistoryPlan;
 mod shutdown;
 use shutdown::{TaskResult, finish_history, handed_over, sequencer_outcome, supervise};
+mod handover;
 mod keys;
 mod marks;
 pub use keys::{KeyStart, parse_launch_digest};
@@ -287,7 +288,7 @@ async fn serve_node(
         tasks.spawn(async move {
             (
                 "handover",
-                keys::watch_handover(
+                handover::watch_handover(
                     watch_tx,
                     operator,
                     trusted_time::TrustedClock::new(watch_clock, watch_samples, max_drift),
