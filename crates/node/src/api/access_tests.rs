@@ -328,7 +328,7 @@ impl Node {
             operator,
             mock_custody,
             payouts_enabled: mock_custody,
-            clock: || NOW,
+            clock: stamps.clone(),
             log_dir: dir.clone(),
             manifest,
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
@@ -367,11 +367,17 @@ impl Node {
         }
     }
 
+    /// Re-trusts the advanced clock so stamps and queries stay admitted, without sequencing
+    /// anything: the last sequenced time is left where it was.
+    async fn retrust(&self) {
+        self.state.tx.send(sequencer::Request::TimeSample(sample_around(&*self.clock))).await.unwrap();
+    }
+
     /// Moves the sequencer's time forward by `ms`, re-trusting it so stamps stay admitted, and
     /// sequences a Tick, so the last sequenced time the API's checks read catches up.
     async fn move_time(&self, ms: u64) {
         self.clock.advance(Duration::from_millis(ms));
-        self.state.tx.send(sequencer::Request::TimeSample(sample_around(&*self.clock))).await.unwrap();
+        self.retrust().await;
         self.state.submit(Command::Tick).await.unwrap();
     }
 

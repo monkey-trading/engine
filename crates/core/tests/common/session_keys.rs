@@ -106,3 +106,21 @@ pub fn trade_cmd_expiring(h: &Harness, key: &Client, nonce: u64, mut req: OrderR
     let ev = evidence(h, hash, Some(req.account), None);
     Command::AccessOrder { request: req, evidence: ev }
 }
+
+/// `req` re-addressed to `account` and signed by `key` with `nonce` and request expiry
+/// `expires_at`, screened like the account's own orders, and sequenced.
+pub fn expiring_trade_for(
+    h: &mut Harness,
+    key: &Client,
+    account: AccountId,
+    nonce: u64,
+    mut req: OrderRequest,
+    expires_at: Millis,
+) -> Vec<Event> {
+    req.account = account;
+    let hash = eip712::order_hash(&key.domain, &req, nonce, expires_at);
+    req.auth = Some(RequestAuth { nonce, expires_at, signature: eip712::sign(&key.key, &hash) });
+    let hash = eip712::order_hash(&key.domain, &req, nonce, expires_at);
+    let ev = evidence(h, hash, Some(req.account), None);
+    h.cmd(Command::AccessOrder { request: req, evidence: ev })
+}

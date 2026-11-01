@@ -207,6 +207,31 @@ async fn a_flooding_key_cannot_starve_the_accounts_revocation() {
 }
 
 #[tokio::test]
+async fn a_key_expired_by_the_clock_is_refused_before_sequencing() {
+    let node = Node::start("session-key-clock-expiry", true).await;
+    let account = key(1);
+    let session = key(7);
+    node.onboard(&account).await;
+    let register = registration(&account, &session, 1, NOW + 60_000);
+    assert_eq!(node.post("/v1/session-keys", register).await.0, StatusCode::OK);
+
+    // The clock passes the key's expiry while no command advances the sequenced time past it;
+    // the request itself is still fresh. The node refuses before sequencing, spending nothing.
+    node.clock.advance(Duration::from_millis(2 * 60_000));
+    node.retrust().await;
+    let (status, body) = node.post("/v1/orders", session_order_at(&account, &session, 0, NOW + 3 * 60_000)).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::UNAUTHORIZED, Some("session key expired")));
+    let session_id = eip712::address(session.verifying_key());
+    assert_eq!(node.get(&format!("/v1/accounts/{session_id}/nonce")).await["next_nonce"], 0);
+    assert!(
+        node.entries().iter().all(
+            |entry| !matches!(entry, LogEntry::Command(c) if matches!(c.sequenced.cmd, Command::AccessOrder { .. }))
+        ),
+        "the expired key's order never reached the log"
+    );
+}
+
+#[tokio::test]
 async fn a_session_key_cannot_revoke_itself_or_another_key() {
     let node = Node::start("session-key-revoke-scope", true).await;
     let account = key(1);
@@ -240,6 +265,23 @@ async fn a_session_key_cannot_revoke_itself_or_another_key() {
     );
     let session_id = eip712::address(session.verifying_key());
     assert_eq!(node.get(&format!("/v1/accounts/{session_id}/nonce")).await["next_nonce"], 0);
+    // Nor can the key revoke itself.
+    let hash = eip712::session_key_revocation_hash(
+        &eip712::domain(31_337, VAULT),
+        eip712::address(account.verifying_key()),
+        session_id,
+        1,
+        NOW + 60_000,
+    );
+    let auth = RequestAuth { nonce: 1, expires_at: NOW + 60_000, signature: eip712::sign(&session, &hash) };
+    let body = serde_json::json!({ "account": eip712::address(account.verifying_key()), "session_key": session_id, "auth": auth });
+    let (status, body) = delete(&node, "/v1/session-keys", body).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::UNAUTHORIZED, Some("invalid signature")));
+    assert_eq!(node.get(&format!("/v1/accounts/{session_id}/nonce")).await["next_nonce"], 0);
+    // Both registrations stand: either key still trades.
+    let (status, events) = node.post("/v1/orders", session_order(&account, &other, 0)).await;
+    assert_eq!(status, StatusCode::OK, "{events}");
+    assert!(events.as_array().unwrap().iter().any(|event| event["type"] == "fill"), "{events}");
     let (status, events) = node.post("/v1/orders", session_order(&account, &session, 0)).await;
     assert_eq!(status, StatusCode::OK, "{events}");
     assert!(events.as_array().unwrap().iter().any(|event| event["type"] == "fill"), "{events}");

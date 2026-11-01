@@ -28,7 +28,7 @@ use tokio_rustls::client::TlsStream as ClientTls;
 use webpki::EndEntityCert;
 
 use crate::api::{ApiState, MAX_BACKFILLS, router};
-use crate::clock::now_ms;
+use crate::clock::SystemClock;
 use crate::config::RateLimit;
 use crate::history::Reader;
 use crate::limits::ApiLimits;
@@ -346,7 +346,7 @@ impl TestNode {
             attestation: Arc::new(attestation.clone()),
             auth: ClientAuth::Unsigned,
             operator: dev_config().operator().unwrap(),
-            clock: now_ms,
+            clock: Arc::new(SystemClock),
             mock_custody: true,
             payouts_enabled: true,
             log_dir: PathBuf::new(),

@@ -51,6 +51,7 @@ use tokio::sync::{Semaphore, broadcast, mpsc, watch};
 use tracing::field::{Empty, display};
 use tracing::{Instrument, Span, info_span};
 
+use crate::clock::Clock;
 use crate::history::Reader;
 use crate::limits::{ApiLimits, limit_client, read_body};
 use crate::log::Manifest;
@@ -108,7 +109,7 @@ pub struct ApiState {
     pub payouts_enabled: bool,
     /// The clock a signed request's expiry is checked against; the node gives the sequencer the same
     /// one to stamp commands with.
-    pub clock: fn() -> Millis,
+    pub clock: Arc<dyn Clock>,
     pub log_dir: PathBuf,
     /// The log writer's manifest, held in enclave memory.
     pub manifest: watch::Receiver<Manifest>,

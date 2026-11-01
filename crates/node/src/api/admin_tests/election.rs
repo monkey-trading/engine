@@ -51,7 +51,7 @@ impl Node {
         self.stamps.advance(Duration::from_millis(after_the_notice() as u64 - NOW as u64));
         let sample = sample_around(self.stamps.as_ref());
         self.state.tx.send(crate::sequencer::Request::TimeSample(sample)).await.unwrap();
-        self.state.clock = after_the_notice;
+        self.state.clock = std::sync::Arc::new(crate::clock::test_clock::TestClock::at(after_the_notice()));
         let frontier = Command::StakingProgress {
             block: 3,
             block_hash: alloy::primitives::B256::repeat_byte(9),

@@ -84,7 +84,8 @@ endpoint = "{publisher}/estr"
 "#
     ));
     fs::write(&config, text).unwrap();
-    let mut node = Some(Node::start(&dir, COLD, || COLD).await);
+    let mut node =
+        Some(Node::start(&dir, COLD, std::sync::Arc::new(crate::clock::test_clock::TestClock::at(COLD))).await);
     let scenario = tokio::time::timeout(Duration::from_secs(15), async {
         let first = node.as_ref().unwrap();
         run_admin(first, &config, &["sync-benchmarks"], || COLD).await?;
@@ -129,7 +130,9 @@ endpoint = "{publisher}/estr"
         failed.store(true, Ordering::SeqCst);
         if restart {
             node.take().unwrap().stop().await;
-            node = Some(Node::start(&dir, RESUMED, || RESUMED).await);
+            node = Some(
+                Node::start(&dir, RESUMED, std::sync::Arc::new(crate::clock::test_clock::TestClock::at(RESUMED))).await,
+            );
         } else {
             let live = node.as_ref().unwrap();
             live.clock.advance(Duration::from_millis((RESUMED - live.clock.now_ms()) as u64));

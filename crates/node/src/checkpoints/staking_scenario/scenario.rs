@@ -263,7 +263,7 @@ impl Scenario {
             access: Some(self.access.client.clone()),
             operator: self.operator,
             mock_custody: false,
-            clock: || NOW,
+            clock: Arc::new(TestClock::at(NOW)),
             log_dir: self.dir.clone(),
             manifest,
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),

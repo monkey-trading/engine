@@ -30,29 +30,24 @@ pub const MAX_SESSION_KEY_EXPIRY_MS: Millis = 24 * 60 * 60 * 1000;
 /// an account's leaf and the work a root spends on it stay bounded whatever one account sequences.
 pub const MAX_SESSION_KEYS_PER_ACCOUNT: usize = 10;
 
-/// How many session keys an account may register over its life. Each registration that introduces
-/// a new key leaves the key's request nonce in `request_nonces` for good, so it can keep its
-/// replay protection after pruning; the lifetime cap bounds that state. Renewing a key the
-/// account already holds does not count.
+/// How many distinct session-key addresses an account may introduce. Each registration seeds the
+/// key's request-nonce entry, which stays in `request_nonces` for good so a pruned key keeps its
+/// replay protection; the lifetime cap bounds that state. Re-registering a key the account has
+/// used before — held, lapsed, or revoked — introduces nothing and never counts.
 pub const MAX_SESSION_KEY_REGISTRATIONS: u64 = 100;
 
-/// The session keys one account registered, and how many it has introduced: `total` bounds the
-/// permanent nonce state a session key leaves, and lets a registration refuse past the lifetime
-/// cap even while `keys` is empty.
+/// The session keys one account registered, and how many distinct keys it has introduced:
+/// `total` bounds the permanent nonce state a session key leaves, and lets a registration refuse
+/// past the lifetime cap even while `keys` is empty.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AccountSessionKeys {
     /// The live registrations, pruned of expired and revoked keys by each registration.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub keys: BTreeMap<AccountId, SessionKey>,
-    /// Every key the account has introduced, for the lifetime cap.
-    #[serde(default, skip_serializing_if = "is_zero")]
+    /// Every distinct key the account has introduced, for the lifetime cap.
+    #[serde(default)]
     pub total: u64,
-}
-
-/// Whether the count is zero, so its default stays out of earlier state encodings.
-fn is_zero(count: &u64) -> bool {
-    *count == 0
 }
 
 /// A session key registered for an account, as the state tree holds it. The key's next request
@@ -75,16 +70,17 @@ impl Engine {
     /// refusal after its signature checks, so a refused registration cannot be replayed from the
     /// log once it would succeed. A registration first prunes the account's expired and revoked
     /// keys — their nonces stay spent in `request_nonces` — and refuses a new key past
-    /// [`MAX_SESSION_KEYS_PER_ACCOUNT`] live or [`MAX_SESSION_KEY_REGISTRATIONS`] over the
-    /// account's life, so one account's state stays bounded; renewing a key the account already
-    /// holds replaces it and never counts against either cap.
+    /// [`MAX_SESSION_KEYS_PER_ACCOUNT`] live or [`MAX_SESSION_KEY_REGISTRATIONS`] distinct keys
+    /// over the account's life, so one account's state stays bounded; re-registering a key the
+    /// account has used before, held or lapsed, replaces it and never counts against either cap.
     /// Error cases:
     /// - before `V41`
     /// - the signature, nonce, or request expiry fails (see `Engine::authorise`)
     /// - the registration names the account's own key or the operator's
     /// - `expires_at` is not in the future, or more than `MAX_SESSION_KEY_EXPIRY_MS` ahead
     /// - the account already holds `MAX_SESSION_KEYS_PER_ACCOUNT` live keys and `session_key`
-    ///   is not one of them, or has introduced `MAX_SESSION_KEY_REGISTRATIONS` keys over its life
+    ///   is not one of them, or has introduced `MAX_SESSION_KEY_REGISTRATIONS` distinct keys over
+    ///   its life
     pub(crate) fn register_session_key(
         &mut self,
         account: AccountId,
@@ -119,18 +115,24 @@ impl Engine {
             return;
         }
         let held = self.session_keys.get(&account).is_some_and(|keys| keys.keys.contains_key(&session_key));
+        // A key whose nonce entry exists has been introduced already: re-registering it, lapsed
+        // or revoked, introduces nothing and never counts against the lifetime cap.
+        let known = self.request_nonces.contains_key(&session_key);
         let entry = self.session_keys.entry(account).or_default();
         if !held && entry.keys.len() >= MAX_SESSION_KEYS_PER_ACCOUNT {
             events.push(rejected(Reject::TooManySessionKeys { max: MAX_SESSION_KEYS_PER_ACCOUNT }));
             return;
         }
-        if !held && entry.total >= MAX_SESSION_KEY_REGISTRATIONS {
+        if !known && entry.total >= MAX_SESSION_KEY_REGISTRATIONS {
             events.push(rejected(Reject::TooManySessionKeys { max: MAX_SESSION_KEY_REGISTRATIONS as usize }));
             return;
         }
-        if !held {
+        if !known {
             entry.total += 1;
         }
+        // Every registered key owns its nonce entry from the start, so even a key pruned before
+        // its first request keeps its replay protection (see `auth`'s pruned-signer path).
+        self.request_nonces.entry(session_key).or_insert(0);
         entry.keys.insert(session_key, SessionKey { expires_at, revoked: false });
         events.push(Event::SessionKeyRegistered { account, session_key, expires_at });
     }
@@ -184,12 +186,13 @@ impl Engine {
         self.session_keys.get(&account).map_or(0, |keys| keys.total)
     }
 
-    /// Drops `account`'s expired and revoked session keys. Spent nonces stay in
-    /// `request_nonces`, so pruning never revives a request a pruned key signed: a later request
-    /// from a pruned key still spends its nonce and refuses as an invalid signature.
+    /// Drops `account`'s expired and revoked session keys. Every key's nonce entry was seeded at
+    /// its registration and stays in `request_nonces`, so pruning never revives a request a
+    /// pruned key signed: a later request from a pruned key still spends its nonce and refuses as
+    /// an invalid signature.
     fn prune_session_keys(&mut self, account: AccountId) {
         let Some(keys) = self.session_keys.get_mut(&account) else { return };
-        keys.keys.retain(|_, key| !key.revoked && self.now <= key.expires_at);
+        keys.keys.retain(|_, state| !state.revoked && self.now <= state.expires_at);
     }
 }
 

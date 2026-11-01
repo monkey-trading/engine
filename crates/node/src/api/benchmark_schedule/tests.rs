@@ -13,7 +13,7 @@ use tokio::sync::{Semaphore, mpsc, watch};
 use tokio::time::timeout;
 
 use crate::api::MAX_BACKFILLS;
-use crate::clock::now_ms;
+use crate::clock::SystemClock;
 use crate::history::Reader;
 use crate::limits::ApiLimits;
 use crate::log::Manifest;
@@ -136,7 +136,7 @@ fn state() -> (ApiState, mpsc::Receiver<Request>) {
         operator: cfg.operator().unwrap(),
         mock_custody: true,
         payouts_enabled: true,
-        clock: now_ms,
+        clock: Arc::new(SystemClock),
         log_dir: scratch_dir("benchmark-schedule-api"),
         manifest: watch::channel(Manifest::default()).1,
         backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),

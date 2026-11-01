@@ -41,7 +41,7 @@ pub(super) async fn admin(State(s): State<ApiState>, Json(req): Json<AdminReques
     // node's clock, an elected one once the staking mirror has also reached the registry's time, so
     // no request the engine cannot yet authorise enters the log, where it could be copied and sent
     // again after the handover.
-    let now = (s.clock)();
+    let now = s.clock.now_ms();
     let (recorded, due) = s.query(move |e| (e.operator().copied(), e.due_rotation(now))).await?;
     let current = recorded.unwrap_or(s.operator);
     let next = due.map(|rotation| Operator { address: rotation.address, ..current });

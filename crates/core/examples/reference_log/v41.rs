@@ -168,7 +168,7 @@ pub(crate) fn session(h: &mut Harness) {
         "{refused:?}"
     );
     // The key is registered for this account only: an order for another account it signs refuses
-    // as an invalid signature and spends nothing.
+    // as an invalid signature; the known signer spends its nonce, the target account nothing.
     let other = Client { expires_at: h.ts + 60_000, ..Client::new(0x71) };
     declare(h, &other);
     let deposit = AccessDeposit {

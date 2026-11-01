@@ -99,7 +99,7 @@ async fn a_rotated_key_reaches_the_log_only_once_its_notice_has_run_and_the_old_
     node.stamps.advance(Duration::from_millis(after_the_notice() as u64 - NOW as u64));
     let sample = sample_around(node.stamps.as_ref());
     node.state.tx.send(crate::sequencer::Request::TimeSample(sample)).await.unwrap();
-    node.state.clock = after_the_notice;
+    node.state.clock = std::sync::Arc::new(crate::clock::test_clock::TestClock::at(after_the_notice()));
     let expires_at = after_the_notice() + 60_000;
     let handover = sign(&next, &node.state.operator, reduce_only(Some(1)), 0, expires_at);
     let (status, events) = node.post("/v1/admin", serde_json::to_value(&handover).unwrap()).await;
@@ -384,7 +384,7 @@ impl Node {
             operator,
             mock_custody: true,
             payouts_enabled: true,
-            clock: || NOW,
+            clock: Arc::new(TestClock::at(NOW)),
             log_dir: dir.clone(),
             manifest,
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),

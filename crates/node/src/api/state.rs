@@ -132,7 +132,7 @@ impl ApiState {
                 debug!("request refused: account has already declared");
                 return Err(ApiError::Forbidden("account has already declared"));
             }
-            if let Err(Reject::ExpiryTooFar { latest }) = auth.check_expiry((self.clock)().max(last_sequenced)) {
+            if let Err(Reject::ExpiryTooFar { latest }) = auth.check_expiry(self.clock.now_ms().max(last_sequenced)) {
                 debug!(latest, "request refused: expiry too far ahead");
                 return Err(ApiError::BadRequest(format!("a first declaration must expire by {latest}")));
             }
@@ -192,7 +192,7 @@ impl ApiState {
         }
         // The clock may run ahead of the sequenced time between commands; a key dead by either
         // is dead, exactly as `check_fresh` reads request expiry.
-        if (self.clock)().max(last_sequenced) > key.expires_at {
+        if self.clock.now_ms().max(last_sequenced) > key.expires_at {
             debug!(session_key = %signer, expires_at = key.expires_at, "request refused: session key expired");
             return Err(ApiError::Unauthorized("session key expired"));
         }
@@ -219,7 +219,7 @@ impl ApiState {
         // sequencer's trusted-time TODO). An expiry too far ahead is left to the engine, which uses
         // the nonce as it refuses it, so the request cannot run later once its expiry comes within
         // the bound.
-        let now = (self.clock)().max(last_sequenced);
+        let now = self.clock.now_ms().max(last_sequenced);
         if let Err(Reject::Expired { expires_at }) = auth.check_expiry(now) {
             debug!(expires_at, "request refused: expired");
             return Err(ApiError::BadRequest(format!("request expired at {expires_at}")));

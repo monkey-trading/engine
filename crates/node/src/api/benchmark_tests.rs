@@ -77,7 +77,7 @@ endpoint = "{publisher}/estr"
 "#
     ));
     fs::write(&cfg_path, text).unwrap();
-    let first = Node::start(&dir, START, || START).await;
+    let first = Node::start(&dir, START, Arc::new(TestClock::at(START))).await;
     // A ticker cannot charge financing before the startup publisher synchronization.
     assert!(first.try_submit(Command::Tick).await.is_none());
     first.sync(&cfg_path, || START).await;
@@ -115,7 +115,7 @@ endpoint = "{publisher}/estr"
 
     // The publisher fixture includes the intervening rate changes. On restart it is fetched
     // before ticks, deposits, or feeds can cause catch-up to use the pre-downtime snapshot.
-    let restarted = Node::start(&dir, RESTART, || RESTART).await;
+    let restarted = Node::start(&dir, RESTART, Arc::new(TestClock::at(RESTART))).await;
     assert!(restarted.try_submit(Command::Tick).await.is_none());
     let request = restarted.sync(&cfg_path, || RESTART).await;
     assert!(request.command.is_benchmark_snapshot());
@@ -227,7 +227,7 @@ async fn run_watch_cases(cases: &[WatchCase], interrupt: bool) {
     "#
         ));
         fs::write(&cfg_path, text).unwrap();
-        let node = Node::start(&dir, clock(), clock).await;
+        let node = Node::start(&dir, clock(), Arc::new(TestClock::at(clock()))).await;
         let args = Cli::try_parse_from([
             "engine",
             "--config",
@@ -323,14 +323,14 @@ async fn run_watch_cases(cases: &[WatchCase], interrupt: bool) {
 }
 
 impl Node {
-    async fn start(dir: &Path, at: Millis, api_clock: fn() -> Millis) -> Self {
+    async fn start(dir: &Path, at: Millis, api_clock: Arc<dyn Clock>) -> Self {
         Self::start_with_router(dir, at, api_clock, std::convert::identity).await
     }
 
     async fn start_with_router(
         dir: &Path,
         at: Millis,
-        api_clock: fn() -> Millis,
+        api_clock: Arc<dyn Clock>,
         wrap: impl FnOnce(Router) -> Router,
     ) -> Self {
         let clock = Arc::new(TestClock::at(at));
@@ -384,7 +384,7 @@ impl Node {
         Self { tx, task, api, url, pin: hex::encode(tls.public_key_sha256), clock }
     }
 
-    async fn sync(&self, config: &Path, clock: fn() -> Millis) -> engine_core::command::AdminRequest {
+    async fn sync(&self, config: &Path, clock: impl Fn() -> Millis) -> engine_core::command::AdminRequest {
         let args = Cli::try_parse_from([
             "engine",
             "--config",
