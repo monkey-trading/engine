@@ -311,11 +311,14 @@ impl LogWriter {
                 warn!(alert = "log_catalog_unavailable", "folding the full catalog before the seal failed: {e:#}");
             }
         }
-        let Some((segment, out)) = self.open.take() else { return Ok(None) };
-        let done = out.into_inner().map_err(|e| e.into_error()).context("flushing log segment")?;
-        done.sync_all().context("syncing log segment")?;
+        let Some((segment, out)) = self.open.as_mut() else { return Ok(None) };
+        out.flush().context("flushing log segment")?;
+        out.get_ref().sync_all().context("syncing log segment")?;
         let listed = segment.info();
+        // List before taking the open segment: a failure leaves the segment open, so sequencing
+        // goes on with a log that still opens.
         self.list(&listed)?;
+        let (segment, _) = self.open.take().expect("the open segment is listed");
         info!(
             file = %listed.file,
             first_seq = listed.first_seq,
@@ -337,7 +340,10 @@ impl LogWriter {
             }
             Err(e) => {
                 warn!(alert = "log_catalog_unavailable", "the sealed segment publishes without the catalog: {e:#}");
+                // The archive serves the catalog when one is present: drop it so the plain manifest
+                // lists the sealed segment until the catalog recovers.
                 self.manifest.send_modify(|m| {
+                    m.catalog = None;
                     Arc::make_mut(&mut m.segments).push(listed.clone());
                     m.active = None;
                 });

@@ -400,7 +400,7 @@ pub(crate) async fn vault_signers(
 ) -> anyhow::Result<std::collections::BTreeSet<engine_core::types::AccountId>> {
     let mut signers = std::collections::BTreeSet::from([at.state.signer]);
     let epochs = at.lifecycle.as_ref().map(|lifecycle| lifecycle.signer_epoch).unwrap_or(1);
-    for epoch in 1..=epochs.min(64) {
+    for epoch in 1..=epochs.min(256) {
         // Chains without canonical lifecycle evidence contribute the current signer only.
         if let Ok(more) = vault.epoch_signers(at, &[epoch]).await {
             signers.extend(more);
@@ -437,11 +437,13 @@ pub(crate) async fn sync_predecessor_log(
         // A transport failure is not fatal — a local copy from an earlier attempt may exist, and
         // the handover's replay decides. An integrity failure (a file that differs from its
         // listing, a copy that does not open) is: the local prefix cannot be trusted.
-        if e.downcast_ref::<reqwest::Error>().is_some() {
-            warn!("fetching the predecessor's published log failed: {e:#}");
-        } else {
+        // Transport failures (timeouts, unreachable origins, over-bound bodies) are non-fatal;
+        // only an integrity failure — a listing the bytes do not match — refuses the start.
+        let text = format!("{e:#}");
+        if text.contains("differs from its listing") || text.contains("manifest") || text.contains("not canonical") {
             return Err(e).context("the predecessor's published log failed integrity checks");
         }
+        warn!("fetching the predecessor's published log failed: {e:#}");
     }
     let manifest = crate::log::Manifest::load(dir)?;
     if manifest.segments.is_empty() {
