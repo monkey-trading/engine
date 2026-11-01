@@ -163,14 +163,10 @@ impl Sequencer {
 
     /// Seals the log's open segment for an admitted handover stop, then answers it: the published
     /// archive and the successor the keys go to need the segment the final checkpoint is in, so it
-    /// seals before the stop commits and a failure propagates instead of handing over without it.
-    /// A full live catalog is folded first, as rotation does; a catalog that still cannot take the
-    /// segment degrades to the plain manifest, which remains authoritative.
-    /// Error cases:
-    /// - the tail segment cannot be sealed
-    /// Whether an admitted handover stop sealed the log's tail: answers the stop either way, so a
-    /// failure is the refusal the predecessor reports while this node goes on sequencing. `None`
-    /// is no stop.
+    /// seals before the stop commits, and a failure is the refusal the predecessor reports while
+    /// this node goes on sequencing, not a stop. A full live catalog is folded first, as rotation
+    /// does; a catalog that still cannot take the segment degrades to the plain manifest, which
+    /// remains authoritative. With no stop the answer is `false` and nothing seals.
     pub(super) fn seal_handover_tail(&mut self, reply: Option<oneshot::Sender<anyhow::Result<()>>>) -> bool {
         let Some(reply) = reply else { return false };
         let sealed =
