@@ -34,8 +34,8 @@
 //! - **Staked balance:** `keccak256(abi.encode(uint256 staked))`, the account's staked MONKEY in
 //!   base units, from `V25`, mirroring the staking contract's finalised events.
 //! - **Session keys:** the keccak-256 of the JSON encoding of the account's session keys — each
-//!   one's expiry and revocation — keyed by the account, from `V41`; a key's next request nonce is
-//!   its own request-nonce leaf.
+//!   one's expiry and revocation — and its lifetime registration count, keyed by the account, from
+//!   `V41`; a key's next request nonce is its own request-nonce leaf.
 //! - **Emission period result:** `keccak256(abi.encode(int128 realised, int128 writtenOff))`, the
 //!   account's realised PnL and written-off debt in the open emission period, from `V19`, until the
 //!   period is finalised.
@@ -73,7 +73,7 @@ use crate::futures::FuturesState;
 use crate::market::{MarketSpec, QuoteCurrency};
 use crate::merkle::keccak;
 use crate::price::{Index, SourceQuote};
-use crate::session_keys::SessionKey;
+use crate::session_keys::AccountSessionKeys;
 use crate::staking::UsdcUnits;
 use crate::types::{AccountId, MarketId, Millis, OrderId};
 
@@ -455,8 +455,8 @@ pub(crate) fn session_key_key(account: AccountId) -> B256 {
 }
 
 /// The value hash of an account's session-keys leaf: the keccak-256 of the JSON encoding of its
-/// keys, whose fields name each key's expiry and revocation.
-pub(crate) fn session_key_hash(keys: &BTreeMap<AccountId, SessionKey>) -> B256 {
+/// keys and lifetime count, whose fields name each key's expiry and revocation.
+pub(crate) fn session_key_hash(keys: &AccountSessionKeys) -> B256 {
     json_hash(keys)
 }
 

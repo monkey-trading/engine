@@ -23,10 +23,16 @@ const SESSION_SEED: u8 = 0x3b;
 /// of scope, a revoked key refuses distinctly and a fresh registration revives it with its nonce
 /// still spent, and a registration past the 24-hour cap refuses.
 pub(crate) fn session(h: &mut Harness) {
-    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V41 });
-
     let account = Client { expires_at: h.ts + 60_000, ..Client::new(ACCOUNT_SEED) };
     let key = Client { expires_at: h.ts + 60_000, ..Client::new(SESSION_SEED) };
+    // Before `V41` activates, a registration is unsupported and spends nothing.
+    let refused = h.cmd(account.register_session_key(0, key.account, h.ts + 3_600_000));
+    assert!(
+        matches!(refused[..], [Event::SessionKeyRejected { reason: Reject::SessionKeyUnsupported, .. }]),
+        "{refused:?}"
+    );
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V41 });
+
     declare(h, &account);
     fund_house(h, &account);
     fund(h, &account);
@@ -42,8 +48,25 @@ pub(crate) fn session(h: &mut Harness) {
         "{refused:?}"
     );
     assert_eq!(h.engine.next_request_nonce(account.account), next + 1);
-    // The account's own key can never be a session key.
+    // The account's own key, an expiry already past, no signature at all, and the operator's
+    // address can never be a session key.
     let refused = h.cmd(account.register_session_key(next + 1, account.account, h.ts + 3_600_000));
+    assert!(
+        matches!(refused[..], [Event::SessionKeyRejected { reason: Reject::InvalidSessionKey, .. }]),
+        "{refused:?}"
+    );
+    let refused = h.cmd(account.register_session_key(next + 2, key.account, h.ts));
+    assert!(matches!(refused[..], [Event::SessionKeyRejected { reason: Reject::Expired { .. }, .. }]), "{refused:?}");
+    let unsigned = Client { expires_at: h.ts + 60_000, ..Client::new(0x54) };
+    let refused = h.cmd(Command::RegisterSessionKey {
+        account: unsigned.account,
+        session_key: key.account,
+        expires_at: h.ts + 3_600_000,
+        auth: None,
+    });
+    assert!(matches!(refused[..], [Event::SessionKeyRejected { reason: Reject::MissingSignature, .. }]), "{refused:?}");
+    let operator = h.engine.operator().expect("the log records its operator").address;
+    let refused = h.cmd(account.register_session_key(next + 3, operator, h.ts + 3_600_000));
     assert!(
         matches!(refused[..], [Event::SessionKeyRejected { reason: Reject::InvalidSessionKey, .. }]),
         "{refused:?}"
@@ -52,12 +75,12 @@ pub(crate) fn session(h: &mut Harness) {
     // One account signature registers the key; its orders and cancels then fill and rest on the
     // key's nonce sequence while the account's sequence stays untouched.
     let expires_at = h.ts + 3_600_000;
-    let events = h.cmd(account.register_session_key(next + 2, key.account, expires_at));
+    let events = h.cmd(account.register_session_key(next + 4, key.account, expires_at));
     assert!(
         matches!(events[..], [Event::SessionKeyRegistered { session_key, .. }] if session_key == key.account),
         "{events:?}"
     );
-    assert_eq!(h.engine.next_request_nonce(account.account), next + 3);
+    assert_eq!(h.engine.next_request_nonce(account.account), next + 5);
     let events = order(
         h,
         &account,
@@ -76,7 +99,7 @@ pub(crate) fn session(h: &mut Harness) {
     let events = cancel(h, &account, &key, 2, order_id);
     assert!(events.iter().any(|event| matches!(event, Event::OrderCancelled { .. })), "{events:?}");
     assert_eq!(h.engine.next_request_nonce(key.account), 3);
-    assert_eq!(h.engine.next_request_nonce(account.account), next + 3);
+    assert_eq!(h.engine.next_request_nonce(account.account), next + 5);
 
     // The key can never move funds: the withdrawal refuses as out of scope, using the key's nonce.
     let events = withdraw(h, &account, &key, 3, "100");
@@ -85,7 +108,7 @@ pub(crate) fn session(h: &mut Harness) {
 
     // An account-signed revocation kills the key: its order refuses distinctly, and a fresh
     // registration revives it with the nonce still spent, so the captured order cannot replay.
-    let events = h.cmd(account.revoke_session_key(next + 3, key.account));
+    let events = h.cmd(account.revoke_session_key(next + 5, key.account));
     assert!(matches!(events[..], [Event::SessionKeyRevoked { .. }]), "{events:?}");
     let events = order(
         h,
@@ -97,7 +120,7 @@ pub(crate) fn session(h: &mut Harness) {
         OrderKind::Market { quoted: f("80000"), max_slippage_bps: None },
     );
     assert_eq!(rejection(&events), &Reject::SessionKeyRevoked, "{events:?}");
-    let events = h.cmd(account.register_session_key(next + 4, key.account, h.ts + 3_600_000));
+    let events = h.cmd(account.register_session_key(next + 6, key.account, h.ts + 3_600_000));
     assert!(matches!(events[..], [Event::SessionKeyRegistered { .. }]), "{events:?}");
     let events = order(
         h,
@@ -120,10 +143,52 @@ pub(crate) fn session(h: &mut Harness) {
     );
     assert!(events.iter().any(|event| matches!(event, Event::Fill(_))), "{events:?}");
 
+    // A key's signature cannot manage keys: its registration of a stranger refuses as an invalid
+    // signature, and revoking a key the account never registered refuses as an invalid key.
+    let stranger = Client { expires_at: h.ts + 60_000, ..Client::new(0x52) };
+    let hash = eip712::session_key_registration_hash(
+        &key.domain,
+        account.account,
+        stranger.account,
+        h.ts + 3_600_000,
+        0,
+        key.expires_at,
+    );
+    let auth = RequestAuth { nonce: 0, expires_at: key.expires_at, signature: eip712::sign(&key.key, &hash) };
+    let refused = h.cmd(Command::RegisterSessionKey {
+        account: account.account,
+        session_key: stranger.account,
+        expires_at: h.ts + 3_600_000,
+        auth: Some(auth),
+    });
+    assert!(matches!(refused[..], [Event::SessionKeyRejected { reason: Reject::InvalidSignature, .. }]), "{refused:?}");
+    let refused = h.cmd(account.revoke_session_key(next + 7, stranger.account));
+    assert!(
+        matches!(refused[..], [Event::SessionKeyRejected { reason: Reject::InvalidSessionKey, .. }]),
+        "{refused:?}"
+    );
+    // The key is registered for this account only: an order for another account it signs refuses
+    // as an invalid signature and spends nothing.
+    let other = Client { expires_at: h.ts + 60_000, ..Client::new(0x71) };
+    declare(h, &other);
+    let deposit = AccessDeposit {
+        account: Some(other.account),
+        payer: Some(other.account),
+        amount: f("1000000"),
+        chain_ref: "0xclient:3b".into(),
+    };
+    let evidence = screened(h, eip712::deposit_screening_hash(&deposit), Some(other.account), Some(other.account));
+    let events = h.cmd(Command::AccessDeposit { deposit, evidence });
+    assert!(matches!(events[..], [Event::Deposited { .. }]), "{events:?}");
+    let events =
+        order(h, &other, &key, 6, Side::Buy, "0.01", OrderKind::Market { quoted: f("80000"), max_slippage_bps: None });
+    assert_eq!(rejection(&events), &Reject::InvalidSignature, "{events:?}");
+    assert_eq!(h.engine.next_request_nonce(key.account), 7);
+
     // A second key shares the account's leaf; a key whose expiry has passed refuses distinctly
     // until a fresh registration prunes it and revives it.
     let second = Client { expires_at: h.ts + 60_000, ..Client::new(SESSION_SEED + 1) };
-    let events = h.cmd(account.register_session_key(next + 5, second.account, h.ts + 60_000));
+    let events = h.cmd(account.register_session_key(next + 8, second.account, h.ts + 60_000));
     assert!(matches!(events[..], [Event::SessionKeyRegistered { .. }]), "{events:?}");
     h.advance(60_001);
     h.price(BTC, "80000");

@@ -190,7 +190,9 @@ impl ApiState {
             debug!(session_key = %signer, "request refused: session key revoked");
             return Err(ApiError::Unauthorized("session key revoked"));
         }
-        if last_sequenced > key.expires_at {
+        // The clock may run ahead of the sequenced time between commands; a key dead by either
+        // is dead, exactly as `check_fresh` reads request expiry.
+        if (self.clock)().max(last_sequenced) > key.expires_at {
             debug!(session_key = %signer, expires_at = key.expires_at, "request refused: session key expired");
             return Err(ApiError::Unauthorized("session key expired"));
         }

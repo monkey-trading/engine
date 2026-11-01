@@ -15,7 +15,9 @@ use engine_core::auth::{MAX_EXPIRY_AHEAD_MS, RequestAuth};
 use engine_core::command::{Command, OrderRequest};
 use engine_core::eip712;
 use engine_core::event::{CancelReason, Event, Reject};
-use engine_core::session_keys::{MAX_SESSION_KEY_EXPIRY_MS, MAX_SESSION_KEYS_PER_ACCOUNT, SessionKey};
+use engine_core::session_keys::{
+    MAX_SESSION_KEY_EXPIRY_MS, MAX_SESSION_KEY_REGISTRATIONS, MAX_SESSION_KEYS_PER_ACCOUNT, SessionKey,
+};
 
 #[test]
 fn one_account_signature_registers_a_key_that_trades_without_the_wallet() {
@@ -306,6 +308,64 @@ fn a_registration_expiry_is_capped_at_a_day_and_must_lie_in_the_future() {
     let cmd = register(&h, &client, &key, h.ts + 1);
     let events = h.cmd(cmd);
     assert!(matches!(events[..], [Event::SessionKeyRegistered { .. }]), "{events:?}");
+}
+
+#[test]
+fn a_pruned_key_keeps_its_replay_protection() {
+    let (mut h, client, key) = funded();
+    h.cmd(register(&h, &client, &key, h.ts + HOUR_MS));
+    assert_eq!(fills(&trade(&mut h, &key, 0, buy(client.account))).len(), 1);
+    h.cmd(client.revoke_session_key(2, key.account));
+    // A fresh registration of another key prunes the revoked one; its nonce entry stays spent.
+    let other = Client::new(9);
+    h.cmd(register(&h, &client, &other, h.ts + HOUR_MS));
+    assert_eq!(h.engine.session_key(client.account, key.account), None);
+    assert_eq!(h.engine.next_request_nonce(key.account), 1);
+
+    // An order the pruned key signed before the revocation lands now: it refuses as an invalid
+    // signature but still spends the key's nonce, so re-registering the key cannot replay it.
+    let events = trade(&mut h, &key, 1, buy(client.account));
+    assert_eq!(rejection(&events), &Reject::InvalidSignature);
+    assert_eq!(h.engine.next_request_nonce(key.account), 2);
+    h.cmd(register(&h, &client, &key, h.ts + HOUR_MS));
+    let events = trade(&mut h, &key, 1, buy(client.account));
+    assert_eq!(rejection(&events), &Reject::InvalidNonce { expected: 2 });
+    let events = trade(&mut h, &key, 2, buy(client.account));
+    assert_eq!(fills(&events).len(), 1, "{events:?}");
+}
+
+#[test]
+fn an_account_cannot_register_more_than_a_lifetime_of_session_keys() {
+    let (mut h, client, _) = funded();
+    assert_eq!(MAX_SESSION_KEY_REGISTRATIONS, 100);
+    // Nine short-lived keys a batch, expired before the next batch: pruning keeps the live count
+    // under the cap while the lifetime total grows to its bound.
+    for batch in 0..11u64 {
+        for i in 0..9u8 {
+            let key = Client::new(0x60 + i);
+            let cmd = register_expiring(&h, &client, &key, h.ts + 1_000, h.ts + 60_000);
+            let events = h.cmd(cmd);
+            assert!(matches!(events[..], [Event::SessionKeyRegistered { .. }]), "batch {batch}: {events:?}");
+        }
+        h.advance(1_001);
+    }
+    let last = Client::new(0x60 + 9);
+    let cmd = register_expiring(&h, &client, &last, h.ts + 1_000, h.ts + 60_000);
+    let events = h.cmd(cmd);
+    assert!(matches!(events[..], [Event::SessionKeyRegistered { .. }]), "{events:?}");
+    assert_eq!(h.engine.session_key_registrations(client.account), 100);
+    // The hundred-and-first key refuses even with live keys pruned under the cap.
+    let overflow = Client::new(0x70);
+    let cmd = register_expiring(&h, &client, &overflow, h.ts + 1_000, h.ts + 60_000);
+    let events = h.cmd(cmd);
+    assert_eq!(
+        events,
+        [Event::SessionKeyRejected {
+            account: client.account,
+            session_key: overflow.account,
+            reason: Reject::TooManySessionKeys { max: MAX_SESSION_KEY_REGISTRATIONS as usize },
+        }]
+    );
 }
 
 #[test]

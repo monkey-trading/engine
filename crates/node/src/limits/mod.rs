@@ -198,6 +198,7 @@ impl<C: Clock + Clone> ApiLimits<C> {
     fn retain_recent(&self) {
         self.per_ip.retain_recent();
         self.initial_per_ip.retain_recent();
+        self.session_accounts.retain_recent();
         self.per_account.retain_recent();
         self.per_ip_connections.retain_recent();
     }

@@ -5,9 +5,9 @@
 //! logs, and dev logs that record `Unsigned`, accept unsigned requests. From `V8`, the operator
 //! signs admin commands the same way, with the key the log's `Operator` records. From `V41`, an
 //! account's registered session key may sign orders and cancels within its expiry, on the key's
-//! own nonce sequence; a revoked or expired key, a key signing a withdrawal, and any registration
-//! or revocation not signed by the account key refuse with their own rejections (see
-//! `session_keys`).
+//! own nonce sequence; a revoked or expired key and a key signing a withdrawal refuse with their
+//! own rejections, and any registration or revocation not signed by the account key refuses as an
+//! invalid signature (see `session_keys`).
 
 use serde::{Deserialize, Serialize};
 
@@ -214,7 +214,17 @@ impl Engine {
         if scope == RequestScope::Keys || self.protocol_version < ProtocolVersion::V41 {
             return Err(Reject::InvalidSignature);
         }
-        let Some(key) = self.session_keys.get(&account).and_then(|keys| keys.get(&signer)).copied() else {
+        let Some(key) = self.session_keys.get(&account).and_then(|keys| keys.keys.get(&signer)).copied() else {
+            // A signer that has spent request nonces before — a pruned session key — keeps its
+            // replay protection after pruning: the refusal still spends its nonce, so a captured
+            // request cannot replay once the key is re-registered. The operator's sequence is
+            // the admin channel's, never a session key's, and is never spent here.
+            if self.protocol_version >= ProtocolVersion::V41
+                && self.operator.is_none_or(|operator| operator.address != signer)
+                && self.request_nonces.contains_key(&signer)
+            {
+                self.use_nonce(signer, auth)?;
+            }
             return Err(Reject::InvalidSignature);
         };
         // The key is registered, so the request spends its nonce even when the key's state or the

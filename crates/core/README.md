@@ -422,13 +422,6 @@ above the finalised frontier, a reversed deposit at vault deposit id 0 is the va
 refund alone, not unheld too, so `startExit` no longer reserves it twice; its session is in
 `examples/reference_log/v39.rs`.
 
-Protocol V41 adds session keys (`src/session_keys.rs`): one account-signed registration
-authorises a browser-held key to place and cancel orders for the account until its expiry, capped
-at 24 hours, or an account-signed revocation; the key's requests run on the key's own nonce
-sequence under the same per-request expiry cap, a revoked or expired key and a key signing a
-withdrawal refuse with their own rejections, and an account's keys are one pruned, capped leaf of
-the state tree; its session is in `examples/reference_log/v41.rs`.
-
 Protocol V40 caps the spread a close can pay (`src/close_spread.rs`): a per-market ceiling registry
 adopted at genesis, kept apart from `MarketSpec`, bounds every close whatever an operator command
 does to the parameters, stress levels, toxicity tiers, or spread tiers. A pure close's charge
@@ -438,6 +431,13 @@ fills its closing slice and cancels the rest. After genesis a ceiling enters onl
 adoption in effect seven days after it is logged, and an entry can only be lowered; a listing
 without an adopted ceiling, or one changing the instrument's identity, is refused; its session is
 in `examples/reference_log/v40.rs`.
+
+Protocol V41 adds session keys (`src/session_keys.rs`): one account-signed registration
+authorises a browser-held key to place and cancel orders for the account until its expiry, capped
+at 24 hours, or an account-signed revocation; the key's requests run on the key's own nonce
+sequence under the same per-request expiry cap, a revoked or expired key and a key signing a
+withdrawal refuse with their own rejections, and an account's keys are one pruned, capped leaf of
+the state tree; its session is in `examples/reference_log/v41.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

@@ -206,6 +206,45 @@ async fn a_flooding_key_cannot_starve_the_accounts_revocation() {
     assert_eq!(events[0]["type"], "session_key_revoked", "{events}");
 }
 
+#[tokio::test]
+async fn a_session_key_cannot_revoke_itself_or_another_key() {
+    let node = Node::start("session-key-revoke-scope", true).await;
+    let account = key(1);
+    let session = key(7);
+    let other = key(8);
+    node.onboard(&account).await;
+    for (nonce, key) in [(1, &session), (2, &other)] {
+        let register = registration(&account, key, nonce, NOW + 3_600_000);
+        assert_eq!(node.post("/v1/session-keys", register).await.0, StatusCode::OK);
+    }
+    // The key's signature on a revocation is not the account's: refused before sequencing, the
+    // registration stands, and no nonce is spent.
+    let hash = eip712::session_key_revocation_hash(
+        &eip712::domain(31_337, VAULT),
+        eip712::address(account.verifying_key()),
+        eip712::address(other.verifying_key()),
+        0,
+        NOW + 60_000,
+    );
+    let auth = RequestAuth { nonce: 0, expires_at: NOW + 60_000, signature: eip712::sign(&session, &hash) };
+    let body = serde_json::json!({
+        "account": eip712::address(account.verifying_key()),
+        "session_key": eip712::address(other.verifying_key()),
+        "auth": auth,
+    });
+    let (status, body) = delete(&node, "/v1/session-keys", body).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::UNAUTHORIZED, Some("invalid signature")));
+    assert!(
+        node.entries().iter().all(|entry| !matches!(entry, LogEntry::Command(c) if matches!(c.sequenced.cmd, Command::RevokeSessionKey { .. }))),
+        "the revocation never reached the log"
+    );
+    let session_id = eip712::address(session.verifying_key());
+    assert_eq!(node.get(&format!("/v1/accounts/{session_id}/nonce")).await["next_nonce"], 0);
+    let (status, events) = node.post("/v1/orders", session_order(&account, &session, 0)).await;
+    assert_eq!(status, StatusCode::OK, "{events}");
+    assert!(events.as_array().unwrap().iter().any(|event| event["type"] == "fill"), "{events}");
+}
+
 /// `account`'s signed registration of `session` until `session_expires_at`, as a JSON body.
 fn registration(account: &SigningKey, session: &SigningKey, nonce: u64, session_expires_at: i64) -> Value {
     json!({

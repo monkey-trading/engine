@@ -1,488 +1,488 @@
 {
- "private_key": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
- "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
- "chain_id": 31337,
- "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa3",
- "requests": [
-  {
-   "kind": "order",
-   "nonce": 0,
-   "expires_at": 1792540800000,
-   "body": {
-    "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
-    "client_id": 1,
-    "market": 1,
-    "side": "buy",
-    "qty": "0.5",
-    "kind": {
-     "kind": "market",
-     "quoted": "100000",
-     "max_slippage_bps": 10
+  "private_key": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+  "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+  "chain_id": 31337,
+  "vault": "0x5fbdb2315678afecb367f032d93f642f64180aa3",
+  "requests": [
+    {
+      "kind": "order",
+      "nonce": 0,
+      "expires_at": 1792540800000,
+      "body": {
+        "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        "client_id": 1,
+        "market": 1,
+        "side": "buy",
+        "qty": "0.5",
+        "kind": {
+          "kind": "market",
+          "quoted": "100000",
+          "max_slippage_bps": 10
+        }
+      },
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "OrderRequest": [
+            {
+              "name": "account",
+              "type": "address"
+            },
+            {
+              "name": "nonce",
+              "type": "uint64"
+            },
+            {
+              "name": "expiresAt",
+              "type": "int64"
+            },
+            {
+              "name": "clientId",
+              "type": "uint64"
+            },
+            {
+              "name": "market",
+              "type": "uint32"
+            },
+            {
+              "name": "side",
+              "type": "string"
+            },
+            {
+              "name": "qty",
+              "type": "int128"
+            },
+            {
+              "name": "kind",
+              "type": "string"
+            },
+            {
+              "name": "price",
+              "type": "int128"
+            },
+            {
+              "name": "hasMaxSlippage",
+              "type": "bool"
+            },
+            {
+              "name": "maxSlippageBps",
+              "type": "int64"
+            },
+            {
+              "name": "reduceOnly",
+              "type": "bool"
+            }
+          ]
+        },
+        "primaryType": "OrderRequest",
+        "domain": {
+          "name": "monkeytrading",
+          "version": "1",
+          "chainId": 31337,
+          "verifyingContract": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+        },
+        "message": {
+          "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+          "nonce": 0,
+          "expiresAt": 1792540800000,
+          "clientId": 1,
+          "market": 1,
+          "side": "buy",
+          "qty": "500000000",
+          "kind": "market",
+          "price": "100000000000000",
+          "hasMaxSlippage": true,
+          "maxSlippageBps": 10,
+          "reduceOnly": false
+        }
+      },
+      "signature": "0x49a6a12c07991877f92e5402347a3de9fd8443d1e0c46cfb1192425ee3be45a634d6100e0fe3c310d87cae48ca6b08aea0bc0f803498752cc5f2ffc867b783bf1c"
+    },
+    {
+      "kind": "order",
+      "nonce": 1,
+      "expires_at": 1792540860000,
+      "body": {
+        "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        "client_id": 2,
+        "market": 2,
+        "side": "sell",
+        "qty": "2",
+        "kind": {
+          "kind": "stop",
+          "price": "3500.25"
+        },
+        "reduce_only": true
+      },
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "OrderRequest": [
+            {
+              "name": "account",
+              "type": "address"
+            },
+            {
+              "name": "nonce",
+              "type": "uint64"
+            },
+            {
+              "name": "expiresAt",
+              "type": "int64"
+            },
+            {
+              "name": "clientId",
+              "type": "uint64"
+            },
+            {
+              "name": "market",
+              "type": "uint32"
+            },
+            {
+              "name": "side",
+              "type": "string"
+            },
+            {
+              "name": "qty",
+              "type": "int128"
+            },
+            {
+              "name": "kind",
+              "type": "string"
+            },
+            {
+              "name": "price",
+              "type": "int128"
+            },
+            {
+              "name": "hasMaxSlippage",
+              "type": "bool"
+            },
+            {
+              "name": "maxSlippageBps",
+              "type": "int64"
+            },
+            {
+              "name": "reduceOnly",
+              "type": "bool"
+            }
+          ]
+        },
+        "primaryType": "OrderRequest",
+        "domain": {
+          "name": "monkeytrading",
+          "version": "1",
+          "chainId": 31337,
+          "verifyingContract": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+        },
+        "message": {
+          "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+          "nonce": 1,
+          "expiresAt": 1792540860000,
+          "clientId": 2,
+          "market": 2,
+          "side": "sell",
+          "qty": "2000000000",
+          "kind": "stop",
+          "price": "3500250000000",
+          "hasMaxSlippage": false,
+          "maxSlippageBps": 0,
+          "reduceOnly": true
+        }
+      },
+      "signature": "0x2001437ca03c64a92c5ef368b6e7fd552e0637fa8a9974faa8c517f31669dda248ad4447d4738a1b046d0678cf7aaca1c608fcb18dba141b2a800ce665962ee71c"
+    },
+    {
+      "kind": "cancel",
+      "nonce": 2,
+      "expires_at": 1792540920000,
+      "body": {
+        "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        "order_id": 42
+      },
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "CancelRequest": [
+            {
+              "name": "account",
+              "type": "address"
+            },
+            {
+              "name": "nonce",
+              "type": "uint64"
+            },
+            {
+              "name": "expiresAt",
+              "type": "int64"
+            },
+            {
+              "name": "orderId",
+              "type": "uint64"
+            }
+          ]
+        },
+        "primaryType": "CancelRequest",
+        "domain": {
+          "name": "monkeytrading",
+          "version": "1",
+          "chainId": 31337,
+          "verifyingContract": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+        },
+        "message": {
+          "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+          "nonce": 2,
+          "expiresAt": 1792540920000,
+          "orderId": 42
+        }
+      },
+      "signature": "0x67268d5a424c2857c4f80752275cc1270dfbd964646aed3618bbeffa49740a44035f10c4b349c2f8e93731e21833dd4c499d34c6b17462ea685d9134dd2407621b"
+    },
+    {
+      "kind": "withdrawal",
+      "nonce": 3,
+      "expires_at": 1792540980000,
+      "body": {
+        "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        "amount": "1234.5"
+      },
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "WithdrawalRequest": [
+            {
+              "name": "account",
+              "type": "address"
+            },
+            {
+              "name": "nonce",
+              "type": "uint64"
+            },
+            {
+              "name": "expiresAt",
+              "type": "int64"
+            },
+            {
+              "name": "amount",
+              "type": "int128"
+            }
+          ]
+        },
+        "primaryType": "WithdrawalRequest",
+        "domain": {
+          "name": "monkeytrading",
+          "version": "1",
+          "chainId": 31337,
+          "verifyingContract": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+        },
+        "message": {
+          "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+          "nonce": 3,
+          "expiresAt": 1792540980000,
+          "amount": "1234500000000"
+        }
+      },
+      "signature": "0x5dc1e1e312cc94561bf160507af321ed6f99df50595e97e0a398a794abe572e700cc0e3002935c8a6961144c2d038f43924a86e3459ebfc1d4f50121be26fc991c"
+    },
+    {
+      "kind": "register_session_key",
+      "nonce": 4,
+      "expires_at": 1792540800000,
+      "body": {
+        "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        "session_key": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+        "expires_at": 1792627200000
+      },
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "RegisterSessionKey": [
+            {
+              "name": "account",
+              "type": "address"
+            },
+            {
+              "name": "nonce",
+              "type": "uint64"
+            },
+            {
+              "name": "expiresAt",
+              "type": "int64"
+            },
+            {
+              "name": "sessionKey",
+              "type": "address"
+            },
+            {
+              "name": "sessionExpiresAt",
+              "type": "int64"
+            }
+          ]
+        },
+        "primaryType": "RegisterSessionKey",
+        "domain": {
+          "name": "monkeytrading",
+          "version": "1",
+          "chainId": 31337,
+          "verifyingContract": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+        },
+        "message": {
+          "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+          "nonce": 4,
+          "expiresAt": 1792540800000,
+          "sessionKey": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+          "sessionExpiresAt": 1792627200000
+        }
+      },
+      "signature": "0x9b5984d4d7268acada7f8a0ab7c49f6c478b5fbd3a7a41f9d159b31fb030101763feecac381e11532422cd9d61818836ba2e9a373747c5163ae944f3aef8ab981b"
+    },
+    {
+      "kind": "revoke_session_key",
+      "nonce": 5,
+      "expires_at": 1792540800000,
+      "body": {
+        "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        "session_key": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8"
+      },
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "RevokeSessionKey": [
+            {
+              "name": "account",
+              "type": "address"
+            },
+            {
+              "name": "nonce",
+              "type": "uint64"
+            },
+            {
+              "name": "expiresAt",
+              "type": "int64"
+            },
+            {
+              "name": "sessionKey",
+              "type": "address"
+            }
+          ]
+        },
+        "primaryType": "RevokeSessionKey",
+        "domain": {
+          "name": "monkeytrading",
+          "version": "1",
+          "chainId": 31337,
+          "verifyingContract": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+        },
+        "message": {
+          "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+          "nonce": 5,
+          "expiresAt": 1792540800000,
+          "sessionKey": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8"
+        }
+      },
+      "signature": "0xc97a70cb4d1cecf490b48c5d76a80273703be05b15cfa5a57838aefe3c7805ce347a03d40b7cbf89d8e38c6ffe3aeff4c3e73f1db44dde6ededbb7f2c78cc8431c"
     }
-   },
-   "typed_data": {
-    "types": {
-     "EIP712Domain": [
-      {
-       "name": "name",
-       "type": "string"
-      },
-      {
-       "name": "version",
-       "type": "string"
-      },
-      {
-       "name": "chainId",
-       "type": "uint256"
-      },
-      {
-       "name": "verifyingContract",
-       "type": "address"
-      }
-     ],
-     "OrderRequest": [
-      {
-       "name": "account",
-       "type": "address"
-      },
-      {
-       "name": "nonce",
-       "type": "uint64"
-      },
-      {
-       "name": "expiresAt",
-       "type": "int64"
-      },
-      {
-       "name": "clientId",
-       "type": "uint64"
-      },
-      {
-       "name": "market",
-       "type": "uint32"
-      },
-      {
-       "name": "side",
-       "type": "string"
-      },
-      {
-       "name": "qty",
-       "type": "int128"
-      },
-      {
-       "name": "kind",
-       "type": "string"
-      },
-      {
-       "name": "price",
-       "type": "int128"
-      },
-      {
-       "name": "hasMaxSlippage",
-       "type": "bool"
-      },
-      {
-       "name": "maxSlippageBps",
-       "type": "int64"
-      },
-      {
-       "name": "reduceOnly",
-       "type": "bool"
-      }
-     ]
-    },
-    "primaryType": "OrderRequest",
-    "domain": {
-     "name": "monkeytrading",
-     "version": "1",
-     "chainId": 31337,
-     "verifyingContract": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
-    },
-    "message": {
-     "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
-     "nonce": 0,
-     "expiresAt": 1792540800000,
-     "clientId": 1,
-     "market": 1,
-     "side": "buy",
-     "qty": "500000000",
-     "kind": "market",
-     "price": "100000000000000",
-     "hasMaxSlippage": true,
-     "maxSlippageBps": 10,
-     "reduceOnly": false
-    }
-   },
-   "signature": "0x49a6a12c07991877f92e5402347a3de9fd8443d1e0c46cfb1192425ee3be45a634d6100e0fe3c310d87cae48ca6b08aea0bc0f803498752cc5f2ffc867b783bf1c"
-  },
-  {
-   "kind": "order",
-   "nonce": 1,
-   "expires_at": 1792540860000,
-   "body": {
-    "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
-    "client_id": 2,
-    "market": 2,
-    "side": "sell",
-    "qty": "2",
-    "kind": {
-     "kind": "stop",
-     "price": "3500.25"
-    },
-    "reduce_only": true
-   },
-   "typed_data": {
-    "types": {
-     "EIP712Domain": [
-      {
-       "name": "name",
-       "type": "string"
-      },
-      {
-       "name": "version",
-       "type": "string"
-      },
-      {
-       "name": "chainId",
-       "type": "uint256"
-      },
-      {
-       "name": "verifyingContract",
-       "type": "address"
-      }
-     ],
-     "OrderRequest": [
-      {
-       "name": "account",
-       "type": "address"
-      },
-      {
-       "name": "nonce",
-       "type": "uint64"
-      },
-      {
-       "name": "expiresAt",
-       "type": "int64"
-      },
-      {
-       "name": "clientId",
-       "type": "uint64"
-      },
-      {
-       "name": "market",
-       "type": "uint32"
-      },
-      {
-       "name": "side",
-       "type": "string"
-      },
-      {
-       "name": "qty",
-       "type": "int128"
-      },
-      {
-       "name": "kind",
-       "type": "string"
-      },
-      {
-       "name": "price",
-       "type": "int128"
-      },
-      {
-       "name": "hasMaxSlippage",
-       "type": "bool"
-      },
-      {
-       "name": "maxSlippageBps",
-       "type": "int64"
-      },
-      {
-       "name": "reduceOnly",
-       "type": "bool"
-      }
-     ]
-    },
-    "primaryType": "OrderRequest",
-    "domain": {
-     "name": "monkeytrading",
-     "version": "1",
-     "chainId": 31337,
-     "verifyingContract": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
-    },
-    "message": {
-     "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
-     "nonce": 1,
-     "expiresAt": 1792540860000,
-     "clientId": 2,
-     "market": 2,
-     "side": "sell",
-     "qty": "2000000000",
-     "kind": "stop",
-     "price": "3500250000000",
-     "hasMaxSlippage": false,
-     "maxSlippageBps": 0,
-     "reduceOnly": true
-    }
-   },
-   "signature": "0x2001437ca03c64a92c5ef368b6e7fd552e0637fa8a9974faa8c517f31669dda248ad4447d4738a1b046d0678cf7aaca1c608fcb18dba141b2a800ce665962ee71c"
-  },
-  {
-   "kind": "cancel",
-   "nonce": 2,
-   "expires_at": 1792540920000,
-   "body": {
-    "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
-    "order_id": 42
-   },
-   "typed_data": {
-    "types": {
-     "EIP712Domain": [
-      {
-       "name": "name",
-       "type": "string"
-      },
-      {
-       "name": "version",
-       "type": "string"
-      },
-      {
-       "name": "chainId",
-       "type": "uint256"
-      },
-      {
-       "name": "verifyingContract",
-       "type": "address"
-      }
-     ],
-     "CancelRequest": [
-      {
-       "name": "account",
-       "type": "address"
-      },
-      {
-       "name": "nonce",
-       "type": "uint64"
-      },
-      {
-       "name": "expiresAt",
-       "type": "int64"
-      },
-      {
-       "name": "orderId",
-       "type": "uint64"
-      }
-     ]
-    },
-    "primaryType": "CancelRequest",
-    "domain": {
-     "name": "monkeytrading",
-     "version": "1",
-     "chainId": 31337,
-     "verifyingContract": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
-    },
-    "message": {
-     "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
-     "nonce": 2,
-     "expiresAt": 1792540920000,
-     "orderId": 42
-    }
-   },
-   "signature": "0x67268d5a424c2857c4f80752275cc1270dfbd964646aed3618bbeffa49740a44035f10c4b349c2f8e93731e21833dd4c499d34c6b17462ea685d9134dd2407621b"
-  },
-  {
-   "kind": "withdrawal",
-   "nonce": 3,
-   "expires_at": 1792540980000,
-   "body": {
-    "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
-    "amount": "1234.5"
-   },
-   "typed_data": {
-    "types": {
-     "EIP712Domain": [
-      {
-       "name": "name",
-       "type": "string"
-      },
-      {
-       "name": "version",
-       "type": "string"
-      },
-      {
-       "name": "chainId",
-       "type": "uint256"
-      },
-      {
-       "name": "verifyingContract",
-       "type": "address"
-      }
-     ],
-     "WithdrawalRequest": [
-      {
-       "name": "account",
-       "type": "address"
-      },
-      {
-       "name": "nonce",
-       "type": "uint64"
-      },
-      {
-       "name": "expiresAt",
-       "type": "int64"
-      },
-      {
-       "name": "amount",
-       "type": "int128"
-      }
-     ]
-    },
-    "primaryType": "WithdrawalRequest",
-    "domain": {
-     "name": "monkeytrading",
-     "version": "1",
-     "chainId": 31337,
-     "verifyingContract": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
-    },
-    "message": {
-     "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
-     "nonce": 3,
-     "expiresAt": 1792540980000,
-     "amount": "1234500000000"
-    }
-   },
-   "signature": "0x5dc1e1e312cc94561bf160507af321ed6f99df50595e97e0a398a794abe572e700cc0e3002935c8a6961144c2d038f43924a86e3459ebfc1d4f50121be26fc991c"
-  },
-  {
-   "kind": "register_session_key",
-   "nonce": 4,
-   "expires_at": 1792540800000,
-   "body": {
-    "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
-    "session_key": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
-    "expires_at": 1792627200000
-   },
-   "typed_data": {
-    "types": {
-     "EIP712Domain": [
-      {
-       "name": "name",
-       "type": "string"
-      },
-      {
-       "name": "version",
-       "type": "string"
-      },
-      {
-       "name": "chainId",
-       "type": "uint256"
-      },
-      {
-       "name": "verifyingContract",
-       "type": "address"
-      }
-     ],
-     "RegisterSessionKey": [
-      {
-       "name": "account",
-       "type": "address"
-      },
-      {
-       "name": "nonce",
-       "type": "uint64"
-      },
-      {
-       "name": "expiresAt",
-       "type": "int64"
-      },
-      {
-       "name": "sessionKey",
-       "type": "address"
-      },
-      {
-       "name": "sessionExpiresAt",
-       "type": "int64"
-      }
-     ]
-    },
-    "primaryType": "RegisterSessionKey",
-    "domain": {
-     "name": "monkeytrading",
-     "version": "1",
-     "chainId": 31337,
-     "verifyingContract": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
-    },
-    "message": {
-     "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
-     "nonce": 4,
-     "expiresAt": 1792540800000,
-     "sessionKey": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
-     "sessionExpiresAt": 1792627200000
-    }
-   },
-   "signature": "0x9b5984d4d7268acada7f8a0ab7c49f6c478b5fbd3a7a41f9d159b31fb030101763feecac381e11532422cd9d61818836ba2e9a373747c5163ae944f3aef8ab981b"
-  },
-  {
-   "kind": "revoke_session_key",
-   "nonce": 5,
-   "expires_at": 1792540800000,
-   "body": {
-    "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
-    "session_key": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8"
-   },
-   "typed_data": {
-    "types": {
-     "EIP712Domain": [
-      {
-       "name": "name",
-       "type": "string"
-      },
-      {
-       "name": "version",
-       "type": "string"
-      },
-      {
-       "name": "chainId",
-       "type": "uint256"
-      },
-      {
-       "name": "verifyingContract",
-       "type": "address"
-      }
-     ],
-     "RevokeSessionKey": [
-      {
-       "name": "account",
-       "type": "address"
-      },
-      {
-       "name": "nonce",
-       "type": "uint64"
-      },
-      {
-       "name": "expiresAt",
-       "type": "int64"
-      },
-      {
-       "name": "sessionKey",
-       "type": "address"
-      }
-     ]
-    },
-    "primaryType": "RevokeSessionKey",
-    "domain": {
-     "name": "monkeytrading",
-     "version": "1",
-     "chainId": 31337,
-     "verifyingContract": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
-    },
-    "message": {
-     "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
-     "nonce": 5,
-     "expiresAt": 1792540800000,
-     "sessionKey": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8"
-    }
-   },
-   "signature": "0xc97a70cb4d1cecf490b48c5d76a80273703be05b15cfa5a57838aefe3c7805ce347a03d40b7cbf89d8e38c6ffe3aeff4c3e73f1db44dde6ededbb7f2c78cc8431c"
-  }
- ]
+  ]
 }
