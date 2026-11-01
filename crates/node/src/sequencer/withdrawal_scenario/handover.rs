@@ -267,8 +267,14 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
     let extra = accounts[5];
     node.chain.stake_from(extra, monkey(30_000)).await?;
     node.chain.delegate_from(extra, operator).await?;
+    // The chain already warped past the election's effective time: close the next epoch at least
+    // an epoch past now, not past the registry's pre-warp epoch start.
+    let latest: u64 = {
+        let block: serde_json::Value = node.chain.request("eth_getBlockByNumber", json!(["latest", false])).await?;
+        u64::from_str_radix(block["timestamp"].as_str().context("timestamp")?.trim_start_matches("0x"), 16)?
+    };
     let open_start = node.chain.open_epoch_start().await?;
-    let close2 = open_start + 3_600;
+    let close2 = std::cmp::max(open_start + 3_600, latest + 5);
     let (_, effective2) = node.chain.close_epoch_at(close2).await?.context("the re-election elected no candidate")?;
     // B still signs on its node; A's key is pending, as before, until sequenced time passes the
     // notice the scenario does not outrun.
