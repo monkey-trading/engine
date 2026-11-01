@@ -174,6 +174,47 @@ pub(crate) fn anchor_updates(
         .collect()
 }
 
+/// The pairs whose committed floor sits below a resolution's prune horizon, counted back from
+/// `newest`: what a write must validate before it mutates. In-memory over the committed anchors,
+/// so the write pays nothing to pairs with nothing to prune; the full plan the prune applies is
+/// built after the write's own mutations (see `plan_prune`).
+pub(crate) fn prune_markets(
+    prior: &ChainAnchors,
+    retentions: &Retentions,
+    newest: Millis,
+) -> BTreeSet<(MarketId, Resolution)> {
+    prior
+        .iter()
+        .filter(|((_, resolution), anchor)| {
+            retentions
+                .of_resolution(*resolution)
+                .is_some_and(|retention| anchor.floor.bucket < newest.saturating_sub(retention))
+        })
+        .map(|(pair, _)| *pair)
+        .collect()
+}
+
+/// Requires every pair a prune plan touches to be among the pairs the write validated before
+/// mutating anything. On an untampered file the probe and the samples already cover them all; a
+/// pair appearing only in the plan means the file changed under the probe, which the write
+/// refuses, never prunes unchecked.
+/// Error cases:
+/// - the plan names a pair outside the validated set
+pub(crate) fn ensure_planned_pairs_validated(
+    plan: &PrunePlan,
+    touched: &BTreeSet<(MarketId, Resolution)>,
+) -> anyhow::Result<()> {
+    for (resolution, _, _, markets) in &plan.passes {
+        for market in markets {
+            ensure!(
+                touched.contains(&(*market, *resolution)),
+                "the prune touches the {market} {resolution:?} pair, which this write did not validate"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Plans the buckets each bounded resolution will prune, counted back from `newest`: which rows
 /// die is decided before anything mutates, so the pairs the prune touches can be validated with
 /// the rest of the write. Planning reads only; `apply_prune` does the deleting.
@@ -358,8 +399,21 @@ pub(crate) fn seed(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction, rows: &[See
         }
         // Only the pre-existing row directly above an insert can have a stale link: the rows
         // this seed inserted chained to each other as they went in.
+        let mut stmts = crate::history::marks::store::merge::MergeStmts {
+            row_at: tx.prepare(ROW_AT).context("preparing a marks relink")?,
+            predecessor: tx.prepare(PREDECESSOR).context("preparing a marks relink")?,
+            insert: tx
+                .prepare(
+                    "INSERT OR REPLACE INTO marks (market, resolution, bucket, open, high, low, close, provenance, prev_bucket, tag)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                )
+                .context("preparing a marks relink")?,
+            successor: tx.prepare(SUCCESSOR).context("preparing a marks relink")?,
+        };
         for bucket in fresh.iter().copied() {
-            crate::history::marks::store::merge::relink_successor(mac, tx, market, resolution, bucket, &fresh)?;
+            crate::history::marks::store::merge::relink_successor(
+                mac, tx, &mut stmts, market, resolution, bucket, &fresh,
+            )?;
         }
     }
     Ok(inserted)

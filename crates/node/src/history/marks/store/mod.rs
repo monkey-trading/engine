@@ -205,18 +205,34 @@ impl Store {
             .flat_map(|market| Resolution::ALL.map(move |resolution| (market, resolution)))
             .collect();
         // Validate the pre-merge state of every pair the write can touch: the pairs the samples
-        // merge, and any pair with rows a prune would delete. The prune itself is planned again
-        // after the merges: a row this batch writes below the horizon appears only then, and its
-        // pair is among the samples' pairs, already validated.
-        let planned = chain::plan_prune(&tx, &self.retentions, newest)?;
-        touched.extend(planned.touched_pairs());
+        // merge, and any pair with a committed floor a prune would sweep past. The prune itself
+        // is planned after the merges: a row this batch writes below the horizon appears only
+        // then, and its pair is among the samples' pairs, already validated.
+        touched.extend(chain::prune_markets(&prior, &self.retentions, newest));
         chain::check_anchors(&tx, &prior, &touched)?;
+        let mut stmts = merge::MergeStmts {
+            row_at: tx.prepare(chain::ROW_AT).context("preparing a marks merge")?,
+            predecessor: tx.prepare(chain::PREDECESSOR).context("preparing a marks merge")?,
+            insert: tx
+                .prepare(
+                    "INSERT OR REPLACE INTO marks (market, resolution, bucket, open, high, low, close, provenance, prev_bucket, tag)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                )
+                .context("preparing a marks merge")?,
+            successor: tx.prepare(chain::SUCCESSOR).context("preparing a marks merge")?,
+        };
         for &(market, ts, mark) in samples {
             for resolution in Resolution::ALL {
-                merge::merge(&self.mac, &tx, market, resolution, resolution.bucket(ts), mark)?;
+                merge::merge(&self.mac, &tx, &mut stmts, market, resolution, resolution.bucket(ts), mark)?;
             }
         }
+        drop(stmts);
         let plan = chain::plan_prune(&tx, &self.retentions, newest)?;
+        // The file the plan read can differ from the anchors the probe read only by host
+        // tampering: on an untampered file every planned pair is one the samples merge or one
+        // whose committed floor sat below the horizon. Anything else was validated by neither,
+        // and the write refuses rather than prune a chain it never checked.
+        chain::ensure_planned_pairs_validated(&plan, &touched)?;
         chain::apply_prune(&self.mac, &tx, &plan)?;
         let updates = chain::anchor_updates(&tx, &touched)?;
         // The commit and the anchor publication are one critical section: a reader that sees an
@@ -238,11 +254,14 @@ impl Store {
         let tx =
             self.conn.transaction_with_behavior(TransactionBehavior::Immediate).context("starting a marks seed")?;
         store::check_schema(&tx, &self.schema, &self.path)?;
-        let mut touched = chain::plan_prune(&tx, &self.retentions, newest)?.touched_pairs();
+        let mut touched = chain::prune_markets(&prior, &self.retentions, newest);
         touched.extend(rows.iter().map(|row| (row.market, row.resolution)));
         chain::check_anchors(&tx, &prior, &touched)?;
         let inserted = chain::seed(&self.mac, &tx, rows)?;
         let plan = chain::plan_prune(&tx, &self.retentions, newest)?;
+        // As in `observe`: every pair the prune touches was validated before the write, or the
+        // file changed under the probe, which the write refuses.
+        chain::ensure_planned_pairs_validated(&plan, &touched)?;
         chain::apply_prune(&self.mac, &tx, &plan)?;
         let updates = chain::anchor_updates(&tx, &touched)?;
         let mut anchors = self.anchors.lock().expect("the marks chain anchors are never poisoned");
