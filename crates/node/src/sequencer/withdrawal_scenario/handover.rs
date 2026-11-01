@@ -1,9 +1,14 @@
 //! An elected operator's enclave takes the keys from the incumbent's: A runs as the operator in
-//! effect with rotation on; an election names B and, past its effective time, B reads A's handover
-//! endpoint from the registry, fetches the published log, takes the keys and the final log segment,
-//! and continues at the seq after A's final checkpoint; A exits; a withdrawal A authorized before
-//! the handover pays; A's stale sealed copy refuses to open; a re-election of A hands the keys
-//! back, and A's old sealed copy cannot reopen under the new release generation.
+//! effect with rotation on; A authorizes a withdrawal and it pays; an election names B and, past
+//! its effective time, B reads A's handover endpoint from the registry, fetches the published log,
+//! takes the keys and the final log segment, and continues at the seq after A's final checkpoint;
+//! A exits; A's stale sealed copy refuses to open; a re-election of A hands the keys back, and
+//! A's old sealed copy cannot reopen under the new release generation.
+//!
+//! The vault reads chain time while an authorization's 24-hour lifetime is issued at the engine's
+//! sequenced time; the election's seven-day notice is crossed by warping the chain alone, so the
+//! scenario pays the incumbent's authorization before the warp: no authorization issued at engine
+//! time could be claimed after it.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -185,6 +190,18 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
         node.chain.delegate_from(staker, b_candidate).await?;
     }
 
+    // A signs the withdrawal's authorization and it pays while the chain and engine clocks still
+    // agree: the vault's 24-hour authorization lifetime runs against chain time, which the warp
+    // below jumps seven days past the engine's sequenced time, so no authorization issued at
+    // engine time can be claimed after it. The authorization is the incumbent's, signed before
+    // the handover either way.
+    let mut a_stream = node.client.stream().await?;
+    let issued = a_stream.payout(trader.account, 10).await?;
+    drop(a_stream);
+    let approved = issued.approved_seq.context("the issued authorization names its approval")?;
+    wait_latest_seq(&mut node.chain, approved).await?;
+    pay_b(&node.chain, &issued).await?;
+
     // 4. A close elects B; the engine mirrors it; time passes its notice; the fold lands.
     let open_start = node.chain.open_epoch_start().await?;
     let close1 = open_start + 2 * 3_600;
@@ -208,14 +225,6 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
     node.chain.sync_release().await?;
     node.chain.wait_finalized_release(b_release).await?;
 
-    // A signs the withdrawal's authorization while it still holds the keys, and a checkpoint
-    // covering the approval posts before the handover.
-    let mut a_stream = node.client.stream().await?;
-    let issued = a_stream.payout(trader.account, 10).await?;
-    drop(a_stream);
-    let checkpoint_seq = last_seq(&node.dir.join("log"))?;
-    wait_latest_seq(&mut node.chain, checkpoint_seq).await?;
-
     // 5. B starts: it resolves A's handover endpoint from the registry, fetches the published log,
     //    takes the keys and the final segment, and continues; A exits; A's authorization pays.
     let mut b_child = spawn_b(&b_dir, &b_config_path, &node, B_DIGEST)?;
@@ -226,13 +235,8 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
     ensure!(status.success(), "A exited with {status} after handing the keys over");
     let a_tip = last_seq(&node.dir.join("log"))?;
     ensure!(last_seq(&b_dir.join("log"))? > a_tip, "B did not continue past A's final checkpoint (seq {a_tip})");
-    // B's custody must post a checkpoint covering the approval before the vault accepts the claim:
-    // serving the API comes first, the checkpoint follows.
-    let approved = issued.approved_seq.context("the issued authorization names its approval")?;
-    wait_latest_seq(&mut node.chain, approved).await?;
-    pay_b(&node.chain, &issued).await?;
     println!(
-        "PASS: the elected operator's enclave took the keys and the log from the incumbent's; the incumbent exited; A's pre-handover authorization pays"
+        "PASS: A's pre-handover authorization paid, and the elected operator's enclave took the keys and the log from the incumbent's and continued at the seq after its final checkpoint"
     );
 
     // 6. A restart refuses: its sealed copy is under a superseded release generation.
