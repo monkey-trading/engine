@@ -32,7 +32,10 @@ pub use replay_audit::replay_path_with_custody;
 pub mod sequencer;
 mod sequencer_thread;
 mod snapshot;
-pub use sequencer::{replay, replay_path, replay_path_in_domain, replay_path_with_trust, replay_with_signer};
+pub mod standby;
+pub use sequencer::{
+    replay, replay_path, replay_path_in_domain, replay_path_with_attested, replay_path_with_trust, replay_with_signer,
+};
 pub use sequencer_thread::run_dedicated;
 mod telemetry;
 pub use telemetry::{Telemetry, init_logging, init_telemetry};

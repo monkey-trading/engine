@@ -39,6 +39,11 @@ impl NodeConfig {
         if production && !mocks.is_empty() {
             bail!("a production build refuses mock providers: {} set to \"mock\"", mocks.join(", "));
         }
+        if production && self.standby.as_ref().is_some_and(|standby| standby.danger_accept_invalid_certs) {
+            bail!(
+                "a production build refuses standby.danger_accept_invalid_certs: stream frame signatures are the authenticity boundary, but TLS verification stays on"
+            );
+        }
         Ok(())
     }
 

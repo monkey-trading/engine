@@ -161,6 +161,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/ct_watch/tracker.rs` — attested keys, log positions, grace waits, and the alerts they raise
 - `src/ct_watch/state.rs` — the watcher's durable, locked state file
 - `src/ct_watch/tests/` — leaf, log client, tracker, state, config, and loopback poll-flow tests
+- `src/standby/mod.rs` — the standby: following the operator in effect's signed stream into a local
+  copy of the published log, the archive bootstrap and refresh, the takeover's promotion watch, and
+  finalizing the copy at the vault's latest checkpoint
+- `src/standby/tests.rs` — copy appends that verify frames and refuse a wrong signer, truncation at
+  the resume checkpoint, and stream resumption after the last offset
 - `src/node/mod.rs` — startup, task supervision, and shutdown
 - `src/node/keys.rs` — this start's enclave keys and their attestation, and the check that the log
   reaches the final checkpoint of the release that handed the keys over
@@ -248,6 +253,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/log/catalog_seal.rs` — the exact checkpoint boundary captured for a paired cache
 - `src/log/commitment.rs` — commitments to the complete typed command/event prefix
 - `src/log/suffix.rs` — recovery that replays only the suffix after a catalog-located checkpoint
+- `src/log/truncate.rs` — takeover truncation of a standby's copy at the checkpoint a promotion
+  resumes from, dropping the unsigned tail
 - `src/log/writer.rs` — appends, flushes, segment rotation, catalog folds, and catalog collection
 - `src/log/view.rs` — manifest accessors over full listings and the lazy catalog
 - `src/log/archive.rs` — completed-segment bytes for the archive, checked against the catalog
@@ -415,7 +422,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/handover/tests.rs` — what each step binds, the encryption, the framing, and the evidence
 - `src/verify/mod.rs` — attestation verification for the CLI and replay: loading or fetching the
   attestation, release manifest, and collateral, `engine-verify` on the system clock, and the
-  checkpoint-signer check
+  checkpoint-signer check, one attestation per signer, that lets `engine replay --attestation` span
+  a change of checkpoint signer
 - `src/verify/fetch.rs` — the key-distribution service client that fetches a quote's VCEK,
   intermediate, root, and revocation list
 - `src/verify/refresh.rs` — the node's boot fetch and periodic refresh of that collateral, checked

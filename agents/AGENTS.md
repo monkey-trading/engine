@@ -92,7 +92,7 @@ an index: load only the rule whose hint matches the current action.
   enclave address, the config file's SHA-256, and the TLS key's hash), attestation verification
   (`verify/`: `engine verify-attestation` loads or fetches (`verify/fetch.rs`) what `engine-verify`
   checks and passes the system clock; `engine replay --attestation` requires every checkpoint
-  signer to have passed it; a mock quote never verifies; `verify/refresh.rs` fetches the node's own
+  signer to have passed it, one attestation per signer when the log spans a change of signer; a mock quote never verifies; `verify/refresh.rs` fetches the node's own
   quote's vendor certificate chain and revocation list in the background, checks and bounds them,
   and serves them at `/v1/attestation/collateral` for a verifier that cannot call the vendor, which
   pins the roots itself), the enclave key lifecycle (`tee/keys.rs` and `tee/sealing.rs`: the signing
@@ -106,6 +106,12 @@ an index: load only the rule whose hint matches the current action.
   staking contract's finalised events once `InitStaking` has applied, with V27 scan progress
   authenticated in engine state rather than trusted from the host cursor, and from V37 the operator
   registry's rotation switches and elections in the same proven blocks, `custody/registry.rs`), the
+  standby (`standby/`: a `--standby` node follows the operator in effect's signed stream into a
+  segment-for-segment copy, backfilled from the public archive and the archive mirrors #48 sets up,
+  and takes over when the registry's liveness rule promotes its candidate: it finalizes the copy at
+  the latest checkpoint the vault accepted, drops the unsigned tail, and exits for a `--new-key`
+  start, which serves only its attestation until the timelock installs the registered enclave;
+  `engine replay --attestation` pairs one attestation with each signer), the
   `/v1/operator` read of the key in effect, its pending rotation, and the last election, checkpoint posting
   and collateral reconciliation, distributions paid included (`checkpoints/`), with strict signature replay and startup checks
   against the vault's finalized commitment before history writes, plus authenticated withdrawal
@@ -241,6 +247,8 @@ an index: load only the rule whose hint matches the current action.
   `dev-monkey-emissions.sh`, the MONKEY emissions scenario on Anvil;
   `dev-monkey-staking.sh`, the MONKEY staking and USDC distributions scenario on Anvil;
   `dev-operator-election.sh`, the delegated operator election scenario on Anvil;
+  `dev-standby-operator.sh`, the standby takeover scenario on Anvil: a failed operator, the liveness
+  rule's promotion, the limited `setSigner`, and the reissued payout across the signer change;
   `dev-snapshot-restart.sh`, the checkpoint snapshot restart and fallback scenario;
   `dev-ct-watch.sh`, the Certificate Transparency watcher against a mock node and a loopback
   stand-in log (`dev-ct-log.py`), a webhook stand-in, a foreign-key certificate, a restart
@@ -453,6 +461,11 @@ Run from the repo root:
   through the real custody quorum, sequencer and API that the deployer's key is refused and the
   elected key applies from the effective time; needs Anvil, Forge, Python 3, and installed Soldeer
   dependencies)
+- Standby operator dev scenario: `./scripts/dev-standby-operator.sh` (the same requirements; A runs
+  with rotation on and payouts paused, B follows A's stream into a copy, A fails, the registry's
+  liveness rule promotes B, the timelock's `setSigner` installs only B's registered enclave, B
+  resumes at A's last vault-accepted checkpoint and the reissued authorization pays once, the log
+  replays across the change of signer, and a promotion with no qualifying standby reverts)
 - Signed withdrawal and FIFO dev scenario: `./scripts/dev-withdrawals.sh` (needs Anvil, Forge,
   Cargo and pinned contract dependencies; uses local signed time and price servers and a loopback
   alert webhook, ends with the guardian pause and signer retirement flow, and preserves

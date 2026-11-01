@@ -88,7 +88,13 @@ contract RegistryHandler is Test {
         if (staked < bond) this.stake(actorSeed, bond - staked);
         address adminKey = vm.addr(uint256(uint160(account)));
         OperatorRegistry.Registration memory registration = OperatorRegistry.Registration(
-            adminKey, bond, _digest(actorSeed % actors.length), bytes32(0), "api.example", "handover.example:9443"
+            adminKey,
+            vm.addr(uint256(keccak256(abi.encode("enclave", account)))),
+            bond,
+            _digest(actorSeed % actors.length),
+            bytes32(0),
+            "api.example",
+            "handover.example:9443"
         );
         (uint8 v, bytes32 r, bytes32 s) =
             vm.sign(uint256(uint160(account)), registry.registrationDigest(account, adminKey));
@@ -121,7 +127,7 @@ contract RegistryHandler is Test {
     }
 
     function closeEpoch() external {
-        (uint64 epochLength,,,,,,,) = registry.parameters();
+        (uint64 epochLength,,,,,,,,) = registry.parameters();
         if (block.timestamp < uint256(registry.openEpochStart()) + epochLength) return;
         bool enabled = registry.rotationEnabled();
         bool waiting = registry.pendingElection().effectiveAt != 0;
@@ -131,7 +137,7 @@ contract RegistryHandler is Test {
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].topics[0] != OperatorRegistry.Elected.selector) continue;
             (,, uint64 effectiveAt) = abi.decode(logs[i].data, (address, bytes32, uint64));
-            (,, uint64 finalityMargin,,,,,) = registry.parameters();
+            (,, uint64 finalityMargin,,,,,,) = registry.parameters();
             if (!enabled || waiting || effectiveAt != block.timestamp + registry.NOTICE() + finalityMargin) {
                 misplacedElections++;
             }

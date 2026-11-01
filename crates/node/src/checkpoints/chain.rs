@@ -131,4 +131,10 @@ pub(crate) trait CheckpointChain: Send + Sync {
     async fn exit_started(&self) -> anyhow::Result<bool> {
         Ok(false)
     }
+
+    /// Whether the operator registry the vault follows has rotation on, at the latest block. Error
+    /// cases: the chain cannot be read; a chain with no registry reads `false`.
+    async fn rotation_enabled(&self) -> anyhow::Result<bool> {
+        Ok(false)
+    }
 }

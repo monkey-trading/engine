@@ -20,6 +20,7 @@ use tracing::{error, info, warn};
 
 use crate::alerts::Routing;
 use crate::api::{ApiState, Feed, MAX_BACKFILLS, Signing, router};
+use crate::checkpoints::CheckpointChain;
 use crate::clock::{Clock, SystemClock, now_ms};
 use crate::config::{AuthMode, CustodyProvider, FeedProvider, NodeConfig};
 use crate::feeds;
@@ -78,7 +79,8 @@ pub(crate) async fn run_with_cpu(
 
 /// Runs every task but alert routing, which it supervises.
 /// Error cases:
-/// - operator rotation is enabled
+/// - `operator.rotation_enabled = true` while the vault's registry has rotation off, or without
+///   `[checkpoints]` EVM custody to read it
 /// - `feeds.provider = "venues"` without `[feeds.venues]`, an API key variable a venue connection
 ///   names is unset, or the TLS config or the ACME client cannot be built
 /// - obtaining the keys (see `keys::attested`), opening the history index (or a fresh one in place
@@ -96,8 +98,18 @@ async fn serve_node(
     cpu: Option<usize>,
     start: KeyStart,
 ) -> anyhow::Result<()> {
-    if cfg.operator.rotation_enabled {
-        bail!("operator rotation is not implemented yet; set operator.rotation_enabled = false");
+    if let Some(vault) = crate::handover::vault_reader(&cfg)? {
+        let on = vault.rotation_enabled().await?;
+        if cfg.operator.rotation_enabled && !on {
+            bail!("operator.rotation_enabled = true, but the vault's registry has rotation off");
+        }
+        if on && !cfg.operator.rotation_enabled {
+            warn!(
+                "the vault's registry has rotation on, but operator.rotation_enabled is false: an election naming another operator moves the admin key this node does not expect"
+            );
+        }
+    } else if cfg.operator.rotation_enabled {
+        bail!("operator.rotation_enabled = true needs [checkpoints] with EVM custody to read the registry");
     }
     if cfg.node.auth == AuthMode::None {
         warn!("API authentication is OFF: development only");

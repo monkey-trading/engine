@@ -410,3 +410,27 @@ async fn absent_or_inconsistent_canonical_metadata_never_grants_historical_trust
         assert!(fixture.chain.pages.lock().unwrap().is_empty());
     }
 }
+
+#[test]
+fn attested_replay_verifies_each_signer_epoch_and_refuses_the_unattested() {
+    use std::collections::BTreeSet;
+
+    use crate::tee::EnclaveKey;
+
+    let fixture = Fixture::new("attested-multi-signer");
+    let old = AccountId(fixture.old.address());
+    let both: BTreeSet<_> = [old, fixture.signer()].into_iter().collect();
+    let replayed = crate::replay_path_with_attested(&fixture.path, Some(fixture.domain), both.clone()).unwrap();
+    assert_eq!(replayed.checkpoint_signers, both, "both signer epochs verify, one attestation each");
+    for signers in [
+        [fixture.signer()].into_iter().collect(),
+        [old].into_iter().collect(),
+        [AccountId(EnclaveKey::generate().address())].into_iter().collect(),
+        Default::default(),
+    ] {
+        assert!(
+            crate::replay_path_with_attested(&fixture.path, Some(fixture.domain), signers).is_err(),
+            "the unattested set must not verify"
+        );
+    }
+}

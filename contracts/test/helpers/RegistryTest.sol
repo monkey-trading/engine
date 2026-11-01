@@ -23,6 +23,8 @@ abstract contract RegistryTest is GovernanceTest {
     uint16 internal constant QUORUM_BPS = 2_000;
     uint16 internal constant MAX_CANDIDATES = 10;
     uint256 internal constant MIN_BOND = 1_000e18;
+    /// @dev Test value only (#360 decides production values).
+    uint64 internal constant LIVENESS = 30 days;
 
     bytes32 internal constant CONFIG = keccak256("candidate config");
 
@@ -51,16 +53,24 @@ abstract contract RegistryTest is GovernanceTest {
 
     function _parameters() internal pure returns (OperatorRegistry.Parameters memory) {
         return OperatorRegistry.Parameters(
-            EPOCH, MIN_TERM, FINALITY_MARGIN, MARGIN_BPS, ELIGIBILITY_BPS, QUORUM_BPS, MAX_CANDIDATES, MIN_BOND
+            EPOCH,
+            MIN_TERM,
+            FINALITY_MARGIN,
+            MARGIN_BPS,
+            ELIGIBILITY_BPS,
+            QUORUM_BPS,
+            MAX_CANDIDATES,
+            MIN_BOND,
+            LIVENESS
         );
     }
 
     function _minimums() internal pure returns (OperatorRegistry.Parameters memory) {
-        return OperatorRegistry.Parameters(1 hours, 0, 0, 0, 0, 0, 1, 0);
+        return OperatorRegistry.Parameters(1 hours, 0, 0, 0, 0, 0, 1, 0, 1 hours);
     }
 
     function _maximums() internal pure returns (OperatorRegistry.Parameters memory) {
-        return OperatorRegistry.Parameters(30 days, 365 days, 7 days, 10_000, 10_000, 10_000, 100, 1e27);
+        return OperatorRegistry.Parameters(30 days, 365 days, 7 days, 10_000, 10_000, 10_000, 100, 1e27, 30 days);
     }
 
     /// @dev A 48-byte launch measurement distinct per `seed`.
@@ -93,7 +103,13 @@ abstract contract RegistryTest is GovernanceTest {
         returns (OperatorRegistry.Registration memory)
     {
         return OperatorRegistry.Registration(
-            adminKey, bond, _digest(seed), CONFIG, "api.candidate.example", "handover.candidate.example:9443"
+            adminKey,
+            address(uint160(uint256(keccak256(abi.encode("enclave", seed))))),
+            bond,
+            _digest(seed),
+            CONFIG,
+            "api.candidate.example",
+            "handover.candidate.example:9443"
         );
     }
 
@@ -156,7 +172,7 @@ abstract contract RegistryTest is GovernanceTest {
 
     /// @dev Warps to the end of the open epoch unless it has already ended, and closes it.
     function _closeNext() internal returns (uint64) {
-        (uint64 epochLength,,,,,,,) = registry.parameters();
+        (uint64 epochLength,,,,,,,,) = registry.parameters();
         uint256 endsAt = uint256(registry.openEpochStart()) + epochLength;
         if (block.timestamp < endsAt) vm.warp(endsAt);
         return registry.closeEpoch();

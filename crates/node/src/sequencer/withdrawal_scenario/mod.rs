@@ -8,6 +8,7 @@ mod keys;
 mod node;
 mod rpc;
 mod services;
+mod standby;
 
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -30,6 +31,8 @@ const CHILD_ALERTS: &str = "ENGINE_WITHDRAWAL_SCENARIO_CHILD_ALERTS";
 const CHILD_KEYS: &str = "ENGINE_WITHDRAWAL_SCENARIO_CHILD_KEYS";
 /// The child's stand-in launch measurement, as `--mock-launch-digest` takes it.
 const CHILD_LAUNCH_DIGEST: &str = "ENGINE_WITHDRAWAL_SCENARIO_CHILD_LAUNCH_DIGEST";
+/// Runs the child as the standby for the operator in effect, following its stream.
+const CHILD_STANDBY: &str = "ENGINE_WITHDRAWAL_SCENARIO_CHILD_STANDBY";
 const CHILD_TEST: &str = "sequencer::withdrawal_scenario::node_child";
 
 #[derive(Deserialize, Serialize)]
@@ -102,10 +105,27 @@ async fn dev_scenario_exit_against_the_last_posted_root() -> anyhow::Result<()> 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "local Anvil end-to-end; scripts/dev-standby-operator.sh runs the parent only"]
+async fn dev_scenario_a_standby_takes_over_from_a_failed_operator() -> anyhow::Result<()> {
+    timeout(Duration::from_secs(900), standby::standby_takes_over())
+        .await
+        .context("the standby takeover scenario exceeded fifteen minutes")?
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "child entry point; launched only by the local withdrawal scenario"]
 async fn node_child() -> anyhow::Result<()> {
     let path = PathBuf::from(std::env::var_os(CHILD_CONFIG).context("scenario child config is required")?);
     let mut cfg = NodeConfig::load(&path)?;
+    if std::env::var_os(CHILD_STANDBY).is_some() {
+        ensure!(cfg.tee.provider == TeeProvider::Mock, "local mock TEE only");
+        ensure!(cfg.custody.provider == CustodyProvider::Evm && cfg.custody.chain_id == 31337, "local Anvil only");
+        let alerts = std::env::var(CHILD_ALERTS).context("scenario alert webhook")?;
+        ensure!(alerts.starts_with("http://127.0.0.1:"), "scenario alert webhook is loopback only");
+        let telemetry =
+            crate::telemetry::init_telemetry(&cfg, |name| (name == "ENGINE_ALERTS_CRITICAL_URL").then(|| alerts.clone()))?;
+        return crate::standby::run(cfg, telemetry).await;
+    }
     ensure!(
         cfg.tee.provider == TeeProvider::Mock && (cfg.tee.use_published_mock_key || cfg.tee.sealing.is_some()),
         "local mock signer only: the published key, or the stand-in for sealing"

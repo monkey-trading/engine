@@ -10,7 +10,7 @@ pub use lifecycle::{ApprovalId, ApprovalStatus, LifecycleEvidence};
 mod rpc;
 pub(crate) mod setup;
 pub(crate) mod signature;
-pub(crate) use rpc::CheckpointRpc;
+pub(crate) use rpc::{CheckpointRpc, Takeover};
 mod chain;
 pub(crate) use chain::{CheckpointChain, CurrentRelease};
 

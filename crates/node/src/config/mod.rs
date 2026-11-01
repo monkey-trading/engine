@@ -33,7 +33,9 @@ mod collateral;
 pub use benchmarks::{BenchmarkSection, BenchmarkSource, Publisher};
 mod access;
 pub use access::AccessSection;
+pub use standby::StandbySection;
 mod custody;
+mod standby;
 pub use custody::{EvmCustodySection, FinalityTag, RpcProviderSection, SecretUrl};
 mod feeds;
 pub use feeds::*;
@@ -109,6 +111,9 @@ pub struct NodeConfig {
     /// Enables startup synchronization with an external signed publisher worker.
     pub benchmarks: Option<BenchmarkSection>,
     pub access: Option<AccessSection>,
+    /// Standby mode (`--standby`): follow the operator in effect's stream into a local copy of the
+    /// published log, ready to take over from its last vault-accepted checkpoint.
+    pub standby: Option<StandbySection>,
     /// Sequenced as admin commands after protocol activation on a log's first boot, all or nothing,
     /// so the rules every fill ran under are part of the public record.
     pub genesis: Genesis,
@@ -237,7 +242,8 @@ pub struct OperatorSection {
     /// signing key between attested enclaves.
     pub rotation_enabled: bool,
     /// The operator's secp256k1 public key, SEC1-encoded hex, which signs every admin command
-    /// `engine admin` sends. The node holds no operator secret.
+    /// `engine admin` sends. The node holds no operator secret. A standby names its own key:
+    /// the promotion that names it records the pending rotation to it.
     pub public_key: String,
 }
 

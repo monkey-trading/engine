@@ -38,6 +38,11 @@ enum Cmd {
         /// which its public stand-in for sealing derives the key. Development only.
         #[arg(long, value_name = "HEX", value_parser = parse_launch_digest)]
         mock_launch_digest: Option<[u8; 48]>,
+        /// Run as the standby for the operator in effect: follow its stream into a local copy of
+        /// the published log and take over when the registry's liveness rule promotes this node's
+        /// candidate (needs `[standby]`).
+        #[arg(long)]
+        standby: bool,
     },
     /// Replay a published log and verify every checkpoint root and signature. `--log` is a single log file, or a
     /// directory of segments with their manifest: a node's log directory or a downloaded archive. A
@@ -56,12 +61,13 @@ enum Cmd {
         /// Verify historical signers against this deployment's finalized vault history.
         #[arg(long, requires = "signer", conflicts_with_all = ["chain_id", "vault", "attestation"])]
         custody_config: Option<PathBuf>,
-        /// Require every checkpoint signer to pass attestation verification against `--release`.
+        /// Verify a checkpoint signer against a release manifest; repeat for a log whose signer
+        /// changes, one attestation per signer, each with its own `--release` in the same order.
         #[arg(long, requires = "release")]
-        attestation: Option<PathBuf>,
-        /// The release manifest `--attestation` verifies against.
-        #[arg(long)]
-        release: Option<PathBuf>,
+        attestation: Vec<PathBuf>,
+        /// The release manifest each `--attestation` verifies against, in the same order.
+        #[arg(long, requires = "attestation")]
+        release: Vec<PathBuf>,
         /// The vendor processor name for the certificate chain, as the vendor publishes it
         /// (the CPU generation's codename, for example Milan or Genoa; Turin is not supported yet).
         #[arg(long, requires = "attestation")]
@@ -204,10 +210,17 @@ struct Cli {
 /// - the CT watcher cannot start, or stops with an error
 fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
-        Cmd::Run { config, new_key, predecessor, mock_launch_digest } => {
+        Cmd::Run { config, new_key, predecessor, mock_launch_digest, standby } => {
             let cfg = NodeConfig::load(&config)?;
             let telemetry = init_telemetry(&cfg, |var| std::env::var(var).ok())?;
-            run_dedicated(cfg, telemetry, KeyStart { new_key, predecessor, mock_launch_digest })
+            if standby {
+                tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()?
+                    .block_on(engine_node::standby::run(cfg, telemetry))
+            } else {
+                run_dedicated(cfg, telemetry, KeyStart { new_key, predecessor, mock_launch_digest })
+            }
         }
         Cmd::Replay {
             log: path,
@@ -223,15 +236,24 @@ fn main() -> anyhow::Result<()> {
         } => {
             init_logging("info")?;
             let domain = chain_id.zip(vault).map(|(chain_id, vault)| CheckpointDomain { chain_id, vault });
-            // Verify the attestation before replaying: its enclave address is the trusted signer
-            // for withdrawal entries, so a log whose checkpoints and withdrawals the verified
-            // enclave signed replays without a separate `--signer`.
+            anyhow::ensure!(
+                attestation.len() == release.len(),
+                "--attestation and --release name different counts ({} and {}); pair them in order",
+                attestation.len(),
+                release.len()
+            );
+            anyhow::ensure!(
+                attestation.len() <= 1 || signer.is_none(),
+                "--signer pins one authority and cannot span the signer change; the attestations suffice"
+            );
+            // Verify the attestations before replaying: their enclave addresses are the trusted
+            // signers for checkpoint and withdrawal entries, so a log whose checkpoints and
+            // withdrawals the verified enclaves signed replays without a separate `--signer`.
             let verified = attestation
-                .map(|attestation| {
-                    let release = release.expect("clap requires --release with --attestation");
-                    verify(&attestation, &release, &processor, &kds, root.as_deref(), None)
-                })
-                .transpose()?;
+                .iter()
+                .zip(&release)
+                .map(|(attestation, release)| verify(attestation, release, &processor, &kds, root.as_deref(), None))
+                .collect::<anyhow::Result<Vec<_>>>()?;
             let mut replayed = if let Some(config) = custody_config {
                 let cfg = NodeConfig::load(&config)?;
                 let signer = signer.ok_or_else(|| anyhow::anyhow!("--custody-config requires --signer"))?;
@@ -239,16 +261,24 @@ fn main() -> anyhow::Result<()> {
                     .enable_all()
                     .build()?
                     .block_on(replay_path_with_custody(&path, &cfg, signer))?
+            } else if verified.len() > 1 {
+                engine_node::replay_path_with_attested(
+                    &path,
+                    domain,
+                    verified.iter().map(|v| v.enclave_address).collect(),
+                )?
             } else {
-                let trusted = engine_node::reconcile_signer(signer, verified.as_ref())?;
+                let trusted = engine_node::reconcile_signer(signer, verified.first())?;
                 replay_path_with_trust(&path, domain, trusted)?
             };
-            if let Some(verified) = verified {
+            if !verified.is_empty() {
                 ensure_signers_verified(&replayed.checkpoint_signers, &verified)?;
-                println!(
-                    "attestation verified: release {}, enclave {}, config {}",
-                    verified.release_name, verified.enclave_address, verified.config_name
-                );
+                for attested in &verified {
+                    println!(
+                        "attestation verified: release {}, enclave {}, config {}",
+                        attested.release_name, attested.enclave_address, attested.config_name
+                    );
+                }
             }
             let activations: Vec<String> =
                 replayed.activations.iter().map(|(version, seq)| format!("{version:?} from seq {seq}")).collect();
