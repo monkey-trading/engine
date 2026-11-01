@@ -146,3 +146,101 @@ async fn a_malformed_end_tag_fails_the_read_instead_of_aborting() {
         .expect_err("served a malformed tag");
     assert!(format!("{err:#}").contains("chain ends"), "{err:#}");
 }
+
+#[tokio::test]
+async fn a_prune_refuses_an_edited_link_even_below_the_horizon() {
+    let (path, mut store) = fresh_store_at("marks-chain-prune-edited", hour_retentions());
+    let market = 1;
+    let base = 1_792_489_860_000;
+    store
+        .observe(&[
+            (market, base, fixed("1")),
+            (market, base + 60_000, fixed("2")),
+            (market, base + 120_000, fixed("3")),
+            (market, base + 180_000, fixed("4")),
+        ])
+        .unwrap();
+    // The host deletes B and edits C's link to skip the hole, without the tag that binds it:
+    // the row no longer authenticates, and the prune refuses to delete it.
+    let host = Connection::open(&path).unwrap();
+    host.execute("DELETE FROM marks WHERE market = 1 AND resolution = 1 AND bucket = ?1", [base + 60_000]).unwrap();
+    host.execute(
+        "UPDATE marks SET prev_bucket = ?1 WHERE market = 1 AND resolution = 1 AND bucket = ?2",
+        [base, base + 120_000],
+    )
+    .unwrap();
+    drop(host);
+    let err = store.observe(&[(market, base + 3_780_000, fixed("5"))]).expect_err("erased an edited row's record");
+    assert!(format!("{err:#}").contains("fails authentication"), "{err:#}");
+}
+
+#[tokio::test]
+async fn a_backfill_refuses_to_relink_a_restored_floor_row() {
+    let (path, mut store) = fresh_store_at("marks-chain-restored-floor", Retentions::defaults());
+    let market = 1;
+    let base = 1_792_489_860_000;
+    // C is the floor beneath D; capture the authentic NULL-link version of its row.
+    store.observe(&[(market, base + 120_000, fixed("3")), (market, base + 180_000, fixed("4"))]).unwrap();
+    let old_tag: Vec<u8> = Connection::open(&path)
+        .unwrap()
+        .query_row(
+            "SELECT tag FROM marks WHERE market = 1 AND resolution = 1 AND bucket = ?1",
+            [base + 120_000],
+            |row| row.get(0),
+        )
+        .unwrap();
+    // A backfill seeds A and B below C: C re-links over them, floor and head anchors move down.
+    store
+        .seed(
+            &[
+                Seed {
+                    market,
+                    resolution: Resolution::M1,
+                    ts: base,
+                    open: fixed("1"),
+                    high: fixed("1"),
+                    low: fixed("1"),
+                    close: fixed("1"),
+                },
+                Seed {
+                    market,
+                    resolution: Resolution::M1,
+                    ts: base + 60_000,
+                    open: fixed("2"),
+                    high: fixed("2"),
+                    low: fixed("2"),
+                    close: fixed("2"),
+                },
+            ],
+            base + 180_000,
+        )
+        .unwrap();
+    // The host deletes B and restores C's captured floor row, tag and all: the ends still match
+    // the committed anchors, but reads refuse the broken chain. A backfill retry recreating B
+    // must not re-link the restored row over the hole.
+    let host = Connection::open(&path).unwrap();
+    host.execute("DELETE FROM marks WHERE market = 1 AND resolution = 1 AND bucket = ?1", [base + 60_000]).unwrap();
+    host.execute(
+        "UPDATE marks SET prev_bucket = NULL, tag = ?1 WHERE market = 1 AND resolution = 1 AND bucket = ?2",
+        rusqlite::params![old_tag, base + 120_000],
+    )
+    .unwrap();
+    drop(host);
+    let page = store.reader().page(market, Resolution::M1, i64::MIN, i64::MAX, 10, 10).await;
+    assert!(page.is_err(), "the restored floor row refuses reads");
+    let err = store
+        .seed(
+            &[Seed {
+                market,
+                resolution: Resolution::M1,
+                ts: base + 60_000,
+                open: fixed("2"),
+                high: fixed("2"),
+                low: fixed("2"),
+                close: fixed("2"),
+            }],
+            base + 180_000,
+        )
+        .expect_err("re-linked a restored floor row");
+    assert!(format!("{err:#}").contains("floor link"), "{err:#}");
+}

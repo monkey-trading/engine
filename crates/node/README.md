@@ -393,9 +393,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   committed chain heads, and its page reader
 - `src/history/marks/store/chain.rs` — the chained index over the cache: each row names the bucket
   below it, the writer re-links only over its own deletes and refuses the rest, and the reader
-  checks every link and chain head before serving (`tests/chain.rs`)
+  checks every link and chain head before serving (`tests/chain.rs`, `tests/refusals.rs`)
+- `src/history/marks/store/reset.rs` — the recovery reset: validating every chain, deleting the
+  log-derived buckets, and re-chaining the survivors
 - `src/history/marks/store/import.rs` — importing a previous run's provider-seeded rows and
-  backfill markers into the seed file
+  backfill markers into the seed file, skipping what cannot be authenticated
 - `src/history/marks/backfill.rs` — the provider backfill: which feed symbols map to a candles
   adapter, the public candles client, and window paging (`tests.rs`)
 - `src/history/marks/run.rs` — the supervised marks task: flushing live mark reports and backfilling

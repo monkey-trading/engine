@@ -57,9 +57,18 @@ impl Store {
             return Ok(0);
         }
         let rows = {
-            let mut stmt = from
-                .prepare("SELECT market, resolution, bucket, open, high, low, close, provenance, prev_bucket, tag FROM marks")
-                .context("reading the prior marks cache")?;
+            let mut stmt = match from.prepare(
+                "SELECT market, resolution, bucket, open, high, low, close, provenance, prev_bucket, tag FROM marks",
+            ) {
+                Ok(stmt) => stmt,
+                Err(e) => {
+                    warn!(
+                        alert = "marks_prior_cache_dropped",
+                        "the prior marks cache cannot be read and is not imported: {e:#}"
+                    );
+                    return Ok(0);
+                }
+            };
             let mapped = stmt
                 .query_map([], |row| {
                     Ok((
@@ -88,11 +97,15 @@ impl Store {
             }
         };
         let markers: Vec<(i64, String, String, [Millis; 8])> = {
-            let mut stmt = from
-                .prepare(
-                    "SELECT market, venue, symbol, at, depth_1m, depth_1h, depth_1d, retention_1s, retention_1m, retention_1h, retention_1d FROM backfilled",
-                )
-                .context("reading the prior backfill markers")?;
+            let mut stmt = match from.prepare(
+                "SELECT market, venue, symbol, at, depth_1m, depth_1h, depth_1d, retention_1s, retention_1m, retention_1h, retention_1d FROM backfilled",
+            ) {
+                Ok(stmt) => stmt,
+                Err(e) => {
+                    warn!(alert = "marks_prior_cache_dropped", "the prior backfill markers cannot be read and are not imported: {e:#}");
+                    return Ok(0);
+                }
+            };
             let mapped = stmt
                 .query_map([], |row| {
                     Ok((

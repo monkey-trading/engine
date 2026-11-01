@@ -341,20 +341,26 @@ async fn a_seed_into_a_bucket_a_successor_still_names_refuses() {
 }
 
 #[tokio::test]
-async fn a_prune_refuses_to_re_floor_over_a_bucket_it_did_not_delete() {
+async fn a_prune_leaves_an_unrelated_pairs_dangling_floor_for_its_readers_to_refuse() {
     let (path, mut store) = fresh_store_at("marks-chain-prune-refuse", hour_retentions());
     let base = 1_792_489_860_000;
     store.observe(&[(1, base, fixed("1")), (1, base + 60_000, fixed("2"))]).unwrap();
     // The host deletes market 1's floor, leaving its head naming the hole, inside the retention
-    // window. A prune anywhere at the resolution must not launder the deletion into a re-floor.
+    // window. A prune that only touches market 2 neither heals nor adopts market 1: its next
+    // read refuses the broken chain, and its next write refuses too.
     Connection::open(&path)
         .unwrap()
         .execute("DELETE FROM marks WHERE market = 1 AND resolution = 1 AND bucket = ?1", [base])
         .unwrap();
-    let err = store
-        .observe(&[(2, base - 2 * 3_600_000, fixed("0")), (2, base, fixed("3"))])
-        .expect_err("re-floored over a host deletion");
-    assert!(format!("{err:#}").contains("this prune did not delete"), "{err:#}");
+    store.observe(&[(2, base - 2 * 3_600_000, fixed("0")), (2, base, fixed("3"))]).unwrap();
+    let err = store.reader().page(1, Resolution::M1, i64::MIN, i64::MAX, 10, 10).await.expect_err("served over a hole");
+    assert!(format!("{err:#}").contains("rolled back") || format!("{err:#}").contains("breaks the chain"), "{err:#}");
+    let err = store.observe(&[(1, base + 60_000, fixed("9"))]).expect_err("merged over a hole");
+    assert!(
+        format!("{err:#}").contains("no longer below it")
+            || format!("{err:#}").contains("no longer matches its committed anchor"),
+        "{err:#}"
+    );
 }
 
 #[tokio::test]

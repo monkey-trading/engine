@@ -23,6 +23,7 @@ use tracing::{debug, warn};
 mod auth;
 mod chain;
 mod import;
+mod merge;
 mod reader;
 mod reset;
 
@@ -307,7 +308,7 @@ impl Store {
         chain::check_anchors(&tx, &prior, &touched)?;
         for &(market, ts, mark) in samples {
             for resolution in Resolution::ALL {
-                chain::merge(&self.mac, &tx, market, resolution, resolution.bucket(ts), mark)?;
+                merge::merge(&self.mac, &tx, market, resolution, resolution.bucket(ts), mark)?;
             }
         }
         let plan = chain::plan_prune(&tx, &self.retentions, newest)?;
@@ -374,8 +375,7 @@ impl Store {
 
     /// Deletes every log-derived bucket, validating the chains first (see `reset.rs`).
     /// Error cases:
-    /// - the transaction fails, a stored row fails authentication, a chain link names a bucket
-    ///   nothing deleted, or a pair no longer matches its committed anchor
+    /// - the transaction fails, or a stored row fails authentication
     fn try_reset_log_derived(&mut self) -> anyhow::Result<()> {
         let prior = self.prior_anchors();
         let tx =
