@@ -176,7 +176,10 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
         )
         .await?;
     node.chain.delegate_self(b_candidate).await?;
-    for staker in [node.chain.payer, node.chain.relayer] {
+    // Stakers must not be the relayer: its nonce reservations back checkpoint posting, and staking
+    // transactions would consume them.
+    let accounts: Vec<Address> = node.chain.request("eth_accounts", json!([])).await?;
+    for staker in [accounts[3], accounts[4]] {
         node.chain.stake_from(staker, monkey(20_000)).await?;
         node.chain.delegate_from(staker, b_candidate).await?;
     }
@@ -241,7 +244,8 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
 
     // 7. A re-election: fresh stake delegates to A; a close elects it; past the notice A takes the
     //    keys back from B, and B exits.
-    let extra = node.chain.deployer;
+    let accounts: Vec<Address> = node.chain.request("eth_accounts", json!([])).await?;
+    let extra = accounts[5];
     node.chain.stake_from(extra, monkey(100_000)).await?;
     node.chain.delegate_from(extra, operator).await?;
     let open_start = node.chain.open_epoch_start().await?;
