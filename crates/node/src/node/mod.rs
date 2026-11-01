@@ -9,7 +9,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, anyhow, bail, ensure};
+use anyhow::{Context, anyhow, bail};
 use engine_core::command::Command;
 use engine_core::types::AccountId;
 use tokio::net::TcpListener;
@@ -109,16 +109,9 @@ async fn serve_node(
             );
         }
         // While rotation is on, the certificate the enclave orders names the API hostname the
-        // registry records for the operator in effect: a mismatch would certify a hostname the
-        // candidate did not register, and clients of the registered one would find no attested
-        // endpoint.
-        if on && let Some(domain) = cfg.api.tls.as_ref().map(|tls| tls.acme.domain.clone()) {
-            let registered = vault.operator_hostname().await?;
-            ensure!(
-                registered == domain,
-                "the registry names {registered} as the operator in effect's API hostname, but api.tls.acme.domain \
-                 is {domain}: point the config at the registered hostname, or register the one the config serves"
-            );
+        // registry records for the operator in effect.
+        if on {
+            crate::handover::check_operator_hostname(&cfg, &vault).await?;
         }
     } else if cfg.operator.rotation_enabled {
         bail!("operator.rotation_enabled = true needs [checkpoints] with EVM custody to read the registry");

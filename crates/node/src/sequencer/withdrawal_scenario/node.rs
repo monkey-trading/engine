@@ -141,6 +141,21 @@ impl Node {
     /// Error cases:
     /// - child startup or the fully booted API deadline fails; the child may exit at once, refused
     pub async fn restart_keys(&mut self, keys: Option<&str>, digest: Option<[u8; 48]>) -> anyhow::Result<()> {
+        self.spawn_keys(keys, digest).await?;
+        match self.wait_api().await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                drop(self.child.take());
+                Err(e)
+            }
+        }
+    }
+
+    /// Spawns the child without waiting for its API: a `new-key` start serves only its attestation
+    /// until governance registers the enclave, so the caller waits for what that start owes.
+    /// Error cases:
+    /// - the child cannot spawn
+    pub async fn spawn_keys(&mut self, keys: Option<&str>, digest: Option<[u8; 48]>) -> anyhow::Result<()> {
         ensure!(self.child.is_none(), "stop the previous scenario node first");
         let path = self.config.to_str().context("test config path is UTF-8")?;
         let digest = digest.map(hex::encode);
@@ -163,7 +178,14 @@ impl Node {
             &env,
             None,
         )?);
-        let started = timeout(LOADED_WAIT, async {
+        Ok(())
+    }
+
+    /// Waits for the fully booted API and controlled market: the child may exit at once, refused.
+    /// Error cases:
+    /// - the child exited, or the deadline passed
+    pub async fn wait_api(&mut self) -> anyhow::Result<()> {
+        timeout(LOADED_WAIT, async {
             loop {
                 self.services.check()?;
                 self.chain.check()?;
@@ -175,12 +197,7 @@ impl Node {
             }
         })
         .await
-        .context("actual node API and controlled market startup; verify test bootstrap hook is wired")?;
-        if let Err(e) = started {
-            drop(self.child.take());
-            return Err(e);
-        }
-        Ok(())
+        .context("actual node API and controlled market startup; verify test bootstrap hook is wired")?
     }
 
     /// Waits until the custody checkpoint gate admits withdrawals on a verdict that covers

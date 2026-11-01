@@ -114,16 +114,18 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
         .await?;
     node.chain.govern_target(node.chain.registry, setRotationCall { enabled: true }.abi_encode()).await?;
     node.chain.sync_release().await?;
-    node.restart_keys(Some("new-key"), Some(A_DIGEST)).await?;
-    let a_client_port = a_port;
+    // A new-key start serves only its attestation until the timelock installs the enclave, so the
+    // spawn and the full-API wait are separate.
+    node.spawn_keys(Some("new-key"), Some(A_DIGEST)).await?;
     let a_enclave = {
-        let client = Client::new(a_client_port, vault)?;
+        let client = Client::new(a_port, vault)?;
         wait_attestation(&client, &mut node, "a").await?
     };
     node.chain
         .impersonate_send(operator, node.chain.registry, setEnclaveCall { enclave: a_enclave }.abi_encode())
         .await?;
     node.chain.govern(setSignerCall { signer: a_enclave }.abi_encode()).await?;
+    node.wait_api().await?;
     node.wait_withdrawals_enabled(0).await?;
 
     // A client deposits and asks for a withdrawal; A approves it before the handover.

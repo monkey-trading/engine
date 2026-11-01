@@ -6,7 +6,7 @@ use anyhow::Context;
 use engine_core::Fixed;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::AccountId;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
 use crate::checkpoints::{LifecycleEvidence, Work};
@@ -159,6 +159,17 @@ impl Sequencer {
     #[cfg(test)]
     pub fn state_root(&mut self) -> [u8; 32] {
         self.engine.state_root()
+    }
+
+    /// Answers an admitted handover stop and seals the log's tail: the final checkpoint is durable
+    /// once the batch flushed, and the published archive and the successor the keys go to need the
+    /// segment it is in.
+    /// Error cases:
+    /// - the tail segment cannot be sealed
+    pub(super) fn seal_handover_tail(&mut self, reply: oneshot::Sender<anyhow::Result<()>>) -> anyhow::Result<()> {
+        let _ = reply.send(Ok(()));
+        self.log.seal_open_segment().context("sealing the log's final segment for the handover")?;
+        Ok(())
     }
 
     /// Attempts the checkpoint a key handover hands over as the final one. The gate's verdict owns

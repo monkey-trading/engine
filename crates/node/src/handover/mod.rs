@@ -372,6 +372,22 @@ pub(crate) async fn resolve_source(vault: &impl CheckpointChain) -> anyhow::Resu
     }))
 }
 
+/// While rotation is on, the certificate the enclave orders names the API hostname the registry
+/// records for the operator in effect: a mismatch would certify a hostname the candidate did not
+/// register, and clients of the registered one would find no attested endpoint. Without
+/// `[api.tls.acme]` there is no certificate to check.
+/// Error cases:
+/// - the chain cannot be read, or the registered hostname differs from the config's
+pub(crate) async fn check_operator_hostname(cfg: &NodeConfig, vault: &impl CheckpointChain) -> anyhow::Result<()> {
+    let Some(domain) = cfg.api.tls.as_ref().map(|tls| tls.acme.domain.clone()) else { return Ok(()) };
+    let registered = vault.operator_hostname().await?;
+    ensure!(
+        registered == domain,
+        "the registry names {registered} as the operator in effect's API hostname, but api.tls.acme.domain is          {domain}: point the config at the registered hostname, or register the one the config serves"
+    );
+    Ok(())
+}
+
 /// Fetches the predecessor's published log into this node's log directory before the handover
 /// connects: the completed segments the archive lists, checked against their listings. The final
 /// segment arrives with the keys instead — the archive serves only completed segments, and this

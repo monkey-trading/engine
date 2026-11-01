@@ -153,7 +153,6 @@ impl Sequencer {
         let mut queries: Vec<Query> = Vec::new();
         let mut syncs = Vec::new();
         let mut benchmark_watches = Vec::new();
-        let mut handed_over = false;
         while let Some(first) = rx.recv().await {
             let started = self.clock.instant();
             let mut sequenced = false;
@@ -215,8 +214,7 @@ impl Sequencer {
             }
             queries.drain(..).for_each(|q| q(&self.engine));
             if let Some(reply) = handover_stop {
-                let _ = reply.send(Ok(()));
-                handed_over = true;
+                self.seal_handover_tail(reply)?;
                 break;
             }
         }
@@ -243,11 +241,6 @@ impl Sequencer {
             }
         }
         self.flush()?;
-        if handed_over {
-            // The final checkpoint is durable: seal the tail segment so the published archive and
-            // the successor the keys go to hold the segment the final checkpoint is in.
-            self.log.seal_open_segment().context("sealing the log's final segment for the handover")?;
-        }
         info!(seq = ?self.engine.last_seq(), "sequencer drained");
         Ok(())
     }
