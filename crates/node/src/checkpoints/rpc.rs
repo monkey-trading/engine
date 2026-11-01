@@ -6,7 +6,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use alloy::eips::{BlockId, BlockNumberOrTag};
-use alloy::primitives::{Address, Bytes};
+use alloy::primitives::{Address, B256, Bytes};
 use alloy::rpc::client::RpcClient;
 use alloy::rpc::types::TransactionRequest;
 use alloy::sol;
@@ -14,6 +14,7 @@ use alloy::sol_types::SolCall;
 use alloy::transports::http::reqwest::{Certificate, Client, Url};
 use anyhow::{Context, anyhow, ensure};
 use engine_core::emissions::TokenUnits;
+use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 
 use crate::checkpoints::emission_budget::budget_from_cap;
@@ -55,6 +56,7 @@ sol! {
     function postCheckpoint(uint64 seq, bytes32 root, bool hasParent, uint64 parentSeq, bytes32 parentRoot, bytes signature) external;
     function currentRelease() external view returns (bytes32);
     function releaseGeneration() external view returns (uint64);
+    function syncedRelease() external view returns (bytes32);
     function registry() external view returns (address);
     function rotationEnabled() external view returns (bool);
     function lastCheckpointAt() external view returns (uint64);
@@ -62,6 +64,7 @@ sol! {
         external
         view
         returns (uint64 epoch, address candidate, address adminKey, bytes32 release, uint64 effectiveAt);
+    function operatorInEffect() external view returns (address candidate, address adminKey, bytes32 release, uint64 since);
     function parameters()
         external
         view
@@ -90,12 +93,16 @@ pub(crate) struct CheckpointRpc {
     submissions: Option<SubmissionStore>,
 }
 
-/// Why a standby takes over: the vault's latest accepted checkpoint, which the resumed log must
-/// contain and end at.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Why a standby takes over: the vault's latest accepted checkpoint — the anchor the published
+/// log must extend — and the signer the vault recorded there, whose later published checkpoints
+/// the copy keeps. Serialized into the copy's `takeover.json` marker so an interrupted
+/// finalization repairs on restart.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Takeover {
     pub seq: u64,
     pub root: String,
+    pub signer: engine_core::types::AccountId,
 }
 
 impl CheckpointRpc {
@@ -192,26 +199,30 @@ impl CheckpointRpc {
             Err(_) => Err(anyhow!("checkpoint RPC timed out")),
         }
     }
-    /// The vault's latest accepted checkpoint, which a takeover resumes from.
-    /// Error cases:
-    /// - an RPC call or decoding fails, or the vault holds no checkpoint
-    pub(crate) async fn latest_checkpoint(&self) -> anyhow::Result<(u64, String)> {
-        let vault = Address::from(self.domain.vault.0);
-        let at = BlockId::latest();
-        let has =
-            hasCheckpointCall::abi_decode_returns(&self.call(vault, hasCheckpointCall {}.abi_encode(), at).await?)?;
-        ensure!(has, "the vault holds no checkpoint");
-        let seq = latestSeqCall::abi_decode_returns(&self.call(vault, latestSeqCall {}.abi_encode(), at).await?)?;
-        let root = latestRootCall::abi_decode_returns(&self.call(vault, latestRootCall {}.abi_encode(), at).await?)?;
-        Ok((seq, format!("0x{}", hex::encode(root.0))))
-    }
-
-    /// Why a standby takes over: the registry promoted `candidate` after the liveness timeout.
+    /// Why a standby takes over: the registry named `candidate`'s key as the pending or current
+    /// operator after the vault has had no checkpoint for the liveness timeout. Every read is
+    /// pinned to one finalized block, so the decision to delete local history can never rest on
+    /// a reorgable or self-inconsistent view. The signal names the vault's latest checkpoint —
+    /// the anchor the published log must extend — and the signer the vault recorded there, whose
+    /// later published checkpoints the copy keeps.
     /// Error cases:
     /// - an RPC call or decoding fails
     pub(crate) async fn takeover(&self, candidate: engine_core::types::AccountId) -> anyhow::Result<Option<Takeover>> {
+        // One canonical block pins every read below, including the liveness clock.
+        let block: serde_json::Value =
+            self.deadline(self.client.request("eth_getBlockByNumber", (BlockNumberOrTag::Finalized, false))).await?;
+        let hash: B256 = block
+            .get("hash")
+            .and_then(|value| value.as_str())
+            .context("the finalized block has no hash")?
+            .parse()
+            .context("decoding the finalized block hash")?;
+        let time = u64::from_str_radix(
+            block.get("timestamp").and_then(|value| value.as_str()).context("no timestamp")?.trim_start_matches("0x"),
+            16,
+        )?;
+        let at = BlockId::hash(hash);
         let vault = Address::from(self.domain.vault.0);
-        let at = BlockId::latest();
         let registry = registryCall::abi_decode_returns(&self.call(vault, registryCall {}.abi_encode(), at).await?)?;
         if registry.is_zero()
             || !rotationEnabledCall::abi_decode_returns(
@@ -223,7 +234,10 @@ impl CheckpointRpc {
         let pending = pendingElectionCall::abi_decode_returns(
             &self.call(registry, pendingElectionCall {}.abi_encode(), at).await?,
         )?;
-        if pending.effectiveAt == 0 || pending.adminKey != candidate.0 {
+        let in_effect = operatorInEffectCall::abi_decode_returns(
+            &self.call(registry, operatorInEffectCall {}.abi_encode(), at).await?,
+        )?;
+        if (pending.effectiveAt == 0 || pending.adminKey != candidate.0) && in_effect.adminKey != candidate.0 {
             return Ok(None);
         }
         // The incumbent still checkpointing means a normal election, which hands the keys over
@@ -235,24 +249,22 @@ impl CheckpointRpc {
         let last = lastCheckpointAtCall::abi_decode_returns(
             &self.call(vault, lastCheckpointAtCall {}.abi_encode(), at).await?,
         )?;
-        let head = self.latest_block_time().await?;
-        if head < last.saturating_add(liveness) {
+        if time < last.saturating_add(liveness) {
             return Ok(None);
         }
-        let (seq, root) = self.latest_checkpoint().await?;
-        Ok(Some(Takeover { seq, root }))
-    }
-
-    /// The latest block's timestamp, in unix seconds.
-    /// Error cases:
-    /// - the RPC call fails or the header decodes incorrectly
-    async fn latest_block_time(&self) -> anyhow::Result<u64> {
-        let value: serde_json::Value =
-            self.deadline(self.client.request("eth_getBlockByNumber", (BlockNumberOrTag::Latest, false))).await?;
-        let timestamp =
-            value.get("timestamp").and_then(|value| value.as_str()).context("latest block has no timestamp")?;
-        let timestamp = timestamp.strip_prefix("0x").unwrap_or(timestamp);
-        u64::from_str_radix(timestamp, 16).context("decoding the latest block timestamp")
+        let has =
+            hasCheckpointCall::abi_decode_returns(&self.call(vault, hasCheckpointCall {}.abi_encode(), at).await?)?;
+        ensure!(has, "the vault holds no checkpoint; a takeover has nothing to resume from");
+        let seq = latestSeqCall::abi_decode_returns(&self.call(vault, latestSeqCall {}.abi_encode(), at).await?)?;
+        let root = latestRootCall::abi_decode_returns(&self.call(vault, latestRootCall {}.abi_encode(), at).await?)?;
+        let signer = checkpointSignerAtCall::abi_decode_returns(
+            &self.call(vault, checkpointSignerAtCall { seq }.abi_encode(), at).await?,
+        )?;
+        Ok(Some(Takeover {
+            seq,
+            root: format!("0x{}", hex::encode(root.0)),
+            signer: engine_core::types::AccountId(signer.0.0),
+        }))
     }
 }
 
@@ -307,6 +319,10 @@ impl CheckpointChain for CheckpointRpc {
 
     async fn current_release(&self, at: &Observation) -> anyhow::Result<CurrentRelease> {
         self.read_current_release(at).await
+    }
+
+    async fn synced_release(&self, at: &Observation) -> anyhow::Result<[u8; 32]> {
+        self.read_synced_release(at).await
     }
 
     async fn claims(&self, at: &LifecycleEvidence, approvals: &[ApprovalId]) -> anyhow::Result<Vec<ApprovalStatus>> {

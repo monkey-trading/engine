@@ -143,8 +143,10 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     /// keys afresh from the running release instead of reopening an old copy.
     uint64 public releaseGeneration;
     /// @notice The effective release the generation last synced at; the first `syncRelease` after an
-    /// election or promotion takes effect bumps the generation when it differs.
-    bytes32 private syncedRelease;
+    /// election or promotion takes effect bumps the generation when it differs. A node reads this
+    /// beside `currentRelease()` and refuses to seal keys until the two agree, so a key service
+    /// never seals under a generation a later sync would supersede.
+    bytes32 public syncedRelease;
     /// @notice The operator registry this vault follows while rotation is on, set once by
     /// governance; the zero address behaves as rotation off.
     OperatorRegistry public registry;
@@ -399,8 +401,10 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     /// @notice Folds a registry-driven release change into this contract's state, raising the
     /// release generation: anyone calls it once an election or promotion moves the operator. A
     /// standby seals its keys only after this, so they are sealed under the generation the release
-    /// change raised.
-    function syncRelease() external {
+    /// change raised. Every state-changing entry point syncs first, so the generation a key
+    /// service observes can never lag the release it names for longer than one read: once the
+    /// operator acts, identity and generation move together.
+    function syncRelease() public {
         bytes32 effective = currentRelease();
         if (effective == syncedRelease) return;
         syncedRelease = effective;

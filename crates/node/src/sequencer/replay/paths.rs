@@ -87,6 +87,7 @@ pub fn replay_path_with_attested(
     attested: BTreeSet<AccountId>,
 ) -> anyhow::Result<Replayed> {
     let found = fs::metadata(path).with_context(|| format!("no readable log at {}", path.display()))?;
+    let attested_set = attested.clone();
     let mut replay = Replay::with_attested(domain, attested);
     if found.is_dir() {
         SegmentedLog::open(path, |entry| replay.apply(&entry))?;
@@ -96,5 +97,8 @@ pub fn replay_path_with_attested(
     let replayed = replay.finish();
     ensure!(replayed.commands > 0, "{} holds no command", path.display());
     ensure!(replayed.checkpoints > 0, "{} holds no checkpoint, so nothing in it is verified", path.display());
+    // No attested key authenticated a command tail after the last checkpoint: an unsealed
+    // append must not pass as verified.
+    replayed.origin.require_attested(&attested_set)?;
     Ok(replayed)
 }

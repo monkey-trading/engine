@@ -132,6 +132,14 @@ pub(crate) trait CheckpointChain: Send + Sync {
         Ok(false)
     }
 
+    /// The release the vault's generation has folded, at the already pinned finalized observation.
+    /// Error cases: the observation is not finalized and pinned, the read fails, or the chain
+    /// reads no releases
+    async fn synced_release(&self, at: &Observation) -> anyhow::Result<[u8; 32]> {
+        let _ = at;
+        anyhow::bail!("this checkpoint chain reads no release generation")
+    }
+
     /// Whether the operator registry the vault follows has rotation on, at the latest block. Error
     /// cases: the chain cannot be read; a chain with no registry reads `false`.
     async fn rotation_enabled(&self) -> anyhow::Result<bool> {

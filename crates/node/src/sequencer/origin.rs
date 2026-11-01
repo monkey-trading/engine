@@ -17,6 +17,8 @@ pub(crate) struct Origin {
     pub(crate) link: B256,
     domain: Option<CheckpointDomain>,
     signer: Option<AccountId>,
+    /// Independently attested signers a pure audit accepts in place of one pinned authority.
+    attested: Option<BTreeSet<AccountId>>,
     first_untrusted: Option<u64>,
     /// Legacy staking references were not in the SMT; checkpoint root coverage cannot attest them.
     unbound_staking: Option<u64>,
@@ -30,6 +32,12 @@ impl Origin {
         Self { domain, signer, ..Self::default() }
     }
 
+    /// Accepts the independently attested signers, one per signer epoch, instead of one pinned
+    /// authority: a command is trusted when its seal is any of them.
+    pub(crate) fn with_attested(domain: Option<CheckpointDomain>, attested: BTreeSet<AccountId>) -> Self {
+        Self { domain, attested: Some(attested), ..Self::default() }
+    }
+
     /// Checks a present seal before applying a command and retains every uncovered span.
     /// Error cases:
     /// - encoding, domain, events, or the present cryptographic seal is invalid
@@ -40,7 +48,10 @@ impl Origin {
             ensure!(command.events.is_some(), "sealed command lacks logged events");
             ensure!(self.domain.is_none_or(|domain| domain == seal.domain), "command seal deployment mismatch");
             seal.verify(link)?;
-            trusted = self.signer == Some(seal.signer) && self.domain == Some(seal.domain);
+            trusted = match &self.attested {
+                Some(attested) => attested.contains(&seal.signer) && self.domain == Some(seal.domain),
+                None => self.signer == Some(seal.signer) && self.domain == Some(seal.domain),
+            };
         }
         if !trusted {
             self.first_untrusted.get_or_insert(command.sequenced.seq);
@@ -138,6 +149,25 @@ impl Origin {
     /// - authority, deployment, or command coverage is missing or inconsistent
     pub(crate) fn require_audit(&self, signer: AccountId) -> anyhow::Result<()> {
         self.require_coverage(self.domain.context("command origin audit requires a deployment")?, signer)
+    }
+
+    /// Authenticates a tail against the independently attested signer set: every command is
+    /// sealed by one of them, so a host-appended unsealed tail cannot pass as verified.
+    /// Error cases:
+    /// - no deployment is recorded, or an unauthenticated command tail starts at `seq`
+    pub(crate) fn require_attested(&self, attested: &BTreeSet<AccountId>) -> anyhow::Result<()> {
+        ensure!(self.attested.as_ref() == Some(attested), "command origin attested authority mismatch");
+        self.require_audit_untrusted()
+    }
+
+    /// Refuses an uncovered tail.
+    /// Error cases:
+    /// - a command after the last authenticated checkpoint was not sealed by an accepted signer
+    fn require_audit_untrusted(&self) -> anyhow::Result<()> {
+        if let Some(seq) = self.first_untrusted {
+            bail!("unauthenticated command tail starts at seq {seq}");
+        }
+        Ok(())
     }
 }
 

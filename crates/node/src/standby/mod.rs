@@ -28,9 +28,12 @@ use futures_util::{StreamExt, pin_mut};
 use rand::Rng;
 use tokio::time::{sleep, timeout};
 use tokio_tungstenite::tungstenite::Message;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::checkpoints::Takeover;
+
+pub(super) mod archive;
+
 use crate::config::{CustodyProvider, NodeConfig, StandbySection};
 use crate::log::{
     LogEntry, LogWriter, MANIFEST, Manifest, Offset, SegmentInfo, SegmentedLog, offset_of, truncate_to_checkpoint,
@@ -41,9 +44,13 @@ use crate::telemetry::Telemetry;
 /// takeover's worst-case delay after the liveness timeout passes.
 const STINT: Duration = Duration::from_secs(15);
 /// The most archive bytes one fetch reads, bounding memory for a manifest or segment.
-const MAX_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
-/// How long one archive GET or WebSocket connect waits.
-const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
+pub(super) const MAX_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
+/// The most segments one manifest may list.
+pub(super) const MAX_ARCHIVE_LISTINGS: usize = 4096;
+/// How long one archive GET's connection or a WebSocket connect waits.
+pub(super) const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long one archive body may take end to end.
+pub(super) const BODY_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Runs the standby until the registry promotes this node's candidate, then finalizes the copy
 /// and returns for a normal `--new-key` start.
@@ -73,40 +80,89 @@ pub async fn run(cfg: NodeConfig, telemetry: Telemetry) -> anyhow::Result<()> {
 async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()> {
     let my_key: AccountId = cfg.operator()?.address;
     let chain = crate::handover::vault_reader(cfg)?.context("standby mode needs [checkpoints]")?;
-    let archive = archive_client(standby)?;
+    let archive = archive::archive_client(standby)?;
     // A cold start backfills completed segments from the archive; a restart resumes the stream
     // after its own last entry, which backfills anything in between.
     let dir = cfg.node.log_dir.as_path();
     if !dir.join(MANIFEST).exists() {
-        bootstrap_archive(&archive, standby, dir).await?;
+        archive::bootstrap_archive(&archive, standby, dir).await?;
     }
-    let (manifest_tx, _) = tokio::sync::watch::channel(Manifest::default());
-    let mut writer = SegmentedLog::open(dir, |_| Ok(()))?
-        .into_writer(cfg.node.segment_commands.max(1), manifest_tx)
-        .context("opening the standby copy for appends")?;
+    let mut writer = open_copy(dir, cfg.node.segment_commands.max(1))?;
     info!(operator = %standby.operator, enclave = %standby.enclave, "standby following the operator in effect");
+    let mut follow_failed = false;
+    let mut signal_failed = false;
     loop {
         match chain.takeover(my_key).await {
             Ok(Some(takeover)) => {
                 writer.flush().context("flushing the copy before the takeover")?;
                 drop(writer);
-                finalize(&archive, standby, dir, &takeover).await?;
+                if let Err(e) = finalize(&archive, standby, dir, &takeover).await {
+                    error!(alert = "standby_takeover_failed", "the takeover could not finalize: {e:#}");
+                    return Err(e);
+                }
                 info!(
                     alert_resolved = "standby_promoted",
                     seq = takeover.seq,
-                    "promoted: the copy ends at the vault's latest checkpoint; start this node without --standby, \
-                     with --new-key, and have the timelock install this enclave's registered address"
+                    "promoted: the copy ends at the latest published checkpoint the outgoing key \
+                     signed; start this node without --standby, with --new-key, under a config \
+                     naming the operator in effect's key, and have the timelock install this \
+                     enclave's registered address"
                 );
                 return Ok(());
             }
-            Ok(None) => {}
-            Err(e) => warn!("reading the takeover signal failed: {e:#}"),
+            Ok(None) => {
+                if signal_failed {
+                    info!(alert_resolved = "standby_signal_failed", "reading the takeover signal works again");
+                    signal_failed = false;
+                }
+            }
+            Err(e) => {
+                if !signal_failed {
+                    error!(alert = "standby_signal_failed", "reading the takeover signal failed: {e:#}");
+                }
+                signal_failed = true;
+                sleep(standby.poll_interval).await;
+            }
         }
         // The writer's last entry is the resume point, so an error mid-stint never duplicates
         // appends: the next stint re-requests from it.
         let resume = writer.last_offset();
         if let Err(e) = follow(&mut writer, cfg, standby, resume, STINT).await {
-            warn!(operator = %standby.operator, "following failed: {e:#}");
+            if !follow_failed {
+                error!(alert = "standby_follow_failed", operator = %standby.operator, "following failed: {e:#}");
+            }
+            follow_failed = true;
+            // A dead operator refuses connections at once; the poll interval bounds the retry
+            // rate for as long as the liveness window lasts.
+            sleep(standby.poll_interval).await;
+        } else if follow_failed {
+            info!(alert_resolved = "standby_follow_failed", "following works again");
+            follow_failed = false;
+        }
+    }
+}
+
+/// Opens the copy for appends, repairing an interrupted takeover first: a crash during
+/// finalization leaves a `takeover.json` marker, and re-running the truncation is idempotent, so
+/// the next start finishes the surgery before following again.
+/// Error cases:
+/// - the copy cannot be opened, and no takeover marker repairs it
+fn open_copy(dir: &std::path::Path, segment_commands: u64) -> anyhow::Result<LogWriter> {
+    let open = |dir: &std::path::Path| {
+        let (manifest_tx, _) = tokio::sync::watch::channel(Manifest::default());
+        SegmentedLog::open(dir, |_| Ok(()))?.into_writer(segment_commands, manifest_tx)
+    };
+    match open(dir) {
+        Ok(writer) => Ok(writer),
+        Err(e) => {
+            let marker = dir.join("takeover.json");
+            let bytes = std::fs::read(&marker).map_err(|_| e)?;
+            let takeover: Takeover =
+                serde_json::from_slice(&bytes).context("parsing the interrupted takeover marker")?;
+            crate::log::truncate_to_checkpoint(dir, takeover.seq, &takeover.root)
+                .context("repairing the interrupted takeover")?;
+            std::fs::remove_file(&marker).context("removing the takeover marker")?;
+            open(dir).context("opening the repaired copy")
         }
     }
 }
@@ -204,145 +260,74 @@ async fn finalize(
     dir: &std::path::Path,
     takeover: &Takeover,
 ) -> anyhow::Result<()> {
-    if let Err(e) = refresh_archive(archive, standby, dir).await {
+    if let Err(e) = archive::refresh_archive(archive, standby, dir).await {
         warn!("refreshing the archive before the takeover failed: {e:#}");
     }
-    ensure!(
-        copy_holds_checkpoint(dir, takeover.seq, &takeover.root)?,
-        "the copy holds no checkpoint at seq {} with root {}: the vault accepted a checkpoint the \
-         operator never published to the stream or archive; the standby cannot take over",
-        takeover.seq,
-        takeover.root
-    );
-    truncate_to_checkpoint(dir, takeover.seq, &takeover.root).context("truncating the copy at the takeover")
+    // The whole copy must replay before any history is dropped: archive-fetched bytes were only
+    // hash-checked against the server's own manifest, and this catches a forged prefix here
+    // rather than after the timelock installs this enclave. Withdrawals verify against the
+    // followed operator's attested enclave, the only key that signed this copy's payouts.
+    crate::sequencer::replay_path_with_attested(dir, None, [standby.enclave].into_iter().collect())
+        .context("the copy does not replay; refusing to truncate it")?;
+    // The resume point is the latest checkpoint in the published log that the outgoing key
+    // signed and that extends the vault's latest root: the anchor itself, then every later
+    // checkpoint of the copy that continues the outgoing key's signed parent chain. Checkpoints
+    // the vault never saw but the outgoing key signed stay: they are published history this
+    // node continues, and dropping them could conflict with a relay of the same signatures.
+    let resume = resume_checkpoint(dir, takeover)?;
+    // The marker makes the surgery resumable: a crash from here is repaired on restart.
+    std::fs::write(
+        dir.join("takeover.json"),
+        serde_json::to_string(&Takeover { seq: resume.0, root: resume.1.clone(), signer: takeover.signer })
+            .context("encoding the takeover marker")?,
+    )
+    .context("writing the takeover marker")?;
+    truncate_to_checkpoint(dir, resume.0, &resume.1).context("truncating the copy at the takeover")?;
+    std::fs::remove_file(dir.join("takeover.json")).context("removing the takeover marker")?;
+    Ok(())
 }
 
-/// Whether the copy holds the checkpoint at `seq` with `root`.
+/// The latest published checkpoint the outgoing key signed that extends the vault's latest root:
+/// the anchor checkpoint itself, then the newest later copy checkpoint whose signed parent is
+/// the running tip. Every skipped or foreign-signed checkpoint between them breaks the chain, so
+/// the result is the deepest unbroken continuation.
 /// Error cases:
-/// - the copy cannot be read
-fn copy_holds_checkpoint(dir: &std::path::Path, seq: u64, root: &str) -> anyhow::Result<bool> {
-    let mut found = false;
+/// - the copy cannot be read, or holds no checkpoint at the anchor
+fn resume_checkpoint(dir: &std::path::Path, takeover: &Takeover) -> anyhow::Result<(u64, String)> {
+    let mut tip: Option<(u64, String)> = None;
+    let mut found_anchor = false;
     SegmentedLog::open(dir, |entry| {
         if let LogEntry::Checkpoint(checkpoint) = &entry {
-            found |= checkpoint.seq == seq && checkpoint.root == root;
+            let root = checkpoint.root.to_lowercase();
+            match &tip {
+                None if checkpoint.seq == takeover.seq && root == takeover.root.to_lowercase() => {
+                    if checkpoint.signer != takeover.signer.to_string() {
+                        bail!(
+                            "the anchor checkpoint at seq {} is signed by {}, not the vault's {}",
+                            checkpoint.seq,
+                            checkpoint.signer,
+                            takeover.signer
+                        );
+                    }
+                    found_anchor = true;
+                    tip = Some((checkpoint.seq, root));
+                }
+                Some((seq, parent_root)) if checkpoint.signer == takeover.signer.to_string() => {
+                    if let Some(parent) = &checkpoint.parent
+                        && parent.has_checkpoint
+                        && parent.seq == *seq
+                        && format!("0x{}", hex::encode(parent.root.0)) == *parent_root
+                    {
+                        tip = Some((checkpoint.seq, root));
+                    }
+                }
+                _ => {}
+            }
         }
         Ok(())
     })?;
-    Ok(found)
-}
-
-/// A cold start: fetches the published manifest and every completed segment it lists into the
-/// empty copy, checking each file against its listing, and writes the manifest. A missing
-/// manifest (a fresh deployment) leaves the copy empty for the stream to fill from seq 0.
-/// Error cases:
-/// - a fetch fails, exceeds the bound, or a file differs from its listing
-async fn bootstrap_archive(
-    archive: &reqwest::Client,
-    standby: &StandbySection,
-    dir: &std::path::Path,
-) -> anyhow::Result<()> {
-    let listings = match fetch_manifest(archive, standby).await {
-        Ok(listings) => listings,
-        Err(e) => match e.downcast::<reqwest::Error>() {
-            Ok(reqwest) if reqwest.status() == Some(reqwest::StatusCode::NOT_FOUND) => return Ok(()),
-            Ok(reqwest) => return Err(reqwest).context("fetching the published manifest"),
-            Err(e) => return Err(e).context("fetching the published manifest"),
-        },
-    };
-    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-    let mut text = String::new();
-    for listed in &listings {
-        let bytes = fetch_archive_bytes(archive, standby, &listed.file).await?;
-        let actual = sha256(&bytes);
-        ensure!(
-            bytes.len() as u64 == listed.bytes && actual == listed.sha256,
-            "archive segment {} differs from its listing",
-            listed.file
-        );
-        std::fs::write(dir.join(&listed.file), bytes).with_context(|| format!("writing {}", listed.file))?;
-        text.push_str(&serde_json::to_string(listed).context("encoding a manifest line")?);
-        text.push('\n');
-    }
-    std::fs::write(dir.join(MANIFEST), text).with_context(|| format!("writing {MANIFEST}"))?;
-    info!(segments = listings.len(), "backfilled the copy from the operator's archive");
-    Ok(())
-}
-
-/// Best-effort refresh of completed segments the copy lacks, run once a takeover is promoted:
-/// the checkpoint the vault accepted last may post after the stream last delivered.
-/// Error cases:
-/// - the manifest cannot be fetched or a listed file differs from its listing
-async fn refresh_archive(
-    archive: &reqwest::Client,
-    standby: &StandbySection,
-    dir: &std::path::Path,
-) -> anyhow::Result<()> {
-    let listings = fetch_manifest(archive, standby).await.context("fetching the published manifest")?;
-    let mut text = String::new();
-    for listed in &listings {
-        let path = dir.join(&listed.file);
-        if path.exists()
-            && std::fs::metadata(&path).is_ok_and(|meta| meta.len() == listed.bytes)
-            && sha256(&std::fs::read(&path)?) == listed.sha256
-        {
-            text.push_str(&serde_json::to_string(listed).context("encoding a manifest line")?);
-            text.push('\n');
-            continue;
-        }
-        let bytes = fetch_archive_bytes(archive, standby, &listed.file).await?;
-        ensure!(
-            bytes.len() as u64 == listed.bytes && sha256(&bytes) == listed.sha256,
-            "archive segment {} differs from its listing",
-            listed.file
-        );
-        std::fs::write(path, &bytes).with_context(|| format!("writing {}", listed.file))?;
-        text.push_str(&serde_json::to_string(listed).context("encoding a manifest line")?);
-        text.push('\n');
-    }
-    std::fs::write(dir.join(MANIFEST), text).with_context(|| format!("writing {MANIFEST}"))?;
-    Ok(())
-}
-
-/// The archive's manifest: one segment listing a line, oldest first.
-/// Error cases:
-/// - the fetch fails or a line is not a listing
-async fn fetch_manifest(archive: &reqwest::Client, standby: &StandbySection) -> anyhow::Result<Vec<SegmentInfo>> {
-    let bytes = fetch_archive_bytes(archive, standby, MANIFEST).await?;
-    bytes
-        .split(|b| *b == b'\n')
-        .filter(|line| !line.trim_ascii().is_empty())
-        .map(|line| serde_json::from_slice(line).context("parsing a manifest line"))
-        .collect()
-}
-
-/// One archive GET, bounded in bytes and time.
-/// Error cases:
-/// - the fetch fails, exceeds the bound, or the body exceeds `MAX_ARCHIVE_BYTES`
-async fn fetch_archive_bytes(
-    archive: &reqwest::Client,
-    standby: &StandbySection,
-    file: &str,
-) -> anyhow::Result<Vec<u8>> {
-    let url = format!("{}/v1/archive/{file}", standby.operator.trim_end_matches('/'));
-    let sent = timeout(FETCH_TIMEOUT, archive.get(&url).send()).await.context("archive fetch timed out")??;
-    let mut response = sent.error_for_status().with_context(|| format!("fetching {url}"))?;
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.context("reading the archive")? {
-        ensure!(bytes.len() as u64 + chunk.len() as u64 <= MAX_ARCHIVE_BYTES, "archive file {file} exceeds the bound");
-        bytes.extend_from_slice(&chunk);
-    }
-    Ok(bytes)
-}
-
-/// The TLS client config for archive fetches: public roots, or no verification when the config
-/// says so. The stream's frame signatures are the authenticity boundary either way.
-fn archive_client(standby: &StandbySection) -> anyhow::Result<reqwest::Client> {
-    let mut builder = reqwest::Client::builder();
-    if standby.danger_accept_invalid_certs {
-        warn!("standby.danger_accept_invalid_certs: the operator's TLS certificate is not verified");
-        builder = builder.danger_accept_invalid_certs(true);
-    }
-    builder.build().context("building the archive client")
+    ensure!(found_anchor, "the copy holds no checkpoint at the vault's latest seq {}", takeover.seq);
+    Ok(tip.expect("the anchor set the tip"))
 }
 
 /// The TLS config for the stream: the venue feeds' public roots, or a verifier that accepts any
@@ -428,7 +413,7 @@ fn stream_url(origin: &str, path_and_query: &str) -> anyhow::Result<String> {
     Ok(url)
 }
 
-fn sha256(bytes: &[u8]) -> String {
+pub(super) fn sha256(bytes: &[u8]) -> String {
     use sha2::Digest as _;
     hex::encode(sha2::Sha256::digest(bytes))
 }

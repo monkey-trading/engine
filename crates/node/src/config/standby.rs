@@ -9,9 +9,13 @@ use serde::Deserialize;
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StandbySection {
-    /// The operator in effect's API origin, for its `/v1/stream` and `/v1/archive/`; the
-    /// stand-in mirrors #48 sets up serve the same bytes.
+    /// The operator in effect's API origin, for its `/v1/stream`; the archive is read from
+    /// `mirrors` first and the operator itself last, since the operator may be dead exactly when
+    /// the archive matters. Every origin must serve the same public bytes.
     pub operator: String,
+    /// Archive mirrors (#48's) to backfill and refresh from, tried in order before `operator`.
+    #[serde(default)]
+    pub mirrors: Vec<String>,
     /// The enclave address the operator's verified attestation names; every stream frame verifies
     /// against it, so the host that carries the connection authenticates nothing.
     pub enclave: engine_core::types::AccountId,

@@ -272,3 +272,22 @@ contract StandbyPromotionTest is RegistryTest {
         return registry.openEpoch() + uint64((block.timestamp - registry.openEpochStart()) / EPOCH);
     }
 }
+
+/// The vault names a promotion's release at once; an election's only from its effective time,
+/// as #359 §10 decides.
+contract ElectionReleaseTimingTest is StandbyPromotionTest {
+    function test_AnElectionsReleaseMovesAtItsEffectiveTime() public {
+        _candidate(alice, 30_000e18, 1);
+        _delegate(alice, alice);
+        _setRotation(true);
+        vm.warp(block.timestamp + MIN_TERM);
+        _closeNext();
+        OperatorRegistry.Election memory pending = registry.pendingElection();
+        assertEq(pending.candidate, alice);
+        // Before the effective time the vault still names the incumbent's release.
+        assertEq(registry.operatorRelease(), _release(0), "an election's release moved before its time");
+        vm.warp(pending.effectiveAt);
+        assertEq(registry.operatorRelease(), _release(1));
+        assertEq(registry.operatorEnclave(), _enclave(1));
+    }
+}

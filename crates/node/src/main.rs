@@ -40,8 +40,8 @@ enum Cmd {
         mock_launch_digest: Option<[u8; 48]>,
         /// Run as the standby for the operator in effect: follow its stream into a local copy of
         /// the published log and take over when the registry's liveness rule promotes this node's
-        /// candidate (needs `[standby]`).
-        #[arg(long)]
+        /// candidate (needs `[standby]`). The standby holds no keys; the key flags do not apply.
+        #[arg(long, conflicts_with_all = ["new_key", "predecessor", "mock_launch_digest"])]
         standby: bool,
     },
     /// Replay a published log and verify every checkpoint root and signature. `--log` is a single log file, or a

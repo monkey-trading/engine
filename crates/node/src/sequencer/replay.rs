@@ -127,9 +127,11 @@ impl Replay {
     }
 
     /// Accepts the independently attested signers, one per signer epoch, instead of one pinned
-    /// authority: each checkpoint and each typed withdrawal must be one of them.
+    /// authority: each checkpoint, each typed withdrawal, and each command seal must be one of
+    /// them, and each authenticated checkpoint covers the commands before it.
     pub(super) fn with_attested(domain: Option<CheckpointDomain>, attested: BTreeSet<AccountId>) -> Self {
-        Self { attested: Some(attested), ..Self::with_trust(domain, None) }
+        let origin = crate::sequencer::origin::Origin::with_attested(domain, attested.clone());
+        Self { attested: Some(attested), domain: domain, trusted_signer: None, origin, ..Self::default() }
     }
     /// Retains only the authenticated outstanding tail after the independently finalized anchor.
     pub(super) fn with_recovery(
@@ -307,10 +309,38 @@ impl Replay {
                     );
                 }
                 if self.trusted_signer.is_some_and(|trusted| trusted != signer) {
-                    self.authorities
-                        .get(&cp.seq)
-                        .context("checkpoint signer differs from trusted recovery authority")?
-                        .verify(cp)?;
+                    if let Some(accepted) = self.authorities.get(&cp.seq) {
+                        accepted.verify(cp)?;
+                    } else {
+                        // A checkpoint custody has not authenticated: the outgoing operator's
+                        // last published checkpoints past the vault's latest. Accept only the
+                        // linear extension of the last authenticated checkpoint, signed by the
+                        // same signer: the signature above binds the root, the parent binds the
+                        // chain, and a key the vault never named cannot pass.
+                        let previous = self
+                            .authorities
+                            .range(..cp.seq)
+                            .next_back()
+                            .map(|(_, accepted)| accepted)
+                            .context("checkpoint signer differs from trusted recovery authority")?;
+                        let parent = cp.parent.context("unauthenticated checkpoint lacks its signed parent")?;
+                        ensure!(
+                            previous.signer == signer
+                                && parent.has_checkpoint
+                                && parent.seq == previous.seq
+                                && parent.root.to_string() == previous.root,
+                            "checkpoint signer differs from trusted recovery authority"
+                        );
+                        self.authorities.insert(
+                            cp.seq,
+                            crate::checkpoints::AcceptedCheckpoint {
+                                seq: cp.seq,
+                                root: cp.root.clone(),
+                                signer,
+                                signer_epoch: previous.signer_epoch,
+                            },
+                        );
+                    }
                 }
                 self.checkpoint_signers.insert(signer);
                 if self.recovery_origin.is_some_and(|parent| {
@@ -326,14 +356,23 @@ impl Replay {
                     && (!parent.has_checkpoint || cp.seq > parent.seq)
                 {
                     ensure!(cp.parent == Some(parent), "outstanding checkpoint has a divergent signed parent");
-                    self.recovery_work.push(crate::checkpoints::Work::capture(cp.clone(), self.accounting, engine));
+                    // Only the pinned authority's outstanding checkpoints queue as posting work:
+                    // a takeover keeps the outgoing operator's later published checkpoints as
+                    // replayed history, but the vault accepts only the current signer's posts.
+                    if self.trusted_signer.is_none_or(|trusted| trusted == signer) {
+                        self.recovery_work.push(crate::checkpoints::Work::capture(cp.clone(), self.accounting, engine));
+                    }
                     self.recovery_parent = Some(crate::log::CheckpointParent {
                         has_checkpoint: true,
                         seq: cp.seq,
                         root: cp.root.parse()?,
                     });
                 }
-                self.origin.checkpoint(cp, checkpoint_domain, self.trusted_signer.is_some())?;
+                self.origin.checkpoint(
+                    cp,
+                    checkpoint_domain,
+                    self.trusted_signer.is_some() || self.attested.is_some(),
+                )?;
                 self.last_signed_checkpoint = Some(cp.clone());
                 self.genesis.checkpoint();
                 // The checkpoint covers the last command applied, whose stamp is the engine's time.

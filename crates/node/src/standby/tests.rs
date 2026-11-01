@@ -100,6 +100,42 @@ fn truncate_mid_segment_drops_its_listing() {
 }
 
 #[test]
+fn truncate_removes_later_listed_segments() {
+    // The accepted checkpoint ends a completed, listed segment with another listed segment after
+    // it: the later file and its listing both go, and the copy still opens.
+    let dir = scratch_dir("standby-truncate-listed-later");
+    let mut writer = open_writer(&dir, 1);
+    for entry in [command(0), checkpoint(0, 7), command(1), checkpoint(1, 8), command(2), checkpoint(2, 9)] {
+        writer.append(&entry).unwrap();
+    }
+    writer.flush().unwrap();
+    drop(writer);
+    truncate_to_checkpoint(&dir, 0, &root(7)).unwrap();
+    assert_eq!(entries(&dir), vec![command(0), checkpoint(0, 7)]);
+    let manifest = std::fs::read_to_string(dir.join(crate::log::MANIFEST)).unwrap();
+    assert_eq!(manifest.lines().count(), 1, "only the target's listing stays: {manifest}");
+}
+
+#[test]
+fn archive_listings_must_be_canonical_and_ordered() {
+    use crate::log::SegmentInfo;
+    let listed = |file: &str, first_seq| SegmentInfo {
+        file: file.into(),
+        first_seq,
+        last_seq: first_seq,
+        bytes: 1,
+        sha256: "00".repeat(32),
+    };
+    assert!(super::archive::validate_listing(&listed("00000000000000000000.jsonl", 0)).is_ok());
+    assert!(super::archive::validate_listing(&listed("../escape.jsonl", 0)).is_err(), "a traversal name is refused");
+    assert!(super::archive::validate_listing(&listed("/abs/path.jsonl", 0)).is_err(), "an absolute name is refused");
+    assert!(
+        super::archive::validate_listing(&listed("00000000000000000001.jsonl", 0)).is_err(),
+        "a wrong seq name is refused"
+    );
+}
+
+#[test]
 fn truncate_refuses_a_checkpoint_the_copy_lacks() {
     let dir = scratch_dir("standby-truncate-missing");
     let mut writer = open_writer(&dir, 100);
@@ -198,6 +234,7 @@ async fn follow_appends_verified_frames_and_refuses_a_wrong_signer() {
     cfg.custody.vault = format!("0x{}", hex::encode([9; 20]));
     let standby = StandbySection {
         operator: format!("http://127.0.0.1:{port}"),
+        mirrors: Vec::new(),
         enclave,
         poll_interval: Duration::from_millis(50),
         danger_accept_invalid_certs: false,
@@ -249,6 +286,7 @@ async fn follow_resumes_after_the_last_offset() {
     cfg.custody.vault = format!("0x{}", hex::encode([9; 20]));
     let standby = StandbySection {
         operator: format!("http://127.0.0.1:{port}"),
+        mirrors: Vec::new(),
         enclave,
         poll_interval: Duration::from_millis(50),
         danger_accept_invalid_certs: false,

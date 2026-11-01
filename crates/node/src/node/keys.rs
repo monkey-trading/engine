@@ -130,6 +130,23 @@ async fn obtain_with(
         Some(vault) => Some(current_release(vault).await?),
         None => None,
     };
+    // Seal or open keys only under a folded release change: while `syncedRelease` trails
+    // `currentRelease()`, anyone's `syncRelease` would raise the generation and supersede a file
+    // sealed now, so the promoter must fold the change first (runbook), and this start waits.
+    if let (Some(vault), Some(current)) = (vault, current.as_ref()) {
+        let folded = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            loop {
+                let at = vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
+                if vault.synced_release(&at).await? == current.id {
+                    return anyhow::Ok(());
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+        })
+        .await
+        .context("the vault never folded the release change into its generation; have the promoter call syncRelease")?;
+        folded?;
+    }
     let generation = current.map_or(0, |current| current.generation);
     let sealed = file_for(dir, &release, generation).exists();
     ensure!(

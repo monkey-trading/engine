@@ -29,9 +29,11 @@ sol! {
         uint16 quorumBps;
         uint16 maxCandidates;
         uint256 minSelfBond;
+        uint64 livenessTimeout;
     }
     struct Registration {
         address adminKey;
+        address enclave;
         uint256 bond;
         bytes launchDigest;
         bytes32 configHash;
@@ -176,6 +178,7 @@ impl Chain {
         let admin = Address::from(engine_core::eip712::address(admin_key.verifying_key()).0);
         let registration = Registration {
             adminKey: admin,
+            enclave: admin,
             bond,
             launchDigest: Bytes::from(digest.to_vec()),
             configHash: CONFIG_HASH.into(),

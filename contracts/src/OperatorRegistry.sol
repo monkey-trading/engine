@@ -96,13 +96,16 @@ contract OperatorRegistry {
         uint64 since;
     }
 
-    /// @notice An election that takes effect at `effectiveAt`.
+    /// @notice An election that takes effect at `effectiveAt`. A promotion (`promoted`) moves
+    /// the vault's release at once; an election moves it at the effective time, as #359 §10
+    /// decides.
     struct Election {
         uint64 epoch;
         address candidate;
         address adminKey;
         bytes32 release;
         uint64 effectiveAt;
+        bool promoted;
     }
 
     /// @notice The initial operator in effect: the deployment's key and release. Its candidate
@@ -452,7 +455,7 @@ contract OperatorRegistry {
         if (winner == address(0)) return epoch;
         Candidate storage elected = candidates[winner];
         uint64 effectiveAt = uint64(block.timestamp + NOTICE + p.finalityMargin);
-        pending = Election(epoch, winner, elected.adminKey, elected.release, effectiveAt);
+        pending = Election(epoch, winner, elected.adminKey, elected.release, effectiveAt, false);
         emit Elected(epoch, winner, elected.adminKey, elected.release, effectiveAt);
     }
 
@@ -482,7 +485,7 @@ contract OperatorRegistry {
         openEpochStart = uint64(block.timestamp);
         Candidate storage promoted = candidates[standby];
         uint64 effectiveAt = uint64(block.timestamp + NOTICE + p.finalityMargin);
-        pending = Election(epoch, standby, promoted.adminKey, promoted.release, effectiveAt);
+        pending = Election(epoch, standby, promoted.adminKey, promoted.release, effectiveAt, true);
         emit Elected(epoch, standby, promoted.adminKey, promoted.release, effectiveAt);
     }
 
@@ -492,19 +495,19 @@ contract OperatorRegistry {
         return _inEffect();
     }
 
-    /// @notice The enclave address the pending-or-current operator's candidate registered: the only
-    /// address the vault's limited `setSigner` installs while rotation is on. A pending election's
-    /// or promotion's candidate counts before its time, since the vault names its release at once.
-    /// Zero when the operator in effect is not a registered candidate.
+    /// @notice The enclave address the named operator's candidate registered: the only address the
+    /// vault's limited `setSigner` installs while rotation is on. A promotion names its candidate
+    /// at once; an election names the winner only from its effective time. Zero when the named
+    /// operator is not a registered candidate.
     function operatorEnclave() external view returns (address) {
-        return candidates[_pendingOrCurrent().candidate].enclave;
+        return candidates[_named().candidate].enclave;
     }
 
-    /// @notice The release the vault names while rotation is on: the pending-or-current operator's,
-    /// a pending one as soon as it is made, since the standby's enclave unseals only under the
-    /// release it runs.
+    /// @notice The release the vault names while rotation is on: the named operator's. A promoted
+    /// standby's enclave unseals only under the release it runs, so a promotion names it at once;
+    /// an election's release moves at its effective time, as #359 §10 decides.
     function operatorRelease() external view returns (bytes32) {
-        return _pendingOrCurrent().release;
+        return _named().release;
     }
 
     /// @dev The operator in effect, pending one settled.
@@ -515,10 +518,10 @@ contract OperatorRegistry {
         return current;
     }
 
-    /// @dev The pending operator when one waits, else the operator in effect: what the vault names
-    /// while rotation is on.
-    function _pendingOrCurrent() private view returns (Operator memory) {
-        if (pending.effectiveAt != 0) {
+    /// @dev The operator the vault names while rotation is on: a pending promotion from the moment
+    /// it is made, a pending election from its effective time, else the operator in effect.
+    function _named() private view returns (Operator memory) {
+        if (pending.effectiveAt != 0 && (pending.promoted || block.timestamp >= pending.effectiveAt)) {
             return Operator(pending.candidate, pending.adminKey, pending.release, pending.effectiveAt);
         }
         return current;

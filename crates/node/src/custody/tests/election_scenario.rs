@@ -146,6 +146,7 @@ fn dev_parameters() -> (Parameters, Parameters, Parameters) {
         quorumBps: 2_000,
         maxCandidates: 10,
         minSelfBond: monkey(1_000),
+        livenessTimeout: 7 * 24 * 3_600,
     };
     let minimums = Parameters {
         epochLength: 60,
@@ -156,6 +157,7 @@ fn dev_parameters() -> (Parameters, Parameters, Parameters) {
         quorumBps: 0,
         maxCandidates: 1,
         minSelfBond: U256::ZERO,
+        livenessTimeout: 60,
     };
     let maximums = Parameters {
         epochLength: 30 * 86_400,
@@ -166,6 +168,7 @@ fn dev_parameters() -> (Parameters, Parameters, Parameters) {
         quorumBps: 10_000,
         maxCandidates: 100,
         minSelfBond: monkey(1_000_000),
+        livenessTimeout: 30 * 24 * 3_600,
     };
     (parameters, minimums, maximums)
 }

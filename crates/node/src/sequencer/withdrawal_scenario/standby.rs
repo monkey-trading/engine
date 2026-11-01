@@ -24,8 +24,8 @@ use crate::sequencer::withdrawal_scenario::client::{Client, Stream, User};
 use crate::sequencer::withdrawal_scenario::flows::{entries, last_seq};
 use crate::sequencer::withdrawal_scenario::node::{ChildProcess, Node, free_port, write_config};
 use crate::sequencer::withdrawal_scenario::rpc::{
-    Chain, currentReleaseCall, latestRootCall, latestSeqCall, operatorInEffectCall, pauseWithdrawalsCall,
-    pendingElectionCall, promoteCall, setEnclaveCall, setPausesCall, setSignerCall,
+    Chain, currentReleaseCall, executeCall, latestRootCall, latestSeqCall, operatorInEffectCall, pauseWithdrawalsCall,
+    pendingElectionCall, promoteCall, scheduleCall, setEnclaveCall, setPausesCall, setSignerCall,
 };
 use crate::sequencer::withdrawal_scenario::{
     CHILD_ALERTS, CHILD_CONFIG, CHILD_FEED, CHILD_KEYS, CHILD_LAUNCH_DIGEST, CHILD_STANDBY, CHILD_TEST,
@@ -115,7 +115,6 @@ pub(super) async fn standby_takes_over() -> anyhow::Result<()> {
     node.client.wait_balance(&trader, "100").await?;
     node.client.wait_finalised(&trader).await?;
     node.wait_withdrawals_enabled(last_seq(&node.dir.join("log"))?).await?;
-    node.chain.send(node.chain.guardian(), node.chain.vault, pauseWithdrawalsCall {}.abi_encode()).await?;
     let request = node.client.withdrawal(&trader, "10").await?;
     let events = node.client.request_withdrawal(&request).await?;
     ensure!(
@@ -124,6 +123,12 @@ pub(super) async fn standby_takes_over() -> anyhow::Result<()> {
             .any(|event| matches!(event, Event::WithdrawalApproved { account, .. } if *account == trader.account)),
         "the withdrawal was not approved: {events:?}"
     );
+    // A signs the authorization while payouts are open; the pause then holds it unclaimed until
+    // the takeover, so the reissue must retire a real outstanding authorization.
+    let mut a_stream = node.client.stream().await?;
+    let issued = a_stream.payout(trader.account, 10).await?;
+    node.chain.send(node.chain.guardian(), node.chain.vault, pauseWithdrawalsCall {}.abi_encode()).await?;
+    drop(a_stream);
     // A's checkpoints keep posting while payouts are paused; wait until one covers the approval.
     let approval_seq = last_seq(&node.dir.join("log"))?;
     timeout(LOADED_WAIT, async {
@@ -188,17 +193,60 @@ pub(super) async fn standby_takes_over() -> anyhow::Result<()> {
     let status = b_child.exited(LOADED_WAIT).await?;
     ensure!(status.success(), "B's standby exited with {status}");
     let copy = entries(&b_log)?;
+    let a_tip = entries(&node.dir.join("log"))?
+        .into_iter()
+        .rev()
+        .find_map(|entry| match entry {
+            LogEntry::Checkpoint(checkpoint) => Some(checkpoint),
+            _ => None,
+        })
+        .context("A's log ends in no checkpoint")?;
+    ensure!(
+        a_tip.seq >= takeover_seq,
+        "A published no checkpoint at or past the vault's latest: tip seq {} < {takeover_seq}",
+        a_tip.seq
+    );
     ensure!(
         matches!(copy.last(), Some(LogEntry::Checkpoint(checkpoint))
-            if checkpoint.seq == takeover_seq && checkpoint.root == format!("0x{}", hex::encode(takeover_root.0))),
-        "B's copy does not end at the vault's latest checkpoint: {copy:?}"
+            if checkpoint.seq == a_tip.seq && checkpoint.root == a_tip.root),
+        "B's copy does not end at the latest published checkpoint A signed: copy {copy:?}, A's tip {a_tip:?}"
     );
 
     // The vault names B's release at finalized before a --new-key start reads it there.
     node.chain.wait_finalized_release(pending.release).await?;
 
-    // The timelock's setSigner accepts only the enclave B registered: the admin key reverts.
-    node.chain.refuses_call(node.chain.vault, setSignerCall { signer: b_admin_address }.abi_encode()).await?;
+    // The timelock's setSigner accepts only the enclave B registered: scheduling the admin key
+    // and executing it reverts, through the timelock's own path.
+    let salt = alloy::primitives::B256::from(rand::random::<[u8; 32]>());
+    let payload = setSignerCall { signer: b_admin_address }.abi_encode();
+    node.chain
+        .send(
+            node.chain.deployer,
+            node.chain.timelock,
+            scheduleCall {
+                target: node.chain.vault,
+                value: U256::ZERO,
+                data: payload.clone().into(),
+                predecessor: alloy::primitives::B256::ZERO,
+                salt,
+                delay: U256::from(1),
+            }
+            .abi_encode(),
+        )
+        .await?;
+    node.chain
+        .refuses_call(
+            node.chain.timelock,
+            executeCall {
+                target: node.chain.vault,
+                value: U256::ZERO,
+                payload: payload.into(),
+                predecessor: alloy::primitives::B256::ZERO,
+                salt,
+            }
+            .abi_encode(),
+        )
+        .await?;
 
     // B starts with fresh keys and serves only its attestation until the timelock installs it.
     let mut b_child = spawn_b(&b_dir, &b_config_path, &node, Some("new-key"), Some(B_DIGEST), false)?;
@@ -240,9 +288,15 @@ pub(super) async fn standby_takes_over() -> anyhow::Result<()> {
 
     // Unpaused, B reissues the durable authorization under its signer epoch and it pays once.
     node.chain.govern(setPausesCall { depositsPaused: false, withdrawalsPaused: false }.abi_encode()).await?;
+    // The authorization A signed retired with its epoch: the vault rejects it, and only the
+    // reissue under B's epoch pays.
+    node.chain.refuses(node.chain.claim(&issued)?.abi_encode()).await?;
     let mut stream = b_client.stream().await?;
     let reissued = payout_at_epoch(&mut stream, trader.account, 10, 2).await?;
-    ensure!(reissued.nonce == 1, "the reissue changed the approval's nonce");
+    ensure!(
+        (reissued.nonce, reissued.approved_seq) == (issued.nonce, issued.approved_seq),
+        "the reissue changed the approval"
+    );
     pay_b(&node.chain, &reissued).await?;
     let signed: Vec<_> = entries(&b_log)?
         .into_iter()
@@ -251,7 +305,10 @@ pub(super) async fn standby_takes_over() -> anyhow::Result<()> {
             _ => None,
         })
         .collect();
-    ensure!(signed == [reissued.clone()], "more than the one reissue was signed: {signed:?}");
+    ensure!(
+        signed == [issued.clone(), reissued.clone()],
+        "A's issue and B's one reissue are exactly what signed: {signed:?}"
+    );
     drop(stream);
 
     // The log verifies across the change of signer, given each signer.
@@ -260,8 +317,9 @@ pub(super) async fn standby_takes_over() -> anyhow::Result<()> {
     ensure!(replayed.checkpoint_signers == signers, "the replay did not name both signers");
     println!(
         "PASS: the liveness rule promotes the standby, the limited setSigner installs only the \
-         registered enclave, B resumes at the vault's latest checkpoint, the reissued authorization \
-         pays once, and the log replays across the signer change"
+         registered enclave, B resumes at the latest published checkpoint the outgoing key signed, \
+         the retired authorization reverts and the reissue pays once, and the log replays across \
+         the signer change"
     );
     Ok(())
 }
