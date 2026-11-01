@@ -3,7 +3,11 @@
 //! cache is rebuildable state, never sequenced: recovery seeds it from the log's replay (the same
 //! derivation as the live index), live commands keep it current, and an optional provider backfill
 //! seeds the depth a fresh log cannot have. Every bucket says whether it is log-derived or
-//! provider-seeded, so a client can weigh seeded history against what the public log proves.
+//! provider-seeded, so a client can weigh seeded history against what the public log proves. The
+//! buckets are chained: each row names the bucket below it under its authentication tag, and
+//! per-pair chain heads committed in memory at recovery re-derivation anchor the index, so a host
+//! that deletes, reorders, or rolls the cache back mid-run is refused at serve time — the read
+//! over the broken span fails before anything is signed.
 
 mod backfill;
 pub(crate) mod run;

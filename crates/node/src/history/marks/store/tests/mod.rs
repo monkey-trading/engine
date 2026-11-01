@@ -1,5 +1,10 @@
 //! The marks cache on disk: bucketing, per-resolution retention, seeding that never overwrites
-//! log-derived rows, backfill markers, paging, and a rebuild of a file the host altered.
+//! log-derived rows, backfill markers, paging, and a rebuild of a file the host altered. The
+//! chained index over the rows — what each row links below it, and what each read refuses when a
+//! link or a committed head no longer matches — is tested in `chain.rs`.
+
+mod chain;
+mod refusals;
 
 use std::path::PathBuf;
 
@@ -361,6 +366,29 @@ async fn import_prior_keeps_authenticated_seeded_rows_and_drops_tampered_ones() 
     assert_eq!(page.entries[0].ts, 1_792_489_860_000);
     assert_eq!(store.backfilled().unwrap(), [(1, COVERAGE)].into_iter().collect());
     assert!(path.exists());
+}
+
+#[tokio::test]
+async fn an_unreadable_prior_cache_is_skipped_not_fatal() {
+    let prior_dir = scratch_dir("marks-import-corrupt");
+    let mut prior = Store::open(&prior_dir.join("marks.sqlite"), Retentions::defaults(), mac_key()).unwrap();
+    prior.observe(&[(1, 1_792_489_860_000, fixed("3"))]).unwrap();
+    // The host writes a value the integer column cannot decode.
+    Connection::open(prior_dir.join("marks.sqlite"))
+        .unwrap()
+        .execute("UPDATE marks SET prev_bucket = 'garbage' WHERE market = 1", [])
+        .unwrap();
+    drop(prior);
+
+    let (_path, mut store) = fresh_store_at("marks-import-corrupt-fresh", Retentions::defaults());
+    let imported = store.import_prior(&prior_dir.join("marks.sqlite")).unwrap();
+    assert_eq!(imported, 0, "the unreadable prior cache is not imported");
+    let page = minute(&store, 1).await;
+    assert!(page.entries.is_empty());
+    // A prior cache of another schema version is skipped the same way.
+    Connection::open(prior_dir.join("marks.sqlite")).unwrap().pragma_update(None, "user_version", 2).unwrap();
+    let imported = store.import_prior(&prior_dir.join("marks.sqlite")).unwrap();
+    assert_eq!(imported, 0, "the other-version prior cache is not imported");
 }
 
 const COVERAGE: Coverage =

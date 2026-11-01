@@ -9,25 +9,66 @@ use rusqlite::{TransactionBehavior, params};
 use tracing::warn;
 
 use crate::history::marks::Resolution;
-use crate::history::marks::store::{Row, Store, read_only, store, tag};
+use crate::history::marks::store::{Row, Store, chain, read_only, store, tag};
 
 impl Store {
     /// Imports the cache at `prior`, which a previous run left at `path`'s final name: provider-
     /// seeded rows whose authentication tags verify, and backfill markers, both with INSERT OR
     /// IGNORE, so log-derived rows the replay will re-derive never overwrite what the log proves.
-    /// Rows the host altered fail verification and are dropped with a warning, never imported.
-    /// One transaction; the prior file is opened read-only and never modified.
+    /// Rows the host altered fail verification and are dropped with a warning, never imported. A
+    /// prior file of another schema version is skipped: this build cannot authenticate its rows,
+    /// and the log re-derives what it proves while a configured backfill re-seeds the rest. One
+    /// transaction; the prior file is opened read-only and never modified.
     /// Error cases:
     /// - the prior file cannot be read
     pub fn import_prior(&mut self, prior: &Path) -> anyhow::Result<usize> {
         if !prior.exists() {
             return Ok(0);
         }
-        let from = read_only(prior).with_context(|| format!("opening the prior marks cache at {}", prior.display()))?;
+        // The prior file is derived and rebuildable: anything about it that cannot be read and
+        // authenticated — a wrong schema, undecodable columns — makes it unavailable, not a boot
+        // failure. The log re-derives what it proves, a configured backfill re-seeds the rest,
+        // and activation replaces the file.
+        let from = match read_only(prior) {
+            Ok(from) => from,
+            Err(e) => {
+                warn!(
+                    alert = "marks_prior_cache_dropped",
+                    "the prior marks cache cannot be opened and is not imported: {e:#}"
+                );
+                return Ok(0);
+            }
+        };
+        let version: i64 = match from.pragma_query_value(None, "user_version", |row| row.get(0)) {
+            Ok(version) => version,
+            Err(e) => {
+                warn!(
+                    alert = "marks_prior_cache_dropped",
+                    "the prior marks cache cannot be read and is not imported: {e:#}"
+                );
+                return Ok(0);
+            }
+        };
+        if version != super::SCHEMA_VERSION {
+            warn!(
+                alert = "marks_prior_cache_dropped",
+                version, "the prior marks cache holds another schema; it is not imported and will be rebuilt"
+            );
+            return Ok(0);
+        }
         let rows = {
-            let mut stmt = from
-                .prepare("SELECT market, resolution, bucket, open, high, low, close, provenance, tag FROM marks")
-                .context("reading the prior marks cache")?;
+            let mut stmt = match from.prepare(
+                "SELECT market, resolution, bucket, open, high, low, close, provenance, prev_bucket, tag FROM marks",
+            ) {
+                Ok(stmt) => stmt,
+                Err(e) => {
+                    warn!(
+                        alert = "marks_prior_cache_dropped",
+                        "the prior marks cache cannot be read and is not imported: {e:#}"
+                    );
+                    return Ok(0);
+                }
+            };
             let mapped = stmt
                 .query_map([], |row| {
                     Ok((
@@ -39,18 +80,32 @@ impl Store {
                         row.get::<_, String>(5)?,
                         row.get::<_, String>(6)?,
                         row.get::<_, String>(7)?,
-                        row.get::<_, [u8; 16]>(8)?,
+                        row.get::<_, Option<Millis>>(8)?,
+                        row.get::<_, [u8; 16]>(9)?,
                     ))
                 })
                 .context("reading the prior marks cache")?;
-            mapped.collect::<Result<Vec<_>, _>>().context("reading the prior marks cache")?
+            match mapped.collect::<Result<Vec<_>, _>>() {
+                Ok(rows) => rows,
+                Err(e) => {
+                    warn!(
+                        alert = "marks_prior_cache_dropped",
+                        "the prior marks cache cannot be read and is not imported: {e:#}"
+                    );
+                    return Ok(0);
+                }
+            }
         };
         let markers: Vec<(i64, String, String, [Millis; 8])> = {
-            let mut stmt = from
-                .prepare(
-                    "SELECT market, venue, symbol, at, depth_1m, depth_1h, depth_1d, retention_1s, retention_1m, retention_1h, retention_1d FROM backfilled",
-                )
-                .context("reading the prior backfill markers")?;
+            let mut stmt = match from.prepare(
+                "SELECT market, venue, symbol, at, depth_1m, depth_1h, depth_1d, retention_1s, retention_1m, retention_1h, retention_1d FROM backfilled",
+            ) {
+                Ok(stmt) => stmt,
+                Err(e) => {
+                    warn!(alert = "marks_prior_cache_dropped", "the prior backfill markers cannot be read and are not imported: {e:#}");
+                    return Ok(0);
+                }
+            };
             let mapped = stmt
                 .query_map([], |row| {
                     Ok((
@@ -70,23 +125,42 @@ impl Store {
                     ))
                 })
                 .context("reading the prior backfill markers")?;
-            mapped.collect::<Result<Vec<_>, _>>().context("reading the prior backfill markers")?
+            match mapped.collect::<Result<Vec<_>, _>>() {
+                Ok(markers) => markers,
+                Err(e) => {
+                    warn!(
+                        alert = "marks_prior_cache_dropped",
+                        "the prior backfill markers cannot be read and are not imported: {e:#}"
+                    );
+                    return Ok(0);
+                }
+            }
         };
+        let prior_anchors = self.prior_anchors();
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .context("starting the prior marks import")?;
         store::check_schema(&tx, &self.schema, &self.path)?;
+        let pairs: std::collections::BTreeSet<(u32, Resolution)> = rows
+            .iter()
+            .filter_map(|(market, resolution, _, _, _, _, _, _, _, _)| {
+                let market = u32::try_from(*market).ok()?;
+                let resolution = Resolution::from_tag(u8::try_from(*resolution).ok()?)?;
+                Some((market, resolution))
+            })
+            .collect();
+        chain::check_anchors(&tx, &prior_anchors, &pairs)?;
         let mut imported = 0;
         let mut dropped = 0;
         {
             let mut insert = tx
                 .prepare(
-                    "INSERT OR IGNORE INTO marks (market, resolution, bucket, open, high, low, close, provenance, tag)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    "INSERT OR IGNORE INTO marks (market, resolution, bucket, open, high, low, close, provenance, prev_bucket, tag)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 )
                 .context("preparing the prior marks import")?;
-            for (market, resolution, bucket, open, high, low, close, provenance, stored) in rows {
+            for (market, resolution, bucket, open, high, low, close, provenance, prev, stored) in rows {
                 let resolution = match u8::try_from(resolution).ok().and_then(Resolution::from_tag) {
                     Some(resolution) => resolution,
                     None => {
@@ -106,7 +180,7 @@ impl Store {
                     market,
                     resolution,
                     bucket,
-                    &Row { open: &open, high: &high, low: &low, close: &close, provenance: &provenance },
+                    &Row { open: &open, high: &high, low: &low, close: &close, provenance: &provenance, prev },
                 );
                 if stored != expected {
                     dropped += 1;
@@ -122,6 +196,7 @@ impl Store {
                         low,
                         close,
                         provenance,
+                        prev,
                         stored
                     ])
                     .with_context(|| format!("importing the prior {market} {resolution:?} bucket at {bucket}"))?;
@@ -141,7 +216,10 @@ impl Store {
                     .context("importing a prior backfill marker")?;
             }
         }
+        let updates = chain::anchor_updates(&tx, &pairs)?;
+        let mut anchors = self.anchors.lock().expect("the marks chain anchors are never poisoned");
         tx.commit().context("committing the prior marks import")?;
+        super::apply_updates(&mut anchors, updates);
         if dropped > 0 {
             warn!(
                 alert = "marks_prior_rows_dropped",
