@@ -352,11 +352,8 @@ async fn payout_at_epoch(
 
 /// Pays the authorization on the chain and requires the duplicate to revert.
 async fn pay_b(chain: &Chain, signed: &SignedWithdrawal) -> anyhow::Result<()> {
-    let signer = signed
-        .authorization
-        .as_ref()
-        .map(|auth| auth.signer)
-        .context("the reissue is a typed authorization")?;
+    let signer =
+        signed.authorization.as_ref().map(|auth| auth.signer).context("the reissue is a typed authorization")?;
     let claim = chain.claim_from(signed, signer)?.abi_encode();
     chain.send(chain.payer, chain.vault, claim.clone()).await?;
     chain.duplicate_reverts(claim).await

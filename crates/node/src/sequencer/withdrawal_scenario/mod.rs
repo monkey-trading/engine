@@ -122,8 +122,9 @@ async fn node_child() -> anyhow::Result<()> {
         ensure!(cfg.custody.provider == CustodyProvider::Evm && cfg.custody.chain_id == 31337, "local Anvil only");
         let alerts = std::env::var(CHILD_ALERTS).context("scenario alert webhook")?;
         ensure!(alerts.starts_with("http://127.0.0.1:"), "scenario alert webhook is loopback only");
-        let telemetry =
-            crate::telemetry::init_telemetry(&cfg, |name| (name == "ENGINE_ALERTS_CRITICAL_URL").then(|| alerts.clone()))?;
+        let telemetry = crate::telemetry::init_telemetry(&cfg, |name| {
+            (name == "ENGINE_ALERTS_CRITICAL_URL").then(|| alerts.clone())
+        })?;
         return crate::standby::run(cfg, telemetry).await;
     }
     ensure!(
