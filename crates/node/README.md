@@ -388,6 +388,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   retained-version pins, and collection (`heads.rs`)
 - `src/history/marks/mod.rs` — the derived marks cache: resolutions, per-resolution retentions,
   provenance, and the recovery seeder
+- `src/history/marks/store/setup.rs` — opening the cache: schema creation and checks,
+  discarding a file that fails them, and validating imported chains before serving
 - `src/history/marks/store/mod.rs` — the cache's SQLite schema, its writer (per-resolution
   pruning, seeding that never overwrites log-derived rows, backfill markers), the committed
   chain anchors, and its page reader
