@@ -5,7 +5,7 @@ use std::net::IpAddr;
 use engine_core::Engine;
 use engine_core::auth::{ClientAuth, RequestAuth};
 use engine_core::command::Command;
-use engine_core::eip712::{B256, Eip712Domain};
+use engine_core::eip712::{B256, Eip712Domain, recover};
 use engine_core::event::{Event, Reject};
 use engine_core::types::{AccountId, Millis};
 use tokio::sync::oneshot;
@@ -82,12 +82,21 @@ impl ApiState {
             self.limits.check_account(account)?;
             return Ok(None);
         }
-        if let Err(reason) = rules.check(account, auth.as_ref(), hash) {
-            debug!(?reason, "request refused");
-            return Err(ApiError::Unauthorized(match reason {
-                Reject::MissingSignature => "missing signature",
-                _ => "invalid signature",
-            }));
+        // The digest is computed at most once, whichever path checks the signature.
+        let mut hash = Some(hash);
+        let mut digest = None;
+        let mut digest = move |domain: &Eip712Domain, auth: &RequestAuth| -> B256 {
+            *digest.get_or_insert_with(|| hash.take().expect("the digest is computed once")(domain, auth))
+        };
+        if let Err(reason) = rules.check(account, auth.as_ref(), &mut digest) {
+            if declaration || !matches!(reason, Reject::InvalidSignature) {
+                debug!(?reason, "request refused");
+                return Err(ApiError::Unauthorized(match reason {
+                    Reject::MissingSignature => "missing signature",
+                    _ => "invalid signature",
+                }));
+            }
+            return self.authorise_session_key(account, auth, &mut digest, rules.domain()).await;
         }
         let auth = auth.expect("check refuses an unsigned request wherever signatures are required");
         // Accounts are never removed and nonces only grow, so neither check can pass a request
@@ -125,6 +134,59 @@ impl ApiState {
         // Counted last, so only a request the node would sequence spends the account's rate. Every
         // signed request is in the public log, so anyone can replay one; a replay fails the nonce
         // or expiry check first and spends nothing.
+        self.limits.check_account(account)?;
+        Ok(Some(auth))
+    }
+
+    /// Admits a request `rules.check` refused as an invalid signature when the signature is a
+    /// registered, live session key's: from `V41` a session key may act for its account through
+    /// orders, cancels, and the requests that carry them. The account must be credited, the key
+    /// registered for it and neither revoked nor expired at the sequenced time, and the request
+    /// fresh on the key's own nonce sequence. The engine re-checks everything it sequences and
+    /// refuses a session-key withdrawal as out of scope, in the log.
+    /// Error cases:
+    /// - the recovered signer is no session key of the account, or the account was never credited
+    /// - the key is revoked or expired
+    /// - a nonce other than the key's next, or a request expiry already past
+    async fn authorise_session_key(
+        &self,
+        account: AccountId,
+        auth: Option<RequestAuth>,
+        digest: &mut impl FnMut(&Eip712Domain, &RequestAuth) -> B256,
+        domain: Option<Eip712Domain>,
+    ) -> Result<Option<RequestAuth>, ApiError> {
+        let Some(domain) = domain else { return Err(ApiError::Unauthorized("invalid signature")) };
+        let Some(auth) = auth else { return Err(ApiError::Unauthorized("missing signature")) };
+        let Some(signer) = recover(&digest(&domain, &auth), &auth.signature) else {
+            return Err(ApiError::Unauthorized("invalid signature"));
+        };
+        if signer == account {
+            return Err(ApiError::Unauthorized("invalid signature"));
+        }
+        let (credited, key, next, last_sequenced) = self
+            .query(move |e| {
+                (
+                    e.accounts().contains_key(&account),
+                    e.session_key(account, signer),
+                    e.next_request_nonce(signer),
+                    e.now(),
+                )
+            })
+            .await?;
+        let Some(key) = key else { return Err(ApiError::Unauthorized("invalid signature")) };
+        if !credited {
+            debug!("request refused: account never credited");
+            return Err(ApiError::Forbidden("account has never been credited"));
+        }
+        if key.revoked {
+            debug!(session_key = %signer, "request refused: session key revoked");
+            return Err(ApiError::Unauthorized("session key revoked"));
+        }
+        if last_sequenced > key.expires_at {
+            debug!(session_key = %signer, expires_at = key.expires_at, "request refused: session key expired");
+            return Err(ApiError::Unauthorized("session key expired"));
+        }
+        self.check_fresh(&auth, next, last_sequenced)?;
         self.limits.check_account(account)?;
         Ok(Some(auth))
     }

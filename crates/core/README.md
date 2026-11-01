@@ -220,7 +220,8 @@ this crate and reproduce the signed state roots exactly.
 - `src/access/mod.rs` — signed eligibility, source policy and bounded public screening types
 - `src/access/engine.rs` — deterministic screening, declarations and uncredited custody holds
 - `src/auth.rs` — client auth, the operator record, request signatures and nonces, and the checks
-  every client request and signed admin command pass
+  every client request and signed admin command pass, including from `V41` a registered session
+  key within its scope
 - `src/eip712.rs` — the EIP-712 domain, the request types clients and the operator sign, and signer
   recovery
 - `src/protocol.rs` — protocol versions, and how to add one
@@ -242,6 +243,8 @@ this crate and reproduce the signed state roots exactly.
   market takes, the roll-adjusted index, and the roll
 - `src/session.rs` — weekly trading windows, holidays, dated closures such as early closes, and
   special sessions
+- `src/session_keys.rs` — from `V41`, session-key registrations and revocations: their state,
+  expiry cap, and the order/cancel-only scope a session key signs within
 - `src/account.rs` — accounts, netted positions, and resting orders
 - `src/command.rs` / `src/event.rs` — engine inputs and outputs
 - `src/types.rs` — ids, sides, and asset classes
@@ -309,7 +312,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V40` parts (`v15.rs` to `v40.rs`)
+  `V15` to `V41` parts (`v15.rs` to `v41.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -415,6 +418,13 @@ Protocol V39 names no unheld principal past the exit terms' deposit cursor: with
 above the finalised frontier, a reversed deposit at vault deposit id 0 is the vault's cursor-rule
 refund alone, not unheld too, so `startExit` no longer reserves it twice; its session is in
 `examples/reference_log/v39.rs`.
+
+Protocol V41 adds session keys (`src/session_keys.rs`): one account-signed registration
+authorises a browser-held key to place and cancel orders for the account until its expiry, capped
+at 24 hours, or an account-signed revocation; the key's requests run on the key's own nonce
+sequence under the same per-request expiry cap, a revoked or expired key and a key signing a
+withdrawal refuse with their own rejections, and the key's state is a leaf of the state tree; its
+session is in `examples/reference_log/v41.rs`.
 
 Protocol V40 caps the spread a close can pay (`src/close_spread.rs`): a per-market ceiling registry
 adopted at genesis, kept apart from `MarketSpec`, bounds every close whatever an operator command

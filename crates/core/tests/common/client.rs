@@ -56,6 +56,31 @@ impl Client {
         Command::Withdraw { account: self.account, amount: f(amount), auth: Some(self.auth(nonce, hash)) }
     }
 
+    /// A signed registration of `session_key` for this account until `session_expires_at`.
+    pub fn register_session_key(&self, nonce: u64, session_key: AccountId, session_expires_at: Millis) -> Command {
+        let hash = eip712::session_key_registration_hash(
+            &self.domain,
+            self.account,
+            session_key,
+            session_expires_at,
+            nonce,
+            self.expires_at,
+        );
+        Command::RegisterSessionKey {
+            account: self.account,
+            session_key,
+            expires_at: session_expires_at,
+            auth: Some(self.auth(nonce, hash)),
+        }
+    }
+
+    /// A signed revocation of `session_key` for this account.
+    pub fn revoke_session_key(&self, nonce: u64, session_key: AccountId) -> Command {
+        let hash =
+            eip712::session_key_revocation_hash(&self.domain, self.account, session_key, nonce, self.expires_at);
+        Command::RevokeSessionKey { account: self.account, session_key, auth: Some(self.auth(nonce, hash)) }
+    }
+
     /// This key's signature over `hash`, with `nonce` and this client's expiry.
     fn auth(&self, nonce: u64, hash: B256) -> RequestAuth {
         RequestAuth { nonce, expires_at: self.expires_at, signature: eip712::sign(&self.key, &hash) }

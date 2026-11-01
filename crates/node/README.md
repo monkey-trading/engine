@@ -61,6 +61,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   `api.quote_max_markets` markets, and gets them again when one changes, at most every
   `api.quote_interval` (at least 100 ms)
 - Orders, cancels, and withdrawals signed by the account (EIP-712), checked before they are
+  sequenced; from `V41`, a session key the account registered at `/v1/session-keys` signs its
+  orders and cancels on the key's own nonce sequence, while withdrawals keep requiring the account
   sequenced; before V24, `auth = "none"` trusts the account field with mock TEE and custody; V24
   client actions and eligibility declarations require signatures in every mode
 - The latest protocol version and the client auth activated at boot, at the log's next seq, after
@@ -306,8 +308,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/log/tests/reader.rs` — reader tests: offsets, following the writer, flushed entries only,
   and the checks on what it reads
 - `src/api/mod.rs` — REST routes, read handlers and the request span
-- `src/api/state.rs` — request authentication, nonce checks and durable sequencer round trips
-- `src/api/actions.rs` — signed client actions and real-peer access screening
+- `src/api/state.rs` — request authentication, nonce checks, the session-key admission a
+  registered key's request falls back to, and durable sequencer round trips
+- `src/api/actions.rs` — signed client actions, session-key registration and revocation, and
+  real-peer access screening
 - `src/api/access.rs` — reads of one custody hold, one pending deposit, and an account's signed eligibility
 - `src/api/access_tests.rs` — deposit-first declarations, peer provenance and public access refusals
 - `src/api/access_tests/admission.rs` — admission before sequencing: never-credited signers declare only against a pending deposit, within per-client and shared budgets; expired requests and exhausted screening capacity refuse without a nonce

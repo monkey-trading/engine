@@ -82,6 +82,24 @@ mod typed {
             string command;
         }
 
+        /// `Command::RegisterSessionKey`. `sessionExpiresAt` caps how long the key may trade;
+        /// `expiresAt` bounds this request as any signed request's does.
+        struct RegisterSessionKey {
+            address account;
+            uint64 nonce;
+            int64 expiresAt;
+            address sessionKey;
+            int64 sessionExpiresAt;
+        }
+
+        /// `Command::RevokeSessionKey`.
+        struct RevokeSessionKey {
+            address account;
+            uint64 nonce;
+            int64 expiresAt;
+            address sessionKey;
+        }
+
         /// The statement names only the eligibility class the client declares.
         struct EligibilityRequest {
             address account;
@@ -169,6 +187,38 @@ pub fn admin_hash(domain: &Eip712Domain, command: &AdminCommand, nonce: u64, exp
     // serde_json encodes.
     let command = serde_json::to_string(command).expect("admin commands serialise");
     typed::AdminRequest { nonce, expiresAt: expires_at, command }.eip712_signing_hash(domain)
+}
+
+/// The digest an account signs to register `session_key` for itself until `session_expires_at`,
+/// with `nonce`, until `expires_at`.
+pub fn session_key_registration_hash(
+    domain: &Eip712Domain,
+    account: AccountId,
+    session_key: AccountId,
+    session_expires_at: Millis,
+    nonce: u64,
+    expires_at: Millis,
+) -> B256 {
+    typed::RegisterSessionKey {
+        account: Address::from(account.0),
+        nonce,
+        expiresAt: expires_at,
+        sessionKey: Address::from(session_key.0),
+        sessionExpiresAt: session_expires_at,
+    }
+    .eip712_signing_hash(domain)
+}
+
+/// The digest an account signs to revoke `session_key` for itself with `nonce`, until `expires_at`.
+pub fn session_key_revocation_hash(
+    domain: &Eip712Domain,
+    account: AccountId,
+    session_key: AccountId,
+    nonce: u64,
+    expires_at: Millis,
+) -> B256 {
+    typed::RevokeSessionKey { account: Address::from(account.0), nonce, expiresAt: expires_at, sessionKey: Address::from(session_key.0) }
+        .eip712_signing_hash(domain)
 }
 
 /// The digest of the exact eligibility statement, bound to deployment, account, nonce and expiry.

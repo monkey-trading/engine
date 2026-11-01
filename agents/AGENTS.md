@@ -14,7 +14,9 @@ an index: load only the rule whose hint matches the current action.
   sessions (from `V21` no quote stamped outside a market's hours prices it), markets priced from
   roll-adjusted front futures contracts (`futures.rs`), dated benchmark histories (`benchmark.rs`, with calendar-change regressions in
   `tests/benchmark_retention.rs`), house exposure caps, toxicity scoring, signed client requests (EIP-712, per-account
-  nonces, and expiries), USD settlement of markets quoted in other currencies, admin commands signed
+  nonces, and expiries, and from `V41` session keys: one account-signed registration authorises a
+  short-lived in-browser key to place and cancel orders on its own nonce sequence, in
+  `session_keys.rs`), USD settlement of markets quoted in other currencies, admin commands signed
   by the operator key the log records and, from `V35`, bounded (`operator_bounds.rs`: profit fee and
   close-out level moves within ±50% after a seven-day notice, held markets kept priced by price-rule changes, and a
   seven-day key rotation); the spread a close can pay, from `V40`, capped per market
@@ -66,7 +68,8 @@ an index: load only the rule whose hint matches the current action.
   sequencer, the public log with signed checkpoints (segmented, with a public archive), `engine
   replay`, `engine exit-proof` (`exit.rs`: the exit's proofs and vault calls from a published log),
   `engine admin` (the operator's signing client), the REST API with the operator's admin
-  route, the browser-origin allowlist (`api.allowed_origins`, in `api/origin.rs`), the client address from a trusted pass-through proxy's PROXY protocol v2 header (`[api.proxy_protocol]`, in `tls/proxy.rs`), account proofs, exit proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
+  route, the browser-origin allowlist (`api.allowed_origins`, in `api/origin.rs`), the
+  `/v1/session-keys` registration and revocation a session key trades under (from `V41`), the client address from a trusted pass-through proxy's PROXY protocol v2 header (`[api.proxy_protocol]`, in `tls/proxy.rs`), account proofs, exit proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
   with rate limits and connection caps, and with `[api.tls.acme]` a public CA certificate for that
   key, obtained and renewed over ACME TLS-ALPN-01 answered on the API's listener, in `tls/acme/`),
   signed answers (`api/signing.rs`: every `/v1` response but

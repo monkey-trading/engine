@@ -15,7 +15,10 @@
 //! - RWA markets keep venue hours; nothing fills while a market is closed.
 //! - Rules are versioned, and a log activates each version at a recorded seq. From `V3`, orders,
 //!   cancels, and withdrawals are authorised as the log's client auth records: by the account's
-//!   EIP-712 signature, next nonce, and expiry, or, in dev logs only, unsigned. From `V5`, every
+//!   EIP-712 signature, next nonce, and expiry, or, in dev logs only, unsigned. From `V41`, one
+//!   account-signed registration also authorises a short-lived session key to place and cancel
+//!   orders on the key's own nonce sequence; withdrawals keep requiring the account key. From
+//!   `V5`, every
 //!   rounding in position accounting favours the house, so no sequence of fills realises more than
 //!   its exact PnL. From `V8`, the operator signs admin commands as clients sign requests, with the
 //!   key the log records, once anything is credited, and one command makes every market
@@ -94,6 +97,7 @@ pub mod params;
 pub mod price;
 pub mod protocol;
 pub mod session;
+pub mod session_keys;
 pub mod staking;
 pub use staking::{Staking, StakingConfig, UsdcUnits};
 mod stress;

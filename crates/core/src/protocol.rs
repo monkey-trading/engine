@@ -201,11 +201,17 @@ pub enum ProtocolVersion {
     /// lowered; a listing without an adopted ceiling, or one changing its instrument's identity,
     /// is refused.
     V40,
+    /// Session keys (`session_keys`): an account-signed registration authorises a browser-held key
+    /// to place and cancel orders until its expiry or an account-signed revocation. A registered,
+    /// unexpired key's request runs on the key's own nonce sequence under the same per-request
+    /// expiry cap; a revoked or expired key, a key signing a withdrawal, and any registration or
+    /// revocation before `V41` are refused with their own rejections.
+    V41,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V40;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V41;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

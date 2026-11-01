@@ -296,6 +296,8 @@ fn the_published_signing_vectors_are_bodies_the_api_accepts() {
             "order" => serde_json::from_value::<OrderRequest>(body).map(drop),
             "cancel" => serde_json::from_value::<CancelRequest>(body).map(drop),
             "withdrawal" => serde_json::from_value::<WithdrawalRequest>(body).map(drop),
+            "register_session_key" => serde_json::from_value::<super::SessionKeyRequest>(body).map(drop),
+            "revoke_session_key" => serde_json::from_value::<super::SessionKeyRevocationRequest>(body).map(drop),
             other => panic!("unknown request kind {other}"),
         };
         assert!(parsed.is_ok(), "{}: {parsed:?}", vector["kind"]);
@@ -448,6 +450,7 @@ impl Node {
         self.send(HttpRequest::get(path).body(Body::empty()).unwrap()).await
     }
 
+
     /// Serves one request and reads its JSON response.
     async fn send(&self, request: HttpRequest<Body>) -> (StatusCode, Value) {
         let response = self.app.clone().oneshot(request).await.unwrap();
@@ -489,3 +492,4 @@ fn signed_order_until(key: &SigningKey, nonce: u64, qty: &str, expires_at: Milli
     req.auth = Some(RequestAuth { nonce, expires_at, signature: eip712::sign(key, &hash) });
     serde_json::to_value(&req).unwrap()
 }
+

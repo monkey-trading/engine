@@ -6,7 +6,7 @@
 
 mod access;
 mod actions;
-use actions::{attest_eligibility, cancel_order, dev_deposit, place_order, withdraw};
+use actions::{attest_eligibility, cancel_order, dev_deposit, place_order, register_session_key, revoke_session_key, withdraw};
 mod admin;
 mod archive;
 mod benchmark_schedule;
@@ -37,7 +37,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use engine_core::account::{Position, RestingOrder};
-use engine_core::auth::{ClientAuth, Operator};
+use engine_core::auth::{ClientAuth, Operator, RequestAuth};
 use engine_core::emissions::TokenUnits;
 use engine_core::market::MarketSpec;
 use engine_core::merkle::{AccountProof, EntitlementProof};
@@ -169,6 +169,23 @@ struct AmountBody {
     amount: Fixed,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionKeyRequest {
+    account: AccountId,
+    session_key: AccountId,
+    expires_at: Millis,
+    auth: RequestAuth,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionKeyRevocationRequest {
+    account: AccountId,
+    session_key: AccountId,
+    auth: RequestAuth,
+}
+
 impl IntoResponse for ApiError {
     /// A JSON `{ "error": … }` body with the matching status; an invalid nonce also carries the
     /// nonce expected, and a rate-limited one `Retry-After` in whole seconds, rounded up.
@@ -230,6 +247,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/eligibility", post(attest_eligibility))
         .route("/v1/orders", post(place_order))
         .route("/v1/orders/cancel", post(cancel_order))
+        .route("/v1/session-keys", post(register_session_key).delete(revoke_session_key))
         .route("/v1/withdrawals", get(withdrawal_queue::queue).post(withdraw))
         .route("/v1/accounts/{address}/withdrawals", get(withdrawal_queue::account))
         .route("/v1/accounts/{address}/withdrawals/{nonce}/reissue", post(reissue::reissue))

@@ -12,7 +12,7 @@ use tracing::Span;
 use tracing::field::display;
 
 use crate::access::{ScreeningRequest, screen};
-use crate::api::{AmountBody, ApiError, ApiResult, ApiState};
+use crate::api::{AmountBody, ApiError, ApiResult, ApiState, SessionKeyRequest, SessionKeyRevocationRequest};
 use crate::clock::now_ms;
 
 /// Places an order and returns the events it produced.
@@ -49,6 +49,49 @@ pub(super) async fn cancel_order(State(s): State<ApiState>, Json(b): Json<Cancel
         })
         .await?;
     Ok(Json(s.submit(Command::CancelOrder { account: b.account, order_id: b.order_id, auth }).await?))
+}
+
+/// Registers a session key the account signed for: the key may place and cancel orders for the
+/// account until `expires_at` or an account-signed revocation.
+/// Error cases:
+/// - the registration is not authorised by the account key
+/// - the sequencer has stopped, or sequencing is halted
+pub(super) async fn register_session_key(
+    State(s): State<ApiState>,
+    Json(b): Json<SessionKeyRequest>,
+) -> ApiResult<Vec<Event>> {
+    let auth = s
+        .authorise(b.account, Some(b.auth), |domain, auth| {
+            eip712::session_key_registration_hash(
+                domain,
+                b.account,
+                b.session_key,
+                b.expires_at,
+                auth.nonce,
+                auth.expires_at,
+            )
+        })
+        .await?;
+    Ok(Json(
+        s.submit(Command::RegisterSessionKey { account: b.account, session_key: b.session_key, expires_at: b.expires_at, auth })
+            .await?,
+    ))
+}
+
+/// Revokes a session key the account signed for; the key's later requests refuse distinctly.
+/// Error cases:
+/// - the revocation is not authorised by the account key
+/// - the sequencer has stopped, or sequencing is halted
+pub(super) async fn revoke_session_key(
+    State(s): State<ApiState>,
+    Json(b): Json<SessionKeyRevocationRequest>,
+) -> ApiResult<Vec<Event>> {
+    let auth = s
+        .authorise(b.account, Some(b.auth), |domain, auth| {
+            eip712::session_key_revocation_hash(domain, b.account, b.session_key, auth.nonce, auth.expires_at)
+        })
+        .await?;
+    Ok(Json(s.submit(Command::RevokeSessionKey { account: b.account, session_key: b.session_key, auth }).await?))
 }
 
 /// Requests a withdrawal; an approval is signed and streamed.

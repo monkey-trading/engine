@@ -163,6 +163,19 @@ impl Harness {
                 let auth = auth(account, &|nonce| withdrawal_hash(&domain, account, amount, nonce, expires_at));
                 Command::Withdraw { account, amount, auth }
             }
+            Command::RegisterSessionKey { account, session_key, expires_at, auth: None } => {
+                let hash = &|nonce| {
+                    eip712::session_key_registration_hash(&domain, account, session_key, expires_at, nonce, expires_at)
+                };
+                let auth = auth(account, hash);
+                Command::RegisterSessionKey { account, session_key, expires_at, auth }
+            }
+            Command::RevokeSessionKey { account, session_key, auth: None } => {
+                let auth = auth(account, &|nonce| {
+                    eip712::session_key_revocation_hash(&domain, account, session_key, nonce, expires_at)
+                });
+                Command::RevokeSessionKey { account, session_key, auth }
+            }
             cmd => cmd,
         }
     }
