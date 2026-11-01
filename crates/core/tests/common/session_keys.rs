@@ -16,14 +16,19 @@ pub const HOUR_MS: Millis = 60 * 60 * 1000;
 
 // ── Helpers ──
 
-/// The `V41` harness under access rules: signed requests, the operator recorded, the ceiling
+/// The `V41` harness under access rules, activated at `version`: signed requests, the operator recorded, the ceiling
 /// registry the `V40` activation check wants, a screening source whose evidence stays fresh across
 /// an hour of sequenced time, client 1 declared and holding 100000, and BTC priced at 100000.
 pub fn funded() -> (Harness, Client, Client) {
+    funded_at(ProtocolVersion::V41)
+}
+
+/// `funded` under `version`.
+pub fn funded_at(version: ProtocolVersion) -> (Harness, Client, Client) {
     let mut h = Harness::v8(ClientAuth::Eip712 { chain_id: CHAIN_ID, vault: VAULT });
     h.cmd(Command::Admin(AdminCommand::SetCloseSpreadCeilings { ceilings: ceilings() }));
     h.admin(AdminCommand::SetAccessPolicy(AccessPolicy { source: source_key(), max_age_ms: 10 * HOUR_MS }));
-    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V41 });
+    h.admin(AdminCommand::ActivateProtocol { version });
     let client = Client::new(1);
     attest(&mut h, &client);
     fund(&mut h, &client, "100000");
@@ -60,6 +65,35 @@ pub fn register_expiring(
         session_key: key.account,
         expires_at: session_expires_at,
         auth: Some(RequestAuth { nonce, expires_at, signature: eip712::sign(&client.key, &hash) }),
+    }
+}
+
+/// The `index`th distinct key a test introduces: seeds `0x10..`, skipping the operator's `0x42`, so
+/// up to 200 keys stay clear of the accounts under test.
+pub fn fresh_key(index: u8) -> Client {
+    let seed = 0x10 + index;
+    Client::new(if seed >= 0x42 { seed + 1 } else { seed })
+}
+
+/// `client` registers `fresh_key(index)` for 1 ms. After a registration the clock moves 2 ms on, so
+/// the key lapses before the next one and the per-account live cap never binds; a refusal leaves
+/// the clock where it was. Returns the events.
+pub fn introduce(h: &mut Harness, client: &Client, index: u8) -> Vec<Event> {
+    let expires_at = h.ts + 60_000;
+    let cmd = register_expiring(h, client, &fresh_key(index), h.ts + 1, expires_at);
+    let events = h.cmd(cmd);
+    if matches!(events[..], [Event::SessionKeyRegistered { .. }]) {
+        h.advance(2);
+    }
+    events
+}
+
+/// Moves the clock to `ts` in daily steps, each with a `Tick`, so rollovers catch up as they
+/// would on a running log instead of deferring the first command after a long gap.
+pub fn idle_until(h: &mut Harness, ts: Millis) {
+    while h.ts < ts {
+        h.advance_to((h.ts + 24 * HOUR_MS).min(ts));
+        h.cmd(Command::Tick);
     }
 }
 

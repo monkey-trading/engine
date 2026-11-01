@@ -19,7 +19,7 @@ use crate::common::{
 };
 use crate::helpers::{accepted, reducing, small_buy};
 use crate::{stress, v10, v11, v12, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28};
-use crate::{v29, v30, v31, v32, v33, v34, v35, v37, v38, v39, v40, v41};
+use crate::{v29, v30, v31, v32, v33, v34, v35, v37, v38, v39, v40, v41, v42};
 
 /// The scripted session: client auth and activation, genesis, funding, prices,
 /// every order kind, signed requests refused for each auth reason, triggers (one held back by its spread), cancels,
@@ -442,5 +442,6 @@ pub(crate) fn session() -> Vec<Sequenced> {
     v39::session(&mut h);
     v40::session(&mut h);
     v41::session(&mut h);
+    v42::session(&mut h);
     h.log
 }

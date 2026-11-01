@@ -30,24 +30,68 @@ pub const MAX_SESSION_KEY_EXPIRY_MS: Millis = 24 * 60 * 60 * 1000;
 /// an account's leaf and the work a root spends on it stay bounded whatever one account sequences.
 pub const MAX_SESSION_KEYS_PER_ACCOUNT: usize = 10;
 
-/// How many distinct session-key addresses an account may introduce. Each registration seeds the
-/// key's request-nonce entry, which stays in `request_nonces` for good so a pruned key keeps its
-/// replay protection; the lifetime cap bounds that state. Re-registering a key the account has
-/// used before — held, lapsed, or revoked — introduces nothing and never counts.
+/// How many distinct session-key addresses an account may introduce in one burst: the capacity of
+/// its introduction budget. Each introduction seeds the key's request-nonce entry, which stays in
+/// `request_nonces` for good so a pruned key keeps its replay protection; the budget bounds that
+/// state. Under `V41` the count was a lifetime cap; from `V42` the budget refills at one address
+/// per [`SESSION_KEY_REFILL_MS`], so an account holds at most this many plus one per elapsed
+/// refill interval. Re-registering a key the account has used before — held, lapsed, or revoked —
+/// introduces nothing and spends nothing.
 pub const MAX_SESSION_KEY_REGISTRATIONS: u64 = 100;
 
-/// The session keys one account registered, and how many distinct keys it has introduced:
-/// `total` bounds the permanent nonce state a session key leaves, and lets a registration refuse
-/// past the lifetime cap even while `keys` is empty.
+/// From `V42`, the sequenced time that returns one address to an account's introduction budget:
+/// one hour, so a client that generates a fresh key at each connect never locks itself out.
+pub const SESSION_KEY_REFILL_MS: Millis = 60 * 60 * 1000;
+
+/// The session keys one account registered, and how many distinct keys it has introduced.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AccountSessionKeys {
     /// The live registrations, pruned of expired and revoked keys by each registration.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub keys: BTreeMap<AccountId, SessionKey>,
-    /// Every distinct key the account has introduced, for the lifetime cap.
+    /// Every distinct key the account has introduced. Under `V41` this was the lifetime cap; from
+    /// `V42` it is a count only, and `budget` bounds introductions.
     #[serde(default)]
     pub total: u64,
+    /// From `V42`, the account's introduction budget; absent for an account that has introduced
+    /// nothing since `V42`, whose budget is full. Absent in every leaf before `V42`, so earlier
+    /// roots are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<IntroductionBudget>,
+}
+
+/// An account's budget of new session-key addresses, refilling one per [`SESSION_KEY_REFILL_MS`]
+/// of sequenced time up to [`MAX_SESSION_KEY_REGISTRATIONS`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IntroductionBudget {
+    /// Addresses that may be introduced as of `refilled_at`; at most the capacity.
+    pub available: u64,
+    /// The sequenced time the refill has been counted up to. While the budget is below capacity it
+    /// trails the latest refill by the part of an interval not yet earned, so a partial interval
+    /// carries; at capacity it is the time the budget was last read.
+    pub refilled_at: Millis,
+}
+
+impl IntroductionBudget {
+    /// A full budget as of `now`.
+    fn full(now: Millis) -> Self {
+        Self { available: MAX_SESSION_KEY_REGISTRATIONS, refilled_at: now }
+    }
+
+    /// The budget at `now`: every whole interval since `refilled_at` returns one address, the
+    /// remainder carries, and a budget that reaches capacity stops accruing. Sequenced time never
+    /// runs backwards, and a reading before `refilled_at` earns nothing.
+    fn at(self, now: Millis) -> Self {
+        let earned = u64::try_from(now.saturating_sub(self.refilled_at) / SESSION_KEY_REFILL_MS).unwrap_or(0);
+        let available = self.available.saturating_add(earned);
+        if available >= MAX_SESSION_KEY_REGISTRATIONS {
+            return Self::full(now);
+        }
+        // `earned` whole intervals fit in the elapsed time, so this cannot overflow.
+        Self { available, refilled_at: self.refilled_at.saturating_add(earned as Millis * SESSION_KEY_REFILL_MS) }
+    }
 }
 
 /// A session key registered for an account, as the state tree holds it. The key's next request
@@ -70,17 +114,21 @@ impl Engine {
     /// refusal after its signature checks, so a refused registration cannot be replayed from the
     /// log once it would succeed. A registration first prunes the account's expired and revoked
     /// keys — their nonces stay spent in `request_nonces` — and refuses a new key past
-    /// [`MAX_SESSION_KEYS_PER_ACCOUNT`] live or [`MAX_SESSION_KEY_REGISTRATIONS`] distinct keys
-    /// over the account's life, so one account's state stays bounded; re-registering a key the
-    /// account has used before, held or lapsed, replaces it and never counts against either cap.
+    /// [`MAX_SESSION_KEYS_PER_ACCOUNT`] live keys or an empty introduction budget, so one account's
+    /// state stays bounded: under `V41` at most [`MAX_SESSION_KEY_REGISTRATIONS`] distinct keys
+    /// over the account's life, and from `V42` at most that many plus one per elapsed
+    /// [`SESSION_KEY_REFILL_MS`]. Re-registering a key the account has used before, held or
+    /// lapsed, replaces it and spends nothing.
     /// Error cases:
     /// - before `V41`
     /// - the signature, nonce, or request expiry fails (see `Engine::authorise`)
     /// - the registration names the account's own key or the operator's
     /// - `expires_at` is not in the future, or more than `MAX_SESSION_KEY_EXPIRY_MS` ahead
     /// - the account already holds `MAX_SESSION_KEYS_PER_ACCOUNT` live keys and `session_key`
-    ///   is not one of them, or has introduced `MAX_SESSION_KEY_REGISTRATIONS` distinct keys over
-    ///   its life
+    ///   is not one of them
+    /// - `session_key` is a new address and, under `V41`, the account has introduced
+    ///   `MAX_SESSION_KEY_REGISTRATIONS` distinct keys, or, from `V42`, its introduction budget is
+    ///   empty
     pub(crate) fn register_session_key(
         &mut self,
         account: AccountId,
@@ -116,18 +164,26 @@ impl Engine {
         }
         let held = self.session_keys.get(&account).is_some_and(|keys| keys.keys.contains_key(&session_key));
         // A key whose nonce entry exists has been introduced already: re-registering it, lapsed
-        // or revoked, introduces nothing and never counts against the lifetime cap.
+        // or revoked, introduces nothing and spends nothing.
         let known = self.request_nonces.contains_key(&session_key);
         let entry = self.session_keys.entry(account).or_default();
         if !held && entry.keys.len() >= MAX_SESSION_KEYS_PER_ACCOUNT {
             events.push(rejected(Reject::TooManySessionKeys { max: MAX_SESSION_KEYS_PER_ACCOUNT }));
             return;
         }
-        if !known && entry.total >= MAX_SESSION_KEY_REGISTRATIONS {
-            events.push(rejected(Reject::TooManySessionKeys { max: MAX_SESSION_KEY_REGISTRATIONS as usize }));
-            return;
-        }
         if !known {
+            let too_many = Reject::TooManySessionKeys { max: MAX_SESSION_KEY_REGISTRATIONS as usize };
+            if self.protocol_version >= ProtocolVersion::V42 {
+                let budget = entry.budget.unwrap_or(IntroductionBudget::full(self.now)).at(self.now);
+                if budget.available == 0 {
+                    events.push(rejected(too_many));
+                    return;
+                }
+                entry.budget = Some(IntroductionBudget { available: budget.available - 1, ..budget });
+            } else if entry.total >= MAX_SESSION_KEY_REGISTRATIONS {
+                events.push(rejected(too_many));
+                return;
+            }
             entry.total += 1;
         }
         // Every registered key owns its nonce entry from the start, so even a key pruned before
@@ -181,9 +237,31 @@ impl Engine {
         self.session_keys.get(&account)?.keys.get(&session_key).copied()
     }
 
-    /// Every session key `account` has introduced, for the lifetime cap.
+    /// Every distinct session key `account` has introduced over its life.
     pub fn session_key_registrations(&self, account: AccountId) -> u64 {
         self.session_keys.get(&account).map_or(0, |keys| keys.total)
+    }
+
+    /// How many new session-key addresses `account` may introduce now: its introduction budget at
+    /// the engine's time from `V42`, and the lifetime cap's remainder before.
+    pub fn session_key_budget(&self, account: AccountId) -> u64 {
+        let keys = self.session_keys.get(&account);
+        if self.protocol_version < ProtocolVersion::V42 {
+            return MAX_SESSION_KEY_REGISTRATIONS.saturating_sub(keys.map_or(0, |keys| keys.total));
+        }
+        keys.and_then(|keys| keys.budget).unwrap_or(IntroductionBudget::full(self.now)).at(self.now).available
+    }
+
+    /// Starts every account's introduction budget at `V42` activation: the capacity less the
+    /// addresses it introduced under `V41`, counting up from the activation time. An account at
+    /// the old lifetime cap starts empty and earns its first address one interval later; none
+    /// starts above the capacity.
+    pub(crate) fn start_introduction_budgets(&mut self) {
+        let now = self.now;
+        for keys in self.session_keys.iter_mut().map(|(_, keys)| keys) {
+            let available = MAX_SESSION_KEY_REGISTRATIONS.saturating_sub(keys.total);
+            keys.budget = Some(IntroductionBudget { available, refilled_at: now });
+        }
     }
 
     /// Drops `account`'s expired and revoked session keys. Every key's nonce entry was seeded at
@@ -199,6 +277,57 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Reading the budget in steps equals reading it once, so frequent registrations neither
+        /// lose nor gain refill; it never exceeds the capacity or earns more than the time allows;
+        /// and nothing overflows for any times the sequencer can stamp.
+        #[test]
+        fn the_budget_refills_by_elapsed_time_whatever_the_reads_between(
+            available in 0..=MAX_SESSION_KEY_REGISTRATIONS,
+            start in 0..=i64::MAX / 4,
+            first in 0..=150 * SESSION_KEY_REFILL_MS,
+            second in 0..=150 * SESSION_KEY_REFILL_MS,
+        ) {
+            let budget = IntroductionBudget { available, refilled_at: start };
+            let (mid, end) = (start + first, start + first + second);
+            let stepped = budget.at(mid).at(end);
+            let once = budget.at(end);
+            prop_assert_eq!(stepped, once);
+            prop_assert!(once.available <= MAX_SESSION_KEY_REGISTRATIONS);
+            prop_assert!(once.available >= available);
+            let earned = (end - start) / SESSION_KEY_REFILL_MS;
+            prop_assert!(once.available - available <= earned as u64);
+            if once.available < MAX_SESSION_KEY_REGISTRATIONS {
+                prop_assert_eq!(once.available, available + earned as u64);
+                prop_assert!(end - once.refilled_at < SESSION_KEY_REFILL_MS);
+            }
+        }
+
+        /// Any times the sequencer can stamp neither overflow nor leave the capacity.
+        #[test]
+        fn the_budget_stays_within_the_capacity_at_any_time(
+            available in 0..=MAX_SESSION_KEY_REGISTRATIONS,
+            refilled_at in 0..=i64::MAX,
+            now in 0..=i64::MAX,
+        ) {
+            let read = IntroductionBudget { available, refilled_at }.at(now);
+            prop_assert!(read.available <= MAX_SESSION_KEY_REGISTRATIONS);
+        }
+
+        /// A reading before the counted time earns nothing and cannot underflow.
+        #[test]
+        fn a_reading_before_the_counted_time_earns_nothing(
+            available in 0..=MAX_SESSION_KEY_REGISTRATIONS,
+            refilled_at in 0..=i64::MAX,
+            back in 0..=i64::MAX,
+        ) {
+            let budget = IntroductionBudget { available, refilled_at };
+            let read = budget.at(refilled_at.saturating_sub(back));
+            prop_assert_eq!(read.available, available);
+        }
+    }
 
     #[test]
     fn a_session_key_round_trips_its_state() {

@@ -420,8 +420,10 @@ pub enum Reject {
     SessionKeyScope,
     /// From `V41`, a registration or revocation sequenced before `V41` activated.
     SessionKeyUnsupported,
-    /// From `V41`, a registration that would hold more than `max` live session keys; a
-    /// registration prunes the account's expired and revoked keys first.
+    /// From `V41`, a registration that would hold more than `max` live session keys, or, with `max`
+    /// the introduction budget's capacity, introduce a new address with the account's budget
+    /// empty (the lifetime cap before `V42`); a registration prunes the account's expired and
+    /// revoked keys first.
     TooManySessionKeys {
         max: usize,
     },
