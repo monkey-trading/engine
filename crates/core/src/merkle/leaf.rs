@@ -34,7 +34,8 @@
 //! - **Staked balance:** `keccak256(abi.encode(uint256 staked))`, the account's staked MONKEY in
 //!   base units, from `V25`, mirroring the staking contract's finalised events.
 //! - **Session keys:** the keccak-256 of the JSON encoding of the account's session keys — each
-//!   one's expiry and revocation — and its lifetime registration count, keyed by the account, from
+//!   one's expiry and revocation — its registration count, and from `V42` its introduction budget
+//!   (addresses available and the time the refill is counted to), keyed by the account, from
 //!   `V41`; a key's next request nonce is its own request-nonce leaf.
 //! - **Emission period result:** `keccak256(abi.encode(int128 realised, int128 writtenOff))`, the
 //!   account's realised PnL and written-off debt in the open emission period, from `V19`, until the
@@ -455,7 +456,8 @@ pub(crate) fn session_key_key(account: AccountId) -> B256 {
 }
 
 /// The value hash of an account's session-keys leaf: the keccak-256 of the JSON encoding of its
-/// keys and lifetime count, whose fields name each key's expiry and revocation.
+/// keys, registration count, and (from `V42`) introduction budget, whose fields name each key's
+/// expiry and revocation.
 pub(crate) fn session_key_hash(keys: &AccountSessionKeys) -> B256 {
     json_hash(keys)
 }

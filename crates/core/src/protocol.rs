@@ -207,11 +207,16 @@ pub enum ProtocolVersion {
     /// expiry cap; a revoked or expired key, a key signing a withdrawal, and any registration or
     /// revocation before `V41` are refused with their own rejections.
     V41,
+    /// An account's introduction of new session-key addresses is a budget that refills over
+    /// sequenced time instead of a lifetime count: a capacity of `MAX_SESSION_KEY_REGISTRATIONS`,
+    /// one address back per `SESSION_KEY_REFILL_MS`. Activation starts each account's budget at the
+    /// capacity less the addresses it introduced under `V41`, refilling from the activation time.
+    V42,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V41;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V42;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {
