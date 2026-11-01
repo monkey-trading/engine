@@ -184,7 +184,13 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
     let open_start = node.chain.open_epoch_start().await?;
     let close1 = open_start + 2 * 3_600;
     let (_, effective1) = node.chain.close_epoch_at(close1).await?.context("the close elected no candidate")?;
-    ensure!(effective1 == close1 + NOTICE_SECS + FINALITY_MARGIN_SECS, "the effective time moved: {effective1}");
+    // The close lands a few blocks after the warp, so its effective time carries the inclusion
+    // delay.
+    let notice1 = close1 + NOTICE_SECS + FINALITY_MARGIN_SECS;
+    ensure!(
+        (notice1..notice1 + 30).contains(&effective1),
+        "the effective time is not the close plus the notice: {effective1}"
+    );
     let b_admin_address = Address::from(engine_core::eip712::address(b_admin.verifying_key()).0);
     // Mirrored, before the effective time: the deployer still signs; the elected key is pending.
     wait_operator(&node.client, || node.chain.check(), Some(&format!("{operator:#x}")), true).await?;
