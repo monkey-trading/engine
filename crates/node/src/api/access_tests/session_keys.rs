@@ -179,7 +179,7 @@ async fn a_flooding_key_cannot_starve_the_accounts_revocation() {
     }
     // The account's keys share one session bucket at the per-account rate, whatever key signs:
     // exhausting it with alternating keys shows keys do not multiply the allowance.
-    let burst = u64::try_from(dev_config().api.per_account.burst.get()).unwrap();
+    let burst = u64::from(dev_config().api.per_account.burst.get());
     let mut nonces = [0u64; 2];
     for index in 0..burst {
         let slot = usize::try_from(index % 2).unwrap();
@@ -188,20 +188,17 @@ async fn a_flooding_key_cannot_starve_the_accounts_revocation() {
         assert_eq!(status, StatusCode::OK, "{events}");
         nonces[slot] += 1;
     }
-    // The shared session bucket is empty; the refill is slower than the posts below, so most of
-    // ten more requests, whichever key signs them, are refused.
+    // The shared session bucket is empty and does not refill within the test, so ten more
+    // requests, whichever key signs them, are all refused.
     let mut refused = 0;
     for index in 0..10 {
         let slot = usize::try_from(index % 2).unwrap();
         let key = if index % 2 == 0 { &session } else { &other };
         let (status, _body) = node.post("/v1/orders", session_order(&account, key, nonces[slot])).await;
-        if status == StatusCode::TOO_MANY_REQUESTS {
-            refused += 1;
-        } else {
-            nonces[slot] += 1;
-        }
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "request {index} was not refused");
+        refused += 1;
     }
-    assert!(refused >= 5, "the shared session bucket refused only {refused} of 10 flooded requests");
+    assert_eq!(refused, 10);
     // The wallet's own allowance is untouched: its signed revocation sequences at once.
     let revoke = revocation(&account, &session, 3);
     let (status, events) = delete(&node, "/v1/session-keys", revoke).await;

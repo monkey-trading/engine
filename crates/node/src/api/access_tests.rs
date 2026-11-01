@@ -26,6 +26,8 @@ use engine_core::price::SourceQuote;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{AccountId, Side};
 use engine_core::{Engine, Fixed};
+use governor::Quota;
+use governor::clock::DefaultClock;
 use k256::ecdsa::SigningKey;
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
@@ -36,7 +38,7 @@ use tower::ServiceExt;
 use crate::access::AccessClient;
 use crate::api::{ApiState, MAX_BACKFILLS, router};
 use crate::clock::test_clock::TestClock;
-use crate::config::AccessSection;
+use crate::config::{AccessSection, RateLimit};
 use crate::history::{INDEX_FILE, Reader};
 use crate::limits::ApiLimits;
 use crate::log::{LogEntry, Manifest};
@@ -330,7 +332,12 @@ impl Node {
             log_dir: dir.clone(),
             manifest,
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
-            limits: Arc::new(ApiLimits::new(&dev_config().api)),
+            // Buckets that refill once an hour, so no test depends on its speed.
+            limits: Arc::new(ApiLimits::with_quota(
+                &dev_config().api,
+                |rate: RateLimit| Quota::with_period(Duration::from_secs(3600)).unwrap().allow_burst(rate.burst),
+                DefaultClock::default(),
+            )),
             history: Reader::new(dir.join(INDEX_FILE), watch::channel(true).1),
             marks: crate::test_support::marks_reader(),
             emission_budget: None,

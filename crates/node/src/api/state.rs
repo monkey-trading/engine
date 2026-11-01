@@ -53,7 +53,6 @@ impl ApiState {
     /// withdrawals the engine refuses in the log as out of scope), false for key management,
     /// which is the account key's alone at the API too, so a session key's signature on a
     /// registration or revocation never reaches the log.
-
     /// `authorise`, except that a `declaration` may come from a never-credited account once a deposit
     /// for it is pending. That is the only request such an account can put in the log, and it is
     /// admitted only while the account has not declared and with an expiry the engine accepts. The
