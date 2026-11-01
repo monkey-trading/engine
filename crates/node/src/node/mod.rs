@@ -274,7 +274,7 @@ async fn serve_node(
         }
         FeedProvider::Venues => {
             let venues = feeds.venues.context("feeds.provider = \"venues\" needs [feeds.venues]")?;
-            let timing = Timing::new(venues.min_quote_spacing, &venues);
+            let timing = Timing::for_venues(&venues);
             let tls = venue::tls_config()?;
             for conn in venues.connections {
                 let (name, tls, feed_tx) = (conn.venue.name(), tls.clone(), tx.clone());

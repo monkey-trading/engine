@@ -150,8 +150,13 @@ struct VenueFeed {
 }
 
 impl Timing {
-    /// The timing from the node config: `min_quote_spacing` is the per-symbol sequencing pace.
-    pub fn new(min_quote_spacing: Duration, venues: &VenuesSection) -> Self {
+    /// The timing a venue section configures: `min_quote_spacing` is the per-symbol sequencing
+    /// pace; the mock feed's tick (`feeds.interval`) never governs venue feeds.
+    pub fn for_venues(venues: &VenuesSection) -> Self {
+        Timing::new(venues.min_quote_spacing, venues)
+    }
+
+    fn new(min_quote_spacing: Duration, venues: &VenuesSection) -> Self {
         Timing {
             interval: min_quote_spacing,
             timeout: venues.timeout,

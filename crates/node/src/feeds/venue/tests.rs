@@ -213,9 +213,9 @@ async fn a_rejected_quote_still_arms_the_emit_timer_for_what_waits() {
     let mut feed = kraken_feed(&[(40, "AAPL")], WAIT);
     feed.tx = tx;
     let now = now_ms();
-    // Apple is closed for another 40 ms: a quote stamped inside the closure is held back, and
-    // one stamped just after it is still ahead of the host clock.
-    feed.schedules = Arc::new(BTreeMap::from([(40, around_the_clock(Some((now - 60_000, now + 40))))]));
+    // Apple is closed for another 20 ms: a quote stamped inside the closure is held back, and
+    // one stamped just after it, at the reopen, is still ahead of the host clock.
+    feed.schedules = Arc::new(BTreeMap::from([(40, around_the_clock(Some((now - 60_000, now + 20))))]));
     let at = |ts: Millis| SourceQuote { source: "kraken".into(), mid: Fixed::from_int(100), ts, contract: None };
     let mut pending = Pending::default();
     pending.add(at(now - 30_000), now).unwrap();
@@ -223,7 +223,9 @@ async fn a_rejected_quote_still_arms_the_emit_timer_for_what_waits() {
     let mut buffered = BTreeMap::from([("AAPL".to_owned(), pending)]);
 
     // The held-back quote is dropped, but the survivor keeps a scheduled way out: with the
-    // venue quiet, the emit timer still fires for it. A rejection that skips arming strands it.
+    // venue quiet, the emit timer still fires for it — the eventual submission once the clock
+    // reaches it and the session has opened is covered by the quiet-release integration test.
+    // A rejection that skips arming strands the survivor and fails this assertion.
     let wake = feed.emit(&mut buffered, &mut BTreeMap::new()).await.unwrap();
     assert!(wake.is_some(), "no wake armed for the survivor");
     assert!(rx.try_recv().is_err(), "the held-back quote sequenced");

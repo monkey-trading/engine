@@ -141,12 +141,11 @@ fn venue_feeds_need_their_section() {
 #[test]
 fn venue_timing_paces_from_the_quote_spacing_not_the_mock_interval() {
     let mut cfg = NodeConfig::load(Path::new(DEV)).unwrap();
-    let venues = cfg.feeds.venues.as_ref().unwrap();
-    let timing = crate::feeds::venue::Timing::new(venues.min_quote_spacing, venues);
+    let timing = crate::feeds::venue::Timing::for_venues(cfg.feeds.venues.as_ref().unwrap());
     assert_eq!(timing.interval, Duration::from_millis(10));
     assert_ne!(timing.interval, cfg.feeds.interval, "the mock tick and the venue pace differ");
     // The mock tick has no venue-timeout bound: the spacing alone governs venue timing.
-    cfg.feeds.interval = venues.timeout;
+    cfg.feeds.interval = cfg.feeds.venues.as_ref().unwrap().timeout;
     cfg.validate().expect("a mock tick past the venue timeout stays valid");
 }
 
