@@ -47,6 +47,8 @@ impl<'a> Collateral<'a> {
             .with_root_certificates(roots)
             .with_no_client_auth();
         let client = Client::builder()
+            // Vendors refuse a request without one, and the client sends none by default.
+            .user_agent(concat!("engine-verify/", env!("CARGO_PKG_VERSION")))
             .tls_backend_preconfigured(tls)
             .timeout(FETCH_TIMEOUT)
             .redirect(Policy::none())
@@ -218,4 +220,29 @@ impl std::error::Error for CollateralUnavailable {}
 enum FetchError {
     Transient(String),
     Refused(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A vendor refuses a request without a User-Agent, so every fetch sends one.
+    #[tokio::test]
+    async fn fetches_carry_a_user_agent() {
+        let app = axum::Router::new().route(
+            "/document",
+            axum::routing::get(|headers: axum::http::HeaderMap| async move {
+                let agent = headers.get(axum::http::header::USER_AGENT).and_then(|v| v.to_str().ok());
+                assert_eq!(agent, Some(concat!("engine-verify/", env!("CARGO_PKG_VERSION"))));
+                "collateral"
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let base = format!("http://{addr}");
+        let collateral = Collateral::new(&base, "Milan").unwrap();
+        let body = collateral.document(&format!("{base}/document")).await.unwrap();
+        assert_eq!(body, b"collateral");
+    }
 }

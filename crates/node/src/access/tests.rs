@@ -40,7 +40,15 @@ enum Behavior {
 struct Server {
     url: String,
     requests: Arc<Mutex<Vec<Value>>>,
+    agents: Arc<Mutex<Vec<String>>>,
     task: JoinHandle<()>,
+}
+
+#[derive(Clone)]
+struct ServerState {
+    behavior: Behavior,
+    requests: Arc<Mutex<Vec<Value>>>,
+    agents: Arc<Mutex<Vec<String>>>,
 }
 
 impl Drop for Server {
@@ -64,6 +72,15 @@ async fn source_requests_carry_the_actual_peer_and_responses_keep_the_sources_ob
         [json!({"request_hash":request.request_hash,"account":request.account,
         "payer":null,"peer":"203.0.113.9"})]
     );
+}
+
+#[tokio::test]
+async fn screening_requests_carry_a_user_agent() {
+    let server = server(Behavior::Valid).await;
+    let client = client(&server.url, 4096);
+    let evidence = client.screen(&query()).await;
+    assert!(matches!(evidence, AccessEvidence::Screened(_)), "{evidence:?}");
+    assert_eq!(server.agents.lock().unwrap().as_slice(), [concat!("engine-access/", env!("CARGO_PKG_VERSION"))],);
 }
 
 #[tokio::test]
@@ -139,21 +156,27 @@ fn client(endpoint: &str, limit: usize) -> AccessClient {
 async fn server(behavior: Behavior) -> Server {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
-    let requests = Arc::new(Mutex::new(Vec::new()));
-    let state = (behavior, requests.clone());
-    let app = Router::new().route("/", post(answer)).with_state(state);
+    let state =
+        ServerState { behavior, requests: Arc::new(Mutex::new(Vec::new())), agents: Arc::new(Mutex::new(Vec::new())) };
+    let app = Router::new().route("/", post(answer)).with_state(state.clone());
     let task = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    Server { url, requests, task }
+    Server { url, requests: state.requests, agents: state.agents, task }
 }
 
 async fn answer(
-    State((behavior, requests)): State<(Behavior, Arc<Mutex<Vec<Value>>>)>,
+    State(state): State<ServerState>,
+    headers: axum::http::HeaderMap,
     Json(request): Json<Value>,
 ) -> Response {
-    requests.lock().unwrap().push(request.clone());
-    match behavior {
+    state.requests.lock().unwrap().push(request.clone());
+    state
+        .agents
+        .lock()
+        .unwrap()
+        .push(headers.get(axum::http::header::USER_AGENT).and_then(|v| v.to_str().ok()).unwrap_or_default().to_owned());
+    match state.behavior {
         Behavior::Invalid => "invalid json with credential=private-fixture-value".into_response(),
         Behavior::Oversized => "x".repeat(4096).into_response(),
         Behavior::Chunked => {
@@ -168,7 +191,7 @@ async fn answer(
         Behavior::Valid | Behavior::Mismatch => {
             let screening = Screening {
                 source: AccountId([0x11; 20]),
-                request_hash: if matches!(behavior, Behavior::Mismatch) {
+                request_hash: if matches!(state.behavior, Behavior::Mismatch) {
                     B256::ZERO
                 } else {
                     serde_json::from_value(request["request_hash"].clone()).unwrap()

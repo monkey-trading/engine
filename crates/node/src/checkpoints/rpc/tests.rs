@@ -1,6 +1,10 @@
 //! A tag from one fork cannot lend confirmation depth to a replacement fork.
 
+use std::sync::{Arc, Mutex};
+
 use super::*;
+use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::{Json, Router, routing::post};
 use serde_json::{Value, json};
 
@@ -58,4 +62,51 @@ async fn confirmation_depth_cannot_cross_a_reorg_between_tag_and_target_reads() 
     .unwrap();
     assert!(rpc.state(View::Finalized).await.is_err(), "a replacement tip must not inherit the orphan tag's depth");
     server.abort();
+}
+
+#[tokio::test]
+async fn reads_carry_a_user_agent() {
+    // A provider can refuse a request without a User-Agent; `rotation_enabled` against a vault
+    // with no registry is one read and answers from zero return data.
+    let agents = Arc::new(Mutex::new(Vec::new()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn({
+        let agents = agents.clone();
+        async move {
+            async fn answer(
+                State(agents): State<Arc<Mutex<Vec<String>>>>,
+                headers: HeaderMap,
+                Json(request): Json<Value>,
+            ) -> Json<Value> {
+                agents.lock().unwrap().push(
+                    headers
+                        .get(axum::http::header::USER_AGENT)
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or_default()
+                        .to_owned(),
+                );
+                assert_eq!(request["method"], "eth_call");
+                Json(json!({"jsonrpc":"2.0","id":request["id"],"result":format!("0x{}", "00".repeat(32))}))
+            }
+            axum::serve(listener, Router::new().route("/", post(answer)).with_state(agents.clone())).await.unwrap();
+        }
+    });
+    let cfg: CheckpointSection = toml::from_str(&format!(
+        "rpc_url='http://{address}'\nrelayer='0x{}'\nretry_interval='1ms'\nrpc_timeout='2s'",
+        "01".repeat(20)
+    ))
+    .unwrap();
+    let rpc = CheckpointRpc::read_only(
+        &cfg,
+        CheckpointDomain { chain_id: 31337, vault: engine_core::types::AccountId([0; 20]) },
+        Address::ZERO,
+        FinalityTag::Latest,
+        2,
+    )
+    .unwrap();
+    assert!(!rpc.rotation_enabled().await.unwrap(), "zero return data names no registry");
+    server.abort();
+    let _ = server.await;
+    assert_eq!(agents.lock().unwrap().as_slice(), [concat!("engine-checkpoints/", env!("CARGO_PKG_VERSION"))],);
 }

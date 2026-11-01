@@ -138,7 +138,11 @@ impl CheckpointRpc {
             .iter()
             .map(|cert| Certificate::from_der(cert))
             .collect::<Result<Vec<_>, _>>()?;
-        let http = Client::builder().tls_certs_only(roots).build()?;
+        let http = Client::builder()
+            // A provider can refuse a request without one, and the client sends none by default.
+            .user_agent(concat!("engine-checkpoints/", env!("CARGO_PKG_VERSION")))
+            .tls_certs_only(roots)
+            .build()?;
         let url = cfg.rpc_url.expose()?;
         let client = RpcClient::new_http_with_client(http, url.clone());
         Ok(Self {

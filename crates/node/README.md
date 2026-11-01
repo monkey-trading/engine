@@ -633,6 +633,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/tests/quorum.rs` — fabrication, disagreement, lag, outages, and quorum recovery
 - `src/custody/tests/quorum_diagnostics.rs` — malformed header exclusion, transport independence, and retained watchdog progress
 - `src/custody/tests/rpc.rs` — the RPC adapter's log decoding, deadlines, and URL scrubbing
+- `src/custody/tests/user_agent.rs` — the RPC adapter's JSON-RPC requests carry the engine's User-Agent
 - `src/custody/tests/confirmed.rs` — confirmed collateral and finality over the real quorum and sequencer
 - `src/custody/tests/confirmed/scan.rs` — empty-window progress during finality stalls, canonical hint invalidation and restart
 - `src/custody/tests/confirmed/frozen.rs` — a pending receipt under frozen finality: each window read

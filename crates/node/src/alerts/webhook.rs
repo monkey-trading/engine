@@ -137,6 +137,8 @@ pub fn client() -> anyhow::Result<Client> {
         .with_root_certificates(roots)
         .with_no_client_auth();
     Client::builder()
+        // A receiver can refuse a request without one, and the client sends none by default.
+        .user_agent(concat!("engine-alerts/", env!("CARGO_PKG_VERSION")))
         .tls_backend_preconfigured(tls)
         .timeout(REQUEST_TIMEOUT)
         .redirect(Policy::none())

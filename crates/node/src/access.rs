@@ -44,6 +44,8 @@ impl AccessClient {
             .collect::<Result<Vec<_>, _>>()
             .context("loading access TLS roots")?;
         let http = Client::builder()
+            // A source can refuse a request without one, and the client sends none by default.
+            .user_agent(concat!("engine-access/", env!("CARGO_PKG_VERSION")))
             .tls_certs_only(roots)
             .no_proxy()
             .redirect(redirect::Policy::none())
