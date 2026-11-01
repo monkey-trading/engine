@@ -96,6 +96,17 @@ contract OperatorRegistry {
         uint64 since;
     }
 
+    /// @notice The operator the election in effect replaced, and the handover data its candidacy
+    /// registered when the election was made: the successor it hands the keys to reads this, since
+    /// the incumbent's candidacy may be gone by the time the successor starts. Empty before any
+    /// election has been made.
+    struct HandoverSource {
+        address candidate;
+        bytes32 release;
+        string apiHostname;
+        string handoverEndpoint;
+    }
+
     /// @notice An election that takes effect at `effectiveAt`. A promotion (`promoted`) moves
     /// the vault's release at once; an election moves it at the effective time, as #359 §10
     /// decides.
@@ -174,6 +185,8 @@ contract OperatorRegistry {
 
     Operator private current;
     Election private pending;
+    /// @notice The operator the last election to take effect replaced, for its successor's handover.
+    HandoverSource private source;
     mapping(address candidate => Candidate) private candidates;
     /// @notice One more than each approved candidate's index in `candidateList`: nonzero while it is
     /// registered and approved, zero when it is registered but unapproved or not registered.
@@ -418,12 +431,16 @@ contract OperatorRegistry {
         }
     }
 
-    /// @notice Turns rotation on or off. Turning it off cancels an election not yet in effect.
+    /// @notice Turns rotation on or off. Turning it off cancels an election not yet in effect, and
+    /// its handover source with it: no successor hands over while rotation is off.
     function setRotation(bool enabled) external onlyGovernance {
         if (enabled == rotationEnabled) revert RotationUnchanged(enabled);
         _settle();
         bool cancelled = !enabled && pending.effectiveAt != 0;
-        if (cancelled) delete pending;
+        if (cancelled) {
+            delete pending;
+            delete source;
+        }
         rotationEnabled = enabled;
         emit RotationChanged(enabled, cancelled);
     }
@@ -456,6 +473,7 @@ contract OperatorRegistry {
         Candidate storage elected = candidates[winner];
         uint64 effectiveAt = uint64(block.timestamp + NOTICE + p.finalityMargin);
         pending = Election(epoch, winner, elected.adminKey, elected.release, effectiveAt, false);
+        source = _source();
         emit Elected(epoch, winner, elected.adminKey, elected.release, effectiveAt);
     }
 
@@ -486,6 +504,7 @@ contract OperatorRegistry {
         Candidate storage promoted = candidates[standby];
         uint64 effectiveAt = uint64(block.timestamp + NOTICE + p.finalityMargin);
         pending = Election(epoch, standby, promoted.adminKey, promoted.release, effectiveAt, true);
+        source = _source();
         emit Elected(epoch, standby, promoted.adminKey, promoted.release, effectiveAt);
     }
 
@@ -510,12 +529,30 @@ contract OperatorRegistry {
         return _named().release;
     }
 
+    /// @notice The operator the election in effect replaced, and the handover data its candidacy
+    /// registered when the election was made: the successor connects at `handoverEndpoint` to take
+    /// the keys (#44), from the moment the election exists, without a transaction to settle it.
+    /// Empty before any election has been made, and when the replaced operator was never a
+    /// registered candidate, so its endpoint was never on chain; the runbook registers the
+    /// operator in effect as a candidate.
+    function handoverSource() external view returns (HandoverSource memory) {
+        return source;
+    }
+
     /// @dev The operator in effect, pending one settled.
     function _inEffect() private view returns (Operator memory) {
         if (pending.effectiveAt != 0 && block.timestamp >= pending.effectiveAt) {
             return Operator(pending.candidate, pending.adminKey, pending.release, pending.effectiveAt);
         }
         return current;
+    }
+
+    /// @dev The handover data of the operator in effect now: the operator a new election names
+    /// replaces, snapshotted when the election is made, since the incumbent's candidacy may be
+    /// gone by the time the successor starts.
+    function _source() private view returns (HandoverSource memory) {
+        Candidate memory leaving = candidates[current.candidate];
+        return HandoverSource(current.candidate, current.release, leaving.apiHostname, leaving.handoverEndpoint);
     }
 
     /// @dev The operator the vault names while rotation is on: a pending promotion from the moment

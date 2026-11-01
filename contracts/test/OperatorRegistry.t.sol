@@ -609,6 +609,69 @@ contract OperatorRegistryTest is RegistryTest {
         assertEq(registry.candidateCount(), 0);
     }
 
+    function test_AnElectionSnapshotsTheIncumbentsHandoverSource() public {
+        // The operator in effect is a registered candidate: the first election snapshots its
+        // endpoint, not an empty one.
+        _candidate(deployerKey, MIN_BOND, 1);
+        _delegate(deployerKey, deployerKey);
+        assertEq(registry.handoverSource().handoverEndpoint, "");
+        uint64 effectiveAt = _elect(bob);
+        OperatorRegistry.HandoverSource memory source = registry.handoverSource();
+        assertEq(source.candidate, deployerKey);
+        // The release the operator in effect ran: the initial release, not the one its candidacy
+        // registered.
+        assertEq(source.release, _release(0));
+        assertEq(source.apiHostname, "api.candidate.example");
+        assertEq(source.handoverEndpoint, "handover.candidate.example:9443");
+        // The snapshot exists from the election's making, without a transaction to settle it, and
+        // survives the election's taking effect and the incumbent's departure.
+        vm.warp(effectiveAt);
+        vm.prank(deployerKey);
+        registry.deregister();
+        source = registry.handoverSource();
+        assertEq(source.candidate, deployerKey);
+        assertEq(source.handoverEndpoint, "handover.candidate.example:9443");
+        assertEq(_inEffect(), bob);
+    }
+
+    function test_TheNextElectionReplacesTheHandoverSourceWithItsOwnIncumbent() public {
+        _candidate(deployerKey, MIN_BOND, 1);
+        _delegate(deployerKey, deployerKey);
+        uint64 effectiveAt = _elect(bob);
+        vm.warp(effectiveAt);
+        assertEq(_inEffect(), bob);
+        // Past bob's minimum term, a close elects alice; the snapshot now names bob, with bob's
+        // own release, as the incumbent alice's successor hands over from.
+        uint64 secondEffectiveAt = _electWith(alice, 30_000e18);
+        assertGt(secondEffectiveAt, 0);
+        OperatorRegistry.HandoverSource memory source = registry.handoverSource();
+        assertEq(source.candidate, bob);
+        assertEq(source.release, _release(2));
+        assertEq(source.apiHostname, "api.candidate.example");
+        assertEq(source.handoverEndpoint, "handover.candidate.example:9443");
+    }
+
+    function test_ANeverRegisteredIncumbentLeavesAnEmptyHandoverSource() public {
+        // The initial operator is not a registered candidate: the first election snapshots no
+        // endpoint, and the successor refuses to start until the runbook registers it.
+        uint64 effectiveAt = _elect(bob);
+        assertGt(effectiveAt, 0);
+        OperatorRegistry.HandoverSource memory source = registry.handoverSource();
+        assertEq(source.candidate, deployerKey);
+        assertEq(source.handoverEndpoint, "");
+        assertEq(source.apiHostname, "");
+    }
+
+    function test_TurningRotationOffClearsTheCancelledElectionsHandoverSource() public {
+        _candidate(deployerKey, MIN_BOND, 1);
+        _delegate(deployerKey, deployerKey);
+        _elect(bob);
+        assertEq(registry.handoverSource().candidate, deployerKey);
+        _setRotation(false);
+        assertEq(registry.handoverSource().candidate, address(0));
+        assertEq(registry.handoverSource().handoverEndpoint, "");
+    }
+
     function testFuzz_TheChallengerIsElectedExactlyWhenItBeatsTheMargin(uint256 incumbentStake, uint256 challengerStake)
         public
     {
