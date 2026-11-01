@@ -19,7 +19,7 @@ use engine_core::auth::ClientAuth;
 use engine_core::command::{AdminCommand, Command, Sequenced};
 use engine_core::event::Event;
 use engine_core::market::QuoteCurrency;
-use engine_core::params::{ProtocolParams, StressLevel, StressTrigger};
+use engine_core::params::{NotionalWeighting, ProtocolParams, StressLevel, StressTrigger, ToxicityParams, ToxicityTier};
 use engine_core::protocol::ProtocolVersion;
 use engine_core::session::{Period, Schedule};
 use engine_core::types::{AssetClass, MarketId, Millis};
@@ -83,6 +83,11 @@ fn the_production_genesis_applies_the_launch_decisions() {
     // level's spread on the tightest bound (share 6001 is the lowest the engine's truncated-share
     // arithmetic fires at 4 bps on the 5-bps markets), fast moves under a minute-scale noise
     // bound, and utilisation levels under a 2% flow-weighted fire rate in the Monte Carlo.
+    // The toxicity parameters, which #130 calibrates from the observed flow for production
+    // (research/cap-calibration's toxicity stage; the values in results/toxicity_choice.json):
+    // memory keeps the score's sampling drift under 1 bp at every market's p99 fill, and a toxic
+    // account (a sustained 2 bps per-fill markout) reaches tier 1 within 75 median-size fills
+    // while a benign account stays below it for 200 fills with probability at least 99.9%.
     assert_eq!(production.params.profit_fee_bps, 1_000);
     let floor = dev.params.house_total_cap_floor;
     let level = |size_spread_multiplier_bps, min_spread_bps, trigger| StressLevel {
@@ -106,10 +111,27 @@ fn the_production_genesis_applies_the_launch_decisions() {
             level(40_000, 10, trigger(9_500, 200, 9_500)),
         ]
     );
+    let toxicity = dev.params.toxicity.clone();
+    assert_eq!(
+        production.params.toxicity,
+        ToxicityParams {
+            horizon_ms: 2_000,
+            ewma_weight_bps: 1_000,
+            notional: Some(NotionalWeighting {
+                prior: Fixed::from_int(5_629_517),
+                memory: Fixed::from_int(11_259_035)
+            }),
+            tiers: vec![
+                ToxicityTier { min_score_bps: 1, extra_spread_bps: 2 },
+                ToxicityTier { min_score_bps: 2, extra_spread_bps: 3 },
+            ],
+        }
+    );
     assert_eq!(
         ProtocolParams {
             house_total_cap_floor: floor,
             stress_levels: dev.params.stress_levels.clone(),
+            toxicity,
             ..production.params.clone()
         },
         dev.params

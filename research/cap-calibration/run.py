@@ -22,6 +22,8 @@ DERIVED = ROOT / "data" / "derived"
 RESULTS = ROOT / "results"
 STAGES = ("per-market", "joint", "sensitivity")
 DEFAULTS = {"per-market": (2000, 500), "joint": (2000, 25), "sensitivity": (1000, 25), "stress": (2000, 25)}  # paths, batch paths
+DEFAULTS = {"per-market": (2000, 500), "joint": (2000, 25), "sensitivity": (1000, 25)}  # paths, batch paths
+TOXICITY_MC_TRIALS = 40_000  # benign false-positive trials per market and threshold
 BASE_TARGET = 0.01  # the total-floor sweep and the sensitivities start from the floors chosen for this target
 SENSITIVITY_MEASURE = "p_short"  # whose choice at BASE_TARGET the sensitivities start from
 
@@ -42,7 +44,10 @@ def inputs():
 
 def manifest(args, scenario) -> dict:
     hashes = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()[:16] for p in sorted(DERIVED.iterdir()) if p.is_file()}
-    return {"command": sys.argv[1:], "scenario": asdict(scenario), "derived_sha256": hashes, "workers": args.workers}
+    record = {"command": sys.argv[1:], "derived_sha256": hashes, "workers": getattr(args, "workers", None)}
+    if scenario is not None:
+        record["scenario"] = asdict(scenario)
+    return record
 
 
 def read_rows(path: Path) -> list[dict]:
@@ -183,6 +188,57 @@ def stress_house_cash_floors(symbols: list[str]) -> "np.ndarray":
     raise ValueError("committed joint_p_short.csv has no binding row for the house-cash family")
 
 
+def toxicity_stage(experiments, markets, bars, flow, args) -> dict:
+    """The toxicity calibration: fill-size quantiles per market from the observed size
+    distribution, markout scales from the bars' Parkinson volatility, then memory, prior, tier
+    thresholds and spreads from the drift, climb, and benign false-positive bounds. Writes the
+    tables and the choice."""
+    import json
+
+    from catalogue import load_genesis
+    from model import toxicity
+
+    genesis = load_genesis()
+    symbols = list(markets.symbols)
+    sigma = toxicity.sigma_markout_bps(bars)
+    sizes = toxicity.size_quantiles(flow.sizes, genesis)
+    toxicity.require_coverage(symbols, sizes, genesis)
+    rows = []
+    for m, symbol in enumerate(symbols):
+        if symbol not in sizes:
+            continue
+        rows.append(
+            {
+                "symbol": symbol,
+                "sigma_markout_bps": round(float(sigma[m]), 4),
+                **{k: round(v, 0) for k, v in sizes[symbol].items()},
+            }
+        )
+    memory_choice = toxicity.choose_memory(sigma, symbols, sizes)
+    prior_choice = toxicity.choose_prior(memory_choice["memory_usd"], sizes, symbols)
+    tier_choice = toxicity.choose_tiers(sigma, symbols, sizes, memory_choice["memory_usd"], prior_choice["prior_usd"], args.seed, TOXICITY_MC_TRIALS)
+    # per-market drift at the chosen memory, for the table
+    for row in rows:
+        m = symbols.index(row["symbol"])
+        for q in ("n50", "n99"):
+            row[f"drift_{q}_bps"] = round(toxicity.drift_bound_sigma(sigma[m], row[q], memory_choice["memory_usd"]), 4)
+    experiments.write_rows(RESULTS / "toxicity_markets.csv", rows)
+    choice = {
+        "toxicity": {
+            "horizon_ms": toxicity.HORIZON_MS,
+            "prior_usd": prior_choice["prior_usd"],
+            "memory_usd": memory_choice["memory_usd"],
+            "tiers": [
+                {"min_score_bps": tier_choice["tier1_bps"], "extra_spread_bps": tier_choice["spread1_bps"]},
+                {"min_score_bps": tier_choice["tier2_bps"], "extra_spread_bps": tier_choice["spread2_bps"]},
+            ],
+        },
+        "method": {"memory": memory_choice, "prior": prior_choice, "tiers": tier_choice},
+    }
+    (RESULTS / "toxicity_choice.json").write_text(json.dumps(choice, indent=1))
+    return {"toxicity_mc_trials": TOXICITY_MC_TRIALS, "toxicity_seed": args.seed}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -191,6 +247,8 @@ def main() -> None:
     sub.add_parser("fetch-markets", help="pull public price history and volume for the launch markets")
     sub.add_parser("derive-papertrade", help="decode papertrade positions into the behaviour dataset")
     sub.add_parser("derive-markets", help="build the hourly price dataset, market statistics, and mix")
+    tx = sub.add_parser("toxicity", help="calibrate the toxicity parameters (prior, memory, tiers); writes results/toxicity_*")
+    tx.add_argument("--seed", type=int, default=1)
     for name in (*STAGES, "stress", "all"):
         sim = sub.add_parser(name, help=f"run the {name} stage" if name != "all" else "run every stage and the report")
         sim.add_argument("--workers", type=int, default=4)
@@ -220,6 +278,24 @@ def main() -> None:
         markets.derive(RAW / "markets", DERIVED)
     elif args.command in (*STAGES, "stress"):
         simulate_stage(args.command, args)
+    elif args.command == "toxicity":
+        class ToxArgs:
+            pass
+
+        tox_args = ToxArgs()
+        tox_args.seed = args.seed
+        from model import experiments as experiments_mod
+
+        np_, sim, bars, flow, markets = inputs()
+        started = time.time()
+        extras = toxicity_stage(experiments_mod, markets, bars, flow, tox_args)
+        record = {
+            "command": sys.argv[1:],
+            # no scenario: the calibration is exact recurrences and trials, not a Monte Carlo
+            "derived_sha256": manifest(args, None)["derived_sha256"],
+            "seconds": round(time.time() - started),
+        } | extras
+        (RESULTS / "manifest_toxicity.json").write_text(json.dumps(record, indent=1, default=str))
     elif args.command == "all":
         for stage in STAGES:
             simulate_stage(stage, args)

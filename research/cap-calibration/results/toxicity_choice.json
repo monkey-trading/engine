@@ -1,0 +1,417 @@
+{
+ "toxicity": {
+  "horizon_ms": 2000,
+  "prior_usd": 5629518.0,
+  "memory_usd": 11259036.0,
+  "tiers": [
+   {
+    "min_score_bps": 1,
+    "extra_spread_bps": 1.8
+   },
+   {
+    "min_score_bps": 2,
+    "extra_spread_bps": 2.6
+   }
+  ]
+ },
+ "method": {
+  "memory": {
+   "memory_usd": 11259036.0,
+   "bound_bps": 1.0,
+   "worst_market": "BRENT",
+   "per_market": {
+    "BTC-USD": {
+     "memory_needed_usd": 1561055.0,
+     "sigma_markout_bps": 0.703
+    },
+    "ETH-USD": {
+     "memory_needed_usd": 3766123.0,
+     "sigma_markout_bps": 1.091
+    },
+    "SOL-USD": {
+     "memory_needed_usd": 5566719.0,
+     "sigma_markout_bps": 1.327
+    },
+    "EUR-USD": {
+     "memory_needed_usd": 163025.0,
+     "sigma_markout_bps": 0.128
+    },
+    "GBP-USD": {
+     "memory_needed_usd": 169228.0,
+     "sigma_markout_bps": 0.13
+    },
+    "USD-JPY": {
+     "memory_needed_usd": 326756.0,
+     "sigma_markout_bps": 0.181
+    },
+    "AUD-USD": {
+     "memory_needed_usd": 293853.0,
+     "sigma_markout_bps": 0.171
+    },
+    "US500": {
+     "memory_needed_usd": 637008.0,
+     "sigma_markout_bps": 0.252
+    },
+    "US100": {
+     "memory_needed_usd": 1262378.0,
+     "sigma_markout_bps": 0.355
+    },
+    "US30": {
+     "memory_needed_usd": 549494.0,
+     "sigma_markout_bps": 0.234
+    },
+    "DE40": {
+     "memory_needed_usd": 1690964.0,
+     "sigma_markout_bps": 0.411
+    },
+    "UK100": {
+     "memory_needed_usd": 990196.0,
+     "sigma_markout_bps": 0.315
+    },
+    "JP225": {
+     "memory_needed_usd": 2255418.0,
+     "sigma_markout_bps": 0.475
+    },
+    "XAU-USD": {
+     "memory_needed_usd": 2488364.0,
+     "sigma_markout_bps": 0.499
+    },
+    "XAG-USD": {
+     "memory_needed_usd": 7443710.0,
+     "sigma_markout_bps": 0.863
+    },
+    "WTI": {
+     "memory_needed_usd": 6437270.0,
+     "sigma_markout_bps": 0.802
+    },
+    "BRENT": {
+     "memory_needed_usd": 11259036.0,
+     "sigma_markout_bps": 1.061
+    },
+    "AAPL": {
+     "memory_needed_usd": 2022019.0,
+     "sigma_markout_bps": 0.8
+    },
+    "MSFT": {
+     "memory_needed_usd": 1762138.0,
+     "sigma_markout_bps": 0.746
+    },
+    "NVDA": {
+     "memory_needed_usd": 4501882.0,
+     "sigma_markout_bps": 1.193
+    },
+    "AMZN": {
+     "memory_needed_usd": 2597414.0,
+     "sigma_markout_bps": 0.906
+    },
+    "GOOGL": {
+     "memory_needed_usd": 2612446.0,
+     "sigma_markout_bps": 0.909
+    },
+    "META": {
+     "memory_needed_usd": 3185184.0,
+     "sigma_markout_bps": 1.004
+    },
+    "TSLA": {
+     "memory_needed_usd": 7928512.0,
+     "sigma_markout_bps": 1.583
+    },
+    "AVGO": {
+     "memory_needed_usd": 5703555.0,
+     "sigma_markout_bps": 1.343
+    },
+    "BRK.B": {
+     "memory_needed_usd": 978898.0,
+     "sigma_markout_bps": 0.556
+    },
+    "JPM": {
+     "memory_needed_usd": 1654241.0,
+     "sigma_markout_bps": 0.723
+    },
+    "V": {
+     "memory_needed_usd": 1420633.0,
+     "sigma_markout_bps": 0.67
+    },
+    "MA": {
+     "memory_needed_usd": 1457169.0,
+     "sigma_markout_bps": 0.679
+    },
+    "LLY": {
+     "memory_needed_usd": 3355419.0,
+     "sigma_markout_bps": 1.03
+    },
+    "JNJ": {
+     "memory_needed_usd": 1252509.0,
+     "sigma_markout_bps": 0.629
+    },
+    "XOM": {
+     "memory_needed_usd": 1852828.0,
+     "sigma_markout_bps": 0.765
+    },
+    "WMT": {
+     "memory_needed_usd": 1620421.0,
+     "sigma_markout_bps": 0.716
+    },
+    "COST": {
+     "memory_needed_usd": 1388118.0,
+     "sigma_markout_bps": 0.663
+    },
+    "NFLX": {
+     "memory_needed_usd": 2702308.0,
+     "sigma_markout_bps": 0.924
+    },
+    "AMD": {
+     "memory_needed_usd": 7203775.0,
+     "sigma_markout_bps": 1.509
+    },
+    "ORCL": {
+     "memory_needed_usd": 5811671.0,
+     "sigma_markout_bps": 1.356
+    }
+   }
+  },
+  "prior": {
+   "prior_usd": 5629518.0,
+   "median_fill_usd": 100000.0
+  },
+  "tiers": {
+   "tier1_bps": 1,
+   "tier2_bps": 2,
+   "spread1_bps": 1.8,
+   "spread2_bps": 2.6,
+   "climb_fills": 75,
+   "climb_fills_tier2": 150,
+   "toxic_reach_bps": 1.152,
+   "median_fill_usd": 100000.0,
+   "burst_sensitivity": {
+    "1.0": 0.0053,
+    "0.5": 0.0389
+   },
+   "benign_upper_99": 0.0008,
+   "benign_by_market": [
+    {
+     "symbol": "BTC-USD",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "ETH-USD",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "SOL-USD",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "EUR-USD",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "GBP-USD",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "USD-JPY",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "AUD-USD",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "US500",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "US100",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "US30",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "DE40",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "UK100",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "JP225",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "XAU-USD",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "XAG-USD",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "WTI",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "BRENT",
+     "crossed": 19,
+     "trials": 40000,
+     "p": 0.000475
+    },
+    {
+     "symbol": "AAPL",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "MSFT",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "NVDA",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "AMZN",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "GOOGL",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "META",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "TSLA",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "AVGO",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "BRK.B",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "JPM",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "V",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "MA",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "LLY",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "JNJ",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "XOM",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "WMT",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "COST",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "NFLX",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "AMD",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    },
+    {
+     "symbol": "ORCL",
+     "crossed": 0,
+     "trials": 40000,
+     "p": 0.0
+    }
+   ]
+  }
+ }
+}

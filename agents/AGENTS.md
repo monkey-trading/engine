@@ -222,6 +222,9 @@ an index: load only the rule whose hint matches the current action.
   production stress triggers (#133): fast-move thresholds and window from minute-scale
   simulations of the markets' own hours, divergence-trigger shares from a stale-fill cost model,
   and utilisation levels from the Monte Carlo's hourly books, proposed into
+  `config/production-genesis.toml`. Its `toxicity` stage calibrates the production toxicity
+  parameters (#130): `prior`, `memory`, tier thresholds and spreads from the observed fill sizes
+  and the markets' markout volatility, proposed into
   `config/production-genesis.toml`. Research may name the platforms whose
   public data it studies, inside `research/` and its PR only. `close-spread-calibration/` calibrates
   per-market close-spread ceilings (#147): pinned inventory and source audit, a pricing model
