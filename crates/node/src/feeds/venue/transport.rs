@@ -26,14 +26,18 @@ pub(super) enum Incoming {
     Binary,
     /// The venue closed the connection, for the reason given.
     Closed(String),
-    /// A ping, pong, or raw frame: nothing to read.
+    /// The venue's answer to a ping, with that ping's payload.
+    Pong(Vec<u8>),
+    /// A ping or raw frame: nothing to read.
     Other,
 }
 
 /// One open connection to a venue: where its messages arrive and where ours go.
 pub(super) struct Link {
     pub stream: Pin<Box<dyn Stream<Item = anyhow::Result<Incoming>> + Send>>,
-    sink: Pin<Box<dyn Sink<String, Error = anyhow::Error> + Send>>,
+    sink: Pin<Box<dyn Sink<Message, Error = anyhow::Error> + Send>>,
+    /// Whether the connection carries WebSocket pings; Databento's lines over TCP do not.
+    pub pings: bool,
 }
 
 impl Link {
@@ -42,9 +46,16 @@ impl Link {
     /// - the connection fails while sending
     pub(super) async fn send_all(&mut self, messages: Vec<String>) -> anyhow::Result<()> {
         for message in messages {
-            self.sink.send(message).await?;
+            self.sink.send(Message::text(message)).await?;
         }
         Ok(())
+    }
+
+    /// Sends a WebSocket ping carrying `payload`.
+    /// Error cases:
+    /// - the connection fails while sending
+    pub(super) async fn ping(&mut self, payload: Vec<u8>) -> anyhow::Result<()> {
+        self.sink.send(Message::Ping(payload.into())).await
     }
 }
 
@@ -62,8 +73,10 @@ pub(super) async fn connect(conn: &VenueConnection, tls: Arc<ClientConfig>) -> a
             Framed::new(TcpStream::connect((host, port)).await?, LinesCodec::new_with_max_length(MAX_LINE_BYTES))
                 .split();
         let stream = stream.map(|line| line.map(Incoming::Text).context("read line"));
-        let sink = sink.sink_map_err(|e| anyhow!("send line: {e}"));
-        return Ok(Link { stream: Box::pin(stream), sink: Box::pin(sink) });
+        let sink = sink.sink_map_err(|e| anyhow!("send line: {e}")).with(|message: Message| async move {
+            message.into_text().map(|line| line.as_str().to_owned()).context("a line carries text")
+        });
+        return Ok(Link { stream: Box::pin(stream), sink: Box::pin(sink), pings: false });
     }
     let (ws, _) = connect_async_tls_with_config(conn.url.as_str(), None, false, Some(Connector::Rustls(tls))).await?;
     let (sink, stream) = ws.split();
@@ -72,9 +85,9 @@ pub(super) async fn connect(conn: &VenueConnection, tls: Arc<ClientConfig>) -> a
             Message::Text(text) => Incoming::Text(text.as_str().to_owned()),
             Message::Binary(_) => Incoming::Binary,
             Message::Close(frame) => Incoming::Closed(format!("{frame:?}")),
-            Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => Incoming::Other,
+            Message::Pong(payload) => Incoming::Pong(payload.to_vec()),
+            Message::Ping(_) | Message::Frame(_) => Incoming::Other,
         })
     });
-    let sink = sink.with(|text: String| async move { anyhow::Ok(Message::text(text)) });
-    Ok(Link { stream: Box::pin(stream), sink: Box::pin(sink) })
+    Ok(Link { stream: Box::pin(stream), sink: Box::pin(sink.sink_map_err(anyhow::Error::from)), pings: true })
 }

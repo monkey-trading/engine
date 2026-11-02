@@ -1,8 +1,10 @@
 //! Venue feed tasks against loopback venues: what they sequence, what they refuse, and how they
 //! reconnect.
 
+mod delay;
 mod emission;
 pub(super) mod fake;
+mod hostile;
 mod hours;
 mod late;
 mod mock;

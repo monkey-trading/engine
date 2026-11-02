@@ -32,6 +32,7 @@ use crate::log::Manifest;
 use crate::sequencer::{Request, Sequencer, SequencerConfig, StreamBody, StreamMsg};
 use crate::tee::EnclaveKey;
 use crate::test_support::{Alert, capture_alerts, dev_config, scratch_dir, sequencer_config, trusted_now};
+use crate::trusted_time::Sample;
 
 /// Each fake venue's book: BTC-USD 81250 / 81251 and ETH-USD 2377 / 2377.1.
 const BTC: (&str, &str, &str) = ("81250", "81251", "81250.5");
@@ -149,12 +150,29 @@ impl Node {
     /// `boot`, activating `version`: tests of listing and quoting paths that predate the rules
     /// `version` adds run under those rules.
     async fn boot_at(name: &str, genesis: &Genesis, version: ProtocolVersion) -> Self {
+        Self::boot_with(name, genesis, version, None).await
+    }
+
+    /// `boot`, with a drift bound of `max_drift` and trusted time at `sample`: how a test runs the
+    /// host clock away from true time.
+    pub(super) async fn boot_lagged(name: &str, genesis: &Genesis, max_drift: Duration, sample: Sample) -> Self {
+        Self::boot_with(name, genesis, ProtocolVersion::LATEST, Some((max_drift, sample))).await
+    }
+
+    /// Boots a fresh log at `version`, with trusted time on the system clock unless `lagged` gives a
+    /// drift bound and first sample.
+    async fn boot_with(
+        name: &str,
+        genesis: &Genesis,
+        version: ProtocolVersion,
+        lagged: Option<(Duration, Sample)>,
+    ) -> Self {
         let dir = scratch_dir(&format!("feeds-{name}"));
         let (stream_tx, stream) = broadcast::channel(65_536);
         let (withdrawals_tx, _) = mpsc::unbounded_channel();
         let (manifest, _) = watch::channel(Manifest::default());
         // The venues sequence thousands of quotes, so one segment holds the whole test.
-        let seq_cfg = SequencerConfig {
+        let mut seq_cfg = SequencerConfig {
             access_policy: Some(crate::test_support::access::policy()),
             segment_commands: 1_000_000,
             checkpoint_every: 1_000,
@@ -162,6 +180,10 @@ impl Node {
             checkpoints: None,
             ..sequencer_config(&dir, manifest)
         };
+        let sample = lagged.map_or_else(trusted_now, |(max_drift, sample)| {
+            seq_cfg.max_drift = max_drift;
+            sample
+        });
         let mut seq = Sequencer::recover(seq_cfg, Arc::new(EnclaveKey::generate()), stream_tx, withdrawals_tx)
             .expect("fresh sequencer");
         if version == ProtocolVersion::LATEST {
@@ -171,7 +193,7 @@ impl Node {
         }
         seq.genesis(genesis).expect("genesis");
         // Trusted time admits stamps on the system clock, so the queued genesis goes in now.
-        seq.trust(trusted_now()).expect("genesis");
+        seq.trust(sample).expect("genesis");
         let (tx, rx) = mpsc::channel(65_536);
         tokio::spawn(seq.run(rx));
         let account = crate::test_support::access::account(1);
@@ -180,6 +202,11 @@ impl Node {
 
     /// Waits until the engine has sequenced a quote from every `(market, source)` pair.
     pub(super) async fn wait_for_quotes(&mut self, expected: &[(MarketId, &str)]) {
+        self.wait_for_quotes_within(expected, WAIT).await;
+    }
+
+    /// `wait_for_quotes`, failing after `wait`.
+    pub(super) async fn wait_for_quotes_within(&mut self, expected: &[(MarketId, &str)], wait: Duration) {
         let mut missing: BTreeSet<(MarketId, String)> =
             expected.iter().map(|(market, source)| (*market, (*source).to_owned())).collect();
         let arrivals = async {
@@ -194,7 +221,7 @@ impl Node {
                 }
             }
         };
-        timeout(WAIT, arrivals).await.expect("a quote from every venue in time");
+        timeout(wait, arrivals).await.expect("a quote from every venue in time");
     }
 
     /// Buys in both markets and checks each fills at the venues' shared mid.

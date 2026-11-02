@@ -76,7 +76,8 @@ The engine takes input from the host through six paths:
   the DNS answers that pick their addresses, from the resolvers DHCP names;
 - the clock, which stamps every sequenced command, bounded by the signed Roughtime readings. The
   guest launches without Secure TSC (`guest_features` is `0x1` in `measurement.json`), so the host
-  can still scale the monotonic clock that times those readings and the age of a sample;
+  can still scale the monotonic clock that times those readings, the age of a sample, the pace of
+  sequenced time, and the pings that bound how far behind a venue's stream is;
 - the data disk, an ext4 filesystem on the first virtio disk, mounted at `/data` with `nosuid`,
   `nodev`, and `noexec`. It holds `config.toml`, read once at boot, the log, the account history
   index, the alert outbox, the custody deposit cursor, and the sealed keys, which `node.log_dir`,

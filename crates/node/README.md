@@ -44,7 +44,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - Trusted time: every stamp is checked against signed Roughtime readings that independent servers
   agree on, and nothing, genesis included, is stamped before the first; sequencing halts with a
   Critical alert when the host clock is beyond the drift bound, or 60 seconds after the last
-  sample, and resumes once a sample is within the bound
+  sample, and resumes once a sample is within the bound; sequenced time keeps at least 99% of
+  monotonic time's pace whatever the host clock does, and a run's first stamp is past every quote
+  carried across its restart
 - REST API for orders, cancels, withdrawals, and reads, plus a WebSocket stream of the log
 - Derived marks cache: each market's index-mark history served signed at `/v1/markets/{id}/marks`,
   paged per resolution with per-entry `log_derived`/`seeded_from_provider` provenance; recovery
@@ -120,14 +122,18 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - Supervised tasks: any task stopping stops the node, and SIGTERM drains to a final checkpoint
 - Live crypto prices from Coinbase and Kraken over WebSocket: one supervised task per
   venue connection, quotes stamped with the venue's own time, and reconnects with backoff
+- A bound on a price's age under a hostile host, on the monotonic clock: every TLS venue connection
+  pings its venue every `feeds.venues.ping_interval`, and a frame read while the newest answered ping
+  was sent more than `feeds.venues.max_delay` ago counts as no quote; `SECURITY.md` states the bound
 - Live FX, index and commodity futures, and US share prices from market-data vendors, two per
   market: Massive (FX, futures, and stocks feeds) and TraderMade over WebSocket with their API
   keys, and Databento's live gateway over TCP with challenge-response authentication; quotes for
   a futures contract carry its name, and a feed holds back quotes stamped or sent while their
   market is closed and quotes for a contract the market does not take
 - Alerts for refused venue messages (at most one a minute per venue, counting the rest, with any API
-  key redacted), venue outages, symbols with no fresh quote while their market is open, and venue
-  times well ahead of the host clock
+  key redacted), venue outages, symbols with no fresh quote while their market is open, venue
+  times well ahead of the host clock, a venue stream past its delay bound, and a host clock falling
+  behind monotonic time
 - A `house_deficit` alert when house NAV falls below zero, at most one a minute while it keeps
   crossing zero
 - EVM custody: a strict majority of at least three RPC providers admits each deposit; from V20,
@@ -309,6 +315,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   close-out after the rollover's financing, and a withdrawal limited at a stale market's last
   mark), and a genesis with no house capital that trades and alerts on a house deficit
 - `src/sequencer/metrics_tests.rs` — the sequencer's metrics and alert-line tests
+- `src/sequencer/pace_tests.rs` — sequenced time against a stalled host clock and across a restart:
+  a held quote ages out on monotonic time
 - `src/log/mod.rs` — the JSON-lines log format, stream offsets, and the single-file reader
 - `src/log/command_seal.rs` — domain-separated canonical command/event seals and predecessor links
 - `src/log/segments.rs` — segment files, rotation, the manifest, and the recovery read, a segment
@@ -722,12 +730,17 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   engine splits without the walk following
 - `src/feeds/venue/mod.rs` — the venue task: connect, subscribe, sequence each symbol's newest
   reached quote per book update, reconnect, and hold back quotes the engine would refuse
+- `src/feeds/venue/adapter.rs` — a venue's protocol on one connection, whichever adapter speaks it
 - `src/feeds/venue/alerts.rs` — the venue task's alerts: outages, silent symbols, a clock ahead of
   the host's, and refused messages
 - `src/feeds/venue/emit.rs` — sequencing the newest reached quote per symbol as book updates
   arrive, paced so updates faster than `feeds.venues.min_quote_spacing` coalesce to the newest,
   and the emit timer that releases what the host clock has not reached yet
-- `src/feeds/venue/transport.rs` — a connection's messages over a WebSocket, or in lines over TCP
+- `src/feeds/venue/transport.rs` — a connection's messages and pings over a WebSocket, or lines
+  over TCP
+- `src/feeds/venue/delay.rs` — how far behind a connection's stream can be, from its pings on the
+  monotonic clock, and refusing frames past `feeds.venues.max_delay`; its tests are in
+  `src/feeds/venue/delay/tests.rs`
 - `src/feeds/venue/validation.rs` — the checks every venue's books pass before they are sequenced
 - `src/feeds/venue/confirm.rs` — confirming every symbol with the engine each tick: which the
   venue is quoting, which markets it does not list, which contracts the listing does not name or
@@ -753,6 +766,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   the host clock has not reached without further venue traffic
 - `src/feeds/tests/fake.rs` — the loopback venues, the feed harness with an engine that applies
   what the feed sequences, and the wait for the next alert
+- `src/feeds/tests/delay.rs` — a connection's pings against a venue that answers them or does not
+- `src/feeds/tests/hostile.rs` — a host clock at the edge of the drift bound with frames held back
+  to match, through the real sequencer: the market goes unpriced once the delay passes the bound
 - `src/feeds/tests/late.rs` — venue tasks against a sequencer that answers late: when a quote
   counts as the venue quoting, and how a connection's last quotes are settled after it ends
 - `src/feeds/tests/mock.rs` — the mock feed stopping one market at its `stop_after` and skipping
@@ -769,7 +785,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/feeds/tests/rwa_support.rs` — schedules open around the clock, signed relistings, and a
   record of every applied command, for the RWA feed tests
 - `src/throttle.rs` — holds a repeating alert to one a minute, counting the ones it held back
-- `src/clock.rs` — the wall and monotonic clocks the sequencer stamps and checks with
+- `src/clock.rs` — the wall and monotonic clocks the sequencer stamps and checks with, and the pace
+  sequenced time keeps with monotonic time (`StampPace`)
 - `src/metrics/mod.rs` — the metrics registry, event counting, and the `/metrics` route
 - `src/metrics/tests.rs` — metrics tests
 - `src/monitor/mod.rs` — samples queue depth, the house, markets, and quote freshness into

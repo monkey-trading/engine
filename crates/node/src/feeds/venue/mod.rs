@@ -6,11 +6,16 @@
 //! quiet for the read deadline — a stalled login, a dead connection — is failed and retried the
 //! same way, even while every market is closed.
 //! A quote stamped while its market's schedule is closed is held back, since the engine refuses it,
-//! and a symbol whose market is closed is not counted as silent.
+//! and a symbol whose market is closed is not counted as silent. A frame read while the stream may
+//! be further behind than `timing.max_delay` counts as no quote (see `delay`).
 
+mod adapter;
+use adapter::Adapter;
 mod alerts;
 mod confirm;
 use confirm::Confirmation;
+mod delay;
+use delay::DelayProbe;
 mod emit;
 use emit::rearm;
 mod quotes;
@@ -40,21 +45,9 @@ use tokio::time::{Instant, MissedTickBehavior, interval_at, sleep, timeout, time
 use tracing::info;
 
 use crate::clock::now_ms;
-use crate::config::{ApiKey, Venue, VenueConnection, VenuesSection};
-use crate::feeds::{bitstamp, coinbase, databento, kraken, massive, tradermade};
+use crate::config::{ApiKey, VenueConnection, VenuesSection};
 use crate::sequencer::Request;
 use crate::throttle::Throttle;
-
-/// A venue's protocol on one connection: its opening messages, and a reader that keeps any state
-/// the venue's messages build on, such as an order book or a login handshake.
-enum Adapter {
-    Bitstamp,
-    Coinbase(coinbase::Books),
-    Kraken(kraken::Books),
-    Massive(massive::Session),
-    Tradermade(tradermade::Session),
-    Databento(databento::Session),
-}
 
 /// Why an adapter refused a message.
 #[derive(Debug, PartialEq)]
@@ -102,6 +95,11 @@ pub struct Timing {
     pub reconnect_min: Duration,
     pub reconnect_max: Duration,
     pub stale_after: Duration,
+    /// How often a connection pings its venue (see `delay`).
+    pub ping_interval: Duration,
+    /// How far behind a connection's stream may be, by its pings, before what it reads counts as no
+    /// quote.
+    pub max_delay: Duration,
 }
 
 /// What a venue symbol quotes: a market, and for a market priced from futures, one contract.
@@ -147,6 +145,12 @@ struct VenueFeed {
     schedules: Arc<BTreeMap<MarketId, Schedule>>,
     refusals: Throttle,
     clock_alerts: Throttle,
+    /// The current connection's pings, on a connection that carries them.
+    delay: Option<DelayProbe>,
+    /// Since when frames have been refused as too far behind, without one counting.
+    refused_since: Option<Instant>,
+    /// Whether the venue is alerted as past its delay bound.
+    delayed: bool,
 }
 
 impl Timing {
@@ -163,60 +167,8 @@ impl Timing {
             reconnect_min: venues.reconnect_min,
             reconnect_max: venues.reconnect_max,
             stale_after: venues.stale_after,
-        }
-    }
-}
-
-impl Adapter {
-    /// A fresh adapter for a new connection on `conn`, authenticating with `api_key` where the
-    /// venue needs one, and subscribed to `symbols`.
-    fn new(conn: &VenueConnection, api_key: Option<&ApiKey>, symbols: &[&str]) -> Self {
-        let key = api_key.map(ApiKey::expose).unwrap_or_default();
-        match conn.venue {
-            Venue::Bitstamp => Adapter::Bitstamp,
-            Venue::Coinbase => Adapter::Coinbase(coinbase::Books::new(symbols)),
-            Venue::Kraken => Adapter::Kraken(kraken::Books::new(symbols)),
-            Venue::Massive => Adapter::Massive(massive::Session::new(&conn.url, key, symbols)),
-            Venue::Tradermade => Adapter::Tradermade(tradermade::Session::new(key, symbols)),
-            Venue::Databento => {
-                let dataset = conn.dataset.as_deref().unwrap_or_default();
-                Adapter::Databento(databento::Session::new(key, dataset, symbols))
-            }
-        }
-    }
-
-    /// The text messages a new connection opens with: its subscriptions, or the login that leads
-    /// to them.
-    fn opening(&self, symbols: &[&str]) -> Vec<String> {
-        match self {
-            Adapter::Bitstamp => bitstamp::subscriptions(symbols),
-            Adapter::Coinbase(_) => coinbase::subscriptions(symbols),
-            Adapter::Kraken(_) => kraken::subscriptions(symbols),
-            Adapter::Massive(session) => session.opening(),
-            Adapter::Tradermade(session) => session.opening(),
-            Adapter::Databento(_) => Vec::new(),
-        }
-    }
-
-    /// Whether the adapter keeps state built from earlier messages, so a refused book means that
-    /// state can no longer be trusted.
-    fn keeps_state(&self) -> bool {
-        matches!(self, Adapter::Coinbase(_) | Adapter::Kraken(_))
-    }
-
-    /// Reads one venue message at host time `now`.
-    /// Error cases:
-    /// - the message is not one the venue's protocol defines, a field fails to parse, or the
-    ///   venue reported an error
-    /// - the message cannot be applied to the state kept for this connection
-    fn read(&mut self, text: &str, now: Millis) -> Result<Frame, Refusal> {
-        match self {
-            Adapter::Bitstamp => bitstamp::parse(text).map_err(Refusal::Message),
-            Adapter::Coinbase(books) => books.read(text, now),
-            Adapter::Kraken(books) => books.read(text, now),
-            Adapter::Massive(session) => session.read(text),
-            Adapter::Tradermade(session) => session.read(text),
-            Adapter::Databento(session) => session.read(text),
+            ping_interval: venues.ping_interval,
+            max_delay: venues.max_delay,
         }
     }
 }
@@ -256,6 +208,9 @@ impl VenueFeed {
             schedules: Arc::default(),
             refusals: Throttle::default(),
             clock_alerts: Throttle::default(),
+            delay: None,
+            refused_since: None,
+            delayed: false,
         }
     }
 
@@ -292,10 +247,14 @@ impl VenueFeed {
     /// - the connection sequences no fresh quote within `timing.timeout` while a market it quotes
     ///   is open, or the venue closes it or asks for a reconnect
     /// - a symbol goes silent, so the connection is replaced to resubscribe it
+    /// - a ping goes unanswered for `timing.timeout`, or cannot be sent within it
     /// - the connection fails, or the sequencer has gone away
     async fn relay(&mut self) -> anyhow::Result<Infallible> {
         let connect = transport::connect(&self.conn, self.tls.clone());
         let mut link = timeout(self.timing.timeout, connect).await.context("connect timed out")?.context("connect")?;
+        // Pinged before it opens, so the answer arrives ahead of the first book.
+        self.delay = link.pings.then(DelayProbe::default);
+        self.ping(&mut link).await?;
         let symbols: Vec<&str> = self.instruments.keys().map(String::as_str).collect();
         let mut adapter = Adapter::new(&self.conn, self.api_key.as_ref(), &symbols);
         let opening = adapter.opening(&symbols);
@@ -320,6 +279,8 @@ impl VenueFeed {
         // sequencing tick.
         let mut checks = interval_at(Instant::now() + self.timing.interval, self.timing.interval);
         checks.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let mut pings = interval_at(Instant::now() + self.timing.ping_interval, self.timing.ping_interval);
+        pings.set_missed_tick_behavior(MissedTickBehavior::Delay);
         // The one deadline every read is judged against, whatever its market's hours: the login,
         // the subscription, and each message after must arrive within it, and any message met
         // sets the next. It outlives each select below, which the checks arm would otherwise
@@ -329,7 +290,10 @@ impl VenueFeed {
             tokio::select! {
                 message = timeout_at(read_deadline, link.stream.next()) => {
                     let message = message.context("read timed out")?.context("connection closed")?.context("read")?;
-                    read_deadline = Instant::now() + self.timing.timeout;
+                    // A pong shows the connection is alive, not that the venue's protocol is moving.
+                    if !matches!(message, Incoming::Pong(_)) {
+                        read_deadline = Instant::now() + self.timing.timeout;
+                    }
                     match message {
                         Incoming::Text(text) => {
                             self.receive(&mut adapter, &mut link, &text, &mut buffered).await?;
@@ -337,9 +301,11 @@ impl VenueFeed {
                         }
                         Incoming::Binary => self.refuse("binary message", ""),
                         Incoming::Closed(reason) => bail!("closed by the venue: {reason}"),
+                        Incoming::Pong(payload) => self.pong(&payload),
                         Incoming::Other => {}
                     }
                 }
+                _ = pings.tick(), if link.pings => self.ping(&mut link).await?,
                 answer = async {
                     match &mut self.confirming {
                         Some(reply) => reply.await,
@@ -404,6 +370,10 @@ impl VenueFeed {
                 bail!("resyncing: {reason}");
             }
         };
+        // The adapter has kept what the message changes; only the quotes wait for the stream.
+        if !self.stream_current() {
+            return Ok(());
+        }
         for book in books {
             match to_quote(self.conn.venue, &self.instruments, book, now) {
                 Ok((symbol, quote)) => {

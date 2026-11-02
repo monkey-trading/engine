@@ -120,6 +120,12 @@ stale_after = "1s"
 # The most often one symbol's latest quote is sequenced: venue feeds sequence a quote per book
 # update, and updates closer together than this coalesce to the newest.
 min_quote_spacing = "10ms"
+# How far behind a connection's stream may be, on the monotonic clock, before what it reads counts
+# as no quote: the host can hold a TLS stream back but cannot answer a ping ahead of what the venue
+# sent before it. The time since the newest answered ping was sent is the bound, so `max_delay` less
+# `ping_interval` is the round trip the connection tolerates.
+ping_interval = "500ms"
+max_delay = "2s"
 
 [[feeds.venues.connections]]
 venue = "coinbase"

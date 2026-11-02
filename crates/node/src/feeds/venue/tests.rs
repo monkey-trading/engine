@@ -8,7 +8,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry;
 
 use crate::alerts::{self, Routes, is_alert_callsite};
-use crate::config::{ApiKey, VenueSymbol};
+use crate::config::{ApiKey, Venue, VenueSymbol};
 use crate::feeds::kraken;
 use crate::feeds::tests::fake::{FakeEngine, WAIT, coinbase_levels, fast, kraken_book, next_alert};
 use crate::feeds::tests::rwa_support::around_the_clock;

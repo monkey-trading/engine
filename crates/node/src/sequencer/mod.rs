@@ -303,9 +303,9 @@ impl Sequencer {
     /// - the log cannot be written
     fn take_sample(&mut self, sample: Sample) -> anyhow::Result<()> {
         if self.benchmark_sync_enabled {
-            let host_ms = self.clock.now_ms();
-            self.benchmark_time_refused |=
-                !self.time.can_admit(host_ms, host_ms.max(self.last_ts), self.clock.instant());
+            let (host_ms, now) = (self.clock.now_ms(), self.clock.instant());
+            let ts = self.time.stamp(host_ms, self.last_ts, now);
+            self.benchmark_time_refused |= !self.time.can_admit(host_ms, ts, now);
         }
         self.time.update(sample);
         if self.benchmark_sync_enabled {
@@ -329,12 +329,12 @@ impl Sequencer {
     }
 
     /// The stamp for a command now, if trusted time admits it. The host clock is untrusted inside
-    /// a TEE: it can't move sequenced time backwards, and nothing is logged unless the clock and the
-    /// stamp are within the drift bound of trusted time.
+    /// a TEE: it can't move sequenced time backwards or hold it back from monotonic time's pace, and
+    /// nothing is logged unless the clock and the stamp are within the drift bound of trusted time.
     fn admitted_ts(&mut self) -> Option<Millis> {
-        let host_ms = self.clock.now_ms();
-        let ts = host_ms.max(self.last_ts);
-        let admitted = self.time.admit(host_ms, ts, self.clock.instant());
+        let (host_ms, now) = (self.clock.now_ms(), self.clock.instant());
+        let ts = self.time.stamp(host_ms, self.last_ts, now);
+        let admitted = self.time.admit(host_ms, ts, now);
         self.note_benchmark_time_admission(admitted, ts);
         if admitted {
             self.admit_benchmark_schedule(ts);
@@ -481,6 +481,8 @@ mod batch_tests;
 mod margin_tests;
 #[cfg(test)]
 mod metrics_tests;
+#[cfg(test)]
+mod pace_tests;
 #[cfg(test)]
 mod tests;
 

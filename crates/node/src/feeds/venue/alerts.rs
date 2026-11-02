@@ -69,12 +69,8 @@ impl VenueFeed {
 
     /// Alerts, at most once per `REALERT_AFTER`, that a quote for `market` is dated `lead_ms` ahead
     /// of the host clock, past the `MAX_QUOTE_LEAD_MS` the engine accepts, so it was dropped: the
-    /// venue's clock or the host's is wrong.
-    ///
-    /// TODO: the sequencer stamps with the untrusted host clock. One set back by more than
-    /// `MAX_QUOTE_LEAD_MS` drops every quote, and the engine keeps pricing from the quotes it
-    /// holds, judged against a sequenced time that a stalled host clock also stalls; the trusted
-    /// time bound closes this.
+    /// venue's clock or the host's is wrong. The quotes the engine holds then age out, since
+    /// sequenced time keeps monotonic time's pace whatever the host clock does (`StampPace`).
     pub(super) fn clock_ahead(&mut self, market: MarketId, lead_ms: Millis) {
         if let Some(suppressed) = self.clock_alerts.ready(Instant::now()) {
             let (venue, feed) = (self.conn.venue.name(), self.conn.url.as_str());

@@ -171,9 +171,12 @@ pub fn serve_databento(listener: TcpListener, prices: Prices) -> JoinHandle<()> 
 async fn accept_next(listener: &TcpListener) -> Option<(Conn, String)> {
     let (tcp, _) = listener.accept().await.ok()?;
     let mut ws = accept_async(tcp).await.ok()?;
-    match timeout(WAIT, ws.next()).await.ok()??.ok()? {
-        Message::Text(text) => Some((ws, text.as_str().to_owned())),
-        _ => None,
+    loop {
+        match timeout(WAIT, ws.next()).await.ok()??.ok()? {
+            Message::Text(text) => return Some((ws, text.as_str().to_owned())),
+            Message::Ping(_) => {}
+            _ => return None,
+        }
     }
 }
 

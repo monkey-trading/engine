@@ -91,6 +91,7 @@ Rebuilt from the log. None changes the books.
 | `venue_symbol_silent` | Warning | A symbol has had no fresh quote while its market is open. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "A crypto venue is down or quiet". |
 | `venue_message_refused` | Warning | A venue message was refused (key redacted). See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Find what is down". |
 | `venue_clock_ahead` | Warning | A venue's timestamps are well ahead of the host clock. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Find what is down". |
+| `venue_delayed` | Warning | A venue's stream may be further behind than `feeds.venues.max_delay`, so its quotes do not count. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Find what is down". |
 | `prices_rejected` | Warning | The engine refused a price update; the reason is in the message. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Find what is down". |
 | `futures_roll_overdue` | Warning | A futures market is past its roll time with no gap recorded. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Futures markets". |
 | `futures_last_contract` | Warning | A futures market prices from the last contract its listing names. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Futures markets". |
@@ -110,6 +111,7 @@ Rebuilt from the log. None changes the books.
 | Alert | Level | Meaning and response |
 | --- | --- | --- |
 | `clock_drift` | Critical | The host clock or a stamp is outside the drift bound: sequencing is halted. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Trusted time". |
+| `host_clock_behind` | Warning | The host clock has fallen a second behind monotonic time, and stamps keep monotonic time's pace. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Trusted time". |
 | `trusted_time_unavailable` | Critical | No trusted time sample within the grace: sequencing is halted. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Trusted time". |
 | `trusted_time_no_sample` | Warning | No trusted time sample could be taken. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Trusted time". |
 | `roughtime_server_failing` | Warning | One Roughtime server keeps failing. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Trusted time". |
