@@ -17,7 +17,8 @@
 # public log, its other data, its metrics, or a page.
 #
 # Needs anvil, forge, cast, curl, jq, and python3, and the contract dependencies (`forge soldeer
-# install` in contracts/). Runs on private temporary data and its own free ports, and no real secret.
+# install` in contracts/). Runs on private temporary data and its own free ports, with no real secret;
+# a synthetic signed access source clears the deposits, as the vault deposit scenario's does.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -33,11 +34,12 @@ trader="$(cast wallet address --private-key "$trader_key" | tr '[:upper:]' '[:lo
 usdc_units=1000000
 digest="$(printf '5a%.0s' $(seq 1 48))"
 node_pid=""
+access_fixture_pid=""
 pids=()
 
-read -r anvil_port api_port metrics_port listen_port hook_port rpc_a rpc_b rpc_c <<< "$(python3 -I - <<'PY'
+read -r anvil_port api_port metrics_port listen_port hook_port rpc_a rpc_b rpc_c ACCESS_SOURCE_PORT <<< "$(python3 -I - <<'PY'
 import socket
-probes = [socket.socket() for _ in range(8)]
+probes = [socket.socket() for _ in range(9)]
 for probe in probes:
     probe.bind(("127.0.0.1", 0))
 print(*(probe.getsockname()[1] for probe in probes))
@@ -46,8 +48,11 @@ PY
 rpc="http://127.0.0.1:$anvil_port"
 api="https://127.0.0.1:$api_port"
 
+export ACCESS_SOURCE_PORT
+
 cleanup() {
   [[ -n "$node_pid" ]] && kill "$node_pid" 2>/dev/null || true
+  [[ -n "$access_fixture_pid" ]] && kill "$access_fixture_pid" 2>/dev/null || true
   for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done
   if [[ -n "${SCENARIO_LOG_DIR:-}" ]]; then
     mkdir -p "$SCENARIO_LOG_DIR"
@@ -76,6 +81,7 @@ wait_for() {
 }
 
 trader_balance() { curl -sk "$api/v1/accounts/$trader" | jq -r '.balance // "none"'; }
+pending_deposits() { curl -sf "http://127.0.0.1:$metrics_port/metrics" | awk '$1 == "engine_access_pending_deposits" { print $2 }'; }
 secret_missing_alerts() { grep -c 'ERROR.*alert="secret_missing"' "$work/node.log" || true; }
 health() { curl -sk -o /dev/null -w '%{http_code}' "$api/v1/health" || true; }
 mine() { cast rpc anvil_mine "$(printf '0x%x' "$1")" --rpc-url "$rpc" >/dev/null; }
@@ -174,6 +180,8 @@ forget_keys_seen() { rm -f "$work"/stand-ins/hits-*; }
 
 step "Build the node"
 cargo build -q --locked -p engine-node --manifest-path "$root/Cargo.toml"
+source "$root/scripts/dev-access-fixture.sh"
+build_access_tools
 engine="$(cargo metadata --format-version 1 --no-deps --manifest-path "$root/Cargo.toml" | jq -r .target_directory)/debug/engine"
 
 step "Start Anvil and deploy the mock USDC and the vault"
@@ -193,6 +201,8 @@ cd "$root"
 grep -qi "vault = \"$vault\"" config/anvil.toml || fail "vault deployed at $vault, not the address config/anvil.toml names"
 send "$usdc" "mint(address,uint256)" "$trader" $((1000000 * usdc_units)) --private-key "$deployer_key"
 send "$usdc" "approve(address,uint256)" "$vault" $((1000000 * usdc_units)) --private-key "$trader_key"
+
+start_access_fixture
 
 step "Start the keyed RPC providers and the webhook stand-in"
 provider_keys v1
@@ -255,6 +265,7 @@ symbols = [{ market = 1, symbol = "C.EURUSD" }]
 text = text.replace("# Trusted time. The sequencer", vendor + "# Trusted time. The sequencer", 1)
 print(text, end="")
 PY
+write_access_config "$work/node.toml"
 grep -q FAKE "$work/node.toml" && fail "the config holds a value"
 release_toml() {
   cat <<TOML
@@ -309,6 +320,8 @@ wait_up
 
 step "A deposit credits through the keyed providers, and the delivered webhook is paged"
 deposit 1000
+wait_for pending_deposits 1
+access_attest "$trader_key"
 wait_for trader_balance 1000
 [[ "$(keys_seen | tr '\n' ' ')" == "FAKE-rpc-a-v1 FAKE-rpc-b-v1 FAKE-rpc-c-v1 " ]] || fail "providers saw $(keys_seen)"
 wait_for_page FAKE-critical-v1 "secret_missing firing"
