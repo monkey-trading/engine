@@ -2139,9 +2139,9 @@ url_secret = "alerts_critical_url"
 
 `checkpoints.rpc_url` and `access.endpoint` take a `{name}` the same way. A value is percent-encoded
 into its place, so it cannot end the path or query it sits in. A URL with no `{name}` is used as
-written, for a provider that needs no key. A production build refuses `api_key_env` and `url_env`:
-the guest's only environment is the measured kernel command line, and a host that could set one
-would choose the secret.
+written, for a provider that needs no key. A production build refuses `api_key_env` and `url_env`,
+but for a standby's config, which no enclave runs: the guest's only environment is the measured kernel
+command line, and a host that could set one would choose the secret.
 
 - **Delivering.** `engine admin deliver-secrets` sends a fresh nonce to the listener, and the enclave
   answers with a one-time HPKE key (the suite the key handover uses) and a quote over the nonce, that
@@ -2198,7 +2198,9 @@ would choose the secret.
   only by election or promotion, and the running release refuses, reading the switch at the finalized
   block that named the release and at the latest one: the keys go to the elected enclave,
   but its vendor accounts and provider keys are its own, delivered under its own key before or after
-  it takes over. A standby holds its own bundle the same way.
+  it takes over. A standby runs outside any enclave on its operator's own host, so a config with
+  `[standby]` writes its keys out and may read `url_env` in a production build; its registered release
+  takes its own delivery after a promotion.
 - **What the host can do.** It carries the connection and holds the file. It can delay or drop a
   delivery and forge a refusal, which is the denial it has anyway; the tool reports no receipt, and a
   retry is safe. It cannot read a bundle, substitute an enclave, or replay an offer, since the quote

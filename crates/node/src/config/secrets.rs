@@ -385,10 +385,11 @@ impl NodeConfig {
 
     /// Refuses a secret read from the environment when `production` is set: the guest's only
     /// environment is the measured kernel command line, so such a field could never be set, and a
-    /// host that could set one would choose the secret.
+    /// host that could set one would choose the secret. A standby's config is apart from that: no
+    /// enclave runs it, and its host is its operator's own.
     /// Error cases:
-    /// - `production` is set and `alerts.critical.url_env`, `alerts.warning.url_env`, or a vendor
-    ///   connection's `api_key_env` is set
+    /// - `production` is set, there is no `[standby]`, and `alerts.critical.url_env`,
+    ///   `alerts.warning.url_env`, or a vendor connection's `api_key_env` is set
     pub(super) fn refuse_environment_secrets(&self, production: bool) -> anyhow::Result<()> {
         let routes =
             [("alerts.critical.url_env", &self.alerts.critical), ("alerts.warning.url_env", &self.alerts.warning)];
@@ -405,7 +406,7 @@ impl NodeConfig {
                 .filter(|connection| connection.api_key_env.is_some())
                 .map(|connection| format!("{} api_key_env", connection.venue.name())),
         );
-        if production && !fields.is_empty() {
+        if production && self.standby.is_none() && !fields.is_empty() {
             bail!(
                 "a production build reads secrets only from a delivered bundle, not the environment: {}",
                 fields.join(", ")

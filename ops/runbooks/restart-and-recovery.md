@@ -61,6 +61,8 @@ only record of the books.
 
 | Alert | What it checks | First action |
 | --- | --- | --- |
+| `secret_missing`, `secrets_unreadable` | Not refusals: the node lacks a delivered secret, or its sealed file does not open. It holds for a chain or screening key, serving only its delivery listener. | Deliver ([key-recovery.md](key-recovery.md), "Secrets"); it goes on starting. |
+| `secrets_start_failed` | The first read of the chain failed on a delivered key. The VM powers off after five minutes, or once a new bundle is sealed. | [alerts.md](alerts.md). |
 | `enclave_key_failed` | The sealed keys cannot be opened or made: none sealed for this release and generation, a changed config, another chip, a lower firmware, or `new-key` beside an existing file. | [key-recovery.md](key-recovery.md). |
 | `signer_unregistered` | Not a refusal: the vault does not name this key, so the node serves only its attestation. | Governance registers the key ([key-recovery.md](key-recovery.md), "New keys"). |
 | `custody_connect_failed` | The custody adapter could not start: the providers could not be reached, or too few agreed on the chain and token. | [feed-and-custody-failures.md](feed-and-custody-failures.md). |

@@ -27,6 +27,7 @@ export REGISTRY=0x...                   # custody.evm.staking.registry.contract
 export USDC=0x...                       # custody.evm.usdc
 export TIMELOCK=0x...                   # the vault's governance(): cast call $VAULT 'governance()(address)'
 export RPC=https://...                  # one custody provider, for these reads
+export SECRETS=host:port                # the delivery listener, as the host forwards tee.sealing.secrets.listen
 ```
 
 Check: `cast chain-id --rpc-url $RPC` prints `42161`, and `cast call $VAULT 'usdc()(address)' --rpc-url $RPC`
@@ -192,7 +193,7 @@ The image mounts one data disk at `/data`. Nothing else persists.
 | `/data/log` | The event log and `manifest.jsonl`; `checkpoint-submission.json` and its `.lock` beside the segments. | Yes, continuously. See below. |
 | `/data/history` | The account history index and marks cache, both rebuilt from the log. | No. |
 | `/data/alerts` | The alert outbox: pages not yet delivered. | Yes, with the log. |
-| `/data/keys` | Sealed enclave keys, one file per release and generation. | A copy is useless on another chip, but keep it: it is the proof of what was sealed. |
+| `/data/keys` | Sealed enclave keys, one file per release and generation, and the delivered secrets, one `<release id>.secrets.json` per release. | A copy is useless on another chip, but keep it: it is the proof of what was sealed. |
 | `/data/custody-cursor.json`, `/data/staking-cursor.json` | Where the deposit and staking scans resume. | Optional. A lost cursor makes the scan start at `custody.evm.start_block`. |
 | `/data/new-key`, `/data/predecessor` | One-off markers the image removes before it starts the engine. | Never. |
 

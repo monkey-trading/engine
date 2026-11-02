@@ -147,12 +147,18 @@ fn a_production_build_refuses_a_secret_from_the_environment_at_load() {
     let from_env =
         delivered.replace("url_secret = \"alerts_critical_url\"", "url_env = \"ENGINE_ALERTS_CRITICAL_URL\"");
     assert_ne!(from_env, delivered, "the edit must change the config");
-    std::fs::write(&path, from_env).unwrap();
+    std::fs::write(&path, &from_env).unwrap();
     let err = format!("{:#}", NodeConfig::load(&path).unwrap_err());
     assert!(
         err.contains("reads secrets only from a delivered bundle") && err.contains("alerts.critical.url_env"),
         "{err}"
     );
+
+    // No enclave runs a standby, so its environment is its operator's own.
+    let standby = "[standby]\noperator = 'https://api.operator.example'\nmirrors = []\n\
+                   enclave = '0x0000000000000000000000000000000000000001'\n";
+    std::fs::write(&path, format!("{from_env}\n{standby}")).unwrap();
+    NodeConfig::load(&path).unwrap();
 }
 
 // ── Helpers ──

@@ -174,15 +174,70 @@ authorizes a checkpoint. If its balance runs out or the endpoint's key is lost, 
 
 ## Secrets
 
-Webhook URLs, vendor API keys and RPC credentials. How a secret reaches an enclave is not built yet
-(#356), so no procedure here is tested. The plan the owner decided: the operator encrypts a bundle
-to the enclave's attested key after verifying that attestation, bound to the release and config the
-vault approved; the bundle survives restarts the way the keys do. Until it exists, a secret changes
-only by a new release.
+Webhook URLs, vendor API keys and RPC credentials. The config names them and the operator delivers
+their values into the enclave; `crates/node/README.md`, "Delivered secrets", has the design and what a
+host can do at each step. Keep the values in a bundle file on the admin workstation, never on the node's
+host, with one entry for every name the config uses:
 
-- If a secret is exposed, treat it as lost now: revoke it at its issuer first (the vendor's console,
-  the RPC provider, the webhook receiver), then replace it.
+```toml
+version = 1
+[secrets]
+provider_a_key = "..."
+alerts_critical_url = "https://..."
+```
+
+`$SECRETS` is the listener's address as the host forwards it (`tee.sealing.secrets.listen`). The tool
+checks the enclave's quote against `release.toml` and encrypts only after that. A real enclave takes
+only the operator key in effect: the one the attested config names while it holds, and the one the log
+records once it runs. A rotated operator therefore keeps its old key until a release's config names the
+new one, and an upgrade's new release takes a moved bundle only under the signature of the operator
+its own config names; a bundle signed before a rotation is refused there, and the operator delivers
+again.
+
+**See what an enclave holds.** This changes nothing. Check: the sealed version is the newest you
+delivered. A lower one means the host restored an older sealed file: treat the host as suspect, and
+deliver a higher version, which repairs it.
+
+```sh
+$ENGINE admin --config node.toml --key-file operator.key secrets-status --to $SECRETS --release release.toml
+```
+
+**Deliver.** **Changes the live system.** Needs the owner's approval of the delivery. A retry is safe:
+the same version with the same secrets is accepted as already sealed, a lower version or the same
+version with other secrets is refused, and no receipt means nothing is proven sealed.
+
+```sh
+$ENGINE admin --config node.toml --key-file operator.key deliver-secrets --to $SECRETS --release release.toml --secrets-file secrets.toml
+```
+
+Check: it prints `sealed: version <n>`. It refuses a bundle lacking a chain or screening key unless given
+`--partial`, and names any integration that stays off.
+
+**Rotate a secret.** Raise `version` and hold every secret, since a bundle replaces the whole sealed
+one. List the new key at its provider first, and leave the old one valid: what runs keeps the clients
+it started with.
+
+1. Deliver. Check: it prints `restart required`, `secrets_restart_required` (Warning) fires, and the
+   status shows the new sealed version and the old running one.
+2. Restart the node ([restart-and-recovery.md](restart-and-recovery.md)); the enclave's keys stay.
+   **Changes the live system.** Check: the alert resolves, and sealed and running versions match.
+3. Revoke the old key at its issuer.
+
+**If a secret is exposed**, treat it as lost now: revoke it at its issuer first (the vendor's console,
+the RPC provider, the webhook receiver), then rotate as above.
+
 - Revoking a vendor key stops that vendor's feed (`venue_feed_down`); a market with one vendor left
   keeps pricing only if its `min_sources` allows it. Make the markets that fall below it reduce-only.
+- Revoking a custody provider's key takes that provider out of the quorum until the restart; with too
+  few left, crediting pauses (`custody_rpc_quorum_lost`) until then.
+
+**When a sealed file is lost or does not open**, the node raises `secrets_unreadable` and `secret_missing`
+and, for a chain or screening key, holds at its next start, serving only the delivery listener. Deliver
+again; it goes on starting with no restart.
+
+**A new release** asks the running one for the bundle first, with no stop
+([deploy-and-rollback.md](deploy-and-rollback.md), section 3). **An election moves nothing**: an elected
+operator delivers its own to its own enclave ([operator-candidate.md](operator-candidate.md)).
+
 - The access source's signing key is recorded in the log with its freshness bound. Replacing the
   key needs a fresh log; replacing its endpoint does not.

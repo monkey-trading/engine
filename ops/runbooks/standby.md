@@ -19,8 +19,9 @@ fallback at the end of this page.
    effect after the notice (7 days plus the finality margin).
 3. The standby's process sees the promotion, finalizes its copy of the log at the last checkpoint the
    vault accepted, drops the unsigned tail after it, and exits.
-4. The standby's operator starts the registered release on the SEV-SNP host with `new-key`. It serves
-   only its attestation.
+4. The standby's operator starts the registered release on the SEV-SNP host with `new-key`, and
+   delivers that candidate's own secrets to it ([key-recovery.md](key-recovery.md), "Secrets"): no
+   secret comes from the failed operator. It then serves only its attestation.
 5. The candidate registers that enclave's address with `setEnclave`, and the timelock installs it with
    `setSigner` (3-day delay). The node then resumes at the last checkpoint the old key signed.
 
@@ -38,7 +39,10 @@ with the operator.
 1. **Config.** The standby's config is the candidate's release config plus a `[standby]` section. It
    is a different file from the registered release (different hash), which is fine: nothing is
    registered for it. It needs EVM custody and `[checkpoints]`, because it reads the vault and the
-   registry. Its `operator.public_key` is the candidate's own admin key.
+   registry. Its `operator.public_key` is the candidate's own admin key. No enclave runs it, so no
+   secret is delivered to it: drop `[tee.sealing.secrets]`, write its RPC URLs out in full, read its
+   webhook URLs with `url_env`, and keep this file private, which a production build allows for a
+   config with `[standby]`.
 
    ```toml
    [standby]
