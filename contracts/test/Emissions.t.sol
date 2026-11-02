@@ -73,17 +73,17 @@ contract EmissionsTest is GovernanceTest {
         vm.expectEmit(address(vault));
         emit Vault.EmissionsClaimed(first.account, first.entitled, first.entitled, first.seq);
         vm.prank(relayer);
-        assertEq(vault.claimEmissions(first.account, first.entitled, first.siblings), first.entitled);
+        assertEq(vault.claimEmissions(first.account, first.entitled, first.seq, first.siblings), first.entitled);
         assertEq(monkey.balanceOf(first.account), first.entitled);
         assertEq(monkey.balanceOf(relayer), 0);
         assertEq(vault.emissionsClaimed(first.account), first.entitled);
 
         vm.expectRevert(abi.encodeWithSelector(Vault.NothingToClaim.selector, first.entitled, first.entitled));
-        vault.claimEmissions(first.account, first.entitled, first.siblings);
+        vault.claimEmissions(first.account, first.entitled, first.seq, first.siblings);
         assertEq(monkey.totalSupply(), first.entitled);
 
         Claim memory other = load(".other");
-        vault.claimEmissions(other.account, other.entitled, other.siblings);
+        vault.claimEmissions(other.account, other.entitled, other.seq, other.siblings);
         assertEq(monkey.balanceOf(other.account), other.entitled);
     }
 
@@ -93,13 +93,16 @@ contract EmissionsTest is GovernanceTest {
         assertEq(later.account, first.account);
         assertGt(later.entitled, first.entitled);
         post(first.seq, first.root, false, 0, 0);
-        vault.claimEmissions(first.account, first.entitled, first.siblings);
+        vault.claimEmissions(first.account, first.entitled, first.seq, first.siblings);
         post(later.seq, later.root, true, first.seq, first.root);
 
-        // The earlier proof no longer matches the latest root.
-        vm.expectRevert(Vault.InvalidEntitlementProof.selector);
-        vault.claimEmissions(first.account, first.entitled, first.siblings);
-        assertEq(vault.claimEmissions(later.account, later.entitled, later.siblings), later.entitled - first.entitled);
+        // The earlier proof still checks against its root, and has nothing left to pay.
+        vm.expectRevert(abi.encodeWithSelector(Vault.NothingToClaim.selector, first.entitled, first.entitled));
+        vault.claimEmissions(first.account, first.entitled, first.seq, first.siblings);
+        assertEq(
+            vault.claimEmissions(later.account, later.entitled, later.seq, later.siblings),
+            later.entitled - first.entitled
+        );
         assertEq(monkey.balanceOf(first.account), later.entitled);
     }
 
@@ -108,7 +111,7 @@ contract EmissionsTest is GovernanceTest {
         Claim memory later = load(".later");
         post(first.seq, first.root, false, 0, 0);
         post(later.seq, later.root, true, first.seq, first.root);
-        assertEq(vault.claimEmissions(later.account, later.entitled, later.siblings), later.entitled);
+        assertEq(vault.claimEmissions(later.account, later.entitled, later.seq, later.siblings), later.entitled);
     }
 
     function testRefusesEveryAlteredProof() public {
@@ -116,33 +119,33 @@ contract EmissionsTest is GovernanceTest {
         Claim memory other = load(".other");
         post(first.seq, first.root, false, 0, 0);
         vm.expectRevert(Vault.InvalidEntitlementProof.selector);
-        vault.claimEmissions(first.account, first.entitled + 1, first.siblings);
+        vault.claimEmissions(first.account, first.entitled + 1, first.seq, first.siblings);
         vm.expectRevert(Vault.InvalidEntitlementProof.selector);
-        vault.claimEmissions(other.account, first.entitled, first.siblings);
+        vault.claimEmissions(other.account, first.entitled, first.seq, first.siblings);
         bytes32[] memory tampered = first.siblings;
         tampered[tampered.length - 1] ^= bytes32(uint256(1));
         vm.expectRevert(Vault.InvalidEntitlementProof.selector);
-        vault.claimEmissions(first.account, first.entitled, tampered);
+        vault.claimEmissions(first.account, first.entitled, first.seq, tampered);
         bytes32[] memory shorter = new bytes32[](first.siblings.length - 1);
         vm.expectRevert(Vault.InvalidEntitlementProof.selector);
-        vault.claimEmissions(first.account, first.entitled, shorter);
+        vault.claimEmissions(first.account, first.entitled, first.seq, shorter);
         assertEq(monkey.totalSupply(), 0);
     }
 
     function testRefusesClaimsBeforeAnyCheckpoint() public {
         Claim memory first = load(".first");
-        vm.expectRevert(Vault.NoCheckpoint.selector);
-        vault.claimEmissions(first.account, first.entitled, first.siblings);
+        vm.expectRevert(Vault.UnknownCheckpoint.selector);
+        vault.claimEmissions(first.account, first.entitled, first.seq, first.siblings);
     }
 
     function testFuzzSingleLeafTreeClaimsUpToTheCap(address account, uint256 entitled) public {
         vm.assume(account != address(0));
         entitled = bound(entitled, 1, monkey.cap());
         post(1, leaf(account, entitled), false, 0, 0);
-        vault.claimEmissions(account, entitled, new bytes32[](0));
+        vault.claimEmissions(account, entitled, 1, new bytes32[](0));
         assertEq(monkey.balanceOf(account), entitled);
         vm.expectRevert(abi.encodeWithSelector(Vault.NothingToClaim.selector, entitled, entitled));
-        vault.claimEmissions(account, entitled, new bytes32[](0));
+        vault.claimEmissions(account, entitled, 1, new bytes32[](0));
     }
 
     function testAnEntitlementPastTheCapMintsNothing() public {
@@ -150,7 +153,7 @@ contract EmissionsTest is GovernanceTest {
         uint256 cap = monkey.cap();
         post(1, leaf(account, cap + 1), false, 0, 0);
         vm.expectRevert(abi.encodeWithSelector(ERC20Capped.ERC20ExceededCap.selector, cap + 1, cap));
-        vault.claimEmissions(account, cap + 1, new bytes32[](0));
+        vault.claimEmissions(account, cap + 1, 1, new bytes32[](0));
         assertEq(vault.emissionsClaimed(account), 0);
     }
 
@@ -170,15 +173,15 @@ contract EmissionsTest is GovernanceTest {
         bytes32[] memory proof = new bytes32[](1);
         proof[0] = leftLeaf;
         vm.expectRevert(Vault.InvalidEntitlementProof.selector);
-        vault.claimEmissions(left, 5, proof);
+        vault.claimEmissions(left, 5, 1, proof);
         proof[0] = rightLeaf;
-        vault.claimEmissions(left, 5, proof);
+        vault.claimEmissions(left, 5, 1, proof);
         proof[0] = leftLeaf;
-        vault.claimEmissions(right, 7, proof);
+        vault.claimEmissions(right, 7, 1, proof);
         assertEq(monkey.balanceOf(left), 5);
         assertEq(monkey.balanceOf(right), 7);
         vm.expectRevert(Vault.InvalidEntitlementProof.selector);
-        vault.claimEmissions(right, 8, new bytes32[](257));
+        vault.claimEmissions(right, 8, 1, new bytes32[](257));
     }
 
     function load(string memory at) private view returns (Claim memory claim) {

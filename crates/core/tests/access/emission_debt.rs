@@ -34,6 +34,7 @@ fn a_reversal_landing_after_the_losses_becomes_an_emission_debt_that_later_losse
     // Period 1: a reorg reverses the receipt. The write-off finds no losses to absorb.
     let events = reverse(&mut h, &deposit);
     assert!(events.iter().any(|e| matches!(e, Event::BadDebt { amount, .. } if *amount == f("50"))), "{events:?}");
+    assert_eq!(h.engine.entitlement(account).0, budget, "the vault pays any root of the signer, so none is taken back");
     let events = next_period(&mut h);
     assert!(allocations(&events).is_empty(), "{events:?}");
     assert_eq!(h.engine.emission_debt(account), f("50"));

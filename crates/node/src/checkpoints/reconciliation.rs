@@ -8,7 +8,8 @@ use tokio::time::Instant;
 use tracing::{debug, error, info, warn};
 
 use crate::checkpoints::{
-    ApprovalId, CheckpointChain, Conflict, Health, LifecycleEvidence, Poster, VaultState, View, Work, signature,
+    ApprovalId, CheckpointChain, Conflict, Health, LatestCheckpoint, LifecycleEvidence, Poster, VaultState, View, Work,
+    signature,
 };
 
 /// The first vault deposit the finalized checkpoint has not credited, and since when it has been
@@ -78,16 +79,20 @@ impl<R: CheckpointChain> Poster<R> {
         Ok((posted, health))
     }
 
-    /// The seq of the vault's latest included checkpoint, `None` when it has none or cannot be read.
-    pub(super) async fn vault_checkpoint(&self) -> Option<u64> {
-        let observation = self.chain.observe(View::Latest, &[]).await.and_then(|at| at.validate(&[]).map(|()| at));
-        match observation {
-            Ok(at) => at.state.checkpoint.map(|(seq, _)| seq),
-            Err(error) => {
-                debug!("the vault's latest checkpoint could not be read: {error:#}");
-                None
-            }
-        }
+    /// The vault's latest included checkpoint and whether a claim can prove against it, read at one
+    /// block; `None` when it has none or cannot be read.
+    pub(super) async fn vault_checkpoint(&self) -> Option<LatestCheckpoint> {
+        let read = async {
+            let at = self.chain.observe(View::Latest, &[]).await?;
+            at.validate(&[])?;
+            let Some((seq, _)) = at.state.checkpoint.clone() else { return Ok(None) };
+            let claimable = self.chain.claims_open(&at, seq).await?;
+            anyhow::Ok(Some(LatestCheckpoint { seq, claimable }))
+        };
+        read.await.unwrap_or_else(|error| {
+            debug!("the vault's latest checkpoint could not be read: {error:#}");
+            None
+        })
     }
 
     /// Ends the `post_diverged` withholding episode, if one is open.

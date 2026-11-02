@@ -12,8 +12,9 @@ use crate::api::{ApiError, ApiResult, ApiState};
 use crate::sequencer::{ClaimAnswer, Request};
 
 /// The proof of the account's cumulative USDC distribution, as the vault's `claimDistribution`
-/// takes it, answered as the MONKEY entitlement proof is: at the checkpoint the vault last accepted
-/// when the node retained one for the account, else the newest one's and not `claimable`.
+/// takes it, answered as the MONKEY entitlement proof is: at the checkpoint the vault last recorded
+/// in the signer epoch in force when the node retained one for the account, else the newest one's and
+/// not `claimable`.
 /// Error cases:
 /// - the address is malformed
 /// - no checkpoint holds a distribution for the account

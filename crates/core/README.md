@@ -287,8 +287,8 @@ this crate and reproduce the signed state roots exactly.
   (`rounding.rs`), spreads and margin against their exact
   amounts (`charges.rs`), and toxicity scores against their markouts (`toxicity.rs`)
 - `tests/invariants/state_root.rs` — incremental roots against a rebuild, with every account's
-  proof and entitlement proof checked and every emission budget accounted for, under generated
-  sessions
+  proof and entitlement proof checked, every emission budget accounted for, and no entitlement
+  falling, under generated sessions
 - `tests/invariants/access.rs` — explicit signing keys and fresh source evidence for current tree sessions
 - `tests/state_root.rs` — the state root from `V9`: its activation, what each root rehashes,
   account proofs, and roots against a rebuild

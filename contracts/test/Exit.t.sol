@@ -74,7 +74,7 @@ contract ExitTestCases is ExitTest {
         vm.expectRevert(Vault.ExitActive.selector);
         vault.withdraw(withdrawal, seq, new bytes32[](0), "");
         vm.expectRevert(Vault.ExitActive.selector);
-        vault.claimDistribution(alice, 1, new bytes32[](0));
+        vault.claimDistribution(alice, 1, seq, new bytes32[](0));
         usdc.mint(funder, 10e6);
         vm.startPrank(funder);
         usdc.approve(address(vault), 10e6);
@@ -442,6 +442,73 @@ contract ExitTestCases is ExitTest {
         assertEq(usdc.balanceOf(address(vault)), 30e6, "the unnamed principal is never paid out");
     }
 
+    function testAClaimAtAnOlderRootIsDeductedAndTheExitProvesOnlyItsOwnRoot() public {
+        usdc.mint(address(vault), 200e6);
+        bytes32 key = keccak256(abi.encodePacked(uint8(13), bob));
+        _addTerms(0, 0, 0);
+        _addDistribution(bob, 30e6);
+        _post();
+        uint64 older = seq;
+        bytes32[] memory olderSiblings = _siblings(key);
+        delete keys;
+        delete values;
+        ExitVerifier.ExitTerms memory terms = _addTerms(0, 0, 0);
+        _addDistribution(bob, 50e6);
+        _post();
+
+        assertEq(vault.claimDistribution(bob, 30e6, older, olderSiblings), 30e6);
+        _startExit(terms);
+
+        bytes32[] memory exitSiblings = _siblings(key);
+        vm.expectRevert(Vault.ExitActive.selector);
+        vault.claimDistribution(bob, 30e6, older, olderSiblings);
+        vm.expectRevert(Vault.ExitActive.selector);
+        vault.claimDistribution(bob, 50e6, seq, exitSiblings);
+        vm.expectRevert(Vault.InvalidEntitlementProof.selector);
+        vault.registerExitDistribution(bob, 30e6, olderSiblings);
+        vault.registerExitDistribution(bob, 50e6, exitSiblings);
+        assertEq(vault.exitDistributionClaims(bob), 20e6);
+        assertEq(vault.distributionsPaid(), 30e6);
+    }
+
+    function testEmissionsStayClaimableAfterTheExitAtAnyRootOfTheSigner() public {
+        bytes32 key = keccak256(abi.encodePacked(uint8(8), bob));
+        _addTerms(0, 0, 0);
+        _leaf(key, keccak256(abi.encode(uint256(3e18))));
+        _post();
+        uint64 older = seq;
+        bytes32[] memory olderSiblings = _siblings(key);
+        delete keys;
+        delete values;
+        ExitVerifier.ExitTerms memory terms = _addTerms(0, 0, 0);
+        _leaf(key, keccak256(abi.encode(uint256(5e18))));
+        _post();
+        _startExit(terms);
+
+        assertEq(vault.claimEmissions(bob, 3e18, older, olderSiblings), 3e18);
+        assertEq(vault.claimEmissions(bob, 5e18, seq, _siblings(key)), 2e18);
+        vm.expectRevert(abi.encodeWithSelector(Vault.NothingToClaim.selector, 3e18, 5e18));
+        vault.claimEmissions(bob, 3e18, older, olderSiblings);
+        assertEq(vault.monkey().balanceOf(bob), 5e18);
+    }
+
+    function testAChangeOfSignerEndsEmissionClaimsOnTheExitRootButNotTheExit() public {
+        usdc.mint(address(vault), 100e6);
+        bytes32 emission = keccak256(abi.encodePacked(uint8(8), bob));
+        bytes32 distribution = keccak256(abi.encodePacked(uint8(13), bob));
+        ExitVerifier.ExitTerms memory terms = _addTerms(0, 0, 0);
+        _leaf(emission, keccak256(abi.encode(uint256(3e18))));
+        _addDistribution(bob, 30e6);
+        _post();
+        _govern(address(vault), abi.encodeCall(Vault.setSigner, (makeAddr("next signer"))));
+        _startExit(terms);
+
+        vm.expectRevert(Vault.InvalidSignerEpoch.selector);
+        vault.claimEmissions(bob, 3e18, seq, _siblings(emission));
+        vault.registerExitDistribution(bob, 30e6, _siblings(distribution));
+        assertEq(vault.exitDistributionClaims(bob), 30e6);
+    }
+
     function testADistributionPaidBeforeTheExitIsDeductedFromItsClaim() public {
         // Bob is paid 30 of a 50 distribution while the engine runs; carol all of her 30.
         usdc.mint(address(vault), 200e6);
@@ -449,8 +516,8 @@ contract ExitTestCases is ExitTest {
         _addDistribution(bob, 30e6);
         _addDistribution(carol, 30e6);
         _post();
-        vault.claimDistribution(bob, 30e6, _siblings(keccak256(abi.encodePacked(uint8(13), bob))));
-        vault.claimDistribution(carol, 30e6, _siblings(keccak256(abi.encodePacked(uint8(13), carol))));
+        vault.claimDistribution(bob, 30e6, seq, _siblings(keccak256(abi.encodePacked(uint8(13), bob))));
+        vault.claimDistribution(carol, 30e6, seq, _siblings(keccak256(abi.encodePacked(uint8(13), carol))));
         delete keys;
         delete values;
         ExitVerifier.ExitTerms memory terms = _addTerms(0, 0, 0);

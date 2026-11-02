@@ -60,9 +60,9 @@ pub enum Request {
     /// divergence or an unrevalidated startup is never erased by an RPC error.
     CheckpointStatus {
         posted: Option<u64>,
-        /// The latest checkpoint the vault includes, which a claim is checked against and which can
-        /// be ahead of the finalized `posted`; `None` when it has none or the read failed.
-        latest: Option<u64>,
+        /// The latest checkpoint the vault includes, which can be ahead of the finalized `posted`,
+        /// and whether a claim can prove against it; `None` when it has none or the read failed.
+        latest: Option<crate::checkpoints::LatestCheckpoint>,
         health: Option<crate::checkpoints::Health>,
         lifecycle: Option<crate::checkpoints::LifecycleEvidence>,
     },

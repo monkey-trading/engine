@@ -51,8 +51,8 @@ const FLOOR: Fixed = Fixed::from_int(10_000_000);
 const CHECKPOINT_EVERY: u64 = 10;
 
 sol! {
-    function claimEmissions(address account, uint256 entitled, bytes32[] siblings) external returns (uint256);
-    function claimDistribution(address account, uint256 entitled, bytes32[] siblings) external returns (uint256);
+    function claimEmissions(address account, uint256 entitled, uint64 checkpointSeq, bytes32[] siblings) external returns (uint256);
+    function claimDistribution(address account, uint256 entitled, uint64 checkpointSeq, bytes32[] siblings) external returns (uint256);
     function approve(address spender, uint256 amount) external returns (bool);
     function mint(address to, uint256 amount) external;
     function stake(uint256 amount) external;
@@ -116,10 +116,16 @@ async fn dev_scenario_staking_pays_stakers_above_the_floor_and_nothing_below_it(
     assert_eq!(replayed.engine.staking(), s.staking_state().await.as_ref());
     assert_eq!(replayed.engine.staked_balances(), &s.staked_balances().await);
 
-    // 4. Each staker claims its USDC against the posted root, relayed by another account; a second
-    //    claim pays nothing, and the vault's balance plus what it paid still equals the ledger.
+    // 4. Each staker reads a proof, two later checkpoints post, and the proof still pays its USDC,
+    //    relayed by another account; the same proof, and the newest one, then pay nothing, and the
+    //    vault's balance plus what it paid still equals the ledger.
     for (staker, usdc) in [(s.stakers[0], 100u64), (s.stakers[1], 300)] {
-        assert_eq!(s.claim_distribution(staker).await, U256::from(usdc) * U256::from(1_000_000));
+        let proof = s.posted_distribution_proof(staker).await;
+        s.later_checkpoint().await;
+        s.later_checkpoint().await;
+        assert!(s.view(s.vault, latestSeqCall {}).await > proof.seq);
+        assert_eq!(s.claim_distribution_proof(&proof).await, U256::from(usdc) * U256::from(1_000_000));
+        assert_eq!(s.refused_distribution_proof(&proof).await, NothingToClaim::SELECTOR);
         assert_eq!(s.refused_distribution_claim(staker).await, NothingToClaim::SELECTOR);
     }
     assert_eq!(s.usdc_balance(s.vault).await + s.view(s.vault, distributionsPaidCall {}).await, s.liabilities());

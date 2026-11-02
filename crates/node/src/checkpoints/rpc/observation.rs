@@ -201,6 +201,24 @@ impl CheckpointRpc {
         Ok(accepted)
     }
 
+    /// Whether the vault takes a claim against checkpoint `seq` at `at`'s pinned block: recorded in
+    /// the epoch in force, whose signer is not retired, as the vault's claims check.
+    /// Error cases:
+    /// - no pinned lifecycle exists, the block was orphaned, or RPC fails
+    pub(super) async fn read_claims_open(&self, at: &Observation, seq: u64) -> anyhow::Result<bool> {
+        let evidence = at.lifecycle.as_ref().context("a claim's checkpoint requires a pinned canonical observation")?;
+        if evidence.signer_retired() {
+            return Ok(false);
+        }
+        let vault = Address::from(self.domain.vault.0);
+        let epoch = checkpointEpochAtCall::abi_decode_returns(
+            &self
+                .call(vault, checkpointEpochAtCall { seq }.abi_encode(), BlockId::hash_canonical(evidence.block_hash))
+                .await?,
+        )?;
+        Ok(epoch == evidence.signer_epoch)
+    }
+
     /// Reads nonce use for a bounded page of approvals at `at`, a few requests at a time, in query
     /// order.
     /// Error cases:

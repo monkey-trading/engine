@@ -33,12 +33,16 @@ impl Scenario {
         self.monkey_balance(account).await - before
     }
 
-    /// Fetches `account`'s distribution proof from the API once the vault has posted its
-    /// checkpoint, and has the relayer claim it; returns the USDC paid.
-    pub(super) async fn claim_distribution(&self, account: AccountId) -> U256 {
-        let proof = self.posted_distribution_proof(account).await;
+    /// Sequences one more command and waits for the checkpoint after it to post.
+    pub(super) async fn later_checkpoint(&self) {
+        self.submit(Command::Tick).await;
+        self.checkpoint_posted().await;
+    }
+
+    /// Has the relayer claim `proof`; returns the USDC paid.
+    pub(super) async fn claim_distribution_proof(&self, proof: &DistributionProof) -> U256 {
         let before = self.usdc_balance(proof.account.0.into()).await;
-        self.send_tx(self.relayer, self.vault, distribution_call(&proof)).await;
+        self.send_tx(self.relayer, self.vault, distribution_call(proof)).await;
         assert_eq!(self.usdc_balance(self.relayer).await, U256::ZERO, "the relayer receives nothing");
         self.usdc_balance(proof.account.0.into()).await - before
     }
@@ -46,15 +50,20 @@ impl Scenario {
     /// The selector the vault reverts with when the relayer claims `account`'s current proof.
     pub(super) async fn refused_distribution_claim(&self, account: AccountId) -> [u8; 4] {
         let proof = self.posted_distribution_proof(account).await;
+        self.refused_distribution_proof(&proof).await
+    }
+
+    /// The selector the vault reverts with when the relayer claims `proof`.
+    pub(super) async fn refused_distribution_proof(&self, proof: &DistributionProof) -> [u8; 4] {
         let call =
-            TransactionRequest::default().from(self.relayer).to(self.vault).input(distribution_call(&proof).into());
+            TransactionRequest::default().from(self.relayer).to(self.vault).input(distribution_call(proof).into());
         let error = self.provider.request::<_, Bytes>("eth_call", (call, "latest")).await.unwrap_err();
         let data = error.as_error_resp().and_then(|payload| payload.as_revert_data()).expect("a revert");
         data[..4].try_into().unwrap()
     }
 
     /// `account`'s distribution proof from the API against the root the vault holds.
-    async fn posted_distribution_proof(&self, account: AccountId) -> DistributionProof {
+    pub(super) async fn posted_distribution_proof(&self, account: AccountId) -> DistributionProof {
         self.checkpoint_posted().await;
         let (status, body) = self.get(&format!("/v1/accounts/{account}/distributions")).await;
         assert_eq!(status, hyper::StatusCode::OK, "{body}");
@@ -174,13 +183,23 @@ impl Scenario {
 /// The vault call that claims `proof`.
 fn emissions_call(proof: &EntitlementProof) -> Vec<u8> {
     let siblings: Vec<B256> = proof.siblings.clone();
-    claimEmissionsCall { account: proof.account.0.into(), entitled: U256::from(proof.entitled.0), siblings }
-        .abi_encode()
+    claimEmissionsCall {
+        account: proof.account.0.into(),
+        entitled: U256::from(proof.entitled.0),
+        checkpointSeq: proof.seq,
+        siblings,
+    }
+    .abi_encode()
 }
 
 /// The vault call that claims `proof`.
 fn distribution_call(proof: &DistributionProof) -> Vec<u8> {
     let siblings: Vec<B256> = proof.siblings.clone();
-    claimDistributionCall { account: proof.account.0.into(), entitled: U256::from(proof.entitled.0), siblings }
-        .abi_encode()
+    claimDistributionCall {
+        account: proof.account.0.into(),
+        entitled: U256::from(proof.entitled.0),
+        checkpointSeq: proof.seq,
+        siblings,
+    }
+    .abi_encode()
 }

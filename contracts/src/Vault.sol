@@ -22,11 +22,14 @@ import {StateTree} from "./StateTree.sol";
 /// through `depositFor`; a balance credited to a contract account can be recovered only through
 /// the exit (#48).
 /// @notice MONKEY emissions: the vault deploys the MONKEY token as its only minter, and mints to an
-/// account what its cumulative entitlement, proven against the latest posted checkpoint root, adds
-/// to what it was already minted.
+/// account what its cumulative entitlement, proven against a recorded checkpoint root of the current
+/// signer, adds to what it was already minted.
 /// @notice Distributions: each epoch the engine sets aside house NAV above the liquidity floor for
-/// stakers; the vault pays an account the USDC its cumulative distribution, proven against the
-/// latest posted checkpoint root, adds to what it was already paid.
+/// stakers; the vault pays an account the USDC its cumulative distribution, proven against a recorded
+/// checkpoint root of the current signer, adds to what it was already paid.
+/// @notice Both amounts only grow from one checkpoint to the next, and each claim pays what the
+/// proven amount adds to what was already paid, so an older root pays no more than was due at it and
+/// a later root pays the rest.
 /// @notice Exit: once no checkpoint has been posted for `exitPeriod`, anyone may start the exit,
 /// which permanently ends signed withdrawals, checkpoints, deposits and distribution claims. For
 /// `claimWindow`, accounts register what the last posted root proves them owed: their equity at its
@@ -444,8 +447,9 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         emit GuardianPausedWithdrawals(until, ++guardianPauses);
     }
 
-    /// @notice Clears the signer, so neither a withdrawal signed in the current epoch nor any
-    /// checkpoint is accepted again; installing a signer through the timelock starts the next epoch.
+    /// @notice Clears the signer, so no withdrawal signed in the current epoch, checkpoint, or claim on
+    /// a root of this epoch is accepted again; installing a signer through the timelock starts the
+    /// next epoch.
     function retireSigner() external onlyGuardian {
         address retired = checkpointSigner;
         if (retired == address(0)) revert NoSigner();
@@ -498,23 +502,22 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     }
 
     /// @notice Mints to `account` the MONKEY its cumulative entitlement `entitled` adds to what it
-    /// was already minted, once `siblings` prove that entitlement against the latest posted root.
-    /// Anyone may relay a claim; the tokens always go to `account`. A proof against an earlier root
-    /// stops working once a later checkpoint is posted; fetch a fresh one.
+    /// was already minted, once `siblings` prove that entitlement against the root of checkpoint
+    /// `checkpointSeq` (see `_claimRoot`). Anyone may relay a claim; the tokens always go to `account`.
     /// @return amount The base units minted.
-    function claimEmissions(address account, uint256 entitled, bytes32[] calldata siblings)
+    function claimEmissions(address account, uint256 entitled, uint64 checkpointSeq, bytes32[] calldata siblings)
         external
         nonReentrant
         returns (uint256 amount)
     {
-        if (!hasCheckpoint) revert NoCheckpoint();
+        bytes32 root = _claimRoot(checkpointSeq);
         bytes32 key = keccak256(abi.encodePacked(ENTITLEMENT_LEAF, account));
-        if (!_proves(latestRoot, key, keccak256(abi.encode(entitled)), siblings)) revert InvalidEntitlementProof();
+        if (!_proves(root, key, keccak256(abi.encode(entitled)), siblings)) revert InvalidEntitlementProof();
         uint256 claimed = emissionsClaimed[account];
         if (entitled <= claimed) revert NothingToClaim(entitled, claimed);
         amount = entitled - claimed;
         emissionsClaimed[account] = entitled;
-        emit EmissionsClaimed(account, amount, entitled, latestSeq);
+        emit EmissionsClaimed(account, amount, entitled, checkpointSeq);
         monkey.mint(account, amount);
     }
 
@@ -597,26 +600,35 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     }
 
     /// @notice Pays `account` the USDC its cumulative distribution `entitled` adds to what it was
-    /// already paid, once `siblings` prove that distribution against the latest posted root. Anyone
-    /// may relay a claim; the USDC always goes to `account`. A proof against an earlier root stops
-    /// working once a later checkpoint is posted; fetch a fresh one.
+    /// already paid, once `siblings` prove that distribution against the root of checkpoint
+    /// `checkpointSeq` (see `_claimRoot`). Anyone may relay a claim; the USDC always goes to `account`.
     /// @return amount The USDC base units paid.
-    function claimDistribution(address account, uint256 entitled, bytes32[] calldata siblings)
+    function claimDistribution(address account, uint256 entitled, uint64 checkpointSeq, bytes32[] calldata siblings)
         external
         nonReentrant
         returns (uint256 amount)
     {
         if (exitStartedAt != 0) revert ExitActive();
-        if (!hasCheckpoint) revert NoCheckpoint();
+        bytes32 root = _claimRoot(checkpointSeq);
         bytes32 key = keccak256(abi.encodePacked(DISTRIBUTION_LEAF, account));
-        if (!_proves(latestRoot, key, keccak256(abi.encode(entitled)), siblings)) revert InvalidEntitlementProof();
+        if (!_proves(root, key, keccak256(abi.encode(entitled)), siblings)) revert InvalidEntitlementProof();
         uint256 claimed = distributionsClaimed[account];
         if (entitled <= claimed) revert NothingToClaim(entitled, claimed);
         amount = entitled - claimed;
         distributionsClaimed[account] = entitled;
         distributionsPaid += amount;
-        emit DistributionClaimed(account, amount, entitled, latestSeq);
+        emit DistributionClaimed(account, amount, entitled, checkpointSeq);
         _pay(account, amount);
+    }
+
+    /// @dev The root a claim proves against: checkpoint `seq`'s, once the vault has recorded it, in
+    /// the signer epoch still in force. A rotation or a guardian's retirement ends the claims on
+    /// every earlier root, and the next signer's first checkpoint proves at least as much.
+    function _claimRoot(uint64 seq) private view returns (bytes32) {
+        if (!hasCheckpointAt[seq]) revert UnknownCheckpoint();
+        if (checkpointEpochAt[seq] != signerEpoch) revert InvalidSignerEpoch();
+        if (checkpointSigner == address(0)) revert NoSigner();
+        return checkpointRoots[seq];
     }
 
     /// @notice Whether no checkpoint has been posted for `staleAfter`, so deposits are refused.

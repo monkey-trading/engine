@@ -2,15 +2,18 @@
 //! previous one, at random points in the session, equals the root of the same state hashed from
 //! scratch, and every account's proof, and every MONKEY entitlement's, verifies against it. The
 //! sessions run under the latest version with emissions initialised, so every rule that changes
-//! state reaches the tree, and their days-long gaps finalise emission periods.
+//! state reaches the tree, and their days-long gaps finalise emission periods. No step reduces an
+//! entitlement, as the vault's claims against any root of its signer rely on.
 
 use std::cell::Cell;
+use std::collections::BTreeMap;
 
 use engine_core::Engine;
 use engine_core::command::{AdminCommand, Command};
 use engine_core::eip712::B256;
 use engine_core::emissions::{EmissionSchedule, TokenUnits};
 use engine_core::protocol::ProtocolVersion;
+use engine_core::types::AccountId;
 use proptest::bool::weighted;
 use proptest::collection::vec;
 use proptest::test_runner::{TestCaseError, TestRunner};
@@ -37,6 +40,7 @@ fn incremental_roots_match_a_rebuild_and_every_account_proves_against_them() {
         let schedule = EmissionSchedule { start_ms: h.ts, period_budget: TokenUnits(1_000_003) };
         h.operator_admin(AdminCommand::InitEmissions(schedule));
         check(&mut h.engine)?;
+        let mut entitled = BTreeMap::new();
         for (step, root) in session.steps.into_iter().zip(roots) {
             h.advance(step.advance_ms);
             let action = step.action.map_accounts(|account| clients.account(account));
@@ -46,6 +50,8 @@ fn incremental_roots_match_a_rebuild_and_every_account_proves_against_them() {
                 Command::Admin(admin) if admin.is_operator_command() => h.operate(admin),
                 other => h.cmd(other),
             };
+            check_entitlements_grow(&h.engine, &mut entitled)
+                .map_err(|e| TestCaseError::fail(format!("after {cmd:?}: {e}")))?;
             if root {
                 check(&mut h.engine).map_err(|e| TestCaseError::fail(format!("after {cmd:?}: {e}")))?;
             }
@@ -60,6 +66,18 @@ fn incremental_roots_match_a_rebuild_and_every_account_proves_against_them() {
 }
 
 // ── Helpers ──
+
+/// Fails if an account's entitlement is below what `entitled` last held for it, and updates it.
+fn check_entitlements_grow(engine: &Engine, entitled: &mut BTreeMap<AccountId, u128>) -> Result<(), String> {
+    for id in engine.accounts().keys() {
+        let now = engine.entitlement(*id).0;
+        let was = entitled.insert(*id, now).unwrap_or(0);
+        if now < was {
+            return Err(format!("the entitlement of {id} fell from {was} to {now}"));
+        }
+    }
+    Ok(())
+}
 
 /// Fails unless the engine's root equals a rebuild's, every account's proof verifies against it
 /// with the account's balance, toxicity score, and positions, and every account's entitlement

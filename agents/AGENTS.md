@@ -176,12 +176,14 @@ an index: load only the rule whose hint matches the current action.
   delay, the guardian, the exit timings below, and the engine's initial MONKEY emission period
   budget, which caps `src/MonkeyToken.sol`,
   the ERC-20 the vault deploys and alone mints: `claimEmissions` mints an account's entitlement,
-  proven against the latest posted root, less what it already claimed. `src/Staking.sol` holds
+  proven against the root of any recorded checkpoint of the signer in force, less what it already
+  claimed. `src/Staking.sol` holds
   MONKEY staked for USDC distributions, enforces the unstake cooldown — the constructor refuses a
   cooldown shorter than the engine's epoch, the lock-up that prices jumping in just before a
   snapshot — and emits the events the engine mirrors; `claimDistribution` pays a staker the USDC
   its cumulative distribution, proven
-  against the latest posted root, adds to what it was already paid. Each staker delegates its whole
+  against the root of any recorded checkpoint of the signer in force, adds to what it was already
+  paid. Each staker delegates its whole
   stake to one candidate, changeable at any time; votes drop at `startUnstake`, and a registered
   candidate's self-bond cannot be unstaked until one cooldown after it leaves. `src/OperatorRegistry.sol`
   deploys the staking contract and elects the operator key: candidates register a self-bond, admin

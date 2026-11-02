@@ -385,7 +385,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/origin.rs` — CORS headers and preflight for the allowed browser origins, and the stream's `Origin` check
 - `src/api/origin_tests.rs` — listed, unlisted, and absent origins on reads, a POST, a preflight, a 429, and the stream
 - `src/api/history.rs` — the account history route: its parameters and limits
-- `src/api/claim_tests.rs` — MONKEY claim proofs while the vault lags: served at the accepted checkpoint, an entitlement that grew since, no accepted checkpoint, and a restart
+- `src/api/claim_tests.rs` — MONKEY claim proofs while the vault lags: served at the accepted checkpoint, an entitlement that grew since, no accepted checkpoint, a restart, and a change of signer
 - `src/api/proof_tests.rs` — account proof and emission entitlement API tests, including the state
   tree dev scenario: 100k accounts, checkpoint work, a proof checked against its logged root, and
   older logs replayed
@@ -586,7 +586,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/history.rs` — accepted history from the finalized anchor, the signed-parent chain, and signer epochs
 - `src/checkpoints/lifecycle_tests/` — paid cash reconciliation, bounded claim polling, rotated authorities, and the vault's pause and retired signer observed, alerted and finalized
 - `src/checkpoints/reconciliation.rs` — finalized collateral health: shortfalls, deposit totals, payouts, surpluses, the credit deadline, and the vault's halt
-- `src/checkpoints/rpc/observation.rs` — same-block balance, epoch, paid total, and bounded claim reads
+- `src/checkpoints/rpc/observation.rs` — same-block balance, epoch, paid total, and bounded claim reads, and whether a claim can prove against a checkpoint
 - `src/checkpoints/rpc/authority.rs` — accepted historical signer identities for rotated nonce journals
 - `src/checkpoints/rpc/submission/tests/lifecycle.rs` — canonical pinned history and retired journal recovery
 - `src/checkpoints/accounting/tests.rs` — cash/reference recomputation oracles and arithmetic boundaries
@@ -603,7 +603,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/rpc/submission/tests/nonce_progress.rs` — free, obsolete, and resurfaced nonce regressions
 - `src/checkpoints/setup.rs` — finalized chain anchor lookup and pending-inclusion startup wait
 - `src/checkpoints/tests.rs` — signature mutations, rollback, retry, and reconciliation tests
-- `src/checkpoints/tests/latest.rs` — the worker reports the vault's latest included checkpoint ahead of the finalized one
+- `src/checkpoints/tests/latest.rs` — the worker reports the vault's latest included checkpoint ahead of the finalized one, and when its signer is retired
 - `src/checkpoints/tests/collateral.rs` — shortfall, ledger-difference, surplus, and uncredited-deposit deadline tests
 - `src/checkpoints/tests/torn.rs` — conflicts read once are retried; a conflict a fresh observation repeats stops the worker
 - `src/checkpoints/scenario.rs` — isolated Anvil posting, credited/held reconciliation, tampering, truncation, surplus booking, shortfall, and reorg checks
@@ -611,16 +611,20 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/scenario/tasks.rs` — the scenario's node tasks, and waits that fail on a stopped task, retry the checkpoint post until its inclusion, or report the poster's last alert
 - `src/checkpoints/emission_budget.rs` — the vault's MONKEY cap against the emission period budget
 - `src/checkpoints/emissions_scenario.rs` — the MONKEY emissions dev scenario on isolated Anvil: pro-rata
-  allocation, cancelled periods, a restart across finalisation, the first halving, and claims that mint
-  each entitlement once against the posted root
+  allocation, cancelled periods, a restart across finalisation, the first halving, claims that mint
+  each entitlement once, a proof claimed after later checkpoints post, and a retired and reinstalled
+  signer ending its roots' claims
 - `src/checkpoints/emissions_scenario/api.rs` — HTTP calls and a startup barrier on the worker's
   real collateral verdict before the scenario drives checkpoint-dependent commands
+- `src/checkpoints/emissions_scenario/claims.rs` — the scenario's on-chain claims against the
+  checkpoints the proofs name, and the guardian's and timelock's signer changes
 - `src/checkpoints/emissions_scenario/funding.rs` — actual Vault funding receipts and finalized
   custody progress for the emissions scenario
 
 - `src/checkpoints/staking_scenario.rs` — the MONKEY staking dev scenario on isolated Anvil: staking
-  mirrored from the Staking contract, an epoch above the floor paying pro-rata in USDC against the
-  posted root, an unstake through the cooldown, and an epoch below the floor paying nothing
+  mirrored from the Staking contract, an epoch above the floor paying pro-rata in USDC against a
+  proof read before two later checkpoints post, an unstake through the cooldown, and an epoch below
+  the floor paying nothing
 - `src/checkpoints/staking_scenario/scenario.rs` — the scenario's chain, deployments, and node,
   which it stops and restarts across an epoch boundary
 - `src/checkpoints/staking_scenario/access.rs` — signed loopback screening and published Anvil keys
@@ -1735,29 +1739,30 @@ leaves and tree nodes it hashed.
 
 `/v1/accounts/{address}/emissions` returns, from `V19`, the account's cumulative MONKEY entitlement
 as the proof does: `seq`, `root`, `account`, `entitled` (base units of the 18-decimal token, as a
-decimal string), and `siblings`, from the root down. The vault's `claimEmissions` checks the proof
-against its latest posted root only, and the node's newest checkpoint runs ahead of it while posting
-lags, so the answer also says what it is proven against: `accepted_seq` (the vault's latest
-included checkpoint as the node last read it, `null` before one), `newest_seq`, `newest_entitled` (the amount the
-newest root holds) and `claimable`. When `claimable` is true the proof is at `accepted_seq`, and the
-claim can land; its `entitled` can be below `newest_entitled`, since an entitlement only grows, and
-the vault pays `entitled` less what it has paid, the rest on a later claim. When false the proof is
-the newest checkpoint's and the claim waits until the vault's `latestSeq` is `newest_seq`.
-The poster relays a checkpoint only once its predecessor is finalized, so the vault's latest root
-stays put between posts and a proof at it has that long to land.
+decimal string), and `siblings`, from the root down. The vault's `claimEmissions` takes the proof's
+`seq` and checks the proof against the root it recorded there, in the signer epoch in force, and the
+node's newest checkpoint runs ahead of it while posting lags, so the answer also says what it is
+proven against: `accepted_seq` (the vault's latest included checkpoint as the node last read it,
+`null` before one, and while the signer that recorded it is replaced or retired), `newest_seq`,
+`newest_entitled` (the amount the newest root holds) and `claimable`. When `claimable` is true the
+proof is at `accepted_seq`, and the claim can land, as it still can once later checkpoints post; its
+`entitled` can be below `newest_entitled`, since an entitlement only grows, and the vault pays
+`entitled` less what it has paid, the rest on a later claim. When false the proof is the newest
+checkpoint's and the claim waits until the vault records its `seq`.
 The node keeps an account's proof for each checkpoint from its first request here (a 404 counts),
 for the 128 accounts that asked most recently, until the vault accepts a later checkpoint; so a
-first answer is not claimable unless the vault is at the newest checkpoint, a restart forgets what
-was kept, and a proof stops working once a later checkpoint is posted: fetch again then. An account
-has no entitlement, and gets 404, until the first checkpoint after a period in which it was
-allocated a share.
+first answer is not claimable unless the vault is at the newest checkpoint, and a restart forgets
+what was kept. A change of signer ends every earlier proof: the vault refuses them until the new
+signer records a checkpoint, and a proof at that checkpoint pays what they held and anything since.
+An account has no entitlement, and gets 404, until the first checkpoint after a period in which it
+was allocated a share.
 
 `/v1/accounts/{address}/distributions` returns, from `V25`, the account's cumulative USDC
 distribution the same way (`entitled` in the 6-decimal token's base units, with the same
 `accepted_seq`, `newest_seq`, `newest_entitled` and `claimable`). The vault's
 `claimDistribution` pays the USDC the distribution adds to what the account was already paid,
-against its latest posted root. An account has no distribution, and gets 404, until the first
-checkpoint after an epoch in which it was allocated a share.
+against the root of the proof's `seq`, under the same rule. An account has no distribution, and gets
+404, until the first checkpoint after an epoch in which it was allocated a share.
 
 `/v1/accounts/{address}/exit` returns, from `V38`, every proof the account exits the vault with
 against the state root of the last checkpoint: `terms` (the vault deposit cursor and the pending and

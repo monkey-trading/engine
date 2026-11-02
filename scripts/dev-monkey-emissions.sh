@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Runs the MONKEY emissions scenario against an isolated Anvil: pro-rata allocation of fixed
 # ten-minute budgets, cancelled empty periods, a restart across a period's finalisation, the first
-# halving, and claims against posted checkpoint roots that mint each entitlement once.
+# halving, claims that mint each entitlement once, a proof claimed after two later checkpoints post,
+# and a retired and reinstalled signer ending the claims on its roots.
 # Needs Anvil, Forge, Cargo, and installed Soldeer dependencies. No external RPC or keys are used.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"

@@ -36,14 +36,14 @@ contract DistributionsTest is Test {
         vm.expectEmit(address(vault));
         emit Vault.DistributionClaimed(account, entitled, entitled, 1);
         vm.prank(relayer);
-        assertEq(vault.claimDistribution(account, entitled, new bytes32[](0)), entitled);
+        assertEq(vault.claimDistribution(account, entitled, 1, new bytes32[](0)), entitled);
         assertEq(usdc.balanceOf(account), entitled);
         assertEq(usdc.balanceOf(relayer), 0);
         assertEq(vault.distributionsClaimed(account), entitled);
         assertEq(vault.distributionsPaid(), entitled);
 
         vm.expectRevert(abi.encodeWithSelector(Vault.NothingToClaim.selector, entitled, entitled));
-        vault.claimDistribution(account, entitled, new bytes32[](0));
+        vault.claimDistribution(account, entitled, 1, new bytes32[](0));
         assertEq(usdc.balanceOf(address(vault)), 0);
     }
 
@@ -55,7 +55,7 @@ contract DistributionsTest is Test {
         setPauses(false, true);
 
         vm.expectRevert(Vault.WithdrawalsPaused.selector);
-        vault.claimDistribution(account, entitled, new bytes32[](0));
+        vault.claimDistribution(account, entitled, 1, new bytes32[](0));
         assertEq(usdc.balanceOf(address(vault)), entitled);
         assertEq(usdc.balanceOf(account), 0);
         assertEq(vault.distributionsClaimed(account), 0);
@@ -72,7 +72,7 @@ contract DistributionsTest is Test {
         assertEq(usdc.balanceOf(address(vault)), entitled + deposit);
 
         setPauses(true, false);
-        assertEq(vault.claimDistribution(account, entitled, new bytes32[](0)), entitled);
+        assertEq(vault.claimDistribution(account, entitled, 1, new bytes32[](0)), entitled);
         assertEq(usdc.balanceOf(account), entitled);
         assertEq(usdc.balanceOf(address(vault)), deposit);
         assertEq(vault.distributionsClaimed(account), entitled);
@@ -87,7 +87,7 @@ contract DistributionsTest is Test {
         usdc.approve(address(vault), 100 * 1e6);
         vault.depositToHouse(100 * 1e6);
         post(1, leaf(account, entitled), false, 0, 0);
-        vault.claimDistribution(account, entitled, new bytes32[](0));
+        vault.claimDistribution(account, entitled, 1, new bytes32[](0));
         assertEq(usdc.balanceOf(address(vault)), 50 * 1e6);
 
         vm.expectRevert(abi.encodeWithSelector(Vault.NoSurplus.selector, 0));
@@ -114,7 +114,7 @@ contract DistributionsTest is Test {
         usdc.approve(address(vault), funded);
         vault.depositToHouse(funded);
         post(1, leaf(account, entitled), false, 0, 0);
-        vault.claimDistribution(account, entitled, new bytes32[](0));
+        vault.claimDistribution(account, entitled, 1, new bytes32[](0));
         vm.expectRevert(abi.encodeWithSelector(Vault.NoSurplus.selector, 0));
         vault.bookSurplus();
 
@@ -149,7 +149,7 @@ contract DistributionsTest is Test {
         usdc.mint(address(vault), 11358);
         post(1, leaf(account, 11358), false, 0, 0);
         vm.expectRevert(Vault.InexactWithdrawalTransfer.selector);
-        vault.claimDistribution(account, 11358, new bytes32[](0));
+        vault.claimDistribution(account, 11358, 1, new bytes32[](0));
     }
 
     function testFuzz_SingleLeafTreeClaimsUpToTheBalance(address account, uint256 entitled) public {
@@ -157,23 +157,24 @@ contract DistributionsTest is Test {
         entitled = bound(entitled, 1, 1e15);
         usdc.mint(address(vault), entitled);
         post(1, leaf(account, entitled), false, 0, 0);
-        vault.claimDistribution(account, entitled, new bytes32[](0));
+        vault.claimDistribution(account, entitled, 1, new bytes32[](0));
         assertEq(usdc.balanceOf(account), entitled);
         vm.expectRevert(abi.encodeWithSelector(Vault.NothingToClaim.selector, entitled, entitled));
-        vault.claimDistribution(account, entitled, new bytes32[](0));
+        vault.claimDistribution(account, entitled, 1, new bytes32[](0));
     }
 
-    function test_AProofAgainstAnOlderRootStopsWorkingAndTheIncrementIsPaid() public {
+    function test_AClaimedOlderRootPaysNothingAndTheNewerOnePaysTheIncrement() public {
         address account = makeAddr("account");
         usdc.mint(address(vault), 250);
         post(1, leaf(account, 100), false, 0, 0);
-        vault.claimDistribution(account, 100, new bytes32[](0));
+        vault.claimDistribution(account, 100, 1, new bytes32[](0));
         post(2, leaf(account, 250), true, 1, leaf(account, 100));
 
-        bytes32[] memory earlier = new bytes32[](0);
-        vm.expectRevert(Vault.InvalidEntitlementProof.selector);
-        vault.claimDistribution(account, 100, earlier);
-        assertEq(vault.claimDistribution(account, 250, new bytes32[](0)), 150);
+        vm.expectRevert(abi.encodeWithSelector(Vault.NothingToClaim.selector, 100, 100));
+        vault.claimDistribution(account, 100, 1, new bytes32[](0));
+        vm.expectEmit(address(vault));
+        emit Vault.DistributionClaimed(account, 150, 250, 2);
+        assertEq(vault.claimDistribution(account, 250, 2, new bytes32[](0)), 150);
         assertEq(usdc.balanceOf(account), 250);
         assertEq(vault.distributionsPaid(), 250);
     }
@@ -195,11 +196,11 @@ contract DistributionsTest is Test {
         bytes32[] memory proof = new bytes32[](1);
         proof[0] = leftLeaf;
         vm.expectRevert(Vault.InvalidEntitlementProof.selector);
-        vault.claimDistribution(left, 5, proof);
+        vault.claimDistribution(left, 5, 1, proof);
         proof[0] = rightLeaf;
-        vault.claimDistribution(left, 5, proof);
+        vault.claimDistribution(left, 5, 1, proof);
         proof[0] = leftLeaf;
-        vault.claimDistribution(right, 7, proof);
+        vault.claimDistribution(right, 7, 1, proof);
         assertEq(usdc.balanceOf(left), 5);
         assertEq(usdc.balanceOf(right), 7);
         assertEq(vault.distributionsPaid(), 12);
@@ -207,15 +208,15 @@ contract DistributionsTest is Test {
 
     function testRefusesEveryAlteredProofAndClaimsBeforeAnyCheckpoint() public {
         address account = makeAddr("account");
-        vm.expectRevert(Vault.NoCheckpoint.selector);
-        vault.claimDistribution(account, 100, new bytes32[](0));
+        vm.expectRevert(Vault.UnknownCheckpoint.selector);
+        vault.claimDistribution(account, 100, 1, new bytes32[](0));
         post(1, leaf(account, 100), false, 0, 0);
         vm.expectRevert(Vault.InvalidEntitlementProof.selector);
-        vault.claimDistribution(account, 101, new bytes32[](0));
+        vault.claimDistribution(account, 101, 1, new bytes32[](0));
         bytes32[] memory tampered = new bytes32[](1);
         tampered[0] = bytes32(uint256(1));
         vm.expectRevert(Vault.InvalidEntitlementProof.selector);
-        vault.claimDistribution(account, 100, tampered);
+        vault.claimDistribution(account, 100, 1, tampered);
         assertEq(usdc.balanceOf(account), 0);
     }
 
