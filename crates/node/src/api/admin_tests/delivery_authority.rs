@@ -103,3 +103,28 @@ async fn an_unbounded_clock_does_not_bring_a_pending_key_in_early() {
         assert!(authority.admits(node.state.operator.address).await.unwrap(), "the recorded key stays");
     }
 }
+
+// Under elections each operator's secrets are its own. Once the log records the elected key, that key
+// must not reach into the incumbent's enclave, and the incumbent's own still does.
+#[tokio::test]
+async fn an_elected_key_takes_no_deliveries_on_the_incumbents_node() {
+    let mut node = Node::staking("delivery-elected").await;
+    let incumbent = node.state.operator.address;
+    let next = SigningKey::from_slice(&[0x55; 32]).unwrap();
+    let elected = engine_core::eip712::address(next.verifying_key());
+    let effective_at = node.elect(elected).await;
+    node.pass_the_notice(effective_at).await;
+    let authority = Authority::Log {
+        tx: node.state.tx.downgrade(),
+        configured: incumbent,
+        trusted: std::sync::Arc::new(crate::test_support::trusted(node.state.clock.clone())),
+    };
+    assert!(!authority.admits(elected).await.unwrap(), "the elected key once it is due");
+    assert!(authority.admits(incumbent).await.unwrap(), "this node's own key once the election is due");
+
+    let handover = sign(&next, &node.state.operator, reduce_only(Some(1)), 0, after_the_notice() + 60_000);
+    let (status, _) = node.post("/v1/admin", serde_json::to_value(&handover).unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!authority.admits(elected).await.unwrap(), "the key the log now records");
+    assert!(authority.admits(incumbent).await.unwrap(), "this node's own key after the handover");
+}

@@ -123,3 +123,34 @@ async fn a_route_a_bundle_left_off_keeps_its_pending_pages_and_the_node_starts()
     let outbox = Outbox::start(cfg, [false, true], Arc::new(Metrics::new()), &mut tasks).await.unwrap();
     assert!(outbox.next(Severity::Warning).await.unwrap().is_some(), "the page waiting for the route is gone");
 }
+
+// The node cannot page that it cannot page, so a route left off must show to what scrapes it.
+#[tokio::test]
+async fn a_route_a_bundle_left_off_shows_on_the_metrics_and_a_route_not_configured_does_not() {
+    let alerts: AlertsSection = toml::from_str(
+        "outbox = { dir = 'x', max_pages = 1, max_bytes = 1, max_age = '1h' }\nno_price_after = '5s'\n\
+         episode_quiet = '15m'\n[warning]\nurl_secret = 'warning_url'\n",
+    )
+    .unwrap();
+    let off = |metrics: &Metrics, severity| {
+        metrics.alert_route_off.get_or_create(&crate::metrics::SeverityLabel { severity }).get()
+    };
+    let spawned = |routes: Routes, metrics: Arc<Metrics>| async move {
+        let (_, router) = channel(routes, metrics);
+        router.spawn(Duration::from_secs(60), &outbox_config()).await.unwrap().drain(Duration::ZERO).await;
+    };
+
+    let metrics = Arc::new(Metrics::new());
+    let mut withheld = Routes::default();
+    withheld.deliver(&alerts, &Default::default()).unwrap();
+    spawned(withheld, metrics.clone()).await;
+    assert_eq!((off(&metrics, "warning"), off(&metrics, "critical")), (1, 0));
+
+    let metrics = Arc::new(Metrics::new());
+    let name = crate::config::SecretName::try_from("warning_url".to_owned()).unwrap();
+    let value = crate::config::SecretValue::test("https://hooks.example/FAKE");
+    let mut delivered = Routes::default();
+    delivered.deliver(&alerts, &[(name, value)].into_iter().collect()).unwrap();
+    spawned(delivered, metrics.clone()).await;
+    assert_eq!(off(&metrics, "warning"), 0);
+}

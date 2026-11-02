@@ -2152,7 +2152,9 @@ command line, and a host that could set one would choose the secret.
   bundle, and it fails the tool's checks before one is sent.
 - **Who may deliver.** The bundle carries a signature over the chain id, the vault, its version, and
   its contents. A running node takes the key the log records or a rotation's that has come due, as
-  `POST /v1/admin` does, by trusted time, so a host's clock brings no rotation in early. A node that
+  `POST /v1/admin` does, by trusted time, so a host's clock brings no rotation in early; while the
+  registry has rotation on it takes only its own config's key, so an elected key reaches into no other
+  operator's enclave. A node that
   has not yet recovered its log takes the key its attested config names, since reading the vault can
   take a delivered key, so no log can be authenticated yet. That is the one key that can end a hold, so
   a rotated operator keeps its old key until a release's config names the new one; a redelivery under
@@ -2174,7 +2176,8 @@ command line, and a host that could set one would choose the secret.
   no screening would admit what it should refuse. It serves only the delivery listener until a bundle
   supplies them, then goes on starting, with no restart. Without a vendor's key that connection stays
   off and the markets it alone prices go unpriced (`market_no_price`). Without a webhook's URL that
-  route stays off, its alerts are only logged, and any pages waiting for it stay in the outbox.
+  route stays off, its alerts are only logged, and any pages waiting for it stay in the outbox;
+  `engine_alert_route_off` shows it to the operator's Prometheus, which pages by `EngineAlertRouteOff`.
 - **A key a provider refuses.** A start whose first read of the chain fails, while `checkpoints.rpc_url`
   names a delivered key, does not power the guest off at once, since that key may be why and only a
   delivery can repair it. It serves only the delivery listener under `secrets_start_failed` (Critical)
@@ -2192,7 +2195,8 @@ command line, and a host that could set one would choose the secret.
   sends the bundle encrypted to its one-time key, with no stop; the keys follow in their own handover.
   The new release cannot yet read the vault to check who answered, so it takes a bundle only under the
   signature of the operator its own config names; a bundle signed before a rotation is refused, and the
-  operator delivers again. It keeps what its config reads. Since the keys' handover ends the release
+  operator delivers again. The bundle moves whole, since the signature covers all of it: a higher version
+  without a retired secret removes it. Since the keys' handover ends the release
   holding the bundle, the new release first makes a few attempts to take it.
 - **An election.** No secret moves. While the registry has rotation on, the vault's release changes
   only by election or promotion, and the running release refuses, reading the switch at the finalized

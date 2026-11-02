@@ -44,9 +44,10 @@ pub(crate) enum Authority {
     /// The key the attested config names, before any log can be authenticated.
     Configured(AccountId),
     /// The key the log records, or a rotation's that has come due by trusted time, as
-    /// `POST /v1/admin` checks it, with the configured key until the log records one. On a node a
-    /// pending rotation names as the successor, its own configured key alone. Weak, so a listener
-    /// that outlives the node's other tasks does not hold the sequencer open past its drain.
+    /// `POST /v1/admin` checks it, with the configured key until the log records one. While the
+    /// registry elects operators, or on a node a pending rotation names as the successor, its own
+    /// configured key alone. Weak, so a listener that outlives the node's other tasks does not hold
+    /// the sequencer open past its drain.
     Log { tx: mpsc::WeakSender<Request>, configured: AccountId, trusted: Arc<TrustedClock> },
 }
 
@@ -86,12 +87,15 @@ impl Authority {
                 let (reply, answered) = oneshot::channel();
                 tx.send(Request::Query(Box::new(move |engine| {
                     let recorded = engine.operator().map_or(configured, |operator| operator.address);
-                    // A pending rotation to this node's own key names this node's operator the
-                    // successor, as recovery reads it: during a promotion's notice the outgoing key
-                    // still signs admin commands, but it reaches into no successor's enclave.
-                    let successor = engine.operator_bounds().rotation.is_some_and(|r| r.address == configured);
+                    // Under elections each operator's secrets are its own, so a key the registry
+                    // elects reaches into no other operator's enclave. A pending rotation to this
+                    // node's own key names this node's operator the successor, as recovery reads it:
+                    // during a promotion's notice the outgoing key still signs admin commands, but it
+                    // reaches into no successor's enclave.
+                    let own_key_only = engine.operator_election().rotation_enabled
+                        || engine.operator_bounds().rotation.is_some_and(|r| r.address == configured);
                     let due = now.and_then(|now| engine.due_rotation(now)).is_some_and(|r| r.address == signer);
-                    let _ = reply.send(if successor { signer == configured } else { signer == recorded || due });
+                    let _ = reply.send(if own_key_only { signer == configured } else { signer == recorded || due });
                 })))
                 .await
                 .map_err(|_| anyhow!("the node is stopping"))?;
@@ -300,3 +304,6 @@ impl Deliveries {
         evidence::produce(&quoting, self.attestor.as_ref(), &self.platform, report_data).await
     }
 }
+
+#[cfg(test)]
+mod tests;

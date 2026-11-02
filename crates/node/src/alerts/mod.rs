@@ -282,6 +282,11 @@ impl Router {
         let mut deliveries = JoinSet::new();
         let routes = [self.routes.keeps_pages(Severity::Critical), self.routes.keeps_pages(Severity::Warning)];
         let outbox = Outbox::start(cfg.clone(), routes, self.metrics.clone(), &mut deliveries).await?;
+        // A route off for want of its secret drops pages unseen, and the node cannot page that.
+        for severity in [Severity::Critical, Severity::Warning] {
+            let off = self.routes.keeps_pages(severity) && !self.routes.has(severity);
+            self.metrics.alert_route_off.get_or_create(&SeverityLabel { severity: severity.as_str() }).set(off.into());
+        }
         // Read before delivery starts removing the pages it delivers.
         let episodes = Episodes::resumed(episode_quiet, outbox.open_episodes().await?, Instant::now());
         let queues = Queues::start(self.routes, client()?, &self.metrics, RETRY, outbox, &mut deliveries);

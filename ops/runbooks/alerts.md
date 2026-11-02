@@ -207,7 +207,7 @@ Raised at most once a minute. The API refuses clients while it is true.
 
 ## Prometheus rules
 
-`ops/prometheus/engine-node-rules.yml` holds seven rules for the operator's Prometheus, which runs
+`ops/prometheus/engine-node-rules.yml` holds eight rules for the operator's Prometheus, which runs
 outside the enclave and pages through a receiver other than the node's own webhook. They watch what
 the node cannot page itself, and escalate two certificate alerts.
 
@@ -216,12 +216,13 @@ the node cannot page itself, and escalate two certificate alerts.
 | `EngineNodeDown` | `up{job="engine"} == 0` for a minute | None: a node that is down cannot page. [restart-and-recovery.md](restart-and-recovery.md). |
 | `EngineAlertPagesFailing` | Pages failed or were dropped in 15 minutes (`engine_alert_deliveries_total`) | None: it is about the pages themselves. [incident-response.md](incident-response.md), "Pages stop arriving". |
 | `EngineAlertDeliveryFailing` | Three failed posts in 5 minutes (`engine_alert_attempts_failed_total`) | None, as above. |
+| `EngineAlertRouteOff` | No delivered bundle holds a severity's webhook URL, so its alerts are only logged (`engine_alert_route_off`) | `secret_missing`, which that route cannot page. [key-recovery.md](key-recovery.md), "Secrets". |
 | `EngineAlertLinesDropped` | Alert lines dropped before routing (`engine_alerts_dropped_total`) | None, as above. |
 | `EngineAlertOutboxOverflow` | Pages refused at the outbox bound (`engine_alert_outbox_overflows_total`) | None, as above. |
 | `EngineTlsCertificateMissing` | `engine_tls_certificate_pending == 1` for 30 minutes | `certificate_pending` ([certificate-renewal-failure.md](certificate-renewal-failure.md)) |
 | `EngineTlsCertificateExpiring` | The certificate expires within 7 days (`engine_tls_certificate_not_after_seconds`) | `certificate_expiring` (same runbook) |
 
-Five of the seven rules have no node alert behind them, by design. They exist because the node cannot
+Six of the eight rules have no node alert the node can page behind them, by design. They exist because the node cannot
 page that it, or its pages, are not getting through. The watcher exports the same alert metrics, so
 scrape it in the same job and the rules cover it.
 
