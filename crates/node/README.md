@@ -1203,8 +1203,9 @@ From `V44`, `POST /v1/orders/cancel-all` takes `{ "account", "auth" }` and cance
 account rests, each with the `order_cancelled` a single cancel emits (an account with none gets
 `[]`). `POST /v1/positions/close-all` takes `{ "account", "closes": [{ "market", "quoted" }],
 "max_slippage_bps", "auth" }` (`max_slippage_bps` optional) and closes the account's whole position
-in each listed market, in list order, as the single reduce-only market order: its answer is that
-order's events per entry, and a refused entry is an `order_rejected` whose `client_id` is the
+in each listed market, in list order, as the single reduce-only market order (from `V45` of at most
+`Fixed::MAX_INPUT` units of a larger position, the rest staying open in the fill's `position`): its
+answer is that order's events per entry, and a refused entry is an `order_rejected` whose `client_id` is the
 entry's index in `closes`. A list that is empty, or names a market twice, is one rejection of the
 whole request, and so is one naming more markets than are listed, which the API refuses with 400
 before the signature is checked. Each is one signed request (`CancelAllRequest`,
@@ -1343,7 +1344,8 @@ last step may still fill. So an order sent with the
 step's price as `quoted`, and its slippage bound, fills when nothing moved, and is declined with
 `Slippage` when the live price is worse than the bound. An order larger than the last step with no
 `declined`, or a side with no steps, cannot be opened. `close` is the price of closing the
-account's whole position. `unavailable` (with `ask` and `bid` empty) carries why a market has no
+account's whole position, or of `Fixed::MAX_INPUT` units of a larger one, the most a close-all closes
+at once. `unavailable` (with `ask` and `bid` empty) carries why a market has no
 price now: closed, no valid index, or no FX price. Quotes come from `Engine::quoter`, which prices as
 a fill does but does not re-evaluate stress or check access screening, so an order is declined for
 screening whatever its quote. A request the node cannot serve, such as an uncredited account, an

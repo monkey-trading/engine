@@ -36,7 +36,8 @@ pub(super) struct MarketQuote {
     pub unavailable: Option<Reject>,
     pub ask: Vec<Step>,
     pub bid: Vec<Step>,
-    /// The price of closing the account's whole position, if it holds one.
+    /// The price of closing the account's whole position, if it holds one; of `Fixed::MAX_INPUT`
+    /// units of a larger one, the most a close-all closes at once.
     pub close: Option<Close>,
 }
 
@@ -50,7 +51,8 @@ pub(super) struct Step {
     pub declined: Option<Reject>,
 }
 
-/// The price of closing the account's whole position, a `qty` order on `side`.
+/// The price of closing the account's position, a `qty` order on `side`: all of it, or
+/// `Fixed::MAX_INPUT` units of a larger one.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub(super) struct Close {
     pub side: Side,
@@ -112,11 +114,9 @@ pub(super) fn market_quote(
     quote.bid = steps(quoter, account, market_id, Side::Sell, &position);
     if !held.is_zero() {
         let side = if held.is_positive() { Side::Sell } else { Side::Buy };
-        quote.close = quoter.quote(account, market_id, side, held.abs()).ok().map(|q| Close {
-            side,
-            qty: held.abs(),
-            price: q.price,
-        });
+        // A close-all closes at most the input bound of a larger position, so that is what is quoted.
+        let qty = held.abs().min(Fixed::MAX_INPUT);
+        quote.close = quoter.quote(account, market_id, side, qty).ok().map(|q| Close { side, qty, price: q.price });
     }
     Some(quote)
 }
@@ -147,8 +147,10 @@ fn steps(quoter: &Quoter, account: AccountId, market: MarketId, side: Side, held
     });
     let mut steps: Vec<Step> = Vec::new();
     // The largest size known to fill, which includes closing what the account holds on the other
-    // side, and whether a tier's top is declined.
-    let (mut known, mut declined) = (if same_side { Fixed::ZERO } else { held.qty.abs() }, false);
+    // side (at most the input bound, past which no order is placeable), and whether a tier's top is
+    // declined.
+    let closing = held.qty.abs().min(Fixed::MAX_INPUT);
+    let (mut known, mut declined) = (if same_side { Fixed::ZERO } else { closing }, false);
     for qty in orders {
         let Some(priced) = quote(qty) else { continue };
         if priced.declined.is_none() {

@@ -227,11 +227,17 @@ pub enum ProtocolVersion {
     /// order's; one that cannot fill is rejected and the others still run. Both forms take one
     /// nonce, run under the `Trade` scope a session key signs within, and are refused before `V44`.
     V44,
+    /// A close-all closes at most `Fixed::MAX_INPUT` units of a position per entry: the closing
+    /// order's quantity is the position capped at the external quantity bound, so a position
+    /// that fills accumulated past the bound still closes, the rest left in the fill's
+    /// `position` for the next request. Before `V45` such a close is refused whole as
+    /// `qty out of range`.
+    V45,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V44;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V45;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

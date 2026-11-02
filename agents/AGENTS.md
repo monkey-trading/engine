@@ -19,7 +19,8 @@ an index: load only the rule whose hint matches the current action.
   `session_keys.rs`, where from `V42` the new addresses an account may introduce are a budget of
   100 refilling one per hour of sequenced time; from `V44`, `Command::CancelAll` and
   `AccessCloseAll` in `execution/cancel.rs` and `execution/batch.rs`: one signed request cancels every resting order, or closes the named
-  markets' whole positions as the single reduce-only market order, on one nonce), USD settlement of markets quoted in other currencies, admin commands signed
+  markets' whole positions as the single reduce-only market order, on one nonce, from `V45` at most
+  `Fixed::MAX_INPUT` units per entry), USD settlement of markets quoted in other currencies, admin commands signed
   by the operator key the log records and, from `V35`, bounded (`operator_bounds.rs`: profit fee and
   close-out level moves within ±50% after a seven-day notice, held markets kept priced by price-rule changes, and a
   seven-day key rotation); the spread a close can pay, from `V40`, capped per market
