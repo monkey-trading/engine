@@ -98,7 +98,8 @@ pub(crate) fn reach(standing: Standing, position: Position<'_>, range_bps: u32) 
         if far_slack.is_negative() {
             let (from, from_slack) = near;
             let crossing = from + (far - from).mul_div(from_slack, from_slack - far_slack, Rounding::TowardZero);
-            return at(crossing.mul_div(Fixed::ONE, notional, Rounding::Up));
+            // Rounded up so a crossing too small for the ratio's nine places stays a positive price.
+            return Reach::At(crossing.mul_div(Fixed::ONE, notional, Rounding::Up));
         }
         near = (far, far_slack);
     }
@@ -129,13 +130,12 @@ pub(crate) fn reach_self_converting(
         return Reach::Beyond;
     }
     let ratio = Fixed::ONE.div_rounded(divisor, Rounding::Up);
-    if (ratio - Fixed::ONE).abs() > Fixed::ONE.mul_bps(i64::from(range_bps)) { Reach::Beyond } else { at(ratio) }
-}
-
-/// A crossing at `ratio` of the mark, rounded up so a positive crossing stays positive, or none a
-/// price can be at when it is not above zero.
-fn at(ratio: Fixed) -> Reach {
-    if ratio.is_positive() { Reach::At(ratio) } else { Reach::Beyond }
+    // As `reach`, a crossing at the range's edge is none: the account is first closed out past it.
+    if (ratio - Fixed::ONE).abs() >= Fixed::ONE.mul_bps(i64::from(range_bps)) {
+        Reach::Beyond
+    } else {
+        Reach::At(ratio)
+    }
 }
 
 /// A close-out price over the mark as a move in whole basis points, negative for a fall.
@@ -151,7 +151,7 @@ pub(crate) fn valued(market: &MarketState, position: &Held) -> (Fixed, Fixed) {
 }
 
 /// Where the account holding `position` in market `id` closes out, for an account of `equity` and
-/// `margin` at the marks: the one rule behind the position maps and an account's own read. A market
+/// `margin` at the marks, the position valued at `(price, notional)` as `valued` gives: the one rule behind the position maps and an account's own read. A market
 /// converting its own currency takes the walk that follows its price; none is due when the node has
 /// no close-out level yet.
 pub(crate) fn position_reach(
@@ -159,10 +159,10 @@ pub(crate) fn position_reach(
     (equity, margin): (Fixed, Fixed),
     id: MarketId,
     position: &Held,
+    (price, notional): (Fixed, Fixed),
     range_bps: u32,
 ) -> Reach {
     let market = &engine.markets()[&id];
-    let (price, notional) = valued(market, position);
     let long = position.qty.is_positive();
     match engine.params().map(|params| params.closeout_level_bps).filter(|_| notional.is_positive()) {
         Some(level_bps) if market.spec.quote_currency.fx_market() == Some(id) => {
@@ -178,8 +178,7 @@ pub(crate) fn position_reach(
 }
 
 /// The close-out of each of `account`'s positions, in market order, with the account's other
-/// positions held at their marks. The price is in the market's quote currency, rounded toward the
-/// mark.
+/// positions held at their marks. The price is in the market's quote currency.
 pub(crate) fn account_closeouts(engine: &Engine, account: &Account, standing: (Fixed, Fixed)) -> Vec<PositionCloseout> {
     account
         .positions
@@ -187,11 +186,11 @@ pub(crate) fn account_closeouts(engine: &Engine, account: &Account, standing: (F
         .map(|(id, position)| {
             let long = position.qty.is_positive();
             let range = if long { LONG_RANGE_BPS } else { SHORT_RANGE_BPS };
-            let (reach, price) = match position_reach(engine, standing, *id, position, range) {
+            let (mark, notional) = valued(&engine.markets()[id], position);
+            let (reach, price) = match position_reach(engine, standing, *id, position, (mark, notional), range) {
                 Reach::Due => (ReachKind::Due, None),
                 Reach::Beyond => (ReachKind::Beyond, None),
                 Reach::At(ratio) => {
-                    let (mark, _) = valued(&engine.markets()[id], position);
                     let rounding = if long { Rounding::Up } else { Rounding::Down };
                     (ReachKind::At, Some(mark.mul_rounded(ratio, rounding)))
                 }

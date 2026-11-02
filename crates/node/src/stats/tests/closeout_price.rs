@@ -71,13 +71,13 @@ impl Case {
         closes_out((self.build)(), self.market, target, &self.keep, self.from)
     }
 
-    /// The price where the engine closes the account out, found by halving a window of 0.5% of the
-    /// price around the estimate, and the estimate.
-    fn agrees(&self) -> (Fixed, Fixed) {
+    /// The estimate, once the price where the engine closes the account out, found by halving a window
+    /// of 0.5% of the price around it, is within the tolerance of it.
+    fn agrees(&self) -> Fixed {
         self.agrees_within(TOLERANCE)
     }
 
-    fn agrees_within(&self, tolerance: Fixed) -> (Fixed, Fixed) {
+    fn agrees_within(&self, tolerance: Fixed) -> Fixed {
         let rig = (self.build)();
         let estimate = price_of(&rig, self.market);
         let mark = mark(&rig, self.market);
@@ -94,7 +94,7 @@ impl Case {
         let threshold = Fixed::from_raw((safe.raw() + gone.raw()) / 2);
         let off = (estimate - threshold).abs();
         assert!(off <= mark.mul(tolerance), "the estimate {estimate} is {off} from the engine's {threshold}");
-        (estimate, threshold)
+        estimate
     }
 }
 
@@ -154,9 +154,9 @@ fn usd_jpy(side: Side) -> Rig {
 /// A long and a short of 5 BTC, on 100000 of equity behind each.
 #[test]
 fn a_usd_long_and_short_are_priced_where_the_engine_closes_them_out() {
-    let (price, _) = Case::new(1, || btc(Side::Buy, 5, 0)).agrees();
+    let price = Case::new(1, || btc(Side::Buy, 5, 0)).agrees();
     assert!(price < Fixed::from_int(100_000), "{price}");
-    let (price, _) = Case::new(1, || btc(Side::Sell, 5, 0)).agrees();
+    let price = Case::new(1, || btc(Side::Sell, 5, 0)).agrees();
     assert!(price > Fixed::from_int(100_000), "{price}");
 }
 
@@ -164,7 +164,7 @@ fn a_usd_long_and_short_are_priced_where_the_engine_closes_them_out() {
 /// once the fall takes it under a million.
 #[test]
 fn a_close_out_across_a_margin_band_is_priced_where_the_engine_closes_it_out() {
-    let (price, _) = Case::new(1, || btc(Side::Buy, 20, 1_400_000)).agrees();
+    let price = Case::new(1, || btc(Side::Buy, 20, 1_400_000)).agrees();
     assert!(price < Fixed::from_int(60_000), "the fall crosses the band at 50000: {price}");
 }
 
@@ -172,15 +172,15 @@ fn a_close_out_across_a_margin_band_is_priced_where_the_engine_closes_it_out() {
 fn a_market_quoted_in_euros_is_priced_where_the_engine_closes_it_out() {
     let mut case = Case::new(DE40, || de40(1_800));
     case.keep = vec![(EUR_USD, "1.08".parse().unwrap())];
-    let (price, _) = case.agrees();
+    let price = case.agrees();
     assert!(price < Fixed::from_int(23_500) && price > Fixed::from_int(20_000), "{price}");
 }
 
 #[test]
 fn usd_jpy_is_priced_where_the_engine_closes_it_out() {
-    let (price, _) = Case::new(USD_JPY, || usd_jpy(Side::Buy)).agrees();
+    let price = Case::new(USD_JPY, || usd_jpy(Side::Buy)).agrees();
     assert!(price < Fixed::from_int(150), "{price}");
-    let (price, _) = Case::new(USD_JPY, || usd_jpy(Side::Sell)).agrees();
+    let price = Case::new(USD_JPY, || usd_jpy(Side::Sell)).agrees();
     assert!(price > Fixed::from_int(150), "{price}");
 }
 
@@ -228,7 +228,7 @@ fn a_short_in_another_market_is_priced_with_its_margin_where_the_engine_closes_t
 /// notional, past the million where the rate is 20%, so the walk up from the mark crosses the band.
 #[test]
 fn a_short_that_crosses_a_margin_band_is_priced_where_the_engine_closes_it_out() {
-    let (price, _) = Case::new(1, || btc(Side::Sell, 8, 400_000)).agrees();
+    let price = Case::new(1, || btc(Side::Sell, 8, 400_000)).agrees();
     assert!(price > Fixed::from_int(125_000), "past the million of notional, at 125000: {price}");
 }
 
@@ -265,7 +265,7 @@ fn an_account_below_the_level_at_the_marks_is_due_and_closed_out_by_the_next_pri
 }
 
 /// A long loses at most its notional, so one the equity covers has no price above zero, and a short
-/// has none up to ten times its mark when the equity covers the loss there.
+/// has none from ten times its mark when the equity covers the loss there.
 #[test]
 fn a_position_the_range_cannot_close_out_has_no_price() {
     let long = btc(Side::Buy, 1, 0);
@@ -276,8 +276,33 @@ fn a_position_the_range_cannot_close_out_has_no_price() {
     let found = closeout_of(&short, TRADER, 1);
     assert_eq!((found.reach, found.price), (ReachKind::Beyond, None));
     assert!(!closes_out(btc(Side::Sell, 1, 10_000_000), 1, Fixed::from_int(200_000), &[], T0 + 10_000));
-    // Just inside the range a short on 100000 of equity has a price: its loss reaches the equity first.
-    assert!(price_of(&btc(Side::Sell, 1, 0), 1) < Fixed::from_int(1_000_000));
+}
+
+/// A 1 BTC short at 100000 stands 900000 of loss from ten times its mark, with 100000 of margin there
+/// at 10% and half of it the level: 950000 of equity is the tie. Under it the price is below ten marks,
+/// over it there is none, so the range ends at ten marks and no sooner or later.
+#[test]
+fn a_short_is_priced_up_to_ten_times_its_mark_and_none_past_it() {
+    let ten_marks = Fixed::from_int(1_000_000);
+    for (balance, priced) in [(940_000, true), (960_000, false)] {
+        let rig = with_balance(btc(Side::Sell, 1, 0), balance);
+        let found = closeout_of(&rig, TRADER, 1);
+        match (priced, found.reach, found.price) {
+            (true, ReachKind::At, Some(price)) => {
+                assert!(price > Fixed::from_int(900_000) && price < ten_marks, "{price}")
+            }
+            (false, ReachKind::Beyond, None) => {}
+            other => panic!("{balance} of equity: {other:?}"),
+        }
+    }
+}
+
+/// A 1 BTC long at 100000 on 95250 of equity falls to 5000 before the slack is gone, a twentieth of its
+/// mark, so the range reaches at least that far down and the engine agrees.
+#[test]
+fn a_long_is_priced_down_to_a_twentieth_of_its_mark() {
+    let price = Case::new(1, || with_balance(btc(Side::Buy, 1, 0), 95_250)).agrees();
+    assert!(price > Fixed::from_int(4_000) && price < Fixed::from_int(6_000), "{price}");
 }
 
 #[test]

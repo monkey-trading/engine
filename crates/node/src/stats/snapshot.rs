@@ -175,7 +175,7 @@ pub(crate) fn scan(engine: &Engine, seq: u64, ts: Millis, layout: Layout, full: 
                 book.profit[layout.profit.profit_bucket(profit_bps)].add(long, notional);
             }
             let range = layout.closeout.range_bps();
-            let reach = closeout::position_reach(engine, (equity, margin), *id, position, range);
+            let reach = closeout::position_reach(engine, (equity, margin), *id, position, (price, notional), range);
             match reach {
                 Reach::Due => book.due.add(long, notional),
                 Reach::Beyond => book.beyond.add(long, notional),

@@ -1677,7 +1677,7 @@ unbounded by default), the activity length, and the close-out and profit buckets
 only for `at`: the price the market must reach for the account to fall below its close-out level, the
 account's other positions held at their marks, so it moves when they or the account's balance do. `due`
 is an account already below the level at its marks, and `beyond` one no price closes out: a long's would
-be zero or below, and a short's above ten times its mark. It is the calculation behind the close-out map
+be zero or below, and a short's ten times its mark or more. It is the calculation behind the close-out map
 (`stats/closeout.rs`), over a wider range, with the map as of its last scan and the read as of now. It is an estimate of where the account crosses the
 level: a close-out closes the largest losing position that can trade first, which may be another one, and
 none trades outside its market's session. A move in an FX market also moves the accounts' positions

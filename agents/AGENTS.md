@@ -459,7 +459,9 @@ Run from the repo root:
   temporary data trades both ways in BTC-USD and ETH-USD, waits one ten-minute MONKEY period out
   (about twelve minutes in all), checks every new route's figures against the accounts and verifies
   each answer with `engine verify-response`, then restarts the node and compares the series); the
-  scan's cost at 100k accounts: `cargo test -p engine-node --lib stats::bench -- --ignored --nocapture`
+  scan's cost at 100k accounts: `cargo test -p engine-node --lib stats::bench -- --ignored --nocapture`; the
+  account read's close-outs for an account holding every launch market:
+  `cargo test -p engine-node --lib stats::tests::closeout_cost -- --ignored --nocapture`
 - A signed checkpoint's cost after a hold, at 100k changed accounts:
   `cargo test -p engine-node --lib held_checkpoint_cost -- --ignored --nocapture`
 - Proxy protocol dev scenario: `./scripts/dev-proxy-protocol.sh` (needs `python3`, `curl`, and `jq`; a
