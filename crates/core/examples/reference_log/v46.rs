@@ -5,6 +5,7 @@ use chrono::Duration;
 use engine_core::benchmark::{BenchmarkBatch, BenchmarkRate};
 use engine_core::command::{AdminCommand, Command};
 use engine_core::event::Event;
+use engine_core::params::StressLevel;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::stress::STRESS_FLOOR_LAPSE_MS;
 use engine_core::types::MarketId;
@@ -42,6 +43,15 @@ fn snapshot(h: &mut Harness, rates: &[(i64, &str)]) -> Vec<Event> {
 /// bound by its range alone, a move within the limit applies, a move past it refuses the whole
 /// snapshot, and a gap between dates scales the limit. A signed undated rate is held to the same cap.
 pub(crate) fn session(h: &mut Harness) {
+    // Levels only an operator's floor reaches, so a floor above level 1 names one that exists.
+    let mut parameters = h.engine.params().expect("the session sets parameters").clone();
+    while parameters.stress_levels.len() < 3 {
+        let last = parameters.stress_levels.last().expect("the normal level").clone();
+        let raised = StressLevel { min_spread_bps: last.min_spread_bps + 5, trigger: None, ..last };
+        parameters.stress_levels.push(raised);
+    }
+    assert_eq!(h.operate_as(ELECTED_SEED, AdminCommand::SetParams(parameters)).last(), Some(&Event::AdminApplied));
+
     let floor = |market, level| AdminCommand::SetStressFloor { market, level };
     assert_eq!(h.operate_as(ELECTED_SEED, floor(Some(BTC), 2)).last(), Some(&Event::AdminApplied));
     assert_eq!(level(h, BTC), 2);
