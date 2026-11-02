@@ -146,6 +146,7 @@ async fn answer(State(state): State<Arc<Mutex<RpcState>>>, Json(request): Json<V
             };
             json!(format!("{nonce:#x}"))
         }
+        "eth_estimateGas" => json!("0x30d40"),
         "eth_sendTransaction" => {
             let transaction = params[0].clone();
             let record: Value = serde_json::from_slice(&std::fs::read(&state.path).unwrap()).unwrap();

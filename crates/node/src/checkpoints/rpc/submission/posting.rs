@@ -11,6 +11,11 @@ use crate::checkpoints::rpc::{CheckpointRpc, hasCheckpointAtCall, postCheckpoint
 use crate::checkpoints::{CheckpointChain, VaultState, View};
 use crate::log::{Checkpoint, CheckpointParent};
 
+/// What a post's gas limit adds to its estimate. An estimate is exact for the state it ran on, and
+/// the vault's write of the block's time costs less when it writes the time already there, so a
+/// post estimated in the second of the last checkpoint runs out of gas once mined later.
+const POST_GAS_MARGIN_DIVISOR: u64 = 4;
+
 impl CheckpointRpc {
     /// Relays exact work, retaining ownership across failed sends and public supersession.
     /// Error cases:
@@ -93,6 +98,9 @@ impl CheckpointRpc {
         }
         // A preceding sync failure must not turn a merely visible reservation into a send.
         self.submissions()?.sync()?;
+        let estimate: U64 = self.deadline(self.client.request("eth_estimateGas", (tx.clone(),))).await?;
+        let estimate: u64 = estimate.to();
+        let tx = TransactionRequest { gas: Some(estimate.saturating_add(estimate / POST_GAS_MARGIN_DIVISOR)), ..tx };
         let hash = self.deadline(self.client.request("eth_sendTransaction", (tx,))).await?;
         reservation.transaction_hash = Some(hash);
         self.submissions()?.store(&reservation)?;
