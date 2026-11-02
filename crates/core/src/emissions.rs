@@ -31,6 +31,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use alloy_primitives::U256;
+use alloy_sol_types::SolValue;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::Fixed;
@@ -203,6 +204,18 @@ impl EmissionSchedule {
 }
 
 impl PeriodResult {
+    /// The ABI encoding this result's leaf hashes: its realised PnL and written-off debt, and
+    /// from `V43` the gross losses between them. The destructure names every field, so a field
+    /// added to `PeriodResult` fails to compile until this encoding holds it.
+    pub(crate) fn leaf_encoding(&self, version: ProtocolVersion) -> Vec<u8> {
+        let PeriodResult { realised, losses, written_off } = self;
+        if version >= ProtocolVersion::V43 {
+            (realised.raw(), losses.raw(), written_off.raw()).abi_encode()
+        } else {
+            (realised.raw(), written_off.raw()).abi_encode()
+        }
+    }
+
     /// The losses a period's weight and its write-off's absorption read: the gross loss, each
     /// fill's `max(-realised_pnl, 0)`, from `V43` — accumulated under every version, so a period
     /// a `V43` activation crosses still counts its earlier fills — the net realised loss before
