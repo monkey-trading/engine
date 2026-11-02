@@ -209,11 +209,13 @@ impl Store {
         // samples' pairs, so every pair with rows to prune after it is among these.
         touched.extend(chain::expiring_pairs(&prior, &self.retentions, newest));
         chain::check_anchors(&tx, &prior, &touched)?;
+        let mut stmts = merge::MergeStmts::prepare(&tx)?;
         for &(market, ts, mark) in samples {
             for resolution in Resolution::ALL {
-                merge::merge(&self.mac, &tx, market, resolution, resolution.bucket(ts), mark)?;
+                merge::merge(&self.mac, &tx, &mut stmts, market, resolution, resolution.bucket(ts), mark)?;
             }
         }
+        drop(stmts);
         let plan = chain::plan_prune(&tx, &self.retentions, newest, &touched)?;
         chain::apply_prune(&self.mac, &tx, &plan)?;
         let updates = chain::anchor_updates(&tx, &touched)?;

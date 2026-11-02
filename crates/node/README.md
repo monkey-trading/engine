@@ -408,7 +408,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   reads and deletes each pair by primary-key prefix (`tests/chain.rs`, `tests/refusals.rs`,
   `tests/prune.rs`: the prune's query plan, and a read racing a commit)
 - `src/history/marks/store/merge.rs` — the live write path: merging a mark into its bucket and
-  re-linking the row above a fresh insert (`store/chain.rs` holds the shared chain queries)
+  re-linking the row above a fresh insert, with the statements prepared once per write and shared
+  by every sample (`store/chain.rs` holds the shared chain queries; `store/tests/bench.rs` is the
+  write's ignored cost-per-sample timing)
 - `src/history/marks/store/reset.rs` — the recovery reset: validating every chain, deleting the
   log-derived buckets, and re-chaining the survivors
 - `src/history/marks/store/import.rs` — importing a previous run's provider-seeded rows and

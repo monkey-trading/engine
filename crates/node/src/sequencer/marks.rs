@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use engine_core::types::{MarketId, Millis};
 use engine_core::{Engine, Fixed};
 use tokio::sync::mpsc;
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::history::marks::MarkSample;
 use crate::sequencer::Sequencer;
@@ -46,7 +46,7 @@ impl Marks {
 
     /// Sends the buffered reports once their commands are durable. A full queue drops the sample:
     /// the cache is derived, and the next change or a recovery reseeds it; one alert per episode
-    /// says so.
+    /// says so, and the first batch the queue takes whole ends the episode.
     fn release(&mut self) {
         if self.pending.is_empty() {
             return;
@@ -65,7 +65,8 @@ impl Marks {
                 "the marks queue is full; dropped samples reseed at the next recovery"
             );
             self.overflow_warned = true;
-        } else if !dropped {
+        } else if !dropped && self.overflow_warned {
+            info!(alert_resolved = "marks_samples_dropped", "the marks queue takes samples again");
             self.overflow_warned = false;
         }
     }
@@ -100,5 +101,40 @@ impl Sequencer {
     pub fn track_stats(&mut self, stats: crate::stats::Stats) {
         stats.finish_recovery(&self.engine);
         self.marks.stats = Some(stats);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn marks_with(capacity: usize) -> (Marks, mpsc::Receiver<MarkSample>) {
+        let (tx, rx) = mpsc::channel(capacity);
+        (Marks { tx: Some(tx), ..Marks::default() }, rx)
+    }
+
+    #[test]
+    fn a_full_queue_drops_samples_and_a_batch_it_takes_whole_ends_the_episode() {
+        let (mut marks, mut rx) = marks_with(1);
+        marks.pending = vec![(1, 10, Fixed::from_int(1)), (2, 10, Fixed::from_int(2))];
+        marks.release();
+        assert!(marks.overflow_warned, "the second sample found the queue full");
+        assert_eq!(rx.try_recv().unwrap().0, 1);
+        assert!(rx.try_recv().is_err(), "the dropped sample is not queued");
+        // A later batch the queue takes whole clears the episode, so the next overflow alerts again.
+        marks.pending = vec![(1, 20, Fixed::from_int(3))];
+        marks.release();
+        assert!(!marks.overflow_warned);
+        assert_eq!(rx.try_recv().unwrap().2, Fixed::from_int(3));
+    }
+
+    #[test]
+    fn an_episode_stays_open_while_the_queue_keeps_dropping() {
+        let (mut marks, _rx) = marks_with(1);
+        marks.pending = vec![(1, 10, Fixed::from_int(1)), (2, 10, Fixed::from_int(2))];
+        marks.release();
+        marks.pending = vec![(1, 20, Fixed::from_int(3))];
+        marks.release();
+        assert!(marks.overflow_warned, "the queue never drained");
     }
 }
