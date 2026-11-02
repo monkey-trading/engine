@@ -197,6 +197,7 @@ async fn serve_node(
         manifest: manifest_tx,
         checkpoint_every: cfg.node.checkpoint_every,
         checkpoint_registry: checkpoint_setup.as_ref().and_then(|setup| setup.poster.registry.clone()),
+        checkpoint_stalled_after: cfg.custody.evm.as_ref().map_or(Duration::MAX, |evm| evm.finality_stalled_after),
         approval_registry: checkpoint_setup.as_ref().map(|setup| setup.approvals.clone()),
         checkpoint_parent: checkpoint_setup.as_ref().map(|setup| setup.parent).unwrap_or_default(),
         checkpoints: checkpoint_setup.as_ref().map(|setup| setup.tx.clone()),

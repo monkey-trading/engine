@@ -1,6 +1,6 @@
 //! Withdrawal signature release only after a custody checkpoint commits its approval.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use engine_core::Fixed;
@@ -43,7 +43,15 @@ pub(super) struct Gate {
     pub backlog: std::collections::VecDeque<BacklogEntry>,
     /// Loaded recovered approvals that custody has not yet been asked about.
     pub unswept: usize,
-    /// Whether a checkpoint is being deferred because the posting queue is full.
+    /// The newest checkpoint known final: the anchor recovery started from, then each the poster
+    /// reports. The registry's entries past it are on their way (see `Gate::holds_back`).
+    pub finalized: Option<u64>,
+    /// When a checkpoint was first held back since one last became final.
+    pub held_since: Option<Instant>,
+    /// How long a hold may last with no checkpoint becoming final before it is a backlog.
+    pub stalled_after: Duration,
+    /// Whether a checkpoint is being deferred because the poster is behind: `stalled_after` passed
+    /// with none becoming final, or the posting queue is full.
     pub backlogged: bool,
     /// The causes (see `Withheld`) whose `checkpoint_withheld` episode is open.
     pub withheld: std::collections::BTreeSet<Withheld>,
@@ -83,7 +91,7 @@ impl Gate {
             info!(
                 alert_resolved = "checkpoint_withheld",
                 cause = cause.cause(),
-                "checkpoint signing resumed at seq {seq}"
+                "checkpoint signing no longer withheld at seq {seq}"
             );
         }
     }
@@ -119,6 +127,9 @@ impl Gate {
             schedule: Default::default(),
             backlog: Default::default(),
             unswept: 0,
+            finalized: parent.has_checkpoint.then_some(parent.seq),
+            held_since: None,
+            stalled_after: Duration::MAX,
             backlogged: false,
             withheld: Default::default(),
             signing: None,
@@ -135,7 +146,7 @@ impl Gate {
     fn withhold_causes(&self) -> String {
         let mut causes: Vec<&str> = self.withheld.iter().map(|cause| cause.cause()).collect();
         if self.backlogged {
-            causes.push("the posting queue is full");
+            causes.push("the checkpoint poster is behind");
         }
         if causes.is_empty() {
             causes.push("no command has applied");
@@ -205,11 +216,30 @@ impl Sequencer {
         self.gate.as_mut().map_or_else(Vec::new, |gate| std::mem::take(&mut gate.recovery))
     }
 
-    /// Logs and publishes a signed state root for the last applied seq. From protocol `V9` the root
-    /// rehashes only what changed since the previous checkpoint, and API proofs are taken against it.
+    /// Logs and publishes a signed state root for the last applied seq, unless the gate withholds
+    /// it or the posting queue is full. What must not wait uses this: a handover's final checkpoint,
+    /// the drain's, and those of required commands. From protocol `V9` the root rehashes only what
+    /// changed since the previous checkpoint, and API proofs are taken against it.
     /// Error cases:
     /// - no command has applied, or the log cannot be written
     pub(super) fn checkpoint(&mut self) -> anyhow::Result<()> {
+        self.attempt_checkpoint(false)
+    }
+
+    /// `checkpoint`, held back while the last signed one is not yet final (see `Gate::holds_back`):
+    /// the periodic cadence and what an approval needs. A later attempt covers what this one would
+    /// have: the next multiple of `checkpoint_every`, or `prove_loaded` on the next custody evidence.
+    /// Error cases:
+    /// - as `checkpoint`, or the checkpoint work registry is poisoned
+    pub(super) fn paced_checkpoint(&mut self) -> anyhow::Result<()> {
+        self.attempt_checkpoint(true)
+    }
+
+    /// Attempts a checkpoint, held back if `paced`. A held attempt still runs the gate's withholding
+    /// checks, so their alerts and the handover's `signing` view stay current.
+    /// Error cases:
+    /// - as `paced_checkpoint`
+    fn attempt_checkpoint(&mut self, paced: bool) -> anyhow::Result<()> {
         let seq = self.engine.last_seq().context("checkpoint before any command")?;
         if self.dedup_checkpoint_seq == Some(seq) {
             // A scheduled and an explicit checkpoint can meet at one seq; the earlier entry
@@ -269,6 +299,12 @@ impl Sequencer {
                 return Ok(());
             }
         }
+        if paced
+            && let Some(gate) = &mut self.gate
+            && gate.holds_back(seq, self.clock.instant())?
+        {
+            return Ok(());
+        }
         // The worker finalizes one checkpoint at a time, so a full queue defers the next checkpoint
         // instead of stopping the sequencer; unproved approvals wait for the next one that fits.
         if let Some(gate) = &mut self.gate
@@ -308,10 +344,7 @@ impl Sequencer {
             if let Some(gate) = &mut self.gate {
                 gate.parent = crate::log::CheckpointParent { has_checkpoint: true, seq, root: root.into() };
                 if std::mem::take(&mut gate.backlogged) {
-                    info!(
-                        alert_resolved = "checkpoint_backlog",
-                        "checkpoint posting queue has room again at seq {seq}"
-                    );
+                    info!(alert_resolved = "checkpoint_backlog", "a checkpoint was signed again at seq {seq}");
                 }
             }
         }
@@ -384,6 +417,9 @@ impl Sequencer {
         health: Option<crate::checkpoints::Health>,
     ) -> anyhow::Result<()> {
         let Some(gate) = &mut self.gate else { return Ok(()) };
+        if let Some(posted) = posted {
+            gate.note_final(posted);
+        }
         use crate::checkpoints::Health;
         match health {
             None | Some(Health::Unvalidated) => {}
@@ -452,6 +488,8 @@ impl Sequencer {
         Ok(())
     }
 }
+
+mod hold_back;
 
 #[cfg(test)]
 mod accounting_tests;

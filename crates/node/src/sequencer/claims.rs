@@ -18,7 +18,8 @@ use serde::{Deserialize, Serialize};
 
 /// Accounts whose proofs each checkpoint retains; the least recently asked leaves first.
 const MAX_WATCHED: usize = 128;
-/// Retained proofs per kind: the posting queue's 64 checkpoints, the accepted one, and the newest.
+/// Retained proofs per kind, a ceiling: the posting queue's 64 checkpoints, the accepted one, and the
+/// newest, though each checkpoint waits for the last to be final, so few are held at once.
 const MAX_HELD: usize = MAX_WATCHED * 66;
 
 /// A cumulative claim proof, as the vault's claim takes it.

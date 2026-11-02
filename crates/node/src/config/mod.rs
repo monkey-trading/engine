@@ -141,7 +141,8 @@ pub struct NodeSection {
     pub log_dir: PathBuf,
     /// Start a new log segment once the current one holds this many commands.
     pub segment_commands: u64,
-    /// Write a signed state root every N commands.
+    /// Write a signed state root every N commands, or at the first multiple of N after the last
+    /// one is final at the withdrawal finality tag, with `[checkpoints]`.
     pub checkpoint_every: u64,
     /// Interval of `Tick` commands that drive sessions and rollovers.
     #[serde(with = "humantime_serde")]

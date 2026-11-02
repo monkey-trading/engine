@@ -211,10 +211,13 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/log/segments/durability_tests.rs` — failed-fsync stream publication regression
 - `src/test_support/readers.rs` — stand-ins for the marks reader and the stats record an `ApiState` holds
 - `src/test_support/written.rs` — shared in-memory test output capture
+- `src/sequencer/checkpoints/hold_back.rs` — holds the next checkpoint back while the last signed one is not yet final, and raises `checkpoint_backlog` when none becomes final
 - `src/sequencer/checkpoints/accounting_tests.rs` — live/recovery accounting oracles and gated 100k-account capture scaling over migrated credits and fresh holds
 - `src/sequencer/checkpoint_tests.rs` — confirmed-prefix signature gating and restart tests
 - `src/sequencer/checkpoint_tests/unvalidated.rs` — worker observations preserve signing holds until collateral is compared, and an unproven finalized prefix pauses withdrawals until coverage is proven
 - `src/sequencer/checkpoint_tests/bootstrap.rs` — recovered empty anchors reconcile while nonempty unscanned checkpoints wait
+- `src/sequencer/checkpoint_tests/hold_back.rs` — the cadence waits for finality, held approvals share the next checkpoint, and the gate's alerts, a handover, a drain and a restart keep working behind a hold
+- `src/sequencer/checkpoint_tests/slow_poster.rs` — the real sequencer and worker in paused time over a chain with thirteen-minute finality: queue depth, withdrawal waits, and a stalled poster
 - `src/sequencer/checkpoint_tests/handover_stop.rs` — a handover's stop is the gate's call: refused
   with its causes while it would withhold the final checkpoint, and only an admitted stop ends the
   sequencer's loop
@@ -994,12 +997,21 @@ pending inclusion to reach that boundary (or disappear in a reorg), bounded by
 checkpoint and its original accounting before signing descendants; an unmined signature remains
 live even when both chain views still show its parent. Permissionless relays matching that local
 chain reconcile the covered prefix, including work beyond the receive queue. The queue is bounded, and
-the worker finalizes one checkpoint at a time; while the queue is full the sequencer defers new
-checkpoints with the Warning `checkpoint_backlog` and keeps sequencing, and approvals wait for the
-next checkpoint that fits. Failed posts retry after `retry_interval` and emit `checkpoint_post_failed`. Withheld signing or
+the worker finalizes one checkpoint at a time, so the relayer can post only one per finality delay at
+`withdrawal_finality_tag`. A periodic checkpoint and an approval's wait while the last signed one is
+not yet final, since one signed sooner would wait its turn covering less. So `node.checkpoint_every`
+is a ceiling, at most one checkpoint is on its way, and the cadence follows the chain's finality without
+tuning. An approval made meanwhile gets the next checkpoint as soon as that one is final, however many
+others share it: on Ethereum, whose finality is about 13 minutes, it is authorized 13 to 26 minutes
+later. A handover's final checkpoint, the one a stopping node writes, and those of required commands
+are not held back. Signing rehashes everything changed since the last checkpoint on the sequencer's
+thread: about 325 ms for 100k changed accounts and 1,000 approval proofs
+(`held_checkpoint_cost_at_100k_accounts`). A hold that outlasts `custody.evm.finality_stalled_after`
+with none becoming final raises the Warning `checkpoint_backlog`, as does a full queue; the sequencer
+keeps sequencing either way, and approvals wait for the next checkpoint. Failed posts retry after `retry_interval` and emit `checkpoint_post_failed`. Withheld signing or
 posting emits the Warning `checkpoint_withheld`, one episode per `cause` (`collateral`,
 `custody_prefix`, `post_diverged`, `signer_retired`) however many attempts it spans, resolved when that hold clears. A conflicting
-posted root or signer stops the node with the Critical `checkpoint_conflict` once the next retry's fresh observation
+posted root or signer, or a vault checkpoint this node did not sign, stops the node with the Critical `checkpoint_conflict` once the next retry's fresh observation
 repeats it; seen once, it retries with `checkpoint_post_failed`, since one read can be torn across a block the
 endpoint is still mining. A failed post once the vault's exit against the last posted root has started
 (`exitStartedAt`) stops the node with the Critical `vault_exit_started`: no checkpoint can follow it. Following decision #15 §2, withdrawals
@@ -1008,7 +1020,8 @@ differ from it: collateral reconciles when the vault's paid total is within the 
 approvals, the vault's running deposit total through the checkpoint's last credited deposit equals
 the ledger's credits, and the vault's USDC balance is at least its deposits less its payments.
 Deposits the checkpoint has not yet credited do not pause withdrawals until the first of them stays
-uncredited for `custody.evm.stall_critical_after`. A difference emits Critical
+uncredited for `custody.evm.stall_critical_after`, which must therefore exceed the credit tag's lag,
+one finality delay, and the wait for the next periodic checkpoint. A difference emits Critical
 `collateral_mismatch` and pauses withdrawals; ordinary trading commands continue. While the latest
 finalized checkpoint's nonempty custody prefix has no sequenced canonical receipt coverage, the
 worker cannot compare it with the vault: it emits the Warning `collateral_pending_deposits` and

@@ -64,8 +64,9 @@ fn extending(reads: impl Fn(&VaultState, &Work) -> Vec<(View, VaultState)>, pers
     poster.chain.state.lock().unwrap().checkpoint = Some((4, root_4()));
     let vault = poster.chain.state.lock().unwrap().clone();
     let reads = Mutex::new(reads(&vault, &work).into());
-    let Poster { chain, registry, domain, signer, retry, pending_deposits_critical_after, post_withheld } = poster;
+    let Poster { chain, domain, signer, retry, pending_deposits_critical_after, post_withheld, .. } = poster;
     let chain = Torn { chain, reads, persists };
+    let registry = Some(Default::default());
     (Poster { chain, registry, domain, signer, retry, pending_deposits_critical_after, post_withheld }, work)
 }
 
@@ -74,10 +75,14 @@ type Case = (&'static str, fn(&VaultState, &Work) -> Vec<(View, VaultState)>);
 
 /// Conflicts one observation can show: the latest view's checkpoint and signer, and the finalized
 /// view's checkpoint and signer.
-const CASES: [Case; 5] = [
+const CASES: [Case; 6] = [
     // #331: the vault's latest seq is read before the post lands and its root after.
     ("a parent torn across the posting block", |vault, work| {
         vec![(View::Latest, VaultState { checkpoint: Some((4, work.checkpoint.root.clone())), ..vault.clone() })]
+    }),
+    // Another copy of this release, whose checkpoint no registered one here matches.
+    ("a checkpoint this node did not sign, past the queued seq", |vault, _| {
+        vec![(View::Latest, VaultState { checkpoint: Some((7, format!("0x{}", "07".repeat(32)))), ..vault.clone() })]
     }),
     ("another root at the queued seq", |vault, _| {
         vec![(View::Latest, VaultState { checkpoint: Some((5, root_4())), ..vault.clone() })]

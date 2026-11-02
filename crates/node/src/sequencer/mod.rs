@@ -427,7 +427,7 @@ impl Sequencer {
                 || (self.gate.is_some()
                     && events.iter().any(|event| matches!(event, Event::WithdrawalApproved { .. }))))
         {
-            self.checkpoint()?;
+            self.paced_checkpoint()?;
         }
         Ok(events)
     }

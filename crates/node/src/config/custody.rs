@@ -53,7 +53,9 @@ pub struct EvmCustodySection {
     /// A deposit stall, reads trailing the final block, an endpoint head that stops
     /// advancing, or a checkpoint deposit left uncredited, that lasts this long raises a
     /// Critical alert. Sized for the credit tag's cadence: on Arbitrum One, above the
-    /// longest gap between L1 batch posts.
+    /// longest gap between L1 batch posts. A checkpoint deposit's bound must also exceed the
+    /// credit tag's lag, one release-tag finality delay, and the wait for the next periodic
+    /// checkpoint, since a deposit waits that long for a final checkpoint that credits it.
     #[serde(with = "humantime_serde")]
     pub stall_critical_after: Duration,
     /// The release tag (`withdrawal_finality_tag`, `finalized` in production) may trail a
@@ -61,7 +63,8 @@ pub struct EvmCustodySection {
     /// at startup, for this long before `custody_finality_stalled` pages or startup refuses
     /// to open the log. Sized for the release tag's cadence, not the batch-posting cadence:
     /// on Arbitrum One the `finalized` tag follows batch posting by one Ethereum finality
-    /// period (about 15 minutes), so production sets this to 30m.
+    /// period (about 15 minutes), so production sets this to 30m. A checkpoint held back this
+    /// long with none becoming final raises `checkpoint_backlog`.
     #[serde(with = "humantime_serde")]
     pub finality_stalled_after: Duration,
     /// Where the deposit cursor is kept between restarts.
