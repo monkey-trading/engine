@@ -17,7 +17,9 @@ an index: load only the rule whose hint matches the current action.
   nonces, and expiries, and from `V41` session keys: one account-signed registration authorises a
   short-lived in-browser key to place and cancel orders on its own nonce sequence, in
   `session_keys.rs`, where from `V42` the new addresses an account may introduce are a budget of
-  100 refilling one per hour of sequenced time), USD settlement of markets quoted in other currencies, admin commands signed
+  100 refilling one per hour of sequenced time; from `V44`, `Command::CancelAll` and
+  `AccessCloseAll` in `execution/cancel.rs` and `execution/batch.rs`: one signed request cancels every resting order, or closes the named
+  markets' whole positions as the single reduce-only market order, on one nonce), USD settlement of markets quoted in other currencies, admin commands signed
   by the operator key the log records and, from `V35`, bounded (`operator_bounds.rs`: profit fee and
   close-out level moves within ±50% after a seven-day notice, held markets kept priced by price-rule changes, and a
   seven-day key rotation); the spread a close can pay, from `V40`, capped per market
@@ -70,7 +72,7 @@ an index: load only the rule whose hint matches the current action.
   replay`, `engine exit-proof` (`exit.rs`: the exit's proofs and vault calls from a published log),
   `engine admin` (the operator's signing client), the REST API with the operator's admin
   route, the browser-origin allowlist (`api.allowed_origins`, in `api/origin.rs`), the
-  `/v1/session-keys` registration and revocation a session key trades under (from `V41`), the client address from a trusted pass-through proxy's PROXY protocol v2 header (`[api.proxy_protocol]`, in `tls/proxy.rs`), account proofs, exit proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
+  `/v1/session-keys` registration and revocation a session key trades under (from `V41`), `/v1/orders/cancel-all` and `/v1/positions/close-all` (from `V44`), the client address from a trusted pass-through proxy's PROXY protocol v2 header (`[api.proxy_protocol]`, in `tls/proxy.rs`), account proofs, exit proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
   with rate limits and connection caps, and with `[api.tls.acme]` a public CA certificate for that
   key, obtained and renewed over ACME TLS-ALPN-01 answered on the API's listener, in `tls/acme/`),
   signed answers (`api/signing.rs`: every `/v1` response but
@@ -266,6 +268,7 @@ an index: load only the rule whose hint matches the current action.
   the metrics and alert routing dev scenario; `dev-alert-outbox.sh`, the isolated alert retry
   kill/restart scenario; `dev-browser-origin.sh`, the browser-origin allowlist scenario against a dev node;
   `dev-proxy-protocol.sh`, the proxied client address scenario against a dev node;
+  `dev-batch-orders.sh`, the cancel-all and close-all scenario against a dev node, ending in a log replay;
   `dev-monkey-emissions.sh`, the MONKEY emissions scenario on Anvil;
   `dev-monkey-staking.sh`, the MONKEY staking and USDC distributions scenario on Anvil;
   `dev-operator-election.sh`, the delegated operator election scenario on Anvil;
@@ -322,7 +325,7 @@ an index: load only the rule whose hint matches the current action.
   scenario, the exit dev scenario, the API and direct-vault access enforcement dev scenario, the
   metrics and alert routing
   dev scenario, the alert outbox kill/restart scenario,
-  the browser-origin scenario, the proxy protocol scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the
+  the browser-origin scenario, the proxy protocol scenario, the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the
   signed API answers dev scenario, the public certificate dev scenario, the executable quotes dev
   scenario, the review-delta helper's test, the merge approval gate's test, the browser verifier
   (`wasm-verifier` builds its package twice on separate runners with the pinned toolchain, the
@@ -432,6 +435,10 @@ Run from the repo root:
 - Proxy protocol dev scenario: `./scripts/dev-proxy-protocol.sh` (needs `python3`, `curl`, and `jq`; a
   loopback forwarder prepends PROXY v2 (and LOCAL) headers to a dev node with a synthetic access source, on private
   temporary data and public Roughtime servers)
+- Batch orders dev scenario: `./scripts/dev-batch-orders.sh` (needs `python3`, `curl`, and `jq`; a dev
+  node with a synthetic access source holds resting orders and positions in two markets, cancels all
+  and closes all on one signed request each, and replays its log; private temporary data, public
+  Roughtime servers)
 - Certificate Transparency watcher: `cargo run -p engine-node -- ct-watch --config
   config/ct-watch.toml` (outside the enclave; `--allow-mock` accepts a mock node and loopback HTTP,
   dev only, refused in a `production` build); its dev scenario: `./scripts/dev-ct-watch.sh` (needs

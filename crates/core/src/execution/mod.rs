@@ -14,9 +14,9 @@ use std::cell::OnceCell;
 use crate::Fixed;
 use crate::access::AccessEvidence;
 use crate::account::{Account, RestingOrder};
-use crate::auth::{RequestAuth, RequestScope};
+use crate::auth::RequestScope;
 use crate::command::{OrderKind, OrderRequest};
-use crate::eip712::{cancel_hash, order_hash};
+use crate::eip712::order_hash;
 use crate::engine::{Engine, Markout};
 use crate::event::{CancelReason, Event, Fill, Reject};
 use crate::fixed::Rounding;
@@ -111,6 +111,15 @@ impl Engine {
         {
             return reject(reason, events);
         }
+        self.place_validated(req, events);
+    }
+
+    /// Fills or rests an order that has passed authorisation, access screening and validation.
+    /// Emits acceptance or rejection, as `place_order` does after those checks.
+    fn place_validated(&mut self, req: &OrderRequest, events: &mut Vec<Event>) {
+        let reject = |reason, events: &mut Vec<Event>| {
+            events.push(Event::OrderRejected { account: req.account, client_id: req.client_id, reason })
+        };
         self.refresh_session(req.market, events);
 
         match req.kind {
@@ -159,25 +168,6 @@ impl Engine {
                     self.trigger_order(order_id, req.account, mid, events);
                 }
             }
-        }
-    }
-
-    /// Authorises the request, then cancels a resting order on the client's request.
-    pub(crate) fn cancel_order(
-        &mut self,
-        account: AccountId,
-        order_id: OrderId,
-        auth: Option<&RequestAuth>,
-        events: &mut Vec<Event>,
-    ) {
-        if let Err(reason) = self.authorise(account, auth, RequestScope::Trade, |domain, auth| {
-            cancel_hash(domain, account, order_id, auth.nonce, auth.expires_at)
-        }) {
-            events.push(Event::OrderRejected { account, client_id: 0, reason });
-        } else if self.remove_order(account, order_id).is_some() {
-            events.push(Event::OrderCancelled { account, order_id, reason: CancelReason::Client });
-        } else {
-            events.push(Event::OrderRejected { account, client_id: 0, reason: Reject::UnknownOrder });
         }
     }
 
@@ -471,19 +461,10 @@ impl Engine {
     pub(crate) fn charge_rounding(&self) -> Rounding {
         if self.protocol_version >= ProtocolVersion::V10 { Rounding::Up } else { Rounding::TowardZero }
     }
-
-    /// Removes a resting order from its account and its market's book.
-    pub(crate) fn remove_order(&mut self, account: AccountId, order_id: OrderId) -> Option<RestingOrder> {
-        let order = self.accounts.get_mut(&account)?.orders.remove(&order_id)?;
-        self.index_order(account, &order, false);
-        if let Some(market) = self.markets.get_mut(&order.market) {
-            market.resting.remove(&order_id);
-        }
-        self.record_order(account, order_id);
-        Some(order)
-    }
 }
 
+mod batch;
+mod cancel;
 mod quote;
 pub use quote::{Quote, Quoter};
 mod validation;

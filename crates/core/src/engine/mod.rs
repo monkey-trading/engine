@@ -349,6 +349,7 @@ impl Engine {
                 Command::CancelOrder { account, order_id, auth } => {
                     self.cancel_order(*account, *order_id, auth.as_ref(), &mut events)
                 }
+                Command::CancelAll { account, auth } => self.cancel_all(*account, auth.as_ref(), &mut events),
                 Command::Admin(cmd) => match self.unsigned_admin(cmd, &mut events) {
                     Ok(()) => events.push(Event::AdminApplied),
                     Err(reason) => events.push(Event::AdminRejected { reason }),

@@ -65,7 +65,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   `api.quote_interval` (at least 100 ms)
 - Orders, cancels, and withdrawals signed by the account (EIP-712), checked before they are
   sequenced; from `V41`, a session key the account registered at `/v1/session-keys` signs its
-  orders and cancels on the key's own nonce sequence, while withdrawals keep requiring the account
+  orders, cancels, and (from `V44`) cancel-all and close-all requests on the key's own nonce sequence, while withdrawals keep requiring the account
   key; before V24, `auth = "none"` trusts the account field with mock TEE and custody; V24
   client actions and eligibility declarations require signatures in every mode
 - The latest protocol version and the client auth activated at boot, at the log's next seq, after
@@ -321,6 +321,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/access.rs` — reads of one custody hold, one pending deposit, and an account's signed eligibility
 - `src/api/access_tests.rs` — deposit-first declarations, peer provenance and public access refusals
 - `src/api/access_tests/admission.rs` — admission before sequencing: never-credited signers declare only against a pending deposit, within per-client and shared budgets; expired requests and exhausted screening capacity refuse without a nonce
+- `src/api/access_tests/batch.rs` — `POST /v1/orders/cancel-all` and `/v1/positions/close-all`: one screening request, one log entry and one nonce each, refusals for a stale nonce, a forged or altered request and a stranger, and a session key signing both forms until revoked
 - `src/api/access_tests/declarations.rs` — a declaration screened like an order: public refusals that leave its deposit pending until an allowed one is recorded
 - `src/api/access_tests/reissue.rs` — a reissue request screened like a withdrawal, by account and peer, refused with 403 before the log
 - `src/api/access_tests/session_keys.rs` — a registered session key trades for its account without the wallet until revoked, a withdrawal it signs refuses as out of scope in the log, and an expired, mis-scoped, uncredited, or rate-flooding key is refused before sequencing, with its cancels, stale nonces, and missing signatures
@@ -1182,9 +1183,22 @@ Endpoints: `GET /v1/health`, `GET /v1/attestation`, `GET /v1/attestation/collate
 `GET /v1/accounts/{address}`, `GET /v1/accounts/{address}/nonce`,
 `GET /v1/accounts/{address}/history`, `GET /v1/accounts/{address}/proof`,
 `GET /v1/accounts/{address}/emissions`, `POST /v1/orders`, `POST /v1/orders/cancel`,
+`POST /v1/orders/cancel-all`, `POST /v1/positions/close-all`,
 `POST /v1/withdrawals` (mock custody only until withdrawals are paid on-chain), `POST /v1/admin`
 (the operator's), `POST /v1/dev/deposit` (mock custody only), `GET /v1/stream` (WebSocket), and
 `GET /v1/archive/{file}` (`manifest.jsonl` or a segment it lists).
+From `V44`, `POST /v1/orders/cancel-all` takes `{ "account", "auth" }` and cancels every order the
+account rests, each with the `order_cancelled` a single cancel emits (an account with none gets
+`[]`). `POST /v1/positions/close-all` takes `{ "account", "closes": [{ "market", "quoted" }],
+"max_slippage_bps", "auth" }` (`max_slippage_bps` optional) and closes the account's whole position
+in each listed market, in list order, as the single reduce-only market order: its answer is that
+order's events per entry, and a refused entry is an `order_rejected` whose `client_id` is the
+entry's index in `closes`. A list that is empty, or names a market twice, is one rejection of the
+whole request, and so is one naming more markets than are listed, which the API refuses with 400
+before the signature is checked. Each is one signed request (`CancelAllRequest`,
+`CloseAllRequest` in `engine-core`'s EIP-712 types, `closes` signed in order), one nonce, one
+rate-limit count, and one screening; the account key or a registered session key may sign either.
+
 A client over its rate gets 429 with `Retry-After`, a body over `api.max_body_bytes` gets 413, a
 body not received within `api.read_timeout` gets 408, and a subscriber over `api.max_subscribers`
 gets 503. A connection over a connection cap or over its client's connection rate is closed before
