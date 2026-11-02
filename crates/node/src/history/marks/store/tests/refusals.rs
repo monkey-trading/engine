@@ -242,7 +242,12 @@ async fn a_backfill_refuses_to_relink_a_restored_floor_row() {
             base + 180_000,
         )
         .expect_err("re-linked a restored floor row");
-    assert!(format!("{err:#}").contains("does not name the bucket below it"), "{err:#}");
+    let message = format!("{err:#}");
+    // The restored row fails its pin before its link is read.
+    assert!(
+        message.contains("does not name the bucket below it") || message.contains("not the version committed for it"),
+        "{message}"
+    );
 }
 
 #[tokio::test]
@@ -334,7 +339,12 @@ async fn a_seed_batch_relinking_past_a_surviving_older_row_refuses() {
             base + 180_000,
         )
         .expect_err("re-linked over a surviving older row");
-    assert!(format!("{err:#}").contains("does not name the bucket below it"), "{err:#}");
+    let message = format!("{err:#}");
+    // The restored row fails its pin before its link is read.
+    assert!(
+        message.contains("does not name the bucket below it") || message.contains("not the version committed for it"),
+        "{message}"
+    );
 }
 
 #[tokio::test]

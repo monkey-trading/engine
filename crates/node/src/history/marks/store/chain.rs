@@ -59,25 +59,22 @@ pub(crate) fn retag(
     Ok(tag)
 }
 
-/// The row directly above `bucket`: its bucket, the link it holds, and the tag it recorded for the
-/// row below.
-const BINDING: &str = "SELECT bucket, prev_bucket, prev_tag FROM marks
-    WHERE market = :market AND resolution = :resolution AND bucket > :bucket ORDER BY bucket ASC LIMIT 1";
-
 /// Requires the stored row at `bucket` with `tag` to be the version this node last wrote for it
 /// before a write builds on it, re-tags it, or binds its tag into a new row: the host can put an
 /// older authentic version back, and a write that kept its content under a new tag would bless it.
 /// A row this transaction rewrote (`written`) is current by construction; a pinned row must carry
-/// its pin; any other row with a row above it must be the tag that row recorded; and a row with
-/// nothing above it is the head, which the committed head anchor already checked.
+/// its pin; any other row with a row above it must be the tag that row recorded, once that row
+/// itself authenticates and carries its pin; and a row with nothing above it is the head, which the
+/// committed head anchor already checked.
 /// Error cases:
-/// - the row is not the pinned version, or not the one the row above it recorded
+/// - the row is not the pinned version, or not the one the authentic row above it recorded, or the
+///   row above it fails authentication
 pub(crate) fn ensure_current(
+    mac: &hmac::Hmac<sha2::Sha256>,
     tx: &Transaction,
     pins: Option<&Interior>,
     written: Option<&BTreeSet<Millis>>,
-    market: MarketId,
-    resolution: Resolution,
+    (market, resolution): (MarketId, Resolution),
     bucket: Millis,
     tag: [u8; 16],
 ) -> anyhow::Result<()> {
@@ -88,24 +85,46 @@ pub(crate) fn ensure_current(
         ensure!(*pinned == tag, "the {market} {resolution:?} bucket at {bucket} is not the version committed for it");
         return Ok(());
     }
-    let above: Option<(Millis, Option<Millis>, Option<[u8; 16]>)> = tx
+    let above: Option<SnapRow> = tx
         .query_row(
-            BINDING,
+            SUCCESSOR,
             named_params! {":market": i64::from(market), ":resolution": resolution as i64, ":bucket": bucket},
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| {
+                Ok(SnapRow {
+                    bucket: row.get(0)?,
+                    open: row.get(1)?,
+                    high: row.get(2)?,
+                    low: row.get(3)?,
+                    close: row.get(4)?,
+                    provenance: row.get(5)?,
+                    prev: row.get(6)?,
+                    tag: row.get(7)?,
+                    prev_tag: row.get(8)?,
+                })
+            },
         )
         .optional()
         .with_context(|| format!("reading the {market} {resolution:?} chain above {bucket}"))?;
-    if let Some((above, prev, prev_tag)) = above {
+    let Some(above) = above else { return Ok(()) };
+    // The record is only as good as the row that holds it: a forged one fails here, and a stale
+    // one fails its own pin.
+    verify_row(mac, market, resolution, &above)?;
+    if let Some(pinned) = pins.and_then(|pins| pins.get(&above.bucket)) {
         ensure!(
-            prev == Some(bucket),
-            "the {market} {resolution:?} chain is broken at {above}: its link does not name the bucket below it"
-        );
-        ensure!(
-            prev_tag == Some(tag),
-            "the {market} {resolution:?} bucket at {bucket} is not the version the row above it recorded"
+            *pinned == above.tag,
+            "the {market} {resolution:?} bucket at {} is not the version committed for it",
+            above.bucket
         );
     }
+    ensure!(
+        above.prev == Some(bucket),
+        "the {market} {resolution:?} chain is broken at {}: its link does not name the bucket below it",
+        above.bucket
+    );
+    ensure!(
+        above.prev_tag == Some(tag),
+        "the {market} {resolution:?} bucket at {bucket} is not the version the row above it recorded"
+    );
     Ok(())
 }
 
@@ -378,7 +397,7 @@ pub(crate) fn apply_prune(
         );
         let pair = (market, resolution);
         let pins = prior.interior(pair);
-        ensure_current(tx, Some(pins.as_ref()), rewrites.get(&pair), market, resolution, floor.bucket, floor.tag)?;
+        ensure_current(mac, tx, Some(pins.as_ref()), rewrites.get(&pair), pair, floor.bucket, floor.tag)?;
         retag(mac, tx, market, resolution, &floor, None)?;
         rewrote(rewrites, market, resolution, floor.bucket);
     }
@@ -423,7 +442,7 @@ pub(crate) fn seed(
             let pred = stmts.predecessor(market, resolution, seed.ts)?;
             // The new row binds its predecessor's tag: refuse to bind a restored older version.
             if let Some((below, below_tag)) = pred.filter(|(below, _)| !fresh.contains(below)) {
-                stmts.ensure_current(tx, market, resolution, below, below_tag)?;
+                stmts.ensure_current(mac, tx, market, resolution, below, below_tag)?;
             }
             let provenance = Provenance::SeededFromProvider.as_str();
             let (open, high, low, close) =

@@ -1637,16 +1637,19 @@ with. A row a write re-links, or changes after another arrived above it (a gap f
 late sample merged into it, a re-floor), is pinned in memory at its new tag, and a read refuses a
 pinned row at any other version, whether it serves the row or only ends beside it. A write refuses
 to merge into, re-link, re-floor, or bind the tag of a row that is not the version it last wrote.
-An older authentic version of a row that the host puts back while the node runs is therefore
-refused wherever it would be served, including by a page that would hide a bucket behind it. A host
-can still delete or corrupt the cache while the node runs, which fails reads until the cache is
-rebuilt, but not make a read serve an older version of a row this run wrote. The pins live in
-memory with the anchors. At startup the prior cache's rows are checked by tag and link and
-re-bound, so an older authentic row the host restores while the node is stopped is not detected;
-the log-derived rows, which a full recovery re-derives from the verified log, are the ones it
-corrects. `?limit=` is 1 to `max_limit` (2000), 500 by default, and a window wider than that pages
-by passing a page's `next` as `from_ms`. The cache is derived state, never sequenced: recovery seeds it from the log's replay, the sequencer's live mark reports keep it
-current, and `[history.marks.backfill]`, where configured, fetches historical candles from the
+Rows are authenticated under a key drawn for each cache file and kept inside it, so a row captured
+in an earlier run does not verify in this one, and an older authentic version of a row that the
+host puts back while the node runs is refused wherever it would be served, including by a page that
+would hide a bucket behind it. A host can still delete or corrupt the cache while the node runs,
+which fails reads until the cache is rebuilt, but not make a read serve an older version of a row
+this run wrote. The pins live in memory with the anchors. At startup the prior cache's rows are
+verified under that file's key, checked by link, and re-tagged under this run's key, so an older
+authentic row the host restores while the node is stopped is not detected; a full recovery without
+`[snapshots]` re-derives the log-derived rows from the verified log and corrects them, and a node
+with `[snapshots]` replays only the suffix, so it corrects none. `?limit=` is 1 to `max_limit`
+(2000), 500 by default, and a window wider than that pages by passing a page's `next` as `from_ms`.
+The cache is derived state, never sequenced: recovery seeds it from the log's replay, the
+sequencer's live mark reports keep it current, and `[history.marks.backfill]`, where configured, fetches historical candles from the
 feed venue's public endpoint (Coinbase's, for its markets) to seed the depth a fresh log cannot
 have; removing `history.dir` while the node is stopped rebuilds it. A cache file written by an
 older version is not imported: the log re-derives what it proves and a configured backfill re-seeds

@@ -90,10 +90,10 @@ an index: load only the rule whose hint matches the current action.
   `log_derived`/`seeded_from_provider` provenance; recovery seeds it from the log's replay through a sink
   in the replay, the sequencer's live mark reports keep it current, and an optional Coinbase candles
   backfill (`[history.marks.backfill]`) seeds depth a fresh log cannot have; each bucket names the one
-  below it, and the tag it carried, under its row tag, and committed in-memory per-pair chain heads and
-  pinned rewritten interior rows anchor the index at recovery re-derivation, so a host that deletes,
-  reorders, rolls back, or replays an older version of a row in the cache mid-run is refused at serve
-  time),
+  below it, and the tag it carried, under a row tag keyed per cache file, and committed in-memory
+  per-pair chain heads and pinned rewritten rows anchor the index at recovery re-derivation, so a
+  host that deletes, reorders, rolls back, or replays an older version of a row in the cache mid-run
+  is refused at serve time),
   the dashboard record (`stats/`, held in memory and rebuilt from the log's replay through a sink in it,
   with no file to roll back: `series.rs` 1m/1h/1d buckets with `[stats]` retention, `snapshot.rs` and
   `closeout.rs` the scan of every account at most once per `api.stats_interval` of sequenced time, `activity.rs`

@@ -35,6 +35,23 @@ pub(crate) struct ChainAnchor {
     pub head: ChainHead,
 }
 
+/// One cache file's run key: random bytes drawn when the file is created and kept inside it, so the
+/// next run can verify the rows it imports.
+pub(crate) type Epoch = [u8; 16];
+
+/// The authenticator of one cache file: an HMAC under a key derived from the enclave's marks key
+/// and the file's `epoch`. A row captured from another file, or from an earlier run's file, does
+/// not verify here, so the host cannot put one back in a running cache.
+pub(crate) fn run_mac(mac_key: &[u8; 32], epoch: &Epoch) -> hmac::Hmac<sha2::Sha256> {
+    use hmac::Mac;
+    let mut derive = <hmac::Hmac<sha2::Sha256> as hmac::digest::KeyInit>::new_from_slice(mac_key)
+        .expect("HMAC takes a key of any length");
+    derive.update(b"engine.marks.cache.run.v1");
+    derive.update(epoch);
+    let key: [u8; 32] = derive.finalize().into_bytes().into();
+    <hmac::Hmac<sha2::Sha256> as hmac::digest::KeyInit>::new_from_slice(&key).expect("HMAC takes a key of any length")
+}
+
 /// The rows of one pair a write rewrote after a row was written above them, or re-linked at any
 /// time, by bucket and tag as committed: a successor binds its predecessor's tag as written with
 /// it, and a window's closing row vouches for the span it closes by its link, so for these rows

@@ -47,7 +47,10 @@ pub const MARKS_FILE: &str = "marks.sqlite";
 /// Version 4 adds `prev_tag`, the tag of the row below as it stood when this row was written, which
 /// the tag binds: a successor vouches for its predecessor's final content, and the rows a write
 /// rewrote while they had a successor are pinned by tag in the committed anchors, so an older
-/// authentic version of an interior row is refused wherever it is served.
+/// authentic version of an interior row is refused wherever it is served. `epoch` holds the random
+/// run key a file is created with: rows are authenticated under a key derived from it, so a row
+/// captured in an earlier run does not verify in this one, and the next run imports this file's
+/// rows by verifying them under its epoch and re-tagging them under its own.
 pub(crate) const SCHEMA_VERSION: i64 = 4;
 pub(crate) const SCHEMA: &str = "
     CREATE TABLE marks (
@@ -65,6 +68,10 @@ pub(crate) const SCHEMA: &str = "
         PRIMARY KEY (market, resolution, bucket)
     ) WITHOUT ROWID;
     CREATE INDEX marks_by_window ON marks (resolution, bucket);
+    CREATE TABLE epoch (
+        id INTEGER PRIMARY KEY CHECK (id = 0),
+        nonce BLOB NOT NULL
+    );
     CREATE TABLE backfilled (
         market INTEGER PRIMARY KEY,
         venue TEXT NOT NULL,

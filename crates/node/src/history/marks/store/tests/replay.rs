@@ -241,3 +241,80 @@ async fn an_imported_chain_with_rewritten_rows_reads_after_the_startup_re_bind()
     assert!(store.prior_anchors().interior((1, Resolution::M1)).is_empty());
     assert_eq!(page(&store, i64::MIN, i64::MAX).await.unwrap().entries.len(), 4);
 }
+
+/// A live sample that fills a gap above a restored row would record the restored row's tag as its
+/// predecessor's, hiding the substitution from the row above.
+#[tokio::test]
+async fn a_late_sample_filling_a_gap_refuses_to_bind_a_restored_predecessor() {
+    let (path, mut store) = fresh_store_at("marks-replay-gap-fill-stale", Retentions::defaults());
+    store.observe(&[(1, BASE, fixed("1")), (1, BASE + MIN, fixed("5"))]).unwrap();
+    let early = capture(&path, BASE + MIN);
+    store.observe(&[(1, BASE + MIN, fixed("9"))]).unwrap();
+    store.observe(&[(1, BASE + 3 * MIN, fixed("4"))]).unwrap();
+    restore(&path, &early);
+    let err = store.observe(&[(1, BASE + 2 * MIN, fixed("6"))]).expect_err("bound a restored predecessor");
+    assert!(format!("{err:#}").contains("not the version the row above it recorded"), "{err:#}");
+}
+
+/// A backfill under a restored successor whose own link still resolves would re-tag it and pin the
+/// older content.
+#[tokio::test]
+async fn a_backfill_refuses_to_re_link_a_restored_successor() {
+    let (path, mut store) = fresh_store_at("marks-replay-relink-stale", Retentions::defaults());
+    store.observe(&[(1, BASE, fixed("1")), (1, BASE + 2 * MIN, fixed("3"))]).unwrap();
+    let early = capture(&path, BASE + 2 * MIN);
+    store.observe(&[(1, BASE + 2 * MIN, fixed("7"))]).unwrap();
+    store.observe(&[(1, BASE + 3 * MIN, fixed("4"))]).unwrap();
+    restore(&path, &early);
+    let err = store.seed(&[seed_at(BASE + MIN, "2")], BASE + 3 * MIN).expect_err("re-linked a restored row");
+    assert!(format!("{err:#}").contains("not the version the row above it recorded"), "{err:#}");
+}
+
+/// The record a write trusts is itself authenticated: a successor edited to name the restored
+/// row's tag fails, whatever it is later restored to.
+#[tokio::test]
+async fn a_forged_successor_record_does_not_clear_a_restored_row_for_the_prune() {
+    let (path, mut store) = fresh_store_at("marks-replay-forged-record", hour_retentions());
+    store.observe(&[(1, BASE, fixed("1")), (1, BASE + MIN, fixed("5"))]).unwrap();
+    let early = capture(&path, BASE + MIN);
+    store.observe(&[(1, BASE + MIN, fixed("9"))]).unwrap();
+    store.observe(&[(1, BASE + 2 * MIN, fixed("4"))]).unwrap();
+    restore(&path, &early);
+    let Value::Blob(early_tag) = &early[7] else { panic!("a tag is a blob") };
+    Connection::open(&path)
+        .unwrap()
+        .execute(
+            "UPDATE marks SET prev_tag = ?1 WHERE market = 1 AND resolution = 1 AND bucket = ?2",
+            rusqlite::params![early_tag, BASE + 2 * MIN],
+        )
+        .unwrap();
+    let err = store.observe(&[(1, BASE + HOUR + 30_000, fixed("5"))]).expect_err("trusted a forged record");
+    assert!(format!("{err:#}").contains("fails authentication"), "{err:#}");
+}
+
+/// A row captured in an earlier run authenticates under that run's key only: after a restart the
+/// host cannot put back a stretch of rows from before it.
+#[tokio::test]
+async fn rows_captured_in_an_earlier_run_do_not_verify_in_the_next() {
+    let prior_dir = scratch_dir("marks-replay-run-one");
+    let prior_path = prior_dir.join("marks.sqlite");
+    let mut prior = Store::open(&prior_path, Retentions::defaults(), mac_key()).unwrap();
+    prior.observe(&[(1, BASE, fixed("1")), (1, BASE + 2 * MIN, fixed("3"))]).unwrap();
+    prior.observe(&[(1, BASE + 3 * MIN, fixed("4"))]).unwrap();
+    prior.observe(&[(1, BASE + 4 * MIN, fixed("5"))]).unwrap();
+    let (c, d) = (capture(&prior_path, BASE + 2 * MIN), capture(&prior_path, BASE + 3 * MIN));
+    prior.seed(&[seed_at(BASE + MIN, "2")], BASE + 4 * MIN).unwrap();
+    drop(prior);
+    // The next run imports the cache, and the host puts run one's C and D back over B's slot.
+    let (path, mut store) = fresh_store_at("marks-replay-run-two", Retentions::defaults());
+    store.import_prior(&prior_path).unwrap();
+    store.validate_chains().unwrap();
+    assert_eq!(page(&store, i64::MIN, i64::MAX).await.unwrap().entries.len(), 5);
+    delete(&path, BASE + MIN);
+    restore(&path, &c);
+    restore(&path, &d);
+    for (from, to) in [(i64::MIN, i64::MAX), (BASE, BASE + 2 * MIN), (BASE + 2 * MIN, BASE + 3 * MIN)] {
+        let err = page(&store, from, to).await.expect_err("served a row from an earlier run");
+        assert!(format!("{err:#}").contains("fails authentication"), "{from}..{to}: {err:#}");
+    }
+}

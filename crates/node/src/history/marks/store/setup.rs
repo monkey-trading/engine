@@ -6,14 +6,16 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, bail, ensure};
-use hmac::digest::KeyInit as _;
+use rand::RngCore;
+use rand::rngs::OsRng;
 
 use rusqlite::{Connection, TransactionBehavior};
 use tracing::warn;
 
 use crate::history::marks::Retentions;
+use crate::history::marks::store::auth::{Epoch, run_mac};
 use crate::history::marks::store::{
-    BUSY_TIMEOUT, Reader, SCHEMA, SCHEMA_VERSION, Store, chain, expected_schema, reset, store,
+    BUSY_TIMEOUT, Reader, SCHEMA, SCHEMA_VERSION, Store, expected_schema, reset, store,
 };
 
 impl Store {
@@ -68,6 +70,9 @@ impl Store {
         match tx.pragma_query_value(None, "user_version", |row| row.get(0)).context("reading the schema version")? {
             0 => {
                 tx.execute_batch(SCHEMA).context("creating the marks schema")?;
+                let mut epoch = Epoch::default();
+                OsRng.fill_bytes(&mut epoch);
+                tx.execute("INSERT INTO epoch (id, nonce) VALUES (0, ?1)", [epoch]).context("drawing the run key")?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION).context("setting the schema version")?;
             }
             SCHEMA_VERSION => {}
@@ -79,8 +84,9 @@ impl Store {
         let integrity: String =
             tx.query_row("PRAGMA integrity_check(1)", [], |row| row.get(0)).context("checking the marks cache")?;
         ensure!(integrity == "ok", "{} is damaged: {integrity}", path.display());
+        let epoch = read_epoch(&tx)?;
         tx.commit().context("committing the marks schema")?;
-        let mac = hmac::Hmac::new_from_slice(&mac_key).context("building the marks authenticator")?;
+        let mac = run_mac(&mac_key, &epoch);
         let store = Self { conn, path: path.to_owned(), retentions, mac, mac_key, schema, anchors: Arc::default() };
         // An existing file (a reopened cache in tests; production opens a fresh seed) gets its
         // anchors established here; re-derivation at recovery validates them before any read.
@@ -114,20 +120,20 @@ impl Store {
     /// Validates every pair's chain on disk: every row authenticates and every link names the
     /// row actually below it. Startup runs this after importing a prior cache, so a host-altered
     /// file is rebuilt from nothing — the log and a configured backfill re-derive it — instead of
-    /// serving refusals or stopping the node on a later write. The rows that pass are re-bound:
-    /// each records the tag the row below it carries now, which the prior run's pins covered, and
-    /// no pin survives into this one.
+    /// serving refusals or stopping the node on a later write.
     /// Error cases:
     /// - a stored row fails authentication, or a chain link does not resolve
     pub fn validate_chains(&mut self) -> anyhow::Result<()> {
         let tx =
             self.conn.transaction_with_behavior(TransactionBehavior::Immediate).context("starting a marks check")?;
         store::check_schema(&tx, &self.schema, &self.path)?;
-        let pairs = reset::rebind_chains(&self.mac, &tx)?;
-        let updates = chain::anchor_updates(&tx, &pairs, &Default::default(), true)?;
-        let mut anchors = self.anchors.lock().expect("the marks chain anchors are never poisoned");
-        tx.commit().context("committing the marks chain re-bind")?;
-        anchors.apply(updates);
-        Ok(())
+        reset::validate_chains(&self.mac, &tx)
     }
+}
+
+/// The run key of the file `conn` holds.
+/// Error cases:
+/// - the file holds no run key, or one of another length
+pub(super) fn read_epoch(conn: &Connection) -> anyhow::Result<Epoch> {
+    conn.query_row("SELECT nonce FROM epoch WHERE id = 0", [], |row| row.get(0)).context("reading the run key")
 }

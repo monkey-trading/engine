@@ -76,6 +76,7 @@ impl<'tx> MergeStmts<'tx> {
     /// - the row is not that version
     pub(crate) fn ensure_current(
         &self,
+        mac: &hmac::Hmac<sha2::Sha256>,
         tx: &Transaction,
         market: MarketId,
         resolution: Resolution,
@@ -84,7 +85,7 @@ impl<'tx> MergeStmts<'tx> {
     ) -> anyhow::Result<()> {
         let pair = (market, resolution);
         let pins = self.pairs.get(&pair).map(|state| state.pins.as_ref());
-        ensure_current(tx, pins, self.rewrites.get(&pair), market, resolution, bucket, tag)
+        ensure_current(mac, tx, pins, self.rewrites.get(&pair), pair, bucket, tag)
     }
 
     /// The bucket below `bucket` and its tag, if any.
@@ -162,7 +163,7 @@ pub(crate) fn merge(
                 "the {market} {resolution:?} chain is broken at {bucket}: its link names a bucket that is no longer below it"
             );
             if below_head {
-                stmts.ensure_current(tx, market, resolution, bucket, row.tag)?;
+                stmts.ensure_current(mac, tx, market, resolution, bucket, row.tag)?;
             }
             if row.provenance != Provenance::LogDerived.as_str() {
                 // A provider-seeded bucket the log now speaks for is rebuilt from the log mark
@@ -189,7 +190,7 @@ pub(crate) fn merge(
         && let Some((below, below_tag)) = pred
     {
         // A gap fill binds its predecessor's tag: refuse to bind a restored older version.
-        stmts.ensure_current(tx, market, resolution, below, below_tag)?;
+        stmts.ensure_current(mac, tx, market, resolution, below, below_tag)?;
     }
     let provenance = Provenance::LogDerived.as_str();
     let tag = tag(
@@ -280,7 +281,7 @@ pub(crate) fn relink_successor(
         "the {market} {resolution:?} chain is broken at {}: its link does not name the bucket below it",
         succ.bucket
     );
-    stmts.ensure_current(tx, market, resolution, succ.bucket, succ.tag)?;
+    stmts.ensure_current(mac, tx, market, resolution, succ.bucket, succ.tag)?;
     // The row now below the successor is the insert itself, as stored.
     let insert_tag: [u8; 16] = tx
         .query_row(

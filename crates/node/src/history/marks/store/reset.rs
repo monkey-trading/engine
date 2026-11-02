@@ -24,18 +24,11 @@ use crate::history::marks::store::{ChainAnchors, SnapRow};
 
 /// Validates every pair's chain as the file holds it: every row authenticates, and every link
 /// names the row actually below it. What a delete later removes is validated through the same
-/// walk, so a hole the file already carries is refused here, before any mutation. The rows that
-/// pass are re-bound to the tags their predecessors carry. Returns the pairs it re-bound.
+/// walk, so a hole the file already carries is refused here, before any mutation.
 /// Error cases:
 /// - a stored row fails authentication, or a link names a bucket that is already missing
-pub(crate) fn rebind_chains(
-    mac: &hmac::Hmac<sha2::Sha256>,
-    tx: &Transaction,
-) -> anyhow::Result<BTreeSet<(MarketId, Resolution)>> {
-    let snapshot = snapshot_all(mac, tx)?;
-    check_links(&snapshot)?;
-    rebind(mac, tx, &snapshot, &BTreeSet::new())?;
-    Ok(snapshot.into_keys().collect())
+pub(crate) fn validate_chains(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction) -> anyhow::Result<()> {
+    check_links(&snapshot_all(mac, tx)?)
 }
 
 /// Requires every link of an already verified snapshot to name the row actually below it.
