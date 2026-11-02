@@ -8,15 +8,15 @@ use common::events::{fills, rejection};
 use common::session_keys::funded_at;
 use common::{BTC, Client, Harness, f};
 use engine_core::Fixed;
-use engine_core::event::Reject;
+use engine_core::event::{Event, Reject};
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::Side;
 
-/// BTC at half a hundredth of a cent, so 1.2 billion units are a $600,000 position: inside the
+/// BTC at five hundredths of a cent, so 1.2 billion units are a $600,000 position: inside the
 /// funded account's margin and the house's caps, and under the first size-spread tier per fill.
 const PRICE: &str = "0.0005";
 
-/// An account holding `side` positions of `orders` orders of `each` units in BTC.
+/// An account that traded `each` units of BTC on `side` `orders` times.
 fn holding(version: ProtocolVersion, side: Side, each: &str, orders: usize) -> (Harness, Client) {
     let (mut h, client, _) = funded_at(version);
     h.price(BTC, PRICE);
@@ -30,7 +30,7 @@ fn position(h: &Harness, client: &Client) -> Fixed {
     h.engine.accounts()[&client.account].position(BTC).qty
 }
 
-fn close(h: &mut Harness, client: &Client) -> Vec<engine_core::event::Event> {
+fn close(h: &mut Harness, client: &Client) -> Vec<Event> {
     let nonce = h.engine.next_request_nonce(client.account);
     let cmd = close_all(h, client, client.account, nonce, closes(&[BTC], PRICE), None);
     h.cmd(cmd)
@@ -61,8 +61,7 @@ fn a_position_at_the_input_limit_closes_whole_and_one_unit_past_it_leaves_one_un
     assert_eq!(fills(&events)[0].position, Fixed::ZERO);
 
     let (mut h, client) = holding(ProtocolVersion::V45, Side::Buy, "500000000", 2);
-    let events = fills(&market_order(&mut h, &client, BTC, Side::Buy, "0.000000001", PRICE)).len();
-    assert_eq!(events, 1);
+    assert_eq!(fills(&market_order(&mut h, &client, BTC, Side::Buy, "0.000000001", PRICE)).len(), 1);
     let events = close(&mut h, &client);
     let [fill] = fills(&events)[..] else { panic!("one fill: {events:?}") };
     assert_eq!((fill.qty, fill.position), (Fixed::MAX_INPUT, Fixed::from_raw(1)));

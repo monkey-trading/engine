@@ -36,7 +36,8 @@ pub(super) struct MarketQuote {
     pub unavailable: Option<Reject>,
     pub ask: Vec<Step>,
     pub bid: Vec<Step>,
-    /// The price of closing the account's whole position, if it holds one.
+    /// The price of closing the account's whole position, if it holds one; of `Fixed::MAX_INPUT`
+    /// units of a larger one, the most a close-all closes at once.
     pub close: Option<Close>,
 }
 
@@ -112,11 +113,9 @@ pub(super) fn market_quote(
     quote.bid = steps(quoter, account, market_id, Side::Sell, &position);
     if !held.is_zero() {
         let side = if held.is_positive() { Side::Sell } else { Side::Buy };
-        quote.close = quoter.quote(account, market_id, side, held.abs()).ok().map(|q| Close {
-            side,
-            qty: held.abs(),
-            price: q.price,
-        });
+        // A close-all closes at most the input bound of a larger position, so that is what is quoted.
+        let qty = held.abs().min(Fixed::MAX_INPUT);
+        quote.close = quoter.quote(account, market_id, side, qty).ok().map(|q| Close { side, qty, price: q.price });
     }
     Some(quote)
 }

@@ -13,7 +13,7 @@ use crate::common::{Client, ETH, Harness, f};
 
 /// The seed of the account key this part trades through.
 const ACCOUNT_SEED: u8 = 0x4d;
-/// ETH at half a hundredth of a cent: 1.2 billion units are a $600,000 position.
+/// ETH at five hundredths of a cent: 1.2 billion units are a $600,000 position.
 const PRICE: &str = "0.0005";
 
 /// An account buys 600 million units twice, so its position (1.2 billion units) is past the input

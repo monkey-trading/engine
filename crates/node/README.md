@@ -1341,7 +1341,8 @@ last step may still fill. So an order sent with the
 step's price as `quoted`, and its slippage bound, fills when nothing moved, and is declined with
 `Slippage` when the live price is worse than the bound. An order larger than the last step with no
 `declined`, or a side with no steps, cannot be opened. `close` is the price of closing the
-account's whole position. `unavailable` (with `ask` and `bid` empty) carries why a market has no
+account's whole position, or of `Fixed::MAX_INPUT` units of a larger one, the most a close-all closes
+at once. `unavailable` (with `ask` and `bid` empty) carries why a market has no
 price now: closed, no valid index, or no FX price. Quotes come from `Engine::quoter`, which prices as
 a fill does but does not re-evaluate stress or check access screening, so an order is declined for
 screening whatever its quote. A request the node cannot serve, such as an uncredited account, an

@@ -243,3 +243,17 @@ fn the_largest_size_search_reaches_the_smallest_quantity_from_the_largest_order(
         assert!(found <= limit && found >= limit - limit.div_int(500), "{limit}: {found}");
     }
 }
+
+#[test]
+fn a_position_past_the_input_bound_is_quoted_to_close_at_the_bound() {
+    let mut engine = funded(100_000_000);
+    deposit(&mut engine, MARGIN, Fixed::from_int(1_000_000));
+    let cheap = fixed("0.0005");
+    price(&mut engine, BTC, cheap, T0);
+    for _ in 0..2 {
+        let events = apply(&mut engine, T0, order(MARGIN, BTC, Side::Buy, fixed("600000000"), cheap, 10_000));
+        assert!(fills(&events), "{events:?}");
+    }
+    let close = read(&engine, MARGIN, BTC).close.expect("a close is quoted for a position past the bound");
+    assert_eq!((close.side, close.qty), (Side::Sell, Fixed::MAX_INPUT));
+}

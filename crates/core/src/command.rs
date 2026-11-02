@@ -330,7 +330,8 @@ pub struct CloseEntry {
 }
 
 /// A client's request to close its positions in `closes`, as it signs and posts it. Each entry runs
-/// as a reduce-only market order of the account's whole position in that market, with `quoted`
+/// as a reduce-only market order of the account's whole position in that market (from `V45` at
+/// most `Fixed::MAX_INPUT` units of it), with `quoted`
 /// and `max_slippage_bps` as a single market order's, and the entry's list index as its
 /// `client_id`, so a rejection names the entry it refused. A refusal of the whole request is a lone
 /// rejection with `client_id` 0.
