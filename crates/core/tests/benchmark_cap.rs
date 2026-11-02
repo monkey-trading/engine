@@ -276,12 +276,17 @@ fn a_rate_refused_for_long_enough_turns_the_observation_stale_without_stopping_f
     let mut h = capped();
     assert!(signs(&mut h, &[(0, "0.04")]));
     hold(&mut h);
-    let rollover = h.engine.next_rollover().unwrap();
-    h.advance_to(rollover + 8 * DAY_MS + 1);
-    let (amounts, observed) = financed(&h.cmd(Command::Tick));
-    assert!(amounts.len() >= 8 && amounts.windows(2).all(|pair| pair[0] == pair[1]), "{amounts:?}");
-    assert_eq!(observed.first().map(|day| day.1), Some(false));
-    assert_eq!(observed.last().map(|day| day.1), Some(true));
+    let (mut charged, mut stale) = (Vec::new(), Vec::new());
+    for _ in 0..10 {
+        let rollover = h.engine.next_rollover().unwrap();
+        h.advance_to(rollover + 1);
+        let (amounts, observed) = financed(&h.cmd(Command::Tick));
+        charged.extend(amounts);
+        stale.extend(observed.iter().map(|day| day.1));
+    }
+    assert_eq!(charged.len(), 10);
+    assert!(charged.windows(2).all(|pair| pair[0] == pair[1]), "{charged:?}");
+    assert_eq!((stale.first(), stale.last()), (Some(&false), Some(&true)), "{stale:?}");
 }
 
 #[test]
