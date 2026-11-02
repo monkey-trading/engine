@@ -14,7 +14,7 @@ fn a_full_posting_queue_defers_checkpoints_and_the_next_one_covers_every_approva
     }
     assert_eq!(node.work.capacity(), 0, "the posting queue filled");
     let gate = node.seq.gate.as_ref().unwrap();
-    assert!(gate.backlogged);
+    assert!(gate.queue_full);
     assert!(!gate.unproved.is_empty(), "approvals after the queue filled wait for a checkpoint");
     let last_checkpoint = log_entries(&node.dir)
         .into_iter()
@@ -30,7 +30,7 @@ fn a_full_posting_queue_defers_checkpoints_and_the_next_one_covers_every_approva
     node._queued.try_recv().unwrap();
     node.seq.sequence(withdraw(1)).unwrap().unwrap();
     let gate = node.seq.gate.as_ref().unwrap();
-    assert!(!gate.backlogged);
+    assert!(!gate.queue_full);
     assert!(gate.unproved.is_empty());
     assert!(gate.payouts.values().all(|payout| payout.proof.is_some()));
     assert_eq!(node.seq.engine.withdrawal_approvals().count(), approvals + 1);

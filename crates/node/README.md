@@ -217,6 +217,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/checkpoint_tests/unvalidated.rs` — worker observations preserve signing holds until collateral is compared, and an unproven finalized prefix pauses withdrawals until coverage is proven
 - `src/sequencer/checkpoint_tests/bootstrap.rs` — recovered empty anchors reconcile while nonempty unscanned checkpoints wait
 - `src/sequencer/checkpoint_tests/hold_back.rs` — the cadence waits for finality, held approvals share the next checkpoint, and the gate's alerts, a handover, a drain and a restart keep working behind a hold
+- `src/sequencer/checkpoint_tests/backlog_alert.rs` — when `checkpoint_backlog` fires and resolves: the stall bound, a forced final checkpoint (handover, drain, failed seal) leaving a stall open, and an episode open across a restart
 - `src/sequencer/checkpoint_tests/slow_poster.rs` — the real sequencer and worker in paused time over a chain with thirteen-minute finality: queue depth, withdrawal waits, and a stalled poster
 - `src/sequencer/checkpoint_tests/handover_stop.rs` — a handover's stop is the gate's call: refused
   with its causes while it would withhold the final checkpoint, and only an admitted stop ends the
@@ -985,8 +986,8 @@ account history. `POST /v1/withdrawals` retains the signed client request format
 seconds, accepted checkpoint and approval proof needed by `Vault.withdraw`.
 
 On-chain checkpoint posting uses an optional `[checkpoints]` section, required with hardware EVM
-custody. `node.checkpoint_every` sets the periodic frequency; every approved withdrawal also forces
-a checkpoint. Each root is durable locally before the relayer sends it, with a gas limit a quarter
+custody. `node.checkpoint_every` sets the periodic frequency; every approved withdrawal also asks
+for one. Each root is durable locally before the relayer sends it, with a gas limit a quarter
 above its estimate, and the node releases no
 withdrawal signature until its approval is covered by a confirmed on-chain prefix and collateral
 reconciles at custody's `withdrawal_finality_tag`, independently of the early-credit tag and its
@@ -1008,7 +1009,11 @@ are not held back. Signing rehashes everything changed since the last checkpoint
 thread: about 325 ms for 100k changed accounts and 1,000 approval proofs
 (`held_checkpoint_cost_at_100k_accounts`). A hold that outlasts `custody.evm.finality_stalled_after`
 with none becoming final raises the Warning `checkpoint_backlog`, as does a full queue; the sequencer
-keeps sequencing either way, and approvals wait for the next checkpoint. Failed posts retry after `retry_interval` and emit `checkpoint_post_failed`. Withheld signing or
+keeps sequencing either way, and approvals wait for the next checkpoint. A stall's episode resolves when a
+newer checkpoint becomes final, or when a checkpoint is signed with none on its way, and a full queue's when a
+checkpoint fits. A final checkpoint signed around the hold (a handover's, a shutdown's) resolves neither, so a
+shutdown during a stall leaves the episode open. Open episodes survive a restart in the alert outbox, and the
+restarted node resolves one at the first evidence the poster has caught up. Failed posts retry after `retry_interval` and emit `checkpoint_post_failed`. Withheld signing or
 posting emits the Warning `checkpoint_withheld`, one episode per `cause` (`collateral`,
 `custody_prefix`, `post_diverged`, `signer_retired`) however many attempts it spans, resolved when that hold clears. A conflicting
 posted root or signer, or a vault checkpoint this node did not sign, stops the node with the Critical `checkpoint_conflict` once the next retry's fresh observation
