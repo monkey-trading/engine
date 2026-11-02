@@ -207,6 +207,11 @@ pub enum ProtocolVersion {
     /// expiry cap; a revoked or expired key, a key signing a withdrawal, and any registration or
     /// revocation before `V41` are refused with their own rejections.
     V41,
+    /// An account's introduction of new session-key addresses is a budget that refills over
+    /// sequenced time instead of a lifetime count: a capacity of `MAX_SESSION_KEY_REGISTRATIONS`,
+    /// one address back per `SESSION_KEY_REFILL_MS`. Activation starts each account's budget at the
+    /// capacity less the addresses it introduced under `V41`, refilling from the activation time.
+    V42,
     /// MONKEY emission weight (`emissions`) is an account's gross realised losses in each period:
     /// every fill's loss magnitude counts, `max(-realised_pnl, 0)` (liquidations included, the
     /// profit fee and financing excluded, cash-in-lieu split losses as before), and wins in the

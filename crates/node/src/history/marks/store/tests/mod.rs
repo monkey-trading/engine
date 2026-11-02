@@ -4,6 +4,7 @@
 //! link or a committed head no longer matches — is tested in `chain.rs`.
 
 mod chain;
+mod prune;
 mod refusals;
 
 use std::path::PathBuf;
@@ -389,6 +390,29 @@ async fn an_unreadable_prior_cache_is_skipped_not_fatal() {
     Connection::open(prior_dir.join("marks.sqlite")).unwrap().pragma_update(None, "user_version", 2).unwrap();
     let imported = store.import_prior(&prior_dir.join("marks.sqlite")).unwrap();
     assert_eq!(imported, 0, "the other-version prior cache is not imported");
+}
+
+#[tokio::test]
+async fn a_prior_cache_of_another_schema_version_is_skipped_whole() {
+    let prior_dir = scratch_dir("marks-import-version");
+    let prior_path = prior_dir.join("marks.sqlite");
+    let mut prior = Store::open(&prior_path, Retentions::defaults(), mac_key()).unwrap();
+    prior.observe(&[(1, 1_792_489_860_000, fixed("3"))]).unwrap();
+    prior.mark_backfilled(1, "coinbase", "BTC-USD", 1_792_000_000_000, COVERAGE).unwrap();
+    drop(prior);
+    // Every row verifies and the file reads cleanly: only its schema version differs.
+    let prior_conn = Connection::open(&prior_path).unwrap();
+    prior_conn.pragma_update(None, "user_version", 2).unwrap();
+    let rows: i64 = prior_conn.query_row("SELECT COUNT(*) FROM marks", [], |row| row.get(0)).unwrap();
+    assert_eq!(rows, 4, "the prior cache holds rows that would import");
+    drop(prior_conn);
+
+    let (_path, mut store) = fresh_store_at("marks-import-version-fresh", Retentions::defaults());
+    assert_eq!(store.import_prior(&prior_path).unwrap(), 0);
+    assert!(minute(&store, 1).await.entries.is_empty());
+    assert!(store.backfilled().unwrap().is_empty(), "the markers of a skipped cache are skipped too");
+    let cached: i64 = store.conn.query_row("SELECT COUNT(*) FROM marks", [], |row| row.get(0)).unwrap();
+    assert_eq!(cached, 0);
 }
 
 const COVERAGE: Coverage =

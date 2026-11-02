@@ -246,7 +246,8 @@ this crate and reproduce the signed state roots exactly.
 - `src/session.rs` — weekly trading windows, holidays, dated closures such as early closes, and
   special sessions
 - `src/session_keys.rs` — from `V41`, session-key registrations and revocations: their state,
-  expiry cap, and the order/cancel-only scope a session key signs within
+  expiry cap, the order/cancel-only scope a session key signs within, and from `V42` the refilling
+  budget of new addresses an account may introduce
 - `src/account.rs` — accounts, netted positions, and resting orders
 - `src/command.rs` / `src/event.rs` — engine inputs and outputs
 - `src/types.rs` — ids, sides, and asset classes
@@ -315,6 +316,9 @@ this crate and reproduce the signed state roots exactly.
 - `tests/session_keys.rs` — `V41` session keys: registration and revival, per-key nonces, the
   order/cancel-only scope, revocations and expiries, the per-account cap and its pruning, and
   cross-account isolation, with the shared harness in `tests/common/session_keys.rs`
+- `tests/session_keys_caps.rs` — session-key retention: the live cap and its pruning, `V41`'s
+  lifetime cap, and `V42`'s refilling introduction budget (empty, hourly refill, carried partial
+  hour, saturation, known addresses free, the activation crossing)
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
@@ -441,6 +445,15 @@ at 24 hours, or an account-signed revocation; the key's requests run on the key'
 sequence under the same per-request expiry cap, a revoked or expired key and a key signing a
 withdrawal refuse with their own rejections, and an account's keys are one pruned, capped leaf of
 the state tree; its session is in `examples/reference_log/v41.rs`.
+
+Protocol V42 replaces V41's lifetime cap on an account's distinct session-key addresses with a
+budget that refills over sequenced time: a capacity of 100 new addresses, one returned per elapsed
+hour with the part of an hour not yet earned carried, so a client that generates a key per
+connect is never locked out for good and an account introduces at most 100 plus one per elapsed hour.
+Re-registering a known address spends nothing. Activation starts each account's budget at 100 less
+the addresses it introduced under V41, counting from the activation time; the leaf gains the
+budget only from V42, so V41 roots are unchanged. Its session is in
+`examples/reference_log/v42.rs`.
 
 Protocol V43 makes MONKEY emission weight an account's gross realised losses in each period
 (`src/emissions.rs`): every fill's loss magnitude counts, `max(-realised_pnl, 0)`, liquidations

@@ -373,6 +373,10 @@ impl Engine {
                 if self.protocol_version < ProtocolVersion::V38 && *version >= ProtocolVersion::V38 {
                     self.reverse_duplicate_live_receipts(events)?;
                 }
+                // The lifetime count of introduced session keys becomes a refilling budget.
+                if self.protocol_version < ProtocolVersion::V42 && *version >= ProtocolVersion::V42 {
+                    self.start_introduction_budgets();
+                }
                 self.protocol_version = *version;
                 if *version >= ProtocolVersion::V26 {
                     self.hot_indexes = None;

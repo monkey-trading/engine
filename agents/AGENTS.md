@@ -16,7 +16,8 @@ an index: load only the rule whose hint matches the current action.
   `tests/benchmark_retention.rs`), house exposure caps, toxicity scoring, signed client requests (EIP-712, per-account
   nonces, and expiries, and from `V41` session keys: one account-signed registration authorises a
   short-lived in-browser key to place and cancel orders on its own nonce sequence, in
-  `session_keys.rs`), USD settlement of markets quoted in other currencies, admin commands signed
+  `session_keys.rs`, where from `V42` the new addresses an account may introduce are a budget of
+  100 refilling one per hour of sequenced time), USD settlement of markets quoted in other currencies, admin commands signed
   by the operator key the log records and, from `V35`, bounded (`operator_bounds.rs`: profit fee and
   close-out level moves within ±50% after a seven-day notice, held markets kept priced by price-rule changes, and a
   seven-day key rotation); the spread a close can pay, from `V40`, capped per market
