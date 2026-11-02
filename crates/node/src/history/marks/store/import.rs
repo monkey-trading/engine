@@ -58,7 +58,7 @@ impl Store {
         }
         let rows = {
             let mut stmt = match from.prepare(
-                "SELECT market, resolution, bucket, open, high, low, close, provenance, prev_bucket, tag FROM marks",
+                "SELECT market, resolution, bucket, open, high, low, close, provenance, prev_bucket, tag, prev_tag FROM marks",
             ) {
                 Ok(stmt) => stmt,
                 Err(e) => {
@@ -82,6 +82,7 @@ impl Store {
                         row.get::<_, String>(7)?,
                         row.get::<_, Option<Millis>>(8)?,
                         row.get::<_, [u8; 16]>(9)?,
+                        row.get::<_, Option<[u8; 16]>>(10)?,
                     ))
                 })
                 .context("reading the prior marks cache")?;
@@ -144,7 +145,7 @@ impl Store {
         store::check_schema(&tx, &self.schema, &self.path)?;
         let pairs: std::collections::BTreeSet<(u32, Resolution)> = rows
             .iter()
-            .filter_map(|(market, resolution, _, _, _, _, _, _, _, _)| {
+            .filter_map(|(market, resolution, ..)| {
                 let market = u32::try_from(*market).ok()?;
                 let resolution = Resolution::from_tag(u8::try_from(*resolution).ok()?)?;
                 Some((market, resolution))
@@ -156,11 +157,11 @@ impl Store {
         {
             let mut insert = tx
                 .prepare(
-                    "INSERT OR IGNORE INTO marks (market, resolution, bucket, open, high, low, close, provenance, prev_bucket, tag)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    "INSERT OR IGNORE INTO marks (market, resolution, bucket, open, high, low, close, provenance, prev_bucket, tag, prev_tag)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 )
                 .context("preparing the prior marks import")?;
-            for (market, resolution, bucket, open, high, low, close, provenance, prev, stored) in rows {
+            for (market, resolution, bucket, open, high, low, close, provenance, prev, stored, prev_tag) in rows {
                 let resolution = match u8::try_from(resolution).ok().and_then(Resolution::from_tag) {
                     Some(resolution) => resolution,
                     None => {
@@ -180,7 +181,15 @@ impl Store {
                     market,
                     resolution,
                     bucket,
-                    &Row { open: &open, high: &high, low: &low, close: &close, provenance: &provenance, prev },
+                    &Row {
+                        open: &open,
+                        high: &high,
+                        low: &low,
+                        close: &close,
+                        provenance: &provenance,
+                        prev,
+                        prev_tag,
+                    },
                 );
                 if stored != expected {
                     dropped += 1;
@@ -197,7 +206,8 @@ impl Store {
                         close,
                         provenance,
                         prev,
-                        stored
+                        stored,
+                        prev_tag
                     ])
                     .with_context(|| format!("importing the prior {market} {resolution:?} bucket at {bucket}"))?;
             }
@@ -216,10 +226,10 @@ impl Store {
                     .context("importing a prior backfill marker")?;
             }
         }
-        let updates = chain::anchor_updates(&tx, &pairs)?;
+        let updates = chain::anchor_updates(&tx, &pairs, &Default::default(), false)?;
         let mut anchors = self.anchors.lock().expect("the marks chain anchors are never poisoned");
         tx.commit().context("committing the prior marks import")?;
-        super::apply_updates(&mut anchors, updates);
+        anchors.apply(updates);
         if dropped > 0 {
             warn!(
                 alert = "marks_prior_rows_dropped",

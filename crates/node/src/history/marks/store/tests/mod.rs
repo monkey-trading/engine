@@ -7,6 +7,7 @@ mod bench;
 mod chain;
 mod prune;
 mod refusals;
+mod replay;
 
 use std::path::PathBuf;
 

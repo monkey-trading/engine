@@ -201,7 +201,7 @@ async fn a_prune_deletes_only_from_pairs_the_write_validated() {
     Connection::open(&path)
         .unwrap()
         .execute(
-            "INSERT INTO marks VALUES (1, 1, ?1, '1', '1', '1', '1', 'log_derived', NULL, zeroblob(16))",
+            "INSERT INTO marks VALUES (1, 1, ?1, '1', '1', '1', '1', 'log_derived', NULL, zeroblob(16), NULL)",
             [planted],
         )
         .unwrap();

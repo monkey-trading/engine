@@ -14,7 +14,7 @@ use engine_core::types::{MarketId, Millis};
 use rusqlite::{Connection, OptionalExtension, Transaction, named_params, params};
 
 use crate::history::marks::Resolution;
-use crate::history::marks::store::auth::{Row, tag};
+use crate::history::marks::store::auth::{Interior, PairCommit, Rewrites, Row, tag};
 use crate::history::marks::store::merge;
 use crate::history::marks::store::{ChainAnchor, ChainAnchors, ChainHead, Seed, SnapRow};
 use crate::history::marks::{Provenance, Retentions};
@@ -29,26 +29,14 @@ pub(crate) fn verify_row(
     resolution: Resolution,
     row: &SnapRow,
 ) -> anyhow::Result<()> {
-    let expected = tag(
-        mac,
-        market,
-        resolution,
-        row.bucket,
-        &Row {
-            open: &row.open,
-            high: &row.high,
-            low: &row.low,
-            close: &row.close,
-            provenance: &row.provenance,
-            prev: row.prev,
-        },
-    );
+    let expected = tag(mac, market, resolution, row.bucket, &row.fields());
     ensure!(row.tag == expected, "the {market} {resolution:?} bucket at {} fails authentication", row.bucket);
     Ok(())
 }
 
-/// Re-links `row` to `prev`, keeping its content: updates the chain link and the tag that binds
-/// it, in the transaction that reasons over the chain.
+/// Re-links `row` to `prev` (the bucket below it, with the tag that row carries), keeping its
+/// content: updates the chain link and the tag that binds it, in the transaction that reasons over
+/// the chain. Returns the row's new tag.
 /// Error cases:
 /// - the update fails
 pub(crate) fn retag(
@@ -57,38 +45,43 @@ pub(crate) fn retag(
     market: MarketId,
     resolution: Resolution,
     row: &SnapRow,
-    prev: Option<Millis>,
-) -> anyhow::Result<()> {
-    let tag = tag(
-        mac,
-        market,
-        resolution,
-        row.bucket,
-        &Row { open: &row.open, high: &row.high, low: &row.low, close: &row.close, provenance: &row.provenance, prev },
-    );
+    below: Option<(Millis, [u8; 16])>,
+) -> anyhow::Result<[u8; 16]> {
+    let (prev, prev_tag) = (below.map(|below| below.0), below.map(|below| below.1));
+    let fields = Row { prev, prev_tag, ..row.fields() };
+    let tag = tag(mac, market, resolution, row.bucket, &fields);
     tx.execute(
-        "UPDATE marks SET prev_bucket = ?4, tag = ?5 WHERE market = ?1 AND resolution = ?2 AND bucket = ?3",
-        params![i64::from(market), resolution as i64, row.bucket, prev, tag],
+        "UPDATE marks SET prev_bucket = ?4, tag = ?5, prev_tag = ?6
+         WHERE market = ?1 AND resolution = ?2 AND bucket = ?3",
+        params![i64::from(market), resolution as i64, row.bucket, prev, tag, prev_tag],
     )
     .with_context(|| format!("re-linking the {market} {resolution:?} bucket at {}", row.bucket))?;
-    Ok(())
+    Ok(tag)
+}
+
+/// Notes that `bucket` was rewritten in place, so `anchor_updates` pins its tag if a row sits
+/// above it at commit.
+pub(crate) fn rewrote(rewrites: &mut Rewrites, market: MarketId, resolution: Resolution, bucket: Millis) {
+    rewrites.entry((market, resolution)).or_default().insert(bucket);
 }
 
 /// One stored row of one pair, for the merge's read of the bucket a sample lands in.
-pub(crate) const ROW_AT: &str = "SELECT open, high, low, close, provenance, prev_bucket, tag FROM marks
+pub(crate) const ROW_AT: &str = "SELECT open, high, low, close, provenance, prev_bucket, tag, prev_tag FROM marks
     WHERE market = :market AND resolution = :resolution AND bucket = :bucket";
-/// The greatest bucket below `bucket`, the chain link a stored or new row there must name.
-pub(crate) const PREDECESSOR: &str = "SELECT MAX(bucket) FROM marks
-    WHERE market = :market AND resolution = :resolution AND bucket < :bucket";
+/// The greatest bucket below `bucket` and its tag, the chain link a stored or new row there must
+/// name and the tag a new row binds.
+pub(crate) const PREDECESSOR: &str = "SELECT bucket, tag FROM marks
+    WHERE market = :market AND resolution = :resolution AND bucket < :bucket ORDER BY bucket DESC LIMIT 1";
 /// The least bucket above `bucket`, whose link a fresh insert can leave stale: only the floor's
 /// NULL or a gap the insert fills may change, and only to the insert itself.
-pub(crate) const SUCCESSOR: &str = "SELECT bucket, open, high, low, close, provenance, prev_bucket, tag FROM marks
+pub(crate) const SUCCESSOR: &str =
+    "SELECT bucket, open, high, low, close, provenance, prev_bucket, tag, prev_tag FROM marks
     WHERE market = :market AND resolution = :resolution AND bucket > :bucket ORDER BY bucket ASC LIMIT 1";
 /// Whether a bucket holds a row, for a successor link that names a bucket below the insert.
 pub(crate) const EXISTS: &str =
     "SELECT EXISTS(SELECT 1 FROM marks WHERE market = :market AND resolution = :resolution AND bucket = :bucket)";
 /// One pair's whole floor row, which a prune checks against the last bucket it deleted.
-const FLOOR_ROW: &str = "SELECT bucket, open, high, low, close, provenance, prev_bucket, tag FROM marks
+const FLOOR_ROW: &str = "SELECT bucket, open, high, low, close, provenance, prev_bucket, tag, prev_tag FROM marks
     WHERE market = ?1 AND resolution = ?2 ORDER BY bucket ASC LIMIT 1";
 /// One pair's floor row, half of its committed anchor.
 const FLOOR: &str = "SELECT bucket, tag FROM marks
@@ -97,9 +90,10 @@ const FLOOR: &str = "SELECT bucket, tag FROM marks
 const HEAD: &str = "SELECT bucket, tag FROM marks
     WHERE market = :market AND resolution = :resolution ORDER BY bucket DESC LIMIT 1";
 
-/// The anchor updates one write publishes with its commit: `Some` for a pair's freshly committed
-/// floor and head, `None` for a pair whose every bucket the write removed.
-pub(crate) type ChainUpdates = BTreeMap<(MarketId, Resolution), Option<ChainAnchor>>;
+/// The updates one write publishes with its commit: `Some` for a pair's freshly committed floor
+/// and head and the interior rows it rewrote, `None` for a pair whose every bucket the write
+/// removed.
+pub(crate) type ChainUpdates = BTreeMap<(MarketId, Resolution), Option<PairCommit>>;
 
 /// One pair's planned deletion: its horizon and the rows below it, in bucket order.
 struct PairPrune {
@@ -116,7 +110,8 @@ pub(crate) struct PrunePlan {
 }
 
 /// The rows of one pair below its horizon, a primary-key prefix search.
-pub(crate) const EXPIRING: &str = "SELECT bucket, open, high, low, close, provenance, prev_bucket, tag FROM marks
+pub(crate) const EXPIRING: &str =
+    "SELECT bucket, open, high, low, close, provenance, prev_bucket, tag, prev_tag FROM marks
     WHERE market = :market AND resolution = :resolution AND bucket < :horizon ORDER BY bucket";
 /// The delete of the rows `EXPIRING` plans, the same primary-key prefix.
 pub(crate) const DELETE_EXPIRED: &str =
@@ -165,18 +160,43 @@ pub(crate) fn check_anchors(
     Ok(())
 }
 
-/// Derives the anchor updates for the touched pairs from the transaction's own post-write view,
-/// so the committed anchors describe exactly what the transaction wrote, never unvalidated disk.
+/// Derives the updates for the touched pairs from the transaction's own post-write view, so the
+/// committed anchors describe exactly what the transaction wrote, never unvalidated disk. A bucket
+/// the write rewrote with a row above it is pinned at its tag; one that is the head is not, since
+/// the head anchor covers it and the row above that supersedes it binds its tag when it arrives.
+/// `rebound` marks a write that re-bound every row of the pairs, so no earlier pin survives.
 /// Error cases:
-/// - a pair's floor or head cannot be read
+/// - a pair's floor, head, or rewritten row cannot be read
 pub(crate) fn anchor_updates(
     tx: &Transaction,
     pairs: &BTreeSet<(MarketId, Resolution)>,
+    rewrites: &Rewrites,
+    rebound: bool,
 ) -> anyhow::Result<ChainUpdates> {
-    pairs
-        .iter()
-        .map(|(market, resolution)| Ok(((*market, *resolution), pair_anchor(tx, *market, *resolution)?)))
-        .collect()
+    let mut updates = ChainUpdates::new();
+    for &(market, resolution) in pairs {
+        let Some(anchor) = pair_anchor(tx, market, resolution)? else {
+            updates.insert((market, resolution), None);
+            continue;
+        };
+        let mut rewritten = Interior::new();
+        for &bucket in rewrites.get(&(market, resolution)).into_iter().flatten() {
+            if bucket >= anchor.head.bucket {
+                continue;
+            }
+            let tag: Option<[u8; 16]> = tx
+                .query_row(
+                    "SELECT tag FROM marks WHERE market = ?1 AND resolution = ?2 AND bucket = ?3",
+                    params![i64::from(market), resolution as i64, bucket],
+                    |row| row.get(0),
+                )
+                .optional()
+                .with_context(|| format!("reading the rewritten {market} {resolution:?} bucket at {bucket}"))?;
+            rewritten.extend(tag.map(|tag| (bucket, tag)));
+        }
+        updates.insert((market, resolution), Some(PairCommit { anchor, rewritten, rebound }));
+    }
+    Ok(updates)
 }
 
 /// The pairs whose committed floor lies below their resolution's horizon, counted back from
@@ -230,6 +250,7 @@ pub(crate) fn plan_prune(
                         provenance: row.get(5)?,
                         prev: row.get(6)?,
                         tag: row.get(7)?,
+                        prev_tag: row.get(8)?,
                     })
                 },
             )
@@ -251,7 +272,12 @@ pub(crate) fn plan_prune(
 /// Error cases:
 /// - the delete fails, an expiring or floor row fails authentication, a link names a bucket that
 ///   is already missing, or a floor link names a bucket this prune did not delete
-pub(crate) fn apply_prune(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction, plan: &PrunePlan) -> anyhow::Result<()> {
+pub(crate) fn apply_prune(
+    mac: &hmac::Hmac<sha2::Sha256>,
+    tx: &Transaction,
+    plan: &PrunePlan,
+    rewrites: &mut Rewrites,
+) -> anyhow::Result<()> {
     for PairPrune { market, resolution, horizon, rows } in &plan.pairs {
         let (market, resolution) = (*market, *resolution);
         let mut previous = None;
@@ -286,6 +312,7 @@ pub(crate) fn apply_prune(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction, plan
                     provenance: row.get(5)?,
                     prev: row.get(6)?,
                     tag: row.get(7)?,
+                    prev_tag: row.get(8)?,
                 })
             })
             .optional()
@@ -304,6 +331,7 @@ pub(crate) fn apply_prune(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction, plan
             floor.bucket
         );
         retag(mac, tx, market, resolution, &floor, None)?;
+        rewrote(rewrites, market, resolution, floor.bucket);
     }
     Ok(())
 }
@@ -312,17 +340,21 @@ pub(crate) fn apply_prune(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction, plan
 /// history never overwrites log-derived marks or an earlier seed. Inserts run oldest first, each
 /// naming the bucket actually below it, and only the pre-existing row above an insert can need
 /// re-linking — to the insert itself, never over a bucket that vanished some other way. Returns
-/// how many rows were added.
+/// how many rows were added, with the buckets it rewrote.
 /// Error cases:
 /// - the transaction fails, a stored row fails authentication, or a link names a bucket this
 ///   seed did not insert
-pub(crate) fn seed(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction, rows: &[Seed]) -> anyhow::Result<usize> {
+pub(crate) fn seed(
+    mac: &hmac::Hmac<sha2::Sha256>,
+    tx: &Transaction,
+    rows: &[Seed],
+) -> anyhow::Result<(usize, Rewrites)> {
     let mut by_pair: BTreeMap<(MarketId, Resolution), Vec<&Seed>> = BTreeMap::new();
     for row in rows {
         by_pair.entry((row.market, row.resolution)).or_default().push(row);
     }
     let mut inserted = 0;
-    let mut stmts = merge::MergeStmts::prepare(tx)?;
+    let mut stmts = merge::MergeStmts::prepare(tx, BTreeMap::new())?;
     for ((market, resolution), mut seeds) in by_pair {
         seeds.sort_by_key(|seed| seed.ts);
         let mut fresh: BTreeSet<Millis> = BTreeSet::new();
@@ -336,9 +368,7 @@ pub(crate) fn seed(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction, rows: &[See
             if exists == 1 {
                 continue;
             }
-            let pred: Option<Millis> = tx
-                .query_row(PREDECESSOR, params![i64::from(market), resolution as i64, seed.ts], |row| row.get(0))
-                .with_context(|| format!("reading the {market} {resolution:?} chain at {}", seed.ts))?;
+            let pred = stmts.predecessor(market, resolution, seed.ts)?;
             let provenance = Provenance::SeededFromProvider.as_str();
             let (open, high, low, close) =
                 (seed.open.to_string(), seed.high.to_string(), seed.low.to_string(), seed.close.to_string());
@@ -347,12 +377,20 @@ pub(crate) fn seed(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction, rows: &[See
                 market,
                 resolution,
                 seed.ts,
-                &Row { open: &open, high: &high, low: &low, close: &close, provenance, prev: pred },
+                &Row {
+                    open: &open,
+                    high: &high,
+                    low: &low,
+                    close: &close,
+                    provenance,
+                    prev: pred.map(|pred| pred.0),
+                    prev_tag: pred.map(|pred| pred.1),
+                },
             );
             inserted += tx
                 .execute(
-                    "INSERT INTO marks (market, resolution, bucket, open, high, low, close, provenance, prev_bucket, tag)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    "INSERT INTO marks (market, resolution, bucket, open, high, low, close, provenance, prev_bucket, tag, prev_tag)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                     params![
                         i64::from(market),
                         resolution as i64,
@@ -362,8 +400,9 @@ pub(crate) fn seed(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction, rows: &[See
                         low,
                         close,
                         provenance,
-                        pred,
-                        tag
+                        pred.map(|pred| pred.0),
+                        tag,
+                        pred.map(|pred| pred.1)
                     ],
                 )
                 .with_context(|| format!("seeding {market} {resolution:?} at {}", seed.ts))?;
@@ -375,5 +414,5 @@ pub(crate) fn seed(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction, rows: &[See
             merge::relink_successor(mac, tx, &mut stmts, market, resolution, bucket, &fresh)?;
         }
     }
-    Ok(inserted)
+    Ok((inserted, stmts.into_rewrites()))
 }

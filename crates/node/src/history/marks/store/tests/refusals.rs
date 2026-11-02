@@ -221,7 +221,7 @@ async fn a_backfill_refuses_to_relink_a_restored_floor_row() {
     let host = Connection::open(&path).unwrap();
     host.execute("DELETE FROM marks WHERE market = 1 AND resolution = 1 AND bucket = ?1", [base + 60_000]).unwrap();
     host.execute(
-        "UPDATE marks SET prev_bucket = NULL, tag = ?1 WHERE market = 1 AND resolution = 1 AND bucket = ?2",
+        "UPDATE marks SET prev_bucket = NULL, prev_tag = NULL, tag = ?1 WHERE market = 1 AND resolution = 1 AND bucket = ?2",
         rusqlite::params![old_tag, base + 120_000],
     )
     .unwrap();
@@ -304,7 +304,7 @@ async fn a_seed_batch_relinking_past_a_surviving_older_row_refuses() {
     )
     .unwrap();
     host.execute(
-        "UPDATE marks SET prev_bucket = NULL, tag = ?1 WHERE market = 1 AND resolution = 1 AND bucket = ?2",
+        "UPDATE marks SET prev_bucket = NULL, prev_tag = NULL, tag = ?1 WHERE market = 1 AND resolution = 1 AND bucket = ?2",
         rusqlite::params![old_tag, base + 120_000],
     )
     .unwrap();
@@ -382,7 +382,7 @@ async fn a_prune_refuses_to_publish_a_restored_row_as_the_new_floor() {
     let host = Connection::open(&path).unwrap();
     host.execute("DELETE FROM marks WHERE market = 1 AND resolution = 1 AND bucket = ?1", [base + 60_000]).unwrap();
     host.execute(
-        "UPDATE marks SET prev_bucket = NULL, tag = ?1 WHERE market = 1 AND resolution = 1 AND bucket = ?2",
+        "UPDATE marks SET prev_bucket = NULL, prev_tag = NULL, tag = ?1 WHERE market = 1 AND resolution = 1 AND bucket = ?2",
         rusqlite::params![old_tag, base + 120_000],
     )
     .unwrap();
@@ -424,12 +424,12 @@ async fn a_prune_refuses_a_floor_linking_an_earlier_deleted_bucket() {
     let base = 1_792_489_860_000;
     // A and C first: C's authentic row links to A. Then B between them: C re-links to B.
     store.observe(&[(market, base, fixed("1")), (market, base + 120_000, fixed("3"))]).unwrap();
-    let old_tag: Vec<u8> = Connection::open(&path)
+    let (old_tag, old_prev_tag): (Vec<u8>, Vec<u8>) = Connection::open(&path)
         .unwrap()
         .query_row(
-            "SELECT tag FROM marks WHERE market = 1 AND resolution = 1 AND bucket = ?1",
+            "SELECT tag, prev_tag FROM marks WHERE market = 1 AND resolution = 1 AND bucket = ?1",
             [base + 120_000],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .unwrap();
     store.observe(&[(market, base + 180_000, fixed("4"))]).unwrap();
@@ -438,8 +438,8 @@ async fn a_prune_refuses_a_floor_linking_an_earlier_deleted_bucket() {
     // A and B must refuse: C's authentic link names an earlier bucket than the last deleted.
     let host = Connection::open(&path).unwrap();
     host.execute(
-        "UPDATE marks SET prev_bucket = ?1, tag = ?2 WHERE market = 1 AND resolution = 1 AND bucket = ?3",
-        rusqlite::params![base, old_tag, base + 120_000],
+        "UPDATE marks SET prev_bucket = ?1, tag = ?2, prev_tag = ?3 WHERE market = 1 AND resolution = 1 AND bucket = ?4",
+        rusqlite::params![base, old_tag, old_prev_tag, base + 120_000],
     )
     .unwrap();
     drop(host);
