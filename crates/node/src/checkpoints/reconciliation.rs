@@ -168,11 +168,14 @@ impl<R: CheckpointChain> Poster<R> {
         if let Some((seq, root)) = &state.checkpoint
             && *seq > work.checkpoint.seq
         {
-            work = known
-                .iter()
-                .copied()
-                .find(|work| work.checkpoint.seq == *seq)
-                .context("vault advanced to a checkpoint not yet received by this worker")?;
+            let relayed = known.iter().copied().find(|work| work.checkpoint.seq == *seq);
+            // The sequencer registers a checkpoint before it is public, so one the registry lacks on
+            // a fresh observation is another history's, which no checkpoint of this node can extend.
+            if relayed.is_none() && self.registry.is_some() {
+                return Err(anyhow::Error::from(Conflict("the vault holds a checkpoint this node did not sign"))
+                    .context(format!("vault root {root} at seq {seq}")));
+            }
+            work = relayed.context("vault advanced to a checkpoint not yet received by this worker")?;
             if work.checkpoint.root != *root {
                 return Err(anyhow::Error::from(Conflict("conflicting publicly relayed checkpoint root"))
                     .context(format!("vault root {root} at seq {seq}")));

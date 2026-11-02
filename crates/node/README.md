@@ -1009,7 +1009,7 @@ with none becoming final raises the Warning `checkpoint_backlog`, as does a full
 keeps sequencing either way, and approvals wait for the next checkpoint. Failed posts retry after `retry_interval` and emit `checkpoint_post_failed`. Withheld signing or
 posting emits the Warning `checkpoint_withheld`, one episode per `cause` (`collateral`,
 `custody_prefix`, `post_diverged`, `signer_retired`) however many attempts it spans, resolved when that hold clears. A conflicting
-posted root or signer stops the node with the Critical `checkpoint_conflict` once the next retry's fresh observation
+posted root or signer, or a vault checkpoint this node did not sign, stops the node with the Critical `checkpoint_conflict` once the next retry's fresh observation
 repeats it; seen once, it retries with `checkpoint_post_failed`, since one read can be torn across a block the
 endpoint is still mining. A failed post once the vault's exit against the last posted root has started
 (`exitStartedAt`) stops the node with the Critical `vault_exit_started`: no checkpoint can follow it. Following decision #15 §2, withdrawals
