@@ -88,7 +88,9 @@ impl Rig {
 
     pub(crate) fn apply(&mut self, ts: Millis, cmd: Command) -> Vec<Event> {
         let seq = self.engine.last_seq().map_or(0, |seq| seq + 1);
-        let events = self.engine.apply(&Sequenced { seq, ts, cmd }).unwrap();
+        let sequenced = Sequenced { seq, ts, cmd };
+        let events = self.engine.apply(&sequenced).unwrap();
+        self.stats.follow(&sequenced);
         self.stats.observe(&self.engine, ts, &events);
         events
     }
@@ -244,6 +246,7 @@ fn a_series_rejects_a_market_it_does_not_take_and_one_it_needs() {
     assert!(ask("bogus", None).unwrap_err().contains("nav"));
 }
 
+mod background;
 mod bounds;
 pub(super) mod closeout_map;
 mod currency;

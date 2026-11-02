@@ -5,12 +5,15 @@
 //! file to roll back; a recovery from a checkpoint snapshot sees only the commands after it, and
 //! every answer says where its data begins.
 //!
-//! The scan of every account (`snapshot`) runs on the sequencer's thread, at most once per
-//! `api.stats_interval` of sequenced time, so the same log gives the same snapshots whenever it is
-//! replayed. Reads run on that thread too, between batches, and so see only commands the log
-//! already holds durably.
+//! The scan of every account (`snapshot`) is due at most once per `api.stats_interval` of sequenced
+//! time, so the same log gives the same snapshots whenever it is replayed. A running node takes it
+//! on a worker thread that applies the same commands to a copy of the engine (`background`), so no
+//! scan holds the sequencer; a replay, and a node whose worker stopped, scan on the replaying or
+//! sequencing thread. Reads run on the sequencer's thread, between batches, and so see only commands
+//! the log already holds durably.
 
 mod activity;
+mod background;
 mod closeout;
 mod monkey;
 mod record;
@@ -23,6 +26,7 @@ pub(crate) use view::{ActivityPage, HouseFigures, PositionsView, SeriesPage, Ser
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use anyhow::Context;
+use engine_core::command::Sequenced;
 use engine_core::types::Millis;
 use engine_core::{Engine, Fixed};
 
@@ -70,6 +74,8 @@ pub(crate) struct Inner {
     staked: u128,
     stakers: u64,
     distribution: Option<Distribution>,
+    /// The worker that takes the scans, once the sequencer has started one.
+    background: Option<background::Background>,
     /// Set while a replay feeds the record, whose scans are light: only the last one is served.
     recovering: bool,
 }
@@ -118,6 +124,7 @@ impl Inner {
             staked: 0,
             stakers: 0,
             distribution: None,
+            background: None,
             recovering: false,
         }
     }
@@ -132,8 +139,42 @@ impl Stats {
         Ok(Self { shared: Arc::new(Mutex::new(Inner::new(&settings))), settings: Arc::new(settings) })
     }
 
+    /// The record, with the background scan installed if it has finished.
     fn lock(&self) -> MutexGuard<'_, Inner> {
-        self.shared.lock().unwrap_or_else(PoisonError::into_inner)
+        let mut inner = self.shared.lock().unwrap_or_else(PoisonError::into_inner);
+        inner.collect();
+        inner
+    }
+
+    /// Moves the scans to a worker over a copy of `engine`, which `follow` then keeps in step. Call
+    /// it once, after recovery, before the sequencer applies its first command. A copy that cannot
+    /// be made leaves the scans on the sequencer's thread, with an alert.
+    pub(crate) fn scan_in_background(&self, engine: &Engine) {
+        match background::Background::start(engine) {
+            Ok(worker) => self.lock().background = Some(worker),
+            Err(error) => background::stopped(&format!("{error:#}")),
+        }
+    }
+
+    /// Gives the worker, if there is one, a command the sequencer applied, before `observe` sees it.
+    pub(crate) fn follow(&self, sequenced: &Sequenced) {
+        let mut inner = self.lock();
+        if inner.background.as_ref().is_some_and(|worker| !worker.apply(sequenced)) {
+            inner.background = None;
+            background::stopped("the worker's queue closed");
+        }
+    }
+
+    /// Waits for the scans in flight and installs them. For tests.
+    #[cfg(test)]
+    pub(crate) fn settle(&self) {
+        let mut inner = self.lock();
+        while let Some(worker) = inner.background.as_mut().filter(|worker| worker.in_flight() > 0) {
+            match worker.wait() {
+                Ok(snapshot) => inner.install(*snapshot),
+                Err(reason) => panic!("the background scan failed: {reason}"),
+            }
+        }
     }
 
     /// Forgets everything recorded: a replay starts over, so a recovery attempt that failed part

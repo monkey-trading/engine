@@ -8,8 +8,9 @@ use engine_core::types::Millis;
 use engine_core::{Engine, Fixed};
 
 use crate::stats::activity::{Entry, Kind, id};
+use crate::stats::background::{self, Background};
 use crate::stats::series::{Amount, Metric, from_raw, from_units};
-use crate::stats::snapshot::{self, MarketBook};
+use crate::stats::snapshot::{self, MarketBook, Snapshot};
 use crate::stats::{Begin, Distribution, Inner, Settings, Stats};
 
 /// A base unit count as a series value.
@@ -122,12 +123,42 @@ impl Inner {
         self.sample_levels(engine, ts);
         if self.next_scan.is_some_and(|due| ts >= due) {
             self.next_scan = Some(ts.saturating_add(settings.interval_ms));
-            let snapshot = snapshot::scan(engine, seq, ts, settings.layout, !self.recovering);
-            for (market, book) in &snapshot.markets {
-                self.sample_book(*market, book, ts);
-            }
-            self.snapshot = Some(snapshot);
+            self.scan(settings, engine, seq, ts);
         }
+    }
+
+    /// Takes the scan due at `seq`: requested of the worker, or run here when there is none.
+    fn scan(&mut self, settings: &Settings, engine: &Engine, seq: u64, ts: Millis) {
+        if let Some(worker) = &mut self.background {
+            if worker.request(seq, ts, settings.layout) {
+                return;
+            }
+            self.background = None;
+            background::stopped("the worker's queue closed");
+        }
+        self.install(snapshot::scan(engine, seq, ts, settings.layout, !self.recovering));
+    }
+
+    /// Installs the finished background scans, oldest first.
+    pub(super) fn collect(&mut self) {
+        while let Some(polled) = self.background.as_mut().map(Background::poll) {
+            match polled {
+                Ok(Some(snapshot)) => self.install(*snapshot),
+                Ok(None) => break,
+                Err(reason) => {
+                    self.background = None;
+                    background::stopped(&reason);
+                }
+            }
+        }
+    }
+
+    /// Serves `snapshot` and samples its long and short at the time it was due.
+    pub(super) fn install(&mut self, snapshot: Snapshot) {
+        for (market, book) in &snapshot.markets {
+            self.sample_book(*market, book, snapshot.ts);
+        }
+        self.snapshot = Some(snapshot);
     }
 
     /// Re-reads the withdrawal queue's total from the engine.
