@@ -38,7 +38,7 @@ use crate::test_support::{dev_config, log_entries, sample_around, scratch_dir, s
 const CHECKPOINT_EVERY: u64 = 100;
 /// The time the sequencer stamps every command with, the API checks against, and quotes carry:
 /// Tue 20 Oct 2026 14:00 UTC.
-const NOW: Millis = 1_792_504_800_000;
+pub(super) const NOW: Millis = 1_792_504_800_000;
 /// The account counts the dev scenario compares checkpoint work at; it credits up to the last.
 const ACCOUNTS: [u32; 3] = [1_000, 10_000, 100_000];
 /// Logs written before the state tree: by the node before protocol versions, and under `V3` and
@@ -232,7 +232,7 @@ async fn an_entitlement_is_provable_from_the_first_checkpoint_after_its_period()
     node.checkpoint().await;
     let (status, body) = node.get(&format!("/v1/accounts/{trader}/emissions")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let proof: EntitlementProof = serde_json::from_value(body).unwrap();
+    let proof = super::claim_tests::proof_of(&body);
     assert_eq!(proof.entitled, TokenUnits(1_000));
     assert!(proof.verify(logged_root(&node.entries(), proof.seq)));
     assert_eq!(node.get("/v1/accounts/0x12/emissions").await.0, StatusCode::BAD_REQUEST);
@@ -243,23 +243,36 @@ async fn an_entitlement_is_provable_from_the_first_checkpoint_after_its_period()
 
 /// A node on a fresh log under the latest protocol version with the dev genesis, serving the API
 /// in process, stamping commands on a clock that moves only when the test moves it.
-struct Node {
+pub(super) struct Node {
     app: Router,
-    state: ApiState,
-    dir: PathBuf,
+    pub(super) state: ApiState,
+    pub(super) dir: PathBuf,
     stamps: Arc<TestClock>,
+    task: tokio::task::JoinHandle<anyhow::Result<()>>,
 }
 
 impl Node {
     /// Recovers a sequencer on a fresh log named after `name`, activates the protocol, sequences
     /// the dev genesis, and serves the API over it, checkpointing every `CHECKPOINT_EVERY` commands.
-    async fn start(name: &str) -> Self {
-        let dir = scratch_dir(name);
+    pub(super) async fn start(name: &str) -> Self {
+        Self::open(scratch_dir(name), Arc::new(TestClock::at(NOW)), true).await
+    }
+
+    /// Stops the sequencer after its last command is durable, then recovers a new one from the log
+    /// it wrote, on the same clock, as a restart does.
+    pub(super) async fn restart(self) -> Self {
+        let (dir, stamps) = (self.dir.clone(), self.stamps.clone());
+        drop(self.app);
+        drop(self.state);
+        self.task.await.expect("the sequencer task ends").expect("the sequencer stops cleanly");
+        Self::open(dir, stamps, false).await
+    }
+
+    async fn open(dir: PathBuf, stamps: Arc<TestClock>, fresh: bool) -> Self {
         let key = Arc::new(EnclaveKey::test_key());
         let (stream, _) = broadcast::channel(16);
         let (withdrawals_tx, _) = mpsc::unbounded_channel();
         let (manifest_tx, manifest) = watch::channel(Manifest::default());
-        let stamps = Arc::new(TestClock::at(NOW));
         let cfg = SequencerConfig {
             segment_commands: 10_000,
             checkpoint_every: CHECKPOINT_EVERY,
@@ -269,12 +282,14 @@ impl Node {
             ..sequencer_config(&dir, manifest_tx)
         };
         let mut seq = Sequencer::recover(cfg, key.clone(), stream.clone(), withdrawals_tx).unwrap();
-        seq.activate_legacy_protocol().unwrap();
-        seq.genesis(&dev_config().genesis).unwrap();
+        if fresh {
+            seq.activate_legacy_protocol().unwrap();
+            seq.genesis(&dev_config().genesis).unwrap();
+        }
         // Trusted time agrees with the fixed clock, so the queued activation and genesis go in now.
         seq.trust(sample_around(stamps.as_ref())).unwrap();
         let (tx, rx) = mpsc::channel(1024);
-        tokio::spawn(seq.run(rx));
+        let task = tokio::spawn(seq.run(rx));
         // The scenario credits 100k accounts from one client, so no request is rate limited.
         let unlimited = |_: RateLimit| Quota::per_second(NonZeroU32::MAX);
         let bundle = AttestationBundle {
@@ -306,11 +321,11 @@ impl Node {
             signing: crate::test_support::signing(),
         };
         let app = router(state.clone()).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9))));
-        Node { app, state, dir, stamps }
+        Node { app, state, dir, stamps, task }
     }
 
     /// Moves the clock and trusted time forward by `by`.
-    async fn advance(&self, by: Duration) {
+    pub(super) async fn advance(&self, by: Duration) {
         self.stamps.advance(by);
         let sample = sample_around(self.stamps.as_ref());
         self.state.tx.send(sequencer::Request::TimeSample(sample)).await.expect("the sequencer is running");
@@ -318,21 +333,21 @@ impl Node {
 
     /// `command` signed by the dev operator key with the operator's next nonce, as `engine admin`
     /// posts it.
-    fn signed(&self, command: AdminCommand) -> Value {
+    pub(super) fn signed(&self, command: AdminCommand) -> Value {
         let key = k256::ecdsa::SigningKey::from_slice(&[0x42; 32]).unwrap();
         let operator = dev_config().operator().unwrap();
         serde_json::to_value(crate::admin::sign(&key, &operator, command, 0, NOW + 60_000)).unwrap()
     }
 
     /// Credits `account` with `amount` through the dev deposit route.
-    async fn deposit(&self, account: AccountId, amount: &str) {
+    pub(super) async fn deposit(&self, account: AccountId, amount: &str) {
         let body = serde_json::json!({ "account": account, "amount": amount });
         let (status, events) = self.post("/v1/dev/deposit", body).await;
         assert_eq!(status, StatusCode::OK, "{events}");
     }
 
     /// Prices BTC at `mid` from two venues, stamped now.
-    async fn price_btc(&self, mid: &str) {
+    pub(super) async fn price_btc(&self, mid: &str) {
         let ts = self.stamps.now_ms();
         let quotes = ["a", "b"]
             .map(|venue| SourceQuote { source: venue.into(), mid: mid.parse().unwrap(), ts, contract: None })
@@ -341,26 +356,26 @@ impl Node {
     }
 
     /// Sequences ticks until the last command applied was followed by a checkpoint.
-    async fn checkpoint(&self) {
+    pub(super) async fn checkpoint(&self) {
         while self.state.query(|e| e.last_seq().map_or(0, |s| s + 1)).await.expect("running") % CHECKPOINT_EVERY != 0 {
             self.state.submit(Command::Tick).await.expect("the sequencer is running");
         }
     }
 
     /// Every entry of the node's log, as flushed so far.
-    fn entries(&self) -> Vec<LogEntry> {
+    pub(super) fn entries(&self) -> Vec<LogEntry> {
         log_entries(&self.dir)
     }
 
     /// The status and JSON body of a POST of `body` to `path`.
-    async fn post(&self, path: &str, body: Value) -> (StatusCode, Value) {
+    pub(super) async fn post(&self, path: &str, body: Value) -> (StatusCode, Value) {
         let request =
             HttpRequest::post(path).header("content-type", "application/json").body(Body::from(body.to_string()));
         self.send(request.unwrap()).await
     }
 
     /// The status and JSON body of a GET of `path`.
-    async fn get(&self, path: &str) -> (StatusCode, Value) {
+    pub(super) async fn get(&self, path: &str) -> (StatusCode, Value) {
         self.send(HttpRequest::get(path).body(Body::empty()).unwrap()).await
     }
 
@@ -374,14 +389,14 @@ impl Node {
 }
 
 /// The account numbered `n`.
-fn account(n: u32) -> AccountId {
+pub(super) fn account(n: u32) -> AccountId {
     let mut id = [0x11; 20];
     id[16..].copy_from_slice(&n.to_be_bytes());
     AccountId(id)
 }
 
 /// The root the log's checkpoint at `seq` carries.
-fn logged_root(entries: &[LogEntry], seq: u64) -> B256 {
+pub(super) fn logged_root(entries: &[LogEntry], seq: u64) -> B256 {
     let root = entries
         .iter()
         .find_map(|entry| match entry {

@@ -50,7 +50,7 @@ impl<R: CheckpointChain> Poster<R> {
             };
             cursor = page.last().map(|approval| (approval.account, approval.nonce));
             let lifecycle = Some(LifecycleEvidence { approvals: statuses, ..evidence.clone() });
-            tx.send(Request::CheckpointStatus { posted, health, lifecycle })
+            tx.send(Request::CheckpointStatus { latest: None, posted, health, lifecycle })
                 .await
                 .map_err(|_| anyhow::anyhow!("sequencer stopped"))?;
         }

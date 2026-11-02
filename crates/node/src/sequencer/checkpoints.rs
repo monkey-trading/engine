@@ -283,6 +283,7 @@ impl Sequencer {
         let (started, root) = (Instant::now(), self.engine.state_root());
         let (elapsed_us, work) = (started.elapsed().as_micros(), self.engine.last_root_work());
         debug!(seq, elapsed_us, leaves = work.map(|w| w.leaves), nodes = work.map(|w| w.nodes), "state root computed");
+        self.claims.capture(&self.engine);
         let cp = Checkpoint {
             parent: self.gate.as_ref().map(|gate| gate.parent),
             seq,

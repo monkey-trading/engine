@@ -14,6 +14,7 @@ use crate::log::{Checkpoint, CheckpointDomain, CommandEntry, LogEntry};
 use crate::sequencer::{Request, replay};
 use crate::tee::EnclaveKey;
 mod distributions;
+mod latest;
 mod receipts;
 
 mod collateral;
@@ -241,7 +242,9 @@ async fn a_provisional_then_orphaned_approval_never_releases_a_signature() {
     let posted = seq.last_seq();
     let (tx, rx) = mpsc::channel(64);
     let task = tokio::spawn(seq.run(rx));
-    tx.send(Request::CheckpointStatus { posted, health: Some(Health::Healthy), lifecycle: None }).await.unwrap();
+    tx.send(Request::CheckpointStatus { latest: None, posted, health: Some(Health::Healthy), lifecycle: None })
+        .await
+        .unwrap();
     submit(&tx, crate::test_support::deposit(100, "0xfinality-deposit")).await;
     submit(&tx, crate::test_support::withdraw(40)).await;
     let mut work = None;
@@ -284,13 +287,15 @@ async fn a_provisional_then_orphaned_approval_never_releases_a_signature() {
         }
         let (posted, health) = poster.reconcile(&work).await.unwrap();
         assert_eq!((posted, health), (None, Health::Unvalidated));
-        tx.send(Request::CheckpointStatus { posted, health: Some(health), lifecycle: None }).await.unwrap();
+        tx.send(Request::CheckpointStatus { latest: None, posted, health: Some(health), lifecycle: None })
+            .await
+            .unwrap();
         sync(&tx).await;
         assert!(signed_rx.try_recv().is_err(), "unfinalized or orphaned inclusion cannot release an approval");
     }
     *finalized.lock().unwrap() = poster.chain.state.lock().unwrap().clone();
     let (posted, health) = poster.reconcile(&work).await.unwrap();
-    tx.send(Request::CheckpointStatus { posted, health: Some(health), lifecycle: None }).await.unwrap();
+    tx.send(Request::CheckpointStatus { latest: None, posted, health: Some(health), lifecycle: None }).await.unwrap();
     sync(&tx).await;
     let released = signed_rx.try_recv().expect("finalized healthy approval releases");
     assert_eq!(released.approved_seq, Some(work.checkpoint.seq));
