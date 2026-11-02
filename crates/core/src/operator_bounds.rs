@@ -61,6 +61,9 @@ pub struct OperatorBounds {
     /// How many rotations have taken effect.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub rotations: u64,
+    /// From `V46`, when a global stress floor above level 0 was set, which starts its time to lapse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub global_floor_set_at: Option<Millis>,
 }
 
 impl OperatorBounds {

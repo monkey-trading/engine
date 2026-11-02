@@ -159,9 +159,6 @@ pub struct Engine {
     /// From `V37`, the mirrored operator registry: whether rotation is on, and the last election.
     #[serde(default, skip_serializing_if = "OperatorElection::is_default")]
     pub(crate) operator_election: OperatorElection,
-    /// From `V46`, when a global stress floor above level 0 was set, which starts its time to lapse.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) global_stress_floor_set_at: Option<Millis>,
     /// From `V40`, the most each market's closing slice may pay, in bps of the index: adopted once
     /// (genesis, or one signed install) and changed only by a signed adoption, so `UpsertMarket`
     /// can neither replace nor raise an entry. Absent until installed.

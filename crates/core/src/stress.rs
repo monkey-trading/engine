@@ -170,7 +170,7 @@ impl Engine {
         match market {
             None => {
                 self.global_stress_floor = level;
-                self.global_stress_floor_set_at = set_at;
+                self.operator_bounds.global_floor_set_at = set_at;
             }
             Some(id) => {
                 let stress = &mut self.markets.get_mut(&id).ok_or("unknown market")?.stress;
@@ -194,7 +194,7 @@ impl Engine {
         }
         if self.global_stress_floor > 0 {
             self.global_stress_floor = self.global_stress_floor.min(MAX_OPERATOR_STRESS_FLOOR);
-            self.global_stress_floor_set_at = Some(now);
+            self.operator_bounds.global_floor_set_at = Some(now);
         }
         self.restress_all(events);
     }
@@ -210,7 +210,7 @@ impl Engine {
         let due = |set_at: Option<Millis>| set_at.is_some_and(|at| now - at >= STRESS_FLOOR_LAPSE_MS);
         let lapsed: Vec<MarketId> =
             self.markets.iter().filter(|(_, market)| due(market.stress.floor_set_at)).map(|(id, _)| *id).collect();
-        let global = due(self.global_stress_floor_set_at);
+        let global = due(self.operator_bounds.global_floor_set_at);
         if lapsed.is_empty() && !global {
             return;
         }
@@ -221,7 +221,7 @@ impl Engine {
         }
         if global {
             self.global_stress_floor = 0;
-            self.global_stress_floor_set_at = None;
+            self.operator_bounds.global_floor_set_at = None;
         }
         self.restress_all(events);
     }
