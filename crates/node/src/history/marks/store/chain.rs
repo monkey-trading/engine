@@ -15,6 +15,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, named_params, params}
 
 use crate::history::marks::Resolution;
 use crate::history::marks::store::auth::{Row, tag};
+use crate::history::marks::store::merge;
 use crate::history::marks::store::{ChainAnchor, ChainAnchors, ChainHead, Seed, SnapRow};
 use crate::history::marks::{Provenance, Retentions};
 
@@ -321,6 +322,7 @@ pub(crate) fn seed(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction, rows: &[See
         by_pair.entry((row.market, row.resolution)).or_default().push(row);
     }
     let mut inserted = 0;
+    let mut stmts = merge::MergeStmts::prepare(tx)?;
     for ((market, resolution), mut seeds) in by_pair {
         seeds.sort_by_key(|seed| seed.ts);
         let mut fresh: BTreeSet<Millis> = BTreeSet::new();
@@ -370,7 +372,7 @@ pub(crate) fn seed(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction, rows: &[See
         // Only the pre-existing row directly above an insert can have a stale link: the rows
         // this seed inserted chained to each other as they went in.
         for bucket in fresh.iter().copied() {
-            crate::history::marks::store::merge::relink_successor(mac, tx, market, resolution, bucket, &fresh)?;
+            merge::relink_successor(mac, tx, &mut stmts, market, resolution, bucket, &fresh)?;
         }
     }
     Ok(inserted)
