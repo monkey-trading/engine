@@ -19,7 +19,7 @@ use tokio::time::{Instant, Interval, MissedTickBehavior, interval_at, sleep};
 use tracing::{error, info, warn};
 
 use crate::config::{ApiKey, NamedSecret, NodeConfig, SecretUse, Values, VenueConnection};
-use crate::handover::{SecretsRefused, fetch_secrets};
+use crate::handover::fetch_secrets;
 use crate::node::keys::{KeyStart, attestor_for, sealer};
 use crate::secrets::{Authority, Listener};
 use crate::tee::secrets::{Replaced, SecretStore};
@@ -27,8 +27,9 @@ use crate::telemetry::Telemetry;
 
 /// How often a failed start looks for a new bundle, and how long it leaves the receipt to go out.
 const NEW_BUNDLE_POLL: Duration = Duration::from_millis(500);
-/// How many failures to reach `--predecessor` a start with no required secret outstanding waits
-/// through before it goes on to take the keys without the bundle.
+/// How many failed attempts on `--predecessor`, refusals included since a refusal can be a read that
+/// failed over there, a start with no required secret outstanding waits through before it goes on to
+/// take the keys without the bundle.
 const PREDECESSOR_ATTEMPTS: u32 = 3;
 /// How often a holding node asks `--predecessor` again.
 const PREDECESSOR_RETRY: Duration = if cfg!(test) { Duration::from_millis(50) } else { Duration::from_secs(30) };
@@ -38,8 +39,8 @@ const PREDECESSOR_RETRY: Duration = if cfg!(test) { Duration::from_millis(50) } 
 pub(crate) struct Delivered {
     /// The secrets it runs with.
     pub values: Values,
-    /// Whether the config names a key the node cannot start without, which a provider may refuse.
-    pub chain_keys: bool,
+    /// Whether the first read of the chain uses a delivered key, which a provider may refuse.
+    pub chain_read_keyed: bool,
     /// The delivery listener, with `[tee.sealing.secrets]`, which the node runs as a supervised task.
     pub listener: Option<Listener>,
     /// Sets who the listener takes deliveries from once the sequencer can say.
@@ -174,8 +175,8 @@ pub(crate) async fn startup(
     // A restart is what `secrets_restart_required` asks for.
     info!(alert_resolved = "secrets_restart_required", "this start runs the newest sealed secrets");
     info!(?version, delivered = values.len(), named = named.len(), "the delivered secrets are set");
-    let chain_keys = named.iter().any(|field| field.usage == SecretUse::Required);
-    Ok(Delivered { values, chain_keys, listener: Some(listener), authority: Some(authority), store: Some(store) })
+    let chain_read_keyed = cfg.checkpoints.as_ref().map_or(Ok(false), |section| section.rpc_url.names_a_secret())?;
+    Ok(Delivered { values, chain_read_keyed, listener: Some(listener), authority: Some(authority), store: Some(store) })
 }
 
 /// The required secrets `store` lacks, each once.
@@ -225,7 +226,7 @@ impl<'a> Moving<'a> {
     }
 
     /// Whether the keys' handover, which ends the release holding the bundle, must wait: until it has
-    /// moved the bundle or definitely will not, or a few failures have shown it cannot.
+    /// moved the bundle, or a few attempts have shown it will not.
     fn unsettled(&self) -> bool {
         !self.settled
     }
@@ -270,7 +271,7 @@ impl<'a> Moving<'a> {
             Err(e) => {
                 warn!(predecessor = address, "taking the running release's secrets failed: {e:#}");
                 self.failures += 1;
-                self.settled |= e.downcast_ref::<SecretsRefused>().is_some() || self.failures >= PREDECESSOR_ATTEMPTS;
+                self.settled |= self.failures >= PREDECESSOR_ATTEMPTS;
             }
         }
     }

@@ -2175,11 +2175,11 @@ would choose the secret.
   supplies them, then goes on starting, with no restart. Without a vendor's key that connection stays
   off and the markets it alone prices go unpriced (`market_no_price`). Without a webhook's URL that
   route stays off, its alerts are only logged, and any pages waiting for it stay in the outbox.
-- **A key a provider refuses.** A start that fails before the sequencer runs, while the config names a
-  chain or screening key, does not power the guest off at once, since a delivered key may be why and
-  only a delivery can repair it. It serves only the delivery listener under `secrets_start_failed`
-  (Critical) for up to five minutes, then exits, or exits as soon as a new bundle is sealed, so the
-  next start takes it. A start that fails for any other reason in that window also waits it out.
+- **A key a provider refuses.** A start whose first read of the chain fails, while `checkpoints.rpc_url`
+  names a delivered key, does not power the guest off at once, since that key may be why and only a
+  delivery can repair it. It serves only the delivery listener under `secrets_start_failed` (Critical)
+  for up to five minutes, then exits, or exits as soon as a new bundle is sealed, so the next start
+  takes it. A failure after that read is no delivered key's doing, and exits at once.
 - **A rotation.** Deliver a higher `version`, holding every secret: a bundle replaces the whole sealed
   one, so the tool refuses one lacking what the node holds for unless given `--partial`. The enclave
   seals it at once, but what runs keeps the clients it built when it started, so the receipt says
@@ -2193,7 +2193,7 @@ would choose the secret.
   The new release cannot yet read the vault to check who answered, so it takes a bundle only under the
   signature of the operator its own config names; a bundle signed before a rotation is refused, and the
   operator delivers again. It keeps what its config reads. Since the keys' handover ends the release
-  holding the bundle, the new release waits for an answer first, through a few failures to reach it.
+  holding the bundle, the new release first makes a few attempts to take it.
 - **An election.** No secret moves. While the registry has rotation on, the vault's release changes
   only by election or promotion, and the running release refuses, reading the switch at the finalized
   block that named the release and at the latest one: the keys go to the elected enclave,

@@ -20,6 +20,8 @@ use crate::trusted_time::tests::logs::Logs;
 /// How long a test waits for what must happen; a hold is checked over a shorter wait.
 const WAIT: Duration = Duration::from_secs(30);
 const HOLDING: Duration = Duration::from_millis(300);
+/// Shorter than a failed start's hold in a test build.
+const UNDER_THE_HOLD: Duration = Duration::from_secs(4);
 
 fn start() -> KeyStart {
     KeyStart { mock_launch_digest: Some(RELEASE), ..KeyStart::default() }
@@ -283,9 +285,10 @@ async fn a_start_that_fails_with_a_chain_key_named_exits_after_its_hold() {
     assert!(outcome.expect("the node held past its bound").is_err());
 }
 
-// No delivered key can be at fault, so a failed start ends as it always has.
+// No delivered key can be at fault, so a failed start ends as it always has, with no hold.
 #[tokio::test]
-async fn a_start_that_fails_with_no_chain_key_named_ends() {
+async fn a_start_that_fails_with_no_key_in_its_chain_read_ends_at_once() {
+    let (logs, _guard) = Logs::capture();
     let mut cfg = startable("startup-failed-no-key");
     // The same failed read, with the URL written out.
     cfg.checkpoints = Some(
@@ -295,8 +298,69 @@ async fn a_start_that_fails_with_no_chain_key_named_ends() {
         )
         .unwrap(),
     );
-    let outcome = timeout(WAIT, crate::node::run_with_cpu(cfg, telemetry(), None, start())).await;
+    let outcome = timeout(UNDER_THE_HOLD, crate::node::run_with_cpu(cfg, telemetry(), None, start())).await;
     assert!(outcome.expect("the node held").is_err());
+    assert_eq!(logs.critical("secrets_start_failed"), 0);
+}
+
+/// A chain whose every answer is zeros: the vault follows no registry, and nothing later decodes.
+async fn zeros_chain() -> std::net::SocketAddr {
+    use axum::routing::post;
+    use serde_json::{Value, json};
+    let answer = |axum::Json(request): axum::Json<Value>| async move {
+        axum::Json(json!({"jsonrpc":"2.0","id":request["id"],"result":format!("0x{}", "00".repeat(32))}))
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, axum::Router::new().fallback(post(answer))).await });
+    address
+}
+
+// The key worked, so nothing after that read is a delivery's to repair: holding would only delay the
+// failure a start has always ended on.
+#[tokio::test]
+async fn a_start_that_fails_after_its_chain_read_ends_at_once() {
+    let (logs, _guard) = Logs::capture();
+    let mut cfg = startable("startup-failed-after-read");
+    sealed_earlier(&cfg, full(1, "a"));
+    let chain = zeros_chain().await;
+    cfg.checkpoints = Some(
+        toml::from_str(&format!(
+            "rpc_url = 'http://{chain}/v2/{{chain_key}}'\nrelayer = '0x0000000000000000000000000000000000000001'\n\
+             retry_interval = '1s'\nrpc_timeout = '1s'",
+        ))
+        .unwrap(),
+    );
+    cfg.custody.evm = Some(
+        toml::from_str(
+            "providers = [{ name = 'a', rpc_url = 'http://127.0.0.1:1' }]\n\
+             usdc = '0xc0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0'\nfinality_tag = 'safe'\n\
+             withdrawal_finality_tag = 'finalized'\nconfirmations = 0\nstart_block = 0\nmax_block_range = 1000\n\
+             poll_interval = '10ms'\nrpc_timeout = '1s'\nstall_critical_after = '1s'\n\
+             finality_stalled_after = '1s'\ncursor_path = 'unused.json'\n",
+        )
+        .unwrap(),
+    );
+    let outcome = timeout(UNDER_THE_HOLD, crate::node::run_with_cpu(cfg, telemetry(), None, start())).await;
+    assert!(outcome.expect("the node held").is_err());
+    assert_eq!(logs.critical("secrets_start_failed"), 0);
+    assert_eq!(logs.count("the node read the chain"), 1, "the failure must come after the read");
+}
+
+// With nothing required outstanding, a predecessor that never answers does not keep the keys' handover
+// waiting for ever: the start goes on, and says what it lacks.
+#[tokio::test]
+async fn a_start_gives_up_on_a_predecessor_it_cannot_reach() {
+    let (logs, _guard) = Logs::capture();
+    let mut cfg = config("startup-no-predecessor");
+    cfg.checkpoints = None;
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().to_string();
+    let start = KeyStart { predecessor: Some(closed), ..start() };
+    let mut telemetry = telemetry();
+    let delivered = timeout(WAIT, startup(&mut cfg, &mut telemetry, &start)).await.expect("it waited for ever");
+    assert!(delivered.unwrap().values.is_empty());
+    assert_eq!(logs.count("taking the running release's secrets failed"), 3);
+    assert_eq!(logs.critical("secret_missing"), 2, "the vendor key and the webhook it lacks");
 }
 
 #[tokio::test]

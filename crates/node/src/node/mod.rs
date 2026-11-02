@@ -88,21 +88,21 @@ pub(crate) async fn run_with_cpu(
     }
     cfg.alerts.outbox.check_disk_location(&cfg.node.log_dir)?;
     let mut routing = alerts.spawn(cfg.alerts.episode_quiet, &cfg.alerts.outbox).await?;
-    let mut past_chain_reads = false;
+    let mut chain_read = false;
     let outcome = tokio::select! {
-        outcome = serve_node(cfg, metrics, &mut routing, cpu, start, &delivered, &mut past_chain_reads) => outcome,
+        outcome = serve_node(cfg, metrics, &mut routing, cpu, start, &delivered, &mut chain_read) => outcome,
         Some(stopped) = listening.join_next() => Err(anyhow!("the delivery listener stopped: {stopped:?}")),
     };
-    // A provider that refuses a delivered key stops a start before anything runs, and only a delivery
-    // can repair that, so this stays up long enough to take one before it exits to be started again.
+    // A provider refusing a delivered key stops a start at its first read of the chain, which only a
+    // delivery repairs, so this stays up to take one before it exits to be started again.
     if let Err(e) = &outcome
-        && !past_chain_reads
-        && delivered.chain_keys
+        && !chain_read
+        && delivered.chain_read_keyed
     {
         error!(
             alert = "secrets_start_failed",
-            "the node cannot start, and a delivered key may be why, so it serves only its delivery listener for {FAILED_START_HOLD:?} \
-             before it exits: deliver a bundle with a working key, and the restart takes it: {e:#}"
+            "the node cannot read the chain, perhaps on its delivered key, so its delivery listener takes a working \
+             key for {FAILED_START_HOLD:?} before it exits, and the restart runs that key: {e:#}"
         );
         secrets::wait_for_a_new_bundle(&delivered, &mut listening, FAILED_START_HOLD).await;
     }
@@ -123,9 +123,8 @@ pub(crate) async fn run_with_cpu(
 /// - the engine would reject a genesis command
 /// - with checkpoints configured, the vault's MONKEY cap cannot be read, or it was derived from
 ///   another emission period budget than the one the log records
-/// - any supervised task stops or panics, or the sequencer cannot drain in time, which
-///   `past_chain_reads`, set once the sequencer takes the listener's queries, tells from a start a
-///   delivered key can have stopped
+/// - any supervised task stops or panics, or the sequencer cannot drain in time, none of them, once
+///   the first read of the chain has set `chain_read`, a delivered key's doing
 async fn serve_node(
     cfg: NodeConfig,
     metrics: Arc<Metrics>,
@@ -133,10 +132,12 @@ async fn serve_node(
     cpu: Option<usize>,
     start: KeyStart,
     delivered: &secrets::Delivered,
-    past_chain_reads: &mut bool,
+    chain_read: &mut bool,
 ) -> anyhow::Result<()> {
     if let Some(vault) = crate::handover::vault_reader(&cfg)? {
         let on = vault.rotation_enabled().await?;
+        *chain_read = true;
+        info!(alert_resolved = "secrets_start_failed", "the node read the chain");
         if cfg.operator.rotation_enabled && !on {
             bail!("operator.rotation_enabled = true, but the vault's registry has rotation off");
         }
@@ -340,8 +341,6 @@ async fn serve_node(
         });
     }
 
-    *past_chain_reads = true;
-    info!(alert_resolved = "secrets_start_failed", "the node read the chain and recovered its log");
     if let Some(authority) = &delivered.authority {
         authority.send_replace(crate::secrets::Authority::Log {
             tx: tx.downgrade(),

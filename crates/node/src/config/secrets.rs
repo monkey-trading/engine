@@ -18,7 +18,7 @@ use anyhow::{Context, bail, ensure};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::{Deserialize, Serialize};
 
-use crate::config::NodeConfig;
+use crate::config::{NodeConfig, TeeProvider};
 
 /// The longest secret name.
 const MAX_NAME_BYTES: usize = 64;
@@ -190,9 +190,11 @@ impl SecretUrl {
         Ok(url)
     }
 
-    /// Every form of what this URL must keep out of a diagnostic, longest first: the URL, its path,
-    /// query, and password on their own, since transport errors quote them and providers put keys in
-    /// them, and a delivered key raw and encoded, since a provider's refusal may echo it alone.
+    /// Every form of what this URL must keep out of a diagnostic: the URL, its path, query, and
+    /// password on their own, since transport errors quote them and providers put keys in them, and a
+    /// delivered key raw and encoded, since a provider's refusal may echo it alone. Longest first, so
+    /// a short form cannot split a longer one before it is matched, and none empty, which `redact`
+    /// would otherwise insert between every character.
     /// Error cases:
     /// - see `expose`
     pub(crate) fn redactions(&self) -> anyhow::Result<Vec<String>> {
@@ -203,6 +205,9 @@ impl SecretUrl {
             forms.push(key.expose().to_owned());
             forms.push(utf8_percent_encode(key.expose(), KEY_IN_URL).to_string());
         }
+        forms.retain(|form| !form.is_empty());
+        forms.sort_by_key(|form| std::cmp::Reverse(form.len()));
+        forms.dedup();
         Ok(forms)
     }
 
@@ -222,6 +227,19 @@ impl SecretUrl {
     /// - its `{name}` is malformed
     fn secret_name(&self) -> anyhow::Result<Option<SecretName>> {
         Ok(self.template()?.map(|template| template.name))
+    }
+
+    /// Whether this URL reads a delivered key.
+    /// Error cases:
+    /// - its `{name}` is malformed
+    pub(crate) fn names_a_secret(&self) -> anyhow::Result<bool> {
+        Ok(self.secret_name()?.is_some())
+    }
+
+    /// Sets a delivered key, as a test's provider would be given it.
+    #[cfg(test)]
+    pub(crate) fn deliver_test_key(&mut self, value: &str) {
+        self.key = Some(SecretValue::test(value));
     }
 
     /// Sets the key `values` holds for this URL's `{name}`.
@@ -339,6 +357,9 @@ impl NodeConfig {
     /// - a URL's `{name}` is malformed
     /// - an alert route names neither or both of a variable and a secret
     /// - a field names a secret and `[tee.sealing.secrets]` is missing, so nothing could deliver it
+    /// - `[tee.sealing.secrets]` is set with real attestation and no `tee.processor`, so no offer's
+    ///   quote could carry the collateral that verifies it, and a node holding for its secrets would
+    ///   never reach a later check
     pub(super) fn validate_secrets(&self) -> anyhow::Result<()> {
         for (key, route) in [("critical", &self.alerts.critical), ("warning", &self.alerts.warning)] {
             if let Some(route) = route {
@@ -350,6 +371,10 @@ impl NodeConfig {
         }
         let named = self.named_secrets()?;
         let listens = self.tee.sealing.as_ref().is_some_and(|sealing| sealing.secrets.is_some());
+        ensure!(
+            !listens || self.tee.provider == TeeProvider::Mock || self.tee.processor.is_some(),
+            "[tee.sealing.secrets] with real attestation needs tee.processor, to fetch its quotes' collateral"
+        );
         if let Some(first) = named.first()
             && !listens
         {

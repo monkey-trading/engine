@@ -118,4 +118,8 @@ async fn a_route_a_bundle_left_off_keeps_its_pending_pages_and_the_node_starts()
     withheld.deliver(&alerts, &Default::default()).unwrap();
     assert!(!withheld.has(Severity::Warning), "no value, no route");
     spawned(withheld).await.expect("a route waiting for its secret stopped the node").drain(Duration::ZERO).await;
+
+    let mut tasks = JoinSet::new();
+    let outbox = Outbox::start(cfg, [false, true], Arc::new(Metrics::new()), &mut tasks).await.unwrap();
+    assert!(outbox.next(Severity::Warning).await.unwrap().is_some(), "the page waiting for the route is gone");
 }

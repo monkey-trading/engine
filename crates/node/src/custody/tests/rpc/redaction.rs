@@ -16,9 +16,14 @@ async fn rpc_errors_never_carry_a_key_a_provider_echoes() {
         let _ = stream.read(&mut request).await.unwrap();
         stream.write_all(answer.as_bytes()).await.unwrap();
     });
-    let rpc = rpc_at(&format!("http://{address}/v2/FAKE-echoed-key"));
+    let toml = evm_toml(&std::env::temp_dir(), 1_000)
+        .replace("rpc_url = \"http://127.0.0.1:1\"", &format!("rpc_url = \"http://{address}/v2/{{rpc_key}}\""))
+        .replace("rpc_timeout = \"1s\"", "rpc_timeout = \"5s\"");
+    let mut cfg: EvmCustodySection = toml::from_str(&toml).unwrap();
+    cfg.providers[0].rpc_url.deliver_test_key("FAKE-echoed-key");
+    let rpc = VaultRpc::new(&cfg, &cfg.providers[0].rpc_url, VAULT).unwrap();
 
     let err = format!("{:#}", rpc.finality().await.unwrap_err());
-    assert!(err.contains("401"), "the provider's answer did not reach the error: {err}");
+    assert!(err.contains("invalid api key"), "the provider's answer did not reach the error: {err}");
     assert!(!err.contains("FAKE-echoed-key"), "{err}");
 }

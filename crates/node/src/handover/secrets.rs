@@ -30,20 +30,6 @@ use crate::secrets::delivery;
 use crate::tee::Attestor;
 use crate::tee::sealing::Sealer;
 
-/// The running release answered and will not send its secrets: asking again changes nothing until
-/// the vault does.
-#[derive(Debug)]
-pub(crate) struct SecretsRefused(String);
-
-impl std::fmt::Display for SecretsRefused {
-    /// The predecessor's reason.
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "the predecessor keeps its secrets: {}", self.0)
-    }
-}
-
-impl std::error::Error for SecretsRefused {}
-
 /// The report data a new release's request for the secrets binds, under its own tag, so a host cannot
 /// turn it into a request for the keys, which would stop sequencing, or the reverse.
 pub(super) fn request_report_data(
@@ -86,8 +72,7 @@ pub(super) fn hpke_info(domain: CheckpointDomain) -> Vec<u8> {
 /// This release's secrets, from the release whose handover listener is at `address`: the bundle the
 /// operator signed, whole, which may hold more than this config reads.
 /// Error cases:
-/// - the predecessor refuses (`SecretsRefused`)
-/// - the predecessor cannot be reached in time, or its quote does not bind what it sent
+/// - the predecessor cannot be reached in time or refuses, or its quote does not bind what it sent
 /// - what it sent does not decrypt, is not signed by `operator`, or fails `Bundle::check_values`
 pub(crate) async fn fetch_secrets(
     cfg: &NodeConfig,
@@ -129,7 +114,7 @@ pub(crate) async fn fetch_secrets(
             hex::decode(ciphertext).context("ciphertext")?,
             evidence,
         ),
-        Reply::Refused { reason } => return Err(SecretsRefused(reason).into()),
+        Reply::Refused { reason } => bail!("the predecessor keeps its secrets: {reason}"),
         Reply::Keys { .. } | Reply::Confirmed { .. } => {
             bail!("the predecessor answered a request for secrets with keys")
         }

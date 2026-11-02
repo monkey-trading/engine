@@ -70,7 +70,7 @@ pub(crate) use evidence::Evidence;
 mod predecessor;
 pub(crate) use predecessor::{DrainReply, Predecessor, Published};
 pub(crate) mod secrets;
-pub(crate) use secrets::{SecretsRefused, fetch_secrets};
+pub(crate) use secrets::fetch_secrets;
 mod successor;
 pub(crate) use successor::take;
 
