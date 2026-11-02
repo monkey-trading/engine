@@ -14,6 +14,9 @@
 #   4. a connection from outside the trusted range that sends a header is closed, and so is one from
 #      the forwarder that sends none.
 #
+# The limiter's bucket refills at one request a second, the slowest the config allows, and the limit
+# is probed over one connection, so a slow runner cannot refill it between requests unnoticed.
+#
 # Needs python3, curl, and jq, and the public Roughtime servers config/dev.toml names. API_PORT,
 # METRICS_PORT, ACCESS_SOURCE_PORT, and FORWARDER_PORT override 18480, 19864, 18846, and 18490 (the
 # forwarder takes that port and the next six); SCENARIO_ARTIFACTS keeps the logs.
@@ -66,10 +69,11 @@ printf '{"mode":"clear","jurisdictions":{},"sanctioned":[],"peers":{"%s":"allowe
 source_pid=$!
 
 step "write the node config: dual-stack listener, proxy range ::1, access source, a small request burst"
+burst=100
 sed -e "s|127.0.0.1:8080|[::]:$api_port|" \
   -e "s|127.0.0.1:9464|127.0.0.1:$metrics_port|" \
   -e "s|data/dev|$work|g" \
-  -e 's|^per_ip = .*|per_ip = { per_second = 2, burst = 40 }|' \
+  -e "s|^per_ip = .*|per_ip = { per_second = 1, burst = $burst }|" \
   "$root/config/dev.toml" > "$work/node.toml"
 cat >> "$work/node.toml" <<EOF
 
@@ -84,7 +88,7 @@ max_age = "30s"
 max_response_bytes = 4096
 max_in_flight = 8
 EOF
-for edit in "[::]:$api_port" "burst = 40" 'trusted = ["::1/128"]'; do
+for edit in "[::]:$api_port" "per_ip = { per_second = 1, burst = $burst }" 'trusted = ["::1/128"]'; do
   grep -qF "$edit" "$work/node.toml" || fail "config edit missing: $edit"
 done
 
@@ -210,12 +214,43 @@ events="$(post_via "$allowed_b" /v1/orders "$(signed order "$order")")"
 jq -e 'any(.[]; .type == "fill")' <<< "$events" > /dev/null || fail "an order from an allowed address did not fill: $events"
 
 step "clients behind one proxy have their own request limits"
-limited=""
-for i in $(seq 1 120); do
-  if [[ "$(status "$(via "$spare_a")/v1/health")" == 429 ]]; then limited=$i; break; fi
-done
-[[ -n "$limited" ]] || fail "a client behind the proxy was never limited"
-expect "the limited client, again" "$(status "$(via "$spare_a")/v1/health")" 429
+# One client spends its burst and is refused, and its next request, a moment later, is refused too.
+# Both run in one process over one connection: a token refills each second, so a request that follows
+# the refusal by less than that must be refused, and only a measured stall of a second or more may
+# excuse a served one, which a new probe then repeats.
+python3 - "$spare_a" "$burst" <<'PY' || fail "a client behind the proxy was not limited as configured"
+import http.client, ssl, sys, time
+
+port, burst, refill = int(sys.argv[1]), int(sys.argv[2]), 1.0
+context = ssl.create_default_context()
+context.check_hostname, context.verify_mode = False, ssl.CERT_NONE
+connection = http.client.HTTPSConnection("127.0.0.1", port, context=context, timeout=10)
+
+
+def health():
+    connection.request("GET", "/v1/health")
+    response = connection.getresponse()
+    response.read()
+    return response.status
+
+
+for attempt in range(1, 6):
+    for sent in range(1, 3 * burst):
+        if health() == 429:
+            break
+    else:
+        sys.exit("never limited after %d requests" % (3 * burst))
+    limited_at = time.monotonic()
+    again = health()
+    waited = time.monotonic() - limited_at
+    print("limited after %d requests; the next, %.3fs later, got %d" % (sent, waited, again))
+    if again == 429:
+        break
+    if waited < refill:
+        sys.exit("the limited client was served %.3fs after a refusal, before its bucket could refill" % waited)
+else:
+    sys.exit("a stalled runner refilled the bucket on every attempt")
+PY
 expect "another client behind the same proxy" "$(status "$(via "$spare_b")/v1/health")" 200
 expect "a direct client" "$(status "$direct/v1/health")" 200
 expect "the first client, from the proxy's own address" "$(status "$(via "$allowed_a")/v1/health")" 200
