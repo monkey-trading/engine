@@ -6,7 +6,7 @@
 use std::collections::BTreeSet;
 
 use anyhow::{Context, ensure};
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{OptionalExtension, Statement, Transaction, params};
 
 use engine_core::Fixed;
 use engine_core::types::{MarketId, Millis};
@@ -16,6 +16,36 @@ use crate::history::marks::Resolution;
 use crate::history::marks::store::SnapRow;
 use crate::history::marks::store::auth::{Row, tag};
 use crate::history::marks::store::chain::{PREDECESSOR, ROW_AT, SUCCESSOR, retag, verify_row};
+
+/// The row store a merge writes, shared with nothing else so the statement is the merge's alone.
+const INSERT: &str =
+    "INSERT OR REPLACE INTO marks (market, resolution, bucket, open, high, low, close, provenance, prev_bucket, tag)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)";
+
+/// The statements one write prepares once and every sample's merge reuses: the row a sample
+/// lands in, the chain link below it, the store that writes it, and the row above a fresh
+/// bucket. Dropped before the write commits.
+pub(crate) struct MergeStmts<'tx> {
+    row_at: Statement<'tx>,
+    predecessor: Statement<'tx>,
+    insert: Statement<'tx>,
+    successor: Statement<'tx>,
+}
+
+impl<'tx> MergeStmts<'tx> {
+    /// Prepares the four statements on `tx`.
+    /// Error cases:
+    /// - a statement does not prepare
+    pub(crate) fn prepare(tx: &'tx Transaction) -> anyhow::Result<Self> {
+        let prepare = |sql| tx.prepare(sql).context("preparing a marks merge");
+        Ok(Self {
+            row_at: prepare(ROW_AT)?,
+            predecessor: prepare(PREDECESSOR)?,
+            insert: prepare(INSERT)?,
+            successor: prepare(SUCCESSOR)?,
+        })
+    }
+}
 
 /// Merges `mark` into the `(market, resolution, bucket)` row: kept open, widened high and low,
 /// moved close, and the bucket now log-derived. A fresh bucket takes the chain link naming the
@@ -27,13 +57,15 @@ use crate::history::marks::store::chain::{PREDECESSOR, ROW_AT, SUCCESSOR, retag,
 pub(crate) fn merge(
     mac: &hmac::Hmac<sha2::Sha256>,
     tx: &Transaction,
+    stmts: &mut MergeStmts<'_>,
     market: MarketId,
     resolution: Resolution,
     bucket: Millis,
     mark: Fixed,
 ) -> anyhow::Result<()> {
-    let row = tx
-        .query_row(ROW_AT, params![i64::from(market), resolution as i64, bucket], |row| {
+    let row = stmts
+        .row_at
+        .query_row(params![i64::from(market), resolution as i64, bucket], |row| {
             Ok(SnapRow {
                 bucket,
                 open: row.get(0)?,
@@ -47,8 +79,9 @@ pub(crate) fn merge(
         })
         .optional()
         .with_context(|| format!("reading the {market} {resolution:?} bucket at {bucket}"))?;
-    let pred: Option<Millis> = tx
-        .query_row(PREDECESSOR, params![i64::from(market), resolution as i64, bucket], |row| row.get(0))
+    let pred: Option<Millis> = stmts
+        .predecessor
+        .query_row(params![i64::from(market), resolution as i64, bucket], |row| row.get(0))
         .with_context(|| format!("reading the {market} {resolution:?} chain at {bucket}"))?;
     let (open, high, low, close, prev) = match &row {
         None => {
@@ -93,14 +126,12 @@ pub(crate) fn merge(
         &Row { open: &open, high: &high, low: &low, close: &close, provenance, prev },
     );
     let fresh = row.is_none();
-    tx.execute(
-        "INSERT OR REPLACE INTO marks (market, resolution, bucket, open, high, low, close, provenance, prev_bucket, tag)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-        params![i64::from(market), resolution as i64, bucket, open, high, low, close, provenance, prev, tag],
-    )
-    .with_context(|| format!("storing the {market} {resolution:?} bucket at {bucket}"))?;
+    stmts
+        .insert
+        .execute(params![i64::from(market), resolution as i64, bucket, open, high, low, close, provenance, prev, tag])
+        .with_context(|| format!("storing the {market} {resolution:?} bucket at {bucket}"))?;
     if fresh {
-        relink_successor(mac, tx, market, resolution, bucket, &BTreeSet::from([bucket]))?;
+        relink_successor(mac, tx, stmts, market, resolution, bucket, &BTreeSet::from([bucket]))?;
     }
     Ok(())
 }
@@ -111,12 +142,14 @@ pub(crate) fn merge(
 /// Error cases:
 /// - the predecessor query fails
 fn pred_below(
-    tx: &Transaction,
+    stmts: &mut MergeStmts<'_>,
     market: MarketId,
     resolution: Resolution,
     bucket: Millis,
 ) -> anyhow::Result<Option<Millis>> {
-    tx.query_row(PREDECESSOR, params![i64::from(market), resolution as i64, bucket], |row| row.get(0))
+    stmts
+        .predecessor
+        .query_row(params![i64::from(market), resolution as i64, bucket], |row| row.get(0))
         .with_context(|| format!("reading the {market} {resolution:?} chain below {bucket}"))
 }
 
@@ -132,13 +165,15 @@ fn pred_below(
 pub(crate) fn relink_successor(
     mac: &hmac::Hmac<sha2::Sha256>,
     tx: &Transaction,
+    stmts: &mut MergeStmts<'_>,
     market: MarketId,
     resolution: Resolution,
     bucket: Millis,
     fresh: &BTreeSet<Millis>,
 ) -> anyhow::Result<()> {
-    let succ = tx
-        .query_row(SUCCESSOR, params![i64::from(market), resolution as i64, bucket], |row| {
+    let succ = stmts
+        .successor
+        .query_row(params![i64::from(market), resolution as i64, bucket], |row| {
             Ok(SnapRow {
                 bucket: row.get(0)?,
                 open: row.get(1)?,
@@ -157,9 +192,9 @@ pub(crate) fn relink_successor(
         return Ok(());
     }
     verify_row(mac, market, resolution, &succ)?;
-    let mut below = pred_below(tx, market, resolution, succ.bucket)?;
+    let mut below = pred_below(stmts, market, resolution, succ.bucket)?;
     while below.is_some_and(|b| fresh.contains(&b)) {
-        below = pred_below(tx, market, resolution, below.expect("a bucket below"))?;
+        below = pred_below(stmts, market, resolution, below.expect("a bucket below"))?;
     }
     ensure!(
         succ.prev == below,

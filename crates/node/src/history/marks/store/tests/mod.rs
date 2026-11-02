@@ -3,6 +3,7 @@
 //! chained index over the rows — what each row links below it, and what each read refuses when a
 //! link or a committed head no longer matches — is tested in `chain.rs`.
 
+mod bench;
 mod chain;
 mod prune;
 mod refusals;
