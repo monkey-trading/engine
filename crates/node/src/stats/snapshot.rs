@@ -204,7 +204,7 @@ pub(crate) fn scan(engine: &Engine, seq: u64, ts: Millis, layout: Layout, full: 
         open_margin,
         open_positions,
         full,
-        distribution_excess: engine.distributable_excess().filter(|_| full),
+        distribution_excess: full.then(|| engine.distributable_excess()).flatten(),
         markets: books,
     }
 }
