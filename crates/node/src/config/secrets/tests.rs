@@ -311,3 +311,24 @@ fn a_vendor_names_its_key_one_way_and_a_public_venue_names_none() {
     let err = public.feeds.venues.as_ref().unwrap().validate().unwrap_err().to_string();
     assert!(err.contains("coinbase api_key_env must be set exactly for a vendor"), "{err}");
 }
+
+#[test]
+fn every_form_of_a_url_and_its_key_is_redacted_from_a_diagnostic() {
+    let mut delivered = url("https://rpc.example/v2/{key}?chain=arb");
+    delivered.key = Some(SecretValue::test("FAKE+key/1"));
+    let forms = delivered.redactions().unwrap();
+    for text in [
+        "error sending request for url (https://rpc.example/v2/FAKE%2Bkey%2F1?chain=arb)",
+        "POST /v2/FAKE%2Bkey%2F1 failed",
+        "HTTP error 401 with body: invalid api key: FAKE+key/1",
+        "the key FAKE%2Bkey%2F1 is revoked",
+    ] {
+        let redacted = redact(text, &forms);
+        assert!(redacted.contains("<redacted>") && !redacted.contains("FAKE"), "{text}: {redacted}");
+    }
+    // A URL with no key still keeps its credential-bearing parts out.
+    let forms = url("https://user:FAKE-password@rpc.example/FAKE-path?FAKE-query").redactions().unwrap();
+    let redacted =
+        redact("to https://user:FAKE-password@rpc.example/FAKE-path?FAKE-query; /FAKE-path; FAKE-query", &forms);
+    assert!(!redacted.contains("FAKE"), "{redacted}");
+}

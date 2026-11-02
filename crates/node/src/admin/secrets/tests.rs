@@ -167,7 +167,27 @@ async fn a_bundle_lacking_what_the_node_holds_for_needs_partial() {
 #[test]
 fn what_the_host_writes_cannot_rewrite_the_operators_terminal() {
     assert_eq!(shown("refused\r\u{1b}[2Ksealed: version 2"), "refused[2Ksealed: version 2");
-    assert_eq!(shown(&"x".repeat(4096)).len(), 512);
+    assert_eq!(shown(&"x".repeat(4096)).len(), 1024);
+}
+
+// A parser's error quotes what it could not read, which the host wrote.
+#[tokio::test]
+async fn a_message_the_tool_cannot_read_does_not_reach_the_terminal_raw() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap().to_string();
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let _: Hello = receive(&mut stream).await.unwrap();
+        send(&mut stream, &serde_json::json!({ "\r\u{1b}[2Ksealed: version 9": 1 })).await.unwrap();
+    });
+    let cfg = config("tool-raw-field");
+    let args = DeliverArgs {
+        peer: peer(&address, manifest("tool-raw-field", RELEASE, CONFIG)),
+        secrets_file: bundle_file("tool-raw-field", 1, "a"),
+        partial: false,
+    };
+    let err = format!("{:#}", deliver(&cfg, &operator_key(), &args).await.unwrap_err());
+    assert!(!err.chars().any(char::is_control), "{err:?}");
 }
 
 // A key the enclave does not take gets as far as the enclave, which refuses it.

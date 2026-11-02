@@ -190,6 +190,22 @@ impl SecretUrl {
         Ok(url)
     }
 
+    /// Every form of what this URL must keep out of a diagnostic, longest first: the URL, its path,
+    /// query, and password on their own, since transport errors quote them and providers put keys in
+    /// them, and a delivered key raw and encoded, since a provider's refusal may echo it alone.
+    /// Error cases:
+    /// - see `expose`
+    pub(crate) fn redactions(&self) -> anyhow::Result<Vec<String>> {
+        let url = self.expose()?;
+        let parts = [Some(url.as_str()), Some(url.path()).filter(|path| path.len() > 1), url.query(), url.password()];
+        let mut forms: Vec<String> = parts.into_iter().flatten().map(str::to_owned).collect();
+        if let Some(key) = &self.key {
+            forms.push(key.expose().to_owned());
+            forms.push(utf8_percent_encode(key.expose(), KEY_IN_URL).to_string());
+        }
+        Ok(forms)
+    }
+
     /// The URL the attested file fixes, for the checks a config load makes: the same scheme, host,
     /// and port `expose` connects to, with a stand-in for any delivered key.
     /// Error cases:
@@ -372,6 +388,11 @@ impl NodeConfig {
         }
         Ok(())
     }
+}
+
+/// `text` with every one of `forms` redacted.
+pub(crate) fn redact(text: &str, forms: &[String]) -> String {
+    forms.iter().fold(text.to_owned(), |text, form| text.replace(form.as_str(), "<redacted>"))
 }
 
 /// Who a URL asks and as whom: everything a delivered value must not reach.

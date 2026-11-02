@@ -146,7 +146,7 @@ async fn a_start_without_a_vendor_key_or_a_webhook_runs_with_them_off() {
 }
 
 #[tokio::test]
-async fn a_public_venue_is_never_withheld_and_a_named_variable_still_reads_in_a_dev_build() {
+async fn a_public_venue_is_never_withheld() {
     let cfg = config("startup-env");
     let delivered = Delivered::default();
     let mut connection = cfg.feeds.venues.as_ref().unwrap().connections[0].clone();
@@ -242,4 +242,61 @@ async fn a_delivered_webhook_that_is_no_longer_acceptable_leaves_its_route_off_w
     assert!(!telemetry.pages_critical);
     assert_eq!(logs.critical("secret_unusable"), 1);
     assert_eq!(logs.count("FAKE"), 0, "a value reached the log");
+}
+
+/// `config(name)`'s data beside each other under this test's directory, so a node can start on it.
+fn startable(name: &str) -> NodeConfig {
+    let mut cfg = config(name);
+    let data = crate::test_support::scratch_dir(&format!("{name}-data"));
+    cfg.node.log_dir = data.join("log");
+    cfg.alerts.outbox.dir = data.join("alerts");
+    cfg
+}
+
+// A delivered chain key the provider refuses stops a start before anything can use it. The node must
+// not power off: the delivery that repairs it needs the listener, and a restart then takes it.
+#[tokio::test]
+async fn a_start_that_fails_with_a_chain_key_named_keeps_taking_deliveries() {
+    let (logs, _guard) = Logs::capture();
+    // With mock custody, reading `[checkpoints]` fails at once, as a refused key does.
+    let cfg = startable("startup-failed");
+    sealed_earlier(&cfg, full(1, "a"));
+    let (address, tool) = (listen(&cfg), config("startup-failed-tool"));
+    let mut running = tokio::spawn(crate::node::run_with_cpu(cfg, telemetry(), None, start()));
+    assert!(timeout(HOLDING, &mut running).await.is_err(), "the node stopped, and the listener with it");
+    assert_eq!(logs.critical("secrets_start_failed"), 1);
+
+    let Reply::Sealed { receipt, .. } = deliver(&tool, &address, full(2, "b")).await else { panic!("refused") };
+    assert_eq!((receipt.version, receipt.restart_required), (2, true), "what it started with is what failed");
+    running.abort();
+}
+
+// No delivered key can be at fault, so a failed start ends as it always has.
+#[tokio::test]
+async fn a_start_that_fails_with_no_chain_key_named_ends() {
+    let mut cfg = startable("startup-failed-no-key");
+    // The same failed read, with the URL written out.
+    cfg.checkpoints = Some(
+        toml::from_str(
+            "rpc_url = 'https://rpc.example/v2'\nrelayer = '0x0000000000000000000000000000000000000001'\n\
+             retry_interval = '1s'\nrpc_timeout = '1s'",
+        )
+        .unwrap(),
+    );
+    let outcome = timeout(WAIT, crate::node::run_with_cpu(cfg, telemetry(), None, start())).await;
+    assert!(outcome.expect("the node held").is_err());
+}
+
+#[tokio::test]
+async fn a_listener_goes_on_taking_deliveries_after_a_start_with_no_failure_in_it() {
+    let cfg = config("startup-listener-runs");
+    sealed_earlier(&cfg, full(1, "a"));
+    let address = listen(&cfg);
+    let tool = config("startup-listener-runs-tool");
+    let (_cfg, _telemetry, delivered) = timeout(WAIT, spawn_startup(cfg)).await.expect("it held").unwrap();
+    let delivered = delivered.unwrap();
+    let serving = tokio::spawn(delivered.listener.unwrap().run());
+    let Reply::Sealed { receipt, .. } = deliver(&tool, &address, full(2, "b")).await else { panic!("refused") };
+    assert!(receipt.restart_required, "{receipt:?}");
+    serving.abort();
 }

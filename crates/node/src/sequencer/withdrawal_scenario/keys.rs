@@ -4,6 +4,7 @@
 //! its timelock, and node processes with the mock TEE and its stand-in for sealing. Each config uses
 //! paths relative to the node's working directory and ephemeral ports, which the scenario reads
 //! from the node's log, so a copy of the data directory runs the same release beside the original.
+//! Its releases also name a delivered webhook, whose bundle a restart keeps and an upgrade takes first.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -38,6 +39,8 @@ const API_UP: &str = "api up over TLS";
 const ATTESTATION_UP: &str = "serving the attestation while the vault names another signer";
 const METRICS_UP: &str = "metrics up";
 const HANDOVER_UP: &str = "handover listener up";
+
+mod secrets;
 
 /// One release's node process, running `config` in `data` under a stand-in measurement.
 struct ReleaseNode {
@@ -97,6 +100,11 @@ pub(super) async fn key_lifecycle() -> anyhow::Result<()> {
     old.ready().await?;
     let epoch = chain.read(chain.vault, signerEpochCall {}).await?;
 
+    // The operator delivers the webhook its config names. What runs started without it, so it says a
+    // restart is needed.
+    let receipt = old.deliver(&services.alerts).await?;
+    ensure!(receipt.version == 1 && receipt.restart_required, "the first bundle's receipt: {receipt:?}");
+
     // An outstanding withdrawal, signed and unclaimed.
     let trader = User::new(1)?;
     chain.deposit(trader.address(), 100, false).await?;
@@ -121,6 +129,8 @@ pub(super) async fn key_lifecycle() -> anyhow::Result<()> {
         .filter(|entry| matches!(entry, LogEntry::Withdrawal(w) if w.nonce == outstanding.nonce && w.account == trader.account))
         .count();
     ensure!(signed == 1, "the restart signed the outstanding withdrawal again: {signed} authorizations");
+    let status = old.secrets_status().await?;
+    ensure!((status.sealed_version, status.running_version) == (Some(1), Some(1)), "after the restart: {status:?}");
 
     // Without its sealed file, and without --new-key, the release refuses to start.
     old.stop().await?;
@@ -156,6 +166,7 @@ pub(super) async fn key_lifecycle() -> anyhow::Result<()> {
         new.logged("the predecessor keeps its keys: the vault's current release is")?,
         "the refusal did not say why"
     );
+    ensure!(new.logged("the predecessor keeps its secrets")?, "the secrets went to a release the vault does not name");
     old.ready().await?;
 
     // Once the timelock makes it the current release, the upgrade takes the keys and the old
@@ -165,6 +176,9 @@ pub(super) async fn key_lifecycle() -> anyhow::Result<()> {
     ensure!(old.exited().await?.success(), "the old release did not exit cleanly once it handed over");
     new.ready().await?;
     ensure!(new.attested_signer().await? == signer, "the upgrade attests another signer");
+    ensure!(new.logged("took the delivered secrets from the running release")?, "the secrets did not move");
+    let status = new.secrets_status().await?;
+    ensure!((status.sealed_version, status.running_version) == (Some(1), Some(1)), "after the upgrade: {status:?}");
     ensure!(chain.read(chain.vault, signerEpochCall {}).await? == epoch, "the upgrade changed the signer epoch");
     chain.send(chain.payer, chain.vault, chain.claim(&outstanding)?.abi_encode()).await?;
     let nonce = usedNoncesCall { account: trader.address(), nonce: outstanding.nonce };
@@ -237,7 +251,8 @@ pub(super) async fn key_lifecycle() -> anyhow::Result<()> {
         "PASS: keys are sealed only for the vault's current release and survive a restart; a missing file \
          refuses without --new-key; a config governance has not named opens nothing; an upgrade it names takes \
          the keys, the outstanding withdrawal pays, and the superseded release no longer opens its own, nor does \
-         it once named again, when it takes the keys afresh; a second copy stops on the checkpoint conflict"
+         it once named again, when it takes the keys afresh; a second copy stops on the checkpoint conflict; \
+         the delivered secrets survive the restart and move first with the upgrade"
     );
     Ok(())
 }
@@ -250,7 +265,12 @@ fn release_config(path: &Path, outbox: &str, chain: &Chain, services: &Services)
     write_config(path, Path::new(""), 0, 0, chain, services, |cfg| {
         cfg["alerts"]["outbox"]["dir"] = outbox.into();
         cfg["tee"]["use_published_mock_key"] = false.into();
-        cfg["tee"]["sealing"] = json!({ "dir": "keys", "handover": { "listen": "127.0.0.1:0" } });
+        cfg["tee"]["sealing"] = json!({
+            "dir": "keys",
+            "handover": { "listen": "127.0.0.1:0" },
+            "secrets": { "listen": "127.0.0.1:0" },
+        });
+        cfg["alerts"]["warning"] = json!({ "url_secret": "alerts_warning_url" });
         Ok(())
     })?;
     Ok(path.to_owned())

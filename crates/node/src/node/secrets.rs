@@ -24,13 +24,15 @@ use crate::tee::secrets::{Replaced, SecretStore};
 use crate::telemetry::Telemetry;
 
 /// How often a holding node asks `--predecessor` again.
-const PREDECESSOR_RETRY: Duration = Duration::from_secs(30);
+const PREDECESSOR_RETRY: Duration = if cfg!(test) { Duration::from_millis(50) } else { Duration::from_secs(30) };
 
 /// What a start's secrets gave it.
 #[derive(Default)]
 pub(crate) struct Delivered {
     /// The secrets it runs with.
     pub values: Values,
+    /// Whether the config names a key the node cannot start without, which a provider may refuse.
+    pub chain_keys: bool,
     /// The delivery listener, with `[tee.sealing.secrets]`, which the node runs as a supervised task.
     pub listener: Option<Listener>,
     /// Sets who the listener takes deliveries from once the sequencer can say.
@@ -107,10 +109,11 @@ pub(crate) async fn startup(
         }
     }
 
+    let held = store.current_running(|version| listener.started(version));
     // Whatever else is connected finishes on its own deadlines, its receipt included.
     serving.detach_all();
-
-    let values = store.current().map(|signed| signed.bundle.secrets).unwrap_or_default();
+    let version = held.as_ref().map(|signed| signed.bundle.version);
+    let values = held.map(|signed| signed.bundle.secrets).unwrap_or_default();
     cfg.deliver_urls(&values).context("setting the delivered keys")?;
     match telemetry.alerts.deliver_routes(&cfg.alerts, &values) {
         Ok(()) => info!(alert_resolved = "secret_unusable", "every delivered webhook URL is acceptable"),
@@ -126,10 +129,9 @@ pub(crate) async fn startup(
     }
     // A restart is what `secrets_restart_required` asks for.
     info!(alert_resolved = "secrets_restart_required", "this start runs the newest sealed secrets");
-    let version = store.version();
-    listener.started(version);
     info!(?version, delivered = values.len(), named = named.len(), "the delivered secrets are set");
-    Ok(Delivered { values, listener: Some(listener), authority: Some(authority), store: Some(store) })
+    let chain_keys = named.iter().any(|field| field.usage == SecretUse::Required);
+    Ok(Delivered { values, chain_keys, listener: Some(listener), authority: Some(authority), store: Some(store) })
 }
 
 /// The required secrets `store` lacks, each once.

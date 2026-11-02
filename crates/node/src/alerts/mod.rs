@@ -280,7 +280,7 @@ impl Router {
     /// - opening or validating the outbox, or building the webhook client fails
     pub async fn spawn(self, episode_quiet: Duration, cfg: &OutboxSection) -> anyhow::Result<Routing> {
         let mut deliveries = JoinSet::new();
-        let routes = [self.routes.has(Severity::Critical), self.routes.has(Severity::Warning)];
+        let routes = [self.routes.keeps_pages(Severity::Critical), self.routes.keeps_pages(Severity::Warning)];
         let outbox = Outbox::start(cfg.clone(), routes, self.metrics.clone(), &mut deliveries).await?;
         // Read before delivery starts removing the pages it delivers.
         let episodes = Episodes::resumed(episode_quiet, outbox.open_episodes().await?, Instant::now());

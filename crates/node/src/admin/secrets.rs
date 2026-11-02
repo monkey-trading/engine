@@ -81,6 +81,13 @@ struct Attested {
 /// - the bundle is older than what the enclave attests it holds
 /// - the enclave refuses it, or its receipt's quote does not bind the receipt on this connection
 pub(super) async fn deliver(cfg: &NodeConfig, key: &SigningKey, args: &DeliverArgs) -> anyhow::Result<()> {
+    deliver_unshown(cfg, key, args).await.map_err(unshown)
+}
+
+/// `deliver`, whose errors may quote what the host sent.
+/// Error cases:
+/// - see `deliver`
+async fn deliver_unshown(cfg: &NodeConfig, key: &SigningKey, args: &DeliverArgs) -> anyhow::Result<()> {
     let bundle = Bundle::from_file(&args.secrets_file)?;
     let named = cfg.named_secrets()?;
     bundle.check(&named)?;
@@ -142,8 +149,14 @@ pub(super) async fn deliver(cfg: &NodeConfig, key: &SigningKey, args: &DeliverAr
 /// Error cases:
 /// - the enclave cannot be reached, or fails its quote (see `connect`)
 pub(super) async fn status(cfg: &NodeConfig, args: &PeerArgs) -> anyhow::Result<()> {
-    print_status(&connect(cfg, args).await?);
+    print_status(&connect(cfg, args).await.map_err(unshown)?);
     Ok(())
+}
+
+/// `error` as this prints it: a parser's error quotes what the host sent, and the operator reads it
+/// in a terminal.
+fn unshown(error: anyhow::Error) -> anyhow::Error {
+    anyhow::anyhow!(shown(&format!("{error:#}")))
 }
 
 /// The names in `missing` whose fields' use `applies` to, each once.
@@ -161,7 +174,7 @@ fn lacking(named: &[NamedSecret], missing: &[SecretName], applies: impl Fn(Secre
 /// `text` from the connection, which the host can write to, as this prints it: bounded, with no
 /// control character that could rewrite what the operator's terminal shows.
 fn shown(text: &str) -> String {
-    text.chars().filter(|c| !c.is_control()).take(512).collect()
+    text.chars().filter(|c| !c.is_control()).take(1024).collect()
 }
 
 /// Prints an enclave's quoted status.

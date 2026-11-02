@@ -31,6 +31,9 @@ pub const RETRY: Retry =
 pub struct Routes {
     critical: Option<WebhookUrl>,
     warning: Option<WebhookUrl>,
+    /// Which routes, Critical then Warning, name a delivered secret: a bundle can leave one off, and
+    /// its pending pages then wait for a bundle that holds it, rather than stopping the node.
+    delivered: [bool; 2],
 }
 
 /// How a page is retried after a failure retrying can fix: the wait starts at `first` and doubles
@@ -73,7 +76,7 @@ impl Routes {
                 .map(|var| WebhookUrl::from_env(var, &env).with_context(|| format!("alerts.{key}")))
                 .transpose()
         };
-        Ok(Self { critical: url(critical, "critical")?, warning: url(warning, "warning")? })
+        Ok(Self { critical: url(critical, "critical")?, warning: url(warning, "warning")?, delivered: [false; 2] })
     }
 
     /// Sets each route that names a delivered secret `values` holds. A route it does not hold stays
@@ -81,6 +84,8 @@ impl Routes {
     /// Error cases:
     /// - a delivered URL is not acceptable, which the delivery's own check refused before sealing
     pub(crate) fn deliver(&mut self, cfg: &AlertsSection, values: &Values) -> anyhow::Result<()> {
+        let named = |route: &Option<WebhookRoute>| route.as_ref().is_some_and(|route| route.url_secret.is_some());
+        self.delivered = [named(&cfg.critical), named(&cfg.warning)];
         let url = |route: &Option<WebhookRoute>, key: &str| {
             route
                 .as_ref()
@@ -96,6 +101,16 @@ impl Routes {
             self.warning = Some(warning);
         }
         Ok(())
+    }
+
+    /// Whether `severity`'s pending pages have a route to wait for: a webhook, or a delivered secret
+    /// this start lacks.
+    pub fn keeps_pages(&self, severity: Severity) -> bool {
+        self.has(severity)
+            || match severity {
+                Severity::Critical => self.delivered[0],
+                Severity::Warning => self.delivered[1],
+            }
     }
 
     /// Whether `severity` has a webhook.

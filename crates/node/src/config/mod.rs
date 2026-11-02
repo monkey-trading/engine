@@ -60,7 +60,7 @@ pub use tls::{AcmeSection, AcmeTestCa, ApiTlsSection};
 mod sealing;
 pub use sealing::{HandoverSection, SealingSection};
 mod secrets;
-pub(crate) use secrets::{NamedSecret, SecretUse, Values};
+pub(crate) use secrets::{NamedSecret, SecretUse, Values, redact};
 pub use secrets::{SecretName, SecretUrl, SecretValue, SecretsSection};
 
 /// Built with the `production` feature: mock TEE, custody, and feed providers are refused.
@@ -362,7 +362,7 @@ impl NodeConfig {
 
 /// A TOML error reduced to its message and line. The error's own text quotes the offending
 /// source line, which may hold a credential such as `custody.evm.providers[].rpc_url`.
-pub(crate) fn parse_error(e: &toml::de::Error, text: &str) -> anyhow::Error {
+fn parse_error(e: &toml::de::Error, text: &str) -> anyhow::Error {
     let line = e.span().map(|span| text[..span.start].matches('\n').count() + 1);
     match line {
         Some(line) => anyhow::anyhow!("line {line}: {}", e.message()),

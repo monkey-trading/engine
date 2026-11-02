@@ -113,6 +113,14 @@ impl SecretStore {
         self.lock().clone()
     }
 
+    /// The sealed bundle, telling `running` its version under the same lock `replace` takes, so a
+    /// bundle sealed from here on is one this start does not run, and no delivery falls between.
+    pub fn current_running(&self, running: impl FnOnce(Option<u64>)) -> Option<SignedBundle> {
+        let held = self.lock();
+        running(held.as_ref().map(|signed| signed.bundle.version));
+        held.clone()
+    }
+
     /// The sealed bundle's version, if there is one.
     pub fn version(&self) -> Option<u64> {
         self.lock().as_ref().map(|signed| signed.bundle.version)

@@ -18,14 +18,14 @@ use alloy::rpc::client::RpcClient;
 use alloy::rpc::types::{Block, Filter, Header, Log, TransactionRequest};
 use alloy::sol;
 use alloy::sol_types::{SolCall, SolEvent};
-use alloy::transports::http::reqwest::{Certificate, Client, Url};
+use alloy::transports::http::reqwest::{Certificate, Client};
 use anyhow::{Context, anyhow, bail, ensure};
 use engine_core::types::AccountId;
 use futures_util::{StreamExt, TryStreamExt, stream};
 use tokio::time::timeout;
 use tracing::debug;
 
-use crate::config::{EvmCustodySection, FinalityTag, SecretUrl};
+use crate::config::{EvmCustodySection, FinalityTag, SecretUrl, redact};
 use crate::custody::chain::BlockLink;
 use crate::custody::evm::{
     Beneficiary, BlockRef, Finality, StakingEvent, StakingEventKind, VaultDeposit, VaultIdentity, VaultReader,
@@ -58,8 +58,8 @@ pub(super) mod legacy {
 
 pub struct VaultRpc {
     client: RpcClient,
-    /// Kept only to scrub it from errors.
-    url: Url,
+    /// The endpoint URL and key in every form, kept only to scrub them from errors.
+    redactions: Vec<String>,
     vault: Address,
     /// The staking contract whose events mirror into the engine; `None` without one.
     staking: Option<Address>,
@@ -305,10 +305,10 @@ impl VaultRpc {
             .tls_certs_only(roots)
             .build()
             .context("building the RPC client")?;
-        let client = RpcClient::new_http_with_client(http, url.clone());
+        let client = RpcClient::new_http_with_client(http, url);
         Ok(VaultRpc {
             client,
-            url,
+            redactions: rpc_url.redactions()?,
             vault,
             staking: cfg.staking.as_ref().map(|staking| staking.contract),
             registry: cfg.staking.as_ref().map(|staking| staking.registry.contract),
@@ -359,12 +359,10 @@ impl VaultRpc {
         }
     }
 
-    /// `text` with the endpoint URL, and its path, query, and password on their own, redacted:
-    /// transport errors quote the URL, and providers put API keys in it.
+    /// `text` with the endpoint URL and its key redacted: transport errors quote the URL, and a
+    /// provider's refusal can echo the key.
     fn scrub(&self, text: &str) -> String {
-        let url = &self.url;
-        let secrets = [Some(url.as_str()), Some(url.path()).filter(|path| path.len() > 1), url.query(), url.password()];
-        secrets.into_iter().flatten().fold(text.to_owned(), |text, secret| text.replace(secret, "<redacted>"))
+        redact(text, &self.redactions)
     }
 
     /// One vault deposit from its log.

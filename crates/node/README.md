@@ -2169,7 +2169,11 @@ would choose the secret.
   no screening would admit what it should refuse. It serves only the delivery listener until a bundle
   supplies them, then goes on starting, with no restart. Without a vendor's key that connection stays
   off and the markets it alone prices go unpriced (`market_no_price`). Without a webhook's URL that
-  route stays off and its alerts are only logged.
+  route stays off, its alerts are only logged, and any pages waiting for it stay in the outbox.
+- **A key a provider refuses.** A start that fails while the config names a chain or screening key does
+  not power the guest off, since a delivered key may be why and only a delivery can repair it. It serves
+  only the delivery listener under `secrets_start_failed` (Critical), and takes a bundle with a working
+  key for the restart that follows.
 - **A rotation.** Deliver a higher `version`, holding every secret: a bundle replaces the whole sealed
   one, so the tool refuses one lacking what the node holds for unless given `--partial`. The enclave
   seals it at once, but what runs keeps the clients it built when it started, so the receipt says

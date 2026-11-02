@@ -150,8 +150,7 @@ impl Listener {
         tokio::select! {
             accepted = self.listener.accept(), if serving.len() < MAX_CONNECTIONS => match accepted {
                 Ok((stream, peer)) => {
-                    let authority = self.authority.borrow().clone();
-                    serving.spawn(self.deliveries.clone().serve_connection(stream, peer, authority));
+                    serving.spawn(self.deliveries.clone().serve_connection(stream, peer, self.authority.clone()));
                 }
                 Err(e) => {
                     warn!("accepting a secrets delivery failed: {e}");
@@ -179,7 +178,7 @@ impl Deliveries {
         self: Arc<Self>,
         mut stream: TcpStream,
         peer: std::net::SocketAddr,
-        authority: Authority,
+        authority: watch::Receiver<Authority>,
     ) {
         let id = self.connections.fetch_add(1, Ordering::Relaxed) + 1;
         let span = info_span!("secrets_delivery", id, peer = %peer);
@@ -208,7 +207,7 @@ impl Deliveries {
     async fn serve(
         &self,
         stream: &mut (impl AsyncRead + AsyncWrite + Unpin),
-        authority: &Authority,
+        authority: &watch::Receiver<Authority>,
     ) -> anyhow::Result<()> {
         let hello: Hello = timeout(HELLO_TIMEOUT, receive(stream)).await.context("no hello in time")??;
         let nonce: [u8; 32] = hex::decode(&hello.nonce)
@@ -260,10 +259,12 @@ impl Deliveries {
         secret: &<Kx as Kem>::PrivateKey,
         nonce: &[u8; 32],
         delivery: &Delivery,
-        authority: &Authority,
+        authority: &watch::Receiver<Authority>,
     ) -> anyhow::Result<Receipt> {
         let signed: SignedBundle = delivery::decrypt(self.domain, &self.store.release(), secret, nonce, delivery)?;
         let signer = signed.signer(self.domain)?;
+        // Read now, not at the hello: a connection can outlive the switch to the log's key.
+        let authority = authority.borrow().clone();
         ensure!(authority.admits(signer).await?, "the bundle is signed by {signer}, not the operator key in effect");
         ensure!(
             self.provider == TeeProvider::Mock || !is_published_operator(signer)?,

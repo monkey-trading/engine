@@ -11,7 +11,7 @@ use alloy::rpc::client::RpcClient;
 use alloy::rpc::types::TransactionRequest;
 use alloy::sol;
 use alloy::sol_types::SolCall;
-use alloy::transports::http::reqwest::{Certificate, Client, Url};
+use alloy::transports::http::reqwest::{Certificate, Client};
 use anyhow::{Context, anyhow, ensure};
 use engine_core::emissions::TokenUnits;
 use serde::{Deserialize, Serialize};
@@ -22,7 +22,7 @@ use crate::checkpoints::{
     AcceptedCheckpoint, ApprovalId, ApprovalStatus, CheckpointChain, CurrentRelease, HandoverSource, LifecycleEvidence,
     Observation, VaultState, View,
 };
-use crate::config::{CheckpointSection, FinalityTag};
+use crate::config::{CheckpointSection, FinalityTag, redact};
 use crate::log::{Checkpoint, CheckpointDomain};
 
 mod authority;
@@ -104,7 +104,8 @@ sol! {
 
 pub(crate) struct CheckpointRpc {
     client: RpcClient,
-    url: Url,
+    /// The endpoint URL and key in every form, kept only to scrub them from errors.
+    redactions: Vec<String>,
     domain: CheckpointDomain,
     token: Address,
     relayer: Address,
@@ -163,11 +164,10 @@ impl CheckpointRpc {
             .user_agent(concat!("engine-checkpoints/", env!("CARGO_PKG_VERSION")))
             .tls_certs_only(roots)
             .build()?;
-        let url = cfg.rpc_url.expose()?;
-        let client = RpcClient::new_http_with_client(http, url.clone());
+        let client = RpcClient::new_http_with_client(http, cfg.rpc_url.expose()?);
         Ok(Self {
             client,
-            url,
+            redactions: cfg.rpc_url.redactions()?,
             domain,
             token,
             relayer: cfg.relayer,
@@ -208,19 +208,7 @@ impl CheckpointRpc {
     {
         match timeout(self.timeout, future.into_future()).await {
             Ok(Ok(value)) => Ok(value),
-            Ok(Err(error)) => {
-                let secrets = [
-                    Some(self.url.as_str()),
-                    Some(self.url.path()).filter(|path| path.len() > 1),
-                    self.url.query(),
-                    self.url.password(),
-                ];
-                let message = secrets
-                    .into_iter()
-                    .flatten()
-                    .fold(error.to_string(), |message, secret| message.replace(secret, "<redacted>"));
-                Err(anyhow!("checkpoint RPC failed: {message}"))
-            }
+            Ok(Err(error)) => Err(anyhow!("checkpoint RPC failed: {}", redact(&error.to_string(), &self.redactions))),
             Err(_) => Err(anyhow!("checkpoint RPC timed out")),
         }
     }

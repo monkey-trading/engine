@@ -10,7 +10,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, bail};
+use anyhow::{Context, anyhow, bail};
 use engine_core::types::AccountId;
 use tokio::net::TcpListener;
 use tokio::sync::{Semaphore, broadcast, mpsc, watch};
@@ -73,16 +73,38 @@ pub(crate) async fn run_with_cpu(
     start: KeyStart,
 ) -> anyhow::Result<()> {
     // Alert lines queue until routing starts, once this has set any delivered webhook.
-    let delivered = secrets::startup(&mut cfg, &mut telemetry, &start)
+    let mut delivered = secrets::startup(&mut cfg, &mut telemetry, &start)
         .await
         .inspect_err(|e| error!(alert = "secrets_startup_failed", "refusing to serve: {e:#}"))?;
+    // Takes deliveries through everything below, however long the vault takes to name this key.
+    let mut listening = JoinSet::new();
+    if let Some(listener) = delivered.listener.take() {
+        listening.spawn(listener.run());
+    }
     let Telemetry { metrics, alerts, pages_critical } = telemetry;
     if !pages_critical {
         warn!("no alerts.critical webhook: Critical alerts are only logged");
     }
     cfg.alerts.outbox.check_disk_location(&cfg.node.log_dir)?;
     let mut routing = alerts.spawn(cfg.alerts.episode_quiet, &cfg.alerts.outbox).await?;
-    let outcome = serve_node(cfg, metrics, &mut routing, cpu, start, delivered).await;
+    let mut serving = false;
+    let outcome = tokio::select! {
+        outcome = serve_node(cfg, metrics, &mut routing, cpu, start, &delivered, &mut serving) => outcome,
+        Some(stopped) = listening.join_next() => Err(anyhow!("the delivery listener stopped: {stopped:?}")),
+    };
+    // A provider that refuses a delivered key stops a start before anything runs, and only a delivery
+    // can repair that, so this stays up for one; the guest powers off when the engine exits.
+    if let Err(e) = &outcome
+        && !serving
+        && delivered.chain_keys
+    {
+        error!(
+            alert = "secrets_start_failed",
+            "the node cannot start, and a delivered key may be why, so it serves only its delivery listener: deliver \
+             a bundle with a working key and restart it: {e:#}"
+        );
+        listening.join_next().await;
+    }
     routing.drain(SHUTDOWN_GRACE).await;
     outcome
 }
@@ -100,14 +122,16 @@ pub(crate) async fn run_with_cpu(
 /// - the engine would reject a genesis command
 /// - with checkpoints configured, the vault's MONKEY cap cannot be read, or it was derived from
 ///   another emission period budget than the one the log records
-/// - any supervised task stops or panics, or the sequencer cannot drain in time
+/// - any supervised task stops or panics, or the sequencer cannot drain in time, which `serving`,
+///   set once every task runs, tells from a start that never served
 async fn serve_node(
     cfg: NodeConfig,
     metrics: Arc<Metrics>,
     routing: &mut Routing,
     cpu: Option<usize>,
     start: KeyStart,
-    mut delivered: secrets::Delivered,
+    delivered: &secrets::Delivered,
+    serving: &mut bool,
 ) -> anyhow::Result<()> {
     if let Some(vault) = crate::handover::vault_reader(&cfg)? {
         let on = vault.rotation_enabled().await?;
@@ -130,12 +154,6 @@ async fn serve_node(
     if cfg.node.auth == AuthMode::None {
         warn!("API authentication is OFF: development only");
     }
-    // Takes deliveries through everything below, however long the vault takes to name this key.
-    let mut listening = JoinSet::new();
-    if let Some(listener) = delivered.listener.take() {
-        listening.spawn(listener.run());
-    }
-
     let keys = keys::attested(&cfg, &start).await?;
     let keys::Keys { enclave: key, tls, store, attestor, attestation } = keys;
     // A takeover's first start under the new signer cuts the log to the vault's finalized
@@ -327,13 +345,6 @@ async fn serve_node(
             trusted: Arc::new(trusted()),
         });
     }
-    if !listening.is_empty() {
-        tasks.spawn(async move {
-            let stopped = listening.join_next().await.expect("the set holds the listener");
-            ("secrets", stopped.context("the delivery listener panicked").and_then(|outcome| outcome))
-        });
-    }
-
     let tick = cfg.node.tick;
     let ticks = tx.clone();
     tasks.spawn(async move { ("ticker", run_ticker(ticks, tick).await) });
@@ -442,6 +453,9 @@ async fn serve_node(
     tasks.spawn(async move { ("api", serve(listener, tls.acceptors, app, limits, api).await) });
     tasks.spawn(async move { ("rate limits", run_retain(retained).await) });
 
+    *serving = true;
+    info!(alert_resolved = "secrets_start_failed", "the node started");
+    info!(alert_resolved = "secrets_startup_failed", "the node started");
     let mut supervised = supervise(
         shutdown::Supervised {
             tasks,
