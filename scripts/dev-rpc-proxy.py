@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Local-only RPC proxy for the custody scenarios; an optional file enables fabricated logs."""
+"""Local-only RPC proxy for the custody scenarios; an optional file enables fabricated logs, and
+another makes it a keyed provider, which answers only a request whose path carries a listed key."""
 
 import argparse
 import json
@@ -16,6 +17,12 @@ class Proxy(BaseHTTPRequestHandler):
     def do_POST(self):
         """Reply from Anvil, optionally adding a validly encoded fictional deposit."""
         body = self.rfile.read(int(self.headers["content-length"]))
+        if self.server.keys:
+            with self.server.hits.open("a") as hits:
+                hits.write(self.path + "\n")
+            if self.path.removeprefix("/v2/") not in self.server.keys.read_text().split():
+                self.send_error(401)
+                return
         try:
             with urlopen(Request(self.server.target, body, {"content-type": "application/json"}), timeout=5) as out:
                 result = json.load(out)
@@ -60,11 +67,13 @@ def main():
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--target", required=True)
     parser.add_argument("--lie-file", type=Path)
+    parser.add_argument("--keys-file", type=Path, help="the keys /v2/<key> is answered for, re-read on each request")
+    parser.add_argument("--hits-file", type=Path, help="with --keys-file, where each request's path is appended")
     args = parser.parse_args()
     if not args.target.startswith("http://127.0.0.1:"):
         parser.error("target must be local Anvil")
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Proxy)
-    server.target, server.lie = args.target, args.lie_file
+    server.target, server.lie, server.keys, server.hits = args.target, args.lie_file, args.keys_file, args.hits_file
     server.serve_forever()
 
 

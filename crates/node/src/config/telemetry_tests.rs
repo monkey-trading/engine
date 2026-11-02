@@ -62,7 +62,7 @@ fn alert_routes_and_a_mock_stop_parse_and_unknown_alert_keys_fail() {
     let text = format!("{dev}\n[alerts.critical]\nurl_env = \"PAGER\"\n")
         .replace("{ market = 1, mid = \"100000\" }", "{ market = 1, mid = \"100000\", stop_after = \"30s\" }");
     let cfg: NodeConfig = toml::from_str(&text).unwrap();
-    assert_eq!(cfg.alerts.critical.unwrap().url_env, "PAGER");
+    assert_eq!(cfg.alerts.critical.unwrap().url_env.as_deref(), Some("PAGER"));
     assert_eq!(cfg.feeds.mock_mids[0].stop_after, Some(Duration::from_secs(30)));
     // A misspelt route would otherwise leave Critical alerts unrouted without a word.
     let text = format!("{dev}\n[alerts.critcal]\nurl_env = \"PAGER\"\n");

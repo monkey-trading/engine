@@ -43,6 +43,7 @@ instant-acme.workspace = true
 ipnet.workspace = true
 jmt.workspace = true
 k256 = { workspace = true, features = ["getrandom"] }
+percent-encoding.workspace = true
 ppp.workspace = true
 prometheus-client.workspace = true
 rand.workspace = true

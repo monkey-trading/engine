@@ -214,8 +214,14 @@ pub fn spawn_feed_into(
         symbol: (*symbol).into(),
         contract: None,
     });
-    let conn =
-        VenueConnection { venue, url: url.to_owned(), api_key_env: None, dataset: None, symbols: symbols.collect() };
+    let conn = VenueConnection {
+        venue,
+        url: url.to_owned(),
+        api_key_env: None,
+        api_key_secret: None,
+        dataset: None,
+        symbols: symbols.collect(),
+    };
     tokio::spawn(venue::run(conn, None, timing, venue::tls_config().expect("tls config"), tx))
 }
 

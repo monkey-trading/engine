@@ -329,7 +329,22 @@ fn a_pin_is_the_attested_key_hash_in_hex() {
     for bad in ["", "0xab", &hex::encode([0xab; 33]), "not hex"] {
         assert!(tls::parse_pin(bad).is_err(), "{bad}");
     }
-    assert!(Cli::try_parse_from(["engine", "set-reduce-only", "true"]).is_err(), "the pin is required");
+}
+
+// The pin stays required for all that goes through the API; a delivery checks a quote instead.
+#[tokio::test]
+async fn an_admin_command_needs_its_pin_and_a_secrets_delivery_does_not() {
+    let args = Cli::try_parse_from(["engine", "--config", DEV_CONFIG, "set-reduce-only", "true"]).unwrap().args;
+    let env = KeyEnv { key_file: None, key: Some(HexKey(DEV_KEY.into())) };
+    let err = run_with_clock(args, env, || 1_000).await.unwrap_err();
+    assert!(err.to_string().contains("--pin is required"), "{err:#}");
+
+    let delivery = ["deliver-secrets", "--to", "127.0.0.1:9", "--release", "r.toml", "--secrets-file", "s.toml"];
+    let parsed = Cli::try_parse_from(["engine"].into_iter().chain(delivery)).unwrap().args;
+    assert!(parsed.pin.is_none() && matches!(parsed.action, AdminAction::DeliverSecrets(_)));
+    // Secrets come from a file, never the command line.
+    assert!(Cli::try_parse_from(["engine", "deliver-secrets", "--to", "127.0.0.1:9", "--release", "r.toml"]).is_err());
+    assert!(Cli::try_parse_from(["engine", "secrets-status", "--to", "127.0.0.1:9", "--release", "r.toml"]).is_ok());
 }
 
 #[test]

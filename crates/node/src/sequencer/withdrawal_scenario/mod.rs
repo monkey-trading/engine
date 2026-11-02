@@ -134,7 +134,7 @@ async fn node_child() -> anyhow::Result<()> {
         let telemetry = crate::telemetry::init_telemetry(&cfg, |name| {
             (name == "ENGINE_ALERTS_CRITICAL_URL").then(|| alerts.clone())
         })?;
-        return crate::standby::run(cfg, telemetry).await;
+        return crate::standby::run(cfg, telemetry, crate::KeyStart::default()).await;
     }
     ensure!(
         cfg.tee.provider == TeeProvider::Mock && (cfg.tee.use_published_mock_key || cfg.tee.sealing.is_some()),

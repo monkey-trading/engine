@@ -11,6 +11,8 @@ use engine_core::types::MarketId;
 use serde::Deserialize;
 use tokio_tungstenite::tungstenite::http::Uri;
 
+use crate::config::{SecretName, SecretValue};
+
 /// Massive's real-time WebSocket endpoints, one per asset class, by path.
 const MASSIVE_PATHS: [&str; 3] = ["/forex", "/futures", "/stocks"];
 
@@ -115,9 +117,14 @@ pub struct VenueConnection {
     /// must also be fresh, bounds the market's age.
     pub url: String,
     /// The environment variable holding the vendor's API key, which is a credential and stays out
-    /// of config files: required for Massive, TraderMade, and Databento, and refused for a venue
-    /// whose feed is public. The node refuses to start while a named variable is unset.
+    /// of config files: required for Massive, TraderMade, and Databento unless `api_key_secret`
+    /// names the key, and refused for a venue whose feed is public. The node refuses to start while
+    /// a named variable is unset. A production build refuses this field: the guest has no
+    /// environment to set it in.
     pub api_key_env: Option<String>,
+    /// The delivered secret holding the vendor's API key, in place of `api_key_env`. Until it is
+    /// delivered this connection stays off, under `secret_missing`.
+    pub api_key_secret: Option<SecretName>,
     /// The Databento dataset the gateway serves, e.g. `GLBX.MDP3`; required for Databento only.
     pub dataset: Option<String>,
     pub symbols: Vec<VenueSymbol>,
@@ -200,6 +207,11 @@ impl ApiKey {
         Ok(ApiKey(key.ok_or_else(|| anyhow!("environment variable {var} is not set"))?))
     }
 
+    /// The key a delivered secret holds.
+    pub(crate) fn delivered(value: &SecretValue) -> Self {
+        ApiKey(value.expose().to_owned())
+    }
+
     /// The key, for the one place that authenticates with it.
     pub fn expose(&self) -> &str {
         &self.0
@@ -252,8 +264,12 @@ impl VenuesSection {
             // A venue's alerts name the connection by its URL, so no two of its connections share one.
             ensure!(endpoints.insert((conn.venue, conn.url.as_str())), "{name} lists url {} twice", conn.url);
             ensure!(
-                conn.api_key_env.is_some() == conn.venue.needs_key(),
-                "{name} api_key_env must be set exactly for a vendor"
+                (conn.api_key_env.is_some() || conn.api_key_secret.is_some()) == conn.venue.needs_key(),
+                "{name} api_key_env must be set exactly for a vendor, unless api_key_secret names its key"
+            );
+            ensure!(
+                conn.api_key_env.is_none() || conn.api_key_secret.is_none(),
+                "{name} names both api_key_env and api_key_secret"
             );
             ensure!(
                 conn.dataset.is_some() == (conn.venue == Venue::Databento),

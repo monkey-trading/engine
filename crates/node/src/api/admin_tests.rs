@@ -497,3 +497,4 @@ fn admin_entries(entries: &[LogEntry]) -> Vec<(AdminRequest, Vec<Event>)> {
         })
         .collect()
 }
+mod delivery_authority;

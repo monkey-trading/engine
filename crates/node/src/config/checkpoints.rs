@@ -34,7 +34,7 @@ impl NodeConfig {
             return Ok(());
         };
         ensure!(self.custody.provider == CustodyProvider::Evm, "[checkpoints] requires EVM custody");
-        let url = cfg.rpc_url.expose()?;
+        let url = cfg.rpc_url.attested()?;
         ensure!(
             url.scheme() == "https" || matches!(url.host_str(), Some("127.0.0.1" | "[::1]")),
             "checkpoints.rpc_url must use HTTPS off-machine"

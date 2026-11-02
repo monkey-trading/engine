@@ -50,7 +50,7 @@ async fn retiring_benchmarks_resolve_critical_webhook_episodes_after_command_rol
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let url = format!("http://{}/hook", listener.local_addr().unwrap());
             let mut cfg = dev_config().alerts;
-            cfg.critical = Some(WebhookRoute { url_env: "RETIREMENT_HOOK".into() });
+            cfg.critical = Some(WebhookRoute::from_env("RETIREMENT_HOOK"));
             cfg.warning = None;
             cfg.outbox.dir = dir.join("outbox");
             cfg.outbox.max_pages = 32;
@@ -207,7 +207,7 @@ async fn retirement_after_restart_resolves_delivered_critical_incidents_without_
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/hook", listener.local_addr().unwrap());
         let mut cfg = dev_config().alerts;
-        cfg.critical = Some(WebhookRoute { url_env: "RETIREMENT_RESTART_HOOK".into() });
+        cfg.critical = Some(WebhookRoute::from_env("RETIREMENT_RESTART_HOOK"));
         cfg.warning = None;
         cfg.outbox.dir = dir.join("outbox");
         cfg.outbox.max_pages = 32;

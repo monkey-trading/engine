@@ -73,7 +73,9 @@ pub(crate) async fn take(
     let request = request_report_data(domain, &challenge, &public, &cfg.file_sha256);
     let evidence = evidence::produce(&Quoting::from(&cfg.tee), attestor, &platform, request).await?;
     let config_sha256 = hex::encode(cfg.file_sha256);
-    send(&mut stream, &Request { public_key: hex::encode(&public), config_sha256, log_tip, evidence }).await?;
+    let request_message =
+        Request { public_key: hex::encode(&public), config_sha256, log_tip, secrets_only: false, evidence };
+    send(&mut stream, &request_message).await?;
     let reply =
         timeout(REPLY_TIMEOUT, receive(&mut stream)).await.context("the predecessor did not answer in time")??;
     let (encapped_key, ciphertext, evidence) = match reply {
@@ -84,6 +86,7 @@ pub(crate) async fn take(
         ),
         Reply::Refused { reason } => bail!("the predecessor keeps its keys: {reason}"),
         Reply::Confirmed { .. } => bail!("the predecessor confirmed a handover it never made"),
+        Reply::Secrets { .. } => bail!("the predecessor answered a request for the keys with secrets"),
     };
     // Before trusted time runs: the vault naming the key bounds what this accepts.
     let now = crate::clock::now_ms() / 1000;
@@ -155,7 +158,7 @@ pub(crate) async fn take(
                 );
                 Ok(())
             }
-            Reply::Keys { .. } => bail!("the predecessor answered the confirmation with keys"),
+            Reply::Keys { .. } | Reply::Secrets { .. } => bail!("the predecessor answered the confirmation with keys"),
             Reply::Refused { reason } => bail!("the predecessor refused the confirmation: {reason}"),
         }
     };

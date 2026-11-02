@@ -68,7 +68,15 @@ an index: load only the rule whose hint matches the current action.
   browsers with wasm-bindgen (`verifyAttestation`, the development-only `verifyMockAttestation`,
   `ExpectedSigner`, `verifyResponse`, `FrameVerifier`); `scripts/build-wasm-verifier.sh` packages
   it as an npm package. Its `README.md` lists every file.
-- **crates/node/** — `engine-node`, binary `engine` (`main.rs` over `lib.rs`). Contains the
+- **crates/node/** — `engine-node`, binary `engine` (`main.rs` over `lib.rs`). Contains delivered
+  secrets (`secrets/`, `tee/secrets.rs`, `node/secrets.rs`, `config/secrets.rs`, `admin/secrets.rs`,
+  `handover/secrets.rs`: RPC provider keys, vendor keys and webhook URLs the attested config names and
+  the operator delivers on `[tee.sealing.secrets]`'s listener with `engine admin deliver-secrets`,
+  encrypted to a one-time HPKE key whose quote passes against the release manifest, signed by the
+  operator key in effect, sealed per release apart from `KeySet`; a URL's `{name}` fills its key only,
+  never its origin; a node lacking a chain or screening key holds on that listener, one lacking a vendor
+  key or webhook runs with it off under `secret_missing`; a rotation needs a restart and says so; an
+  approved upgrade moves the bundle, an election moves none), the
   access-source screening (`access.rs`, signed decisions with bounded HTTP reads),
   sequencer, the public log with signed checkpoints (segmented, with a public archive), `engine
   replay`, `engine exit-proof` (`exit.rs`: the exit's proofs and vault calls from a published log),
@@ -152,8 +160,8 @@ an index: load only the rule whose hint matches the current action.
   connection's stream can be from its pings on the monotonic clock, past which its frames count as
   no quote, and `sequencer/quotes.rs` holds each quote to that bound at its stamp) and a mock, Prometheus metrics on an operator
   listener, and alert routing to webhooks with a bounded durable outbox outside the public log. Its
-  `production` cargo feature refuses mock TEE, custody, and feed providers, and an API without
-  `[api.tls.acme]`, at config load; release images build with it. `engine ct-watch` (`ct_watch/`)
+  `production` cargo feature refuses mock TEE, custody, and feed providers, an API without
+  `[api.tls.acme]`, and a secret read from the environment, at config load; release images build with it. `engine ct-watch` (`ct_watch/`)
   is a separate process outside the enclave,
   holding no key of the node's: it verifies the node's attestation, follows RFC 6962 logs (bounded
   reads, tree head signatures checked, no consistency proofs), and raises `unattested_certificate`
@@ -237,6 +245,9 @@ an index: load only the rule whose hint matches the current action.
   synchronization before startup catch-up and after trusted-time halts spanning unpaid rollovers.
   `ct-watch.toml` is the Certificate Transparency watcher's config, documenting what it needs: the
   domain, the node and its release manifest, the logs to follow, and alert routing.
+  A field reads a delivered secret by name, never its value: `{name}` in a URL's path or query,
+  `api_key_secret`, or `url_secret`, with `[tee.sealing.secrets]` to receive them; a `production` build
+  refuses `api_key_env` and `url_env`.
   `test-keys.toml` lists the keys whose private keys the repo publishes for development (the dev
   configs' operator key, explicit published mock enclave signer, shared access-source test
   authority, and Anvil's default accounts); a node whose TEE is not the mock refuses them
@@ -298,6 +309,9 @@ an index: load only the rule whose hint matches the current action.
   incumbent authorized pays, a stale sealed copy refuses, and a re-election hands the keys back;
   `dev-standby-operator.sh`, the standby takeover scenario on Anvil: a failed operator, the liveness
   rule's promotion, the limited `setSigner`, and the reissued payout across the signer change;
+  `dev-production-secrets.sh`, delivering secrets into a dev node's attested enclave on Anvil: a hold
+  until delivery, refused bundles, a restart, a rotation, a restored and a damaged sealed file, and no
+  value anywhere outside the enclave;
   `dev-dashboard-data.sh`, the dashboard data scenario: signed trades both ways in two markets and a
   MONKEY period closing, each new route's figures checked and verified with `engine verify-response`, and
   the series compared across a restart;
@@ -361,7 +375,7 @@ an index: load only the rule whose hint matches the current action.
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
   the browser-origin scenario, the proxy protocol scenario, the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the
   signed API answers dev scenario, the public certificate dev scenario, the executable quotes dev
-  scenario, the review-delta helper's test, the merge approval gate's test, the browser verifier
+  scenario, the production secrets dev scenario, the review-delta helper's test, the merge approval gate's test, the browser verifier
   (`wasm-verifier` builds its package twice on separate runners with the pinned toolchain, the
   second from another checkout path, and its first run also runs `dev-wasm-verifier.sh` on that
   package; `wasm-verifier-compare` fails if the builds differ), and the enclave image (`image`
@@ -544,6 +558,12 @@ Run from the repo root:
   the liquidity floor paying pro-rata in USDC against posted checkpoint roots, an unstake through
   the cooldown, and an epoch below the floor paying nothing; needs Anvil, Forge, and installed
   Soldeer dependencies)
+- Deliver secrets into an enclave as the operator: `cargo run -p engine-node -- admin --config <config>
+  --key-file <key> deliver-secrets --to <host:port> --release <release.toml> --secrets-file <file>`
+  (`secrets-status` reads what it attests it holds; `--allow-mock` for a dev node). Against anything
+  but a local dev node, [no-deploy](rules/no-deploy.md) applies
+- Production secrets dev scenario: `./scripts/dev-production-secrets.sh` (the vault scenario's
+  requirements; obviously fake values, private temporary data, and its own free ports)
 - Operator election dev scenario: `./scripts/dev-operator-election.sh` (starts Anvil, deploys the
   vault, the registry and its staking contract, delegates to two candidates, elects one, and checks
   through the real custody quorum, sequencer and API that the deployer's key is refused and the

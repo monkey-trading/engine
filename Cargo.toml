@@ -52,6 +52,7 @@ nix = { version = "0.31.3", default-features = false, features = ["sched"] }
 # in an OS random source that does not build for the browser and that verification never uses.
 p384 = { version = "0.14.0", default-features = false, features = ["ecdsa"] }
 # PROXY protocol v2 header parsing for the proxy that passes TLS through (`[api.proxy_protocol]`).
+percent-encoding = "2.3"
 ppp = "2.3"
 prometheus-client = "0.25"
 proptest = { version = "1.12", default-features = false, features = ["std"] }

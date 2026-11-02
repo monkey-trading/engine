@@ -17,7 +17,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::alerts::outbox::Outbox;
 use crate::alerts::{Page, Severity};
-use crate::config::{AlertsSection, WebhookRoute, WebhookUrl};
+use crate::config::{AlertsSection, Values, WebhookRoute, WebhookUrl};
 use crate::metrics::{DeliveryLabels, Metrics, SeverityLabel};
 
 /// Deadline for one POST, connection included.
@@ -50,7 +50,8 @@ pub struct Queues {
 }
 
 impl Routes {
-    /// Reads each configured route's URL from the environment variable it names, through `env`.
+    /// Reads each configured route's URL from the environment variable it names, through `env`. A
+    /// route that names a delivered secret instead stays off until `deliver` sets it.
     /// Error cases:
     /// - a configured route's variable is unset, or does not hold an acceptable URL
     pub fn from_config(cfg: &AlertsSection, env: impl Fn(&str) -> Option<String>) -> anyhow::Result<Self> {
@@ -68,10 +69,33 @@ impl Routes {
         let url = |route: &Option<WebhookRoute>, key: &str| {
             route
                 .as_ref()
-                .map(|route| WebhookUrl::from_env(&route.url_env, &env).with_context(|| format!("alerts.{key}")))
+                .and_then(|route| route.url_env.as_ref())
+                .map(|var| WebhookUrl::from_env(var, &env).with_context(|| format!("alerts.{key}")))
                 .transpose()
         };
         Ok(Self { critical: url(critical, "critical")?, warning: url(warning, "warning")? })
+    }
+
+    /// Sets each route that names a delivered secret `values` holds. A route it does not hold stays
+    /// off, under the `secret_missing` the node raises for it.
+    /// Error cases:
+    /// - a delivered URL is not acceptable, which the delivery's own check refused before sealing
+    pub(crate) fn deliver(&mut self, cfg: &AlertsSection, values: &Values) -> anyhow::Result<()> {
+        let url = |route: &Option<WebhookRoute>, key: &str| {
+            route
+                .as_ref()
+                .and_then(|route| route.url_secret.as_ref())
+                .and_then(|name| values.get(name))
+                .map(|value| WebhookUrl::parse(&format!("alerts.{key}"), value.expose()))
+                .transpose()
+        };
+        if let Some(critical) = url(&cfg.critical, "critical")? {
+            self.critical = Some(critical);
+        }
+        if let Some(warning) = url(&cfg.warning, "warning")? {
+            self.warning = Some(warning);
+        }
+        Ok(())
     }
 
     /// Whether `severity` has a webhook.

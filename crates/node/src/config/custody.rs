@@ -1,18 +1,18 @@
 //! The `[custody.evm]` section, the independent providers whose URLs may carry credentials, and the checks that tie
-//! the custody section to its provider.
+//! the custody section to its provider. A provider's key may be delivered instead of written here
+//! (`SecretUrl`), but its origin stays in the attested file, since these providers' quorum credits
+//! deposits.
 
 use std::collections::BTreeSet;
-use std::fmt;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use alloy::primitives::Address;
-use alloy::transports::http::reqwest::Url;
 use anyhow::{Context, bail};
 use engine_core::Fixed;
 use serde::Deserialize;
 
-use crate::config::{CustodyProvider, NodeConfig, TeeProvider};
+use crate::config::{CustodyProvider, NodeConfig, SecretUrl, TeeProvider};
 
 /// The block tag whose number marks finality on the custody chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -105,28 +105,6 @@ pub struct RpcProviderSection {
     pub rpc_url: SecretUrl,
 }
 
-/// A URL that may carry credentials. `Debug` hides it; read it with `expose` where it is used.
-#[derive(Deserialize)]
-#[serde(transparent)]
-pub struct SecretUrl(String);
-
-impl fmt::Debug for SecretUrl {
-    /// Never prints the URL.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("SecretUrl(<redacted>)")
-    }
-}
-
-impl SecretUrl {
-    /// The URL, for the one place that connects with it.
-    /// Error cases:
-    /// - the value is not a valid URL
-    pub fn expose(&self) -> anyhow::Result<Url> {
-        // `url::ParseError` names the problem, never the input, so nothing secret reaches a log.
-        Url::parse(&self.0).map_err(|e| anyhow::anyhow!("custody.evm.providers.rpc_url: {e}"))
-    }
-}
-
 impl NodeConfig {
     /// Checks the custody section against its provider, and that genesis credits house capital
     /// only under mock custody.
@@ -153,7 +131,7 @@ impl NodeConfig {
         }
         let (mut names, mut urls) = (BTreeSet::new(), BTreeSet::new());
         for provider in &evm.providers {
-            let url = provider.rpc_url.expose()?;
+            let url = provider.rpc_url.attested()?;
             if provider.name.trim().is_empty() || !names.insert(&provider.name) || !urls.insert(url.clone()) {
                 bail!("custody.evm.providers requires non-empty unique names and distinct URLs");
             }

@@ -60,7 +60,7 @@ different measurement; it runs the image on mock custody and prices, without a c
 
 ## What the guest exposes
 
-The engine takes input from the host through six paths:
+The engine takes input from the host through seven paths:
 
 - the API port, `node.listen` in the config, served over TLS with a key generated in the enclave,
   which also answers the CA's TLS-ALPN-01 validations for `[api.tls.acme]`, so the host forwards
@@ -68,6 +68,9 @@ The engine takes input from the host through six paths:
 - the handover port, `tee.sealing.handover.listen`, where the next release asks for the enclave's
   keys; the request and the answer are attested and the keys encrypted, so the host only carries
   them;
+- the delivery port, `tee.sealing.secrets.listen`, where the operator delivers the node's secrets;
+  the offer and the receipt are attested and the bundle encrypted and signed, so the host only
+  carries them;
 - the metrics port, `metrics.listen`, which serves `GET /metrics` over plain HTTP and is reachable
   from the host only when the config puts it on a guest address rather than loopback;
 - its outbound network: venue feeds over TLS, the custody RPC providers and the checkpoint RPC
@@ -304,12 +307,14 @@ the timelock call `setSigner`. The same applies after a compromise, once the old
 deleted.
 
 The attestation binds every byte of the config file, so a verifier can check the hash only against
-a copy it can read. A credential in the file, such as an API key in a `custody.evm.providers`
-entry's `rpc_url`, must reach the node another way before that config can be published; until then, only whoever holds
-the file can check its hash. The guest's only environment is the measured kernel command line, so
-the webhook URL that `[alerts.critical]` reads from an environment variable has no way in either:
-a config with real attestation needs that route, so it cannot start in the image until secrets
-are released to the attested enclave.
+a copy it can read, and a credential in the file would stop that config being published. The config
+therefore names its secrets, and the operator delivers them into the attested enclave on
+`[tee.sealing.secrets]`'s listener with `engine admin deliver-secrets`, which checks the enclave's
+quote against this release's manifest first (`crates/node/README.md`, Delivered secrets). The
+guest's only environment is the measured kernel command line, so a production build refuses a secret
+read from an environment variable. The host forwards that listener's port as it does the API's; it
+carries only encrypted bundles. A first deployment holds on that listener until the operator
+delivers, before step one of the key lifecycle.
 
 The commit time enters the kernel and every initramfs entry, so each release has its own launch
 digest, even one that changes only documentation: a verifier takes the digest from that release's

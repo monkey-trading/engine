@@ -2078,6 +2078,7 @@ dependencies = [
  "jmt",
  "k256 0.14.0",
  "nix",
+ "percent-encoding",
  "ppp",
  "prometheus-client",
  "rand 0.8.8",

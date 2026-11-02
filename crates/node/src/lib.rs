@@ -1,6 +1,6 @@
 //! The TEE-hosted node around `engine-core`: the sequencer and public log, log replay, the client
-//! API with its TLS and limits, enclave attestation, trusted time, custody, price feeds, and the
-//! operator's metrics and alert routing; `engine admin`, the operator's client; and `engine ct-watch`,
+//! API with its TLS and limits, enclave attestation, delivered secrets, trusted time, custody, price
+//! feeds, and the operator's metrics and alert routing; `engine admin`, the operator's client; and `engine ct-watch`,
 //! the Certificate Transparency watcher.
 
 mod access;
@@ -29,6 +29,7 @@ pub use node::{KeyStart, parse_launch_digest, run};
 mod replay_audit;
 mod roughtime;
 pub use replay_audit::replay_path_with_custody;
+mod secrets;
 pub mod sequencer;
 mod sequencer_thread;
 mod snapshot;

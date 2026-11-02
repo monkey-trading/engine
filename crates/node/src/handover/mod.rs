@@ -37,6 +37,10 @@
 //! the checkpoint inside the encrypted keys, so a host that swaps the segment bytes is caught before
 //! the confirmation goes out.
 //!
+//! Delivered secrets are no part of the keys (`tee::secrets`). An approved upgrade moves them first,
+//! with no stop, since reading the vault can already take a delivered key (`secrets`). An election
+//! moves none: the elected operator's enclave brings its own, as #359 decides.
+//!
 //! The mock TEE's quotes and stand-in measurements prove nothing: two mock enclaves hand over to
 //! each other for development only, and a real enclave never accepts a mock one.
 
@@ -61,10 +65,12 @@ use crate::log::CheckpointDomain;
 use crate::tee::keys::KeySet;
 use crate::tee::sealing::Release;
 
-mod evidence;
+pub(crate) mod evidence;
 pub(crate) use evidence::Evidence;
 mod predecessor;
 pub(crate) use predecessor::{DrainReply, Predecessor, Published};
+pub(crate) mod secrets;
+pub(crate) use secrets::fetch_secrets;
 mod successor;
 pub(crate) use successor::take;
 
@@ -104,7 +110,7 @@ pub(crate) fn ensure_named(current: CurrentRelease, release: &Release) -> anyhow
 }
 
 /// The HPKE suite: DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, ChaCha20-Poly1305.
-type Kx = X25519HkdfSha256;
+pub(crate) type Kx = X25519HkdfSha256;
 
 /// The largest message either side reads; collateral, the largest part, stays under 300 KiB.
 const MAX_MESSAGE_BYTES: u32 = 1 << 20;
@@ -112,9 +118,9 @@ const MAX_MESSAGE_BYTES: u32 = 1 << 20;
 /// under, so every segment a predecessor can publish it can also hand over.
 const MAX_SEGMENT_BYTES: u32 = 64 << 20;
 /// How long a peer gets to send the challenge or a request, or the confirmation after the keys.
-const MESSAGE_TIMEOUT: Duration = Duration::from_secs(60);
+pub(crate) const MESSAGE_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long the successor waits for the keys: the predecessor's drain and its vendor fetch.
-const REPLY_TIMEOUT: Duration = Duration::from_secs(300);
+pub(crate) const REPLY_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// The predecessor's first message on each connection, which the successor's request binds, so a
 /// request or confirmation recorded on one connection is refused on any other.
@@ -138,6 +144,9 @@ struct Request {
     /// handover carries every segment past it, so nothing sequenced up to the stop is missing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     log_tip: Option<u64>,
+    /// Asks for the delivered secrets alone, with no stop: its quote binds that under its own tag.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    secrets_only: bool,
     evidence: Evidence,
 }
 
@@ -154,6 +163,9 @@ enum Reply {
     /// The confirmation verified, signed with the handed-over key so the host cannot forge it: the
     /// predecessor exits.
     Confirmed { signature: String },
+    /// The delivered secrets, encrypted to the request's public key, and the predecessor's quote
+    /// over them. Sequencing goes on.
+    Secrets { encapped_key: String, ciphertext: String, evidence: Evidence },
 }
 
 /// The successor's proof that it holds the keys: the handed-over key's signature.
@@ -213,7 +225,7 @@ fn confirmed_digest(domain: CheckpointDomain, request: &[u8; 64]) -> [u8; 32] {
 }
 
 /// A SHA-256 in the first half of report data, the second half zero.
-fn padded(digest: [u8; 32]) -> [u8; 64] {
+pub(crate) fn padded(digest: [u8; 32]) -> [u8; 64] {
     let mut report_data = [0u8; 64];
     report_data[..32].copy_from_slice(&digest);
     report_data
@@ -276,7 +288,7 @@ fn open_keys(
 /// peer that stops reading cannot hold the other side.
 /// Error cases:
 /// - the write fails or takes longer
-async fn send(stream: &mut (impl AsyncWrite + Unpin), message: &impl Serialize) -> anyhow::Result<()> {
+pub(crate) async fn send(stream: &mut (impl AsyncWrite + Unpin), message: &impl Serialize) -> anyhow::Result<()> {
     let body = serde_json::to_vec(message).context("encoding a handover message")?;
     let len = u32::try_from(body.len()).ok().filter(|len| *len <= MAX_MESSAGE_BYTES).context("message too large")?;
     let write = async {
@@ -293,7 +305,7 @@ async fn send(stream: &mut (impl AsyncWrite + Unpin), message: &impl Serialize) 
 /// Reads one message `send` wrote.
 /// Error cases:
 /// - the read fails or ends early, the length is over `MAX_MESSAGE_BYTES`, or the JSON is not a `T`
-async fn receive<T: DeserializeOwned>(stream: &mut (impl AsyncRead + Unpin)) -> anyhow::Result<T> {
+pub(crate) async fn receive<T: DeserializeOwned>(stream: &mut (impl AsyncRead + Unpin)) -> anyhow::Result<T> {
     let mut len = [0u8; 4];
     stream.read_exact(&mut len).await.context("reading a handover message")?;
     let len = u32::from_be_bytes(len);

@@ -1,10 +1,12 @@
 //! `engine admin`: signs an admin command with the operator's key and submits it to a node's
-//! `POST /v1/admin`, over TLS pinned to the node's attested key. The key comes from a file or the
-//! `OPERATOR_KEY` environment variable, never the command line, where other users of the machine
-//! could read it, and it never leaves this process: the node holds only the operator's public key.
+//! `POST /v1/admin`, over TLS pinned to the node's attested key, or delivers secrets into its enclave
+//! (`secrets`). The key comes from a file or the `OPERATOR_KEY` environment variable, never the
+//! command line, where other users of the machine could read it, and it never leaves this process:
+//! the node holds only the operator's public key.
 
 mod benchmark_feed;
 mod benchmark_watch;
+mod secrets;
 mod tls;
 
 use std::fmt;
@@ -59,9 +61,10 @@ pub struct AdminArgs {
     node: Uri,
     /// The node's attested TLS key hash, in hex: the last 32 bytes of the `bundle` its
     /// `/v1/attestation` serves, once the bundle is checked against the quote's report data. The
-    /// connection is refused for any other key.
+    /// connection is refused for any other key. Required by every command but `deliver-secrets` and
+    /// `secrets-status`, which check a quote instead and do not use the API.
     #[arg(short, long, value_parser = tls::parse_pin)]
-    pin: [u8; 32],
+    pin: Option<[u8; 32]>,
     /// A file holding the operator's private key in hex. Without it, `OPERATOR_KEY_FILE` names the
     /// file, or `OPERATOR_KEY` holds the key.
     #[arg(short, long)]
@@ -168,6 +171,13 @@ pub enum AdminAction {
         #[arg(long)]
         effective_at: DateTime<Utc>,
     },
+    /// Encrypt a secrets bundle to a node's attested one-time key, after checking its quote against
+    /// the release manifest, sign it, and deliver it to `[tee.sealing.secrets]`'s listener. Secrets
+    /// come from a file, never the command line.
+    DeliverSecrets(secrets::DeliverArgs),
+    /// Print what a node's enclave attests it holds: the sealed and running bundle versions, and the
+    /// secrets it lacks. No value leaves the enclave.
+    SecretsStatus(secrets::PeerArgs),
 }
 
 /// A node's API: its `https://host:port` URL, and the hash its TLS key must have.
@@ -239,6 +249,7 @@ impl AdminAction {
                 AdminCommand::SetBenchmarkRate { benchmark, annual_bps }
             }
             AdminAction::SyncBenchmarks { .. } => bail!("publisher sync is asynchronous"),
+            AdminAction::DeliverSecrets(_) | AdminAction::SecretsStatus(_) => bail!("secrets take no admin command"),
             AdminAction::SetStressFloor { level, market } => AdminCommand::SetStressFloor { market, level },
             AdminAction::SetReduceOnly { reduce_only, market } => AdminCommand::SetReduceOnly { market, reduce_only },
             AdminAction::AnnounceParams { profit_fee_bps, closeout_level_bps, effective_at } => {
@@ -271,11 +282,37 @@ impl AdminAction {
     }
 }
 
+/// Runs what the command line asks for: a secrets delivery or status read, or an admin command.
+/// Error cases:
+/// - see `secrets::deliver`, `secrets::status`, and `run`
+pub async fn dispatch(mut args: AdminArgs, env: KeyEnv) -> anyhow::Result<()> {
+    let action = std::mem::replace(&mut args.action, AdminAction::SetReduceOnly { reduce_only: false, market: None });
+    match action {
+        AdminAction::DeliverSecrets(deliver) => {
+            let cfg = NodeConfig::load(&args.config)?;
+            crate::init_logging(&cfg.logging.level)?;
+            let key = resolve_key(args.key_file.as_deref(), env)?;
+            signing_operator(cfg.operator()?, &key, args.rotated, &args.config)?;
+            secrets::deliver(&cfg, &key, &deliver).await
+        }
+        AdminAction::SecretsStatus(peer) => {
+            let cfg = NodeConfig::load(&args.config)?;
+            crate::init_logging(&cfg.logging.level)?;
+            secrets::status(&cfg, &peer).await
+        }
+        action => {
+            args.action = action;
+            run(args, env).await.map(drop)
+        }
+    }
+}
+
 /// Signs the command with the operator's next nonce and submits it, printing the signed request and
 /// the events the engine produced. Returns the request it sent.
 /// Error cases:
 /// - the config does not load, or the key is missing, unreadable, malformed, or not the config's
 ///   operator key
+/// - `--pin` is missing
 /// - a spec or parameters file cannot be read, does not parse, or fails validation
 /// - the node cannot be reached in time, or refuses the request (see `call`)
 /// - the engine rejects the command
@@ -328,7 +365,7 @@ async fn run_configured(
     if let AdminAction::RotateOperator { address } = &args.action {
         cfg.refuse_rotation_to_test_key(*address)?;
     }
-    let node = NodeApi { url: args.node, pin: args.pin };
+    let node = NodeApi { url: args.node, pin: args.pin.context("--pin is required for this command")? };
     if let AdminAction::SyncBenchmarks { watch } = args.action {
         return benchmark_feed::run(&cfg, &node, &key, &operator, clock, watch).await;
     }

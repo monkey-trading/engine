@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use anyhow::{Context, bail, ensure};
+use engine_core::types::Millis;
 use tracing::level_filters::LevelFilter;
 use tracing::subscriber::with_default;
 use tracing::{Level, enabled};
@@ -12,8 +13,8 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, registry};
 
 use crate::config::{
-    AuthMode, CustodyProvider, FeedProvider, MIN_QUOTE_INTERVAL, MIN_STATS_INTERVAL, NodeConfig, PRODUCTION_BUILD,
-    StatsSection, TeeProvider,
+    AuthMode, CustodyProvider, FeedProvider, HistorySection, MIN_QUOTE_INTERVAL, MIN_STATS_INTERVAL, NodeConfig,
+    PRODUCTION_BUILD, StatsSection, TeeProvider,
 };
 use crate::sequencer::genesis::check_genesis;
 use crate::trusted_time::NO_SAMPLE_GRACE;
@@ -91,11 +92,12 @@ impl NodeConfig {
     /// - `[api.tls.acme]` fails validation (see `AcmeSection::validate`)
     /// - `[api.proxy_protocol]` fails validation (see `ProxyProtocolSection::validate`)
     /// - `[tee.sealing]` fails validation (see `validate_sealing`)
+    /// - a field names a secret no listener can receive (see `validate_secrets`)
     pub(super) fn validate(&self) -> anyhow::Result<()> {
         if let Some(access) = &self.access {
             access.validate()?;
             if self.tee.provider != TeeProvider::Mock {
-                ensure!(access.endpoint.expose()?.scheme() == "https", "access HTTP fixtures require the mock TEE");
+                ensure!(access.endpoint.attested()?.scheme() == "https", "access HTTP fixtures require the mock TEE");
             }
         }
         if let Some(benchmarks) = &self.benchmarks {
@@ -103,6 +105,7 @@ impl NodeConfig {
         }
         self.tee.validate()?;
         self.validate_sealing()?;
+        self.validate_secrets()?;
         let filter = EnvFilter::try_new(&self.logging.level).context("logging.level")?;
         // A word that is not a level, such as "warning", parses as a target and hides every alert.
         ensure!(
@@ -231,6 +234,17 @@ impl NodeConfig {
         }
         // Genesis is all or nothing, so a command the engine would refuse fails the load.
         check_genesis(&self.client_auth()?, self.operator()?, &self.genesis)
+    }
+}
+
+impl HistorySection {
+    /// The retention in milliseconds, the unit of sequenced time.
+    /// Error cases:
+    /// - the retention is zero, which would empty the index at every write
+    /// - it is too long to count in milliseconds
+    pub fn retention_ms(&self) -> anyhow::Result<Millis> {
+        ensure!(!self.retention.is_zero(), "must be non-zero");
+        Millis::try_from(self.retention.as_millis()).context("too long")
     }
 }
 

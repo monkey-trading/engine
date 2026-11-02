@@ -606,6 +606,34 @@ jobs:
           ENGINE_PREBUILT: "1"
         run: ./scripts/dev-signed-api.sh
 
+  dev-production-secrets:
+    needs: [changes, engine-build]
+    if: needs.changes.outputs.scenarios == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: engine-build
+          path: target/debug
+      - name: Make the downloaded build executable
+        run: chmod +x target/debug/engine target/debug/examples/access_source target/debug/examples/sign_request
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with:
+          version: v1.8.3
+          cache: false
+      - name: Install contract dependencies
+        working-directory: contracts
+        run: forge soldeer install
+      - name: Run the production secrets dev scenario
+        env:
+          ENGINE_PREBUILT: "1"
+        run: ./scripts/dev-production-secrets.sh
+
   dev-acme:
     needs: changes
     if: needs.changes.outputs.scenarios == 'true' || needs.changes.outputs.cache == 'true'
@@ -1147,6 +1175,23 @@ jobs:
           gh run cancel ${{ github.run_id }} \
             || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
 
+  cancel-dev-production-secrets:
+    needs: dev-production-secrets
+    if: failure() && needs.dev-production-secrets.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
   cancel-dev-acme:
     needs: dev-acme
     if: failure() && needs.dev-acme.result == 'failure'
@@ -1271,7 +1316,7 @@ jobs:
   # `changes` set its area false. Add every new job to `needs`, and a gated one to `$area` below.
   ci-passed:
     if: always()
-    needs: [changes, fmt, file-loc, clippy, test, reference-examples, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, engine-build, dev-metrics-alerts, dev-alert-outbox, dev-ct-watch, dev-browser-origin, dev-dashboard-data, dev-proxy-protocol, dev-batch-orders, dev-snapshot-restart, dev-rwa-feeds, dev-attestation-verifier, dev-signed-api, dev-acme, wasm-verifier, wasm-verifier-compare, image, image-compare, review-delta, merge-approval]
+    needs: [changes, fmt, file-loc, clippy, test, reference-examples, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, engine-build, dev-metrics-alerts, dev-alert-outbox, dev-ct-watch, dev-browser-origin, dev-dashboard-data, dev-proxy-protocol, dev-batch-orders, dev-snapshot-restart, dev-rwa-feeds, dev-attestation-verifier, dev-signed-api, dev-production-secrets, dev-acme, wasm-verifier, wasm-verifier-compare, image, image-compare, review-delta, merge-approval]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -1289,7 +1334,7 @@ jobs:
                "dev-alert-outbox": "scenarios", "dev-ct-watch": "scenarios", "dev-browser-origin": "scenarios", "dev-dashboard-data": "scenarios", "dev-proxy-protocol": "scenarios", "dev-batch-orders": "scenarios",
                "dev-snapshot-restart": "scenarios",
                "dev-rwa-feeds": "scenarios", "dev-attestation-verifier": "scenarios", "dev-signed-api": "scenarios",
-               "dev-acme": "scenarios",
+               "dev-production-secrets": "scenarios", "dev-acme": "scenarios",
                "wasm-verifier": "scenarios", "wasm-verifier-compare": "scenarios", image: "image",
                "image-compare": "image", "review-delta": "agent_scripts", "merge-approval": "merge_approval"} as $area
             | ["wasm-verifier-compare", "image-compare"] as $compare

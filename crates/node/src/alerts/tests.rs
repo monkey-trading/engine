@@ -327,8 +327,8 @@ fn routes(critical: Option<&str>, warning: Option<&str>) -> Routes {
         outbox: outbox_config(),
         no_price_after: Duration::from_secs(5),
         episode_quiet: Duration::from_secs(60),
-        critical: critical.map(|_| WebhookRoute { url_env: "CRITICAL".into() }),
-        warning: warning.map(|_| WebhookRoute { url_env: "WARNING".into() }),
+        critical: critical.map(|_| WebhookRoute::from_env("CRITICAL")),
+        warning: warning.map(|_| WebhookRoute::from_env("WARNING")),
     };
     let env = |var: &str| match var {
         "CRITICAL" => critical.map(str::to_owned),

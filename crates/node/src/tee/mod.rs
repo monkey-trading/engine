@@ -27,6 +27,7 @@ use sha3::{Digest, Keccak256};
 
 pub(crate) mod keys;
 pub(crate) mod sealing;
+pub(crate) mod secrets;
 #[cfg(target_os = "linux")]
 pub(crate) mod snp;
 

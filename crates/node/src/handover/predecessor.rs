@@ -29,6 +29,7 @@ use crate::log::{Checkpoint, CheckpointDomain, Manifest, SegmentInfo};
 use crate::sequencer::{StreamBody, StreamMsg};
 use crate::tee::keys::Head;
 use crate::tee::sealing::{KeyStore, Platform, Release};
+use crate::tee::secrets::SecretStore;
 use crate::tee::{Attestor, EnclaveKey};
 use crate::trusted_time::TrustedClock;
 
@@ -55,6 +56,8 @@ pub(crate) struct Predecessor<C = CheckpointRpc> {
     drain: Drain,
     /// Whether the sequencer signed its last checkpoint, rather than withholding it.
     signing: watch::Receiver<bool>,
+    /// The delivered secrets, which an approved upgrade takes first.
+    secrets: Option<Arc<SecretStore>>,
 }
 
 /// How one connection ended.
@@ -102,11 +105,18 @@ impl Predecessor {
             trusted,
             drain,
             signing,
+            secrets: None,
         }))
     }
 }
 
 impl<C: CheckpointChain> Predecessor<C> {
+    /// Gives the listener the delivered secrets an approved upgrade takes.
+    pub(crate) fn with_secrets(mut self, secrets: Option<Arc<SecretStore>>) -> Self {
+        self.secrets = secrets;
+        self
+    }
+
     /// Serves successors one connection at a time until one confirms a handover, which ends the
     /// node. Once sequencing has stopped it goes on serving them, under `handover_unconfirmed`: the
     /// vault names the successor's release, so this release's own copy of the keys no longer opens,
@@ -162,6 +172,10 @@ impl<C: CheckpointChain> Predecessor<C> {
         let Some((public_key, config_sha256)) = parsed else {
             return Ok(refuse(&mut stream, anyhow!("the public key or config hash is not hex of its length")).await);
         };
+        if request.secrets_only {
+            self.serve_secrets(&mut stream, &request, &challenge, &public_key, config_sha256).await;
+            return Ok(Served::Unconfirmed);
+        }
         let report_data = request_report_data(self.domain, &challenge, &public_key, &config_sha256);
         let release = match self.admit(&request, &report_data, config_sha256).await {
             Ok(release) => release,
@@ -474,6 +488,8 @@ impl Published {
         Ok(head)
     }
 }
+
+mod secrets;
 
 #[cfg(test)]
 mod tests;

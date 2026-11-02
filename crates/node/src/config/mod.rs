@@ -11,7 +11,7 @@ use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{Context, ensure};
+use anyhow::Context;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use ed25519_dalek::VerifyingKey;
@@ -22,7 +22,7 @@ use engine_core::eip712;
 use engine_core::market::MarketSpec;
 use engine_core::params::ProtocolParams;
 use engine_core::staking::StakingConfig;
-use engine_core::types::{AccountId, Millis};
+use engine_core::types::AccountId;
 use k256::ecdsa;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
@@ -36,7 +36,7 @@ pub use access::AccessSection;
 pub use standby::StandbySection;
 mod custody;
 mod standby;
-pub use custody::{EvmCustodySection, FinalityTag, RpcProviderSection, SecretUrl};
+pub use custody::{EvmCustodySection, FinalityTag, RpcProviderSection};
 mod feeds;
 pub use feeds::*;
 mod marks;
@@ -59,6 +59,9 @@ mod tls;
 pub use tls::{AcmeSection, AcmeTestCa, ApiTlsSection};
 mod sealing;
 pub use sealing::{HandoverSection, SealingSection};
+mod secrets;
+pub(crate) use secrets::{NamedSecret, SecretUse, Values};
+pub use secrets::{SecretName, SecretUrl, SecretValue, SecretsSection};
 
 /// Built with the `production` feature: mock TEE, custody, and feed providers are refused.
 #[cfg(feature = "production")]
@@ -313,7 +316,8 @@ impl NodeConfig {
     /// - `[api.proxy_protocol]` or `api.fresh_accounts` fails validation
     /// - this is a production build and a TEE, custody, or feed provider is `mock`, an allowed
     ///   origin is not `https`, `[api.tls.acme]` is missing, a trusted proxy range is loopback or too
-    ///   wide, or `api.fresh_accounts` is above the production values (see `ApiSection::refuse_dev_fresh_budgets`)
+    ///   wide, `api.fresh_accounts` is above the production values (see `ApiSection::refuse_dev_fresh_budgets`),
+    ///   or a field reads a secret from the environment (see `refuse_environment_secrets`)
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         let mut cfg: NodeConfig = toml::from_str(&text)
@@ -325,6 +329,7 @@ impl NodeConfig {
         cfg.api.refuse_self_signed(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
         cfg.api.refuse_unsafe_proxy(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
         cfg.api.refuse_dev_fresh_budgets(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
+        cfg.refuse_environment_secrets(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
         cfg.file_sha256 = Sha256::digest(text.as_bytes()).into();
         Ok(cfg)
     }
@@ -355,20 +360,9 @@ impl NodeConfig {
     }
 }
 
-impl HistorySection {
-    /// The retention in milliseconds, the unit of sequenced time.
-    /// Error cases:
-    /// - the retention is zero, which would empty the index at every write
-    /// - it is too long to count in milliseconds
-    pub fn retention_ms(&self) -> anyhow::Result<Millis> {
-        ensure!(!self.retention.is_zero(), "must be non-zero");
-        Millis::try_from(self.retention.as_millis()).context("too long")
-    }
-}
-
 /// A TOML error reduced to its message and line. The error's own text quotes the offending
 /// source line, which may hold a credential such as `custody.evm.providers[].rpc_url`.
-fn parse_error(e: &toml::de::Error, text: &str) -> anyhow::Error {
+pub(crate) fn parse_error(e: &toml::de::Error, text: &str) -> anyhow::Error {
     let line = e.span().map(|span| text[..span.start].matches('\n').count() + 1);
     match line {
         Some(line) => anyhow::anyhow!("line {line}: {}", e.message()),

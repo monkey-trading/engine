@@ -131,8 +131,14 @@ impl WatchConfig {
     /// - the domain is not a lowercase hostname, an interval is zero or the attestation interval
     ///   exceeds half the grace, a URL is not HTTPS (or loopback HTTP with `allow_mock`) or carries
     ///   credentials, a log name repeats or is malformed, or a log key is not a supported one
+    /// - the Critical route names no environment variable
     pub(super) fn validate(&self, allow_mock: bool) -> anyhow::Result<()> {
         validate_domain(&self.domain)?;
+        // The watcher runs outside the enclave, so no bundle ever reaches it.
+        ensure!(
+            self.alerts.critical.as_ref().is_none_or(|route| route.url_env.is_some() && route.url_secret.is_none()),
+            "alerts.critical takes url_env: the watcher has no delivered secrets"
+        );
         ensure!(!self.state_file.as_os_str().is_empty(), "state_file is empty");
         for (name, interval) in [
             ("attestation_interval", self.attestation_interval),

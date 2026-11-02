@@ -9,6 +9,8 @@ use anyhow::{anyhow, bail};
 use reqwest::Url;
 use serde::Deserialize;
 
+use crate::config::SecretName;
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MetricsSection {
@@ -105,8 +107,12 @@ impl OutboxSection {
 #[serde(deny_unknown_fields)]
 pub struct WebhookRoute {
     /// The environment variable holding the webhook URL, which is a credential and stays out of
-    /// config files.
-    pub url_env: String,
+    /// config files. A production node refuses it, since its guest has no environment to set it
+    /// in; it names `url_secret` instead. The CT watcher, outside the enclave, reads only this.
+    pub url_env: Option<String>,
+    /// The delivered secret holding the webhook URL. Until it is delivered this route is off, and
+    /// its alerts are only logged, under `secret_missing`.
+    pub url_secret: Option<SecretName>,
 }
 
 /// A URL that may carry credentials. `Debug` hides it; read it with `expose` where it is used.
@@ -119,16 +125,30 @@ impl fmt::Debug for WebhookUrl {
     }
 }
 
+impl WebhookRoute {
+    /// A route that reads the variable `var`.
+    pub fn from_env(var: &str) -> Self {
+        Self { url_env: Some(var.to_owned()), url_secret: None }
+    }
+}
+
 impl WebhookUrl {
-    /// Reads the URL from the environment variable `var`, looked up through `env`. Plain HTTP is
-    /// accepted only to this machine: the host controls the network.
+    /// Reads the URL from the environment variable `var`, looked up through `env`.
     /// Error cases:
-    /// - `var` is unset, or its value is not a URL
-    /// - the scheme is not HTTPS, unless it is HTTP to a loopback address
+    /// - `var` is unset, or its value is not an acceptable URL (see `parse`)
     pub fn from_env(var: &str, env: impl Fn(&str) -> Option<String>) -> anyhow::Result<Self> {
         let value = env(var).ok_or_else(|| anyhow!("environment variable {var} is not set"))?;
+        Self::parse(var, &value)
+    }
+
+    /// `value`, the URL `source` holds. Plain HTTP is accepted only to this machine: the host
+    /// controls the network.
+    /// Error cases:
+    /// - `value` is not a URL
+    /// - the scheme is not HTTPS, unless it is HTTP to a loopback address
+    pub(crate) fn parse(source: &str, value: &str) -> anyhow::Result<Self> {
         // `url::ParseError` names the problem, never the input, so nothing secret reaches a log.
-        let url = Url::parse(&value).map_err(|e| anyhow!("{var}: {e}"))?;
+        let url = Url::parse(value).map_err(|e| anyhow!("{source}: {e}"))?;
         let loopback = url
             .host_str()
             .and_then(|host| host.trim_start_matches('[').trim_end_matches(']').parse::<IpAddr>().ok())
@@ -136,7 +156,7 @@ impl WebhookUrl {
         match url.scheme() {
             "https" => Ok(Self(url)),
             "http" if loopback => Ok(Self(url)),
-            _ => bail!("{var}: must be an https URL, or http to a loopback address"),
+            _ => bail!("{source}: must be an https URL, or http to a loopback address"),
         }
     }
 

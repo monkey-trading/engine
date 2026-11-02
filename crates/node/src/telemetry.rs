@@ -1,6 +1,6 @@
 //! Logging, metrics, and alert routing, set up before the node runs: the global log subscriber,
-//! which feeds alert lines to the router whatever the log level and holds the HTTP client's own
-//! logs at `warn`, and the node's metrics registry.
+//! which feeds alert lines to the router whatever the log level and holds the logs of the crates
+//! that carry credentials at `warn`, and the node's metrics registry.
 
 use std::io::IsTerminal;
 use std::sync::Arc;
@@ -17,8 +17,20 @@ use crate::alerts::{self, AlertLayer, Routes, Severity, is_alert_callsite};
 use crate::config::{NodeConfig, WebhookRoute};
 use crate::metrics::Metrics;
 
-/// The HTTP client's crates, whose logs stay at `warn` or above whatever `logging.level` says.
-const HTTP_CLIENT_TARGETS: [&str; 3] = ["reqwest", "hyper", "hyper_util"];
+/// The crates that see a credential on its way out, whose logs stay at `warn` or above whatever
+/// `logging.level` says: the HTTP clients print URLs, and at `trace` the WebSocket client prints its
+/// handshake request and every frame, a vendor's key among them, and the RPC client its requests.
+const CREDENTIAL_TARGETS: [&str; 9] = [
+    "reqwest",
+    "hyper",
+    "hyper_util",
+    "h2",
+    "tungstenite",
+    "tokio_tungstenite",
+    "alloy_transport",
+    "alloy_transport_http",
+    "alloy_rpc_client",
+];
 
 /// What `run` needs that exists before logging starts: the node's metrics, and the alert router the
 /// log subscriber feeds.
@@ -78,8 +90,8 @@ fn install_subscriber(level: &str, alerts: Option<AlertLayer>) -> anyhow::Result
 }
 
 /// The log formatter at `level`, writing to `writer` with colour codes if `ansi`, plus `alerts` when
-/// given, which sees alert lines whatever the level. The HTTP client's own logs stay at `warn` or
-/// above, since a request's URL can be a credential.
+/// given, which sees alert lines whatever the level. The logs of the crates that carry credentials
+/// stay at `warn` or above, since a request's URL or frame can hold one.
 /// Error cases:
 /// - `level` is not a valid filter directive
 fn log_subscriber<W>(
@@ -93,15 +105,15 @@ where
 {
     let filter = EnvFilter::try_new(level).context("log level")?;
     // Applied on top of `filter`, so no directive in `logging.level` can lift it.
-    let quiet_http_client = filter_fn(|meta| *meta.level() <= Level::WARN || !is_http_client(meta.target()));
+    let quiet = filter_fn(|meta| *meta.level() <= Level::WARN || !carries_credentials(meta.target()));
     Ok(registry()
-        .with(fmt::layer().with_ansi(ansi).with_writer(writer).with_filter(filter.and(quiet_http_client)))
+        .with(fmt::layer().with_ansi(ansi).with_writer(writer).with_filter(filter.and(quiet)))
         .with(alerts.map(|layer| layer.with_filter(filter_fn(is_alert_callsite)))))
 }
 
-/// Whether `target` is in one of the HTTP client's crates.
-fn is_http_client(target: &str) -> bool {
-    HTTP_CLIENT_TARGETS
+/// Whether `target` is in one of the crates that see a credential.
+fn carries_credentials(target: &str) -> bool {
+    CREDENTIAL_TARGETS
         .iter()
         .any(|crate_name| target.strip_prefix(crate_name).is_some_and(|rest| rest.is_empty() || rest.starts_with("::")))
 }
@@ -118,12 +130,17 @@ mod tests {
 
     #[test]
     fn http_client_logs_stay_quiet_whatever_the_log_level() {
-        for level in ["trace", "info,reqwest::connect=debug,hyper_util=trace"] {
+        for level in ["trace", "info,reqwest::connect=debug,hyper_util=trace,tungstenite=trace,alloy_rpc_client=trace"]
+        {
             let written = Written::default();
             let subscriber = log_subscriber(level, None, written.clone(), false).unwrap();
             with_default(subscriber, || {
                 debug!(target: "reqwest::connect", "posting to https://hooks.example/secret-token");
                 trace!(target: "hyper_util::client", "request to https://hooks.example/secret-token");
+                trace!(target: "tungstenite::protocol", "Sending frame: secret-token");
+                trace!(target: "tokio_tungstenite::handshake", "request secret-token");
+                trace!(target: "alloy_rpc_client::call", "sending secret-token");
+                debug!(target: "alloy_transport_http::reqwest_transport", "to secret-token");
                 warn!(target: "reqwest::connect", "client warning");
                 info!(target: "engine_node::node", "node detail");
                 info!(target: "reqwestful", "another crate");

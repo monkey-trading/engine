@@ -1,5 +1,6 @@
-//! Node wiring: obtain and attest the enclave key, the config, and the API's TLS key (`keys`), wait
-//! for the vault to name the key (`registration`), recover the engine from its log and the history
+//! Node wiring: open or wait for its delivered secrets (`secrets`), obtain and attest the enclave key,
+//! the config, and the API's TLS key (`keys`), wait for the vault to name the key (`registration`),
+//! recover the engine from its log and the history
 //! index, then run the sequencer, ticker, price feeds, custody, trusted time check, history index,
 //! API, rate-limit upkeep, monitor, metrics listener, and alert routing as supervised tasks. Any
 //! task stopping stops the node. On SIGTERM or ctrl-c, every task but the sequencer is stopped; the
@@ -24,22 +25,24 @@ use crate::clock::{Clock, SystemClock};
 use crate::config::{AuthMode, CustodyProvider, FeedProvider, NodeConfig};
 use crate::feeds;
 use crate::feeds::venue::{self, Timing};
-use crate::history::HistoryPlan;
 mod shutdown;
 use shutdown::{TaskResult, finish_history, handed_over, sequencer_outcome, supervise};
 mod handover;
 mod keys;
 mod marks;
+pub(crate) mod secrets;
 mod ticker;
 pub use keys::{KeyStart, parse_launch_digest};
 use ticker::run_ticker;
 mod preflight;
+mod recovery;
+use recovery::read_log_and_history_authorities;
 mod registration;
 mod signer_history;
 use crate::limits::{ApiLimits, run_retain};
 use crate::log::Manifest;
 use crate::metrics::Metrics;
-use crate::sequencer::{ReplayedLog, Request, Sequencer, SequencerConfig, genesis_commands};
+use crate::sequencer::{Request, Sequencer, SequencerConfig, genesis_commands};
 use crate::stats::Stats;
 use crate::telemetry::Telemetry;
 use crate::tls::acme::{CertificateTask, Sealed};
@@ -64,18 +67,22 @@ pub async fn run(cfg: NodeConfig, telemetry: Telemetry) -> anyhow::Result<()> {
 /// Error cases:
 /// - see `run`
 pub(crate) async fn run_with_cpu(
-    cfg: NodeConfig,
-    telemetry: Telemetry,
+    mut cfg: NodeConfig,
+    mut telemetry: Telemetry,
     cpu: Option<usize>,
     start: KeyStart,
 ) -> anyhow::Result<()> {
+    // Alert lines queue until routing starts, once this has set any delivered webhook.
+    let delivered = secrets::startup(&mut cfg, &mut telemetry, &start)
+        .await
+        .inspect_err(|e| error!(alert = "secrets_startup_failed", "refusing to serve: {e:#}"))?;
     let Telemetry { metrics, alerts, pages_critical } = telemetry;
     if !pages_critical {
         warn!("no alerts.critical webhook: Critical alerts are only logged");
     }
     cfg.alerts.outbox.check_disk_location(&cfg.node.log_dir)?;
     let mut routing = alerts.spawn(cfg.alerts.episode_quiet, &cfg.alerts.outbox).await?;
-    let outcome = serve_node(cfg, metrics, &mut routing, cpu, start).await;
+    let outcome = serve_node(cfg, metrics, &mut routing, cpu, start, delivered).await;
     routing.drain(SHUTDOWN_GRACE).await;
     outcome
 }
@@ -100,6 +107,7 @@ async fn serve_node(
     routing: &mut Routing,
     cpu: Option<usize>,
     start: KeyStart,
+    mut delivered: secrets::Delivered,
 ) -> anyhow::Result<()> {
     if let Some(vault) = crate::handover::vault_reader(&cfg)? {
         let on = vault.rotation_enabled().await?;
@@ -122,6 +130,10 @@ async fn serve_node(
     if cfg.node.auth == AuthMode::None {
         warn!("API authentication is OFF: development only");
     }
+    // Takes deliveries through everything below, however long the vault takes to name this key.
+    let (delivery_authority, authority) =
+        watch::channel(crate::secrets::Authority::Configured(cfg.operator()?.address));
+    let listening = delivered.listener.take().map(|listener| tokio::spawn(listener.run(authority)));
 
     let keys = keys::attested(&cfg, &start).await?;
     let keys::Keys { enclave: key, tls, store, attestor, attestation } = keys;
@@ -278,7 +290,7 @@ async fn serve_node(
         && let Some(predecessor) =
             crate::handover::Predecessor::bind(&cfg, store, attestor, &key, trusted(), drain_tx, signing_rx).await?
     {
-        handover.spawn(predecessor.run());
+        handover.spawn(predecessor.with_secrets(delivered.store.clone()).run());
     }
     if let Some(store) = &store
         && let Some(vault) = crate::handover::vault_reader(&cfg)?
@@ -307,6 +319,17 @@ async fn serve_node(
         });
     }
 
+    delivery_authority.send_replace(crate::secrets::Authority::Log {
+        tx: tx.clone(),
+        configured: operator.address,
+        clock: clock.clone(),
+    });
+    if let Some(listening) = listening {
+        tasks.spawn(
+            async move { ("secrets", listening.await.context("the delivery listener panicked").and_then(|r| r)) },
+        );
+    }
+
     let tick = cfg.node.tick;
     let ticks = tx.clone();
     tasks.spawn(async move { ("ticker", run_ticker(ticks, tick).await) });
@@ -331,7 +354,11 @@ async fn serve_node(
             let tls = venue::tls_config()?;
             for conn in venues.connections {
                 let (name, tls, feed_tx) = (conn.venue.name(), tls.clone(), tx.clone());
-                let api_key = conn.api_key(|var| std::env::var(var).ok())?;
+                // Off under the `secret_missing` startup raised; the monitor pages its markets.
+                if delivered.withholds(&conn) {
+                    continue;
+                }
+                let api_key = delivered.api_key(&conn)?;
                 info!(venue = name, url = %conn.url, symbols = conn.symbols.len(), "starting venue feed");
                 tasks.spawn(async move { (name, venue::run(conn, api_key, timing, tls, feed_tx).await) });
             }
@@ -446,51 +473,7 @@ async fn serve_node(
     }
 }
 
-/// Replays with independently finalized historical signer evidence before any persisted mutation,
-/// from a verified snapshot when snapshots are configured, seeding the marks cache through `marks`.
-/// Error cases:
-/// - history, log, authenticated signer history, or the marks cache fails validation
-fn read_log_and_history_authorities(
-    cfg: &NodeConfig,
-    signer: Option<AccountId>,
-    parent: Option<crate::log::CheckpointParent>,
-    authorities: crate::checkpoints::SignerHistory,
-    marks: &std::rc::Rc<std::cell::RefCell<crate::history::marks::Store>>,
-    stats: &Stats,
-    mut observe: impl FnMut(&crate::log::LogEntry),
-) -> anyhow::Result<(ReplayedLog, HistoryPlan)> {
-    if cfg.snapshots.is_some() {
-        // Snapshot recovery replays the authenticated suffix only and attaches no marks sink, so the
-        // cache keeps the rows it imported and the provider backfill gives the depth they lack.
-        let (log, plan) = Sequencer::read_paired_log(cfg, signer, parent, authorities, Some(stats.clone()), observe)
-            .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
-        return Ok((log, HistoryPlan::authenticated(plan)?));
-    }
-    let history_failed = |e: &anyhow::Error| error!(alert = "history_recovery_failed", "refusing to serve: {e:#}");
-    let mut check = HistoryPlan::open(&cfg.history).inspect_err(history_failed)?;
-    let (sink, seeding, reset_done) = marks::recovery_sink(marks);
-    let log = Sequencer::read_log_with_authorities(
-        &cfg.node.log_dir,
-        Some(crate::log::CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? }),
-        signer,
-        parent,
-        authorities,
-        |entry| {
-            check.observe(entry);
-            observe(entry);
-        },
-        Some(sink),
-        Some(stats.clone()),
-    )
-    .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
-    // A replay that never moved a mark still resets: the cache must not serve another log's rows.
-    if !reset_done.get() {
-        marks.borrow_mut().reset_log_derived().context("resetting the marks cache for re-derivation")?;
-    }
-    anyhow::ensure!(!seeding.get(), "seeding the marks cache from the log failed");
-    Ok((log, check))
 }
-
 #[cfg(test)]
 mod tests;
 

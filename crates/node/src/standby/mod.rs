@@ -55,19 +55,32 @@ pub(super) const BODY_TIMEOUT: Duration = Duration::from_secs(300);
 /// Error cases:
 /// - the config is not an EVM-custody standby, the copy cannot be opened, the archive bootstrap
 ///   fails, or the takeover's checkpoint is absent from the copy after an archive refresh
-pub async fn run(cfg: NodeConfig, telemetry: Telemetry) -> anyhow::Result<()> {
+pub async fn run(mut cfg: NodeConfig, mut telemetry: Telemetry, start: crate::KeyStart) -> anyhow::Result<()> {
     let standby = cfg.standby.clone().context("--standby needs a [standby] section")?;
     ensure!(
         cfg.custody.provider == CustodyProvider::Evm && cfg.checkpoints.is_some(),
         "standby mode needs [checkpoints] with EVM custody: it reads the vault and registry"
     );
+    // A standby needs its own chain access, and an elected operator brings its own secrets.
+    let delivered = crate::node::secrets::startup(&mut cfg, &mut telemetry, &start)
+        .await
+        .inspect_err(|e| error!(alert = "secrets_startup_failed", "refusing to serve: {e:#}"))?;
     let Telemetry { metrics: _, alerts, pages_critical } = telemetry;
     if !pages_critical {
         warn!("no alerts.critical webhook: Critical alerts are only logged");
     }
     cfg.alerts.outbox.check_disk_location(&cfg.node.log_dir)?;
     let routing = alerts.spawn(cfg.alerts.episode_quiet, &cfg.alerts.outbox).await?;
-    let outcome = serve(&cfg, &standby).await;
+    let outcome = match delivered.listener {
+        Some(listener) => {
+            let authority = crate::secrets::Authority::Configured(cfg.operator()?.address);
+            tokio::select! {
+                outcome = serve(&cfg, &standby) => outcome,
+                outcome = listener.run(tokio::sync::watch::channel(authority).1) => outcome,
+            }
+        }
+        None => serve(&cfg, &standby).await,
+    };
     routing.drain(Duration::from_secs(10)).await;
     outcome
 }

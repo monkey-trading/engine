@@ -1,7 +1,9 @@
 //! The enclave's keys and what belongs with them: what a restart keeps and an upgrade hands to the
 //! next release. The signing key is the vault's signer and the attested address; the TLS key is the
 //! attested key the API serves, with the ACME account and the certificate the CA issued for it, so a
-//! restart orders nothing and a CAA `accounturi` can name the enclave's own account.
+//! restart orders nothing and a CAA `accounturi` can name the enclave's own account. Delivered
+//! secrets do not belong with them (`tee::secrets`): the keys move to an elected operator, while its
+//! vendor accounts and provider keys are its own.
 
 use std::fmt;
 
