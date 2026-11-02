@@ -372,10 +372,9 @@ fn is_snapshot_name(file: &str) -> bool {
     })
 }
 
-/// Whether the serialized engine `state` predates the V42 gross-loss accumulator: an open period
-/// result without a gross-loss field. Recovery from such a cache would drop a crossing period's
-/// pre-upgrade weight and mis-charge write-off debt, so `read` refuses it and the caller replays
-/// the full log. State this build serializes always carries the field, even while zero.
+/// Whether the serialized engine `state` predates the V42 gross-loss accumulator: an open
+/// period result without a gross-loss field, which only a pre-V42 build writes. `read` refuses
+/// such a cache — recovery would drop a crossing period's pre-upgrade weight — and replays the log.
 fn predates_gross_losses(state: &serde_json::Value) -> bool {
     state["period_results"]
         .as_object()

@@ -37,8 +37,8 @@
 //!   one's expiry and revocation — and its lifetime registration count, keyed by the account, from
 //!   `V41`; a key's next request nonce is its own request-nonce leaf.
 //! - **Emission period result:** from `V19`, `keccak256(abi.encode(int128 realised, int128
-//!   writtenOff))` of the open period's realised PnL and written-off debt, until it is finalised;
-//!   from `V42`, while the gross `losses` are nonzero, `(realised, losses, writtenOff)` instead.
+//!   writtenOff))` of the open period's results, until it is finalised; from `V42`, the
+//!   three-field encoding `(realised, losses, writtenOff)` with the gross losses alongside.
 //! - **Emission ledger:** `keccak256(abi.encode(int128 earned, int128 debt))`, from `V32`: the
 //!   loss weight the account earned, uncharged by any write-off, and the write-off debt later loss weight pays down.
 //! - **Remaining state:** the keccak-256 of the JSON encoding of every engine field no other leaf
@@ -427,8 +427,8 @@ pub(crate) fn period_result_key(account: AccountId) -> B256 {
 pub(crate) fn period_result_hash(result: &PeriodResult, version: ProtocolVersion) -> B256 {
     let PeriodResult { realised, losses, written_off } = result;
     let pair = (realised.raw(), written_off.raw());
-    let triple = version >= ProtocolVersion::V42 && !losses.is_zero();
-    let fields = if triple { (pair.0, losses.raw(), pair.1).abi_encode() } else { pair.abi_encode() };
+    let fields =
+        if version >= ProtocolVersion::V42 { (pair.0, losses.raw(), pair.1).abi_encode() } else { pair.abi_encode() };
     keccak(&[&fields])
 }
 

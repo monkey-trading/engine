@@ -62,14 +62,16 @@ fn a_cache_predating_the_gross_loss_accumulator_refuses_recovery() {
         let root = engine.state_root();
         snapshot.checkpoint.root = format!("0x{}", hex::encode(root));
         snapshot.checkpoint.signature = key.sign_checkpoint(31337, &snapshot.vault.0, 0, &root);
-        snapshot.engine = serde_json::to_string(&engine).unwrap();
+        // The payload keeps the legacy serialization: reading the engine back and re-encoding it
+        // would add the gross-loss field the old build did not write.
+        snapshot.engine = serde_json::to_string(&state).unwrap();
         write(&cfg, &snapshot, &key).unwrap();
         let path = candidates(&cfg).unwrap().remove(0);
         let refused = read(&cfg, &path, 31337, snapshot.vault).err().unwrap();
         assert!(refused.to_string().contains("predates the gross-loss accumulator"), "{refused:#}");
     }
 
-    // The same results with their gross losses recorded read back.
+    // The same results with their gross losses recorded read back with the value intact.
     state["period_results"][account] = serde_json::json!({ "realised": "50", "losses": "100", "written_off": "0" });
     let mut engine: Engine = serde_json::from_value(state).unwrap();
     let root = engine.state_root();
@@ -78,7 +80,9 @@ fn a_cache_predating_the_gross_loss_accumulator_refuses_recovery() {
     snapshot.engine = serde_json::to_string(&engine).unwrap();
     write(&cfg, &snapshot, &key).unwrap();
     let path = candidates(&cfg).unwrap().remove(0);
-    assert!(read(&cfg, &path, 31337, snapshot.vault).is_ok());
+    let (_, restored) = read(&cfg, &path, 31337, snapshot.vault).unwrap();
+    let account = AccountId([0x01; 20]);
+    assert_eq!(restored.period_results()[&account].losses, engine_core::Fixed::from_int(100));
 }
 
 #[test]

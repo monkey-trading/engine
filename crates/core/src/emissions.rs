@@ -5,10 +5,10 @@
 //! - **Periods** are the half-open windows `[start + n·PERIOD_MS, start + (n+1)·PERIOD_MS)` of
 //!   sequenced time. A command stamped exactly at a boundary belongs to the later period.
 //! - **Weight.** An account's weight in a period is the sum of its fills' loss magnitudes there,
-//!   each `max(-realised_pnl, 0)` (liquidations included, the profit fee and financing not), and
-//!   of the cash in lieu splits realise on its positions (dividends not), less the debt the house
-//!   wrote off for it there; from `V42` wins in the period do not offset — before `V42` weight is
-//!   the net realised trading loss, the sum of the fills' `realised_pnl` with the same
+//!   each `max(-realised_pnl, 0)` (liquidations included, the profit fee and financing not), and,
+//!   from `V23`, of its cash in lieu splits' loss magnitudes (dividends not), less the debt the
+//!   house wrote off for it there; from `V42` wins in the period do not offset — before `V42`
+//!   weight is the net realised trading loss, the sum of the fills' `realised_pnl` with the same
 //!   exclusions. From `V32`, the write-off a period's losses cannot absorb becomes a per-account
 //!   emission debt, up to the weight the account earned and has not been charged for, and later
 //!   loss weight pays the debt down before any of it earns weight again. A weight that is not
