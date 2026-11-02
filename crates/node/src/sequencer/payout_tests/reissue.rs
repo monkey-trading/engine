@@ -225,7 +225,7 @@ fn a_recovered_approval_of_a_retired_epoch_loaded_after_the_scan_is_still_due() 
     let cp = node.approve();
     node.seq.release_payouts(&node.evidence(&cp)).unwrap();
     node.seq.flush().unwrap();
-    let issued = node.signed.try_recv().unwrap().authorization.unwrap();
+    let issued = node.signed.try_recv().unwrap();
     let mut recovered = node.restart(&cp);
     // The epoch-2 scan finishes before this approval's backlog window loads.
     let gate = recovered.seq.gate.as_mut().unwrap();
@@ -233,7 +233,7 @@ fn a_recovered_approval_of_a_retired_epoch_loaded_after_the_scan_is_still_due() 
     gate.schedule.retire(payout.order);
     gate.unswept -= 1;
     gate.schedule.prepare(2, &gate.payouts);
-    gate.backlog.push_back(((TRADER, 1), 0, Some((issued.signer_epoch, issued.expires_at))));
+    gate.backlog.push_back(((TRADER, 1), 0, Some(issued)));
     recovered.seq.load_backlog().unwrap();
     let gate = recovered.seq.gate.as_ref().unwrap();
     assert!(gate.schedule.is_pending(gate.payouts[&(TRADER, 1)].order), "a retired epoch is due on load");

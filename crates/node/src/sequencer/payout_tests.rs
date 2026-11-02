@@ -16,7 +16,7 @@ use tokio::sync::{broadcast, mpsc, watch};
 use crate::checkpoints::{AcceptedCheckpoint, ApprovalId, ApprovalStatus, LifecycleEvidence, SignerHistory};
 use crate::clock::test_clock::TestClock;
 use crate::log::{Checkpoint, CheckpointDomain, LogEntry, Manifest};
-use crate::sequencer::{Reissue, Sequencer, SequencerConfig, SignedWithdrawal};
+use crate::sequencer::{AccountPayouts, Reissue, Sequencer, SequencerConfig, SignedWithdrawal};
 use crate::tee::EnclaveKey;
 use crate::test_support::{
     TRADER, deposit, dev_config, log_entries, sample_around, scratch_dir, sequencer_config, withdraw,
@@ -432,5 +432,6 @@ mod backlog;
 mod claim_retirement;
 mod halt;
 mod origin;
+mod read;
 mod reissue;
 mod restart_bound;

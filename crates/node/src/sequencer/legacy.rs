@@ -2,16 +2,19 @@
 
 use std::collections::BTreeMap;
 
-use anyhow::{bail, ensure};
+use anyhow::{Context, bail, ensure};
 use engine_core::command::{AdminCommand, Command};
 use engine_core::deposits::LegacyDeposit;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::AccountId;
 use engine_core::{Engine, Fixed};
 
+use tracing::{error, info};
+
 use crate::config::{CustodyProvider, CustodySection};
 use crate::custody;
-use crate::sequencer::{ReplayedLog, Sequencer};
+use crate::log::LogEntry;
+use crate::sequencer::{ReplayedLog, Sequencer, SignedWithdrawal};
 
 mod approvals;
 pub(crate) use approvals::{Approvals, Authorizations, FinalityProof};
@@ -49,6 +52,35 @@ pub(super) fn check_snapshot_provenance(
         "snapshot owes a withdrawal approved before custody finality; its provenance needs full replay"
     );
     Ok(())
+}
+
+impl Sequencer {
+    /// Signs an approved withdrawal and logs it; custody and the stream get it once it is flushed.
+    /// Error cases:
+    /// - the log cannot be written
+    pub(super) fn sign_withdrawal(&mut self, account: AccountId, amount: Fixed, nonce: u64) -> anyhow::Result<()> {
+        let seq = self.engine.last_seq().context("withdrawal without approval sequence")?;
+        if self.withdrawal_release_seq(account, nonce, seq, None)?.is_none() {
+            error!(alert = "legacy_withdrawal_unproven", %account, nonce, "inherited withdrawal lacks canonical finality proof");
+            bail!("inherited withdrawal lacks canonical finality proof");
+        }
+        self.log.sync()?;
+        let signature = self.key.sign_withdrawal(self.chain_id, &self.vault.0, account, amount, nonce);
+        info!(%account, nonce, "withdrawal signed");
+        self.record(LogEntry::Withdrawal(SignedWithdrawal {
+            account,
+            amount,
+            nonce,
+            chain_id: self.chain_id,
+            vault: self.vault,
+            signature,
+            approved_seq: None,
+            authorization: None,
+        }))?;
+        self.legacy_approvals.signed(account, amount, nonce);
+        self.legacy_authorizations.remove(&(account, nonce));
+        Ok(())
+    }
 }
 
 impl ReplayedLog {

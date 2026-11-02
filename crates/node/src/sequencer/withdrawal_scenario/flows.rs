@@ -47,6 +47,12 @@ pub(super) async fn payments_and_crashes() -> anyhow::Result<()> {
         entries(&node.dir.join("log"))?.contains(&LogEntry::Withdrawal(first.clone())),
         "public authorization preceded its log entry"
     );
+    // The node serves the same authorization without a stream or a log search.
+    let read = node.client.wait_payouts(&trader, &[(1, Some(&first))]).await?;
+    ensure!(
+        read["payouts"][0]["amount"].as_str().and_then(|text| text.parse::<Fixed>().ok()) == Some(Fixed::from_int(10)),
+        "payout amount: {read}"
+    );
     // Only the account's signature reissues, and only an authorization that is expired or retired.
     let expires_at = first.authorization.as_ref().context("typed payout")?.expires_at;
     let other = User::new(2)?;
@@ -118,12 +124,16 @@ pub(super) async fn payments_and_crashes() -> anyhow::Result<()> {
         recovered.nonce == durable.nonce && recovered.approved_seq == durable.approved_seq,
         "restart changed payout identity"
     );
+    // A restart serves what the log holds, both before any claim.
+    node.client.wait_payouts(&trader, &[(1, Some(&recovered_first)), (2, Some(&recovered))]).await?;
     ensure!(
         node.chain.read(node.chain.vault, latestSeqCall {}).await?
             > recovered_first.authorization.as_ref().context("typed payout")?.checkpoint_seq,
         "old-root claim did not use an older accepted checkpoint"
     );
     pay(&node, &recovered_first).await?;
+    // Once the claim is final the node stops listing it; the other stays until it is claimed.
+    node.client.wait_payouts(&trader, &[(2, Some(&recovered))]).await?;
     let paid = node.chain.read(node.chain.vault, totalWithdrawnCall {}).await?;
     node.chain.duplicate_reverts(node.chain.claim(&recovered_first)?.abi_encode()).await?;
     ensure!(
@@ -131,6 +141,7 @@ pub(super) async fn payments_and_crashes() -> anyhow::Result<()> {
         "duplicate increased paid counter"
     );
     pay(&node, &recovered).await?;
+    node.client.wait_payouts(&trader, &[]).await?;
 
     // A new release requires the real worker to reconcile the reduced token balance against its
     // independently read cumulative paid counter, not a manually supplied healthy flag.

@@ -267,6 +267,43 @@ impl Client {
         Ok(())
     }
 
+    /// Waits for `/v1/accounts/{address}/payouts` to hold exactly `expected` (nonce and latest
+    /// authorization, oldest first) with every approval loaded, and returns the answer.
+    /// Error cases:
+    /// - the answer differs past its deadline
+    pub async fn wait_payouts(
+        &self,
+        user: &User,
+        expected: &[(u64, Option<&SignedWithdrawal>)],
+    ) -> anyhow::Result<Value> {
+        let expected = serde_json::to_value(
+            expected
+                .iter()
+                .map(|(nonce, withdrawal)| serde_json::json!({ "nonce": nonce, "withdrawal": withdrawal }))
+                .collect::<Vec<_>>(),
+        )?;
+        let mut last = Value::Null;
+        let reached = timeout(LOADED_WAIT, async {
+            loop {
+                if let Ok(value) = self.get(&format!("/v1/accounts/{}/payouts", user.account)).await {
+                    let held: Vec<Value> = value["payouts"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(|payout| serde_json::json!({ "nonce": payout["nonce"], "withdrawal": payout["withdrawal"] }))
+                        .collect();
+                    if value["loaded"] == true && Value::Array(held) == expected {
+                        return value;
+                    }
+                    last = value;
+                }
+                sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await;
+        reached.with_context(|| format!("payouts of {} never matched {expected}; last answer {last}", user.account))
+    }
+
     /// Waits for every deposit of an account to be final, so payout capacity counts its principal.
     /// Error cases:
     /// - the principal stays unfinalised past its deadline

@@ -127,7 +127,8 @@ an index: load only the rule whose hint matches the current action.
   authorization replay, bounded finalized claim polling, immutable signer-epoch history independent
   of approval-root history, command-origin seals checked before writable recovery
   (`log/command_seal.rs`, `sequencer/origin.rs`), bounded FIFO reissue scheduling
-  (`sequencer/payout_schedule.rs`), and public queue/account-position reads.
+  (`sequencer/payout_schedule.rs`), public queue/account-position reads, and an account's unpaid
+  payouts with their latest authorizations (`api/payouts.rs`, answered from the sequencer's memory).
   Withdrawal authorizations carry EIP-712 data and an approval inclusion proof; custody's used nonce
   determines payment, and unpaid approvals are reissued on signer rotation or on their account's
   signed request, never on a schedule. It also has price feeds: live crypto

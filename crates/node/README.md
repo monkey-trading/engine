@@ -186,10 +186,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/config.rs` — the sequencer's construction config
 - `src/sequencer/messages.rs` — sequencer requests, stream messages, and signed withdrawals
 - `src/sequencer/checkpoints.rs` — checkpoint creation, custody reconciliation, and signature release
-- `src/sequencer/payouts.rs` — durable unpaid delivery, finalized claim evidence, epoch reissues, and reissue requests
+- `src/sequencer/payouts.rs` — durable unpaid delivery, finalized claim evidence, epoch reissues, reissue requests, and the account payouts read
 - `src/sequencer/payout_schedule.rs` — complete unpaid approval order, bounded epoch and requested reissue scheduling, and the hold behind unloaded recovered approvals
 - `src/sequencer/payout_tests.rs` — release order across claim pages, durability, restart, expiry without reissue, and rotation
-- `src/sequencer/payout_tests/` — paginated replacement signature order, paused claim acknowledgement, sealed approval recovery, FIFO signing across unloaded recovery windows, expired authorizations a rotation leaves unsigned, and no issuance or reissue while the vault pauses withdrawals or has a retired signer
+- `src/sequencer/payout_tests/` — the account payouts read across signing, reissue, payment and an unfinished restart load, paginated replacement signature order, paused claim acknowledgement, sealed approval recovery, FIFO signing across unloaded recovery windows, expired authorizations a rotation leaves unsigned, and no issuance or reissue while the vault pauses withdrawals or has a retired signer
 - `src/sequencer/withdrawal_scenario/` — actual Anvil/TLS/stream/custody crash, FIFO, and guardian pause and signer retirement scenarios with local signed time,
   the enclave key lifecycle scenario (`keys.rs`), and the elected operator's handover (`handover.rs`)
 - `src/sequencer/withdrawal_scenario/` — actual Anvil/TLS/stream/custody crash, FIFO, and guardian pause and signer retirement scenarios with local signed time
@@ -200,6 +200,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/withdrawals.rs` — vault EIP-712 digests and exact approval inclusion verification
 - `src/api/withdrawal_queue.rs` — public FIFO pagination and account queue positions
 - `src/api/reissue.rs` — a holder's screened request to sign an expired approval again
+- `src/api/payouts.rs` — an account's unpaid payouts and their latest signed authorizations, read from the sequencer's memory
 - `src/node/signer_history.rs` — finalized accepted roots and immutable signer epochs before recovery writes
 - `src/replay_audit.rs` and `src/replay_audit/` — read-only custody-backed historical signer audits and tests
 - `src/log/segments/durability_tests.rs` — failed-fsync stream publication regression
@@ -923,6 +924,18 @@ replaces the one it names. While the host leaves the log intact a restart reissu
 approval is signed while an older one that may still need a signature waits in an unloaded
 recovery window; recovery from a checkpoint snapshot sees only the authorizations after it, so an
 approval signed before it is signed once more.
+
+`GET /v1/accounts/<address>/payouts?after=<nonce>&limit=50` returns `seq`, `loaded`, `payouts` and
+`next`: the account's unpaid approvals, oldest first (1–200 per page), each as `nonce`, `amount` and
+`withdrawal`, the latest `SignedWithdrawal` exactly as the stream carries it, or `null` until one is
+signed. A reissue or a signer rotation replaces it. The sequencer answers from the payouts it
+already holds, a range scan bounded by the page, with no log, disk or custody read, and the
+response is signed like the rest of `/v1`. `next` is the nonce to pass as `after` when the page was
+full, else `null`. An approval custody has not yet reported paid is still listed, so a client
+still reads the vault for it. A nonce is absent because it is paid only when `loaded` is true and
+no earlier page left a `next` unfollowed: `loaded` is false while a restart is still loading
+approvals, and always false on a node without a checkpoint gate. Approvals inherited from before
+V22, signed without an authorization, are not listed.
 
 `GET /v1/withdrawals?limit=50&after=<request-seq>` returns `seq`, `queue` and `next`.
 `GET /v1/accounts/<address>/withdrawals` filters the same FIFO and reports each request's global
