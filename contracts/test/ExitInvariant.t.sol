@@ -7,6 +7,7 @@ import {TimelockController} from "@openzeppelin-contracts/governance/TimelockCon
 import {ExitVerifier} from "../src/ExitVerifier.sol";
 import {Vault} from "../src/Vault.sol";
 import {ExitTest} from "./helpers/ExitTest.sol";
+import {TreeBuilder} from "./helpers/TreeBuilder.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
 
 /// @notice Deposits, surpluses and checkpoints of random roots, then the exit: registrations of
@@ -22,6 +23,11 @@ contract ExitHandler is ExitTest {
     ExitVerifier.PendingDeposit private pending;
     bytes private chainRef;
     bool private hasPending;
+    /// @dev The tree before the latest post, which a claim may still prove against.
+    bytes32[] private olderKeys;
+    bytes32[] private olderValues;
+    uint256[3] private olderEntitlements;
+    uint64 private olderSeq;
 
     uint256 public tokensIn;
     uint256 public tokensOut;
@@ -62,6 +68,10 @@ contract ExitHandler is ExitTest {
     /// one existing deposit pending, and held principal within what the vault holds.
     function post(uint256 seed) external {
         if (vault.exitStartedAt() != 0) return;
+        olderKeys = keys;
+        olderValues = values;
+        olderEntitlements = entitlements;
+        olderSeq = seq;
         delete keys;
         delete values;
         uint256 count = vault.depositCount();
@@ -123,7 +133,24 @@ contract ExitHandler is ExitTest {
         uint256 balance = usdc.balanceOf(address(vault));
         if (entitlements[i] <= claimed || balance < house || entitlements[i] - claimed > balance - house) return;
         bytes32 key = keccak256(abi.encodePacked(uint8(13), actors[i]));
-        tokensOut += vault.claimDistribution(actors[i], entitlements[i], _siblings(key));
+        tokensOut += vault.claimDistribution(actors[i], entitlements[i], seq, _siblings(key));
+    }
+
+    /// @dev The same at the root before the latest, which pays no more than was due at it.
+    function claimDistributionAtOlderRoot(uint256 actorSeed) external {
+        if (vault.exitStartedAt() != 0 || olderSeq == 0) return;
+        uint256 i = actorSeed % actors.length;
+        uint256 claimed = vault.distributionsClaimed(actors[i]);
+        uint256 house = vault.totalRefundable() + uint256(int256(terms.held / UNIT));
+        uint256 balance = usdc.balanceOf(address(vault));
+        uint256 entitled = olderEntitlements[i];
+        if (entitled <= claimed || balance < house || entitled - claimed > balance - house) return;
+        bytes32 key = keccak256(abi.encodePacked(uint8(13), actors[i]));
+        uint256 index;
+        while (olderKeys[index] != key) index++;
+        tokensOut += vault.claimDistribution(
+            actors[i], entitled, olderSeq, TreeBuilder.proof(olderKeys, olderValues, index)
+        );
     }
 
     function warp(uint256 seconds_) external {
@@ -243,7 +270,7 @@ contract ExitInvariantTest is ExitTest {
     function setUp() public override {
         super.setUp();
         handler = new ExitHandler(usdc, vault, governance);
-        bytes4[] memory actions = new bytes4[](11);
+        bytes4[] memory actions = new bytes4[](12);
         actions[0] = ExitHandler.deposit.selector;
         actions[1] = ExitHandler.transferSurplus.selector;
         actions[2] = ExitHandler.post.selector;
@@ -255,6 +282,7 @@ contract ExitInvariantTest is ExitTest {
         actions[8] = ExitHandler.claim.selector;
         actions[9] = ExitHandler.release.selector;
         actions[10] = ExitHandler.claimDistribution.selector;
+        actions[11] = ExitHandler.claimDistributionAtOlderRoot.selector;
         targetContract(address(handler));
         targetSelector(FuzzSelector({addr: address(handler), selectors: actions}));
     }

@@ -2,6 +2,7 @@
 //! vault, and MONKEY token, on a clock the scenario moves.
 
 mod api;
+mod claims;
 mod funding;
 
 use std::net::SocketAddr;
@@ -11,11 +12,10 @@ use std::process::{Command as Process, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
-use alloy::primitives::{Address, B256, Bytes, U64, U256};
+use alloy::primitives::{Address, U64, U256};
 use alloy::rpc::client::RpcClient;
-use alloy::rpc::types::TransactionRequest;
 use alloy::sol;
-use alloy::sol_types::{SolCall, SolError, SolValue};
+use alloy::sol_types::{SolError, SolValue};
 use axum::Router;
 use axum::extract::connect_info::MockConnectInfo;
 use axum::http::StatusCode;
@@ -24,7 +24,6 @@ use engine_core::auth::{ClientAuth, Operator};
 use engine_core::command::{AdminCommand, Command, OrderKind, OrderRequest};
 use engine_core::emissions::{EmissionSchedule, Emissions, PERIODS_PER_HALVING, TokenUnits};
 use engine_core::event::Event;
-use engine_core::merkle::EntitlementProof;
 use engine_core::price::SourceQuote;
 use engine_core::types::{AccountId, Millis, Side};
 use governor::{Quota, clock::DefaultClock};
@@ -34,7 +33,7 @@ use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
 use crate::api::{ApiState, MAX_BACKFILLS, router};
-use crate::checkpoints::scenario::{Anvil, deploy, send};
+use crate::checkpoints::scenario::{Anvil, deploy};
 use crate::checkpoints::{CheckpointChain, CheckpointRpc, Health, Poster, View};
 use crate::clock::{Clock, test_clock::TestClock};
 use crate::config::{CheckpointSection, FinalityTag, RateLimit};
@@ -55,12 +54,14 @@ const ALICE: AccountId = AccountId([0xa1; 20]);
 const BOB: AccountId = AccountId([0xb0; 20]);
 
 sol! {
-    function claimEmissions(address account, uint256 entitled, bytes32[] siblings) external returns (uint256);
+    function claimEmissions(address account, uint256 entitled, uint64 checkpointSeq, bytes32[] siblings) external returns (uint256);
     function monkey() external view returns (address);
     function balanceOf(address account) external view returns (uint256);
     function latestSeq() external view returns (uint64);
     function latestRoot() external view returns (bytes32);
     error NothingToClaim(uint256 entitled, uint256 claimed);
+    error InvalidSignerEpoch();
+    error NoSigner();
 }
 
 #[tokio::test]
@@ -106,9 +107,14 @@ async fn dev_scenario_emissions_share_fixed_budgets_halve_survive_restart_and_cl
     );
     assert_eq!(s.entitlements().await, [2 * quarter, 6 * quarter]);
 
-    // 4. Claim on chain against the posted root, relayed by another account; a second claim mints nothing.
-    let claimed = s.claim(ALICE).await;
-    assert_eq!(claimed, U256::from(2 * quarter));
+    // 4. A proof read now still claims after two later checkpoints post, relayed by another account;
+    // the same proof, and the newest one, then mint nothing.
+    let proof = s.posted_proof(ALICE).await;
+    s.later_checkpoint().await;
+    s.later_checkpoint().await;
+    assert!(s.view(s.vault, latestSeqCall {}).await > proof.seq);
+    assert_eq!(s.claim_proof(&proof).await, U256::from(2 * quarter));
+    assert_eq!(s.refused_proof(&proof).await, NothingToClaim::SELECTOR);
     assert_eq!(s.refused_claim(ALICE).await, NothingToClaim::SELECTOR);
 
     // 5. A loss in the open period, a restart after its end, and the first command finalises it.
@@ -147,6 +153,20 @@ async fn dev_scenario_emissions_share_fixed_budgets_halve_survive_restart_and_cl
     assert_eq!(s.claim(BOB).await, U256::from(bob));
     assert_eq!(s.balance(ALICE).await, U256::from(alice));
     assert_eq!(s.refused_claim(BOB).await, NothingToClaim::SELECTOR);
+
+    // 8. Retiring the signer ends the claims on its roots, and installing one keeps them ended until
+    // it records a checkpoint, which proves all the earlier root held and more.
+    s.losses(&[(ALICE, "1")], "100000", "99900").await;
+    s.next_period().await;
+    let proof = s.posted_proof(ALICE).await;
+    s.retire_signer().await;
+    s.claims_closed(ALICE).await;
+    assert_eq!(s.refused_proof(&proof).await, NoSigner::SELECTOR);
+    s.install_signer().await;
+    assert_eq!(s.refused_proof(&proof).await, InvalidSignerEpoch::SELECTOR);
+    s.first_checkpoint_after(proof.seq).await;
+    assert_eq!(s.claim(ALICE).await, U256::from(DEV_PERIOD_BUDGET / 2));
+    assert_eq!(s.refused_claim(ALICE).await, NothingToClaim::SELECTOR);
     s.stop().await;
 }
 
@@ -157,6 +177,7 @@ struct Scenario {
     funder: Address,
     relayer: Address,
     usdc: Address,
+    governance: Address,
     vault: Address,
     monkey: Address,
     key: Arc<EnclaveKey>,
@@ -224,6 +245,7 @@ impl Scenario {
             funder: accounts[0],
             relayer: accounts[1],
             usdc,
+            governance,
             vault,
             monkey: Address::ZERO,
             key,
@@ -409,35 +431,6 @@ impl Scenario {
         .await;
     }
 
-    /// Fetches `account`'s entitlement proof from the API once the vault has posted its checkpoint,
-    /// and has the relayer claim it; returns the MONKEY minted.
-    async fn claim(&self, account: AccountId) -> U256 {
-        let proof = self.posted_proof(account).await;
-        let before = self.balance(account).await;
-        send(&self.provider, self.relayer, self.vault, claim_call(&proof)).await;
-        assert_eq!(self.balance(AccountId(self.relayer.0.0)).await, U256::ZERO, "the relayer receives nothing");
-        self.balance(account).await - before
-    }
-
-    /// The selector the vault reverts with when the relayer claims `account`'s current proof.
-    async fn refused_claim(&self, account: AccountId) -> [u8; 4] {
-        let proof = self.posted_proof(account).await;
-        let call = TransactionRequest::default().from(self.relayer).to(self.vault).input(claim_call(&proof).into());
-        let error = self.provider.request::<_, Bytes>("eth_call", (call, "latest")).await.unwrap_err();
-        let data = error.as_error_resp().and_then(|payload| payload.as_revert_data()).expect("a revert");
-        data[..4].try_into().unwrap()
-    }
-
-    /// `account`'s proof from the API against the root the vault holds.
-    async fn posted_proof(&self, account: AccountId) -> EntitlementProof {
-        self.checkpoint_posted().await;
-        let (status, body) = self.get(&format!("/v1/accounts/{account}/emissions")).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        let proof = serde_json::from_value::<crate::sequencer::ClaimAnswer<EntitlementProof>>(body).unwrap().proof;
-        assert_eq!(proof.root, self.view(self.vault, latestRootCall {}).await, "the proof is for the posted root");
-        proof
-    }
-
     /// `account`'s MONKEY balance.
     async fn balance(&self, account: AccountId) -> U256 {
         self.view(self.monkey, balanceOfCall { account: account.0.into() }).await
@@ -483,13 +476,6 @@ impl Scenario {
 /// Alice's and Bob's entitlements in base units.
 fn entitlements(engine: &Engine) -> [u128; 2] {
     [ALICE, BOB].map(|account| engine.entitlement(account).0)
-}
-
-/// The vault call that claims `proof`.
-fn claim_call(proof: &EntitlementProof) -> Vec<u8> {
-    let siblings: Vec<B256> = proof.siblings.clone();
-    claimEmissionsCall { account: proof.account.0.into(), entitled: U256::from(proof.entitled.0), siblings }
-        .abi_encode()
 }
 
 /// Encodes the Vault's constructor arguments: token, signer, governance, guardian, budget, and the

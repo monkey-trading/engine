@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use std::time::Duration;
 
 use super::proof_tests::{NOW, Node, account, logged_root};
+use crate::checkpoints::LatestCheckpoint;
 use crate::log::LogEntry;
 use crate::sequencer::{ClaimAnswer, Request};
 
@@ -55,7 +56,12 @@ async fn next_checkpoint(node: &Node) {
 
 /// Tells the sequencer the vault's latest checkpoint is the one at `seq`, as the poster does.
 async fn vault_accepts(node: &Node, seq: u64) {
-    let status = Request::CheckpointStatus { posted: None, latest: Some(seq), health: None, lifecycle: None };
+    report_latest(node, LatestCheckpoint { seq, claimable: true }).await;
+}
+
+/// Tells the sequencer the vault's latest checkpoint, as the poster does.
+async fn report_latest(node: &Node, latest: LatestCheckpoint) {
+    let status = Request::CheckpointStatus { posted: None, latest: Some(latest), health: None, lifecycle: None };
     node.state.tx.send(status).await.expect("the sequencer is running");
 }
 
@@ -180,4 +186,31 @@ async fn a_restart_forgets_what_was_retained_and_waits_for_the_vault_again() {
     // The poster reports the vault's checkpoint again once it has read it.
     vault_accepts(&node, newest).await;
     assert_eq!(node.get(&route(trader)).await.1["claimable"], json!(true));
+}
+
+#[tokio::test]
+async fn a_change_of_signer_ends_what_is_claimable_until_the_next_one_records_a_checkpoint() {
+    let node = Node::start("claim-signer-change").await;
+    let trader = account(1);
+    assert_eq!(node.get(&route(trader)).await.0, StatusCode::NOT_FOUND);
+    earn(&node, trader, true).await;
+    let accepted = *checkpoints(&node).last().unwrap();
+    vault_accepts(&node, accepted).await;
+    assert_eq!(node.get(&route(trader)).await.1["claimable"], json!(true));
+    next_checkpoint(&node).await;
+    let newest = *checkpoints(&node).last().unwrap();
+
+    // The signer that recorded the vault's latest is replaced or retired.
+    report_latest(&node, LatestCheckpoint { seq: accepted, claimable: false }).await;
+    let (_, body) = node.get(&route(trader)).await;
+    assert_eq!(proof_of(&body).seq, newest, "the old epoch's root is no longer served");
+    assert_eq!((body["accepted_seq"].clone(), body["claimable"].clone()), (Value::Null, json!(false)));
+
+    // The checkpoint retained for the account is the next signer's first, whatever it names.
+    vault_accepts(&node, newest).await;
+    next_checkpoint(&node).await;
+    let (_, body) = node.get(&route(trader)).await;
+    let proof = proof_of(&body);
+    assert_eq!((proof.seq, body["claimable"].clone()), (newest, json!(true)));
+    assert!(proof.verify(logged_root(&node.entries(), newest)));
 }

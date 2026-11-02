@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Runs the MONKEY staking and USDC distributions scenario against an isolated Anvil: staking
 # through the Staking contract mirrored into the engine, an epoch above the liquidity floor paying
-# stakers pro-rata in USDC against posted checkpoint roots, an unstake through the cooldown, and a
-# second epoch below the floor paying nothing.
+# stakers pro-rata in USDC against proofs read before two later checkpoints post, an unstake through
+# the cooldown, and a second epoch below the floor paying nothing.
 # Needs Anvil, Forge, Cargo, and installed Soldeer dependencies. No external RPC or keys are used.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"

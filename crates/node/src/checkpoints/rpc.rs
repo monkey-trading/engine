@@ -330,6 +330,10 @@ impl CheckpointChain for CheckpointRpc {
         self.read_accepted_checkpoints(at, sequences).await
     }
 
+    async fn claims_open(&self, at: &Observation, seq: u64) -> anyhow::Result<bool> {
+        self.read_claims_open(at, seq).await
+    }
+
     async fn epoch_signers(
         &self,
         at: &Observation,

@@ -1,10 +1,13 @@
-//! MONKEY and USDC claim proofs at the checkpoint the vault has accepted.
+//! MONKEY and USDC claim proofs at the checkpoint the vault has recorded.
 //!
-//! The vault checks a claim against its latest posted root, and the engine's tree is only ever at
-//! the newest checkpoint, which runs ahead of the vault while posting lags. So the sequencer keeps,
-//! for the accounts that asked for a proof lately, the proof each new checkpoint gives them, until
-//! the vault has accepted a later one. An account is watched from its first request, so that first
-//! answer is the newest proof and not yet claimable.
+//! The vault checks a claim against the root of the checkpoint it names, once that checkpoint is
+//! recorded in the signer epoch in force, and the engine's tree is only ever at the newest
+//! checkpoint, which runs ahead of the vault while posting lags. So the sequencer keeps, for the
+//! accounts that asked for a proof lately, the proof each new checkpoint gives them, until the vault
+//! has accepted a later one. An account is watched from its first request, so that first answer is
+//! the newest proof and not yet claimable. A proof served at an accepted checkpoint stays good while
+//! later ones post; a change of signer ends it, and the next signer's first checkpoint proves at
+//! least as much.
 
 use std::collections::BTreeMap;
 
@@ -15,6 +18,8 @@ use engine_core::staking::UsdcUnits;
 use engine_core::types::AccountId;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+
+use crate::checkpoints::LatestCheckpoint;
 
 /// Accounts whose proofs each checkpoint retains; the least recently asked leaves first.
 const MAX_WATCHED: usize = 128;
@@ -57,15 +62,18 @@ impl Proved for DistributionProof {
 pub struct ClaimAnswer<P: Proved> {
     #[serde(flatten)]
     pub proof: P,
-    /// The latest checkpoint the node has seen the vault accept, `null` before it has seen one.
+    /// The latest checkpoint the node has seen the vault record in its signer epoch in force, `null`
+    /// before it has seen one, or once the signer that recorded it is replaced or retired.
     pub accepted_seq: Option<u64>,
     /// The newest checkpoint the node has created.
     pub newest_seq: u64,
     /// The account's cumulative amount at the newest checkpoint: what the proof will name once the
     /// vault accepts that checkpoint. Never below the proof's own `entitled`.
     pub newest_entitled: P::Amount,
-    /// Whether the proof is against the checkpoint the vault last accepted, so a claim can land
-    /// now. Otherwise the claim waits for the vault to accept `newest_seq`.
+    /// Whether the proof is against `accepted_seq`, so the vault checks it now, and goes on checking
+    /// it as later checkpoints post; a withdrawal pause still holds a USDC claim. Otherwise the proof
+    /// waits for the vault to record its seq, and a seq a replaced or retired signer recorded never
+    /// pays again, so a client asks again rather than keep it.
     pub claimable: bool,
 }
 
@@ -82,10 +90,16 @@ pub(super) struct Claims {
 }
 
 impl Claims {
-    /// Notes the checkpoint the vault accepted and drops the proofs of the ones before it.
-    pub(super) fn accept(&mut self, posted: u64) {
-        self.accepted = Some(self.accepted.map_or(posted, |known| known.max(posted)));
-        let accepted = self.accepted.unwrap_or(posted);
+    /// Notes the vault's latest checkpoint: one a claim can prove against is accepted, and the proofs
+    /// of the ones before it go. Under a signer that has not recorded one, none is accepted until it
+    /// does; the proofs held for its first checkpoint stay.
+    pub(super) fn accept(&mut self, latest: LatestCheckpoint) {
+        if !latest.claimable {
+            self.accepted = None;
+            return;
+        }
+        let accepted = self.accepted.map_or(latest.seq, |known| known.max(latest.seq));
+        self.accepted = Some(accepted);
         self.entitlements = self.entitlements.split_off(&(accepted, AccountId([0; 20])));
         self.distributions = self.distributions.split_off(&(accepted, AccountId([0; 20])));
     }
@@ -155,6 +169,11 @@ mod tests {
 
     const STAKER: AccountId = AccountId([7; 20]);
 
+    /// The vault's latest checkpoint under the signer that recorded it.
+    fn recorded(seq: u64) -> LatestCheckpoint {
+        LatestCheckpoint { seq, claimable: true }
+    }
+
     /// A distribution proof at `seq` naming `entitled`; its path is not checked here.
     fn distribution(seq: u64, entitled: u128) -> DistributionProof {
         DistributionProof {
@@ -177,7 +196,7 @@ mod tests {
         let mut claims = Claims::default();
         Claims::keep(&mut claims.distributions, Some(distribution(10, 5_000)), STAKER);
         Claims::keep(&mut claims.distributions, Some(distribution(11, 5_000)), STAKER);
-        claims.accept(10);
+        claims.accept(recorded(10));
         let answer = ask(&mut claims, distribution(12, 5_000));
         assert_eq!((answer.proof.seq, answer.claimable), (10, true));
         assert_eq!((answer.accepted_seq, answer.newest_seq), (Some(10), 12));
@@ -186,7 +205,7 @@ mod tests {
     #[test]
     fn a_caught_up_vault_gets_the_newest_distribution_proof() {
         let mut claims = Claims::default();
-        claims.accept(12);
+        claims.accept(recorded(12));
         let answer = ask(&mut claims, distribution(12, 5_000));
         assert_eq!((answer.proof.seq, answer.claimable), (12, true));
     }
@@ -195,7 +214,7 @@ mod tests {
     fn a_distribution_that_grew_after_the_accepted_root_is_proven_at_what_it_was_then() {
         let mut claims = Claims::default();
         Claims::keep(&mut claims.distributions, Some(distribution(10, 5_000)), STAKER);
-        claims.accept(10);
+        claims.accept(recorded(10));
         let answer = ask(&mut claims, distribution(12, 9_000));
         assert_eq!((answer.proof.entitled, answer.newest_entitled), (UsdcUnits(5_000), UsdcUnits(9_000)));
         assert!(answer.claimable);
@@ -208,7 +227,7 @@ mod tests {
         let answer = ask(&mut claims, distribution(12, 5_000));
         assert_eq!((answer.proof.seq, answer.accepted_seq, answer.claimable), (12, None, false));
         // The vault's checkpoint is one the account was not retained at.
-        claims.accept(11);
+        claims.accept(recorded(11));
         let answer = ask(&mut claims, distribution(12, 5_000));
         assert_eq!((answer.proof.seq, answer.claimable), (12, false));
     }
@@ -219,10 +238,30 @@ mod tests {
         for seq in [10, 11, 12] {
             Claims::keep(&mut claims.distributions, Some(distribution(seq, 5_000)), STAKER);
         }
-        claims.accept(11);
+        claims.accept(recorded(11));
         assert_eq!(claims.distributions.keys().map(|(seq, _)| *seq).collect::<Vec<_>>(), [11, 12]);
-        claims.accept(10);
+        claims.accept(recorded(10));
         assert_eq!(claims.accepted, Some(11), "a lower report does not move the accepted checkpoint back");
+    }
+
+    #[test]
+    fn a_signer_that_has_recorded_no_checkpoint_leaves_nothing_claimable_until_it_does() {
+        let mut claims = Claims::default();
+        for seq in [10, 11] {
+            Claims::keep(&mut claims.distributions, Some(distribution(seq, 5_000)), STAKER);
+        }
+        claims.accept(recorded(10));
+        assert_eq!(ask(&mut claims, distribution(11, 5_000)).proof.seq, 10);
+
+        // The vault's latest is still the old signer's.
+        claims.accept(LatestCheckpoint { seq: 10, claimable: false });
+        let answer = ask(&mut claims, distribution(11, 5_000));
+        assert_eq!((answer.proof.seq, answer.accepted_seq, answer.claimable), (11, None, false));
+
+        // The next signer's first checkpoint is the one the account's proof was kept for.
+        claims.accept(recorded(11));
+        let answer = ask(&mut claims, distribution(12, 5_000));
+        assert_eq!((answer.proof.seq, answer.accepted_seq, answer.claimable), (11, Some(11), true));
     }
 
     #[test]

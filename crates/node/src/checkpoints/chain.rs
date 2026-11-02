@@ -51,6 +51,16 @@ pub(crate) trait CheckpointChain: Send + Sync {
         Ok(Observation { view, state: self.state(view).await?, lifecycle: None })
     }
 
+    /// Whether a claim can prove against the vault's checkpoint `seq` at `at`'s block: one recorded
+    /// in the signer epoch in force, whose signer is not retired. An adapter that reads no signer
+    /// history has only the current epoch's checkpoints to answer for.
+    /// Error cases:
+    /// - the checkpoint's epoch cannot be read at that block
+    async fn claims_open(&self, at: &Observation, seq: u64) -> anyhow::Result<bool> {
+        let _ = seq;
+        Ok(!at.state.signer_retired())
+    }
+
     /// Authenticates accepted identities against the already sampled canonical observation.
     /// Error cases:
     /// - historical metadata is unavailable or the requested page exceeds its bound

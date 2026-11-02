@@ -202,6 +202,41 @@ async fn canonical_history_cannot_assign_a_future_signer_epoch() {
 }
 
 #[tokio::test]
+async fn claims_on_the_vaults_latest_checkpoint_close_with_its_epoch_at_the_pinned_block() {
+    let dir = scratch_dir("claims-open-rpc");
+    let server = Server::start(&dir).await;
+    let cp = checkpoint(10);
+    {
+        let mut state = server.state.lock().unwrap();
+        state.latest = Some(cp.clone());
+        state.accepted.insert(cp.seq, (cp.clone(), 2));
+        state.epoch = 2;
+        let signer = state.signer;
+        state.epoch_signers.insert(2, signer);
+    }
+    let chain = rpc(&server.url, &dir);
+    let at = chain.observe(View::Latest, &[]).await.unwrap();
+    assert!(chain.claims_open(&at, 10).await.unwrap(), "recorded in the epoch in force");
+    let epoch_read = server.state.lock().unwrap().calls.last().cloned().unwrap();
+    assert_eq!(epoch_read, (hex::encode(checkpointEpochAtCall::SELECTOR), at.lifecycle.as_ref().unwrap().block_hash));
+
+    server.state.lock().unwrap().epoch = 3;
+    let at = chain.observe(View::Latest, &[]).await.unwrap();
+    assert!(!chain.claims_open(&at, 10).await.unwrap(), "a later epoch ends the root");
+
+    // Retirement starts no epoch: the signer is what says so, and no epoch read is needed.
+    {
+        let mut state = server.state.lock().unwrap();
+        state.epoch = 2;
+        state.signer = alloy::primitives::Address::ZERO;
+    }
+    let at = chain.observe(View::Latest, &[]).await.unwrap();
+    let reads = server.state.lock().unwrap().calls.len();
+    assert!(!chain.claims_open(&at, 10).await.unwrap(), "a retired signer ends the root");
+    assert_eq!(server.state.lock().unwrap().calls.len(), reads);
+}
+
+#[tokio::test]
 async fn latest_history_cannot_authorize_retired_signatures() {
     let dir = scratch_dir("payout-latest-history-rpc");
     let server = Server::start(&dir).await;

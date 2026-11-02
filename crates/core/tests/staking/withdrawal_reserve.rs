@@ -91,6 +91,8 @@ fn receipt_reversal_never_releases_distribution_reserves_and_finality_releases_o
     let observed_at_seq = h.engine.recorded_deposit(&receipt.reference()).unwrap().updated_at_seq;
     h.cmd(Command::CustodyDeposit(Box::new(DepositUpdate::Reverse { receipt: receipt.clone(), observed_at_seq })));
     assert_eq!(h.engine.withdrawal_cash(), Some(f("1100")));
+    let paying = UsdcUnits(900_000_000);
+    assert_eq!(h.engine.distribution(staker), paying, "the vault pays any root of the signer, so none is taken back");
     let reversed_at_seq = h.engine.recorded_deposit(&receipt.reference()).unwrap().updated_at_seq;
     h.cmd(Command::CustodyDeposit(Box::new(DepositUpdate::Reinstate { receipt: receipt.clone(), reversed_at_seq })));
     assert_eq!(h.engine.withdrawal_cash(), Some(f("1100")));

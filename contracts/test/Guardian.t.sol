@@ -40,11 +40,11 @@ contract GuardianTest is WithdrawalTest {
 
         _post(vault, 11, distribution, KEY);
         vm.expectRevert(Vault.WithdrawalsPaused.selector);
-        vault.claimDistribution(claimant, 5e6, new bytes32[](0));
+        vault.claimDistribution(claimant, 5e6, 11, new bytes32[](0));
         assertEq(vault.distributionsPaid(), 0);
 
         _post(vault, 12, _leaf(ENTITLEMENT_LEAF, claimant, 3e18), KEY);
-        assertEq(vault.claimEmissions(claimant, 3e18, new bytes32[](0)), 3e18);
+        assertEq(vault.claimEmissions(claimant, 3e18, 12, new bytes32[](0)), 3e18);
         assertEq(vault.monkey().balanceOf(claimant), 3e18);
 
         usdc.mint(trader, 10e6);

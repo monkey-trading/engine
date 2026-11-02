@@ -2,8 +2,10 @@
 
 use std::sync::{Arc, Mutex};
 
+use engine_core::types::AccountId;
+
 use super::poster;
-use crate::checkpoints::Work;
+use crate::checkpoints::{LatestCheckpoint, Work};
 use crate::log::CheckpointParent;
 use crate::sequencer::Request;
 use crate::tee::EnclaveKey;
@@ -39,6 +41,22 @@ async fn the_worker_reports_the_vaults_latest_checkpoint_ahead_of_the_finalized_
     let Some(Request::CheckpointStatus { posted, latest, .. }) = rx.recv().await else {
         panic!("the worker reports a status");
     };
-    assert_eq!((posted, latest), (None, Some(works[0].checkpoint.seq)));
+    assert_eq!((posted, latest), (None, Some(LatestCheckpoint { seq: works[0].checkpoint.seq, claimable: true })));
+    task.abort();
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_worker_reports_no_claims_on_the_vaults_latest_checkpoint_once_its_signer_is_retired() {
+    let (poster, first, key) = poster();
+    poster.chain.state.lock().unwrap().checkpoint = Some((first.checkpoint.seq, first.checkpoint.root.clone()));
+    poster.chain.state.lock().unwrap().signer = AccountId([0; 20]);
+    let works = chain_of(1, &key, &first);
+    let (_work_tx, work_rx) = tokio::sync::mpsc::channel(8);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+    let task = tokio::spawn(poster.run_with_recovery(work_rx, tx, works.clone()));
+    let Some(Request::CheckpointStatus { latest, .. }) = rx.recv().await else {
+        panic!("the worker reports a status");
+    };
+    assert_eq!(latest, Some(LatestCheckpoint { seq: works[0].checkpoint.seq, claimable: false }));
     task.abort();
 }

@@ -142,6 +142,15 @@ pub(crate) struct VaultState {
     pub distributions_paid: Fixed,
 }
 
+/// The vault's latest checkpoint, as a claim sees it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LatestCheckpoint {
+    pub seq: u64,
+    /// Whether a claim can prove against it: the signer that recorded it is still in force, neither
+    /// replaced nor retired.
+    pub claimable: bool,
+}
+
 /// Latest inclusion is progress; only final custody-policy state authorizes signature release.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum View {

@@ -168,7 +168,9 @@ timelock, which alone rotates the signer, lifts a withdrawal pause or changes th
 sets the current release: the one launch measurement and config hash that may hold the enclave's
 keys. As the vault's immutable guardian, the same multisig may also, without the delay, pause
 withdrawals for seven days or retire the signer, which the vault then refuses for withdrawals and
-checkpoints until the timelock installs one; the node signs no withdrawal while either holds. With
+checkpoints until the timelock installs one, and for MONKEY and USDC claims until that signer posts
+a checkpoint, which an exit that starts first rules out; the node signs no withdrawal while either
+holds. With
 `[tee.sealing]` the keys are sealed on the host's disk under a key the SEV-SNP firmware derives from
 the chip, the launch measurement, the guest policy, and the committed TCB, with the config hash
 bound to the ciphertext, so neither the host nor another release, the same code under another
