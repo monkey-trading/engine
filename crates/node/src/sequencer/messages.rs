@@ -11,6 +11,7 @@ use tokio::sync::{oneshot, watch};
 
 use crate::benchmarks::BenchmarkSchedule;
 use crate::log::{Checkpoint, CommandEntry, LogEntry, Offset};
+use crate::sequencer::house::HouseState;
 use crate::trusted_time::Sample;
 
 pub type Query = Box<dyn FnOnce(&Engine) + Send>;
@@ -44,6 +45,8 @@ pub enum Request {
         reply: Option<oneshot::Sender<Vec<Event>>>,
     },
     Query(Query),
+    /// The parameters and latest checkpoint, answered once every prior request is flushed.
+    HouseState(oneshot::Sender<HouseState>),
     /// A trusted time sample from the trusted time task.
     TimeSample(Sample),
     /// Answered with the last seq once every command before it is synced, so it survives power loss.

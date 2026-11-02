@@ -223,6 +223,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/origin.rs` — command-origin coverage shared by replay and writable recovery
 - `src/sequencer/replay.rs` — log replay, which recovery and `engine replay` share
 - `src/sequencer/replay/snapshot.rs` — replay restored from a verified state snapshot
+- `src/sequencer/house.rs` — the latest checkpoint and the seq of the latest `SetParams`, which `GET /v1/house/state` answers from
+- `src/sequencer/tests/house_state.rs` — the house state before any command, as parameters are set and replaced, as checkpoints are logged, and after a restart
 - `src/sequencer/replay/authorities.rs` — accepted historical signers for checkpoints a retired key signed
 - `src/sequencer/legacy.rs` — verified legacy activation inputs and pre-writer signature eligibility
 - `src/sequencer/legacy/approvals.rs` — authenticated approval prefixes, bounded receipt proofs and per-obligation release authorization
@@ -239,6 +241,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/snapshot/mod.rs` — signed snapshot envelopes, size limits, atomic publication, and retention
 - `src/snapshot/tests.rs` — snapshot authentication, deployment binding, retention, and corruption
 - `src/snapshot/context.rs` — required recovery accounting, signed base witnesses, and concrete checkpoint work
+- `src/snapshot/progress.rs` — the genesis, activation, checkpoint and latest-`SetParams` facts a snapshot carries
 - `src/snapshot/head.rs` — authenticated complete history-head records and bounded metadata publication
 - `src/snapshot/head/tests.rs` — head provenance, replay-prefix matching, and interrupted-publication regressions
 - `src/snapshot/paired.rs` — the record binding one checkpoint's cache, history head, and catalog boundary
@@ -648,6 +651,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/registry.rs` — the operator registry's rotation switch and election events, decoded for the staking mirror
 - `src/custody/tests/rpc/registry.rs` — registry logs decoded only from the configured registry, with effective times in milliseconds
 - `src/custody/tests/staking/registry.rs` — registry events mirrored once with the stakes, a refused one stalling the mirror, and the staking contract's deployer checked against the configured registry
+- `src/api/house_state.rs` — `GET /v1/house/state`: the parameters with the seq that set them, and the latest checkpoint
 - `src/api/operator.rs` — `GET /v1/operator`: the key in effect, its pending rotation, whether rotation is on, and the last election
 - `src/api/admin_tests/election.rs` — the operator route and the admin route after an election, published keys included
 - `src/custody/staking.rs` — mirroring the staking contract's finalised events into `Stake`/`Unstake`
@@ -1178,7 +1182,7 @@ The EVM HTTP withdrawal route remains disabled until #23; this scenario proves a
 at the sequencer/core boundary and does not perform a physical payout or HTTP cash-out.
 
 Endpoints: `GET /v1/health`, `GET /v1/attestation`, `GET /v1/attestation/collateral`,
-`GET /v1/markets`, `GET /v1/markets/{id}/marks`, `GET /v1/house`, `GET /v1/house/positions`,
+`GET /v1/markets`, `GET /v1/markets/{id}/marks`, `GET /v1/house`, `GET /v1/house/state`, `GET /v1/house/positions`,
 `GET /v1/monkey`, `GET /v1/monkey/activity`, `GET /v1/stats/series`, `GET /v1/operator`,
 `GET /v1/accounts/{address}`, `GET /v1/accounts/{address}/nonce`,
 `GET /v1/accounts/{address}/history`, `GET /v1/accounts/{address}/proof`,
@@ -1660,6 +1664,19 @@ change needs. From `V37`, while the operator registry has rotation on, the engin
 time, or seven days after the election is logged when that is later, and once the staking mirror
 has completed a finalised block stamped at or after the registry's effective time, signing with
 `--rotated`.
+`GET /v1/house/state` returns `{"seq", "params", "checkpoint"}` from memory, signed like the other
+reads, with no log scan, so a client learns the protocol parameters and the latest checkpoint
+without replaying the log. `seq` is the log head the read was taken at (`null` on an empty log).
+`params` is `null` until the first `SetParams` applies, then the parameters in force, as the
+`set_params` command encodes them (`profit_fee_bps`, `closeout_level_bps`, `house_total_cap_bps`,
+`house_total_cap_floor` left out when zero, `stress_levels`, and the rest), plus `seq`, the seq of the
+`SetParams` that set them (`null` only when a snapshot written before it carried the seq restored the
+node and no `SetParams` has applied since). `checkpoint` is `null` until the log holds one, then the
+latest checkpoint as the stream carries it (`offset`, `type: "checkpoint"`, `seq`, `root`,
+`signature`, `signer`, and the rest). The sequencer keeps the checkpoint as it logs it and the seq as
+it applies the command; recovery restores both from the replay it already runs, or from the snapshot
+it starts at, which carries them. The answer waits for the batch before it to be flushed, so it never
+shows what a crash could take back.
 `GET /v1/operator` returns the key in effect, the pending rotation and its time, whether rotation is
 on, and the last election. A refused registry mirror raises a Critical `election_rejected` alert and
 holds the staking mirror behind it. With real attestation, `rotate-operator` and the admin route refuse an address that `config/test-keys.toml` lists, and the route refuses a request such a key signs unless it is the configured operator's, and the route admits a pending rotation's key only once its time has come by the node's clock. `engine replay` prints the operator a log records. A node

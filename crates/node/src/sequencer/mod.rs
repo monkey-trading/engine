@@ -27,6 +27,7 @@ pub use messages::{
 };
 mod access;
 mod benchmark_schedule;
+pub(crate) mod house;
 mod payout_schedule;
 #[cfg(test)]
 mod payout_tests;
@@ -45,7 +46,7 @@ use engine_core::Engine;
 #[cfg(test)]
 use engine_core::Fixed;
 use engine_core::auth::{ClientAuth, Operator};
-use engine_core::command::{AdminCommand, Command, Sequenced};
+use engine_core::command::{Command, Sequenced};
 use engine_core::deposits::LegacyDeposit;
 use engine_core::event::Event;
 use engine_core::protocol::ProtocolVersion;
@@ -56,7 +57,7 @@ use tracing::{error, info, info_span, warn};
 use crate::benchmarks::BenchmarkSchedule;
 use crate::checkpoints::accounting::Accounting;
 use crate::clock::Clock;
-use crate::log::{CommandEntry, LogEntry, LogWriter, SegmentedLog};
+use crate::log::{CommandEntry, LogEntry, LogWriter, Offset, SegmentedLog};
 use crate::metrics::Metrics;
 use crate::sequencer::alerts::{BenchmarkAlerts, DeficitAlert, alert_on, reinstated_receipt, resolve_reversal};
 use crate::snapshot::{Progress, RecoveryBase};
@@ -129,6 +130,7 @@ pub struct Sequencer {
     uncaptured: Option<snapshots::Deferred>,
     /// Live mark reporting for the derived marks cache, and the dashboard record fed beside it.
     marks: marks::Marks,
+    house: house::Latest,
 }
 
 /// A log read from disk and replayed, before anything is written to it.
@@ -172,6 +174,7 @@ impl Sequencer {
                         }
                     }
                     Request::Query(q) => queries.push(q),
+                    Request::HouseState(reply) => self.house.wait(reply),
                     Request::TimeSample(sample) => self.take_sample(sample)?,
                     Request::Sync(reply) => syncs.push(reply),
                     Request::WatchBenchmarkSchedule(reply) => benchmark_watches.push(reply),
@@ -333,14 +336,8 @@ impl Sequencer {
     /// - the log cannot be written
     /// - the engine refuses the sequence, which means this sequencer is broken
     fn stamp_once(&mut self, ts: Millis, cmd: Command) -> anyhow::Result<Vec<Event>> {
-        let parameters = match &cmd {
-            Command::Admin(command) => Some(command),
-            Command::SignedAdmin(request) => Some(&request.command),
-            _ => None,
-        };
-        let previous_schedule = parameters
-            .filter(|command| matches!(command, AdminCommand::SetParams(_)))
-            .map(|_| self.engine.params().map(|params| params.rollover.clone()));
+        let previous_schedule =
+            house::set_params_of(&cmd).map(|_| self.engine.params().map(|params| params.rollover.clone()));
         let previous_benchmarks =
             matches!(&cmd, Command::Admin(_) | Command::SignedAdmin(_)).then(|| BenchmarkAlerts::listed(&self.engine));
         let sequenced = Sequenced { seq: self.next_seq, ts, cmd };
@@ -352,6 +349,7 @@ impl Sequencer {
         withdrawal_scenario::before_approval_log(&sequenced, &events)?;
         self.accounting.apply(&sequenced.cmd, &events)?;
         self.progress.genesis.command(&sequenced, &events);
+        house::note_params(&mut self.progress.params_seq, &sequenced, &events);
         if self.engine.protocol_version() != version {
             self.progress.activations.push((self.engine.protocol_version(), sequenced.seq));
         }
@@ -425,10 +423,10 @@ impl Sequencer {
     /// Appends an entry to the log and queues it for the stream at its offset.
     /// Error cases:
     /// - the log cannot be written
-    fn record(&mut self, entry: LogEntry) -> anyhow::Result<()> {
+    fn record(&mut self, entry: LogEntry) -> anyhow::Result<Offset> {
         let offset = self.log.append(&entry)?;
         self.outbox.push(Arc::new(StreamMsg::new(offset, entry)));
-        Ok(())
+        Ok(offset)
     }
 
     /// Makes buffered log entries durable, then publishes what they produced and hands signed
@@ -445,6 +443,7 @@ impl Sequencer {
             self.benchmark_schedule.send_replace(BenchmarkSchedule::from_engine(&self.engine));
         }
         self.release_marks();
+        self.house.answer(&self.engine, self.progress.params_seq);
         for msg in self.outbox.drain(..) {
             if let StreamBody::Withdrawal(w) = &msg.body
                 && self.withdrawals.send(w.clone()).is_err()

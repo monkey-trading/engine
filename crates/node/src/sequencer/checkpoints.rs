@@ -296,7 +296,8 @@ impl Sequencer {
             domain: Some(crate::log::CheckpointDomain { chain_id: self.chain_id, vault: self.vault }),
             deferred_withdrawals: self.gate.is_some(),
         };
-        self.record(LogEntry::Checkpoint(cp.clone()))?;
+        let offset = self.record(LogEntry::Checkpoint(cp.clone()))?;
+        self.house.checkpointed(offset, &cp);
         self.command_link = crate::log::command_seal::checkpoint_link(&cp)?;
         self.capture_payout_proofs();
         if self.gate.is_some() {
