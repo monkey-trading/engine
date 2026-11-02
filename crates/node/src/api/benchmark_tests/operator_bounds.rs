@@ -148,11 +148,13 @@ endpoint = "{publisher}/estr"
     assert!(batch.rates.iter().all(|rate| rate.benchmark != "SOFR" || rate.effective_date != wednesday), "{batch:?}");
     assert_eq!(observed(&node, "SOFR", wednesday).await, None);
     assert_eq!(observed(&node, "ESTR", wednesday).await, Some(fixed("0.0201")));
-    let mut raised = Vec::new();
+    let mut refused = Vec::new();
     while let Ok(alert) = alerts.try_recv() {
-        raised.push(alert.name);
+        if alert["alert"] == "benchmark_rate_refused" {
+            refused.push((alert["benchmark"].clone(), alert["level"].clone()));
+        }
     }
-    assert!(raised.iter().any(|name| name == "benchmark_rate_refused"), "{raised:?}");
+    assert_eq!(refused, [("SOFR".to_owned(), "WARN".to_owned())]);
 
     // 3. The operator signing that rate itself is refused, and a rate inside the cap applies.
     let events = signed(&node, sofr_snapshot(wednesday, "0.075")).await;
