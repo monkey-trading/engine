@@ -104,6 +104,35 @@ fn the_distribution_excess_is_the_engines_and_comes_with_the_scan_it_was_read_at
     assert_eq!(view["excess_seq"], rig.engine.last_seq().unwrap());
 }
 
+/// From V29 the excess leaves out the house's unfinalised deposits, which NAV counts, so it is not
+/// NAV over the floor; and it is the scan's figure, read at the scan's `seq`: cash that moves in a
+/// later command changes the engine's excess and not the figure served until the next scan.
+#[test]
+fn the_distribution_excess_differs_from_nav_over_the_floor_and_stays_at_the_scan() {
+    let mut rig = Rig::staking_at(engine_core::protocol::ProtocolVersion::V29);
+    let set_unfinalised = |rig: &mut Rig, amount: i64| {
+        let mut state = json(&rig.engine);
+        state["unfinalised_house_deposits"] = json(Fixed::from_int(amount));
+        rig.engine = serde_json::from_value(state).unwrap();
+    };
+    let served = |rig: &Rig| {
+        let view = json(rig.stats.monkey(&rig.engine))["distribution"].clone();
+        (view["excess_usd"].as_str().map(|text| text.parse::<Fixed>().unwrap()), view["excess_seq"].as_u64())
+    };
+    set_unfinalised(&mut rig, 4_000);
+    rig.apply(T0 + 60_000, Command::Tick);
+    let scan_seq = rig.engine.last_seq().unwrap();
+    let at_scan = rig.engine.distributable_excess().unwrap();
+    let nav_over_floor = rig.engine.house_nav() - Fixed::from_int(1_000);
+    assert_ne!(at_scan, nav_over_floor, "the unfinalised deposits are NAV the close does not distribute");
+    assert_eq!(served(&rig), (Some(at_scan), Some(scan_seq)));
+
+    set_unfinalised(&mut rig, 0);
+    rig.apply(T0 + 61_000, Command::Tick);
+    assert_ne!(rig.engine.distributable_excess().unwrap(), at_scan, "the command moved what a close would pay");
+    assert_eq!(served(&rig), (Some(at_scan), Some(scan_seq)), "until the next scan, the figure is the scan's");
+}
+
 /// A MONKEY amount is a `u128`: the series keep it whole past what an `i128` holds, and a ratio too
 /// large for `Fixed` is still served.
 #[test]

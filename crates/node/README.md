@@ -1576,8 +1576,8 @@ metric's buckets oldest first: `nav`, `cash`, `withdrawal_queue`, `total_staked`
 the activity feed also says when it has dropped older entries (`truncated`, `retained_from_ms`). The record is derived from the log and held in memory:
 recovery rebuilds it by replay, so after a recovery from a snapshot it begins at the first command
 after it. Scans of every account run on the sequencer's thread at most once per `api.stats_interval`
-of sequenced time (100k levered accounts with staking initialised took about 35 ms, p99 40 ms, and the light scan
-about 15 ms, `stats::bench`), and a replay takes the light scan for all but the last. `[stats]` sets each resolution's retention (1m 48h, 1h 90d, 1d
+of sequenced time (100k levered accounts with staking initialised took about 35 ms, p99 40 ms, and the light scan,
+which no longer walks the accounts for the distributable excess, about 9 ms, `stats::bench`), and a replay takes the light scan for all but the last. `[stats]` sets each resolution's retention (1m 48h, 1h 90d, 1d
 unbounded by default), the activity length, and the close-out and profit buckets.
 
 `GET /v1/markets/{id}/marks?resolution=(1s|1m|1h|1d)&from_ms=&to_ms=&limit=` returns

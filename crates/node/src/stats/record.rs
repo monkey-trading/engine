@@ -17,13 +17,14 @@ fn units(amount: u128) -> Amount {
     from_units(amount)
 }
 
-/// The USD notional of a fill, or `None` for a market whose currency has no FX index.
+/// The USD notional of a fill, or `None` for a fill the market's current currency cannot value. A fill
+/// carries the FX index of the currency it executed in, and none for USD, so a market whose
+/// currency changed later in the same command disagrees with it and is left out rather than
+/// valued at a currency the fill did not use.
 fn fill_usd(engine: &Engine, fill: &Fill) -> Option<Fixed> {
-    let market = engine.markets().get(&fill.market)?;
-    let fx = fill.fx_index.or(market.fx_mark);
-    (market.spec.quote_currency.is_usd() || fx.is_some()).then(|| {
-        market.spec.quote_currency.to_usd(fill.qty.abs().mul_rounded(fill.price, Rounding::Down), fx, Rounding::Down)
-    })
+    let currency = engine.markets().get(&fill.market)?.spec.quote_currency;
+    (currency.is_usd() == fill.fx_index.is_none())
+        .then(|| currency.to_usd(fill.qty.abs().mul_rounded(fill.price, Rounding::Down), fill.fx_index, Rounding::Down))
 }
 
 impl Stats {

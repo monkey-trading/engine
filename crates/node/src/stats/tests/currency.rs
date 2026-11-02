@@ -105,3 +105,52 @@ fn a_long_in_the_market_that_converts_its_own_currency_closes_out_where_the_scan
 fn a_short_in_the_market_that_converts_its_own_currency_closes_out_where_the_scan_says() {
     usd_jpy_agrees_with_the_engine(Side::Sell);
 }
+
+/// The volume of `market` in the first minute bucket.
+fn volume_in(rig: &Rig, market: MarketId) -> Fixed {
+    let query = crate::stats::SeriesQuery {
+        metric: "volume".into(),
+        market: Some(market),
+        resolution: "1m".into(),
+        from_ms: None,
+        to_ms: None,
+        limit: None,
+    };
+    let series = serde_json::to_value(rig.stats.series(&rig.engine, &query).unwrap().finish()).unwrap();
+    series["entries"][0]["value"].as_str().unwrap().parse().unwrap()
+}
+
+/// Trades one contract in `market`, edits that market's listing as `relist` says, and has the record see
+/// the fill again as if the change came in the same command. A fill carries the FX index of the
+/// currency it executed in, none for USD, so it is not valued at the new currency: the volume stays
+/// that of the first sighting.
+fn a_relisting_leaves_the_fill_uncounted(market: MarketId, relist: impl Fn(&mut serde_json::Value)) {
+    let mut rig = Rig::new();
+    rig.apply(T0 + 500, quote(EUR_USD, "1.08", T0 + 500));
+    rig.apply(T0 + 500, quote(DE40, "23500", T0 + 500));
+    let events = rig.trade_in(market, T0 + 600, TRADER, Side::Buy, 1);
+    let fills: Vec<_> = events.iter().filter(|event| matches!(event, Event::Fill(_))).cloned().collect();
+    assert_eq!(fills.len(), 1, "{events:?}");
+    let before = volume_in(&rig, market);
+    assert!(before.is_positive());
+    let mut state = serde_json::to_value(&rig.engine).unwrap();
+    relist(&mut state["markets"][market.to_string()]);
+    rig.engine = serde_json::from_value(state).unwrap();
+    rig.stats.observe(&rig.engine, T0 + 700, &fills);
+    assert_eq!(volume_in(&rig, market), before);
+}
+
+#[test]
+fn a_fill_in_euros_is_not_counted_in_dollars_when_its_market_is_relisted_in_dollars() {
+    a_relisting_leaves_the_fill_uncounted(DE40, |listing| {
+        listing["spec"].as_object_mut().unwrap().remove("quote_currency");
+    });
+}
+
+#[test]
+fn a_fill_in_dollars_is_not_counted_in_euros_when_its_market_is_relisted_in_euros() {
+    a_relisting_leaves_the_fill_uncounted(BTC, |listing| {
+        listing["spec"]["quote_currency"] = serde_json::json!({ "currency": "eur", "fx_market": EUR_USD });
+        listing["fx_mark"] = serde_json::json!("1.08");
+    });
+}
