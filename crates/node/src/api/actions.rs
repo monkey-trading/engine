@@ -1,6 +1,6 @@
 //! Authenticated client actions with sequenced access evidence.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 
 use axum::extract::{ConnectInfo, State};
 use axum::{Extension, Json};
@@ -17,6 +17,7 @@ use tracing::field::display;
 use tracing::{Span, debug};
 
 use crate::access::{ScreeningRequest, screen};
+use crate::api::state::BeforeCredit;
 use crate::api::{AmountBody, ApiError, ApiResult, ApiState, SessionKeyRequest, SessionKeyRevocationRequest};
 use crate::clock::now_ms;
 
@@ -102,26 +103,36 @@ pub(super) async fn close_all(
 }
 
 /// Registers a session key the account signed for: the key may place and cancel orders for the
-/// account until `expires_at` or an account-signed revocation.
+/// account until `expires_at` or an account-signed revocation. A never-credited account may register
+/// one once it has declared; the key can act only after the account's first credit.
 /// Error cases:
 /// - the registration is not authorised by the account key
+/// - a never-credited account has not declared, or is over its client's share or the shared budget
 /// - the sequencer has stopped, or sequencing is halted
 pub(super) async fn register_session_key(
     State(s): State<ApiState>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     Json(b): Json<SessionKeyRequest>,
 ) -> ApiResult<Vec<Event>> {
     // Key management is the account key's alone: a session key's signature never reaches the log.
     let auth = s
-        .authorise(b.account, b.auth, false, |domain, auth| {
-            eip712::session_key_registration_hash(
-                domain,
-                b.account,
-                b.session_key,
-                b.expires_at,
-                auth.nonce,
-                auth.expires_at,
-            )
-        })
+        .authorise_request(
+            b.account,
+            b.auth,
+            |domain, auth| {
+                eip712::session_key_registration_hash(
+                    domain,
+                    b.account,
+                    b.session_key,
+                    b.expires_at,
+                    auth.nonce,
+                    auth.expires_at,
+                )
+            },
+            false,
+            BeforeCredit::SessionKeys,
+            client_ip(&peer),
+        )
         .await?;
     Ok(Json(
         s.submit(Command::RegisterSessionKey {
@@ -137,15 +148,24 @@ pub(super) async fn register_session_key(
 /// Revokes a session key the account signed for; the key's later requests refuse distinctly.
 /// Error cases:
 /// - the revocation is not authorised by the account key
+/// - a never-credited account has not declared, or is over its client's share or the shared budget
 /// - the sequencer has stopped, or sequencing is halted
 pub(super) async fn revoke_session_key(
     State(s): State<ApiState>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     Json(b): Json<SessionKeyRevocationRequest>,
 ) -> ApiResult<Vec<Event>> {
     let auth = s
-        .authorise(b.account, b.auth, false, |domain, auth| {
-            eip712::session_key_revocation_hash(domain, b.account, b.session_key, auth.nonce, auth.expires_at)
-        })
+        .authorise_request(
+            b.account,
+            b.auth,
+            |domain, auth| {
+                eip712::session_key_revocation_hash(domain, b.account, b.session_key, auth.nonce, auth.expires_at)
+            },
+            false,
+            BeforeCredit::SessionKeys,
+            client_ip(&peer),
+        )
         .await?;
     Ok(Json(s.submit(Command::RevokeSessionKey { account: b.account, session_key: b.session_key, auth }).await?))
 }
@@ -181,8 +201,8 @@ pub(super) async fn withdraw(
 }
 
 /// Screens an account's signed declaration like an order and sequences it with the evidence; the
-/// engine records it only on a verified, allowed and clear screening, which its first credit and
-/// order need.
+/// engine records it only on a verified, allowed and clear screening, which its first credit, order
+/// and, for a never-credited account, session keys need.
 /// Error cases:
 /// - authentication, nonce, expiry, rate, screening capacity, or sequencer availability fails
 pub(super) async fn attest_eligibility(
@@ -195,14 +215,26 @@ pub(super) async fn attest_eligibility(
         Some(request.auth.clone()),
         |domain, auth| eligibility_hash(domain, request.account, request.class, auth.nonce, auth.expires_at),
         false,
-        true,
-        peer.as_ref().map(|Extension(ConnectInfo(peer))| peer.ip()),
+        BeforeCredit::Declaration,
+        client_ip(&peer),
     )
     .await?;
+    // A wallet declares for free, so declarations hold at most half the API's screening slots: however
+    // many arrive, orders keep a slot.
+    let _declaring = s
+        .access
+        .as_ref()
+        .map(|client| client.declaration_slots.try_acquire().map_err(|_| ApiError::Unavailable))
+        .transpose()?;
     let auth = &request.auth;
     let hash = eligibility_hash(&signature_domain(&s), request.account, request.class, auth.nonce, auth.expires_at);
     let evidence = api_screen(&s, peer, request.account, hash).await?;
     Ok(Json(s.submit(Command::AttestEligibility { request, evidence }).await?))
+}
+
+/// The address a request's client is counted under, when its connection has one.
+fn client_ip(peer: &Option<Extension<ConnectInfo<SocketAddr>>>) -> Option<IpAddr> {
+    peer.as_ref().map(|Extension(ConnectInfo(peer))| peer.ip())
 }
 
 /// The existing recorded deployment domain also binds development declarations.

@@ -368,7 +368,9 @@ account's next nonce and an expiry at most five minutes ahead:
 
 ```bash
 SIGNER_KEY=<private key> cargo run -p engine-core --example sign_request -- \
-    <chain id> <vault> <nonce> <expires at> <order|cancel|withdrawal|eligibility> '<unsigned body>'
+    <chain id> <vault> <nonce> <expires at> \
+    <order|cancel|cancel_all|close_all|withdrawal|eligibility|session_key_registration|session_key_revocation> \
+    '<unsigned body>'
 ```
 
 From V24, client actions and declarations always require signatures, including in development logs that recorded

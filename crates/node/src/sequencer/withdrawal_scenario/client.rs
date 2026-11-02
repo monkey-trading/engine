@@ -139,41 +139,32 @@ impl Client {
         })
     }
 
-    /// Records the user's signed eligibility declaration, retrying only the pre-log refusal that
-    /// its deposit is not yet pending; the deposit credits once the declaration is recorded.
+    /// Records the user's signed eligibility declaration; a deposit already pending credits on its
+    /// next retry, and a later one at its first screening.
     /// Error cases:
-    /// - any other refusal, or the deposit never reaches the node
+    /// - the API or the engine refuses the declaration
     pub async fn declare(&self, user: &User) -> anyhow::Result<()> {
         let class = EligibilityClass::Professional;
-        for _ in 0..50 {
-            let nonce = self.nonce(user).await?;
-            let expires_at = now_ms() + 120_000;
-            let request = EligibilityRequest {
-                account: user.account,
-                class,
-                auth: RequestAuth {
-                    nonce,
-                    expires_at,
-                    signature: eip712::sign(
-                        &user.key,
-                        &eip712::eligibility_hash(&self.domain, user.account, class, nonce, expires_at),
-                    ),
-                },
-            };
-            match self.post("/v1/eligibility", &request).await {
-                Ok(events) => {
-                    ensure!(
-                        events.iter().any(|event| matches!(event, Event::EligibilityAttested { .. })),
-                        "declaration refused: {events:?}"
-                    );
-                    return Ok(());
-                }
-                // A declaration ahead of its deposit is refused before the log and spends nothing.
-                Err(error) if error.to_string().contains("403") => sleep(Duration::from_millis(100)).await,
-                Err(error) => return Err(error),
-            }
-        }
-        anyhow::bail!("declaration stayed refused: the deposit never reached the node");
+        let nonce = self.nonce(user).await?;
+        let expires_at = now_ms() + 120_000;
+        let request = EligibilityRequest {
+            account: user.account,
+            class,
+            auth: RequestAuth {
+                nonce,
+                expires_at,
+                signature: eip712::sign(
+                    &user.key,
+                    &eip712::eligibility_hash(&self.domain, user.account, class, nonce, expires_at),
+                ),
+            },
+        };
+        let events = self.post("/v1/eligibility", &request).await?;
+        ensure!(
+            events.iter().any(|event| matches!(event, Event::EligibilityAttested { .. })),
+            "declaration refused: {events:?}"
+        );
+        Ok(())
     }
 
     /// Retries only explicit pre-sequencing 503 refusals while finalized custody catches up.

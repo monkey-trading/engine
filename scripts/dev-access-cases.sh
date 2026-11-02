@@ -76,16 +76,13 @@ wait_for access_pending_gauge 0
 [[ "$(house_nav)" == "$expected_nav" ]] || fail "outage retry changed house NAV"
 grep -Fq 'alert_resolved="access_source_failed"' "$work/node.log" || fail "screening recovery did not resolve its outage alert"
 
-step "A never-credited signer cannot order or declare; its deposit waits pending through a US declaration until an allowed one"
+step "A never-credited signer cannot order; its deposit waits pending through a US declaration until an allowed one"
 new_key="$(key 3)"
 new_account="$(cast wallet address --private-key "$new_key")"
 new_balance() { curl --max-time 2 -sk "$api/v1/accounts/$new_account" | jq -r '.balance // "none"'; }
 signed="$(access_request "$new_key" order)"
 code="$(curl --max-time 10 -sk -o /dev/null -w '%{http_code}' "$api/v1/orders" -H 'content-type: application/json' -d "$signed")"
 [[ "$code" == "403" ]] || fail "a never-credited order answered $code"
-signed="$(access_signed_body "$new_key" eligibility "{\"account\":\"$new_account\",\"class\":\"professional\"}")"
-code="$(curl --max-time 10 -sk -o /dev/null -w '%{http_code}' "$api/v1/eligibility" -H 'content-type: application/json' -d "$signed")"
-[[ "$code" == "403" ]] || fail "a declaration with no pending deposit answered $code"
 access_reference="$(access_funding_reference "$vault" 'depositFor(address,uint256)' "$new_account" $((10 * usdc_units)) --private-key "$house_key")"
 mine 3
 wait_for access_pending_amount 10
@@ -104,6 +101,69 @@ access_set_fixture clear
 access_attest "$new_key"
 wait_for new_balance 10
 [[ "$(access_pending_amount)" == none ]] || fail "a credited deposit remains pending"
+
+step "A fresh wallet declares and registers a session key with no deposit, and an order stays refused until a deposit credits it"
+never_credited="account has never been credited"
+must_declare="a never-credited account must declare first"
+fresh_key="$(key 4)"
+fresh_account="$(cast wallet address --private-key "$fresh_key" | tr '[:upper:]' '[:lower:]')"
+session_key="$(key 5)"
+session_account="$(cast wallet address --private-key "$session_key" | tr '[:upper:]' '[:lower:]')"
+spare_account="$(cast wallet address --private-key "$(key 6)" | tr '[:upper:]' '[:lower:]')"
+fresh_balance() { curl --max-time 2 -sk "$api/v1/accounts/$fresh_account" | jq -r '.balance // "none"'; }
+fresh_nonce() { curl --max-time 2 -sk "$api/v1/accounts/$fresh_account/nonce" | jq -r .next_nonce; }
+session_nonce() { curl --max-time 2 -sk "$api/v1/accounts/$session_account/nonce" | jq -r .next_nonce; }
+session_expiry="$(python3 -c 'import time; print(int(time.time() * 1000) + 3600000)')"
+fresh_registration() { echo "{\"account\":\"$fresh_account\",\"session_key\":\"$1\",\"expires_at\":$session_expiry}"; }
+fresh_declaration="{\"account\":\"$fresh_account\",\"class\":\"professional\"}"
+access_expect_forbidden /v1/orders "$(access_request "$fresh_key" order)" "$never_credited"
+signed="$(access_signed_body "$fresh_key" session_key_registration "$(fresh_registration "$session_account")")"
+access_expect_forbidden /v1/session-keys "$signed" "$must_declare"
+[[ "$(fresh_nonce)" == 0 ]] || fail "a refused registration used the wallet's nonce"
+access_attest "$fresh_key"
+[[ "$(curl --max-time 2 -sk "$api/v1/accounts/$fresh_account/eligibility" | jq -r .class)" == professional ]] || fail "the declaration was not recorded"
+access_expect_forbidden /v1/eligibility "$(access_signed_body "$fresh_key" eligibility "$fresh_declaration")" "account has already declared"
+[[ "$(fresh_nonce)" == 1 ]] || fail "a second declaration used the wallet's nonce"
+signed="$(access_signed_body "$fresh_key" session_key_registration "$(fresh_registration "$session_account")")"
+events="$(access_post /v1/session-keys "$signed")"
+jq -e 'length == 1 and .[0].type == "session_key_registered"' <<< "$events" >/dev/null || fail "the registration did not apply: $events"
+# Revocation is the wallet's too before its first deposit: a second key comes and goes.
+signed="$(access_signed_body "$fresh_key" session_key_registration "$(fresh_registration "$spare_account")")"
+events="$(access_post /v1/session-keys "$signed")"
+jq -e '.[0].type == "session_key_registered"' <<< "$events" >/dev/null || fail "the second registration did not apply: $events"
+signed="$(access_signed_body "$fresh_key" session_key_revocation "{\"account\":\"$fresh_account\",\"session_key\":\"$spare_account\"}")"
+events="$(curl --max-time 10 -skf -X DELETE "$api/v1/session-keys" -H 'content-type: application/json' -d "$signed")"
+jq -e 'length == 1 and .[0].type == "session_key_revoked"' <<< "$events" >/dev/null || fail "the revocation did not apply: $events"
+access_expect_forbidden /v1/orders "$(access_request "$fresh_key" order)" "$never_credited"
+access_expect_forbidden /v1/orders "$(access_session_order "$session_key" "$fresh_account")" "$never_credited"
+[[ "$(session_nonce)" == 0 ]] || fail "a refused order used the session key's nonce"
+# What the console reads for a wallet with no account: its history and nonces answer, its account does not.
+fresh_history() { curl --max-time 2 -sk "$api/v1/accounts/$fresh_account/history" | jq -r '[.events[]?.type] | unique | join(",")'; }
+wait_for fresh_history "eligibility_attested,session_key_registered,session_key_revoked"
+[[ "$(fresh_balance)" == none ]] || fail "a wallet with no deposit has an account"
+
+step "A deposit after the declaration credits at its first screening, and the session key fills orders with no further account signature, across a restart"
+fresh_nonce_before="$(fresh_nonce)"
+access_reference="$(access_funding_reference "$vault" 'depositFor(address,uint256)' "$fresh_account" $((1000 * usdc_units)) --private-key "$house_key")"
+fresh_reference="$access_reference"
+mine 3
+wait_for fresh_balance 1000
+expected_deposits=$((expected_deposits + 1))
+events="$(access_post /v1/orders "$(access_session_order "$session_key" "$fresh_account")")"
+jq -e 'any(.[]; .type == "fill")' <<< "$events" >/dev/null || fail "the session key's order did not fill: $events"
+stop_node
+start_node
+[[ "$(curl --max-time 2 -sk "$api/v1/accounts/$fresh_account/eligibility" | jq -r .class)" == professional ]] || fail "the declaration did not survive the restart"
+# The feed needs a moment after a restart; a refused attempt uses a session nonce and no account signature.
+session_sell_fills() {
+  local events
+  events="$(access_post /v1/orders "$(ACCESS_ORDER_SIDE=sell access_session_order "$session_key" "$fresh_account")" || true)"
+  jq -e 'any(.[]?; .type == "fill")' <<< "$events" >/dev/null 2>&1 && echo filled || echo unfilled
+}
+wait_for session_sell_fills filled
+[[ "$(fresh_nonce)" == "$fresh_nonce_before" ]] || fail "the session key's orders used the wallet's nonce"
+[[ "$(session_nonce)" -ge 2 ]] || fail "the session key's orders did not use its own nonces"
+expected_nav="$(house_nav)"
 
 step "A sanctioned payer cannot fund an eligible beneficiary or the house by direct vault calls"
 payer="$(cast wallet address --private-key "$house_key")"
@@ -143,5 +203,13 @@ jq -se '
 jq -se --arg account "$new_account" '
   any(.[] | select(.entry == "command") | .events[]?; .type == "eligibility_rejected" and .account == ($account | ascii_downcase) and .reason.reason == "united_states")
 ' "$work"/log/[0-9]*.jsonl >/dev/null || fail "the refused US declaration is missing from the public log"
+jq -se --arg account "$fresh_account" --arg reference "$fresh_reference" '
+  [ .[] | select(.entry == "command") ] as $commands |
+  ($commands | map(.events // [] | any(.type == "session_key_registered" and .account == $account)) | index(true)) as $registered |
+  ($commands | map(.cmd.type == "access_custody_deposit" and .cmd.receipt.beneficiary.account == $account) | index(true)) as $deposited |
+  $registered != null and $deposited != null and $registered < $deposited and
+  ($commands | any(.cmd.type == "retry_deposit_screening" and .cmd.chain_ref == $reference) | not) and
+  ($commands | any(.events[]?; .type == "deposit_pending" and .chain_ref == $reference) | not)
+' "$work"/log/[0-9]*.jsonl >/dev/null || fail "the wallet did not register before its deposit, or the deposit needed a retry"
 if grep -Eq '127\.0\.0\.1|203\.0\.113\.99' "$work"/log/[0-9]*.jsonl; then fail "an IP address leaked into the public log"; fi
-echo "PASS: signed, screened eligibility; API access refusals; direct payer and contract-wallet holds survive restart"
+echo "PASS: signed, screened eligibility; setup before a first deposit; API access refusals; direct payer and contract-wallet holds survive restart"

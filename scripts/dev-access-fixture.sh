@@ -41,7 +41,8 @@ EOF
 access_signed_body() {
   local private_key="$1" kind="$2" body="$3" account nonce expires_at
   account="$(jq -r .account <<< "$body")"
-  nonce="$(curl --max-time 5 -skf "$api/v1/accounts/$account/nonce" | jq -er .next_nonce)"
+  # A session key signs on its own nonce sequence: ACCESS_NONCE_OF names it.
+  nonce="$(curl --max-time 5 -skf "$api/v1/accounts/${ACCESS_NONCE_OF:-$account}/nonce" | jq -er .next_nonce)"
   expires_at="$(python3 -c 'import time; print(int(time.time() * 1000) + 60000)')"
   SIGNER_KEY="${private_key#0x}" "$access_signer" 31337 "$vault" "$nonce" "$expires_at" "$kind" "$body"
 }
@@ -66,16 +67,37 @@ access_attest() {
   fail "signed eligibility declaration was not recorded"
 }
 
+access_order_body() {
+  local account="$1" mark
+  mark="$(curl --max-time 5 -skf "$api/v1/markets" | jq -er '.[] | select(.id == 1) | .mark')"
+  echo "{\"account\":\"$account\",\"client_id\":46,\"market\":1,\"side\":\"${ACCESS_ORDER_SIDE:-buy}\",\"qty\":\"0.01\",\"kind\":{\"kind\":\"market\",\"quoted\":\"$mark\"}}"
+}
+
 access_request() {
-  local private_key="$1" kind="$2" account body mark
+  local private_key="$1" kind="$2" account body
   account="$(cast wallet address --private-key "$private_key")"
   if [[ "$kind" == withdrawal ]]; then
     body="{\"account\":\"$account\",\"amount\":\"1\"}"
   else
-    mark="$(curl --max-time 5 -skf "$api/v1/markets" | jq -er '.[] | select(.id == 1) | .mark')"
-    body="{\"account\":\"$account\",\"client_id\":46,\"market\":1,\"side\":\"${ACCESS_ORDER_SIDE:-buy}\",\"qty\":\"0.01\",\"kind\":{\"kind\":\"market\",\"quoted\":\"$mark\"}}"
+    body="$(access_order_body "$account")"
   fi
   access_signed_body "$private_key" "$kind" "$body"
+}
+
+# An order for `account` that its session key signs, on the key's own nonce sequence.
+access_session_order() {
+  local session_key="$1" account="$2"
+  ACCESS_NONCE_OF="$(cast wallet address --private-key "$session_key")" \
+    access_signed_body "$session_key" order "$(access_order_body "$account")"
+}
+
+# Fails unless the request, sent with method `$4` (POST by default), answers 403 with the error `$3`.
+access_expect_forbidden() {
+  local route="$1" signed="$2" expected="$3" method="${4:-POST}" response code body
+  response="$(curl --max-time 10 -sk -X "$method" -w '\n%{http_code}' "$api$route" -H 'content-type: application/json' -d "$signed")"
+  code="${response##*$'\n'}"
+  body="${response%$'\n'*}"
+  [[ "$code" == 403 && "$(jq -r .error <<< "$body")" == "$expected" ]] || fail "$method $route answered $code $body, expected 403 $expected"
 }
 
 access_set_fixture() {

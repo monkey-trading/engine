@@ -170,6 +170,8 @@ pub struct ApiSection {
     /// may send, which ends its stream when larger.
     pub max_body_bytes: NonZeroUsize,
     /// Requests from one client, and requests that act for one account; excess requests get 429.
+    /// A never-credited account's free requests are also counted at these rates: `per_ip` is the
+    /// budget all clients share, and `per_account` each client's share of it.
     pub per_ip: RateLimit,
     pub per_account: RateLimit,
     /// New connections from one client; one over it is closed before its TLS handshake. Set it

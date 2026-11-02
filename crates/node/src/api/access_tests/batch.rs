@@ -4,7 +4,7 @@ use super::session_keys::{delete, registration, revocation, session_order};
 use super::*;
 
 /// A signed cancel-all for `account`, signed by `signer` with `nonce`, as a JSON body.
-fn cancel_all(account: &SigningKey, signer: &SigningKey, nonce: u64) -> Value {
+pub(super) fn cancel_all(account: &SigningKey, signer: &SigningKey, nonce: u64) -> Value {
     let account = eip712::address(account.verifying_key());
     let hash = eip712::cancel_all_hash(&eip712::domain(31_337, VAULT), account, nonce, NOW + 60_000);
     let auth = RequestAuth { nonce, expires_at: NOW + 60_000, signature: eip712::sign(signer, &hash) };
@@ -12,7 +12,7 @@ fn cancel_all(account: &SigningKey, signer: &SigningKey, nonce: u64) -> Value {
 }
 
 /// A signed close-all of `markets` quoted at `quoted` each, as a JSON body.
-fn close_all(account: &SigningKey, signer: &SigningKey, nonce: u64, markets: &[u32], quoted: i64) -> Value {
+pub(super) fn close_all(account: &SigningKey, signer: &SigningKey, nonce: u64, markets: &[u32], quoted: i64) -> Value {
     let account = eip712::address(account.verifying_key());
     let closes = markets.iter().map(|&market| CloseEntry { market, quoted: Fixed::from_int(quoted) }).collect();
     let mut request = CloseAllRequest { account, closes, max_slippage_bps: None, auth: None };

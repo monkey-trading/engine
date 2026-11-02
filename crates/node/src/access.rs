@@ -30,6 +30,8 @@ pub(crate) struct AccessClient {
     endpoint: Url,
     max_response_bytes: usize,
     pub(crate) api_slots: Semaphore,
+    /// How many of `api_slots` declarations may hold at once: half, rounded up.
+    pub(crate) declaration_slots: Semaphore,
 }
 
 impl AccessClient {
@@ -58,6 +60,7 @@ impl AccessClient {
             endpoint: config.endpoint.expose()?,
             max_response_bytes: config.max_response_bytes,
             api_slots: Semaphore::new(config.max_in_flight.get()),
+            declaration_slots: Semaphore::new(config.max_in_flight.get().div_ceil(2)),
         })
     }
 

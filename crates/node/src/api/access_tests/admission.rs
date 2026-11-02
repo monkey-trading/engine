@@ -1,14 +1,14 @@
-//! API admission before anything is sequenced: a never-credited signer may only declare, and only once
-//! a deposit for it is pending; no client can take the whole budget for those declarations however
-//! many fresh keys it signs with; an expired request and exhausted screening capacity both refuse
-//! without reaching the source or spending a nonce.
+//! API admission before anything is sequenced: a never-credited signer's first request can only be a
+//! declaration; no client can take the whole budget for those declarations however many fresh keys it
+//! signs with; declarations cannot take every screening slot from orders; an expired request and
+//! exhausted screening capacity both refuse without reaching the source or spending a nonce.
 
 use std::num::NonZeroU32;
 
 use super::*;
 
 #[tokio::test]
-async fn fresh_signers_declare_only_against_a_pending_deposit_and_within_their_client_share() {
+async fn fresh_signers_declare_with_no_deposit_and_within_their_client_share() {
     let mut node = Node::start("access-initial-budget", true).await;
     let mut config = dev_config().api;
     config.per_ip.per_second = NonZeroU32::new(1).unwrap();
@@ -41,27 +41,6 @@ async fn fresh_signers_declare_only_against_a_pending_deposit_and_within_their_c
     assert_eq!((status, &body["error"]), (StatusCode::FORBIDDEN, &json!("account has never been credited")));
     assert_eq!(settled_entries(&node).await, entries, "a never-credited order reaches no log");
     assert_eq!(node.source.lock().unwrap().requests.len(), queries, "nor the paid source");
-    // A key with no pending deposit cannot declare, and spends none of its client's share.
-    assert!(matches!(declare(1, 6).await, Err(crate::api::ApiError::Forbidden(_))));
-    assert_eq!(settled_entries(&node).await, entries);
-    for seed in 1..=4 {
-        let account = eip712::address(key(seed).verifying_key());
-        let chain_ref = format!("0xpending:{seed}");
-        let deposit = node
-            .state
-            .query(move |engine| {
-                crate::test_support::access::funding(
-                    engine,
-                    Some(account),
-                    Some(account),
-                    Fixed::from_int(10),
-                    &chain_ref,
-                )
-            })
-            .await
-            .unwrap();
-        assert!(matches!(node.state.submit(deposit).await.unwrap().as_slice(), [Event::DepositPending { .. }]));
-    }
     let first = declare(1, 1).await.unwrap();
     assert!(matches!(first.0.as_slice(), [Event::EligibilityAttested { .. }]));
     let before = settled_entries(&node).await;
@@ -86,6 +65,31 @@ async fn fresh_signers_declare_only_against_a_pending_deposit_and_within_their_c
     }
     let screened = node.source.lock().unwrap().requests.len();
     assert_eq!(screened, queries + 2, "only the two admitted declarations are screened");
+}
+
+#[tokio::test]
+async fn declarations_taking_their_share_of_the_screening_slots_leave_orders_a_slot() {
+    let node = Node::start("access-declaration-slots", true).await;
+    let (trader, wallet) = (key(1), key(2));
+    let account = eip712::address(wallet.verifying_key());
+    node.onboard(&trader).await;
+    let client = node.state.access.as_ref().unwrap();
+    assert_eq!(client.api_slots.available_permits(), 2);
+    let declaring = client.declaration_slots.acquire_many(1).await.unwrap();
+    assert_eq!(client.declaration_slots.available_permits(), 0, "half of two slots");
+    let (entries, queries) = (settled_entries(&node).await, node.source.lock().unwrap().requests.len());
+    // A declaration past its share refuses before the source and the log, and uses no nonce.
+    let (status, body) = node.post("/v1/eligibility", declaration(&wallet, 0)).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::SERVICE_UNAVAILABLE, Some("engine unavailable")));
+    assert_eq!(settled_entries(&node).await, entries);
+    assert_eq!(node.source.lock().unwrap().requests.len(), queries);
+    assert_eq!(node.state.query(move |engine| engine.next_request_nonce(account)).await.unwrap(), 0);
+    // An order screens through the slots declarations cannot hold.
+    let (status, events) = node.post("/v1/orders", order(&trader, 1)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(events.as_array().unwrap().iter().any(|event| event["type"] == "fill"), "{events}");
+    drop(declaring);
+    assert_eq!(node.post("/v1/eligibility", declaration(&wallet, 0)).await.0, StatusCode::OK);
 }
 
 #[tokio::test]
@@ -128,7 +132,7 @@ async fn expired_signed_orders_never_reach_the_source_or_claim_a_public_action()
 /// The number of logged commands once the writer has flushed everything the sequencer applied:
 /// the log flushes behind the replies (and checkpoints flush behind commands), so wait until the
 /// logged commands reach the applied seq, and count commands only.
-async fn settled_entries(node: &Node) -> usize {
+pub(super) async fn settled_entries(node: &Node) -> usize {
     let applied =
         node.state.query(|engine| engine.last_seq().map_or(0, |seq| seq + 1)).await.expect("the engine answers")
             as usize;

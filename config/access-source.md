@@ -100,23 +100,34 @@ in development logs that recorded unsigned client auth. From V24, other client a
 signatures. Cancellation remains available without a geography restriction.
 
 `engine-core`'s `sign_request` example accepts `eligibility` with the unsigned JSON body. Read the next
-nonce at `/v1/accounts/{address}/nonce` and the recorded class at `/v1/accounts/{address}/eligibility`.
-Eligibility is separate from funded account state. A never-credited account can declare only once a
-deposit for it is pending, and only a declaration the engine could record is admitted: the account
+nonce at `/v1/accounts/{address}/nonce` and the recorded class at `/v1/accounts/{address}/eligibility`;
+both answer for a wallet the engine has never credited.
+Eligibility is separate from funded account state, and a wallet can declare before it deposits anything.
+For a never-credited account, only a declaration the engine could record is admitted: the account
 has not declared yet, and the expiry is at most five minutes ahead. The API screens a declaration
 like an order, with the account and the transport peer, and the engine records it only on verified,
 fresh, allowed and clear evidence. A declaration from a US or sanctioned jurisdiction, or with
 unknown, unavailable, stale, mismatched or forged evidence, is refused in the public log with its
-reason (`eligibility_rejected`) and uses its nonce; the account's deposit stays pending and is not
-retried. The account may declare again, each attempt counted against its rate, its client's share of
-fresh-account admissions and the shared budget, and the next retry after a recorded declaration
-credits the deposit.
+reason (`eligibility_rejected`) and uses its nonce; any deposit for the account stays pending and is
+not retried. The account may declare again, each attempt counted against its rate, its client's share
+of fresh-account admissions and the shared budget.
+
+A deposit made after a recorded declaration credits at its first screening. A deposit made without
+one stays pending, so funds sent straight to the vault are never stuck, and the next retry after a
+recorded declaration credits it.
+
+Once it has declared, a never-credited account may also sign `POST` and `DELETE /v1/session-keys`, so
+a wallet finishes setup and deposits last. These are not screened again: the declaration is where the
+account and its client are screened, and a request without one is refused with 403 before the log. A
+session key registered this way cannot act until a deposit credits the account, and every order it
+signs is screened as usual.
 
 Policy refusals are sequenced and durable before the API returns their rejection events. They use
 the authenticated signer's nonce, preventing replay from the public log after conditions change.
 Invalid authentication, stale API nonces, rate limits and transport failures do not create a claimed
-account action. A never-credited account may sign only a declaration, and only once a deposit for it is
-pending; its other requests, and a declaration without one, are refused with 403 before the log. An otherwise allowed EVM withdrawal receives `payout_unavailable` until on-chain
+account action. A never-credited account may sign only a declaration and, once it has declared, its
+session-key registrations and revocations; its other requests, and anything a session key signs for
+it, are refused with 403 before the log. An otherwise allowed EVM withdrawal receives `payout_unavailable` until on-chain
 payouts exist; no collateral is debited. An unhealthy reconciliation guard also prevents approval.
 Screening at placement covers a resting limit or stop order until it fills or is cancelled; it is
 not screened again when it triggers. Orders resting from before V24 were admitted under the rules in
@@ -148,7 +159,7 @@ A screening that fails, or that still classifies a subject as unknown, changes n
 sequenced. When a sequenced retry's evidence still fails verification, the turn ends and the wait
 doubles, up to five minutes; the next turn that leaves no sequenced retry pending resets it to five
 seconds. The engine indexes pending deposits by beneficiary and keeps the retryable ones in their
-own ordered set, so neither a turn nor declaration admission scans the backlog. Each HTTP call keeps the configured
+own ordered set, so neither a turn nor a declaration scans the backlog. Each HTTP call keeps the configured
 deadline and size bounds. The ingestion cursor can advance after the pending command is durable;
 its progress is independent of retry IO. Both mock and EVM custody resume this work from the public
 log after restart or cursor loss. Verified clear evidence for a declared account credits the deposit
@@ -174,9 +185,29 @@ while a retry turn's screening fails or its evidence does not verify, and resolv
 that does not fail. Refusal counters include `eligibility_rejected`
 and `deposit_held` in `engine_rejections_total`; API policy reasons appear under `reason="access"`.
 Use the public event for the exact reason. API screening has bounded concurrency; custody retains
-independent bounded screening capacity for ingestion and retries. A declaration from a never-credited account takes one token from its client's
-share, at the per-account rate, and one from a budget all clients share, at the per-IP rate. Fresh
-signing keys cannot multiply that budget, and no one client can take all of it.
+independent bounded screening capacity for ingestion and retries. Declarations hold at most half the
+API's screening slots, rounded up, so however many arrive, orders keep a slot; a declaration past that
+gets 503 and uses no nonce.
+
+A declaration or session-key request from a never-credited account takes one token from its client's
+share, at `api.per_account`, and one from a budget all clients share, at `api.per_ip`. Fresh signing
+keys cannot multiply that budget, and no one client can take all of it. A request refused before the
+log (a second declaration, a key request before the declaration, a stale nonce, a bad expiry) takes no
+token. These budgets are the only bound on what a wallet can add for free:
+
+- Each admitted request adds one log command and one history index row, and a declaration one call to
+  the source.
+- A wallet's first declaration adds two state entries, in `eligibility` and `request_nonces`. Its first
+  registration adds two, in `session_keys` and `request_nonces`, whose entry for the key stays for good
+  so a pruned key keeps its replay protection. Each later registration of a new address adds one.
+- All clients together therefore add at most `api.per_ip.per_second` x 86,400 commands a day, plus the
+  burst, and twice that in state entries, from fresh wallets that each declare and register once. One
+  client adds at most `api.per_account.per_second` x 86,400 commands a day, plus its burst.
+
+While the shared budget is exhausted, every new wallet's request gets 429 with `Retry-After` and uses
+no nonce, so it stays valid to resend until its expiry; a pending deposit stays pending, and credited
+accounts are unaffected. `api_initial_budget_full` is a Warning raised at most once a minute while
+this lasts.
 
 ## Promotion and rollback
 

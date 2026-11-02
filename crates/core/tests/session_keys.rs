@@ -10,12 +10,12 @@ use common::session_keys::{
     HOUR_MS, buy, expiring_trade, expiring_trade_for, funded, limit, register, register_expiring, trade, trade_cmd,
 };
 use common::{BTC, Client, Harness, f};
-use engine_core::Engine;
 use engine_core::auth::{MAX_EXPIRY_AHEAD_MS, RequestAuth};
 use engine_core::command::{AdminCommand, Command, OrderRequest};
 use engine_core::eip712;
 use engine_core::event::{CancelReason, Event, Reject};
 use engine_core::session_keys::{MAX_SESSION_KEY_EXPIRY_MS, SessionKey};
+use engine_core::{Engine, Fixed};
 
 #[test]
 fn one_account_signature_registers_a_key_that_trades_without_the_wallet() {
@@ -77,6 +77,51 @@ fn a_log_with_registrations_replays_to_its_roots() {
         }
     }
     assert_eq!(replay.session_key(client.account, key.account), Some(SessionKey { expires_at, revoked: true }));
+}
+
+/// The engine's declaration and key rules ask for no account, which the API's pre-deposit admission
+/// relies on: these apply on a never-credited account, replay to their roots, and leave it with no
+/// account entry, while the key still cannot trade for it.
+#[test]
+fn a_never_credited_account_declares_and_manages_keys_and_its_log_replays_to_its_roots() {
+    let (mut h, _, key) = funded();
+    let wallet = Client::new(2);
+    let start = h.log.len();
+    let expires_at = h.ts + HOUR_MS;
+    let mut live = Vec::new();
+    attest(&mut h, &wallet);
+    live.push(h.engine.state_root());
+    let cmd = register(&h, &wallet, &key, expires_at);
+    let events = h.cmd(cmd);
+    assert_eq!(events, [Event::SessionKeyRegistered { account: wallet.account, session_key: key.account, expires_at }]);
+    live.push(h.engine.state_root());
+    // The engine refuses the key's order on the account it does not hold, using the key's nonce.
+    let events = trade(&mut h, &key, 0, buy(wallet.account));
+    assert_eq!(rejection(&events), &Reject::InsufficientFunds { available: Fixed::ZERO }, "{events:?}");
+    live.push(h.engine.state_root());
+    let cmd = wallet.revoke_session_key(2, key.account);
+    let events = h.cmd(cmd);
+    assert_eq!(events, [Event::SessionKeyRevoked { account: wallet.account, session_key: key.account }]);
+    live.push(h.engine.state_root());
+    assert!(!h.engine.accounts().contains_key(&wallet.account));
+
+    let mut replay = Engine::new();
+    for (index, sequenced) in h.log.iter().enumerate() {
+        replay.apply(sequenced).expect("in sequence");
+        if index >= start {
+            assert_eq!(&replay.state_root(), &live[index - start], "root diverges at log index {index}");
+        }
+    }
+    assert!(!replay.accounts().contains_key(&wallet.account));
+    assert_eq!(replay.session_key(wallet.account, key.account), Some(SessionKey { expires_at, revoked: true }));
+    assert_eq!((replay.next_request_nonce(wallet.account), replay.next_request_nonce(key.account)), (3, 1));
+    // A rebuilt tree commits the same leaves, and an exit has nothing to register for the wallet.
+    let root = h.engine.state_root();
+    let mut rebuilt: Engine = serde_json::from_slice(&serde_json::to_vec(&h.engine).unwrap()).unwrap();
+    assert_eq!(rebuilt.state_root(), root);
+    let exit = h.engine.exit_proof(wallet.account).expect("a V38 root holds exit terms");
+    assert!(exit.account.is_none() && exit.approvals.is_empty() && exit.queued.is_empty());
+    assert!(exit.distribution.is_none() && exit.pending_deposits.is_empty());
 }
 
 #[test]
