@@ -188,6 +188,7 @@ impl ReplayedLog {
         let signer = AccountId(key.address());
         let replayed = &self.replayed;
         let checkpoint = replayed.last_signed_checkpoint.clone().unwrap();
+        let params_seq = replayed.params_seq;
         let domain = checkpoint.domain.unwrap();
         assert!(replayed.recovery_anchor_work.as_ref().unwrap().has_proven_prefix());
         assert!(replayed.recovery_work.iter().any(|work| !work.has_proven_prefix()));
@@ -207,6 +208,7 @@ impl ReplayedLog {
                 genesis: replayed.genesis.clone(),
                 activations: replayed.activations.clone(),
                 checkpoints: replayed.checkpoints,
+                params_seq: replayed.params_seq,
             },
             context: snapshot::RecoveryContext {
                 commands: replayed.commands,
@@ -227,6 +229,8 @@ impl ReplayedLog {
         let path = snapshot::candidates_readonly(cache).unwrap().remove(0);
         let (cached, engine) = snapshot::read(cache, &path, domain.chain_id, domain.vault).unwrap();
         let replayed = Replay::from_snapshot(engine, cached, domain, Some(signer), Some(parent)).unwrap().finish();
+        assert_eq!(replayed.last_checkpoint_offset, Some(offset), "a snapshot restores where its checkpoint sits");
+        assert_eq!(replayed.params_seq, params_seq, "a snapshot carries the seq of the parameters in force");
         assert_eq!(replayed.recovery_work.last().unwrap().checkpoint, checkpoint);
         Self { replayed, snapshot_seq: Some(checkpoint.seq), ..self }
     }

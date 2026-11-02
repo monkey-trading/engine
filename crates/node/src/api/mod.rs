@@ -15,6 +15,7 @@ mod benchmark_schedule;
 mod distributions;
 mod exit;
 mod history;
+mod house_state;
 mod marks;
 mod operator;
 mod origin;
@@ -254,6 +255,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/monkey", get(stats::monkey))
         .route("/v1/monkey/activity", get(stats::activity))
         .route("/v1/stats/series", get(stats::series))
+        .route("/v1/house/state", get(house_state::house_state))
         .route("/v1/operator", get(operator::operator))
         .route("/v1/accounts/{address}", get(account))
         .route("/v1/accounts/{address}/nonce", get(nonce))

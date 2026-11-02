@@ -2,6 +2,8 @@
 
 mod context;
 pub(crate) use context::{RecoveryBase, RecoveryContext};
+mod progress;
+pub(crate) use progress::Progress;
 pub(crate) mod catalog_heads;
 pub(crate) mod generations;
 pub(crate) mod head;
@@ -19,7 +21,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, ensure};
 use engine_core::Engine;
 use engine_core::eip712::{self, B256, Signature};
-use engine_core::protocol::ProtocolVersion;
 use engine_core::types::AccountId;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha3::{Digest, Keccak256};
@@ -27,17 +28,7 @@ use tracing::warn;
 
 use crate::config::SnapshotSection;
 use crate::log::{Checkpoint, Offset};
-use crate::sequencer::GenesisProgress;
 use crate::tee::EnclaveKey;
-
-/// Replay facts carried across a checkpoint; every field is authenticated with the engine bytes.
-#[derive(Clone, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Progress {
-    pub genesis: GenesisProgress,
-    pub activations: Vec<(ProtocolVersion, u64)>,
-    pub checkpoints: u64,
-}
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -382,6 +382,7 @@ pub(super) fn refusing_sequencer(answer_syncs: bool, refusals: usize) -> mpsc::S
                 Request::Sync(_) => {}
                 Request::CheckpointStatus { .. } => unreachable!("no checkpoint worker in this test"),
                 Request::WatchBenchmarkSchedule(_) => unreachable!("only the API watches benchmark schedules"),
+                Request::HouseState(_) => unreachable!("only the API reads the house state"),
                 Request::ReissueWithdrawal { .. } => unreachable!("only the API asks for a reissue"),
                 Request::AccountPayouts { .. } => unreachable!("only the API asks for payouts"),
                 Request::FinalCheckpoint(_) => unreachable!("only a handover asks for the final checkpoint"),

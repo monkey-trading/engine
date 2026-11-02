@@ -127,7 +127,9 @@ an index: load only the rule whose hint matches the current action.
   the latest checkpoint the vault accepted, drops the unsigned tail, and exits for a `--new-key`
   start, which serves only its attestation until the timelock installs the registered enclave;
   `engine replay --attestation` pairs one attestation with each signer), the
-  `/v1/operator` read of the key in effect, its pending rotation, and the last election, checkpoint posting
+  `/v1/operator` read of the key in effect, its pending rotation, and the last election, the
+  `/v1/house/state` read of the protocol parameters (with the seq that set them) and the latest checkpoint
+  (`api/house_state.rs`, `sequencer/house.rs`), checkpoint posting
   and collateral reconciliation, distributions paid included (`checkpoints/`), with strict signature replay and startup checks
   against the vault's finalized commitment before history writes, plus authenticated withdrawal
   authorization replay, bounded finalized claim polling, immutable signer-epoch history independent
