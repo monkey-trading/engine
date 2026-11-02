@@ -187,6 +187,7 @@ endpoint = "{publisher}/estr"
     //    worker's snapshot still leaves out what the cap refuses.
     let held = set + STRESS_FLOOR_LAPSE_MS - 1;
     advance(&node, &clock, held).await;
+    node.sync(&cfg_path, move || held).await;
     node.submit(Command::Tick).await;
     assert_eq!(stress(&node).await, (1, 1));
     node.stop().await;
