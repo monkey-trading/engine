@@ -22,20 +22,32 @@ fn batch(index: usize) -> Vec<(u32, i64, Fixed)> {
         .collect()
 }
 
-#[test]
-#[ignore = "a timing comparison, run by hand"]
-fn observe_cost_per_sample() {
+/// The best of `ROUNDS` runs of `BATCHES` batches against fresh stores holding `retentions`.
+fn measure(label: &str, retentions: Retentions) {
     let mut best = f64::MAX;
     for round in 0..ROUNDS {
-        let mut store = fresh_store(&format!("marks-bench-{round}"), Retentions::defaults());
+        let mut store = fresh_store(&format!("marks-bench-{label}-{round}"), retentions);
         let batches: Vec<_> = (0..BATCHES).map(batch).collect();
         let started = Instant::now();
         for samples in &batches {
             store.observe(samples).unwrap();
         }
         let micros = started.elapsed().as_secs_f64() * 1e6 / (BATCHES * BATCH) as f64;
-        println!("round {round}: {micros:.1} us per sample");
+        println!("{label} round {round}: {micros:.1} us per sample");
         best = best.min(micros);
     }
-    println!("observe: best of {ROUNDS}, {} samples per round: {best:.1} us per sample", BATCHES * BATCH);
+    println!("{label}: best of {ROUNDS}, {} samples per round: {best:.1} us per sample", BATCHES * BATCH);
+}
+
+#[test]
+#[ignore = "a timing comparison, run by hand"]
+fn observe_cost_per_sample() {
+    measure("observe", Retentions::defaults());
+}
+
+/// The same run with retentions shorter than it, so every flush re-floors the pairs it prunes.
+#[test]
+#[ignore = "a timing comparison, run by hand"]
+fn observe_cost_per_sample_while_pruning() {
+    measure("observe-pruning", Retentions { s1: 60_000, m1: 600_000, h1: 3_600_000, d1: None });
 }

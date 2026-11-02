@@ -13,7 +13,7 @@ use tracing::warn;
 
 use crate::history::marks::Retentions;
 use crate::history::marks::store::{
-    BUSY_TIMEOUT, Reader, SCHEMA, SCHEMA_VERSION, Store, expected_schema, reset, store,
+    BUSY_TIMEOUT, Reader, SCHEMA, SCHEMA_VERSION, Store, chain, expected_schema, reset, store,
 };
 
 impl Store {
@@ -114,13 +114,20 @@ impl Store {
     /// Validates every pair's chain on disk: every row authenticates and every link names the
     /// row actually below it. Startup runs this after importing a prior cache, so a host-altered
     /// file is rebuilt from nothing — the log and a configured backfill re-derive it — instead of
-    /// serving refusals or stopping the node on a later write.
+    /// serving refusals or stopping the node on a later write. The rows that pass are re-bound:
+    /// each records the tag the row below it carries now, which the prior run's pins covered, and
+    /// no pin survives into this one.
     /// Error cases:
     /// - a stored row fails authentication, or a chain link does not resolve
     pub fn validate_chains(&mut self) -> anyhow::Result<()> {
         let tx =
             self.conn.transaction_with_behavior(TransactionBehavior::Immediate).context("starting a marks check")?;
         store::check_schema(&tx, &self.schema, &self.path)?;
-        reset::validate_chains(&self.mac, &tx)
+        let pairs = reset::rebind_chains(&self.mac, &tx)?;
+        let updates = chain::anchor_updates(&tx, &pairs, &Default::default(), true)?;
+        let mut anchors = self.anchors.lock().expect("the marks chain anchors are never poisoned");
+        tx.commit().context("committing the marks chain re-bind")?;
+        anchors.apply(updates);
+        Ok(())
     }
 }

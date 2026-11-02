@@ -8,6 +8,7 @@ use std::sync::Arc;
 use engine_core::types::{MarketId, Millis};
 
 use crate::history::marks::Resolution;
+use crate::history::marks::store::chain::ChainUpdates;
 
 /// What one backfill recorded as its coverage: the depths the config asked for and the retentions
 /// that pruned the seed. A later config that asks for more re-runs the backfill.
@@ -34,9 +35,10 @@ pub(crate) struct ChainAnchor {
     pub head: ChainHead,
 }
 
-/// The rows of one pair a write rewrote while a row sat above them, by bucket and tag as committed:
-/// a successor binds its predecessor's tag as written with it, so these are the rows whose tag has
-/// since moved, and the committed tag is the only version a read accepts for them.
+/// The rows of one pair a write rewrote after a row was written above them, or re-linked at any
+/// time, by bucket and tag as committed: a successor binds its predecessor's tag as written with
+/// it, and a window's closing row vouches for the span it closes by its link, so for these rows
+/// the committed tag is the only version a read or a write accepts.
 pub(crate) type Interior = BTreeMap<Millis, [u8; 16]>;
 
 /// The buckets a write rewrote in place, per pair, whose tags `anchor_updates` reads at commit.
@@ -54,35 +56,34 @@ pub(crate) struct PairCommit {
 /// The committed state of every (market, resolution) pair, established at recovery re-derivation
 /// and advanced by every write, atomically with its commit. The store and its readers share one:
 /// the writer merges in the pairs a transaction touched, a reader checks one pair's floor and head,
-/// and the interior rows pinned inside them, before serving a page. Derefs to the anchors.
+/// and the rows pinned inside or at them, before serving a page.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ChainAnchors {
     anchors: BTreeMap<(MarketId, Resolution), ChainAnchor>,
     interior: BTreeMap<(MarketId, Resolution), Arc<Interior>>,
 }
 
-impl std::ops::Deref for ChainAnchors {
-    type Target = BTreeMap<(MarketId, Resolution), ChainAnchor>;
-    fn deref(&self) -> &Self::Target {
-        &self.anchors
+impl ChainAnchors {
+    /// The committed floor and head of `pair`, if it holds rows.
+    pub(crate) fn get(&self, pair: &(MarketId, Resolution)) -> Option<&ChainAnchor> {
+        self.anchors.get(pair)
     }
-}
 
-impl std::ops::DerefMut for ChainAnchors {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.anchors
+    /// The pairs that hold rows.
+    pub(crate) fn keys(&self) -> impl Iterator<Item = &(MarketId, Resolution)> {
+        self.anchors.keys()
     }
-}
 
-impl<'a> IntoIterator for &'a ChainAnchors {
-    type Item = (&'a (MarketId, Resolution), &'a ChainAnchor);
-    type IntoIter = std::collections::btree_map::Iter<'a, (MarketId, Resolution), ChainAnchor>;
-    fn into_iter(self) -> Self::IntoIter {
+    /// Every committed anchor, by pair.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&(MarketId, Resolution), &ChainAnchor)> {
         self.anchors.iter()
     }
-}
 
-impl ChainAnchors {
+    /// Commits `anchor` for `pair`.
+    pub(crate) fn insert(&mut self, pair: (MarketId, Resolution), anchor: ChainAnchor) {
+        self.anchors.insert(pair, anchor);
+    }
+
     /// The interior rows pinned for `pair`: shared, so a reader holds the set it checked a page
     /// against while the writer moves on.
     pub(crate) fn interior(&self, pair: (MarketId, Resolution)) -> Arc<Interior> {
@@ -92,7 +93,7 @@ impl ChainAnchors {
     /// Merges a transaction's commits: `Some` replaces the pair's anchor and pins what it
     /// rewrote, `None` removes a pair whose every bucket the transaction deleted. Pins below the
     /// floor go; the set is copied only when it changes.
-    pub(crate) fn apply(&mut self, updates: crate::history::marks::store::chain::ChainUpdates) {
+    pub(crate) fn apply(&mut self, updates: ChainUpdates) {
         for (pair, commit) in updates {
             let Some(commit) = commit else {
                 self.anchors.remove(&pair);

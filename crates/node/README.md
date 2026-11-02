@@ -411,20 +411,24 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/history/marks/store/setup.rs` — opening the cache: schema creation and checks,
   discarding a file that fails them, and validating imported chains before serving
 - `src/history/marks/store/mod.rs` — the cache's SQLite schema, its writer (per-resolution
-  pruning, seeding that never overwrites log-derived rows, backfill markers), the committed
-  chain anchors, and its page reader
+  pruning, seeding that never overwrites log-derived rows, backfill markers), and its page reader
+- `src/history/marks/store/auth.rs` — the row tag, the coverage a backfill recorded, and the
+  committed state the writer and readers share: each pair's floor and head anchors and the pinned
+  rows inside them
 - `src/history/marks/store/chain.rs` — the chained index over the cache: each row names the bucket
-  below it and the tag that row carried, the writer re-links only over its own deletes and refuses
-  the rest and pins the interior rows it rewrote, and the reader checks every link, pin, and chain
-  head before serving; the prune plans from the committed anchors and
-  reads and deletes each pair by primary-key prefix (`tests/chain.rs`, `tests/refusals.rs`,
-  `tests/prune.rs`: the prune's query plan, and a read racing a commit)
+  below it and the tag that row carried, the writer re-links only over its own deletes, refuses
+  the rest and any row that is not the version it last wrote, and pins the rows it rewrote, and
+  the reader checks every link, pin, and chain head before serving; the prune plans from the
+  committed anchors and reads and deletes each pair by primary-key prefix (`tests/chain.rs`,
+  `tests/refusals.rs`, `tests/replay.rs`: a replayed row refused at serve time and by every
+  write, `tests/prune.rs`: the prune's query plan, and a read racing a commit)
 - `src/history/marks/store/merge.rs` — the live write path: merging a mark into its bucket and
   re-linking the row above a fresh insert, with the statements prepared once per write and shared
   by every sample (`store/chain.rs` holds the shared chain queries; `store/tests/bench.rs` is the
   write's ignored cost-per-sample timing)
 - `src/history/marks/store/reset.rs` — the recovery reset: validating every chain, deleting the
-  log-derived buckets, and re-chaining the survivors
+  log-derived buckets, and re-chaining and re-binding the survivors; startup's re-bind of an
+  imported cache
 - `src/history/marks/store/import.rs` — importing a previous run's provider-seeded rows and
   backfill markers into the seed file, skipping what cannot be authenticated
 - `src/history/marks/backfill.rs` — the provider backfill: which feed symbols map to a candles
@@ -1629,15 +1633,19 @@ in memory atomically with each write — reject a host that deletes, reorders, o
 back mid-run: the next read over the broken span or ends fails before anything is signed, and a
 write never re-links over a deletion it did not itself make. A row also records the tag the row
 below it carried when the row was written, so the row above vouches for the content a bucket ended
-with, and a row a write changed after another arrived above it (a gap filled under it, a late
-sample merged into it) is pinned in memory at its new tag. An older authentic version of an interior
-row that the host puts back therefore fails every read that serves it or ends beside it, and a
-page that would hide a bucket behind such a row fails too. The pins live as long as the process:
-they are in memory like the anchors, and a restart rebuilds the cache from the log and the
-backfill, which re-binds every surviving row. A host that deletes or corrupts the cache can still
-make reads fail until it is rebuilt; it cannot make them serve an older version of a row this run
-wrote. `?limit=` is 1 to `max_limit` (2000), 500 by default, and a window wider than that pages by passing a page's `next` as `from_ms`. The cache is derived state,
-never sequenced: recovery seeds it from the log's replay, the sequencer's live mark reports keep it
+with. A row a write re-links, or changes after another arrived above it (a gap filled under it, a
+late sample merged into it, a re-floor), is pinned in memory at its new tag, and a read refuses a
+pinned row at any other version, whether it serves the row or only ends beside it. A write refuses
+to merge into, re-link, re-floor, or bind the tag of a row that is not the version it last wrote.
+An older authentic version of a row that the host puts back while the node runs is therefore
+refused wherever it would be served, including by a page that would hide a bucket behind it. A host
+can still delete or corrupt the cache while the node runs, which fails reads until the cache is
+rebuilt, but not make a read serve an older version of a row this run wrote. The pins live in
+memory with the anchors. At startup the prior cache's rows are checked by tag and link and
+re-bound, so an older authentic row the host restores while the node is stopped is not detected;
+the log-derived rows, which a full recovery re-derives from the verified log, are the ones it
+corrects. `?limit=` is 1 to `max_limit` (2000), 500 by default, and a window wider than that pages
+by passing a page's `next` as `from_ms`. The cache is derived state, never sequenced: recovery seeds it from the log's replay, the sequencer's live mark reports keep it
 current, and `[history.marks.backfill]`, where configured, fetches historical candles from the
 feed venue's public endpoint (Coinbase's, for its markets) to seed the depth a fresh log cannot
 have; removing `history.dir` while the node is stopped rebuilds it. A cache file written by an

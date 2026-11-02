@@ -24,11 +24,18 @@ use crate::history::marks::store::{ChainAnchors, SnapRow};
 
 /// Validates every pair's chain as the file holds it: every row authenticates, and every link
 /// names the row actually below it. What a delete later removes is validated through the same
-/// walk, so a hole the file already carries is refused here, before any mutation.
+/// walk, so a hole the file already carries is refused here, before any mutation. The rows that
+/// pass are re-bound to the tags their predecessors carry. Returns the pairs it re-bound.
 /// Error cases:
 /// - a stored row fails authentication, or a link names a bucket that is already missing
-pub(crate) fn validate_chains(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction) -> anyhow::Result<()> {
-    check_links(&snapshot_all(mac, tx)?)
+pub(crate) fn rebind_chains(
+    mac: &hmac::Hmac<sha2::Sha256>,
+    tx: &Transaction,
+) -> anyhow::Result<BTreeSet<(MarketId, Resolution)>> {
+    let snapshot = snapshot_all(mac, tx)?;
+    check_links(&snapshot)?;
+    rebind(mac, tx, &snapshot, &BTreeSet::new())?;
+    Ok(snapshot.into_keys().collect())
 }
 
 /// Requires every link of an already verified snapshot to name the row actually below it.
@@ -78,17 +85,31 @@ pub(crate) fn reset_log_derived(
     let removed = tx
         .execute("DELETE FROM marks WHERE provenance = ?1", [Provenance::LogDerived.as_str()])
         .context("resetting log-derived marks")?;
-    for ((market, resolution), rows) in &snapshot {
-        // validate_chains checked every link, including links on rows this delete removes: the
-        // delete also removes every reference to them, and a row whose own link names a missing
-        // bucket would let the delete launder a host deletion into a clean re-chain.
+    // check_links covered every link, including links on rows this delete removes: the delete
+    // also removes every reference to them, and a row whose own link names a missing bucket
+    // would let the delete launder a host deletion into a clean re-chain.
+    rebind(mac, tx, &snapshot, &deleted)?;
+    let updates = anchor_updates(tx, &pairs, &Default::default(), true)?;
+    Ok((removed, updates))
+}
+
+/// Re-binds every row of `snapshot` that `deleted` does not name: its link made the survivor
+/// actually below it, where its predecessor is a row the delete removed, and the tag it records
+/// made the tag that survivor carries now, so no earlier pin outlives it.
+/// Error cases:
+/// - an update fails
+fn rebind(
+    mac: &hmac::Hmac<sha2::Sha256>,
+    tx: &Transaction,
+    snapshot: &Snapshot,
+    deleted: &BTreeSet<(MarketId, Resolution, Millis)>,
+) -> anyhow::Result<()> {
+    for ((market, resolution), rows) in snapshot {
         let mut pred: Option<(Millis, [u8; 16])> = None;
         for row in rows {
             if deleted.contains(&(*market, *resolution, row.bucket)) {
                 continue;
             }
-            // Where the row's predecessor is a row this delete removed, the survivors close over
-            // it; every survivor also takes the tag its predecessor now carries.
             let tag = if row.prev != pred.map(|pred| pred.0) || row.prev_tag != pred.map(|pred| pred.1) {
                 retag(mac, tx, *market, *resolution, row, pred)?
             } else {
@@ -97,8 +118,7 @@ pub(crate) fn reset_log_derived(
             pred = Some((row.bucket, tag));
         }
     }
-    let updates = anchor_updates(tx, &pairs, &Default::default(), true)?;
-    Ok((removed, updates))
+    Ok(())
 }
 
 /// Every pair's rows, verified, in bucket order: what a whole-cache re-chain reasons over.

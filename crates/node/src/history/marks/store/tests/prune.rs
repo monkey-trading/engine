@@ -52,7 +52,7 @@ fn assert_pruned_and_anchored(store: &Store, newest: i64) {
         .map(|(market, resolution, _)| (market, Resolution::from_tag(u8::try_from(resolution).unwrap()).unwrap()))
         .collect();
     assert_eq!(anchors.keys().copied().collect::<BTreeSet<_>>(), on_disk, "anchors name the pairs on disk");
-    for (&(market, resolution), anchor) in &anchors {
+    for (&(market, resolution), anchor) in anchors.iter() {
         assert_eq!(pair_anchor(&store.conn, market, resolution).unwrap(), Some(*anchor), "{market} {resolution:?}");
     }
 }
@@ -225,4 +225,18 @@ async fn a_prune_deletes_only_from_pairs_the_write_validated() {
     let err = store.observe(&[(2, BASE + 2 * HOUR, fixed("3"))]).expect_err("pruned an unvalidated chain");
     assert!(format!("{err:#}").contains("no longer matches its committed anchor"), "{err:#}");
     assert_eq!(planted_rows(&store), 1);
+}
+
+#[test]
+fn a_commit_rewriting_only_an_interior_row_resolves_on_the_next_attempt() {
+    let mut store = fresh_store("marks-race-interior", Retentions::defaults());
+    store.observe(&[(1, BASE, fixed("1")), (1, BASE + 60_000, fixed("2")), (1, BASE + 120_000, fixed("3"))]).unwrap();
+    // A late sample rewrites the middle bucket: the floor and head the reader checks are untouched,
+    // so only the pin tells its older snapshot from a replay.
+    let (attempts, page) = read_racing(&mut store, 1, 1, |store, _| {
+        store.observe(&[(1, BASE + 60_000 + 1_000, fixed("9"))]).unwrap();
+    });
+    assert_eq!(attempts, [0, 1], "the raced attempt retried once");
+    let page = page.unwrap();
+    assert_eq!(page.entries[1].high, fixed("9"), "the retry serves the rewritten bucket");
 }

@@ -225,10 +225,7 @@ impl Store {
         // samples' pairs, so every pair with rows to prune after it is among these.
         touched.extend(chain::expiring_pairs(&prior, &self.retentions, newest));
         chain::check_anchors(&tx, &prior, &touched)?;
-        // The heads each pair stood at: a merge into a lower bucket changes a row with one above it.
-        let heads =
-            touched.iter().filter_map(|pair| prior.get(pair).map(|anchor| (*pair, anchor.head.bucket))).collect();
-        let mut stmts = merge::MergeStmts::prepare(&tx, heads)?;
+        let mut stmts = merge::MergeStmts::prepare(&tx, &prior, &touched)?;
         for &(market, ts, mark) in samples {
             for resolution in Resolution::ALL {
                 merge::merge(&self.mac, &tx, &mut stmts, market, resolution, resolution.bucket(ts), mark)?;
@@ -236,8 +233,9 @@ impl Store {
         }
         let mut rewrites = stmts.into_rewrites();
         let plan = chain::plan_prune(&tx, &self.retentions, newest, &touched)?;
-        chain::apply_prune(&self.mac, &tx, &plan, &mut rewrites)?;
+        chain::apply_prune(&self.mac, &tx, &plan, &mut rewrites, &prior)?;
         let updates = chain::anchor_updates(&tx, &touched, &rewrites, false)?;
+        drop(prior);
         // The commit and the anchor publication are one critical section: a reader that sees an
         // older state than the anchor raced this flush and re-synchronizes instead of refusing.
         let mut anchors = self.anchors.lock().expect("the marks chain anchors are never poisoned");
@@ -260,10 +258,13 @@ impl Store {
         let mut touched = chain::expiring_pairs(&prior, &self.retentions, newest);
         touched.extend(rows.iter().map(|row| (row.market, row.resolution)));
         chain::check_anchors(&tx, &prior, &touched)?;
-        let (inserted, mut rewrites) = chain::seed(&self.mac, &tx, rows)?;
+        let (inserted, mut rewrites) = chain::seed(&self.mac, &tx, rows, &prior)?;
         let plan = chain::plan_prune(&tx, &self.retentions, newest, &touched)?;
-        chain::apply_prune(&self.mac, &tx, &plan, &mut rewrites)?;
+        chain::apply_prune(&self.mac, &tx, &plan, &mut rewrites, &prior)?;
         let updates = chain::anchor_updates(&tx, &touched, &rewrites, false)?;
+        // The pins are shared copy-on-write: publishing while this write still holds the prior
+        // snapshot would copy the whole set for a prune that drops one.
+        drop(prior);
         let mut anchors = self.anchors.lock().expect("the marks chain anchors are never poisoned");
         tx.commit().context("committing a marks seed")?;
         anchors.apply(updates);

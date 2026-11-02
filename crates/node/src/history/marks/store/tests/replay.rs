@@ -127,7 +127,8 @@ async fn head_merges_pin_nothing_and_a_prune_drops_the_pins_below_the_floor() {
     store.seed(&[seed_at(BASE - MIN, "1"), seed_at(BASE - 2 * MIN, "1")], BASE).unwrap();
     assert_eq!(pinned(&store), 1);
     store.observe(&[(1, BASE + 2 * HOUR, fixed("3"))]).unwrap();
-    assert_eq!(pinned(&store), 0, "pins below the floor are dropped with the rows");
+    let pins = store.prior_anchors().interior((1, Resolution::M1));
+    assert!(pins.keys().all(|bucket| *bucket >= BASE + 2 * HOUR), "pins below the floor are dropped: {pins:?}");
 }
 
 #[tokio::test]
@@ -141,4 +142,102 @@ async fn a_reset_re_binds_the_survivors_and_clears_the_pins() {
     assert!(store.prior_anchors().interior((1, Resolution::M1)).is_empty());
     let entries = page(&store, i64::MIN, i64::MAX).await.unwrap().entries;
     assert_eq!(entries.iter().map(|entry| entry.ts).collect::<Vec<_>>(), [BASE + MIN, BASE + 2 * MIN]);
+}
+
+/// The issue's scenario to the letter: C is still the head when the backfill inserts B, so the
+/// re-link of C is not covered by a successor's record; D arrives after.
+#[tokio::test]
+async fn a_head_re_linked_by_a_backfill_cannot_be_restored_once_a_row_follows() {
+    let (path, mut store) = fresh_store_at("marks-replay-issue", Retentions::defaults());
+    store.observe(&[(1, BASE, fixed("1")), (1, BASE + 2 * MIN, fixed("3"))]).unwrap();
+    let captured = capture(&path, BASE + 2 * MIN);
+    store.seed(&[seed_at(BASE + MIN, "2")], BASE + 2 * MIN).unwrap();
+    store.observe(&[(1, BASE + 3 * MIN, fixed("4"))]).unwrap();
+    assert_eq!(page(&store, i64::MIN, i64::MAX).await.unwrap().entries.len(), 4);
+    delete(&path, BASE + MIN);
+    restore(&path, &captured);
+    let c = BASE + 2 * MIN;
+    assert_refused(&store, &[(i64::MIN, i64::MAX), (c, c), (BASE, c), (BASE, BASE + MIN), (BASE, BASE)]).await;
+}
+
+/// The writer does not bless a restored row by re-tagging it: a prune that re-floors it refuses.
+#[tokio::test]
+async fn a_prune_refuses_to_re_floor_a_restored_pinned_row() {
+    let (path, mut store) = fresh_store_at("marks-replay-prune-pinned", hour_retentions());
+    store.observe(&[(1, BASE, fixed("1")), (1, BASE + 2 * MIN, fixed("3"))]).unwrap();
+    let captured = capture(&path, BASE + 2 * MIN);
+    store.observe(&[(1, BASE + 3 * MIN, fixed("4"))]).unwrap();
+    store.seed(&[seed_at(BASE + MIN, "2")], BASE + 3 * MIN).unwrap();
+    delete(&path, BASE + MIN);
+    restore(&path, &captured);
+    // The flush expires A only; C's link names it, so only the pin stands between C and the floor.
+    let err = store.observe(&[(1, BASE + HOUR + 30_000, fixed("5"))]).expect_err("re-floored a restored row");
+    assert!(format!("{err:#}").contains("not the version committed for it"), "{err:#}");
+}
+
+/// The same with no pin: the restored row is an earlier version of a bucket that grew as the head,
+/// and only the row above it knows.
+#[tokio::test]
+async fn a_prune_refuses_to_re_floor_an_earlier_version_of_a_grown_bucket() {
+    let (path, mut store) = fresh_store_at("marks-replay-prune-grown", hour_retentions());
+    store.observe(&[(1, BASE, fixed("1")), (1, BASE + MIN, fixed("5"))]).unwrap();
+    let early = capture(&path, BASE + MIN);
+    store.observe(&[(1, BASE + MIN, fixed("9"))]).unwrap();
+    store.observe(&[(1, BASE + 2 * MIN, fixed("4"))]).unwrap();
+    restore(&path, &early);
+    let err = store.observe(&[(1, BASE + HOUR + 30_000, fixed("5"))]).expect_err("re-floored a stale row");
+    assert!(format!("{err:#}").contains("not the version the row above it recorded"), "{err:#}");
+}
+
+#[tokio::test]
+async fn a_late_sample_refuses_to_merge_into_an_earlier_version_of_the_bucket() {
+    let (path, mut store) = fresh_store_at("marks-replay-merge-stale", Retentions::defaults());
+    store.observe(&[(1, BASE, fixed("1")), (1, BASE + MIN, fixed("5"))]).unwrap();
+    let early = capture(&path, BASE + MIN);
+    store.observe(&[(1, BASE + MIN, fixed("9"))]).unwrap();
+    store.observe(&[(1, BASE + 2 * MIN, fixed("4"))]).unwrap();
+    restore(&path, &early);
+    let err = store.observe(&[(1, BASE + MIN + 5_000, fixed("6"))]).expect_err("merged into a stale row");
+    assert!(format!("{err:#}").contains("not the version the row above it recorded"), "{err:#}");
+}
+
+#[tokio::test]
+async fn a_backfill_refuses_to_bind_the_tag_of_an_earlier_version() {
+    let (path, mut store) = fresh_store_at("marks-replay-seed-stale", Retentions::defaults());
+    store.observe(&[(1, BASE, fixed("1")), (1, BASE + MIN, fixed("5"))]).unwrap();
+    let early = capture(&path, BASE + MIN);
+    store.observe(&[(1, BASE + MIN, fixed("9"))]).unwrap();
+    store.observe(&[(1, BASE + 5 * MIN, fixed("4"))]).unwrap();
+    restore(&path, &early);
+    // G would record the restored row's tag as its predecessor's, hiding the substitution.
+    let err = store.seed(&[seed_at(BASE + 3 * MIN, "2")], BASE + 5 * MIN).expect_err("bound a stale predecessor");
+    assert!(format!("{err:#}").contains("not the version the row above it recorded"), "{err:#}");
+}
+
+#[tokio::test]
+async fn a_prune_pins_the_new_floor_and_pages_across_it_serve() {
+    let (_path, mut store) = fresh_store_at("marks-replay-prune-floor", hour_retentions());
+    store.observe(&[(1, BASE, fixed("1")), (1, BASE + MIN, fixed("2")), (1, BASE + 2 * MIN, fixed("3"))]).unwrap();
+    store.observe(&[(1, BASE + HOUR + 30_000, fixed("4"))]).unwrap();
+    let entries = page(&store, i64::MIN, i64::MAX).await.unwrap().entries;
+    assert_eq!(entries.iter().map(|entry| entry.ts).collect::<Vec<_>>(), [BASE + MIN, BASE + 2 * MIN, BASE + HOUR]);
+    assert!(store.prior_anchors().interior((1, Resolution::M1)).contains_key(&(BASE + MIN)), "the floor is pinned");
+}
+
+/// A restart imports the prior run's rows without its pins; the re-bind that startup runs makes
+/// the chain readable again.
+#[tokio::test]
+async fn an_imported_chain_with_rewritten_rows_reads_after_the_startup_re_bind() {
+    let prior_dir = scratch_dir("marks-replay-import-prior");
+    let mut prior = Store::open(&prior_dir.join("marks.sqlite"), Retentions::defaults(), mac_key()).unwrap();
+    prior.observe(&[(1, BASE, fixed("1")), (1, BASE + 2 * MIN, fixed("3"))]).unwrap();
+    prior.observe(&[(1, BASE + 3 * MIN, fixed("4"))]).unwrap();
+    prior.seed(&[seed_at(BASE + MIN, "2")], BASE + 3 * MIN).unwrap();
+    assert!(!prior.prior_anchors().interior((1, Resolution::M1)).is_empty());
+    drop(prior);
+    let mut store = fresh_store("marks-replay-import-fresh", Retentions::defaults());
+    store.import_prior(&prior_dir.join("marks.sqlite")).unwrap();
+    store.validate_chains().unwrap();
+    assert!(store.prior_anchors().interior((1, Resolution::M1)).is_empty());
+    assert_eq!(page(&store, i64::MIN, i64::MAX).await.unwrap().entries.len(), 4);
 }
