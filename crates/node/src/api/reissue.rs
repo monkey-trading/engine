@@ -42,6 +42,18 @@ pub(crate) fn reissue_hash(
     keccak256([&[0x19, 0x01][..], domain.hash_struct().as_slice(), value.as_slice()].concat())
 }
 
+/// Whether the sequencer holds the account's unpaid approval `nonce`, read from the checkpoint gate's
+/// memory as the payouts route reads it.
+/// Error cases:
+/// - the sequencer has stopped
+async fn approval_loaded(s: &ApiState, account: AccountId, nonce: u64) -> Result<bool, ApiError> {
+    let (reply, rx) = oneshot::channel();
+    let request = Request::AccountPayouts { account, after: nonce.checked_sub(1), limit: 1, reply };
+    s.tx.send(request).await.map_err(|_| ApiError::Unavailable)?;
+    let held = rx.await.map_err(|_| ApiError::Unavailable)?;
+    Ok(held.payouts.first().is_some_and(|payout| payout.nonce == nonce))
+}
+
 /// Queues the approval for signing again once the account proves control of it and, once access is
 /// enforced, passes the account and peer screening a new withdrawal gets; the authorization
 /// arrives on the stream. The node never reissues on a schedule, so this is the only way an expired
@@ -49,10 +61,13 @@ pub(crate) fn reissue_hash(
 /// Error cases:
 /// - the address or nonce is invalid, the signature is not the account's, or the account is over
 ///   its rate
+/// - once access is enforced, no unpaid approval is loaded under the nonce, which is refused before
+///   any screening
 /// - screening refuses the account or its peer, or the screening capacity is full
 /// - no unpaid approval is loaded under the nonce, or the request replaces an authorization other
 ///   than the latest, or the latest is still usable
-/// - there is no checkpoint gate, or the sequencer has stopped
+/// - there is no checkpoint gate and access is not enforced (enforced, a node without one holds no
+///   approval to ask for), or the sequencer has stopped
 pub(super) async fn reissue(
     State(s): State<ApiState>,
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
@@ -69,6 +84,12 @@ pub(super) async fn reissue(
     }
     s.limits.check_account(account)?;
     let screening = if s.access_enforced() {
+        // Screening is paid for, and any key can sign a request, so only an account with an unpaid
+        // approval under the nonce is screened.
+        if !approval_loaded(&s, account, nonce).await? {
+            debug!(nonce, "reissue refused before screening: no unpaid approval is loaded");
+            return Err(ApiError::NotFound);
+        }
         Some(ReissueScreening { request_hash: hash, evidence: api_screen(&s, peer, account, hash).await? })
     } else {
         None

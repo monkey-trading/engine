@@ -137,7 +137,7 @@ async fn a_refused_declaration_leaves_the_key_routes_closed_until_one_is_recorde
 
 #[tokio::test]
 async fn a_declaration_while_activation_waits_for_trusted_time_never_reaches_the_log() {
-    let node = Node::start_with_time("pre-deposit-startup", true, false).await;
+    let node = Node::start_with_time("pre-deposit-startup", true, false, false).await;
     let (status, body) = node.post("/v1/eligibility", declaration(&key(1), 0)).await;
     assert_eq!((status, body["error"].as_str()), (StatusCode::SERVICE_UNAVAILABLE, Some("engine unavailable")));
     assert!(node.entries().is_empty());

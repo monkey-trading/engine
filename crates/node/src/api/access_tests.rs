@@ -2,6 +2,7 @@
 
 mod admission;
 mod batch;
+mod cancel;
 mod declarations;
 mod pre_deposit;
 mod pre_deposit_budgets;
@@ -54,7 +55,7 @@ const VAULT: AccountId = AccountId([0xaa; 20]);
 
 #[tokio::test]
 async fn a_v24_build_refuses_unsigned_claimants_while_activation_waits_for_trusted_time() {
-    let node = Node::start_with_time("startup-auth", true, false).await;
+    let node = Node::start_with_time("startup-auth", true, false, false).await;
     let mut request = order(&key(1), 0);
     request.as_object_mut().unwrap().remove("auth");
     let (status, body) = node.post("/v1/orders", request).await;
@@ -215,35 +216,6 @@ async fn concurrent_signed_orders_cannot_fill_twice_from_one_nonce() {
     assert_eq!(replay(&node.entries()).unwrap().engine.next_request_nonce(account), 2);
 }
 
-#[tokio::test]
-async fn a_client_can_cancel_its_resting_order_while_geo_access_is_excluded() {
-    let node = Node::start("access-cancel", true).await;
-    let client = key(1);
-    let account = eip712::address(client.verifying_key());
-    node.onboard(&client).await;
-    let mut request: OrderRequest = serde_json::from_value(order(&client, 1)).unwrap();
-    request.kind = OrderKind::Limit { price: Fixed::from_int(90000) };
-    let hash = eip712::order_hash(&eip712::domain(31_337, VAULT), &request, 1, NOW + 60_000);
-    request.auth.as_mut().unwrap().signature = eip712::sign(&client, &hash);
-    let accepted = node.post("/v1/orders", json!(request)).await.1;
-    assert_eq!(accepted[0]["type"], "order_accepted");
-    let order_id = accepted[0]["order_id"].as_u64().unwrap();
-    node.source.lock().unwrap().jurisdiction = Jurisdiction::UnitedStates;
-    let queries = node.source.lock().unwrap().requests.len();
-    let hash = eip712::cancel_hash(&eip712::domain(31_337, VAULT), account, order_id, 2, NOW + 60_000);
-    let request = engine_core::command::CancelRequest {
-        account,
-        order_id,
-        auth: Some(RequestAuth { nonce: 2, expires_at: NOW + 60_000, signature: eip712::sign(&client, &hash) }),
-    };
-    let (status, events) = node.post("/v1/orders/cancel", json!(request)).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(events[0]["type"], "order_cancelled");
-    assert_eq!(events[0]["reason"], "client");
-    assert_eq!(node.source.lock().unwrap().requests.len(), queries);
-    assert!(node.state.query(move |engine| engine.accounts()[&account].orders.is_empty()).await.unwrap());
-}
-
 struct Node {
     app: Router,
     state: ApiState,
@@ -251,6 +223,8 @@ struct Node {
     dir: PathBuf,
     source: Arc<Mutex<source::Source>>,
     withdrawals: mpsc::UnboundedReceiver<SignedWithdrawal>,
+    /// Keeps the checkpoint worker's queue open for a gated node.
+    _checkpoint_work: mpsc::Receiver<crate::checkpoints::Work>,
     tasks: Vec<JoinHandle<()>>,
 }
 
@@ -262,10 +236,11 @@ impl Drop for Node {
 
 impl Node {
     async fn start(name: &str, mock_custody: bool) -> Self {
-        Self::start_with_time(name, mock_custody, true).await
+        Self::start_with_time(name, mock_custody, true, false).await
     }
 
-    async fn start_with_time(name: &str, mock_custody: bool, trusted: bool) -> Self {
+    async fn start_with_time(name: &str, mock_custody: bool, trusted: bool, gated: bool) -> Self {
+        let (work, work_rx) = mpsc::channel(1024);
         let dir = scratch_dir(&format!("access-api-{name}"));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let source = Arc::new(Mutex::new(source::Source {
@@ -298,6 +273,7 @@ impl Node {
             vault: VAULT,
             operator,
             clock: stamps.clone(),
+            checkpoints: gated.then_some(work),
             ..sequencer_config(&dir, manifest_tx)
         };
         let mut sequencer = Sequencer::recover(cfg, enclave.clone(), stream.clone(), withdrawals).unwrap();
@@ -366,6 +342,7 @@ impl Node {
             dir,
             source,
             withdrawals: withdrawals_rx,
+            _checkpoint_work: work_rx,
             tasks: vec![source_task, sequencer_task],
         }
     }

@@ -329,10 +329,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/access_tests.rs` — a declaration crediting its pending deposit, peer provenance and public access refusals
 - `src/api/access_tests/admission.rs` — admission before sequencing: never-credited signers declare within per-client and shared budgets; declarations leave orders a screening slot; expired requests and exhausted screening capacity refuse without a nonce
 - `src/api/access_tests/batch.rs` — `POST /v1/orders/cancel-all` and `/v1/positions/close-all`: one screening request, one log entry and one nonce each, refusals for a stale nonce, a forged or altered request and a stranger, and a session key signing both forms until revoked
+- `src/api/access_tests/cancel.rs` — a client cancels its resting order while geo access is excluded, with no screening call
 - `src/api/access_tests/declarations.rs` — a declaration screened like an order: public refusals that leave its deposit pending until an allowed one is recorded
 - `src/api/access_tests/pre_deposit.rs` — a wallet's setup before its first deposit: the order of its declaration and session keys, what stays refused until a deposit credits it, both deposit orders, engine refusals, and the reads and scans it meets
 - `src/api/access_tests/pre_deposit_budgets.rs` — what those requests spend: a token from the client's share and the shared budget, nothing when refused before the log, and what a refused wallet sees
-- `src/api/access_tests/reissue.rs` — a reissue request screened like a withdrawal, by account and peer, refused with 403 before the log
+- `src/api/access_tests/reissue.rs` — a reissue request screened like a withdrawal, by account and peer, refused with 403 before the log, and a request for an approval that does not exist refused with 404 before any screening call
 - `src/api/access_tests/session_keys.rs` — a registered session key trades for its account without the wallet until revoked, a withdrawal it signs refuses as out of scope in the log, an expired, mis-scoped, or rate-flooding key is refused before sequencing, and a never-credited account registers one only after declaring, with its cancels, stale nonces, and missing signatures
 - `src/api/access_tests/source.rs` — the mock screening source the access tests answer with
 - `src/access.rs`, `src/access/tests.rs` — bounded signed-source IO and failure-path tests
@@ -952,7 +953,8 @@ account asks with `POST /v1/accounts/<address>/withdrawals/<payout-nonce>/reissu
 The signature is the account's EIP-712 signature, under the same domain as its other requests, of
 `ReissueRequest(address account,uint64 payoutNonce,uint64 replacesExpiresAt)`, so it works once.
 Under access enforcement the request is screened like a new withdrawal, by account and transport
-peer, and judged at the sequencer's trusted time. The node queues the approval for a new 24-hour
+peer, and judged at the sequencer's trusted time; a request for an approval the sequencer does not
+hold is answered `404` before it is screened, so a key that holds none costs no screening call. The node queues the approval for a new 24-hour
 authorization with the same nonce, in approval order, and answers `401` for another signer, `403`
 with the access reason when screening refuses the account or its peer, `404` for an approval that
 is unknown, paid, or not yet loaded by a restart's recovery, and `400` while the latest
