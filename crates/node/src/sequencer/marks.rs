@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 
 use engine_core::types::{MarketId, Millis};
 use engine_core::{Engine, Fixed};
-use tokio::sync::mpsc;
-use tracing::{info, warn};
+use tokio::sync::mpsc::{self, error::TrySendError};
+use tracing::{debug, info, warn};
 
 use crate::history::marks::MarkSample;
 use crate::sequencer::Sequencer;
@@ -56,8 +56,20 @@ impl Marks {
             return;
         };
         let mut dropped = false;
+        let mut closed = false;
         for sample in self.pending.drain(..) {
-            dropped |= tx.try_send(sample).is_err();
+            match tx.try_send(sample) {
+                Ok(()) => {}
+                Err(TrySendError::Full(_)) => dropped = true,
+                Err(TrySendError::Closed(_)) => closed = true,
+            }
+        }
+        // The cache task ended (a shutdown, which it flushes through, or a failure its supervisor
+        // stops the node for): nothing is lost to a full queue, so no alert, and no more sends.
+        if closed {
+            debug!("the marks task has ended; marks reports stop");
+            self.tx = None;
+            return;
         }
         if dropped && !self.overflow_warned {
             warn!(
@@ -126,6 +138,17 @@ mod tests {
         marks.release();
         assert!(!marks.overflow_warned);
         assert_eq!(rx.try_recv().unwrap().2, Fixed::from_int(3));
+    }
+
+    #[test]
+    fn a_closed_queue_is_not_a_drop_and_stops_reporting() {
+        let (mut marks, rx) = marks_with(1);
+        drop(rx);
+        marks.pending = vec![(1, 10, Fixed::from_int(1))];
+        marks.release();
+        assert!(!marks.overflow_warned, "a receiver gone at shutdown is not an overflow");
+        assert!(marks.tx.is_none());
+        assert!(marks.pending.is_empty());
     }
 
     #[test]

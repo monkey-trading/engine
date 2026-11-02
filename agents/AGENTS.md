@@ -262,7 +262,7 @@ an index: load only the rule whose hint matches the current action.
   running it against a stubbed GitHub API;
   `dev-vault-deposits.sh`, the vault deposit and RPC quorum dev scenarios on Anvil, with
   `dev-rpc-proxy.py` providing three local fault-injection endpoints and `dev-alert-audit.py`
-  judging its node log's alerts (a provider Warning or a marks-queue overflow that clears within a bounded window passes); `dev-metrics-alerts.sh`,
+  judging its node log's alerts (a provider Warning that clears within a bounded window passes); `dev-metrics-alerts.sh`,
   the metrics and alert routing dev scenario; `dev-alert-outbox.sh`, the isolated alert retry
   kill/restart scenario; `dev-browser-origin.sh`, the browser-origin allowlist scenario against a dev node;
   `dev-proxy-protocol.sh`, the proxied client address scenario against a dev node;

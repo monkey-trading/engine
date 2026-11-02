@@ -45,17 +45,15 @@ rpc_b_port="${RPC_B_PORT:-18546}"
 rpc_c_port="${RPC_C_PORT:-18547}"
 
 # Fails on an alert in the node log that is not in $1 (a `|` list), except a Warning a retry clears
-# (an RPC provider or deposit read that has not caught up, or the marks queue overflowing on a
-# loaded host: the cache is derived and reseeds, so only an overflow that persists is a fault): that
-# one is tolerated and logged when it resolves within ALERT_CLEAR_SECONDS, and fails when it
-# persists past it or never resolves. A wrong
+# (an RPC provider or deposit read that has not caught up): that one is tolerated and logged when it
+# resolves within ALERT_CLEAR_SECONDS, and fails when it persists past it or never resolves. A wrong
 # outcome fails the scenario's own checks regardless. $2 names the phase for the message.
 alert_clear_seconds="${ALERT_CLEAR_SECONDS:-5}"
 audit_alerts() {
   local out status=0 deadline=$((SECONDS + alert_clear_seconds + 2))
   while :; do
     out="$(python3 -I "$root/scripts/dev-alert-audit.py" audit "$work/node.log" --allow "$1" \
-      --transient 'custody_rpc_provider_failed|custody_rpc_provider_disagreed|custody_rpc_failed|custody_chain_unsettled|marks_samples_dropped' \
+      --transient 'custody_rpc_provider_failed|custody_rpc_provider_disagreed|custody_rpc_failed|custody_chain_unsettled' \
       --window "$alert_clear_seconds")" && status=0 || status=$?
     # Young and still open: give it the rest of its window to clear.
     if [[ "$status" == 2 && "$SECONDS" -lt "$deadline" ]]; then sleep 1; continue; fi
