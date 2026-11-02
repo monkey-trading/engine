@@ -3,6 +3,7 @@
 
 use std::time::Duration;
 
+use alloy::primitives::Address;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::task::JoinHandle;
 use tokio::time::{sleep, timeout};
@@ -103,4 +104,37 @@ async fn mine_block(url: &str) {
         .await
         .unwrap();
     assert!(response.get("error").is_none(), "{response}");
+}
+
+/// Requires every transaction `relayer` has mined to have succeeded: a post that runs out of gas
+/// spends a nonce and commits nothing.
+pub(super) async fn assert_no_post_reverted(url: &str, relayer: Address) {
+    let head = local_rpc(url, "eth_blockNumber", serde_json::json!([])).await;
+    let head = u64::from_str_radix(head.as_str().unwrap().trim_start_matches("0x"), 16).unwrap();
+    for number in 1..=head {
+        let block = local_rpc(url, "eth_getBlockByNumber", serde_json::json!([format!("{number:#x}"), true])).await;
+        for tx in block["transactions"].as_array().unwrap() {
+            if tx["from"].as_str().unwrap().parse::<Address>().unwrap() == relayer {
+                let receipt = local_rpc(url, "eth_getTransactionReceipt", serde_json::json!([tx["hash"]])).await;
+                assert_eq!(receipt["status"], "0x1", "a checkpoint post reverted: {tx} {receipt}");
+            }
+        }
+    }
+}
+
+/// Executes only local Anvil scenario controls and rejects JSON-RPC errors.
+pub(super) async fn local_rpc(url: &str, method: &str, params: serde_json::Value) -> serde_json::Value {
+    let response: serde_json::Value = reqwest::Client::new()
+        .post(url)
+        .json(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":method,"params":params}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(response.get("error").is_none(), "{response}");
+    response.get("result").unwrap().clone()
 }

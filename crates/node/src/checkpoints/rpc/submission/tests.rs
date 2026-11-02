@@ -24,6 +24,30 @@ mod nonce_progress;
 use crate::checkpoints::rpc::submission::tests::fakes::Server;
 
 #[tokio::test]
+async fn a_post_goes_out_with_a_quarter_more_gas_than_its_estimate() {
+    let dir = scratch_dir("submission-gas-margin");
+    fs::create_dir_all(&dir).unwrap();
+    let server = Server::start(&dir).await;
+    rpc(&server.url, &dir).post(&checkpoint(10)).await.unwrap();
+    // The fake estimates 200,000.
+    assert_eq!(server.state.lock().unwrap().sent[0]["gas"], "0x3d090");
+}
+
+#[tokio::test]
+async fn a_failed_gas_estimate_sends_nothing_and_keeps_the_reservation_for_the_retry() {
+    let dir = scratch_dir("submission-gas-estimate-fails");
+    fs::create_dir_all(&dir).unwrap();
+    let server = Server::start(&dir).await;
+    let (chain, cp) = (rpc(&server.url, &dir), checkpoint(10));
+    server.state.lock().unwrap().fail_method = Some("eth_estimateGas");
+    assert!(chain.post(&cp).await.is_err());
+    assert!(server.state.lock().unwrap().sent.is_empty());
+    server.state.lock().unwrap().fail_method = None;
+    chain.post(&cp).await.unwrap();
+    assert_eq!(server.state.lock().unwrap().sent.len(), 1);
+}
+
+#[tokio::test]
 async fn long_pending_survives_restart_without_another_send_or_finality_release() {
     let dir = scratch_dir("submission-long-pending");
     fs::create_dir_all(&dir).unwrap();

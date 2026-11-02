@@ -21,6 +21,7 @@ use engine_core::types::AccountId;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::time::sleep;
 
+use crate::checkpoints::scenario::tasks::local_rpc;
 use crate::checkpoints::{CheckpointChain, CheckpointRpc, Poster, View};
 use crate::config::{CheckpointSection, CustodyProvider, FinalityTag, RpcProviderSection};
 use crate::custody::Custody;
@@ -151,6 +152,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
     let (access_client, source_task) = source::start(domain).await;
     let (work_tx, work_rx) = mpsc::channel(64);
     let (stream, _) = broadcast::channel(1024);
+    let metrics = Arc::new(crate::metrics::Metrics::new());
     let (withdrawals, _signed) = mpsc::unbounded_channel();
     let seq_cfg = crate::sequencer::SequencerConfig {
         access_policy: Some(access::policy()),
@@ -158,6 +160,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
         checkpoints: Some(work_tx),
         vault: domain.vault,
         operator: cfg.operator().unwrap(),
+        metrics: metrics.clone(),
         ..sequencer_config(&dir, watch::channel(Manifest::default()).0)
     };
     let mut seq = Sequencer::recover(seq_cfg, key.clone(), stream, withdrawals).unwrap();
@@ -280,6 +283,13 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
             }
         })
         .await;
+    // The worker raises the alert before its verdict reaches the gate.
+    tasks
+        .wait("the gate to pause withdrawals", &mut alerts, async |_| match metrics.withdrawals_paused.get() {
+            1 => Ok(()),
+            _ => Err("the gate has not paused withdrawals yet".into()),
+        })
+        .await;
     let (reply, request) = oneshot::channel();
     tx.send(Request::Query(Box::new(move |engine| {
         let _ = reply.send(access::withdrawal(engine, 1, Fixed::ONE, true));
@@ -368,6 +378,13 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
         }
     })
     .await;
+    tasks::assert_no_post_reverted(&url, checkpoint_relayer).await;
+    // A send the stopped poster lost, with a shortfall withholding its retry, leaves a live signed
+    // checkpoint the vault never took. The poster refuses anything but its successor, however far
+    // the chain advances, so the checkpoint below extends it.
+    if let Some(reserved) = delayed.chain.reserved_checkpoint().unwrap() {
+        tasks::include_checkpoint(&url, &delayed, &reserved).await;
+    }
     let saved = local_rpc(&url, "evm_snapshot", serde_json::json!([])).await;
     let current = delayed.chain.state(View::Latest).await.unwrap();
     let (parent_seq, parent_root) = current.checkpoint.clone().unwrap();
@@ -478,21 +495,4 @@ async fn submit(tx: &mpsc::Sender<Request>, cmd: Command) -> Option<Vec<engine_c
 fn write_entries(path: &Path, entries: &[LogEntry]) {
     let text: String = entries.iter().map(|entry| format!("{}\n", serde_json::to_string(entry).unwrap())).collect();
     std::fs::write(path, text).unwrap();
-}
-
-/// Executes only local Anvil scenario controls and rejects JSON-RPC errors.
-async fn local_rpc(url: &str, method: &str, params: serde_json::Value) -> serde_json::Value {
-    let response: serde_json::Value = reqwest::Client::new()
-        .post(url)
-        .json(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":method,"params":params}))
-        .send()
-        .await
-        .unwrap()
-        .error_for_status()
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert!(response.get("error").is_none(), "{response}");
-    response.get("result").unwrap().clone()
 }

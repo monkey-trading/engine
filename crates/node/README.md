@@ -981,7 +981,8 @@ seconds, accepted checkpoint and approval proof needed by `Vault.withdraw`.
 
 On-chain checkpoint posting uses an optional `[checkpoints]` section, required with hardware EVM
 custody. `node.checkpoint_every` sets the periodic frequency; every approved withdrawal also forces
-a checkpoint. Each root is durable locally before the relayer sends it, and the node releases no
+a checkpoint. Each root is durable locally before the relayer sends it, with a gas limit a quarter
+above its estimate, and the node releases no
 withdrawal signature until its approval is covered by a confirmed on-chain prefix and collateral
 reconciles at custody's `withdrawal_finality_tag`, independently of the early-credit tag and its
 confirmation depth. Latest inclusion is
