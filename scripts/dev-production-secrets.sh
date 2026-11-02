@@ -408,8 +408,10 @@ step "The log replays"
 
 step "No value appears in the node's logs, its public log, its other data, its metrics, or a page"
 grep -q "sealed a delivered secrets bundle" "$work/node.log" || fail "the node log holds none of the delivery's lines"
-for path in node.log tool.log replay.log metrics.log node.toml log history alerts keys custody-cursor.json; do
-  if grep -rqa FAKE "$work/$path"; then fail "a value appears in $path: $(grep -rla FAKE "$work/$path" | head -n 3)"; fi
+for path in "$work"/*; do
+  # The operator's own files and the stand-ins, which hold the values by design, are all it leaves out.
+  case "$(basename "$path")" in operator | stand-ins) continue ;; esac
+  if grep -rqa FAKE "$path"; then fail "a value appears in $path: $(grep -rla FAKE "$path" | head -n 3)"; fi
 done
 jq -e 'select(.body | tostring | contains("FAKE"))' "$work/stand-ins/pages.jsonl" >/dev/null && fail "a page's body holds a value"
 
