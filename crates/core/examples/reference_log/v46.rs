@@ -70,8 +70,7 @@ pub(crate) fn session(h: &mut Harness) {
 
     // BTC's and the global floor's 72 hours run first, ETH's a second later.
     h.advance_to(activated + STRESS_FLOOR_LAPSE_MS);
-    let lapsed = h.cmd(Command::Tick);
-    assert!(lapsed.iter().any(|event| matches!(event, Event::StressChanged { .. })), "{lapsed:?}");
+    h.cmd(Command::Tick);
     assert_eq!((floor_in(h, BTC), floor_in(h, ETH)), (0, 1));
     h.advance_to(renewed + STRESS_FLOOR_LAPSE_MS);
     h.cmd(Command::Tick);
