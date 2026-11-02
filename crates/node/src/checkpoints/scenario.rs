@@ -421,6 +421,8 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
         delayed.chain.state(View::Finalized).await.unwrap().checkpoint,
         Some((seq, work.checkpoint.root.clone()))
     );
+    // The revert drops these blocks: a post reverted in them would leave the reservation made after it behind.
+    tasks::assert_no_post_reverted(&url, checkpoint_relayer).await;
     assert_eq!(local_rpc(&url, "evm_revert", serde_json::json!([saved])).await, serde_json::json!(true));
     assert_eq!(
         delayed.chain.state(View::Latest).await.unwrap().checkpoint,
