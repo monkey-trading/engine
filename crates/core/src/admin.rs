@@ -359,6 +359,11 @@ impl Engine {
                 if self.protocol_version < ProtocolVersion::V38 && *version >= ProtocolVersion::V38 {
                     self.tree = None;
                 }
+                // Open period results rehash under the V43 gross-loss encoding, so the cached
+                // tree's leaves cannot be trusted across the activation.
+                if self.protocol_version < ProtocolVersion::V43 && *version >= ProtocolVersion::V43 {
+                    self.tree = None;
+                }
                 if let Some(cash) = distribution_cash {
                     self.withdrawal_cash = Some(cash);
                 }

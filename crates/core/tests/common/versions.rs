@@ -1,6 +1,7 @@
 //! Protocol-version constructors for the shared harness.
 
 use engine_core::Fixed;
+use engine_core::access::AccessPolicy;
 use engine_core::auth::ClientAuth;
 use engine_core::command::AdminCommand;
 use engine_core::emissions::{EmissionSchedule, TokenUnits};
@@ -149,6 +150,27 @@ impl Harness {
         let schedule = EmissionSchedule { start_ms: h.ts, period_budget: TokenUnits(period_budget) };
         h.operator_admin(AdminCommand::InitEmissions(schedule));
         h
+    }
+
+    /// The close-spread `harness` with access screening on, emissions initialised from now at
+    /// `period_budget` base units a period, and `version` (at least `V40`) active. Clients trade
+    /// through the screened commands, as `common::close_spread` sequences them.
+    pub fn emitting_at(version: ProtocolVersion, period_budget: u128) -> Self {
+        let mut h = crate::common::close_spread::harness();
+        h.admin(AdminCommand::SetAccessPolicy(AccessPolicy {
+            source: crate::common::close_spread::source_key(),
+            max_age_ms: 10 * crate::common::session_keys::HOUR_MS,
+        }));
+        h.admin(AdminCommand::ActivateProtocol { version });
+        let schedule = EmissionSchedule { start_ms: h.ts, period_budget: TokenUnits(period_budget) };
+        h.operator_admin(AdminCommand::InitEmissions(schedule));
+        h
+    }
+
+    /// `emitting_at` under `V43`: an account's emission weight is its gross realised loss in the
+    /// period — each fill's loss magnitude, wins not offsetting.
+    pub fn emitting_gross(period_budget: u128) -> Self {
+        Harness::emitting_at(ProtocolVersion::V43, period_budget)
     }
 
     /// `v17`, then `V18`'s dated benchmark rates, `V19`, `V20`, and `V21`, which refuses quotes

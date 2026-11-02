@@ -229,11 +229,10 @@ impl Engine {
             let order = self.accounts.get(&id).and_then(|acct| acct.orders.get(&order_id));
             (order_key(order_id), order.map(|order| order_hash(id, order)))
         }));
-        changes.extend(
-            period_results
-                .into_iter()
-                .map(|id| (period_result_key(id), self.period_results.get(&id).map(period_result_hash))),
-        );
+        let version = self.protocol_version;
+        changes.extend(period_results.into_iter().map(|id| {
+            (period_result_key(id), self.period_results.get(&id).map(|result| period_result_hash(result, version)))
+        }));
         let entitlement_leaves: Vec<(AccountId, Option<TokenUnits>)> =
             entitlements.into_iter().map(|id| (id, self.entitlements.get(&id).copied())).collect();
         changes.extend(

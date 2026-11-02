@@ -69,6 +69,48 @@ fn a_reversal_landing_after_the_losses_becomes_an_emission_debt_that_later_losse
 }
 
 #[test]
+fn from_v43_a_write_off_absorbs_gross_losses_and_debt_consumes_gross_weight_first() {
+    let (mut h, client) = emitting(ProtocolVersion::V43);
+    let account = client.account;
+    let budget = h.engine.emissions().expect("initialised").schedule.budget(0);
+
+    // Period 0: 50 of losses earn the allocation and the clawable credit.
+    let first = receipt(1, account, "100");
+    credit(&mut h, &first);
+    lose(&mut h, "100", "90");
+    assert_eq!(allocations(&next_period(&mut h)), [(account, 0, f("50"), budget)]);
+    assert_eq!(h.engine.emission_earned(account), f("50"));
+
+    // Period 1: the reversal writes off 50 before any trade there; the fill that loses 30 and the
+    // one that wins 20 close the period. The 30 gross loss absorbs the write-off with 20 left
+    // over, which becomes debt charged against the earned credit (under the old net rule the
+    // period's 10 of net loss would leave 40 unabsorbed); no weight survives the write-off.
+    reverse(&mut h, &first);
+    credit(&mut h, &receipt(2, account, "100"));
+    lose(&mut h, "100", "94");
+    lose(&mut h, "94", "98");
+    let result = h.engine.period_results()[&account];
+    assert_eq!((result.realised, result.losses, result.written_off), (f("-10"), f("30"), f("50")));
+    let events = next_period(&mut h);
+    assert!(allocations(&events).is_empty(), "{events:?}");
+    assert_eq!((h.engine.emission_debt(account), h.engine.emission_earned(account)), (f("20"), f("30")));
+    assert_root_matches_rebuild(&mut h.engine);
+
+    // Period 2: a 25 loss on one fill and a 10 win on another: the gross 25 pays the debt down
+    // first and the remaining 5 earns. Under the net rule the period's 15 would pay only 15 of
+    // the 20 debt and nothing would earn.
+    credit(&mut h, &receipt(3, account, "100"));
+    lose(&mut h, "100", "95");
+    lose(&mut h, "95", "97");
+    let result = h.engine.period_results()[&account];
+    assert_eq!((result.realised, result.losses), (f("-15"), f("25")));
+    assert_eq!(allocations(&next_period(&mut h)), [(account, 2, f("5"), budget)]);
+    assert_eq!(h.engine.emission_debt(account), Fixed::ZERO);
+    assert_eq!(h.engine.entitlement(account).0, 2 * budget);
+    assert_root_matches_rebuild(&mut h.engine);
+}
+
+#[test]
 fn the_state_root_commits_to_each_accounts_debt() {
     let (mut h, client) = emitting(ProtocolVersion::V32);
     let account = client.account;
@@ -246,6 +288,14 @@ fn emitting(version: ProtocolVersion) -> (Harness, Client) {
     let mut h = Harness::emitting(1_000_000);
     for step in [ProtocolVersion::V20, ProtocolVersion::V21, ProtocolVersion::V22] {
         h.admin(AdminCommand::ActivateProtocol { version: step });
+    }
+    if version >= ProtocolVersion::V40 {
+        // Activation past `V40` wants every listed market ceilinged; the node alone sequences the
+        // install.
+        let events = h.cmd(Command::Admin(AdminCommand::SetCloseSpreadCeilings {
+            ceilings: crate::common::close_spread::ceilings(),
+        }));
+        assert!(events.contains(&Event::AdminApplied), "ceiling install rejected: {events:?}");
     }
     h.admin(AdminCommand::SetAccessPolicy(engine_core::access::AccessPolicy {
         source: eip712::address(source().verifying_key()),

@@ -372,9 +372,19 @@ fn is_snapshot_name(file: &str) -> bool {
     })
 }
 
+/// Whether the serialized engine `state` predates the V43 gross-loss accumulator: an open
+/// period result without a gross-loss field, which only a pre-V43 build writes. `read` refuses
+/// such a cache — recovery would drop a crossing period's pre-upgrade weight — and replays the log.
+fn predates_gross_losses(state: &serde_json::Value) -> bool {
+    state["period_results"]
+        .as_object()
+        .is_some_and(|results| results.values().any(|result| result.get("losses").is_none()))
+}
+
 /// Authenticates the whole payload before decoding engine state, then recomputes its root.
 /// Error cases:
 /// - the file is unreadable, malformed, oversized, from another deployment, untrusted, or inconsistent
+/// - the engine state predates the V43 gross-loss accumulator
 pub(crate) fn read(
     cfg: &SnapshotSection,
     path: &Path,
@@ -382,7 +392,12 @@ pub(crate) fn read(
     vault: AccountId,
 ) -> anyhow::Result<(Snapshot, Engine)> {
     let snapshot = read_payload(cfg, path, chain_id, vault)?;
-    let mut engine: Engine = serde_json::from_str(&snapshot.engine).context("decoding snapshot engine")?;
+    let state: serde_json::Value = serde_json::from_str(&snapshot.engine).context("decoding snapshot engine")?;
+    ensure!(
+        !predates_gross_losses(&state),
+        "snapshot predates the gross-loss accumulator; recovery replays the full log"
+    );
+    let mut engine: Engine = serde_json::from_value(state).context("decoding snapshot engine")?;
     ensure!(engine.last_seq() == Some(snapshot.checkpoint.seq), "snapshot sequence mismatch");
     let state_root = engine.state_root();
     let root = format!("0x{}", hex::encode(state_root));

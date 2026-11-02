@@ -51,10 +51,11 @@
 //!   window before a halt still count after the reopening, so a move across a halt shorter than
 //!   the window raises fast-move stress as it would without the halt.
 //! - From `V19`, once the operator's signed initialisation records a start and a budget, MONKEY
-//!   emissions share each ten-minute period's fixed budget pro rata by the accounts' net realised
-//!   trading losses, less debt written off, halve the budget every 182.5 days, cancel what no
-//!   account is allocated, and keep each account's cumulative entitlement in the state tree for the
-//!   vault to mint against.
+//!   emissions share each ten-minute period's fixed budget pro rata by the accounts' realised
+//!   losses, less debt written off — each fill's loss magnitude from `V43`, with wins in the period
+//!   not offsetting; the net realised loss before it — halve the budget every 182.5 days, cancel
+//!   what no account is allocated, and keep each account's cumulative entitlement in the state tree
+//!   for the vault to mint against.
 //! - From `V21`, a quote prices a market only from within one open session: it is refused unless
 //!   the market stays open from its stamp to its sequencing, and dropped after any closure; a market
 //!   may price from futures contracts, its index the front contract's median plus a roll adjustment

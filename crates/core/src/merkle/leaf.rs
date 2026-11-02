@@ -37,12 +37,10 @@
 //!   one's expiry and revocation — its registration count, and from `V42` its introduction budget
 //!   (addresses available and the time the refill is counted to), keyed by the account, from
 //!   `V41`; a key's next request nonce is its own request-nonce leaf.
-//! - **Emission period result:** `keccak256(abi.encode(int128 realised, int128 writtenOff))`, the
-//!   account's realised PnL and written-off debt in the open emission period, from `V19`, until the
-//!   period is finalised.
-//! - **Emission ledger:** `keccak256(abi.encode(int128 earned, int128 debt))`, from `V32`: the loss
-//!   weight the account earned that no write-off has yet been charged against, and the write-off
-//!   debt later loss weight pays down.
+//! - **Emission period result:** from `V19`, `keccak256(abi.encode(int128 realised, int128
+//!   writtenOff))` of the open period, until it is finalised; from `V43`, `(realised, losses, writtenOff)`.
+//! - **Emission ledger:** `keccak256(abi.encode(int128 earned, int128 debt))`, from `V32`: the
+//!   loss weight the account earned, uncharged by any write-off, and the write-off debt later loss weight pays down.
 //! - **Remaining state:** the keccak-256 of the JSON encoding of every engine field no other leaf
 //!   holds (`state.rs`).
 //!
@@ -74,6 +72,7 @@ use crate::futures::FuturesState;
 use crate::market::{MarketSpec, QuoteCurrency};
 use crate::merkle::keccak;
 use crate::price::{Index, SourceQuote};
+use crate::protocol::ProtocolVersion;
 use crate::session_keys::AccountSessionKeys;
 use crate::staking::UsdcUnits;
 use crate::types::{AccountId, MarketId, Millis, OrderId};
@@ -423,11 +422,9 @@ pub(crate) fn period_result_key(account: AccountId) -> B256 {
     keccak(&[&[PERIOD_RESULT], &account.0])
 }
 
-/// The value hash of an emission period result leaf.
-pub(crate) fn period_result_hash(result: &PeriodResult) -> B256 {
-    // Every field is named, so a field added to `PeriodResult` fails to compile until the leaf holds it.
-    let PeriodResult { realised, written_off } = result;
-    keccak(&[&(realised.raw(), written_off.raw()).abi_encode()])
+/// The value hash of an emission period result leaf, as the module's leaf list encodes it.
+pub(crate) fn period_result_hash(result: &PeriodResult, version: ProtocolVersion) -> B256 {
+    keccak(&[&result.leaf_encoding(version)])
 }
 
 /// The key of `account`'s distribution leaf.

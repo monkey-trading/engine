@@ -47,6 +47,45 @@ fn authenticates_payload_and_deployment_before_loading_state() {
 }
 
 #[test]
+fn a_cache_predating_the_gross_loss_accumulator_refuses_recovery() {
+    let (cfg, key, mut snapshot) = fixture("snapshot-gross-losses");
+    // The engine a pre-V43 build serialized: open period results without a gross-loss field,
+    // whether the period's net is negative or wins leave it positive, as its checkpoint attests.
+    let mut state: serde_json::Value = serde_json::from_str(&snapshot.engine).unwrap();
+    let account = "0x0101010101010101010101010101010101010101";
+    for result in [
+        serde_json::json!({ "realised": "-5", "written_off": "0" }),
+        serde_json::json!({ "realised": "50", "written_off": "0" }),
+    ] {
+        state["period_results"][account] = result;
+        let mut engine: Engine = serde_json::from_value(state.clone()).unwrap();
+        let root = engine.state_root();
+        snapshot.checkpoint.root = format!("0x{}", hex::encode(root));
+        snapshot.checkpoint.signature = key.sign_checkpoint(31337, &snapshot.vault.0, 0, &root);
+        // The payload keeps the legacy serialization: reading the engine back and re-encoding it
+        // would add the gross-loss field the old build did not write.
+        snapshot.engine = serde_json::to_string(&state).unwrap();
+        write(&cfg, &snapshot, &key).unwrap();
+        let path = candidates(&cfg).unwrap().remove(0);
+        let refused = read(&cfg, &path, 31337, snapshot.vault).err().unwrap();
+        assert!(refused.to_string().contains("predates the gross-loss accumulator"), "{refused:#}");
+    }
+
+    // The same results with their gross losses recorded read back with the value intact.
+    state["period_results"][account] = serde_json::json!({ "realised": "50", "losses": "100", "written_off": "0" });
+    let mut engine: Engine = serde_json::from_value(state).unwrap();
+    let root = engine.state_root();
+    snapshot.checkpoint.root = format!("0x{}", hex::encode(root));
+    snapshot.checkpoint.signature = key.sign_checkpoint(31337, &snapshot.vault.0, 0, &root);
+    snapshot.engine = serde_json::to_string(&engine).unwrap();
+    write(&cfg, &snapshot, &key).unwrap();
+    let path = candidates(&cfg).unwrap().remove(0);
+    let (_, restored) = read(&cfg, &path, 31337, snapshot.vault).unwrap();
+    let account = AccountId([0x01; 20]);
+    assert_eq!(restored.period_results()[&account].losses, engine_core::Fixed::from_int(100));
+}
+
+#[test]
 fn retains_newest_caches_and_reclaims_staging_files() {
     let (cfg, key, mut snapshot) = fixture("snapshot-retain");
     for index in 1..5 {
