@@ -1,0 +1,270 @@
+# Production node config, without [genesis].
+#
+# Assemble the config a production node runs with, then hash it (sha256sum): the hash is part of the
+# release the vault's timelock names, so one changed byte, a comment included, is another release.
+#
+#   cat ops/runbooks/production-node.toml config/benchmark-publishers.toml \
+#       config/production-genesis.toml > node.toml
+#
+# Every value that is a placeholder or a decision still open carries a trailing marker comment. Set
+# the value and delete the comment; the assembled file must contain no marker.
+# ops/runbooks/deploy-and-rollback.md has the procedure.
+#
+# Secrets never appear in this file. Webhook URLs and vendor API keys are read from the environment
+# variables named here, and how they reach an enclave is not built yet (#356). An RPC credential
+# may sit in a provider URL, but then the config cannot be published for verification.
+#
+# Paths are under /data, the image's one writable disk. The alert outbox must be a sibling of the
+# log directory. A production build refuses mock providers, an unsigned API, plain-http origins and
+# a config without [api.tls.acme].
+
+[node]
+# The guest address the host forwards port 443 to. The CA validates on it too.
+listen = "0.0.0.0:8080"
+log_dir = "/data/log"
+segment_commands = 1000
+# A ceiling: at most one checkpoint is in flight, so the cadence follows the chain's finality.
+checkpoint_every = 1000
+tick = "250ms"
+# Recorded in the log on first start, with the custody chain id and vault.
+auth = "eip712"
+
+[logging]
+level = "info"
+
+[api]
+# Keep max_connections below the process's open-file limit.
+max_connections = 512
+max_connections_per_ip = 32
+handshake_timeout = "10s"
+read_timeout = "30s"
+max_body_bytes = 65536
+per_ip = { per_second = 50, burst = 100 } # OWNER: production limits for fresh accounts are open (#482)
+per_account = { per_second = 10, burst = 20 } # OWNER: as above (#482)
+per_ip_connections = { per_second = 100, burst = 200 } # OWNER: keep it above per_ip
+max_subscribers = 256
+send_timeout = "30s"
+# The console's https origin; any other browser origin is refused. A production build takes only https.
+allowed_origins = ["https://console.example.com"] # REPLACE
+
+[api.tls.acme]
+# The API's DNS name, lowercase. The CA connects to it on port 443.
+domain = "api.example.com" # REPLACE
+# Rehearse on the CA's staging directory first (a separate release).
+directory_url = "https://acme-v02.api.letsencrypt.org/directory" # OWNER: the CA
+contact = "mailto:ops@example.com" # REPLACE
+
+# Behind a pass-through proxy that sends PROXY protocol v2, list its address ranges here. The header
+# is unauthenticated: list only addresses that reach the node solely through your own proxy.
+# [api.proxy_protocol]
+# trusted = []
+
+[tee]
+provider = "configfs_tsm"
+# The codename of the host's CPU generation; the node relays that generation's vendor collateral.
+processor = "Genoa" # OWNER: the host's CPU generation
+
+[tee.sealing]
+dir = "/data/keys"
+
+[tee.sealing.handover]
+# Where a successor release asks this one for the keys. Reachable by the successor, not the public.
+listen = "0.0.0.0:9471"
+# Archive mirrors of the incumbent's log, for when this node takes the keys over an election.
+mirrors = ["https://mirror-a.example.com", "https://mirror-b.example.com"] # REPLACE
+
+[operator]
+# Off at launch. The deployer is the only operator until the timelock turns the registry's rotation on.
+rotation_enabled = false
+# SEC1 public key of the operator's admin key (hex, 0x04 then 64 bytes). A placeholder: its private
+# key was discarded.
+public_key = "0x045a1ac079d8e8d39ae3b157534b725ac6249271c637e4990e757031332c9f5a3a94358448d7b698b31a8b99cd137c950532ad908acda681abdc19489fccb87a14" # REPLACE
+
+[custody]
+provider = "evm"
+chain_id = 42161 # Arbitrum One
+vault = "0x1111111111111111111111111111111111111111" # REPLACE
+
+[custody.evm]
+# At least three providers run by different operators, each serving state back to start_block.
+# Credentials in a URL make the config unpublishable until #356.
+providers = [
+  { name = "provider-a", rpc_url = "https://rpc-a.example.com/key" }, # REPLACE
+  { name = "provider-b", rpc_url = "https://rpc-b.example.com/key" }, # REPLACE
+  { name = "provider-c", rpc_url = "https://rpc-c.example.com/key" }, # REPLACE
+]
+usdc = "0x2222222222222222222222222222222222222222" # REPLACE: the vault's usdc()
+# Production credits at latest, less confirmations, and releases principal at finalized.
+finality_tag = "latest"
+withdrawal_finality_tag = "finalized"
+confirmations = 2 # OWNER: blocks of the credit tag to wait
+start_block = 1 # REPLACE: the vault's deployment block
+max_block_range = 1000 # OWNER: within every provider's limits
+poll_interval = "1s" # OWNER: within every provider's rate limits
+rpc_timeout = "5s"
+# Must exceed the credit tag's lag, one finalized-tag delay, and the wait for the next checkpoint, or
+# a deposit pauses withdrawals; and the longest gap between batch posts. Not measured on Arbitrum
+# One. The config hash is part of the release, so set it before the release is named.
+stall_critical_after = "1h" # OWNER: measure on Arbitrum One first
+# On Arbitrum One the finalized tag follows batch posting by about one Ethereum finality period.
+finality_stalled_after = "30m"
+cursor_path = "/data/custody-cursor.json"
+
+[custody.evm.staking]
+contract = "0x3333333333333333333333333333333333333333" # REPLACE
+cursor_path = "/data/staking-cursor.json"
+
+[custody.evm.staking.registry]
+contract = "0x4444444444444444444444444444444444444444" # REPLACE
+
+[checkpoints]
+# A separate endpoint from the custody providers. It signs and funds the relayer's transactions,
+# so it must support eth_sendTransaction and hold a funded relayer dedicated to this log.
+rpc_url = "https://checkpoint-rpc.example.com/key" # REPLACE
+relayer = "0x5555555555555555555555555555555555555555" # REPLACE
+retry_interval = "2s"
+rpc_timeout = "10s"
+
+[feeds]
+provider = "venues"
+interval = "200ms"
+
+[feeds.venues]
+timeout = "10s"
+reconnect_min = "500ms"
+reconnect_max = "30s"
+stale_after = "1s"
+min_quote_spacing = "10ms"
+
+# Crypto: Coinbase and Kraken, public feeds with no key. Each market needs both (min_sources = 2).
+[[feeds.venues.connections]]
+venue = "coinbase"
+url = "wss://advanced-trade-ws.coinbase.com"
+symbols = [{ market = 1, symbol = "BTC-USD" }, { market = 2, symbol = "ETH-USD" }, { market = 3, symbol = "SOL-USD" }]
+
+[[feeds.venues.connections]]
+venue = "kraken"
+url = "wss://ws.kraken.com/v2"
+symbols = [{ market = 1, symbol = "BTC/USD" }, { market = 2, symbol = "ETH/USD" }, { market = 3, symbol = "SOL/USD" }]
+
+# Foreign exchange: two vendors a market. Every launch market has min_sources = 2, so a market
+# priced by two vendors has no price when either is down. The vendors' account plans, redistribution
+# rights and key variables are open (#6, #356).
+[[feeds.venues.connections]]
+venue = "massive"
+url = "wss://socket.massive.com/forex"
+api_key_env = "MASSIVE_API_KEY"
+symbols = [
+  { market = 10, symbol = "EUR-USD" },
+  { market = 11, symbol = "GBP-USD" },
+  { market = 12, symbol = "USD-JPY" },
+  { market = 13, symbol = "AUD-USD" },
+]
+
+[[feeds.venues.connections]]
+venue = "tradermade"
+url = "wss://stream.tradermade.com/feedAdv"
+api_key_env = "TRADERMADE_API_KEY"
+symbols = [
+  { market = 10, symbol = "EURUSD" },
+  { market = 11, symbol = "GBPUSD" },
+  { market = 12, symbol = "USDJPY" },
+  { market = 13, symbol = "AUDUSD" },
+]
+
+# Index and commodity futures. A symbol names the contract it quotes, one of the market's `contracts`
+# in config/production-genesis.toml, and the feed sends each contract the market takes now. Shown
+# for US500 (market 20); every other futures market (21 to 25, 30 to 33) needs the same two vendors
+# and its own contracts.
+[[feeds.venues.connections]]
+venue = "massive"
+url = "wss://socket.massive.com/futures"
+api_key_env = "MASSIVE_API_KEY"
+symbols = [
+  { market = 20, symbol = "ESZ6", contract = "ESZ6" },
+  { market = 20, symbol = "ESH7", contract = "ESH7" },
+  { market = 20, symbol = "ESM7", contract = "ESM7" },
+  { market = 20, symbol = "ESU7", contract = "ESU7" },
+  { market = 20, symbol = "ESZ7", contract = "ESZ7" },
+  { market = 20, symbol = "ESH8", contract = "ESH8" },
+] # OWNER: add markets 21 to 25 and 30 to 33
+
+[[feeds.venues.connections]]
+venue = "databento"
+url = "tcp://glbx-mdp3.lsg.databento.com:13000"
+api_key_env = "DATABENTO_API_KEY"
+dataset = "GLBX.MDP3"
+symbols = [
+  { market = 20, symbol = "ESZ6", contract = "ESZ6" },
+  { market = 20, symbol = "ESH7", contract = "ESH7" },
+  { market = 20, symbol = "ESM7", contract = "ESM7" },
+  { market = 20, symbol = "ESU7", contract = "ESU7" },
+  { market = 20, symbol = "ESZ7", contract = "ESZ7" },
+  { market = 20, symbol = "ESH8", contract = "ESH8" },
+] # OWNER: add the same markets, with each exchange's dataset
+
+# US shares, shown for AAPL (market 40).
+[[feeds.venues.connections]]
+venue = "massive"
+url = "wss://socket.massive.com/stocks"
+api_key_env = "MASSIVE_API_KEY"
+symbols = [{ market = 40, symbol = "AAPL" }] # OWNER: add markets 41 to 59
+
+[[feeds.venues.connections]]
+venue = "databento"
+url = "tcp://equs-mini.lsg.databento.com:13000"
+api_key_env = "DATABENTO_API_KEY"
+dataset = "EQUS.MINI"
+symbols = [{ market = 40, symbol = "AAPL" }] # OWNER: add markets 41 to 59
+
+# Trusted time: a strict majority of these independent servers must agree. The attestation binds
+# this file, so a verifier checks the keys against a published copy.
+[time]
+max_drift = "15s"
+interval = "10s"
+
+[[time.servers]]
+name = "int08h"
+address = "roughtime.int08h.com:2002"
+public_key = "AW5uAoTSTDfG5NfY1bTh08GUnOqlRb+HVhbJ3ODJvsE="
+
+[[time.servers]]
+name = "TimeNL"
+address = "rough.time.nl:2002"
+public_key = "v2CievhgKsxzlWPwIkYFUXeA51Akhkv5uhJCj1/kbiY="
+
+[[time.servers]]
+name = "txryan"
+address = "time.txryan.com:5319"
+public_key = "iBVjxg/1j7y1+kQUTBYdTabxCppesU/07D4PMDJk2WA="
+
+[history]
+dir = "/data/history"
+retention = "365d"
+
+# Plain HTTP, no per-account data. Listen on an address only the monitoring network reaches.
+[metrics]
+listen = "0.0.0.0:9464"
+
+[alerts]
+outbox = { dir = "/data/alerts", max_pages = 2048, max_bytes = 16777216, max_age = "1h" }
+no_price_after = "5s"
+episode_quiet = "15m"
+
+# The webhook URLs are credentials: the node reads them from these environment variables.
+[alerts.critical]
+url_env = "ENGINE_ALERTS_CRITICAL_URL"
+
+[alerts.warning]
+url_env = "ENGINE_ALERTS_WARNING_URL"
+
+# The signed screening source. Its signing authority and freshness bound are recorded once in the
+# log. Without this section the actions it screens are refused. See config/access-source.md.
+[access]
+source = "0x6666666666666666666666666666666666666666" # REPLACE: the screening authority's address
+endpoint = "https://screening.example.com/key" # REPLACE
+timeout = "2s" # OWNER
+max_age = "30s" # OWNER
+max_response_bytes = 4096
+max_in_flight = 8 # OWNER
+

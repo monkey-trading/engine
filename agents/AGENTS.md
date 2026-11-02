@@ -320,7 +320,16 @@ an index: load only the rule whose hint matches the current action.
   and checks the build's download retries.
 - **ops/** — operator assets: `grafana/engine-node.json`, the node's Grafana dashboard, and
   `prometheus/engine-node-rules.yml`, the alerting rules for a down node, failing alert pages, or a
-  missing or expiring API certificate.
+  missing or expiring API certificate. `runbooks/` holds the operator's procedures (`README.md`
+  indexes them): deploy and rollback, reduce-only, restart and recovery, key recovery, corporate
+  actions, incident response, withdrawal stalls and `checkpoint_backlog`, feed, custody and
+  checkpoint-endpoint failures including a crypto venue outage, certificate renewal failure, the
+  `unattested_certificate` alert, operator candidates and standbys. `alerts.md` lists every alert
+  the code raises with its level and where to go (a new alert gets a row there in the same change),
+  `reference.md` holds the shared variables and checks, and `production-node.toml` is the production
+  node config without `[genesis]`, assembled with `config/benchmark-publishers.toml` and
+  `config/production-genesis.toml`, each placeholder or open decision marked `OWNER` or `REPLACE`,
+  with a test that it loads.
 - **.github/workflows/** — `ci.yaml`: fmt, the file line cap, clippy, tests (and the node's
   production-build tests), the reference-log examples' tests, the reference-log replay and
   invariant tests on x86_64 and aarch64 Linux, the unchanged-reference-log check, `cargo-deny`,
@@ -403,6 +412,7 @@ Run from the repo root:
   `cargo test -p engine-core --test hot_path_benchmark --locked -- --ignored --nocapture`
 - Property tests: `cargo test -p engine-core --test invariants`
 - Production genesis and its calendars: `cargo test -p engine-node --test production_genesis`
+- Production node template: `cargo test -p engine-node --test production_node_template`
 - New protocol version's reference log:
   `cargo run -p engine-core --example reference_log -- crates/core/tests/reference/v<N>.jsonl`, then
   the node's from it: `cargo run -p engine-node --example reference_log --
