@@ -61,6 +61,39 @@ async fn consumed_nonce_must_reach_the_configured_confirmation_ancestor() {
     assert_eq!(server.state.lock().unwrap().sent.len(), 3);
 }
 
+#[tokio::test]
+async fn a_chain_nonce_behind_the_reservation_sends_nothing_and_names_both_nonces() {
+    let dir = scratch_dir("nonce-progress-behind");
+    fs::create_dir_all(&dir).unwrap();
+    let server = Server::start(&dir).await;
+    let a = checkpoint(10);
+    let b = successor(&a, 11);
+    let chain = rpc(&server.url, &dir);
+    chain.post(&a).await.unwrap();
+    assert_eq!(read_record(&dir)["nonce"], 7);
+    let bytes = fs::read(dir.join("checkpoint-submission.json")).unwrap();
+    // The chain forgets the nonce the reservation owns, as after a reorg deeper than its finality.
+    {
+        let mut state = server.state.lock().unwrap();
+        state.latest_nonce = 6;
+        state.pending_nonce = 6;
+    }
+    let error = chain.post(&a).await.unwrap_err();
+    assert!(format!("{error:#}").contains("relayer nonce 6 is behind its reservation at 7"), "{error:#}");
+    // A successor of a finalized predecessor meets the same refusal.
+    public_finality_and_drop(&server, &a);
+    let error = chain.post(&b).await.unwrap_err();
+    assert!(format!("{error:#}").contains("relayer nonce 6 is behind its reservation at 7"), "{error:#}");
+    assert_eq!(fs::read(dir.join("checkpoint-submission.json")).unwrap(), bytes, "the reservation is kept");
+    assert_eq!(server.state.lock().unwrap().sent.len(), 1, "nothing is sent at a nonce with a gap");
+    // A lagging read that catches up is not stuck.
+    server.state.lock().unwrap().latest_nonce = 7;
+    server.state.lock().unwrap().pending_nonce = 7;
+    chain.post(&b).await.unwrap();
+    assert_eq!(read_record(&dir)["nonce"], 7);
+    assert_eq!(server.state.lock().unwrap().sent.len(), 2);
+}
+
 #[test]
 fn existing_records_load_and_invalid_reuse_provenance_preserves_bytes() {
     let dir = scratch_dir("nonce-progress-records");

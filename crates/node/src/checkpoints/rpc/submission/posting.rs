@@ -59,7 +59,7 @@ impl CheckpointRpc {
                             .context("reserved nonce is consumed; await canonical checkpoint reconciliation")?,
                     }
                 } else {
-                    ensure!(latest_nonce == previous.nonce, "relayer nonce is behind its reservation");
+                    ensure!(latest_nonce == previous.nonce, behind_reservation(latest_nonce, previous.nonce));
                     previous
                 }
             }
@@ -67,7 +67,7 @@ impl CheckpointRpc {
                 ensure!(cp.seq > previous.checkpoint.seq, "checkpoint differs from its nonce reservation");
                 // Neither public latest inclusion nor an account nonce proves obsolescence.
                 self.check_finalized_parent(cp, &previous.checkpoint).await?;
-                ensure!(latest_nonce >= previous.nonce, "relayer nonce is behind its reservation");
+                ensure!(latest_nonce >= previous.nonce, behind_reservation(latest_nonce, previous.nonce));
                 let reused_through = if latest_nonce == previous.nonce {
                     Some(previous.checkpoint.clone())
                 } else {
@@ -226,6 +226,15 @@ impl CheckpointRpc {
         self.check_free_nonce(nonce).await?;
         self.submissions()?.reserve(cp.clone(), nonce, None)
     }
+}
+
+/// The refusal when the chain's relayer nonce has fallen behind the durable reservation. A
+/// reservation moves to a later nonce only once the earlier one's consumer is final, so this is a
+/// reorg deeper than the configured finality, or a backend that lags the one the reservation was
+/// made from. The poster sends nothing at a nonce with a gap and changes nothing; a lagging read
+/// clears on the next retry.
+fn behind_reservation(chain_nonce: u64, reserved_nonce: u64) -> String {
+    format!("relayer nonce {chain_nonce} is behind its reservation at {reserved_nonce}")
 }
 
 /// Encodes the exact enclave-authorized vault call.
