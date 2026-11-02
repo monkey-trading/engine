@@ -487,14 +487,14 @@ fn commands(entries: &[LogEntry]) -> Vec<Command> {
         .collect()
 }
 
+mod access_tests;
 mod benchmark_recovery;
 mod benchmark_schedule;
 mod benchmarks;
 mod catch_up;
 mod genesis;
+mod house_state;
 mod operator;
+mod replay;
 mod rotation;
 mod toxicity;
-
-mod access_tests;
-mod replay;

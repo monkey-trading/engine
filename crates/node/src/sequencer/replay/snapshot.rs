@@ -98,7 +98,13 @@ impl Replay {
         } else {
             None
         };
-        let Snapshot { progress: Progress { genesis, activations, checkpoints }, context, checkpoint, .. } = snapshot;
+        let Snapshot {
+            progress: Progress { genesis, activations, checkpoints, params_seq },
+            context,
+            checkpoint,
+            offset,
+            ..
+        } = snapshot;
         let last_checkpoint_ts = Some(engine.now());
         // The pinned snapshot envelope signs all engine bytes, including legacy staking references.
         // Commands after its checkpoint are checked independently from that checkpoint's link.
@@ -126,6 +132,9 @@ impl Replay {
             recovery_origin: parent,
             recovery_anchor,
             last_signed_checkpoint: Some(checkpoint),
+            last_checkpoint_offset: Some(offset),
+            last_offset: Some(offset),
+            params_seq,
             domain: Some(domain),
             trusted_signer,
             origin,

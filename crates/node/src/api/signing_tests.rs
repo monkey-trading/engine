@@ -67,6 +67,28 @@ async fn a_read_is_signed_over_its_request_challenge_time_and_log_head() {
 }
 
 #[tokio::test]
+async fn the_house_state_is_signed_and_answers_the_seq_the_parameters_and_the_checkpoint() {
+    let (node, app) = node("house-state", &dev_config().api);
+    let (status, headers, body) = call(&app, "GET", "/v1/house/state", Some(CHALLENGE), Body::empty()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(verify(("GET", "/v1/house/state", b""), parse(CHALLENGE), status, &headers, &body), Ok(()));
+    let state: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let head = node.manifest.borrow().flushed.expect("genesis is in the log").seq;
+    assert_eq!(state["seq"], head, "the answer is read at the log head the signature names");
+    let params = state["params"].as_object().expect("genesis set the parameters");
+    for field in ["seq", "profit_fee_bps", "closeout_level_bps", "house_total_cap_bps", "stress_levels"] {
+        assert!(params.contains_key(field), "params lacks {field}: {state}");
+    }
+    assert!(params["seq"].as_u64().is_some_and(|set_at| set_at <= head), "{state}");
+    let checkpoint = state["checkpoint"].as_object().expect("the dev log has checkpointed");
+    assert_eq!(checkpoint["type"], "checkpoint");
+    assert!(checkpoint["offset"].as_str().is_some_and(|offset| offset.contains(':')), "{state}");
+    for field in ["seq", "root", "signature", "signer"] {
+        assert!(checkpoint.contains_key(field), "checkpoint lacks {field}: {state}");
+    }
+}
+
+#[tokio::test]
 async fn a_response_is_signed_over_the_request_body_it_answers() {
     let (_node, app) = node("request-body", &dev_config().api);
     let sent = br#"{"account":"0x0707070707070707070707070707070707070707","amount":"oops"}"#;

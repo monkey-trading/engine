@@ -277,6 +277,8 @@ impl Sequencer {
             accounting,
             last_checkpoint_ts,
             last_signed_checkpoint,
+            last_checkpoint_offset,
+            params_seq,
             recovery_work,
             recovery_anchor_work,
             recovery_base,
@@ -359,7 +361,7 @@ impl Sequencer {
             benchmark_schedule_dirty: false,
             benchmark_schedule_pending: false,
             sealing: cfg.history_sealing,
-            progress: Progress { genesis, activations, checkpoints },
+            progress: Progress { genesis, activations, checkpoints, params_seq },
             command_prefix,
             snapshot_base: recovery_base,
             snapshot_work: recovery_work.clone(),
@@ -367,6 +369,7 @@ impl Sequencer {
             snapshot_signers: checkpoint_signers,
             uncaptured: None,
             marks: Default::default(),
+            house: house::Latest::recovered(last_checkpoint_offset.zip(last_signed_checkpoint.clone())),
         };
         sequencer.marks.take_recovered(replayed_last_marks);
         {

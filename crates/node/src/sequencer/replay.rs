@@ -31,6 +31,10 @@ pub struct Replayed {
     pub(crate) recovery_work: Vec<crate::checkpoints::Work>,
     pub(crate) recovery_anchor_work: Option<crate::checkpoints::Work>,
     pub(crate) last_signed_checkpoint: Option<crate::log::Checkpoint>,
+    /// Where `last_signed_checkpoint` sits in the log.
+    pub(crate) last_checkpoint_offset: Option<log::Offset>,
+    /// The seq of the latest applied `SetParams`, if the replay saw one or its snapshot carried one.
+    pub(crate) params_seq: Option<u64>,
     pub(crate) recovery_base: Option<RecoveryBase>,
     /// Withdrawals the last command approved that the log ends before signing, as a crash between
     /// a command's entry and its withdrawal entry leaves: `(account, amount, nonce)`.
@@ -76,6 +80,10 @@ pub(super) struct Replay {
     command_prefix: [u8; 32],
     checkpoints: u64,
     last_signed_checkpoint: Option<crate::log::Checkpoint>,
+    last_checkpoint_offset: Option<log::Offset>,
+    /// The offset of the entry applied last, from which the next one's follows (see `log::offset_of`).
+    last_offset: Option<log::Offset>,
+    params_seq: Option<u64>,
     recovery_parent: Option<crate::log::CheckpointParent>,
     recovery_origin: Option<crate::log::CheckpointParent>,
     recovery_anchor: Option<crate::log::Checkpoint>,
@@ -160,6 +168,7 @@ impl Replay {
     /// - a checkpoint root that differs from the replayed state
     pub(super) fn apply(&mut self, entry: &LogEntry) -> anyhow::Result<()> {
         let engine = &mut self.engine;
+        self.last_offset = log::offset_of(self.last_offset, entry).ok();
         match entry {
             LogEntry::Command(c) => {
                 ensure_signed(self.logs_events, &self.approved, engine.last_seq())?;
@@ -172,6 +181,9 @@ impl Replay {
                 crate::sequencer::legacy::check_activation_ledger(&c.sequenced.cmd, &self.legacy_deposits)?;
                 let events = engine.apply(&c.sequenced).with_context(|| format!("applying seq {seq}"))?;
                 self.genesis.command(&c.sequenced, &events);
+                if crate::sequencer::house::applied_set_params(&c.sequenced.cmd, &events) {
+                    self.params_seq = Some(seq);
+                }
                 if engine.protocol_version() != version {
                     self.activations.push((engine.protocol_version(), seq));
                 }
@@ -346,6 +358,7 @@ impl Replay {
                     self.trusted_signer.is_some() || self.attested.is_some(),
                 )?;
                 self.last_signed_checkpoint = Some(cp.clone());
+                self.last_checkpoint_offset = self.last_offset;
                 self.genesis.checkpoint();
                 // The checkpoint covers the last command applied, whose stamp is the engine's time.
                 self.last_checkpoint_ts = Some(engine.now());
@@ -391,6 +404,8 @@ impl Replay {
             access_failed: self.access_alerts.failed(),
             last_marks: self.last_marks,
             last_signed_checkpoint: self.last_signed_checkpoint,
+            last_checkpoint_offset: self.last_checkpoint_offset,
+            params_seq: self.params_seq,
             recovery_work: self.recovery_work,
             recovery_anchor_work: self.recovery_anchor_work,
             recovery_base,
