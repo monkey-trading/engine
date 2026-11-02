@@ -784,6 +784,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `tests/replay.rs` — replays a log the node wrote before protocol versions, kept in
   `tests/fixtures/`, and checks that `engine replay` fails on a log it cannot verify
 - `tests/common/access.rs` — shared explicit signed declarations, screening and financial scenario inputs
+- `tests/production_node_template.rs` — loads `ops/runbooks/production-node.toml` assembled with the
+  benchmark publishers and the production genesis, checks it holds what a production build requires,
+  and that every placeholder carries a marker
 - `tests/production_genesis/` — loads `config/production-genesis.toml` as a dev node's genesis,
   checks the launch values and quote currencies, and steps it through weeks with holidays and early
   closes (`main.rs`); checks each market reaches every divergence stress level with screened house
