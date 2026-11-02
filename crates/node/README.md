@@ -118,7 +118,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   spread a close would pay over a ceiling, because the fill clamps to it, floored to the exact
   bound
 - Supervised tasks: any task stopping stops the node, and SIGTERM drains to a final checkpoint
-- Live crypto prices from Coinbase, Kraken, and Bitstamp over WebSocket: one supervised task per
+- Live crypto prices from Coinbase and Kraken over WebSocket: one supervised task per
   venue connection, quotes stamped with the venue's own time, and reconnects with backoff
 - Live FX, index and commodity futures, and US share prices from market-data vendors, two per
   market: Massive (FX, futures, and stocks feeds) and TraderMade over WebSocket with their API

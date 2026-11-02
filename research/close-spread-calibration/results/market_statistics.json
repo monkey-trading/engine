@@ -1,8 +1,8 @@
 {
   "engine_revision": "41a9ef4a52cb26ac592c5a0e372f610d8d1ba067",
   "input_sha256": {
-    "genesis_inventory": "72ffcc75459ccd23ea1459d87d905746b59a0b3d55ede0fe9a1ba55865dc0e55",
-    "genesis_file_informational": "5d3ef4fd6b5ca7e6b68b4976879bdabb91036e9adcb6be6151aaf41ee1d2ceee",
+    "genesis_inventory": "3569588aba17895b97247ac8c5a7adb2741cf51b0d49439c90822d7c096f7d8d",
+    "genesis_file_informational": "7da8130364beb3384043d8ed5b96dabc19805a9d8da039df6ef2c5c0d6356bdd",
     "bars": "d742bab6c751e97338bbb82d7801f22aec3a5bed7d01904b7dcdd9ed076ec522",
     "catalogue.py": "8426ed40b977bc18c2b80fa240b3d2c22c56b2c871363017e9b84af159cb6396",
     "derive/markets.py": "32629c08a2adcb27109f4dddd529828ccc81421fd583245e673d9108d1edd428",
@@ -31,17 +31,17 @@
       "ewma_weight_bps": 1000,
       "tiers": [
         {
-          "min_score_bps": 5,
-          "extra_spread_bps": 1
+          "min_score_bps": 1,
+          "extra_spread_bps": 2
         },
         {
-          "min_score_bps": 15,
+          "min_score_bps": 2,
           "extra_spread_bps": 3
         }
       ],
       "notional": {
-        "prior": "10000",
-        "memory": "10000000"
+        "prior": "5629518",
+        "memory": "11259036"
       }
     },
     "stress_levels": [
@@ -53,17 +53,17 @@
         "size_spread_multiplier_bps": 20000,
         "min_spread_bps": 2,
         "trigger": {
-          "divergence_share_bps": 6000,
-          "move_bps": 150,
-          "utilisation_bps": 8000
+          "divergence_share_bps": 6001,
+          "move_bps": 75,
+          "utilisation_bps": 7000
         }
       },
       {
         "size_spread_multiplier_bps": 40000,
         "min_spread_bps": 10,
         "trigger": {
-          "divergence_share_bps": 8000,
-          "move_bps": 300,
+          "divergence_share_bps": 9500,
+          "move_bps": 200,
           "utilisation_bps": 9500
         }
       }
@@ -80,7 +80,7 @@
         "margin_tiers": [
           {
             "up_to": "1000000",
-            "bps": 1000
+            "bps": 100
           },
           {
             "bps": 2000
@@ -160,7 +160,7 @@
         "margin_tiers": [
           {
             "up_to": "1000000",
-            "bps": 1000
+            "bps": 100
           },
           {
             "bps": 2000

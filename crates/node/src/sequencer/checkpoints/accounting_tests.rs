@@ -57,11 +57,11 @@ fn gated_live_and_recovered_accounting_matches_cash_through_trading_and_withdraw
     let mut unpaid = Fixed::ZERO;
     let mut live = Vec::new();
     for cmd in [
-        deposit(1000, "0xmargin"),
+        deposit(574, "0xmargin"),
         Command::HouseCapital { amount: Fixed::from_int(100), chain_ref: "0xcapital".into() },
         Command::HouseCapital { amount: Fixed::from_int(-10), chain_ref: "0xcapital-out".into() },
         Command::HouseCapital { amount: Fixed::ZERO, chain_ref: "0xcapital-zero".into() },
-        deposit(1000, "0xmargin"),
+        deposit(574, "0xmargin"),
         Command::HouseCapital { amount: Fixed::ONE, chain_ref: "0xmargin".into() },
         prices(1, "100000", clock.now_ms()),
         order(1, Side::Buy, "0.1", "100000"),

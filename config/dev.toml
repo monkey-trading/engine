@@ -110,8 +110,8 @@ mock_mids = [
   { market = 40, mid = "230" },
 ]
 
-# Live crypto venues. Every venue here quotes against USD, so the index never
-# mixes quote currencies.
+# Live crypto venues: Coinbase and Kraken, so the index is their mean.
+# Every venue here quotes against USD, so the index never mixes quote currencies.
 [feeds.venues]
 timeout = "10s"
 reconnect_min = "500ms"
@@ -130,11 +130,6 @@ symbols = [{ market = 1, symbol = "BTC-USD" }, { market = 2, symbol = "ETH-USD" 
 venue = "kraken"
 url = "wss://ws.kraken.com/v2"
 symbols = [{ market = 1, symbol = "BTC/USD" }, { market = 2, symbol = "ETH/USD" }]
-
-[[feeds.venues.connections]]
-venue = "bitstamp"
-url = "wss://ws.bitstamp.net"
-symbols = [{ market = 1, symbol = "btcusd" }, { market = 2, symbol = "ethusd" }]
 
 # Trusted time. The sequencer checks every stamp against signed Roughtime readings
 # (RFC 10049), and stamps nothing, genesis included, before its first sample. It
@@ -288,7 +283,7 @@ asset_class = "crypto"
 max_slippage_bps = 25
 house_cap_bps = 3000
 house_cap_floor = "300000"
-margin_tiers = [{ up_to = "1000000", bps = 1000 }, { bps = 2000 }]
+margin_tiers = [{ up_to = "1000000", bps = 100 }, { bps = 2000 }]
 spread_tiers = [{ up_to = "2000000", bps = 0 }, { up_to = "10000000", bps = 3 }, { bps = 8 }]
 schedule = { kind = "always_open" }
 price_rules = { max_age_ms = 1000, max_divergence_bps = 25, min_sources = 2 }
@@ -301,7 +296,7 @@ asset_class = "crypto"
 max_slippage_bps = 25
 house_cap_bps = 2000
 house_cap_floor = "200000"
-margin_tiers = [{ up_to = "1000000", bps = 1000 }, { bps = 2000 }]
+margin_tiers = [{ up_to = "1000000", bps = 100 }, { bps = 2000 }]
 spread_tiers = [{ up_to = "1000000", bps = 0 }, { up_to = "5000000", bps = 3 }, { bps = 8 }]
 schedule = { kind = "always_open" }
 price_rules = { max_age_ms = 1000, max_divergence_bps = 25, min_sources = 2 }

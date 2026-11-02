@@ -11,16 +11,18 @@
 #   large-cap shares.
 # - Margin (#8, launch margin tables): professional-client levels, up to 200:1
 #   (50 bps) on FX majors and major indices and lower on commodities, shares
-#   and crypto, with bands that rise with position notional.
+#   and crypto, with bands that rise with position notional. BTC-USD and
+#   ETH-USD are 100:1 (100 bps) up to $1M of notional, and SOL-USD 10:1.
 # - Fees (#9, launch fee schedule): a 10% profit fee, and financing markups
 #   over the benchmark of 2.5% for indices, commodities and shares, 1% for FX,
 #   and 5% for crypto.
 # - Size spreads, stress levels, and the other protocol parameters are
 #   config/dev.toml's (#9). A market dev.toml does not list takes its asset
 #   class's size spreads, slippage bound, price rules, margin tables and house
-#   cap, except SOL-USD's house cap: 10% of house NAV, set here below BTC's 30%
-#   and ETH's 20%. Each market's financing benchmark is the rate of its base or
-#   index currency, as dev.toml's EUR-USD uses ESTR, with that rate's day basis.
+#   cap, except SOL-USD's house cap (10% of house NAV, set here below BTC's 30%
+#   and ETH's 20%) and its margin (10:1 where BTC-USD and ETH-USD are 100:1).
+#   Each market's financing benchmark is the rate of its base or index
+#   currency, as dev.toml's EUR-USD uses ESTR, with that rate's day basis.
 # - Margin and spread bands and house caps are in USD notional. USD-JPY,
 #   Germany 40, UK 100 and Japan 225 are quoted in JPY, EUR, GBP and JPY at
 #   their venues (quote_currency). Their profit and loss accrues in that
@@ -308,7 +310,7 @@ symbol = "BTC-USD"
 asset_class = "crypto"
 max_slippage_bps = 25
 house_cap_bps = 3000
-margin_tiers = [{ up_to = "1000000", bps = 1000 }, { bps = 2000 }]
+margin_tiers = [{ up_to = "1000000", bps = 100 }, { bps = 2000 }]
 spread_tiers = [{ up_to = "2000000", bps = 0 }, { up_to = "10000000", bps = 3 }, { bps = 8 }]
 schedule = { kind = "always_open" }
 price_rules = { max_age_ms = 1000, max_divergence_bps = 25, min_sources = 2 }
@@ -320,7 +322,7 @@ symbol = "ETH-USD"
 asset_class = "crypto"
 max_slippage_bps = 25
 house_cap_bps = 2000
-margin_tiers = [{ up_to = "1000000", bps = 1000 }, { bps = 2000 }]
+margin_tiers = [{ up_to = "1000000", bps = 100 }, { bps = 2000 }]
 spread_tiers = [{ up_to = "1000000", bps = 0 }, { up_to = "5000000", bps = 3 }, { bps = 8 }]
 schedule = { kind = "always_open" }
 price_rules = { max_age_ms = 1000, max_divergence_bps = 25, min_sources = 2 }

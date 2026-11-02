@@ -187,9 +187,9 @@ fn a_market_that_is_closed_or_has_no_fx_price_says_why_and_has_no_steps() {
 #[test]
 fn an_account_that_can_open_under_a_dollar_gets_a_step_for_it() {
     let mut engine = engine();
-    deposit(&mut engine, TINY, fixed("0.05"));
+    deposit(&mut engine, TINY, fixed("0.005"));
     let quote = read(&engine, TINY, BTC);
-    // Five cents at 10% margin opens half a dollar: 0.000005 BTC at 100,000.
+    // Half a cent at 1% margin opens half a dollar: 0.000005 BTC at 100,000.
     for (side, steps) in sides(&quote) {
         let fitting_steps: Vec<_> = steps.iter().filter(|step| step.declined.is_none()).collect();
         let step = fitting_steps.last().unwrap_or_else(|| panic!("{side:?}: {quote:?}"));

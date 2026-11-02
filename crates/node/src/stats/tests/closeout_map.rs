@@ -13,19 +13,19 @@ fn total(bins: &[crate::stats::snapshot::Bin]) -> (Fixed, u64) {
     })
 }
 
-/// A long of 5 BTC on 100000 of equity closes out where equity falls to half the margin
-/// requirement: about 15.8% below the mark, so inside the 16-15% bucket or its neighbour.
+/// A long of 8 BTC on 100000 of equity closes out where equity falls to half the margin
+/// requirement: about 12.1% below the mark, so inside the 13-12% bucket or its neighbour.
 #[test]
 fn a_long_lands_in_the_bucket_of_the_fall_that_closes_its_account_out() {
     let mut rig = Rig::new();
-    rig.trade(T0 + 1_000, TRADER, Side::Buy, 5);
+    rig.trade(T0 + 1_000, TRADER, Side::Buy, 8);
     let snapshot = scan(&rig.engine, 0, T0, layout(), true);
     let book = &snapshot.markets[&BTC];
     assert_eq!((book.long.count, book.short.count), (1, 0));
     let hit: Vec<usize> = book.closeout.iter().enumerate().filter(|(_, b)| b.long.count == 1).map(|(i, _)| i).collect();
     assert_eq!(hit.len(), 1, "one bucket holds the position: {hit:?}");
-    // Bucket 4 covers a fall of 16% to 15%, bucket 3 of 17% to 16%.
-    assert!((3..=4).contains(&hit[0]), "bucket {}", hit[0]);
+    // Bucket 7 covers a fall of 13% to 12%, bucket 8 of 12% to 11%.
+    assert!((7..=8).contains(&hit[0]), "bucket {}", hit[0]);
     assert_eq!(total(&book.closeout).1 + book.beyond.long.count + book.due.long.count, 1);
     assert_eq!(snapshot.open_positions, 1);
     assert_eq!(snapshot.open_interest, book.long.usd);

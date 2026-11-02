@@ -43,8 +43,8 @@ fn dev_scenario_financing_closes_out_and_a_stale_market_counts_at_its_last_mark(
     seq.genesis(&genesis).unwrap();
     seq.trust(sample_around(clock.as_ref())).unwrap();
 
-    // 0.1 BTC bought at 100,000 and marked at 94,740: equity 474 against a close-out level of 473.7.
-    fund(&mut seq, 1, 1000, "dep-1");
+    // 0.1 BTC bought at 100,000 and marked at 94,740: equity 48 against a close-out level of 47.37.
+    fund(&mut seq, 1, 574, "dep-1");
     sequenced(&mut seq, prices(BTC, "100000", now()));
     market_order(&mut seq, 1, BTC, Side::Buy, "0.1", "100000");
     sequenced(&mut seq, prices(BTC, "94740", now()));
@@ -59,9 +59,9 @@ fn dev_scenario_financing_closes_out_and_a_stale_market_counts_at_its_last_mark(
         events.contains(&Event::Financing { account: access::account(1), market: BTC, amount: financing }),
         "{events:?}"
     );
-    let equity = fixed("474") - financing;
+    let equity = fixed("48") - financing;
     assert!(
-        events.contains(&Event::CloseOut { account: access::account(1), equity, margin: fixed("947.4") }),
+        events.contains(&Event::CloseOut { account: access::account(1), equity, margin: fixed("94.74") }),
         "{events:?}"
     );
     assert!(events.iter().any(|e| matches!(e, Event::Fill(fill) if fill.liquidation && fill.qty == fixed("0.1"))));
@@ -73,16 +73,16 @@ fn dev_scenario_financing_closes_out_and_a_stale_market_counts_at_its_last_mark(
     sequenced(&mut seq, prices(ETH, "3800", now()));
     move_to(&mut seq, rollover + 1_200);
     sequenced(&mut seq, prices(BTC, "94740", now()));
-    // Equity 800 against 380 of margin at the last mark leaves 420 free; past whole-USDC dust, a
+    // Equity 800 against 38 of margin at the last mark leaves 762 free; past whole-USDC dust, a
     // request above it is refused.
-    let events = withdrawal(&mut seq, 8, "420.000001");
-    let refused = Reject::InsufficientFunds { available: fixed("420") };
+    let events = withdrawal(&mut seq, 8, "762.000001");
+    let refused = Reject::InsufficientFunds { available: fixed("762") };
     assert!(matches!(&events[..], [Event::WithdrawalRejected { reason, .. }] if *reason == refused), "{events:?}");
-    let events = withdrawal(&mut seq, 8, "420");
+    let events = withdrawal(&mut seq, 8, "762");
     assert!(
         events.contains(&Event::WithdrawalApproved {
             account: crate::test_support::access::account(8),
-            amount: fixed("420"),
+            amount: fixed("762"),
             nonce: 1
         }),
         "{events:?}"
