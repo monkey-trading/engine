@@ -483,6 +483,248 @@
         }
       },
       "signature": "0xc97a70cb4d1cecf490b48c5d76a80273703be05b15cfa5a57838aefe3c7805ce347a03d40b7cbf89d8e38c6ffe3aeff4c3e73f1db44dde6ededbb7f2c78cc8431c"
+    },
+    {
+      "kind": "cancel_all",
+      "nonce": 6,
+      "expires_at": 1792540800000,
+      "body": {
+        "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+      },
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "CancelAllRequest": [
+            {
+              "name": "account",
+              "type": "address"
+            },
+            {
+              "name": "nonce",
+              "type": "uint64"
+            },
+            {
+              "name": "expiresAt",
+              "type": "int64"
+            }
+          ]
+        },
+        "primaryType": "CancelAllRequest",
+        "domain": {
+          "name": "monkeytrading",
+          "version": "1",
+          "chainId": 31337,
+          "verifyingContract": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+        },
+        "message": {
+          "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+          "nonce": 6,
+          "expiresAt": 1792540800000
+        }
+      },
+      "signature": "0x78626c433b7526d63e3d42d77b0d21b3b3759a822e50a0c1530a5c162c6625f3048ec7435678afcf74c2c53002fde16a9ed88e3cff1dd03f54e9a9f3b593d5681c"
+    },
+    {
+      "kind": "close_all",
+      "nonce": 7,
+      "expires_at": 1792540800000,
+      "body": {
+        "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        "closes": [
+          {
+            "market": 2,
+            "quoted": "3000"
+          },
+          {
+            "market": 1,
+            "quoted": "100000"
+          }
+        ],
+        "max_slippage_bps": 50
+      },
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "CloseAllRequest": [
+            {
+              "name": "account",
+              "type": "address"
+            },
+            {
+              "name": "nonce",
+              "type": "uint64"
+            },
+            {
+              "name": "expiresAt",
+              "type": "int64"
+            },
+            {
+              "name": "closes",
+              "type": "CloseEntry[]"
+            },
+            {
+              "name": "hasMaxSlippage",
+              "type": "bool"
+            },
+            {
+              "name": "maxSlippageBps",
+              "type": "int64"
+            }
+          ],
+          "CloseEntry": [
+            {
+              "name": "market",
+              "type": "uint32"
+            },
+            {
+              "name": "quoted",
+              "type": "int128"
+            }
+          ]
+        },
+        "primaryType": "CloseAllRequest",
+        "domain": {
+          "name": "monkeytrading",
+          "version": "1",
+          "chainId": 31337,
+          "verifyingContract": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+        },
+        "message": {
+          "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+          "nonce": 7,
+          "expiresAt": 1792540800000,
+          "closes": [
+            {
+              "market": 2,
+              "quoted": "3000000000000"
+            },
+            {
+              "market": 1,
+              "quoted": "100000000000000"
+            }
+          ],
+          "hasMaxSlippage": true,
+          "maxSlippageBps": 50
+        }
+      },
+      "signature": "0xa7c9e7fb6d774c7ffa853475ff3aa214ec54cca4bc8ad48d35483e3dacb7fb630627590edf507cc732b7a7d38cbfdf83db8e7a3e6b7892c8cd003793eef9df7b1b"
+    },
+    {
+      "kind": "close_all",
+      "nonce": 8,
+      "expires_at": 1792540800000,
+      "body": {
+        "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        "closes": []
+      },
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "CloseAllRequest": [
+            {
+              "name": "account",
+              "type": "address"
+            },
+            {
+              "name": "nonce",
+              "type": "uint64"
+            },
+            {
+              "name": "expiresAt",
+              "type": "int64"
+            },
+            {
+              "name": "closes",
+              "type": "CloseEntry[]"
+            },
+            {
+              "name": "hasMaxSlippage",
+              "type": "bool"
+            },
+            {
+              "name": "maxSlippageBps",
+              "type": "int64"
+            }
+          ],
+          "CloseEntry": [
+            {
+              "name": "market",
+              "type": "uint32"
+            },
+            {
+              "name": "quoted",
+              "type": "int128"
+            }
+          ]
+        },
+        "primaryType": "CloseAllRequest",
+        "domain": {
+          "name": "monkeytrading",
+          "version": "1",
+          "chainId": 31337,
+          "verifyingContract": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+        },
+        "message": {
+          "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+          "nonce": 8,
+          "expiresAt": 1792540800000,
+          "closes": [],
+          "hasMaxSlippage": false,
+          "maxSlippageBps": 0
+        }
+      },
+      "signature": "0x0c5f5885ab1dec69b0e90d6a2343c2e3d3bf72a9b415b35593266844f409ef685a647c4c7186c26f593c735f15141609b9be4083339ab2512d8bd8094bf6453c1c"
     }
   ]
 }

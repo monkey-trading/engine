@@ -24,7 +24,7 @@ use sha3::{Digest, Keccak256};
 
 use crate::Fixed;
 use crate::access::{AccessDeposit, EligibilityClass, Screening};
-use crate::command::{AdminCommand, OrderKind, OrderRequest};
+use crate::command::{AdminCommand, CloseAllRequest, CloseEntry, OrderKind, OrderRequest};
 use crate::types::{AccountId, Millis, OrderId, Side};
 
 /// The domain name every request is signed under.
@@ -64,6 +64,30 @@ mod typed {
             uint64 nonce;
             int64 expiresAt;
             uint64 orderId;
+        }
+
+        /// `Command::CancelAll`.
+        struct CancelAllRequest {
+            address account;
+            uint64 nonce;
+            int64 expiresAt;
+        }
+
+        /// One entry of `Command::AccessCloseAll`: the market and the price the client saw.
+        struct CloseEntry {
+            uint32 market;
+            int128 quoted;
+        }
+
+        /// `Command::AccessCloseAll`. The list is signed in order; `hasMaxSlippage` is false when the
+        /// closes take each market's own bound.
+        struct CloseAllRequest {
+            address account;
+            uint64 nonce;
+            int64 expiresAt;
+            CloseEntry[] closes;
+            bool hasMaxSlippage;
+            int64 maxSlippageBps;
         }
 
         /// `Command::Withdraw`.
@@ -166,6 +190,30 @@ pub fn cancel_hash(
 ) -> B256 {
     typed::CancelRequest { account: Address::from(account.0), nonce, expiresAt: expires_at, orderId: order_id }
         .eip712_signing_hash(domain)
+}
+
+/// The digest a client signs to cancel all its resting orders with `nonce`, until `expires_at`.
+pub fn cancel_all_hash(domain: &Eip712Domain, account: AccountId, nonce: u64, expires_at: Millis) -> B256 {
+    typed::CancelAllRequest { account: Address::from(account.0), nonce, expiresAt: expires_at }
+        .eip712_signing_hash(domain)
+}
+
+/// The digest a client signs to close the positions `req` names with `nonce`, until `expires_at`.
+pub fn close_all_hash(domain: &Eip712Domain, req: &CloseAllRequest, nonce: u64, expires_at: Millis) -> B256 {
+    // Every field is named, so a field added to `CloseAllRequest` fails to compile until it is signed.
+    let CloseAllRequest { account, closes, max_slippage_bps, auth: _ } = req;
+    typed::CloseAllRequest {
+        account: Address::from(account.0),
+        nonce,
+        expiresAt: expires_at,
+        closes: closes
+            .iter()
+            .map(|CloseEntry { market, quoted }| typed::CloseEntry { market: *market, quoted: quoted.raw() })
+            .collect(),
+        hasMaxSlippage: max_slippage_bps.is_some(),
+        maxSlippageBps: max_slippage_bps.unwrap_or(0),
+    }
+    .eip712_signing_hash(domain)
 }
 
 /// The digest a client signs to withdraw `amount` with `nonce`, until `expires_at`.

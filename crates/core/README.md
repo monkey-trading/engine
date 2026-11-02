@@ -246,11 +246,14 @@ this crate and reproduce the signed state roots exactly.
   market takes, the roll-adjusted index, and the roll
 - `src/session.rs` — weekly trading windows, holidays, dated closures such as early closes, and
   special sessions
+- `src/execution/batch.rs` and `src/execution/cancel.rs` — from `V44`, close-all and cancel-all: one
+  signed request closes whole positions through the single reduce-only market order's path, or cancels
+  every resting order
 - `src/session_keys.rs` — from `V41`, session-key registrations and revocations: their state,
   expiry cap, the order/cancel-only scope a session key signs within, and from `V42` the refilling
   budget of new addresses an account may introduce
 - `src/account.rs` — accounts, netted positions, and resting orders
-- `src/command.rs` / `src/event.rs` — engine inputs and outputs
+- `src/command.rs` / `src/event/` (its tests in `tests.rs`) — engine inputs and outputs
 - `src/types.rs` — ids, sides, and asset classes
 - `tests/` — protocol tests through `Engine::apply`, with a shared harness, its signing client
   (`client.rs`), protocol-version constructors (`versions.rs`), and the reference-log format in
@@ -320,10 +323,15 @@ this crate and reproduce the signed state roots exactly.
 - `tests/session_keys_caps.rs` — session-key retention: the live cap and its pruning, `V41`'s
   lifetime cap, and `V42`'s refilling introduction budget (empty, hourly refill, carried partial
   hour, saturation, known addresses free, the activation crossing)
+- `tests/batch_orders.rs` — `V44` batch orders: cancel-all and close-all events, the nonce, a replay,
+  an empty, repeated or too long list, a flat or unlisted entry, expiry, screening, a session key,
+  and the refusal before `V44`, with the shared harness in `tests/common/batch.rs`
+- `tests/batch_equivalence.rs` — property test: a close-all matches the same reduce-only orders sent
+  one at a time, in events, balances, positions, market aggregates, and house cash
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V43` parts (`v15.rs` to `v43.rs`)
+  `V15` to `V44` parts (`v15.rs` to `v44.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -463,6 +471,22 @@ included and the profit fee and financing still excluded, and wins in the period
 period's losses first, and what survives pays debt down before it earns; its session is in
 `examples/reference_log/v43.rs`.
 
+Protocol V44 adds batch orders (`src/execution/cancel.rs` and `src/execution/batch.rs`). `Command::CancelAll` cancels every
+resting order the account holds, in order id order, each with the `OrderCancelled` a single cancel
+emits; with none it does nothing. `Command::AccessCloseAll` (screened like an order) names
+markets, each with the price the client saw, and a slippage bound: every entry runs, in list order,
+as the reduce-only market order of the account's whole position in that market, through the same
+validation and execution as one order sent alone, so its spreads, close-spread ceiling, profit fee,
+emissions weight, stress and house caps are that order's, and each entry sees what the one before
+left. An entry that cannot fill emits the rejection a single order would, with its list index as
+the `client_id`, and the others still run; a market with no position is refused as reduce-only. A
+list with no entries, naming a market twice, or with more entries than listed markets is refused whole. Both forms use
+one nonce however many entries they hold, are authorised and screened once, and are signed as
+`CancelAllRequest` and `CloseAllRequest` (the list as `CloseEntry[]`, in order). A session key signs
+either form within its trade scope. Before V44 both are refused with `BatchUnsupported`, using no
+nonce. Neither adds engine state, so V43 roots are unchanged. Its session is in
+`examples/reference_log/v44.rs`.
+
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it
 is logged, and a signed rotation is refused; its session is in `examples/reference_log/v37.rs`.
@@ -585,7 +609,8 @@ apply to every historical protocol version without changing its events or roots.
 Run `cargo test -p engine-core --test hot_path_benchmark --locked -- --ignored --nocapture`
 in a quiet CPU window. The optimized dev profile benchmarks 100 samples per scenario; setup and
 index recovery are outside steady-state timings. It measures `Engine::apply`, including event
-allocation and drop, but excludes log I/O, signatures and checkpoint hashing. These figures are
+allocation and drop, but excludes log I/O and checkpoint hashing, and signatures except in the
+batch scenarios, whose requests are signed and so include the signature check. These figures are
 command-processing regression guards, not an end-to-end service latency promise.
 
 | Scenario | Accounts | p99 budget |
@@ -595,6 +620,9 @@ command-processing regression guards, not an end-to-end service latency promise.
 | Dormant resting orders in the repriced market | 100,000 | 200 us |
 | Daily rollover with financing on every position | 100,000 | 500 ms |
 | Finalising a MONKEY emission period in which every account lost (one sample) | 100,000 | 500 ms |
+| A signed empty cancel-all, the floor of a signed command (one sample per account) | 100,000 | 2 ms |
+| A signed cancel-all of 100 resting orders | 100,000 | 2 ms |
+| A signed close-all across the 37 launch markets | 100,000 | 2 ms |
 | First command after a year-long gap with quotes held across it, or at the last stamp the engine accepts (one sample each) | 1 | 5 ms |
 
 A concentrated price update still visits every holder, and a rollover still finances and checks

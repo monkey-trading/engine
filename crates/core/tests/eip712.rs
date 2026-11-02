@@ -8,10 +8,12 @@
 
 use alloy_dyn_abi::TypedData;
 use alloy_primitives::hex;
-use engine_core::command::{AdminCommand, CancelRequest, OrderKind, OrderRequest, WithdrawalRequest};
+use engine_core::command::{
+    AdminCommand, CancelAllRequest, CancelRequest, CloseAllRequest, OrderKind, OrderRequest, WithdrawalRequest,
+};
 use engine_core::eip712::{
-    self, Signature, admin_hash, cancel_hash, order_hash, session_key_registration_hash, session_key_revocation_hash,
-    withdrawal_hash,
+    self, Signature, admin_hash, cancel_all_hash, cancel_hash, close_all_hash, order_hash,
+    session_key_registration_hash, session_key_revocation_hash, withdrawal_hash,
 };
 use engine_core::types::{AccountId, Millis};
 use k256::ecdsa::SigningKey;
@@ -81,6 +83,25 @@ fn the_engine_reproduces_each_vector_signature_from_its_request_body() {
                     "orderId": body.order_id,
                 });
                 (cancel_hash(&domain, body.account, body.order_id, nonce, expires_at), message)
+            }
+            "cancel_all" => {
+                let body: CancelAllRequest = serde_json::from_value(vector.body.clone()).unwrap();
+                let message = json!({ "account": body.account.to_string(), "nonce": nonce, "expiresAt": expires_at });
+                (cancel_all_hash(&domain, body.account, nonce, expires_at), message)
+            }
+            "close_all" => {
+                let req: CloseAllRequest = serde_json::from_value(vector.body.clone()).unwrap();
+                let closes: Vec<Value> = req
+                    .closes
+                    .iter()
+                    .map(|entry| json!({ "market": entry.market, "quoted": entry.quoted.raw().to_string() }))
+                    .collect();
+                let message = json!({
+                    "account": req.account.to_string(), "nonce": nonce, "expiresAt": expires_at,
+                    "closes": closes, "hasMaxSlippage": req.max_slippage_bps.is_some(),
+                    "maxSlippageBps": req.max_slippage_bps.unwrap_or(0),
+                });
+                (close_all_hash(&domain, &req, nonce, expires_at), message)
             }
             "withdrawal" => {
                 let body: WithdrawalRequest = serde_json::from_value(vector.body.clone()).unwrap();

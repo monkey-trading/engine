@@ -5,10 +5,14 @@ mod common;
 use std::time::Instant;
 
 use chrono::NaiveDateTime;
-use common::{BTC, ETH, Harness, acct, f, market, ny, us_equities};
+use common::batch::{cancel_all, close_all, funded, market_order};
+use common::close_spread::rest;
+use common::session_keys::fresh_key;
+use common::{BTC, Client, ETH, Harness, acct, f, market, ny, us_equities};
 use engine_core::Engine;
-use engine_core::command::{AdminCommand, Command, OrderKind, Sequenced};
+use engine_core::command::{AdminCommand, CloseEntry, Command, OrderKind, Sequenced};
 use engine_core::market::{MarketSpec, PriceRules};
+use engine_core::params::DEFAULT_MAX_RESTING_ORDERS;
 use engine_core::price::SourceQuote;
 use engine_core::session::{Period, Schedule};
 use engine_core::types::{AccountId, AssetClass, MAX_STAMP_MS, MarketId, Side};
@@ -16,6 +20,13 @@ use serde_json::json;
 
 const SAMPLES: usize = 100;
 const HALTED: MarketId = 9;
+/// The markets the production genesis lists, which a close-all across every market names.
+const LAUNCH_MARKETS: usize = 37;
+/// The p99 budget for a signed batch command at 100k accounts. The 200 us of the unsigned commands
+/// above cannot hold for any signed one, whose signature recovery alone takes about that long
+/// (`empty_cancel_all_100k`); a batch must add little on top, and a close-all across every market
+/// measured about 270 us above that floor.
+const BATCH_BUDGET_US: u128 = 2_000;
 
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
@@ -215,4 +226,145 @@ fn halted() -> Harness {
     h.advance_to(ny(2026, 10, 20, 14, 30));
     h.price(HALTED, "100");
     h
+}
+
+#[test]
+#[ignore = "100k-account benchmark: run in an isolated CPU window"]
+fn batch_command_latency() {
+    // Each sample is its own account, holding a position in every launch market and a full set of
+    // resting orders, among 100k accounts. A signed, screened cancel-all or close-all is built
+    // outside the timed region, so the timing is the engine's apply of it, signature check included.
+    let (mut h, client, _) = funded();
+    h.price(ETH, "3000");
+    market_order(&mut h, &client, BTC, Side::Buy, "0.5", "100000");
+    market_order(&mut h, &client, ETH, Side::Sell, "5", "3000");
+    rest(&mut h, &client, BTC, Side::Buy, "0.1", OrderKind::Limit { price: f("90000") });
+    let mut state = serde_json::to_value(&h.engine).expect("fixture encoding");
+    let template =
+        state["accounts"].as_object().unwrap().iter().find(|(_, v)| !v["orders"].as_object().unwrap().is_empty());
+    let (_, template) = template.map(|(k, v)| (k.clone(), v.clone())).expect("the client rests an order");
+    let order = template["orders"].as_object().unwrap().values().next().cloned().unwrap();
+    let position = template["positions"][ETH.to_string()].clone();
+    let market_template = state["markets"][ETH.to_string()].clone();
+    // The launch markets: the harness's three, and copies of ETH under further ids.
+    let ids: Vec<MarketId> =
+        [BTC, ETH, common::AAPL].into_iter().chain(100..100 + (LAUNCH_MARKETS - 3) as MarketId).collect();
+    for &id in ids.iter().filter(|id| ![BTC, ETH, common::AAPL].contains(id)) {
+        let mut copy = market_template.clone();
+        copy["spec"]["id"] = json!(id);
+        copy["spec"]["symbol"] = json!(format!("COPY-{id}"));
+        state["markets"][id.to_string()] = copy;
+    }
+    let samples: Vec<Client> = (0..SAMPLES as u8).map(fresh_key).collect();
+    let mut next_order = state["next_order_id"].as_u64().unwrap();
+    let mut accounts = state["accounts"].take().as_object().unwrap().clone();
+    for sample in &samples {
+        let mut value = template.clone();
+        // BTC long and ETH short as the harness holds them, and ETH's position in every copy;
+        // AAPL is unpriced, so its close-all entry is a rejection.
+        value["positions"] = json!({});
+        for id in ids.iter().filter(|id| **id != common::AAPL) {
+            let held = if *id == BTC { template["positions"][BTC.to_string()].clone() } else { position.clone() };
+            value["positions"][id.to_string()] = held;
+        }
+        value["orders"] = json!({});
+        for index in 0..DEFAULT_MAX_RESTING_ORDERS {
+            let market = ids[index % ids.len()];
+            let mut resting = order.clone();
+            resting["order_id"] = json!(next_order);
+            resting["market"] = json!(market);
+            value["orders"][next_order.to_string()] = resting;
+            state["markets"][market.to_string()]["resting"][next_order.to_string()] = json!(sample.account);
+            next_order += 1;
+        }
+        accounts.insert(serde_json::to_value(sample.account).unwrap().as_str().unwrap().to_owned(), value);
+    }
+    // Filler accounts up to 100k, and each market's aggregates matching the positions held.
+    for index in 0..100_000usize.saturating_sub(accounts.len()) {
+        let mut address = [0xee; 20];
+        address[12..].copy_from_slice(&(index as u64 + 1).to_be_bytes());
+        let key = serde_json::to_value(AccountId(address)).unwrap().as_str().unwrap().to_owned();
+        let mut filler = template.clone();
+        filler["positions"] = json!({});
+        filler["orders"] = json!({});
+        accounts.insert(key, filler);
+    }
+    // The aggregates of each market match the positions held: the harness client's and every sample's.
+    let (long, short) = (f("0.5"), f("-5"));
+    for id in &ids {
+        let holders = SAMPLES as i128 + i128::from(*id == BTC || *id == ETH);
+        let (qty, entry) = match *id {
+            BTC => (long.raw() * holders, f("100000")),
+            common::AAPL => (0, f("0")),
+            _ => (short.raw() * holders, f("3000")),
+        };
+        let market = &mut state["markets"][id.to_string()];
+        market["client_qty"] = json!(engine_core::Fixed::from_raw(qty));
+        market["client_cost"] = json!(engine_core::Fixed::from_raw(qty * entry.raw() / 1_000_000_000));
+    }
+    // Each sample has made the declaration the harness client has.
+    let declared = state["eligibility"][client.account.to_string()].clone();
+    for sample in &samples {
+        state["eligibility"][sample.account.to_string()] = declared.clone();
+    }
+    state["accounts"] = accounts.into();
+    state["next_order_id"] = json!(next_order);
+    state["markouts"] = json!([]);
+    h.engine = serde_json::from_value(state).expect("benchmark fixture");
+    apply(&mut h.engine, h.ts, Command::Tick);
+
+    let mut cancel_times = Vec::with_capacity(SAMPLES);
+    let mut floor_times = Vec::with_capacity(SAMPLES);
+    let mut close_times = Vec::with_capacity(SAMPLES);
+    for (index, sample) in samples.iter().enumerate() {
+        let ts = h.ts + 1 + index as i64;
+        let cancel = cancel_all(sample, sample.account, 0);
+        let began = Instant::now();
+        let events = apply_events(&mut h.engine, ts, cancel);
+        cancel_times.push(began.elapsed().as_micros());
+        assert_eq!(events.len(), DEFAULT_MAX_RESTING_ORDERS, "every resting order is cancelled");
+        assert!(h.engine.accounts()[&sample.account].orders.is_empty());
+
+        // A cancel-all with nothing resting: the signature check and the per-command work every
+        // command pays, which the close-all's fills add to.
+        let empty = cancel_all(sample, sample.account, 1);
+        let began = Instant::now();
+        apply_events(&mut h.engine, ts, empty);
+        floor_times.push(began.elapsed().as_micros());
+
+        let entries: Vec<CloseEntry> = ids
+            .iter()
+            .map(|&market| CloseEntry { market, quoted: if market == BTC { f("99000") } else { f("3100") } })
+            .collect();
+        let close = close_all(&h, sample, sample.account, 2, entries, None);
+        let began = Instant::now();
+        let events = apply_events(&mut h.engine, ts, close);
+        close_times.push(began.elapsed().as_micros());
+        let filled = events.iter().filter(|e| matches!(e, engine_core::event::Event::Fill(_))).count();
+        let rejected = events.iter().filter(|e| matches!(e, engine_core::event::Event::OrderRejected { .. })).count();
+        // Every market but the unpriced AAPL closes.
+        assert_eq!((filled, rejected), (LAUNCH_MARKETS - 1, 1), "the close-all fills each priced market: {events:?}");
+    }
+    for (name, times) in [
+        ("empty_cancel_all_100k", &mut floor_times),
+        ("cancel_all_at_cap_100k", &mut cancel_times),
+        ("close_all_all_markets_100k", &mut close_times),
+    ] {
+        times.sort_unstable();
+        println!(
+            "LATENCY {name} accounts=100000 samples={SAMPLES} p50_us={} p99_us={}",
+            times[SAMPLES / 2 - 1],
+            times[SAMPLES - 2]
+        );
+        assert!(
+            times[SAMPLES - 2] <= BATCH_BUDGET_US,
+            "{name} p99 {}us exceeds {BATCH_BUDGET_US}us",
+            times[SAMPLES - 2]
+        );
+    }
+}
+
+fn apply_events(engine: &mut Engine, ts: i64, cmd: Command) -> Vec<engine_core::event::Event> {
+    let seq = engine.last_seq().map_or(0, |seq| seq + 1);
+    engine.apply(&Sequenced { seq, ts, cmd }).expect("valid benchmark sequence")
 }

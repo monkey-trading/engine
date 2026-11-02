@@ -7,7 +7,8 @@
 mod access;
 mod actions;
 use actions::{
-    attest_eligibility, cancel_order, dev_deposit, place_order, register_session_key, revoke_session_key, withdraw,
+    attest_eligibility, cancel_all, cancel_order, close_all, dev_deposit, place_order, register_session_key,
+    revoke_session_key, withdraw,
 };
 mod admin;
 mod archive;
@@ -268,6 +269,8 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/eligibility", post(attest_eligibility))
         .route("/v1/orders", post(place_order))
         .route("/v1/orders/cancel", post(cancel_order))
+        .route("/v1/orders/cancel-all", post(cancel_all))
+        .route("/v1/positions/close-all", post(close_all))
         .route("/v1/session-keys", post(register_session_key).delete(revoke_session_key))
         .route("/v1/withdrawals", get(withdrawal_queue::queue).post(withdraw))
         .route("/v1/accounts/{address}/withdrawals", get(withdrawal_queue::account))
