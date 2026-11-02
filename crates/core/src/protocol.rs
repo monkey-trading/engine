@@ -210,16 +210,16 @@ pub enum ProtocolVersion {
     /// MONKEY emission weight (`emissions`) is an account's gross realised losses in each period:
     /// every fill's loss magnitude counts, `max(-realised_pnl, 0)` (liquidations included, the
     /// profit fee and financing excluded, cash-in-lieu split losses as before), and wins in the
-    /// period do not offset. Before `V42` weight is the net realised loss there. The `V32`
+    /// period do not offset. Before `V43` weight is the net realised loss there. The `V32`
     /// emission-debt mechanics carry over: a period's write-off absorbs its gross losses first,
     /// the unabsorbed remainder becomes debt charged against earned weight, and surviving weight
     /// pays debt down before it earns.
-    V42,
+    V43,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V42;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V43;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

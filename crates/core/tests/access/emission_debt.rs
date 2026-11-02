@@ -69,8 +69,8 @@ fn a_reversal_landing_after_the_losses_becomes_an_emission_debt_that_later_losse
 }
 
 #[test]
-fn from_v42_a_write_off_absorbs_gross_losses_and_debt_consumes_gross_weight_first() {
-    let (mut h, client) = emitting(ProtocolVersion::V42);
+fn from_v43_a_write_off_absorbs_gross_losses_and_debt_consumes_gross_weight_first() {
+    let (mut h, client) = emitting(ProtocolVersion::V43);
     let account = client.account;
     let budget = h.engine.emissions().expect("initialised").schedule.budget(0);
 

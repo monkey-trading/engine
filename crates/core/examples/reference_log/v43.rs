@@ -1,4 +1,4 @@
-//! The session's `V42` part: MONKEY emission weight is an account's gross realised losses in the
+//! The session's `V43` part: MONKEY emission weight is an account's gross realised losses in the
 //! period — a losing fill earns its own weight even when wins in the same period leave the account
 //! net positive — and the `V32` emission-debt mechanics run on gross weight.
 
@@ -30,11 +30,11 @@ const DEBTOR_SEED: u8 = 0x44;
 /// A fresh market this part lists, so its trades price from no stress or toxicity history.
 const GRS: MarketId = 44;
 
-/// `V42` activates. A trader with prior gains takes a losing fill inside a period its win leaves
+/// `V43` activates. A trader with prior gains takes a losing fill inside a period its win leaves
 /// net positive, and the fill still earns its full gross weight. A second trader's write-off
 /// becomes an emission debt that later gross loss weight pays down before any of it earns again.
 pub(crate) fn session(h: &mut Harness) {
-    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V42 });
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V43 });
     // The earlier parts replaced the stress table with a single level whose 100bps minimum every
     // fill would pay, carrying spread noise into the gross weights; the launch table prices a
     // quiet market at no spread. The profit fee and close-out level stay as they are, so no

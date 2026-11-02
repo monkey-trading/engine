@@ -7,7 +7,7 @@
 //! - **Weight.** An account's weight in a period is the sum of its fills' loss magnitudes there,
 //!   each `max(-realised_pnl, 0)` (liquidations included, the profit fee and financing not), and,
 //!   from `V23`, of its cash in lieu splits' loss magnitudes (dividends not), less the debt the
-//!   house wrote off for it there; from `V42` wins in the period do not offset — before `V42`
+//!   house wrote off for it there; from `V43` wins in the period do not offset — before `V43`
 //!   weight is the net realised trading loss, the sum of the fills' `realised_pnl` with the same
 //!   exclusions. From `V32`, the write-off a period's losses cannot absorb becomes a per-account
 //!   emission debt, up to the weight the account earned and has not been charged for, and later
@@ -91,8 +91,8 @@ pub struct PeriodResult {
     /// from `V23` of the cash in lieu its positions' splits realise.
     pub realised: Fixed,
     /// The sum of the loss magnitudes those results carry, each `max(-pnl, 0)`: a win adds nothing
-    /// and does not offset a loss. Accumulated under every version so a period a `V42` activation
-    /// crosses settles its earlier fills gross; only weight from `V42` reads it. Always serialized,
+    /// and does not offset a loss. Accumulated under every version so a period a `V43` activation
+    /// crosses settles its earlier fills gross; only weight from `V43` reads it. Always serialized,
     /// so a snapshot's engine JSON reveals whether it predates the accumulator.
     #[serde(default)]
     pub losses: Fixed,
@@ -204,11 +204,11 @@ impl EmissionSchedule {
 
 impl PeriodResult {
     /// The losses a period's weight and its write-off's absorption read: the gross loss, each
-    /// fill's `max(-realised_pnl, 0)`, from `V42` — accumulated under every version, so a period
-    /// a `V42` activation crosses still counts its earlier fills — the net realised loss before
+    /// fill's `max(-realised_pnl, 0)`, from `V43` — accumulated under every version, so a period
+    /// a `V43` activation crosses still counts its earlier fills — the net realised loss before
     /// it.
     fn losses_at(&self, version: ProtocolVersion) -> Fixed {
-        if version >= ProtocolVersion::V42 { self.losses } else { (-self.realised).max(Fixed::ZERO) }
+        if version >= ProtocolVersion::V43 { self.losses } else { (-self.realised).max(Fixed::ZERO) }
     }
 
     /// The account's weight: its losses in the period (see `losses_at`) less what the house wrote
@@ -269,8 +269,8 @@ impl Engine {
     /// Adds a fill's realised PnL and any debt written off to `account`'s result in the open period,
     /// once emissions have started. From `V32` that is judged at the enclosing command's stamp, not
     /// at the boundary a corporate catch-up has rewound the clock to. The fill's loss magnitude
-    /// joins the result's gross losses with every version, so a period that a `V42` activation
-    /// crosses still settles its earlier fills at their gross weight; only `V42` weight reads them.
+    /// joins the result's gross losses with every version, so a period that a `V43` activation
+    /// crosses still settles its earlier fills at their gross weight; only `V43` weight reads them.
     pub(crate) fn record_period_result(&mut self, account: AccountId, realised: Fixed, written_off: Fixed) {
         let at = if self.protocol_version >= ProtocolVersion::V32 { self.command_ms } else { self.now };
         let started = self.emissions.as_ref().is_some_and(|emissions| at >= emissions.schedule.start_ms);

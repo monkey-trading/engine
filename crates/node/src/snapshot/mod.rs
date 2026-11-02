@@ -372,8 +372,8 @@ fn is_snapshot_name(file: &str) -> bool {
     })
 }
 
-/// Whether the serialized engine `state` predates the V42 gross-loss accumulator: an open
-/// period result without a gross-loss field, which only a pre-V42 build writes. `read` refuses
+/// Whether the serialized engine `state` predates the V43 gross-loss accumulator: an open
+/// period result without a gross-loss field, which only a pre-V43 build writes. `read` refuses
 /// such a cache — recovery would drop a crossing period's pre-upgrade weight — and replays the log.
 fn predates_gross_losses(state: &serde_json::Value) -> bool {
     state["period_results"]
@@ -384,7 +384,7 @@ fn predates_gross_losses(state: &serde_json::Value) -> bool {
 /// Authenticates the whole payload before decoding engine state, then recomputes its root.
 /// Error cases:
 /// - the file is unreadable, malformed, oversized, from another deployment, untrusted, or inconsistent
-/// - the engine state predates the V42 gross-loss accumulator
+/// - the engine state predates the V43 gross-loss accumulator
 pub(crate) fn read(
     cfg: &SnapshotSection,
     path: &Path,

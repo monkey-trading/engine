@@ -1,5 +1,5 @@
 //! Which losses earn MONKEY from `V19`, through `Engine::apply`: netting within a period before
-//! `V42` and gross loss magnitudes from `V42` on, fees and financing left out, liquidations counted
+//! `V43` and gross loss magnitudes from `V43` on, fees and financing left out, liquidations counted
 //! less written-off debt, negative cash at the cutoff, and the signed one-time initialisation that
 //! starts the clock.
 
@@ -33,7 +33,7 @@ fn a_win_offsets_a_loss_in_the_same_period_before_the_profit_fee() {
 
 #[test]
 fn a_losing_fill_earns_weight_in_a_period_the_account_ends_net_positive() {
-    // The owner's scenario, from `V42`: an account with prior gains takes a losing fill inside a
+    // The owner's scenario, from `V43`: an account with prior gains takes a losing fill inside a
     // period its wins leave net positive, and that fill still earns its own weight.
     let mut h = Harness::emitting_gross(BUDGET);
     let (a, b) = (Client::new(1), Client::new(2));
@@ -57,7 +57,7 @@ fn a_losing_fill_earns_weight_in_a_period_the_account_ends_net_positive() {
 }
 
 #[test]
-fn wins_never_offset_losses_in_the_same_period_from_v42() {
+fn wins_never_offset_losses_in_the_same_period_from_v43() {
     let mut h = Harness::emitting_gross(BUDGET);
     let a = Client::new(1);
     attest_and_fund(&mut h, &a);
@@ -70,9 +70,9 @@ fn wins_never_offset_losses_in_the_same_period_from_v42() {
 }
 
 #[test]
-fn a_v42_activation_crossing_a_period_settles_its_earlier_fills_gross() {
-    // Losses accrued before the activation keep their weight: the period a `V42` activation
-    // crosses finalises under `V42`, and the gross losses accumulate under every version for
+fn a_v43_activation_crossing_a_period_settles_its_earlier_fills_gross() {
+    // Losses accrued before the activation keep their weight: the period a `V43` activation
+    // crosses finalises under `V43`, and the gross losses accumulate under every version for
     // exactly this settlement.
     let mut h = Harness::emitting_at(ProtocolVersion::V41, BUDGET);
     let (a, b) = (Client::new(1), Client::new(2));
@@ -83,8 +83,8 @@ fn a_v42_activation_crossing_a_period_settles_its_earlier_fills_gross() {
     screened_round_trip(&mut h, &[(&a, "1")], "99900", "99920");
     screened_round_trip(&mut h, &[(&b, "0.6")], "100000", "99900");
     h.engine.state_root();
-    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V42 });
-    // Activation rehashes every leaf under the V42 encodings: the incremental root, including the
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V43 });
+    // Activation rehashes every leaf under the V43 encodings: the incremental root, including the
     // open period results, equals a rebuild's.
     let incremental = h.engine.state_root();
     let mut rebuilt: engine_core::Engine = serde_json::from_slice(&serde_json::to_vec(&h.engine).unwrap()).unwrap();
@@ -96,9 +96,9 @@ fn a_v42_activation_crossing_a_period_settles_its_earlier_fills_gross() {
 }
 
 #[test]
-fn before_v42_netting_still_applies() {
-    // The gross rule activates at `V42`: one version earlier a win still offsets the period's
-    // losses, exactly as every pre-`V42` log records it.
+fn before_v43_netting_still_applies() {
+    // The gross rule activates at `V43`: one version earlier a win still offsets the period's
+    // losses, exactly as every pre-`V43` log records it.
     let mut h = Harness::emitting_at(ProtocolVersion::V41, BUDGET);
     let (a, b) = (Client::new(1), Client::new(2));
     attest_and_fund(&mut h, &a);
@@ -109,7 +109,7 @@ fn before_v42_netting_still_applies() {
     assert_eq!(allocations(&next_period(&mut h)), [(a.account, 0, f("20"), 250_000), (b.account, 0, f("60"), 750_000)]);
 }
 
-/// Attests `client` eligible and funds it with a screened deposit, as the access rules a `V42`
+/// Attests `client` eligible and funds it with a screened deposit, as the access rules a `V43`
 /// harness keeps require.
 fn attest_and_fund(h: &mut Harness, client: &Client) {
     attest(h, client);

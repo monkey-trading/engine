@@ -121,7 +121,7 @@ this crate and reproduce the signed state roots exactly.
 - From protocol `V19`, MONKEY emissions: once the operator's signed initialisation records a start
   no earlier than itself and a period budget, each ten-minute period's budget is shared pro rata by
   the accounts' realised losses there (liquidations included, the profit fee and
-  financing not), each fill's loss magnitude from `V42` — wins in the period do not offset — and the
+  financing not), each fill's loss magnitude from `V43` — wins in the period do not offset — and the
   net realised loss before it,
   less debt the house wrote off (from `V32`, a write-off the period's losses cannot absorb is carried as
   debt, up to the weight the account earned, that later weight pays first), leaving out any account with negative cash at the
@@ -302,7 +302,7 @@ this crate and reproduce the signed state roots exactly.
   corporate-action catch-up.
 - `tests/emissions.rs`, `tests/emissions_eligibility.rs`, `tests/emissions_schedule.rs` — MONKEY
   emissions from `V19`: allocation, rounding, cancellation, and finality; which losses count — gross
-  loss magnitudes from `V42`, net before it — and the signed initialisation; and the schedule's
+  loss magnitudes from `V43`, net before it — and the signed initialisation; and the schedule's
   arithmetic with the first halving
 - `tests/staking_authentication.rs` — V27 mirror-identity roots, migration, and finalized scan anchors
 - `tests/staking/withdrawal_reserve.rs` — shared distribution/FIFO capacity, inherited gaps, receipt lifecycle and exact reserves
@@ -318,7 +318,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V42` parts (`v15.rs` to `v42.rs`)
+  `V15` to `V43` parts (`v15.rs` to `v43.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -442,12 +442,12 @@ sequence under the same per-request expiry cap, a revoked or expired key and a k
 withdrawal refuse with their own rejections, and an account's keys are one pruned, capped leaf of
 the state tree; its session is in `examples/reference_log/v41.rs`.
 
-Protocol V42 makes MONKEY emission weight an account's gross realised losses in each period
+Protocol V43 makes MONKEY emission weight an account's gross realised losses in each period
 (`src/emissions.rs`): every fill's loss magnitude counts, `max(-realised_pnl, 0)`, liquidations
 included and the profit fee and financing still excluded, and wins in the period no longer offset
-— before `V42` weight is the net realised loss there; the `V32` write-off debt still absorbs a
+— before `V43` weight is the net realised loss there; the `V32` write-off debt still absorbs a
 period's losses first, and what survives pays debt down before it earns; its session is in
-`examples/reference_log/v42.rs`.
+`examples/reference_log/v43.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

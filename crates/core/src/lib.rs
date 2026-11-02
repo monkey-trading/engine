@@ -52,7 +52,7 @@
 //!   the window raises fast-move stress as it would without the halt.
 //! - From `V19`, once the operator's signed initialisation records a start and a budget, MONKEY
 //!   emissions share each ten-minute period's fixed budget pro rata by the accounts' realised
-//!   losses, less debt written off — each fill's loss magnitude from `V42`, with wins in the period
+//!   losses, less debt written off — each fill's loss magnitude from `V43`, with wins in the period
 //!   not offsetting; the net realised loss before it — halve the budget every 182.5 days, cancel
 //!   what no account is allocated, and keep each account's cumulative entitlement in the state tree
 //!   for the vault to mint against.

@@ -49,7 +49,7 @@ fn authenticates_payload_and_deployment_before_loading_state() {
 #[test]
 fn a_cache_predating_the_gross_loss_accumulator_refuses_recovery() {
     let (cfg, key, mut snapshot) = fixture("snapshot-gross-losses");
-    // The engine a pre-V42 build serialized: open period results without a gross-loss field,
+    // The engine a pre-V43 build serialized: open period results without a gross-loss field,
     // whether the period's net is negative or wins leave it positive, as its checkpoint attests.
     let mut state: serde_json::Value = serde_json::from_str(&snapshot.engine).unwrap();
     let account = "0x0101010101010101010101010101010101010101";

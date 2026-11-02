@@ -167,10 +167,10 @@ impl Harness {
         h
     }
 
-    /// `emitting_at` under `V42`: an account's emission weight is its gross realised loss in the
+    /// `emitting_at` under `V43`: an account's emission weight is its gross realised loss in the
     /// period — each fill's loss magnitude, wins not offsetting.
     pub fn emitting_gross(period_budget: u128) -> Self {
-        Harness::emitting_at(ProtocolVersion::V42, period_budget)
+        Harness::emitting_at(ProtocolVersion::V43, period_budget)
     }
 
     /// `v17`, then `V18`'s dated benchmark rates, `V19`, `V20`, and `V21`, which refuses quotes
