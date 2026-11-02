@@ -19,6 +19,7 @@ use std::time::Duration;
 
 use axum::body::{Body, Bytes, to_bytes};
 use axum::extract::{Request, State};
+use axum::http::header::CACHE_CONTROL;
 use axum::http::{HeaderValue, Method};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -85,7 +86,8 @@ impl Signing {
 }
 
 /// Signs the response to a `/v1` request outside `UNSIGNED_ROUTES` and the archive, and adds the
-/// signature, the time, the log head's seq, and the challenge it covers as `X-Engine-*` headers. A
+/// signature, the time, the log head's seq, and the challenge it covers as `X-Engine-*` headers, and
+/// marks every answer `Cache-Control: no-store`. A
 /// request without `X-Engine-Challenge` is answered under 32 zero bytes; one with a challenge that
 /// is not 64 hex characters gets an unsigned 400, since there is no challenge to sign it under. While
 /// trusted time does not bound the host clock, the response goes out as it is, unsigned.
@@ -119,6 +121,9 @@ pub(super) async fn sign_responses(State(s): State<ApiState>, req: Request, next
         Ok(body) => body,
         Err(e) => return e.into_response(),
     };
+    // A stored answer stays bound to the challenge of the request that fetched it, so nothing may
+    // store one. The header is outside the signature's coverage.
+    parts.headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
     let Some(time_ms) = s.signing.time_ms() else {
         debug!(status = parts.status.as_u16(), "answer unsigned: trusted time does not bound the host clock");
         return Response::from_parts(parts, Body::from(body));
