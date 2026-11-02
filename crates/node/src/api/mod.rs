@@ -51,7 +51,7 @@ use engine_core::types::{AccountId, MarketId, Millis, OrderId};
 use engine_core::{Engine, Fixed};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::sync::{Semaphore, broadcast, mpsc, watch};
+use tokio::sync::{Semaphore, broadcast, mpsc, oneshot, watch};
 use tracing::field::{Empty, display};
 use tracing::{Instrument, Span, info_span};
 
@@ -59,7 +59,7 @@ use crate::clock::Clock;
 use crate::history::Reader;
 use crate::limits::{ApiLimits, limit_client, read_body};
 use crate::log::Manifest;
-use crate::sequencer::{self, StreamMsg};
+use crate::sequencer::{self, ClaimAnswer, StreamMsg};
 use crate::tee::Attestation;
 
 type ApiResult<T> = Result<Json<T>, ApiError>;
@@ -420,18 +420,23 @@ async fn proof(State(s): State<ApiState>, Path(address): Path<String>) -> ApiRes
     proof.map(Json).ok_or(ApiError::NotFound)
 }
 
-/// The proof of the account's cumulative MONKEY entitlement against the state root of the last
-/// checkpoint, as the vault's `claimEmissions` takes it. The vault checks it against its latest
-/// posted root, so a claim waits until the vault's `latestSeq` is the proof's `seq`.
+/// The proof of the account's cumulative MONKEY entitlement, as the vault's `claimEmissions` takes
+/// it, with `accepted_seq`, `newest_seq`, `newest_entitled` and `claimable` saying what it is proven
+/// against. The vault checks a claim against its latest posted root: the proof is at the checkpoint
+/// the vault last accepted when the node retained one for the account (from its first request on),
+/// and `claimable` is true. Otherwise it is the newest checkpoint's and the claim waits for the
+/// vault to reach `newest_seq`. A proof at the accepted root names the entitlement then, which only
+/// grows, so the vault pays that less what it has paid, and the rest on a later claim.
 /// Error cases:
 /// - the address is malformed
 /// - no checkpoint holds an entitlement for the account
 /// - the sequencer has stopped
-async fn emissions(State(s): State<ApiState>, Path(address): Path<String>) -> ApiResult<EntitlementProof> {
-    let id: AccountId = address.parse().map_err(|e| ApiError::BadRequest(format!("{e}")))?;
-    Span::current().record("id", display(id));
-    let proof = s.query(move |e| e.entitlement_proof(id)).await?;
-    proof.map(Json).ok_or(ApiError::NotFound)
+async fn emissions(State(s): State<ApiState>, Path(address): Path<String>) -> ApiResult<ClaimAnswer<EntitlementProof>> {
+    let account: AccountId = address.parse().map_err(|e| ApiError::BadRequest(format!("{e}")))?;
+    Span::current().record("id", display(account));
+    let (reply, rx) = oneshot::channel();
+    s.tx.send(sequencer::Request::EntitlementClaim { account, reply }).await.map_err(|_| ApiError::Unavailable)?;
+    rx.await.map_err(|_| ApiError::Unavailable)?.map(Json).ok_or(ApiError::NotFound)
 }
 
 #[cfg(test)]
@@ -440,6 +445,8 @@ mod access_tests;
 mod admin_tests;
 #[cfg(test)]
 mod auth_tests;
+#[cfg(test)]
+mod claim_tests;
 #[cfg(test)]
 mod marks_tests;
 #[cfg(test)]

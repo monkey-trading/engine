@@ -26,7 +26,7 @@ impl Scenario {
         self.checkpoint_posted().await;
         let (status, body) = self.get(&format!("/v1/accounts/{account}/emissions")).await;
         assert_eq!(status, hyper::StatusCode::OK, "{body}");
-        let proof: EntitlementProof = serde_json::from_value(body).unwrap();
+        let proof = serde_json::from_value::<crate::sequencer::ClaimAnswer<EntitlementProof>>(body).unwrap().proof;
         assert_eq!(proof.root, self.view(self.vault, latestRootCall {}).await, "the proof is for the posted root");
         let before = self.monkey_balance(account).await;
         self.send_tx(self.relayer, self.vault, emissions_call(&proof)).await;
@@ -58,7 +58,7 @@ impl Scenario {
         self.checkpoint_posted().await;
         let (status, body) = self.get(&format!("/v1/accounts/{account}/distributions")).await;
         assert_eq!(status, hyper::StatusCode::OK, "{body}");
-        let proof: DistributionProof = serde_json::from_value(body).unwrap();
+        let proof = serde_json::from_value::<crate::sequencer::ClaimAnswer<DistributionProof>>(body).unwrap().proof;
         assert_eq!(proof.root, self.view(self.vault, latestRootCall {}).await, "the proof is for the posted root");
         proof
     }

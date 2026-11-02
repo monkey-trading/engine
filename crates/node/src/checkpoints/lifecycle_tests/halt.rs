@@ -250,7 +250,7 @@ async fn a_retirement_seen_before_the_first_finalized_checkpoint_reaches_the_seq
     let (status_tx, mut status_rx) = mpsc::channel(4);
     work_tx.send(work).await.unwrap();
     let task = tokio::spawn(poster.run_with_approvals(work_rx, status_tx, Vec::new(), registry(1)));
-    let Request::CheckpointStatus { posted: None, health: None, lifecycle: Some(evidence) } =
+    let Request::CheckpointStatus { posted: None, health: None, lifecycle: Some(evidence), .. } =
         status_rx.recv().await.unwrap()
     else {
         panic!("the bootstrap retirement must reach the sequencer as finalized evidence");
@@ -283,7 +283,7 @@ async fn a_retirement_with_an_older_finalized_checkpoint_reaches_the_sequencer()
     let (status_tx, mut status_rx) = mpsc::channel(4);
     work_tx.send(work).await.unwrap();
     let task = tokio::spawn(poster.run_with_approvals(work_rx, status_tx, Vec::new(), registry(1)));
-    let Request::CheckpointStatus { posted: None, health: None, lifecycle: Some(evidence) } =
+    let Request::CheckpointStatus { posted: None, health: None, lifecycle: Some(evidence), .. } =
         status_rx.recv().await.unwrap()
     else {
         panic!("the older-finalized retirement must reach the sequencer as finalized evidence");
@@ -343,7 +343,7 @@ async fn one_status(poster: Poster<Chain>, work: Work) -> Request {
 /// The parts of a checkpoint status, for assertions.
 fn status_parts(status: Request) -> (Option<u64>, Option<Health>, Option<LifecycleEvidence>) {
     match status {
-        Request::CheckpointStatus { posted, health, lifecycle } => (posted, health, lifecycle),
+        Request::CheckpointStatus { posted, health, lifecycle, .. } => (posted, health, lifecycle),
         _ => panic!("expected a checkpoint status"),
     }
 }

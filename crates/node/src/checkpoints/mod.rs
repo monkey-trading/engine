@@ -312,8 +312,9 @@ impl<R: CheckpointChain> Poster<R> {
                     if lifecycle.is_some() {
                         approval_cursor = page.last().map(|approval| (approval.account, approval.nonce));
                     }
+                    let vault_latest = self.vault_checkpoint().await;
                     let evidence = lifecycle.clone();
-                    tx.send(Request::CheckpointStatus { posted, health, lifecycle }).await.map_err(|_| anyhow::anyhow!("sequencer stopped"))?;
+                    tx.send(Request::CheckpointStatus { posted, latest: vault_latest, health, lifecycle }).await.map_err(|_| anyhow::anyhow!("sequencer stopped"))?;
                     if let Some(evidence) = &evidence {
                         approval_cursor = self
                             .sweep(evidence, &approvals, approval_cursor, posted, health, &tx)

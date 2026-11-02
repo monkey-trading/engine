@@ -20,6 +20,8 @@ pub use replay::{
 };
 mod checkpoints;
 use checkpoints::{Gate, HandoverGate};
+mod claims;
+pub use claims::ClaimAnswer;
 mod messages;
 pub use messages::{
     AccountPayouts, HandoverRefused, PayoutView, Query, Reissue, ReissueScreening, Request, SignedWithdrawal,
@@ -110,6 +112,7 @@ pub struct Sequencer {
     operator: Operator,
     metrics: Arc<Metrics>,
     gate: Option<Gate>,
+    claims: claims::Claims,
     accounting: Accounting,
     /// Startup and recovery wait for a signed, complete publisher attempt before catch-up.
     benchmark_sync: bool,
@@ -184,7 +187,16 @@ impl Sequencer {
                     Request::AccountPayouts { account, after, limit, reply } => {
                         let _ = reply.send(self.account_payouts(account, after, limit));
                     }
-                    Request::CheckpointStatus { posted, health, lifecycle } => {
+                    Request::EntitlementClaim { account, reply } => {
+                        let _ = reply.send(self.claims.entitlement(&self.engine, account));
+                    }
+                    Request::DistributionClaim { account, reply } => {
+                        let _ = reply.send(self.claims.distribution(&self.engine, account));
+                    }
+                    Request::CheckpointStatus { posted, latest, health, lifecycle } => {
+                        if let Some(latest) = latest {
+                            self.claims.accept(latest);
+                        }
                         self.custody_status(posted, health, lifecycle)?;
                     }
                     Request::FinalCheckpoint(reply) => {

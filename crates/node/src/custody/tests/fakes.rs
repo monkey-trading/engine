@@ -384,7 +384,11 @@ pub(super) fn refusing_sequencer(answer_syncs: bool, refusals: usize) -> mpsc::S
                 Request::WatchBenchmarkSchedule(_) => unreachable!("only the API watches benchmark schedules"),
                 Request::HouseState(_) => unreachable!("only the API reads the house state"),
                 Request::ReissueWithdrawal { .. } => unreachable!("only the API asks for a reissue"),
-                Request::AccountPayouts { .. } => unreachable!("only the API asks for payouts"),
+                Request::AccountPayouts { .. }
+                | Request::EntitlementClaim { .. }
+                | Request::DistributionClaim { .. } => {
+                    unreachable!("only the API asks for payouts and claims")
+                }
                 Request::FinalCheckpoint(_) => unreachable!("only a handover asks for the final checkpoint"),
                 Request::TimeSample(_) => unreachable!("custody sends no time samples"),
             }

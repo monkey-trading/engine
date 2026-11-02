@@ -78,6 +78,18 @@ impl<R: CheckpointChain> Poster<R> {
         Ok((posted, health))
     }
 
+    /// The seq of the vault's latest included checkpoint, `None` when it has none or cannot be read.
+    pub(super) async fn vault_checkpoint(&self) -> Option<u64> {
+        let observation = self.chain.observe(View::Latest, &[]).await.and_then(|at| at.validate(&[]).map(|()| at));
+        match observation {
+            Ok(at) => at.state.checkpoint.map(|(seq, _)| seq),
+            Err(error) => {
+                debug!("the vault's latest checkpoint could not be read: {error:#}");
+                None
+            }
+        }
+    }
+
     /// Ends the `post_diverged` withholding episode, if one is open.
     fn resume_posting(&self) {
         if self.post_withheld.swap(false, Ordering::Relaxed) {

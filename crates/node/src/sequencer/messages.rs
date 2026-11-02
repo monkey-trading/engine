@@ -4,6 +4,7 @@ use engine_core::access::{AccessEvidence, AccessReject};
 use engine_core::command::Command;
 use engine_core::eip712::B256;
 use engine_core::event::Event;
+use engine_core::merkle::{DistributionProof, EntitlementProof};
 use engine_core::types::AccountId;
 use engine_core::{Engine, Fixed};
 use serde::{Deserialize, Serialize};
@@ -11,6 +12,7 @@ use tokio::sync::{oneshot, watch};
 
 use crate::benchmarks::BenchmarkSchedule;
 use crate::log::{Checkpoint, CommandEntry, LogEntry, Offset};
+use crate::sequencer::ClaimAnswer;
 use crate::sequencer::house::HouseState;
 use crate::trusted_time::Sample;
 
@@ -58,6 +60,9 @@ pub enum Request {
     /// divergence or an unrevalidated startup is never erased by an RPC error.
     CheckpointStatus {
         posted: Option<u64>,
+        /// The latest checkpoint the vault includes, which a claim is checked against and which can
+        /// be ahead of the finalized `posted`; `None` when it has none or the read failed.
+        latest: Option<u64>,
         health: Option<crate::checkpoints::Health>,
         lifecycle: Option<crate::checkpoints::LifecycleEvidence>,
     },
@@ -78,6 +83,16 @@ pub enum Request {
         after: Option<u64>,
         limit: usize,
         reply: oneshot::Sender<AccountPayouts>,
+    },
+    /// An account's MONKEY entitlement proof, at the accepted checkpoint when one is retained for it.
+    EntitlementClaim {
+        account: AccountId,
+        reply: oneshot::Sender<Option<ClaimAnswer<EntitlementProof>>>,
+    },
+    /// An account's USDC distribution proof, at the accepted checkpoint when one is retained for it.
+    DistributionClaim {
+        account: AccountId,
+        reply: oneshot::Sender<Option<ClaimAnswer<DistributionProof>>>,
     },
     /// A key handover's stop: answered once the final checkpoint the successor is handed is written
     /// and durable, and refused with the checkpoint gate's reason while it would withhold that

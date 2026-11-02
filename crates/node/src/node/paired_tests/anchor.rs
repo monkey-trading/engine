@@ -89,7 +89,12 @@ async fn gated_log() -> (NodeConfig, Vec<Checkpoint>, Checkpoint) {
     }
     let base = checkpoints[0].clone();
     node.tx
-        .send(Request::CheckpointStatus { posted: Some(base.seq), health: Some(Health::Healthy), lifecycle: None })
+        .send(Request::CheckpointStatus {
+            latest: None,
+            posted: Some(base.seq),
+            health: Some(Health::Healthy),
+            lifecycle: None,
+        })
         .await
         .unwrap();
     for _ in 0..12 {

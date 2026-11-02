@@ -99,15 +99,15 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - Proofs of an account's balance and positions, and of its positions' marks, against the last
   checkpoint's state root, from protocol `V9`
 - MONKEY emissions from protocol `V19`: `engine admin init-emissions` records the schedule once,
-  and `GET /v1/accounts/{address}/emissions` serves an account's cumulative entitlement with its proof
-  against the last checkpoint's root, for the vault's `claimEmissions`; with `[checkpoints]`, the
+  and `GET /v1/accounts/{address}/emissions` serves an account's cumulative entitlement with its proof,
+  at the checkpoint the vault accepted when one is retained, for the vault's `claimEmissions`; with `[checkpoints]`, the
   node reads the period budget the vault's MONKEY cap was derived from, refuses a schedule with any
   other, and refuses to start on a log that records one
 - MONKEY staking from protocol `V25`: `engine admin init-staking` or a genesis `staking` entry
   records the liquidity floor, epoch length, start, and unstake cooldown once; each epoch the
   engine distributes house NAV above the floor to stakers pro-rata, and
   `GET /v1/accounts/{address}/distributions` serves an account's cumulative USDC distribution with
-  its proof against the last checkpoint's root, for the vault's `claimDistribution`; checkpoint
+  its proof, for the vault's `claimDistribution`; checkpoint
   reconciliation counts the USDC the vault has paid in distributions against the ledger
 - The exit against the last posted root from protocol `V38`: `GET /v1/accounts/{address}/exit`
   serves every proof an account exits the vault with against the last checkpoint's root, and
@@ -190,6 +190,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/config.rs` — the sequencer's construction config
 - `src/sequencer/messages.rs` — sequencer requests, stream messages, and signed withdrawals
 - `src/sequencer/checkpoints.rs` — checkpoint creation, custody reconciliation, and signature release
+- `src/sequencer/claims.rs` — MONKEY and USDC claim proofs retained for recently asking accounts at each new checkpoint, so one is served at the checkpoint the vault accepted
 - `src/sequencer/payouts.rs` — durable unpaid delivery, finalized claim evidence, epoch reissues, reissue requests, and the account payouts read
 - `src/sequencer/payout_schedule.rs` — complete unpaid approval order, bounded epoch and requested reissue scheduling, and the hold behind unloaded recovered approvals
 - `src/sequencer/payout_tests.rs` — release order across claim pages, durability, restart, expiry without reissue, and rotation
@@ -331,8 +332,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/access_tests/source.rs` — the mock screening source the access tests answer with
 - `src/access.rs`, `src/access/tests.rs` — bounded signed-source IO and failure-path tests
 - `src/api/admin.rs` — the operator's admin route, checked before it is sequenced
-- `src/api/distributions.rs` — an account's cumulative USDC distribution with its proof against the
-  last checkpoint's root, for the vault's `claimDistribution`
+- `src/api/distributions.rs` — an account's cumulative USDC distribution with its proof, at the
+  checkpoint the vault accepted when one is retained, for the vault's `claimDistribution`
 - `src/api/exit.rs` — every proof an account exits the vault with, against the last checkpoint's root
 - `src/exit.rs` — `engine exit-proof`: a published log's commands applied through one checkpoint,
   the exit proofs against its root, and the vault calls that carry them, ABI-encoded
@@ -379,6 +380,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/origin.rs` — CORS headers and preflight for the allowed browser origins, and the stream's `Origin` check
 - `src/api/origin_tests.rs` — listed, unlisted, and absent origins on reads, a POST, a preflight, a 429, and the stream
 - `src/api/history.rs` — the account history route: its parameters and limits
+- `src/api/claim_tests.rs` — MONKEY claim proofs while the vault lags: served at the accepted checkpoint, an entitlement that grew since, no accepted checkpoint, and a restart
 - `src/api/proof_tests.rs` — account proof and emission entitlement API tests, including the state
   tree dev scenario: 100k accounts, checkpoint work, a proof checked against its logged root, and
   older logs replayed
@@ -594,6 +596,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/rpc/submission/tests/nonce_progress.rs` — free, obsolete, and resurfaced nonce regressions
 - `src/checkpoints/setup.rs` — finalized chain anchor lookup and pending-inclusion startup wait
 - `src/checkpoints/tests.rs` — signature mutations, rollback, retry, and reconciliation tests
+- `src/checkpoints/tests/latest.rs` — the worker reports the vault's latest included checkpoint ahead of the finalized one
 - `src/checkpoints/tests/collateral.rs` — shortfall, ledger-difference, surplus, and uncredited-deposit deadline tests
 - `src/checkpoints/tests/torn.rs` — conflicts read once are retried; a conflict a fresh observation repeats stops the worker
 - `src/checkpoints/scenario.rs` — isolated Anvil posting, credited/held reconciliation, tampering, truncation, surplus booking, shortfall, and reorg checks
@@ -1694,15 +1697,27 @@ gets 404 until the next one. Each checkpoint logs, at `debug`, how long its root
 leaves and tree nodes it hashed.
 
 `/v1/accounts/{address}/emissions` returns, from `V19`, the account's cumulative MONKEY entitlement
-against the state root of the last checkpoint: `seq`, `root`, `account`, `entitled` (base units of
-the 18-decimal token, as a decimal string), and `siblings`, from the root down. The vault's
-`claimEmissions` checks the proof against its latest posted root only, so a claim waits until the
-vault's `latestSeq` equals the proof's `seq`, and a proof stops working once a later checkpoint is
-posted; fetch a fresh one then. An account has no entitlement, and gets 404, until the first
-checkpoint after a period in which it was allocated a share.
+as the proof does: `seq`, `root`, `account`, `entitled` (base units of the 18-decimal token, as a
+decimal string), and `siblings`, from the root down. The vault's `claimEmissions` checks the proof
+against its latest posted root only, and the node's newest checkpoint runs ahead of it while posting
+lags, so the answer also says what it is proven against: `accepted_seq` (the vault's latest
+included checkpoint as the node last read it, `null` before one), `newest_seq`, `newest_entitled` (the amount the
+newest root holds) and `claimable`. When `claimable` is true the proof is at `accepted_seq`, and the
+claim can land; its `entitled` can be below `newest_entitled`, since an entitlement only grows, and
+the vault pays `entitled` less what it has paid, the rest on a later claim. When false the proof is
+the newest checkpoint's and the claim waits until the vault's `latestSeq` is `newest_seq`.
+The poster relays a checkpoint only once its predecessor is finalized, so the vault's latest root
+stays put between posts and a proof at it has that long to land.
+The node keeps an account's proof for each checkpoint from its first request here (a 404 counts),
+for the 128 accounts that asked most recently, until the vault accepts a later checkpoint; so a
+first answer is not claimable unless the vault is at the newest checkpoint, a restart forgets what
+was kept, and a proof stops working once a later checkpoint is posted: fetch again then. An account
+has no entitlement, and gets 404, until the first checkpoint after a period in which it was
+allocated a share.
 
 `/v1/accounts/{address}/distributions` returns, from `V25`, the account's cumulative USDC
-distribution the same way (`entitled` in the 6-decimal token's base units). The vault's
+distribution the same way (`entitled` in the 6-decimal token's base units, with the same
+`accepted_seq`, `newest_seq`, `newest_entitled` and `claimable`). The vault's
 `claimDistribution` pays the USDC the distribution adds to what the account was already paid,
 against its latest posted root. An account has no distribution, and gets 404, until the first
 checkpoint after an epoch in which it was allocated a share.

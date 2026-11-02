@@ -278,6 +278,7 @@ async fn incomplete_genesis_and_missing_checkpoint_service_preserve_history_byte
             .await
             .unwrap();
         tx.send(crate::sequencer::Request::CheckpointStatus {
+            latest: None,
             posted: None,
             health: Some(Health::Healthy),
             lifecycle: None,

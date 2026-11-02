@@ -115,7 +115,9 @@ async fn a_refused_handover_stop_goes_on_sequencing_until_the_gate_admits_it() {
     let (tx, rx) = mpsc::channel(8);
     let task = tokio::spawn(seq.run(rx));
 
-    tx.send(Request::CheckpointStatus { posted: None, health: Some(Health::Diverged), lifecycle: None }).await.unwrap();
+    tx.send(Request::CheckpointStatus { latest: None, posted: None, health: Some(Health::Diverged), lifecycle: None })
+        .await
+        .unwrap();
     tx.send(Request::Submit { cmd: Command::Tick, reply: None }).await.unwrap();
     let (stop, stopped) = oneshot::channel();
     tx.send(Request::FinalCheckpoint(stop)).await.unwrap();
@@ -129,7 +131,9 @@ async fn a_refused_handover_stop_goes_on_sequencing_until_the_gate_admits_it() {
     replied.await.unwrap();
 
     // Once the gate admits the final checkpoint, the stop commits.
-    tx.send(Request::CheckpointStatus { posted: None, health: Some(Health::Healthy), lifecycle: None }).await.unwrap();
+    tx.send(Request::CheckpointStatus { latest: None, posted: None, health: Some(Health::Healthy), lifecycle: None })
+        .await
+        .unwrap();
     let (stop, stopped) = oneshot::channel();
     tx.send(Request::FinalCheckpoint(stop)).await.unwrap();
     stopped.await.unwrap().unwrap();
