@@ -2242,9 +2242,12 @@ that benchmark accrues no financing. An inherited undated rate still applies and
 resolves the independent missing-rate incident immediately. Fetch errors retain previously
 sequenced history; the separate worker logs `benchmark_fetch_failed` and retries at its next interval.
 From `V46` the protocol refuses a signed rate more than 300 bps per day from the applied rates next
-to its date. The worker leaves such a rate out of its snapshot and logs `benchmark_rate_refused` at
-Warning severity, naming the benchmark, and signs everything else, so a refusal holds back neither the
-other benchmarks nor a rollover waiting for a snapshot. The last applied rate keeps financing, the limit
+to its date, and any change to a date already applied, a publisher's revision included. The worker
+leaves such a rate out of its snapshot and logs `benchmark_rate_refused` at Warning severity, naming
+the benchmark, and signs everything else, so a refusal holds back neither the other benchmarks nor a
+rollover waiting for a snapshot. The worker routes its alerts through the config's `[alerts]` webhooks,
+so it needs their environment variables too, and keeps its own outbox beside the node's, in the
+outbox directory's name with `-benchmark-worker` added. The last applied rate keeps financing, the limit
 grows with each day from it, so a real move lands once it fits, and `benchmark_rate_stale` escalates if
 the benchmark stays behind for five weekdays. `research/benchmark-cap/` lists what the cap would have
 refused in each benchmark's published history.

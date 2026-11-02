@@ -19,7 +19,8 @@ The closest any benchmark has come since then is SOFR on 17 September 2019, the 
 | TONA | 7,064 | 1998-01-05 | 2026-10-29 | 0 | 1998-03-30 0.39% to 1998-03-31 0.7%: 31 bps of 300 |
 
 `results/refused.csv` lists each refused rate with the applied rate it is measured from, the gap, the
-move and the limit, and `results/summary.md` holds the table above as the check writes it. AONIA's
+move and the limit, and `results/summary.md` holds these figures as the check writes them, with the
+count of published moves described below. AONIA's
 refusals by year: 1976 7, 1977 18, 1978 13, 1979 12, 1980 29, 1981 11, 1982 19, 1983 59, 1984 8,
 1985 6, 1986 1, 1987 1, 1988 1. The largest published move among them is 66 percentage points in a
 day (85% to 19%, 9 March 1983), and June 1985 holds two of about 15. All predate the Reserve Bank's

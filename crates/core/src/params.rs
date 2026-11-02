@@ -67,7 +67,7 @@ pub struct StressLevel {
     /// Spread applied to every fill at this level, regardless of size.
     pub min_spread_bps: i64,
     /// Conditions that raise a market to this level automatically. Any one met is enough. `None`
-    /// means operator-only.
+    /// means operator-only, which from `V46` only level 1 can be: the operator's floor stops there.
     #[serde(default)]
     pub trigger: Option<StressTrigger>,
 }

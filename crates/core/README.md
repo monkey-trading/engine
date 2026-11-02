@@ -516,12 +516,13 @@ its electors own the house NAV both move value towards. A signed rate more than 
 the applied rates next to its date is refused, in `set_benchmark_rates` and `SetBenchmarkRate` alike,
 with the whole snapshot left unapplied. The limit is the cap times the calendar days between the
 dates, so a real move refused today lands once enough days have passed, and a benchmark's first rate
-is bound only by its ±100% range. An applied date does not change: the rate it holds passes, as the
-worker sends it again, and any other is refused, so no rate can be ratcheted, or walked from a
-backdated one, past the cap. The last applied rate keeps financing meanwhile, and `benchmark_rate_stale`
+is bound only by its ±100% range. An applied date does not change, with a reason of its own: the rate
+it holds passes, as the worker sends it again, and any other is refused, a publisher's revision
+included, so no rate can be ratcheted, or walked from a backdated one, past the cap. The last applied rate keeps financing meanwhile, and `benchmark_rate_stale`
 reports it after five weekdays. `research/benchmark-cap/` checks the cap against each benchmark's
 published history. The stress floor is at most level 1, in a market or in all of them, and lapses to
-the automatic level 72 hours of sequenced time after it is set, unless it is set again. A floor above
+the automatic level 72 hours of sequenced time after it is set, unless it is set again, and a catch-up
+prices the boundaries before that time with the floor. A floor above
 level 1 when V46 activates drops to level 1, and each floor then in force starts its 72 hours. The
 automatic triggers and reduce-only do not change, and earlier logs replay unchanged, since nothing
 records a floor's time before V46. Its session is in `examples/reference_log/v46.rs`.

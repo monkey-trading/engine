@@ -215,3 +215,94 @@ endpoint = "{publisher}/estr"
     assert_eq!(*replayed.engine.benchmark_history(), history);
     assert_eq!(serde_json::to_value(&replayed.engine.markets()[&1].stress).unwrap(), market);
 }
+
+/// The worker's alert reaches its webhook through `admin::run`, the real entry point, whose global
+/// subscriber takes a process of its own: this test re-runs itself as that process.
+#[tokio::test]
+async fn the_workers_refused_rate_alert_reaches_its_webhook() {
+    const CHILD: &str = "ENGINE_BENCHMARK_WORKER_ALERT_CHILD";
+    const TEST: &str = "api::benchmark_tests::operator_bounds::the_workers_refused_rate_alert_reaches_its_webhook";
+    if let Some(args) = std::env::var_os(CHILD) {
+        let args: Vec<String> = serde_json::from_str(args.to_str().unwrap()).unwrap();
+        let args = Cli::try_parse_from(args).unwrap().args;
+        admin::run(args, KeyEnv { key_file: None, key: Some(HexKey("42".repeat(32))) }).await.unwrap();
+        return;
+    }
+    let dir = scratch_dir("operator-bounds-worker-alert");
+    fs::create_dir_all(&dir).unwrap();
+    // Dated today against the real clock the child's worker reads, and so different from the rate
+    // the dev genesis applied for today.
+    let now = crate::clock::now_ms();
+    let today = chrono::DateTime::from_timestamp_millis(now).unwrap().date_naive();
+    let sofr = format!("Effective Date,Rate Type,Rate (%)\n{},SOFR,7.50\n", today.format("%m/%d/%Y"));
+    let estr = format!("KEY,TIME_PERIOD,OBS_VALUE\nEST.B.EU000A2X2A25.WT,{today},2.00\n");
+    let (pages_tx, mut pages) = mpsc::unbounded_channel::<String>();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let stand_in = format!("http://{}", listener.local_addr().unwrap());
+    let app = Router::new()
+        .route("/sofr", get(move || std::future::ready(sofr.clone())))
+        .route("/estr", get(move || std::future::ready(estr.clone())))
+        .route(
+            "/warning",
+            axum::routing::post(move |body: String| {
+                let _ = pages_tx.send(body);
+                std::future::ready(StatusCode::OK)
+            }),
+        );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await });
+
+    let cfg_path = dir.join("node.toml");
+    let text = fs::read_to_string(crate::test_support::DEV_CONFIG).unwrap();
+    let mut text = text.replace("data/dev/alerts", &dir.join("alerts").display().to_string());
+    text.push_str(&format!(
+        r#"
+[alerts.warning]
+url_env = "ENGINE_TEST_WARNING_URL"
+
+[benchmarks]
+interval = "1h"
+timeout = "2s"
+[[benchmarks.sources]]
+publisher = "sofr"
+endpoint = "{stand_in}/sofr"
+[[benchmarks.sources]]
+publisher = "estr"
+endpoint = "{stand_in}/estr"
+"#
+    ));
+    fs::write(&cfg_path, text).unwrap();
+    let node = start(&dir, now, Arc::new(TestClock::at(now))).await;
+    assert!(node.try_submit(Command::Tick).await.is_none(), "held for the first snapshot");
+
+    let args = serde_json::to_string(&[
+        "engine",
+        "--config",
+        cfg_path.to_str().unwrap(),
+        "--node",
+        &node.url,
+        "--pin",
+        &node.pin,
+        "sync-benchmarks",
+    ])
+    .unwrap();
+    let child = tokio::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", TEST, "--nocapture"])
+        .env(CHILD, args)
+        .env("ENGINE_TEST_WARNING_URL", format!("{stand_in}/warning"))
+        .kill_on_drop(true)
+        .output();
+    let output = tokio::time::timeout(Duration::from_secs(120), child).await.expect("the worker finishes").unwrap();
+    assert!(
+        output.status.success(),
+        "the worker failed: {}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The hold is released: the refused rate did not stop the snapshot.
+    assert!(node.try_submit(Command::Tick).await.is_some(), "the worker's snapshot applied");
+    let page = pages.try_recv().expect("the alert reached the webhook");
+    assert!(page.contains("benchmark_rate_refused") && page.contains("SOFR"), "{page}");
+    node.stop().await;
+    server.abort();
+}

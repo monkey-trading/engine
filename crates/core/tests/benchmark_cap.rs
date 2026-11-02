@@ -68,7 +68,8 @@ fn signs(h: &mut Harness, observations: &[(i64, &str)]) -> bool {
     let done = events.contains(&Event::AdminApplied);
     if !done {
         assert_eq!(h.engine.benchmark_history(), &before, "a refused snapshot changes nothing: {events:?}");
-        assert!(matches!(events.last(), Some(Event::AdminRejected { reason }) if reason.contains("bps a day")));
+        assert!(matches!(events.last(), Some(Event::AdminRejected { reason })
+            if reason.contains("bps a day") || reason.contains("an applied date does not change")));
     }
     done
 }
@@ -147,6 +148,19 @@ fn an_applied_date_does_not_change() {
 }
 
 #[test]
+fn a_refused_revision_says_its_date_does_not_change() {
+    let mut h = capped();
+    assert!(signs(&mut h, &[(0, "0.04")]));
+    let command = snapshot(&h, &[(0, "0.0401")]);
+    let events = h.operate(command);
+    assert!(
+        matches!(events.last(), Some(Event::AdminRejected { reason })
+            if reason.contains("an applied date does not change") && !reason.contains("bps a day")),
+        "{events:?}"
+    );
+}
+
+#[test]
 fn a_backdated_rate_cannot_walk_the_rate_in_force_past_the_cap() {
     let mut h = capped();
     assert!(signs(&mut h, &[(0, "0.04")]));
@@ -208,6 +222,11 @@ fn a_first_dated_rate_is_measured_a_day_from_an_undated_one() {
     h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V46 });
     assert!(!signs(&mut h, &[(0, "0.070000001")]));
     assert!(signs(&mut h, &[(0, "0.07")]));
+    // With a dated rate in the history the undated one measures nothing: a day later the rate moves
+    // on from 7%, and the rate backdated before it is held only to the rate after it.
+    h.advance(DAY_MS);
+    assert!(signs(&mut h, &[(0, "0.1")]));
+    assert!(signs(&mut h, &[(2, "0.0999")]));
 }
 
 /// Opens a long BTC position that pays financing each rollover.
@@ -279,6 +298,8 @@ fn a_rate_refused_for_long_enough_turns_the_observation_stale_without_stopping_f
     let (mut charged, mut stale) = (Vec::new(), Vec::new());
     for _ in 0..10 {
         let rollover = h.engine.next_rollover().unwrap();
+        h.advance_to(rollover - 1);
+        assert!(!signs(&mut h, &[(0, "0.5")]));
         h.advance_to(rollover + 1);
         let (amounts, observed) = financed(&h.cmd(Command::Tick));
         charged.extend(amounts);

@@ -85,6 +85,28 @@ fn a_floor_lapses_72_hours_after_it_is_set_on_the_sequencers_stamp() {
 }
 
 #[test]
+fn a_rollover_a_catch_up_walks_before_the_lapse_is_priced_with_the_floor() {
+    // No command falls between the floor and its lapse: a Tick at the lapse walks the rollovers
+    // between them, and only then does the floor go.
+    let mut h = at(ProtocolVersion::V46);
+    h.operator_admin(floor(Some(BTC), 1));
+    let lapses_at = h.ts + STRESS_FLOOR_LAPSE_MS;
+    assert!(h.engine.next_rollover().unwrap() < lapses_at);
+    h.advance_to(lapses_at);
+    let events = h.cmd(Command::Tick);
+    let lapsed = events.iter().position(|event| *event == Event::StressChanged { market: BTC, level: 0 });
+    let rolled = events.iter().rposition(|event| {
+        matches!(
+            event,
+            Event::BenchmarkRateMissing { .. }
+                | Event::BenchmarkRateObserved { .. }
+                | Event::BenchmarkRateUndated { .. }
+        )
+    });
+    assert!(rolled.is_some() && lapsed.is_some() && rolled < lapsed, "{events:?}");
+}
+
+#[test]
 fn setting_a_floor_again_restarts_its_time() {
     let mut h = at(ProtocolVersion::V46);
     h.operator_admin(floor(Some(BTC), 1));

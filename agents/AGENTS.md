@@ -248,7 +248,7 @@ an index: load only the rule whose hint matches the current action.
   `init`, `kernel.config`, the `sev-snp-measure` pins, `apt.conf` (the Debian snapshot's apt
   settings), and `retry`, which repeats each download after a failure. Its `README.md` covers the
   build, what the guest exposes, the attestation layout, booting on a host, and the release steps.
-- **research/** — studies that set protocol parameters from data, outside the build and CI except the close-spread study's and the benchmark-cap study's `fixtures/`.
+- **research/** — studies that set protocol parameters from data, outside the build and CI except the close-spread study's `fixtures/` and the benchmark-cap study's `fixtures/` and `results/refused.csv`.
   `cap-calibration/` calibrates the house exposure-cap floors by Monte Carlo (#111): scripts that
   fetch and derive its public data (raw pulls in gitignored `data/raw/`, the derived dataset in
   `data/derived/`), the Python model behind `run.py`, its tests, and `results/`. Its `README.md`

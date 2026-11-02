@@ -53,8 +53,7 @@ pub struct BenchmarkBatch {
 
 /// A rate the V46 cap refuses, and the applied rate it is measured from: the date is `None` for a
 /// benchmark's undated rate.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RefusedBenchmarkRate {
     pub rate: BenchmarkRate,
     pub from_date: Option<NaiveDate>,
@@ -65,6 +64,13 @@ impl fmt::Display for RefusedBenchmarkRate {
     /// The refusal as it reads in an `AdminRejected` reason or an alert.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let rate = &self.rate;
+        if self.from_date == Some(rate.effective_date) {
+            return write!(
+                f,
+                "benchmark {} already holds {} for {}, and an applied date does not change",
+                rate.benchmark, self.from_rate, rate.effective_date
+            );
+        }
         write!(
             f,
             "benchmark {} rate {} on {} moves more than {MAX_BENCHMARK_MOVE_BPS_PER_DAY} bps a day from {}",
@@ -210,9 +216,9 @@ impl Engine {
 /// what it has admitted so far: the limit is the cap times the days between them, in each direction.
 /// An applied date does not change: the rate it holds passes, as the worker sends it again, and any
 /// other is refused, since a change measured from its neighbours could be ratcheted, or walked from a
-/// backdated rate, past the cap. A benchmark's undated rate stands in for the observation before a rate
-/// that has no dated one, as one day away. A rate with no neighbour at all is the benchmark's first,
-/// bound only by the ±100% range.
+/// backdated rate, past the cap. A benchmark with no dated observation measures from its undated rate,
+/// as one day away. A rate with no neighbour at all is the benchmark's first, bound only by the ±100%
+/// range.
 pub fn split_by_cap(
     history: &BenchmarkHistory,
     undated: &BTreeMap<String, i64>,
@@ -247,11 +253,9 @@ fn refusal(
     if let Some(applied) = observed.get(&date) {
         return (*applied != rate.annual_rate).then(|| refused(Some(date), *applied));
     }
-    let before = observed
-        .range(..date)
-        .next_back()
-        .map(|(day, value)| (Some(*day), *value, (date - *day).num_days()))
-        .or_else(|| undated_bps.map(|bps| (None, Fixed::from_bps(bps), 1)));
+    let before = observed.range(..date).next_back().map(|(day, value)| (Some(*day), *value, (date - *day).num_days()));
+    let before =
+        before.or_else(|| undated_bps.filter(|_| observed.is_empty()).map(|bps| (None, Fixed::from_bps(bps), 1)));
     if let Some((day, value, days)) = before
         && !within_cap(rate.annual_rate, value, days)
     {

@@ -250,8 +250,6 @@ impl Engine {
         self.apply_due_ceiling(sequenced.ts);
 
         let mut events = Vec::new();
-        // From `V46` a floor whose 72 hours have run lapses before the command acts.
-        self.lapse_stress_floors(&mut events);
         // From `V21`, a quote held across a closure could never count under the hours rules, so it
         // drops before anything this command does: catch-up at an intermediate boundary, a close-out
         // check, or an early outcome for a rejected batch or activation must never act on it.
@@ -302,6 +300,8 @@ impl Engine {
                 return Ok(events);
             };
             corporate_margin = margin;
+            // From `V46` a floor whose 72 hours have run lapses before the command acts.
+            self.lapse_stress_floors(&mut events);
         }
         // From `V12`, a price command's quotes are stored first, then every market is brought to the
         // sequenced time, so no fill or check, a rollover's included, acts on an index the market
