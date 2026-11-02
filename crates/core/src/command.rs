@@ -106,6 +106,20 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         auth: Option<RequestAuth>,
     },
+    /// From `V44`, cancels every resting order `account` holds, in order id order, each with the
+    /// event a single cancel emits; a no-op with none. One signature and one nonce cover them all.
+    CancelAll {
+        account: AccountId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        auth: Option<RequestAuth>,
+    },
+    /// From `V44`, closes the account's whole position in each named market as one reduce-only
+    /// market order apiece, in list order, with the API's actual screening input as `AccessOrder`
+    /// has for an order. `V44` is screened throughout, so there is no unscreened form.
+    AccessCloseAll {
+        request: CloseAllRequest,
+        evidence: AccessEvidence,
+    },
     Admin(AdminCommand),
     /// An admin command the operator signed, from `V8`. From `V8`, an unsigned `Admin` operator
     /// command is refused once any deposit or house capital is credited. Boxed: admin commands are
@@ -300,6 +314,43 @@ pub struct OrderRequest {
     /// Only reduce an existing position, never open or flip it.
     #[serde(default)]
     pub reduce_only: bool,
+    /// The account's signature, nonce, and expiry, where the log's rules require them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<RequestAuth>,
+}
+
+/// One market a close-all closes, with the price the client saw for the closing order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CloseEntry {
+    pub market: MarketId,
+    /// The quote guard's reference, as `OrderKind::Market::quoted` is for a single order.
+    pub quoted: Fixed,
+}
+
+/// A client's request to close its positions in `closes`, as it signs and posts it. Each entry runs
+/// as a reduce-only market order of the account's whole position in that market, with `quoted`
+/// and `max_slippage_bps` as a single market order's, and the entry's list index as its
+/// `client_id`, so a rejection names the entry it refused. A refusal of the whole request is a lone
+/// rejection with `client_id` 0.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CloseAllRequest {
+    pub account: AccountId,
+    pub closes: Vec<CloseEntry>,
+    /// The client's slippage bound for every entry; the market's own bound caps it.
+    #[serde(default)]
+    pub max_slippage_bps: Option<i64>,
+    /// The account's signature, nonce, and expiry, where the log's rules require them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<RequestAuth>,
+}
+
+/// A client's request to cancel every resting order it holds, as it signs and posts it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CancelAllRequest {
+    pub account: AccountId,
     /// The account's signature, nonce, and expiry, where the log's rules require them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth: Option<RequestAuth>,

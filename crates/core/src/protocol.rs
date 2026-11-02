@@ -220,11 +220,18 @@ pub enum ProtocolVersion {
     /// the unabsorbed remainder becomes debt charged against earned weight, and surviving weight
     /// pays debt down before it earns.
     V43,
+    /// Batch orders (`batch`): one signed request cancels every resting order the account holds,
+    /// or closes the account's whole position in each named market, as one sequenced command. Each
+    /// close runs the single reduce-only market order's execution path in list order, so its
+    /// spreads, close-spread ceiling, fee, emissions weight, stress and house caps are that
+    /// order's; one that cannot fill is rejected and the others still run. Both forms take one
+    /// nonce, run under the `Trade` scope a session key signs within, and are refused before `V44`.
+    V44,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V43;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V44;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

@@ -5,11 +5,16 @@ use std::net::SocketAddr;
 use axum::extract::{ConnectInfo, State};
 use axum::{Extension, Json};
 use engine_core::access::{AccessDeposit, AccessEvidence, EligibilityRequest, SourceFailure};
-use engine_core::command::{CancelRequest, Command, OrderRequest, WithdrawalRequest};
-use engine_core::eip712::{self, cancel_hash, deposit_screening_hash, eligibility_hash, order_hash, withdrawal_hash};
+use engine_core::command::{
+    CancelAllRequest, CancelRequest, CloseAllRequest, Command, OrderRequest, WithdrawalRequest,
+};
+use engine_core::eip712::{
+    self, cancel_all_hash, cancel_hash, close_all_hash, deposit_screening_hash, eligibility_hash, order_hash,
+    withdrawal_hash,
+};
 use engine_core::event::Event;
-use tracing::Span;
 use tracing::field::display;
+use tracing::{Span, debug};
 
 use crate::access::{ScreeningRequest, screen};
 use crate::api::{AmountBody, ApiError, ApiResult, ApiState, SessionKeyRequest, SessionKeyRevocationRequest};
@@ -50,6 +55,50 @@ pub(super) async fn cancel_order(State(s): State<ApiState>, Json(b): Json<Cancel
         })
         .await?;
     Ok(Json(s.submit(Command::CancelOrder { account: b.account, order_id: b.order_id, auth }).await?))
+}
+
+/// Cancels every resting order the account holds, on one signature and one nonce.
+/// Error cases:
+/// - the request is not authorised for its account
+/// - the sequencer has stopped, or sequencing is halted
+pub(super) async fn cancel_all(State(s): State<ApiState>, Json(b): Json<CancelAllRequest>) -> ApiResult<Vec<Event>> {
+    let auth = s
+        .authorise(b.account, b.auth, true, |domain, auth| {
+            cancel_all_hash(domain, b.account, auth.nonce, auth.expires_at)
+        })
+        .await?;
+    Ok(Json(s.submit(Command::CancelAll { account: b.account, auth }).await?))
+}
+
+/// Closes the account's whole position in each market the request names, on one signature, one
+/// nonce, and one screening; the request counts once against the rate limits.
+/// Error cases:
+/// - the request names more markets than are listed
+/// - the request is not authorised for its account
+/// - access screening refuses the account, or its capacity or source is unavailable
+/// - the sequencer has stopped, or sequencing is halted
+pub(super) async fn close_all(
+    State(s): State<ApiState>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Json(mut req): Json<CloseAllRequest>,
+) -> ApiResult<Vec<Event>> {
+    // A request signed over more entries than there are markets can only be refused, so it is
+    // refused before its signature is hashed or a nonce is used.
+    Span::current().record("id", display(req.account));
+    let listed = s.query(|engine| engine.markets().len()).await?;
+    if req.closes.len() > listed {
+        debug!(entries = req.closes.len(), listed, "request refused: more closes than listed markets");
+        return Err(ApiError::BadRequest("more closes than listed markets".into()));
+    }
+    let auth = req.auth.take();
+    req.auth = s
+        .authorise(req.account, auth, true, |domain, auth| close_all_hash(domain, &req, auth.nonce, auth.expires_at))
+        .await?;
+    let auth = req.auth.as_ref().ok_or(ApiError::Unauthorized("missing signature"))?;
+    let hash = close_all_hash(&signature_domain(&s), &req, auth.nonce, auth.expires_at);
+    let evidence = api_screen(&s, peer, req.account, hash).await?;
+    let cmd = Command::AccessCloseAll { request: req, evidence };
+    Ok(Json(s.submit(cmd).await?))
 }
 
 /// Registers a session key the account signed for: the key may place and cancel orders for the

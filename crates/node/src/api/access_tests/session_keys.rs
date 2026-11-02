@@ -288,7 +288,7 @@ async fn a_session_key_cannot_revoke_itself_or_another_key() {
 }
 
 /// `account`'s signed registration of `session` until `session_expires_at`, as a JSON body.
-fn registration(account: &SigningKey, session: &SigningKey, nonce: u64, session_expires_at: i64) -> Value {
+pub(super) fn registration(account: &SigningKey, session: &SigningKey, nonce: u64, session_expires_at: i64) -> Value {
     json!({
         "account": eip712::address(account.verifying_key()),
         "session_key": eip712::address(session.verifying_key()),
@@ -317,7 +317,7 @@ fn signed_registration_auth(
 }
 
 /// `account`'s signed revocation of `session`, as a JSON body.
-fn revocation(account: &SigningKey, session: &SigningKey, nonce: u64) -> Value {
+pub(super) fn revocation(account: &SigningKey, session: &SigningKey, nonce: u64) -> Value {
     let hash = eip712::session_key_revocation_hash(
         &eip712::domain(31_337, VAULT),
         eip712::address(account.verifying_key()),
@@ -333,7 +333,7 @@ fn revocation(account: &SigningKey, session: &SigningKey, nonce: u64) -> Value {
 }
 
 /// A BTC market buy for `account`, signed by its session `key` with `nonce`, as a JSON body.
-fn session_order(account: &SigningKey, key: &SigningKey, nonce: u64) -> Value {
+pub(super) fn session_order(account: &SigningKey, key: &SigningKey, nonce: u64) -> Value {
     session_order_at(account, key, nonce, NOW + 60_000)
 }
 
@@ -372,7 +372,7 @@ fn session_withdrawal(account: &SigningKey, key: &SigningKey, nonce: u64) -> Val
 }
 
 /// The status and JSON body of a DELETE of `path` with a JSON `body`.
-async fn delete(node: &Node, path: &str, body: Value) -> (StatusCode, Value) {
+pub(super) async fn delete(node: &Node, path: &str, body: Value) -> (StatusCode, Value) {
     let request =
         Request::delete(path).header("content-type", "application/json").body(Body::from(body.to_string())).unwrap();
     let response = node.app.clone().oneshot(request).await.unwrap();

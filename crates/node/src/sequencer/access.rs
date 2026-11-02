@@ -90,6 +90,7 @@ fn source_health(engine: &Engine, cmd: &Command, events: &[Event]) -> Option<Sou
             | Reject::SessionKeyExpired { .. }
             | Reject::SessionKeyScope
             | Reject::SessionKeyUnsupported
+            | Reject::BatchUnsupported
             | Reject::TooManySessionKeys { .. } => None,
             _ => Some(SourceHealth::Verified),
         },
@@ -130,6 +131,7 @@ pub(super) fn is_access_command(cmd: &Command) -> bool {
         cmd,
         Command::AttestEligibility { .. }
             | Command::AccessOrder { .. }
+            | Command::AccessCloseAll { .. }
             | Command::AccessWithdraw { .. }
             | Command::AccessDeposit { .. }
             | Command::AccessCustodyDeposit { .. }
@@ -175,6 +177,7 @@ mod tests {
     use super::*;
     use engine_core::Fixed;
     use engine_core::access::{AccessEvidence, EligibilityClass, SourceFailure};
+    use engine_core::event::CancelReason;
     use engine_core::types::AccountId;
 
     const ACCOUNT: AccountId = AccountId([1; 20]);
@@ -261,6 +264,53 @@ mod tests {
             assert!(!state.failed);
         }
         assert_eq!(logs.count("alert_resolved=\"access_source_failed\""), 2);
+    }
+
+    #[test]
+    fn a_close_all_drives_the_source_episode_by_its_own_screening() {
+        use engine_core::command::{CloseAllRequest, CloseEntry};
+        let (logs, _guard) = crate::trusted_time::tests::logs::Logs::capture();
+        let close_all = Command::AccessCloseAll {
+            request: CloseAllRequest {
+                account: ACCOUNT,
+                closes: vec![CloseEntry { market: 1, quoted: Fixed::ONE }],
+                max_slippage_bps: None,
+                auth: None,
+            },
+            evidence: AccessEvidence::Failed { reason: SourceFailure::Unavailable },
+        };
+        let rejected = |reason| Event::OrderRejected { account: ACCOUNT, client_id: 0, reason };
+        let note =
+            |state: &mut AccessAlerts, cmd: &Command, events: &[Event]| state.note(&Engine::default(), cmd, events);
+
+        let mut state = AccessAlerts::default();
+        note(&mut state, &close_all, &[rejected(Reject::Access { reason: AccessReject::SourceUnavailable })]);
+        assert!(state.failed, "a refused close-all opens the episode");
+        assert_eq!(logs.count("alert=\"access_source_failed\""), 1);
+        // Before `V44` the request reads no evidence, so it says nothing about the source.
+        note(&mut state, &close_all, &[rejected(Reject::BatchUnsupported)]);
+        assert!(state.failed);
+        // Every outcome after a passed screening resolves it: an entry rejection, a refused list,
+        // an acceptance.
+        for (resolved, outcome) in (1..).zip([
+            rejected(Reject::ReduceOnly),
+            rejected(Reject::InvalidOrder { reason: "no markets to close".into() }),
+            Event::OrderAccepted { account: ACCOUNT, client_id: 0, order_id: 1 },
+        ]) {
+            state.failed = true;
+            note(&mut state, &close_all, &[outcome]);
+            assert!(!state.failed);
+            assert_eq!(logs.count("alert_resolved=\"access_source_failed\""), resolved);
+        }
+        // A cancel-all is not screened: its events say nothing about the source.
+        let cancel_all = Command::CancelAll { account: ACCOUNT, auth: None };
+        state.failed = true;
+        note(
+            &mut state,
+            &cancel_all,
+            &[Event::OrderCancelled { account: ACCOUNT, order_id: 1, reason: CancelReason::Client }],
+        );
+        assert!(state.failed);
     }
 
     #[test]

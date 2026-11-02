@@ -10,7 +10,9 @@ use axum::extract::connect_info::MockConnectInfo;
 use axum::http::Request as HttpRequest;
 use engine_core::auth::MAX_EXPIRY_AHEAD_MS;
 use engine_core::auth::RequestAuth;
-use engine_core::command::{CancelRequest, Command, OrderKind, OrderRequest, WithdrawalRequest};
+use engine_core::command::{
+    CancelAllRequest, CancelRequest, CloseAllRequest, Command, OrderKind, OrderRequest, WithdrawalRequest,
+};
 use engine_core::eip712;
 use engine_core::eip712::{Eip712Domain, cancel_hash, order_hash, withdrawal_hash};
 use engine_core::event::{Event, Reject};
@@ -296,6 +298,8 @@ fn the_published_signing_vectors_are_bodies_the_api_accepts() {
             "order" => serde_json::from_value::<OrderRequest>(body).map(drop),
             "cancel" => serde_json::from_value::<CancelRequest>(body).map(drop),
             "withdrawal" => serde_json::from_value::<WithdrawalRequest>(body).map(drop),
+            "cancel_all" => serde_json::from_value::<CancelAllRequest>(body).map(drop),
+            "close_all" => serde_json::from_value::<CloseAllRequest>(body).map(drop),
             "register_session_key" => serde_json::from_value::<super::SessionKeyRequest>(body).map(drop),
             "revoke_session_key" => serde_json::from_value::<super::SessionKeyRevocationRequest>(body).map(drop),
             other => panic!("unknown request kind {other}"),

@@ -4,6 +4,7 @@
 // Each test binary uses a different subset of these helpers.
 #![allow(dead_code)]
 
+pub mod batch;
 mod client;
 pub use client::*;
 pub mod close_spread;

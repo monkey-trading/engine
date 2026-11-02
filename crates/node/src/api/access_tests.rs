@@ -1,6 +1,7 @@
 //! Authenticated API refusals use the actual transport peer and are durable before reply.
 
 mod admission;
+mod batch;
 mod declarations;
 mod reissue;
 mod session_keys;
