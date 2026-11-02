@@ -450,7 +450,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/stats/background.rs` — the scan's worker thread: a copy of the engine that applies every command
   the sequencer applies, so a scan reads the sequencer's state at its seq without holding the sequencer
 - `src/stats/closeout.rs` — the estimated close-out price of one position, other positions at their
-  marks, across margin bands and for the market that converts its own currency (`closeout/tests.rs`)
+  marks, across margin bands and for the market that converts its own currency (`closeout/tests.rs`),
+  and each position's close-out in the account read (`tests/closeout_price.rs` checks it against the engine)
 - `src/stats/activity.rs` — the bounded feed of loss allocations, stakes and unstakes
 - `src/stats/view.rs` — the answers built from the record and the engine
 - `src/stats/bench.rs` — the ignored cost benchmarks at 100k accounts: a scan, `observe`, and each command's
@@ -1668,6 +1669,18 @@ after it finishes,
 every due scan is taken, and if the worker stops the record scans on the
 sequencer's thread again and raises the `stats_scan_inline` warning. A replay scans on its own thread, lightly for all but the last, so a replay of a log at 100k accounts spends about 5 ms per light interval of sequenced time on it. `[stats]` sets each resolution's retention (1m 48h, 1h 90d, 1d
 unbounded by default), the activity length, and the close-out and profit buckets.
+
+`GET /v1/accounts/{address}` adds `closeouts`, one entry per position in market order:
+`{"market", "reach": "due" | "at" | "beyond", "price"}`. `price`, in the market's quote currency, is set
+only for `at`: the price the market must reach for the account to fall below its close-out level, the
+account's other positions held at their marks, so it moves when they or the account's balance do. `due`
+is an account already below the level at its marks, and `beyond` one no price closes out: a long's would
+be zero or below, and a short's above ten times its mark. It is the calculation behind the close-out map
+(`stats/closeout.rs`), so the two cannot disagree. It is an estimate of where the account crosses the
+level: a close-out closes the largest losing position that can trade first, which may be another one, and
+none trades outside its market's session. A move in an FX market also moves the accounts' positions
+quoted in its currency, which the estimate holds at their marks. The read runs on the sequencer's
+thread (about 9 µs p99 for an account holding all 37 launch markets, 7 µs of it the close-outs, against the 200 µs command budget; `stats::tests::closeout_cost`).
 
 `GET /v1/markets/{id}/marks?resolution=(1s|1m|1h|1d)&from_ms=&to_ms=&limit=` returns
 `{"market", "resolution", "entries", "next", "max_limit"}`: one market's index-mark history from the

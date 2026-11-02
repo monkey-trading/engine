@@ -168,6 +168,8 @@ struct AccountView {
     positions: BTreeMap<MarketId, Position>,
     orders: BTreeMap<OrderId, RestingOrder>,
     toxicity_bps: i64,
+    /// Where each position's market must reach for the account to fall below its close-out level.
+    closeouts: Vec<crate::stats::PositionCloseout>,
 }
 
 #[derive(Serialize)]
@@ -370,7 +372,7 @@ async fn house(State(s): State<ApiState>) -> ApiResult<HouseView> {
     Ok(Json(view))
 }
 
-/// One account's balance, equity, margin, positions, and orders.
+/// One account's balance, equity, margin, positions, orders, and each position's close-out.
 /// Error cases:
 /// - the address is malformed
 /// - the account has never been credited
@@ -382,6 +384,7 @@ async fn account(State(s): State<ApiState>, Path(address): Path<String>) -> ApiR
         .query(move |e| {
             let acct = e.accounts().get(&id)?;
             let (equity, margin) = e.equity_and_margin(acct, None);
+            let closeouts = crate::stats::account_closeouts(e, acct, (equity, margin));
             Some(AccountView {
                 balance: acct.balance,
                 unfinalised_deposits: acct.unfinalised_deposits,
@@ -390,6 +393,7 @@ async fn account(State(s): State<ApiState>, Path(address): Path<String>) -> ApiR
                 positions: acct.positions.clone(),
                 orders: acct.orders.clone(),
                 toxicity_bps: acct.toxicity_bps,
+                closeouts,
             })
         })
         .await?;
@@ -449,6 +453,8 @@ mod admin_tests;
 mod auth_tests;
 #[cfg(test)]
 mod claim_tests;
+#[cfg(test)]
+mod closeout_tests;
 #[cfg(test)]
 mod marks_tests;
 #[cfg(test)]

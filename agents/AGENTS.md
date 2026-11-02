@@ -95,7 +95,7 @@ an index: load only the rule whose hint matches the current action.
   time),
   the dashboard record (`stats/`, held in memory and rebuilt from the log's replay through a sink in it,
   with no file to roll back: `series.rs` 1m/1h/1d buckets with `[stats]` retention, `snapshot.rs` and
-  `closeout.rs` the full scan of every account at most once per `api.stats_interval` of sequenced time and a light one (totals only) every `api.stats_light_interval`, taken by `background.rs`'s worker over a copy of the engine so it never holds the sequencer, `activity.rs`
+  `closeout.rs` the full scan of every account at most once per `api.stats_interval` of sequenced time and a light one (totals only) every `api.stats_light_interval`, taken by `background.rs`'s worker over a copy of the engine so it never holds the sequencer, and, from the full scan's rule, each position's `closeouts` price in `GET /v1/accounts/{address}`, `activity.rs`
   the bounded MONKEY feed, `view.rs` the answers) served signed from `api/stats.rs` and `/v1/house`:
   `/v1/house/positions`, `/v1/monkey`, `/v1/monkey/activity` and `/v1/stats/series`, each stating where its
   data begins (`stats::bench` measures the scan at 100k accounts),

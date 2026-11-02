@@ -23,7 +23,8 @@ fn a_close_out_across_a_margin_band_is_found_where_the_slack_reaches_zero() {
     // below the mark, in the first band although the position stands in the second.
     let position = Position { notional: f(3_000_000), long: true, spec: &spec };
     let reach = reach(standing(2_000_000, 40_000), position, 9_000);
-    let Reach::At(offset) = reach else { panic!("{reach:?}") };
+    let Reach::At(ratio) = reach else { panic!("{reach:?}") };
+    let offset = offset_bps(ratio);
     assert!((-6_660..=-6_640).contains(&offset), "{offset}");
     // The same account's slack at the estimate is nil: its equity is the level's share of the margin.
     let notional = f(3_000_000) + f(3_000_000).mul_bps(offset);
@@ -37,7 +38,8 @@ fn a_short_closes_out_on_a_rise_and_an_account_already_below_the_level_is_due() 
     let spec = btc();
     // A short of 500k on 100k of equity and a 50k margin: closed out at a notional of 571429.
     let position = Position { notional: f(500_000), long: false, spec: &spec };
-    let Reach::At(offset) = reach(standing(100_000, 50_000), position, 5_000) else { panic!() };
+    let Reach::At(ratio) = reach(standing(100_000, 50_000), position, 5_000) else { panic!() };
+    let offset = offset_bps(ratio);
     assert!(offset > 0 && offset <= 5_000, "{offset}");
     let due = reach(standing(20_000, 50_000), position, 5_000);
     assert_eq!(due, Reach::Due, "equity under half the margin is closed out at the marks");
@@ -59,12 +61,12 @@ fn a_self_converting_pair_closes_out_where_its_yen_profit_in_dollars_falls_to_th
         panic!()
     };
     // 1/p = 1/150 + 9500 / (100000 * 150), so p = 136.99: 868 bps below the mark.
-    assert!((-870..=-866).contains(&long), "{long}");
+    assert!((-870..=-866).contains(&offset_bps(long)), "{long}");
     let Reach::At(short) = reach_self_converting(standing(10_000, 1_000), false, quantity, entry, mark, 2_000) else {
         panic!()
     };
     // 1/p = 1/150 - 9500 / (100000 * 150), so p = 165.76: 1050 bps above.
-    assert!((1_045..=1_055).contains(&short), "{short}");
+    assert!((1_045..=1_055).contains(&offset_bps(short)), "{short}");
     assert_eq!(reach_self_converting(standing(10_000, 1_000), true, quantity, entry, mark, 500), Reach::Beyond);
     assert_eq!(reach_self_converting(standing(400, 1_000), true, quantity, entry, mark, 2_000), Reach::Due);
 }
