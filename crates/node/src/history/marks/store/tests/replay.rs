@@ -224,10 +224,10 @@ async fn a_prune_pins_the_new_floor_and_pages_across_it_serve() {
     assert!(store.prior_anchors().interior((1, Resolution::M1)).contains_key(&(BASE + MIN)), "the floor is pinned");
 }
 
-/// A restart imports the prior run's rows without its pins; the re-bind that startup runs makes
-/// the chain readable again.
+/// A restart imports the prior run's rows without its pins; the import re-tags them, each
+/// recording the tag of the row below it as imported, so the chain reads without them.
 #[tokio::test]
-async fn an_imported_chain_with_rewritten_rows_reads_after_the_startup_re_bind() {
+async fn an_imported_chain_with_rewritten_rows_reads_without_the_prior_runs_pins() {
     let prior_dir = scratch_dir("marks-replay-import-prior");
     let mut prior = Store::open(&prior_dir.join("marks.sqlite"), Retentions::defaults(), mac_key()).unwrap();
     prior.observe(&[(1, BASE, fixed("1")), (1, BASE + 2 * MIN, fixed("3"))]).unwrap();
@@ -317,4 +317,62 @@ async fn rows_captured_in_an_earlier_run_do_not_verify_in_the_next() {
         let err = page(&store, from, to).await.expect_err("served a row from an earlier run");
         assert!(format!("{err:#}").contains("fails authentication"), "{from}..{to}: {err:#}");
     }
+}
+
+/// The import's rows verify for the rest of the run unless the recovery reset re-keys the cache:
+/// the host copies two adjacent rows after the import, the replay writes corrected ones, and the
+/// copies come back.
+#[tokio::test]
+async fn rows_captured_before_the_recovery_reset_do_not_verify_after_it() {
+    let prior_dir = scratch_dir("marks-replay-reset-prior");
+    let prior_path = prior_dir.join("marks.sqlite");
+    let mut prior = Store::open(&prior_path, Retentions::defaults(), mac_key()).unwrap();
+    let samples = [(1, BASE, fixed("1")), (1, BASE + MIN, fixed("2")), (1, BASE + 2 * MIN, fixed("3"))];
+    prior.observe(&samples).unwrap();
+    prior.observe(&[(1, BASE + 3 * MIN, fixed("4"))]).unwrap();
+    drop(prior);
+    let (path, mut store) = fresh_store_at("marks-replay-reset-fresh", Retentions::defaults());
+    store.import_prior(&prior_path).unwrap();
+    store.validate_chains().unwrap();
+    let (b, c) = (capture(&path, BASE + MIN), capture(&path, BASE + 2 * MIN));
+    // Full recovery: the reset removes the log-derived rows, and the replay writes the log's marks,
+    // which differ from the imported ones.
+    store.reset_log_derived().unwrap();
+    store.observe(&[(1, BASE, fixed("1")), (1, BASE + MIN, fixed("7")), (1, BASE + 2 * MIN, fixed("3"))]).unwrap();
+    store.observe(&[(1, BASE + 3 * MIN, fixed("4"))]).unwrap();
+    assert_eq!(page(&store, BASE + MIN, BASE + MIN).await.unwrap().entries[0].close, fixed("7"));
+    restore(&path, &b);
+    restore(&path, &c);
+    for (from, to, limit) in [(BASE + MIN, BASE + MIN, 10), (BASE + MIN, i64::MAX, 1)] {
+        let err = store.reader().page(1, Resolution::M1, from, to, limit, 10).await.expect_err("served a stale row");
+        assert!(format!("{err:#}").contains("fails authentication"), "{from}..{to}: {err:#}");
+    }
+}
+
+/// A replay flush that re-links a provider-seeded row already re-linked by an earlier flush checks
+/// the rows it just wrote against this transaction's tag, not the pin the transaction began with.
+#[tokio::test]
+async fn consecutive_replay_flushes_below_a_seeded_row_all_commit() {
+    let mut store = fresh_store("marks-replay-consecutive", Retentions::defaults());
+    store.seed(&[seed_at(BASE + 10 * MIN, "9")], BASE + 10 * MIN).unwrap();
+    store.observe(&[(1, BASE, fixed("1"))]).unwrap();
+    store.observe(&[(1, BASE + MIN, fixed("2")), (1, BASE + 2 * MIN, fixed("3"))]).unwrap();
+    store.observe(&[(1, BASE + 3 * MIN, fixed("4")), (1, BASE + 5 * MIN, fixed("5"))]).unwrap();
+    assert_eq!(page(&store, i64::MIN, i64::MAX).await.unwrap().entries.len(), 6);
+}
+
+/// A head the backfill re-linked is pinned, and a live mark merging into it moves its pin with it.
+#[tokio::test]
+async fn a_live_mark_merging_into_a_pinned_head_keeps_it_readable_and_the_old_row_refused() {
+    let (path, mut store) = fresh_store_at("marks-replay-pinned-head", Retentions::defaults());
+    store.observe(&[(1, BASE, fixed("1")), (1, BASE + 2 * MIN, fixed("3"))]).unwrap();
+    store.seed(&[seed_at(BASE + MIN, "2")], BASE + 2 * MIN).unwrap();
+    let before = capture(&path, BASE + 2 * MIN);
+    store.observe(&[(1, BASE + 2 * MIN + 10_000, fixed("8"))]).unwrap();
+    assert_eq!(page(&store, BASE + 2 * MIN, BASE + 2 * MIN).await.unwrap().entries[0].close, fixed("8"));
+    store.observe(&[(1, BASE + 3 * MIN, fixed("4"))]).unwrap();
+    assert_eq!(page(&store, i64::MIN, i64::MAX).await.unwrap().entries.len(), 4);
+    restore(&path, &before);
+    let c = BASE + 2 * MIN;
+    assert_refused(&store, &[(i64::MIN, i64::MAX), (c, c), (BASE, c)]).await;
 }

@@ -60,6 +60,7 @@ fn check_links(snapshot: &Snapshot) -> anyhow::Result<()> {
 ///   did not remove, or a pair no longer matches its committed anchor
 pub(crate) fn reset_log_derived(
     mac: &hmac::Hmac<sha2::Sha256>,
+    next: &hmac::Hmac<sha2::Sha256>,
     tx: &Transaction,
     prior: &ChainAnchors,
 ) -> anyhow::Result<(usize, ChainUpdates)> {
@@ -81,14 +82,15 @@ pub(crate) fn reset_log_derived(
     // check_links covered every link, including links on rows this delete removes: the delete
     // also removes every reference to them, and a row whose own link names a missing bucket
     // would let the delete launder a host deletion into a clean re-chain.
-    rebind(mac, tx, &snapshot, &deleted)?;
+    rebind(next, tx, &snapshot, &deleted)?;
     let updates = anchor_updates(tx, &pairs, &Default::default(), true)?;
     Ok((removed, updates))
 }
 
-/// Re-binds every row of `snapshot` that `deleted` does not name: its link made the survivor
-/// actually below it, where its predecessor is a row the delete removed, and the tag it records
-/// made the tag that survivor carries now, so no earlier pin outlives it.
+/// Re-tags every row of `snapshot` that `deleted` does not name under `mac`, the new run key: its
+/// link made the survivor actually below it, where its predecessor is a row the delete removed,
+/// and the tag it records made the tag that survivor carries now, so no earlier pin and no earlier
+/// version outlives it.
 /// Error cases:
 /// - an update fails
 fn rebind(
@@ -103,11 +105,7 @@ fn rebind(
             if deleted.contains(&(*market, *resolution, row.bucket)) {
                 continue;
             }
-            let tag = if row.prev != pred.map(|pred| pred.0) || row.prev_tag != pred.map(|pred| pred.1) {
-                retag(mac, tx, *market, *resolution, row, pred)?
-            } else {
-                row.tag
-            };
+            let tag = retag(mac, tx, *market, *resolution, row, pred)?;
             pred = Some((row.bucket, tag));
         }
     }
@@ -126,23 +124,7 @@ fn snapshot_all(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction) -> anyhow::Res
         .prepare("SELECT market, resolution, bucket, open, high, low, close, provenance, prev_bucket, tag, prev_tag FROM marks ORDER BY market, resolution, bucket")
         .context("snapshotting the marks cache")?;
     let rows = stmt
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, MarketId>(0)?,
-                row.get::<_, i64>(1)?,
-                SnapRow {
-                    bucket: row.get(2)?,
-                    open: row.get(3)?,
-                    high: row.get(4)?,
-                    low: row.get(5)?,
-                    close: row.get(6)?,
-                    provenance: row.get(7)?,
-                    prev: row.get(8)?,
-                    tag: row.get(9)?,
-                    prev_tag: row.get(10)?,
-                },
-            ))
-        })
+        .query_map([], |row| Ok((row.get::<_, MarketId>(0)?, row.get::<_, i64>(1)?, SnapRow::from_row(row, 2)?)))
         .context("snapshotting the marks cache")?;
     for row in rows {
         let (market, resolution, row) = row.context("snapshotting the marks cache")?;

@@ -1,5 +1,6 @@
-//! Importing a previous run's cache into the seed file: provider-seeded rows whose
-//! authentication tags verify, and backfill markers — neither of which the log can rebuild.
+//! Importing a previous run's cache into the seed file: the rows whose authentication tags verify
+//! under that file's run key, re-tagged under this run's, and backfill markers — the provider-
+//! seeded rows and the markers being what the log cannot rebuild.
 
 use std::path::Path;
 
@@ -14,10 +15,10 @@ use crate::history::marks::store::setup::read_epoch;
 use crate::history::marks::store::{Row, Store, chain, read_only, store, tag};
 
 impl Store {
-    /// Imports the cache at `prior`, which a previous run left at `path`'s final name: provider-
-    /// seeded rows whose authentication tags verify under that file's own run key, and backfill
-    /// markers, both with INSERT OR IGNORE, so log-derived rows the replay will re-derive never
-    /// overwrite what the log proves. Each imported row is re-tagged under this run's key, with
+    /// Imports the cache at `prior`, which a previous run left at `path`'s final name: its rows
+    /// whose authentication tags verify under that file's own run key, and backfill markers, both
+    /// with INSERT OR IGNORE, so log-derived rows the replay will re-derive never overwrite what
+    /// the log proves (a full recovery's reset deletes them; `[snapshots]` keeps them). Each imported row is re-tagged under this run's key, with
     /// the tag of the row below it as imported, so the prior run's versions of these rows no longer
     /// verify and no stale record of a predecessor's tag is carried over.
     /// Rows the host altered fail verification and are dropped with a warning, never imported. A

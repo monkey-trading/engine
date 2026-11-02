@@ -127,19 +127,7 @@ pub(crate) fn merge(
 ) -> anyhow::Result<()> {
     let row = stmts
         .row_at
-        .query_row(params![i64::from(market), resolution as i64, bucket], |row| {
-            Ok(SnapRow {
-                bucket,
-                open: row.get(0)?,
-                high: row.get(1)?,
-                low: row.get(2)?,
-                close: row.get(3)?,
-                provenance: row.get(4)?,
-                prev: row.get(5)?,
-                tag: row.get(6)?,
-                prev_tag: row.get(7)?,
-            })
-        })
+        .query_row(params![i64::from(market), resolution as i64, bucket], |row| SnapRow::from_row(row, 0))
         .optional()
         .with_context(|| format!("reading the {market} {resolution:?} bucket at {bucket}"))?;
     let pred = stmts.predecessor(market, resolution, bucket)?;
@@ -252,19 +240,7 @@ pub(crate) fn relink_successor(
 ) -> anyhow::Result<()> {
     let succ = stmts
         .successor
-        .query_row(params![i64::from(market), resolution as i64, bucket], |row| {
-            Ok(SnapRow {
-                bucket: row.get(0)?,
-                open: row.get(1)?,
-                high: row.get(2)?,
-                low: row.get(3)?,
-                close: row.get(4)?,
-                provenance: row.get(5)?,
-                prev: row.get(6)?,
-                tag: row.get(7)?,
-                prev_tag: row.get(8)?,
-            })
-        })
+        .query_row(params![i64::from(market), resolution as i64, bucket], |row| SnapRow::from_row(row, 0))
         .optional()
         .with_context(|| format!("reading the {market} {resolution:?} chain above {bucket}"))?;
     let Some(succ) = succ else { return Ok(()) };

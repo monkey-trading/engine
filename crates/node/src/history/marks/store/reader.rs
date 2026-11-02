@@ -223,19 +223,7 @@ pub(crate) fn read_page_once(
         (None, None) => {}
     }
     let below: Option<SnapRow> = conn
-        .query_row(BELOW, params![i64::from(market), resolution as i64, from], |row| {
-            Ok(SnapRow {
-                bucket: row.get(0)?,
-                open: row.get(1)?,
-                high: row.get(2)?,
-                low: row.get(3)?,
-                close: row.get(4)?,
-                provenance: row.get(5)?,
-                prev: row.get(6)?,
-                tag: row.get(7)?,
-                prev_tag: row.get(8)?,
-            })
-        })
+        .query_row(BELOW, params![i64::from(market), resolution as i64, from], |row| SnapRow::from_row(row, 0))
         .optional()
         .context("reading below the marks window")?;
     if let Some(below) = &below {
@@ -243,19 +231,7 @@ pub(crate) fn read_page_once(
         pinned(below.bucket, &below.tag)?;
     }
     let above: Option<SnapRow> = conn
-        .query_row(ABOVE, params![i64::from(market), resolution as i64, to], |row| {
-            Ok(SnapRow {
-                bucket: row.get(0)?,
-                open: row.get(1)?,
-                high: row.get(2)?,
-                low: row.get(3)?,
-                close: row.get(4)?,
-                provenance: row.get(5)?,
-                prev: row.get(6)?,
-                tag: row.get(7)?,
-                prev_tag: row.get(8)?,
-            })
-        })
+        .query_row(ABOVE, params![i64::from(market), resolution as i64, to], |row| SnapRow::from_row(row, 0))
         .optional()
         .context("reading above the marks window")?;
     if let Some(above) = &above {

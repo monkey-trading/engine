@@ -427,10 +427,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   by every sample (`store/chain.rs` holds the shared chain queries; `store/tests/bench.rs` is the
   write's ignored cost-per-sample timing)
 - `src/history/marks/store/reset.rs` — the recovery reset: validating every chain, deleting the
-  log-derived buckets, and re-chaining and re-binding the survivors; startup's re-bind of an
-  imported cache
-- `src/history/marks/store/import.rs` — importing a previous run's provider-seeded rows and
-  backfill markers into the seed file, skipping what cannot be authenticated
+  log-derived buckets, and re-chaining the survivors under a new run key
+- `src/history/marks/store/import.rs` — importing a previous run's rows (every row that verifies
+  under that file's run key, log-derived included, which a full recovery's reset then deletes) and
+  backfill markers into the seed file, re-tagged under this run's key; what cannot be
+  authenticated is skipped
 - `src/history/marks/backfill.rs` — the provider backfill: which feed symbols map to a candles
   adapter, the public candles client, and window paging (`tests.rs`)
 - `src/history/marks/run.rs` — the supervised marks task: flushing live mark reports and backfilling
@@ -1637,12 +1638,13 @@ with. A row a write re-links, or changes after another arrived above it (a gap f
 late sample merged into it, a re-floor), is pinned in memory at its new tag, and a read refuses a
 pinned row at any other version, whether it serves the row or only ends beside it. A write refuses
 to merge into, re-link, re-floor, or bind the tag of a row that is not the version it last wrote.
-Rows are authenticated under a key drawn for each cache file and kept inside it, so a row captured
-in an earlier run does not verify in this one, and an older authentic version of a row that the
+Rows are authenticated under a key derived from the enclave key and a nonce kept in each cache file,
+and the recovery reset draws a new nonce and re-tags the rows it keeps, so a row captured in an
+earlier run, or before the reset, does not verify after it, and an older authentic version of a row that the
 host puts back while the node runs is refused wherever it would be served, including by a page that
 would hide a bucket behind it. A host can still delete or corrupt the cache while the node runs,
-which fails reads until the cache is rebuilt, but not make a read serve an older version of a row
-this run wrote. The pins live in memory with the anchors. At startup the prior cache's rows are
+which fails reads, and stops the node when a later write trips over it, until the cache is rebuilt,
+but not make a read serve an older version of a row this run wrote. The pins live in memory with the anchors. At startup the prior cache's rows are
 verified under that file's key, checked by link, and re-tagged under this run's key, so an older
 authentic row the host restores while the node is stopped is not detected; a full recovery without
 `[snapshots]` re-derives the log-derived rows from the verified log and corrects them, and a node

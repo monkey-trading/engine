@@ -89,19 +89,7 @@ pub(crate) fn ensure_current(
         .query_row(
             SUCCESSOR,
             named_params! {":market": i64::from(market), ":resolution": resolution as i64, ":bucket": bucket},
-            |row| {
-                Ok(SnapRow {
-                    bucket: row.get(0)?,
-                    open: row.get(1)?,
-                    high: row.get(2)?,
-                    low: row.get(3)?,
-                    close: row.get(4)?,
-                    provenance: row.get(5)?,
-                    prev: row.get(6)?,
-                    tag: row.get(7)?,
-                    prev_tag: row.get(8)?,
-                })
-            },
+            |row| SnapRow::from_row(row, 0),
         )
         .optional()
         .with_context(|| format!("reading the {market} {resolution:?} chain above {bucket}"))?;
@@ -109,7 +97,8 @@ pub(crate) fn ensure_current(
     // The record is only as good as the row that holds it: a forged one fails here, and a stale
     // one fails its own pin.
     verify_row(mac, market, resolution, &above)?;
-    if let Some(pinned) = pins.and_then(|pins| pins.get(&above.bucket)) {
+    let rewritten = written.is_some_and(|written| written.contains(&above.bucket));
+    if let Some(pinned) = pins.and_then(|pins| pins.get(&above.bucket)).filter(|_| !rewritten) {
         ensure!(
             *pinned == above.tag,
             "the {market} {resolution:?} bucket at {} is not the version committed for it",
@@ -134,7 +123,8 @@ pub(crate) fn rewrote(rewrites: &mut Rewrites, market: MarketId, resolution: Res
 }
 
 /// One stored row of one pair, for the merge's read of the bucket a sample lands in.
-pub(crate) const ROW_AT: &str = "SELECT open, high, low, close, provenance, prev_bucket, tag, prev_tag FROM marks
+pub(crate) const ROW_AT: &str =
+    "SELECT bucket, open, high, low, close, provenance, prev_bucket, tag, prev_tag FROM marks
     WHERE market = :market AND resolution = :resolution AND bucket = :bucket";
 /// The greatest bucket below `bucket` and its tag, the chain link a stored or new row there must
 /// name and the tag a new row binds.
@@ -303,19 +293,7 @@ pub(crate) fn plan_prune(
         let rows = stmt
             .query_map(
                 named_params! {":market": i64::from(market), ":resolution": resolution as i64, ":horizon": horizon},
-                |row| {
-                    Ok(SnapRow {
-                        bucket: row.get(0)?,
-                        open: row.get(1)?,
-                        high: row.get(2)?,
-                        low: row.get(3)?,
-                        close: row.get(4)?,
-                        provenance: row.get(5)?,
-                        prev: row.get(6)?,
-                        tag: row.get(7)?,
-                        prev_tag: row.get(8)?,
-                    })
-                },
+                |row| SnapRow::from_row(row, 0),
             )
             .and_then(|rows| rows.collect::<Result<Vec<_>, _>>())
             .with_context(|| format!("planning the {market} {resolution:?} prune"))?;
@@ -367,19 +345,7 @@ pub(crate) fn apply_prune(
         // still there. A NULL link or a link skipping that bucket is a restored snapshot row,
         // refused, not published as the new floor.
         let floor: Option<SnapRow> = tx
-            .query_row(FLOOR_ROW, params![i64::from(market), resolution as i64], |row| {
-                Ok(SnapRow {
-                    bucket: row.get(0)?,
-                    open: row.get(1)?,
-                    high: row.get(2)?,
-                    low: row.get(3)?,
-                    close: row.get(4)?,
-                    provenance: row.get(5)?,
-                    prev: row.get(6)?,
-                    tag: row.get(7)?,
-                    prev_tag: row.get(8)?,
-                })
-            })
+            .query_row(FLOOR_ROW, params![i64::from(market), resolution as i64], |row| SnapRow::from_row(row, 0))
             .optional()
             .with_context(|| format!("reading the pruned {resolution:?} floor of {market}"))?;
         let Some(floor) = floor else { continue };

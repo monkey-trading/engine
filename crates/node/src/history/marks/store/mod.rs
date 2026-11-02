@@ -15,6 +15,8 @@ use std::time::Duration;
 use anyhow::Context;
 use engine_core::Fixed;
 use engine_core::types::{MarketId, Millis};
+use rand::RngCore;
+use rand::rngs::OsRng;
 use rusqlite::{Connection, TransactionBehavior, params};
 use tracing::{debug, warn};
 
@@ -27,7 +29,7 @@ mod reset;
 mod setup;
 
 pub(crate) use auth::{ChainAnchor, ChainAnchors, ChainHead, Coverage};
-use auth::{Row, tag};
+use auth::{Epoch, Row, run_mac, tag};
 pub use reader::Reader;
 
 use crate::history::marks::{MarkSample, Resolution, Retentions};
@@ -121,6 +123,24 @@ pub(crate) struct SnapRow {
 }
 
 impl SnapRow {
+    /// The row a query over `bucket, open, high, low, close, provenance, prev_bucket, tag, prev_tag`
+    /// returned, those columns starting at `first`.
+    /// Error cases:
+    /// - a column does not decode
+    pub(crate) fn from_row(row: &rusqlite::Row<'_>, first: usize) -> rusqlite::Result<Self> {
+        Ok(Self {
+            bucket: row.get(first)?,
+            open: row.get(first + 1)?,
+            high: row.get(first + 2)?,
+            low: row.get(first + 3)?,
+            close: row.get(first + 4)?,
+            provenance: row.get(first + 5)?,
+            prev: row.get(first + 6)?,
+            tag: row.get(first + 7)?,
+            prev_tag: row.get(first + 8)?,
+        })
+    }
+
     /// The row's tag inputs, as `tag` binds them.
     pub(crate) fn fields(&self) -> Row<'_> {
         Row {
@@ -281,8 +301,10 @@ impl Store {
     /// Deletes every log-derived bucket, so a recovery re-derivation rebuilds exactly what the
     /// verified log proves and nothing the host wrote into those rows while the node was stopped;
     /// provider-seeded buckets stay until a log mark replaces them, and the chains over them
-    /// re-link only over what this delete removed. A refused reset rebuilds the derived cache
-    /// from nothing.
+    /// re-link only over what this delete removed. The cache takes a new run key and every
+    /// survivor is re-tagged under it, so no row from before the reset verifies after it, whatever
+    /// the host captured. Readers are built after recovery, so none holds the key it replaces. A
+    /// refused reset rebuilds the derived cache from nothing.
     /// Error cases:
     /// - the cache file cannot be discarded or reopened
     pub fn reset_log_derived(&mut self) -> anyhow::Result<()> {
@@ -294,14 +316,8 @@ impl Store {
             warn!(alert = "marks_cache_rebuilt", "rebuilding the marks cache after a refused reset: {e:#}");
             let path = self.path.clone();
             store::discard(&path)?;
-            // Readers cloned before the rebuild share this store's anchor map: keep them on one
-            // map, reset to what the fresh, empty file commits.
-            let shared = self.anchors.clone();
             *self = Self::open(&path, self.retentions, self.mac_key)
                 .with_context(|| format!("rebuilding the marks cache after a refused reset: {e:#}"))?;
-            let fresh = self.prior_anchors();
-            self.anchors = shared;
-            *self.anchors.lock().expect("the marks chain anchors are never poisoned") = fresh;
         }
         Ok(())
     }
@@ -315,10 +331,16 @@ impl Store {
         let tx =
             self.conn.transaction_with_behavior(TransactionBehavior::Immediate).context("starting a marks reset")?;
         store::check_schema(&tx, &self.schema, &self.path)?;
-        let (removed, updates) = reset::reset_log_derived(&self.mac, &tx, &prior)?;
+        let mut epoch = Epoch::default();
+        OsRng.fill_bytes(&mut epoch);
+        let next = run_mac(&self.mac_key, &epoch);
+        let (removed, updates) = reset::reset_log_derived(&self.mac, &next, &tx, &prior)?;
+        tx.execute("UPDATE epoch SET nonce = ?1 WHERE id = 0", [epoch]).context("drawing the run key")?;
         let mut anchors = self.anchors.lock().expect("the marks chain anchors are never poisoned");
         tx.commit().context("committing a marks reset")?;
         anchors.apply(updates);
+        drop(anchors);
+        self.mac = next;
         debug!(removed, "log-derived marks reset for re-derivation");
         Ok(())
     }
