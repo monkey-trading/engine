@@ -3,7 +3,9 @@
 
 mod common;
 
-use common::batch::{cancel_all, close_all, close_all_expiring, closes, funded, market_order, onboard, replayed};
+use common::batch::{
+    cancel_all, close_all, close_all_expiring, closes, funded, funded_emitting, market_order, onboard, replayed,
+};
 use common::close_spread::rest;
 use common::events::{fills, rejection};
 use common::session_keys::{funded_at, register};
@@ -242,6 +244,50 @@ fn the_signature_covers_the_whole_list_in_order_and_the_slippage_bound() {
         assert_eq!(rejection(&events), &Reject::InvalidSignature, "{events:?}");
     }
     assert_eq!(h.engine.accounts()[&client.account].positions.len(), 2);
+}
+
+#[test]
+fn an_unsigned_batch_is_refused_and_uses_no_nonce() {
+    let (mut h, client, _) = funded();
+    open_positions(&mut h, &client);
+    let resting = rest_limit(&mut h, &client, BTC, "90000");
+    let before = nonce(&h, client.account);
+
+    let events = h.cmd(Command::CancelAll { account: client.account, auth: None });
+    assert_eq!(rejection(&events), &Reject::MissingSignature);
+    assert!(h.engine.accounts()[&client.account].orders.contains_key(&resting), "the order still rests");
+
+    // Screening evidence for the request does not stand in for its signature.
+    let Command::AccessCloseAll { mut request, evidence } =
+        close_all(&h, &client, client.account, before, closes(&[BTC, ETH], "100000"), None)
+    else {
+        unreachable!("a screened close-all")
+    };
+    request.auth = None;
+    let events = h.cmd(Command::AccessCloseAll { request, evidence });
+    assert_eq!(rejection(&events), &Reject::MissingSignature);
+    assert!(fills(&events).is_empty());
+    let positions = &h.engine.accounts()[&client.account].positions;
+    assert!(positions.contains_key(&BTC) && positions.contains_key(&ETH), "no position closed");
+    assert_eq!(nonce(&h, client.account), before, "a refused unsigned request burns no nonce");
+}
+
+#[test]
+fn a_close_all_records_each_losing_fill_in_full_and_the_net_realised() {
+    let (mut h, client, _) = funded_emitting();
+    open_positions(&mut h, &client);
+    // The long in BTC loses and the short in ETH wins, in one batch.
+    h.price(BTC, "99000");
+    h.price(ETH, "2900");
+    let entries = vec![CloseEntry { market: BTC, quoted: f("99000") }, CloseEntry { market: ETH, quoted: f("2900") }];
+    let cmd = close_all(&h, &client, client.account, nonce(&h, client.account), entries, None);
+    let events = h.cmd(cmd);
+    let realised: Vec<_> = fills(&events).iter().map(|fill| fill.realised_pnl).collect();
+    let [loss, win] = realised[..] else { panic!("a fill per market: {events:?}") };
+    assert!(loss.is_negative() && win.is_positive(), "{events:?}");
+    let result = h.engine.period_results()[&client.account];
+    assert_eq!(result.losses, -loss, "the losing fill's magnitude, not the batch's net");
+    assert_eq!(result.realised, loss + win, "the net of both fills");
 }
 
 #[test]

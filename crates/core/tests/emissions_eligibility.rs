@@ -74,11 +74,15 @@ fn a_v43_activation_crossing_a_period_settles_its_earlier_fills_gross() {
     // Losses accrued before the activation keep their weight: the period a `V43` activation
     // crosses finalises under `V43`, and the gross losses accumulate under every version for
     // exactly this settlement.
-    let mut h = Harness::emitting_at(ProtocolVersion::V41, BUDGET);
+    let mut h = Harness::emitting_at(ProtocolVersion::V42, BUDGET);
     let (a, b) = (Client::new(1), Client::new(2));
     attest_and_fund(&mut h, &a);
     attest_and_fund(&mut h, &b);
-    // One period, all under `V41`: a loses 100 on one fill and wins 20 on another; b loses 60.
+    // Period 0 closes under `V42`, still net: a loses 100 and wins 20, and weighs 80.
+    screened_round_trip(&mut h, &[(&a, "1")], "100000", "99900");
+    screened_round_trip(&mut h, &[(&a, "1")], "99900", "99920");
+    assert_eq!(allocations(&next_period(&mut h)), [(a.account, 0, f("80"), BUDGET)]);
+    // Period 1, all under `V42`: a loses 100 on one fill and wins 20 on another; b loses 60.
     screened_round_trip(&mut h, &[(&a, "1")], "100000", "99900");
     screened_round_trip(&mut h, &[(&a, "1")], "99900", "99920");
     screened_round_trip(&mut h, &[(&b, "0.6")], "100000", "99900");
@@ -91,15 +95,15 @@ fn a_v43_activation_crossing_a_period_settles_its_earlier_fills_gross() {
     assert_eq!(rebuilt.state_root(), incremental);
     assert_eq!(
         allocations(&next_period(&mut h)),
-        [(a.account, 0, f("100"), 625_000), (b.account, 0, f("60"), 375_000)]
+        [(a.account, 1, f("100"), 625_000), (b.account, 1, f("60"), 375_000)]
     );
 }
 
 #[test]
 fn before_v43_netting_still_applies() {
-    // The gross rule activates at `V43`: one version earlier a win still offsets the period's
-    // losses, exactly as every pre-`V43` log records it.
-    let mut h = Harness::emitting_at(ProtocolVersion::V41, BUDGET);
+    // The gross rule activates at `V43`: under `V42`, the version before it, a win still offsets
+    // the period's losses, exactly as every pre-`V43` log records it.
+    let mut h = Harness::emitting_at(ProtocolVersion::V42, BUDGET);
     let (a, b) = (Client::new(1), Client::new(2));
     attest_and_fund(&mut h, &a);
     attest_and_fund(&mut h, &b);
