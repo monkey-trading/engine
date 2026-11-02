@@ -201,8 +201,8 @@ impl CheckpointRpc {
         Ok(accepted)
     }
 
-    /// Whether the vault takes a claim against checkpoint `seq` at `at`'s pinned block: recorded in
-    /// the epoch in force, whose signer is not retired, as the vault's claims check.
+    /// Whether a claim can prove against checkpoint `seq` at `at`'s pinned block: recorded in the
+    /// epoch in force, whose signer is not retired, as the vault's claims check.
     /// Error cases:
     /// - no pinned lifecycle exists, the block was orphaned, or RPC fails
     pub(super) async fn read_claims_open(&self, at: &Observation, seq: u64) -> anyhow::Result<bool> {

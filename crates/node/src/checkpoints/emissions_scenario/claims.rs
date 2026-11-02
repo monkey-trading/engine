@@ -1,6 +1,8 @@
 //! The scenario's on-chain claims: proofs read from the API, claimed against the checkpoint they
 //! name, and the signer changes that end them.
 
+use std::time::Duration;
+
 use alloy::primitives::{B256, Bytes, U256};
 use alloy::rpc::types::TransactionRequest;
 use alloy::sol;
@@ -10,10 +12,9 @@ use engine_core::command::Command;
 use engine_core::merkle::EntitlementProof;
 use engine_core::types::AccountId;
 use serde_json::json;
-use std::time::Duration;
 use tokio::time::sleep;
 
-use super::{Scenario, claimEmissionsCall, latestRootCall, latestSeqCall};
+use crate::checkpoints::emissions_scenario::{Scenario, claimEmissionsCall, latestRootCall, latestSeqCall};
 use crate::checkpoints::scenario::send;
 
 sol! {

@@ -146,8 +146,8 @@ pub(crate) struct VaultState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LatestCheckpoint {
     pub seq: u64,
-    /// Whether the vault takes a claim proven against it now: the signer that recorded it is still
-    /// in force, neither replaced nor retired.
+    /// Whether a claim can prove against it: the signer that recorded it is still in force, neither
+    /// replaced nor retired.
     pub claimable: bool,
 }
 

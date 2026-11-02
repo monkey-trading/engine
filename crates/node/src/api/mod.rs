@@ -425,9 +425,10 @@ async fn proof(State(s): State<ApiState>, Path(address): Path<String>) -> ApiRes
 /// against. The vault checks a claim against the root of the checkpoint named by the proof's `seq`,
 /// in the signer epoch in force: the proof is at the checkpoint the vault last recorded in that epoch
 /// when the node retained one for the account (from its first request on), and `claimable` is true.
-/// Otherwise it is the newest checkpoint's and the claim waits for the vault to record that seq. A
-/// proof at the accepted root names the entitlement then, which only grows, so the vault pays that
-/// less what it has paid, and the rest on a later claim.
+/// Otherwise it is the newest checkpoint's, and the claim waits for the vault to record that seq in
+/// the epoch in force, so a client asks again rather than keep it. A proof at the accepted root names
+/// the entitlement then, which only grows, so the vault pays that less what it has paid, and the rest
+/// on a later claim.
 /// Error cases:
 /// - the address is malformed
 /// - no checkpoint holds an entitlement for the account

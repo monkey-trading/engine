@@ -1748,12 +1748,13 @@ proven against: `accepted_seq` (the vault's latest included checkpoint as the no
 proof is at `accepted_seq`, and the claim can land, as it still can once later checkpoints post; its
 `entitled` can be below `newest_entitled`, since an entitlement only grows, and the vault pays
 `entitled` less what it has paid, the rest on a later claim. When false the proof is the newest
-checkpoint's and the claim waits until the vault records its `seq`.
+checkpoint's and waits until the vault records its `seq` in the signer epoch in force, so ask again
+rather than keep it.
 The node keeps an account's proof for each checkpoint from its first request here (a 404 counts),
 for the 128 accounts that asked most recently, until the vault accepts a later checkpoint; so a
 first answer is not claimable unless the vault is at the newest checkpoint, and a restart forgets
-what was kept. A change of signer ends every earlier proof: the vault refuses them until the new
-signer records a checkpoint, and a proof at that checkpoint pays what they held and anything since.
+what was kept. A change of signer ends every earlier proof for good, and a proof at the new signer's
+first checkpoint pays what they held and anything since.
 An account has no entitlement, and gets 404, until the first checkpoint after a period in which it
 was allocated a share.
 
@@ -1761,8 +1762,9 @@ was allocated a share.
 distribution the same way (`entitled` in the 6-decimal token's base units, with the same
 `accepted_seq`, `newest_seq`, `newest_entitled` and `claimable`). The vault's
 `claimDistribution` pays the USDC the distribution adds to what the account was already paid,
-against the root of the proof's `seq`, under the same rule. An account has no distribution, and gets
-404, until the first checkpoint after an epoch in which it was allocated a share.
+against the root of the proof's `seq`, under the same rule, and `claimable` does not read a withdrawal
+pause, under which the vault refuses the claim. An account has no distribution, and gets 404, until
+the first checkpoint after an epoch in which it was allocated a share.
 
 `/v1/accounts/{address}/exit` returns, from `V38`, every proof the account exits the vault with
 against the state root of the last checkpoint: `terms` (the vault deposit cursor and the pending and

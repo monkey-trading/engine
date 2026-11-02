@@ -93,6 +93,10 @@ contract ClaimRootsTest is GovernanceTest {
         usdc.mint(address(vault), FUNDED);
     }
 
+    function test_TheVaultStaysUnderTheContractSizeLimit() public view {
+        assertLe(address(vault).code.length, 24_576, "EIP-170");
+    }
+
     function test_AnOlderRootThenANewerThenTheOlderAgain() public {
         // Alice holds 100 at both checkpoints 10 and 11, and 250 at 12.
         _post(10, alice, 100);

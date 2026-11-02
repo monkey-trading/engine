@@ -492,20 +492,50 @@ contract ExitTestCases is ExitTest {
         assertEq(vault.monkey().balanceOf(bob), 5e18);
     }
 
-    function testAChangeOfSignerEndsEmissionClaimsOnTheExitRootButNotTheExit() public {
-        usdc.mint(address(vault), 100e6);
-        bytes32 emission = keccak256(abi.encodePacked(uint8(8), bob));
-        bytes32 distribution = keccak256(abi.encodePacked(uint8(13), bob));
-        ExitVerifier.ExitTerms memory terms = _addTerms(0, 0, 0);
-        _leaf(emission, keccak256(abi.encode(uint256(3e18))));
-        _addDistribution(bob, 30e6);
-        _post();
+    function testAChangeOfSignerBeforeTheExitEndsEmissionClaimsOnItsRootButNotTheExit() public {
+        ExitVerifier.ExitTerms memory terms = _rootWithEmissionAndDistribution();
         _govern(address(vault), abi.encodeCall(Vault.setSigner, (makeAddr("next signer"))));
         _startExit(terms);
+        _assertEmissionRefusedAndDistributionRegisters(Vault.InvalidSignerEpoch.selector);
+    }
 
-        vm.expectRevert(Vault.InvalidSignerEpoch.selector);
-        vault.claimEmissions(bob, 3e18, seq, _siblings(emission));
-        vault.registerExitDistribution(bob, 30e6, _siblings(distribution));
+    function testARetirementBeforeTheExitEndsEmissionClaimsOnItsRootButNotTheExit() public {
+        ExitVerifier.ExitTerms memory terms = _rootWithEmissionAndDistribution();
+        vm.prank(multisig);
+        vault.retireSigner();
+        _startExit(terms);
+        _assertEmissionRefusedAndDistributionRegisters(Vault.NoSigner.selector);
+    }
+
+    function testAChangeOfSignerAfterTheExitEndsEmissionClaimsOnItsRootButNotTheExit() public {
+        _startExit(_rootWithEmissionAndDistribution());
+        _govern(address(vault), abi.encodeCall(Vault.setSigner, (makeAddr("next signer"))));
+        _assertEmissionRefusedAndDistributionRegisters(Vault.InvalidSignerEpoch.selector);
+    }
+
+    function testARetirementAfterTheExitEndsEmissionClaimsOnItsRootButNotTheExit() public {
+        _startExit(_rootWithEmissionAndDistribution());
+        vm.prank(multisig);
+        vault.retireSigner();
+        _assertEmissionRefusedAndDistributionRegisters(Vault.NoSigner.selector);
+    }
+
+    /// @dev Posts a root holding bob's entitlement of 3 MONKEY and distribution of 30 USDC.
+    function _rootWithEmissionAndDistribution() private returns (ExitVerifier.ExitTerms memory terms) {
+        usdc.mint(address(vault), 100e6);
+        terms = _addTerms(0, 0, 0);
+        _leaf(keccak256(abi.encodePacked(uint8(8), bob)), keccak256(abi.encode(uint256(3e18))));
+        _addDistribution(bob, 30e6);
+        _post();
+    }
+
+    /// @dev No checkpoint can follow the exit, so the entitlement stays unminted, while the exit
+    /// still registers the distribution against the same root.
+    function _assertEmissionRefusedAndDistributionRegisters(bytes4 refusal) private {
+        bytes32[] memory emission = _siblings(keccak256(abi.encodePacked(uint8(8), bob)));
+        vm.expectRevert(refusal);
+        vault.claimEmissions(bob, 3e18, seq, emission);
+        vault.registerExitDistribution(bob, 30e6, _siblings(keccak256(abi.encodePacked(uint8(13), bob))));
         assertEq(vault.exitDistributionClaims(bob), 30e6);
     }
 

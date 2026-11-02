@@ -85,7 +85,7 @@ impl<R: CheckpointChain> Poster<R> {
         let read = async {
             let at = self.chain.observe(View::Latest, &[]).await?;
             at.validate(&[])?;
-            let Some((seq, _)) = at.state.checkpoint.clone() else { return Ok(None) };
+            let Some(seq) = at.state.checkpoint.as_ref().map(|(seq, _)| *seq) else { return Ok(None) };
             let claimable = self.chain.claims_open(&at, seq).await?;
             anyhow::Ok(Some(LatestCheckpoint { seq, claimable }))
         };

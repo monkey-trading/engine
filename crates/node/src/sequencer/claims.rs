@@ -70,9 +70,10 @@ pub struct ClaimAnswer<P: Proved> {
     /// The account's cumulative amount at the newest checkpoint: what the proof will name once the
     /// vault accepts that checkpoint. Never below the proof's own `entitled`.
     pub newest_entitled: P::Amount,
-    /// Whether the proof is against `accepted_seq`, so a claim can land now, and goes on landing as
-    /// later checkpoints post. Otherwise the claim waits for the vault to record the proof's seq in
-    /// the signer epoch in force.
+    /// Whether the proof is against `accepted_seq`, so the vault checks it now, and goes on checking
+    /// it as later checkpoints post; a withdrawal pause still holds a USDC claim. Otherwise the proof
+    /// waits for the vault to record its seq, and a seq a replaced or retired signer recorded never
+    /// pays again, so a client asks again rather than keep it.
     pub claimable: bool,
 }
 

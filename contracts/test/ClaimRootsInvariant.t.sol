@@ -31,9 +31,6 @@ contract ClaimRootsHandler is GovernanceTest {
     mapping(uint64 seq => uint256[3] amounts) private distributionsAt;
 
     uint256 public funded;
-    uint256 public olderRootClaims;
-    uint256 public refusedOtherEpoch;
-    uint256 public refusedRetired;
 
     constructor(MockUSDC token, Vault target, TimelockController timelock) {
         usdc = token;
@@ -96,15 +93,12 @@ contract ClaimRootsHandler is GovernanceTest {
         bool refused = true;
         if (vault.checkpointEpochAt(seq) != vault.signerEpoch()) {
             vm.expectRevert(Vault.InvalidSignerEpoch.selector);
-            refusedOtherEpoch++;
         } else if (retired) {
             vm.expectRevert(Vault.NoSigner.selector);
-            refusedRetired++;
         } else if (entitled <= claimed) {
             vm.expectRevert(abi.encodeWithSelector(Vault.NothingToClaim.selector, entitled, claimed));
         } else {
             refused = false;
-            if (seq != vault.latestSeq()) olderRootClaims++;
         }
         uint256 amount = usdcClaim
             ? vault.claimDistribution(account, entitled, seq, siblings)
