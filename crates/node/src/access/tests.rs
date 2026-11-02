@@ -121,6 +121,21 @@ async fn absent_sources_refuse_without_network_and_api_capacity_does_not_consume
     );
 }
 
+#[test]
+fn declarations_leave_an_order_a_slot_at_every_accepted_capacity() {
+    for slots in 2..=17 {
+        let config: AccessSection = toml::from_str(&format!(
+            "source='0x{}'\nendpoint='http://127.0.0.1:9'\ntimeout='100ms'\nmax_age='1s'\nmax_response_bytes=4096\nmax_in_flight={slots}",
+            "11".repeat(20),
+        ))
+        .unwrap();
+        let client = AccessClient::new(&config).unwrap();
+        let (declaring, all) = (client.declaration_slots.available_permits(), client.api_slots.available_permits());
+        assert_eq!(all, slots);
+        assert!((1..all).contains(&declaring), "{declaring} of {all}");
+    }
+}
+
 #[tokio::test]
 async fn decode_failures_log_the_error_position_but_no_response_values() {
     keep_callsites_interested();

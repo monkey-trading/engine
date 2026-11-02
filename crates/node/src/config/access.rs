@@ -30,6 +30,7 @@ impl AccessSection {
     /// Checks structural bounds and refuses plaintext network transport outside loopback.
     /// Error cases:
     /// - an invalid URL, insecure remote transport, zero bound, or oversized response bound
+    /// - fewer than two screening slots, which would let a declaration hold every one an order needs
     pub fn validate(&self) -> anyhow::Result<()> {
         let url = self.endpoint.expose().context("access.endpoint")?;
         let loopback = url
@@ -42,6 +43,7 @@ impl AccessSection {
         );
         ensure!(!self.timeout.is_zero(), "access.timeout must be positive");
         ensure!(self.max_in_flight.get() <= Semaphore::MAX_PERMITS, "access.max_in_flight exceeds semaphore limit");
+        ensure!(self.max_in_flight.get() >= 2, "access.max_in_flight must be at least 2 to leave orders a slot");
         ensure!(
             self.max_age.as_millis() > 0 && self.max_age.as_millis() <= i64::MAX as u128,
             "access.max_age is out of range"
@@ -92,6 +94,8 @@ mod tests {
             assert!(config.validate().is_err(), "{from} -> {to}");
         }
         assert!(toml::from_str::<AccessSection>(&VALID.replace("max_in_flight=2", "max_in_flight=0")).is_err());
+        let single: AccessSection = toml::from_str(&VALID.replace("max_in_flight=2", "max_in_flight=1")).unwrap();
+        assert!(single.validate().unwrap_err().to_string().contains("access.max_in_flight"));
         assert!(toml::from_str::<AccessSection>(&format!("{VALID}\nmax_ages='2s'")).is_err());
     }
 }

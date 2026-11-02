@@ -186,14 +186,15 @@ that does not fail. Refusal counters include `eligibility_rejected`
 and `deposit_held` in `engine_rejections_total`; API policy reasons appear under `reason="access"`.
 Use the public event for the exact reason. API screening has bounded concurrency; custody retains
 independent bounded screening capacity for ingestion and retries. Declarations hold at most half the
-API's screening slots, rounded up, so however many arrive, orders keep a slot; a declaration past that
-gets 503 and uses no nonce.
+API's screening slots, rounded up, so however many arrive, orders keep a slot; `access.max_in_flight`
+must be at least 2 for that to hold. A declaration past that gets 503 and uses no nonce.
 
 A declaration or session-key request from a never-credited account takes one token from its client's
 share, at `api.per_account`, and one from a budget all clients share, at `api.per_ip`. Fresh signing
-keys cannot multiply that budget, and no one client can take all of it. A request refused before the
-log (a second declaration, a key request before the declaration, a stale nonce, a bad expiry) takes no
-token. These budgets are the only bound on what a wallet can add for free:
+keys cannot multiply that budget, and no one client can take all of it. A second declaration, a key
+request before the declaration, a stale nonce, or a bad expiry is refused before it takes a token; a
+declaration answered 503 for want of a screening slot has already spent its tokens. These budgets are
+the only bound on what a wallet can add for free:
 
 - Each admitted request adds one log command and one history index row, and a declaration one call to
   the source.

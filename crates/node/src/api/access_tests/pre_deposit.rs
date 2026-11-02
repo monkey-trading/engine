@@ -107,6 +107,35 @@ async fn a_fresh_wallet_declares_then_registers_and_stays_out_of_trading_until_c
 }
 
 #[tokio::test]
+async fn a_refused_declaration_leaves_the_key_routes_closed_until_one_is_recorded() {
+    let node = Node::start("pre-deposit-refused", true).await;
+    let (wallet, session) = (key(1), key(7));
+    let account = address(&wallet);
+    node.source.lock().unwrap().jurisdiction = Jurisdiction::UnitedStates;
+    let (status, events) = node.post("/v1/eligibility", declaration(&wallet, 0)).await;
+    assert_eq!((status, &events[0]["type"]), (StatusCode::OK, &json!("eligibility_rejected")), "{events}");
+    assert_eq!(next_nonce(&node, account).await, 1, "the refusal used its nonce");
+    let entries = settled_entries(&node).await;
+
+    // The spent nonce does not stand in for a recorded declaration, on either route.
+    let (status, body) = node.post("/v1/session-keys", registration(&wallet, &session, 1, NOW + HOUR_MS)).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some(MUST_DECLARE)));
+    let (status, body) = delete(&node, "/v1/session-keys", revocation(&wallet, &session, 1)).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some(MUST_DECLARE)));
+    assert_eq!(settled_entries(&node).await, entries);
+    assert_eq!(next_nonce(&node, account).await, 1);
+
+    // An allowed declaration opens them.
+    node.source.lock().unwrap().jurisdiction = Jurisdiction::Allowed;
+    let (status, events) = node.post("/v1/eligibility", declaration(&wallet, 1)).await;
+    assert_eq!((status, &events[0]["type"]), (StatusCode::OK, &json!("eligibility_attested")), "{events}");
+    assert_eq!(
+        node.post("/v1/session-keys", registration(&wallet, &session, 2, NOW + HOUR_MS)).await.0,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
 async fn a_declaration_while_activation_waits_for_trusted_time_never_reaches_the_log() {
     let node = Node::start_with_time("pre-deposit-startup", true, false).await;
     let (status, body) = node.post("/v1/eligibility", declaration(&key(1), 0)).await;

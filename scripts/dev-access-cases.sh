@@ -119,6 +119,8 @@ fresh_declaration="{\"account\":\"$fresh_account\",\"class\":\"professional\"}"
 access_expect_forbidden /v1/orders "$(access_request "$fresh_key" order)" "$never_credited"
 signed="$(access_signed_body "$fresh_key" session_key_registration "$(fresh_registration "$session_account")")"
 access_expect_forbidden /v1/session-keys "$signed" "$must_declare"
+signed="$(access_signed_body "$fresh_key" session_key_revocation "{\"account\":\"$fresh_account\",\"session_key\":\"$session_account\"}")"
+access_expect_forbidden /v1/session-keys "$signed" "$must_declare" DELETE
 [[ "$(fresh_nonce)" == 0 ]] || fail "a refused registration used the wallet's nonce"
 access_attest "$fresh_key"
 [[ "$(curl --max-time 2 -sk "$api/v1/accounts/$fresh_account/eligibility" | jq -r .class)" == professional ]] || fail "the declaration was not recorded"
@@ -209,7 +211,7 @@ jq -se --arg account "$fresh_account" --arg reference "$fresh_reference" '
   ($commands | map(.cmd.type == "access_custody_deposit" and .cmd.receipt.beneficiary.account == $account) | index(true)) as $deposited |
   $registered != null and $deposited != null and $registered < $deposited and
   ($commands | any(.cmd.type == "retry_deposit_screening" and .cmd.chain_ref == $reference) | not) and
-  ($commands | any(.events[]?; .type == "deposit_pending" and .chain_ref == $reference) | not)
+  ($commands | any(.[]; .events // [] | any(.type == "deposit_pending" and .chain_ref == $reference)) | not)
 ' "$work"/log/[0-9]*.jsonl >/dev/null || fail "the wallet did not register before its deposit, or the deposit needed a retry"
 if grep -Eq '127\.0\.0\.1|203\.0\.113\.99' "$work"/log/[0-9]*.jsonl; then fail "an IP address leaked into the public log"; fi
 echo "PASS: signed, screened eligibility; setup before a first deposit; API access refusals; direct payer and contract-wallet holds survive restart"
