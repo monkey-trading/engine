@@ -72,11 +72,22 @@ impl Scenario {
         data[..4].try_into().unwrap()
     }
 
-    /// `account`'s proof from the API against the root the vault holds.
+    /// `account`'s proof from the API against the root the vault holds, once the worker's next read
+    /// of the vault has told the node it holds it.
     pub(super) async fn posted_proof(&self, account: AccountId) -> EntitlementProof {
         self.checkpoint_posted().await;
-        let (status, body) = self.get(&format!("/v1/accounts/{account}/emissions")).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
+        let latest = self.view(self.vault, latestSeqCall {}).await;
+        let body = crate::test_support::wait_for("the node to read the vault's latest checkpoint", async {
+            loop {
+                let (status, body) = self.get(&format!("/v1/accounts/{account}/emissions")).await;
+                assert_eq!(status, StatusCode::OK, "{body}");
+                if body["accepted_seq"] == json!(latest) {
+                    return body;
+                }
+                sleep(Duration::from_millis(40)).await;
+            }
+        })
+        .await;
         let proof = serde_json::from_value::<crate::sequencer::ClaimAnswer<EntitlementProof>>(body).unwrap().proof;
         assert_eq!(proof.root, self.view(self.vault, latestRootCall {}).await, "the proof is for the posted root");
         proof

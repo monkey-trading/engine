@@ -13,7 +13,7 @@ use engine_core::merkle::{DistributionProof, EntitlementProof};
 use engine_core::staking::UsdcUnits;
 use engine_core::types::AccountId;
 
-use super::{balanceOfCall, latestRootCall};
+use super::{balanceOfCall, latestRootCall, latestSeqCall};
 use crate::checkpoints::scenario::transact;
 use crate::checkpoints::staking_scenario::{claimDistributionCall, claimEmissionsCall};
 
@@ -24,13 +24,29 @@ impl Scenario {
     /// and has the relayer claim it; returns the MONKEY minted.
     pub(super) async fn claim_emissions(&self, account: AccountId) -> U256 {
         self.checkpoint_posted().await;
-        let (status, body) = self.get(&format!("/v1/accounts/{account}/emissions")).await;
-        assert_eq!(status, hyper::StatusCode::OK, "{body}");
+        let body = self.answer_at_latest(&format!("/v1/accounts/{account}/emissions")).await;
         let proof = serde_json::from_value::<crate::sequencer::ClaimAnswer<EntitlementProof>>(body).unwrap().proof;
         assert_eq!(proof.root, self.view(self.vault, latestRootCall {}).await, "the proof is for the posted root");
         let before = self.monkey_balance(account).await;
         self.send_tx(self.relayer, self.vault, emissions_call(&proof)).await;
         self.monkey_balance(account).await - before
+    }
+
+    /// The claim answer at `path` once the node has read the vault's latest checkpoint, which the
+    /// worker reports after the post is mined.
+    async fn answer_at_latest(&self, path: &str) -> serde_json::Value {
+        let latest = self.view(self.vault, latestSeqCall {}).await;
+        crate::test_support::wait_for("the node to read the vault's latest checkpoint", async {
+            loop {
+                let (status, body) = self.get(path).await;
+                assert_eq!(status, hyper::StatusCode::OK, "{body}");
+                if body["accepted_seq"] == serde_json::json!(latest) {
+                    return body;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+            }
+        })
+        .await
     }
 
     /// Sequences one more command and waits for the checkpoint after it to post.
@@ -62,11 +78,11 @@ impl Scenario {
         data[..4].try_into().unwrap()
     }
 
-    /// `account`'s distribution proof from the API against the root the vault holds.
+    /// `account`'s distribution proof from the API against the root the vault holds, once the
+    /// worker's next read of the vault has told the node it holds it.
     pub(super) async fn posted_distribution_proof(&self, account: AccountId) -> DistributionProof {
         self.checkpoint_posted().await;
-        let (status, body) = self.get(&format!("/v1/accounts/{account}/distributions")).await;
-        assert_eq!(status, hyper::StatusCode::OK, "{body}");
+        let body = self.answer_at_latest(&format!("/v1/accounts/{account}/distributions")).await;
         let proof = serde_json::from_value::<crate::sequencer::ClaimAnswer<DistributionProof>>(body).unwrap().proof;
         assert_eq!(proof.root, self.view(self.vault, latestRootCall {}).await, "the proof is for the posted root");
         proof

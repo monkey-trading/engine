@@ -22,11 +22,11 @@ import {StateTree} from "./StateTree.sol";
 /// through `depositFor`; a balance credited to a contract account can be recovered only through
 /// the exit (#48).
 /// @notice MONKEY emissions: the vault deploys the MONKEY token as its only minter, and mints to an
-/// account what its cumulative entitlement, proven against a recorded checkpoint root of the current
-/// signer, adds to what it was already minted.
+/// account what its cumulative entitlement, proven against a recorded checkpoint root of the signer
+/// epoch in force, adds to what it was already minted.
 /// @notice Distributions: each epoch the engine sets aside house NAV above the liquidity floor for
 /// stakers; the vault pays an account the USDC its cumulative distribution, proven against a recorded
-/// checkpoint root of the current signer, adds to what it was already paid.
+/// checkpoint root of the signer epoch in force, adds to what it was already paid.
 /// @notice Both amounts only grow from one checkpoint to the next, and each claim pays what the
 /// proven amount adds to what was already paid, so an older root pays no more than was due at it and
 /// a later root pays the rest.
