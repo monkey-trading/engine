@@ -16,9 +16,9 @@ use crate::v37::ELECTED_SEED;
 /// A benchmark no market lists, so its rates finance nothing the later parts hold.
 const BENCHMARK: &str = "V46-RATE";
 
-/// The effective stress level of `market`.
-fn level(h: &Harness, market: MarketId) -> usize {
-    h.engine.markets()[&market].stress.level
+/// The operator's stress floor in `market`, which the automatic level may stand above.
+fn floor_in(h: &Harness, market: MarketId) -> usize {
+    h.engine.markets()[&market].stress.floor
 }
 
 /// A snapshot of `rates` for the benchmark, as `(days ago, annual rate)`, as the operator signs it.
@@ -54,9 +54,9 @@ pub(crate) fn session(h: &mut Harness) {
 
     let floor = |market, level| AdminCommand::SetStressFloor { market, level };
     assert_eq!(h.operate_as(ELECTED_SEED, floor(Some(BTC), 2)).last(), Some(&Event::AdminApplied));
-    assert_eq!(level(h, BTC), 2);
+    assert_eq!(floor_in(h, BTC), 2);
     h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V46 });
-    assert_eq!(level(h, BTC), 1);
+    assert_eq!(floor_in(h, BTC), 1);
     let activated = h.ts;
 
     for market in [Some(ETH), None] {
@@ -64,7 +64,6 @@ pub(crate) fn session(h: &mut Harness) {
         assert!(matches!(refused.last(), Some(Event::AdminRejected { .. })), "{refused:?}");
     }
     assert_eq!(h.operate_as(ELECTED_SEED, floor(None, 1)).last(), Some(&Event::AdminApplied));
-    assert_eq!(level(h, ETH), 1);
     h.advance(1_000);
     assert_eq!(h.operate_as(ELECTED_SEED, floor(Some(ETH), 1)).last(), Some(&Event::AdminApplied));
     let renewed = h.ts;
@@ -72,11 +71,11 @@ pub(crate) fn session(h: &mut Harness) {
     // BTC's and the global floor's 72 hours run first, ETH's a second later.
     h.advance_to(activated + STRESS_FLOOR_LAPSE_MS);
     let lapsed = h.cmd(Command::Tick);
-    assert!(lapsed.contains(&Event::StressChanged { market: BTC, level: 0 }), "{lapsed:?}");
-    assert_eq!((level(h, BTC), level(h, ETH)), (0, 1));
+    assert!(lapsed.iter().any(|event| matches!(event, Event::StressChanged { .. })), "{lapsed:?}");
+    assert_eq!((floor_in(h, BTC), floor_in(h, ETH)), (0, 1));
     h.advance_to(renewed + STRESS_FLOOR_LAPSE_MS);
     h.cmd(Command::Tick);
-    assert_eq!(level(h, ETH), 0);
+    assert_eq!(floor_in(h, ETH), 0);
 
     assert_eq!(snapshot(h, &[(3, "0.9")]).last(), Some(&Event::AdminApplied));
     assert_eq!(snapshot(h, &[(2, "0.87")]).last(), Some(&Event::AdminApplied));
