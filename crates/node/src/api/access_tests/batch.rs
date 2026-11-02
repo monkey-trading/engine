@@ -35,6 +35,10 @@ fn logged(node: &Node, matches: impl Fn(&Command) -> bool) -> usize {
     node.entries().iter().filter(|entry| matches!(entry, LogEntry::Command(c) if matches(&c.sequenced.cmd))).count()
 }
 
+async fn held_btc(node: &Node, account: AccountId) -> Fixed {
+    node.state.query(move |engine| engine.accounts()[&account].position(1).qty).await.unwrap()
+}
+
 fn types(events: &Value) -> Vec<&str> {
     events.as_array().unwrap().iter().map(|event| event["type"].as_str().unwrap()).collect()
 }
@@ -135,4 +139,40 @@ async fn an_empty_close_all_is_logged_as_a_refusal_so_screening_leaves_an_event(
     assert_eq!(types(&events), ["order_rejected"], "{events}");
     assert_eq!(events[0]["reason"]["kind"], "invalid_order", "{events}");
     assert_eq!(logged(&node, |cmd| matches!(cmd, Command::AccessCloseAll { .. })), 1);
+}
+
+#[tokio::test]
+async fn a_close_all_with_refused_or_failed_screening_closes_nothing() {
+    let node = Node::start("batch-screening", true).await;
+    let account = key(1);
+    let id = eip712::address(account.verifying_key());
+    node.onboard(&account).await;
+    assert_eq!(node.post("/v1/orders", order(&account, 1)).await.0, StatusCode::OK);
+    let opened = held_btc(&node, id).await;
+    assert!(opened.is_positive());
+
+    // A sanctioned account, a source answer that does not verify, and a barred jurisdiction each
+    // refuse the request whole and log it, on its nonce.
+    node.source.lock().unwrap().sanctioned.insert(id);
+    let (status, events) = node.post("/v1/positions/close-all", close_all(&account, &account, 2, &[1], 100000)).await;
+    assert_eq!((status, events[0]["reason"]["reason"].as_str()), (StatusCode::OK, Some("account_sanctioned")));
+    node.source.lock().unwrap().sanctioned.clear();
+    node.source.lock().unwrap().forged = true;
+    let (status, events) = node.post("/v1/positions/close-all", close_all(&account, &account, 3, &[1], 100000)).await;
+    assert_eq!((status, events[0]["reason"]["reason"].as_str()), (StatusCode::OK, Some("source_invalid")));
+    node.source.lock().unwrap().forged = false;
+    node.source.lock().unwrap().jurisdiction = Jurisdiction::UnitedStates;
+    let (status, events) = node.post("/v1/positions/close-all", close_all(&account, &account, 4, &[1], 100000)).await;
+    assert_eq!((status, events[0]["reason"]["reason"].as_str()), (StatusCode::OK, Some("united_states")));
+
+    assert_eq!(types(&events), ["order_rejected"], "{events}");
+    assert_eq!(held_btc(&node, id).await, opened, "no position closed");
+    assert_eq!(logged(&node, |cmd| matches!(cmd, Command::AccessCloseAll { .. })), 3);
+    assert_eq!(node.get(&format!("/v1/accounts/{id}/nonce")).await["next_nonce"], 5);
+
+    // The same request once screening passes closes the position.
+    node.source.lock().unwrap().jurisdiction = Jurisdiction::Allowed;
+    let (status, events) = node.post("/v1/positions/close-all", close_all(&account, &account, 5, &[1], 100000)).await;
+    assert_eq!((status, types(&events)), (StatusCode::OK, vec!["order_accepted", "fill"]), "{events}");
+    assert!(held_btc(&node, id).await.is_zero());
 }

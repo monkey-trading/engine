@@ -138,6 +138,8 @@ async fn an_unsigned_request_is_refused_before_it_is_sequenced() {
         ("/v1/orders", order),
         ("/v1/orders/cancel", serde_json::json!({ "account": account, "order_id": 0 })),
         ("/v1/withdrawals", serde_json::json!({ "account": account, "amount": "100" })),
+        ("/v1/orders/cancel-all", serde_json::json!({ "account": account })),
+        ("/v1/positions/close-all", serde_json::json!({ "account": account, "closes": [] })),
     ];
     let logged = node.entries().len();
     for (path, body) in requests {

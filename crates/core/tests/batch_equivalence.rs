@@ -130,6 +130,9 @@ fn a_close_all_matches_the_same_reduce_only_orders_sent_one_at_a_time() {
         let before = outcome(&batch);
         let orders = |h: &Harness| serde_json::to_value(&h.engine.accounts()[&clients[0].account].orders).unwrap();
         let resting = orders(&batch);
+        let account =
+            |h: &Harness, client: &Client| serde_json::to_value(&h.engine.accounts()[&client.account]).unwrap();
+        let bystanders_before = [account(&batch, &clients[1]), account(&batch, &clients[2])];
         assert_eq!(before, outcome(&one_by_one), "the two books start identical");
 
         let nonce = batch.engine.next_request_nonce(clients[0].account);
@@ -149,9 +152,9 @@ fn a_close_all_matches_the_same_reduce_only_orders_sent_one_at_a_time() {
         prop_assert_eq!(outcome(&batch), outcome(&one_by_one));
         // Resting orders neither fill nor cancel: a close-all is market orders only.
         prop_assert_eq!(orders(&batch), resting.clone());
-        // Accounts other than the requester are untouched, and cash is conserved.
-        let others = |h: &Harness| serde_json::to_value(&h.engine.accounts()[&clients[1].account]).unwrap();
-        prop_assert_eq!(others(&batch), others(&one_by_one));
+        // Accounts other than the requester are exactly as they were before the batch, and cash is
+        // conserved.
+        prop_assert_eq!([account(&batch, &clients[1]), account(&batch, &clients[2])], bystanders_before);
         batch.assert_conserved(engine_core::Fixed::ZERO);
         // One request, one nonce.
         prop_assert_eq!(batch.engine.next_request_nonce(clients[0].account), nonce + 1);
@@ -184,8 +187,20 @@ fn a_close_all_matches_the_same_reduce_only_orders_sent_one_at_a_time() {
         if events.iter().filter(|e| matches!(e, Event::Fill(_))).count() > 1 {
             reached.insert("several fills in one batch");
         }
-        if batch.engine.period_results().get(&clients[0].account).is_some_and(|result| result.losses.is_positive()) {
-            reached.insert("gross loss recorded for emissions");
+        // The batch's own fills: a loss recorded before it (a forced close-out) proves nothing, and
+        // gross and net weight differ only where one batch holds both a win and a loss.
+        let realised: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Fill(fill) => Some(fill.realised_pnl),
+                _ => None,
+            })
+            .collect();
+        if realised.iter().any(|pnl| pnl.is_negative()) {
+            reached.insert("a losing fill in a close-all");
+        }
+        if realised.iter().any(|pnl| pnl.is_negative()) && realised.iter().any(|pnl| pnl.is_positive()) {
+            reached.insert("a win and a loss in one close-all");
         }
         if resting.as_object().is_some_and(|orders| !orders.is_empty()) {
             reached.insert("resting orders kept through a close-all");
@@ -203,7 +218,8 @@ fn a_close_all_matches_the_same_reduce_only_orders_sent_one_at_a_time() {
         "unlisted market",
         "several fills in one batch",
         "resting orders kept through a close-all",
-        "gross loss recorded for emissions",
+        "a losing fill in a close-all",
+        "a win and a loss in one close-all",
     ];
     for path in expected {
         assert!(reached.contains(path), "no generated case reached `{path}`: {reached:?}");
