@@ -70,3 +70,25 @@ fn a_self_converting_pair_closes_out_where_its_yen_profit_in_dollars_falls_to_th
     assert_eq!(reach_self_converting(standing(10_000, 1_000), true, quantity, entry, mark, 500), Reach::Beyond);
     assert_eq!(reach_self_converting(standing(400, 1_000), true, quantity, entry, mark, 2_000), Reach::Due);
 }
+
+#[test]
+fn a_crossing_too_small_for_the_ratio_to_hold_stays_a_positive_price() {
+    let spec = btc();
+    // A long of 100k on equity one hundred-thousandth short of its notional falls to nothing before
+    // the slack turns negative, at 0.0000105 of notional: a ratio of 1e-10, kept by rounding up.
+    let equity = Fixed::from_raw(100_000 * 1_000_000_000 - 10_000);
+    let standing = Standing { equity, margin: f(10_000), level_bps: 5_000 };
+    let position = Position { notional: f(100_000), long: true, spec: &spec };
+    let Reach::At(ratio) = reach(standing, position, 10_000) else { panic!() };
+    assert!(ratio.is_positive(), "{ratio}");
+    assert_eq!(reach(Standing { equity: f(100_000), ..standing }, position, 10_000), Reach::Beyond);
+}
+
+#[test]
+fn a_self_converting_short_is_none_past_ten_times_its_mark_even_by_a_fraction_of_a_basis_point() {
+    let (quantity, entry, mark) = (f(100_000), f(150), f(150));
+    let standing = |equity: &str| Standing { equity: equity.parse().unwrap(), margin: f(500), level_bps: 5_000 };
+    // 90250 of equity less 250, the level's share of the margin, leaves 90000: a price of exactly 10 marks.
+    assert!(matches!(reach_self_converting(standing("90250"), false, quantity, entry, mark, 90_000), Reach::At(_)));
+    assert_eq!(reach_self_converting(standing("90250.09"), false, quantity, entry, mark, 90_000), Reach::Beyond);
+}

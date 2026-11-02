@@ -397,6 +397,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/origin.rs` — CORS headers and preflight for the allowed browser origins, and the stream's `Origin` check
 - `src/api/origin_tests.rs` — listed, unlisted, and absent origins on reads, a POST, a preflight, a 429, and the stream
 - `src/api/history.rs` — the account history route: its parameters and limits
+- `src/api/closeout_tests.rs` — the account read serving a position's close-out price, and none for a flat account
 - `src/api/claim_tests.rs` — MONKEY claim proofs while the vault lags: served at the accepted checkpoint, an entitlement that grew since, no accepted checkpoint, a restart, and a change of signer
 - `src/api/proof_tests.rs` — account proof and emission entitlement API tests, including the state
   tree dev scenario: 100k accounts, checkpoint work, a proof checked against its logged root, and
@@ -458,7 +459,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   cost across a scan interval with the scan inline and handed to the worker, the worker's copy
   of the engine in memory, and how far the worker falls behind at 1000 and 5000 commands a second
 - `src/stats/tests.rs`, `src/stats/tests/` — the record against the engine: volume and levels, the
-  close-out map against engine close-outs, MONKEY totals and epochs, bounds, recovery
+  close-out map and each position's close-out price against engine close-outs, the account read's
+  cost (`closeout_cost.rs`, ignored), MONKEY totals and epochs, bounds, recovery
 - `src/sequencer/replay/stats.rs` — the replay's sink into the record
 - `src/history/marks/task_tests/` — recovery seeding from a short log and live maintenance through
   the sequencer's reports
@@ -1676,7 +1678,7 @@ only for `at`: the price the market must reach for the account to fall below its
 account's other positions held at their marks, so it moves when they or the account's balance do. `due`
 is an account already below the level at its marks, and `beyond` one no price closes out: a long's would
 be zero or below, and a short's above ten times its mark. It is the calculation behind the close-out map
-(`stats/closeout.rs`), so the two cannot disagree. It is an estimate of where the account crosses the
+(`stats/closeout.rs`), over a wider range, with the map as of its last scan and the read as of now. It is an estimate of where the account crosses the
 level: a close-out closes the largest losing position that can trade first, which may be another one, and
 none trades outside its market's session. A move in an FX market also moves the accounts' positions
 quoted in its currency, which the estimate holds at their marks. The read runs on the sequencer's

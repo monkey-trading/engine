@@ -207,8 +207,11 @@ fn an_account_with_several_positions_prices_each_with_the_others_at_their_marks(
     Case::new(ETH, both).agrees();
 }
 
+/// A short in another market adds margin the account must carry, as a long does, so it brings the
+/// price of a BTC long toward its mark.
 #[test]
-fn a_hedge_in_another_market_moves_a_positions_price_the_other_way() {
+fn a_short_in_another_market_is_priced_with_its_margin_where_the_engine_closes_the_account_out() {
+    let alone = price_of(&btc(Side::Buy, 4, 0), 1);
     let hedged = || {
         let mut rig = btc(Side::Buy, 4, 0);
         quote(&mut rig, ETH, "4000", T0 + 2_000);
@@ -216,8 +219,17 @@ fn a_hedge_in_another_market_moves_a_positions_price_the_other_way() {
         assert!(events.iter().any(|event| matches!(event, Event::Fill(_))), "{events:?}");
         rig
     };
+    assert!(price_of(&hedged(), 1) > alone, "the ETH short's margin leaves BTC less room: {alone}");
     Case::new(1, hedged).agrees();
     Case::new(ETH, hedged).agrees();
+}
+
+/// 8 BTC short is 800k of notional, in the 10% band; with 500k of equity it closes out near 1.2M of
+/// notional, past the million where the rate is 20%, so the walk up from the mark crosses the band.
+#[test]
+fn a_short_that_crosses_a_margin_band_is_priced_where_the_engine_closes_it_out() {
+    let (price, _) = Case::new(1, || btc(Side::Sell, 8, 400_000)).agrees();
+    assert!(price > Fixed::from_int(125_000), "past the million of notional, at 125000: {price}");
 }
 
 /// With the DE40 closed, a close-out cannot trade it and counts it at its last mark, as the estimate
@@ -288,7 +300,7 @@ fn the_answer_names_each_position_and_leaves_the_price_out_unless_the_reach_is_a
 /// which the estimate holds at their marks. With 250k of DE40 beside a 200k EUR-USD long, the price
 /// is 13 bps of the mark from the engine's: the one case the estimate is not exact to the tick.
 #[test]
-fn an_fx_market_is_priced_within_a_quarter_per_cent_with_positions_quoted_in_its_currency_held() {
+fn an_fx_market_is_priced_within_15_bps_with_positions_quoted_in_its_currency_held() {
     let build = || {
         let mut rig = Rig::new();
         quote(&mut rig, EUR_USD, "1.08", T0 + 500);
