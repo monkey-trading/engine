@@ -14,7 +14,9 @@ use crate::sequencer::checkpoints::HandoverGate;
 use crate::sequencer::{Request, SequencerConfig};
 use crate::test_support::sample_around;
 
-const STALLED_AFTER: Duration = Duration::from_secs(30 * 60);
+/// `node.checkpoint_every` in `config/dev.toml`.
+const REALISTIC_CHECKPOINT_EVERY: u64 = 1000;
+pub(super) const STALLED_AFTER: Duration = Duration::from_secs(30 * 60);
 
 #[test]
 fn the_next_checkpoint_waits_until_the_last_signed_is_final() {
@@ -39,7 +41,10 @@ fn the_next_checkpoint_waits_until_the_last_signed_is_final() {
 
 #[test]
 fn an_approval_with_nothing_on_its_way_signs_at_once() {
-    let mut node = Node::new("hold-back-approval-idle");
+    let mut node = Node::sparse("hold-back-approval-idle");
+    // Only the approval asks for a checkpoint: a command that approves nothing waits for the cadence.
+    node.seq.sequence(Command::Tick).unwrap().unwrap();
+    assert!(node.queued.try_recv().is_err());
     node.seq.sequence(withdraw(1)).unwrap().unwrap();
     let work = node.queued.try_recv().expect("the approval's own checkpoint");
     assert_eq!(work.checkpoint.seq, node.seq.last_seq().unwrap());
@@ -48,8 +53,10 @@ fn an_approval_with_nothing_on_its_way_signs_at_once() {
 
 #[test]
 fn approvals_held_behind_a_checkpoint_share_the_next_with_no_further_command() {
-    let mut node = Node::new("hold-back-approval-held");
-    let first = node.tick_signs();
+    let mut node = Node::sparse("hold-back-approval-held");
+    node.seq.sequence(Command::Tick).unwrap().unwrap();
+    node.seq.checkpoint().unwrap();
+    let first = node.queued.try_recv().expect("the checkpoint on its way").checkpoint;
     for _ in 0..3 {
         node.seq.sequence(withdraw(1)).unwrap().unwrap();
     }
@@ -191,35 +198,6 @@ fn a_recovered_approval_observed_paid_behind_a_hold_needs_no_proof() {
     assert_eq!(gate.payouts.keys().map(|(_, nonce)| *nonce).collect::<Vec<_>>(), [2], "the paid one is gone");
 }
 
-#[test]
-fn a_hold_is_a_backlog_only_past_the_stall_bound_and_a_final_checkpoint_restarts_the_bound() {
-    let mut node = Node::new("hold-back-backlog");
-    let first = node.tick_signs();
-    let lines = crate::alerts::capture(|| {
-        // A finality delay and the next: each inside the bound, so nothing fires.
-        node.tick_holds();
-        node.advance(STALLED_AFTER - Duration::from_secs(1));
-        node.tick_holds();
-        node.seq.checkpoint_status(Some(first.seq), Some(Health::Healthy)).unwrap();
-        let second = node.tick_signs();
-        node.tick_holds();
-        node.advance(STALLED_AFTER - Duration::from_secs(1));
-        node.tick_holds();
-        // Past the bound with none final: one episode however many attempts it spans.
-        node.advance(Duration::from_secs(1));
-        for _ in 0..3 {
-            node.tick_holds();
-        }
-        node.seq.checkpoint_status(Some(second.seq), Some(Health::Healthy)).unwrap();
-        node.tick_signs();
-    });
-    let key = "checkpoint_backlog{}".to_owned();
-    assert_eq!(
-        crate::alerts::pages_for(lines),
-        [(crate::alerts::Status::Firing, key.clone()), (crate::alerts::Status::Resolved, key)]
-    );
-}
-
 /// What a held checkpoint costs the sequencer's thread once it signs: the root over everything
 /// changed during the hold, here every one of 100k accounts, and the proofs of 1,000 approvals.
 #[test]
@@ -306,7 +284,7 @@ fn signed_withdrawal(node: &Node) -> bool {
 }
 
 /// A gated sequencer's config, with a checkpoint every command and the poster's registry.
-fn config<'a>(
+pub(super) fn config<'a>(
     dir: &'a std::path::Path,
     clock: &Arc<TestClock>,
     sink: mpsc::Sender<Work>,
@@ -328,18 +306,26 @@ fn config<'a>(
 
 /// A funded account on a gated sequencer whose bootstrap checkpoints are final, with nothing on its
 /// way to the vault.
-struct Node {
-    seq: Sequencer,
-    queued: Receiver<Work>,
+pub(super) struct Node {
+    pub(super) seq: Sequencer,
+    pub(super) queued: Receiver<Work>,
     signed: mpsc::UnboundedReceiver<crate::sequencer::SignedWithdrawal>,
-    clock: Arc<TestClock>,
-    dir: std::path::PathBuf,
-    anchor: Checkpoint,
+    pub(super) clock: Arc<TestClock>,
+    pub(super) dir: std::path::PathBuf,
+    pub(super) anchor: Checkpoint,
 }
 
 impl Node {
-    fn new(name: &str) -> Self {
+    pub(super) fn new(name: &str) -> Self {
         Self::with(name, None)
+    }
+
+    /// A node whose periodic cadence is the dev configs' `checkpoint_every`, so only an approval, a
+    /// handover or the drain signs a checkpoint of its own accord.
+    fn sparse(name: &str) -> Self {
+        let mut node = Self::new(name);
+        node.seq.checkpoint_every = REALISTIC_CHECKPOINT_EVERY;
+        node
     }
 
     fn with(name: &str, signing: Option<watch::Sender<bool>>) -> Self {
@@ -365,26 +351,26 @@ impl Node {
     }
 
     /// Moves the clock on, with a time sample so commands are still admitted.
-    fn advance(&mut self, by: Duration) {
+    pub(super) fn advance(&mut self, by: Duration) {
         self.clock.advance(by);
         self.seq.trust(sample_around(self.clock.as_ref())).unwrap();
     }
 
     /// Sequences a command and returns the checkpoint it signed.
-    fn tick_signs(&mut self) -> Checkpoint {
+    pub(super) fn tick_signs(&mut self) -> Checkpoint {
         self.seq.sequence(Command::Tick).unwrap().unwrap();
         self.queued.try_recv().expect("a checkpoint follows the command").checkpoint
     }
 
     /// Sequences a command that signs no checkpoint.
-    fn tick_holds(&mut self) {
+    pub(super) fn tick_holds(&mut self) {
         self.seq.sequence(Command::Tick).unwrap().unwrap();
         assert!(self.queued.try_recv().is_err(), "the checkpoint is held back");
     }
 
     /// Reports `checkpoint` final with evidence that every approval is unpaid, as the worker does
     /// on each tick.
-    fn final_at(&mut self, checkpoint: &Checkpoint) {
+    pub(super) fn final_at(&mut self, checkpoint: &Checkpoint) {
         let evidence = LifecycleEvidence { approvals: statuses(&self.seq, &[]), ..evidence_at(&self.seq, checkpoint) };
         self.seq.custody_status(Some(checkpoint.seq), Some(Health::Healthy), Some(evidence)).unwrap();
     }

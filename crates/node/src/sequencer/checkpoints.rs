@@ -50,9 +50,14 @@ pub(super) struct Gate {
     pub held_since: Option<Instant>,
     /// How long a hold may last with no checkpoint becoming final before it is a backlog.
     pub stalled_after: Duration,
-    /// Whether a checkpoint is being deferred because the poster is behind: `stalled_after` passed
-    /// with none becoming final, or the posting queue is full.
-    pub backlogged: bool,
+    /// `stalled_after` passed with none becoming final: the `checkpoint_backlog` episode open
+    /// until one does.
+    pub stalled: bool,
+    /// A checkpoint is being deferred because the posting queue is full.
+    pub queue_full: bool,
+    /// An earlier run may have left a `checkpoint_backlog` episode open, which the alert outbox
+    /// keeps across a restart. Starts set; ends with the first evidence the poster is not behind.
+    pub earlier_run_open: bool,
     /// The causes (see `Withheld`) whose `checkpoint_withheld` episode is open.
     pub withheld: std::collections::BTreeSet<Withheld>,
     /// Told whether no cause is open after each checkpoint attempt, for a handover to check
@@ -130,7 +135,9 @@ impl Gate {
             finalized: parent.has_checkpoint.then_some(parent.seq),
             held_since: None,
             stalled_after: Duration::MAX,
-            backlogged: false,
+            stalled: false,
+            queue_full: false,
+            earlier_run_open: true,
             withheld: Default::default(),
             signing: None,
         }
@@ -145,7 +152,7 @@ impl Gate {
     /// Why the gate would withhold a checkpoint, for a handover's refusal.
     fn withhold_causes(&self) -> String {
         let mut causes: Vec<&str> = self.withheld.iter().map(|cause| cause.cause()).collect();
-        if self.backlogged {
+        if self.queue_full {
             causes.push("the checkpoint poster is behind");
         }
         if causes.is_empty() {
@@ -311,9 +318,7 @@ impl Sequencer {
             && !gate.sink.is_closed()
             && gate.sink.capacity() == 0
         {
-            if !std::mem::replace(&mut gate.backlogged, true) {
-                warn!(alert = "checkpoint_backlog", "checkpoint deferred at seq {seq}: the posting queue is full");
-            }
+            gate.note_queue_full(seq);
             return Ok(());
         }
         let (started, root) = (Instant::now(), self.engine.state_root());
@@ -343,9 +348,7 @@ impl Sequencer {
             self.queue_checkpoint(cp.clone())?;
             if let Some(gate) = &mut self.gate {
                 gate.parent = crate::log::CheckpointParent { has_checkpoint: true, seq, root: root.into() };
-                if std::mem::take(&mut gate.backlogged) {
-                    info!(alert_resolved = "checkpoint_backlog", "a checkpoint was signed again at seq {seq}");
-                }
+                gate.note_queued(seq);
             }
         }
         if self.gate.is_some() {
