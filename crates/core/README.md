@@ -44,6 +44,9 @@ this crate and reproduce the signed state roots exactly.
   nonces and expiries, limited to listings, parameters, benchmark rates, stress floors, and
   reduce-only; once any deposit or house capital is credited, an unsigned one is refused, so only
   genesis runs unsigned
+- From protocol `V46`, a signed benchmark rate moves at most 300 bps per day from the applied rates
+  next to its date (`src/benchmark.rs`), and the operator's stress floor is at most level 1 and lapses
+  after 72 hours (`src/stress.rs`)
 - From protocol `V35`, the operator's powers are bounded (`src/operator_bounds.rs`). The profit fee
   and the close-out level change only within ±50% of their launch values, the rates in force when
   parameters are first set under `V35` or when it activates, and only from the time a signed
@@ -180,7 +183,8 @@ this crate and reproduce the signed state roots exactly.
 - `src/markouts.rs` — each fill's markout, queued and then marked against the index after its
   horizon, and toxicity scores
 - `src/closeout.rs` — account close-out and bad-debt write-off
-- `src/benchmark.rs` — dated publisher snapshots, effective-date lookup, staleness, and retention
+- `src/benchmark.rs` — dated publisher snapshots, effective-date lookup, staleness, and retention;
+  from `V46`, the cap on a signed rate (`split_by_cap`)
 - `src/funds.rs` — legacy and mock deposits, withdrawals, house capital, and overnight financing
 - `src/deposits.rs` — exact custody receipts, sequencer-confirmed principal locks, finality,
   canonical reversals, and atomic moves of reincluded deposits to their replacement receipts
@@ -219,7 +223,8 @@ this crate and reproduce the signed state roots exactly.
 - `src/staking/tests.rs` — staking tests: initialisation and validation, mirror crediting and
   refusals, epoch closes above and below the floor, rounding, skipped epochs, and the
   floor-preserving and principal locks
-- `src/stress.rs` — stress levels: the automatic triggers, the move window, and the floors
+- `src/stress.rs` — stress levels: the automatic triggers, the move window, and the floors, from `V46`
+  bounded at level 1 and lapsing after 72 hours
 - `src/access/mod.rs` — signed eligibility, source policy and bounded public screening types
 - `src/access/engine.rs` — deterministic screening, declarations and uncredited custody holds
 - `src/auth.rs` — client auth, the operator record, request signatures and nonces, and the checks
@@ -334,7 +339,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V45` parts (`v15.rs` to `v45.rs`)
+  `V15` to `V46` parts (`v15.rs` to `v46.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -392,6 +397,12 @@ operator's next nonce; `engine admin`, in `engine-node`, signs and submits it.
 
 `tests/benchmarks.rs` covers dated financing, catch-up, snapshots, staleness, and replay.
 `tests/benchmark_retention.rs` covers calendar changes, retention boundaries, and dated financing.
+`tests/benchmark_cap.rs` covers the `V46` cap: each limit, a date gap, a benchmark's first rate, a
+refused snapshot, applied and backdated dates, undated rates, and what a refusal leaves financing.
+`tests/benchmark_cap_history.rs` replays each launch benchmark's published history through the cap,
+and requires what it refuses to match `research/benchmark-cap/results/refused.csv`.
+`tests/stress_floor.rs` covers the `V46` stress floor: its limit, its 72 hours and their renewal,
+activation over a higher floor, the automatic triggers, reduce-only, and replay.
 
 ## Testing
 
@@ -499,6 +510,21 @@ V45 each entry closes at most `Fixed::MAX_INPUT` units, as repeated single reduc
 that size would, and the fill's `position` states what remains for the next request. A position
 within the limit closes whole as before, and V44 logs replay unchanged. Its session is in
 `examples/reference_log/v45.rs`.
+
+Protocol V46 bounds what an elected operator can do with benchmark rates and the stress floor, since
+its electors own the house NAV both move value towards. A signed rate more than 300 bps per day from
+the applied rates next to its date is refused, in `set_benchmark_rates` and `SetBenchmarkRate` alike,
+with the whole snapshot left unapplied. The limit is the cap times the calendar days between the
+dates, so a real move refused today lands once enough days have passed, and a benchmark's first rate
+is bound only by its ±100% range. An applied date does not change: the rate it holds passes, as the
+worker sends it again, and any other is refused, so no rate can be ratcheted, or walked from a
+backdated one, past the cap. The last applied rate keeps financing meanwhile, and `benchmark_rate_stale`
+reports it after five weekdays. `research/benchmark-cap/` checks the cap against each benchmark's
+published history. The stress floor is at most level 1, in a market or in all of them, and lapses to
+the automatic level 72 hours of sequenced time after it is set, unless it is set again. A floor above
+level 1 when V46 activates drops to level 1, and each floor then in force starts its 72 hours. The
+automatic triggers and reduce-only do not change, and earlier logs replay unchanged, since nothing
+records a floor's time before V46. Its session is in `examples/reference_log/v46.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

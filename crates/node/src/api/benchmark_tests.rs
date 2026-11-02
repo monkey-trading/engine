@@ -35,6 +35,7 @@ const FIRST: Millis = 1_792_530_000_000; // 20 Oct 2026 21:00 UTC = 22:00 London
 const RESTART: Millis = FIRST + 2 * 86_400_000 + 1;
 const TRADER: AccountId = AccountId([0xaa; 20]);
 
+mod operator_bounds;
 mod recovery;
 mod retention;
 mod schedule;
@@ -333,6 +334,17 @@ impl Node {
         api_clock: Arc<dyn Clock>,
         wrap: impl FnOnce(Router) -> Router,
     ) -> Self {
+        Self::launch(dir, at, api_clock, wrap, engine_core::protocol::ProtocolVersion::V23).await
+    }
+
+    /// A node under `protocol`, the latest it activates, or the legacy rules at `V23`.
+    async fn launch(
+        dir: &Path,
+        at: Millis,
+        api_clock: Arc<dyn Clock>,
+        wrap: impl FnOnce(Router) -> Router,
+        protocol: engine_core::protocol::ProtocolVersion,
+    ) -> Self {
         let clock = Arc::new(TestClock::at(at));
         let key = Arc::new(EnclaveKey::test_key());
         let (stream, _) = broadcast::channel(1024);
@@ -342,7 +354,11 @@ impl Node {
         let operator = cfg.operator;
         let mut seq = Sequencer::recover(cfg, key.clone(), stream.clone(), withdrawals).unwrap();
         seq.wait_for_benchmarks().unwrap();
-        seq.activate_legacy_protocol().unwrap();
+        if protocol == engine_core::protocol::ProtocolVersion::LATEST {
+            seq.activate_protocol().unwrap();
+        } else {
+            seq.activate_legacy_protocol().unwrap();
+        }
         if seq.needs_genesis() {
             seq.genesis(&dev_config().genesis).unwrap();
         }
@@ -356,7 +372,7 @@ impl Node {
             tls_public_key_sha256: tls.public_key_sha256,
         };
         let state = ApiState {
-            protocol: engine_core::protocol::ProtocolVersion::V23,
+            protocol,
             access: None,
             tx: tx.clone(),
             stream,

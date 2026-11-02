@@ -79,7 +79,8 @@ pub enum AdminAction {
     UpsertMarket { file: PathBuf },
     /// Replace the protocol parameters from a TOML file.
     SetParams { file: PathBuf },
-    /// Set a benchmark rate, in bps a year.
+    /// Set a benchmark rate, in bps a year. From protocol V46 it moves at most 300 bps a day from the
+    /// applied rates next to its date.
     SetBenchmarkRate {
         benchmark: String,
         #[arg(allow_negative_numbers = true)]
@@ -92,7 +93,8 @@ pub enum AdminAction {
         watch: bool,
     },
     /// Set the operator's stress floor for one market, or for every market without `--market`.
-    /// A market's level never falls below what its automatic triggers set.
+    /// A market's level never falls below what its automatic triggers set. From protocol V46 the
+    /// floor is at most level 1 and lapses 72 hours after it is set, unless it is set again.
     SetStressFloor {
         level: usize,
         #[arg(short, long)]

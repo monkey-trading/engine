@@ -94,6 +94,7 @@ async fn publisher_errors_and_timeouts_retain_the_previous_snapshot_policy() {
         rollover: None,
         required: ["SOFR".into()].into(),
         history: Default::default(),
+        undated: Default::default(),
     };
     let client = client().unwrap();
     for (path, expected_error) in [

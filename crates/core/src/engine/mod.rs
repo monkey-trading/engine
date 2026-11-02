@@ -159,6 +159,9 @@ pub struct Engine {
     /// From `V37`, the mirrored operator registry: whether rotation is on, and the last election.
     #[serde(default, skip_serializing_if = "OperatorElection::is_default")]
     pub(crate) operator_election: OperatorElection,
+    /// From `V46`, when a global stress floor above level 0 was set, which starts its time to lapse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) global_stress_floor_set_at: Option<Millis>,
     /// From `V40`, the most each market's closing slice may pay, in bps of the index: adopted once
     /// (genesis, or one signed install) and changed only by a signed adoption, so `UpsertMarket`
     /// can neither replace nor raise an entry. Absent until installed.
@@ -250,6 +253,8 @@ impl Engine {
         self.apply_due_ceiling(sequenced.ts);
 
         let mut events = Vec::new();
+        // From `V46` a floor whose 72 hours have run lapses before the command acts.
+        self.lapse_stress_floors(&mut events);
         // From `V21`, a quote held across a closure could never count under the hours rules, so it
         // drops before anything this command does: catch-up at an intermediate boundary, a close-out
         // check, or an early outcome for a rejected batch or activation must never act on it.

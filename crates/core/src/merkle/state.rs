@@ -94,6 +94,9 @@ struct Globals<'a> {
     /// From `V37`; omitted until the registry's first mirrored event, so earlier roots stand.
     #[serde(skip_serializing_if = "OperatorElection::is_default")]
     operator_election: &'a OperatorElection,
+    /// From `V46`; omitted while no global stress floor is lapsing, so earlier roots stand.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    global_stress_floor_set_at: &'a Option<Millis>,
     /// From `V40`; omitted until the registry is installed, so earlier roots stand.
     #[serde(skip_serializing_if = "Option::is_none")]
     close_spread_ceilings: &'a Option<BTreeMap<MarketId, i64>>,
@@ -431,6 +434,7 @@ impl Engine {
             access_policy,
             operator_bounds,
             operator_election,
+            global_stress_floor_set_at,
             close_spread_ceilings,
             pending_ceiling,
             session_keys: _,
@@ -466,6 +470,7 @@ impl Engine {
             access_policy,
             operator_bounds,
             operator_election,
+            global_stress_floor_set_at,
             close_spread_ceilings,
             pending_ceiling,
         }
