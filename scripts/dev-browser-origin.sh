@@ -34,7 +34,7 @@ step() { echo "==> $*"; }
 fail() { echo "FAIL: $*" >&2; tail -n 40 "$work"/node.log >&2 || true; exit 1; }
 trap 'fail "the command at line $LINENO failed"' ERR
 
-(cd "$root" && cargo build -p engine-node --locked --quiet)
+[ -n "${ENGINE_PREBUILT:-}" ] || (cd "$root" && cargo build -p engine-node --locked --quiet)
 engine="$(cargo metadata --format-version 1 --no-deps --manifest-path "$root/Cargo.toml" | jq -r .target_directory)/debug/engine"
 
 max_drift="$(awk -F'"' '/^max_drift = / { print $2 }' "$root/config/dev.toml")"

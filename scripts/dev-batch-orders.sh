@@ -48,7 +48,7 @@ for port in "$api_port" "$metrics_port" "$source_port"; do
 done
 
 step "build the node and the scenario's tools"
-cargo build -q --locked -p engine-node --manifest-path "$root/Cargo.toml"
+[ -n "${ENGINE_PREBUILT:-}" ] || cargo build -q --locked -p engine-node --manifest-path "$root/Cargo.toml"
 source "$root/scripts/dev-access-fixture.sh"
 build_access_tools
 engine="$(cargo metadata --format-version 1 --no-deps --manifest-path "$root/Cargo.toml" | jq -r .target_directory)/debug/engine"

@@ -85,7 +85,7 @@ add_leaf() { python3 "$root/scripts/dev-ct-log.py" leaf "$2" x509 "$(( $(date +%
 openssl version | grep -q '^OpenSSL 3' || fail "OpenSSL 3 is required (x509 -force_pubkey)"
 
 step "build the node"
-(cd "$root" && cargo build -p engine-node --locked --quiet)
+[ -n "${ENGINE_PREBUILT:-}" ] || (cd "$root" && cargo build -p engine-node --locked --quiet)
 engine="$(cargo metadata --format-version 1 --no-deps --manifest-path "$root/Cargo.toml" | jq -r .target_directory)/debug/engine"
 python3 - "$api_port" "$log_port" "$hook_port" "$metrics_port" "$watch_metrics_port" <<'PY'
 import socket, sys
