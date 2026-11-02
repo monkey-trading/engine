@@ -109,6 +109,7 @@ impl Node {
             limits: Arc::new(ApiLimits::with_quota(&dev_config().api, unlimited, DefaultClock::default())),
             history: Reader::new(dir.join(INDEX_FILE), watch::channel(true).1),
             marks: crate::test_support::marks_reader(),
+            stats: crate::test_support::stats(),
             emission_budget: None,
             payouts_enabled: false,
             collateral: None,

@@ -7,7 +7,8 @@
 #   3. sequence 3,600 more (a tenfold log and history), and stop and restart again the same way;
 #   4. corrupt the newest cache and restart once more.
 # Passes when every restart recovers from a cache and replays at most one checkpoint interval,
-# history serves every deposit once as soon as the API answers, the corrupt cache raises a
+# history serves every deposit once as soon as the API answers, the dashboard record says it begins
+# after the cache (`from_genesis` false), the corrupt cache raises a
 # `snapshot_rejected` Warning and recovery uses an earlier cache, and `engine replay` verifies every
 # checkpoint the node wrote, the ones after the fallback included. Restart times are printed, not
 # gated.
@@ -140,6 +141,24 @@ recovery() {
   commands="$(sed -n 's/.*commands=\([0-9]*\).*/\1/p' <<< "$line")"
   echo "${seq:-none} $commands"
 }
+# Where the dashboard record begins, as "<from_genesis> <begins_seq>", once a command has reached it.
+dashboard_begins() {
+  local begins
+  for _ in $(seq 1 100); do
+    begins="$(curl -sk --max-time 5 "https://127.0.0.1:$api_port/v1/stats/series?metric=cash&resolution=1d" \
+      | jq -r 'select(.begins_seq != null) | "\(.from_genesis) \(.begins_seq)"')"
+    [[ -n "$begins" ]] && { echo "$begins"; return 0; }
+    sleep 0.2
+  done
+  fail "the dashboard record never began"
+}
+# A recovery from a cache replays only the suffix, so the record says it does not begin at genesis.
+expect_suffix_begin() {
+  local from_genesis begins_seq
+  read -r from_genesis begins_seq <<< "$(dashboard_begins)"
+  [[ "$from_genesis" == false ]] || fail "the dashboard record claims the genesis after a recovery from cache $1"
+  (( begins_seq > $1 )) || fail "the dashboard record begins at $begins_seq, not after cache $1"
+}
 newest_cache() { find "$work/snapshots" -maxdepth 1 -name '[0-9]*-[0-9]*.json' | sort | tail -n 1; }
 # A burst can outrun history; the scenario restarts a node whose history has caught up.
 wait_for_events() {
@@ -180,6 +199,7 @@ for target in 400 4000; do
   [[ "$seq" != none ]] || fail "restart with $target deposits replayed the whole log"
   suffix=$(( commands - seq - 1 ))
   (( suffix <= interval )) || fail "restart replayed $suffix commands after the cache"
+  expect_suffix_begin "$seq"
   served="$(history_events)"
   [[ "$served" == "$target" ]] || fail "history served $served of $target deposits"
   echo "restart scenario: deposits=$target log_commands=$commands restart_ms=$restart_ms suffix_commands=$suffix"
@@ -197,6 +217,7 @@ read -r seq commands <<< "$line"
 [[ "$seq" != none ]] || fail "the fallback replayed the whole log"
 (( seq < newest_seq )) || fail "recovery used cache $seq, not one before the corrupt $newest_seq"
 grep -q 'WARN.*alert="snapshot_rejected"' "$work/fallback.log" || fail "no snapshot_rejected Warning"
+expect_suffix_begin "$seq"
 served="$(history_events)"
 [[ "$served" == "$deposits" ]] || fail "history served $served of $deposits deposits after the fallback"
 stop_node

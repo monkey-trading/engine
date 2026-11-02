@@ -254,6 +254,7 @@ fn rotation_requires_accepted_historical_signers_and_reissues_with_the_current_e
         authorities,
         |_| {},
         None,
+        None,
     )
     .unwrap();
     let cfg = SequencerConfig { checkpoint_parent: parent, ..node.config() };
@@ -297,6 +298,7 @@ fn rotation_requires_accepted_historical_signers_and_reissues_with_the_current_e
         Some(parent),
         history,
         |_| {},
+        None,
         None,
     )
     .expect("epoch2 reissue on epoch1 root survives another rotation without an epoch2 checkpoint");

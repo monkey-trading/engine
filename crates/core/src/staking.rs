@@ -330,6 +330,56 @@ impl Engine {
         }
 
         let nav = self.house_nav();
+        let excess = self.excess_over(config.liquidity_floor);
+        let usdc_excess = if excess.is_positive() { (excess.raw() / USDC_SCALE) as u128 } else { 0 };
+        let mut allocated = 0u128;
+        if usdc_excess > 0 && !self.staked.is_empty() {
+            let stakes: Vec<(AccountId, u128)> =
+                self.staked.iter().map(|(account, staked)| (*account, staked.0)).collect();
+            let total: U256 = stakes.iter().map(|(_, staked)| U256::from(*staked)).sum();
+            for (account, staked) in stakes {
+                // At most `usdc_excess`, as each stake is at most the total.
+                let amount: u128 = (U256::from(usdc_excess) * U256::from(staked) / total).to();
+                if amount == 0 {
+                    continue;
+                }
+                let distribution = self.distributions.entry(account).or_default();
+                distribution.0 = distribution.0.checked_add(amount).expect("a claimable distribution fits a u128");
+                allocated += amount;
+                events.push(Event::DistributionAllocated { account, epoch: closed, amount: UsdcUnits(amount) });
+            }
+            // `allocated` is at most `usdc_excess`, so the raw amount fits an `i128`.
+            let amount = Fixed::from_raw((allocated * USDC_SCALE as u128) as i128);
+            self.house_cash -= amount;
+            if self.protocol_version >= ProtocolVersion::V31 {
+                *self.withdrawal_cash.as_mut().expect("V31 requires V22 capacity") -= amount;
+            }
+        }
+        events.push(Event::DistributionEpochClosed {
+            epoch: closed,
+            nav,
+            floor: config.liquidity_floor,
+            excess: UsdcUnits(usdc_excess),
+            allocated: UsdcUnits(allocated),
+        });
+        let staking = self.staking.as_mut().expect("read above");
+        staking.epoch = elapsed;
+        staking.distributed.0 += allocated;
+    }
+}
+
+impl Engine {
+    /// What an epoch close at the current state would distribute, in USD before the whole-USDC
+    /// rounding, or `None` before staking is initialised: house NAV and cash above the floor, less
+    /// the principal that can still reverse, the clients' debts and the withdrawal capacity. It
+    /// walks every account.
+    pub fn distributable_excess(&self) -> Option<Fixed> {
+        Some(self.excess_over(self.staking.as_ref()?.config.liquidity_floor))
+    }
+
+    /// The excess over `floor` that an epoch close distributes.
+    fn excess_over(&self, floor: Fixed) -> Fixed {
+        let nav = self.house_nav();
         // The floor stays as house liquidity, and every principal still able to reverse stays
         // locked, exactly as `house_capital` and a reversal take it back: the house's unfinalised
         // deposits and each client's, whose realised gains are therefore not distributed until the
@@ -374,47 +424,11 @@ impl Engine {
         } else {
             available
         };
-        let excess = if self.protocol_version >= ProtocolVersion::V28 {
-            Fixed::from_raw(
-                distributable_nav.raw().min(available.raw()).saturating_sub(config.liquidity_floor.raw()).max(0),
-            )
+        if self.protocol_version >= ProtocolVersion::V28 {
+            Fixed::from_raw(distributable_nav.raw().min(available.raw()).saturating_sub(floor.raw()).max(0))
         } else {
-            (nav.min(available) - config.liquidity_floor).max(Fixed::ZERO)
-        };
-        let usdc_excess = if excess.is_positive() { (excess.raw() / USDC_SCALE) as u128 } else { 0 };
-        let mut allocated = 0u128;
-        if usdc_excess > 0 && !self.staked.is_empty() {
-            let stakes: Vec<(AccountId, u128)> =
-                self.staked.iter().map(|(account, staked)| (*account, staked.0)).collect();
-            let total: U256 = stakes.iter().map(|(_, staked)| U256::from(*staked)).sum();
-            for (account, staked) in stakes {
-                // At most `usdc_excess`, as each stake is at most the total.
-                let amount: u128 = (U256::from(usdc_excess) * U256::from(staked) / total).to();
-                if amount == 0 {
-                    continue;
-                }
-                let distribution = self.distributions.entry(account).or_default();
-                distribution.0 = distribution.0.checked_add(amount).expect("a claimable distribution fits a u128");
-                allocated += amount;
-                events.push(Event::DistributionAllocated { account, epoch: closed, amount: UsdcUnits(amount) });
-            }
-            // `allocated` is at most `usdc_excess`, so the raw amount fits an `i128`.
-            let amount = Fixed::from_raw((allocated * USDC_SCALE as u128) as i128);
-            self.house_cash -= amount;
-            if self.protocol_version >= ProtocolVersion::V31 {
-                *self.withdrawal_cash.as_mut().expect("V31 requires V22 capacity") -= amount;
-            }
+            (nav.min(available) - floor).max(Fixed::ZERO)
         }
-        events.push(Event::DistributionEpochClosed {
-            epoch: closed,
-            nav,
-            floor: config.liquidity_floor,
-            excess: UsdcUnits(usdc_excess),
-            allocated: UsdcUnits(allocated),
-        });
-        let staking = self.staking.as_mut().expect("read above");
-        staking.epoch = elapsed;
-        staking.distributed.0 += allocated;
     }
 }
 

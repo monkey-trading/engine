@@ -372,6 +372,7 @@ impl Node {
             limits: Arc::new(ApiLimits::new(&dev_config().api)),
             history: Reader::new(PathBuf::new(), watch::channel(true).1),
             marks: crate::test_support::marks_reader(),
+            stats: crate::test_support::stats(),
             emission_budget: None,
             collateral: None,
             listing: Default::default(),

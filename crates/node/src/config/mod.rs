@@ -41,7 +41,13 @@ mod feeds;
 pub use feeds::*;
 mod marks;
 pub use marks::{BackfillSection, MarksSection};
+mod stats;
 pub(crate) use marks::{default_marks_retention_1h, default_marks_retention_1m, default_marks_retention_1s};
+pub use stats::StatsSection;
+pub(crate) use stats::VOLUME_WINDOW_HOURS;
+use stats::{MIN_STATS_INTERVAL, default_stats_interval};
+mod api_defaults;
+use api_defaults::{default_heartbeat_interval, default_quote_interval, default_quote_max_markets};
 mod checkpoints;
 pub use checkpoints::CheckpointSection;
 mod telemetry;
@@ -105,6 +111,9 @@ pub struct NodeConfig {
     pub feeds: FeedsSection,
     pub time: TimeSection,
     pub history: HistorySection,
+    /// The dashboard series and position maps derived from the log; all defaults when absent.
+    #[serde(default)]
+    pub stats: StatsSection,
     pub snapshots: Option<SnapshotSection>,
     pub metrics: MetricsSection,
     pub alerts: AlertsSection,
@@ -183,6 +192,11 @@ pub struct ApiSection {
     /// Most markets one quote subscription may name.
     #[serde(default = "default_quote_max_markets")]
     pub quote_max_markets: NonZeroUsize,
+    /// The least sequenced time between two scans of every account for the house's position
+    /// figures (`GET /v1/house`, `GET /v1/house/positions`) and the long and short series. At
+    /// least one second; 60 seconds by default.
+    #[serde(default = "default_stats_interval", with = "humantime_serde")]
+    pub stats_interval: Duration,
     /// Browser origins (`scheme://host[:port]`) that may read the REST API and open the stream. Empty
     /// by default, which sends no CORS headers and refuses a stream upgrade that carries any `Origin`
     /// (a client that sends none still connects). The
@@ -439,20 +453,6 @@ fn public_key_address(key: &str) -> anyhow::Result<AccountId> {
         .and_then(|bytes| ecdsa::VerifyingKey::from_sec1_bytes(&bytes).ok())
         .context("not a SEC1-encoded secp256k1 public key in hex")?;
     Ok(eip712::address(&key))
-}
-
-/// Five seconds, the default `api.heartbeat_interval`.
-fn default_heartbeat_interval() -> Duration {
-    Duration::from_secs(5)
-}
-
-fn default_quote_interval() -> Duration {
-    MIN_QUOTE_INTERVAL
-}
-
-/// Four, the default `api.quote_max_markets`.
-fn default_quote_max_markets() -> NonZeroUsize {
-    NonZeroUsize::new(4).expect("four is not zero")
 }
 
 /// Decodes a base64 Ed25519 public key.

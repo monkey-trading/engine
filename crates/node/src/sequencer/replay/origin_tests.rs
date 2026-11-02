@@ -170,6 +170,7 @@ fn legacy_staking_references_need_genuine_seals_before_writable_recovery() {
         history,
         |_| {},
         None,
+        None,
     )
     .unwrap();
     let config = crate::sequencer::SequencerConfig {

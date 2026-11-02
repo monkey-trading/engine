@@ -58,6 +58,7 @@ impl Http {
             limits: Arc::new(ApiLimits::new(&cfg.api)),
             history,
             marks: crate::test_support::marks_reader(),
+            stats: crate::test_support::stats(),
             emission_budget: None,
             collateral: None,
             listing: Default::default(),

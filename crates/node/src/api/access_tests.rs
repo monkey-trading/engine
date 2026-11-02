@@ -340,6 +340,7 @@ impl Node {
             )),
             history: Reader::new(dir.join(INDEX_FILE), watch::channel(true).1),
             marks: crate::test_support::marks_reader(),
+            stats: crate::test_support::stats(),
             emission_budget: None,
             collateral: None,
             listing: Default::default(),

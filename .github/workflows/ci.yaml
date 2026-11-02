@@ -370,6 +370,23 @@ jobs:
       - name: Run the browser origin dev scenario
         run: ./scripts/dev-browser-origin.sh
 
+  dev-dashboard-data:
+    needs: changes
+    if: needs.changes.outputs.scenarios == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+      - name: Run the dashboard data dev scenario
+        run: ./scripts/dev-dashboard-data.sh
+
   dev-proxy-protocol:
     needs: changes
     if: needs.changes.outputs.scenarios == 'true'
@@ -877,6 +894,23 @@ jobs:
           gh run cancel ${{ github.run_id }} \
             || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
 
+  cancel-dev-dashboard-data:
+    needs: dev-dashboard-data
+    if: failure() && needs.dev-dashboard-data.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
   cancel-dev-proxy-protocol:
     needs: dev-proxy-protocol
     if: failure() && needs.dev-proxy-protocol.result == 'failure'
@@ -1086,7 +1120,7 @@ jobs:
   # `changes` set its area false. Add every new job to `needs`, and a gated one to `$area` below.
   ci-passed:
     if: always()
-    needs: [changes, fmt, file-loc, clippy, test, reference-examples, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, dev-metrics-alerts, dev-alert-outbox, dev-ct-watch, dev-browser-origin, dev-proxy-protocol, dev-snapshot-restart, dev-rwa-feeds, dev-attestation-verifier, dev-signed-api, dev-acme, wasm-verifier, wasm-verifier-compare, image, image-compare, review-delta, merge-approval]
+    needs: [changes, fmt, file-loc, clippy, test, reference-examples, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, dev-metrics-alerts, dev-alert-outbox, dev-ct-watch, dev-browser-origin, dev-dashboard-data, dev-proxy-protocol, dev-snapshot-restart, dev-rwa-feeds, dev-attestation-verifier, dev-signed-api, dev-acme, wasm-verifier, wasm-verifier-compare, image, image-compare, review-delta, merge-approval]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -1100,7 +1134,7 @@ jobs:
             | {fmt: "rust", "file-loc": "rust", clippy: "rust", test: "rust", "reference-examples": "rust",
                "reference-logs": "rust", "reference-logs-frozen": "rust", "cargo-deny": "rust", contracts: "contracts",
                "dev-vault-deposits": "scenarios", "dev-metrics-alerts": "scenarios",
-               "dev-alert-outbox": "scenarios", "dev-ct-watch": "scenarios", "dev-browser-origin": "scenarios", "dev-proxy-protocol": "scenarios",
+               "dev-alert-outbox": "scenarios", "dev-ct-watch": "scenarios", "dev-browser-origin": "scenarios", "dev-dashboard-data": "scenarios", "dev-proxy-protocol": "scenarios",
                "dev-snapshot-restart": "scenarios",
                "dev-rwa-feeds": "scenarios", "dev-attestation-verifier": "scenarios", "dev-signed-api": "scenarios",
                "dev-acme": "scenarios",

@@ -50,6 +50,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   paged per resolution with per-entry `log_derived`/`seeded_from_provider` provenance; recovery
   seeds it from the log's replay, live mark reports keep it current, and an optional provider
   backfill seeds the depth a fresh log cannot have
+- Dashboard data: the House and MONKEY pages' series, position maps, MONKEY totals and activity,
+  held in memory and rebuilt from the log's replay at start (`GET /v1/stats/series`,
+  `/v1/house/positions`, `/v1/monkey`, `/v1/monkey/activity`, and more in `/v1/house`)
 - Signed answers: every `/v1` response a client relies on carries the attested enclave key's
   signature over the request and its body, the client's challenge, the node's time, which it signs
   only while trusted time bounds it, the log head, and the status and body; a `signed=1` stream
@@ -169,6 +172,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/standby/tests.rs` — copy appends that verify frames and refuse a wrong signer, truncation at
   the resume checkpoint, and stream resumption after the last offset
 - `src/node/mod.rs` — startup, task supervision, and shutdown
+- `src/node/ticker.rs` — the `Tick` command at `node.tick`, so sessions and rollovers fire without traffic
 - `src/node/keys.rs` — this start's enclave keys and their attestation, and the check that the log
   reaches the final checkpoint of the release that handed the keys over
 - `src/node/keys/tests.rs` — sealed, new, refused, and unsealed keys, the vault's current release,
@@ -204,6 +208,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/node/signer_history.rs` — finalized accepted roots and immutable signer epochs before recovery writes
 - `src/replay_audit.rs` and `src/replay_audit/` — read-only custody-backed historical signer audits and tests
 - `src/log/segments/durability_tests.rs` — failed-fsync stream publication regression
+- `src/test_support/readers.rs` — stand-ins for the marks reader and the stats record an `ApiState` holds
 - `src/test_support/written.rs` — shared in-memory test output capture
 - `src/sequencer/checkpoints/accounting_tests.rs` — live/recovery accounting oracles and gated 100k-account capture scaling over migrated credits and fresh holds
 - `src/sequencer/checkpoint_tests.rs` — confirmed-prefix signature gating and restart tests
@@ -362,6 +367,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/signing_bench.rs` — the ignored cost benchmark: one frame, a signed account read, and a
   signed fan-out at `api.max_subscribers`
 - `src/api/archive.rs` — the archive routes: the manifest and completed segments
+- `src/api/stats.rs` — the dashboard routes: `/v1/stats/series`, `/v1/house/positions`, `/v1/monkey`,
+  and `/v1/monkey/activity`, read on the sequencer's thread between batches
+- `src/api/stats_tests.rs` — those routes through the router: refusals, the 503 before the first scan
 - `src/api/auth_tests.rs` — signed-request API tests: signatures, nonces, expiries, refused
   accounts, and racing requests
 - `src/api/origin.rs` — CORS headers and preflight for the allowed browser origins, and the stream's `Origin` check
@@ -409,6 +417,19 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   adapter, the public candles client, and window paging (`tests.rs`)
 - `src/history/marks/run.rs` — the supervised marks task: flushing live mark reports and backfilling
   listed markets one at a time
+- `src/stats/mod.rs` — the dashboard record: its settings, the lock, recovery's restart and finish
+- `src/stats/series.rs` — the bucketed series: metrics, kinds and units, retention pruning, paging
+- `src/stats/record.rs` — what each applied command adds: volume, levels, totals, activity, scans
+- `src/stats/snapshot.rs` — the scan of every account: open interest and margin, long and short, the
+  close-out and profit maps; light for the scans a replay does not serve
+- `src/stats/closeout.rs` — the estimated close-out price of one position, other positions at their
+  marks, across margin bands and for the market that converts its own currency (`closeout/tests.rs`)
+- `src/stats/activity.rs` — the bounded feed of loss allocations, stakes and unstakes
+- `src/stats/view.rs` — the answers built from the record and the engine
+- `src/stats/bench.rs` — the ignored cost benchmark of a scan and of `observe` at 100k accounts
+- `src/stats/tests.rs`, `src/stats/tests/` — the record against the engine: volume and levels, the
+  close-out map against engine close-outs, MONKEY totals and epochs, bounds, recovery
+- `src/sequencer/replay/stats.rs` — the replay's sink into the record
 - `src/history/marks/task_tests/` — recovery seeding from a short log and live maintenance through
   the sequencer's reports
 - `src/history/tests/mod.rs` — history index tests: pages, filters, retention, following the log,
@@ -510,6 +531,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/limits/mod.rs` — request rate limits, connection caps, the stream subscriber cap, and the allowed browser origins
 - `src/limits/tests.rs` — the limiters' buckets, caps, and alert throttle
 - `src/config/mod.rs` — the node config schema, loading, and the config file's hash
+- `src/config/stats.rs` — the `[stats]` section: retention, activity length, position-map buckets
+- `src/config/api_defaults.rs` — defaults of the `[api]` keys with a default
 - `src/config/benchmarks.rs` — publisher endpoints, cadence, timeout, and catalogue coverage
 - `src/config/collateral.rs` — the `[tee]` keys of the attestation collateral relay and their bounds
 - `src/config/checkpoints.rs` — checkpoint relayer config and validation
@@ -1154,7 +1177,8 @@ The EVM HTTP withdrawal route remains disabled until #23; this scenario proves a
 at the sequencer/core boundary and does not perform a physical payout or HTTP cash-out.
 
 Endpoints: `GET /v1/health`, `GET /v1/attestation`, `GET /v1/attestation/collateral`,
-`GET /v1/markets`, `GET /v1/markets/{id}/marks`, `GET /v1/house`, `GET /v1/operator`,
+`GET /v1/markets`, `GET /v1/markets/{id}/marks`, `GET /v1/house`, `GET /v1/house/positions`,
+`GET /v1/monkey`, `GET /v1/monkey/activity`, `GET /v1/stats/series`, `GET /v1/operator`,
 `GET /v1/accounts/{address}`, `GET /v1/accounts/{address}/nonce`,
 `GET /v1/accounts/{address}/history`, `GET /v1/accounts/{address}/proof`,
 `GET /v1/accounts/{address}/emissions`, `POST /v1/orders`, `POST /v1/orders/cancel`,
@@ -1506,6 +1530,32 @@ catching up with the log`). History is public, like the log.
 at most `limit + 1` entries, and at most 16 pages are read at once. Until the index has taken every
 command the log held when the node started, the route answers 503 (`history is catching up with the
 log`). History is public, like the log.
+
+`GET /v1/house` answers `cash`, `nav` and `gross_exposure` at the last command, and from the last
+account scan `seq`, `snapshot_ms`, `open_interest` (the notional of every client position, long and
+short), `open_margin` and `open_positions`, with `markets`: each market's `long`, `short` and `net`
+notional in USD, position counts, `unrealised` (the house's result at the mark) and `volume`. The
+scan figures are `null` until the first scan; `volume` sums the last 24 hourly buckets and
+`volume_since_ms` says where that window starts. `GET /v1/house/positions?market=` answers one
+market's positions as aggregates only: `closeout`, USD and counts by the move from the mark that
+would close the account out (the account's other positions held at their marks; a long falls, a
+short rises), with `due_now` and `beyond_range`, and `profit` buckets by side; no account is named,
+and the answer is 503 until the first scan. `GET /v1/monkey` answers the emission schedule and
+totals (`emissions`), the stake (`staking`) and the distribution state (`distribution`, whose
+`excess_usd` is what the engine would distribute at the last scan, in USD, and the amounts of USDC
+are named `_usdc_units`, whole base units). `GET /v1/monkey/activity?limit=&before=`
+pages the newest loss allocations, stakes and unstakes, newest first, with ids and `next` as decimal
+strings. `GET /v1/stats/series?metric=&market=&resolution=(1m|1h|1d)&from_ms=&to_ms=&limit=` pages a
+metric's buckets oldest first: `nav`, `cash`, `withdrawal_queue`, `total_staked`, `total_allocated`,
+`cumulative_distributed`, `long` and `short` (per market), `volume` (per market or all),
+`monkey_per_loss` and `distributed_per_epoch`. The series, activity and MONKEY answers state where their data begins
+(`begins_ms`, `begins_seq`, `from_genesis`), and positions are dated by their scan (`seq`, `snapshot_ms`);
+the activity feed also says when it has dropped older entries (`truncated`, `retained_from_ms`). The record is derived from the log and held in memory:
+recovery rebuilds it by replay, so after a recovery from a snapshot it begins at the first command
+after it. Scans of every account run on the sequencer's thread at most once per `api.stats_interval`
+of sequenced time (100k levered accounts with staking initialised took about 35 ms, p99 40 ms, and the light scan
+about 15 ms, `stats::bench`), and a replay takes the light scan for all but the last. `[stats]` sets each resolution's retention (1m 48h, 1h 90d, 1d
+unbounded by default), the activity length, and the close-out and profit buckets.
 
 `GET /v1/markets/{id}/marks?resolution=(1s|1m|1h|1d)&from_ms=&to_ms=&limit=` returns
 `{"market", "resolution", "entries", "next", "max_limit"}`: one market's index-mark history from the
@@ -2110,6 +2160,10 @@ cargo test -p engine-node trusted_time::tests::scenario
 
 # Dev scenario: a listed browser origin gets CORS headers and the stream, any other gets neither
 ./scripts/dev-browser-origin.sh
+
+# Dev scenario: the dashboard routes answer with the figures the accounts placed, verify, and survive
+# a restart (waits out one ten-minute MONKEY period, about twelve minutes)
+./scripts/dev-dashboard-data.sh
 
 # Dev scenario: limits and screening use the client address a trusted proxy's PROXY header names
 ./scripts/dev-proxy-protocol.sh

@@ -214,12 +214,13 @@ impl Sequencer {
         parent: Option<crate::log::CheckpointParent>,
         mut observe: impl FnMut(&LogEntry),
     ) -> anyhow::Result<ReplayedLog> {
-        Self::read_log_with_authorities(dir, domain, signer, parent, Default::default(), &mut observe, None)
+        Self::read_log_with_authorities(dir, domain, signer, parent, Default::default(), &mut observe, None, None)
     }
 
     /// Replays accepted history while requiring the current signer for the unanchored tail.
     /// Error cases:
     /// - trusted history is inconsistent, or ordinary replay/recovery validation fails
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn read_log_with_authorities(
         dir: &Path,
         domain: Option<crate::log::CheckpointDomain>,
@@ -228,12 +229,16 @@ impl Sequencer {
         authorities: crate::checkpoints::SignerHistory,
         mut observe: impl FnMut(&LogEntry),
         marks: Option<crate::history::marks::MarkSink>,
+        stats: Option<crate::stats::Stats>,
     ) -> anyhow::Result<ReplayedLog> {
         let mut replay = parent
             .map_or_else(|| Replay::with_trust(domain, signer), |parent| Replay::with_recovery(domain, signer, parent));
         replay.set_authorities(authorities)?;
         if let Some(sink) = marks {
             replay.sample_marks_with(sink);
+        }
+        if let Some(stats) = stats {
+            replay.record_stats_with(stats);
         }
         let log = SegmentedLog::open(dir, |entry| {
             observe(&entry);

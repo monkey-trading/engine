@@ -301,6 +301,7 @@ pub(super) fn state(node: &TestSequencer, dir: &Path, api: &crate::config::ApiSe
         limits: Arc::new(ApiLimits::with_quota(api, hourly, DefaultClock::default())),
         history: Reader::new(dir.join(INDEX_FILE), watch::channel(true).1),
         marks: crate::test_support::marks_reader(),
+        stats: crate::test_support::stats(),
         emission_budget: None,
         collateral: None,
         listing: Default::default(),

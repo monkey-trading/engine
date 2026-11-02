@@ -170,6 +170,7 @@ fn section(per_second: u32, burst: u32) -> ApiSection {
         heartbeat_interval: Duration::from_secs(5),
         quote_interval: Duration::from_millis(100),
         quote_max_markets: NonZeroUsize::new(4).unwrap(),
+        stats_interval: Duration::from_secs(60),
         allowed_origins: Vec::new(),
         tls: None,
         proxy_protocol: None,
