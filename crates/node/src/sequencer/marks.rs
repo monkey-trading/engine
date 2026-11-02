@@ -4,6 +4,7 @@
 
 use std::collections::BTreeMap;
 
+use engine_core::command::Sequenced;
 use engine_core::types::{MarketId, Millis};
 use engine_core::{Engine, Fixed};
 use tokio::sync::mpsc::{self, error::TrySendError};
@@ -94,9 +95,11 @@ impl Sequencer {
 
     /// Buffers the mark changes of the command just applied for release with this batch's flush, and
     /// adds the command, which produced `events`, to the dashboard record.
-    pub(super) fn report_marks(&mut self, ts: Millis, events: &[engine_core::event::Event]) {
+    pub(super) fn report_marks(&mut self, sequenced: &Sequenced, events: &[engine_core::event::Event]) {
+        let ts = sequenced.ts;
         self.marks.report(&self.engine, ts);
         if let Some(stats) = &self.marks.stats {
+            stats.follow(sequenced);
             stats.observe(&self.engine, ts, events);
         }
     }
@@ -112,6 +115,7 @@ impl Sequencer {
     /// may have seeded, and gives it the recovered state's scan if its replay took none.
     pub fn track_stats(&mut self, stats: crate::stats::Stats) {
         stats.finish_recovery(&self.engine);
+        stats.scan_in_background(&self.engine);
         self.marks.stats = Some(stats);
     }
 }

@@ -85,3 +85,38 @@ fn scan_and_observe_cost() {
         percentile(&mut observed, 99)
     );
 }
+
+/// What the record costs each command across one scan interval at 100k accounts, with the scan taken
+/// on the sequencer's thread and with it handed to the worker: the longest single command and the
+/// total, of `follow` and `observe` alone (the engine's own `apply` is not timed). The command
+/// that makes the scan due is the one that shares a turn with it.
+#[test]
+#[ignore = "100k-account benchmark: run in an isolated CPU window"]
+fn command_cost_across_a_scan_interval() {
+    use engine_core::command::{Command, Sequenced};
+    let (_rig, mut engine) = engine_with_accounts();
+    for (name, background) in [("inline", false), ("background", true)] {
+        let stats = crate::test_support::stats();
+        if background {
+            stats.scan_in_background(&engine);
+        }
+        let mut times = Vec::new();
+        let mut at = engine.now() + 1_000;
+        for step in 0..=65 {
+            let sequenced = Sequenced { seq: engine.last_seq().unwrap() + 1, ts: at, cmd: Command::Tick };
+            let events = engine.apply(&sequenced).expect("a tick applies");
+            let began = Instant::now();
+            stats.follow(&sequenced);
+            stats.observe(&engine, at, &events);
+            times.push((began.elapsed().as_micros(), step));
+            at += 1_000;
+        }
+        stats.settle();
+        let total: u128 = times.iter().map(|(micros, _)| micros).sum();
+        let (longest, step) = *times.iter().max().unwrap();
+        println!(
+            "STATS cycle mode={name} accounts={ACCOUNTS} commands={} longest_us={longest} at_step={step} total_us={total}",
+            times.len()
+        );
+    }
+}

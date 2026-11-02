@@ -435,11 +435,14 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/stats/record.rs` — what each applied command adds: volume, levels, totals, activity, scans
 - `src/stats/snapshot.rs` — the scan of every account: open interest and margin, long and short, the
   close-out and profit maps; light for the scans a replay does not serve
+- `src/stats/background.rs` — the scan's worker thread: a copy of the engine that applies every command
+  the sequencer applies, so a scan reads the sequencer's state at its seq without holding the sequencer
 - `src/stats/closeout.rs` — the estimated close-out price of one position, other positions at their
   marks, across margin bands and for the market that converts its own currency (`closeout/tests.rs`)
 - `src/stats/activity.rs` — the bounded feed of loss allocations, stakes and unstakes
 - `src/stats/view.rs` — the answers built from the record and the engine
-- `src/stats/bench.rs` — the ignored cost benchmark of a scan and of `observe` at 100k accounts
+- `src/stats/bench.rs` — the ignored cost benchmarks at 100k accounts: a scan, `observe`, and each command's
+  cost across a scan interval with the scan inline and handed to the worker
 - `src/stats/tests.rs`, `src/stats/tests/` — the record against the engine: volume and levels, the
   close-out map against engine close-outs, MONKEY totals and epochs, bounds, recovery
 - `src/sequencer/replay/stats.rs` — the replay's sink into the record
@@ -1610,9 +1613,14 @@ metric's buckets oldest first: `nav`, `cash`, `withdrawal_queue`, `total_staked`
 (`begins_ms`, `begins_seq`, `from_genesis`), and positions are dated by their scan (`seq`, `snapshot_ms`);
 the activity feed also says when it has dropped older entries (`truncated`, `retained_from_ms`). The record is derived from the log and held in memory:
 recovery rebuilds it by replay, so after a recovery from a snapshot it begins at the first command
-after it. Scans of every account run on the sequencer's thread at most once per `api.stats_interval`
-of sequenced time (100k levered accounts with staking initialised took about 35 ms, p99 40 ms, and the light scan,
-which no longer walks the accounts for the distributable excess, about 9 ms, `stats::bench`), and a replay takes the light scan for all but the last. `[stats]` sets each resolution's retention (1m 48h, 1h 90d, 1d
+after it. Scans of every account are due at most once per `api.stats_interval`
+of sequenced time. A running node takes them on a worker thread holding a copy of the engine that applies
+every command the sequencer applies, so a scan reads the engine at the seq it fell due at and never holds
+the sequencer (100k levered accounts with staking initialised: a scan took about 30 ms on the sequencer's
+thread; with the worker the longest command in a scan interval cost 0.2 ms, `stats::bench`). The copy
+doubles the engine's memory; the result is installed by the next command or read after it finishes,
+every due scan is taken, and if the worker stops the record scans on the
+sequencer's thread again and raises the `stats_scan_inline` warning. A replay scans on its own thread, lightly (about 9 ms at 100k accounts, as it no longer walks them for the distributable excess) for all but the last. `[stats]` sets each resolution's retention (1m 48h, 1h 90d, 1d
 unbounded by default), the activity length, and the close-out and profit buckets.
 
 `GET /v1/markets/{id}/marks?resolution=(1s|1m|1h|1d)&from_ms=&to_ms=&limit=` returns
