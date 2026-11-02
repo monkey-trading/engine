@@ -56,7 +56,7 @@ allowed_a=$fwd; allowed_b=$((fwd + 1)); us=$((fwd + 2)); spare_a=$((fwd + 3)); s
 allowed_a_ip="203.0.113.7"; allowed_b_ip="203.0.113.9"; us_ip="198.51.100.5"
 
 step "build the node and the scenario's tools"
-cargo build -q --locked -p engine-node --manifest-path "$root/Cargo.toml"
+[ -n "${ENGINE_PREBUILT:-}" ] || cargo build -q --locked -p engine-node --manifest-path "$root/Cargo.toml"
 source "$root/scripts/dev-access-fixture.sh"
 build_access_tools
 engine="$(cargo metadata --format-version 1 --no-deps --manifest-path "$root/Cargo.toml" | jq -r .target_directory)/debug/engine"

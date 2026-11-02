@@ -57,7 +57,7 @@ expect_near() { near "$2" "$3" "$4" || fail "$1: expected $3 within $4, got $2";
 calc() { python3 -c "print($1)"; }
 
 step "build the node and the scenario's tools"
-cargo build -q --locked -p engine-node --manifest-path "$root/Cargo.toml"
+[ -n "${ENGINE_PREBUILT:-}" ] || cargo build -q --locked -p engine-node --manifest-path "$root/Cargo.toml"
 source "$root/scripts/dev-access-fixture.sh"
 build_access_tools
 engine="$(cargo metadata --format-version 1 --no-deps --manifest-path "$root/Cargo.toml" | jq -r .target_directory)/debug/engine"

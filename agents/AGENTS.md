@@ -339,7 +339,10 @@ an index: load only the rule whose hint matches the current action.
   lifecycle dev scenario, the signed withdrawal and FIFO dev
   scenario, the exit dev scenario, the API and direct-vault access enforcement dev scenario, the
   metrics and alert routing
-  dev scenario, the alert outbox kill/restart scenario,
+  dev scenario, the alert outbox kill/restart scenario (with the metrics and alert routing, browser-origin, proxy protocol,
+  batch orders, dashboard data, Certificate Transparency watcher, snapshot restart and signed API
+  scenarios only run the node and its fixture tools, so they take one `engine-build` job's build as
+  an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
   the browser-origin scenario, the proxy protocol scenario, the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the
   signed API answers dev scenario, the public certificate dev scenario, the executable quotes dev
   scenario, the review-delta helper's test, the merge approval gate's test, the browser verifier
@@ -348,6 +351,8 @@ an index: load only the rule whose hint matches the current action.
   package; `wasm-verifier-compare` fails if the builds differ), and the enclave image (`image`
   checks its download retries, builds it twice, and boots it under QEMU, `image-compare` fails if
   the builds differ), on every push to `main`, every PR, and every merge group of the merge queue.
+  A PR builds the package and the image once, and its image job also builds and boots the dev
+  image; the second builds and the two compare jobs run in merge groups, pushes and manual runs.
   On a PR, the first job, `changes`, sorts the changed files into the Rust, contracts, scenario,
   image, agent-script, and merge-approval areas from an explicit path list, and each job runs only
   when its area changed: `agents/` (but for the review-delta helper in
@@ -355,7 +360,10 @@ an index: load only the rule whose hint matches the current action.
   `fixtures/`, which an `engine-core` test reads), the root `README.md`, `SECURITY.md`,
   `AGENTS.md`, and `CLAUDE.md`, and the `README.md` of `image/` and of each crate change none. A
   push to `main`, a merge group, a manual run, a workflow change, a failed diff, or any path the
-  list does not name runs every job.
+  list does not name runs every job. A push to `main` whose commit passed a merge group (the queue
+  lands the commit its group tested, which `changes` looks up) runs no area: only the jobs that save
+  a Rust cache run, `test` compiling without running its tests, so the caches every other run
+  restores stay fresh without repeating the group's checks; any other push runs every job.
   Actions are pinned by commit SHA. `ci-passed` is the one CI check branch rules require: it passes
   only when every other job succeeded or was skipped because its area did not change, so each new
   job must be added to its `needs` and its area map, and every path it reads to `changes`. Each

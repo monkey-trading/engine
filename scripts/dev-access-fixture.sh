@@ -2,8 +2,11 @@
 # Sourced by local Anvil scenarios. The source signs synthetic classifications with Anvil key 0.
 
 build_access_tools() {
-  cargo build -q --locked -p engine-node --example access_source --manifest-path "$root/Cargo.toml"
-  cargo build -q --locked -p engine-core --example sign_request --manifest-path "$root/Cargo.toml"
+  # CI builds both once and hands them to the scenarios that set ENGINE_PREBUILT.
+  if [ -z "${ENGINE_PREBUILT:-}" ]; then
+    cargo build -q --locked -p engine-node --example access_source --manifest-path "$root/Cargo.toml"
+    cargo build -q --locked -p engine-core --example sign_request --manifest-path "$root/Cargo.toml"
+  fi
   access_target="$(cargo metadata --format-version 1 --no-deps --manifest-path "$root/Cargo.toml" | jq -r .target_directory)"
   access_signer="$access_target/debug/examples/sign_request"
 }

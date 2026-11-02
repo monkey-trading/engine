@@ -34,7 +34,7 @@ wait_for() {
   fail "metric $1 never reached $2"
 }
 
-(cd "$root" && cargo build -p engine-node --locked --quiet)
+[ -n "${ENGINE_PREBUILT:-}" ] || (cd "$root" && cargo build -p engine-node --locked --quiet)
 engine="$(cargo metadata --format-version 1 --no-deps --manifest-path "$root/Cargo.toml" | jq -r .target_directory)/debug/engine"
 python3 - "$api_port" "$metrics_port" "$hook_port" <<'PY'
 import socket, sys
