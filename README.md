@@ -164,7 +164,7 @@ You need the latest stable Rust on Linux or macOS, and `jq` and `xxd` for the AP
 a local node with a mock enclave, mock custody, and simulated prices; its API is served over TLS on
 `127.0.0.1:8080`, which you can change with `node.listen` in `config/dev.toml`. The certificate is
 self-signed, so the examples below pass `curl -k`. Set `feeds.provider = "venues"` in a copy of the
-config to price BTC-USD and ETH-USD from Coinbase, Kraken, and Bitstamp instead; the other markets
+config to price BTC-USD and ETH-USD from Coinbase and Kraken instead; the other markets
 then have no price, so their orders get `no_price`. The node checks its clock against public
 Roughtime servers over UDP: it starts sequencing once they answer, and stops a minute after it
 loses them. A log is tied to the `[genesis]` it was started with: after editing that section, delete

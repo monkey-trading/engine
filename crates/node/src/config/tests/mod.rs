@@ -294,13 +294,13 @@ fn a_malformed_config_line_is_named_but_never_quoted() {
 // ── Helpers ──
 
 #[test]
-fn the_committed_venue_feeds_price_both_crypto_markets_from_three_venues() {
+fn the_committed_venue_feeds_price_both_crypto_markets_from_coinbase_and_kraken() {
     let mut cfg = NodeConfig::load(Path::new(DEV)).unwrap();
     cfg.feeds.provider = FeedProvider::Venues;
     cfg.validate().unwrap();
     let connections = cfg.feeds.venues.unwrap().connections;
     let venues: Vec<Venue> = connections.iter().map(|c| c.venue).collect();
-    assert_eq!(venues, [Venue::Coinbase, Venue::Kraken, Venue::Bitstamp]);
+    assert_eq!(venues, [Venue::Coinbase, Venue::Kraken]);
     for conn in connections {
         let markets: Vec<MarketId> = conn.symbols.iter().map(|s| s.market).collect();
         assert_eq!(markets, [1, 2], "{}", conn.venue.name());

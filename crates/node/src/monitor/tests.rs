@@ -238,11 +238,12 @@ fn every_fed_venue_has_a_quote_time_from_the_start_and_no_retired_one_has_any() 
     };
     // (config, the sources it feeds BTC from, a source the engine still holds but the config dropped)
     for (text, fed, retired) in
-        [(&dev, ["mock-a", "mock-b", "mock-c"], "kraken"), (&venues, ["bitstamp", "coinbase", "kraken"], "mock-a")]
+        [(&dev, &["mock-a", "mock-b", "mock-c"][..], "kraken"), (&venues, &["coinbase", "kraken"][..], "mock-a")]
     {
         let cfg: NodeConfig = toml::from_str(text).unwrap();
         let sources = configured_sources(&cfg.feeds);
-        assert_eq!(sources[&BTC], fed.map(str::to_owned).into(), "{sources:?}");
+        let fed_set: BTreeSet<String> = fed.iter().map(|source| (*source).to_owned()).collect();
+        assert_eq!(sources[&BTC], fed_set, "{sources:?}");
 
         // Before genesis lists a market, every pair the config feeds reads as stale from the start.
         let metrics = Metrics::new();
@@ -253,7 +254,7 @@ fn every_fed_venue_has_a_quote_time_from_the_start_and_no_retired_one_has_any() 
         }
 
         // The last fed venue never quotes BTC; the retired one quoted a day ago.
-        let [quoting @ .., silent] = fed;
+        let [quoting @ .., silent] = fed else { panic!("a config feeds BTC from at least one source") };
         let mut engine = dev_engine();
         let quotes: Vec<_> = quoting.iter().map(|venue| (*venue, T0)).chain([(retired, T0 - 86_400_000)]).collect();
         sequence(&mut engine, T0, prices(BTC, &quotes));

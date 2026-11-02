@@ -20,8 +20,8 @@ Gaps, closures and contract rolls are not in the need: a price jump is not a spr
 
 | Market | Class | Divergence | Hourly p99 (cal. upper) | Need | Calibration-only | Proposed | % of min margin | Validation hours over calibration-only | Confidence |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---|
-| BTC-USD | crypto | 25 | 205 | 29.4 | 30 | **30** | 3.0% | 0.20% | moderate |
-| ETH-USD | crypto | 25 | 294 | 30.9 | 35 | **35** | 3.5% | 0.07% | moderate |
+| BTC-USD | crypto | 25 | 205 | 29.4 | 30 | **30** | 30.0% | 0.20% | moderate |
+| ETH-USD | crypto | 25 | 294 | 30.9 | 35 | **35** | 35.0% | 0.07% | moderate |
 | SOL-USD | crypto | 25 | 351 | 31.9 | 35 | **35** | 3.5% | 0.02% | moderate |
 | EUR-USD | fx | 5 | 39 | 6.6 | 13 | **13** | 26.0% | 0.00% | moderate |
 | GBP-USD | fx | 5 | 34 | 6.6 | 13 | **13** | 26.0% | 0.00% | moderate |
@@ -60,13 +60,13 @@ Gaps, closures and contract rolls are not in the need: a price jump is not a spr
 
 Method and test: the method is fixed on the calibration sample (2024-10-28 to 2026-04-27) and tested on the later validation sample (to 2026-10-12). It covers every market, so the proposed value refits on the larger of the two tails (in-sample on the validation tail). Over the validation hours, the share whose need would exceed the calibration-only ceiling is at most 0.86%. A market at the floor fails the test whenever its validation need exceeds the launch charge, so the count of markets whose calibration-only ceiling is above the floor (30) is not the population that can fail it.
 
-Burden: every proposed ceiling is at most 30% of the market's smallest initial margin (limit 30%). Floor-bound ceilings (EUR-USD, GBP-USD, USD-JPY, AUD-USD, US500, US30, UK100) sit at the 13-bp floor, 26% of their 50-bp margin, so the launch parameters themselves already cost them that share of margin to close at the top stress level: an owner decision for the launch stress minimum, not for the ceiling.
+Burden: every proposed ceiling is at most 35% of the market's smallest initial margin (limit 30%). Floor-bound ceilings (EUR-USD, GBP-USD, USD-JPY, AUD-USD, US500, US30, UK100) sit at the 13-bp floor, 26% of their 50-bp margin, so the launch parameters themselves already cost them that share of margin to close at the top stress level: an owner decision for the launch stress minimum, not for the ceiling.
 
 Sensitivity: doubling the volatility input raises 31 ceilings, by at most 10 bps. The divergence limit in the genesis price rules, not volatility, sets most of each ceiling.
 
 ## What the choices cost
 
-Registry against one global value: a single value must be at least 35 bps (the largest market), which costs 14 of 37 markets more than the burden limit, up to 70% of margin. At the strictest value (13 bps) 30 markets would need more than they may charge.
+Registry against one global value: a single value must be at least 35 bps (the largest market), which costs 16 of 37 markets more than the burden limit, up to 70% of margin. At the strictest value (13 bps) 30 markets would need more than they may charge.
 
 Reversal blending (grid of 6 position sizes and 4 opening fractions per market and stress level, against each market's proposed ceiling): the share of reversals whose blended spread exceeds the ceiling is 0.0% at calm, 1.1% at the elevated level and 13.1% at the top level (by class: commodity 3%, crypto 0%, equity 23%, fx 0%, index 2%). This is a grid, not a flow distribution. Under one global value at the floor instead, the shares are 0.0%, 4.5% and 24.5%.
 

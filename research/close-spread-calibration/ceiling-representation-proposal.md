@@ -22,7 +22,7 @@ crypto 30 to 35. They differ because the genesis price rules do: the divergence 
 indices, commodities and shares, and 25 for crypto, and the ceiling covers that limit plus a one-second tail.
 One global value fails whichever way it is set:
 
-- At the largest value (35 bps), 14 of 37 markets (every FX, index and commodity market) exceed the 30%-of-margin
+- At the largest value (35 bps), 16 of 37 markets (every FX, index and commodity market, and BTC-USD and ETH-USD at their 1% margin) exceed the 30%-of-margin
   burden limit; EUR-USD's 50-bp minimum margin would pay 70% of itself to close.
 - At the strictest (13 bps), 30 of 37 markets may charge less than their reference-risk need.
 
@@ -112,7 +112,7 @@ one-unit index. The floor needs neither. The truncated `Fill.spread_bps` must no
 ## 5. A listing with no ceiling: refuse
 
 #147 forbids hiding missing evidence behind a uniform fallback, and the table shows none is defensible: a
-single value is above the burden limit for 14 markets at 35 bps and below the need of 30 at 13. A class
+single value is above the burden limit for 16 markets at 35 bps and below the need of 30 at 13. A class
 fallback would extend one asset class's evidence to an instrument that was never calibrated. So a post-genesis
 `UpsertMarket` of an ID with no entry is refused.
 

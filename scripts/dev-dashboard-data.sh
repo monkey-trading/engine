@@ -199,8 +199,9 @@ expect_near "ETH short" "$(market 2 short)" "$short_eth" "$(rel "$short_eth")"
 expect_near "ETH net" "$(market 2 net)" "$(calc "$long_eth - $short_eth")" "$(rel "$long_eth")"
 total="$(calc "$long_btc + $short_btc + $long_eth + $short_eth")"
 expect_near "open interest" "$(jq -r .open_interest "$house")" "$total" "$(rel "$total")"
-# Margin is 10% of each position's notional in these markets (the first million), rounded up.
-expect_near "open margin" "$(jq -r .open_margin "$house")" "$(calc "$total * 0.1")" "$(rel "$total")"
+# Margin is 1% of each position's notional in these markets (100x, the first million), rounded up.
+open_margin="$(calc "$total * 0.01")"
+expect_near "open margin" "$(jq -r .open_margin "$house")" "$open_margin" "$(rel "$open_margin")"
 jq -e '.cash and .nav and .gross_exposure and (.unrealised | tonumber | type == "number") and (.volume | tonumber) > 0' "$house" > /dev/null \
   || fail "the existing fields or the new volume are missing: $(cat "$house")"
 

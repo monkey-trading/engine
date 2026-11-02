@@ -62,13 +62,13 @@ fn vendor_connections_with_their_keys_datasets_and_contracts_load() {
     assert_eq!(vendors, [Massive, Massive, Massive, Tradermade, Databento, Databento]);
     // Each key comes from the variable its connection names, and never reaches a log.
     let env = |var: &str| (var == "TRADERMADE_API_KEY").then(|| "tradermade-secret".to_owned());
-    let key = connections[6].api_key(env).unwrap().expect("a vendor key");
+    let key = connections[5].api_key(env).unwrap().expect("a vendor key");
     assert_eq!(key.expose(), "tradermade-secret");
     assert_eq!(format!("{key:?}"), "ApiKey(<redacted>)");
     assert!(connections[0].api_key(env).unwrap().is_none());
-    let unset = format!("{:#}", connections[3].api_key(env).unwrap_err());
+    let unset = format!("{:#}", connections[2].api_key(env).unwrap_err());
     assert!(unset.contains("massive api_key_env") && unset.contains("MASSIVE_API_KEY is not set"), "{unset}");
-    let empty = format!("{:#}", connections[3].api_key(|_| Some(String::new())).unwrap_err());
+    let empty = format!("{:#}", connections[2].api_key(|_| Some(String::new())).unwrap_err());
     assert!(empty.contains("is not set"), "{empty}");
 }
 
@@ -89,20 +89,20 @@ fn a_production_build_takes_the_vendor_feeds_and_refuses_the_mock_feed() {
 fn vendor_settings_that_would_fail_or_could_be_forged_are_refused() {
     type Edit = fn(&mut Vec<VenueConnection>);
     let cases: [(&str, Edit); 11] = [
-        ("massive api_key_env must be set", |c| c[3].api_key_env = None),
-        ("coinbase api_key_env must be set", |c| c[0].api_key_env = c[3].api_key_env.clone()),
-        ("massive url must be one of its", |c| c[3].url = "wss://socket.massive.com/crypto".into()),
-        ("tradermade url must be on tradermade.com", |c| c[6].url = "wss://stream.example.com/feedAdv".into()),
-        ("databento url must be tcp://", |c| c[7].url = "wss://glbx-mdp3.lsg.databento.com:13000".into()),
-        ("databento url must name the gateway port", |c| c[7].url = "tcp://glbx-mdp3.lsg.databento.com".into()),
-        ("databento dataset must be set exactly for databento", |c| c[7].dataset = None),
-        ("massive dataset must be set exactly for databento", |c| c[3].dataset = Some("GLBX.MDP3".into())),
+        ("massive api_key_env must be set", |c| c[2].api_key_env = None),
+        ("coinbase api_key_env must be set", |c| c[0].api_key_env = c[2].api_key_env.clone()),
+        ("massive url must be one of its", |c| c[2].url = "wss://socket.massive.com/crypto".into()),
+        ("tradermade url must be on tradermade.com", |c| c[5].url = "wss://stream.example.com/feedAdv".into()),
+        ("databento url must be tcp://", |c| c[6].url = "wss://glbx-mdp3.lsg.databento.com:13000".into()),
+        ("databento url must name the gateway port", |c| c[6].url = "tcp://glbx-mdp3.lsg.databento.com".into()),
+        ("databento dataset must be set exactly for databento", |c| c[6].dataset = None),
+        ("massive dataset must be set exactly for databento", |c| c[2].dataset = Some("GLBX.MDP3".into())),
         ("massive lists market 20 contract ESZ6 twice", |c| {
-            let futures = c[4].symbols[0].clone();
-            c[5].symbols.push(futures)
+            let futures = c[3].symbols[0].clone();
+            c[4].symbols.push(futures)
         }),
-        ("databento lists symbol ESZ6 twice", |c| c[7].symbols[1].symbol = "ESZ6".into()),
-        ("massive lists url wss://socket.massive.com/stocks twice", |c| c[4].url = c[5].url.clone()),
+        ("databento lists symbol ESZ6 twice", |c| c[6].symbols[1].symbol = "ESZ6".into()),
+        ("massive lists url wss://socket.massive.com/stocks twice", |c| c[3].url = c[4].url.clone()),
     ];
     for (expected, edit) in cases {
         let mut cfg = with_vendors();
@@ -151,8 +151,8 @@ fn venue_timing_paces_from_the_quote_spacing_not_the_mock_interval() {
 
 // ── Helpers ──
 
-/// The committed dev config with `VENDORS` after its crypto venues: Coinbase, Kraken, and Bitstamp
-/// at indices 0 to 2, then Massive's three feeds, TraderMade, and Databento's two datasets.
+/// The committed dev config with `VENDORS` after its crypto venues: Coinbase and Kraken
+/// at indices 0 and 1, then Massive's three feeds, TraderMade, and Databento's two datasets.
 fn with_vendors() -> NodeConfig {
     let dev = std::fs::read_to_string(DEV).unwrap();
     let (head, tail) = dev.split_once("\n[time]\n").expect("dev.toml has a [time] section");
