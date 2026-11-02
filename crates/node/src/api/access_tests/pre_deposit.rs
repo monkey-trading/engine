@@ -256,6 +256,10 @@ async fn a_wallet_with_a_declaration_and_keys_but_no_account_meets_every_read_an
     let (wallet, session) = (key(1), key(7));
     let account = address(&wallet);
     let unknown = address(&key(8));
+    // A credited account's position beside the wallet, so the dashboard's scan has something to count.
+    let trader = key(9);
+    node.onboard(&trader).await;
+    assert_eq!(node.post("/v1/orders", order(&trader, 1)).await.0, StatusCode::OK);
     assert_eq!(node.post("/v1/eligibility", declaration(&wallet, 0)).await.0, StatusCode::OK);
     assert_eq!(
         node.post("/v1/session-keys", registration(&wallet, &session, 1, NOW + HOUR_MS)).await.0,
@@ -289,11 +293,11 @@ async fn a_wallet_with_a_declaration_and_keys_but_no_account_meets_every_read_an
     let [start] = &bundle.calls[..] else { panic!("only startExit, nothing to register: {:?}", bundle.calls) };
     assert!(start.what.starts_with("startExit"), "{}", start.what);
 
-    // The dashboard's scan reads accounts only, so the wallet adds no position or margin.
+    // The dashboard's scan counts the trader's one position and nothing for the wallet.
     let stats = node.state.stats.clone();
     node.state.query(move |engine| stats.finish_recovery(engine)).await.unwrap();
     let house = node.get("/v1/house").await;
-    assert_eq!((&house["open_positions"], &house["open_interest"]), (&json!(0), &json!("0")), "{house}");
+    assert_eq!(house["open_positions"], 1, "{house}");
 }
 
 // ── Helpers ──

@@ -5,7 +5,11 @@
 
 use std::num::NonZeroU32;
 
+use axum::http::Method;
+
+use super::pre_deposit_budgets::send;
 use super::*;
+use crate::trusted_time::tests::logs::Logs;
 
 #[tokio::test]
 async fn fresh_signers_declare_with_no_deposit_and_within_their_client_share() {
@@ -68,28 +72,51 @@ async fn fresh_signers_declare_with_no_deposit_and_within_their_client_share() {
 }
 
 #[tokio::test]
-async fn declarations_taking_their_share_of_the_screening_slots_leave_orders_a_slot() {
+async fn a_declaration_in_flight_holds_its_slot_and_leaves_orders_theirs() {
+    let (logs, _guard) = Logs::capture();
     let node = Node::start("access-declaration-slots", true).await;
-    let (trader, wallet) = (key(1), key(2));
-    let account = eip712::address(wallet.verifying_key());
+    let (trader, first, second) = (key(1), key(2), key(3));
+    let later = eip712::address(second.verifying_key());
     node.onboard(&trader).await;
-    let client = node.state.access.as_ref().unwrap();
-    assert_eq!(client.api_slots.available_permits(), 2);
-    let declaring = client.declaration_slots.acquire_many(1).await.unwrap();
-    assert_eq!(client.declaration_slots.available_permits(), 0, "half of two slots");
-    let (entries, queries) = (settled_entries(&node).await, node.source.lock().unwrap().requests.len());
-    // A declaration past its share refuses before the source and the log, and uses no nonce.
-    let (status, body) = node.post("/v1/eligibility", declaration(&wallet, 0)).await;
-    assert_eq!((status, body["error"].as_str()), (StatusCode::SERVICE_UNAVAILABLE, Some("engine unavailable")));
+    // The source holds the first wallet's screening, so its declaration stays in flight.
+    let gate = Arc::new(Semaphore::new(0));
+    node.source.lock().unwrap().hold = Some((eip712::address(first.verifying_key()), gate.clone()));
+    let queries = node.source.lock().unwrap().requests.len();
+    let in_flight = node.post("/v1/eligibility", declaration(&first, 0));
+    tokio::pin!(in_flight);
+    tokio::select! {
+        answer = &mut in_flight => panic!("answered while the source holds it: {answer:?}"),
+        () = async {
+            while node.source.lock().unwrap().requests.len() == queries {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        } => {}
+    }
+    let entries = settled_entries(&node).await;
+
+    // Half of two slots: the next declaration refuses before the source and the log, uses no nonce,
+    // says when to retry, and the operator hears of it.
+    let (status, body, retry_after) = send(&node, 1, Method::POST, "/v1/eligibility", declaration(&second, 0)).await;
+    assert_eq!(
+        (status, body["error"].as_str(), retry_after),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("declaration screening is at capacity"), Some(5))
+    );
     assert_eq!(settled_entries(&node).await, entries);
-    assert_eq!(node.source.lock().unwrap().requests.len(), queries);
-    assert_eq!(node.state.query(move |engine| engine.next_request_nonce(account)).await.unwrap(), 0);
-    // An order screens through the slots declarations cannot hold.
+    assert_eq!(node.source.lock().unwrap().requests.len(), queries + 1);
+    assert_eq!(node.state.query(move |engine| engine.next_request_nonce(later)).await.unwrap(), 0);
+    assert_eq!(logs.count("alert=\"api_declaration_slots_full\""), 1);
+
+    // An order screens through the slot declarations cannot hold.
     let (status, events) = node.post("/v1/orders", order(&trader, 1)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(events.as_array().unwrap().iter().any(|event| event["type"] == "fill"), "{events}");
-    drop(declaring);
-    assert_eq!(node.post("/v1/eligibility", declaration(&wallet, 0)).await.0, StatusCode::OK);
+
+    // The held declaration finishes, which frees its slot for the next.
+    gate.add_permits(1);
+    let (status, events) = in_flight.await;
+    assert_eq!((status, &events[0]["type"]), (StatusCode::OK, &json!("eligibility_attested")), "{events}");
+    let (status, events) = node.post("/v1/eligibility", declaration(&second, 0)).await;
+    assert_eq!((status, &events[0]["type"]), (StatusCode::OK, &json!("eligibility_attested")), "{events}");
 }
 
 #[tokio::test]

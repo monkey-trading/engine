@@ -15,6 +15,7 @@ use tokio::sync::Semaphore;
 use tracing::warn;
 
 use crate::config::AccessSection;
+use crate::limits::{SHARED_CAP_FULL, ThrottledAlert};
 
 /// The source receives the real transport peer only for API actions; it is never logged.
 #[derive(Serialize)]
@@ -32,6 +33,8 @@ pub(crate) struct AccessClient {
     pub(crate) api_slots: Semaphore,
     /// How many of `api_slots` declarations may hold at once: half, rounded up.
     pub(crate) declaration_slots: Semaphore,
+    /// Raised while declarations are refused for want of those slots.
+    pub(crate) declaration_slots_full: ThrottledAlert,
 }
 
 impl AccessClient {
@@ -61,6 +64,7 @@ impl AccessClient {
             max_response_bytes: config.max_response_bytes,
             api_slots: Semaphore::new(config.max_in_flight.get()),
             declaration_slots: Semaphore::new(config.max_in_flight.get().div_ceil(2)),
+            declaration_slots_full: ThrottledAlert::new("api_declaration_slots_full", SHARED_CAP_FULL),
         })
     }
 

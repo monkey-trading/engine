@@ -126,8 +126,9 @@ Policy refusals are sequenced and durable before the API returns their rejection
 the authenticated signer's nonce, preventing replay from the public log after conditions change.
 Invalid authentication, stale API nonces, rate limits and transport failures do not create a claimed
 account action. A never-credited account may sign only a declaration and, once it has declared, its
-session-key registrations and revocations; its other requests, and anything a session key signs for
-it, are refused with 403 before the log. An otherwise allowed EVM withdrawal receives `payout_unavailable` until on-chain
+session-key registrations and revocations; its other requests, and the orders, cancels and withdrawals
+a session key signs for it, are refused with 403 before the log, while a session key's signature on a
+declaration or a key request is refused with 401. An otherwise allowed EVM withdrawal receives `payout_unavailable` until on-chain
 payouts exist; no collateral is debited. An unhealthy reconciliation guard also prevents approval.
 Screening at placement covers a resting limit or stop order until it fills or is cancelled; it is
 not screened again when it triggers. Orders resting from before V24 were admitted under the rules in
@@ -187,7 +188,9 @@ and `deposit_held` in `engine_rejections_total`; API policy reasons appear under
 Use the public event for the exact reason. API screening has bounded concurrency; custody retains
 independent bounded screening capacity for ingestion and retries. Declarations hold at most half the
 API's screening slots, rounded up, so however many arrive, orders keep a slot; `access.max_in_flight`
-must be at least 2 for that to hold. A declaration past that gets 503 and uses no nonce.
+must be at least 2 for that to hold. A declaration past that gets 503
+`declaration screening is at capacity` with `Retry-After`, and uses no nonce, and
+`api_declaration_slots_full` is a Warning raised at most once a minute while this lasts.
 
 A declaration or session-key request from a never-credited account takes one token from its client's
 share, at `api.per_account`, and one from a budget all clients share, at `api.per_ip`. Fresh signing

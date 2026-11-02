@@ -219,12 +219,18 @@ pub(super) async fn attest_eligibility(
         client_ip(&peer),
     )
     .await?;
-    // A wallet declares for free, so declarations hold at most half the API's screening slots: however
-    // many arrive, orders keep a slot.
+    // A wallet declares for free, so declarations hold at most half the API's screening slots until
+    // they are sequenced: however many arrive, orders keep a slot.
     let _declaring = s
         .access
         .as_ref()
-        .map(|client| client.declaration_slots.try_acquire().map_err(|_| ApiError::Unavailable))
+        .map(|client| {
+            client.declaration_slots.try_acquire().map_err(|_| {
+                debug!("declaration refused: its screening slots are full");
+                client.declaration_slots_full.raise(&"declaration screening slots");
+                ApiError::NotReady("declaration screening is at capacity")
+            })
+        })
         .transpose()?;
     let auth = &request.auth;
     let hash = eligibility_hash(&signature_domain(&s), request.account, request.class, auth.nonce, auth.expires_at);

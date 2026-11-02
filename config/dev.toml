@@ -50,6 +50,8 @@ read_timeout = "30s"
 # Largest request body (413 when larger) and largest message a stream subscriber may send.
 max_body_bytes = 65536
 # A token bucket: `burst` requests at once, refilled at `per_second`. Excess requests get 429.
+# per_ip and per_account also bound a never-credited wallet's free requests: per_ip is the budget all
+# clients share, and per_account each client's share of it.
 per_ip = { per_second = 50, burst = 100 }
 # Requests that act for one account: orders, cancels, and withdrawals.
 per_account = { per_second = 10, burst = 20 }

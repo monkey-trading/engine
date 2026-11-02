@@ -136,7 +136,13 @@ fn limited(mut node: Node, shared: u32, share: u32) -> Node {
 
 /// The status, JSON body and `Retry-After` seconds of `method path` from client `203.0.113.<client>`,
 /// through the node's routes under its current limits.
-async fn send(node: &Node, client: u8, method: Method, path: &str, body: Value) -> (StatusCode, Value, Option<u64>) {
+pub(super) async fn send(
+    node: &Node,
+    client: u8,
+    method: Method,
+    path: &str,
+    body: Value,
+) -> (StatusCode, Value, Option<u64>) {
     let peer = ConnectInfo(SocketAddr::from(([203, 0, 113, client], 9)));
     let app = router(node.state.clone()).layer(Extension(peer));
     let request = Request::builder()

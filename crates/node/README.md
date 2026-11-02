@@ -1517,13 +1517,16 @@ From V24, a wallet sets up before its first deposit, in this order:
   `a never-credited account must declare first` before that. A request the engine refuses, such as a
   key over the ten-key cap, answers 200 with `session_key_rejected`, is in the public log, and uses its
   nonce.
-- Anything else it or a session key signs for it gets 403 `account has never been credited`, until a
-  deposit credits it. A deposit after the declaration credits at its first screening; a deposit
-  without one stays pending and credits on the retry after a later declaration.
+- Its orders, cancels and withdrawals, signed by it or by a session key, get 403
+  `account has never been credited` until a deposit credits it. A session key's signature on a
+  declaration or a key request gets 401 `invalid signature`. A deposit after the declaration credits
+  at its first screening; a deposit without one stays pending and credits on the retry after a later
+  declaration.
 
 Each of these never-credited requests must expire within five minutes (400 otherwise) and takes one
 token from its client's share of a budget all clients share (429 with `Retry-After` when either is
-out). See [access-source configuration](../../config/access-source.md) for the budgets' rates and the
+out). A declaration also waits for a screening slot (503 `declaration screening is at capacity` with
+`Retry-After` when declarations hold their share). See [access-source configuration](../../config/access-source.md) for the budgets' rates and the
 growth they allow.
 Authenticated policy refusals consume the nonce. The recorded source supplies geography
 and sanctions classifications; missing, unknown, stale or unauthenticated evidence fails closed.

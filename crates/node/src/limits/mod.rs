@@ -38,7 +38,7 @@ use crate::config::{ApiSection, RateLimit};
 const RETAIN_EVERY: Duration = Duration::from_secs(10);
 /// Least time between two raises of one alert.
 const ALERT_EVERY: Duration = Duration::from_secs(60);
-const SHARED_CAP_FULL: &str = "a cap every client shares is full; clients are being refused";
+pub(crate) const SHARED_CAP_FULL: &str = "a cap every client shares is full; clients are being refused";
 
 type KeyedLimiter<K, C> = RateLimiter<K, DashMapStateStore<K>, C, NoOpMiddleware<<C as Clock>::Instant>>;
 
