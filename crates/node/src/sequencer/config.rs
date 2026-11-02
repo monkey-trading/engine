@@ -33,6 +33,8 @@ pub struct SequencerConfig<'a> {
     /// Where the sequencer records its metrics.
     pub metrics: Arc<Metrics>,
     pub(crate) checkpoint_registry: Option<crate::checkpoints::Registry>,
+    /// How long a checkpoint may stay held back, with none becoming final, before `checkpoint_backlog`.
+    pub(crate) checkpoint_stalled_after: Duration,
     pub(crate) approval_registry: Option<crate::checkpoints::ApprovalRegistry>,
     pub(crate) checkpoint_parent: crate::log::CheckpointParent,
     pub(crate) checkpoints: Option<mpsc::Sender<crate::checkpoints::Work>>,

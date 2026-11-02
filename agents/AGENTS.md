@@ -132,7 +132,8 @@ an index: load only the rule whose hint matches the current action.
   `/v1/operator` read of the key in effect, its pending rotation, and the last election, the
   `/v1/house/state` read of the protocol parameters (with the seq that set them) and the latest checkpoint
   (`api/house_state.rs`, `sequencer/house.rs`), checkpoint posting
-  and collateral reconciliation, distributions paid included (`checkpoints/`), with strict signature replay and startup checks
+  and collateral reconciliation, distributions paid included (`checkpoints/`), at most one signed checkpoint on its way to
+  finality at a time (`sequencer/checkpoints/hold_back.rs`), with strict signature replay and startup checks
   against the vault's finalized commitment before history writes, plus authenticated withdrawal
   authorization replay, bounded finalized claim polling, immutable signer-epoch history independent
   of approval-root history, command-origin seals checked before writable recovery
@@ -434,6 +435,8 @@ Run from the repo root:
   (about twelve minutes in all), checks every new route's figures against the accounts and verifies
   each answer with `engine verify-response`, then restarts the node and compares the series); the
   scan's cost at 100k accounts: `cargo test -p engine-node --lib stats::bench -- --ignored --nocapture`
+- A signed checkpoint's cost after a hold, at 100k changed accounts:
+  `cargo test -p engine-node --lib held_checkpoint_cost -- --ignored --nocapture`
 - Proxy protocol dev scenario: `./scripts/dev-proxy-protocol.sh` (needs `python3`, `curl`, and `jq`; a
   loopback forwarder prepends PROXY v2 (and LOCAL) headers to a dev node with a synthetic access source, on private
   temporary data and public Roughtime servers)

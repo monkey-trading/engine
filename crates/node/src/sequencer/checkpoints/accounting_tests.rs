@@ -138,8 +138,9 @@ fn gated_live_and_recovered_accounting_matches_cash_through_trading_and_withdraw
     }
     recovered.trust(sample_around(clock.as_ref())).unwrap();
     // Recovery revalidates collateral before signing: the worker's first reconciliation lifts
-    // the hold this restart put on it.
-    recovered.checkpoint_status(None, Some(crate::checkpoints::Health::Healthy)).unwrap();
+    // the hold this restart put on it, and with the restored chain final the next can be signed.
+    let final_seq = restored.last().map(|work| work.checkpoint.seq);
+    recovered.checkpoint_status(final_seq, Some(crate::checkpoints::Health::Healthy)).unwrap();
     let (events, _) = apply(&mut recovered, &mut queued, &mut unpaid, deposit(7, "0xafter-restart"));
     assert!(events.iter().any(|event| matches!(event, Event::Deposited { .. })));
     assert_eq!(recompute(&recovered.engine, unpaid), (expected.0 + Fixed::from_int(7), expected.1 + 1));
@@ -351,6 +352,8 @@ fn apply(
         work.push(captured);
     }
     assert_eq!(work.len(), 1, "every applied command forces exactly one checkpoint");
+    // Final at once, so the next command gets its own checkpoint.
+    seq.checkpoint_status(seq.last_seq(), None).unwrap();
     (events, work)
 }
 

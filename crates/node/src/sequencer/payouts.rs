@@ -116,7 +116,7 @@ impl Sequencer {
             self.capture_payout_proofs();
             Ok(())
         } else {
-            self.checkpoint()
+            self.paced_checkpoint()
         }
     }
 
@@ -173,6 +173,8 @@ impl Sequencer {
             if observed.claimed {
                 gate.schedule.retire(payout.order);
                 gate.payouts.remove(&key);
+                // A recovered approval can be paid before a held checkpoint would have proved it.
+                gate.unproved.remove(&key);
                 if let Some(registry) = &gate.approvals {
                     registry.lock().map_err(|_| anyhow::anyhow!("approval registry is poisoned"))?.remove(&key);
                 }

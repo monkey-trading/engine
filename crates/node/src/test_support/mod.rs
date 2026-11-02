@@ -364,6 +364,7 @@ pub fn sequencer_config(dir: &Path, manifest: watch::Sender<Manifest>) -> Sequen
         manifest,
         checkpoint_every: CHECKPOINT_EVERY,
         checkpoint_registry: None,
+        checkpoint_stalled_after: Duration::from_secs(30 * 60),
         approval_registry: None,
         checkpoint_parent: Default::default(),
         checkpoints: None,

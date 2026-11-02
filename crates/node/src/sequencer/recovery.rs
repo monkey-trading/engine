@@ -350,6 +350,7 @@ impl Sequencer {
             gate: cfg.checkpoints.map(|sink| {
                 let mut gate = Gate::new(sink, cfg.checkpoint_parent);
                 gate.registry = cfg.checkpoint_registry;
+                gate.stalled_after = cfg.checkpoint_stalled_after;
                 gate.approvals = cfg.approval_registry;
                 gate.signing = cfg.checkpoint_signing;
                 gate
@@ -446,7 +447,7 @@ impl Sequencer {
                     sequencer.queue_checkpoint(cp)?;
                 }
             } else {
-                sequencer.checkpoint()?;
+                sequencer.paced_checkpoint()?;
             }
         }
         sequencer.prove_loaded()?;
