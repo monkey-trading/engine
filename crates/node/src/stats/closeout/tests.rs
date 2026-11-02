@@ -71,17 +71,20 @@ fn a_self_converting_pair_closes_out_where_its_yen_profit_in_dollars_falls_to_th
     assert_eq!(reach_self_converting(standing(400, 1_000), true, quantity, entry, mark, 2_000), Reach::Due);
 }
 
+/// A long of 100k on equity one hundred-thousandth short of its notional falls to nothing before the
+/// slack turns negative, at a notional of about 0.00001: a ratio of 1e-10, kept by rounding up, at a
+/// 10% margin and at 1%.
 #[test]
 fn a_crossing_too_small_for_the_ratio_to_hold_stays_a_positive_price() {
-    let spec = btc();
-    // A long of 100k on equity one hundred-thousandth short of its notional falls to nothing before
-    // the slack turns negative, at a notional of 0.0000105: a ratio of 1e-10, kept by rounding up.
-    let equity = Fixed::from_raw(100_000 * 1_000_000_000 - 10_000);
-    let standing = Standing { equity, margin: f(10_000), level_bps: 5_000 };
-    let position = Position { notional: f(100_000), long: true, spec: &spec };
-    let Reach::At(ratio) = reach(standing, position, 10_000) else { panic!() };
-    assert!(ratio.is_positive(), "{ratio}");
-    assert_eq!(reach(Standing { equity: f(100_000), ..standing }, position, 10_000), Reach::Beyond);
+    for bps in [1_000, 100] {
+        let spec = MarketSpec { margin_tiers: vec![engine_core::market::Tier { up_to: None, bps }], ..btc() };
+        let equity = Fixed::from_raw(100_000 * 1_000_000_000 - 10_000);
+        let standing = Standing { equity, margin: f(100_000).mul_bps(bps), level_bps: 5_000 };
+        let position = Position { notional: f(100_000), long: true, spec: &spec };
+        let Reach::At(ratio) = reach(standing, position, 10_000) else { panic!("{bps} bps") };
+        assert!(ratio.is_positive(), "{bps} bps: {ratio}");
+        assert_eq!(reach(Standing { equity: f(100_000), ..standing }, position, 10_000), Reach::Beyond);
+    }
 }
 
 #[test]

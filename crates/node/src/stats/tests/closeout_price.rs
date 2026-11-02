@@ -21,6 +21,12 @@ fn closeout_of(rig: &Rig, account: AccountId, market: MarketId) -> PositionClose
     account_closeouts(&rig.engine, acct, standing).into_iter().find(|c| c.market == market).expect("a position")
 }
 
+/// The close-out level's share of the margin BTC requires for `notional`, whatever the margin tiers are.
+fn level_share(rig: &Rig, notional: Fixed) -> Fixed {
+    let level = rig.engine.params().expect("parameters are set").closeout_level_bps;
+    rig.engine.markets()[&1].spec.margin_for(notional, engine_core::fixed::Rounding::Up).mul_bps(level)
+}
+
 fn price_of(rig: &Rig, market: MarketId) -> Fixed {
     let found = closeout_of(rig, TRADER, market);
     assert_eq!(found.reach, ReachKind::At, "{found:?}");
@@ -98,9 +104,13 @@ impl Case {
     }
 }
 
-fn with_balance(mut rig: Rig, balance: i64) -> Rig {
+fn with_balance(rig: Rig, balance: i64) -> Rig {
+    with_balance_of(rig, Fixed::from_int(balance))
+}
+
+fn with_balance_of(mut rig: Rig, balance: Fixed) -> Rig {
     let mut state = serde_json::to_value(&rig.engine).unwrap();
-    state["accounts"][TRADER.to_string()]["balance"] = serde_json::json!(Fixed::from_int(balance));
+    state["accounts"][TRADER.to_string()]["balance"] = serde_json::json!(balance);
     rig.engine = serde_json::from_value(state).unwrap();
     rig
 }
@@ -251,7 +261,10 @@ fn a_position_beside_a_market_outside_its_session_is_priced_with_that_market_at_
 
 #[test]
 fn an_account_below_the_level_at_the_marks_is_due_and_closed_out_by_the_next_price() {
-    let rig = with_balance(btc(Side::Buy, 5, 0), 20_000);
+    let funded = btc(Side::Buy, 5, 0);
+    let half_the_level =
+        level_share(&funded, Fixed::from_int(500_000)).div_int_rounded(2, engine_core::fixed::Rounding::Down);
+    let rig = with_balance_of(funded, half_the_level);
     let found = closeout_of(&rig, TRADER, 1);
     assert_eq!((found.reach, found.price), (ReachKind::Due, None));
     let mut rig = rig;
@@ -278,14 +291,15 @@ fn a_position_the_range_cannot_close_out_has_no_price() {
     assert!(!closes_out(btc(Side::Sell, 1, 10_000_000), 1, Fixed::from_int(200_000), &[], T0 + 10_000));
 }
 
-/// A 1 BTC short at 100000 stands 900000 of loss from ten times its mark, with 100000 of margin there
-/// at 10% and half of it the level: 950000 of equity is the tie. Under it the price is below ten marks,
-/// over it there is none, so the range ends at ten marks and no sooner or later.
+/// A 1 BTC short at 100000 stands 900000 of loss from ten times its mark, where the level's share of
+/// the margin is the other part of the tie. Under the tie the price is below ten marks, over it there
+/// is none, so the range ends at ten marks and no sooner or later, at any margin.
 #[test]
 fn a_short_is_priced_up_to_ten_times_its_mark_and_none_past_it() {
     let ten_marks = Fixed::from_int(1_000_000);
-    for (balance, priced) in [(940_000, true), (960_000, false)] {
-        let rig = with_balance(btc(Side::Sell, 1, 0), balance);
+    let tie = Fixed::from_int(900_000) + level_share(&btc(Side::Sell, 1, 0), ten_marks);
+    for (balance, priced) in [(tie - Fixed::from_int(10_000), true), (tie + Fixed::from_int(10_000), false)] {
+        let rig = with_balance_of(btc(Side::Sell, 1, 0), balance);
         let found = closeout_of(&rig, TRADER, 1);
         match (priced, found.reach, found.price) {
             (true, ReachKind::At, Some(price)) => {
