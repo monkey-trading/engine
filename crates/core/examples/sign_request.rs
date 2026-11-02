@@ -3,14 +3,16 @@
 //! ```text
 //! SIGNER_KEY=<private key> cargo run -p engine-core --example sign_request -- \
 //!     <chain id> <vault> <nonce> <expires at> \
-//!     <order|cancel|cancel_all|close_all|withdrawal> '<body>'
+//!     <order|cancel|cancel_all|close_all|withdrawal|eligibility|session_key_registration|session_key_revocation> \
+//!     '<body>'
 //! ```
 //!
 //! The account's private key comes from `SIGNER_KEY`, never the command line, where other users
 //! could read it. `<body>` is the unsigned JSON body of `POST /v1/orders`, `/v1/orders/cancel`,
-//! `/v1/orders/cancel-all`, `/v1/positions/close-all`, or `/v1/withdrawals`; the output is that body
-//! with its `auth` added. The nonce is the account's `next_nonce` from
-//! `GET /v1/accounts/{address}/nonce`. `<expires at>` is the latest time, in milliseconds since the
+//! `/v1/orders/cancel-all`, `/v1/positions/close-all`, `/v1/withdrawals`, `/v1/eligibility`, or
+//! `POST` or `DELETE /v1/session-keys`; the output is that body with its `auth` added. The nonce is
+//! the signer's `next_nonce` from `GET /v1/accounts/{address}/nonce`, and the key's own for a request
+//! a session key signs. `<expires at>` is the latest time, in milliseconds since the
 //! Unix epoch, the request may execute at; the engine refuses one more than five minutes ahead
 //! (`MAX_EXPIRY_AHEAD_MS`). Run on a request from `tests/fixtures/eip712.json`, it prints that
 //! request's signature; a wallet signing the request's typed data with `eth_signTypedData_v4` prints
@@ -22,7 +24,8 @@ use engine_core::access::EligibilityClass;
 use engine_core::auth::RequestAuth;
 use engine_core::command::{CancelAllRequest, CancelRequest, CloseAllRequest, OrderRequest, WithdrawalRequest};
 use engine_core::eip712::{
-    self, cancel_all_hash, cancel_hash, close_all_hash, eligibility_hash, order_hash, withdrawal_hash,
+    self, cancel_all_hash, cancel_hash, close_all_hash, eligibility_hash, order_hash, session_key_registration_hash,
+    session_key_revocation_hash, withdrawal_hash,
 };
 use engine_core::types::{AccountId, Millis};
 use k256::ecdsa::SigningKey;
@@ -36,6 +39,21 @@ struct EligibilityBody {
     class: EligibilityClass,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionKeyRegistrationBody {
+    account: AccountId,
+    session_key: AccountId,
+    expires_at: Millis,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionKeyRevocationBody {
+    account: AccountId,
+    session_key: AccountId,
+}
+
 /// Prints the signed body.
 /// Error cases:
 /// - `SIGNER_KEY` is unset or not a secp256k1 private key
@@ -46,7 +64,8 @@ fn main() -> anyhow::Result<()> {
     let [chain_id, vault, nonce, expires_at, kind, body] = args.as_slice() else {
         bail!(
             "usage: SIGNER_KEY=<private key> sign_request <chain id> <vault> <nonce> <expires at> \
-             <order|cancel|cancel_all|close_all|withdrawal> <body>"
+             <order|cancel|cancel_all|close_all|withdrawal|eligibility|session_key_registration|\
+             session_key_revocation> <body>"
         );
     };
     let key = std::env::var("SIGNER_KEY").context("SIGNER_KEY")?;
@@ -77,8 +96,17 @@ fn main() -> anyhow::Result<()> {
             let withdrawal: WithdrawalRequest = serde_json::from_value(body.clone())?;
             withdrawal_hash(&domain, withdrawal.account, withdrawal.amount, nonce, expires_at)
         }
+        "session_key_registration" => {
+            let key: SessionKeyRegistrationBody = serde_json::from_value(body.clone())?;
+            session_key_registration_hash(&domain, key.account, key.session_key, key.expires_at, nonce, expires_at)
+        }
+        "session_key_revocation" => {
+            let key: SessionKeyRevocationBody = serde_json::from_value(body.clone())?;
+            session_key_revocation_hash(&domain, key.account, key.session_key, nonce, expires_at)
+        }
         other => bail!(
-            "unknown request kind {other:?}; expected order, cancel, cancel_all, close_all, withdrawal, or eligibility"
+            "unknown request kind {other:?}; expected order, cancel, cancel_all, close_all, withdrawal, eligibility, \
+             session_key_registration, or session_key_revocation"
         ),
     };
     body["auth"] = serde_json::to_value(RequestAuth { nonce, expires_at, signature: eip712::sign(&key, &hash) })?;

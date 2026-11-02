@@ -38,7 +38,7 @@ use crate::config::{ApiSection, RateLimit};
 const RETAIN_EVERY: Duration = Duration::from_secs(10);
 /// Least time between two raises of one alert.
 const ALERT_EVERY: Duration = Duration::from_secs(60);
-const SHARED_CAP_FULL: &str = "a cap every client shares is full; clients are being refused";
+pub(crate) const SHARED_CAP_FULL: &str = "a cap every client shares is full; clients are being refused";
 
 type KeyedLimiter<K, C> = RateLimiter<K, DashMapStateStore<K>, C, NoOpMiddleware<<C as Clock>::Instant>>;
 
@@ -51,6 +51,7 @@ pub struct ApiLimits<C: Clock = DefaultClock> {
     /// allowance and a flooding key cannot starve the wallet's requests.
     session_accounts: KeyedLimiter<AccountId, C>,
     initial_accounts: KeyedLimiter<(), C>,
+    initial_accounts_full: ThrottledAlert,
     initial_per_ip: KeyedLimiter<IpAddr, C>,
     per_ip_connections: KeyedLimiter<IpAddr, C>,
     subscribers: Arc<Semaphore>,
@@ -119,6 +120,7 @@ impl<C: Clock + Clone> ApiLimits<C> {
             per_account: RateLimiter::dashmap_with_clock(quota(cfg.per_account), clock.clone()),
             session_accounts: RateLimiter::dashmap_with_clock(quota(cfg.per_account), clock.clone()),
             initial_accounts: RateLimiter::dashmap_with_clock(quota(cfg.per_ip), clock.clone()),
+            initial_accounts_full: ThrottledAlert::new("api_initial_budget_full", SHARED_CAP_FULL),
             initial_per_ip: RateLimiter::dashmap_with_clock(quota(cfg.per_account), clock.clone()),
             per_ip_connections: RateLimiter::dashmap_with_clock(quota(cfg.per_ip_connections), clock),
             subscribers: Arc::new(Semaphore::new(cfg.max_subscribers.get())),
@@ -172,9 +174,11 @@ impl<C: Clock + Clone> ApiLimits<C> {
         check(&self.session_accounts, &account, "session_account")
     }
 
-    /// Counts one declaration from a never-credited account: first against its client's share, at
-    /// the per-account rate, so no one client can take the whole budget, then against the budget
-    /// all clients share, at the per-IP rate, so fresh signing keys cannot multiply it.
+    /// Counts one declaration or session-key request from a never-credited account: first against
+    /// its client's share, at the per-account rate, so no one client can take the whole budget, then
+    /// against the budget all clients share, at the per-IP rate, so fresh signing keys cannot multiply
+    /// it. These are the requests a wallet can put in the public log for free, so an exhausted shared
+    /// budget raises `api_initial_budget_full`: every new wallet is refused while it lasts.
     /// Error cases:
     /// - the client is over its share, or the shared budget is exhausted
     pub(crate) fn check_initial_account(&self, ip: Option<IpAddr>) -> Result<(), ApiError> {
@@ -182,6 +186,7 @@ impl<C: Clock + Clone> ApiLimits<C> {
             check(&self.initial_per_ip, &client_key(ip), "initial_ip")?;
         }
         check(&self.initial_accounts, &(), "initial_account")
+            .inspect_err(|_| self.initial_accounts_full.raise(&"fresh-account admissions"))
     }
 
     /// A place for one more stream subscriber, held until it disconnects.

@@ -15,6 +15,18 @@ use tracing::{Span, debug};
 use crate::api::{ApiError, ApiState};
 use crate::sequencer;
 
+/// How the API admits a signed request from an account the engine has never credited.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum BeforeCredit {
+    /// Refused: the request can do nothing until the account holds funds.
+    Refused,
+    /// A declaration, admitted while the account has not declared.
+    Declaration,
+    /// A session-key registration or revocation, admitted once the account has declared: the
+    /// declaration is where the account and its client are screened, so these cannot skip it.
+    SessionKeys,
+}
+
 impl ApiState {
     /// Whether the build's access rules apply, including while startup activation waits for trusted
     /// time.
@@ -45,7 +57,7 @@ impl ApiState {
         session: bool,
         hash: impl FnOnce(&Eip712Domain, &RequestAuth) -> B256,
     ) -> Result<Option<RequestAuth>, ApiError> {
-        self.authorise_request(account, auth, hash, session, false, None).await
+        self.authorise_request(account, auth, hash, session, BeforeCredit::Refused, None).await
     }
 
     /// `session` decides whether a registered session key's signature may stand in for the
@@ -53,26 +65,28 @@ impl ApiState {
     /// withdrawals the engine refuses in the log as out of scope), false for key management,
     /// which is the account key's alone at the API too, so a session key's signature on a
     /// registration or revocation never reaches the log.
-    /// `authorise`, except that a `declaration` may come from a never-credited account once a deposit
-    /// for it is pending. That is the only request such an account can put in the log, and it is
-    /// admitted only while the account has not declared and with an expiry the engine accepts. The
-    /// engine can still refuse it on its screening, using its nonce, so the account may declare again;
-    /// each attempt is counted against the account's rate, the share of fresh-account admissions its
-    /// client `peer` may take, and all clients' combined budget.
+    /// `authorise`, except for what `before_credit` lets a never-credited account do: declare, and
+    /// once it has declared, manage its session keys. Those are the only requests such an account can
+    /// put in the log, and each is admitted only with an expiry the engine accepts. The engine can
+    /// still refuse one, using its nonce, so the account may try again; each attempt is counted
+    /// against the account's rate, the share of fresh-account admissions its client `peer` may take,
+    /// and all clients' combined budget.
     /// Error cases:
-    /// - as `authorise`, except that a never-credited account with a pending deposit may declare
-    /// - a never-credited account has already declared, or signs an expiry beyond `MAX_EXPIRY_AHEAD_MS`
-    /// - a never-credited declaration is over its client's share or the combined budget
+    /// - as `authorise`, except that `before_credit` may admit a never-credited account
+    /// - a never-credited account declares again, manages session keys before declaring, or signs an
+    ///   expiry beyond `MAX_EXPIRY_AHEAD_MS`
+    /// - a never-credited account's admitted request is over its client's share or the combined budget
     pub(super) async fn authorise_request(
         &self,
         account: AccountId,
         auth: Option<RequestAuth>,
         hash: impl FnOnce(&Eip712Domain, &RequestAuth) -> B256,
         session: bool,
-        declaration: bool,
+        before_credit: BeforeCredit,
         peer: Option<IpAddr>,
     ) -> Result<Option<RequestAuth>, ApiError> {
         Span::current().record("id", display(account));
+        let declaration = before_credit == BeforeCredit::Declaration;
         let access = self.access_enforced();
         let rules = if access || declaration {
             match &self.auth {
@@ -106,35 +120,38 @@ impl ApiState {
             return self.authorise_session_key(account, auth, &mut digest, rules.domain()).await;
         }
         let auth = auth.expect("check refuses an unsigned request wherever signatures are required");
-        // Accounts are never removed and nonces only grow, so neither check can pass a request
-        // that the engine then sees ahead of its account's next nonce.
-        let (credited, pending, declared, next, last_sequenced) = self
+        // Accounts and declarations are never removed and nonces only grow, so none of these checks
+        // can pass a request that the engine then sees ahead of its account's next nonce.
+        let (credited, declared, next, last_sequenced) = self
             .query(move |e| {
                 let credited = e.accounts().contains_key(&account);
-                let first = !credited && declaration;
-                let pending = first && e.has_pending_deposit(account);
-                let declared = first && e.eligibility(account).is_some();
-                (credited, pending, declared, e.next_request_nonce(account), e.now())
+                let declared = !credited && e.eligibility(account).is_some();
+                (credited, declared, e.next_request_nonce(account), e.now())
             })
             .await?;
-        if !credited && !pending {
-            debug!(declaration, "request refused: account never credited");
-            return Err(ApiError::Forbidden(if declaration {
-                "a never-credited account declares only once a deposit for it is pending"
-            } else {
-                "account has never been credited"
-            }));
+        if !credited {
+            let refusal = match before_credit {
+                BeforeCredit::Refused => Some("account has never been credited"),
+                BeforeCredit::SessionKeys if !declared => Some("a never-credited account must declare first"),
+                BeforeCredit::SessionKeys | BeforeCredit::Declaration => None,
+            };
+            if let Some(refusal) = refusal {
+                debug!(?before_credit, "request refused: {refusal}");
+                return Err(ApiError::Forbidden(refusal));
+            }
         }
         self.check_fresh(&auth, next, last_sequenced)?;
         if !credited {
-            // Only a declaration the engine could record: one not yet made, with an expiry it accepts.
-            if declared {
+            // Only what the engine could act on: not a second declaration, nor an expiry it refuses.
+            if declaration && declared {
                 debug!("request refused: account has already declared");
                 return Err(ApiError::Forbidden("account has already declared"));
             }
             if let Err(Reject::ExpiryTooFar { latest }) = auth.check_expiry(self.clock.now_ms().max(last_sequenced)) {
                 debug!(latest, "request refused: expiry too far ahead");
-                return Err(ApiError::BadRequest(format!("a first declaration must expire by {latest}")));
+                return Err(ApiError::BadRequest(format!(
+                    "a never-credited account's request must expire by {latest}"
+                )));
             }
             self.limits.check_initial_account(peer)?;
         }

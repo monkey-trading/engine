@@ -1,14 +1,18 @@
-//! API admission before anything is sequenced: a never-credited signer may only declare, and only once
-//! a deposit for it is pending; no client can take the whole budget for those declarations however
-//! many fresh keys it signs with; an expired request and exhausted screening capacity both refuse
-//! without reaching the source or spending a nonce.
+//! API admission before anything is sequenced: a never-credited signer's first request can only be a
+//! declaration; no client can take the whole budget for those declarations however many fresh keys it
+//! signs with; declarations cannot take every screening slot from orders; an expired request and
+//! exhausted screening capacity both refuse without reaching the source or spending a nonce.
 
 use std::num::NonZeroU32;
 
+use axum::http::Method;
+
+use super::pre_deposit_budgets::send;
 use super::*;
+use crate::trusted_time::tests::logs::Logs;
 
 #[tokio::test]
-async fn fresh_signers_declare_only_against_a_pending_deposit_and_within_their_client_share() {
+async fn fresh_signers_declare_with_no_deposit_and_within_their_client_share() {
     let mut node = Node::start("access-initial-budget", true).await;
     let mut config = dev_config().api;
     config.per_ip.per_second = NonZeroU32::new(1).unwrap();
@@ -41,27 +45,6 @@ async fn fresh_signers_declare_only_against_a_pending_deposit_and_within_their_c
     assert_eq!((status, &body["error"]), (StatusCode::FORBIDDEN, &json!("account has never been credited")));
     assert_eq!(settled_entries(&node).await, entries, "a never-credited order reaches no log");
     assert_eq!(node.source.lock().unwrap().requests.len(), queries, "nor the paid source");
-    // A key with no pending deposit cannot declare, and spends none of its client's share.
-    assert!(matches!(declare(1, 6).await, Err(crate::api::ApiError::Forbidden(_))));
-    assert_eq!(settled_entries(&node).await, entries);
-    for seed in 1..=4 {
-        let account = eip712::address(key(seed).verifying_key());
-        let chain_ref = format!("0xpending:{seed}");
-        let deposit = node
-            .state
-            .query(move |engine| {
-                crate::test_support::access::funding(
-                    engine,
-                    Some(account),
-                    Some(account),
-                    Fixed::from_int(10),
-                    &chain_ref,
-                )
-            })
-            .await
-            .unwrap();
-        assert!(matches!(node.state.submit(deposit).await.unwrap().as_slice(), [Event::DepositPending { .. }]));
-    }
     let first = declare(1, 1).await.unwrap();
     assert!(matches!(first.0.as_slice(), [Event::EligibilityAttested { .. }]));
     let before = settled_entries(&node).await;
@@ -86,6 +69,54 @@ async fn fresh_signers_declare_only_against_a_pending_deposit_and_within_their_c
     }
     let screened = node.source.lock().unwrap().requests.len();
     assert_eq!(screened, queries + 2, "only the two admitted declarations are screened");
+}
+
+#[tokio::test]
+async fn a_declaration_in_flight_holds_its_slot_and_leaves_orders_theirs() {
+    let (logs, _guard) = Logs::capture();
+    let node = Node::start("access-declaration-slots", true).await;
+    let (trader, first, second) = (key(1), key(2), key(3));
+    let later = eip712::address(second.verifying_key());
+    node.onboard(&trader).await;
+    // The source holds the first wallet's screening, so its declaration stays in flight.
+    let gate = Arc::new(Semaphore::new(0));
+    node.source.lock().unwrap().hold = Some((eip712::address(first.verifying_key()), gate.clone()));
+    let queries = node.source.lock().unwrap().requests.len();
+    let in_flight = node.post("/v1/eligibility", declaration(&first, 0));
+    tokio::pin!(in_flight);
+    tokio::select! {
+        answer = &mut in_flight => panic!("answered while the source holds it: {answer:?}"),
+        () = async {
+            while node.source.lock().unwrap().requests.len() == queries {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        } => {}
+    }
+    let entries = settled_entries(&node).await;
+
+    // Half of two slots: the next declaration refuses before the source and the log, uses no nonce,
+    // says when to retry, and the operator hears of it.
+    let (status, body, retry_after) = send(&node, 1, Method::POST, "/v1/eligibility", declaration(&second, 0)).await;
+    assert_eq!(
+        (status, body["error"].as_str(), retry_after),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("declaration screening is at capacity"), Some(5))
+    );
+    assert_eq!(settled_entries(&node).await, entries);
+    assert_eq!(node.source.lock().unwrap().requests.len(), queries + 1);
+    assert_eq!(node.state.query(move |engine| engine.next_request_nonce(later)).await.unwrap(), 0);
+    assert_eq!(logs.count("alert=\"api_declaration_slots_full\""), 1);
+
+    // An order screens through the slot declarations cannot hold.
+    let (status, events) = node.post("/v1/orders", order(&trader, 1)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(events.as_array().unwrap().iter().any(|event| event["type"] == "fill"), "{events}");
+
+    // The held declaration finishes, which frees its slot for the next.
+    gate.add_permits(1);
+    let (status, events) = in_flight.await;
+    assert_eq!((status, &events[0]["type"]), (StatusCode::OK, &json!("eligibility_attested")), "{events}");
+    let (status, events) = node.post("/v1/eligibility", declaration(&second, 0)).await;
+    assert_eq!((status, &events[0]["type"]), (StatusCode::OK, &json!("eligibility_attested")), "{events}");
 }
 
 #[tokio::test]
@@ -128,7 +159,7 @@ async fn expired_signed_orders_never_reach_the_source_or_claim_a_public_action()
 /// The number of logged commands once the writer has flushed everything the sequencer applied:
 /// the log flushes behind the replies (and checkpoints flush behind commands), so wait until the
 /// logged commands reach the applied seq, and count commands only.
-async fn settled_entries(node: &Node) -> usize {
+pub(super) async fn settled_entries(node: &Node) -> usize {
     let applied =
         node.state.query(|engine| engine.last_seq().map_or(0, |seq| seq + 1)).await.expect("the engine answers")
             as usize;

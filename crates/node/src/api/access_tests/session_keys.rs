@@ -130,19 +130,29 @@ async fn a_session_key_cancels_and_a_stale_nonce_stays_out_of_the_log() {
 }
 
 #[tokio::test]
-async fn a_never_credited_account_cannot_register_a_session_key() {
+async fn a_never_credited_account_registers_a_session_key_only_after_declaring() {
     let node = Node::start("session-key-uncredited", true).await;
     let account = key(1);
     let session = key(7);
-    // No deposit has ever credited the account, so even its own signed registration is refused
-    // before sequencing, and nothing enters the log.
+    let registrations = |node: &Node| {
+        let register = |entry: &LogEntry| matches!(entry, LogEntry::Command(c) if matches!(c.sequenced.cmd, Command::RegisterSessionKey { .. }));
+        node.entries().iter().filter(|entry| register(entry)).count()
+    };
+    // No declaration is recorded, so even its own signed registration is refused before sequencing,
+    // and nothing enters the log.
     let register = registration(&account, &session, 0, NOW + 3_600_000);
     let (status, body) = node.post("/v1/session-keys", register).await;
-    assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("account has never been credited")));
-    assert!(
-        node.entries().iter().all(|entry| !matches!(entry, LogEntry::Command(c) if matches!(c.sequenced.cmd, Command::RegisterSessionKey { .. }))),
-        "the registration never reached the log"
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::FORBIDDEN, Some("a never-credited account must declare first"))
     );
+    assert_eq!(registrations(&node), 0, "the registration never reached the log");
+    // Once it has declared, the same registration at its next nonce applies with no deposit.
+    assert_eq!(node.attest(&account).await[0]["type"], "eligibility_attested");
+    let register = registration(&account, &session, 1, NOW + 3_600_000);
+    let (status, events) = node.post("/v1/session-keys", register).await;
+    assert_eq!((status, &events[0]["type"]), (StatusCode::OK, &json!("session_key_registered")), "{events}");
+    assert_eq!(registrations(&node), 1);
 }
 
 #[tokio::test]
@@ -355,7 +365,7 @@ fn session_order_at(account: &SigningKey, key: &SigningKey, nonce: u64, expires_
 }
 
 /// A withdrawal for `account`, signed by its session `key` with `nonce`, as a JSON body.
-fn session_withdrawal(account: &SigningKey, key: &SigningKey, nonce: u64) -> Value {
+pub(super) fn session_withdrawal(account: &SigningKey, key: &SigningKey, nonce: u64) -> Value {
     let amount = Fixed::from_int(10);
     let hash = eip712::withdrawal_hash(
         &eip712::domain(31_337, VAULT),

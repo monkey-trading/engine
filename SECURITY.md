@@ -110,6 +110,9 @@ Under V24 and V26 onward, client actions and eligibility declarations require si
 and declarations, orders and withdrawals require fresh screening of the account and client peer.
 A missing declaration, an unknown classification, or a screening source failure keeps a deposit
 uncredited and pending for bounded automatic retries.
+A wallet can declare and manage its session keys before its first deposit, so the fresh-account rate
+budgets, rather than a deposit's cost, bound what a free wallet can add to the public log and to state,
+and a client that exhausts the shared budget refuses other new wallets until it refills.
 Confirmed sanctioned holds have no automatic release or refund path.
 Older logs retain their recorded authorization rules, including the standalone pre-access V25 rules. Access-source evidence is signed by a recorded
 authority and bounded by freshness, subject and request digest; the source classifications and

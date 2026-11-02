@@ -3,6 +3,8 @@
 mod admission;
 mod batch;
 mod declarations;
+mod pre_deposit;
+mod pre_deposit_budgets;
 mod reissue;
 mod session_keys;
 mod source;
@@ -70,8 +72,6 @@ async fn a_pending_deposit_admits_the_signed_declaration_that_credits_it_and_hea
     let unsigned = json!({"account":account,"class":"professional"});
     let before = node.entries().len();
     assert_eq!(node.post("/v1/eligibility", unsigned).await.0, StatusCode::UNPROCESSABLE_ENTITY);
-    let (status, body) = node.post("/v1/eligibility", declaration(&client, 0)).await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "no deposit is pending for the account yet: {body}");
     assert_eq!(node.entries().len(), before);
     assert!(node.source.lock().unwrap().requests.is_empty());
     let pending = node.post("/v1/dev/deposit", json!({"account":account,"amount":"100000"})).await.1;
@@ -273,6 +273,7 @@ impl Node {
             sanctioned: BTreeSet::new(),
             forged: false,
             requests: Vec::new(),
+            hold: None,
         }));
         let config: AccessSection = toml::from_str(&format!(
             "source='{}'\nendpoint='http://{}'\ntimeout='2s'\nmax_age='1s'\nmax_response_bytes=4096\nmax_in_flight=2",

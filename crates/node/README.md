@@ -323,12 +323,14 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/actions.rs` — signed client actions, session-key registration and revocation, and
   real-peer access screening
 - `src/api/access.rs` — reads of one custody hold, one pending deposit, and an account's signed eligibility
-- `src/api/access_tests.rs` — deposit-first declarations, peer provenance and public access refusals
-- `src/api/access_tests/admission.rs` — admission before sequencing: never-credited signers declare only against a pending deposit, within per-client and shared budgets; expired requests and exhausted screening capacity refuse without a nonce
+- `src/api/access_tests.rs` — a declaration crediting its pending deposit, peer provenance and public access refusals
+- `src/api/access_tests/admission.rs` — admission before sequencing: never-credited signers declare within per-client and shared budgets; declarations leave orders a screening slot; expired requests and exhausted screening capacity refuse without a nonce
 - `src/api/access_tests/batch.rs` — `POST /v1/orders/cancel-all` and `/v1/positions/close-all`: one screening request, one log entry and one nonce each, refusals for a stale nonce, a forged or altered request and a stranger, and a session key signing both forms until revoked
 - `src/api/access_tests/declarations.rs` — a declaration screened like an order: public refusals that leave its deposit pending until an allowed one is recorded
+- `src/api/access_tests/pre_deposit.rs` — a wallet's setup before its first deposit: the order of its declaration and session keys, what stays refused until a deposit credits it, both deposit orders, engine refusals, and the reads and scans it meets
+- `src/api/access_tests/pre_deposit_budgets.rs` — what those requests spend: a token from the client's share and the shared budget, nothing when refused before the log, and what a refused wallet sees
 - `src/api/access_tests/reissue.rs` — a reissue request screened like a withdrawal, by account and peer, refused with 403 before the log
-- `src/api/access_tests/session_keys.rs` — a registered session key trades for its account without the wallet until revoked, a withdrawal it signs refuses as out of scope in the log, and an expired, mis-scoped, uncredited, or rate-flooding key is refused before sequencing, with its cancels, stale nonces, and missing signatures
+- `src/api/access_tests/session_keys.rs` — a registered session key trades for its account without the wallet until revoked, a withdrawal it signs refuses as out of scope in the log, an expired, mis-scoped, or rate-flooding key is refused before sequencing, and a never-credited account registers one only after declaring, with its cancels, stale nonces, and missing signatures
 - `src/api/access_tests/source.rs` — the mock screening source the access tests answer with
 - `src/access.rs`, `src/access/tests.rs` — bounded signed-source IO and failure-path tests
 - `src/api/admin.rs` — the operator's admin route, checked before it is sequenced
@@ -1502,16 +1504,31 @@ signature under the domain of `custody.vault` on `custody.chain_id` (see `engine
 which the request itself is accepted; a limit or stop order it places rests until it fills or is
 cancelled, and from V24 its screening at placement covers it for that whole time. A
 missing or invalid signature is refused with 401, an expired request with 400, a signed request
-other than a declaration from an account that has never been credited with 403, and a nonce other
-than the account's next with 409 and the `expected` nonce; none of these reaches the log. A request
-refused with 403 or 409 uses no nonce, so it stays valid until its `expires_at`: resubmit that same
-request once its nonce is next, or let it expire before signing different content at that nonce.
-From V24, a never-credited account may sign only a declaration, admitted once a deposit for it is
-pending and within its client's share of a budget all clients share; its other signed requests, and a
-declaration without a pending deposit, get 403. The API screens a declaration like an order, and
-the engine records it only on verified, allowed and clear evidence; a refused declaration is in the
-public log with its reason and leaves the deposit pending, and once one is recorded the pending
-deposit credits on its next retry.
+that its account may not yet make, because the account has never been credited, with 403, and a nonce
+other than the account's next with 409 and the `expected` nonce; none of these reaches the log. A
+request refused with 403 or 409 uses no nonce, so it stays valid until its `expires_at`: resubmit that
+same request once its nonce is next, or let it expire before signing different content at that nonce.
+
+From V24, a wallet sets up before its first deposit, in this order:
+
+- `POST /v1/eligibility` needs no deposit. The API screens a declaration like an order, and the engine
+  records it only on verified, allowed and clear evidence; a refused one is in the public log with its
+  reason. A second declaration gets 403 `account has already declared`.
+- `POST` and `DELETE /v1/session-keys` work once it has declared, and get 403
+  `a never-credited account must declare first` before that. A request the engine refuses, such as a
+  key over the ten-key cap, answers 200 with `session_key_rejected`, is in the public log, and uses its
+  nonce.
+- Its orders, cancels and withdrawals, signed by it or by a session key, get 403
+  `account has never been credited` until a deposit credits it. A session key's signature on a
+  declaration or a key request gets 401 `invalid signature`. A deposit after the declaration credits
+  at its first screening; a deposit without one stays pending and credits on the retry after a later
+  declaration.
+
+Each of these never-credited requests must expire within five minutes (400 otherwise) and takes one
+token from its client's share of a budget all clients share (429 with `Retry-After` when either is
+out). A declaration also waits for a screening slot (503 `declaration screening is at capacity` with
+`Retry-After` when declarations hold their share). See [access-source configuration](../../config/access-source.md) for the budgets' rates and the
+growth they allow.
 Authenticated policy refusals consume the nonce. The recorded source supplies geography
 and sanctions classifications; missing, unknown, stale or unauthenticated evidence fails closed.
 See [access-source configuration](../../config/access-source.md) for the response schema, eligibility

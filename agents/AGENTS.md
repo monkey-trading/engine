@@ -72,7 +72,7 @@ an index: load only the rule whose hint matches the current action.
   replay`, `engine exit-proof` (`exit.rs`: the exit's proofs and vault calls from a published log),
   `engine admin` (the operator's signing client), the REST API with the operator's admin
   route, the browser-origin allowlist (`api.allowed_origins`, in `api/origin.rs`), the
-  `/v1/session-keys` registration and revocation a session key trades under (from `V41`), `/v1/orders/cancel-all` and `/v1/positions/close-all` (from `V44`), the client address from a trusted pass-through proxy's PROXY protocol v2 header (`[api.proxy_protocol]`, in `tls/proxy.rs`), account proofs, exit proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
+  `/v1/session-keys` registration and revocation a session key trades under (from `V41`), admission before a first deposit (`api/state.rs`: a never-credited account may declare, then manage its session keys, each within the fresh-account budgets in `limits/`, and nothing else; declarations hold at most half the API's screening slots), `/v1/orders/cancel-all` and `/v1/positions/close-all` (from `V44`), the client address from a trusted pass-through proxy's PROXY protocol v2 header (`[api.proxy_protocol]`, in `tls/proxy.rs`), account proofs, exit proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
   with rate limits and connection caps, and with `[api.tls.acme]` a public CA certificate for that
   key, obtained and renewed over ACME TLS-ALPN-01 answered on the API's listener, in `tls/acme/`),
   signed answers (`api/signing.rs`: every `/v1` response but
@@ -306,7 +306,7 @@ an index: load only the rule whose hint matches the current action.
   verifier scenario: the WebAssembly package and the `engine` CLI reach the same verdict and message
   on every attestation fixture and `engine-wire` vector; `build-wasm-verifier.sh`, the browser
   verifier's reproducible npm package build (`--dev` for the scenario);
-  `dev-access-enforcement.sh` checks signed eligibility, API refusals,
+  `dev-access-enforcement.sh` checks signed eligibility, a wallet's setup before its first deposit, API refusals,
   direct vault payer sanctions, automatic screening recovery and held collateral across restart,
   using `dev-access-fixture.sh` and `dev-access-cases.sh` for the explicit synthetic source and
   assertions; `dev-quotes.sh`, the executable quotes scenario run through the vault deposit scenario

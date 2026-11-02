@@ -177,9 +177,9 @@ fn undeclared_refused_or_unclassified_deposits_stay_pending_and_credit_once_cure
 }
 
 #[test]
-fn indexed_retry_candidates_and_pending_lookups_match_a_full_scan_through_declarations() {
+fn indexed_retry_candidates_match_a_full_scan_through_declarations() {
     let (mut h, client) = setup();
-    let (other, stranger) = (crate::common::Client::new(2), crate::common::Client::new(3));
+    let other = crate::common::Client::new(2);
     let unavailable = AccessEvidence::Failed { reason: SourceFailure::Unavailable };
     // An undeclared account's, a declared account's and the house's deposits all wait pending.
     let (undeclared, clear) = deposit(&h, Some(client.account), Some(client.account), "0xindex:1");
@@ -189,7 +189,7 @@ fn indexed_retry_candidates_and_pending_lookups_match_a_full_scan_through_declar
     h.cmd(Command::AccessDeposit { deposit: declared, evidence: unavailable.clone() });
     let (house, _) = deposit(&h, None, Some(other.account), "0xindex:3");
     h.cmd(Command::AccessDeposit { deposit: house, evidence: unavailable });
-    let check = |engine: &Engine, retryable: &[&str], pending: [bool; 3]| {
+    let check = |engine: &Engine, retryable: &[&str]| {
         let scanned: Engine = serde_json::from_slice(&serde_json::to_vec(engine).unwrap()).unwrap();
         for engine in [engine, &scanned] {
             let references = |after, limit| -> Vec<String> {
@@ -197,16 +197,31 @@ fn indexed_retry_candidates_and_pending_lookups_match_a_full_scan_through_declar
             };
             assert_eq!(references("", 8), retryable);
             assert_eq!(references(retryable.last().unwrap(), 1), &retryable[..1], "the scan wraps around");
-            let lookups = [client.account, other.account, stranger.account].map(|a| engine.has_pending_deposit(a));
-            assert_eq!(lookups, pending);
         }
     };
-    check(&h.engine, &["0xindex:2", "0xindex:3"], [true, true, false]);
+    check(&h.engine, &["0xindex:2", "0xindex:3"]);
     attest(&mut h, &client);
-    check(&h.engine, &["0xindex:1", "0xindex:2", "0xindex:3"], [true, true, false]);
+    check(&h.engine, &["0xindex:1", "0xindex:2", "0xindex:3"]);
     let retry = h.cmd(Command::RetryDepositScreening { chain_ref: undeclared.chain_ref, evidence: clear });
     assert!(matches!(retry.as_slice(), [Event::Deposited { .. }]), "{retry:?}");
-    check(&h.engine, &["0xindex:2", "0xindex:3"], [false, true, false]);
+    check(&h.engine, &["0xindex:2", "0xindex:3"]);
+}
+
+#[test]
+fn a_deposit_held_before_its_declaration_does_not_become_a_retry_candidate() {
+    let (mut h, client) = setup();
+    let (deposit, clear) = deposit(&h, Some(client.account), Some(client.account), "0xindex:held");
+    h.cmd(Command::AccessDeposit { deposit: deposit.clone(), evidence: clear.clone() });
+    assert!(h.engine.pending_deposits().contains_key(&deposit.chain_ref));
+    let mut sanctioned = clear;
+    let AccessEvidence::Screened(screening) = &mut sanctioned else { unreachable!() };
+    screening.payer_status = SanctionsStatus::Sanctioned;
+    sign_screening(&h, screening);
+    let held = h.cmd(Command::RetryDepositScreening { chain_ref: deposit.chain_ref, evidence: sanctioned });
+    assert!(matches!(held.as_slice(), [Event::DepositHeld { reason: AccessReject::PayerSanctioned, .. }]), "{held:?}");
+    // The declaration makes the account's pending deposits retryable, and the held one is not among them.
+    attest(&mut h, &client);
+    assert!(h.engine.retryable_pending("", 8).is_empty());
 }
 
 /// Deleted pending leaves must disappear from both the incremental tree and a fresh rebuild.
