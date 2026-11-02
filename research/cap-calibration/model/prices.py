@@ -48,10 +48,10 @@ def drift_per_open_hour(bars: np.ndarray) -> np.ndarray:
     return moves.sum(axis=0) / is_open.sum(axis=0)
 
 
-def build(bars: np.ndarray, weeks: np.ndarray, hours: int, vol_scale: float = 1.0, drift: np.ndarray | None = None) -> Paths:
-    """Price levels for the sampled weeks. `weeks` is (paths, n_weeks), or (paths, n_weeks, markets)
-    to give each market its own weeks. `drift`, per market, is taken off every open hour's gap, which
-    moves the whole bar and keeps its open inside its range, before `vol_scale` scales the moves."""
+def _moves(bars: np.ndarray, weeks: np.ndarray, hours: int, drift: np.ndarray | None) -> tuple[np.ndarray, np.ndarray]:
+    """(is_open, moves) of the sampled weeks: per (path, hour, market), the log moves
+    (gap, high, low, close) against the open, with the drift taken off every open hour's gap.
+    `weeks` is (paths, n_weeks), or (paths, n_weeks, markets) to give each market its own."""
     n_markets = bars.shape[1]
     by_week = bars.reshape(-1, WEEK, n_markets, 4)
     if weeks.ndim == 2:
@@ -64,6 +64,40 @@ def build(bars: np.ndarray, weeks: np.ndarray, hours: int, vol_scale: float = 1.
     moves = np.where(is_open[..., None], sampled, 0).astype(np.float64) / 1e6
     if drift is not None:
         moves[..., 0] -= np.where(is_open, drift, 0.0)
+    return is_open, moves
+
+
+def build(
+    bars: np.ndarray,
+    weeks: np.ndarray,
+    hours: int,
+    vol_scale: float = 1.0,
+    drift: np.ndarray | None = None,
+    own_weeks: np.ndarray | None = None,
+    shared: np.ndarray | None = None,
+) -> Paths:
+    """Price levels for the sampled weeks. `weeks` is (paths, n_weeks), or (paths, n_weeks, markets)
+    to give each market its own weeks. `drift`, per market, is taken off every open hour's gap, which
+    moves the whole bar and keeps its open inside its range, before `vol_scale` scales the moves.
+
+    With `own_weeks` (paths, n_weeks, markets) and `shared` (markets), market m's moves are
+    `shared[m]` times its moves in `weeks` plus `sqrt(1 - shared[m]**2)` times its moves in its
+    own weeks: a market whose returns correlate `shared[m]` with the market that `weeks` gives
+    the same history. Its sessions are those of `weeks`. A market with `shared` 1 is unchanged.
+    The gap and the close are mixed linearly, so their variance is each source's; the high and
+    low combine in quadrature, so the bar's range stays at its history's scale."""
+    is_open, moves = _moves(bars, weeks, hours, drift)
+    if own_weeks is not None:
+        _, own = _moves(bars, own_weeks, hours, drift)
+        own = np.where(is_open[..., None], own, 0.0)
+        a = np.asarray(shared, dtype=np.float64)[None, None, :, None]
+        b = np.sqrt(np.maximum(1.0 - a * a, 0.0))
+        mixed = a * moves + b * own
+        # The ranges combine in quadrature, keeping the bar's range at its history's scale, and
+        # are widened where needed to contain the open and the close.
+        mixed[..., 1] = np.maximum(np.sqrt((a[..., 0] * moves[..., 1]) ** 2 + (b[..., 0] * own[..., 1]) ** 2), np.maximum(mixed[..., 3], 0.0))
+        mixed[..., 2] = np.minimum(-np.sqrt((a[..., 0] * moves[..., 2]) ** 2 + (b[..., 0] * own[..., 2]) ** 2), np.minimum(mixed[..., 3], 0.0))
+        moves = mixed
     moves *= vol_scale
     gap, hi, lo, cl = moves[..., 0], moves[..., 1], moves[..., 2], moves[..., 3]
     log_close = np.cumsum(gap + cl, axis=1)

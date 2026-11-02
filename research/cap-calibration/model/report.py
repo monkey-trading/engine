@@ -220,6 +220,78 @@ def sensitivity_section(results: Path) -> str:
     return "\n".join(["## Sensitivity", "", intro, "", table(header, body), ""])
 
 
+def retained_section(results: Path) -> str:
+    """The retained-NAV study (`model/retained.py`): the baseline at every market count, the
+    stability of the 37-market answer in the number of paths, and the sensitivities."""
+    from model import retained
+
+    rows = read(results / "retained_nav.csv")
+    by_run: dict[tuple, list[dict]] = {}
+    for r in rows:
+        by_run.setdefault((r["variant"], int(r["markets"])), []).append(r)
+
+    def floor(v):
+        return "not in grid" if v is None else usd(v)
+
+    def summary(run_rows):
+        got = retained.retained_nav(run_rows)
+        at = got["row"]
+        # The highest share of paths with house cash below zero at any floor that serves the flow.
+        served = [r for r in run_rows if r["floor"] >= (got["serve_floor"] or float("inf"))]
+        worst = max((r["p_short"] for r in served), default=float("nan"))
+        return got, at, worst
+
+    head = []
+    for (variant, n), run_rows in sorted(by_run.items(), key=lambda kv: kv[0][1]):
+        if variant != "baseline":
+            continue
+        got, at, worst = summary(run_rows)
+        paths = int(run_rows[0]["paths"])
+        p = at["p_short"] if at else float("nan")
+        head.append(
+            [n, paths, usd(got["serve_floor"]), floor(got["retained_nav"]), pct(p) if at else "-", pct(retained.standard_error(p, paths), 2) if at else "-", pct(worst), pct(at["refused_share_directional"]) if at else "-", pct(at["refused_share_week1"]) if at else "-", usd(at["fee_mean"]) if at else "-"]
+        )
+    out = [
+        "## Retained NAV by market count",
+        "",
+        "The house holds its liquidity floor as NAV, sweeping everything above it each hour, and trades under the genesis cap fractions of that NAV. Retained NAV is the lowest grid floor that refuses at most 1% of directional notional and keeps house cash below zero in at most 1% of paths, at it and at every higher grid floor. Baseline clones are equity markets correlated 0.7 with their template, each as busy as it. Paths, with the binomial standard error of the measure at the retained NAV; the last columns are the worst share at any floor that serves the flow, and the refusal and mean fees at the retained NAV.",
+        "",
+        table(["Markets", "Paths", "Serves flow from", "Retained NAV", "Cash<0", "SE", "Cash<0, worst served floor", "Refused, 90 days", "Refused, week 1", "Fees mean"], head),
+        "",
+    ]
+    stability = results / "retained_stability.csv"
+    if stability.exists():
+        st = read(stability)
+        rows_st = []
+        for count in sorted({int(r["paths"]) for r in st}):
+            sub = [r for r in st if int(r["paths"]) == count]
+            got = retained.retained_nav(sub)
+            at = got["row"]
+            worst = max((r["p_short"] for r in sub if r["floor"] >= (got["serve_floor"] or float("inf"))), default=float("nan"))
+            rows_st.append([count, usd(got["serve_floor"]), floor(got["retained_nav"]), pct(at["p_short"]) if at else "-", pct(worst), pct(retained.standard_error(max(worst, 1e-9), count), 2)])
+        out += ["The 37-market baseline on the first 500, 1,000, 2,000 and 4,000 paths (SE at the worst share):", "", table(["Paths", "Serves flow from", "Retained NAV", "Cash<0 at it", "Worst served", "SE"], rows_st), ""]
+    variants = [v for v in retained.VARIANTS if v != "baseline"]
+    counts = sorted({n for (v, n) in by_run if v != "baseline"})
+    table_rows = []
+    for variant in ["baseline", *variants]:
+        cells = [variant]
+        for n in counts:
+            run_rows = by_run.get((variant, n))
+            if not run_rows:
+                cells.append("-")
+                continue
+            got, at, worst = summary(run_rows)
+            cells.append(f"{floor(got['retained_nav'])} ({pct(worst)}; {int(run_rows[0]['paths'])})")
+        table_rows.append(cells)
+    out += [
+        "Sensitivities: retained NAV (worst cash<0 share at a served floor; paths) at the counts run.",
+        "",
+        table(["Variant", *[f"{n} markets" for n in counts]], table_rows),
+        "",
+    ]
+    return "\n".join(out)
+
+
 def write(derived: Path, results: Path) -> None:
     parts = [
         "# Cap calibration results",
@@ -233,4 +305,6 @@ def write(derived: Path, results: Path) -> None:
         parts.append(per_market_section(results))
     parts.append(joint_section(results))
     parts.append(sensitivity_section(results))
+    if (results / "retained_nav.csv").exists():
+        parts.append(retained_section(results))
     (results / "report.md").write_text("\n".join(parts))

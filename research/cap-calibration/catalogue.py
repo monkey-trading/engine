@@ -113,3 +113,16 @@ def launch_markets(path: Path = GENESIS) -> list[dict]:
     if missing:
         raise ValueError(f"no price series for {missing}")
     return [dict(m, series=SERIES[m["symbol"]]) for m in markets]
+
+
+# The owner's planned margin for BTC-USD and ETH-USD: this first-tier rate up to the same
+# notional as today's first tier, then the rates above it unchanged (SOL-USD keeps the genesis
+# bands). Not yet in the production genesis; the retained-NAV study runs both.
+PLANNED_CRYPTO_SYMBOLS = ("BTC-USD", "ETH-USD")
+PLANNED_CRYPTO_FIRST_TIER_BPS = 100
+
+
+def planned_crypto_tiers(markets: list[dict]) -> list[dict]:
+    """BTC-USD's genesis margin bands with the first tier at the planned rate."""
+    tiers = next(m["margin_tiers"] for m in markets if m["symbol"] == PLANNED_CRYPTO_SYMBOLS[0])
+    return [dict(tiers[0], bps=PLANNED_CRYPTO_FIRST_TIER_BPS), *tiers[1:]]

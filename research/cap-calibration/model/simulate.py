@@ -61,6 +61,7 @@ class Scenario:
     idle_withdraw_per_day: float = 0.05
     run_withdraw_per_day: float = 0.5  # while NAV is below zero
     batch_paths: int = 250
+    sweep_epoch_h: int = 0  # distributions every this many hours sweep the NAV above each lane's capital; 0 = none
     utilisation_stats: bool = False  # record per-hour utilisation buckets and absolute exposure (stress calibration)
 
 
@@ -78,6 +79,7 @@ class Markets:
     columns: np.ndarray  # each market's column in the price data
     fx_columns: np.ndarray  # the column of the FX market a market converts at; -1 for USD
     fx_invert: np.ndarray  # yen: USD per unit is one over USD-JPY
+    shared: np.ndarray | None = None  # share of a market's returns that follow its history's weeks; the rest are its own (`prices.build`)
 
     @property
     def max_leverage(self) -> np.ndarray:
@@ -97,6 +99,7 @@ class Markets:
             columns=self.columns[idx],
             fx_columns=self.fx_columns[idx],
             fx_invert=self.fx_invert[idx],
+            shared=None if self.shared is None else self.shared[idx],
         )
 
 
@@ -211,8 +214,13 @@ def prepare(scenario: Scenario, markets: Markets, bars: np.ndarray, flow: Flow, 
         weeks = pricing.sample_weeks(rng, n_paths, n_weeks, history, scenario.block_weeks)
     sub = bars[:, needed]
     drift = pricing.drift_per_open_hour(sub) if scenario.demean else None
+    own_weeks, shared = None, None
+    if markets.shared is not None and (markets.shared < 1).any() and not scenario.independent_markets:
+        own_weeks = np.stack([pricing.sample_weeks(rng, n_paths, n_weeks, history, scenario.block_weeks) for _ in needed], axis=-1)
+        shared = np.ones(len(needed))
+        shared[[position[c] for c in markets.columns]] = markets.shared
     paths = pricing.select(
-        pricing.build(sub, weeks, hours, scenario.vol_scale, drift),
+        pricing.build(sub, weeks, hours, scenario.vol_scale, drift, own_weeks, shared),
         np.array([position[c] for c in markets.columns]),
         np.array([position[c] if c >= 0 else -1 for c in markets.fx_columns]),
         markets.fx_invert,
@@ -388,10 +396,18 @@ def order_fits(exposure, cap, total_cap, flow: Flow, mapping: str, schedules: li
     return fits
 
 
-def run_batch(scenario: Scenario, markets: Markets, bars: np.ndarray, flow: Flow, floors: np.ndarray, total_floors: np.ndarray, seed: int, n_paths: int) -> dict:
+def run_batch(
+    scenario: Scenario, markets: Markets, bars: np.ndarray, flow: Flow, floors: np.ndarray, total_floors: np.ndarray, seed: int, n_paths: int, capital: np.ndarray | None = None
+) -> dict:
     """Simulates `n_paths` paths for every lane: `floors` is (lanes, markets) and `total_floors`
     (lanes,). Returns per-(path, lane) results. State keeps lanes on the last axis, so a
-    settlement scheduled for one (path, market) writes one contiguous block of lanes."""
+    settlement scheduled for one (path, market) writes one contiguous block of lanes.
+
+    `capital` (lanes,) is the house's opening cash, deposited in the vault at hour 0. With
+    `scenario.sweep_epoch_h` it is also the retained NAV: at the end of every that many hours the
+    house pays out the smaller of its NAV and its cash above the capital, as an epoch close
+    distributes the excess over the liquidity floor (`staking.rs`, `excess_over`), less the
+    deductions the engine also makes, which only keep more in the house."""
     rng = np.random.default_rng(seed)
     prep = prepare(scenario, markets, bars, flow, rng, n_paths)
     hours = scenario.days * 24
@@ -414,6 +430,10 @@ def run_batch(scenario: Scenario, markets: Markets, bars: np.ndarray, flow: Flow
     ring = np.zeros((n_paths, ring_len, n_markets, 5, n_lanes))
     totals = np.zeros((n_paths, n_markets, 4, n_lanes))
     vault, idle, in_positions, queue = (np.zeros(lanes_shape) for _ in range(4))
+    # Capital the house holds outside the per-market cash, less what it has distributed.
+    extra = np.zeros(lanes_shape) if capital is None else np.broadcast_to(np.asarray(capital, dtype=float), (n_lanes,)) * np.ones(lanes_shape)
+    vault += extra
+    out_distributed = np.zeros(lanes_shape)
 
     # `desired` and `refused_hedged` cover hedged flow too; `refused` and the week-one figures are
     # directional (churn included), as `desired_directional` is.
@@ -423,7 +443,7 @@ def run_batch(scenario: Scenario, markets: Markets, bars: np.ndarray, flow: Flow
     out["ever_negative"] = np.zeros(lanes_shape, dtype=bool)
     out["queued"] = np.zeros(lanes_shape, dtype=bool)
     out["first_negative_h"] = np.full(lanes_shape, -1)
-    started = np.zeros(lanes_shape, dtype=bool)  # the house has cash or exposure
+    started = extra > 0  # the house has cash or exposure
     out["daily_nav"] = np.zeros((n_paths, n_lanes, scenario.days), dtype=np.float32)
     refused_by_market = np.zeros(shape)
     desired_by_market = np.zeros((n_paths, n_markets))
@@ -437,6 +457,7 @@ def run_batch(scenario: Scenario, markets: Markets, bars: np.ndarray, flow: Flow
         util_hist = np.zeros((1, n_util_buckets, n_markets, n_lanes))
         util_expo = np.zeros((1, n_util_buckets, n_markets, n_lanes))
 
+    capital_floor = np.zeros(lanes_shape) if capital is None else np.asarray(capital, dtype=float)[None, :]
     h_scale = scenario.hedged_scale
     decay = farm_decay(scenario, hours)
     directional = [c for c in flow.classes if c.kind == "directional" and c.hold_h > 0]
@@ -491,7 +512,7 @@ def run_batch(scenario: Scenario, markets: Markets, bars: np.ndarray, flow: Flow
             entry = paths.close[:, t]
             fx = paths.fx[:, t]
             exposure = (entry * fx)[..., None] * (longs - shorts)  # USD notional at the mark
-            nav = (house - (exposure - fx[..., None] * cost)).sum(axis=1)
+            nav = (house - (exposure - fx[..., None] * cost)).sum(axis=1) + extra
             cap = accounting.exposure_cap(nav[:, None, :], cap_bps, market_floors)
             total_cap = accounting.exposure_cap(nav, markets.total_cap_bps, total_floors[None])
 
@@ -636,10 +657,16 @@ def run_batch(scenario: Scenario, markets: Markets, bars: np.ndarray, flow: Flow
             out["withdrawn"] += paid + settle_queue
             out["queued"] |= queue > 1e-6
             out["max_queue"] = np.maximum(out["max_queue"], queue)
-            identity_gap = max(identity_gap, float(np.abs(vault - (idle + in_positions + queue + house.sum(axis=1))).max()))
+            identity_gap = max(identity_gap, float(np.abs(vault - (idle + in_positions + queue + house.sum(axis=1) + extra)).max()))
 
             exposure = (entry * fx)[..., None] * (longs - shorts)
-            nav = (house - (exposure - fx[..., None] * cost)).sum(axis=1)
+            nav = (house - (exposure - fx[..., None] * cost)).sum(axis=1) + extra
+            if scenario.sweep_epoch_h and (t + 1) % scenario.sweep_epoch_h == 0:
+                payout = np.maximum(np.minimum(nav, house.sum(axis=1) + extra) - capital_floor, 0.0)
+                extra -= payout
+                vault -= payout
+                nav -= payout
+                out_distributed += payout
             if scenario.utilisation_stats:
                 # The stress calibration reads the book the hour leaves behind: after its
                 # settlements and its opens, the positions outstanding until the next hour.
@@ -660,7 +687,7 @@ def run_batch(scenario: Scenario, markets: Markets, bars: np.ndarray, flow: Flow
             out["ever_negative"] |= nav < 0
             started |= (np.abs(house).sum(axis=1) > 0) | (np.abs(exposure).sum(axis=1) > 0)
             out["min_nav"] = np.minimum(out["min_nav"], np.where(started, nav, np.inf))
-            out["min_cash"] = np.minimum(out["min_cash"], np.where(started, house.sum(axis=1), np.inf))
+            out["min_cash"] = np.minimum(out["min_cash"], np.where(started, house.sum(axis=1) + extra, np.inf))
             out["max_gross_exposure"] = np.maximum(out["max_gross_exposure"], np.abs(exposure).sum(axis=1))
             if t % 24 == 23:
                 out["daily_nav"][:, :, t // 24] = nav
@@ -668,6 +695,7 @@ def run_batch(scenario: Scenario, markets: Markets, bars: np.ndarray, flow: Flow
     for name, channel in (("fee", FEE), ("financing", FINANCING), ("bad_debt", BAD_DEBT), ("mint_basis", MINT)):
         out[name] = totals[:, :, channel].sum(axis=1)
     out["nav_end"] = nav
+    out["distributed"] = out_distributed
     out["pnl_by_market"] = (house - (exposure - fx[..., None] * cost)).transpose(0, 2, 1)
     out["refused_by_market"] = refused_by_market.transpose(0, 2, 1)
     out["desired_by_market"] = np.broadcast_to(desired_by_market[:, None, :], (n_paths, n_lanes, n_markets)).copy()
@@ -680,13 +708,14 @@ def run_batch(scenario: Scenario, markets: Markets, bars: np.ndarray, flow: Flow
 
 
 def run_many(tasks: list[tuple], workers: int = 1) -> list[dict]:
-    """Runs several (scenario, markets, bars, flow, floors, total_floors) tasks, splitting each
-    into batches of paths and running every batch in one pool of `workers` processes."""
+    """Runs several (scenario, markets, bars, flow, floors, total_floors[, capital]) tasks,
+    splitting each into batches of paths and running every batch in one pool of `workers`
+    processes."""
     jobs, owner = [], []
-    for n, (scenario, markets, bars, flow, floors, total_floors) in enumerate(tasks):
+    for n, (scenario, markets, bars, flow, floors, total_floors, *capital) in enumerate(tasks):
         for i, start in enumerate(range(0, scenario.paths, scenario.batch_paths)):
             size = min(scenario.batch_paths, scenario.paths - start)
-            jobs.append((scenario, markets, bars, flow, floors, total_floors, scenario.seed * 100_003 + i, size))
+            jobs.append((scenario, markets, bars, flow, floors, total_floors, scenario.seed * 100_003 + i, size, *capital))
             owner.append(n)
     if workers > 1:
         from concurrent.futures import ProcessPoolExecutor
