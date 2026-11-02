@@ -14,7 +14,8 @@ use k256::ecdsa::SigningKey;
 use crate::admin::NodeApi;
 use crate::test_support::capture_alerts;
 
-/// Serves SOFR and ESTR histories, the outlying SOFR and the next ESTR once `published` is set.
+/// Serves SOFR and ESTR histories to 19 October, and once `published` is set their next rates, for
+/// 21 October: an outlying SOFR and an ordinary ESTR.
 async fn publishers() -> (String, Arc<AtomicUsize>, JoinHandle<std::io::Result<()>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -27,9 +28,9 @@ async fn publishers() -> (String, Arc<AtomicUsize>, JoinHandle<std::io::Result<(
                 let later = sofr.load(Ordering::SeqCst) > 0;
                 async move {
                     if later {
-                        "Effective Date,Rate Type,Rate (%)\n10/19/2026,SOFR,1.00\n10/20/2026,SOFR,4.50\n"
+                        "Effective Date,Rate Type,Rate (%)\n10/19/2026,SOFR,4.00\n10/21/2026,SOFR,7.50\n"
                     } else {
-                        "Effective Date,Rate Type,Rate (%)\n10/19/2026,SOFR,1.00\n"
+                        "Effective Date,Rate Type,Rate (%)\n10/19/2026,SOFR,4.00\n"
                     }
                 }
             }),
@@ -40,9 +41,9 @@ async fn publishers() -> (String, Arc<AtomicUsize>, JoinHandle<std::io::Result<(
                 let later = estr.load(Ordering::SeqCst) > 0;
                 async move {
                     if later {
-                        "KEY,TIME_PERIOD,OBS_VALUE\nEST.B.EU000A2X2A25.WT,2026-10-19,2.40\nEST.B.EU000A2X2A25.WT,2026-10-20,2.41\n"
+                        "KEY,TIME_PERIOD,OBS_VALUE\nEST.B.EU000A2X2A25.WT,2026-10-19,2.00\nEST.B.EU000A2X2A25.WT,2026-10-21,2.01\n"
                     } else {
-                        "KEY,TIME_PERIOD,OBS_VALUE\nEST.B.EU000A2X2A25.WT,2026-10-19,2.40\n"
+                        "KEY,TIME_PERIOD,OBS_VALUE\nEST.B.EU000A2X2A25.WT,2026-10-19,2.00\n"
                     }
                 }
             }),
@@ -83,7 +84,7 @@ fn sofr_snapshot(date: chrono::NaiveDate, rate: &str) -> AdminCommand {
     })
 }
 
-/// BTC's effective stress level, and the floors in force.
+/// BTC's effective stress level, and its floor.
 async fn stress(node: &Node) -> (usize, usize) {
     query(node, |engine| {
         let market = &engine.markets()[&1];
@@ -92,8 +93,15 @@ async fn stress(node: &Node) -> (usize, usize) {
     .await
 }
 
-async fn start(dir: &Path, at: Millis) -> Node {
-    Node::launch(dir, at, Arc::new(TestClock::at(at)), std::convert::identity, ProtocolVersion::LATEST).await
+/// A node under the latest protocol at `at`, whose API reads `clock`.
+async fn start(dir: &Path, at: Millis, clock: Arc<TestClock>) -> Node {
+    Node::launch(dir, at, clock, std::convert::identity, ProtocolVersion::LATEST).await
+}
+
+/// Moves the sequenced time and the API's clock to `to`.
+async fn advance(node: &Node, clock: &TestClock, to: Millis) {
+    clock.advance(Duration::from_millis((to - clock.now_ms()) as u64));
+    node.advance(to).await;
 }
 
 #[tokio::test]
@@ -118,24 +126,28 @@ endpoint = "{publisher}/estr"
 "#
     ));
     fs::write(&cfg_path, text).unwrap();
-    let (monday, tuesday) = ("2026-10-19".parse().unwrap(), "2026-10-20".parse().unwrap());
+    let tuesday: chrono::NaiveDate = "2026-10-20".parse().unwrap();
+    let wednesday: chrono::NaiveDate = "2026-10-21".parse().unwrap();
+    let clock = Arc::new(TestClock::at(START));
 
-    // 1. The worker's first snapshot releases the hold on a fresh node, and a benchmark's first rate
-    //    is bound only by its range.
-    let node = start(&dir, START).await;
+    // 1. The worker's first snapshot releases the hold on a fresh node. The dev genesis dates its own
+    //    rates today, as a benchmark's first rates, and the publishers' earlier rates are within the
+    //    cap of them.
+    let node = start(&dir, START, clock.clone()).await;
     assert!(node.try_submit(Command::Tick).await.is_none(), "held for the first snapshot");
     node.sync(&cfg_path, || START).await;
-    assert_eq!(observed(&node, "SOFR", monday).await, Some(fixed("0.01")));
-    assert_eq!(observed(&node, "ESTR", monday).await, Some(fixed("0.024")));
+    assert_eq!(observed(&node, "SOFR", tuesday).await, Some(fixed("0.04")));
 
-    // 2. The publisher's next SOFR is 350 bps from the last applied. The worker leaves it out and
+    // 2. A day later the publisher's SOFR is 350 bps from the last applied. The worker leaves it out,
     //    raises an alert, and signs ESTR's, which applies.
+    let wednesday_noon = START + 86_400_000;
+    advance(&node, &clock, wednesday_noon).await;
     published.store(1, Ordering::SeqCst);
-    let request = node.sync(&cfg_path, || START + 1_000).await;
+    let request = node.sync(&cfg_path, || START + 86_400_000).await;
     let AdminCommand::SetBenchmarkRates(batch) = &request.command else { panic!("a snapshot") };
-    assert!(batch.rates.iter().all(|rate| rate.benchmark != "SOFR" || rate.effective_date != tuesday), "{batch:?}");
-    assert_eq!(observed(&node, "SOFR", tuesday).await, None);
-    assert_eq!(observed(&node, "ESTR", tuesday).await, Some(fixed("0.0241")));
+    assert!(batch.rates.iter().all(|rate| rate.benchmark != "SOFR" || rate.effective_date != wednesday), "{batch:?}");
+    assert_eq!(observed(&node, "SOFR", wednesday).await, None);
+    assert_eq!(observed(&node, "ESTR", wednesday).await, Some(fixed("0.0201")));
     let mut raised = Vec::new();
     while let Ok(alert) = alerts.try_recv() {
         raised.push(alert.name);
@@ -143,15 +155,15 @@ endpoint = "{publisher}/estr"
     assert!(raised.iter().any(|name| name == "benchmark_rate_refused"), "{raised:?}");
 
     // 3. The operator signing that rate itself is refused, and a rate inside the cap applies.
-    let events = signed(&node, sofr_snapshot(tuesday, "0.045")).await;
+    let events = signed(&node, sofr_snapshot(wednesday, "0.075")).await;
     assert!(
         matches!(events.last(), Some(Event::AdminRejected { reason }) if reason.contains("moves more than 300 bps a day")),
         "{events:?}"
     );
-    assert_eq!(observed(&node, "SOFR", tuesday).await, None);
-    let events = signed(&node, sofr_snapshot(tuesday, "0.039")).await;
+    assert_eq!(observed(&node, "SOFR", wednesday).await, None);
+    let events = signed(&node, sofr_snapshot(wednesday, "0.069")).await;
     assert_eq!(events.last(), Some(&Event::AdminApplied));
-    assert_eq!(observed(&node, "SOFR", tuesday).await, Some(fixed("0.039")));
+    assert_eq!(observed(&node, "SOFR", wednesday).await, Some(fixed("0.069")));
 
     // 4. A floor at level 2 is refused, for a market and for all of them; one at level 1 applies.
     let floor = |market, level| AdminCommand::SetStressFloor { market, level };
@@ -169,18 +181,21 @@ endpoint = "{publisher}/estr"
     assert_eq!(stress(&node).await, (1, 1));
     let set = node.clock.now_ms();
 
-    // 5. A millisecond before its 72 hours the floor still holds, across a restart.
+    // 5. A millisecond before its 72 hours the floor still holds, across a restart, and the restarted
+    //    worker's snapshot still leaves out what the cap refuses.
     let held = set + STRESS_FLOOR_LAPSE_MS - 1;
-    node.advance(held).await;
+    advance(&node, &clock, held).await;
     node.submit(Command::Tick).await;
     assert_eq!(stress(&node).await, (1, 1));
     node.stop().await;
-    let node = start(&dir, held).await;
+    let node = start(&dir, held, clock.clone()).await;
     node.sync(&cfg_path, move || held).await;
     assert_eq!(stress(&node).await, (1, 1), "the floor's time survives a restart");
+    assert_eq!(observed(&node, "SOFR", wednesday).await, Some(fixed("0.069")));
 
     // 6. At its 72 hours it lapses to the automatic level, on the sequencer's stamp.
-    node.advance(set + STRESS_FLOOR_LAPSE_MS).await;
+    let lapsed = set + STRESS_FLOOR_LAPSE_MS;
+    advance(&node, &clock, lapsed).await;
     let events = node.submit(Command::Tick).await;
     assert!(events.contains(&Event::StressChanged { market: 1, level: 0 }), "{events:?}");
     assert_eq!(stress(&node).await, (0, 0));
@@ -190,7 +205,7 @@ endpoint = "{publisher}/estr"
     publishers.abort();
 
     // 7. A restart and a public replay reach the same state.
-    let node = start(&dir, set + STRESS_FLOOR_LAPSE_MS).await;
+    let node = start(&dir, lapsed, clock.clone()).await;
     assert_eq!(query(&node, |engine| engine.benchmark_history().clone()).await, history);
     node.stop().await;
     let replayed = replay(&log_entries(&dir)).unwrap();
