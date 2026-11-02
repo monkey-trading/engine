@@ -32,7 +32,9 @@
 //! - forge a receipt: no, it is quoted, so the tool reports only what the enclave did. A refusal is
 //!   not quoted and can be forged, which is only the denial the host has anyway;
 //! - delay or drop a delivery: yes, for as long as a connection's timeouts allow, and the tool then
-//!   reports no receipt. A retry with the same version and secrets is accepted as already sealed;
+//!   reports no receipt. A retry with the same version and secrets is accepted as already sealed. A
+//!   peer that can reach the listener can do the same by filling its connections, so the host forwards
+//!   it only from the operator's addresses;
 //! - point the node at its own servers: no, a delivered value fills a URL's key, and the attested
 //!   config fixes the URL's origin. A bundle, even one a stolen operator key signs, can name only
 //!   another key at the same provider, a vendor key, or a webhook, so it can deny service or redirect

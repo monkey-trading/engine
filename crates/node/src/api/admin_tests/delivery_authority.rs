@@ -11,9 +11,14 @@ async fn a_running_node_takes_deliveries_from_the_key_in_effect_and_no_other() {
     let next = SigningKey::from_slice(&[0x55; 32]).unwrap();
     let address = engine_core::eip712::address(next.verifying_key());
     let stranger = AccountId([7; 20]);
-    let authority = |clock| Authority::Log { tx: node.state.tx.clone(), configured: old, clock };
+    let authority =
+        |clock: std::sync::Arc<dyn crate::clock::Clock>, tx: &tokio::sync::mpsc::Sender<_>| Authority::Log {
+            tx: tx.downgrade(),
+            configured: old,
+            trusted: std::sync::Arc::new(crate::test_support::trusted(clock)),
+        };
 
-    let before = authority(node.state.clock.clone());
+    let before = authority(node.stamps.clone(), &node.state.tx);
     assert!(before.admits(old).await.unwrap(), "the recorded key");
     assert!(!before.admits(address).await.unwrap(), "a key no rotation names");
     assert!(!before.admits(stranger).await.unwrap(), "a stranger");
@@ -31,7 +36,7 @@ async fn a_running_node_takes_deliveries_from_the_key_in_effect_and_no_other() {
     node.state.tx.send(crate::sequencer::Request::TimeSample(sample)).await.unwrap();
     let clock = std::sync::Arc::new(crate::clock::test_clock::TestClock::at(after_the_notice()));
     node.state.clock = clock.clone();
-    let due = authority(clock);
+    let due = authority(clock, &node.state.tx);
     assert!(due.admits(address).await.unwrap(), "the new key once it is due");
     assert!(!due.admits(stranger).await.unwrap(), "a stranger once the rotation is due");
 
@@ -50,7 +55,11 @@ async fn a_named_successor_takes_deliveries_from_its_own_key_and_not_the_outgoin
     let node = Node::start_on("delivery-successor", true).await;
     let outgoing = node.state.operator.address;
     let own = engine_core::eip712::address(SigningKey::from_slice(&[0x55; 32]).unwrap().verifying_key());
-    let successor = Authority::Log { tx: node.state.tx.clone(), configured: own, clock: node.state.clock.clone() };
+    let successor = Authority::Log {
+        tx: node.state.tx.downgrade(),
+        configured: own,
+        trusted: std::sync::Arc::new(crate::test_support::trusted(node.stamps.clone())),
+    };
     assert!(!successor.admits(own).await.unwrap(), "no rotation names this node yet");
 
     let rotation = node.sign(0, AdminCommand::RotateOperator { address: own }, NOW + 60_000);
@@ -59,4 +68,38 @@ async fn a_named_successor_takes_deliveries_from_its_own_key_and_not_the_outgoin
     assert!(successor.admits(own).await.unwrap(), "the named successor's own key, before its notice has run");
     assert!(!successor.admits(outgoing).await.unwrap(), "the outgoing key on its successor");
     assert!(!successor.admits(AccountId([7; 20])).await.unwrap(), "a stranger");
+}
+
+// A host that moves the guest's clock past the notice does not bring the new key in: with nothing to
+// bound the clock the rotation is not due, and with a sample that disagrees with it neither.
+#[tokio::test]
+async fn an_unbounded_clock_does_not_bring_a_pending_key_in_early() {
+    let node = Node::start_on("delivery-untrusted-clock", true).await;
+    let next = engine_core::eip712::address(SigningKey::from_slice(&[0x55; 32]).unwrap().verifying_key());
+    let rotation = node.sign(0, AdminCommand::RotateOperator { address: next }, NOW + 60_000);
+    let (status, _) = node.post("/v1/admin", serde_json::to_value(&rotation).unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let moved: std::sync::Arc<dyn crate::clock::Clock> =
+        std::sync::Arc::new(crate::clock::test_clock::TestClock::at(after_the_notice()));
+    let no_sample = crate::trusted_time::TrustedClock::new(
+        moved.clone(),
+        tokio::sync::watch::channel(None).1,
+        dev_config().time.max_drift,
+    );
+    let honest_sample = sample_around(node.stamps.as_ref());
+    let contradicted = crate::trusted_time::TrustedClock::new(
+        moved,
+        tokio::sync::watch::channel(Some(honest_sample)).1,
+        dev_config().time.max_drift,
+    );
+    for trusted in [no_sample, contradicted] {
+        let authority = Authority::Log {
+            tx: node.state.tx.downgrade(),
+            configured: node.state.operator.address,
+            trusted: std::sync::Arc::new(trusted),
+        };
+        assert!(!authority.admits(next).await.unwrap(), "the pending key on the host's word");
+        assert!(authority.admits(node.state.operator.address).await.unwrap(), "the recorded key stays");
+    }
 }

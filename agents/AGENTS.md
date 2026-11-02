@@ -73,10 +73,11 @@ an index: load only the rule whose hint matches the current action.
   `handover/secrets.rs`: RPC provider keys, vendor keys and webhook URLs the attested config names and
   the operator delivers on `[tee.sealing.secrets]`'s listener with `engine admin deliver-secrets`,
   encrypted to a one-time HPKE key whose quote passes against the release manifest, signed by the
-  operator key in effect, sealed per release apart from `KeySet`; a URL's `{name}` fills its key only,
-  never its origin; a node lacking a chain or screening key holds on that listener, one lacking a vendor
-  key or webhook runs with it off under `secret_missing`; a rotation needs a restart and says so; an
-  approved upgrade moves the bundle, an election moves none), the
+  operator key in effect (the attested config's until the log is recovered, then the log's), sealed
+  per release apart from `KeySet`; a URL's `{name}` fills its key only, never its origin; a node lacking
+  a chain or screening key holds on that listener, one lacking a vendor key or webhook runs with it off
+  under `secret_missing`; a rotation needs a restart and says so; an approved upgrade moves the bundle,
+  an election moves none), the
   access-source screening (`access.rs`, signed decisions with bounded HTTP reads),
   sequencer, the public log with signed checkpoints (segmented, with a public archive), `engine
   replay`, `engine exit-proof` (`exit.rs`: the exit's proofs and vault calls from a published log),
@@ -155,10 +156,11 @@ an index: load only the rule whose hint matches the current action.
   determines payment, and unpaid approvals are reissued on signer rotation or on their account's
   signed request, never on a schedule. It also has price feeds: live crypto
   venue WebSockets and RWA market-data vendors (`feeds/`, one adapter per venue: Massive and
-  TraderMade over WebSocket, Databento's live gateway over TCP, with API keys read from the
-  environment variables the config names; `feeds/venue/delay.rs` bounds how far behind a TLS
-  connection's stream can be from its pings on the monotonic clock, past which its frames count as
-  no quote, and `sequencer/quotes.rs` holds each quote to that bound at its stamp) and a mock, Prometheus metrics on an operator
+  TraderMade over WebSocket, Databento's live gateway over TCP, with API keys from the delivered
+  secrets the config names, or in a development build environment variables; `feeds/venue/delay.rs`
+  bounds how far behind a TLS connection's stream can be from its pings on the monotonic clock, past
+  which its frames count as no quote, and `sequencer/quotes.rs` holds each quote to that bound at its
+  stamp) and a mock, Prometheus metrics on an operator
   listener, and alert routing to webhooks with a bounded durable outbox outside the public log. Its
   `production` cargo feature refuses mock TEE, custody, and feed providers, an API without
   `[api.tls.acme]`, and a secret read from the environment, at config load; release images build with it. `engine ct-watch` (`ct_watch/`)

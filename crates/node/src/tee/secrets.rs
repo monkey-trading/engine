@@ -119,27 +119,33 @@ impl SecretStore {
     }
 
     /// Seals `signed` over the file unless the store holds a newer one. The same version with the
-    /// same secrets is a retry after a lost receipt, and changes nothing.
+    /// same secrets is a retry after a lost receipt, and changes nothing unless a newer operator key
+    /// signed it: that signature is the one an upgrade to a config naming that key will check.
     /// Error cases:
     /// - the store holds this version with other secrets, or a higher one
     /// - the file cannot be written and synced, which leaves the file and the store as they were
     pub fn replace(&self, signed: SignedBundle) -> anyhow::Result<Replaced> {
         let mut held = self.lock();
+        let mut replaced = Replaced::Sealed;
         if let Some(held) = held.as_ref() {
             let (version, newest) = (signed.bundle.version, held.bundle.version);
             ensure!(
                 version != newest || signed.bundle == held.bundle,
                 "version {version} is already sealed with other secrets: a rotation takes a higher version"
             );
-            if version == newest {
+            if signed == *held {
                 return Ok(Replaced::AlreadySealed);
             }
-            ensure!(version > newest, "version {version} is older than the sealed version {newest}");
+            if version == newest {
+                replaced = Replaced::AlreadySealed;
+            } else {
+                ensure!(version > newest, "version {version} is older than the sealed version {newest}");
+            }
         }
         self.write(&signed)?;
         *held = Some(signed);
         *self.unreadable.lock().unwrap_or_else(PoisonError::into_inner) = None;
-        Ok(Replaced::Sealed)
+        Ok(replaced)
     }
 
     /// Seals `signed` into a new file beside the current one and renames it over.

@@ -131,9 +131,10 @@ async fn serve_node(
         warn!("API authentication is OFF: development only");
     }
     // Takes deliveries through everything below, however long the vault takes to name this key.
-    let (delivery_authority, authority) =
-        watch::channel(crate::secrets::Authority::Configured(cfg.operator()?.address));
-    let listening = delivered.listener.take().map(|listener| tokio::spawn(listener.run(authority)));
+    let mut listening = JoinSet::new();
+    if let Some(listener) = delivered.listener.take() {
+        listening.spawn(listener.run());
+    }
 
     let keys = keys::attested(&cfg, &start).await?;
     let keys::Keys { enclave: key, tls, store, attestor, attestation } = keys;
@@ -319,15 +320,18 @@ async fn serve_node(
         });
     }
 
-    delivery_authority.send_replace(crate::secrets::Authority::Log {
-        tx: tx.clone(),
-        configured: operator.address,
-        clock: clock.clone(),
-    });
-    if let Some(listening) = listening {
-        tasks.spawn(
-            async move { ("secrets", listening.await.context("the delivery listener panicked").and_then(|r| r)) },
-        );
+    if let Some(authority) = &delivered.authority {
+        authority.send_replace(crate::secrets::Authority::Log {
+            tx: tx.downgrade(),
+            configured: operator.address,
+            trusted: Arc::new(trusted()),
+        });
+    }
+    if !listening.is_empty() {
+        tasks.spawn(async move {
+            let stopped = listening.join_next().await.expect("the set holds the listener");
+            ("secrets", stopped.context("the delivery listener panicked").and_then(|outcome| outcome))
+        });
     }
 
     let tick = cfg.node.tick;

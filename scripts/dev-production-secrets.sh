@@ -65,7 +65,7 @@ trap cleanup EXIT
 step() { echo "==> $*"; }
 fail() {
   echo "FAIL: $*" >&2
-  [[ -f "$work/node.log" ]] && tail -n 40 "$work/node.log" >&2
+  [[ -f "$work/node.log" ]] && grep -vE ' (TRACE|DEBUG) ' "$work/node.log" | tail -n 40 >&2
   exit 1
 }
 
@@ -118,12 +118,6 @@ wait_up() {
 stop_node() {
   kill -TERM "$node_pid"
   wait "$node_pid" || fail "node did not shut down cleanly"
-  node_pid=""
-}
-# Stops a node that holds, which has nothing to drain.
-stop_holding() {
-  kill -TERM "$node_pid"
-  wait "$node_pid" 2>/dev/null || true
   node_pid=""
 }
 wait_listening() {
@@ -315,7 +309,7 @@ tool_said "sealed version none"
 step "The bundle is encrypted to the node's attested key and delivered, and the node goes on starting"
 deliver "$work/operator/v1.toml"
 tool_said "sealed: version 1"
-tool_said "lacking: massive_api_key"
+tool_said "these integrations stay off: massive_api_key"
 wait_up
 
 step "A deposit credits through the keyed providers, and the delivered webhook is paged"

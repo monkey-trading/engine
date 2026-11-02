@@ -53,6 +53,7 @@ async fn the_tool_delivers_to_the_release_its_manifest_names() {
     let args = DeliverArgs {
         peer: peer(&enclave.address, manifest("tool-delivers", RELEASE, CONFIG)),
         secrets_file: bundle_file("tool-delivers", 1, "a"),
+        partial: false,
     };
     deliver(&enclave.cfg, &operator_key(), &args).await.unwrap();
     assert_eq!(enclave.store.current().unwrap().bundle, full(1, "a"));
@@ -62,6 +63,7 @@ async fn the_tool_delivers_to_the_release_its_manifest_names() {
     let rotated = DeliverArgs {
         peer: peer(&enclave.address, manifest("tool-delivers-2", RELEASE, CONFIG)),
         secrets_file: bundle_file("tool-delivers-2", 2, "b"),
+        partial: false,
     };
     deliver(&enclave.cfg, &operator_key(), &rotated).await.unwrap();
     assert_eq!(enclave.store.current().unwrap().bundle, full(2, "b"));
@@ -96,6 +98,7 @@ async fn the_tool_sends_nothing_to_an_enclave_its_manifest_does_not_name() {
         let args = DeliverArgs {
             peer: peer(&enclave.address, release),
             secrets_file: bundle_file(&format!("tool-refuses-{}", what.replace(' ', "-")), 1, "a"),
+            partial: false,
         };
         let err = format!("{:#}", deliver(cfg, &operator_key(), &args).await.unwrap_err());
         assert!(err.contains(why), "{what}: {err}");
@@ -115,6 +118,7 @@ async fn the_tool_refuses_a_bundle_the_config_cannot_use_and_one_older_than_the_
     let older = DeliverArgs {
         peer: peer(&enclave.address, manifest("tool-older", RELEASE, CONFIG)),
         secrets_file: bundle_file("tool-older", 4, "four"),
+        partial: false,
     };
     let err = deliver(&enclave.cfg, &operator_key(), &older).await.unwrap_err();
     assert!(format!("{err:#}").contains("attests it holds version 5"), "{err:#}");
@@ -123,10 +127,47 @@ async fn the_tool_refuses_a_bundle_the_config_cannot_use_and_one_older_than_the_
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("secrets.toml");
     std::fs::write(&path, "version = 6\n[secrets]\ntypo_key = 'FAKE-value'\n").unwrap();
-    let typo = DeliverArgs { peer: peer(&enclave.address, manifest("tool-typo", RELEASE, CONFIG)), secrets_file: path };
+    let typo = DeliverArgs {
+        peer: peer(&enclave.address, manifest("tool-typo", RELEASE, CONFIG)),
+        secrets_file: path,
+        partial: false,
+    };
     let err = format!("{:#}", deliver(&enclave.cfg, &operator_key(), &typo).await.unwrap_err());
     assert!(err.contains("typo_key") && !err.contains("FAKE"), "{err}");
     assert_eq!(enclave.store.version(), Some(5));
+}
+
+// The whole sealed bundle goes, so a bundle lacking what the node holds for would hold it at its next
+// restart: refused unless the operator means it, while one lacking a vendor key or webhook is not.
+#[tokio::test]
+async fn a_bundle_lacking_what_the_node_holds_for_needs_partial() {
+    let enclave = Enclave::start("tool-partial").await;
+    let dir = scratch_dir("tool-partial-bundle");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("secrets.toml");
+    std::fs::write(&path, "version = 1\n[secrets]\nvendor_key = 'FAKE-vendor'\n").unwrap();
+    let release = manifest("tool-partial", RELEASE, CONFIG);
+    let refused =
+        DeliverArgs { peer: peer(&enclave.address, release.clone()), secrets_file: path.clone(), partial: false };
+    let err = format!("{:#}", deliver(&enclave.cfg, &operator_key(), &refused).await.unwrap_err());
+    assert!(err.contains("chain_key") && err.contains("--partial"), "{err}");
+    assert_eq!(enclave.store.current(), None);
+
+    let meant =
+        DeliverArgs { peer: peer(&enclave.address, release.clone()), secrets_file: path.clone(), partial: true };
+    deliver(&enclave.cfg, &operator_key(), &meant).await.unwrap();
+    assert_eq!(enclave.store.version(), Some(1));
+
+    std::fs::write(&path, "version = 2\n[secrets]\nchain_key = 'FAKE-chain'\n").unwrap();
+    let optional = DeliverArgs { peer: peer(&enclave.address, release), secrets_file: path, partial: false };
+    deliver(&enclave.cfg, &operator_key(), &optional).await.unwrap();
+    assert_eq!(enclave.store.version(), Some(2));
+}
+
+#[test]
+fn what_the_host_writes_cannot_rewrite_the_operators_terminal() {
+    assert_eq!(shown("refused\r\u{1b}[2Ksealed: version 2"), "refused[2Ksealed: version 2");
+    assert_eq!(shown(&"x".repeat(4096)).len(), 512);
 }
 
 // A key the enclave does not take gets as far as the enclave, which refuses it.
@@ -136,6 +177,7 @@ async fn the_enclave_refuses_a_key_the_operator_does_not_hold() {
     let args = DeliverArgs {
         peer: peer(&enclave.address, manifest("tool-key", RELEASE, CONFIG)),
         secrets_file: bundle_file("tool-key", 1, "a"),
+        partial: false,
     };
     let stranger = SigningKey::from_slice(&[0x77; 32]).unwrap();
     let err = deliver(&enclave.cfg, &stranger, &args).await.unwrap_err();
@@ -296,6 +338,7 @@ async fn a_forged_receipt_is_refused() {
         let args = DeliverArgs {
             peer: peer(&address, manifest(&format!("forged-{quoted}-{claimed}"), RELEASE, CONFIG)),
             secrets_file: bundle_file(&format!("forged-{quoted}-{claimed}"), 1, "a"),
+            partial: false,
         };
         let err = format!("{:#}", deliver(&cfg, &operator_key(), &args).await.unwrap_err());
         assert!(err.contains(why), "{what}: {err}");
@@ -313,6 +356,7 @@ async fn a_forged_receipt_is_refused() {
     let args = DeliverArgs {
         peer: peer(&address, manifest("forged-measurement", RELEASE, CONFIG)),
         secrets_file: bundle_file("forged-measurement", 1, "a"),
+        partial: false,
     };
     let err = format!("{:#}", deliver(&cfg, &operator_key(), &args).await.unwrap_err());
     assert!(err.contains("receipt's quote does not verify"), "{err}");
@@ -339,12 +383,12 @@ async fn a_dropped_receipt_says_a_retry_is_safe() {
     });
     let release = manifest("tool-dropped", RELEASE, CONFIG);
     let file = bundle_file("tool-dropped", 1, "a");
-    let args = DeliverArgs { peer: peer(&address, release.clone()), secrets_file: file.clone() };
+    let args = DeliverArgs { peer: peer(&address, release.clone()), secrets_file: file.clone(), partial: false };
     let err = format!("{:#}", deliver(&enclave.cfg, &operator_key(), &args).await.unwrap_err());
     assert!(err.contains("a retry with the same version is safe"), "{err}");
     assert_eq!(enclave.store.version(), Some(1), "the enclave sealed it");
 
-    let retry = DeliverArgs { peer: peer(&enclave.address, release), secrets_file: file };
+    let retry = DeliverArgs { peer: peer(&enclave.address, release), secrets_file: file, partial: false };
     deliver(&enclave.cfg, &operator_key(), &retry).await.unwrap();
     assert_eq!(enclave.store.current().unwrap().bundle, full(1, "a"));
 }

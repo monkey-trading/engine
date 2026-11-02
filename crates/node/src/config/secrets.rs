@@ -30,6 +30,8 @@ const KEY_IN_URL: &AsciiSet = &NON_ALPHANUMERIC.remove(b'-').remove(b'.').remove
 /// Stands in for a key while the config's URL is checked: what the file fixes is the same with any
 /// key, since encoding keeps a key inside the path or query.
 const CHECKED_KEY: &str = "key";
+/// A second stand-in, to show what a URL does with a different value.
+const OTHER_CHECKED_KEY: &str = "other";
 
 /// The secrets one bundle holds, by name.
 pub(crate) type Values = BTreeMap<SecretName, SecretValue>;
@@ -179,7 +181,13 @@ impl SecretUrl {
     pub fn expose(&self) -> anyhow::Result<Url> {
         let Some(template) = self.template()? else { return parse(&self.text) };
         let key = self.key.as_ref().with_context(|| format!("secret {} has not been delivered", template.name))?;
-        template.with(key.expose())
+        let url = template.with(key.expose())?;
+        ensure!(
+            authority_of(&url) == authority_of(&template.with(CHECKED_KEY)?),
+            "secret {} would change which server this URL asks",
+            template.name
+        );
+        Ok(url)
     }
 
     /// The URL the attested file fixes, for the checks a config load makes: the same scheme, host,
@@ -214,7 +222,7 @@ impl SecretUrl {
     /// a credential.
     /// Error cases:
     /// - a brace without its partner, a second placeholder, a malformed name, or a placeholder
-    ///   before the path or query, where a value could change which server is asked
+    ///   anywhere but the path or query, where a value could change which server is asked
     fn template(&self) -> anyhow::Result<Option<Template<'_>>> {
         let Some((before, rest)) = self.text.split_once('{') else {
             ensure!(!self.text.contains('}'), "a URL has a closing brace without an opening one");
@@ -223,12 +231,24 @@ impl SecretUrl {
         let (name, after) = rest.split_once('}').context("a URL's secret placeholder is not closed")?;
         ensure!(!after.contains(['{', '}']), "a URL may name one secret");
         let name = SecretName::try_from(name.to_owned()).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let outside = |name: &SecretName| {
+            anyhow::anyhow!(
+                "the secret {name} must sit in a URL's path or query: the attested config fixes which server is asked"
+            )
+        };
         let authority = before.split_once("://").map_or("", |(_, authority)| authority);
-        ensure!(
-            authority.contains(['/', '?']) && !before.contains('#'),
-            "the secret {name} must sit in a URL's path or query: the attested config fixes which server is asked"
-        );
-        Ok(Some(Template { before, name, after }))
+        if !authority.contains(['/', '?']) || before.contains('#') {
+            return Err(outside(&name));
+        }
+        // The text alone cannot say where a value lands, since a URL parser skips extra slashes and
+        // takes a backslash for one: `https:///{key}` makes it the host. So parse with two values,
+        // and refuse a URL whose server or credentials follow them.
+        let template = Template { before, name, after };
+        let (one, other) = (template.with(CHECKED_KEY)?, template.with(OTHER_CHECKED_KEY)?);
+        if authority_of(&one) != authority_of(&other) || one.fragment() != other.fragment() {
+            return Err(outside(&template.name));
+        }
+        Ok(Some(template))
     }
 }
 
@@ -352,6 +372,11 @@ impl NodeConfig {
         }
         Ok(())
     }
+}
+
+/// Who a URL asks and as whom: everything a delivered value must not reach.
+fn authority_of(url: &Url) -> (&str, Option<&str>, Option<u16>, &str, Option<&str>) {
+    (url.scheme(), url.host_str(), url.port(), url.username(), url.password())
 }
 
 /// `text` parsed. `url::ParseError` names the problem, never the input, so nothing secret reaches a

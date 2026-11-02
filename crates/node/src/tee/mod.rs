@@ -13,6 +13,7 @@
 //! signature can be replayed in another context.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, ensure};
 use engine_core::Fixed;
@@ -30,6 +31,9 @@ pub(crate) mod sealing;
 pub(crate) mod secrets;
 #[cfg(target_os = "linux")]
 pub(crate) mod snp;
+
+/// Mints each quote's report entry name.
+static NEXT_REPORT: AtomicU64 = AtomicU64::new(0);
 
 /// A source of hardware attestation quotes over caller-chosen report data.
 pub trait Attestor: Send + Sync {
@@ -78,7 +82,7 @@ impl Attestor for ConfigfsTsm {
     /// - the report directory cannot be created (not a TDX / SEV-SNP guest, or no permission)
     /// - writing `inblob`, or reading `outblob` or `provider`, fails
     fn attest(&self, report_data: [u8; 64]) -> anyhow::Result<(String, Vec<u8>)> {
-        let dir = self.root.join(format!("engine-{}", std::process::id()));
+        let dir = self.report_entry();
         std::fs::create_dir(&dir)
             .with_context(|| format!("creating {} (is this a TDX/SEV-SNP guest?)", dir.display()))?;
         let result = (|| {
@@ -89,6 +93,15 @@ impl Attestor for ConfigfsTsm {
         })();
         let _ = std::fs::remove_dir(&dir);
         result
+    }
+}
+
+impl ConfigfsTsm {
+    /// A report entry no other quote uses: startup, a handover, and each delivery connection all
+    /// quote, and an entry that exists refuses the second.
+    fn report_entry(&self) -> PathBuf {
+        let entry = NEXT_REPORT.fetch_add(1, Ordering::Relaxed);
+        self.root.join(format!("engine-{}-{entry}", std::process::id()))
     }
 }
 
@@ -286,6 +299,12 @@ mod tests {
         let key = VerifyingKey::recover_from_prehash(&digest, &signature, recid).unwrap();
         key.verify_prehash(&digest, &signature).unwrap();
         key
+    }
+
+    #[test]
+    fn each_quote_takes_its_own_report_entry() {
+        let attestor = ConfigfsTsm::default();
+        assert_ne!(attestor.report_entry(), attestor.report_entry());
     }
 
     #[test]

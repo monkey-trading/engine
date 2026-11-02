@@ -7,6 +7,7 @@ use engine_core::types::AccountId;
 use hpke::Kem;
 use k256::ecdsa::SigningKey;
 use tokio::net::TcpStream;
+use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
 use super::*;
@@ -111,14 +112,15 @@ impl Enclave {
         let store = Arc::new(SecretStore::open(&dir, sealer, CONFIG).unwrap());
         let listen = "127.0.0.1:0".parse().unwrap();
         let named = cfg.named_secrets().unwrap();
-        let mut listener =
-            Listener::bind(&cfg, listen, platform, Box::new(MockAttestor), store.clone(), named).await.unwrap();
+        let authority = watch::channel(Authority::Configured(cfg.operator().unwrap().address)).1;
+        let listener = Listener::bind(&cfg, listen, platform, Box::new(MockAttestor), store.clone(), named, authority)
+            .await
+            .unwrap();
         if let Some(version) = running {
             listener.started(version);
         }
         let address = listener.local_addr().to_string();
-        let authority = Authority::Configured(cfg.operator().unwrap().address);
-        let task = tokio::spawn(listener.run(tokio::sync::watch::channel(authority).1));
+        let task = tokio::spawn(listener.run());
         Self { cfg, address, store, task }
     }
 
@@ -309,7 +311,9 @@ async fn an_older_or_conflicting_version_is_refused_and_a_retry_after_a_lost_rec
     let delivery = lost.encrypt(&full(3, "three").sign(lost.domain, &operator_key()));
     send(&mut lost.stream, &delivery).await.unwrap();
     drop(lost);
-    // The next connection waits its turn behind the dropped one, so the seal has happened.
+    while enclave.store.version().is_none() {
+        tokio::task::yield_now().await;
+    }
     let retried = enclave.sealed(full(3, "three")).await;
     assert!(retried.already_sealed, "{retried:?}");
 
@@ -377,6 +381,32 @@ async fn a_malformed_or_abandoned_connection_ends_alone_and_the_listener_goes_on
 
     assert!(!enclave.task.is_finished());
     enclave.sealed(full(1, "a")).await;
+}
+
+// A silent peer holds its own connection, not the operator's.
+#[tokio::test]
+async fn an_idle_peer_does_not_block_a_delivery() {
+    let enclave = Enclave::start("secrets-idle-peer").await;
+    let _idle = TcpStream::connect(&enclave.address).await.unwrap();
+    let _waiting = enclave.connect().await;
+    let delivered = tokio::time::timeout(std::time::Duration::from_secs(5), enclave.sealed(full(1, "a")));
+    assert_eq!(delivered.await.expect("an idle peer blocked the delivery").version, 1);
+}
+
+// The sequencer drains only once every sender is gone, so what the listener keeps must not count.
+#[tokio::test]
+async fn the_delivery_authority_does_not_hold_the_sequencer_open() {
+    let (tx, mut rx) = mpsc::channel::<crate::sequencer::Request>(1);
+    let authority = Authority::Log {
+        tx: tx.downgrade(),
+        configured: AccountId([1; 20]),
+        trusted: Arc::new(crate::test_support::trusted(Arc::new(crate::clock::SystemClock))),
+    };
+    let (_keeps_the_channel_open, receiver) = watch::channel(authority);
+    drop(tx);
+    assert!(rx.recv().await.is_none(), "the sequencer's channel stayed open");
+    let err = receiver.borrow().clone().admits(AccountId([1; 20])).await.unwrap_err();
+    assert!(err.to_string().contains("the node is stopping"), "{err:#}");
 }
 
 #[tokio::test]

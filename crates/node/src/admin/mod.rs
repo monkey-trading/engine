@@ -285,25 +285,21 @@ impl AdminAction {
 /// Runs what the command line asks for: a secrets delivery or status read, or an admin command.
 /// Error cases:
 /// - see `secrets::deliver`, `secrets::status`, and `run`
-pub async fn dispatch(mut args: AdminArgs, env: KeyEnv) -> anyhow::Result<()> {
-    let action = std::mem::replace(&mut args.action, AdminAction::SetReduceOnly { reduce_only: false, market: None });
-    match action {
+pub async fn dispatch(args: AdminArgs, env: KeyEnv) -> anyhow::Result<()> {
+    match &args.action {
         AdminAction::DeliverSecrets(deliver) => {
             let cfg = NodeConfig::load(&args.config)?;
             crate::init_logging(&cfg.logging.level)?;
             let key = resolve_key(args.key_file.as_deref(), env)?;
             signing_operator(cfg.operator()?, &key, args.rotated, &args.config)?;
-            secrets::deliver(&cfg, &key, &deliver).await
+            secrets::deliver(&cfg, &key, deliver).await
         }
         AdminAction::SecretsStatus(peer) => {
             let cfg = NodeConfig::load(&args.config)?;
             crate::init_logging(&cfg.logging.level)?;
-            secrets::status(&cfg, &peer).await
+            secrets::status(&cfg, peer).await
         }
-        action => {
-            args.action = action;
-            run(args, env).await.map(drop)
-        }
+        _ => run(args, env).await.map(drop),
     }
 }
 

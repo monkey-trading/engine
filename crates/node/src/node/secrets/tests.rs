@@ -171,11 +171,15 @@ async fn sealed_secrets_that_do_not_open_are_an_alert_and_a_hold_and_a_delivery_
     assert!(matches!(deliver(&tool, &address, full(1, "b")).await, Reply::Sealed { .. }));
     let (cfg, _, delivered) = timeout(WAIT, starting).await.expect("it still holds").unwrap();
     delivered.unwrap();
+    assert!(logs.count("alert_resolved=\"secrets_unreadable\"") >= 1, "the alert was never resolved");
     assert_eq!(cfg.checkpoints.as_ref().unwrap().rpc_url.expose().unwrap().path(), "/v2/FAKE-chain-b");
 }
 
+// A key the attested config does not name, which is all a host has. A retired key the config still
+// names does end a hold, by design: no log can be authenticated yet, and a bundle cannot change which
+// provider is asked (`crate::secrets`).
 #[tokio::test]
-async fn a_host_or_a_retired_key_cannot_end_the_hold() {
+async fn a_stranger_cannot_end_the_hold() {
     let cfg = config("startup-stranger");
     let address = listen(&cfg);
     let mut starting = spawn_startup(cfg);
@@ -236,6 +240,6 @@ async fn a_delivered_webhook_that_is_no_longer_acceptable_leaves_its_route_off_w
     let (_, telemetry, delivered) = timeout(WAIT, spawn_startup(cfg)).await.expect("it held").unwrap();
     delivered.unwrap();
     assert!(!telemetry.pages_critical);
-    assert_eq!(logs.critical("secrets_unreadable"), 1);
+    assert_eq!(logs.critical("secret_unusable"), 1);
     assert_eq!(logs.count("FAKE"), 0, "a value reached the log");
 }

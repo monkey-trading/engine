@@ -72,13 +72,10 @@ pub async fn run(mut cfg: NodeConfig, mut telemetry: Telemetry, start: crate::Ke
     cfg.alerts.outbox.check_disk_location(&cfg.node.log_dir)?;
     let routing = alerts.spawn(cfg.alerts.episode_quiet, &cfg.alerts.outbox).await?;
     let outcome = match delivered.listener {
-        Some(listener) => {
-            let authority = crate::secrets::Authority::Configured(cfg.operator()?.address);
-            tokio::select! {
-                outcome = serve(&cfg, &standby) => outcome,
-                outcome = listener.run(tokio::sync::watch::channel(authority).1) => outcome,
-            }
-        }
+        Some(listener) => tokio::select! {
+            outcome = serve(&cfg, &standby) => outcome,
+            outcome = listener.run() => outcome,
+        },
         None => serve(&cfg, &standby).await,
     };
     routing.drain(Duration::from_secs(10)).await;

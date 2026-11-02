@@ -144,6 +144,24 @@ fn only_a_higher_version_replaces_what_is_sealed_and_a_retry_changes_nothing() {
     assert_eq!(store(&dir).version(), Some(4));
 }
 
+// A rotated operator redelivering what is sealed: its signature is what an upgrade to a config naming
+// its key will check, so it replaces the old one with no change of version.
+#[test]
+fn a_retry_under_a_new_operator_key_keeps_that_keys_signature() {
+    let dir = scratch_dir("secrets-new-signer");
+    let ours = store(&dir);
+    ours.replace(bundle(3, "FAKE-three")).unwrap();
+
+    let next = SigningKey::from_slice(&[0x55; 32]).unwrap();
+    let resigned = bundle(3, "FAKE-three").bundle.sign(DOMAIN, &next);
+    assert_eq!(ours.replace(resigned.clone()).unwrap(), Replaced::AlreadySealed);
+    let reopened = store(&dir);
+    assert_eq!(reopened.current(), Some(resigned.clone()));
+    assert_eq!(reopened.current().unwrap().signer(DOMAIN).unwrap(), engine_core::eip712::address(next.verifying_key()));
+    // Its own retry changes nothing further.
+    assert_eq!(ours.replace(resigned).unwrap(), Replaced::AlreadySealed);
+}
+
 // What a host gains by restoring an older copy: the older bundle, and nothing else. The status the
 // operator reads shows it, and a higher version repairs it.
 #[test]

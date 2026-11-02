@@ -2112,8 +2112,8 @@ published, names which secret each field reads, and the operator delivers the va
 ```toml
 [tee.sealing.secrets]
 # The delivery listener, plain TCP: the host carries it, so the quote, the encryption, and the
-# operator's signature protect it, not the transport.
-listen = "0.0.0.0:9472"
+# operator's signature protect it, not the transport. Keep it off public interfaces (below).
+listen = "10.0.2.15:9472"
 
 [custody.evm]
 providers = [
@@ -2147,9 +2147,17 @@ would choose the secret.
   bundle, and it fails the tool's checks before one is sent.
 - **Who may deliver.** The bundle carries a signature over the chain id, the vault, its version, and
   its contents. A running node takes the key the log records or a rotation's that has come due, as
-  `POST /v1/admin` does. A node that has not yet recovered its log takes the key its attested config
-  names, since reading the vault can take a delivered key, so no log can be authenticated yet. A
-  real enclave refuses a published test key.
+  `POST /v1/admin` does, by trusted time, so a host's clock brings no rotation in early. A node that
+  has not yet recovered its log takes the key its attested config names, since reading the vault can
+  take a delivered key, so no log can be authenticated yet. That is the one key that can end a hold, so
+  a rotated operator keeps its old key until a release's config names the new one; a redelivery under
+  the new key replaces the sealed signature, for the upgrade that follows. A real enclave refuses a
+  published test key.
+- **Reaching the listener.** Anyone who can connect can read the offer, whose names are in the
+  published config anyway, and cause a quote; only the operator's signature seals anything. The listener
+  runs a few connections at once with short deadlines, so an idle peer does not hold up a delivery, but
+  a peer that fills them can delay one, as it can for any open port. The host forwards it only from the
+  operator's addresses, as it does the handover port.
 - **What a restart keeps.** The bundle is sealed per release in `<release id>.secrets.json` under
   `tee.sealing.dir`, with AES-256-GCM under the platform's derived key and the config hash bound to the
   ciphertext, and without the vault's generation: it must open before the vault can be read, and it
@@ -2162,12 +2170,13 @@ would choose the secret.
   supplies them, then goes on starting, with no restart. Without a vendor's key that connection stays
   off and the markets it alone prices go unpriced (`market_no_price`). Without a webhook's URL that
   route stays off and its alerts are only logged.
-- **A rotation.** Deliver a higher `version`. The enclave seals it at once, but what runs keeps the
-  clients it built when it started, so the receipt says `restart required`,
-  `secrets_restart_required` (Warning) stays open until a restart, and the old key should stay valid
-  at its provider until then. The restart keeps the enclave's keys. A retry at the same version with
-  the same secrets, after a receipt the host dropped, is accepted as already sealed; the same version
-  with others is refused, as is a lower one.
+- **A rotation.** Deliver a higher `version`, holding every secret: a bundle replaces the whole sealed
+  one, so the tool refuses one lacking what the node holds for unless given `--partial`. The enclave
+  seals it at once, but what runs keeps the clients it built when it started, so the receipt says
+  `restart required`, `secrets_restart_required` (Warning) stays open until a restart, and the old key
+  should stay valid at its provider until then. The restart keeps the enclave's keys. A retry at the
+  same version with the same secrets, after a receipt the host dropped, is accepted as already sealed;
+  the same version with others is refused, as is a lower one.
 - **An upgrade.** With `--predecessor`, the new release asks the running one for the bundle before it
   reads the vault. The running release checks the new one's quote and that the vault names it, and
   sends the bundle encrypted to its one-time key, with no stop; the keys follow in their own handover.

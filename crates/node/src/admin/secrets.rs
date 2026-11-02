@@ -16,7 +16,7 @@ use tokio::time::timeout;
 
 use crate::admin::CALL_TIMEOUT;
 use crate::clock::now_ms;
-use crate::config::{NodeConfig, TeeProvider};
+use crate::config::{NamedSecret, NodeConfig, SecretName, SecretUse, TeeProvider};
 use crate::handover::evidence;
 use crate::handover::{Evidence, REPLY_TIMEOUT, receive, send};
 use crate::log::CheckpointDomain;
@@ -51,9 +51,13 @@ pub struct DeliverArgs {
     #[command(flatten)]
     peer: PeerArgs,
     /// The bundle, TOML: `version = <n>`, higher than the node's for a rotation, and a `[secrets]`
-    /// table of the names the config reads and their values.
+    /// table of the names the config reads and their values. It replaces the whole sealed bundle.
     #[arg(long)]
     secrets_file: PathBuf,
+    /// Deliver a bundle lacking a secret the node cannot run without, which then holds at its next
+    /// start until a bundle holds it.
+    #[arg(long)]
+    partial: bool,
 }
 
 /// A connection whose enclave has passed its quote.
@@ -72,6 +76,7 @@ struct Attested {
 /// Delivers the bundle in `args`, signed by `key`, and prints the enclave's quoted receipt.
 /// Error cases:
 /// - the file is not a bundle, or holds what this config's fields do not read, or a malformed value
+/// - it lacks a secret the node cannot run without, and `--partial` is not given
 /// - the enclave cannot be reached, or fails its quote (see `connect`)
 /// - the bundle is older than what the enclave attests it holds
 /// - the enclave refuses it, or its receipt's quote does not bind the receipt on this connection
@@ -79,6 +84,14 @@ pub(super) async fn deliver(cfg: &NodeConfig, key: &SigningKey, args: &DeliverAr
     let bundle = Bundle::from_file(&args.secrets_file)?;
     let named = cfg.named_secrets()?;
     bundle.check(&named)?;
+    let missing = bundle.missing(&named);
+    let holds_for = lacking(&named, &missing, |usage| usage == SecretUse::Required);
+    ensure!(
+        args.partial || holds_for.is_empty(),
+        "this bundle replaces the whole sealed one and lacks {}, without which the node holds at its next start: \
+         complete it, or pass --partial",
+        holds_for.join(", ")
+    );
     let mut peer = connect(cfg, &args.peer).await?;
     print_status(&peer);
     if let Some(sealed) = peer.status.sealed_version {
@@ -88,7 +101,6 @@ pub(super) async fn deliver(cfg: &NodeConfig, key: &SigningKey, args: &DeliverAr
             bundle.version
         );
     }
-    let missing = bundle.missing(&named);
     let signed = bundle.sign(peer.domain, key);
     let message = delivery::encrypt(peer.domain, &peer.release, &peer.public_key, &peer.nonce, &signed)?;
     send(&mut peer.stream, &message).await?;
@@ -98,7 +110,7 @@ pub(super) async fn deliver(cfg: &NodeConfig, key: &SigningKey, args: &DeliverAr
         .context("no receipt: the bundle may have been sealed, and a retry with the same version is safe")?;
     let (receipt, evidence) = match reply {
         Reply::Sealed { receipt, evidence } => (receipt, evidence),
-        Reply::Refused { reason } => bail!("the enclave refused the bundle: {reason}"),
+        Reply::Refused { reason } => bail!("the enclave refused the bundle: {}", shown(&reason)),
     };
     let bound = receipt_report_data(peer.domain, &peer.nonce, &message, &receipt);
     check_quote(peer.own, &evidence, &bound, &peer.manifest, peer.root.as_deref(), unix_now())
@@ -113,9 +125,12 @@ pub(super) async fn deliver(cfg: &NodeConfig, key: &SigningKey, args: &DeliverAr
     if receipt.already_sealed {
         println!("already sealed: this was a retry");
     }
-    if !receipt.missing.is_empty() {
-        let names: Vec<String> = receipt.missing.iter().map(ToString::to_string).collect();
-        println!("lacking: {}: these integrations stay off", names.join(", "));
+    if !holds_for.is_empty() {
+        println!("lacking, so the node holds at its next start: {}", holds_for.join(", "));
+    }
+    let off = lacking(&named, &receipt.missing, |usage| usage != SecretUse::Required);
+    if !off.is_empty() {
+        println!("lacking, so these integrations stay off: {}", off.join(", "));
     }
     if receipt.restart_required {
         println!("restart required: what runs keeps the secrets it started with until a restart");
@@ -129,6 +144,24 @@ pub(super) async fn deliver(cfg: &NodeConfig, key: &SigningKey, args: &DeliverAr
 pub(super) async fn status(cfg: &NodeConfig, args: &PeerArgs) -> anyhow::Result<()> {
     print_status(&connect(cfg, args).await?);
     Ok(())
+}
+
+/// The names in `missing` whose fields' use `applies` to, each once.
+fn lacking(named: &[NamedSecret], missing: &[SecretName], applies: impl Fn(SecretUse) -> bool) -> Vec<String> {
+    let mut names: Vec<String> = named
+        .iter()
+        .filter(|field| applies(field.usage) && missing.contains(&field.name))
+        .map(|field| field.name.to_string())
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// `text` from the connection, which the host can write to, as this prints it: bounded, with no
+/// control character that could rewrite what the operator's terminal shows.
+fn shown(text: &str) -> String {
+    text.chars().filter(|c| !c.is_control()).take(512).collect()
 }
 
 /// Prints an enclave's quoted status.
@@ -190,7 +223,7 @@ fn check_offer(
     ensure!(
         offer.config_sha256 == hex::encode(config_sha256),
         "the enclave runs config {}, not this config's {}",
-        offer.config_sha256,
+        shown(&offer.config_sha256),
         hex::encode(config_sha256)
     );
     ensure!(

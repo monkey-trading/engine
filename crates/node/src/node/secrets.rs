@@ -3,11 +3,16 @@
 //! has every secret it cannot safely run without. It sets what it has into the config and the alert
 //! routes, and leaves each integration whose secret it lacks off, under `secret_missing`. Nothing
 //! falls back to the environment or to a default: a field that names a secret reads only that.
+//! While it holds it takes only the key its attested config names: reading the vault can take a
+//! delivered key, so no log it could read a rotation from can be authenticated yet. A rotated
+//! operator keeps its old key until a release's config names the new one.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
+use tokio::sync::watch;
+use tokio::task::JoinSet;
 use tokio::time::{MissedTickBehavior, interval};
 use tracing::{error, info, warn};
 
@@ -28,6 +33,8 @@ pub(crate) struct Delivered {
     pub values: Values,
     /// The delivery listener, with `[tee.sealing.secrets]`, which the node runs as a supervised task.
     pub listener: Option<Listener>,
+    /// Sets who the listener takes deliveries from once the sequencer can say.
+    pub authority: Option<watch::Sender<Authority>>,
     /// The sealed bundle, which an approved upgrade takes.
     pub store: Option<Arc<SecretStore>>,
 }
@@ -72,9 +79,10 @@ pub(crate) async fn startup(
         );
     }
     let attestor = attestor_for(cfg.tee.provider);
-    let mut listener = Listener::bind(cfg, section.listen, platform, attestor, store.clone(), named.clone()).await?;
     let operator = cfg.operator()?.address;
-    let authority = Authority::Configured(operator);
+    let (authority, taking) = watch::channel(Authority::Configured(operator));
+    let listener =
+        Listener::bind(cfg, section.listen, platform, attestor, store.clone(), named.clone(), taking).await?;
     let predecessor = start.predecessor.as_deref();
     if let Some(address) = predecessor {
         take_from_predecessor(cfg, address, start, &store, operator, &named).await;
@@ -83,6 +91,7 @@ pub(crate) async fn startup(
     let mut retry = interval(PREDECESSOR_RETRY);
     retry.set_missed_tick_behavior(MissedTickBehavior::Delay);
     retry.tick().await;
+    let mut serving = JoinSet::new();
     let mut raised = false;
     while !lacks_required(&store, &named).is_empty() {
         if !raised {
@@ -90,10 +99,7 @@ pub(crate) async fn startup(
             raised = true;
         }
         tokio::select! {
-            accepted = listener.accept() => match accepted {
-                Ok((stream, peer)) => listener.serve_connection(stream, peer, &authority).await,
-                Err(e) => warn!("accepting a secrets delivery failed: {e}"),
-            },
+            () = listener.step(&mut serving) => {}
             _ = retry.tick(), if predecessor.is_some() => {
                 let address = predecessor.expect("the branch needs one");
                 take_from_predecessor(cfg, address, start, &store, operator, &named).await;
@@ -101,22 +107,29 @@ pub(crate) async fn startup(
         }
     }
 
+    // Whatever else is connected finishes on its own deadlines, its receipt included.
+    serving.detach_all();
+
     let values = store.current().map(|signed| signed.bundle.secrets).unwrap_or_default();
     cfg.deliver_urls(&values).context("setting the delivered keys")?;
-    if let Err(e) = telemetry.alerts.deliver_routes(&cfg.alerts, &values) {
-        error!(
-            alert = "secrets_unreadable",
+    match telemetry.alerts.deliver_routes(&cfg.alerts, &values) {
+        Ok(()) => info!(alert_resolved = "secret_unusable", "every delivered webhook URL is acceptable"),
+        Err(e) => error!(
+            alert = "secret_unusable",
             "a delivered webhook URL is not acceptable, so its route stays off: {e:#}"
-        );
+        ),
     }
     telemetry.pages_critical = telemetry.alerts.pages_critical();
     report_missing(&store, &named);
+    if store.unreadable().is_none() {
+        info!(alert_resolved = "secrets_unreadable", "this release's sealed secrets open");
+    }
     // A restart is what `secrets_restart_required` asks for.
     info!(alert_resolved = "secrets_restart_required", "this start runs the newest sealed secrets");
     let version = store.version();
     listener.started(version);
     info!(?version, delivered = values.len(), named = named.len(), "the delivered secrets are set");
-    Ok(Delivered { values, listener: Some(listener), store: Some(store) })
+    Ok(Delivered { values, listener: Some(listener), authority: Some(authority), store: Some(store) })
 }
 
 /// The required secrets `store` lacks, each once.

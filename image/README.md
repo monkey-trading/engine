@@ -312,9 +312,9 @@ therefore names its secrets, and the operator delivers them into the attested en
 `[tee.sealing.secrets]`'s listener with `engine admin deliver-secrets`, which checks the enclave's
 quote against this release's manifest first (`crates/node/README.md`, Delivered secrets). The
 guest's only environment is the measured kernel command line, so a production build refuses a secret
-read from an environment variable. The host forwards that listener's port as it does the API's; it
-carries only encrypted bundles. A first deployment holds on that listener until the operator
-delivers, before step one of the key lifecycle.
+read from an environment variable. The host forwards that listener's port only from the operator's
+addresses; it carries only encrypted bundles. A first deployment holds on that listener until the
+operator delivers, before step one of the key lifecycle.
 
 The commit time enters the kernel and every initramfs entry, so each release has its own launch
 digest, even one that changes only documentation: a verifier takes the digest from that release's
