@@ -247,8 +247,8 @@ this crate and reproduce the signed state roots exactly.
 - `src/session.rs` — weekly trading windows, holidays, dated closures such as early closes, and
   special sessions
 - `src/execution/batch.rs` and `src/execution/cancel.rs` — from `V44`, close-all and cancel-all: one
-  signed request closes whole positions through the single reduce-only market order's path, or cancels
-  every resting order
+  signed request closes whole positions through the single reduce-only market order's path (from
+  `V45` at most `Fixed::MAX_INPUT` units per entry), or cancels every resting order
 - `src/session_keys.rs` — from `V41`, session-key registrations and revocations: their state,
   expiry cap, the order/cancel-only scope a session key signs within, and from `V42` the refilling
   budget of new addresses an account may introduce
@@ -326,12 +326,15 @@ this crate and reproduce the signed state roots exactly.
 - `tests/batch_orders.rs` — `V44` batch orders: cancel-all and close-all events, the nonce, a replay,
   an empty, repeated or too long list, a flat or unlisted entry, expiry, screening, a session key,
   and the refusal before `V44`, with the shared harness in `tests/common/batch.rs`
+- `tests/batch_max_input.rs` — `V45`: a close-all of a long or short position past the quantity
+  input limit closes a piece of the limit per entry and leaves the rest in the fill's position; at
+  the limit it closes whole; `V44` still refuses it
 - `tests/batch_equivalence.rs` — property test: a close-all matches the same reduce-only orders sent
   one at a time, in events, balances, positions, market aggregates, and house cash
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V44` parts (`v15.rs` to `v44.rs`)
+  `V15` to `V45` parts (`v15.rs` to `v45.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -486,6 +489,14 @@ one nonce however many entries they hold, are authorised and screened once, and 
 either form within its trade scope. Before V44 both are refused with `BatchUnsupported`, using no
 nonce. Neither adds engine state, so V43 roots are unchanged. Its session is in
 `examples/reference_log/v44.rs`.
+
+Protocol V45 bounds a close-all entry's closing quantity at `Fixed::MAX_INPUT`. A position can
+grow past that limit through repeated fills, and the closing order takes its quantity from the
+position, so under V44 the order was refused as `qty out of range` and the position stayed open. From
+V45 each entry closes at most `Fixed::MAX_INPUT` units, as repeated single reduce-only orders of
+that size would, and the fill's `position` states what remains for the next request. A position
+within the limit closes whole as before, and V44 logs replay unchanged. Its session is in
+`examples/reference_log/v45.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

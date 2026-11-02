@@ -2,7 +2,7 @@
 //! `cancel`).
 //!
 //! Each close is the single reduce-only market order of the account's whole position in its
-//! market, run through the same validation and execution as one sent alone, so spreads, the
+//! market (from `V45` at most `Fixed::MAX_INPUT` units of it, the rest left open), run through the same validation and execution as one sent alone, so spreads, the
 //! close-spread ceiling, the profit fee, the emissions weight, stress and the house caps are that
 //! order's. The entries run in list order, each seeing the state the one before left, and a
 //! refused entry does not stop the rest. Authorisation and access screening run once, for the
@@ -95,12 +95,17 @@ impl Engine {
         max_slippage_bps: Option<i64>,
     ) -> OrderRequest {
         let held = self.accounts.get(&account).map_or(Fixed::ZERO, |acct| acct.position(entry.market).qty);
+        // From `V45` a position past the input bound closes in pieces of at most the bound, the
+        // way repeated single reduce-only orders would: the order stays a valid external input.
+        let closing = |qty: Fixed| {
+            if self.protocol_version >= ProtocolVersion::V45 { qty.min(Fixed::MAX_INPUT) } else { qty }
+        };
         let (side, qty) = if held.is_zero() {
             (Side::Sell, Fixed::from_raw(1))
         } else if held.is_positive() {
-            (Side::Sell, held)
+            (Side::Sell, closing(held))
         } else {
-            (Side::Buy, held.abs())
+            (Side::Buy, closing(held.abs()))
         };
         OrderRequest {
             account,

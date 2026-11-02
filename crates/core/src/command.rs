@@ -114,7 +114,8 @@ pub enum Command {
         auth: Option<RequestAuth>,
     },
     /// From `V44`, closes the account's whole position in each named market as one reduce-only
-    /// market order apiece, in list order, with the API's actual screening input as `AccessOrder`
+    /// market order apiece (from `V45` at most `Fixed::MAX_INPUT` units of a position), in list order,
+    /// with the API's actual screening input as `AccessOrder`
     /// has for an order. `V44` is screened throughout, so there is no unscreened form.
     AccessCloseAll {
         request: CloseAllRequest,
