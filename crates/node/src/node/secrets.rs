@@ -11,18 +11,25 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
+use engine_core::types::AccountId;
+use futures_util::future::BoxFuture;
 use tokio::sync::watch;
 use tokio::task::JoinSet;
-use tokio::time::{MissedTickBehavior, interval};
+use tokio::time::{Instant, Interval, MissedTickBehavior, interval_at, sleep};
 use tracing::{error, info, warn};
 
 use crate::config::{ApiKey, NamedSecret, NodeConfig, SecretUse, Values, VenueConnection};
-use crate::handover::fetch_secrets;
+use crate::handover::{SecretsRefused, fetch_secrets};
 use crate::node::keys::{KeyStart, attestor_for, sealer};
 use crate::secrets::{Authority, Listener};
 use crate::tee::secrets::{Replaced, SecretStore};
 use crate::telemetry::Telemetry;
 
+/// How often a failed start looks for a new bundle, and how long it leaves the receipt to go out.
+const NEW_BUNDLE_POLL: Duration = Duration::from_millis(500);
+/// How many failures to reach `--predecessor` a start with no required secret outstanding waits
+/// through before it goes on to take the keys without the bundle.
+const PREDECESSOR_ATTEMPTS: u32 = 3;
 /// How often a holding node asks `--predecessor` again.
 const PREDECESSOR_RETRY: Duration = if cfg!(test) { Duration::from_millis(50) } else { Duration::from_secs(30) };
 
@@ -41,6 +48,21 @@ pub(crate) struct Delivered {
     pub store: Option<Arc<SecretStore>>,
 }
 
+/// Moving the running release's secrets here on `--predecessor`.
+struct Moving<'a> {
+    cfg: &'a NodeConfig,
+    address: &'a str,
+    start: &'a KeyStart,
+    store: &'a SecretStore,
+    operator: AccountId,
+    named: &'a [NamedSecret],
+    retry: Interval,
+    attempt: Option<BoxFuture<'a, anyhow::Result<Replaced>>>,
+    failures: u32,
+    /// Whether the keys' handover may go on: see `unsettled`.
+    settled: bool,
+}
+
 impl Delivered {
     /// Whether `connection` names a key this start lacks, so it stays off.
     pub(crate) fn withholds(&self, connection: &VenueConnection) -> bool {
@@ -55,6 +77,29 @@ impl Delivered {
             Some(name) => Ok(self.values.get(name).map(ApiKey::delivered)),
             None => connection.api_key(|var| std::env::var(var).ok()),
         }
+    }
+}
+
+/// Waits until a new bundle is sealed, with a moment for its receipt to go out, or until `hold` has
+/// passed or the listener has stopped: the listener takes deliveries meanwhile, and the caller exits
+/// so the next start takes what it sealed.
+pub(crate) async fn wait_for_a_new_bundle(
+    delivered: &Delivered,
+    listening: &mut JoinSet<anyhow::Result<()>>,
+    hold: Duration,
+) {
+    let Some(store) = &delivered.store else { return };
+    let running = store.version();
+    let sealed = async {
+        while store.version() == running {
+            sleep(NEW_BUNDLE_POLL).await;
+        }
+        sleep(NEW_BUNDLE_POLL).await;
+    };
+    tokio::select! {
+        () = sealed => {}
+        () = sleep(hold) => {}
+        _ = listening.join_next() => {}
     }
 }
 
@@ -85,29 +130,28 @@ pub(crate) async fn startup(
     let (authority, taking) = watch::channel(Authority::Configured(operator));
     let listener =
         Listener::bind(cfg, section.listen, platform, attestor, store.clone(), named.clone(), taking).await?;
-    let predecessor = start.predecessor.as_deref();
-    if let Some(address) = predecessor {
-        take_from_predecessor(cfg, address, start, &store, operator, &named).await;
-    }
-
-    let mut retry = interval(PREDECESSOR_RETRY);
-    retry.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    retry.tick().await;
     let mut serving = JoinSet::new();
+    let mut moving =
+        start.predecessor.as_deref().map(|address| Moving::new(cfg, address, start, &store, operator, &named));
     let mut raised = false;
-    while !lacks_required(&store, &named).is_empty() {
-        if !raised {
+    loop {
+        let lacking = lacks_required(&store, &named);
+        if lacking.is_empty() && moving.as_ref().is_none_or(|moving| !moving.unsettled()) {
+            break;
+        }
+        if !raised && !lacking.is_empty() {
             report_missing(&store, &named);
             raised = true;
         }
-        tokio::select! {
-            () = listener.step(&mut serving) => {}
-            _ = retry.tick(), if predecessor.is_some() => {
-                let address = predecessor.expect("the branch needs one");
-                take_from_predecessor(cfg, address, start, &store, operator, &named).await;
-            }
+        match &mut moving {
+            Some(moving) => tokio::select! {
+                () = listener.step(&mut serving) => {}
+                () = moving.step(&lacking) => {}
+            },
+            None => listener.step(&mut serving).await,
         }
     }
+    drop(moving);
 
     let held = store.current_running(|version| listener.started(version));
     // Whatever else is connected finishes on its own deadlines, its receipt included.
@@ -162,28 +206,73 @@ fn report_missing(store: &SecretStore, named: &[NamedSecret]) {
     }
 }
 
-/// Asks the running release for its secrets and seals what it sends. A failure leaves the store as it
-/// was: the node goes on with what it has, and the operator can deliver instead.
-async fn take_from_predecessor(
-    cfg: &NodeConfig,
-    address: &str,
-    start: &KeyStart,
-    store: &SecretStore,
-    operator: engine_core::types::AccountId,
-    named: &[NamedSecret],
-) {
-    let attestor = attestor_for(cfg.tee.provider);
-    let taken = match sealer(cfg.tee.provider, start) {
-        Ok(sealer) => fetch_secrets(cfg, address, sealer.as_ref(), attestor.as_ref(), operator, named).await,
-        Err(e) => Err(e),
+impl<'a> Moving<'a> {
+    /// The first attempt to take the running release's secrets, from `address`.
+    fn new(
+        cfg: &'a NodeConfig,
+        address: &'a str,
+        start: &'a KeyStart,
+        store: &'a SecretStore,
+        operator: AccountId,
+        named: &'a [NamedSecret],
+    ) -> Self {
+        let mut retry = interval_at(Instant::now() + PREDECESSOR_RETRY, PREDECESSOR_RETRY);
+        retry.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let mut moving =
+            Self { cfg, address, start, store, operator, named, retry, attempt: None, failures: 0, settled: false };
+        moving.attempt = Some(moving.attempt());
+        moving
     }
-    .and_then(|signed| store.replace(signed));
-    match taken {
-        Ok(Replaced::Sealed) => {
-            info!(predecessor = address, version = ?store.version(), "sealed the running release's secrets")
+
+    /// Whether the keys' handover, which ends the release holding the bundle, must wait: until it has
+    /// moved the bundle or definitely will not, or a few failures have shown it cannot.
+    fn unsettled(&self) -> bool {
+        !self.settled
+    }
+
+    /// One attempt, as its own future, so the hold goes on taking deliveries while it runs. A hung
+    /// predecessor can take minutes.
+    fn attempt(&self) -> BoxFuture<'a, anyhow::Result<Replaced>> {
+        let (cfg, address, start, store, operator, named) =
+            (self.cfg, self.address, self.start, self.store, self.operator, self.named);
+        Box::pin(async move {
+            let attestor = attestor_for(cfg.tee.provider);
+            let sealer = sealer(cfg.tee.provider, start)?;
+            let signed = fetch_secrets(cfg, address, sealer.as_ref(), attestor.as_ref(), operator, named).await?;
+            store.replace(signed)
+        })
+    }
+
+    /// Runs the attempt in flight to its end and settles what it shows, or waits to start the next
+    /// while `lacking` shows a required secret still missing or the last one failed. Cancel-safe: the
+    /// attempt stays in `self` when the hold races this against a connection.
+    async fn step(&mut self, lacking: &[NamedSecret]) {
+        let Some(attempt) = &mut self.attempt else {
+            if self.settled && lacking.is_empty() {
+                return std::future::pending().await;
+            }
+            self.retry.tick().await;
+            self.attempt = Some(self.attempt());
+            return;
+        };
+        let outcome = attempt.await;
+        self.attempt = None;
+        let address = self.address;
+        match outcome {
+            Ok(Replaced::Sealed) => {
+                info!(predecessor = address, version = ?self.store.version(), "sealed the running release's secrets");
+                self.settled = true;
+            }
+            Ok(Replaced::AlreadySealed) => {
+                info!(predecessor = address, "the running release's secrets are already sealed");
+                self.settled = true;
+            }
+            Err(e) => {
+                warn!(predecessor = address, "taking the running release's secrets failed: {e:#}");
+                self.failures += 1;
+                self.settled |= e.downcast_ref::<SecretsRefused>().is_some() || self.failures >= PREDECESSOR_ATTEMPTS;
+            }
         }
-        Ok(Replaced::AlreadySealed) => info!(predecessor = address, "the running release's secrets are already sealed"),
-        Err(e) => warn!(predecessor = address, "taking the running release's secrets failed: {e:#}"),
     }
 }
 

@@ -4,12 +4,14 @@
 mod secrets;
 mod stop;
 mod successor;
+mod vault;
+use vault::{Rotation, Vault};
 
 use super::*;
 
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use anyhow::bail;
@@ -37,14 +39,6 @@ const OTHER_CONFIG: [u8; 32] = [0xc2; 32];
 /// The vault's generation of the successor's release once it names it.
 const GENERATION: u64 = 4;
 
-/// A vault that names `signer`, and the release `current` holds as its current one.
-struct Vault {
-    signer: AccountId,
-    current: Arc<Mutex<CurrentRelease>>,
-    /// Whether the registry has rotation on.
-    rotation: Arc<AtomicBool>,
-}
-
 /// A running predecessor, the node behind it, and the successor's config.
 struct Exchange {
     address: String,
@@ -64,37 +58,9 @@ struct Exchange {
     /// Whether the node behind the predecessor signs its checkpoints.
     signing: watch::Sender<bool>,
     /// The registry's rotation switch, as the predecessor reads it.
-    rotation: Arc<AtomicBool>,
+    rotation: Rotation,
     /// The delivered secrets the predecessor holds.
     secrets: Arc<SecretStore>,
-}
-
-impl CheckpointChain for Vault {
-    async fn state(&self, _view: View) -> anyhow::Result<VaultState> {
-        let zero = Fixed::ZERO;
-        Ok(VaultState {
-            height: 1,
-            signer: self.signer,
-            checkpoint: None,
-            balance: zero,
-            deposits: 0,
-            deposited: zero,
-            distributions_paid: zero,
-        })
-    }
-
-    async fn post(&self, _checkpoint: &Checkpoint) -> anyhow::Result<()> {
-        bail!("this vault takes no checkpoints")
-    }
-
-    async fn current_release(&self, at: &Observation) -> anyhow::Result<CurrentRelease> {
-        ensure!(at.view == View::Finalized, "the current release is read at finality");
-        Ok(*self.current.lock().unwrap())
-    }
-
-    async fn rotation_enabled(&self) -> anyhow::Result<bool> {
-        Ok(self.rotation.load(Ordering::SeqCst))
-    }
 }
 
 #[tokio::test]
@@ -274,7 +240,7 @@ impl Exchange {
         let (drain, drains) = mpsc::channel(1);
         let (signing, signing_rx) = watch::channel(true);
         let predecessor_log = scratch_dir(&format!("{name}-old-log"));
-        let rotation = Arc::new(AtomicBool::new(false));
+        let rotation = Rotation::default();
         let stand_in = Box::new(MockSealer { launch_digest: RELEASE });
         let secrets = Arc::new(SecretStore::open(&dir, stand_in, PREDECESSOR_CONFIG).unwrap());
         let predecessor = Predecessor {

@@ -11,6 +11,7 @@ use alloy::rpc::client::RpcClient;
 use alloy::rpc::types::TransactionRequest;
 use alloy::sol;
 use alloy::sol_types::SolCall;
+use alloy::transports::http::reqwest::redirect::Policy;
 use alloy::transports::http::reqwest::{Certificate, Client};
 use anyhow::{Context, anyhow, ensure};
 use engine_core::emissions::TokenUnits;
@@ -163,6 +164,8 @@ impl CheckpointRpc {
             // A provider can refuse a request without one, and the client sends none by default.
             .user_agent(concat!("engine-checkpoints/", env!("CARGO_PKG_VERSION")))
             .tls_certs_only(roots)
+            // A redirect would leave the origin the attested config fixes, carrying the key with it.
+            .redirect(Policy::none())
             .build()?;
         let client = RpcClient::new_http_with_client(http, cfg.rpc_url.expose()?);
         Ok(Self {
@@ -187,6 +190,20 @@ impl CheckpointRpc {
     /// - the client was constructed for read-only audit
     fn submissions(&self) -> anyhow::Result<&SubmissionStore> {
         self.submissions.as_ref().context("read-only checkpoint client cannot access posting reservations")
+    }
+
+    /// Whether the vault's registry has rotation on at `at`; a vault with no registry has none.
+    /// Error cases:
+    /// - an RPC call or decoding fails
+    async fn rotation_at(&self, at: BlockId) -> anyhow::Result<bool> {
+        let vault = Address::from(self.domain.vault.0);
+        let registry = registryCall::abi_decode_returns(&self.call(vault, registryCall {}.abi_encode(), at).await?)?;
+        if registry.is_zero() {
+            return Ok(false);
+        }
+        Ok(rotationEnabledCall::abi_decode_returns(
+            &self.call(registry, rotationEnabledCall {}.abi_encode(), at).await?,
+        )?)
     }
 
     /// Executes a read at one canonical block hash.
@@ -365,15 +382,16 @@ impl CheckpointChain for CheckpointRpc {
     /// Error cases:
     /// - an RPC call or decoding fails
     async fn rotation_enabled(&self) -> anyhow::Result<bool> {
-        let vault = Address::from(self.domain.vault.0);
-        let at = BlockId::latest();
-        let registry = registryCall::abi_decode_returns(&self.call(vault, registryCall {}.abi_encode(), at).await?)?;
-        if registry.is_zero() {
-            return Ok(false);
-        }
-        Ok(rotationEnabledCall::abi_decode_returns(
-            &self.call(registry, rotationEnabledCall {}.abi_encode(), at).await?,
-        )?)
+        self.rotation_at(BlockId::latest()).await
+    }
+
+    /// Reads the registry's rotation switch at the pinned block of a finalized observation.
+    /// Error cases:
+    /// - the observation is not finalized and pinned, or an RPC call or decoding fails
+    async fn rotation_enabled_at(&self, at: &Observation) -> anyhow::Result<bool> {
+        ensure!(at.view == View::Finalized, "the rotation switch requires a finalized observation");
+        let evidence = at.lifecycle.as_ref().context("the rotation switch requires a pinned canonical observation")?;
+        self.rotation_at(BlockId::hash_canonical(evidence.block_hash)).await
     }
 
     /// The handover source the vault's registry recorded when the election in effect was made.

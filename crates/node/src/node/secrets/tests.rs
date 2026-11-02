@@ -18,7 +18,7 @@ use crate::tee::secrets::file_for;
 use crate::trusted_time::tests::logs::Logs;
 
 /// How long a test waits for what must happen; a hold is checked over a shorter wait.
-const WAIT: Duration = Duration::from_secs(10);
+const WAIT: Duration = Duration::from_secs(30);
 const HOLDING: Duration = Duration::from_millis(300);
 
 fn start() -> KeyStart {
@@ -254,21 +254,33 @@ fn startable(name: &str) -> NodeConfig {
 }
 
 // A delivered chain key the provider refuses stops a start before anything can use it. The node must
-// not power off: the delivery that repairs it needs the listener, and a restart then takes it.
+// not power off at once: the delivery that repairs it needs the listener. Once it has one, or once
+// the hold has passed, it exits, and the next start takes what it sealed.
 #[tokio::test]
-async fn a_start_that_fails_with_a_chain_key_named_keeps_taking_deliveries() {
+async fn a_start_that_fails_with_a_chain_key_named_takes_a_delivery_and_exits() {
     let (logs, _guard) = Logs::capture();
     // With mock custody, reading `[checkpoints]` fails at once, as a refused key does.
     let cfg = startable("startup-failed");
     sealed_earlier(&cfg, full(1, "a"));
     let (address, tool) = (listen(&cfg), config("startup-failed-tool"));
-    let mut running = tokio::spawn(crate::node::run_with_cpu(cfg, telemetry(), None, start()));
+    let running = crate::node::run_with_cpu(cfg, telemetry(), None, start());
+    tokio::pin!(running);
     assert!(timeout(HOLDING, &mut running).await.is_err(), "the node stopped, and the listener with it");
     assert_eq!(logs.critical("secrets_start_failed"), 1);
 
     let Reply::Sealed { receipt, .. } = deliver(&tool, &address, full(2, "b")).await else { panic!("refused") };
     assert_eq!((receipt.version, receipt.restart_required), (2, true), "what it started with is what failed");
-    running.abort();
+    let outcome = timeout(WAIT, running).await.expect("it did not exit once it had its bundle");
+    assert!(outcome.is_err(), "the failed start's error is what it exits with");
+}
+
+// A transient failure with no delivery in sight must not keep the node down until someone stops it.
+#[tokio::test]
+async fn a_start_that_fails_with_a_chain_key_named_exits_after_its_hold() {
+    let cfg = startable("startup-failed-hold");
+    sealed_earlier(&cfg, full(1, "a"));
+    let outcome = timeout(WAIT, crate::node::run_with_cpu(cfg, telemetry(), None, start())).await;
+    assert!(outcome.expect("the node held past its bound").is_err());
 }
 
 // No delivered key can be at fault, so a failed start ends as it always has.

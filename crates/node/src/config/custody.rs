@@ -131,7 +131,7 @@ impl NodeConfig {
         }
         let (mut names, mut urls) = (BTreeSet::new(), BTreeSet::new());
         for provider in &evm.providers {
-            let url = provider.rpc_url.attested()?;
+            let url = provider.rpc_url.attested().context("custody.evm.providers.rpc_url")?;
             if provider.name.trim().is_empty() || !names.insert(&provider.name) || !urls.insert(url.clone()) {
                 bail!("custody.evm.providers requires non-empty unique names and distinct URLs");
             }

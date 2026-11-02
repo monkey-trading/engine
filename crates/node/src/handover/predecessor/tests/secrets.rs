@@ -71,7 +71,8 @@ async fn an_election_moves_the_keys_and_none_of_the_secrets() {
     let mut exchange = Exchange::start("secrets-election").await;
     exchange.make_upgrade_current();
     exchange.hold(full(3, "incumbents-own"), &operator_key());
-    exchange.rotation.store(true, Ordering::SeqCst);
+    exchange.rotation.latest.store(true, Ordering::SeqCst);
+    exchange.rotation.finalized.store(true, Ordering::SeqCst);
     let err = format!("{:#}", exchange.fetch(exchange.operator()).await.unwrap_err());
     assert!(err.contains("an elected operator brings its own secrets"), "{err}");
     assert!(exchange.drains.try_recv().is_err(), "the refusal stopped sequencing");
@@ -86,13 +87,76 @@ async fn an_election_moves_the_keys_and_none_of_the_secrets() {
     assert!(!sealed.contains("secrets"), "the key set has grown a place for secrets: {sealed}");
 }
 
+// Governance can throw the switch inside the finality window: the release was named at finality, so
+// the state there counts, and so does the newest, whichever way it was thrown.
 #[tokio::test]
-async fn a_release_with_no_secrets_says_so_and_a_failed_read_refuses() {
+async fn a_rotation_switch_on_at_either_block_moves_nothing() {
+    for (what, latest, finalized) in [("at finality", false, true), ("at the latest block", true, false)] {
+        let exchange = Exchange::start(&format!("secrets-switch-{latest}")).await;
+        exchange.make_upgrade_current();
+        exchange.hold(full(3, "a"), &operator_key());
+        exchange.rotation.latest.store(latest, Ordering::SeqCst);
+        exchange.rotation.finalized.store(finalized, Ordering::SeqCst);
+        let err = format!("{:#}", exchange.fetch(exchange.operator()).await.unwrap_err());
+        assert!(err.contains("an elected operator brings its own secrets"), "{what}: {err}");
+    }
+}
+
+// Not knowing whether this is an election sends nothing.
+#[tokio::test]
+async fn a_rotation_switch_that_cannot_be_read_moves_nothing() {
+    let exchange = Exchange::start("secrets-switch-unread").await;
+    exchange.make_upgrade_current();
+    exchange.hold(full(3, "a"), &operator_key());
+    exchange.rotation.fails.store(true, Ordering::SeqCst);
+    let err = format!("{:#}", exchange.fetch(exchange.operator()).await.unwrap_err());
+    assert!(err.contains("rotation switch") && err.contains("keeps its secrets"), "{err}");
+}
+
+#[tokio::test]
+async fn a_release_with_no_secrets_says_so() {
     let mut exchange = Exchange::start("secrets-none").await;
     exchange.make_upgrade_current();
     let err = format!("{:#}", exchange.fetch(exchange.operator()).await.unwrap_err());
     assert!(err.contains("holds no delivered secrets"), "{err}");
     assert!(exchange.drains.try_recv().is_err());
+}
+
+// A new release whose config names a chain key cannot go on without its bundle: it holds, asks again,
+// and takes it once the vault names its release.
+#[tokio::test]
+async fn a_holding_start_takes_the_bundle_once_the_vault_names_its_release() {
+    let exchange = Exchange::start("secrets-retry").await;
+    exchange.hold(full(3, "a"), &operator_key());
+    let (mut cfg, _) = successor_config("secrets-retry-holding");
+    cfg.checkpoints = Some(
+        toml::from_str(
+            "rpc_url = 'https://rpc.example/v2/{chain_key}'\nrelayer = '0x0000000000000000000000000000000000000001'\n\
+             retry_interval = '1s'\nrpc_timeout = '1s'",
+        )
+        .unwrap(),
+    );
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    cfg.tee.sealing.as_mut().unwrap().secrets = Some(toml::from_str(&format!("listen = '127.0.0.1:{port}'")).unwrap());
+    let start = crate::KeyStart {
+        predecessor: Some(exchange.address.clone()),
+        mock_launch_digest: Some(UPGRADE),
+        ..Default::default()
+    };
+    let mut starting = tokio::spawn(async move {
+        let metrics = Arc::new(crate::metrics::Metrics::new());
+        let (_, alerts) = crate::alerts::channel(crate::alerts::Routes::default(), metrics.clone());
+        let mut telemetry = crate::telemetry::Telemetry { metrics, alerts, pages_critical: false };
+        let delivered = crate::node::secrets::startup(&mut cfg, &mut telemetry, &start).await;
+        (cfg, delivered)
+    });
+    assert!(timeout(Duration::from_millis(300), &mut starting).await.is_err(), "it went on without its chain key");
+
+    exchange.make_upgrade_current();
+    let (cfg, delivered) = timeout(Duration::from_secs(10), starting).await.expect("it still holds").unwrap();
+    assert_eq!(delivered.unwrap().store.unwrap().version(), Some(3));
+    let rpc = cfg.checkpoints.as_ref().unwrap().rpc_url.expose().unwrap();
+    assert_eq!(rpc.path(), "/v2/FAKE-chain-a");
 }
 
 // What answers cannot be checked yet: the operator's signature is what the successor takes.

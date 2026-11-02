@@ -265,7 +265,9 @@ impl Deliveries {
         let signer = signed.signer(self.domain)?;
         // Read now, not at the hello: a connection can outlive the switch to the log's key.
         let authority = authority.borrow().clone();
-        ensure!(authority.admits(signer).await?, "the bundle is signed by {signer}, not the operator key in effect");
+        let admitted =
+            timeout(MESSAGE_TIMEOUT, authority.admits(signer)).await.context("the sequencer did not answer")??;
+        ensure!(admitted, "the bundle is signed by {signer}, not the operator key in effect");
         ensure!(
             self.provider == TeeProvider::Mock || !is_published_operator(signer)?,
             "the bundle is signed by a published test key"

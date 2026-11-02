@@ -172,6 +172,14 @@ pub(crate) trait CheckpointChain: Send + Sync {
         Ok(false)
     }
 
+    /// Whether the registry has rotation on at the already pinned finalized observation, the state the
+    /// vault's current release was read at. Error cases: the observation is not finalized and pinned,
+    /// or the chain cannot be read; a chain with no registry reads `false`.
+    async fn rotation_enabled_at(&self, at: &Observation) -> anyhow::Result<bool> {
+        let _ = at;
+        Ok(false)
+    }
+
     /// The handover source the vault's registry recorded when the election in effect was made: the
     /// operator it replaced and the handover endpoint its candidacy registered, which the elected
     /// successor connects to for the keys. Error cases: the chain cannot be read, or it reads no

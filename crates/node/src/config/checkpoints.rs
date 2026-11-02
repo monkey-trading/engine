@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use alloy::primitives::Address;
-use anyhow::ensure;
+use anyhow::{Context, ensure};
 use serde::Deserialize;
 
 use crate::config::{CustodyProvider, NodeConfig, SecretUrl, TeeProvider};
@@ -34,7 +34,7 @@ impl NodeConfig {
             return Ok(());
         };
         ensure!(self.custody.provider == CustodyProvider::Evm, "[checkpoints] requires EVM custody");
-        let url = cfg.rpc_url.attested()?;
+        let url = cfg.rpc_url.attested().context("checkpoints.rpc_url")?;
         ensure!(
             url.scheme() == "https" || matches!(url.host_str(), Some("127.0.0.1" | "[::1]")),
             "checkpoints.rpc_url must use HTTPS off-machine"

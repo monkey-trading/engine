@@ -50,6 +50,8 @@ use crate::tls::serve;
 use crate::{custody::Custody, metrics, monitor, trusted_time, verify::Relay};
 use preflight::{authorize, emission_preflight};
 
+/// How long a start that failed with a delivered key in play stays up for its repair.
+const FAILED_START_HOLD: Duration = if cfg!(test) { Duration::from_secs(5) } else { Duration::from_secs(300) };
 /// How long the sequencer gets to drain and checkpoint after a shutdown signal.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 const CHANNEL_CAPACITY: usize = 65_536;
@@ -73,9 +75,8 @@ pub(crate) async fn run_with_cpu(
     start: KeyStart,
 ) -> anyhow::Result<()> {
     // Alert lines queue until routing starts, once this has set any delivered webhook.
-    let mut delivered = secrets::startup(&mut cfg, &mut telemetry, &start)
-        .await
-        .inspect_err(|e| error!(alert = "secrets_startup_failed", "refusing to serve: {e:#}"))?;
+    let mut delivered =
+        secrets::startup(&mut cfg, &mut telemetry, &start).await.inspect_err(|e| error!("refusing to serve: {e:#}"))?;
     // Takes deliveries through everything below, however long the vault takes to name this key.
     let mut listening = JoinSet::new();
     if let Some(listener) = delivered.listener.take() {
@@ -87,23 +88,23 @@ pub(crate) async fn run_with_cpu(
     }
     cfg.alerts.outbox.check_disk_location(&cfg.node.log_dir)?;
     let mut routing = alerts.spawn(cfg.alerts.episode_quiet, &cfg.alerts.outbox).await?;
-    let mut serving = false;
+    let mut past_chain_reads = false;
     let outcome = tokio::select! {
-        outcome = serve_node(cfg, metrics, &mut routing, cpu, start, &delivered, &mut serving) => outcome,
+        outcome = serve_node(cfg, metrics, &mut routing, cpu, start, &delivered, &mut past_chain_reads) => outcome,
         Some(stopped) = listening.join_next() => Err(anyhow!("the delivery listener stopped: {stopped:?}")),
     };
     // A provider that refuses a delivered key stops a start before anything runs, and only a delivery
-    // can repair that, so this stays up for one; the guest powers off when the engine exits.
+    // can repair that, so this stays up long enough to take one before it exits to be started again.
     if let Err(e) = &outcome
-        && !serving
+        && !past_chain_reads
         && delivered.chain_keys
     {
         error!(
             alert = "secrets_start_failed",
-            "the node cannot start, and a delivered key may be why, so it serves only its delivery listener: deliver \
-             a bundle with a working key and restart it: {e:#}"
+            "the node cannot start, and a delivered key may be why, so it serves only its delivery listener for {FAILED_START_HOLD:?} \
+             before it exits: deliver a bundle with a working key, and the restart takes it: {e:#}"
         );
-        listening.join_next().await;
+        secrets::wait_for_a_new_bundle(&delivered, &mut listening, FAILED_START_HOLD).await;
     }
     routing.drain(SHUTDOWN_GRACE).await;
     outcome
@@ -122,8 +123,9 @@ pub(crate) async fn run_with_cpu(
 /// - the engine would reject a genesis command
 /// - with checkpoints configured, the vault's MONKEY cap cannot be read, or it was derived from
 ///   another emission period budget than the one the log records
-/// - any supervised task stops or panics, or the sequencer cannot drain in time, which `serving`,
-///   set once every task runs, tells from a start that never served
+/// - any supervised task stops or panics, or the sequencer cannot drain in time, which
+///   `past_chain_reads`, set once the sequencer takes the listener's queries, tells from a start a
+///   delivered key can have stopped
 async fn serve_node(
     cfg: NodeConfig,
     metrics: Arc<Metrics>,
@@ -131,7 +133,7 @@ async fn serve_node(
     cpu: Option<usize>,
     start: KeyStart,
     delivered: &secrets::Delivered,
-    serving: &mut bool,
+    past_chain_reads: &mut bool,
 ) -> anyhow::Result<()> {
     if let Some(vault) = crate::handover::vault_reader(&cfg)? {
         let on = vault.rotation_enabled().await?;
@@ -338,6 +340,8 @@ async fn serve_node(
         });
     }
 
+    *past_chain_reads = true;
+    info!(alert_resolved = "secrets_start_failed", "the node read the chain and recovered its log");
     if let Some(authority) = &delivered.authority {
         authority.send_replace(crate::secrets::Authority::Log {
             tx: tx.downgrade(),
@@ -453,9 +457,6 @@ async fn serve_node(
     tasks.spawn(async move { ("api", serve(listener, tls.acceptors, app, limits, api).await) });
     tasks.spawn(async move { ("rate limits", run_retain(retained).await) });
 
-    *serving = true;
-    info!(alert_resolved = "secrets_start_failed", "the node started");
-    info!(alert_resolved = "secrets_startup_failed", "the node started");
     let mut supervised = supervise(
         shutdown::Supervised {
             tasks,

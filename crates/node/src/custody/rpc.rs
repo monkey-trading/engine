@@ -18,6 +18,7 @@ use alloy::rpc::client::RpcClient;
 use alloy::rpc::types::{Block, Filter, Header, Log, TransactionRequest};
 use alloy::sol;
 use alloy::sol_types::{SolCall, SolEvent};
+use alloy::transports::http::reqwest::redirect::Policy;
 use alloy::transports::http::reqwest::{Certificate, Client};
 use anyhow::{Context, anyhow, bail, ensure};
 use engine_core::types::AccountId;
@@ -303,6 +304,8 @@ impl VaultRpc {
             // A provider can refuse a request without one, and the client sends none by default.
             .user_agent(concat!("engine-custody/", env!("CARGO_PKG_VERSION")))
             .tls_certs_only(roots)
+            // A redirect would leave the origin the attested config fixes, carrying the key with it.
+            .redirect(Policy::none())
             .build()
             .context("building the RPC client")?;
         let client = RpcClient::new_http_with_client(http, url);

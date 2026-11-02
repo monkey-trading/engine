@@ -405,7 +405,7 @@ fn authority_of(url: &Url) -> (&str, Option<&str>, Option<u16>, &str, Option<&st
 /// Error cases:
 /// - `text` is not a URL
 fn parse(text: &str) -> anyhow::Result<Url> {
-    Url::parse(text).map_err(|e| anyhow::anyhow!("custody.evm.providers.rpc_url: {e}"))
+    Url::parse(text).map_err(|e| anyhow::anyhow!("not a URL: {e}"))
 }
 
 #[cfg(test)]

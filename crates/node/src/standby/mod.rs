@@ -64,7 +64,7 @@ pub async fn run(mut cfg: NodeConfig, mut telemetry: Telemetry, start: crate::Ke
     // A standby needs its own chain access, and an elected operator brings its own secrets.
     let delivered = crate::node::secrets::startup(&mut cfg, &mut telemetry, &start)
         .await
-        .inspect_err(|e| error!(alert = "secrets_startup_failed", "refusing to serve: {e:#}"))?;
+        .inspect_err(|e| error!("refusing to serve: {e:#}"))?;
     let Telemetry { metrics: _, alerts, pages_critical } = telemetry;
     if !pages_critical {
         warn!("no alerts.critical webhook: Critical alerts are only logged");

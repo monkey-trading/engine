@@ -511,7 +511,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/secrets/bundle.rs` — the bundle, the operator's signature over it, and what a config can use
 - `src/secrets/delivery.rs` — the delivery's messages, what each quote binds, and the encryption
 - `src/secrets/listener.rs` — the enclave's side: an offer per connection, the operator key in effect,
-  and the seal; `src/secrets/tests.rs` runs it over loopback from the host's side
+  and the seal; `src/secrets/tests.rs` runs it over loopback from the host's side, and
+  `src/secrets/tests/leaks.rs` checks where a value must never go; `src/secrets/bundle/tests.rs` covers
+  what the signature binds and a file that does not parse
 - `src/handover/mod.rs` — the handover's messages, framing, report data, HPKE encryption of the keys,
   the vault's current release check that a start and a handover share, the registry's handover
   source an elected successor resolves the incumbent from, and the predecessor's published-log
@@ -527,7 +529,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/handover/secrets.rs` — the new release's side of moving the delivered secrets with an
   approved upgrade, checked by the operator's signature; `src/handover/predecessor/secrets.rs` is
   the running release's, which refuses an election's successor; `src/handover/predecessor/tests/`'s
-  `secrets.rs` covers both
+  `secrets.rs` covers both, against the switch in its `vault.rs`
 - `src/handover/tests.rs` — what each step binds, the encryption, the framing, and the evidence
 - `src/verify/mod.rs` — attestation verification for the CLI and replay: loading or fetching the
   attestation, release manifest, and collateral, `engine-verify` on the system clock, and the
@@ -726,6 +728,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/tests/staking/registry.rs` — registry events mirrored once with the stakes, a refused one stalling the mirror, and the staking contract's deployer checked against the configured registry
 - `src/api/house_state.rs` — `GET /v1/house/state`: the parameters with the seq that set them, and the latest checkpoint
 - `src/api/operator.rs` — `GET /v1/operator`: the key in effect, its pending rotation, whether rotation is on, and the last election
+- `src/api/admin_tests/delivery_authority.rs` — who a running node takes deliveries from: the key in
+  effect by trusted time, and a named successor's own
 - `src/api/admin_tests/election.rs` — the operator route and the admin route after an election, published keys included
 - `src/custody/staking.rs` — mirroring the staking contract's finalised events into `Stake`/`Unstake`
   commands once each, holding them until `InitStaking` has applied; V27 completed ranges, including
@@ -759,6 +763,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/tests/quorum.rs` — fabrication, disagreement, lag, outages, and quorum recovery
 - `src/custody/tests/quorum_diagnostics.rs` — malformed header exclusion, transport independence, and retained watchdog progress
 - `src/custody/tests/rpc.rs` — the RPC adapter's log decoding, deadlines, and URL scrubbing
+- `src/custody/tests/rpc/redaction.rs` — a key a provider's refusal echoes stays out of the error
 - `src/custody/tests/user_agent.rs` — the RPC adapter's JSON-RPC requests carry the engine's User-Agent
 - `src/custody/tests/confirmed.rs` — confirmed collateral and finality over the real quorum and sequencer
 - `src/custody/tests/confirmed/scan.rs` — empty-window progress during finality stalls, canonical hint invalidation and restart
@@ -2170,10 +2175,11 @@ would choose the secret.
   supplies them, then goes on starting, with no restart. Without a vendor's key that connection stays
   off and the markets it alone prices go unpriced (`market_no_price`). Without a webhook's URL that
   route stays off, its alerts are only logged, and any pages waiting for it stay in the outbox.
-- **A key a provider refuses.** A start that fails while the config names a chain or screening key does
-  not power the guest off, since a delivered key may be why and only a delivery can repair it. It serves
-  only the delivery listener under `secrets_start_failed` (Critical), and takes a bundle with a working
-  key for the restart that follows.
+- **A key a provider refuses.** A start that fails before the sequencer runs, while the config names a
+  chain or screening key, does not power the guest off at once, since a delivered key may be why and
+  only a delivery can repair it. It serves only the delivery listener under `secrets_start_failed`
+  (Critical) for up to five minutes, then exits, or exits as soon as a new bundle is sealed, so the
+  next start takes it. A start that fails for any other reason in that window also waits it out.
 - **A rotation.** Deliver a higher `version`, holding every secret: a bundle replaces the whole sealed
   one, so the tool refuses one lacking what the node holds for unless given `--partial`. The enclave
   seals it at once, but what runs keeps the clients it built when it started, so the receipt says
@@ -2186,9 +2192,11 @@ would choose the secret.
   sends the bundle encrypted to its one-time key, with no stop; the keys follow in their own handover.
   The new release cannot yet read the vault to check who answered, so it takes a bundle only under the
   signature of the operator its own config names; a bundle signed before a rotation is refused, and the
-  operator delivers again. It keeps what its config reads.
+  operator delivers again. It keeps what its config reads. Since the keys' handover ends the release
+  holding the bundle, the new release waits for an answer first, through a few failures to reach it.
 - **An election.** No secret moves. While the registry has rotation on, the vault's release changes
-  only by election or promotion, and the running release refuses: the keys go to the elected enclave,
+  only by election or promotion, and the running release refuses, reading the switch at the finalized
+  block that named the release and at the latest one: the keys go to the elected enclave,
   but its vendor accounts and provider keys are its own, delivered under its own key before or after
   it takes over. A standby holds its own bundle the same way.
 - **What the host can do.** It carries the connection and holds the file. It can delay or drop a
@@ -2198,7 +2206,10 @@ would choose the secret.
   or a receipt. Restoring an older sealed file gives the older bundle, which nothing on the disk can
   tell from the newest: its URLs have the same attested origins, so it can hold only an older key for
   the same provider, which a rotation for cause has revoked, or an older webhook. `secrets-status`
-  shows the version the enclave holds, under its quote, and a higher delivery repairs it.
+  shows the version the enclave holds, under its quote, and a higher delivery repairs it. A Databento
+  key is the exception to what the host's network can touch: that gateway has no TLS, and its login
+  answers a challenge in the clear with the key's last five characters and a digest, so a host can
+  relay a login of its own under the operator's account without learning the key.
 - **Where a value goes.** Nowhere but the enclave's memory, the seal, and the connection it
   authenticates. `Debug` and `Display` redact it, errors name a secret and never its value, the crates
   that see a credential on its way out log only at `warn` or above whatever `logging.level` says, and
