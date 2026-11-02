@@ -256,4 +256,7 @@ fn a_position_past_the_input_bound_is_quoted_to_close_at_the_bound() {
     }
     let close = read(&engine, MARGIN, BTC).close.expect("a close is quoted for a position past the bound");
     assert_eq!((close.side, close.qty), (Side::Sell, Fixed::MAX_INPUT));
+    // The closing side is quoted up to the bound too, not left empty: an order of that size fills.
+    let quote = read(&engine, MARGIN, BTC);
+    assert_eq!(quote.bid.last().map(|step| step.qty), Some(Fixed::MAX_INPUT), "{quote:?}");
 }

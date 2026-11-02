@@ -71,7 +71,8 @@ pub(super) async fn cancel_all(State(s): State<ApiState>, Json(b): Json<CancelAl
 }
 
 /// Closes the account's whole position in each market the request names (from `V45` at most
-/// `Fixed::MAX_INPUT` units of it), on one signature, one nonce, and one screening; the request counts once against the rate limits.
+/// `Fixed::MAX_INPUT` units of it), on one signature, one nonce, and one screening; the request
+/// counts once against the rate limits.
 /// Error cases:
 /// - the request names more markets than are listed
 /// - the request is not authorised for its account

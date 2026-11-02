@@ -51,7 +51,8 @@ pub(super) struct Step {
     pub declined: Option<Reject>,
 }
 
-/// The price of closing the account's whole position, a `qty` order on `side`.
+/// The price of closing the account's position, a `qty` order on `side`: all of it, or
+/// `Fixed::MAX_INPUT` units of a larger one.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub(super) struct Close {
     pub side: Side,
@@ -146,8 +147,10 @@ fn steps(quoter: &Quoter, account: AccountId, market: MarketId, side: Side, held
     });
     let mut steps: Vec<Step> = Vec::new();
     // The largest size known to fill, which includes closing what the account holds on the other
-    // side, and whether a tier's top is declined.
-    let (mut known, mut declined) = (if same_side { Fixed::ZERO } else { held.qty.abs() }, false);
+    // side (at most the input bound, past which no order is placeable), and whether a tier's top is
+    // declined.
+    let closing = held.qty.abs().min(Fixed::MAX_INPUT);
+    let (mut known, mut declined) = (if same_side { Fixed::ZERO } else { closing }, false);
     for qty in orders {
         let Some(priced) = quote(qty) else { continue };
         if priced.declined.is_none() {

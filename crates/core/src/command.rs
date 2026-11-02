@@ -114,9 +114,8 @@ pub enum Command {
         auth: Option<RequestAuth>,
     },
     /// From `V44`, closes the account's whole position in each named market as one reduce-only
-    /// market order apiece (from `V45` at most `Fixed::MAX_INPUT` units of a position), in list order,
-    /// with the API's actual screening input as `AccessOrder`
-    /// has for an order. `V44` is screened throughout, so there is no unscreened form.
+    /// market order apiece (from `V45` at most `Fixed::MAX_INPUT` units of a position), in list
+    /// order, with the API's actual screening input as `AccessOrder` has for an order. `V44` is screened throughout, so there is no unscreened form.
     AccessCloseAll {
         request: CloseAllRequest,
         evidence: AccessEvidence,
@@ -331,10 +330,9 @@ pub struct CloseEntry {
 
 /// A client's request to close its positions in `closes`, as it signs and posts it. Each entry runs
 /// as a reduce-only market order of the account's whole position in that market (from `V45` at
-/// most `Fixed::MAX_INPUT` units of it), with `quoted`
-/// and `max_slippage_bps` as a single market order's, and the entry's list index as its
-/// `client_id`, so a rejection names the entry it refused. A refusal of the whole request is a lone
-/// rejection with `client_id` 0.
+/// most `Fixed::MAX_INPUT` units of it), with `quoted` and `max_slippage_bps` as a single market
+/// order's, and the entry's list index as its `client_id`, so a rejection names the entry it
+/// refused. A refusal of the whole request is a lone rejection with `client_id` 0.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CloseAllRequest {
