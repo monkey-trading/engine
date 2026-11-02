@@ -8,7 +8,7 @@ use std::path::Path;
 
 use axum::body::{Body, Bytes, to_bytes};
 use axum::extract::connect_info::MockConnectInfo;
-use axum::http::header::{ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS, ORIGIN};
+use axum::http::header::{ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS, CACHE_CONTROL, ORIGIN};
 use axum::http::{HeaderMap, Request as HttpRequest};
 use engine_wire::{
     CHALLENGE_HEADER, Connection, Deployment, Error, SEQ_HEADER, SIGNATURE_HEADER, SignedFrame, TIME_HEADER,
@@ -38,6 +38,7 @@ async fn a_read_is_signed_over_its_request_challenge_time_and_log_head() {
     let (status, headers, body) = call(&app, "GET", target, Some(CHALLENGE), Body::empty()).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(headers[CHALLENGE_HEADER], CHALLENGE);
+    assert_eq!(headers[CACHE_CONTROL], "no-store");
     assert_eq!(headers[TIME_HEADER], NOW.to_string());
     let head = node.manifest.borrow().flushed.expect("genesis is in the log").seq;
     assert_eq!(headers[SEQ_HEADER], head.to_string());
@@ -139,6 +140,7 @@ async fn error_responses_from_handlers_and_the_router_are_signed() {
         assert_eq!(status, expected, "{method} {target}");
         let verified = verify((method, target, b""), parse(CHALLENGE), status, &headers, &sent);
         assert_eq!(verified, Ok(()), "{method} {target}");
+        assert_eq!(headers[CACHE_CONTROL], "no-store", "{method} {target}");
     }
 }
 
@@ -200,6 +202,7 @@ async fn a_listed_origin_can_read_a_signed_answer_and_gets_its_preflight_unsigne
         assert!(exposed.split(", ").any(|exposed| exposed == name), "{name} is not exposed: {exposed}");
     }
     assert_eq!(verify(("GET", "/v1/markets", b""), parse(CHALLENGE), status, &headers, &body), Ok(()));
+    assert_eq!(headers[CACHE_CONTROL], "no-store");
 
     let preflight = send("OPTIONS", Some(("access-control-request-method", "GET"))).await.unwrap();
     assert_eq!(preflight.status(), StatusCode::NO_CONTENT);
@@ -224,6 +227,7 @@ async fn an_answer_is_signed_at_the_host_clock_only_while_trusted_time_bounds_it
             for name in [SIGNATURE_HEADER, TIME_HEADER, SEQ_HEADER, CHALLENGE_HEADER] {
                 assert!(!headers.contains_key(name), "{when}: {target} carries {name}");
             }
+            assert_eq!(headers[CACHE_CONTROL], "no-store", "{when}: {target}");
         }
     };
     let signed_at = async |ms: Millis| {

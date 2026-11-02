@@ -1271,7 +1271,9 @@ answered under 32 zero bytes, and a malformed one gets an unsigned 400. The resp
 `X-Engine-Signature` (65-byte recoverable secp256k1, `0x` hex), `X-Engine-Time` (the host clock in
 milliseconds, within `time.max_drift` of trusted time), `X-Engine-Seq` (the seq of the last log
 entry the node had flushed when it answered; 0 before the first), and `X-Engine-Challenge` (echoed
-in lowercase). The signature covers
+in lowercase). Every answer on these routes also carries `Cache-Control: no-store`, which the
+signature does not cover, so no browser or proxy keeps an answer bound to one request's challenge.
+The signature covers
 `keccak256("engine.response.v1" ‖ chain_id (u64 BE) ‖ vault (20 bytes) ‖ challenge (32) ‖ time (u64
 BE) ‖ seq (u64 BE) ‖ status (u16 BE) ‖ sha256(method ‖ 0x00 ‖ path and query) ‖ sha256(request
 body) ‖ sha256(response body as sent))`, for the custody chain id and vault in the config; a `HEAD`
