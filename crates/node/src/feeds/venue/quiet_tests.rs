@@ -71,6 +71,75 @@ async fn a_repeat_is_held_for_half_the_markets_max_age_when_that_is_shorter_than
 }
 
 #[tokio::test]
+async fn a_repeat_is_released_before_its_delay_bound_runs_out() {
+    let (mut feed, mut rx) = feed_with_rules(true);
+    let max_delay = Duration::from_millis(1_200);
+    feed.timing.max_delay = max_delay;
+    // The newest answered ping is 900ms old, none answered since: a quote read now stops counting
+    // 300ms from now, before the refresh of one held now falls due 500ms after it was sequenced.
+    let mut probe = DelayProbe::default();
+    let payload = probe.sent(Instant::now() - Duration::from_millis(900));
+    probe.answered(&payload);
+    feed.delay = Some(probe);
+    let mut buffered = BTreeMap::from([(SYMBOL.to_owned(), Pending::default())]);
+
+    // The first quote goes at once, as a repeat never waits on it.
+    let first = at(100, now_ms() - 10);
+    buffered.get_mut(SYMBOL).unwrap().add(first.clone(), now_ms()).unwrap();
+    note(feed.delay.as_mut().expect("pings"), &first, max_delay);
+    assert_eq!(feed.emit(&mut buffered, &mut BTreeMap::new()).await.unwrap(), None);
+    assert!(sequenced(&mut rx).is_some());
+
+    // The same mid again: held, but the bound noted when it was read runs out before the refresh
+    // falls due, so the timer is set inside the bound less the send margin, not at the refresh.
+    let second = at(100, now_ms());
+    buffered.get_mut(SYMBOL).unwrap().add(second.clone(), now_ms()).unwrap();
+    note(feed.delay.as_mut().expect("pings"), &second, max_delay);
+    let before = Instant::now();
+    let wake = feed.emit(&mut buffered, &mut BTreeMap::new()).await.unwrap().expect("a timer for the repeat");
+    assert!(sequenced(&mut rx).is_none(), "the repeat waits");
+    let wait = wake - before;
+    assert!(wait > Duration::from_millis(100) && wait <= Duration::from_millis(300), "{wait:?}");
+
+    // Released there, the repeat sequences inside its bound instead of dropping as past it.
+    tokio::time::sleep_until(wake).await;
+    assert!(feed.emit(&mut buffered, &mut BTreeMap::new()).await.unwrap().is_none());
+    let (quote, bound) = sequenced_with_bound(&mut rx).expect("the repeat sequences");
+    assert_eq!(quote.mid, second.mid);
+    assert!(bound.is_some(), "the repeat carries the bound it was read with");
+    assert!(feed.emit(&mut buffered, &mut BTreeMap::new()).await.unwrap().is_none());
+    assert!(sequenced(&mut rx).is_none());
+}
+
+#[tokio::test]
+async fn a_repeat_within_the_send_margin_of_its_bound_goes_at_once() {
+    let (mut feed, mut rx) = feed_with_rules(true);
+    let max_delay = Duration::from_millis(1_200);
+    feed.timing.max_delay = max_delay;
+    // The newest answered ping is 1.1s old: a quote read now stops counting in 100ms, at the send
+    // margin, so one held for its refresh would reach the sequencer only past its bound.
+    let mut probe = DelayProbe::default();
+    let payload = probe.sent(Instant::now() - Duration::from_millis(1_100));
+    probe.answered(&payload);
+    feed.delay = Some(probe);
+    let mut buffered = BTreeMap::from([(SYMBOL.to_owned(), Pending::default())]);
+
+    let first = at(100, now_ms() - 10);
+    buffered.get_mut(SYMBOL).unwrap().add(first.clone(), now_ms()).unwrap();
+    note(feed.delay.as_mut().expect("pings"), &first, max_delay);
+    feed.emit(&mut buffered, &mut BTreeMap::new()).await.unwrap();
+    assert!(sequenced(&mut rx).is_some());
+
+    let second = at(100, now_ms());
+    buffered.get_mut(SYMBOL).unwrap().add(second.clone(), now_ms()).unwrap();
+    note(feed.delay.as_mut().expect("pings"), &second, max_delay);
+    assert_eq!(feed.emit(&mut buffered, &mut BTreeMap::new()).await.unwrap(), None);
+    let (quote, bound) = sequenced_with_bound(&mut rx).expect("the repeat goes at once");
+    assert_eq!(quote.mid, second.mid);
+    assert!(bound.is_some(), "it still carries the bound it was read with");
+}
+
+#[tokio::test]
 async fn a_quote_the_engine_does_not_hold_is_forgotten_so_the_next_goes_at_once() {
     use crate::feeds::venue::confirm::Confirmation;
     let (mut feed, mut rx) = feed_with_rules(true);
@@ -260,11 +329,23 @@ async fn emit_one(feed: &mut VenueFeed, quote: SourceQuote) -> Option<Instant> {
 }
 
 fn sequenced(rx: &mut mpsc::Receiver<Request>) -> Option<SourceQuote> {
+    sequenced_with_bound(rx).map(|(quote, _)| quote)
+}
+
+/// The next sequenced quote and the delay bound it carries, if one went.
+fn sequenced_with_bound(rx: &mut mpsc::Receiver<Request>) -> Option<(SourceQuote, Option<std::time::Instant>)> {
     match rx.try_recv() {
-        Ok(Request::Quote { cmd: Command::Prices { mut quotes, .. }, .. }) => quotes.pop(),
+        Ok(Request::Quote { cmd: Command::Prices { mut quotes, .. }, not_after }) => {
+            quotes.pop().map(|quote| (quote, not_after))
+        }
         Ok(_) => panic!("expected a price command"),
         Err(_) => None,
     }
+}
+
+/// Notes the delay bound `receive` notes for `quote`, as if it had just been read off the wire.
+fn note(probe: &mut DelayProbe, quote: &SourceQuote, max_delay: Duration) {
+    probe.note_read(SYMBOL, quote.ts, max_delay);
 }
 
 /// A pseudo-random sequence, so every run replays the same venues.

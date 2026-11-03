@@ -73,6 +73,13 @@ impl DelayProbe {
         }
     }
 
+    /// When the bound on the age of `symbol`'s quote stamped `ts` runs out, if one is noted, read
+    /// without forgetting it: a quote held for its refresh still carries the bound when it goes.
+    /// A quote with none noted is not, unlike `take_not_after`'s, already past one.
+    pub(super) fn peek_not_after(&self, symbol: &str, ts: Millis) -> Option<std::time::Instant> {
+        self.not_after.get(symbol).and_then(|noted| noted.get(&ts).copied())
+    }
+
     /// When the bound on the age of `symbol`'s quote stamped `ts`, taken to sequence, runs out,
     /// forgetting it and any older. A quote with none noted, which a host clock stepping back can
     /// leave waiting behind one taken since, is already past it.
