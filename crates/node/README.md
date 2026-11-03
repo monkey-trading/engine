@@ -2228,8 +2228,8 @@ Watches share the API subscriber cap, wait within the node-call timeout, and ref
 A recovered log with a rollover schedule must already record client auth, the operator, and toxicity
 notional weighting. Publisher synchronization refuses older logs missing those activation prerequisites
 before writing any command; migrate such logs separately before configuring the publisher worker.
-The public `GET /v1/benchmarks` returns the next rollover, the retained rate history, and any undated
-rate the cap measures from, so the worker
+The public `GET /v1/benchmarks` returns the next rollover, the retained rate history, any undated rate
+the cap measures from, and the protocol version in force, so the worker
 fetches histories covering downtime before a missed rollover is charged. A restart regenerates the
 TLS key: verify its attestation and restart the worker with the new pin before sequencing resumes.
 

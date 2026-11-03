@@ -151,6 +151,7 @@ impl Engine {
             }
         }
         self.now = target;
+        self.lapse_stress_floors(events);
         Some(false)
     }
 }

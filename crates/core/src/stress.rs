@@ -200,9 +200,10 @@ impl Engine {
     }
 
     /// From `V46`: drops each floor whose `STRESS_FLOOR_LAPSE_MS` has run by the engine's time, leaving
-    /// the automatic level. It runs at each boundary a catch-up walks and before the command acts, so
-    /// a boundary before the lapse is priced with the floor. The bound on the work is the listed
-    /// markets, which `refresh_all_stress` walks for every command anyway.
+    /// the automatic level. The corporate timeline runs it at each boundary it walks and at the
+    /// command's own time, before the command acts, so a boundary before the lapse is priced with the
+    /// floor. The bound on the work is the listed markets, which `refresh_all_stress` walks for every
+    /// command anyway.
     pub(crate) fn lapse_stress_floors(&mut self, events: &mut Vec<Event>) {
         if self.protocol_version < ProtocolVersion::V46 {
             return;

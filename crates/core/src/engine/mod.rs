@@ -300,8 +300,6 @@ impl Engine {
                 return Ok(events);
             };
             corporate_margin = margin;
-            // From `V46` a floor whose 72 hours have run lapses before the command acts.
-            self.lapse_stress_floors(&mut events);
         }
         // From `V12`, a price command's quotes are stored first, then every market is brought to the
         // sequenced time, so no fill or check, a rollover's included, acts on an index the market

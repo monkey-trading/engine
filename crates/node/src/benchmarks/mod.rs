@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, ensure};
 use chrono::NaiveDate;
-use engine_core::benchmark::{BenchmarkBatch, BenchmarkRate, BenchmarkState, MAX_BENCHMARK_RATES, split_by_cap};
+use engine_core::benchmark::{BenchmarkBatch, BenchmarkRate, BenchmarkState, MAX_BENCHMARK_RATES};
 use reqwest::{Client, Url};
 use rustls::{ClientConfig, RootCertStore};
 use tracing::{Instrument, info, info_span, warn};
@@ -92,7 +92,7 @@ fn within_cap(
     observations: Vec<BenchmarkRate>,
 ) -> Vec<BenchmarkRate> {
     let benchmark = source.publisher.benchmark();
-    let (admitted, refused) = split_by_cap(&state.history, &state.undated, &observations);
+    let (admitted, refused) = state.split_by_cap(&observations);
     if refused.is_empty() {
         info!(alert_resolved = "benchmark_rate_refused", benchmark, "publisher history is within the cap");
     } else {

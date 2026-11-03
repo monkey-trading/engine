@@ -292,6 +292,9 @@ pub struct BenchmarkState {
     /// Each benchmark's undated rate, in bps a year, which the V46 cap measures a first dated rate from.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub undated: BTreeMap<String, i64>,
+    /// The rules in force, which say whether the V46 cap applies.
+    #[serde(default)]
+    pub protocol_version: ProtocolVersion,
 }
 
 impl Engine {
@@ -303,11 +306,20 @@ impl Engine {
             required: self.markets.values().map(|m| m.spec.financing.benchmark.clone()).collect(),
             history: self.benchmark_history.clone(),
             undated: self.benchmarks.clone(),
+            protocol_version: self.protocol_version,
         }
     }
 }
 
 impl BenchmarkState {
+    /// `rates` as the rules in force split them: before V46 the cap refuses nothing.
+    pub fn split_by_cap(&self, rates: &[BenchmarkRate]) -> (Vec<BenchmarkRate>, Vec<RefusedBenchmarkRate>) {
+        if self.protocol_version < ProtocolVersion::V46 {
+            return (rates.to_vec(), Vec::new());
+        }
+        split_by_cap(&self.history, &self.undated, rates)
+    }
+
     /// The rollover-local date at `ts`.
     pub fn date_at(&self, ts: Millis) -> NaiveDate {
         let utc = DateTime::from_timestamp_millis(ts).expect("timestamps fit chrono");
