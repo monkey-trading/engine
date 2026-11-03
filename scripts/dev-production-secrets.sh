@@ -129,10 +129,10 @@ wait_listening() {
   fail "the delivery listener did not come up"
 }
 
-# `engine admin`, on `$config`, keeping what it prints.
+# `engine admin`, on `$config`, keeping what it prints, with no backtrace under the error it ends on.
 admin() {
   # shellcheck disable=SC2086 # admin_flags is empty or one flag.
-  "$engine" admin --config "${config:-$work/node.toml}" --key-file "${key_file:-$work/operator/operator.key}" \
+  RUST_BACKTRACE=0 RUST_LIB_BACKTRACE=0 "$engine" admin --config "${config:-$work/node.toml}" --key-file "${key_file:-$work/operator/operator.key}" \
     ${admin_flags:-} "$@" >>"$work/tool.log" 2>&1
 }
 deliver() { admin deliver-secrets --to "127.0.0.1:$listen_port" --release "${release:-$work/operator/release.toml}" --secrets-file "$1" --allow-mock; }
