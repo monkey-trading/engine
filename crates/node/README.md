@@ -551,6 +551,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/limits/tests.rs` — the limiters' buckets, caps, and alert throttle
 - `src/config/mod.rs` — the node config schema, loading, and the config file's hash
 - `src/config/stats.rs` — the `[stats]` section: retention, activity length, position-map buckets
+- `src/config/api.rs` — the `[api]` section: connection and rate limits, timeouts, the quote, heartbeat and
+  stats scan intervals, origins, TLS and the proxy protocol
 - `src/config/api_defaults.rs` — defaults of the `[api]` keys with a default
 - `src/config/benchmarks.rs` — publisher endpoints, cadence, timeout, and catalogue coverage
 - `src/config/collateral.rs` — the `[tee]` keys of the attestation collateral relay and their bounds
@@ -564,7 +566,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/config/telemetry.rs` — the metrics listener and alert webhook config, and the redacting
   `WebhookUrl`
 - `src/config/tests.rs` — config loading and validation tests
-- `src/config/api_tests.rs` — the `[api]` heartbeat and quote intervals' defaults and minimums
+- `src/config/api_tests.rs` — the `[api]` heartbeat, quote and stats scan intervals' defaults and minimums
 - `src/config/mock_key_tests.rs` — published mock-only signer opt-in and hardware refusal regressions
 - `src/config/custody_tests.rs` — independent provider configuration checks
 - `src/config/production_tests.rs` — the config file's hash, and a production build's refusal of
