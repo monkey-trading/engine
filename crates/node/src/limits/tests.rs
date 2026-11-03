@@ -76,7 +76,9 @@ fn a_paid_declaration_takes_nothing_from_the_unpaid_budgets_and_is_held_to_its_a
     for _ in 0..2 {
         limits.check_paid_declaration(paid, client(1)).unwrap();
     }
-    assert!(matches!(limits.check_paid_declaration(paid, client(1)), Err(ApiError::SetupLimited(_))), "per account");
+    // The account's bucket is out: its next attempt comes from a fresh client, with the paid
+    // budget still holding, so only the account's rate can refuse it.
+    assert!(matches!(limits.check_paid_declaration(paid, client(3)), Err(ApiError::SetupLimited(_))), "per account");
     assert!(limits.paid_declarations_full.due(Instant::now()), "an account's own refusal is not the paid budget's");
     // Another account from the same client has its own bucket, but the client's paid share is out.
     limits.check_paid_declaration(other, client(2)).unwrap();
