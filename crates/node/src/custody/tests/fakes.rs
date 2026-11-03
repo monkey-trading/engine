@@ -390,6 +390,7 @@ pub(super) fn refusing_sequencer(answer_syncs: bool, refusals: usize) -> mpsc::S
                     unreachable!("only the API asks for payouts and claims")
                 }
                 Request::FinalCheckpoint(_) => unreachable!("only a handover asks for the final checkpoint"),
+                Request::Quote { .. } => unreachable!("custody sends no quotes"),
                 Request::TimeSample(_) => unreachable!("custody sends no time samples"),
             }
         }

@@ -4,7 +4,8 @@
 //! cannot forge inside it, so the pong answering a ping sent at `t` arrives only after every frame
 //! the venue sent before answering, all of them sent before `t` included. A frame read after that
 //! pong was therefore sent after `t`, and is at most `now - t` old whatever the wall clock reads. A
-//! frame read while that is over `timing.max_delay` counts as no quote.
+//! frame read while that is over `timing.max_delay` counts as no quote, and a quote read in time
+//! carries when it stops being so to the sequencer, since the host can hold that back too.
 //!
 //! This holds only while the monotonic clock's rate is honest (see `Clock::instant`), and only over
 //! TLS: on Databento's plain TCP the host could answer a ping itself, so that connection carries
@@ -55,6 +56,13 @@ impl DelayProbe {
     /// before any is answered, when nothing bounds it.
     pub(super) fn behind(&self, now: Instant) -> Option<Duration> {
         self.newest_answered.map(|sent| now.saturating_duration_since(sent))
+    }
+
+    /// When the proof of a frame read now runs out: every frame read after a pong was sent after its
+    /// ping, so the newest answered ping's send time bounds this frame's age from then on, and past
+    /// `max_delay` of it the frame is too old to sequence.
+    pub(super) fn not_after(&self, max_delay: Duration) -> Option<std::time::Instant> {
+        self.newest_answered.map(|sent| (sent + max_delay).into_std())
     }
 
     /// How long the oldest unanswered ping has waited at `now`.

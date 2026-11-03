@@ -135,9 +135,10 @@ clock, so the node checks that clock against signed time from several independen
 [Roughtime](https://www.rfc-editor.org/rfc/rfc10049) servers. It stamps nothing until signed time
 has arrived, and stops sequencing while the clock is further from the time the servers agree on
 than a set bound, or once a minute has passed without signed time. Prices are held to a tighter bound
-that does not rest on the clock at all: a venue's TLS stream is ordered, so a ping's reply bounds how
-far behind the stream can be, and a stream further behind than a set bound counts as no quote.
-[SECURITY.md](SECURITY.md) states the bound and what it depends on.
+that does not rest on the host's wall clock: a venue's TLS stream is ordered, so a ping's reply bounds
+how far behind the stream can be, and a stream further behind than a set bound counts as no quote.
+It rests on the monotonic clock's rate instead. [SECURITY.md](SECURITY.md) states the bound and what
+it depends on.
 
 The enclave also attests to the key it signs with, to the key its API serves TLS with, and to the
 SHA-256 of the config file it runs with. Both keys are generated inside the enclave, so client

@@ -93,7 +93,7 @@ fn late_sequencer(delay: Duration) -> (mpsc::Sender<Request>, mpsc::UnboundedRec
         let mut engine = FakeEngine::new();
         while let Some(request) = requests.recv().await {
             match request {
-                Request::Submit { cmd, .. } => {
+                Request::Submit { cmd, .. } | Request::Quote { cmd, .. } => {
                     if let Command::Prices { market, .. } = &cmd {
                         let _ = arrived.send(Arrival::Prices(*market));
                     }

@@ -45,6 +45,11 @@ impl VenueFeed {
                 && let Some(quote) = quotes.take(now)
             {
                 let market = self.instruments[symbol].market;
+                // One still ahead of the host clock goes on under this older time, the stricter.
+                let not_after = self.not_after.get(symbol).copied();
+                if quotes.next_ahead(now).is_none() {
+                    self.not_after.remove(symbol);
+                }
                 // Held and out-of-session quotes are dropped, not sequenced for the engine to
                 // refuse; an out-of-session one is logged. The engine needs the market open from
                 // the venue stamp to the sequencer's stamp, which may come up to an interval
@@ -60,7 +65,7 @@ impl VenueFeed {
                 if !held && self.in_session(market, quote.ts, now) {
                     self.unconfirmed.insert(symbol.clone());
                     let cmd = Command::Prices { market, quotes: vec![quote] };
-                    self.tx.send(Request::Submit { cmd, reply: None }).await.map_err(|_| anyhow!("sequencer gone"))?;
+                    self.tx.send(Request::Quote { cmd, not_after }).await.map_err(|_| anyhow!("sequencer gone"))?;
                     paced.insert(symbol.clone(), Instant::now() + self.timing.interval);
                 }
             }

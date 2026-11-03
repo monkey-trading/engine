@@ -267,21 +267,23 @@ A price's age under a hostile host is bounded on the monotonic clock, not the wa
 carries every byte and sets the wall clock, so it can hold back a venue's TLS stream and set its clock
 back to match, and a quote's venue stamp then looks fresh: the drift bound alone would let prices run
 `time.max_drift` plus `max_age_ms` behind the market. So each TLS venue connection pings its venue
-every `feeds.venues.ping_interval`, and a frame read while the newest answered ping was sent more than
-`feeds.venues.max_delay` ago counts as no quote: a TLS stream is ordered, so a pong arrives only after
-every frame the venue sent before it. Sequenced time keeps at least 99% of monotonic time's pace
-whatever the host clock does, and a run's first stamp is past every quote carried across its restart,
-so a quote counts for at most its market's `max_age_ms` once it reaches the engine. A price an order
-fills at is therefore at most `max_delay`, plus the 1 s a quote stamped ahead of the host clock may wait
-for it, plus `max_age_ms`, old (with 1% of the time since it arrived): 4 s under production's 2 s
-`max_delay` and 1 s `max_age_ms`, whatever the host clock reads and however the host delays the network.
-Both venues of a market must meet this for it to have a price, so a delay past the bound leaves the
-market without one. The bound on a market priced from Databento and one TLS source is that source's:
-the host can delay or alter Databento's half of the index, within the divergence bound, but the
-market has no price once the TLS source's quote ages out. Every part of this rests on the monotonic
-clock's rate, which the host can scale unless the guest's TSC is protected. The enclave image launches
-without Secure TSC, so until it does, a host that scales that clock and withholds the Roughtime replies
-that would expose it is not bounded by any of this, nor by `time.max_drift`. The
+every `feeds.venues.ping_interval`. A TLS stream is ordered, so a pong arrives only after every frame
+the venue sent before it, and a frame read after that pong was sent after its ping. A quote is
+sequenced only within `feeds.venues.max_delay` of the newest ping answered when it was read, whether
+the host held it back on the network or held the sequencer back by stalling its log or its CPU.
+Sequenced time keeps at least 99% of monotonic time's pace whatever the host clock does, and a run's
+first stamp is past every quote carried across its restart, as far as trusted time admits, so a quote
+counts for at most its market's `max_age_ms`, plus 1%, once it reaches the engine. A price an order
+fills at is therefore at most `max_delay` plus `max_age_ms` old, from when the venue sent it: 3 s under
+production's 2 s and 1 s, whatever the host clock reads and however the host delays the network. A
+production market needs two sources fresh, so a delay past the bound on either leaves it without a
+price. The bound on a market priced from Databento and one TLS source is that source's: the host can
+delay or alter Databento's half of the index, within the divergence bound, but the market has no price
+once the TLS source's quote ages out. Every part of this rests on the monotonic clock's rate, which
+the host can scale unless the guest's TSC is protected. The enclave image launches without Secure TSC,
+and Roughtime rounds are timed on that clock with nothing comparing the two, so until it does, a host
+that scales that clock is bounded by none of this, nor by `time.max_drift`.
+The
 Certificate Transparency watcher (`engine ct-watch`) checks tree head signatures but not consistency
 or inclusion proofs, so a log that shows different views to different clients can hide a certificate
 from it, and it sees only the logs it follows. A

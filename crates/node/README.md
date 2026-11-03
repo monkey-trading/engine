@@ -123,8 +123,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - Live crypto prices from Coinbase and Kraken over WebSocket: one supervised task per
   venue connection, quotes stamped with the venue's own time, and reconnects with backoff
 - A bound on a price's age under a hostile host, on the monotonic clock: every TLS venue connection
-  pings its venue every `feeds.venues.ping_interval`, and a frame read while the newest answered ping
-  was sent more than `feeds.venues.max_delay` ago counts as no quote; `SECURITY.md` states the bound
+  pings its venue every `feeds.venues.ping_interval`, and a quote is sequenced only within
+  `feeds.venues.max_delay` of the newest ping answered when it was read; `SECURITY.md` states the
+  bound
 - Live FX, index and commodity futures, and US share prices from market-data vendors, two per
   market: Massive (FX, futures, and stocks feeds) and TraderMade over WebSocket with their API
   keys, and Databento's live gateway over TCP with challenge-response authentication; quotes for
@@ -315,8 +316,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   close-out after the rollover's financing, and a withdrawal limited at a stale market's last
   mark), and a genesis with no house capital that trades and alerts on a house deficit
 - `src/sequencer/metrics_tests.rs` — the sequencer's metrics and alert-line tests
-- `src/sequencer/pace_tests.rs` — sequenced time against a stalled host clock and across a restart:
-  a held quote ages out on monotonic time
+- `src/sequencer/quotes.rs` — sequencing a venue's quote only while the bound on its age holds
+- `src/sequencer/pace_tests.rs` — sequenced time against a stalled host clock, a held-back sequencer,
+  and a restart: a held quote ages out on monotonic time
 - `src/log/mod.rs` — the JSON-lines log format, stream offsets, and the single-file reader
 - `src/log/command_seal.rs` — domain-separated canonical command/event seals and predecessor links
 - `src/log/segments.rs` — segment files, rotation, the manifest, and the recovery read, a segment
@@ -739,8 +741,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/feeds/venue/transport.rs` — a connection's messages and pings over a WebSocket, or lines
   over TCP
 - `src/feeds/venue/delay.rs` — how far behind a connection's stream can be, from its pings on the
-  monotonic clock, and refusing frames past `feeds.venues.max_delay`; its tests are in
-  `src/feeds/venue/delay/tests.rs`
+  monotonic clock, refusing frames past `feeds.venues.max_delay` and giving each quote the time its
+  bound runs out; its tests are in `src/feeds/venue/delay/tests.rs`
 - `src/feeds/venue/validation.rs` — the checks every venue's books pass before they are sequenced
 - `src/feeds/venue/confirm.rs` — confirming every symbol with the engine each tick: which the
   venue is quoting, which markets it does not list, which contracts the listing does not name or

@@ -48,6 +48,18 @@ pub struct StampPace {
     behind: bool,
 }
 
+impl Clock for SystemClock {
+    /// Wall-clock milliseconds since the epoch.
+    fn now_ms(&self) -> Millis {
+        now_ms()
+    }
+
+    /// `Instant::now()`.
+    fn instant(&self) -> Instant {
+        Instant::now()
+    }
+}
+
 impl StampPace {
     /// A pace whose first stamp is at least `start`.
     pub fn new(start: Millis) -> Self {
@@ -62,10 +74,11 @@ impl StampPace {
         })
     }
 
-    /// Records `ts`, stamped at monotonic time `now` from the host clock reading `host_ms`: a stamp
-    /// above the floor moves it up, and once a `PACE_WINDOW` has run the floor gives way towards the
-    /// host clock by at most `PACE_GIVE_MS`. Warns when the host clock has fallen `PACE_ALERT_MS`
-    /// behind the floor, and logs when it is back.
+    /// Records `ts`, stamped at monotonic time `now` from the host clock reading `host_ms`: a host
+    /// clock above the floor moves it up, and once a `PACE_WINDOW` has run the floor gives way towards
+    /// the host clock by at most `PACE_GIVE_MS`. A stamp held at the last one moves nothing, or the
+    /// next stamp would undo the give. Warns when the host clock has fallen `PACE_ALERT_MS` behind
+    /// the floor, and logs when it is back.
     pub fn stamped(&mut self, host_ms: Millis, ts: Millis, now: Instant) {
         let floor = self.floor(now);
         let Some((_, at)) = self.anchor else {
@@ -84,23 +97,11 @@ impl StampPace {
             info!(alert_resolved = "host_clock_behind", "host clock back with monotonic time");
         }
         self.behind = behind;
-        if ts > floor {
-            self.anchor = Some((ts, now));
+        if host_ms > floor {
+            self.anchor = Some((host_ms, now));
         } else if now.saturating_duration_since(at) >= PACE_WINDOW {
             self.anchor = Some((host_ms.max(floor.saturating_sub(PACE_GIVE_MS)), now));
         }
-    }
-}
-
-impl Clock for SystemClock {
-    /// Wall-clock milliseconds since the epoch.
-    fn now_ms(&self) -> Millis {
-        now_ms()
-    }
-
-    /// `Instant::now()`.
-    fn instant(&self) -> Instant {
-        Instant::now()
     }
 }
 
@@ -126,12 +127,18 @@ mod tests {
     /// The stamps a pace gives over two minutes, a stamp each `STEP`, from a host clock reading
     /// `host(ms since the start)`, as `(ms since the start, stamp)`.
     fn run(host: impl Fn(Millis) -> Millis) -> Vec<(Millis, Millis)> {
+        run_every(STEP, Duration::from_secs(120), host)
+    }
+
+    /// The stamps a pace gives over `span`, a stamp each `step`, as `run` does.
+    fn run_every(step: Duration, span: Duration, host: impl Fn(Millis) -> Millis) -> Vec<(Millis, Millis)> {
         let at = Instant::now();
         let mut pace = StampPace::new(Millis::MIN);
         let mut last = Millis::MIN;
-        (0..2_400)
+        let step_ms = step.as_millis() as Millis;
+        (0..span.as_millis() as Millis / step_ms)
             .map(|i| {
-                let elapsed = i * STEP.as_millis() as Millis;
+                let elapsed = i * step_ms;
                 let now = at + Duration::from_millis(elapsed as u64);
                 let host_ms = START + host(elapsed);
                 let ts = host_ms.max(last).max(pace.floor(now));
@@ -184,6 +191,16 @@ mod tests {
             ts - (START + elapsed - 300)
         };
         assert!(ahead(11_000) >= 280, "{}", ahead(11_000));
+        assert!(ahead(25_000) <= 160, "{}", ahead(25_000));
+        assert_eq!(ahead(45_000), 0);
+    }
+
+    #[test]
+    fn a_correction_drains_at_the_give_with_stamps_closer_together_than_it() {
+        // Stamps a millisecond apart: each still at the last one must not undo the give.
+        let stamps =
+            run_every(Duration::from_millis(1), Duration::from_secs(50), |ms| if ms < 10_000 { ms } else { ms - 300 });
+        let ahead = |at: Millis| stamps[at as usize].1 - (START + at - 300);
         assert!(ahead(25_000) <= 160, "{}", ahead(25_000));
         assert_eq!(ahead(45_000), 0);
     }

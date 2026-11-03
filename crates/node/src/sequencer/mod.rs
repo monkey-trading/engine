@@ -176,6 +176,7 @@ impl Sequencer {
                             replies.push((reply, events));
                         }
                     }
+                    Request::Quote { cmd, not_after } => sequenced |= self.sequence_quote(cmd, not_after)?.is_some(),
                     Request::Query(q) => queries.push(q),
                     Request::HouseState(reply) => self.house.wait(reply),
                     Request::TimeSample(sample) => self.take_sample(sample)?,
@@ -473,6 +474,7 @@ mod alerts;
 pub(crate) mod genesis;
 mod snapshots;
 pub use genesis::{GenesisProgress, genesis_commands};
+mod quotes;
 mod required;
 
 #[cfg(test)]

@@ -142,7 +142,7 @@ sequenced before the first sample, and sequencing halts when the host clock is o
 | `roughtime_server_disagrees` (Warning) | One server signed a time outside the agreed sample. | Do not act on one server; if it persists, the owner may drop it (a new release). |
 | `trusted_time_no_sample` (Warning) | No sample could be taken. | UDP egress to the servers; the host's resolver. |
 | `trusted_time_unavailable` (Critical) | No sample within the grace: sequencing has halted. | As above. Sequencing resumes by itself when a sample arrives. |
-| `host_clock_behind` (Warning) | The host clock has fallen a second behind monotonic time. Stamps keep monotonic time's pace, so quotes still age out. | Fix the host's clock. The host controls the clock, so also read [incident-response.md](incident-response.md). |
+| `host_clock_behind` (Warning) | The host clock has fallen a second behind monotonic time. Stamps keep monotonic time's pace, so quotes still age out. A clock that ran ahead and came back leaves stamps ahead of it, and markets may have no price until that gap drains, at 1% of elapsed time. | Fix the host's clock. The host controls the clock, so also read [incident-response.md](incident-response.md). |
 | `clock_drift` (Critical) | The host clock or a stamp is outside the drift bound of trusted time: sequencing halted. | Fix the host's clock. The host controls the clock, so also read [incident-response.md](incident-response.md) if it was a large jump. |
 
 ## Custody RPC providers

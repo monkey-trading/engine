@@ -94,9 +94,14 @@ impl TimeGate {
     }
 
     /// The stamp for a command at monotonic time `now`, from the host clock reading `host_ms`:
-    /// never before `last_ts`, nor behind the pace of monotonic time (`StampPace`).
+    /// never before `last_ts`, nor behind the pace of monotonic time (`StampPace`), unless that pace
+    /// is past what the latest sample admits, so the pace alone never halts sequencing.
     pub fn stamp(&self, host_ms: Millis, last_ts: Millis, now: Instant) -> Millis {
-        host_ms.max(last_ts).max(self.pace.floor(now))
+        let admitted = self.sample.map_or(Millis::MAX, |sample| {
+            let age = now.saturating_duration_since(sample.at);
+            sample.earliest_ms.saturating_add(floor_millis(age)).saturating_add(self.max_drift_ms)
+        });
+        host_ms.max(last_ts).max(self.pace.floor(now).min(admitted))
     }
 
     /// Replaces the latest sample.

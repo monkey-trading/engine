@@ -19,6 +19,9 @@ use crate::test_support::{dev_config, log_entries, sample_around, scratch_dir, s
 const AT: Millis = 1_792_530_000_000;
 const STEP: Duration = Duration::from_millis(100);
 const MAX_DRIFT: Duration = Duration::from_secs(10);
+const MAX_DELAY: Duration = Duration::from_secs(2);
+/// How long a hostile host holds a quote back, within the drift bound.
+const HELD: Duration = Duration::from_secs(5);
 
 #[test]
 fn a_stalled_host_clock_cannot_keep_a_held_quote_pricing_the_market() {
@@ -63,6 +66,47 @@ fn the_first_stamp_of_a_run_is_past_every_quote_carried_across_its_restart() {
     seq.sequence(Command::Tick).unwrap().expect("within the drift bound");
     assert_eq!(seq.engine.now(), AT + max_age + 1, "the first stamp past the quotes the log leaves");
     assert_eq!(seq.engine.markets()[&1].index(seq.engine.now()), Err(PriceError::Stale { fresh: 0, needed: 2 }));
+}
+
+#[test]
+fn a_quote_held_back_past_its_deadline_is_dropped_however_fresh_its_stamp_looks() {
+    let dir = scratch_dir("pace-deadline");
+    let clock = Arc::new(TestClock::at(AT));
+    // The host clock runs behind true time, within the drift bound.
+    clock.skew(-(HELD.as_millis() as Millis));
+    let mut seq = fresh(&dir, &clock);
+    let not_after = clock.instant() + MAX_DELAY;
+    let stamp = clock.true_ms();
+
+    // The feed has read and queued a quote, and the host stalls the sequencer's log for as long as
+    // its clock is behind, so sequenced time reaches the quote's stamp just as it is sequenced.
+    clock.advance(HELD);
+    assert!(seq.sequence_quote(prices(stamp), Some(not_after)).unwrap().is_none());
+    assert_eq!(seq.engine.markets()[&1].quotes.len(), 0);
+
+    // Within its deadline, or on a connection with no pings, the same quote prices the market: only
+    // the deadline kept it out.
+    assert!(seq.sequence_quote(prices(stamp), Some(clock.instant() + MAX_DELAY)).unwrap().is_some());
+    assert!(seq.engine.markets()[&1].index(seq.engine.now()).is_ok());
+    let later = clock.true_ms();
+    assert!(seq.sequence_quote(prices(later), None).unwrap().is_some());
+    assert_eq!(seq.engine.markets()[&1].quotes["venue-a"].ts, later);
+}
+
+#[test]
+fn a_first_stamp_past_what_trusted_time_admits_is_held_to_it_rather_than_halting() {
+    let dir = scratch_dir("pace-long-age");
+    let clock = Arc::new(TestClock::at(AT));
+    let mut seq = fresh_with(&dir, &clock, MAX_DRIFT.as_millis() as Millis * 6);
+    seq.sequence(prices(AT)).unwrap().expect("admitted");
+    seq.flush().unwrap();
+    drop(seq);
+
+    let mut seq = recovered(&dir, &clock);
+    seq.trust(sample_around(clock.as_ref())).unwrap();
+    seq.sequence(Command::Tick).unwrap().expect("sequencing does not halt");
+    // The sample allows AT - 1s at the earliest, and a stamp may be the drift bound past that.
+    assert_eq!(seq.engine.now(), AT - 1_000 + MAX_DRIFT.as_millis() as Millis);
 }
 
 #[test]
@@ -120,16 +164,23 @@ fn recovered(dir: &Path, clock: &Arc<TestClock>) -> Sequencer {
     Sequencer::recover(cfg, key, broadcast::channel(16).0, mpsc::unbounded_channel().0).unwrap()
 }
 
-/// A sequencer on a fresh log at the latest protocol, under BTC-USD alone, with trusted time on `clock`.
+/// A sequencer on a fresh log at the latest protocol, under BTC-USD alone, with trusted time on
+/// `clock`'s true time.
 fn fresh(dir: &Path, clock: &Arc<TestClock>) -> Sequencer {
+    fresh_with(dir, clock, dev_config().genesis.markets[0].price_rules.max_age_ms)
+}
+
+/// `fresh`, with BTC-USD's `max_age_ms` set.
+fn fresh_with(dir: &Path, clock: &Arc<TestClock>, max_age_ms: Millis) -> Sequencer {
     let mut seq = recovered(dir, clock);
     let mut genesis = dev_config().genesis;
     genesis.markets.retain(|market| market.id == 1);
+    genesis.markets[0].price_rules.max_age_ms = max_age_ms;
     genesis.close_spread_ceilings.retain(|ceiling| ceiling.market == 1);
     genesis.benchmarks.clear();
     seq.activate_protocol().unwrap();
     seq.genesis(&genesis).unwrap();
-    seq.trust(sample_around(clock.as_ref())).unwrap();
+    seq.trust(sample_around(&TrueTime(clock.clone()))).unwrap();
     seq
 }
 

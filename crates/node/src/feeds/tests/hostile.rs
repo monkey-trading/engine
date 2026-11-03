@@ -8,8 +8,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use engine_core::Fixed;
+use engine_core::command::Command;
 use engine_core::event::{Event, Reject};
-use engine_core::price::PriceError;
+use engine_core::price::{PriceError, SourceQuote};
 use engine_core::types::{MarketId, Millis};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, copy};
 use tokio::net::{TcpListener, TcpStream};
@@ -82,14 +83,45 @@ async fn within_the_delay_bound_a_delayed_price_is_no_older_than_the_stated_boun
     // The venues move now, in true time: the host trades at what it has held back, for `lag`.
     moved.store(true, Ordering::SeqCst);
     let moved_at = Instant::now();
-    assert_eq!(node.fill_index(BEFORE.2).await, BEFORE.2.parse().unwrap());
+    assert_eq!(node.try_fill_index(BEFORE.2).await, Some(BEFORE.2.parse().unwrap()));
     let age_ms = now_ms() + lag_ms - node.newest_quote(1).await;
     assert!(age_ms >= lag_ms - 100, "the host holds the price back by {lag_ms}ms, but it is only {age_ms}ms old");
     assert!(age_ms <= bound_ms, "a price {age_ms}ms old, past the stated {bound_ms}ms");
 
     // Once the frames the host held have arrived, the engine prices from the venues' new mid.
-    sleep_until(moved_at + lag + Duration::from_millis(200)).await;
-    assert_eq!(node.fill_index(AFTER.2).await, AFTER.2.parse().unwrap());
+    let moved_on = async {
+        while node.try_fill_index(AFTER.2).await != Some(AFTER.2.parse().unwrap()) {
+            sleep(Duration::from_millis(20)).await;
+        }
+    };
+    timeout(LOADED_WAIT, moved_on).await.expect("the venues' new price");
+    assert!(moved_at.elapsed() >= lag, "the new price came through before the host released it");
+}
+
+#[tokio::test]
+async fn a_running_sequencer_drops_a_quote_past_its_deadline() {
+    let mut node = Node::boot("late-quote", &dev_config().genesis).await;
+    let quote = |source: &str| Command::Prices {
+        market: 1,
+        quotes: vec![SourceQuote {
+            source: source.to_owned(),
+            mid: BEFORE.2.parse().unwrap(),
+            ts: now_ms(),
+            contract: None,
+        }],
+    };
+    let past = std::time::Instant::now() - Duration::from_secs(1);
+    node.tx.send(Request::Quote { cmd: quote("late"), not_after: Some(past) }).await.expect("sequencer up");
+    node.tx.send(Request::Quote { cmd: quote("in-time"), not_after: None }).await.expect("sequencer up");
+
+    // In order, so the second having been sequenced means the first has been judged.
+    node.wait_for_quotes(&[(1, "in-time")]).await;
+    let (reply, answer) = oneshot::channel();
+    let query = Box::new(move |engine: &engine_core::Engine| {
+        let _ = reply.send(engine.markets()[&1].quotes.contains_key("late"));
+    });
+    node.tx.send(Request::Query(query)).await.expect("sequencer up");
+    assert!(!answer.await.expect("an answer"), "the late quote was sequenced");
 }
 
 // ── Helpers ──
@@ -183,15 +215,9 @@ impl Node {
         answer.await.expect("an answer")
     }
 
-    /// The index a small BTC-USD buy quoted at `mid` fills at, retrying while the quotes change hands.
-    async fn fill_index(&self, mid: &str) -> Fixed {
-        for _ in 0..50 {
-            let events = self.buy(1, mid).await;
-            if let Some(fill) = events.iter().find_map(|e| if let Event::Fill(fill) = e { Some(fill) } else { None }) {
-                return fill.index;
-            }
-            sleep(Duration::from_millis(20)).await;
-        }
-        panic!("the market has no price to fill at");
+    /// The index a small BTC-USD buy quoted at `mid` fills at, if it fills.
+    async fn try_fill_index(&self, mid: &str) -> Option<Fixed> {
+        let events = self.buy(1, mid).await;
+        events.iter().find_map(|event| if let Event::Fill(fill) = event { Some(fill.index) } else { None })
     }
 }
