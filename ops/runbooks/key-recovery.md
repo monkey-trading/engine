@@ -168,7 +168,8 @@ it is recorded in the log, and changing it in the config for a log that has begu
   take the log; the new release takes the moved bundle only under the new key's signature, so
   deliver the bundle again under the new key. Until the new release runs, run `secrets-status`
   after every restart (the command is under "Secrets" below): the sealed version must be the newest
-  you delivered, and any other version means the exposed key reached the listener.
+  you delivered, and any other version means the host is lying to you or the exposed key
+  delivered — treat both as compromise.
 - **The key is lost.** No other key can sign an admin command or a rotation while rotation is off.
   Keep two copies of the key in separate places. With rotation on, only an election replaces the
   operator ([operator-candidate.md](operator-candidate.md)); the governance fallback in
