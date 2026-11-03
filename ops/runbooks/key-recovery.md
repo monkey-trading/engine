@@ -155,6 +155,21 @@ it is recorded in the log, and changing it in the config for a log that has begu
   reduce-only while the exposed key is still valid ([reduce-only.md](reduce-only.md)). Every admin command is public, and the
   protocol bounds the operator's limits (a profit fee or close-out level moves within 50% after a
   seven-day notice).
+
+  Rotating is not enough: until a release whose config names the new key runs, the exposed key can
+  also seal a secrets bundle into the enclave. At every restart, before the log's rotation has been
+  read, the delivery listener takes only the key the config names, and with rotation on it takes
+  that key the whole time. A bundle the exposed key seals sets the webhook URLs the pages go to
+  from the next restart on, and nothing bounds its version, so one sealed at the version's maximum
+  refuses every later delivery on this release until a new release's own sealed file replaces it or
+  the host deletes the file. **Ship a new release naming the new key**
+  ([deploy-and-rollback.md](deploy-and-rollback.md), section 3): a config naming a key the log has
+  not rotated to is refused at recovery, so the rotation must be logged before the new release can
+  take the log; the new release takes the moved bundle only under the new key's signature, so
+  deliver the bundle again under the new key. Until the new release runs, run `secrets-status`
+  after every restart (the command is under "Secrets" below): the sealed version must be the newest
+  you delivered, and any other version means the host is lying to you or the exposed key
+  delivered — treat both as compromise.
 - **The key is lost.** No other key can sign an admin command or a rotation while rotation is off.
   Keep two copies of the key in separate places. With rotation on, only an election replaces the
   operator ([operator-candidate.md](operator-candidate.md)); the governance fallback in
