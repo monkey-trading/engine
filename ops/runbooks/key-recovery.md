@@ -189,8 +189,8 @@ alerts_critical_url = "https://..."
 `$SECRETS` is the listener's address as the host forwards it (`tee.sealing.secrets.listen`). The tool
 checks the enclave's quote against `release.toml` and encrypts only after that. A real enclave takes
 only the operator key in effect: the one the attested config names while it holds, and the one the log
-records once it runs, or its own config's alone while the registry has rotation on, since an elected
-key has no business in another operator's enclave. A rotated operator therefore keeps its old key until a release's config names the
+records once it runs, or its own config's alone once an election is recorded while the registry has
+rotation on, since an elected key has no business in another operator's enclave. A rotated operator therefore keeps its old key until a release's config names the
 new one, and an upgrade's new release takes a moved bundle only under the signature of the operator
 its own config names; a bundle signed before a rotation is refused there, and the operator delivers
 again.
