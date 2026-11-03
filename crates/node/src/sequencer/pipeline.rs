@@ -9,6 +9,12 @@
 //! flushed first, then its messages go out. A failed sync stops the node, as an inline one does.
 //! Batches that queue up while a sync runs share the next one. Without the thread
 //! (`pipeline_log_syncs` not called), a batch syncs in line.
+//!
+//! Segment rotation defers to the same thread: at a boundary the writer flushes the full segment
+//! and swaps the open file on the sequencer, and the seal — the segment's fsync, its durable
+//! manifest listing, and the staged next segment's exclusive link — rides that batch's `SyncJob`,
+//! publishing in `finish_sync` before anything of the new segment is released. The on-disk order
+//! is what an inline seal gives: the old segment is listed before the new one takes its name.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -225,11 +231,13 @@ impl Release {
 }
 
 impl Sequencer {
-    /// Moves each batch's data sync onto its own thread, for a sequencer that `run`s.
+    /// Moves each batch's data sync onto its own thread, for a sequencer that `run`s. Segment
+    /// rotation's seal defers to the same thread.
     /// Error cases:
     /// - the thread cannot start
     pub fn pipeline_log_syncs(&mut self) -> anyhow::Result<()> {
         self.pipeline = Some(Pipeline::start()?);
+        self.log.defer_seals();
         Ok(())
     }
 
@@ -242,6 +250,7 @@ impl Sequencer {
         sync: impl Fn(&SyncJob) -> anyhow::Result<()> + Send + 'static,
     ) -> anyhow::Result<()> {
         self.pipeline = Some(Pipeline::start_with(sync)?);
+        self.log.defer_seals();
         Ok(())
     }
 

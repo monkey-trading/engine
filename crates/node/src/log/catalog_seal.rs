@@ -57,6 +57,7 @@ impl LogWriter {
     /// Error cases:
     /// - no exact active checkpoint, missing catalog or missing serialized write ownership
     pub(crate) fn capture_catalog_boundary_unpublished(&self) -> anyhow::Result<PendingCatalogSeal> {
+        ensure!(self.pending_seals.is_empty(), "a deferred segment seal has not published");
         let view = self.manifest.borrow().clone();
         let (segment, _) = self.open.as_ref().context("checkpoint has no active segment")?;
         let last = self.last.context("checkpoint has no physical offset")?;
