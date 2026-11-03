@@ -185,9 +185,9 @@ async fn a_paid_wallets_refused_declarations_are_held_to_its_own_bucket_and_spen
 #[tokio::test]
 async fn the_paid_budget_running_out_is_an_alert_and_one_clients_refused_wallets_cannot_drain_it() {
     let (logs, _guard) = Logs::capture();
-    // Two shared tokens and two per client, none refilling within the test.
-    let node = limited(Node::start("pre-deposit-paid-alert", true).await, 2, 2);
-    let wallets = [key(1), key(2), key(3), key(4)];
+    // Three shared tokens and two per client, none refilling within the test.
+    let node = limited(Node::start("pre-deposit-paid-alert", true).await, 3, 2);
+    let wallets = [key(1), key(2), key(3), key(4), key(5)];
     for (n, wallet) in wallets.iter().enumerate() {
         deposit(&node, address(wallet), &format!("0xfunding:paid{n}")).await;
     }
@@ -195,14 +195,16 @@ async fn the_paid_budget_running_out_is_an_alert_and_one_clients_refused_wallets
     let declare =
         |client, wallet, nonce| send(&node, client, Method::POST, "/v1/eligibility", declaration(wallet, nonce));
     // Client 1's two paid tokens go on two wallets; its third wallet is refused by its client share, which
-    // is no alert.
+    // spends no shared token and is no alert.
     assert_eq!(declare(1, &wallets[0], 0).await.0, StatusCode::OK);
     assert_eq!(declare(1, &wallets[1], 0).await.0, StatusCode::OK);
     assert_eq!(declare(1, &wallets[2], 0).await.0, StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(logs.count("alert=\"api_paid_declaration_budget_full\""), 0, "one client's share is its own problem");
-    // The two shared tokens are spent, so another client's wallet is refused, and the operator hears of it once.
-    assert_eq!(declare(2, &wallets[2], 0).await.0, StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(declare(2, &wallets[3], 0).await.0, StatusCode::TOO_MANY_REQUESTS);
+    // One client cannot take the shared budget all: the share leaves a token, and another client
+    // still declares while the budget has one left.
+    assert_eq!(declare(2, &wallets[3], 0).await.0, StatusCode::OK);
+    // The paid budget is out now, so the next wallet is refused, and the operator hears of it once.
+    assert_eq!(declare(3, &wallets[4], 0).await.0, StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(logs.count("alert=\"api_paid_declaration_budget_full\""), 1);
 }
 
