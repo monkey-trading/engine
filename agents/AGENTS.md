@@ -373,8 +373,8 @@ an index: load only the rule whose hint matches the current action.
   scenario, the exit dev scenario, the API and direct-vault access enforcement dev scenario, the
   metrics and alert routing
   dev scenario, the alert outbox kill/restart scenario (with the metrics and alert routing, browser-origin, proxy protocol,
-  batch orders, dashboard data, Certificate Transparency watcher, snapshot restart and signed API
-  scenarios only run the node and its fixture tools, so they take one `engine-build` job's build as
+  batch orders, dashboard data, Certificate Transparency watcher, snapshot restart, production secrets
+  and signed API scenarios only run the node and its fixture tools, so they take one `engine-build` job's build as
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
   the browser-origin scenario, the proxy protocol scenario, the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the
   signed API answers dev scenario, the public certificate dev scenario, the executable quotes dev
