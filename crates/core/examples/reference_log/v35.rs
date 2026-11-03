@@ -34,6 +34,7 @@ pub(crate) fn session(h: &mut Harness) {
         AdminCommand::AnnounceParams(ParamsNotice {
             profit_fee_bps: None,
             closeout_level_bps: Some(closeout_level_bps),
+            stress: None,
             effective_at,
         })
     };

@@ -100,7 +100,7 @@ jobs:
                 # The deposit and checkpoint scenarios deploy the vault.
                 contracts/*) areas+=" contracts scenarios" ;;
                 # The test job runs the corporate-action and operator bounds scenarios.
-                scripts/dev-corporate-actions.sh | scripts/dev-operator-bounds.sh) areas+=" rust" ;;
+                scripts/dev-corporate-actions.sh | scripts/dev-operator-bounds.sh | scripts/dev-params-notice.sh) areas+=" rust" ;;
                 # The browser verifier's jobs build its package and run its scenario.
                 scripts/dev-* | scripts/build-wasm-verifier.sh) areas+=" scenarios" ;;
                 # The ACME scenario downloads its test CA under image/retry.
@@ -183,6 +183,9 @@ jobs:
         run: ./scripts/dev-corporate-actions.sh
       - name: Run the operator bounds dev scenario
         run: ./scripts/dev-operator-bounds.sh
+      - name: Run the parameter notice dev scenario
+        if: needs.changes.outputs.cache != 'true'
+        run: ./scripts/dev-params-notice.sh
       - name: Check sequencer command latency at 100k accounts
         if: needs.changes.outputs.cache != 'true'
         run: cargo test -p engine-core --test hot_path_benchmark --locked -- --ignored --nocapture

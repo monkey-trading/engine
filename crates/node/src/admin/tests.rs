@@ -143,8 +143,13 @@ fn each_action_builds_its_admin_command() {
             AdminCommand::AnnounceParams(ParamsNotice {
                 profit_fee_bps: Some(1_200),
                 closeout_level_bps: None,
+                stress: None,
                 effective_at: 1_798_761_600_000,
             }),
+        ),
+        (
+            vec!["announce-markup", "2", "-150", "--effective-at", "2027-01-01T00:00:00Z"],
+            AdminCommand::AnnounceMarkup { market: 2, markup_bps: -150, effective_at: 1_798_761_600_000 },
         ),
         (
             vec!["rotate-operator", "0x5555555555555555555555555555555555555555"],
@@ -209,6 +214,15 @@ fn a_listing_or_parameters_come_from_toml_and_are_validated_before_signing() {
     let params = write("params.toml", &params);
     let expected = AdminCommand::SetParams(dev_config().genesis.params);
     assert_eq!(action(&["set-params", &params]).command().unwrap(), expected);
+    // A stress notice takes the stress parameters of the file a later `set-params` carries.
+    let at = "2027-01-01T00:00:00Z";
+    let AdminCommand::AnnounceParams(notice) =
+        action(&["announce-params", "--stress-from", &params, "--effective-at", at]).command().unwrap()
+    else {
+        panic!("announce-params gives notice")
+    };
+    assert_eq!(notice.stress, Some(StressSettings::of(&dev_config().genesis.params)));
+    assert_eq!((notice.profit_fee_bps, notice.closeout_level_bps), (None, None));
 
     let mut wide = dev_config().genesis.params;
     let top = wide.stress_levels.len() - 1;

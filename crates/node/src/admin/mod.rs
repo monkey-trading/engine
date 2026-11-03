@@ -25,7 +25,7 @@ use engine_core::eip712;
 use engine_core::emissions::{EmissionSchedule, TokenUnits};
 use engine_core::event::Event;
 use engine_core::market::MarketSpec;
-use engine_core::operator_bounds::ParamsNotice;
+use engine_core::operator_bounds::{ParamsNotice, StressSettings};
 use engine_core::params::ProtocolParams;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{AccountId, MarketId, Millis};
@@ -115,15 +115,31 @@ pub enum AdminAction {
         #[arg(short, long)]
         market: Option<MarketId>,
     },
-    /// Give notice of a new profit fee and/or close-out level (from V35): a `set-params` carrying
-    /// them applies only from `--effective-at`, at least seven days after the notice is logged, and
-    /// each must stay within 50% of its launch value.
+    /// Give notice of a new profit fee and/or close-out level (from V35), and of new stress
+    /// parameters (from V50): a `set-params` carrying them applies only from `--effective-at`, at
+    /// least seven days after the notice is logged, and the fee and level must each stay within 50%
+    /// of their launch values. It replaces a pending notice, whatever that names.
     AnnounceParams {
         #[arg(long)]
         profit_fee_bps: Option<i64>,
         #[arg(long)]
         closeout_level_bps: Option<i64>,
-        /// When the new rates may apply from, in RFC 3339 (`2027-01-01T00:00:00Z`).
+        /// A TOML parameters file whose stress levels, move window and cooldown a later
+        /// `set-params` applies, such as the file it will carry.
+        #[arg(long)]
+        stress_from: Option<PathBuf>,
+        /// When the new values may apply from, in RFC 3339 (`2027-01-01T00:00:00Z`).
+        #[arg(long)]
+        effective_at: DateTime<Utc>,
+    },
+    /// Give notice of a listed market's new financing markup, in bps a year (from V50): an
+    /// `upsert-market` carrying it applies only from `--effective-at`, at least seven days after the
+    /// notice is logged. It replaces that market's pending markup notice.
+    AnnounceMarkup {
+        market: MarketId,
+        #[arg(allow_negative_numbers = true)]
+        markup_bps: i64,
+        /// When the new markup may apply from, in RFC 3339 (`2027-01-01T00:00:00Z`).
         #[arg(long)]
         effective_at: DateTime<Utc>,
     },
@@ -221,12 +237,17 @@ impl AdminAction {
             AdminAction::DeliverSecrets(_) | AdminAction::SecretsStatus(_) => bail!("secrets take no admin command"),
             AdminAction::SetStressFloor { level, market } => AdminCommand::SetStressFloor { market, level },
             AdminAction::SetReduceOnly { reduce_only, market } => AdminCommand::SetReduceOnly { market, reduce_only },
-            AdminAction::AnnounceParams { profit_fee_bps, closeout_level_bps, effective_at } => {
+            AdminAction::AnnounceParams { profit_fee_bps, closeout_level_bps, stress_from, effective_at } => {
+                let stress = stress_from.map(|file| input::read_toml(&file).map(|params| StressSettings::of(&params)));
                 AdminCommand::AnnounceParams(ParamsNotice {
                     profit_fee_bps,
                     closeout_level_bps,
+                    stress: stress.transpose()?,
                     effective_at: effective_at.timestamp_millis(),
                 })
+            }
+            AdminAction::AnnounceMarkup { market, markup_bps, effective_at } => {
+                AdminCommand::AnnounceMarkup { market, markup_bps, effective_at: effective_at.timestamp_millis() }
             }
             AdminAction::RotateOperator { address } => AdminCommand::RotateOperator { address },
             AdminAction::InitEmissions { start, period_budget } => {

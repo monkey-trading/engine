@@ -263,10 +263,18 @@ pub enum AdminCommand {
     /// epoch 0 starts, and the unstake cooldown the staking contract enforces. A log records it
     /// once.
     InitStaking(StakingConfig),
-    /// From `V35`, signed notice of a new profit fee or close-out level, which a `SetParams` may
-    /// apply from the notice's time on, at least seven days after the sequenced time. Replaces a
-    /// pending notice.
+    /// From `V35`, signed notice of a new profit fee or close-out level, and from `V50` of new stress
+    /// parameters, which a `SetParams` may apply from the notice's time on, at least seven days
+    /// after the sequenced time. Replaces a pending notice, whatever it names.
     AnnounceParams(ParamsNotice),
+    /// From `V50`, signed notice of a listed market's new financing markup, which an `UpsertMarket`
+    /// may apply from `effective_at` on, at least seven days after the sequenced time. Replaces that
+    /// market's pending markup notice.
+    AnnounceMarkup {
+        market: MarketId,
+        markup_bps: i64,
+        effective_at: Millis,
+    },
     /// From `V35`, signed rotation of the operator key to `address`, in effect seven days after it
     /// is logged. Replaces a pending rotation. From `V37`, refused while the operator registry has
     /// rotation on.
@@ -406,6 +414,7 @@ impl AdminCommand {
             | AdminCommand::ScheduleCorporateAction(_)
             | AdminCommand::InitStaking(_)
             | AdminCommand::AnnounceParams(_)
+            | AdminCommand::AnnounceMarkup { .. }
             | AdminCommand::RotateOperator { .. }
             | AdminCommand::AdoptCloseSpreadCeiling { .. } => true,
             AdminCommand::SetClientAuth(_)

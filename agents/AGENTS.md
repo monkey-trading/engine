@@ -24,7 +24,7 @@ an index: load only the rule whose hint matches the current action.
   by the operator key the log records and, from `V35`, bounded (`operator_bounds.rs`: profit fee and
   close-out level moves within ±50% after a seven-day notice, held markets kept priced by price-rule changes, and a
   seven-day key rotation, and from `V46` signed benchmark rates capped at 300 bps per day from the applied rates next to their
-  date in `benchmark.rs`, a market holding positions kept on its benchmark, and a stress floor of at most level 1 lapsing after 72 hours in `stress.rs`); the spread a close can pay, from `V40`, capped per market
+  date in `benchmark.rs`, a market holding positions kept on its benchmark, and a stress floor of at most level 1 lapsing after 72 hours in `stress.rs`, and from `V50` stress parameters and a listed market's markup moved only after a seven-day notice); the spread a close can pay, from `V40`, capped per market
   (`close_spread.rs`: a ceiling registry adopted at genesis, kept apart from `MarketSpec`, clamps every close at
   the pricing site, refuses a reversal over its ceiling while the pure close stays open, and admits a post-genesis
   entry only by a signed seven-day adoption that can only lower it); and, from `V37`, elected (`election.rs`: the operator registry's rotation switch and
@@ -299,6 +299,8 @@ an index: load only the rule whose hint matches the current action.
   `dev-corporate-actions.sh`, the signed localhost TLS/API dividend, split and restart scenario;
   `dev-operator-bounds.sh`, the operator's bounds on a dev node: benchmark rates inside and outside the
   cap, the worker signing around a refusal, the stress floor's limit and 72-hour lapse, restart and replay;
+  `dev-params-notice.sh`, the V50 notice on a dev node: stress parameters and a market's markup refused
+  with no notice and before its time, applied at it through `engine admin` and TLS, and replayed;
   `check-reference-logs.sh`, which fails a branch that changes a committed reference log;
   `check-merge-approved.sh`, the merge queue's approval gate, with `check-merge-approved-test.sh`
   running it against a stubbed GitHub API;
@@ -423,7 +425,7 @@ an index: load only the rule whose hint matches the current action.
   before, and a job that times out is cancelled rather than failed, so the run continues too.
   `gh run rerun --failed` re-runs the failed, cancelled, and unstarted jobs with `ci-passed`, so a
   re-run after a flake repeats everything the first failure cut short. The test job also runs the
-  corporate-action and operator bounds dev scenarios and checks command latency budgets against 100k-account fixtures.
+  corporate-action, operator bounds and parameter notice dev scenarios and checks command latency budgets against 100k-account fixtures.
   `merge-approval.yaml` runs only on merge groups: its `merge-approved` job, the merge-group side of
   the required `merge-approved` check, runs `scripts/check-merge-approved.sh`, which follows the
   queue's entries from the group's head down to `main` and passes only if the latest
@@ -558,6 +560,8 @@ Run from the repo root:
   `cargo test -p engine-node --lib quotes::bench -- --ignored --nocapture`
 - Operator bounds dev scenario: `./scripts/dev-operator-bounds.sh` (runs the isolated signed
   operator/worker/TLS/API scenario with deterministic time, restart and public replay)
+- Parameter notice dev scenario: `./scripts/dev-params-notice.sh` (runs the isolated signed
+  operator/TLS/API scenario with deterministic time and public replay)
 - Corporate-action dev scenario: `./scripts/dev-corporate-actions.sh` (runs the isolated signed
   operator/TLS/API scenario with deterministic venue time, restart and public replay)
 - Access enforcement dev scenario: `./scripts/dev-access-enforcement.sh` (Anvil, API and direct vault

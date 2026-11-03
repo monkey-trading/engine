@@ -1,5 +1,4 @@
-//! V19 API tests for the operator's admin route, and the operator channel's dev scenario through
-//! `engine admin`.
+//! V19 API tests for the operator's admin route and the operator channel's dev scenario via `engine admin`.
 
 use super::*;
 use std::fs;
@@ -37,6 +36,7 @@ use crate::tls::{TlsIdentity, serve};
 
 mod corporate;
 mod election;
+mod notice;
 mod tls;
 
 /// The dev operator key, whose public key `config/dev.toml` names.

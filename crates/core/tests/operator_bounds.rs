@@ -42,7 +42,12 @@ fn op_as(h: &mut Harness, seed: u8, command: AdminCommand) -> Vec<Event> {
 }
 
 fn notice(fee: Option<i64>, level: Option<i64>, effective_at: Millis) -> AdminCommand {
-    AdminCommand::AnnounceParams(ParamsNotice { profit_fee_bps: fee, closeout_level_bps: level, effective_at })
+    AdminCommand::AnnounceParams(ParamsNotice {
+        profit_fee_bps: fee,
+        closeout_level_bps: level,
+        stress: None,
+        effective_at,
+    })
 }
 
 fn next_operator() -> AccountId {
@@ -135,7 +140,7 @@ fn a_notice_may_name_each_end_of_the_range() {
         announce(&mut h, Some(fee), Some(level));
     }
     assert_eq!(
-        h.engine.operator_bounds().notice.map(|n| (n.profit_fee_bps, n.closeout_level_bps)),
+        h.engine.operator_bounds().notice.as_ref().map(|n| (n.profit_fee_bps, n.closeout_level_bps)),
         Some((Some(1_500), Some(7_500)))
     );
 }
@@ -181,7 +186,7 @@ fn a_notice_is_spent_rate_by_rate() {
     let effective_at = announce(&mut h, Some(1_200), Some(6_000));
     h.advance_to(effective_at);
     h.operator_admin(rates(1_200, 5_000));
-    let left = h.engine.operator_bounds().notice;
+    let left = h.engine.operator_bounds().notice.clone();
     assert_eq!(left.map(|n| (n.profit_fee_bps, n.closeout_level_bps)), Some((None, Some(6_000))));
     // The fee has moved, and moving it again needs a new notice.
     assert_eq!(
@@ -257,7 +262,7 @@ fn a_pending_notice_survives_parameters_that_leave_its_rate_alone() {
     let effective_at = announce(&mut h, Some(1_200), None);
     h.advance_to(effective_at);
     h.operator_admin(AdminCommand::SetParams(ProtocolParams { house_total_cap_bps: 15_000, ..base() }));
-    assert_eq!(h.engine.operator_bounds().notice.map(|n| n.profit_fee_bps), Some(Some(1_200)));
+    assert_eq!(h.engine.operator_bounds().notice.as_ref().map(|n| n.profit_fee_bps), Some(Some(1_200)));
 }
 
 #[test]

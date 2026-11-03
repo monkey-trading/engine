@@ -6,14 +6,20 @@
 //! A price-rule change that would leave a market with open positions without a price is refused
 //! unless the market is reduce-only. The operator key rotates only by a signed `RotateOperator`,
 //! which takes effect seven days after it is logged; from then the old key signs nothing.
+//!
+//! From `V50` the stress parameters and a listed market's financing markup take the same seven-day
+//! notice, with no range: an `AnnounceParams` may name new stress parameters, and an
+//! `AnnounceMarkup` one market's new markup, each applying once from its time on.
+
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
 use crate::engine::Engine;
 use crate::market::MarketSpec;
-use crate::params::{MAX_RATE_BPS, ProtocolParams};
+use crate::params::{MAX_RATE_BPS, ProtocolParams, StressLevel};
 use crate::protocol::ProtocolVersion;
-use crate::types::{AccountId, MAX_STAMP_MS, Millis};
+use crate::types::{AccountId, MAX_STAMP_MS, MarketId, Millis};
 
 /// How long before a rate change or an operator rotation takes effect it is logged: seven days.
 pub const NOTICE_MS: Millis = 7 * 24 * 60 * 60 * 1000;
@@ -29,14 +35,47 @@ pub struct LaunchRates {
 
 /// The operator's notice of new rates: each named value may take effect in a `SetParams` from
 /// `effective_at` on, once.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ParamsNotice {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profit_fee_bps: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub closeout_level_bps: Option<i64>,
+    /// From `V50`, new stress parameters, left out of the encoding when none are named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stress: Option<StressSettings>,
     /// The sequenced time the new values may apply from.
+    pub effective_at: Millis,
+}
+
+/// The stress parameters, which together decide when a market reaches a level and how long it is
+/// held there: the levels with their spreads and triggers, the move window and the cooldown.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StressSettings {
+    pub levels: Vec<StressLevel>,
+    pub move_window_ms: i64,
+    pub cooldown_ms: i64,
+}
+
+impl StressSettings {
+    /// The stress parameters `params` sets.
+    pub fn of(params: &ProtocolParams) -> Self {
+        Self {
+            levels: params.stress_levels.clone(),
+            move_window_ms: params.stress_move_window_ms,
+            cooldown_ms: params.stress_cooldown_ms,
+        }
+    }
+}
+
+/// From `V50`, the operator's notice of one listed market's new financing markup, which a relisting
+/// may apply from `effective_at` on, once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MarkupNotice {
+    pub markup_bps: i64,
     pub effective_at: Millis,
 }
 
@@ -49,7 +88,7 @@ pub struct PendingRotation {
 }
 
 /// What the bounds keep in state, left out of the encoding while empty.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OperatorBounds {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -64,6 +103,9 @@ pub struct OperatorBounds {
     /// From `V46`, when a global stress floor above level 0 was set, which starts its time to lapse.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub global_floor_set_at: Option<Millis>,
+    /// From `V50`, each listed market's pending markup notice.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub markups: BTreeMap<MarketId, MarkupNotice>,
 }
 
 impl OperatorBounds {
@@ -98,15 +140,32 @@ impl Engine {
         }
     }
 
-    /// Records a notice of new rates, replacing any pending one.
+    /// Records a notice of new rates, and from `V50` of new stress parameters, replacing any pending
+    /// one.
     /// Error cases:
     /// - before `V35`, or before parameters are set
     /// - a notice naming no rate, a rate outside its valid range or outside ±50% of its launch value
+    /// - stress parameters before `V50`, or ones the parameters in force would fail
+    ///   `ProtocolParams::validate_for` or `ProtocolParams::check_closing_spread` with
     /// - an effective time less than seven days after the sequenced time, or past the latest stamp
     pub(crate) fn announce_params(&mut self, notice: &ParamsNotice) -> Result<(), String> {
         self.require_bounds_protocol("a parameter notice")?;
         let launch = self.operator_bounds.launch.ok_or("protocol params not set")?;
-        if notice.profit_fee_bps.is_none() && notice.closeout_level_bps.is_none() {
+        if let Some(stress) = &notice.stress {
+            if self.protocol_version < ProtocolVersion::V50 {
+                return Err(format!("a stress notice needs protocol {:?}", ProtocolVersion::V50));
+            }
+            let current = self.params.as_ref().expect("launch rates are recorded with the parameters");
+            let params = ProtocolParams {
+                stress_levels: stress.levels.clone(),
+                stress_move_window_ms: stress.move_window_ms,
+                stress_cooldown_ms: stress.cooldown_ms,
+                ..current.clone()
+            };
+            params.validate_for(self.protocol_version)?;
+            params.check_closing_spread()?;
+        }
+        if notice.profit_fee_bps.is_none() && notice.closeout_level_bps.is_none() && notice.stress.is_none() {
             return Err("a parameter notice names no rate".into());
         }
         if let Some(fee) = notice.profit_fee_bps {
@@ -131,21 +190,70 @@ impl Engine {
                 ));
             }
         }
-        if notice.effective_at < self.now + NOTICE_MS {
-            return Err(format!("a parameter notice takes effect no sooner than {}", self.now + NOTICE_MS));
+        self.check_notice_time("a parameter notice", notice.effective_at)?;
+        self.operator_bounds.notice = Some(notice.clone());
+        Ok(())
+    }
+
+    /// From `V50`, records a notice of `market`'s new financing markup, replacing any pending one for
+    /// that market.
+    /// Error cases:
+    /// - before `V50`, or for a market that is not listed
+    /// - a markup outside ±10000 bps a year
+    /// - an effective time less than seven days after the sequenced time, or past the latest stamp
+    pub(crate) fn announce_markup(&mut self, market: MarketId, markup_bps: i64, at: Millis) -> Result<(), String> {
+        if self.protocol_version < ProtocolVersion::V50 {
+            return Err(format!("a markup notice needs protocol {:?}", ProtocolVersion::V50));
         }
-        if notice.effective_at > MAX_STAMP_MS {
-            return Err(format!("a parameter notice takes effect no later than {MAX_STAMP_MS}"));
+        if !self.markets.contains_key(&market) {
+            return Err(format!("market {market} is not listed"));
         }
-        self.operator_bounds.notice = Some(*notice);
+        if !(-MAX_RATE_BPS..=MAX_RATE_BPS).contains(&markup_bps) {
+            return Err("financing.markup_bps must be within ±10000".into());
+        }
+        self.check_notice_time("a markup notice", at)?;
+        self.operator_bounds.markups.insert(market, MarkupNotice { markup_bps, effective_at: at });
+        Ok(())
+    }
+
+    /// From `V50`, checks a relisting changes a listed market's markup only to the value its notice
+    /// names, once that notice's time has come, and returns whether the relisting spends it.
+    /// Error cases:
+    /// - a changed markup no notice names, or whose notice takes effect later than the sequenced time
+    pub(crate) fn check_markup_change(&self, spec: &MarketSpec) -> Result<bool, String> {
+        let Some(market) = self.markets.get(&spec.id) else { return Ok(false) };
+        let (id, new) = (spec.id, spec.financing.markup_bps);
+        if self.protocol_version < ProtocolVersion::V50 || market.spec.financing.markup_bps == new {
+            return Ok(false);
+        }
+        match self.operator_bounds.markups.get(&id).filter(|notice| notice.markup_bps == new) {
+            None => Err(format!("market {id}'s markup change to {new} needs a notice of at least seven days")),
+            Some(notice) if notice.effective_at > self.now => {
+                Err(format!("market {id}'s markup change to {new} takes effect from {}", notice.effective_at))
+            }
+            Some(_) => Ok(true),
+        }
+    }
+
+    /// Checks a notice's time: at least seven days after the sequenced time, and no later than the
+    /// latest stamp.
+    fn check_notice_time(&self, what: &str, effective_at: Millis) -> Result<(), String> {
+        if effective_at < self.now + NOTICE_MS {
+            return Err(format!("{what} takes effect no sooner than {}", self.now + NOTICE_MS));
+        }
+        if effective_at > MAX_STAMP_MS {
+            return Err(format!("{what} takes effect no later than {MAX_STAMP_MS}"));
+        }
         Ok(())
     }
 
     /// Checks `params` against the bounds: a changed profit fee or close-out level is within ±50% of
-    /// its launch value and named by a notice whose time has come.
+    /// its launch value and named by a notice whose time has come, and from `V50` so are changed
+    /// stress parameters, with no range.
     /// Error cases:
     /// - a changed rate outside ±50% of its launch value
     /// - a changed rate no notice names, or whose notice takes effect later than the sequenced time
+    /// - from `V50`, changed stress parameters no notice names, or whose notice takes effect later
     pub(crate) fn check_rate_changes(&self, params: &ProtocolParams) -> Result<(), String> {
         let Some(current) = &self.params else { return Ok(()) };
         // Recorded with the first parameters under `V35`, or at its activation over them.
@@ -162,7 +270,7 @@ impl Engine {
             if !within_half(new, launched) {
                 return Err(format!("{name} {new} is outside ±50% of its launch value {launched}"));
             }
-            let notice = self.operator_bounds.notice.filter(|notice| match name {
+            let notice = self.operator_bounds.notice.as_ref().filter(|notice| match name {
                 "profit_fee_bps" => notice.profit_fee_bps == Some(new),
                 _ => notice.closeout_level_bps == Some(new),
             });
@@ -174,21 +282,37 @@ impl Engine {
                 Some(_) => {}
             }
         }
-        Ok(())
+        let stress = StressSettings::of(params);
+        if self.protocol_version < ProtocolVersion::V50 || stress == StressSettings::of(current) {
+            return Ok(());
+        }
+        match self.operator_bounds.notice.as_ref().filter(|notice| notice.stress.as_ref() == Some(&stress)) {
+            None => Err("a stress parameter change needs a notice of at least seven days".into()),
+            Some(notice) if notice.effective_at > self.now => {
+                Err(format!("the stress parameter change takes effect from {}", notice.effective_at))
+            }
+            Some(_) => Ok(()),
+        }
     }
 
     /// After new parameters apply: records the launch rates if these are the first, and spends the
-    /// notice of each rate that changed.
-    pub(crate) fn settle_rate_changes(&mut self, before: Option<(i64, i64)>, params: &ProtocolParams) {
+    /// notice of each rate, and of the stress parameters, that changed.
+    pub(crate) fn settle_rate_changes(&mut self, before: Option<&ProtocolParams>, params: &ProtocolParams) {
         self.record_launch_rates();
-        let (Some((fee, level)), Some(notice)) = (before, self.operator_bounds.notice.as_mut()) else { return };
+        let Some(before) = before else { return };
+        let (fee, level, stress) = (before.profit_fee_bps, before.closeout_level_bps, StressSettings::of(before));
+        let Some(notice) = self.operator_bounds.notice.as_mut() else { return };
         if params.profit_fee_bps != fee && notice.profit_fee_bps == Some(params.profit_fee_bps) {
             notice.profit_fee_bps = None;
         }
         if params.closeout_level_bps != level && notice.closeout_level_bps == Some(params.closeout_level_bps) {
             notice.closeout_level_bps = None;
         }
-        if notice.profit_fee_bps.is_none() && notice.closeout_level_bps.is_none() {
+        let applied = StressSettings::of(params);
+        if applied != stress && notice.stress.as_ref() == Some(&applied) {
+            notice.stress = None;
+        }
+        if notice.profit_fee_bps.is_none() && notice.closeout_level_bps.is_none() && notice.stress.is_none() {
             self.operator_bounds.notice = None;
         }
     }

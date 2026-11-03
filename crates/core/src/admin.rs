@@ -63,6 +63,10 @@ impl Engine {
     ///   positions unpriced and not reduce-only (see `Engine::check_priceable`)
     /// - `AnnounceParams` and `RotateOperator` with any error case of `Engine::announce_params` and
     ///   `Engine::rotate_operator`
+    /// - from `V50`, `SetParams` that changes the stress parameters without a notice whose time has
+    ///   come (see `Engine::check_rate_changes`); `UpsertMarket` that changes a listed market's
+    ///   markup without one (see `Engine::check_markup_change`); `AnnounceMarkup` with any error case
+    ///   of `Engine::announce_markup`
     /// - from `V40`, `SetCloseSpreadCeilings` and `AdoptCloseSpreadCeiling` with any error case of
     ///   `Engine::install_close_spread_ceilings` and `Engine::adopt_close_spread_ceiling`;
     ///   `UpsertMarket` of a market the ceiling registry has no entry for, or changing the
@@ -101,32 +105,13 @@ impl Engine {
                 if bounded {
                     self.check_rate_changes(params)?;
                 }
-                let rates_before = self.params.as_ref().map(|p| (p.profit_fee_bps, p.closeout_level_bps));
+                let before = self.params.clone().filter(|_| bounded);
                 self.next_rollover = Some(params.rollover.next_after(self.now));
                 self.params = Some(params.clone());
                 if bounded {
-                    self.settle_rate_changes(rates_before, params);
+                    self.settle_rate_changes(before.as_ref(), params);
                 }
-                // From `V16`, a lowered memory reweighs old history at once: without the clamp,
-                // the account's next markout still weighs the history it built under the earlier
-                // memory, and caps it only then. Raising the memory clamps nothing, since history
-                // never exceeds the memory it built under. `SetToxicityNotional` lands only
-                // where no history exists to clamp: parameters without weighting predate every
-                // notional-weighted markout. Read to select first: a touched account re-encodes
-                // its leaf at the next root, so touch only what the clamp changes.
-                if self.protocol_version >= ProtocolVersion::V16
-                    && let Some(memory) = params.toxicity.notional.map(|weighting| weighting.memory)
-                {
-                    let over: Vec<_> = self
-                        .accounts
-                        .iter()
-                        .filter(|(_, acct)| acct.toxicity_history > memory)
-                        .map(|(account, _)| *account)
-                        .collect();
-                    for account in over {
-                        self.accounts.get_mut(&account).expect("selected above").toxicity_history = memory;
-                    }
-                }
+                self.clamp_toxicity_history(params);
                 self.restress_all(events);
                 if self.protocol_version >= ProtocolVersion::V12 {
                     self.advance_markets(None, events);
@@ -150,6 +135,7 @@ impl Engine {
                     self.check_priceable(spec)?;
                 }
                 self.check_held_benchmark(spec)?;
+                let spends_markup_notice = self.check_markup_change(spec)?;
                 if let Some(params) = self.params.as_ref().filter(|_| self.protocol_version >= ProtocolVersion::V13) {
                     params.check_divergence_reachable(spec)?;
                 }
@@ -193,6 +179,9 @@ impl Engine {
                     None => {
                         self.markets.insert(spec.id, MarketState { futures, ..MarketState::new(spec.clone()) });
                     }
+                }
+                if spends_markup_notice {
+                    self.operator_bounds.markups.remove(&spec.id);
                 }
                 self.refresh_session(spec.id, events);
                 // A new listing for a market others convert at can change what its index converts
@@ -388,6 +377,9 @@ impl Engine {
             AdminCommand::InitEmissions(schedule) => self.init_emissions(schedule)?,
             AdminCommand::InitStaking(config) => self.init_staking(config)?,
             AdminCommand::AnnounceParams(notice) => self.announce_params(notice)?,
+            AdminCommand::AnnounceMarkup { market, markup_bps, effective_at } => {
+                self.announce_markup(*market, *markup_bps, *effective_at)?
+            }
             AdminCommand::RotateOperator { address } => self.rotate_operator(*address)?,
             AdminCommand::SetCloseSpreadCeilings { ceilings } => self.install_close_spread_ceilings(ceilings)?,
             AdminCommand::AdoptCloseSpreadCeiling { market, max_close_spread_bps, effective_at } => {
@@ -404,7 +396,8 @@ impl Engine {
     /// - a corporate instruction, which only the signed operator channel accepts
     /// - from `V8`, an operator command once any deposit or house capital is credited
     /// - the emission schedule, which only the operator's signature initialises
-    /// - a parameter notice or an operator rotation, which only the operator's signature records
+    /// - a parameter or markup notice or an operator rotation, which only the operator's signature
+    ///   records
     /// - any error case of `admin`
     pub(crate) fn unsigned_admin(&mut self, cmd: &AdminCommand, events: &mut Vec<Event>) -> Result<(), String> {
         if matches!(cmd, AdminCommand::ScheduleCorporateAction(_)) {
@@ -419,7 +412,10 @@ impl Engine {
         if matches!(cmd, AdminCommand::InitEmissions(_)) {
             return Err("the operator signs the emission schedule".into());
         }
-        if matches!(cmd, AdminCommand::AnnounceParams(_) | AdminCommand::RotateOperator { .. }) {
+        if matches!(
+            cmd,
+            AdminCommand::AnnounceParams(_) | AdminCommand::AnnounceMarkup { .. } | AdminCommand::RotateOperator { .. }
+        ) {
             return Err("the operator signs a parameter notice or a rotation".into());
         }
         self.admin(cmd, events)

@@ -759,6 +759,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/admin_tests/delivery_authority.rs` — who a running node takes deliveries from: the key in
   effect by trusted time, and a named successor's own
 - `src/api/admin_tests/election.rs` — the operator route and the admin route after an election, published keys included
+- `src/api/admin_tests/notice.rs` — the V50 dev scenario: stress parameters and a market's markup refused with no notice and before its time, applied at it through `engine admin` and TLS, and replayed
 - `src/custody/staking.rs` — mirroring the staking contract's finalised events into `Stake`/`Unstake`
   commands once each, holding them until `InitStaking` has applied; V27 completed ranges, including
   empty ones, are authenticated by `StakingProgress` and the host cursor cannot advance them
@@ -987,6 +988,10 @@ cargo run -p engine-node -- admin --pin $PIN set-stress-floor 1 --market 1
 cargo run -p engine-node -- admin --pin $PIN set-benchmark-rate SOFR 430
 cargo run -p engine-node -- admin --pin $PIN upsert-market market.toml        # no table header
 cargo run -p engine-node -- admin --pin $PIN set-params params.toml           # no table header
+# From protocol V50, new stress parameters and a listed market's markup apply only seven days after
+# a notice, by a set-params carrying that file or an upsert-market carrying that markup.
+cargo run -p engine-node -- admin --pin $PIN announce-params --stress-from params.toml --effective-at 2027-01-08T00:00:00Z
+cargo run -p engine-node -- admin --pin $PIN announce-markup 1 300 --effective-at 2027-01-08T00:00:00Z
 # Once per log, from protocol V19: when emission period 0 starts (not before the command is
 # sequenced) and its budget in MONKEY base units. Production values need the owner's approval.
 cargo run -p engine-node -- admin --pin $PIN init-emissions --start 2027-01-01T00:00:00Z --period-budget <units>
@@ -1050,6 +1055,10 @@ cargo run -p engine-node -- admin --config <node.toml> --key-file <operator.key>
 # Run the production secrets scenario on isolated Anvil: a node that holds until its keys are
 # delivered, refused bundles, a restart, a rotation, a restored and a damaged sealed file
 ./scripts/dev-production-secrets.sh
+
+# Run the parameter notice scenario on a dev node: stress parameters and a market's markup refused
+# with no notice and before its time, applied at it through engine admin and TLS, and replayed
+./scripts/dev-params-notice.sh
 ```
 
 EVM custody requires at least three entries in `custody.evm.providers`, each with a unique
@@ -1906,7 +1915,10 @@ log; changing it needs a fresh log, except by a rotation: from `V35`, `engine ad
 <address>` hands the role to another key seven days after it is logged, `--rotated` signs with that
 key, and a restart accepts the log's rotated key under the config that names the original one, as
 long as the chain and vault match. `announce-params` gives the notice a profit fee or close-out level
-change needs. From `V37`, while the operator registry has rotation on, the engine refuses
+change needs, and from `V50` with `--stress-from <params.toml>` the notice for the stress levels, move
+window and cooldown that a `set-params` carrying that file applies; `announce-markup <market> <bps>
+--effective-at <time>` gives the notice a listed market's markup change needs before an
+`upsert-market` carries it. From `V37`, while the operator registry has rotation on, the engine refuses
 `rotate-operator`, and an election's key takes over the same way: from the election's effective
 time, or seven days after the election is logged when that is later, and once the staking mirror
 has completed a finalised block stamped at or after the registry's effective time, signing with
