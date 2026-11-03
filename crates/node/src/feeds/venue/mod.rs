@@ -151,8 +151,6 @@ struct VenueFeed {
     refused_since: Option<Instant>,
     /// Whether the venue is alerted as past its delay bound.
     delayed: bool,
-    /// Each symbol's oldest unsequenced quote's `Request::Quote::not_after`.
-    not_after: BTreeMap<String, std::time::Instant>,
 }
 
 impl Timing {
@@ -213,7 +211,6 @@ impl VenueFeed {
             delay: None,
             refused_since: None,
             delayed: false,
-            not_after: BTreeMap::new(),
         }
     }
 
@@ -257,7 +254,6 @@ impl VenueFeed {
         let mut link = timeout(self.timing.timeout, connect).await.context("connect timed out")?.context("connect")?;
         // Pinged before it opens, so the answer arrives ahead of the first book.
         self.delay = link.pings.then(DelayProbe::default);
-        self.not_after.clear();
         self.ping(&mut link).await?;
         let symbols: Vec<&str> = self.instruments.keys().map(String::as_str).collect();
         let mut adapter = Adapter::new(&self.conn, self.api_key.as_ref(), &symbols);
@@ -378,16 +374,16 @@ impl VenueFeed {
         if !self.stream_current() {
             return Ok(());
         }
-        let not_after = self.delay.as_ref().and_then(|probe| probe.not_after(self.timing.max_delay));
         for book in books {
             match to_quote(self.conn.venue, &self.instruments, book, now) {
                 Ok((symbol, quote)) => {
-                    let market = self.instruments[&symbol].market;
-                    if let Some(not_after) = not_after {
-                        self.not_after.entry(symbol.clone()).or_insert(not_after);
-                    }
-                    if let Err(lead_ms) = buffered.entry(symbol).or_default().add(quote, now) {
-                        self.clock_ahead(market, lead_ms);
+                    let (market, ts) = (self.instruments[&symbol].market, quote.ts);
+                    match buffered.entry(symbol.clone()).or_default().add(quote, now) {
+                        Ok(()) => {
+                            let max_delay = self.timing.max_delay;
+                            self.delay.iter_mut().for_each(|probe| probe.note_read(&symbol, ts, max_delay));
+                        }
+                        Err(lead_ms) => self.clock_ahead(market, lead_ms),
                     }
                 }
                 Err(reason) if adapter.keeps_state() => {

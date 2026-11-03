@@ -44,9 +44,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - Trusted time: every stamp is checked against signed Roughtime readings that independent servers
   agree on, and nothing, genesis included, is stamped before the first; sequencing halts with a
   Critical alert when the host clock is beyond the drift bound, or 60 seconds after the last
-  sample, and resumes once a sample is within the bound; sequenced time keeps at least 99% of
-  monotonic time's pace whatever the host clock does, and a run's first stamp is past every quote
-  carried across its restart
+  sample, and resumes once a sample is within the bound; sequenced time keeps pace with monotonic
+  time whatever the host clock does, giving up at most 10 ms of it a second, and after a restart
+  stamps hold, dropping venue quotes, until that pace passes every quote carried across it
 - REST API for orders, cancels, withdrawals, and reads, plus a WebSocket stream of the log
 - Derived marks cache: each market's index-mark history served signed at `/v1/markets/{id}/marks`,
   paged per resolution with per-entry `log_derived`/`seeded_from_provider` provenance; recovery

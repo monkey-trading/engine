@@ -317,7 +317,7 @@ impl Sequencer {
         // one-checkpoint-per-seq dedup: the missing trailing one is written on demand.
         let dedup_checkpoint_seq = last_signed_checkpoint.as_ref().map(|checkpoint| checkpoint.seq);
         let close_spread_ceilings = cfg.close_spread_ceilings.clone();
-        let first_stamp = past_held_quotes(&engine);
+        let (last_ts, start) = (engine.now(), past_held_quotes(&engine));
         let mut sequencer = Self {
             legacy_deposits,
             legacy_approvals,
@@ -336,7 +336,7 @@ impl Sequencer {
             stream,
             withdrawals,
             outbox: Vec::new(),
-            time: TimeGate::new(cfg.max_drift, cfg.clock.instant()).starting_at(first_stamp),
+            time: TimeGate::new(cfg.max_drift, cfg.clock.instant()).resuming(last_ts, start),
             clock: cfg.clock,
             required: Vec::new(),
             client_auth: cfg.client_auth,
@@ -457,9 +457,10 @@ impl Sequencer {
     }
 }
 
-/// One past the last sequenced time at which a quote the engine holds counts, for the first stamp of
-/// a run. A restart takes as long as the host likes and the clock then reads what it likes within
-/// the drift bound, so a quote carried across one must not price the market from before it.
+/// One past the last sequenced time at which a quote the engine holds counts: a run's stamps hold
+/// there, dropping venue quotes, until the pace from its last stamp reaches it. A restart takes as
+/// long as the host likes and the clock then reads what it likes within the drift bound, so a quote
+/// carried across one must not price the market from before it.
 fn past_held_quotes(engine: &Engine) -> Millis {
     let held = engine.markets().values().flat_map(|market| {
         let next = market.futures.iter().flat_map(|futures| futures.next_quotes.values());

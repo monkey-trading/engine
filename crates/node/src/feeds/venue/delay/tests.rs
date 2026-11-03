@@ -58,3 +58,56 @@ fn a_pong_for_no_ping_sent_bounds_nothing() {
     }
     assert_eq!(probe.waiting(at), Some(Duration::ZERO), "the ping still waits");
 }
+
+#[test]
+fn each_quote_keeps_the_bound_of_the_ping_answered_when_it_was_read() {
+    let at = Instant::now();
+    let (mut probe, payloads) = pinged(at, &[0, 100]);
+    let max_delay = MS * 2_000;
+    probe.answered(&payloads[0]);
+    probe.note_read("BTC", 1_000, max_delay);
+    probe.note_read("BTC", 1_001, max_delay);
+    probe.answered(&payloads[1]);
+    // A quote read after the later answer, while the earlier ones still wait, as one ahead of the
+    // host clock does.
+    probe.note_read("BTC", 1_002, max_delay);
+    assert_eq!(probe.take_not_after("BTC", 1_001), (at + max_delay).into_std());
+    assert_eq!(probe.take_not_after("BTC", 1_002), (at + MS * 100 + max_delay).into_std());
+}
+
+#[test]
+fn a_repeated_stamp_keeps_the_stricter_bound() {
+    let at = Instant::now();
+    let (mut probe, payloads) = pinged(at, &[0, 100]);
+    let max_delay = MS * 2_000;
+    probe.answered(&payloads[0]);
+    probe.note_read("BTC", 1_000, max_delay);
+    probe.answered(&payloads[1]);
+    probe.note_read("BTC", 1_000, max_delay);
+    assert_eq!(probe.take_not_after("BTC", 1_000), (at + max_delay).into_std());
+}
+
+#[test]
+fn taking_a_quote_forgets_the_older_and_keeps_the_newer() {
+    let at = Instant::now();
+    let (mut probe, payloads) = pinged(at, &[0]);
+    let max_delay = MS * 2_000;
+    probe.answered(&payloads[0]);
+    for ts in [1_000, 1_001, 1_002] {
+        probe.note_read("BTC", ts, max_delay);
+    }
+    probe.note_read("ETH", 1_000, max_delay);
+    assert_eq!(probe.take_not_after("BTC", 1_001), (at + max_delay).into_std());
+    assert_eq!(probe.not_after["BTC"].keys().copied().collect::<Vec<_>>(), [1_002]);
+    assert_eq!(probe.not_after["ETH"].len(), 1, "another symbol's is untouched");
+}
+
+#[test]
+fn a_quote_with_no_bound_noted_is_already_past_it() {
+    let (mut probe, _) = pinged(Instant::now(), &[0]);
+    // Nothing answered, and nothing noted: the bound is no later than now.
+    let before = std::time::Instant::now();
+    probe.note_read("BTC", 1_000, MS * 2_000);
+    assert!(probe.take_not_after("BTC", 1_000) <= std::time::Instant::now());
+    assert!(probe.take_not_after("BTC", 999) >= before);
+}

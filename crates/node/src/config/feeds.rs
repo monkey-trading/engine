@@ -86,7 +86,7 @@ pub struct VenuesSection {
     pub ping_interval: Duration,
     /// How far behind a connection's stream may be before what it reads counts as no quote. A
     /// quote's age when it reaches the engine is at most this under a hostile host, so a price's is
-    /// at most this plus its market's `max_age_ms`. Past `ping_interval` by more than the round
+    /// at most about this plus its market's `max_age_ms`. Past `ping_interval` by more than the round
     /// trips and stalls an honest network shows, or the market loses its price without cause.
     #[serde(with = "humantime_serde")]
     pub max_delay: Duration,

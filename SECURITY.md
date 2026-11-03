@@ -271,11 +271,13 @@ every `feeds.venues.ping_interval`. A TLS stream is ordered, so a pong arrives o
 the venue sent before it, and a frame read after that pong was sent after its ping. A quote is
 sequenced only within `feeds.venues.max_delay` of the newest ping answered when it was read, whether
 the host held it back on the network or held the sequencer back by stalling its log or its CPU.
-Sequenced time keeps at least 99% of monotonic time's pace whatever the host clock does, and a run's
-first stamp is past every quote carried across its restart, as far as trusted time admits, so a quote
-counts for at most its market's `max_age_ms`, plus 1%, once it reaches the engine. A price an order
-fills at is therefore at most `max_delay` plus `max_age_ms` old, from when the venue sent it: 3 s under
-production's 2 s and 1 s, whatever the host clock reads and however the host delays the network. A
+Sequenced time keeps pace with monotonic time whatever the host clock does, giving up at most 10 ms
+of it a second, and after a restart stamps hold, and venue quotes are dropped, until that pace from
+the last stamp passes every quote carried across it, so a quote counts for about its market's
+`max_age_ms` at most once it reaches the engine. A stall after a command is stamped delays that
+command but not the stamp of any after it. A price an order fills at is therefore at most about
+`max_delay` plus `max_age_ms` old, from when the venue sent it: 3 s under production's 2 s and 1 s,
+whatever the host clock reads and however the host delays the network. A
 production market needs two sources fresh, so a delay past the bound on either leaves it without a
 price. The bound on a market priced from Databento and one TLS source is that source's: the host can
 delay or alter Databento's half of the index, within the divergence bound, but the market has no price

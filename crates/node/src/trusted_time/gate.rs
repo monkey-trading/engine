@@ -88,14 +88,21 @@ impl TimeGate {
         Self { max_drift_ms: floor_millis(max_drift), started: now, sample: None, halted: None, refused: 0, pace }
     }
 
-    /// This gate, with the first stamp at least `first_stamp`.
-    pub fn starting_at(self, first_stamp: Millis) -> Self {
-        Self { pace: StampPace::new(first_stamp), ..self }
+    /// This gate, for a run whose stamps are at least `start` and keep pace from `last_ts`, the last
+    /// stamp before it, from when the gate started.
+    pub fn resuming(self, last_ts: Millis, start: Millis) -> Self {
+        Self { pace: StampPace::new(start).anchored(last_ts, self.started), ..self }
+    }
+
+    /// Whether a stamp given now, from the host clock reading `host_ms`, would be held at the run's
+    /// start (see `StampPace`).
+    pub fn holding_start(&self, host_ms: Millis, now: Instant) -> bool {
+        self.pace.holding_start(host_ms, now)
     }
 
     /// The stamp for a command at monotonic time `now`, from the host clock reading `host_ms`:
     /// never before `last_ts`, nor behind the pace of monotonic time (`StampPace`), unless that pace
-    /// is past what the latest sample admits, so the pace alone never halts sequencing.
+    /// is past what the latest sample admits.
     pub fn stamp(&self, host_ms: Millis, last_ts: Millis, now: Instant) -> Millis {
         let admitted = self.sample.map_or(Millis::MAX, |sample| {
             let age = now.saturating_duration_since(sample.at);

@@ -11,11 +11,12 @@
 //! TLS: on Databento's plain TCP the host could answer a ping itself, so that connection carries
 //! none, and the other source a market needs is what bounds it.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::mem::take;
 use std::time::Duration;
 
 use anyhow::{Context, bail};
+use engine_core::types::Millis;
 use tokio::time::{Instant, timeout};
 use tracing::{info, warn};
 
@@ -30,6 +31,9 @@ pub(super) struct DelayProbe {
     /// the connection, which bounds how many there are.
     unanswered: VecDeque<(u64, Instant)>,
     newest_answered: Option<Instant>,
+    /// When the bound on the age of each symbol's quotes read and not yet sequenced runs out, by
+    /// their stamps: at most one a millisecond within `MAX_QUOTE_LEAD_MS` of the host clock.
+    not_after: BTreeMap<String, BTreeMap<Millis, std::time::Instant>>,
 }
 
 impl DelayProbe {
@@ -48,7 +52,7 @@ impl DelayProbe {
         let Some(ping) = <[u8; 8]>::try_from(payload).ok().map(u64::from_be_bytes) else { return };
         let answers = self.unanswered.iter().take_while(|(sent, _)| *sent <= ping).count();
         if self.unanswered.get(answers.wrapping_sub(1)).is_some_and(|(sent, _)| *sent == ping) {
-            self.newest_answered = self.unanswered.drain(..answers).last().map(|(_, at)| at);
+            self.newest_answered = self.unanswered.drain(..answers).next_back().map(|(_, at)| at);
         }
     }
 
@@ -58,11 +62,25 @@ impl DelayProbe {
         self.newest_answered.map(|sent| now.saturating_duration_since(sent))
     }
 
-    /// When the proof of a frame read now runs out: every frame read after a pong was sent after its
-    /// ping, so the newest answered ping's send time bounds this frame's age from then on, and past
-    /// `max_delay` of it the frame is too old to sequence.
-    pub(super) fn not_after(&self, max_delay: Duration) -> Option<std::time::Instant> {
-        self.newest_answered.map(|sent| (sent + max_delay).into_std())
+    /// Notes, for `symbol`'s quote stamped `ts` and read now, when the bound on its age runs out:
+    /// every frame read after a pong was sent after its ping, so past `max_delay` of the newest
+    /// answered ping's send time the quote is too old to sequence. A second quote with that stamp
+    /// keeps the first's, the stricter.
+    pub(super) fn note_read(&mut self, symbol: &str, ts: Millis, max_delay: Duration) {
+        if let Some(sent) = self.newest_answered {
+            let not_after = (sent + max_delay).into_std();
+            self.not_after.entry(symbol.to_owned()).or_default().entry(ts).or_insert(not_after);
+        }
+    }
+
+    /// When the bound on the age of `symbol`'s quote stamped `ts`, taken to sequence, runs out,
+    /// forgetting it and any older. A quote with none noted, which a host clock stepping back can
+    /// leave waiting behind one taken since, is already past it.
+    pub(super) fn take_not_after(&mut self, symbol: &str, ts: Millis) -> std::time::Instant {
+        let noted = self.not_after.entry(symbol.to_owned()).or_default();
+        let not_after = noted.get(&ts).copied();
+        *noted = noted.split_off(&ts.saturating_add(1));
+        not_after.unwrap_or_else(std::time::Instant::now)
     }
 
     /// How long the oldest unanswered ping has waited at `now`.

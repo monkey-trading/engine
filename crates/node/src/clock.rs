@@ -33,16 +33,17 @@ pub trait Clock: Send + Sync {
 /// The operating system's clocks.
 pub struct SystemClock;
 
-/// The least the next sequenced stamp may be: sequenced time keeps moving at no less than 99% of
-/// monotonic time whatever the host clock does, from the first stamp of a run, so a quote the
-/// engine holds ages out within its `max_age_ms` of arriving even if the host clock stalls or steps
-/// back. It gives way that 1% so a monotonic clock running a little fast, or a host clock's
-/// correction back, does not ratchet sequenced time ahead for good.
+/// The least the next sequenced stamp may be: sequenced time keeps pace with monotonic time
+/// whatever the host clock does, giving up at most `PACE_GIVE_MS` of it a `PACE_WINDOW`, so a quote
+/// the engine holds ages out within about its `max_age_ms` of arriving even if the host clock
+/// stalls or steps back. It gives way that much so a monotonic clock running a little fast, or a
+/// host clock's correction back, does not ratchet sequenced time ahead for good. A run's stamps
+/// also hold at its start until the pace reaches it, without the pace running on from there.
 #[derive(Debug)]
 pub struct StampPace {
-    /// The least the first stamp of a run may be.
+    /// The least any stamp of the run may be.
     start: Millis,
-    /// A stamp and the monotonic time it was given, which the floor moves on from.
+    /// A stamp and the monotonic time it was given, which the pace moves on from.
     anchor: Option<(Millis, Instant)>,
     /// Whether the host clock is alerted as having fallen behind.
     behind: bool,
@@ -61,47 +62,64 @@ impl Clock for SystemClock {
 }
 
 impl StampPace {
-    /// A pace whose first stamp is at least `start`.
+    /// A pace whose stamps are at least `start`, moving on from the first.
     pub fn new(start: Millis) -> Self {
         Self { start, anchor: None, behind: false }
     }
 
+    /// This pace, moving on from `ms` at monotonic time `at` rather than from its first stamp.
+    pub fn anchored(self, ms: Millis, at: Instant) -> Self {
+        Self { anchor: Some((ms, at)), ..self }
+    }
+
     /// The least the stamp given at monotonic time `now` may be.
     pub fn floor(&self, now: Instant) -> Millis {
-        self.anchor.map_or(self.start, |(ms, at)| {
-            let elapsed = Millis::try_from(now.saturating_duration_since(at).as_millis()).unwrap_or(Millis::MAX);
-            ms.saturating_add(elapsed)
-        })
+        self.start.max(self.pace(now))
+    }
+
+    /// Whether a stamp given now would be held at the start, past both the host clock reading
+    /// `host_ms` and the pace.
+    pub fn holding_start(&self, host_ms: Millis, now: Instant) -> bool {
+        self.start > host_ms.max(self.pace(now))
     }
 
     /// Records `ts`, stamped at monotonic time `now` from the host clock reading `host_ms`: a host
-    /// clock above the floor moves it up, and once a `PACE_WINDOW` has run the floor gives way towards
-    /// the host clock by at most `PACE_GIVE_MS`. A stamp held at the last one moves nothing, or the
-    /// next stamp would undo the give. Warns when the host clock has fallen `PACE_ALERT_MS` behind
-    /// the floor, and logs when it is back.
+    /// clock above the pace moves it up, and once a `PACE_WINDOW` has run the pace gives way towards
+    /// the host clock by at most `PACE_GIVE_MS`. A stamp held at the last one or at the start moves
+    /// nothing, or the next stamp would undo the give, or the pace would run on from the start.
+    /// Warns when the host clock has fallen `PACE_ALERT_MS` behind the pace, and logs when it is
+    /// back.
     pub fn stamped(&mut self, host_ms: Millis, ts: Millis, now: Instant) {
-        let floor = self.floor(now);
         let Some((_, at)) = self.anchor else {
             self.anchor = Some((ts, now));
             return;
         };
-        let behind = floor.saturating_sub(host_ms) >= PACE_ALERT_MS;
+        let pace = self.pace(now);
+        let behind = pace.saturating_sub(host_ms) >= PACE_ALERT_MS;
         if behind && !self.behind {
             // The gap changes while the clock stays behind, so it is in the message, not the key.
             warn!(
                 alert = "host_clock_behind",
                 "host clock {}ms behind monotonic time: stamps keep monotonic pace",
-                floor.saturating_sub(host_ms)
+                pace.saturating_sub(host_ms)
             );
         } else if self.behind && !behind {
             info!(alert_resolved = "host_clock_behind", "host clock back with monotonic time");
         }
         self.behind = behind;
-        if host_ms > floor {
+        if host_ms > pace {
             self.anchor = Some((host_ms, now));
         } else if now.saturating_duration_since(at) >= PACE_WINDOW {
-            self.anchor = Some((host_ms.max(floor.saturating_sub(PACE_GIVE_MS)), now));
+            self.anchor = Some((host_ms.max(pace.saturating_sub(PACE_GIVE_MS)), now));
         }
+    }
+
+    /// Where the pace has reached at `now`: the anchor moved on by the monotonic time since.
+    fn pace(&self, now: Instant) -> Millis {
+        self.anchor.map_or(Millis::MIN, |(ms, at)| {
+            let elapsed = Millis::try_from(now.saturating_duration_since(at).as_millis()).unwrap_or(Millis::MAX);
+            ms.saturating_add(elapsed)
+        })
     }
 }
 
@@ -118,6 +136,9 @@ mod tests {
 
     const START: Millis = 1_792_530_000_000;
     const STEP: Duration = Duration::from_millis(50);
+
+    /// A host clock's reading, by milliseconds since a run's start.
+    type HostClock = fn(Millis) -> Millis;
     /// How far the pace may fall behind monotonic time over `elapsed_ms`: 1%, a `PACE_GIVE_MS` that
     /// has not yet had its window, and a millisecond of rounding.
     fn allowed_ms(elapsed_ms: Millis) -> Millis {
@@ -151,7 +172,7 @@ mod tests {
 
     #[test]
     fn stamps_keep_pace_with_monotonic_time_whatever_the_host_clock_does() {
-        let hosts: [(&str, fn(Millis) -> Millis); 6] = [
+        let hosts: [(&str, HostClock); 6] = [
             ("stalled", |_| 0),
             ("stalled after a minute", |ms| ms.min(60_000)),
             ("a step back", |ms| if ms < 30_000 { ms } else { ms - 20_000 }),
@@ -212,6 +233,23 @@ mod tests {
         for (elapsed, ts) in stamps {
             assert!(ts - (START + elapsed - elapsed / 200) <= PACE_GIVE_MS, "at {elapsed}ms");
         }
+    }
+
+    #[test]
+    fn a_run_holds_at_its_start_until_the_pace_reaches_it_without_running_on_from_it() {
+        let at = Instant::now();
+        let mut pace = StampPace::new(START + 1_000).anchored(START, at);
+        // The host clock stands where the last run stopped: stamps hold at the start.
+        for ms in [0, 500, 999] {
+            let now = at + Duration::from_millis(ms);
+            assert!(pace.holding_start(START, now), "at {ms}ms");
+            assert_eq!(pace.floor(now), START + 1_000);
+            pace.stamped(START, START + 1_000, now);
+        }
+        // Once the pace from the last stamp passes the start, it carries on from there, not ahead.
+        let past = at + Duration::from_millis(1_500);
+        assert!(!pace.holding_start(START, past));
+        assert_eq!(pace.floor(past), START + 1_500);
     }
 
     #[test]

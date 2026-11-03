@@ -66,6 +66,17 @@ fn the_first_stamp_of_a_run_is_past_every_quote_carried_across_its_restart() {
     seq.sequence(Command::Tick).unwrap().expect("within the drift bound");
     assert_eq!(seq.engine.now(), AT + max_age + 1, "the first stamp past the quotes the log leaves");
     assert_eq!(seq.engine.markets()[&1].index(seq.engine.now()), Err(PriceError::Stale { fresh: 0, needed: 2 }));
+    // While stamps hold there, a quote stored at that stamp would count for longer: none is taken.
+    let fresh_quote = Some(clock.instant() + MAX_DELAY);
+    assert!(seq.sequence_quote(prices(seq.engine.now()), fresh_quote).unwrap().is_none());
+    assert_eq!(seq.engine.markets()[&1].quotes["venue-a"].ts, AT, "only the carried quote is held");
+
+    // Once the pace from the last stamp passes the hold, stamps follow it, not the hold.
+    clock.advance(Duration::from_millis(max_age as u64 + 100));
+    seq.sequence(Command::Tick).unwrap().expect("within the drift bound");
+    assert_eq!(seq.engine.now(), AT + max_age + 100);
+    let quote = Some(clock.instant() + MAX_DELAY);
+    assert!(seq.sequence_quote(prices(seq.engine.now()), quote).unwrap().is_some());
 }
 
 #[test]
@@ -108,6 +119,13 @@ fn a_first_stamp_past_what_trusted_time_admits_is_held_to_it_rather_than_halting
     seq.sequence(Command::Tick).unwrap().expect("sequencing does not halt");
     // The sample allows AT - 1s at the earliest, and a stamp may be the drift bound past that.
     assert_eq!(seq.engine.now(), AT - 1_000 + MAX_DRIFT.as_millis() as Millis);
+
+    // Once the hold is over, stamps are back on the honest host clock: nothing ran on ahead of it
+    // for a market with a shorter `max_age_ms` to lose its price to.
+    clock.advance(Duration::from_millis(MAX_DRIFT.as_millis() as u64 * 6 + 100));
+    seq.trust(sample_around(clock.as_ref())).unwrap();
+    seq.sequence(Command::Tick).unwrap().expect("admitted");
+    assert_eq!(seq.engine.now(), clock.now_ms());
 }
 
 #[test]
