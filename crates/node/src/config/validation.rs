@@ -18,10 +18,10 @@ use crate::config::{
 use crate::sequencer::genesis::check_genesis;
 use crate::trusted_time::NO_SAMPLE_GRACE;
 
-/// The least `feeds.venues.min_quote_spacing`: the most often one symbol's latest quote may be
-/// sequenced. Venue message rates stay well under it, while an injected host flooding the
-/// socket cannot make a feed sequence a symbol's quotes more often than 100 a second, whatever
-/// the config a deployment attests.
+/// The least `feeds.venues.min_quote_spacing`: how often a symbol's quote budget refills after its
+/// short burst. Venue message rates stay well under it, while an injected host flooding the
+/// socket cannot make a feed sequence a symbol's quotes faster than 100 a second after that
+/// burst, whatever the config a deployment attests.
 const MIN_VENUE_QUOTE_SPACING: Duration = Duration::from_millis(10);
 
 impl NodeConfig {

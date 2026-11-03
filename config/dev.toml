@@ -122,8 +122,11 @@ timeout = "10s"
 reconnect_min = "500ms"
 reconnect_max = "30s"
 stale_after = "1s"
-# The most often one symbol's latest quote is sequenced: venue feeds sequence a quote per book
-# update, and updates closer together than this coalesce to the newest.
+# The rate a symbol's quotes may be sequenced at: one per spacing after a burst of a few. A book
+# update that moves the mid is sequenced at once while that budget lasts; past it, updates coalesce
+# to the newest and wait for the budget to refill. An update that leaves the mid where it was waits
+# until the engine's quote is half of stale_after or the market's max_age_ms old, whichever is
+# shorter, then sequences to keep the venue counting.
 min_quote_spacing = "10ms"
 # How far behind a connection's stream may be, on the monotonic clock, before what it reads counts
 # as no quote: the host can hold a TLS stream back but cannot answer a ping ahead of what the venue

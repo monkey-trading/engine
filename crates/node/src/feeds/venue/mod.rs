@@ -1,6 +1,7 @@
 //! One venue's live feed. A task connects, subscribes, and sequences the venue's top-of-book mids
-//! as `Command::Prices`, one per book update as it arrives — the newest quote the host clock has
-//! reached, never one stamped ahead of it. It returns only when the sequencer has gone away: a
+//! as `Command::Prices`, one per book update that moves a symbol's mid or falls due to refresh the
+//! quote the engine holds (see `quotes::refresh_after`) — the newest quote read, as soon as it is
+//! read, whatever its stamp. It returns only when the sequencer has gone away: a
 //! failed connection is retried inside the task with backoff, and while it is down the venue's
 //! last quotes age out in the engine, which prices from the other venues. A connection that stays
 //! quiet for the read deadline — a stalled login, a dead connection — is failed and retried the
@@ -85,9 +86,12 @@ pub(super) struct Book {
 /// how old a quote may be and still count as the venue quoting.
 #[derive(Debug, Clone, Copy)]
 pub struct Timing {
-    /// The most often one symbol's latest quote is sequenced. A book update sequences its
-    /// symbol's quote at once; updates closer together than this coalesce to the newest, so venue
-    /// messages a hostile host floods in cannot amplify sequencer load past this rate.
+    /// The rate a symbol's quotes may be sequenced at: one per interval, with a burst of a few
+    /// first. A book update that moves the mid sequences its symbol's quote at once while the
+    /// budget lasts; past it, updates coalesce to the newest and wait for the budget to refill, so
+    /// venue messages a hostile host floods in cannot amplify sequencer load past this rate. One
+    /// that repeats the mid waits until the engine's quote is half of `stale_after` or the
+    /// market's `max_age_ms` old, whichever is shorter.
     pub interval: Duration,
     /// The deadline for a read: the login, the subscription, and each message after, whatever its
     /// market's hours.
@@ -143,6 +147,11 @@ struct VenueFeed {
     idle: BTreeSet<String>,
     /// Each market's trading hours, as the engine last confirmed them.
     schedules: Arc<BTreeMap<MarketId, Schedule>>,
+    /// Each market's `max_age_ms`, as the engine last confirmed it. Until a market has one, none of
+    /// its quotes waits (see `quotes::verdict`).
+    max_age: BTreeMap<MarketId, Millis>,
+    /// The mid and stamp of the newest quote sequenced for each symbol on the current connection.
+    sent: BTreeMap<String, (Fixed, Millis)>,
     refusals: Throttle,
     clock_alerts: Throttle,
     /// The current connection's pings, on a connection that carries them.
@@ -206,6 +215,8 @@ impl VenueFeed {
             held_back: BTreeMap::new(),
             idle: BTreeSet::new(),
             schedules: Arc::default(),
+            max_age: BTreeMap::new(),
+            sent: BTreeMap::new(),
             refusals: Throttle::default(),
             clock_alerts: Throttle::default(),
             delay: None,
@@ -235,12 +246,13 @@ impl VenueFeed {
     }
 
     /// One connection: connect, send the opening messages, then read messages and sequence each
-    /// symbol's newest reached quote as its book updates arrive (see `emit`), at most one per
-    /// symbol per `timing.interval`. Once the sequencer has applied it, the venue counts as
-    /// quoting that symbol while the quote the engine holds from it is no older than
-    /// `timing.stale_after` or the market's `max_age_ms` (see `confirm`). Every read has
-    /// `timing.timeout` to produce a message, whether or not any market is open, so a stalled
-    /// login or a dead connection is replaced instead of hanging unseen through a closure.
+    /// symbol's newest quote as its book updates move its mid or its last quote needs refreshing
+    /// (see `emit`), at most one per symbol per `timing.interval` past a short burst. Once the
+    /// sequencer has applied it, the venue counts as quoting that symbol while the quote the engine
+    /// holds from it is no older than `timing.stale_after` or the market's `max_age_ms` (see
+    /// `confirm`). Every read has `timing.timeout` to produce a message, whether or not any market
+    /// is open, so a stalled login or a dead connection is replaced instead of hanging unseen
+    /// through a closure.
     /// Error cases:
     /// - connecting or sending the opening messages fails or takes longer than `timing.timeout`
     /// - no message arrives within `timing.timeout`, whatever its market's hours
@@ -264,16 +276,18 @@ impl VenueFeed {
             .context("subscribe")?;
         info!(venue = self.conn.venue.name(), feed = self.conn.url.as_str(), "venue connected");
         let mut waiting_since = Instant::now();
+        // The engine's quote from an earlier connection says nothing of what this one sequenced.
+        self.sent.clear();
         // Ask at once, so the first quotes are judged against the markets' hours.
         if self.confirming.is_none() {
             self.confirming = Some(self.confirm().await?);
         }
 
         let mut buffered: BTreeMap<String, Pending> = BTreeMap::new();
-        let mut paced: BTreeMap<String, Instant> = BTreeMap::new();
-        // The emit timer wakes for what `emit` holds: a symbol whose updates outran the pace, and
-        // a quote the host clock has not reached yet. `emit` returns the next deadline; it idles
-        // a day out when nothing waits. Like the read deadline, it outlives each select below.
+        let mut spent: BTreeMap<String, Instant> = BTreeMap::new();
+        // The emit timer wakes for what `emit` holds: a symbol whose updates outran its budget, and
+        // a repeat waiting to refresh. `emit` returns the next deadline; it idles a day out when
+        // nothing waits. Like the read deadline, it outlives each select below.
         let mut emit_wake = Box::pin(sleep(Duration::from_secs(24 * 60 * 60)));
         // Silence and the no-fresh-quote count are checked once an interval, as they were on the
         // sequencing tick.
@@ -297,7 +311,7 @@ impl VenueFeed {
                     match message {
                         Incoming::Text(text) => {
                             self.receive(&mut adapter, &mut link, &text, &mut buffered).await?;
-                            rearm(&mut emit_wake, self.emit(&mut buffered, &mut paced).await?);
+                            rearm(&mut emit_wake, self.emit(&mut buffered, &mut spent).await?);
                         }
                         Incoming::Binary => self.refuse("binary message", ""),
                         Incoming::Closed(reason) => bail!("closed by the venue: {reason}"),
@@ -314,9 +328,12 @@ impl VenueFeed {
                 } => {
                     self.confirming = None;
                     self.confirmed(answer.map_err(|_| anyhow!("sequencer gone"))?);
+                    // An answer can forget a record or change a market's limit, so a repeat
+                    // already waiting is judged afresh and its timer set again.
+                    rearm(&mut emit_wake, self.emit(&mut buffered, &mut spent).await?);
                 }
                 _ = &mut emit_wake => {
-                    rearm(&mut emit_wake, self.emit(&mut buffered, &mut paced).await?);
+                    rearm(&mut emit_wake, self.emit(&mut buffered, &mut spent).await?);
                 }
                 _ = checks.tick() => {
                     if self.check_silent() {
@@ -402,15 +419,16 @@ impl VenueFeed {
         self.schedules.get(&market).is_some_and(|schedule| !schedule.is_open(ts))
     }
 
-    /// Whether the engine's last confirmed hours keep `market` open from a quote's stamp `ts` to an
-    /// interval after host time `now`, by when the sequencer stamps a quote sent now. A span longer
-    /// than `timing.stale_after` holds only a quote too old to count, so only its two ends are
-    /// checked.
+    /// Whether the engine's last confirmed hours keep `market` open from a quote's stamp `ts` or
+    /// host time `now`, whichever is earlier, to the later of `ts` and an interval after `now`, by
+    /// when the sequencer stamps a quote sent now: the span the engine checks, which a stamp ahead
+    /// of the host clock stretches. A span longer than `timing.stale_after` holds only a quote too
+    /// old to count, so only its two ends are checked.
     fn in_session(&self, market: MarketId, ts: Millis, now: Millis) -> bool {
         let Some(schedule) = self.schedules.get(&market) else { return true };
         let interval = Millis::try_from(self.timing.interval.as_millis()).unwrap_or(Millis::MAX);
         let stale_after = Millis::try_from(self.timing.stale_after.as_millis()).unwrap_or(Millis::MAX);
-        let (first, last) = (ts.min(now), now.saturating_add(interval));
+        let (first, last) = (ts.min(now), ts.max(now.saturating_add(interval)));
         if last.saturating_sub(first) > stale_after.saturating_add(interval) {
             return schedule.is_open(first) && schedule.is_open(last);
         }
@@ -450,5 +468,7 @@ pub async fn run(
     VenueFeed::new(conn, api_key, timing, tls, tx).run().await
 }
 
+#[cfg(test)]
+mod quiet_tests;
 #[cfg(test)]
 mod tests;

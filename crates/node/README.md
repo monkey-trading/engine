@@ -748,13 +748,16 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   the new share units, keeping a restart's pending splits and re-anchoring to a mark when the
   engine splits without the walk following
 - `src/feeds/venue/mod.rs` — the venue task: connect, subscribe, sequence each symbol's newest
-  reached quote per book update, reconnect, and hold back quotes the engine would refuse
+  quote when its mid moves or the engine's quote needs refreshing, reconnect, and hold back
+  quotes the engine would refuse
 - `src/feeds/venue/adapter.rs` — a venue's protocol on one connection, whichever adapter speaks it
 - `src/feeds/venue/alerts.rs` — the venue task's alerts: outages, silent symbols, a clock ahead of
   the host's, and refused messages
-- `src/feeds/venue/emit.rs` — sequencing the newest reached quote per symbol as book updates
-  arrive, paced so updates faster than `feeds.venues.min_quote_spacing` coalesce to the newest,
-  and the emit timer that releases what the host clock has not reached yet
+- `src/feeds/venue/emit.rs` — sequencing the newest quote per symbol as book updates arrive, as soon
+  as it is read, within a per-symbol budget (one per `feeds.venues.min_quote_spacing` after a
+  burst, past which updates coalesce to the newest), holding a repeat of the sequenced mid until
+  the engine's quote is half of `stale_after` or the market's `max_age_ms` old, and the emit timer
+  that releases what the budget held or a repeat that falls due
 - `src/feeds/venue/transport.rs` — a connection's messages and pings over a WebSocket, or lines
   over TCP
 - `src/feeds/venue/delay.rs` — how far behind a connection's stream can be, from its pings on the
@@ -765,8 +768,13 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   venue is quoting, which markets it does not list, which contracts the listing does not name or
   the market does not take, and changed market hours; and settling a dropped connection's last
   quotes
-- `src/feeds/venue/quotes.rs` — the quotes held between book updates until the host clock reaches
-  them, and the rule that decides whether the quote the engine holds counts as the venue quoting
+- `src/feeds/venue/quotes.rs` — the newest quote held between book updates, the rule that
+  decides whether a quote repeats the sequenced mid and when it falls due, and
+  the rule that decides whether the quote the engine holds counts as the venue quoting
+- `src/feeds/venue/quiet_tests.rs` — the repeat rule: when a repeat waits, goes, or is dropped,
+  the emit path arming its timer and clearing its memory, and the engine's index compared at every
+  millisecond against an engine handed every update, under sequencer delays inside and past the
+  refresh margin
 - `src/feeds/venue/setup.rs` — the TLS client config and reconnect backoff every connection shares
 - `src/feeds/venue/tests.rs` — venue task unit tests: alert throttling and silence windows on
   paused time, held quotes against the engine's rule, kept books for unsubscribed symbols, the
@@ -780,9 +788,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   checksum; `src/feeds/kraken/tests.rs` replays recorded book messages against it
 - `src/feeds/tests/mod.rs` — venue tasks against loopback venues: what they sequence, refuse,
   and alert, and how they reconnect
-- `src/feeds/tests/emission.rs` — one sequenced quote per book update: bursts sequence per
-  update, the pace coalesces what arrives faster to the newest, and the emit timer releases what
-  the host clock has not reached without further venue traffic
+- `src/feeds/tests/emission.rs` — one sequenced quote per book update as it is read: a burst
+  goes at once, the budget coalesces what arrives faster to the newest, and a quote stamped ahead
+  of the host clock is not held for it
+- `src/feeds/tests/quiet.rs` — a venue repeating its top of book: a repeated mid is sequenced only
+  to refresh the engine's quote, a moved mid or a new connection's first quote goes at once
 - `src/feeds/tests/fake.rs` — the loopback venues, the feed harness with an engine that applies
   what the feed sequences, and the wait for the next alert
 - `src/feeds/tests/delay.rs` — a connection's pings against a venue that answers them or does not
