@@ -15,6 +15,7 @@ use tracing::{error, info};
 use crate::checkpoints::setup::{Setup, Unregistered, connect};
 use crate::config::NodeConfig;
 use crate::limits::{ApiLimits, run_retain};
+use crate::metrics::Metrics;
 use crate::tee::{Attestation, EnclaveKey};
 use crate::tls::{Acceptors, serve};
 
@@ -29,8 +30,9 @@ pub(super) async fn registered(
     key: &Arc<EnclaveKey>,
     acceptors: &Acceptors,
     attestation: &Arc<Attestation>,
+    metrics: &Metrics,
 ) -> anyhow::Result<Option<Setup>> {
-    wait(cfg, &key.address_hex(), acceptors, attestation, || connect(cfg, key)).await
+    wait(cfg, &key.address_hex(), acceptors, attestation, || connect(cfg, key, metrics)).await
 }
 
 /// `registered`, setting the checkpoints up with `connect`.

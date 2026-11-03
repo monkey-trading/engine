@@ -208,7 +208,9 @@ withdrawal is authorised until posting resumes.
 
 1. Check the endpoint: `cast block-number --rpc-url <checkpoint endpoint>` and
    `cast balance <relayer> --rpc-url <checkpoint endpoint>`. The relayer needs gas on Arbitrum One;
-   no alert fires on a low balance.
+   with `[checkpoints.relayer_gas]` set, `checkpoint_relayer_low` warns below its `min_balance`, read
+   at a block the custody providers agree is final, and `engine_checkpoint_relayer_balance_eth`
+   exports the balance.
 2. Fund the account or restore the endpoint. The queued checkpoints post in order when it works.
 3. If the endpoint is gone for good, a new one with a funded relayer is a config change and a new
    release. Mind the clock: while checkpoints are not accepted, `staleAfter` (deposits refused) and

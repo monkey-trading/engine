@@ -7,9 +7,13 @@ use anyhow::Context;
 use engine_core::types::AccountId;
 use tokio::sync::mpsc;
 
-use crate::checkpoints::{ApprovalRegistry, CheckpointChain, CheckpointRpc, Observation, Poster, View, Work};
+use crate::checkpoints::{
+    ApprovalRegistry, CheckpointChain, CheckpointRpc, Observation, Poster, RelayerGas, View, Work,
+};
 use crate::config::{EvmCustodySection, FinalityTag, NodeConfig};
+use crate::custody::BalanceQuorum;
 use crate::log::CheckpointDomain;
+use crate::metrics::Metrics;
 use crate::tee::EnclaveKey;
 
 /// The vault names another signer than this enclave's key, at its latest or finalized block.
@@ -86,7 +90,11 @@ async fn await_finality_boundary<C: CheckpointChain>(
 /// Error cases:
 /// - configuration, transport, or vault reads fail
 /// - the vault names another signer (`Unregistered`)
-pub(crate) async fn connect(cfg: &NodeConfig, key: &Arc<EnclaveKey>) -> anyhow::Result<Option<Setup>> {
+pub(crate) async fn connect(
+    cfg: &NodeConfig,
+    key: &Arc<EnclaveKey>,
+    metrics: &Metrics,
+) -> anyhow::Result<Option<Setup>> {
     let Some(checkpoints) = &cfg.checkpoints else { return Ok(None) };
     let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
     let token = cfg.custody.evm.as_ref().context("checkpoint custody is not EVM")?.usdc;
@@ -101,6 +109,11 @@ pub(crate) async fn connect(cfg: &NodeConfig, key: &Arc<EnclaveKey>) -> anyhow::
         &cfg.node.log_dir,
         AccountId(key.address()),
     )?;
+    let chain = if checkpoints.relayer_gas.is_some() {
+        chain.with_balance_quorum(BalanceQuorum::connect(&cfg.custody)?)
+    } else {
+        chain
+    };
     let state = await_finality_boundary(&chain, AccountId(key.address()), checkpoints.retry_interval, evm).await?;
     chain.authenticate_reservation(&state).await?;
     let parent = match &state.state.checkpoint {
@@ -116,6 +129,12 @@ pub(crate) async fn connect(cfg: &NodeConfig, key: &Arc<EnclaveKey>) -> anyhow::
         retry: checkpoints.retry_interval,
         pending_deposits_critical_after: evm.stall_critical_after,
         post_withheld: Default::default(),
+        relayer_gas: checkpoints.relayer_gas.as_ref().map(|gas| RelayerGas {
+            relayer: checkpoints.relayer,
+            min_balance: gas.min_balance,
+            balance_eth: metrics.checkpoint_relayer_balance_eth.clone(),
+            low: Default::default(),
+        }),
     };
     let (tx, rx) = mpsc::channel(64);
     Ok(Some(Setup { poster, tx, rx, posted_seq, parent, approvals: Default::default(), observation: state }))

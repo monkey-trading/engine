@@ -98,6 +98,8 @@ pub(super) struct ChainState {
     /// means it always exists, as in single-fixture tests.
     pub(super) staking_deployed_at: Option<u64>,
     pub(super) failing: bool,
+    /// The native balance `account_balance` reports for every account.
+    pub(super) balance: U256,
     /// Requests that start a poll: identity checks and final-block reads.
     pub(super) polls: u64,
     pub(super) reads: Vec<(u64, u64)>,
@@ -229,6 +231,14 @@ impl VaultReader for FakeChain {
         }
         let visible = chain.staking.iter().filter(|e| !chain.hide_logs && (from..=to.number).contains(&e.block));
         Ok(visible.cloned().collect())
+    }
+
+    async fn account_balance(&self, at: BlockRef, _account: Address) -> anyhow::Result<U256> {
+        let chain = self.0.lock().unwrap();
+        if chain.hash_at(at.number) != at.hash {
+            bail!("block {} is not canonical", at.hash);
+        }
+        Ok(chain.balance)
     }
 
     async fn staking_registry(&self, at: BlockRef) -> anyhow::Result<Option<Address>> {

@@ -1,11 +1,13 @@
 //! Local Anvil scenario over the real sequencer, vault RPC, checkpoint worker, and deposit adapter.
 
 use crate::checkpoints::Health;
+mod anvil;
+pub(crate) use anvil::Anvil;
 mod source;
 mod tasks;
 
 use std::path::Path;
-use std::process::{Child, Command as Process, Stdio};
+use std::process::{Command as Process, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -39,14 +41,6 @@ sol! {
     function depositFor(address account, uint256 amount) external returns (uint256);
     function transfer(address to, uint256 amount) external returns (bool);
     function bookSurplus() external returns (uint256);
-}
-
-pub(crate) struct Anvil(pub Child);
-impl Drop for Anvil {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
 }
 
 #[tokio::test]
@@ -105,6 +99,7 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
         retry: section.retry_interval,
         pending_deposits_critical_after: Duration::from_secs(10),
         post_withheld: Default::default(),
+        relayer_gas: None,
     };
     make_poster().startup(None).await.unwrap();
 

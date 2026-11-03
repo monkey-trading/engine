@@ -64,10 +64,14 @@ fn extending(reads: impl Fn(&VaultState, &Work) -> Vec<(View, VaultState)>, pers
     poster.chain.state.lock().unwrap().checkpoint = Some((4, root_4()));
     let vault = poster.chain.state.lock().unwrap().clone();
     let reads = Mutex::new(reads(&vault, &work).into());
-    let Poster { chain, domain, signer, retry, pending_deposits_critical_after, post_withheld, .. } = poster;
+    let Poster { chain, domain, signer, retry, pending_deposits_critical_after, post_withheld, relayer_gas, .. } =
+        poster;
     let chain = Torn { chain, reads, persists };
     let registry = Some(Default::default());
-    (Poster { chain, registry, domain, signer, retry, pending_deposits_critical_after, post_withheld }, work)
+    (
+        Poster { chain, registry, domain, signer, retry, pending_deposits_critical_after, post_withheld, relayer_gas },
+        work,
+    )
 }
 
 /// Each conflict the worker can read from one observation, as the vault state that shows it.

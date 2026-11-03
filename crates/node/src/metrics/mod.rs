@@ -120,6 +120,7 @@ pub struct Metrics {
     pub fills: Family<MarketLabel, Counter>,
     pub rejections: Family<RejectionLabels, Counter>,
     pub last_checkpoint_seconds: FloatGauge,
+    pub checkpoint_relayer_balance_eth: FloatGauge,
     pub house_nav: FloatGauge,
     pub house_gross_exposure: FloatGauge,
     pub house_net_exposure: Family<MarketLabel, FloatGauge>,
@@ -153,6 +154,7 @@ impl Metrics {
             fills: Family::default(),
             rejections: Family::default(),
             last_checkpoint_seconds: FloatGauge::default(),
+            checkpoint_relayer_balance_eth: FloatGauge::default(),
             house_nav: FloatGauge::default(),
             house_gross_exposure: FloatGauge::default(),
             house_net_exposure: Family::default(),
@@ -204,6 +206,12 @@ impl Metrics {
             "last_checkpoint_timestamp_seconds",
             "Sequenced time of the command the last signed checkpoint covers",
             metrics.last_checkpoint_seconds.clone(),
+        );
+        r.register(
+            "checkpoint_relayer_balance_eth",
+            "The checkpoint relayer's balance in ether at a block the custody providers agree is final; set only \
+             with [checkpoints.relayer_gas], after the first read",
+            metrics.checkpoint_relayer_balance_eth.clone(),
         );
         r.register("house_nav", "House cash minus clients' unrealised PnL", metrics.house_nav.clone());
         r.register(

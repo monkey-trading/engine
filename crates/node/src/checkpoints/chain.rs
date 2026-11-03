@@ -1,5 +1,6 @@
 //! Chain access the checkpoint worker reads and posts through.
 
+use alloy::primitives::U256;
 use anyhow::{Context, ensure};
 use engine_core::Fixed;
 use engine_core::emissions::TokenUnits;
@@ -151,6 +152,14 @@ pub(crate) trait CheckpointChain: Send + Sync {
     /// can be posted. Error cases: the chain cannot be read; a chain with no exit reads `false`.
     async fn exit_started(&self) -> anyhow::Result<bool> {
         Ok(false)
+    }
+
+    /// The relayer's balance in wei at a block the custody providers agree is final, or `None` when
+    /// this chain does not watch it.
+    /// Error cases:
+    /// - the custody providers have no quorum on it
+    async fn relayer_balance(&self) -> anyhow::Result<Option<U256>> {
+        Ok(None)
     }
 
     /// Whether this chain can read the vault's folded release; false for stand-in chains.

@@ -13,7 +13,7 @@ use std::future::IntoFuture;
 use std::time::Duration;
 
 use alloy::eips::{BlockId, BlockNumberOrTag};
-use alloy::primitives::{Address, Bytes, U64};
+use alloy::primitives::{Address, Bytes, U64, U256};
 use alloy::rpc::client::RpcClient;
 use alloy::rpc::types::{Block, Filter, Header, Log, TransactionRequest};
 use alloy::sol;
@@ -195,6 +195,17 @@ impl VaultReader for VaultRpc {
             return Ok(None);
         }
         Ok(Some(registryCall::abi_decode_returns(&out).context("decoding the staking contract's registry")?))
+    }
+
+    /// `account`'s native balance in the canonical block `at`.
+    /// Error cases:
+    /// - the request fails or times out, or the endpoint does not hold that block as canonical
+    async fn account_balance(&self, at: BlockRef, account: Address) -> anyhow::Result<U256> {
+        self.deadline(
+            "eth_getBalance",
+            self.client.request::<_, U256>("eth_getBalance", (account, BlockId::hash_canonical(at.hash))),
+        )
+        .await
     }
 
     /// Both mirrorable staking events from the configured contract, and the operator registry's

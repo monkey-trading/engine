@@ -6,7 +6,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use alloy::eips::{BlockId, BlockNumberOrTag};
-use alloy::primitives::{Address, B256, Bytes};
+use alloy::primitives::{Address, B256, Bytes, U256};
 use alloy::rpc::client::RpcClient;
 use alloy::rpc::types::TransactionRequest;
 use alloy::sol;
@@ -24,6 +24,7 @@ use crate::checkpoints::{
     Observation, VaultState, View,
 };
 use crate::config::{CheckpointSection, FinalityTag, redact};
+use crate::custody::BalanceQuorum;
 use crate::log::{Checkpoint, CheckpointDomain};
 
 mod authority;
@@ -114,6 +115,8 @@ pub(crate) struct CheckpointRpc {
     finality_tag: BlockNumberOrTag,
     confirmations: u64,
     submissions: Option<SubmissionStore>,
+    /// The custody providers' view of the relayer's balance, when its gas is watched.
+    balances: Option<BalanceQuorum>,
 }
 
 /// Why a standby takes over: the vault's latest accepted checkpoint — the anchor the published
@@ -182,7 +185,14 @@ impl CheckpointRpc {
             },
             confirmations,
             submissions: None,
+            balances: None,
         })
+    }
+
+    /// Watches the relayer's balance through the custody providers.
+    pub(crate) fn with_balance_quorum(mut self, balances: BalanceQuorum) -> Self {
+        self.balances = Some(balances);
+        self
     }
 
     /// Grants posting access only to clients constructed with a durable reservation store.
@@ -375,6 +385,16 @@ impl CheckpointChain for CheckpointRpc {
         let input = exitStartedAtCall {}.abi_encode();
         let started = exitStartedAtCall::abi_decode_returns(&self.call(vault, input, BlockId::latest()).await?)?;
         Ok(started != 0)
+    }
+
+    /// The relayer's balance in the highest block the custody providers agree is final.
+    /// Error cases:
+    /// - the custody providers have no quorum on it
+    async fn relayer_balance(&self) -> anyhow::Result<Option<U256>> {
+        match &self.balances {
+            Some(balances) => balances.balance(self.relayer).await.map(Some),
+            None => Ok(None),
+        }
     }
 
     /// Reads whether the vault's registry has rotation on, at the latest block; a vault with no

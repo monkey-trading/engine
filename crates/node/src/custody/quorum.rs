@@ -9,7 +9,7 @@
 use std::collections::BTreeSet;
 use std::sync::Mutex;
 
-use alloy::primitives::Address;
+use alloy::primitives::{Address, U256};
 use anyhow::{Context, bail, ensure};
 use futures_util::future::join_all;
 use tracing::{error, info, warn};
@@ -224,9 +224,30 @@ impl<R: VaultReader + Sync> VaultReader for Quorum<R> {
         .await;
         self.vote("staking_registry", answers).map(|v| v.0)
     }
+
+    /// Identical balances of `account` at the same canonical block hash.
+    /// Error cases:
+    /// - no quorum
+    async fn account_balance(&self, at: BlockRef, account: Address) -> anyhow::Result<U256> {
+        let answers = join_all(self.providers.iter().enumerate().map(|(i, (_, r))| async move {
+            self.qualified(i)?;
+            r.account_balance(at, account).await
+        }))
+        .await;
+        self.vote("account_balance", answers).map(|v| v.0)
+    }
 }
 
 impl<R: VaultReader + Sync> Quorum<R> {
+    /// `account`'s balance at the highest block a majority declares final.
+    /// Error cases:
+    /// - the providers have no identity, finality or balance quorum, or name no final block
+    pub(super) async fn finalized_balance(&self, account: Address) -> anyhow::Result<U256> {
+        self.identity().await?;
+        let block = self.finality().await?.tagged.context("custody providers name no final block")?;
+        self.account_balance(block, account).await
+    }
+
     /// Selects the highest common tag height, never reducing the fixed provider threshold.
     /// A chain move can split one poll's reads — a revert or reorg between the pair reads and
     /// the common height's header reads leaves every provider contradicting itself — so when no

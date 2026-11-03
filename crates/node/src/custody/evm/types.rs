@@ -51,6 +51,13 @@ pub trait VaultReader {
         let _ = at;
         async { anyhow::bail!("this reader does not read the staking contract's registry") }
     }
+
+    /// The native balance of `account` in the canonical block `at`. A reader that cannot read it
+    /// refuses.
+    fn account_balance(&self, at: BlockRef, account: Address) -> impl Future<Output = anyhow::Result<U256>> + Send {
+        let _ = (at, account);
+        async { anyhow::bail!("this reader does not read account balances") }
+    }
 }
 
 /// A block by height and hash.
