@@ -253,7 +253,7 @@ async fn the_workers_refused_rate_alert_reaches_its_webhook() {
 
     let cfg_path = dir.join("node.toml");
     let text = fs::read_to_string(crate::test_support::DEV_CONFIG).unwrap();
-    let mut text = text.replace("data/dev/alerts", &dir.join("alerts").display().to_string());
+    let mut text = text.replace("data/dev", &dir.display().to_string());
     text.push_str(&format!(
         r#"
 [alerts.warning]
