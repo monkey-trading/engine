@@ -20,15 +20,15 @@ use crate::clock::test_clock::TestClock;
 use crate::config::AccessSection;
 
 /// A bounded production client backed by a signed, deterministic loopback source.
-pub(super) struct Source {
-    pub(super) client: Arc<AccessClient>,
-    pub(super) policy: AccessPolicy,
+pub(crate) struct Source {
+    pub(crate) client: Arc<AccessClient>,
+    pub(crate) policy: AccessPolicy,
     task: JoinHandle<()>,
 }
 
 impl Source {
     /// Starts the source under the deployed vault's domain and the scenario's sequenced clock.
-    pub(super) async fn start(clock: Arc<TestClock>, operator: Operator) -> Self {
+    pub(crate) async fn start(clock: Arc<TestClock>, operator: Operator) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let key = SigningKey::from_slice(&[0x77; 32]).unwrap();
         let config: AccessSection = toml::from_str(&format!(

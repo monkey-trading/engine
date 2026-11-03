@@ -197,6 +197,7 @@ pub(super) fn event_kind(event: &Event) -> Result<u8> {
         Event::Unstaked { .. } => "unstaked",
         Event::StakingRejected { .. } => "staking_rejected",
         Event::DistributionAllocated { .. } => "distribution_allocated",
+        Event::OperatorShareAllocated { .. } => "operator_share_allocated",
         Event::EligibilityAttested { .. } => "eligibility_attested",
         Event::EligibilityRejected { .. } => "eligibility_rejected",
         Event::DepositPending { .. } => "deposit_pending",

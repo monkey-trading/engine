@@ -98,7 +98,7 @@ impl Accounting {
                         self.unpaid.raw().checked_add(amount.raw()).context("checkpoint unpaid approvals overflow")?,
                     );
                 }
-                Event::DistributionAllocated { amount, .. } => {
+                Event::DistributionAllocated { amount, .. } | Event::OperatorShareAllocated { amount, .. } => {
                     // Allocations change the claim holder, not cumulative custody credits.
                     i128::try_from(amount.0)
                         .ok()

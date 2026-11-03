@@ -23,6 +23,14 @@
 //!   stakers with an unfunded realised loss while another position cannot close.
 //!   House cash falls by the allocated total. Each account's cumulative distribution is a leaf of
 //!   its own in the state tree, which the vault checks a claim against.
+//! - **The operator's share**, from V47. While rotation is on, `floor(excess / 5)` credits the
+//!   operator in effect when the close runs, after any handover due then, and stakers share the
+//!   rest as above, so the fraction that rounding leaves goes to them and their dust to the house.
+//!   The allocated total never passes the excess. The share is the same whatever the excess holds:
+//!   a close that sweeps what built up while nothing was staked pays the operator a fifth of it.
+//!   It credits the leaf of the candidate seated under the key in effect (`election`), which is also
+//!   that candidate's leaf as a staker, so the vault's claim and exit pay the operator as they pay
+//!   anyone.
 //! - **Reconciliation.** Allocations reduce house cash before any USDC leaves the vault; the
 //!   vault's cumulative `distributionsPaid` explains the difference at the next checkpoint.
 
@@ -42,6 +50,9 @@ use crate::types::{AccountId, MAX_STAMP_MS, Millis};
 
 /// One USDC base unit in `Fixed`'s raw units (9 decimals against USDC's 6).
 pub(crate) const USDC_SCALE: i128 = 1_000;
+/// From `V47`, what the excess is divided by for the operator's share while rotation is on: a
+/// fifth, 20%. A constant, not a parameter, so the operator it pays cannot change it.
+const OPERATOR_SHARE_DIVISOR: u128 = 5;
 
 /// A cumulative USDC distribution in USDC base units (6 decimals), as the vault pays it. Serializes
 /// as a decimal string, so no JSON client loses precision.
@@ -71,7 +82,8 @@ pub struct Staking {
     pub config: StakingConfig,
     /// The epoch stake and NAV accrue to: the one the last command fell in, or 0 before the start.
     pub epoch: u64,
-    /// USDC base units allocated to stakers across every closed epoch.
+    /// USDC base units allocated across every closed epoch: to stakers, and from `V47` to the
+    /// operator.
     pub distributed: UsdcUnits,
     /// The highest finalised Ethereum block a credited mirror sequenced: the authenticated
     /// frontier the watcher resumes from, so a host cursor cannot skip an unmirrored event.
@@ -315,8 +327,9 @@ impl Engine {
     }
 
     /// Closes every epoch the sequenced time has ended, before anything else the command does: the
-    /// latest one distributes `NAV − floor` pro-rata to the staked snapshot; the ones before it,
-    /// whose end no command witnessed, distribute nothing, like emission periods.
+    /// latest one distributes `NAV − floor` pro-rata to the staked snapshot, less from `V47` the
+    /// operator's share while rotation is on; the ones before it, whose end no command witnessed,
+    /// distribute nothing, like emission periods.
     pub(crate) fn finalise_staking(&mut self, events: &mut Vec<Event>) {
         let Some(staking) = &self.staking else { return };
         let (config, open) = (staking.config, staking.epoch);
@@ -334,17 +347,26 @@ impl Engine {
         let usdc_excess = if excess.is_positive() { (excess.raw() / USDC_SCALE) as u128 } else { 0 };
         let mut allocated = 0u128;
         if usdc_excess > 0 && !self.staked.is_empty() {
+            let mut to_stakers = usdc_excess;
+            if let Some(account) = self.operator_share_account() {
+                let amount = usdc_excess / OPERATOR_SHARE_DIVISOR;
+                if amount > 0 {
+                    self.credit_distribution(account, amount);
+                    to_stakers -= amount;
+                    allocated += amount;
+                    events.push(Event::OperatorShareAllocated { account, epoch: closed, amount: UsdcUnits(amount) });
+                }
+            }
             let stakes: Vec<(AccountId, u128)> =
                 self.staked.iter().map(|(account, staked)| (*account, staked.0)).collect();
             let total: U256 = stakes.iter().map(|(_, staked)| U256::from(*staked)).sum();
             for (account, staked) in stakes {
-                // At most `usdc_excess`, as each stake is at most the total.
-                let amount: u128 = (U256::from(usdc_excess) * U256::from(staked) / total).to();
+                // At most `to_stakers`, as each stake is at most the total.
+                let amount: u128 = (U256::from(to_stakers) * U256::from(staked) / total).to();
                 if amount == 0 {
                     continue;
                 }
-                let distribution = self.distributions.entry(account).or_default();
-                distribution.0 = distribution.0.checked_add(amount).expect("a claimable distribution fits a u128");
+                self.credit_distribution(account, amount);
                 allocated += amount;
                 events.push(Event::DistributionAllocated { account, epoch: closed, amount: UsdcUnits(amount) });
             }
@@ -369,6 +391,12 @@ impl Engine {
 }
 
 impl Engine {
+    /// Adds `amount` to `account`'s cumulative distribution.
+    fn credit_distribution(&mut self, account: AccountId, amount: u128) {
+        let distribution = self.distributions.entry(account).or_default();
+        distribution.0 = distribution.0.checked_add(amount).expect("a claimable distribution fits a u128");
+    }
+
     /// What an epoch close at the current state would distribute, in USD before the whole-USDC
     /// rounding, or `None` before staking is initialised: house NAV and cash above the floor, less
     /// the principal that can still reverse, the clients' debts and the withdrawal capacity. It

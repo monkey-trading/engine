@@ -60,7 +60,8 @@ struct DistributionView {
     last_closed_epoch: Option<u64>,
     last_closed_ms: Option<Millis>,
     next_close_ms: Millis,
-    /// USDC base units allocated to stakers across every closed epoch.
+    /// USDC base units allocated across every closed epoch: to stakers, and from `V47` to the
+    /// operator.
     distributed_usdc_units: UsdcUnits,
     /// The last close this record saw, with what it measured.
     last_distribution: Option<LastDistribution>,

@@ -1,4 +1,4 @@
-//! The election scenario's chain: Anvil at a fixed genesis time, three local RPC proxies for the
+//! The election scenarios' chain: Anvil at a fixed genesis time, three local RPC proxies for the
 //! custody quorum, and the vault, MONKEY, operator registry, and the staking contract it deploys.
 
 use std::process::{Command as Process, Stdio};
@@ -54,6 +54,8 @@ sol! {
     function setRotation(bool enabled) external;
     function closeEpoch() external returns (uint64);
     function operatorInEffect() external view returns (Operator);
+    function depositToHouse(uint256 amount) external returns (uint256);
+    function depositFor(address account, uint256 amount) external returns (uint256);
     function schedule(address target, uint256 value, bytes data, bytes32 predecessor, bytes32 salt, uint256 delay) external;
     function execute(address target, uint256 value, bytes payload, bytes32 predecessor, bytes32 salt) external payable;
     error SelfBondLocked(uint256 locked);
@@ -64,7 +66,7 @@ pub(super) struct Chain {
     _anvil: Anvil,
     _proxies: Vec<Anvil>,
     pub(super) provider: RpcClient,
-    url: String,
+    pub(super) url: String,
     /// The URLs of the three proxies the custody quorum reads through.
     pub(super) proxies: Vec<String>,
     pub(super) accounts: Vec<Address>,
@@ -164,6 +166,19 @@ impl Chain {
         self.rpc("anvil_stopImpersonatingAccount", json!([self.vault])).await;
         self.send(account, self.monkey, approveCall { spender: self.staking, amount }.abi_encode()).await;
         self.send(account, self.staking, stakeCall { amount }.abi_encode()).await
+    }
+
+    /// Deposits `amount` USDC base units into the vault for the house, or for `account`, minting them
+    /// to the funder first; the custody watcher credits the deposit from its event.
+    pub(super) async fn fund(&self, account: Option<Address>, amount: U256) {
+        let funder = self.accounts[0];
+        self.send(funder, self.usdc, mintCall { to: funder, amount }.abi_encode()).await;
+        self.send(funder, self.usdc, approveCall { spender: self.vault, amount }.abi_encode()).await;
+        let deposit = match account {
+            Some(account) => depositForCall { account, amount }.abi_encode(),
+            None => depositToHouseCall { amount }.abi_encode(),
+        };
+        self.send(funder, self.vault, deposit).await;
     }
 
     /// Registers `candidate` with `admin_key` — which must authorize the registration with its
@@ -269,11 +284,11 @@ impl Chain {
         receipt
     }
 
-    async fn next_block_at(&self, at: u64) {
+    pub(super) async fn next_block_at(&self, at: u64) {
         self.rpc("evm_setNextBlockTimestamp", json!([at])).await;
     }
 
-    async fn latest_timestamp(&self) -> u64 {
+    pub(super) async fn latest_timestamp(&self) -> u64 {
         let block: Value = self.provider.request("eth_getBlockByNumber", ("latest", false)).await.unwrap();
         u64::from_str_radix(block["timestamp"].as_str().unwrap().trim_start_matches("0x"), 16).unwrap()
     }

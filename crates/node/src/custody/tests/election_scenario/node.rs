@@ -1,5 +1,6 @@
-//! The election scenario's node: the real sequencer on a test clock, the custody watcher over the
-//! three-proxy quorum mirroring the staking contract and the registry, and the API.
+//! The election scenarios' node: the real sequencer on a test clock, the custody watcher over the
+//! three-proxy quorum mirroring the staking contract and the registry, the API, and, for the
+//! operator's share, the checkpoint worker posting roots to the vault.
 
 use std::net::SocketAddr;
 use std::num::NonZeroU32;
@@ -13,7 +14,8 @@ use axum::http::{Request as HttpRequest, StatusCode};
 use axum::{Extension, Router};
 use engine_core::Engine;
 use engine_core::auth::{ClientAuth, Operator};
-use engine_core::command::AdminCommand;
+use engine_core::command::{AdminCommand, Command};
+use engine_core::event::Event;
 use engine_core::staking::StakingConfig;
 use engine_core::types::{AccountId, Millis};
 use governor::Quota;
@@ -27,16 +29,25 @@ use tower::ServiceExt;
 use super::chain::Chain;
 use super::{COOLDOWN_SECS, DISTRIBUTION_EPOCH_SECS, T0_SECS};
 use crate::api::{ApiState, MAX_BACKFILLS, router};
+use crate::checkpoints::staking_scenario::access::Source;
+use crate::checkpoints::{CheckpointRpc, Poster};
 use crate::clock::Clock;
 use crate::clock::test_clock::TestClock;
-use crate::config::{CustodyProvider, CustodySection, FinalityTag, Genesis, RateLimit, RpcProviderSection};
+use crate::config::{
+    CheckpointSection, CustodyProvider, CustodySection, FinalityTag, Genesis, RateLimit, RpcProviderSection,
+};
 use crate::custody::Custody;
 use crate::history::{INDEX_FILE, Reader};
 use crate::limits::ApiLimits;
-use crate::log::Manifest;
+use crate::log::{CheckpointDomain, Manifest};
 use crate::sequencer::{Request, Sequencer, SequencerConfig, genesis_commands};
 use crate::tee::{AttestationBundle, EnclaveKey, MockAttestor, attest_bundle};
-use crate::test_support::{dev_config, sample_around, scratch_dir, sequencer_config};
+use crate::test_support::{CHECKPOINT_EVERY, dev_config, sample_around, scratch_dir, sequencer_config};
+
+/// Commands between the checkpoints a scenario that posts them signs: few enough to reach one with
+/// a handful of ticks, and more than the custody watcher's progress after each post sequences, so
+/// the node goes quiet between a scenario's steps.
+const POSTED_CHECKPOINT_EVERY: u64 = 10;
 
 /// The running node the scenario drives.
 pub(super) struct Node {
@@ -45,6 +56,10 @@ pub(super) struct Node {
     pub(super) dir: PathBuf,
     sequencer: JoinHandle<anyhow::Result<()>>,
     custody: JoinHandle<anyhow::Result<()>>,
+    /// The checkpoint worker and the task relaying its status, when the scenario posts checkpoints.
+    checkpoints: Option<(JoinHandle<anyhow::Result<()>>, JoinHandle<()>)>,
+    /// The signed screening source deposits and orders pass through, when the scenario moves funds.
+    _access: Option<Source>,
 }
 
 impl Node {
@@ -52,7 +67,17 @@ impl Node {
     /// the staking config the registry's staking contract was deployed with in its genesis, and the
     /// custody watcher reading the chain through its proxies.
     pub(super) async fn start(chain: &Chain, key: Arc<EnclaveKey>) -> Self {
-        let dir = scratch_dir("election-anvil");
+        Self::launch(chain, key, false).await
+    }
+
+    /// `start`, with the checkpoint worker posting roots to the vault and a signed screening source,
+    /// for a scenario that moves funds.
+    pub(super) async fn start_posting_checkpoints(chain: &Chain, key: Arc<EnclaveKey>) -> Self {
+        Self::launch(chain, key, true).await
+    }
+
+    async fn launch(chain: &Chain, key: Arc<EnclaveKey>, post_checkpoints: bool) -> Self {
+        let dir = scratch_dir(if post_checkpoints { "operator-share-anvil" } else { "election-anvil" });
         let clock = Arc::new(TestClock::at(T0_SECS as Millis * 1000));
         let mut cfg = dev_config();
         cfg.custody.provider = CustodyProvider::Evm;
@@ -71,22 +96,45 @@ impl Node {
         let (withdrawals, signed) = mpsc::unbounded_channel();
         let (manifest_tx, manifest) = watch::channel(Manifest::default());
         let auth = ClientAuth::Eip712 { chain_id: 31337, vault: operator.vault };
+        let (work_tx, work_rx) = mpsc::channel(64);
+        let source = match post_checkpoints {
+            true => Some(Source::start(clock.clone(), operator).await),
+            false => None,
+        };
         let seq_cfg = SequencerConfig {
             vault: operator.vault,
             operator,
             client_auth: auth.clone(),
             clock: clock.clone(),
             genesis: genesis_commands(&genesis),
+            checkpoint_every: if post_checkpoints { POSTED_CHECKPOINT_EVERY } else { CHECKPOINT_EVERY },
+            checkpoints: post_checkpoints.then_some(work_tx),
+            access_policy: source.as_ref().map(|source| source.policy.clone()),
             ..sequencer_config(&dir, manifest_tx)
         };
         let mut seq = Sequencer::recover(seq_cfg, key.clone(), stream.clone(), withdrawals).unwrap();
-        let custody = Custody::connect(&custody, seq.last_seq()).unwrap();
+        let access = source.as_ref().map(|source| source.client.clone());
+        let custody = Custody::connect(&custody, seq.last_seq()).unwrap().with_access(access.clone());
         seq.activate_protocol().unwrap();
         seq.genesis(&genesis).unwrap();
         seq.trust(sample_around(clock.as_ref())).unwrap();
         let (tx, rx) = mpsc::channel(1024);
+        let recovery = seq.take_recovery_checkpoints();
         let sequencer = tokio::spawn(seq.run(rx));
         let custody = tokio::spawn(custody.run(signed, tx.clone()));
+        let checkpoints = post_checkpoints.then(|| {
+            let (status_tx, mut status_rx) = mpsc::channel(64);
+            let sequencer_tx = tx.clone();
+            let status = tokio::spawn(async move {
+                while let Some(message) = status_rx.recv().await {
+                    if sequencer_tx.send(message).await.is_err() {
+                        break;
+                    }
+                }
+            });
+            let poster = poster(chain, &dir, &key);
+            (tokio::spawn(poster.run_with_recovery(work_rx, status_tx, recovery)), status)
+        });
         let bundle = AttestationBundle {
             enclave_address: key.address(),
             config_sha256: [0; 32],
@@ -99,7 +147,7 @@ impl Node {
             attestation: Arc::new(attest_bundle(&MockAttestor, &bundle).unwrap()),
             auth,
             protocol: engine_core::protocol::ProtocolVersion::LATEST,
-            access: None,
+            access,
             operator,
             mock_custody: false,
             clock: Arc::new(TestClock::at(T0_SECS as Millis * 1000)),
@@ -116,15 +164,24 @@ impl Node {
             listing: Default::default(),
             signing: crate::test_support::signing(),
         };
-        Node { state, clock, dir, sequencer, custody }
+        Node { state, clock, dir, sequencer, custody, checkpoints, _access: source }
     }
 
-    /// Moves the sequenced time to `ms`, trusted time with it, and the API's clock to `api`.
-    pub(super) async fn advance_to(&mut self, ms: Millis, api: fn() -> Millis) {
+    /// Moves the sequenced time to `ms`, and trusted time and the API's clock with it.
+    pub(super) async fn advance_to(&mut self, ms: Millis) {
         let by = u64::try_from(ms - self.clock.now_ms()).expect("time only moves forward");
         self.clock.advance(Duration::from_millis(by));
         self.state.tx.send(Request::TimeSample(sample_around(self.clock.as_ref()))).await.unwrap();
-        self.state.clock = Arc::new(crate::clock::test_clock::TestClock::at(api()));
+        self.state.clock = Arc::new(crate::clock::test_clock::TestClock::at(ms));
+    }
+
+    /// Sequences `cmd` and returns its events.
+    pub(super) async fn submit(&self, cmd: Command) -> Vec<Event> {
+        let (reply, rx) = oneshot::channel();
+        self.state.tx.send(Request::Submit { cmd, reply: Some(reply) }).await.unwrap();
+        crate::test_support::wait_for("the sequencer to answer a submission", rx)
+            .await
+            .expect("trusted time admits the command")
     }
 
     /// Reads the engine between batches.
@@ -170,8 +227,21 @@ impl Node {
         self.send(HttpRequest::get(path).body(Body::empty()).unwrap()).await
     }
 
-    /// Stops the custody watcher and drains the sequencer.
+    /// The status and JSON body of a POST of `body` to `path`.
+    pub(super) async fn post(&self, path: &str, body: Value) -> (StatusCode, Value) {
+        let request =
+            HttpRequest::post(path).header("content-type", "application/json").body(Body::from(body.to_string()));
+        self.send(request.unwrap()).await
+    }
+
+    /// Stops the checkpoint worker and the custody watcher, and drains the sequencer.
     pub(super) async fn stop(self) {
+        if let Some((poster, status)) = self.checkpoints {
+            poster.abort();
+            let _ = poster.await;
+            status.abort();
+            let _ = status.await;
+        }
         self.custody.abort();
         let _ = self.custody.await;
         drop(self.state);
@@ -185,6 +255,26 @@ impl Node {
         let status = response.status();
         let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    }
+}
+
+/// The checkpoint worker posting to the chain's vault at the latest block.
+fn poster(chain: &Chain, dir: &std::path::Path, key: &EnclaveKey) -> Poster<CheckpointRpc> {
+    let section: CheckpointSection = toml::from_str(&format!(
+        "rpc_url = {:?}\nrelayer = '{:#x}'\nretry_interval = '40ms'\nrpc_timeout = '2s'",
+        chain.url, chain.accounts[9]
+    ))
+    .unwrap();
+    let domain = CheckpointDomain { chain_id: 31337, vault: AccountId(chain.vault.into()) };
+    let signer = AccountId(key.address());
+    Poster {
+        chain: CheckpointRpc::new(&section, domain, chain.usdc, FinalityTag::Latest, 0, dir, signer).unwrap(),
+        registry: None,
+        domain,
+        signer,
+        retry: section.retry_interval,
+        pending_deposits_critical_after: Duration::from_secs(1),
+        post_withheld: Default::default(),
     }
 }
 
