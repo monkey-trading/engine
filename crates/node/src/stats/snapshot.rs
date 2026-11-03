@@ -4,12 +4,11 @@
 
 use std::collections::BTreeMap;
 
-use engine_core::fixed::Rounding;
 use engine_core::types::{MarketId, Millis};
 use engine_core::{Engine, Fixed};
 use serde::Serialize;
 
-use crate::stats::closeout::{self, Reach, Standing};
+use crate::stats::closeout::{self, Reach};
 
 /// A position map's bucketing: `half` buckets of `width` basis points each side of the centre.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,7 +142,6 @@ pub(crate) fn scan(engine: &Engine, seq: u64, ts: Millis, layout: Layout, full: 
     let mut books: BTreeMap<MarketId, MarketBook> =
         engine.markets().iter().map(|(id, market)| (*id, MarketBook::new(market.mark, layout))).collect();
     let (mut open_interest, mut open_margin, mut open_positions) = (Fixed::ZERO, Fixed::ZERO, 0);
-    let level_bps = engine.params().map(|params| params.closeout_level_bps);
     for account in engine.accounts().values() {
         let valued = account.positions.keys().all(|id| {
             engine
@@ -158,8 +156,7 @@ pub(crate) fn scan(engine: &Engine, seq: u64, ts: Millis, layout: Layout, full: 
         open_margin += margin;
         for (id, position) in &account.positions {
             let market = &engine.markets()[id];
-            let price = market.mark.unwrap_or(position.entry);
-            let notional = market.usd_at_mark(position.qty.abs().mul_rounded(price, Rounding::Up), Rounding::Up);
+            let (price, notional) = closeout::valued(market, position);
             let long = position.qty.is_positive();
             let book = books.get_mut(id).expect("a book exists for every listed market");
             open_interest += notional;
@@ -177,23 +174,14 @@ pub(crate) fn scan(engine: &Engine, seq: u64, ts: Millis, layout: Layout, full: 
                 let profit_bps = if long { move_bps } else { move_bps.saturating_neg() };
                 book.profit[layout.profit.profit_bucket(profit_bps)].add(long, notional);
             }
-            let reach = match level_bps.filter(|_| notional.is_positive()) {
-                Some(level_bps) if market.spec.quote_currency.fx_market() == Some(*id) => {
-                    let standing = Standing { equity, margin, level_bps };
-                    let (quantity, range) = (position.qty.abs(), layout.closeout.range_bps());
-                    closeout::reach_self_converting(standing, long, quantity, position.entry, price, range)
-                }
-                Some(level_bps) => closeout::reach(
-                    Standing { equity, margin, level_bps },
-                    closeout::Position { notional, long, spec: &market.spec },
-                    layout.closeout.range_bps(),
-                ),
-                None => Reach::Beyond,
-            };
+            let range = layout.closeout.range_bps();
+            let reach = closeout::position_reach(engine, (equity, margin), *id, position, (price, notional), range);
             match reach {
                 Reach::Due => book.due.add(long, notional),
                 Reach::Beyond => book.beyond.add(long, notional),
-                Reach::At(offset) => book.closeout[layout.closeout.inner(offset)].add(long, notional),
+                Reach::At(ratio) => {
+                    book.closeout[layout.closeout.inner(closeout::offset_bps(ratio))].add(long, notional)
+                }
             }
         }
     }

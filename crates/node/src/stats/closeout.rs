@@ -1,17 +1,43 @@
 //! The estimated close-out price of one position: where the market must move for its account to
 //! fall below the close-out level, with the account's other positions held at their marks.
 
-use engine_core::Fixed;
+use engine_core::account::{Account, Position as Held};
+use engine_core::engine::MarketState;
 use engine_core::fixed::Rounding;
 use engine_core::market::MarketSpec;
+use engine_core::types::MarketId;
+use engine_core::{Engine, Fixed};
+use serde::Serialize;
+
+/// How far a long can fall, to nothing, before its close-out price counts as none.
+const LONG_RANGE_BPS: u32 = 10_000;
+/// How far a short can rise, to ten times its mark, before its close-out price counts as none.
+const SHORT_RANGE_BPS: u32 = 90_000;
+
+/// Whether an account's position is below its close-out level at the marks, or where it closes out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum ReachKind {
+    Due,
+    At,
+    Beyond,
+}
+
+/// One position's close-out, as the account read serves it. `price` is set only for `at`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub(crate) struct PositionCloseout {
+    pub market: MarketId,
+    pub reach: ReachKind,
+    pub price: Option<Fixed>,
+}
 
 /// Where a position's account closes out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Reach {
     /// The account is below the close-out level at the marks already.
     Due,
-    /// A move of this many basis points of the mark, negative for a fall.
-    At(i64),
+    /// The close-out price over the mark: below one for a long, above it for a short.
+    At(Fixed),
     /// No move inside the range closes the account out.
     Beyond,
 }
@@ -72,7 +98,8 @@ pub(crate) fn reach(standing: Standing, position: Position<'_>, range_bps: u32) 
         if far_slack.is_negative() {
             let (from, from_slack) = near;
             let crossing = from + (far - from).mul_div(from_slack, from_slack - far_slack, Rounding::TowardZero);
-            return Reach::At(crossing.bps_of(notional) - 10_000);
+            // Rounded up so a crossing too small for the ratio's nine places stays a positive price.
+            return Reach::At(crossing.mul_div(Fixed::ONE, notional, Rounding::Up));
         }
         near = (far, far_slack);
     }
@@ -102,8 +129,75 @@ pub(crate) fn reach_self_converting(
     if !divisor.is_positive() {
         return Reach::Beyond;
     }
-    let offset = Fixed::ONE.div(divisor).bps_of(Fixed::ONE) - 10_000;
-    if offset.unsigned_abs() > u64::from(range_bps) { Reach::Beyond } else { Reach::At(offset) }
+    let ratio = Fixed::ONE.div_rounded(divisor, Rounding::Up);
+    // As `reach`, a crossing at the range's edge is none: the account is first closed out past it.
+    if (ratio - Fixed::ONE).abs() >= Fixed::ONE.mul_bps(i64::from(range_bps)) {
+        Reach::Beyond
+    } else {
+        Reach::At(ratio)
+    }
+}
+
+/// A close-out price over the mark as a move in whole basis points, negative for a fall.
+pub(crate) fn offset_bps(ratio: Fixed) -> i64 {
+    ratio.bps_of(Fixed::ONE) - 10_000
+}
+
+/// The price a position is valued at, its market's mark or its entry before one, and its USD
+/// notional there.
+pub(crate) fn valued(market: &MarketState, position: &Held) -> (Fixed, Fixed) {
+    let price = market.mark.unwrap_or(position.entry);
+    (price, market.usd_at_mark(position.qty.abs().mul_rounded(price, Rounding::Up), Rounding::Up))
+}
+
+/// Where the account holding `position` in market `id` closes out, for an account of `equity` and
+/// `margin` at the marks, the position valued at `(price, notional)` as `valued` gives: the one rule behind the position maps and an account's own read. A market
+/// converting its own currency takes the walk that follows its price; none is due when the node has
+/// no close-out level yet.
+pub(crate) fn position_reach(
+    engine: &Engine,
+    (equity, margin): (Fixed, Fixed),
+    id: MarketId,
+    position: &Held,
+    (price, notional): (Fixed, Fixed),
+    range_bps: u32,
+) -> Reach {
+    let market = &engine.markets()[&id];
+    let long = position.qty.is_positive();
+    match engine.params().map(|params| params.closeout_level_bps).filter(|_| notional.is_positive()) {
+        Some(level_bps) if market.spec.quote_currency.fx_market() == Some(id) => {
+            let standing = Standing { equity, margin, level_bps };
+            reach_self_converting(standing, long, position.qty.abs(), position.entry, price, range_bps)
+        }
+        Some(level_bps) => {
+            let position = Position { notional, long, spec: &market.spec };
+            reach(Standing { equity, margin, level_bps }, position, range_bps)
+        }
+        None => Reach::Beyond,
+    }
+}
+
+/// The close-out of each of `account`'s positions, in market order, with the account's other
+/// positions held at their marks. The price is in the market's quote currency.
+pub(crate) fn account_closeouts(engine: &Engine, account: &Account, standing: (Fixed, Fixed)) -> Vec<PositionCloseout> {
+    account
+        .positions
+        .iter()
+        .map(|(id, position)| {
+            let long = position.qty.is_positive();
+            let range = if long { LONG_RANGE_BPS } else { SHORT_RANGE_BPS };
+            let (mark, notional) = valued(&engine.markets()[id], position);
+            let (reach, price) = match position_reach(engine, standing, *id, position, (mark, notional), range) {
+                Reach::Due => (ReachKind::Due, None),
+                Reach::Beyond => (ReachKind::Beyond, None),
+                Reach::At(ratio) => {
+                    let rounding = if long { Rounding::Up } else { Rounding::Down };
+                    (ReachKind::At, Some(mark.mul_rounded(ratio, rounding)))
+                }
+            };
+            PositionCloseout { market: *id, reach, price }
+        })
+        .collect()
 }
 
 #[cfg(test)]

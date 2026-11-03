@@ -248,7 +248,9 @@ fn a_series_rejects_a_market_it_does_not_take_and_one_it_needs() {
 
 mod background;
 mod bounds;
+mod closeout_cost;
 pub(super) mod closeout_map;
+mod closeout_price;
 mod currency;
 mod monkey;
 mod queue;

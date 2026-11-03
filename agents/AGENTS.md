@@ -97,7 +97,7 @@ an index: load only the rule whose hint matches the current action.
   is refused at serve time),
   the dashboard record (`stats/`, held in memory and rebuilt from the log's replay through a sink in it,
   with no file to roll back: `series.rs` 1m/1h/1d buckets with `[stats]` retention, `snapshot.rs` and
-  `closeout.rs` the full scan of every account at most once per `api.stats_interval` of sequenced time and a light one (totals only) every `api.stats_light_interval`, taken by `background.rs`'s worker over a copy of the engine so it never holds the sequencer, `activity.rs`
+  `closeout.rs` the full scan of every account at most once per `api.stats_interval` of sequenced time and a light one (totals only) every `api.stats_light_interval`, taken by `background.rs`'s worker over a copy of the engine so it never holds the sequencer, and, from the full scan's rule, each position's `closeouts` price in `GET /v1/accounts/{address}`, `activity.rs`
   the bounded MONKEY feed, `view.rs` the answers) served signed from `api/stats.rs` and `/v1/house`:
   `/v1/house/positions`, `/v1/monkey`, `/v1/monkey/activity` and `/v1/stats/series`, each stating where its
   data begins (`stats::bench` measures the scan at 100k accounts),
@@ -468,7 +468,9 @@ Run from the repo root:
   temporary data trades both ways in BTC-USD and ETH-USD, waits one ten-minute MONKEY period out
   (about twelve minutes in all), checks every new route's figures against the accounts and verifies
   each answer with `engine verify-response`, then restarts the node and compares the series); the
-  scan's cost at 100k accounts: `cargo test -p engine-node --lib stats::bench -- --ignored --nocapture`
+  scan's cost at 100k accounts: `cargo test -p engine-node --lib stats::bench -- --ignored --nocapture`; the
+  account read's close-outs for an account holding every launch market:
+  `cargo test -p engine-node --lib stats::tests::closeout_cost -- --ignored --nocapture`
 - A signed checkpoint's cost after a hold, at 100k changed accounts:
   `cargo test -p engine-node --lib held_checkpoint_cost -- --ignored --nocapture`
 - Proxy protocol dev scenario: `./scripts/dev-proxy-protocol.sh` (needs `python3`, `curl`, and `jq`; a

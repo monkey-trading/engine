@@ -23,7 +23,8 @@ fn a_close_out_across_a_margin_band_is_found_where_the_slack_reaches_zero() {
     // below the mark, in the first band although the position stands in the second.
     let position = Position { notional: f(3_000_000), long: true, spec: &spec };
     let reach = reach(standing(2_000_000, 40_000), position, 9_000);
-    let Reach::At(offset) = reach else { panic!("{reach:?}") };
+    let Reach::At(ratio) = reach else { panic!("{reach:?}") };
+    let offset = offset_bps(ratio);
     assert!((-6_660..=-6_640).contains(&offset), "{offset}");
     // The same account's slack at the estimate is nil: its equity is the level's share of the margin.
     let notional = f(3_000_000) + f(3_000_000).mul_bps(offset);
@@ -37,7 +38,8 @@ fn a_short_closes_out_on_a_rise_and_an_account_already_below_the_level_is_due() 
     let spec = btc();
     // A short of 500k on 100k of equity and a 50k margin: closed out at a notional of 571429.
     let position = Position { notional: f(500_000), long: false, spec: &spec };
-    let Reach::At(offset) = reach(standing(100_000, 50_000), position, 5_000) else { panic!() };
+    let Reach::At(ratio) = reach(standing(100_000, 50_000), position, 5_000) else { panic!() };
+    let offset = offset_bps(ratio);
     assert!(offset > 0 && offset <= 5_000, "{offset}");
     let due = reach(standing(20_000, 50_000), position, 5_000);
     assert_eq!(due, Reach::Due, "equity under half the margin is closed out at the marks");
@@ -59,12 +61,39 @@ fn a_self_converting_pair_closes_out_where_its_yen_profit_in_dollars_falls_to_th
         panic!()
     };
     // 1/p = 1/150 + 9500 / (100000 * 150), so p = 136.99: 868 bps below the mark.
-    assert!((-870..=-866).contains(&long), "{long}");
+    assert!((-870..=-866).contains(&offset_bps(long)), "{long}");
     let Reach::At(short) = reach_self_converting(standing(10_000, 1_000), false, quantity, entry, mark, 2_000) else {
         panic!()
     };
     // 1/p = 1/150 - 9500 / (100000 * 150), so p = 165.76: 1050 bps above.
-    assert!((1_045..=1_055).contains(&short), "{short}");
+    assert!((1_045..=1_055).contains(&offset_bps(short)), "{short}");
     assert_eq!(reach_self_converting(standing(10_000, 1_000), true, quantity, entry, mark, 500), Reach::Beyond);
     assert_eq!(reach_self_converting(standing(400, 1_000), true, quantity, entry, mark, 2_000), Reach::Due);
+}
+
+/// A long of 100k on equity one hundred-thousandth short of its notional falls to nothing before the
+/// slack turns negative, at a notional of about 0.00001: a ratio of 1e-10, kept by rounding up, at a
+/// 10% margin and at 1%.
+#[test]
+fn a_crossing_too_small_for_the_ratio_to_hold_stays_a_positive_price() {
+    for bps in [1_000, 100] {
+        let spec = MarketSpec { margin_tiers: vec![engine_core::market::Tier { up_to: None, bps }], ..btc() };
+        let equity = Fixed::from_raw(100_000 * 1_000_000_000 - 10_000);
+        let standing = Standing { equity, margin: f(100_000).mul_bps(bps), level_bps: 5_000 };
+        let position = Position { notional: f(100_000), long: true, spec: &spec };
+        let Reach::At(ratio) = reach(standing, position, 10_000) else { panic!("{bps} bps") };
+        assert!(ratio.is_positive(), "{bps} bps: {ratio}");
+        assert_eq!(reach(Standing { equity: f(100_000), ..standing }, position, 10_000), Reach::Beyond);
+    }
+}
+
+#[test]
+fn a_self_converting_short_is_none_from_ten_times_its_mark_even_by_a_fraction_of_a_basis_point() {
+    let (quantity, entry, mark) = (f(100_000), f(150), f(150));
+    let standing = |equity: &str| Standing { equity: equity.parse().unwrap(), margin: f(500), level_bps: 5_000 };
+    // 90250 of equity less 250, the level's share of the margin, leaves 90000: a price of exactly 10 marks,
+    // where the account is not yet below the level, and just short of it a price.
+    assert!(matches!(reach_self_converting(standing("90249.9"), false, quantity, entry, mark, 90_000), Reach::At(_)));
+    assert_eq!(reach_self_converting(standing("90250"), false, quantity, entry, mark, 90_000), Reach::Beyond);
+    assert_eq!(reach_self_converting(standing("90250.09"), false, quantity, entry, mark, 90_000), Reach::Beyond);
 }
