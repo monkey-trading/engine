@@ -64,8 +64,9 @@ allowed_origins = ["http://localhost:3000"]
 send_timeout = "30s"
 # A signed stream subscriber (`signed=1`) gets a signed heartbeat at least this often; at least 1s.
 heartbeat_interval = "5s"
-# A signed stream subscriber that asked for an account's quotes gets them again when one changes, at
-# most this often (at least 100ms), for at most this many markets.
+# A signed stream subscriber that asked for an account's quotes gets them again when one changes,
+# as soon as the log head moves if its last read was this long ago and never more often (at least
+# 100ms), for at most this many markets.
 quote_interval = "100ms"
 quote_max_markets = 4
 # The least sequenced time between two scans of every account, which feed the open interest, margin

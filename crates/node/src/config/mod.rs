@@ -189,7 +189,8 @@ pub struct ApiSection {
     #[serde(default = "default_heartbeat_interval", with = "humantime_serde")]
     pub heartbeat_interval: Duration,
     /// A signed stream connection that asked for an account's quotes gets them again when one
-    /// changes, at most this often. At least 100 ms.
+    /// changes: as soon as the log head moves if its last read was this long ago, and never more often
+    /// than this. At least 100 ms.
     #[serde(default = "default_quote_interval", with = "humantime_serde")]
     pub quote_interval: Duration,
     /// Most markets one quote subscription may name.

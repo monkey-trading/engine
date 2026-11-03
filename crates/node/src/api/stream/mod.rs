@@ -21,7 +21,6 @@ use axum::http::Uri;
 use axum::response::Response;
 use engine_wire::Connection;
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
-use rand::Rng;
 use serde::Deserialize;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, broadcast, watch};
@@ -173,15 +172,13 @@ pub async fn stream(
             let connection = Connection::new(challenge, request);
             let framing = Framing::new(s.signing.clone(), connection, s.manifest.clone());
             let (inbox, requests) = watch::channel(String::new());
-            // Each connection reads at its own phase of the interval, so many do not read at once.
-            let phase = rand::thread_rng().gen_range(Duration::ZERO..s.limits.quote_interval);
             let quotes = Quotes::new(
                 s.tx.downgrade(),
                 s.manifest.clone(),
                 requests,
                 s.limits.quote_interval,
                 s.limits.quote_max_markets,
-                phase,
+                s.limits.quote_reads(),
             );
             Some((framing, quotes, inbox))
         }
