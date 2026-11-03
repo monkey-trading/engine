@@ -201,12 +201,38 @@ async fn follow_resumes_at_the_copys_last_command() {
     drop(writer);
     let (mut writer, mut copied) = open_copy(&dir, 100, Chain::new(DOMAIN, enclave())).unwrap();
     let (port, server, request) = operator_stream(Vec::new()).await;
-    let reached =
-        follow(&mut writer, &mut copied, &config(), &standby_section(port), Duration::from_millis(300)).await.unwrap();
-    assert_eq!(reached, Some(Offset { seq: 0, index: 1 }));
+    // The host held the connection open and fed it nothing: that is a failed stint, not a working one.
+    let failed = follow(&mut writer, &mut copied, &config(), &standby_section(port), Duration::from_millis(300))
+        .await
+        .unwrap_err();
+    assert!(format!("{failed:#}").contains("delivered no frame"), "{failed:#}");
     let request = request.await.unwrap();
     assert!(request.contains("from=0"), "the stream resumed at the copy's last command: {request}");
     assert!(!request.contains("after="));
+    server.abort();
+}
+
+#[tokio::test]
+async fn follow_repeats_the_tail_without_reappending_it() {
+    let operator = scratch_dir("standby-follow-repeat-operator");
+    ticks(&operator, 6).await;
+    let dir = scratch_dir("standby-follow-repeat-copy");
+    copy_log(&operator, &dir);
+    // The operator carries on; the resumed stream repeats the copy's tail before the new entries.
+    ticks(&operator, 4).await;
+    let (mut writer, mut copied) = open_copy(&dir, 100, Chain::new(DOMAIN, enclave())).unwrap();
+    let head = copied.head().unwrap();
+    let frames = log_messages(&operator, Offset::start_of(head.seq))
+        .into_iter()
+        .map(|message| (By::Operator, message))
+        .collect();
+    let (port, server, _) = operator_stream(frames).await;
+    follow(&mut writer, &mut copied, &config(), &standby_section(port), Duration::from_secs(5)).await.unwrap();
+    writer.flush().unwrap();
+    drop(writer);
+    // Every repeat was recognised, not appended again: the copy is the operator's log exactly.
+    assert_eq!(log_entries(&dir), log_entries(&operator));
+    crate::sequencer::replay_path(&dir).unwrap();
     server.abort();
 }
 
@@ -379,4 +405,24 @@ pub(super) fn copy_log(from: &std::path::Path, to: &std::path::Path) {
             std::fs::copy(file.path(), to.join(file.file_name())).unwrap();
         }
     }
+}
+
+#[test]
+fn the_stint_alert_decision_keeps_the_two_alerts_apart() {
+    let offset = Some(Offset { seq: 4, index: 0 });
+    let stream_err = || anyhow::anyhow!("the stream broke");
+    let rollback_err =
+        || anyhow::Error::new(chain::Rollback { copy_head: offset, evidence: "a repeat differs".into() });
+    use super::{StintAction, stint_action};
+    // A stream failure is a follow failure even while a rollback episode is open.
+    assert_eq!(stint_action(&Err(stream_err()), true, true), StintAction::FollowFailed);
+    assert_eq!(stint_action(&Err(stream_err()), false, false), StintAction::FollowFailed);
+    // A rollback is not a follow failure; the stream itself worked.
+    assert!(matches!(stint_action(&Err(rollback_err()), true, true), StintAction::Rollback(_)));
+    assert!(matches!(stint_action(&Err(rollback_err()), false, false), StintAction::Rollback(_)));
+    // Only an Ok stint that repeated the whole tail resolves an open episode.
+    assert_eq!(stint_action(&Ok(offset), true, true), StintAction::Resolved);
+    assert_eq!(stint_action(&Ok(offset), true, false), StintAction::Quiet);
+    assert_eq!(stint_action(&Ok(offset), false, true), StintAction::Quiet);
+    assert_eq!(stint_action(&Ok(None), false, false), StintAction::Quiet);
 }

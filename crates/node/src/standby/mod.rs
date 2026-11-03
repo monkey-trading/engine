@@ -31,17 +31,16 @@ use std::time::Duration;
 
 use anyhow::{Context, bail, ensure};
 use engine_core::types::AccountId;
-use futures_util::{StreamExt, pin_mut};
-use rand::Rng;
-use tokio::time::{sleep, timeout};
-use tokio_tungstenite::tungstenite::Message;
+use tokio::time::sleep;
 use tracing::{error, info, warn};
 
 use crate::checkpoints::Takeover;
 
 pub(crate) mod archive;
 mod chain;
-use chain::{Chain, Step, rollback_of};
+mod follow;
+use chain::{Chain, rollback_of};
+use follow::follow;
 
 use crate::config::{CustodyProvider, NodeConfig, StandbySection};
 use crate::log::{
@@ -60,12 +59,6 @@ pub(super) const MAX_ARCHIVE_LISTINGS: usize = 65_536;
 pub(super) const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long one archive body may take end to end.
 pub(super) const BODY_TIMEOUT: Duration = Duration::from_secs(300);
-
-/// What a signed heartbeat names: the operator's flushed log head, or `None` before its first entry.
-#[derive(serde::Deserialize)]
-struct Heartbeat {
-    head: Option<Offset>,
-}
 
 /// Runs the standby until the registry promotes this node's candidate, then finalizes the copy
 /// and returns for a normal `--new-key` start.
@@ -152,41 +145,79 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
         // The copy's last command is the resume point, so an error mid-stint never duplicates
         // appends: the next stint re-requests from it.
         let followed = follow(&mut writer, &mut copied, cfg, standby, STINT).await;
-        let rollback = followed.as_ref().err().and_then(rollback_of);
-        if let (Err(e), None) = (&followed, rollback) {
-            if !follow_failed {
-                error!(alert = "standby_follow_failed", operator = %standby.operator, "following failed: {e:#}");
-            }
-            follow_failed = true;
-            // A dead operator refuses connections at once; the poll interval bounds the retry
-            // rate for as long as the liveness window lasts.
-            sleep(standby.poll_interval).await;
-            continue;
-        }
         // The stream itself worked: what it carried is another matter.
-        if std::mem::take(&mut follow_failed) {
-            info!(alert_resolved = "standby_follow_failed", operator = %standby.operator, "following works again");
-        }
-        if let Some(rollback) = rollback {
-            if !std::mem::replace(&mut rolled_back, true) {
-                error!(
-                    alert = "operator_log_rollback",
-                    operator = %standby.operator,
-                    "{rollback}; the copy takes nothing more and is kept as the source to restore it from"
-                );
+        match stint_action(&followed, rolled_back, copied.confirmed()) {
+            StintAction::FollowFailed => {
+                let error = followed.as_ref().unwrap_err();
+                if !follow_failed {
+                    error!(alert = "standby_follow_failed", operator = %standby.operator, "following failed: {error:#}");
+                }
+                follow_failed = true;
+                // A dead operator refuses connections at once; the poll interval bounds the retry
+                // rate for as long as the liveness window lasts.
+                sleep(standby.poll_interval).await;
+                continue;
             }
-            sleep(standby.poll_interval).await;
-        } else if rolled_back && copied.confirmed() {
-            info!(
-                alert_resolved = "operator_log_rollback",
-                operator = %standby.operator,
-                "the operator's log holds the copy's history again"
-            );
-            rolled_back = false;
-        } else {
-            // A host that closes every connection at once must not spin this loop.
-            sleep(Duration::from_secs(1)).await;
+            StintAction::Quiet => {
+                if std::mem::take(&mut follow_failed) {
+                    info!(alert_resolved = "standby_follow_failed", operator = %standby.operator, "following works again");
+                }
+                // A host that closes every connection at once must not spin this loop.
+                sleep(Duration::from_secs(1)).await;
+            }
+            StintAction::Rollback(evidence) => {
+                if std::mem::take(&mut follow_failed) {
+                    info!(alert_resolved = "standby_follow_failed", operator = %standby.operator, "following works again");
+                }
+                if !std::mem::replace(&mut rolled_back, true) {
+                    error!(
+                        alert = "operator_log_rollback",
+                        operator = %standby.operator,
+                        "{evidence}; the copy takes nothing more and is kept as the source to restore it from"
+                    );
+                }
+                sleep(standby.poll_interval).await;
+            }
+            StintAction::Resolved => {
+                if std::mem::take(&mut follow_failed) {
+                    info!(alert_resolved = "standby_follow_failed", operator = %standby.operator, "following works again");
+                }
+                info!(
+                    alert_resolved = "operator_log_rollback",
+                    operator = %standby.operator,
+                    "the operator's log holds the copy's history again"
+                );
+                rolled_back = false;
+                sleep(Duration::from_secs(1)).await;
+            }
         }
+    }
+}
+
+/// What one follow stint says about the two follow alerts.
+#[derive(Debug, PartialEq)]
+enum StintAction {
+    /// The stream itself failed: raise (once) `standby_follow_failed`; nothing else changes.
+    FollowFailed,
+    /// The stream worked and carried nothing new about a rollback: resolve `standby_follow_failed`
+    /// if raised; no other change.
+    Quiet,
+    /// The stream worked and showed a rollback: resolve `standby_follow_failed` if raised; raise
+    /// (once per episode) `operator_log_rollback` with the evidence.
+    Rollback(String),
+    /// The stream worked and repeated the whole tail of a rolled-back copy: resolve both alerts.
+    Resolved,
+}
+
+/// The alert decision for one stint: the stream's failure is its own alert, whatever the failure
+/// carries; an Ok stint that repeated the whole tail resolves a rollback episode, and a quiet Ok
+/// stint resolves nothing but `standby_follow_failed`.
+fn stint_action(followed: &anyhow::Result<Option<Offset>>, rolled_back: bool, confirmed: bool) -> StintAction {
+    match followed.as_ref().err().and_then(rollback_of) {
+        None if followed.is_err() => StintAction::FollowFailed,
+        Some(rollback) => StintAction::Rollback(rollback.to_string()),
+        None if rolled_back && confirmed => StintAction::Resolved,
+        None => StintAction::Quiet,
     }
 }
 
@@ -216,87 +247,6 @@ fn open_copy(dir: &std::path::Path, segment_commands: u64, empty: Chain) -> anyh
             open(dir).context("opening the repaired copy")
         }
     }
-}
-
-/// One follow stint: opens a signed stream at the copy's last command, verifies every frame against
-/// the operator's enclave address, checks each heartbeat and entry against the copy (`Chain`), and
-/// appends each new entry, for up to `budget`. Returns the copy's head. A closed, failed, or ended
-/// connection returns to re-check the chain; the next stint opens a fresh connection, which the
-/// verifier binds, so a spliced connection is never trusted across stints.
-/// Error cases:
-/// - the connection fails, a frame fails verification, or the copy cannot be written
-/// - the operator's log no longer extends the copy (a `Rollback`); nothing more is appended
-async fn follow(
-    writer: &mut LogWriter,
-    copied: &mut Chain,
-    cfg: &NodeConfig,
-    standby: &StandbySection,
-    budget: Duration,
-) -> anyhow::Result<Option<Offset>> {
-    let mut challenge = [0u8; 32];
-    rand::thread_rng().fill(&mut challenge);
-    let path_and_query =
-        format!("/v1/stream?signed=1&challenge={}&from={}", hex::encode(challenge), copied.resume_seq());
-    let url = stream_url(&standby.operator, &path_and_query)?;
-    let connector = tokio_tungstenite::Connector::Rustls(tls(standby)?);
-    let connect = tokio_tungstenite::connect_async_tls_with_config(url.as_str(), None, false, Some(connector));
-    let (mut stream, _) = timeout(FETCH_TIMEOUT, connect)
-        .await
-        .context("connecting to the stream timed out")?
-        .with_context(|| format!("connecting to {url}"))?;
-    let mut verifier = engine_wire::FrameVerifier::new(
-        standby.enclave.0,
-        engine_wire::Deployment {
-            chain_id: cfg.custody.chain_id,
-            vault: cfg.custody.vault.parse::<AccountId>().context("custody.vault")?.0,
-        },
-        engine_wire::Connection::new(challenge, &path_and_query),
-    );
-    let deadline = sleep(budget);
-    pin_mut!(deadline);
-    copied.begin();
-    // Every exit path flushes: a later stint resumes the stream from the copy's last command, so
-    // an unflushed append would be skipped forever.
-    let followed = async {
-        loop {
-            let frame = {
-                let next = stream.next();
-                futures_util::pin_mut!(next);
-                match futures_util::future::select(&mut deadline, next).await {
-                    futures_util::future::Either::Left(_) => break,
-                    futures_util::future::Either::Right((message, _)) => {
-                        let message = message.context("reading the stream")??;
-                        let text = match message {
-                            Message::Text(text) => text,
-                            Message::Close(_) => break,
-                            // The stream sends text frames; anything else is ignored, as the
-                            // subscriber side of the API does with what a subscriber sends.
-                            _ => continue,
-                        };
-                        verifier.verify_text(&text).context("a stream frame failed verification")?
-                    }
-                }
-            };
-            let value: serde_json::Value = serde_json::from_str(&frame.msg).context("a stream message is not JSON")?;
-            if value.get("type").and_then(serde_json::Value::as_str) == Some("heartbeat") {
-                let heartbeat: Heartbeat = serde_json::from_value(value).context("a heartbeat names no log head")?;
-                copied.heartbeat(heartbeat.head)?;
-                continue;
-            }
-            let message: crate::sequencer::StreamMsg =
-                serde_json::from_value(value).context("a stream message is not a log entry")?;
-            let entry = LogEntry::from(message.body);
-            if let Step::Extends(link) = copied.check(message.offset, &entry)? {
-                writer.append(&entry).context("appending a stream entry to the copy")?;
-                copied.extend(message.offset, entry, link);
-                writer.flush().context("flushing the copy")?;
-            }
-        }
-        anyhow::Ok(copied.head())
-    }
-    .await;
-    writer.sync().context("syncing the copy")?;
-    followed
 }
 
 /// Finalizes the copy for the takeover: refreshes completed segments from the archive in case the

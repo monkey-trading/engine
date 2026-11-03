@@ -5,6 +5,7 @@
 use std::path::Path;
 
 use engine_core::command::{Command, Sequenced};
+use engine_core::types::AccountId;
 
 use super::*;
 use crate::log::{Checkpoint, CommandEntry, CommandSeal, LogEntry, SegmentedLog};
@@ -176,13 +177,13 @@ async fn an_entry_that_does_not_chain_is_refused_and_leaves_the_copy_as_it_was()
             "another key",
             offset,
             resealed(EnclaveKey::generate().seal_command(DOMAIN, link)),
-            "not by the followed enclave",
+            "which no checkpoint the copy holds names",
         ),
         (
             "another deployment",
             offset,
             resealed(EnclaveKey::test_key().seal_command(other_domain, link)),
-            "for this deployment",
+            "not this deployment",
         ),
         ("another command", offset, LogEntry::Command(restamped), "its seal does not chain onto the copy's history"),
         (
@@ -291,4 +292,71 @@ fn checkpoint(seq: u64) -> LogEntry {
         domain: None,
         deferred_withdrawals: false,
     })
+}
+
+#[tokio::test]
+async fn a_checkpoint_signed_by_a_predecessor_enclave_extends_the_copy_and_admits_its_seals() {
+    // A handover re-seals nothing: history sealed before it carries the predecessor's seal. A copy
+    // that follows the successor must take the predecessor's checkpoint, and the commands it sealed.
+    let predecessor = EnclaveKey::generate();
+    let followed = EnclaveKey::generate();
+    let mut copied = Chain::new(DOMAIN, AccountId(followed.address()));
+    extend(&mut copied, sealed(followed, 0, B256::default()));
+
+    let root = [7u8; 32];
+    let checkpoint = LogEntry::Checkpoint(Checkpoint {
+        parent: None,
+        seq: 0,
+        root: format!("0x{}", hex::encode(root)),
+        signature: predecessor.sign_checkpoint(DOMAIN.chain_id, &DOMAIN.vault.0, 0, &root),
+        signer: predecessor.address_hex(),
+        domain: Some(DOMAIN),
+        deferred_withdrawals: false,
+    });
+    extend(&mut copied, checkpoint);
+
+    // A command sealed by the predecessor — history from before the handover — extends.
+    let link = copied.link;
+    extend(&mut copied, sealed(predecessor, 1, link));
+}
+
+#[tokio::test]
+async fn a_checkpoint_whose_signature_recovers_to_another_enclave_is_refused() {
+    let named = EnclaveKey::generate();
+    let signed_by = EnclaveKey::generate();
+    let followed = EnclaveKey::generate();
+    let mut copied = Chain::new(DOMAIN, AccountId(followed.address()));
+    extend(&mut copied, sealed(followed, 0, B256::default()));
+    let root = [9u8; 32];
+    let entry = LogEntry::Checkpoint(Checkpoint {
+        parent: None,
+        seq: 0,
+        root: format!("0x{}", hex::encode(root)),
+        signature: signed_by.sign_checkpoint(DOMAIN.chain_id, &DOMAIN.vault.0, 0, &root),
+        signer: named.address_hex(),
+        domain: Some(DOMAIN),
+        deferred_withdrawals: false,
+    });
+    let head = copied.head().unwrap();
+    let at = offset_of(Some(head), &entry).unwrap();
+    let refused = copied.check(at, &entry).unwrap_err();
+    assert!(refused.evidence.contains("another enclave"), "{}", refused.evidence);
+    assert_eq!(copied.head(), Some(head), "the refused checkpoint left the copy as it was");
+}
+
+/// A tick command at `seq` sealed by `key` over `link`.
+fn sealed(key: EnclaveKey, seq: u64, link: B256) -> LogEntry {
+    let mut entry = match command(seq) {
+        LogEntry::Command(entry) => entry,
+        _ => unreachable!(),
+    };
+    entry.seal = Some(key.seal_command(DOMAIN, command_link(link, &entry).unwrap()));
+    LogEntry::Command(entry)
+}
+
+/// Checks `entry` at the offset it belongs to after the copy's head, and takes it.
+fn extend(copied: &mut Chain, entry: LogEntry) {
+    let at = offset_of(copied.head(), &entry).unwrap();
+    let Step::Extends(link) = copied.check(at, &entry).unwrap() else { panic!("extends") };
+    copied.extend(at, entry, link);
 }

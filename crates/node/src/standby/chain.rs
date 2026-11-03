@@ -1,25 +1,32 @@
 //! Whether the operator's stream extends the standby's copy. The enclave seals every command over
 //! `command_link`, a hash chain that restarts at each checkpoint, so the link after the copy's last
 //! entry pins the copy's history. A resumed stream starts at the copy's last command and must
-//! repeat it, and the entries after it, exactly; every later command must carry the followed
-//! enclave's seal over the link that extends the copy. A signed heartbeat naming a head behind the
-//! copy, a repeat that differs, or an entry that does not chain means the operator's log no longer
-//! holds the copy's history. The copy then takes nothing more, and stays as it is.
+//! repeat it, and the entries after it, exactly; every later command must be sealed, over the link
+//! that extends the copy, by the followed enclave or one a checkpoint the copy holds names — the
+//! history a handover re-seals under a new key still counts. A signed heartbeat naming a head
+//! behind the copy, a repeat that differs, or an entry that does not chain means the operator's
+//! log no longer holds the copy's history. The copy then takes nothing more, and stays as it is.
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::path::Path;
 
-use engine_core::eip712::B256;
+use anyhow::Context as _;
+use engine_core::eip712::{self, B256};
 use engine_core::types::AccountId;
 
 use crate::log::command_seal::{checkpoint_link, command_link};
-use crate::log::{CheckpointDomain, LogEntry, Offset, offset_of};
+use crate::log::{Checkpoint, CheckpointDomain, LogEntry, Offset, offset_of};
 
 /// The copy's command-origin chain, and its last command with the entries after it.
 #[derive(Clone)]
 pub(super) struct Chain {
     domain: CheckpointDomain,
-    enclave: AccountId,
+    /// Every enclave that may seal the log's commands: the followed one, and each a checkpoint the
+    /// copy holds names — a checkpoint authenticates its signer, since only that enclave's key
+    /// makes a signature that recovers to it — so history sealed before a handover still counts
+    /// as extending the copy.
+    signers: BTreeSet<AccountId>,
     /// The link after the copy's last entry.
     link: B256,
     /// The copy's last command, then every entry after it, which a resumed stream repeats first.
@@ -58,20 +65,26 @@ impl fmt::Display for Rollback {
 impl std::error::Error for Rollback {}
 
 impl Chain {
-    /// An empty copy's chain, for the commands `enclave` seals in `domain`.
+    /// An empty copy's chain, for the commands the enclave `standby.enclave` names seals in `domain`.
     pub(super) fn new(domain: CheckpointDomain, enclave: AccountId) -> Self {
-        Self { domain, enclave, link: B256::default(), tail: Vec::new(), repeat: None }
+        Self { domain, signers: [enclave].into_iter().collect(), link: B256::default(), tail: Vec::new(), repeat: None }
     }
 
     /// Takes the copy's next entry as read from its own files, which hold only what the stream or
-    /// the archive gave it: its links are computed, not checked.
+    /// the archive gave it: its links are computed, not checked. Its checkpoints' signers join the
+    /// set that may seal what comes next: the copy is the trusted local artifact.
     /// Error cases:
     /// - the entry does not follow the last one, or its link cannot be computed
     pub(super) fn record(&mut self, entry: LogEntry) -> anyhow::Result<()> {
         let offset = offset_of(self.head(), &entry)?;
         let link = match &entry {
             LogEntry::Command(command) => command_link(self.link, command)?,
-            LogEntry::Checkpoint(checkpoint) => checkpoint_link(checkpoint)?,
+            LogEntry::Checkpoint(checkpoint) => {
+                if let Ok(signer) = checkpoint.signer.parse::<AccountId>() {
+                    self.signers.insert(signer);
+                }
+                checkpoint_link(checkpoint)?
+            }
             LogEntry::Withdrawal(_) => self.link,
         };
         self.extend(offset, entry, link);
@@ -161,10 +174,16 @@ impl Chain {
                     return Err(not_next(format!("the copy's next command is seq {next}")));
                 }
                 let seal = command.seal.as_ref().ok_or_else(|| not_next("it carries no command seal".into()))?;
-                if seal.domain != self.domain || seal.signer != self.enclave {
+                if seal.domain != self.domain {
                     return Err(not_next(format!(
-                        "it is sealed by {} for chain {} and vault {}, not by the followed enclave {} for this deployment",
-                        seal.signer, seal.domain.chain_id, seal.domain.vault, self.enclave
+                        "it is sealed for chain {} and vault {}, not this deployment",
+                        seal.domain.chain_id, seal.domain.vault
+                    )));
+                }
+                if !self.signers.contains(&seal.signer) {
+                    return Err(not_next(format!(
+                        "it is sealed by {}, which no checkpoint the copy holds names",
+                        seal.signer
                     )));
                 }
                 let link = command_link(self.link, command).map_err(|e| not_next(format!("{e:#}")))?;
@@ -175,7 +194,15 @@ impl Chain {
                 if checkpoint.seq != offset.seq {
                     return Err(not_next(format!("it is a checkpoint for seq {}", checkpoint.seq)));
                 }
-                checkpoint_link(checkpoint).map(Step::Extends).map_err(|e| not_next(format!("{e:#}")))
+                // Only a signature that recovers to the signer it names admits the signer: a forged
+                // checkpoint checks nothing, and a stale or replayed one fails the same way.
+                let signer = match admit_checkpoint(checkpoint, &self.domain) {
+                    Ok(signer) => signer,
+                    Err(why) => return Err(not_next(format!("{why:#}"))),
+                };
+                let link = checkpoint_link(checkpoint).map_err(|e| not_next(format!("{e:#}")))?;
+                self.signers.insert(signer);
+                Ok(Step::Extends(link))
             }
             LogEntry::Withdrawal(_) => Ok(Step::Extends(self.link)),
         }
@@ -209,6 +236,43 @@ impl Chain {
 /// The rollback anywhere in `error`'s chain of causes, if any.
 pub(super) fn rollback_of(error: &anyhow::Error) -> Option<&Rollback> {
     error.chain().find_map(|cause| cause.downcast_ref::<Rollback>())
+}
+
+/// Whether a streamed checkpoint may enter the copy: its signature must recover to the signer it
+/// names, over the digest its own fields name. Returns the admitted signer.
+/// Error cases:
+/// - the named signer does not parse, the root or signature is malformed, the signature recovers
+///   to no key, or it recovers to another enclave than the entry names
+fn admit_checkpoint(checkpoint: &Checkpoint, domain: &CheckpointDomain) -> anyhow::Result<AccountId> {
+    let named = checkpoint.signer.parse::<AccountId>().context("its checkpoint names no signer")?;
+    let recovered = checkpoint_signer(checkpoint, domain).context("its checkpoint signature checks nothing")?;
+    anyhow::ensure!(named == recovered, "its checkpoint signature recovers to another enclave than it names");
+    Ok(named)
+}
+
+/// The enclave a checkpoint's signature recovers to, over the digest its own fields name: the
+/// v2 digest covers the recorded parent, the v1 digest none. A historical entry without a domain
+/// is read against the copy's deployment.
+/// Error cases:
+/// - the root or signature is malformed, or the signature recovers to no key
+fn checkpoint_signer(checkpoint: &Checkpoint, domain: &CheckpointDomain) -> anyhow::Result<AccountId> {
+    let domain = checkpoint.domain.as_ref().unwrap_or(domain);
+    let root: [u8; 32] = hex::decode(checkpoint.root.trim_start_matches("0x"))
+        .context("decoding the checkpoint root")?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("the checkpoint root is not 32 bytes"))?;
+    let digest = match &checkpoint.parent {
+        Some(parent) => {
+            crate::tee::checkpoint_digest_v2(domain.chain_id, &domain.vault.0, checkpoint.seq, &root, *parent)
+        }
+        None => crate::tee::checkpoint_digest(domain.chain_id, &domain.vault.0, checkpoint.seq, &root),
+    };
+    let bytes =
+        hex::decode(checkpoint.signature.trim_start_matches("0x")).context("decoding the checkpoint signature")?;
+    let signature: [u8; 65] =
+        bytes.as_slice().try_into().map_err(|_| anyhow::anyhow!("the checkpoint signature is not 65 bytes"))?;
+    eip712::recover(&digest.into(), &eip712::Signature::from(signature))
+        .context("the checkpoint signature recovers to no key")
 }
 
 #[cfg(test)]

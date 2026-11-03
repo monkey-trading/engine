@@ -166,16 +166,19 @@ the node had already answered and streamed. A cut below a later checkpoint the v
 has not finalized shows only when the node's checkpoint poster next compares a checkpoint with the
 vault (`checkpoint_conflict`), and a cut after the latest accepted checkpoint goes unnoticed by the
 node. Checkpoints go out about once per finality
-delay of the custody chain, so up to about two finality delays of commands can be erased. Clients
+delay of the custody chain, so about two finality delays of commands can be erased while
+checkpoint delivery is healthy; a host that stalls or withholds the poster's submissions
+extends the window by however long the accumulated tail stays unanchored. Clients
 keep the signed replies and frames for them, but the node does not compare those with the
-restarted log. A standby following the operator's signed stream does: it takes a command only when
-the enclave's seal on it continues the standby's copy, and each stream it resumes must first repeat
+restarted log. A standby following the operator's signed stream does: it takes a command only when a seal a checkpoint the copy
+holds names (or the followed enclave's) continues the standby's copy, so history sealed
+before a handover still extends it, and each stream it resumes must first repeat
 the copy's last command exactly. When the operator's log no longer holds what the standby copied (a
 signed heartbeat behind the copy, a repeat that differs, or a command that does not chain), the
 standby raises the Critical `operator_log_rollback` alert, through its own alert routing, naming
-the range; it takes nothing more and keeps its copy unchanged to restore from. It detects only a
-cut that reaches back past what it received. New posts also sign the exact predecessor sequence
-and root, which the vault compares atomically to fence divergent same-key publishers. The checkpoint RPC still supplies the canonical chain
+the range; it takes nothing more and keeps its copy unchanged to restore from. New posts also sign the exact predecessor sequence
+and root, which the vault compares atomically to fence divergent same-key publishers. The standby's
+check reaches only as far as what it received: it detects a cut that goes back past that. The checkpoint RPC still supplies the canonical chain
 view, and a signature's named signer must be checked against a trusted attestation or the vault's
 authorized signer. A withdrawal signature never settles its approval: finalized custody nonce-use
 evidence does. Withdrawal completion evidence also requires that independently trusted signer
