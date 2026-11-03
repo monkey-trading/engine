@@ -228,16 +228,58 @@ fn a_delivery_waits_for_a_start_to_finish_choosing_what_it_runs() {
     store.replace(bundle(1, "FAKE-a")).unwrap();
     let said = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mut delivery = None;
-    let chosen = store.current_running(|version| {
-        assert_eq!(version, Some(1));
-        let (sealing, waited) = (store.clone(), said.clone());
-        delivery = Some(std::thread::spawn(move || {
-            sealing.replace(bundle(2, "FAKE-b")).unwrap();
-            assert!(waited.load(std::sync::atomic::Ordering::SeqCst), "it sealed before the start had chosen");
-        }));
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        said.store(true, std::sync::atomic::Ordering::SeqCst);
-    });
-    assert_eq!(chosen.unwrap().bundle.version, 1);
+    let chosen = store.current_if_complete(
+        |_| true,
+        |version| {
+            assert_eq!(version, Some(1));
+            let (sealing, waited) = (store.clone(), said.clone());
+            delivery = Some(std::thread::spawn(move || {
+                sealing.replace(bundle(2, "FAKE-b")).unwrap();
+                assert!(waited.load(std::sync::atomic::Ordering::SeqCst), "it sealed before the start had chosen");
+            }));
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            said.store(true, std::sync::atomic::Ordering::SeqCst);
+        },
+    );
+    assert_eq!(chosen.unwrap().unwrap().bundle.version, 1);
     delivery.unwrap().join().unwrap();
+}
+
+// A start's completeness check and its choice of what it runs take one lock, so a delivery sealing
+// a partial bundle in between cannot leave the start running it: the choice fails and the start
+// keeps holding, and its next choice runs the repaired bundle.
+#[test]
+fn a_partial_delivery_cannot_replace_a_complete_bundle_between_the_check_and_the_choice() {
+    let store = std::sync::Arc::new(store(&scratch_dir("secrets-partial-choice")));
+    let beta = SecretName::try_from("beta_key".to_owned()).unwrap();
+    let two_secrets = |version: u64| {
+        let mut secrets = bundle(version, "FAKE-alpha").bundle.secrets;
+        secrets.insert(beta.clone(), SecretValue::test("FAKE-beta"));
+        Bundle { version, secrets }.sign(DOMAIN, &SigningKey::from_slice(&[0x42; 32]).unwrap())
+    };
+    let needs_beta = |held: Option<&SignedBundle>| held.is_some_and(|signed| signed.bundle.secrets.contains_key(&beta));
+    store.replace(two_secrets(1)).unwrap();
+
+    // While the start holds the lock choosing, a delivery seals a higher version without the
+    // required secret; the start still runs the complete version it checked.
+    let mut delivery = None;
+    let chosen = store.current_if_complete(needs_beta, |version| {
+        assert_eq!(version, Some(1));
+        let sealing = store.clone();
+        delivery = Some(std::thread::spawn(move || sealing.replace(bundle(2, "FAKE-alpha")).unwrap()));
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    });
+    delivery.unwrap().join().unwrap();
+    assert_eq!(store.version(), Some(2));
+    let chosen = chosen.expect("the complete bundle was chosen").expect("a bundle");
+    assert_eq!(chosen.bundle.version, 1);
+    assert!(chosen.bundle.secrets.contains_key(&beta));
+
+    // The bundle now sealed lacks the required secret, so the same choice keeps the start holding.
+    assert!(store.current_if_complete(needs_beta, |_| {}).is_none());
+
+    // The delivery that completes the bundle ends the hold: the next choice runs it.
+    store.replace(two_secrets(3)).unwrap();
+    let chosen = store.current_if_complete(needs_beta, |_| {}).expect("the repaired bundle was chosen");
+    assert_eq!(chosen.expect("a bundle").bundle.version, 3);
 }

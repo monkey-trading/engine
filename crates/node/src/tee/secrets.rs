@@ -114,12 +114,22 @@ impl SecretStore {
         self.lock().clone()
     }
 
-    /// The sealed bundle, telling `running` its version under the same lock `replace` takes, so a
-    /// bundle sealed from here on is one this start does not run, and no delivery falls between.
-    pub fn current_running(&self, running: impl FnOnce(Option<u64>)) -> Option<SignedBundle> {
+    /// The sealed bundle when `complete` finds it whole, else `None`, with the check and the read
+    /// under the one lock `replace` takes, so no delivery can replace a complete bundle with a
+    /// partial one between a start's completeness check and its choice of what it runs. `running`
+    /// is told the version under that same lock, once `complete` has passed, so a bundle sealed
+    /// from here on is one this start does not run, and no delivery falls between.
+    pub fn current_if_complete(
+        &self,
+        complete: impl FnOnce(Option<&SignedBundle>) -> bool,
+        running: impl FnOnce(Option<u64>),
+    ) -> Option<Option<SignedBundle>> {
         let held = self.lock();
+        if !complete(held.as_ref()) {
+            return None;
+        }
         running(held.as_ref().map(|signed| signed.bundle.version));
-        held.clone()
+        Some(held.clone())
     }
 
     /// The sealed bundle's version, if there is one.
