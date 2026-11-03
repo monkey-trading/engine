@@ -21,8 +21,7 @@ RAW = ROOT / "data" / "raw"
 DERIVED = ROOT / "data" / "derived"
 RESULTS = ROOT / "results"
 STAGES = ("per-market", "joint", "sensitivity")
-DEFAULTS = {"per-market": (2000, 500), "joint": (2000, 25), "sensitivity": (1000, 25), "stress": (2000, 25)}  # paths, batch paths
-DEFAULTS = {"per-market": (2000, 500), "joint": (2000, 25), "sensitivity": (1000, 25)}  # paths, batch paths
+DEFAULTS = {"per-market": (2000, 500), "joint": (2000, 25), "sensitivity": (1000, 25), "stress": (2000, 25), "retained": (1, 1)}  # paths, batch paths; the retained stage sets its own (model/retained.py)
 TOXICITY_MC_TRIALS = 40_000  # benign false-positive trials per market and threshold
 BASE_TARGET = 0.01  # the total-floor sweep and the sensitivities start from the floors chosen for this target
 SENSITIVITY_MEASURE = "p_short"  # whose choice at BASE_TARGET the sensitivities start from
@@ -75,6 +74,8 @@ def simulate_stage(stage: str, args) -> None:
     if stage == "per-market":
         rows = experiments.per_market(scenario, markets, bars, flow, args.workers)
         experiments.write_rows(RESULTS / "per_market_sweep.csv", rows)
+    elif stage == "retained":
+        extras = retained_stage(np, scenario, markets, bars, flow, args)
     elif stage == "stress":
         extras = stress_stage(experiments, np, scenario, markets, bars, flow, args)
     elif stage == "joint":
@@ -106,10 +107,27 @@ def simulate_stage(stage: str, args) -> None:
             row["base_measure"] = SENSITIVITY_MEASURE
         experiments.write_rows(RESULTS / "sensitivity.csv", out)
     record = manifest(args, scenario) | {"seconds": round(time.time() - started)}
+    if stage == "retained":
+        record |= extras
     if stage == "stress":
         record |= extras
         record["scenario"] = asdict(replace(scenario, name="utilisation", utilisation_stats=True))
     (RESULTS / f"manifest_{stage}.json").write_text(json.dumps(record, indent=1, default=str))
+
+
+def retained_stage(np, scenario, markets, bars, flow, args) -> dict:
+    """The retained-NAV study (`model/retained.py`): the baseline at every market count and the
+    sensitivities, appended to `results/retained_nav.csv` run by run; delete the file to start
+    over. The paths and batch size of each run are set there, not by `--paths`."""
+    import csv
+
+    from model import expansion, retained
+
+    classes = expansion.asset_classes(DERIVED)
+    with (DERIVED / "market_mix.csv").open() as fh:
+        listed = {r["symbol"] for r in csv.DictReader(fh) if r["listed"] == "True"}
+    retained.run_stage(scenario, markets, bars, flow, classes, listed, args.workers, RESULTS / "retained_nav.csv", RESULTS / "retained_stability.csv", only=args.only, log=lambda m: print(m, flush=True))
+    return {"plan": [list(p) for p in retained.plan()], "grid": retained.floor_grid(retained.GRID_LOW, retained.GRID_HIGH).tolist(), "class_weights": retained.BASE_CLASS_WEIGHTS, "shared": retained.BASE_SHARED}
 
 
 def stress_stage(experiments, np, scenario, markets, bars, flow, args) -> dict:
@@ -249,12 +267,14 @@ def main() -> None:
     sub.add_parser("derive-markets", help="build the hourly price dataset, market statistics, and mix")
     tx = sub.add_parser("toxicity", help="calibrate the toxicity parameters (prior, memory, tiers); writes results/toxicity_*")
     tx.add_argument("--seed", type=int, default=1)
-    for name in (*STAGES, "stress", "all"):
+    for name in (*STAGES, "stress", "retained", "all"):
         sim = sub.add_parser(name, help=f"run the {name} stage" if name != "all" else "run every stage and the report")
         sim.add_argument("--workers", type=int, default=4)
         sim.add_argument("--paths", type=int, help="paths per run; defaults per stage (DEFAULTS)")
         sim.add_argument("--seed", type=int, default=1)
         sim.add_argument("--batch-paths", type=int, help="paths per worker job, part of the random stream; defaults per stage (DEFAULTS)")
+        if name == "retained":
+            sim.add_argument("--only", nargs="*", help="run only these variants of the plan")
         if name == "stress":
             sim.add_argument("--move-hours", type=int, default=400, help="history hours per market for the move-trigger tables")
     sub.add_parser("report", help="write results/report.md from the stage outputs")
@@ -276,7 +296,7 @@ def main() -> None:
         from derive import markets
 
         markets.derive(RAW / "markets", DERIVED)
-    elif args.command in (*STAGES, "stress"):
+    elif args.command in (*STAGES, "stress", "retained"):
         simulate_stage(args.command, args)
     elif args.command == "toxicity":
         class ToxArgs:

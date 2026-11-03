@@ -406,7 +406,6 @@ opening notional, directional flow and churn.
 - **Withdrawals.** The withdrawal and run rates are assumptions; the queue measure depends on
   them, and the house-cash measure does not.
 
-<<<<<<< HEAD
 ## Stress triggers
 
 The launch stress triggers (`config/production-genesis.toml`, #118) are dev values. The `stress`
@@ -513,7 +512,7 @@ Provenance: `run.py stress` on the committed `data/derived/`, 2,000 paths in bat
 settings: the effective scenario, the move-table hours, and the floor families); the move tables
 sample 400 history hours per market at the same seed. The same seed and batch sizes reproduce the
 run exactly.
-=======
+
 ## Toxicity parameters
 
 The launch toxicity parameters (`config/production-genesis.toml`, #114) are dev values. The
@@ -588,7 +587,65 @@ median-size fills.
 Provenance: `run.py toxicity` on the committed `data/derived/`, seed 1, about 5 seconds
 (`results/manifest_toxicity.json`). The benign trials are seeded and deterministic at a fixed
 trial count.
->>>>>>> 0dd953e1 ([research,config,node,agents] Add toxicity calibration stage and propose production values)
+
+## Retained NAV
+
+The `retained` stage sizes the staking liquidity floor: how much NAV the house must hold back from
+sweeping so that the vault always covers client balances. It reuses the floor study's data and
+simulation with a different scenario (`model/retained.py`): the house opens at a candidate floor as
+its capital, sweeps everything above it each hour (worst case; the engine's own deductions only
+retain more), and trades under the genesis cap fractions of that NAV, with the planned BTC and ETH
+margin bands (1% to $2M, 2% to $10M, 5% above, #520). Cloned markets extend the launch set to 50–500
+markets: equity templates at correlation 0.7 with their template, each as busy as it, since the
+launch set alone cannot say how the answer scales. `run.py retained` writes
+`results/retained_nav.csv`, `results/retained_stability.csv`, and `manifest_retained.json`; it is
+its own stage, not part of `all`.
+
+Retained NAV is the lowest grid floor (geometric, ratio 1.6, $4M to $4.6B) that refuses at most 1%
+of directional notional and keeps house cash below zero in at most 1% of paths, at it and at every
+higher floor:
+
+| Markets | Paths | Retained NAV | Cash<0 | Refused, 90 days | Fees mean |
+|---|---|---|---|---|---|
+| 37 (launch) | 4000 | $107M | 0 | 0.49% | $74.3M |
+| 100 | 1000 | $107M | 0 | 0.49% | $78M |
+| 500 | 200 | $107M | 0 | 0.43% | $101M |
+
+Stable in the path count (the 37-market answer is $107M on the first 500, 1,000, 2,000 and 4,000
+paths) and in nearly every sensitivity (correlation 0.3–1, volatility x2, flow x0.25–x4, one
+client direction, sweep epoch, no farming). What moves it:
+
+- **The genesis cap fractions dominate.** With 10% BTC/ETH margin (the genesis bands) instead of
+  the planned 1–5%, retained NAV falls to $26.2M at every count to 300 markets ($41.9M at 500) —
+  high margin lets a small NAV carry little risk. The previous bands (1% to $1M, 20% above) give
+  the same $107M as the planned ones.
+- **Flow per clone is the scaling assumption.** The answer is flat in the market count because
+  crypto carries about 76% of the flow and the clones are light equity markets. Cloning crypto
+  instead (each clone as busy as BTC/ETH) reaches $440M retained at 100 markets and $2.88B at 500;
+  mixed clones sit between ($172M at 200).
+- **Fixed dollar caps per market are far weaker than NAV fractions.** With dollar caps of $10M a
+  market in place of the NAV-share caps, retained NAV falls to $2M at 37 and 100 markets, and cash
+  dips below zero in 0.60% of paths at the 37-market retained floor (12 of 2,000; upper bound
+  0.97%) — a fixed cap does not grow with the house, so a small floor meets the same flow. $1M caps
+  retain $1M and already measure 0.67% at 500 markets.
+
+Reading for the reserve floor: under the planned bands, **$107M** — held as NAV, with sweeps only
+of the excess. Under the genesis 10% bands, $26.2M would serve, but the bands themselves are the
+decision that moves the number.
+
+Limits:
+
+- **The 100x crypto profile is approximated** from the existing oil margin schedule (sizes and
+  notional per margin); `derive/papertrade.py` lists the planned and previous bands among its
+  schedules, so a rebuild with the papertrade positions replaces the approximation.
+- **Close-out gap bad debt is excluded.** The model fills crypto close-outs at the trigger in
+  continuous trading, so these results say nothing about 100x safety; that is #500 (crash windows,
+  priced-update gaps, 100x vs 50x), which builds on this study's results.
+- **The crypto series is a Binance spot stand-in**; Coinbase/Kraken-only pricing is not re-derived.
+- **Genesis starts at zero capital** (#436): a floor under opening NAV is swept by the first
+  staker, so the retained floor must be at or above opening NAV. At zero capital nothing is swept
+  until fees build to the floor — about 130 days at launch flow for $107M — carrying the early-dip
+  risk the floor study shows at zero capital until then.
 
 ## Re-running
 
@@ -601,18 +658,11 @@ cd research/cap-calibration
 /tmp/cap-venv/bin/python -I run.py all          # per-market, joint, sensitivity, then results/report.md
 ```
 
-<<<<<<< HEAD
 `all` reruns the floor study from the committed `data/derived/` with the committed results'
 settings: `DEFAULTS` in `run.py` sets each stage's paths and paths per batch, and `--workers`
 defaults to 4. Stages run alone with `per-market`, `joint`, `sensitivity`, and `report`; the
-stress-trigger calibration (below) is not part of `all` and runs with `stress`, under the same
-seeding and manifest conventions. Each batch of paths is
-=======
-`all` reruns the floor study from the committed `data/derived/` with the committed results' settings:
-`DEFAULTS` in `run.py` sets each stage's paths and paths per batch, and `--workers` defaults to 4.
-Stages run alone with `per-market`, `joint`, `sensitivity`, and `report`; the toxicity
-calibration (above) runs with `toxicity`. Each batch of paths is
->>>>>>> 0dd953e1 ([research,config,node,agents] Add toxicity calibration stage and propose production values)
+stress-trigger calibration (above) runs with `stress` and the toxicity calibration (above) with
+`toxicity`, and the liquidity-floor sizing (above) with `retained`, none part of `all`, under the same seeding and manifest conventions. Each batch of paths is
 seeded from `--seed` (default 1) and its index, and its size shapes its random draws, so the same
 seed and batch size reproduce a run exactly, and another batch size gives other, equally valid
 paths. `results/manifest_<stage>.json` records the scenario, including both, the hashes of the
@@ -641,13 +691,9 @@ To recalibrate as live data arrives:
 - `derive/`: `papertrade.py` decodes positions; `markets.py` builds the hourly dataset, statistics,
   mix, and benchmark rates, into `data/derived/`.
 - `model/`: `accounting.py` (engine rules), `prices.py` (bootstrap), `flow.py` (behaviour),
-<<<<<<< HEAD
   `simulate.py` (the hourly simulation), `experiments.py` (runs and measures), `stress.py` (the
-  stress-trigger calibration), `report.py`.
-=======
-  `simulate.py` (the hourly simulation), `experiments.py` (runs and measures),
-  `toxicity.py` (the toxicity calibration), `report.py`.
->>>>>>> 0dd953e1 ([research,config,node,agents] Add toxicity calibration stage and propose production values)
+  stress-trigger calibration), `toxicity.py` (the toxicity calibration), `retained.py` (the
+  liquidity-floor sizing), `report.py`.
 - `tests/`: the engine rules, the simulation's accounting, the data derivation, and the
   estimators, on hand cases and small synthetic inputs.
 - `results/`: the stage outputs, `report.md`, and run manifests.

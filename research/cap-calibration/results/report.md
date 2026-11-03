@@ -309,3 +309,55 @@ Every scenario at the floors chosen for house cash below zero (the vault short o
 | flow x4 | 4.70% (47; <5.95%) | 0.60% (6; <1.18%) | 1.20% | 9.3% | $103M | $99.7M | $2.52M | x0.3 / x1 |
 | exits before closures | 17.90% (179; <20.01%) | 1.20% (12; <1.94%) | 3.10% | 0.3% | $26M | $25M | $300k | x0.1 / x0.3 |
 | keep drift | 18.40% (184; <20.53%) | 1.20% (12; <1.94%) | 3.40% | 0.3% | $25.7M | $25.4M | $632k | x0.1 / x0.3 |
+
+## Retained NAV by market count
+
+The house holds its liquidity floor as NAV, sweeping everything above it each hour, and trades under the genesis cap fractions of that NAV. Retained NAV is the lowest grid floor that refuses at most 1% of directional notional and keeps house cash below zero in at most 1% of paths, at it and at every higher grid floor. Baseline clones are equity markets correlated 0.7 with their template, each as busy as it. Paths, with the binomial standard error of the measure at the retained NAV; the last columns are the worst share at any floor that serves the flow, and the refusal and mean fees at the retained NAV.
+
+| Markets | Paths | Serves flow from | Retained NAV | Cash<0 | SE | Cash<0, worst served floor | Refused, 90 days | Refused, week 1 | Fees mean |
+|---|---|---|---|---|---|---|---|---|---|
+| 37 | 4000 | $107M | $107M | 0 | 0 | 0 | 0.49% | 1.91% | $74.3M |
+| 50 | 1500 | $107M | $107M | 0 | 0 | 0 | 0.49% | 1.87% | $75.2M |
+| 75 | 1000 | $107M | $107M | 0 | 0 | 0 | 0.48% | 1.81% | $76.3M |
+| 100 | 1000 | $107M | $107M | 0 | 0 | 0 | 0.49% | 1.86% | $78M |
+| 150 | 500 | $107M | $107M | 0 | 0 | 0 | 0.47% | 1.86% | $81M |
+| 200 | 400 | $107M | $107M | 0 | 0 | 0 | 0.46% | 1.73% | $83.9M |
+| 300 | 300 | $107M | $107M | 0 | 0 | 0 | 0.45% | 1.70% | $89.7M |
+| 500 | 200 | $107M | $107M | 0 | 0 | 0 | 0.43% | 1.57% | $101M |
+
+The 37-market baseline on the first 500, 1,000, 2,000 and 4,000 paths (SE at the worst share):
+
+| Paths | Serves flow from | Retained NAV | Cash<0 at it | Worst served | SE |
+|---|---|---|---|---|---|
+| 500 | $107M | $107M | 0 | 0 | <0.01% |
+| 1000 | $107M | $107M | 0 | 0 | <0.01% |
+| 2000 | $107M | $107M | 0 | 0 | <0.01% |
+| 4000 | $107M | $107M | 0 | 0 | <0.01% |
+
+Sensitivities: retained NAV (worst cash<0 share at a floor that serves the flow — at and above the retained NAV for the dollar-cap variants, which measure no refusals; paths) at the counts run.
+
+| Variant | 37 markets | 50 markets | 75 markets | 100 markets | 150 markets | 200 markets | 300 markets | 500 markets |
+|---|---|---|---|---|---|---|---|---|
+| baseline | $107M (0; 4000) | $107M (0; 1500) | $107M (0; 1000) | $107M (0; 1000) | $107M (0; 500) | $107M (0; 400) | $107M (0; 300) | $107M (0; 200) |
+| crypto bands 1% to $1M, 20% above | $107M (0; 500) | $107M (0; 400) | $107M (0; 300) | $107M (0; 300) | $107M (0; 150) | $107M (0; 150) | $107M (0; 100) | $107M (0; 60) |
+| crypto margin 10% (genesis) | $26.2M (0; 500) | $26.2M (0; 400) | $26.2M (0; 300) | $26.2M (0; 300) | $26.2M (0; 150) | $26.2M (0; 150) | $26.2M (0; 100) | $41.9M (0; 60) |
+| no farming | $107M (0; 300) | $107M (0; 100) | $107M (0; 100) | $107M (0; 150) | $107M (0; 100) | $107M (0; 100) | - | $107M (0; 60) |
+| farming x2 | $107M (0; 300) | - | - | $107M (0; 150) | - | - | - | - |
+| vol x1.5 | $107M (0; 300) | - | - | $107M (0; 150) | - | - | - | - |
+| vol x2 | $107M (0; 300) | - | - | $107M (0; 150) | - | $107M (0; 100) | - | $107M (0; 60) |
+| correlation 0.3 | $107M (0; 300) | - | - | $107M (0; 150) | - | - | - | - |
+| correlation 0.9 | $107M (0; 300) | - | - | $107M (0; 150) | - | - | - | - |
+| correlation 1 | $107M (0; 300) | - | - | $107M (0; 150) | - | $107M (0; 100) | - | $107M (0; 60) |
+| one client direction | $107M (0; 300) | - | - | $107M (0; 150) | - | - | - | - |
+| flow x0.25 | $107M (0; 300) | - | - | $107M (0; 150) | - | - | - | - |
+| flow x4 | $107M (0; 300) | - | - | $107M (0; 150) | - | $107M (0; 100) | - | $107M (0; 60) |
+| total flow fixed | $107M (0; 300) | - | - | $107M (0; 150) | - | - | - | - |
+| tail flow | $107M (0; 300) | - | - | $107M (0; 150) | - | - | - | - |
+| sweep daily | $107M (0; 300) | - | - | $107M (0; 150) | - | - | - | - |
+| sweep weekly | $107M (0; 300) | - | - | $107M (0; 150) | - | - | - | - |
+| no sweep | $107M (0; 300) | - | - | $107M (0; 150) | - | - | - | - |
+| dollar caps $1M a market | $1M (0; 1000) | - | - | - | - | - | - | $1M (0.67%; 150) |
+| dollar caps $10M a market | $2M (0.60%; 2000) | - | - | $2M (0.50%; 1000) | - | - | - | $4M (0; 300) |
+| crypto clones | $107M (0; 300) | - | - | $440M (0; 150) | - | $1.13B (0; 100) | - | $2.88B (0; 60) |
+| index and commodity clones | $107M (0; 300) | - | - | $107M (0; 150) | - | - | - | - |
+| mixed clones | $107M (0; 300) | - | - | $107M (0; 150) | - | $172M (0; 100) | - | $440M (0; 60) |

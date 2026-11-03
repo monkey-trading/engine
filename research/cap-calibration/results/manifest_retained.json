@@ -1,0 +1,453 @@
+{
+ "command": [
+  "retained",
+  "--workers",
+  "3"
+ ],
+ "derived_sha256": {
+  "benchmarks.csv": "16e04c781473c39d",
+  "hourly_bars.npz": "d742bab6c751e973",
+  "market_mix.csv": "cbf00cf20cf6fde8",
+  "market_stats.csv": "5c590a0c86a90c0a",
+  "papertrade_daily.csv": "38379b23e276390f",
+  "papertrade_flow.csv": "fe24885aaaa069e5",
+  "papertrade_holding.csv": "bf066bbc49e19029",
+  "papertrade_leverage.csv": "fd05f25e9538d410",
+  "papertrade_sizes.csv": "341fd8a0af63fdce",
+  "papertrade_summary.json": "875fc6c89820321a"
+ },
+ "workers": 3,
+ "scenario": {
+  "name": "baseline",
+  "paths": 1,
+  "seed": 1,
+  "days": 90,
+  "flow_scale": 1.0,
+  "hedged_scale": 1.0,
+  "leverage_mapping": "capped",
+  "vol_scale": 1.0,
+  "block_weeks": 4,
+  "independent_markets": false,
+  "common_direction": false,
+  "demean": true,
+  "hold_through_closures": true,
+  "farm_half_life_days": null,
+  "gap_pair_share": 0.0,
+  "withdraw_on_exit": 0.5,
+  "idle_withdraw_per_day": 0.05,
+  "run_withdraw_per_day": 0.5,
+  "batch_paths": 1,
+  "sweep_epoch_h": 0,
+  "utilisation_stats": false
+ },
+ "seconds": 10434,
+ "plan": [
+  [
+   "baseline",
+   37,
+   4000
+  ],
+  [
+   "baseline",
+   50,
+   1500
+  ],
+  [
+   "baseline",
+   75,
+   1000
+  ],
+  [
+   "baseline",
+   100,
+   1000
+  ],
+  [
+   "baseline",
+   150,
+   500
+  ],
+  [
+   "baseline",
+   200,
+   400
+  ],
+  [
+   "baseline",
+   300,
+   300
+  ],
+  [
+   "baseline",
+   500,
+   200
+  ],
+  [
+   "crypto bands 1% to $1M, 20% above",
+   37,
+   500
+  ],
+  [
+   "crypto bands 1% to $1M, 20% above",
+   50,
+   400
+  ],
+  [
+   "crypto bands 1% to $1M, 20% above",
+   75,
+   300
+  ],
+  [
+   "crypto bands 1% to $1M, 20% above",
+   100,
+   300
+  ],
+  [
+   "crypto bands 1% to $1M, 20% above",
+   150,
+   150
+  ],
+  [
+   "crypto bands 1% to $1M, 20% above",
+   200,
+   150
+  ],
+  [
+   "crypto bands 1% to $1M, 20% above",
+   300,
+   100
+  ],
+  [
+   "crypto bands 1% to $1M, 20% above",
+   500,
+   60
+  ],
+  [
+   "crypto margin 10% (genesis)",
+   37,
+   500
+  ],
+  [
+   "crypto margin 10% (genesis)",
+   50,
+   400
+  ],
+  [
+   "crypto margin 10% (genesis)",
+   75,
+   300
+  ],
+  [
+   "crypto margin 10% (genesis)",
+   100,
+   300
+  ],
+  [
+   "crypto margin 10% (genesis)",
+   150,
+   150
+  ],
+  [
+   "crypto margin 10% (genesis)",
+   200,
+   150
+  ],
+  [
+   "crypto margin 10% (genesis)",
+   300,
+   100
+  ],
+  [
+   "crypto margin 10% (genesis)",
+   500,
+   60
+  ],
+  [
+   "dollar caps $10M a market",
+   37,
+   2000
+  ],
+  [
+   "dollar caps $10M a market",
+   100,
+   1000
+  ],
+  [
+   "dollar caps $10M a market",
+   500,
+   300
+  ],
+  [
+   "dollar caps $1M a market",
+   37,
+   1000
+  ],
+  [
+   "dollar caps $1M a market",
+   500,
+   150
+  ],
+  [
+   "no farming",
+   37,
+   300
+  ],
+  [
+   "farming x2",
+   37,
+   300
+  ],
+  [
+   "vol x1.5",
+   37,
+   300
+  ],
+  [
+   "vol x2",
+   37,
+   300
+  ],
+  [
+   "correlation 0.3",
+   37,
+   300
+  ],
+  [
+   "correlation 0.9",
+   37,
+   300
+  ],
+  [
+   "correlation 1",
+   37,
+   300
+  ],
+  [
+   "one client direction",
+   37,
+   300
+  ],
+  [
+   "flow x0.25",
+   37,
+   300
+  ],
+  [
+   "flow x4",
+   37,
+   300
+  ],
+  [
+   "total flow fixed",
+   37,
+   300
+  ],
+  [
+   "tail flow",
+   37,
+   300
+  ],
+  [
+   "sweep daily",
+   37,
+   300
+  ],
+  [
+   "sweep weekly",
+   37,
+   300
+  ],
+  [
+   "no sweep",
+   37,
+   300
+  ],
+  [
+   "crypto clones",
+   37,
+   300
+  ],
+  [
+   "index and commodity clones",
+   37,
+   300
+  ],
+  [
+   "mixed clones",
+   37,
+   300
+  ],
+  [
+   "no farming",
+   100,
+   150
+  ],
+  [
+   "farming x2",
+   100,
+   150
+  ],
+  [
+   "vol x1.5",
+   100,
+   150
+  ],
+  [
+   "vol x2",
+   100,
+   150
+  ],
+  [
+   "correlation 0.3",
+   100,
+   150
+  ],
+  [
+   "correlation 0.9",
+   100,
+   150
+  ],
+  [
+   "correlation 1",
+   100,
+   150
+  ],
+  [
+   "one client direction",
+   100,
+   150
+  ],
+  [
+   "flow x0.25",
+   100,
+   150
+  ],
+  [
+   "flow x4",
+   100,
+   150
+  ],
+  [
+   "total flow fixed",
+   100,
+   150
+  ],
+  [
+   "tail flow",
+   100,
+   150
+  ],
+  [
+   "sweep daily",
+   100,
+   150
+  ],
+  [
+   "sweep weekly",
+   100,
+   150
+  ],
+  [
+   "no sweep",
+   100,
+   150
+  ],
+  [
+   "crypto clones",
+   100,
+   150
+  ],
+  [
+   "index and commodity clones",
+   100,
+   150
+  ],
+  [
+   "mixed clones",
+   100,
+   150
+  ],
+  [
+   "no farming",
+   200,
+   100
+  ],
+  [
+   "no farming",
+   500,
+   60
+  ],
+  [
+   "vol x2",
+   200,
+   100
+  ],
+  [
+   "vol x2",
+   500,
+   60
+  ],
+  [
+   "correlation 1",
+   200,
+   100
+  ],
+  [
+   "correlation 1",
+   500,
+   60
+  ],
+  [
+   "flow x4",
+   200,
+   100
+  ],
+  [
+   "flow x4",
+   500,
+   60
+  ],
+  [
+   "crypto clones",
+   200,
+   100
+  ],
+  [
+   "crypto clones",
+   500,
+   60
+  ],
+  [
+   "mixed clones",
+   200,
+   100
+  ],
+  [
+   "mixed clones",
+   500,
+   60
+  ]
+ ],
+ "grid": [
+  4000000.0,
+  6400000.0,
+  10240000.000000002,
+  16384000.000000004,
+  26214400.000000004,
+  41943040.00000001,
+  67108864.00000003,
+  107374182.40000004,
+  171798691.8400001,
+  274877906.9440001,
+  439804651.11040026,
+  703687441.7766404,
+  1125899906.8426247,
+  1801439850.9481995,
+  2882303761.51712,
+  4611686018.427392
+ ],
+ "class_weights": {
+  "equity": 1.0
+ },
+ "shared": 0.7
+}

@@ -12,7 +12,7 @@ slice of notional at its band's rate (`market.rs`, `staircase`).
 
 import csv
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -55,6 +55,56 @@ def banded_notional(margin, tiers: list[dict]):
     margin = np.asarray(margin, dtype=float)
     within = np.interp(margin, costs, edges)
     return np.where(margin > costs[-1], edges[-1] + (margin - costs[-1]) / rates[-1], within)
+
+
+def margin_for_notional(notional, tiers: list[dict]):
+    """The margin that buys `notional` under the bands: the inverse of `banded_notional`."""
+    edges = [0.0] + [float(t["up_to"]) for t in tiers if "up_to" in t]
+    rates = [t["bps"] / 1e4 for t in tiers]
+    costs = np.cumsum([0.0] + [(hi - lo) * r for lo, hi, r in zip(edges, edges[1:], rates)])
+    notional = np.asarray(notional, dtype=float)
+    return np.where(notional > edges[-1], costs[-1] + (notional - edges[-1]) * rates[-1], np.interp(notional, edges, costs))
+
+
+def with_schedule(flow: Flow, source: list[dict], tiers: list[dict]) -> Flow:
+    """`flow` with the `capped` size and leverage profiles of the bands `tiers` when it has none,
+    approximated from those of the bands `source`, which must have the same first-tier rate.
+
+    Both bands price a notional up to their first bound alike, so a position whose notional on
+    `source` is at most the first bound of `tiers` keeps it. A larger one is taken to be bound
+    by its bands, not by its own leverage: its margin is what buys that notional on `source`, and
+    its notional on `tiers` is what that margin buys there. The leverage profile scales the two
+    higher bins by one factor, so the notional per margin changes as the sizes' does, up to the
+    maximum leverage.
+    The exact profile needs the papertrade positions (`derive-papertrade` with the bands among the
+    launch schedules), and replaces this when present."""
+    key, src_key = schedule_key(tiers), schedule_key(source)
+    if tiers[0]["bps"] != source[0]["bps"]:
+        raise ValueError("the bands must share a first-tier rate")
+    if any((k, "capped", key) in flow.sizes for k in ("directional", "hedged")):
+        return flow
+    sizes, leverage = dict(flow.sizes), dict(flow.leverage)
+    keep_below = float(tiers[0]["up_to"])
+    for kind in ("directional", "hedged"):
+        if (kind, "capped", src_key) not in flow.sizes:
+            continue
+        bounds, shares = flow.sizes[(kind, "capped", src_key)]
+        moved = np.where(bounds <= keep_below, bounds, banded_notional(margin_for_notional(bounds, source), tiers))
+        sizes[(kind, "capped", key)] = (np.maximum.accumulate(moved), shares)
+        moved = np.maximum.accumulate(moved)
+        # Each size cell's notional is its margin share times the notional its margin buys on the
+        # source bands; the profile scales by how much that notional changes on `tiers`.
+        buys = bounds / np.maximum(margin_for_notional(bounds, source), 1e-12)
+        notional = np.diff(shares, prepend=0.0) * buys
+        change = float((notional * moved / bounds).sum() / notional.sum())
+        ratio = leverage[(kind, "capped", src_key)].copy()
+        by_bin = np.array([sum(c.margin_share for c in flow.classes if c.kind == kind and c.bucket == b) for b in range(len(ratio))])
+        total = float((by_bin * ratio).sum())
+        low = by_bin[0] * ratio[0]
+        scale = (total * change - low) / (total - low) if total > low else 1.0
+        ratio[1:] = np.minimum(ratio[1:] * scale, 1e4 / tiers[0]["bps"])  # no more than the maximum leverage
+        leverage[(kind, "capped", key)] = ratio
+    return replace(flow, sizes=sizes, leverage=leverage)
 
 
 def load(derived: Path) -> Flow:

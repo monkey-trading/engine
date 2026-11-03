@@ -113,3 +113,11 @@ def launch_markets(path: Path = GENESIS) -> list[dict]:
     if missing:
         raise ValueError(f"no price series for {missing}")
     return [dict(m, series=SERIES[m["symbol"]]) for m in markets]
+
+
+# The owner's planned margin bands for BTC-USD and ETH-USD (#520): 1% to $2M of notional, 2% to
+# $10M, 5% above. SOL-USD keeps the genesis bands. Not yet in the production genesis; the
+# retained-NAV study runs the planned bands, the plan before them, and the genesis bands.
+PLANNED_CRYPTO_SYMBOLS = ("BTC-USD", "ETH-USD")
+PLANNED_CRYPTO_TIERS = [{"up_to": "2000000", "bps": 100}, {"up_to": "10000000", "bps": 200}, {"bps": 500}]
+PREVIOUS_CRYPTO_TIERS = [{"up_to": "1000000", "bps": 100}, {"bps": 2000}]  # the plan #520 replaced
