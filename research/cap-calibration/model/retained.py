@@ -35,6 +35,13 @@ BASE_SHARED = 0.7
 CRYPTO_BANDS = {"planned": PLANNED_CRYPTO_TIERS, "previous": PREVIOUS_CRYPTO_TIERS, "genesis": None}
 PREVIOUS = "crypto bands 1% to $1M, 20% above"
 GENESIS = "crypto margin 10% (genesis)"
+# Fixed dollar caps instead of NAV shares: each market capped at this many dollars of net client
+# exposure, the total at their sum, whatever the NAV. The shares of NAV make the loss a gap can
+# cause scale with the NAV, so only dollar caps make the NAV a cushion that is sized.
+DOLLAR_1M = "dollar caps $1M a market"
+DOLLAR_10M = "dollar caps $10M a market"
+DOLLAR_GRID = np.array([0.0, 5e5, 1e6, 2e6, 4e6, 8e6, 16e6, 32e6, 64e6])
+DOLLAR_PATHS = {DOLLAR_10M: {37: 2000, 100: 1000, 500: 300}, DOLLAR_1M: {37: 1000, 500: 150}}
 
 # name -> (scenario changes, expansion changes). The baseline is the planned bands on BTC-USD and
 # ETH-USD (`catalogue.PLANNED_CRYPTO_TIERS`), and clones that are equity markets
@@ -58,6 +65,8 @@ VARIANTS = {
     "sweep daily": ({"sweep_epoch_h": 24}, {}),
     "sweep weekly": ({"sweep_epoch_h": 168}, {}),
     "no sweep": ({"sweep_epoch_h": 0}, {}),
+    DOLLAR_1M: ({}, {"dollar_cap": 1e6}),
+    DOLLAR_10M: ({}, {"dollar_cap": 1e7}),
     "crypto clones": ({}, {"class_weights": {"crypto": 1.0}}),
     "index and commodity clones": ({}, {"class_weights": {"index": 1.0, "commodity": 1.0}}),
     "mixed clones": ({}, {"class_weights": {"equity": 6.0, "fx": 2.0, "index": 1.0, "commodity": 1.0, "crypto": 1.0}}),
@@ -75,7 +84,7 @@ COMPARISON_PATHS = {37: 500, 50: 400, 75: 300, 100: 300, 150: 150, 200: 150, 300
 SENSITIVITY_PATHS = {37: 300, 100: 150}
 # Variants whose answer changes with the market count are run at every count, on fewer paths.
 SCALING_VARIANTS = ("no farming", "vol x2", "correlation 1", "flow x4", "crypto clones", "mixed clones")
-SCALING_PATHS = {37: 100, 50: 100, 75: 100, 100: 100, 150: 100, 200: 100, 300: 60, 500: 60}
+SCALING_PATHS = {37: 100, 100: 100, 200: 100, 500: 60}
 STABILITY_PATHS = (500, 1000, 2000, 4000)  # the first this many paths of the 37-market baseline
 
 
@@ -88,8 +97,9 @@ def plan() -> list[tuple[str, int, int]]:
     """(variant, market count, paths) for the whole stage, in run order."""
     runs = [("baseline", n, paths) for n, paths in HEADLINE_PATHS.items()]
     runs += [(v, n, paths) for v in (PREVIOUS, GENESIS) for n, paths in COMPARISON_PATHS.items()]
+    runs += [(v, n, paths) for v, counts in DOLLAR_PATHS.items() for n, paths in counts.items()]
     for n, paths in SENSITIVITY_PATHS.items():
-        runs += [(v, n, paths) for v in VARIANTS if v not in ("baseline", PREVIOUS, GENESIS)]
+        runs += [(v, n, paths) for v in VARIANTS if v not in ("baseline", PREVIOUS, GENESIS, *DOLLAR_PATHS)]
     runs += [(v, n, paths) for v in SCALING_VARIANTS for n, paths in SCALING_PATHS.items()]
     first = {}
     for v, n, paths in runs:
@@ -115,9 +125,13 @@ def run_variant(scenario, markets, bars, flow, classes, listed, n: int, variant:
         source = next(m["margin_tiers"] for m in genesis if m["margin_tiers"][0]["bps"] == tiers[0]["bps"])
         flow = with_schedule(flow, source, tiers)
     require_profiles(markets, flow)
+    dollar = spec.pop("dollar_cap", None)
     m, b = expand(markets, bars, classes, listed, n, **spec)
-    floors = np.zeros((len(grid), n))
-    (out,) = simulate.run_many([(scenario, m, b, flow, floors, np.zeros(len(grid)), grid)], workers)
+    floors, total = np.zeros((len(grid), n)), np.zeros(len(grid))
+    if dollar is not None:
+        m = replace(m, cap_bps=np.zeros(n, dtype=int), total_cap_bps=0)
+        floors, total = np.full((len(grid), n), dollar), np.full(len(grid), dollar * n)
+    (out,) = simulate.run_many([(scenario, m, b, flow, floors, total, grid)], workers)
     return [row for count in slices or (scenario.paths,) for row in lane_rows(take(out, count), variant, n, grid)]
 
 
@@ -154,7 +168,7 @@ def run_stage(scenario, markets, bars, flow, classes, listed, workers: int, rows
         if (variant, n) in done or (only and variant not in only):
             continue
         slices = STABILITY_PATHS if (variant, n) == ("baseline", 37) else ()
-        rows = run_variant(scenario, markets, bars, flow, classes, listed, n, variant, paths, grid, workers_for(n, workers), slices)
+        rows = run_variant(scenario, markets, bars, flow, classes, listed, n, variant, paths, DOLLAR_GRID if variant in DOLLAR_PATHS else grid, workers_for(n, workers), slices)
         full = [r for r in rows if r["paths"] == paths]
         append_rows(rows_path, full)
         if slices:
@@ -171,12 +185,12 @@ def append_rows(path, rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
-def retained_nav(rows: list[dict], target: float = TARGET, refusal: float = REFUSAL_LIMIT) -> dict:
+def retained_nav(rows: list[dict], target: float = TARGET, refusal: float | None = REFUSAL_LIMIT) -> dict:
     """From one (variant, count)'s rows: the lowest floor that serves the flow and keeps house
     cash below zero in at most `target` of paths, here and at every higher grid floor. None when
     the top of the grid does not."""
     rows = sorted(rows, key=lambda r: r["floor"])
-    serve = next((r["floor"] for i, r in enumerate(rows) if all(x["refused_share_directional"] <= refusal for x in rows[i:])), None)
+    serve = 0.0 if refusal is None else next((r["floor"] for i, r in enumerate(rows) if all(x["refused_share_directional"] <= refusal for x in rows[i:])), None)
     safe = next((r["floor"] for i, r in enumerate(rows) if all(x["p_short"] <= target for x in rows[i:])), None)
     both = None if serve is None or safe is None else max(serve, safe)
     at = next((r for r in rows if r["floor"] == both), None)

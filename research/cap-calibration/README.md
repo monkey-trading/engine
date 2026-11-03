@@ -406,7 +406,6 @@ opening notional, directional flow and churn.
 - **Withdrawals.** The withdrawal and run rates are assumptions; the queue measure depends on
   them, and the house-cash measure does not.
 
-<<<<<<< HEAD
 ## Stress triggers
 
 The launch stress triggers (`config/production-genesis.toml`, #118) are dev values. The `stress`
@@ -513,7 +512,7 @@ Provenance: `run.py stress` on the committed `data/derived/`, 2,000 paths in bat
 settings: the effective scenario, the move-table hours, and the floor families); the move tables
 sample 400 history hours per market at the same seed. The same seed and batch sizes reproduce the
 run exactly.
-=======
+
 ## Toxicity parameters
 
 The launch toxicity parameters (`config/production-genesis.toml`, #114) are dev values. The
@@ -588,7 +587,6 @@ median-size fills.
 Provenance: `run.py toxicity` on the committed `data/derived/`, seed 1, about 5 seconds
 (`results/manifest_toxicity.json`). The benign trials are seeded and deterministic at a fixed
 trial count.
->>>>>>> 0dd953e1 ([research,config,node,agents] Add toxicity calibration stage and propose production values)
 
 ## Re-running
 
@@ -601,18 +599,11 @@ cd research/cap-calibration
 /tmp/cap-venv/bin/python -I run.py all          # per-market, joint, sensitivity, then results/report.md
 ```
 
-<<<<<<< HEAD
 `all` reruns the floor study from the committed `data/derived/` with the committed results'
 settings: `DEFAULTS` in `run.py` sets each stage's paths and paths per batch, and `--workers`
 defaults to 4. Stages run alone with `per-market`, `joint`, `sensitivity`, and `report`; the
-stress-trigger calibration (below) is not part of `all` and runs with `stress`, under the same
-seeding and manifest conventions. Each batch of paths is
-=======
-`all` reruns the floor study from the committed `data/derived/` with the committed results' settings:
-`DEFAULTS` in `run.py` sets each stage's paths and paths per batch, and `--workers` defaults to 4.
-Stages run alone with `per-market`, `joint`, `sensitivity`, and `report`; the toxicity
-calibration (above) runs with `toxicity`. Each batch of paths is
->>>>>>> 0dd953e1 ([research,config,node,agents] Add toxicity calibration stage and propose production values)
+stress-trigger calibration (above) runs with `stress` and the toxicity calibration (above) with
+`toxicity`, neither part of `all`, under the same seeding and manifest conventions. Each batch of paths is
 seeded from `--seed` (default 1) and its index, and its size shapes its random draws, so the same
 seed and batch size reproduce a run exactly, and another batch size gives other, equally valid
 paths. `results/manifest_<stage>.json` records the scenario, including both, the hashes of the
@@ -641,13 +632,8 @@ To recalibrate as live data arrives:
 - `derive/`: `papertrade.py` decodes positions; `markets.py` builds the hourly dataset, statistics,
   mix, and benchmark rates, into `data/derived/`.
 - `model/`: `accounting.py` (engine rules), `prices.py` (bootstrap), `flow.py` (behaviour),
-<<<<<<< HEAD
   `simulate.py` (the hourly simulation), `experiments.py` (runs and measures), `stress.py` (the
-  stress-trigger calibration), `report.py`.
-=======
-  `simulate.py` (the hourly simulation), `experiments.py` (runs and measures),
-  `toxicity.py` (the toxicity calibration), `report.py`.
->>>>>>> 0dd953e1 ([research,config,node,agents] Add toxicity calibration stage and propose production values)
+  stress-trigger calibration), `toxicity.py` (the toxicity calibration), `report.py`.
 - `tests/`: the engine rules, the simulation's accounting, the data derivation, and the
   estimators, on hand cases and small synthetic inputs.
 - `results/`: the stage outputs, `report.md`, and run manifests.
