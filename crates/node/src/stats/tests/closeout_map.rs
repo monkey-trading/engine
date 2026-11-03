@@ -86,11 +86,11 @@ fn the_estimated_close_out_price_of_a_short_is_where_the_engine_closes_the_accou
     engine_agrees_with_the_bucket(Side::Sell, 5, 0);
 }
 
-/// 20 BTC is 2M of notional, in the margin band above a million; the account is closed out only
-/// after the fall brings it under a million, so the estimate must cross the band edge.
+/// 25 BTC is 2.5M of notional, in the margin band above two million; the account is closed out only
+/// after the fall brings it under two million, so the estimate must cross the band edge.
 #[test]
 fn an_estimate_that_crosses_a_margin_band_agrees_with_the_engine() {
-    engine_agrees_with_the_bucket(Side::Buy, 20, 1_400_000);
+    engine_agrees_with_the_bucket(Side::Buy, 25, 1_500_000);
 }
 
 #[test]

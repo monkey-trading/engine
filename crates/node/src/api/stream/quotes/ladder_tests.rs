@@ -122,8 +122,9 @@ fn the_last_tier_ends_where_the_house_runs_out_of_capacity() {
 
 #[test]
 fn the_last_tier_ends_where_the_account_runs_out_of_margin() {
+    // A million of equity margins 180k to 10 million of notional and 5% of the rest: about 264 BTC.
     let mut engine = funded(90_000_000);
-    deposit(&mut engine, MARGIN, Fixed::from_int(3_000_000));
+    deposit(&mut engine, MARGIN, Fixed::from_int(1_000_000));
     assert_last_tier(&engine, MARGIN, "insufficient_margin");
     let quote = read(&engine, MARGIN, BTC);
     for (_, steps) in sides(&quote) {
