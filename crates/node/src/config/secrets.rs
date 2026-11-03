@@ -383,14 +383,33 @@ impl NodeConfig {
         Ok(())
     }
 
+    /// Refuses at load what `refuse_environment_secrets` does, but for a config with `[standby]`,
+    /// which `--standby` runs on its operator's own host, in no enclave. A node started on that config
+    /// without the flag is refused by `refuse_environment_secrets_on_a_node`.
+    /// Error cases:
+    /// - see `refuse_environment_secrets`
+    pub(super) fn refuse_environment_secrets_at_load(&self, production: bool) -> anyhow::Result<()> {
+        if self.standby.is_some() {
+            return Ok(());
+        }
+        self.refuse_environment_secrets(production)
+    }
+
+    /// `refuse_environment_secrets` for this build, for a node about to run, whatever its config's
+    /// `[standby]` says: only `--standby` runs as one.
+    /// Error cases:
+    /// - see `refuse_environment_secrets`
+    pub(crate) fn refuse_environment_secrets_on_a_node(&self) -> anyhow::Result<()> {
+        self.refuse_environment_secrets(super::PRODUCTION_BUILD)
+    }
+
     /// Refuses a secret read from the environment when `production` is set: the guest's only
     /// environment is the measured kernel command line, so such a field could never be set, and a
-    /// host that could set one would choose the secret. A standby's config is apart from that: no
-    /// enclave runs it, and its host is its operator's own.
+    /// host that could set one would choose the secret.
     /// Error cases:
-    /// - `production` is set, there is no `[standby]`, and `alerts.critical.url_env`,
-    ///   `alerts.warning.url_env`, or a vendor connection's `api_key_env` is set
-    pub(super) fn refuse_environment_secrets(&self, production: bool) -> anyhow::Result<()> {
+    /// - `production` is set and `alerts.critical.url_env`, `alerts.warning.url_env`, or a vendor
+    ///   connection's `api_key_env` is set
+    fn refuse_environment_secrets(&self, production: bool) -> anyhow::Result<()> {
         let routes =
             [("alerts.critical.url_env", &self.alerts.critical), ("alerts.warning.url_env", &self.alerts.warning)];
         let mut fields: Vec<String> = routes
@@ -406,7 +425,7 @@ impl NodeConfig {
                 .filter(|connection| connection.api_key_env.is_some())
                 .map(|connection| format!("{} api_key_env", connection.venue.name())),
         );
-        if production && self.standby.is_none() && !fields.is_empty() {
+        if production && !fields.is_empty() {
             bail!(
                 "a production build reads secrets only from a delivered bundle, not the environment: {}",
                 fields.join(", ")

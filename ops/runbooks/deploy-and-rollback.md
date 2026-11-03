@@ -167,8 +167,8 @@ Use this for a new image, a new config, or both. The running release is `A`, the
    hand the enclave's keys to it.
    What happens: `B` first asks `A` for the delivered secrets, with no stop: `A` checks `B`'s quote
    against the vendor's chain and the vault's named release, and sends the bundle encrypted to `B`,
-   which takes it only under the signature of the operator `B`'s config names. If `B` raises
-   `secret_missing`, deliver to `B` yourself ([key-recovery.md](key-recovery.md), "Secrets"): `A` refuses
+   which takes it only under the signature of the operator `B`'s config names. If the move fails, `B`
+   raises `secret_missing`: deliver to `B` yourself ([key-recovery.md](key-recovery.md), "Secrets"): `A` refuses
    while rotation is on, and a bundle signed before an operator rotation does not move.
    `B` then connects to `A` for the keys. `A` checks `B`'s quote in the same way, stops sequencing, signs a final checkpoint, and sends the keys and the
    log tail encrypted to `B`. `B` writes the log, checks it reaches that checkpoint, seals the keys

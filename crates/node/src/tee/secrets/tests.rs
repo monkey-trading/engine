@@ -230,10 +230,10 @@ fn a_delivery_waits_for_a_start_to_finish_choosing_what_it_runs() {
     let mut delivery = None;
     let chosen = store.current_running(|version| {
         assert_eq!(version, Some(1));
-        let (store, said) = (store.clone(), said.clone());
+        let (sealing, waited) = (store.clone(), said.clone());
         delivery = Some(std::thread::spawn(move || {
-            store.replace(bundle(2, "FAKE-b")).unwrap();
-            assert!(said.load(std::sync::atomic::Ordering::SeqCst), "it sealed before the start had chosen");
+            sealing.replace(bundle(2, "FAKE-b")).unwrap();
+            assert!(waited.load(std::sync::atomic::Ordering::SeqCst), "it sealed before the start had chosen");
         }));
         std::thread::sleep(std::time::Duration::from_millis(100));
         said.store(true, std::sync::atomic::Ordering::SeqCst);

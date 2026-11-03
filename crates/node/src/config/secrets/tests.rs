@@ -255,6 +255,22 @@ fn a_production_build_refuses_each_secret_from_the_environment_and_a_dev_build_d
     }
 }
 
+// `[standby]` lets a config load with the environment, but only `--standby` runs on it as a standby.
+#[test]
+fn a_config_with_a_standby_section_loads_on_the_environment_and_starts_no_node_on_it() {
+    let mut cfg = naming_each_kind();
+    cfg.alerts.critical = Some(WebhookRoute::from_env("HOOK"));
+    cfg.refuse_environment_secrets_at_load(true).unwrap_err();
+    cfg.standby = Some(
+        toml::from_str(
+            "operator = 'https://api.operator.example'\nenclave = '0x0000000000000000000000000000000000000001'",
+        )
+        .unwrap(),
+    );
+    cfg.refuse_environment_secrets_at_load(true).unwrap();
+    cfg.refuse_environment_secrets(true).unwrap_err();
+}
+
 #[test]
 fn the_config_load_checks_a_named_url_as_it_checks_a_written_one() {
     let mut cfg = naming_each_kind();

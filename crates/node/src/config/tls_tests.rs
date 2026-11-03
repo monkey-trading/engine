@@ -154,11 +154,14 @@ fn a_production_build_refuses_a_secret_from_the_environment_at_load() {
         "{err}"
     );
 
-    // No enclave runs a standby, so its environment is its operator's own.
+    // No enclave runs a standby, so its environment is its operator's own, but the section alone
+    // does not make a node one: only `--standby` does.
     let standby = "[standby]\noperator = 'https://api.operator.example'\nmirrors = []\n\
                    enclave = '0x0000000000000000000000000000000000000001'\n";
     std::fs::write(&path, format!("{from_env}\n{standby}")).unwrap();
-    NodeConfig::load(&path).unwrap();
+    let loaded = NodeConfig::load(&path).unwrap();
+    let err = format!("{:#}", loaded.refuse_environment_secrets_on_a_node().unwrap_err());
+    assert!(err.contains("reads secrets only from a delivered bundle"), "{err}");
 }
 
 // ── Helpers ──

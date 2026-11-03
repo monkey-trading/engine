@@ -151,7 +151,9 @@ pub(crate) async fn startup(
         if lacking.is_empty() && moving.as_ref().is_none_or(|moving| !moving.unsettled()) {
             break;
         }
-        if !raised && !lacking.is_empty() {
+        // A new release has asked for what it lacks, and a prompt answer is the ordinary upgrade.
+        let asked = moving.as_ref().is_none_or(|moving| moving.failures > 0 || moving.settled);
+        if !raised && asked && !lacking.is_empty() {
             report_missing(store.current().as_ref(), &named);
             raised = true;
         }

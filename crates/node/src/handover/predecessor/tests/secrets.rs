@@ -125,6 +125,35 @@ async fn a_release_with_no_secrets_says_so() {
 // A new release whose config names a chain key cannot go on without its bundle: it holds, asks again,
 // and takes it once the vault names its release.
 #[tokio::test]
+async fn a_prompt_move_raises_nothing() {
+    let (logs, _guard) = crate::trusted_time::tests::logs::Logs::capture();
+    let exchange = Exchange::start("secrets-prompt").await;
+    exchange.hold(full(3, "a"), &operator_key());
+    exchange.make_upgrade_current();
+    let (mut cfg, _) = successor_config("secrets-prompt-holding");
+    cfg.checkpoints = Some(
+        toml::from_str(
+            "rpc_url = 'https://rpc.example/v2/{chain_key}'\nrelayer = '0x0000000000000000000000000000000000000001'\n\
+             retry_interval = '1s'\nrpc_timeout = '1s'",
+        )
+        .unwrap(),
+    );
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    cfg.tee.sealing.as_mut().unwrap().secrets = Some(toml::from_str(&format!("listen = '127.0.0.1:{port}'")).unwrap());
+    let start = crate::KeyStart {
+        predecessor: Some(exchange.address.clone()),
+        mock_launch_digest: Some(UPGRADE),
+        ..Default::default()
+    };
+    let metrics = Arc::new(crate::metrics::Metrics::new());
+    let (_, alerts) = crate::alerts::channel(crate::alerts::Routes::default(), metrics.clone());
+    let mut telemetry = crate::telemetry::Telemetry { metrics, alerts, pages_critical: false };
+    let delivered = timeout(Duration::from_secs(10), crate::node::secrets::startup(&mut cfg, &mut telemetry, &start));
+    assert_eq!(delivered.await.expect("it still holds").unwrap().store.unwrap().version(), Some(3));
+    assert_eq!(logs.critical("secret_missing"), 0, "the ordinary upgrade pages no one");
+}
+
+#[tokio::test]
 async fn a_holding_start_takes_the_bundle_once_the_vault_names_its_release() {
     let exchange = Exchange::start("secrets-retry").await;
     exchange.hold(full(3, "a"), &operator_key());

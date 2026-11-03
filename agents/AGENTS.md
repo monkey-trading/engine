@@ -249,7 +249,7 @@ an index: load only the rule whose hint matches the current action.
   domain, the node and its release manifest, the logs to follow, and alert routing.
   A field reads a delivered secret by name, never its value: `{name}` in a URL's path or query,
   `api_key_secret`, or `url_secret`, with `[tee.sealing.secrets]` to receive them; a `production` build
-  refuses `api_key_env` and `url_env`, but for a config with `[standby]`, which no enclave runs.
+  refuses `api_key_env` and `url_env`, but for `run --standby`, which no enclave runs.
   `test-keys.toml` lists the keys whose private keys the repo publishes for development (the dev
   configs' operator key, explicit published mock enclave signer, shared access-source test
   authority, and Anvil's default accounts); a node whose TEE is not the mock refuses them

@@ -380,6 +380,52 @@ async fn the_hold_outlasts_the_receipt_of_the_bundle_that_ended_it() {
     timeout(UNDER_THE_HOLD, waited).await.expect("the receipt did not end it");
 }
 
+// A failed move is when a holding release has something to say: it needs the operator.
+#[tokio::test]
+async fn a_holding_start_raises_what_it_lacks_once_the_move_has_failed() {
+    let (logs, _guard) = Logs::capture();
+    let mut cfg = config("startup-move-failed");
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().to_string();
+    let start = KeyStart { predecessor: Some(closed), ..start() };
+    let mut telemetry = telemetry();
+    let held = timeout(Duration::from_secs(1), startup(&mut cfg, &mut telemetry, &start)).await;
+    assert!(held.is_err(), "it went on without its chain key");
+    assert_eq!(logs.critical("secret_missing"), 3, "the chain key, the vendor key, and the webhook");
+}
+
+// The screening source's key is one a node holds for, and fills only its URL's place.
+#[tokio::test]
+async fn a_start_holds_for_a_screening_key_and_sets_it_on_its_endpoint() {
+    let mut cfg = config("startup-screening");
+    cfg.access = Some(
+        toml::from_str(
+            "source = '0x0000000000000000000000000000000000000001'\n\
+             endpoint = 'https://source.example/v1/{screening_key}'\ntimeout = '2s'\nmax_age = '30s'\n\
+             max_response_bytes = 4096\nmax_in_flight = 8\n",
+        )
+        .unwrap(),
+    );
+    let (address, tool) = (listen(&cfg), config("startup-screening-tool"));
+    sealed_earlier(&cfg, full(1, "a"));
+    let mut starting = spawn_startup(cfg);
+    assert!(timeout(HOLDING, &mut starting).await.is_err(), "it went on without its screening key");
+
+    let everything = crate::secrets::tests::bundle(
+        2,
+        &[
+            ("chain_key", "FAKE-chain-b"),
+            ("vendor_key", "FAKE-vendor-b"),
+            ("critical_url", "https://hooks.example/FAKE-hook-b"),
+            ("screening_key", "FAKE-screening-b"),
+        ],
+    );
+    let Reply::Sealed { .. } = deliver(&tool, &address, everything).await else { panic!("refused") };
+    let (cfg, _, delivered) = timeout(WAIT, starting).await.expect("it still holds").unwrap();
+    delivered.unwrap();
+    let endpoint = cfg.access.as_ref().unwrap().endpoint.expose().unwrap();
+    assert_eq!(endpoint.as_str(), "https://source.example/v1/FAKE-screening-b");
+}
+
 // With nothing required outstanding, a predecessor that never answers does not keep the keys' handover
 // waiting for ever: the start goes on, and says what it lacks.
 #[tokio::test]

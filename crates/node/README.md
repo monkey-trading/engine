@@ -511,9 +511,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/secrets/bundle.rs` — the bundle, the operator's signature over it, and what a config can use
 - `src/secrets/delivery.rs` — the delivery's messages, what each quote binds, and the encryption
 - `src/secrets/listener.rs` — the enclave's side: an offer per connection, the operator key in effect,
-  and the seal; `src/secrets/tests.rs` runs it over loopback from the host's side, and
-  `src/secrets/tests/leaks.rs` checks where a value must never go; `src/secrets/bundle/tests.rs` covers
-  what the signature binds and a file that does not parse
+  and the seal; `src/secrets/tests.rs` runs it over loopback from the host's side,
+  `src/secrets/listener/tests.rs` covers a real enclave's refusal of a published signer and the
+  connection cap, and `src/secrets/tests/leaks.rs` checks where a value must never go;
+  `src/secrets/bundle/tests.rs` covers what the signature binds and a file that does not parse
 - `src/handover/mod.rs` — the handover's messages, framing, report data, HPKE encryption of the keys,
   the vault's current release check that a start and a handover share, the registry's handover
   source an elected successor resolves the incumbent from, and the predecessor's published-log
@@ -2140,7 +2141,7 @@ url_secret = "alerts_critical_url"
 `checkpoints.rpc_url` and `access.endpoint` take a `{name}` the same way. A value is percent-encoded
 into its place, so it cannot end the path or query it sits in. A URL with no `{name}` is used as
 written, for a provider that needs no key. A production build refuses `api_key_env` and `url_env`,
-but for a standby's config, which no enclave runs: the guest's only environment is the measured kernel
+but for `run --standby`, which no enclave runs: the guest's only environment is the measured kernel
 command line, and a host that could set one would choose the secret.
 
 - **Delivering.** `engine admin deliver-secrets` sends a fresh nonce to the listener, and the enclave
@@ -2203,7 +2204,7 @@ command line, and a host that could set one would choose the secret.
   block that named the release and at the latest one: the keys go to the elected enclave,
   but its vendor accounts and provider keys are its own, delivered under its own key before or after
   it takes over. A standby runs outside any enclave on its operator's own host, so a config with
-  `[standby]` writes its keys out and may read `url_env` and `api_key_env` in a production build; its registered release
+  `[standby]` writes its keys out and, run with `--standby`, may read `url_env` and `api_key_env` in a production build; its registered release
   takes its own delivery after a promotion.
 - **What the host can do.** It carries the connection and holds the file. It can delay or drop a
   delivery and forge a refusal, which is the denial it has anyway; the tool reports no receipt, and a

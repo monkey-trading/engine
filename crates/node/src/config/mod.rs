@@ -329,7 +329,8 @@ impl NodeConfig {
         cfg.api.refuse_self_signed(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
         cfg.api.refuse_unsafe_proxy(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
         cfg.api.refuse_dev_fresh_budgets(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
-        cfg.refuse_environment_secrets(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
+        cfg.refuse_environment_secrets_at_load(PRODUCTION_BUILD)
+            .with_context(|| format!("validating {}", path.display()))?;
         cfg.file_sha256 = Sha256::digest(text.as_bytes()).into();
         Ok(cfg)
     }

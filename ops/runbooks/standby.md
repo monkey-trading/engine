@@ -42,7 +42,7 @@ with the operator.
    registry. Its `operator.public_key` is the candidate's own admin key. No enclave runs it, so no
    secret is delivered to it: drop `[tee.sealing.secrets]`, write its RPC and screening URLs out in
    full, read its webhook URLs with `url_env` and any vendor key with `api_key_env`, and keep this file
-   private, which a production build allows for a config with `[standby]`.
+   private, which a production build allows for `run --standby` on a config with `[standby]`.
 
    ```toml
    [standby]
