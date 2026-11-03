@@ -198,18 +198,18 @@ fn the_cap_starts_at_v46_and_earlier_rules_take_any_rate_in_range() {
 #[test]
 fn a_signed_undated_rate_is_held_to_the_cap_too() {
     let set = |annual_bps| AdminCommand::SetBenchmarkRate { benchmark: "SOFR".into(), annual_bps };
-    let refused = |events: Vec<Event>| matches!(events.last(), Some(Event::AdminRejected { reason }) if reason.contains("bps a day"));
+    let refused = |events: Vec<Event>, why: &str| matches!(events.last(), Some(Event::AdminRejected { reason }) if reason.contains(why));
 
     let mut h = capped();
     // The first is bound only by the range, and dated today.
     assert_eq!(h.operate(set(9_000)).last(), Some(&Event::AdminApplied));
     assert_eq!(applied(&h, ago(&h, 0)), Some(f("0.9")));
     // Signed again today it is the same date, which does not change, and the same rate passes.
-    assert!(refused(h.operate(set(8_700))));
+    assert!(refused(h.operate(set(8_700)), "an applied date does not change"));
     assert_eq!(h.operate(set(9_000)).last(), Some(&Event::AdminApplied));
     // The next day it moves within a day's limit of the last date, and not past it.
     h.advance(DAY_MS);
-    assert!(refused(h.operate(set(5_000))));
+    assert!(refused(h.operate(set(5_000)), "bps a day"));
     assert_eq!(h.operate(set(8_700)).last(), Some(&Event::AdminApplied));
     assert_eq!(applied(&h, ago(&h, 0)), Some(f("0.87")));
 }
