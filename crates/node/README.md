@@ -2524,7 +2524,9 @@ leaves such a rate out of its snapshot and logs `benchmark_rate_refused` at Warn
 the benchmark, and signs everything else, so a refusal holds back neither the other benchmarks nor a
 rollover waiting for a snapshot. The worker routes its alerts through the config's `[alerts]` webhooks,
 so it needs their environment variables too, and keeps its own outbox beside the node's, in the
-outbox directory's name with `-benchmark-worker` added. The last applied rate keeps financing, the limit
+outbox directory's name with `-benchmark-worker` added, which must be creatable and writable on the
+worker's own host: the worker opens it before it signs anything, and fails naming the path if it
+cannot. The last applied rate keeps financing, the limit
 grows with each day from it, so a real move lands once it fits (but for a rate measured from an undated
 rate, which only a log from before V18 can hold with no dated history, and whose one-day limit is walked
 by hand), and `benchmark_rate_stale` escalates if the benchmark stays behind for five weekdays. `research/benchmark-cap/` lists what the cap would have

@@ -233,7 +233,11 @@ These run outside the enclave. None holds the enclave's keys.
   `benchmark_sync_failed`, `benchmark_fetch_failed`, `benchmark_sync_pending`,
   `benchmark_rate_refused`. It posts its own alerts through the config's `[alerts]` webhooks, so set
   their environment variables here too, and it keeps its own outbox beside the node's, in the outbox
-  directory's name with `-benchmark-worker` added.
+  directory's name with `-benchmark-worker` added (`/data/alerts-benchmark-worker` for the production
+  template's `/data/alerts`). The worker opens it before it signs anything, so that path must be
+  creatable, writable by the worker's user and persistent on the worker's own host. If it is not, the
+  worker exits with an error naming the path, signs nothing, and a restarted node sequences no
+  ordinary commands until a snapshot arrives.
 - **Certificate Transparency watcher**, on a host independent of the node's:
   `$ENGINE ct-watch --config ct-watch.toml` (template: `config/ct-watch.toml`). Start it before the
   first certificate is issued. See [unattested-certificate.md](unattested-certificate.md).

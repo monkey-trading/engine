@@ -1,10 +1,12 @@
 use super::input::{operator_key, resolve_key, socket_target};
 use super::*;
 use std::fs;
+use std::sync::Arc;
 
 use clap::{CommandFactory, Parser};
 use engine_core::market::QuoteCurrency;
 
+use crate::metrics::Metrics;
 use crate::test_support::{DEV_CONFIG, dev_config, scratch_dir};
 
 /// The dev operator key, whose public key `config/dev.toml` names.
@@ -381,4 +383,21 @@ fn corporate_action_file_requires_explicit_withholding_and_validates_its_range()
 fn action(args: &[&str]) -> AdminAction {
     let argv = ["engine", "--pin", ZERO_PIN].into_iter().chain(args.iter().copied());
     Cli::try_parse_from(argv).unwrap_or_else(|e| panic!("{args:?}: {e}")).args.action
+}
+
+#[tokio::test]
+async fn a_worker_outbox_that_cannot_be_created_names_its_path() {
+    let dir = scratch_dir("worker-outbox-path");
+    fs::create_dir_all(&dir).unwrap();
+    // A file where the outbox's parent directory should be, so creating the outbox fails whoever runs.
+    let blocker = dir.join("data");
+    fs::write(&blocker, b"not a directory").unwrap();
+    let mut cfg = dev_config();
+    cfg.alerts.outbox.dir = blocker.join("alerts");
+    let alerts = crate::alerts::channel(Default::default(), Arc::new(Metrics::new())).1;
+
+    let err = worker_routing(alerts, &cfg).await.err().expect("the outbox cannot be created");
+
+    let worker = blocker.join("alerts-benchmark-worker");
+    assert!(format!("{err:#}").contains(&worker.display().to_string()), "{err:#}");
 }
