@@ -170,9 +170,10 @@ async fn a_paid_wallets_refused_declarations_are_held_to_its_own_bucket_and_spen
         let (status, events, _) = declare(1, &paid, nonce).await;
         assert_eq!((status, &events[0]["type"]), (StatusCode::OK, &json!("eligibility_rejected")), "{events}");
     }
-    // Its own bucket is out, so a third attempt is told to wait before it reaches the source or the log.
+    // Its own bucket is out: the third attempt comes from a fresh client, with the paid budget
+    // still holding, so only the account's rate can refuse it before the source or the log.
     let (entries, queries) = (settled_entries(&node).await, screened(&node));
-    let (status, body, retry_after) = declare(1, &paid, 2).await;
+    let (status, body, retry_after) = declare(2, &paid, 2).await;
     assert_eq!((status, body["error"].as_str()), (StatusCode::TOO_MANY_REQUESTS, Some(crate::api::SETUP_LIMITED)));
     assert!(retry_after.is_some_and(|seconds| seconds >= 1), "{retry_after:?}");
     assert_eq!((settled_entries(&node).await, screened(&node)), (entries, queries));
