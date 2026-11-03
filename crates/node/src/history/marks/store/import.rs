@@ -68,7 +68,7 @@ impl Store {
             Err(e) => {
                 warn!(
                     alert = "marks_prior_cache_dropped",
-                    "the prior marks cache holds no run key and is not imported: {e:#}"
+                    "the prior marks cache holds no run nonce and is not imported: {e:#}"
                 );
                 return Ok(0);
             }

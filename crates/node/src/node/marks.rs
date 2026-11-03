@@ -55,7 +55,7 @@ pub(super) fn startup(cfg: &NodeConfig, mac_key: [u8; 32]) -> anyhow::Result<Mar
     if seed.exists() {
         discard_file(&seed).with_context(|| format!("clearing the leftover marks seed at {}", seed.display()))?;
     }
-    let mut store = Store::open(&seed, retentions, mac_key)?;
+    let mut store = Store::create(&seed, retentions, mac_key)?;
     // A previous run's cache carries provider-seeded rows and backfill markers the log cannot
     // rebuild; recovery's re-derivation resets only the log-derived content over them.
     store.import_prior(&cfg.history.dir.join(MARKS_FILE)).context("importing the prior marks cache")?;
@@ -66,7 +66,7 @@ pub(super) fn startup(cfg: &NodeConfig, mac_key: [u8; 32]) -> anyhow::Result<Mar
         // the cache — never inherit the hole.
         warn!(alert = "marks_cache_rebuilt", "the prior marks cache fails validation and is rebuilt: {e:#}");
         discard_file(&seed).with_context(|| format!("clearing the invalid marks seed at {}", seed.display()))?;
-        store = Store::open(&seed, retentions, mac_key)?;
+        store = Store::create(&seed, retentions, mac_key)?;
     }
     let backfill =
         cfg.history.marks.as_ref().and_then(|marks| marks.backfill.clone()).filter(|backfill| backfill.enabled);

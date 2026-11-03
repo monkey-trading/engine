@@ -1,7 +1,7 @@
 //! The marks task: keeps the derived cache current from the sequencer's live mark reports, and
 //! backfills provider history for listed markets the feeds map to a candles adapter. Supervised
 //! like every other task: an error stops the node, since the cache shares the history directory's
-//! disk. Samples a slow disk drops are re-derived at the next recovery, never roots.
+//! disk. Samples a slow disk drops are re-derived at the next full recovery without `[snapshots]`, never roots.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -107,7 +107,8 @@ fn write(store: &mut Store, buffered: &mut Vec<MarkSample>) -> anyhow::Result<()
 /// for now, and retries a failed one after `RETRY_AFTER`. Which market is unspecified: the
 /// listing order decides, one per tick.
 /// Error cases:
-/// - the listed markets cannot be queried, or a completed backfill's marker cannot be written
+/// - the listed markets cannot be queried, a completed backfill's marker cannot be written, or the
+///   cache rejects a write during the backfill
 async fn backfill_due(
     store: &mut Store,
     candles: &Candles,

@@ -429,3 +429,35 @@ async fn a_cache_file_with_a_damaged_run_key_is_rebuilt_empty() {
     let store = Store::open(&path, Retentions::defaults(), mac_key()).unwrap();
     assert!(page(&store, i64::MIN, i64::MAX).await.unwrap().entries.is_empty());
 }
+
+/// Startup keys the store from a nonce it draws itself: a cache the host left or planted at the
+/// seed path, with a nonce of its choosing, is refused instead of adopted.
+#[tokio::test]
+async fn a_new_cache_is_never_created_over_an_existing_one() {
+    let (path, mut store) = fresh_store_at("marks-replay-create-over", Retentions::defaults());
+    store.observe(&[(1, BASE, fixed("1"))]).unwrap();
+    drop(store);
+    let err = Store::create(&path, Retentions::defaults(), mac_key()).err().expect("created over a cache");
+    assert!(format!("{err:#}").contains("already holds a cache"), "{err:#}");
+    let fresh = scratch_dir("marks-replay-create-new").join(MARKS_FILE);
+    assert!(Store::create(&fresh, Retentions::defaults(), mac_key()).is_ok());
+}
+
+/// The reset redraws the nonce and stores it, so the next start imports the reset cache.
+#[tokio::test]
+async fn a_reset_cache_imports_on_the_next_start() {
+    let prior_dir = scratch_dir("marks-replay-reset-import-prior");
+    let prior_path = prior_dir.join("marks.sqlite");
+    let mut prior = Store::open(&prior_path, Retentions::defaults(), mac_key()).unwrap();
+    prior.observe(&[(1, BASE, fixed("1")), (1, BASE + MIN, fixed("2"))]).unwrap();
+    prior.seed(&[seed_at(BASE - MIN, "9")], BASE + MIN).unwrap();
+    prior.reset_log_derived().unwrap();
+    prior.observe(&[(1, BASE, fixed("1")), (1, BASE + MIN, fixed("3"))]).unwrap();
+    drop(prior);
+    let mut store = fresh_store("marks-replay-reset-import-fresh", Retentions::defaults());
+    assert!(store.import_prior(&prior_path).unwrap() > 0);
+    store.validate_chains().unwrap();
+    let entries = page(&store, i64::MIN, i64::MAX).await.unwrap().entries;
+    assert_eq!(entries.len(), 3);
+    assert_eq!(entries[2].close, fixed("3"));
+}

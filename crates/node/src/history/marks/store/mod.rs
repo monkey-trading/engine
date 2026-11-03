@@ -45,12 +45,13 @@ pub const MARKS_FILE: &str = "marks.sqlite";
 /// back breaks the chain the next read refuses on, and per-pair chain anchors — the floor and
 /// head committed in memory, atomically with each write — reject a restored old snapshot before
 /// any of it is served. Rows strictly between an unchanged floor and head are bound by the links
-/// walked per page; what a bounded read never spans, the next recovery's re-derivation rewrites.
+/// walked per page; what a bounded read never spans, a full recovery without `[snapshots]` rewrites
+/// (superseded by version 4's pins).
 /// Version 4 adds `prev_tag`, the tag of the row below as it stood when this row was written, which
 /// the tag binds: a successor vouches for its predecessor's final content, and the rows a write
 /// rewrote while they had a successor are pinned by tag in the committed anchors, so an older
 /// authentic version of an interior row is refused wherever it is served. `epoch` holds the random
-/// run key a file is created with: rows are authenticated under a key derived from it, so a row
+/// nonce a file is created with: rows are authenticated under a key derived from it, so a row
 /// captured in an earlier run does not verify in this one, and the next run imports this file's
 /// rows by verifying them under its epoch and re-tagging them under its own.
 pub(crate) const SCHEMA_VERSION: i64 = 4;
@@ -240,7 +241,8 @@ impl Store {
     /// the newest sample.
     /// Error cases:
     /// - the file holds a schema this code did not create
-    /// - the transaction fails, a stored price does not parse, or a chain link no longer resolves
+    /// - the transaction fails, a stored price does not parse, a chain link no longer resolves, or a
+    ///   row it builds on is not the version last written for it
     pub fn observe(&mut self, samples: &[MarkSample]) -> anyhow::Result<()> {
         let Some(&newest) = samples.iter().map(|(_, ts, _)| ts).max() else { return Ok(()) };
         let newest = newest.max(self.newest_seen);
@@ -326,7 +328,7 @@ impl Store {
             warn!(alert = "marks_cache_rebuilt", "rebuilding the marks cache after a refused reset: {e:#}");
             let path = self.path.clone();
             store::discard(&path)?;
-            *self = Self::open(&path, self.retentions, self.mac_key)
+            *self = Self::create(&path, self.retentions, self.mac_key)
                 .with_context(|| format!("rebuilding the marks cache after a refused reset: {e:#}"))?;
         }
         Ok(())
@@ -345,7 +347,7 @@ impl Store {
         OsRng.fill_bytes(&mut epoch);
         let next = run_mac(&self.mac_key, &epoch);
         let (removed, updates) = reset::reset_log_derived(&self.mac, &next, &tx, &prior)?;
-        tx.execute("UPDATE epoch SET nonce = ?1 WHERE id = 0", [epoch]).context("drawing the run key")?;
+        tx.execute("UPDATE epoch SET nonce = ?1 WHERE id = 0", [epoch]).context("drawing the run nonce")?;
         let mut anchors = self.anchors.lock().expect("the marks chain anchors are never poisoned");
         tx.commit().context("committing a marks reset")?;
         anchors.apply(updates);

@@ -35,8 +35,9 @@ pub(crate) struct ChainAnchor {
     pub head: ChainHead,
 }
 
-/// One cache file's run key: random bytes drawn when the file is created and kept inside it, so the
-/// next run can verify the rows it imports.
+/// One cache file's run nonce: random bytes drawn when the file is created, and again by the recovery
+/// reset, and kept inside it, so the next run can verify the rows it imports. It is public: the key
+/// is derived from it and the enclave's marks key (see `run_mac`).
 pub(crate) type Epoch = [u8; 16];
 
 /// The authenticator of one cache file: an HMAC under a key derived from the enclave's marks key
