@@ -12,10 +12,11 @@ use engine_core::stress::STRESS_FLOOR_LAPSE_MS;
 use k256::ecdsa::SigningKey;
 
 use crate::admin::NodeApi;
-use crate::test_support::capture_alerts;
+use crate::test_support::{Alert, capture_alerts_and_resolutions};
 
 /// Serves SOFR and ESTR histories to 19 October, and once `published` is set their next rates, for
-/// 21 October: an outlying SOFR and an ordinary ESTR.
+/// 21 October: an outlying SOFR and an ordinary ESTR, and at 2 a SOFR that is the 6.9% the operator
+/// signs for that day.
 async fn publishers() -> (String, Arc<AtomicUsize>, JoinHandle<std::io::Result<()>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -25,9 +26,11 @@ async fn publishers() -> (String, Arc<AtomicUsize>, JoinHandle<std::io::Result<(
         .route(
             "/sofr",
             get(move || {
-                let later = sofr.load(Ordering::SeqCst) > 0;
+                let stage = sofr.load(Ordering::SeqCst);
                 async move {
-                    if later {
+                    if stage == 2 {
+                        "Effective Date,Rate Type,Rate (%)\n10/19/2026,SOFR,4.00\n10/21/2026,SOFR,6.90\n"
+                    } else if stage == 1 {
                         "Effective Date,Rate Type,Rate (%)\n10/19/2026,SOFR,4.00\n10/21/2026,SOFR,7.50\n"
                     } else {
                         "Effective Date,Rate Type,Rate (%)\n10/19/2026,SOFR,4.00\n"
@@ -98,6 +101,18 @@ async fn start(dir: &Path, at: Millis, clock: Arc<TestClock>) -> Node {
     Node::launch(dir, at, clock, std::convert::identity, ProtocolVersion::LATEST).await
 }
 
+/// The benchmarks whose `benchmark_rate_refused` episodes the lines received so far resolve, sorted.
+fn resolved_refusals(lines: &mut mpsc::UnboundedReceiver<Alert>) -> Vec<String> {
+    let mut benchmarks = Vec::new();
+    while let Ok(line) = lines.try_recv() {
+        if line["alert_resolved"] == "benchmark_rate_refused" {
+            benchmarks.push(line["benchmark"].clone());
+        }
+    }
+    benchmarks.sort();
+    benchmarks
+}
+
 /// Moves the sequenced time and the API's clock to `to`.
 async fn advance(node: &Node, clock: &TestClock, to: Millis) {
     clock.advance(Duration::from_millis((to - clock.now_ms()) as u64));
@@ -106,7 +121,7 @@ async fn advance(node: &Node, clock: &TestClock, to: Millis) {
 
 #[tokio::test]
 async fn dev_scenario_the_operator_is_bounded_on_benchmark_rates_and_the_stress_floor() {
-    let (_alerts_guard, mut alerts) = capture_alerts();
+    let (_alerts_guard, mut alerts, mut resolved) = capture_alerts_and_resolutions();
     let dir = scratch_dir("operator-bounds-scenario");
     fs::create_dir_all(&dir).unwrap();
     let (publisher, published, publishers) = publishers().await;
@@ -137,6 +152,7 @@ endpoint = "{publisher}/estr"
     assert!(node.try_submit(Command::Tick).await.is_none(), "held for the first snapshot");
     node.sync(&cfg_path, || START).await;
     assert_eq!(observed(&node, "SOFR", tuesday).await, Some(fixed("0.04")));
+    assert_eq!(resolved_refusals(&mut resolved), ["ESTR", "SOFR"], "nothing was refused");
 
     // 2. A day later the publisher's SOFR is 350 bps from the last applied. The worker leaves it out,
     //    raises an alert, and signs ESTR's, which applies.
@@ -155,6 +171,8 @@ endpoint = "{publisher}/estr"
         }
     }
     assert_eq!(refused, [("SOFR".to_owned(), "WARN".to_owned())]);
+    // Only the benchmark inside the cap is reported as resolved, under the alert's own `benchmark`.
+    assert_eq!(resolved_refusals(&mut resolved), ["ESTR"]);
 
     // 3. The operator signing that rate itself is refused, and a rate inside the cap applies.
     let events = signed(&node, sofr_snapshot(wednesday, "0.075")).await;
@@ -166,6 +184,15 @@ endpoint = "{publisher}/estr"
     let events = signed(&node, sofr_snapshot(wednesday, "0.069")).await;
     assert_eq!(events.last(), Some(&Event::AdminApplied));
     assert_eq!(observed(&node, "SOFR", wednesday).await, Some(fixed("0.069")));
+
+    // 3b. The publisher revises SOFR to the rate the operator signed, so the cap admits it again: the
+    //     worker's next snapshot ends the SOFR episode, with the `benchmark` its alert carried, and
+    //     the publisher then goes back to its outlier for the restart below.
+    published.store(2, Ordering::SeqCst);
+    node.sync(&cfg_path, || START + 86_400_000).await;
+    assert_eq!(resolved_refusals(&mut resolved), ["ESTR", "SOFR"]);
+    assert!(alerts.try_recv().is_err(), "nothing is refused any more");
+    published.store(1, Ordering::SeqCst);
 
     // 4. A floor at level 2 is refused, for a market and for all of them; one at level 1 applies.
     let floor = |market, level| AdminCommand::SetStressFloor { market, level };

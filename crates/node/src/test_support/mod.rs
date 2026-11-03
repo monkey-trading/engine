@@ -1,13 +1,14 @@
 //! Shared test harness: scratch directories, the committed dev config, a running sequencer, a
 //! history index following it, and a log layer that hands every alert to the test.
 
+mod alerts;
 mod events;
 mod readers;
+pub use alerts::{capture_alerts, capture_alerts_and_resolutions};
 pub use events::every_event;
 pub use readers::{marks_reader, stats};
 
 use std::collections::BTreeMap;
-use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,11 +25,6 @@ use k256::elliptic_curve::Generate;
 use tokio::sync::{Semaphore, broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
-use tracing::field::{Field, Visit};
-use tracing::subscriber::DefaultGuard;
-use tracing::{Event as LogEvent, Subscriber};
-use tracing_subscriber::Registry;
-use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
 
 mod written;
 pub use written::Written;
@@ -219,34 +215,6 @@ impl TestHistory {
     }
 }
 
-/// Collects the fields of every event that carries an `alert` field.
-struct AlertLayer(mpsc::UnboundedSender<Alert>);
-
-/// Records an event's fields as strings.
-#[derive(Default)]
-struct Fields(Alert);
-
-impl<S: Subscriber> Layer<S> for AlertLayer {
-    fn on_event(&self, event: &LogEvent<'_>, _: Context<'_, S>) {
-        let mut fields = Fields::default();
-        event.record(&mut fields);
-        if fields.0.contains_key("alert") {
-            fields.0.insert("level".to_owned(), event.metadata().level().to_string());
-            let _ = self.0.send(fields.0);
-        }
-    }
-}
-
-impl Visit for Fields {
-    fn record_str(&mut self, field: &Field, value: &str) {
-        self.0.insert(field.name().to_owned(), value.to_owned());
-    }
-
-    fn record_debug(&mut self, field: &Field, value: &dyn Debug) {
-        self.0.insert(field.name().to_owned(), format!("{value:?}"));
-    }
-}
-
 /// Polls `read` once, so that it takes one of `permits` and starts blocking work that cannot finish
 /// yet, then drops it: the blocking work must keep the permit until `release` lets it end. It
 /// releases before asserting, so a failure never leaves the work blocked.
@@ -306,14 +274,6 @@ mod tests {
         drop(tx);
         refresher.await.unwrap();
     }
-}
-
-/// Routes this thread's logs to an alert collector until the guard drops. `#[tokio::test]` runs
-/// every task on the test's thread, so the alerts of the tasks a test spawns all arrive.
-pub fn capture_alerts() -> (DefaultGuard, mpsc::UnboundedReceiver<Alert>) {
-    keep_callsites_interested();
-    let (tx, rx) = mpsc::unbounded_channel();
-    (tracing::subscriber::set_default(Registry::default().with(AlertLayer(tx))), rx)
 }
 
 /// An empty directory for one test, named after it.
