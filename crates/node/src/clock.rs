@@ -9,8 +9,9 @@ use tracing::{info, warn};
 
 /// How long the pace of sequenced time runs from one anchor before it may give way.
 const PACE_WINDOW: Duration = Duration::from_secs(1);
-/// How far behind monotonic time sequenced time may give way per `PACE_WINDOW`: 1%, far more than
-/// any clock discipline slews (500 ppm), so a host clock's corrections still drain.
+/// How far behind monotonic time sequenced time may give way per `PACE_WINDOW`: 1%, so a host
+/// clock's step back drains rather than holding stamps ahead of it for good. A slew moves the
+/// monotonic clock with it, so opens no gap.
 const PACE_GIVE_MS: Millis = 10;
 /// How far behind the pace the host clock is before that is alerted: past any clock correction's
 /// step.
@@ -37,8 +38,9 @@ pub struct SystemClock;
 /// whatever the host clock does, giving up at most `PACE_GIVE_MS` of it a `PACE_WINDOW`, so a quote
 /// the engine holds ages out within about its `max_age_ms` of arriving even if the host clock
 /// stalls or steps back. It gives way that much so a monotonic clock running a little fast, or a
-/// host clock's correction back, does not ratchet sequenced time ahead for good. A run's stamps
-/// also hold at its start until the pace reaches it, without the pace running on from there.
+/// host clock's correction back, does not ratchet sequenced time ahead for good. A resumed run's
+/// stamps also hold at its start until the pace from its last stamp reaches it, without the pace
+/// running on from there (`anchored`); a pace with no anchor runs on from its first stamp.
 #[derive(Debug)]
 pub struct StampPace {
     /// The least any stamp of the run may be.

@@ -72,7 +72,7 @@ async fn past_the_delay_bound_the_market_goes_unpriced_with_the_clock_at_the_edg
 }
 
 #[tokio::test]
-async fn within_the_delay_bound_a_delayed_price_is_no_older_than_the_stated_bound() {
+async fn within_the_delay_bound_a_delayed_price_still_prices_no_older_than_its_delay() {
     let lag = MAX_DELAY - Duration::from_millis(500);
     let (mut node, moved) = hostile_node("within-the-bound", lag).await;
     let lag_ms = lag.as_millis() as Millis;

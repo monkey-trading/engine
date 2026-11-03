@@ -3,6 +3,7 @@
 //! its restart.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use engine_core::price::{PriceError, SourceQuote};
@@ -106,6 +107,28 @@ fn a_quote_held_back_past_its_deadline_is_dropped_however_fresh_its_stamp_looks(
 }
 
 #[test]
+fn a_quote_is_judged_on_the_clock_readings_its_stamp_is_made_from() {
+    let dir = scratch_dir("pace-one-reading");
+    let clock = Arc::new(TestClock::at(AT));
+    fresh(&dir, &clock).flush().unwrap();
+    // The host stalls the CPU between the sequencer's reads: from the second read on, monotonic
+    // time is `HELD` later than the first saw.
+    let stalling = Arc::new(StallingClock {
+        inner: clock.clone(),
+        armed: AtomicBool::new(false),
+        stalled: AtomicBool::new(false),
+        jump: HELD,
+    });
+    let mut seq = sequencer_on(&dir, stalling.clone());
+    seq.trust(sample_around(&TrueTime(clock.clone()))).unwrap();
+    stalling.armed.store(true, Ordering::SeqCst);
+    let not_after = clock.instant() + MAX_DELAY;
+    assert!(seq.sequence_quote(prices(clock.now_ms()), Some(not_after)).unwrap().is_some());
+    // Judged and stamped on one reading: the stamp is the host clock's, not the stall's pace.
+    assert_eq!(seq.engine.now(), clock.now_ms());
+}
+
+#[test]
 fn a_first_stamp_past_what_trusted_time_admits_is_held_to_it_rather_than_halting() {
     let dir = scratch_dir("pace-long-age");
     let clock = Arc::new(TestClock::at(AT));
@@ -173,12 +196,43 @@ impl Clock for TrueTime {
     }
 }
 
+/// A clock that reads `inner` until armed, and from the read after that one on is `jump` later in
+/// monotonic time, as the host stalling the CPU between two reads makes it.
+struct StallingClock {
+    inner: Arc<TestClock>,
+    armed: AtomicBool,
+    stalled: AtomicBool,
+    jump: Duration,
+}
+
+impl Clock for StallingClock {
+    /// The inner clock's wall time.
+    fn now_ms(&self) -> Millis {
+        self.inner.now_ms()
+    }
+
+    /// The inner clock's monotonic time, `jump` later after the first read once armed.
+    fn instant(&self) -> std::time::Instant {
+        if self.stalled.load(Ordering::SeqCst) {
+            return self.inner.instant() + self.jump;
+        }
+        if self.armed.load(Ordering::SeqCst) {
+            self.stalled.store(true, Ordering::SeqCst);
+        }
+        self.inner.instant()
+    }
+}
+
 /// A sequencer over the log in `dir`, with `clock`.
 fn recovered(dir: &Path, clock: &Arc<TestClock>) -> Sequencer {
+    sequencer_on(dir, clock.clone())
+}
+
+/// A sequencer over the log in `dir`, reading `clock`.
+fn sequencer_on(dir: &Path, clock: Arc<dyn Clock>) -> Sequencer {
     let genesis = finished_genesis(&log_entries(dir));
     let manifest = watch::channel(Manifest::default()).0;
-    let cfg =
-        SequencerConfig { clock: clock.clone(), max_drift: MAX_DRIFT, genesis, ..sequencer_config(dir, manifest) };
+    let cfg = SequencerConfig { clock, max_drift: MAX_DRIFT, genesis, ..sequencer_config(dir, manifest) };
     let key = Arc::new(EnclaveKey::test_key());
     Sequencer::recover(cfg, key, broadcast::channel(16).0, mpsc::unbounded_channel().0).unwrap()
 }

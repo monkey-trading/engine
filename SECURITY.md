@@ -273,7 +273,8 @@ sequenced only within `feeds.venues.max_delay` of the newest ping answered when 
 the host held it back on the network or held the sequencer back by stalling its log or its CPU.
 Sequenced time keeps pace with monotonic time whatever the host clock does, giving up at most 10 ms
 of it a second, and after a restart stamps hold, and venue quotes are dropped, until that pace from
-the last stamp passes every quote carried across it, so a quote counts for about its market's
+the last stamp passes every quote carried across it (for a market whose `max_age_ms` is longer than
+`time.max_drift`, only as far as trusted time admits), so a quote counts for about its market's
 `max_age_ms` at most once it reaches the engine. A stall after a command is stamped delays that
 command but not the stamp of any after it. A price an order fills at is therefore at most about
 `max_delay` plus `max_age_ms` old, from when the venue sent it: 3 s under production's 2 s and 1 s,

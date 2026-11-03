@@ -41,7 +41,7 @@ use access::AccessAlerts;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
 use engine_core::Engine;
@@ -270,11 +270,23 @@ impl Sequencer {
     /// Stamps and sequences one command, after any queued required commands. Returns `None`, with
     /// nothing logged, when trusted time refuses the stamp.
     /// Error cases:
+    /// - as `sequence_stamped`
+    fn sequence(&mut self, cmd: Command) -> anyhow::Result<Option<Vec<Event>>> {
+        self.sequence_stamped(cmd, None)
+    }
+
+    /// `sequence`, with the stamp also refused for a venue's quote that `quote` names (see
+    /// `admitted_ts`).
+    /// Error cases:
     /// - the log cannot be written
     /// - the engine rejects a queued required command
     /// - the engine refuses the sequence, which means this sequencer is broken
-    fn sequence(&mut self, mut cmd: Command) -> anyhow::Result<Option<Vec<Event>>> {
-        let Some(ts) = self.admitted_ts() else {
+    fn sequence_stamped(
+        &mut self,
+        mut cmd: Command,
+        quote: Option<Option<Instant>>,
+    ) -> anyhow::Result<Option<Vec<Event>>> {
+        let Some(ts) = self.admitted_ts(quote) else {
             return Ok(None);
         };
         self.sequence_queued(ts)?;
@@ -310,7 +322,7 @@ impl Sequencer {
         }
         self.time.update(sample);
         if self.benchmark_sync_enabled {
-            if let Some(ts) = self.admitted_ts() {
+            if let Some(ts) = self.admitted_ts(None) {
                 self.sequence_queued(ts)?;
             }
             Ok(())
@@ -327,20 +339,6 @@ impl Sequencer {
     pub fn trust(&mut self, sample: Sample) -> anyhow::Result<()> {
         self.take_sample(sample)?;
         self.flush()
-    }
-
-    /// The stamp for a command now, if trusted time admits it. The host clock is untrusted inside
-    /// a TEE: it can't move sequenced time backwards or hold it back from monotonic time's pace, and
-    /// nothing is logged unless the clock and the stamp are within the drift bound of trusted time.
-    fn admitted_ts(&mut self) -> Option<Millis> {
-        let (host_ms, now) = (self.clock.now_ms(), self.clock.instant());
-        let ts = self.time.stamp(host_ms, self.last_ts, now);
-        let admitted = self.time.admit(host_ms, ts, now);
-        self.note_benchmark_time_admission(admitted, ts);
-        if admitted {
-            self.admit_benchmark_schedule(ts);
-        }
-        admitted.then_some(ts)
     }
 
     /// Applies one command at `ts`, logs it with its events, signs any approved withdrawal, and
