@@ -527,13 +527,18 @@ the applied rates next to its date is refused, in `set_benchmark_rates` and `Set
 with the whole snapshot left unapplied. The limit is the cap times the calendar days between the
 dates, so a real move refused today lands once enough days have passed, and a benchmark's first rate
 is bound only by its ±100% range. A rate measured from an undated rate, which only a log from before
-V18 can hold with no dated history, keeps one day's limit and is walked up by hand. A relisting cannot
+V18 can hold with no dated history, keeps one day's limit and is walked up by hand. Until a dated
+rate is applied it binds only a first observation: a snapshot, or two in turn, that dates the undated
+rate's own value far back and then the move today passes, since the move measures from the backdated
+rate. V46 admits that, because a log written under it replays under the rules it was written under,
+and it needs a log that set a rate before V18 and has set none since: a fresh node activates the
+latest version before genesis, so its genesis rates are dated. A relisting cannot
 move a market that holds positions onto another benchmark, since that would reach them with a first
 rate; no limit on the move would do, as fresh names walk any limit within one second. A market with
 no positions moves freely, and a retired benchmark's holders stay on its name, whose rates can be
 signed within the cap. An applied date does not change, with a reason of its own: the rate
 it holds passes, as the worker sends it again, and any other is refused, a publisher's revision
-included, so no rate can be ratcheted, or walked from a backdated one, past the cap. The last applied rate keeps financing meanwhile, and `benchmark_rate_stale`
+included, so no rate can be ratcheted, or walked from a backdated one, past the cap, except from the undated rate above. The last applied rate keeps financing meanwhile, and `benchmark_rate_stale`
 reports it after five weekdays. `research/benchmark-cap/` checks the cap against each benchmark's
 published history. The stress floor is at most level 1, in a market or in all of them, and lapses to
 the automatic level 72 hours of sequenced time after it is set, unless it is set again, and a catch-up

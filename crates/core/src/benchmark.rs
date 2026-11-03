@@ -7,7 +7,9 @@
 //! the NAV its electors own. A relisting still sets a market's markup at once, which `V46` does not
 //! bound. A refused rate changes nothing: the last applied rate keeps financing, and since the limit
 //! grows with the days from it, a real move lands once enough days have passed; only a rate measured
-//! from an undated rate, which a log from before `V18` can hold, keeps one day's limit. The operator's
+//! from an undated rate, which a log from before `V18` can hold, keeps one day's limit, and binds only
+//! while the benchmark has no dated observation, so a backdated observation equal to it frees the next
+//! rate (`tests/benchmark_cap.rs`; the README says why `V46` keeps that). The operator's
 //! worker removes what the cap refuses before it signs (`split_by_cap`), so one refusal does not hold
 //! back the other benchmarks or a rollover waiting for a snapshot.
 
