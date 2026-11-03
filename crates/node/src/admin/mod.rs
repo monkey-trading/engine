@@ -304,14 +304,16 @@ pub async fn run(args: AdminArgs, env: KeyEnv) -> anyhow::Result<AdminRequest> {
 /// with `-benchmark-worker` added, which has to exist or be creatable on the worker's own host.
 /// Error cases:
 /// - `alerts.outbox.dir` names no directory
-/// - the worker's outbox cannot be created, opened or validated, with its path in the error
+/// - routing cannot start; the durable outbox at the named path must be creatable and writable,
+///   though a failure naming the path can also come from deeper routing setup
 async fn worker_routing(alerts: Router, cfg: &NodeConfig) -> anyhow::Result<Routing> {
     let mut outbox = cfg.alerts.outbox.clone();
     let name = outbox.dir.file_name().context("alerts.outbox.dir names no directory")?.to_string_lossy();
     outbox.dir = outbox.dir.with_file_name(format!("{name}-benchmark-worker"));
     alerts.spawn(cfg.alerts.episode_quiet, &outbox).await.with_context(|| {
         format!(
-            "starting the benchmark worker's alert outbox at {}; the worker needs it writable",
+            "starting the benchmark worker's alert routing; its durable outbox at {} must be creatable \
+             and writable",
             outbox.dir.display()
         )
     })
