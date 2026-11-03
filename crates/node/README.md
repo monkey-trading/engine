@@ -497,8 +497,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   close-out map and each position's close-out price against engine close-outs, the account read's
   cost (`closeout_cost.rs`, ignored), MONKEY totals and epochs, bounds, recovery
 - `src/sequencer/replay/stats.rs` — the replay's sink into the record
-- `src/history/marks/task_tests/` — recovery seeding from a short log and live maintenance through
-  the sequencer's reports
+- `src/history/marks/task_tests/` — recovery seeding from a short log, live maintenance through
+  the sequencer's reports, and a cache write fault during a backfill stopping the task
 - `src/history/tests/mod.rs` — history index tests: pages, filters, retention, following the log,
   and restarts
 - `src/history/tests/recovery.rs` — startup checks against the log, readiness to serve, and
