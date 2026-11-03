@@ -146,10 +146,19 @@ pub(crate) async fn startup(
     let mut moving =
         start.predecessor.as_deref().map(|address| Moving::new(cfg, address, start, &store, operator, &named));
     let mut raised = false;
-    loop {
+    // The completeness check and the choice of what runs take one store lock, so a delivery cannot
+    // seal a partial bundle over the complete one between them; a bundle that fails the check under
+    // the lock keeps this start holding.
+    let held = loop {
         let lacking = lacks_required(&store, &named);
         if lacking.is_empty() && moving.as_ref().is_none_or(|moving| !moving.unsettled()) {
-            break;
+            if let Some(held) = store.current_if_complete(
+                |signed| missing_required(signed, &named).is_empty(),
+                |version| listener.started(version),
+            ) {
+                break held;
+            }
+            raised = false;
         }
         // A new release has asked for what it lacks, and a prompt answer is the ordinary upgrade.
         let asked = moving.as_ref().is_none_or(|moving| moving.failures > 0 || moving.settled);
@@ -164,10 +173,8 @@ pub(crate) async fn startup(
             },
             None => listener.step(&mut serving).await,
         }
-    }
+    };
     drop(moving);
-
-    let held = store.current_running(|version| listener.started(version));
     // Whatever else is connected finishes on its own deadlines, its receipt included.
     serving.detach_all();
     // From what this start runs: a delivery still connected may already have sealed a newer one.
@@ -199,14 +206,21 @@ pub(crate) async fn startup(
     })
 }
 
-/// The required secrets `store` lacks, each once.
-fn lacks_required(store: &SecretStore, named: &[NamedSecret]) -> Vec<NamedSecret> {
-    let held = store.current().map(|signed| signed.bundle.secrets).unwrap_or_default();
+/// The required secrets the bundle `held` lacks, each once.
+fn missing_required(held: Option<&SignedBundle>, named: &[NamedSecret]) -> Vec<NamedSecret> {
     named
         .iter()
-        .filter(|field| field.usage == SecretUse::Required && !held.contains_key(&field.name))
+        .filter(|field| {
+            field.usage == SecretUse::Required
+                && !held.is_some_and(|signed| signed.bundle.secrets.contains_key(&field.name))
+        })
         .cloned()
         .collect()
+}
+
+/// The required secrets `store` lacks, each once.
+fn lacks_required(store: &SecretStore, named: &[NamedSecret]) -> Vec<NamedSecret> {
+    missing_required(store.current().as_ref(), named)
 }
 
 /// Raises `secret_missing` for each field whose secret `held` lacks, and resolves it for each it holds.
