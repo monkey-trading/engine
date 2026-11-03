@@ -120,7 +120,7 @@ an index: load only the rule whose hint matches the current action.
   names, takes the keys — and the sealed tail segment, so no seq is missing — over HPKE after each
   release attests the other; the elected successor resolves the incumbent's handover endpoint from
   the registry's recorded source and fetches the published log first), the trusted time check against
-  Roughtime servers, the custody adapter (mock, or EVM vault deposits over alloy, mirroring the
+  Roughtime servers with sequenced time held to monotonic time's pace (`clock.rs`), the custody adapter (mock, or EVM vault deposits over alloy, mirroring the
   staking contract's finalised events once `InitStaking` has applied, with V27 scan progress
   authenticated in engine state rather than trusted from the host cursor, and from V37 the operator
   registry's rotation switches and elections in the same proven blocks, `custody/registry.rs`), the
@@ -146,7 +146,9 @@ an index: load only the rule whose hint matches the current action.
   signed request, never on a schedule. It also has price feeds: live crypto
   venue WebSockets and RWA market-data vendors (`feeds/`, one adapter per venue: Massive and
   TraderMade over WebSocket, Databento's live gateway over TCP, with API keys read from the
-  environment variables the config names) and a mock, Prometheus metrics on an operator
+  environment variables the config names; `feeds/venue/delay.rs` bounds how far behind a TLS
+  connection's stream can be from its pings on the monotonic clock, past which its frames count as
+  no quote, and `sequencer/quotes.rs` holds each quote to that bound at its stamp) and a mock, Prometheus metrics on an operator
   listener, and alert routing to webhooks with a bounded durable outbox outside the public log. Its
   `production` cargo feature refuses mock TEE, custody, and feed providers, and an API without
   `[api.tls.acme]`, at config load; release images build with it. `engine ct-watch` (`ct_watch/`)
@@ -209,7 +211,8 @@ an index: load only the rule whose hint matches the current action.
 - **config/** — node configs. `dev.toml` runs the TEE, custody and feeds as mocks on one machine,
   and checks the clock against public Roughtime servers, citing each server's key source;
   `feeds.provider = "venues"` prices its crypto markets from live venues instead, leaving the others
-  unpriced. `anvil.toml` runs EVM custody against the vault on a local Anvil chain. The optional
+  unpriced. `[feeds.venues]`'s `ping_interval` and `max_delay` bound how far behind a venue's stream
+  may be, with `SECURITY.md` stating the resulting bound on a price's age. `anvil.toml` runs EVM custody against the vault on a local Anvil chain. The optional
   `[api.tls.acme]` names the API's domain and the ACME CA that certifies its key. The `[genesis]`
   section is protocol: it is sequenced into the log as admin commands on first boot, all or
   nothing, and credits house capital from config only under mock custody. Loading refuses a genesis

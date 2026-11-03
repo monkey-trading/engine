@@ -130,6 +130,21 @@ fn a_venue_quote_pace_over_the_flood_bound_is_refused() {
 }
 
 #[test]
+fn a_ping_interval_that_is_zero_or_outlasts_the_delay_bound_is_refused() {
+    let edits: [fn(&mut crate::config::VenuesSection); 3] = [
+        |venues| venues.ping_interval = Duration::ZERO,
+        |venues| venues.ping_interval = venues.max_delay,
+        |venues| venues.max_delay = venues.ping_interval / 2,
+    ];
+    for edit in edits {
+        let mut cfg = NodeConfig::load(Path::new(DEV)).unwrap();
+        edit(cfg.feeds.venues.as_mut().unwrap());
+        let err = format!("{:#}", cfg.validate().unwrap_err());
+        assert!(err.contains("ping_interval must be non-zero and shorter than max_delay"), "{err}");
+    }
+}
+
+#[test]
 fn venue_feeds_need_their_section() {
     let mut cfg = NodeConfig::load(Path::new(DEV)).unwrap();
     cfg.feeds.provider = FeedProvider::Venues;

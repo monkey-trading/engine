@@ -189,7 +189,7 @@ impl Sequencer {
             return Ok(());
         }
         let Some(posted) = evidence.checkpoint_seq else { return Ok(()) };
-        let Some(ts) = self.admitted_ts() else { return Ok(()) };
+        let Some(ts) = self.admitted_ts(None) else { return Ok(()) };
         let issued_at = u64::try_from(ts / 1_000).context("negative payout issue time")?;
         let gate = self.gate.as_mut().expect("checkpoint gate exists");
         gate.schedule.prepare(evidence.signer_epoch, &gate.payouts);
@@ -265,7 +265,7 @@ impl Sequencer {
         replaces: u64,
         screening: Option<&ReissueScreening>,
     ) -> Reissue {
-        let Some(ts) = self.admitted_ts() else { return Reissue::Unavailable };
+        let Some(ts) = self.admitted_ts(None) else { return Reissue::Unavailable };
         if self.engine.protocol_version().supports_access() {
             let refusal = match screening {
                 Some(screening) => {

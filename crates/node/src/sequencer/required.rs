@@ -213,7 +213,7 @@ impl Sequencer {
         if self.required.is_empty() {
             return Ok(());
         }
-        match self.admitted_ts() {
+        match self.admitted_ts(None) {
             Some(ts) => self.sequence_queued(ts),
             None => Ok(()),
         }

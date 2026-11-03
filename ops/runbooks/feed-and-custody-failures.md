@@ -72,6 +72,7 @@ Open markets with no mark are the `market_no_price` case. Match the alerts to th
 | `venue_symbol_silent` | Warning | A symbol has had no fresh quote for `feeds.venues.timeout` while its market is open. The connection is replaced. | Check the symbol is still the vendor's (a ticker or contract change); a wrong symbol is a config fix. |
 | `venue_message_refused` | Warning | The node refused a vendor message (malformed, unknown). At most one a minute, with a count; API keys are redacted. | Read the excerpt. A vendor format change needs a node release. |
 | `venue_clock_ahead` | Warning | A venue's timestamps are well ahead of the host clock. | Check `clock_drift` and the host clock; quotes ahead of sequenced time are rejected (`prices_rejected`, reason `quote_ahead`). |
+| `venue_delayed` | Warning | A connection's pings show its stream may be further behind than `feeds.venues.max_delay`, so what it reads counts as no quote, and a market needing that venue has no price. It resolves when a frame next counts. Fields: `venue`, `feed`. | Check the network path to the venue, and the host's load. If the path is healthy, the host may be holding the stream back: read [incident-response.md](incident-response.md). |
 | `prices_rejected` | Warning | The engine refused a price update. The `reason` is one of `unknown_market`, `malformed_quote`, `quote_ahead`, `market_closed`, `contract_not_taken`, `other`. | `contract_not_taken` on a futures market means a quote for a contract the market is not on: see below. |
 | `market_no_price` | Critical | An open market a feed prices has had no usable price for `alerts.no_price_after`. | Below. |
 | `market_unfed` | Warning | No configured feed prices this market, so it cannot trade. It never pages `market_no_price`. | Expected only for markets you have not wired; otherwise a config gap. |
@@ -141,6 +142,7 @@ sequenced before the first sample, and sequencing halts when the host clock is o
 | `roughtime_server_disagrees` (Warning) | One server signed a time outside the agreed sample. | Do not act on one server; if it persists, the owner may drop it (a new release). |
 | `trusted_time_no_sample` (Warning) | No sample could be taken. | UDP egress to the servers; the host's resolver. |
 | `trusted_time_unavailable` (Critical) | No sample within the grace: sequencing has halted. | As above. Sequencing resumes by itself when a sample arrives. |
+| `host_clock_behind` (Warning) | The host clock has fallen a second behind monotonic time. Stamps keep monotonic time's pace, so quotes still age out. A clock that ran ahead and came back leaves stamps ahead of it, and markets may have no price until that gap drains, at 1% of elapsed time. | Fix the host's clock. The host controls the clock, so also read [incident-response.md](incident-response.md). |
 | `clock_drift` (Critical) | The host clock or a stamp is outside the drift bound of trusted time: sequencing halted. | Fix the host's clock. The host controls the clock, so also read [incident-response.md](incident-response.md) if it was a large jump. |
 
 ## Custody RPC providers

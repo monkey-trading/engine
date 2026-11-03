@@ -1,5 +1,7 @@
 //! Sequencer requests and public log stream messages.
 
+use std::time::Instant;
+
 use engine_core::access::{AccessEvidence, AccessReject};
 use engine_core::command::Command;
 use engine_core::eip712::B256;
@@ -45,6 +47,12 @@ pub enum Request {
     Submit {
         cmd: Command,
         reply: Option<oneshot::Sender<Vec<Event>>>,
+    },
+    /// A venue's quote, sequenced only while the monotonic clock has not passed `not_after`, by when
+    /// its connection's pings stop bounding its age. `None` on a connection without pings.
+    Quote {
+        cmd: Command,
+        not_after: Option<Instant>,
     },
     Query(Query),
     /// The parameters and latest checkpoint, answered once every prior request is flushed.

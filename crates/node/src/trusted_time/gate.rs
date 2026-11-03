@@ -8,7 +8,7 @@ use engine_core::types::Millis;
 use tokio::sync::watch;
 use tracing::{debug, error, info};
 
-use crate::clock::Clock;
+use crate::clock::{Clock, StampPace};
 use crate::trusted_time::{Sample, ceil_millis, floor_millis};
 
 /// How long sequencing may go on after the latest trusted time sample (#15 §4).
@@ -46,6 +46,7 @@ pub struct TimeGate {
     halted: Option<Halt>,
     /// Stamps refused since sequencing halted.
     refused: u64,
+    pace: StampPace,
 }
 
 /// The host clock, read only while the gate would admit a stamp of it: within `max_drift` of every
@@ -83,7 +84,31 @@ impl Refusal {
 impl TimeGate {
     /// A gate with no sample yet, started at `now`.
     pub fn new(max_drift: Duration, now: Instant) -> Self {
-        Self { max_drift_ms: floor_millis(max_drift), started: now, sample: None, halted: None, refused: 0 }
+        let pace = StampPace::new(Millis::MIN);
+        Self { max_drift_ms: floor_millis(max_drift), started: now, sample: None, halted: None, refused: 0, pace }
+    }
+
+    /// This gate, for a run whose stamps are at least `start` and keep pace from `last_ts`, the last
+    /// stamp before it, from when the gate started.
+    pub fn resuming(self, last_ts: Millis, start: Millis) -> Self {
+        Self { pace: StampPace::new(start).anchored(last_ts, self.started), ..self }
+    }
+
+    /// Whether a stamp given now, from the host clock reading `host_ms`, would be held at the run's
+    /// start (see `StampPace`).
+    pub fn holding_start(&self, host_ms: Millis, now: Instant) -> bool {
+        self.pace.holding_start(host_ms, now)
+    }
+
+    /// The stamp for a command at monotonic time `now`, from the host clock reading `host_ms`:
+    /// never before `last_ts`, nor behind the pace of monotonic time (`StampPace`), unless that pace
+    /// is past what the latest sample admits.
+    pub fn stamp(&self, host_ms: Millis, last_ts: Millis, now: Instant) -> Millis {
+        let admitted = self.sample.map_or(Millis::MAX, |sample| {
+            let age = now.saturating_duration_since(sample.at);
+            sample.earliest_ms.saturating_add(floor_millis(age)).saturating_add(self.max_drift_ms)
+        });
+        host_ms.max(last_ts).max(self.pace.floor(now).min(admitted))
     }
 
     /// Replaces the latest sample.
@@ -127,6 +152,9 @@ impl TimeGate {
             }
         }
         self.halted = halt;
+        if refusal.is_none() {
+            self.pace.stamped(host_ms, ts, now);
+        }
         refusal.is_none()
     }
 

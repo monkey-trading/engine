@@ -13,15 +13,16 @@ use engine_core::event::Event;
 use engine_core::futures::FuturesContract;
 use engine_core::market::MarketSpec;
 use engine_core::types::{MarketId, Millis};
+use futures_util::StreamExt;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 
 use crate::clock::now_ms;
 use crate::config::{Genesis, Venue, VenueConnection, VenueSymbol};
-use crate::feeds::tests::fake::{accept, bitstamp_book, fast, kraken_book, listen, next_alert, stream};
+use crate::feeds::tests::fake::{accept, bitstamp_book, fast, kraken_book, listen, next_alert, send, stream};
 use crate::feeds::tests::rwa_support::{around_the_clock, commands, events_of, listing, priced, wait_for};
 use crate::feeds::tests::scenario::Node;
-use crate::feeds::venue::{self, tls_config};
+use crate::feeds::venue::{self, Timing, tls_config};
 use crate::test_support::{Alert, LOADED_WAIT, capture_alerts, dev_config};
 
 const US500: MarketId = 20;
@@ -32,6 +33,16 @@ const TIMEOUT: Duration = Duration::from_millis(400);
 /// so the ceiling only bounds a hang, and a loaded machine is not mistaken for one. Unlike the
 /// feeds' own timeout, `TIMEOUT`, it is no part of what the tests check.
 const WAIT: Duration = LOADED_WAIT;
+/// Pings often enough to come and go within `TIMEOUT`, with a delay bound past it.
+const PINGING: Timing = Timing {
+    interval: Duration::from_millis(10),
+    timeout: TIMEOUT,
+    reconnect_min: Duration::from_millis(10),
+    reconnect_max: Duration::from_millis(40),
+    stale_after: Duration::from_secs(1),
+    ping_interval: Duration::from_millis(50),
+    max_delay: Duration::from_secs(1),
+};
 /// The commands after the roll that must quote June and never December.
 const RUN: usize = 200;
 /// Far enough ahead that setup ends well before it, however long setup takes.
@@ -101,6 +112,43 @@ async fn a_live_connection_is_kept_by_its_traffic_while_every_market_is_closed()
     tokio::time::sleep(TIMEOUT * 3).await;
     assert_no_feed_alert(&mut alerts);
     assert!(timeout(Duration::from_millis(100), listener.accept()).await.is_err(), "reconnected despite traffic");
+}
+
+#[tokio::test]
+async fn pongs_alone_do_not_keep_a_connection_while_every_market_is_closed() {
+    let start = now_ms();
+    let closed = MarketSpec { schedule: around_the_clock(Some((start - 60_000, start + LATER_MS))), ..listing(AAPL) };
+    let node = Node::boot("pongs-only", &genesis(vec![closed])).await;
+    let (listener, url) = listen().await;
+    start_feed_timed(&node, Venue::Kraken, &[(AAPL, "AAPL", None)], &url, PINGING);
+
+    // The venue reads on, so every ping is answered, and sends nothing of its protocol. With Apple
+    // closed, only the read deadline can end this connection.
+    let (mut ws, _) = accept(&listener).await;
+    let answering = tokio::spawn(async move { while ws.next().await.is_some() {} });
+    let (_retry, _) = timeout(WAIT, accept(&listener)).await.expect("the connection replaced");
+    answering.abort();
+}
+
+#[tokio::test]
+async fn a_ping_unanswered_for_the_timeout_ends_a_connection_while_every_market_is_closed() {
+    let start = now_ms();
+    let closed = MarketSpec { schedule: around_the_clock(Some((start - 60_000, start + LATER_MS))), ..listing(AAPL) };
+    let node = Node::boot("unanswered", &genesis(vec![closed])).await;
+    let (listener, url) = listen().await;
+    start_feed_timed(&node, Venue::Kraken, &[(AAPL, "AAPL", None)], &url, PINGING);
+
+    // The venue keeps the read deadline fresh with heartbeats, and has stopped reading, so no ping
+    // after the opening one is answered. With Apple closed, only the unanswered ping can end this.
+    let (mut ws, _) = accept(&listener).await;
+    let traffic = tokio::spawn(async move {
+        loop {
+            send(&mut ws, &[r#"{"channel":"heartbeat"}"#.to_owned()]).await;
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    });
+    let (_retry, _) = timeout(WAIT, accept(&listener)).await.expect("the connection replaced");
+    traffic.abort();
 }
 
 #[tokio::test]
@@ -221,6 +269,11 @@ async fn listen_and_serve(venue: Venue, names: &[&str]) -> String {
 
 /// Starts `venue`'s feed for `symbols` into `node`, reading the venue at `url`.
 fn start_feed(node: &Node, venue: Venue, symbols: &[(MarketId, &str, Option<&str>)], url: &str) {
+    start_feed_timed(node, venue, symbols, url, fast(TIMEOUT));
+}
+
+/// `start_feed` with `timing`.
+fn start_feed_timed(node: &Node, venue: Venue, symbols: &[(MarketId, &str, Option<&str>)], url: &str, timing: Timing) {
     let url = url.to_owned();
     let symbols = symbols
         .iter()
@@ -231,7 +284,7 @@ fn start_feed(node: &Node, venue: Venue, symbols: &[(MarketId, &str, Option<&str
         })
         .collect();
     let conn = VenueConnection { venue, url, api_key_env: None, dataset: None, symbols };
-    tokio::spawn(venue::run(conn, None, fast(TIMEOUT), tls_config().expect("tls config"), node.tx.clone()));
+    tokio::spawn(venue::run(conn, None, timing, tls_config().expect("tls config"), node.tx.clone()));
 }
 
 /// The contracts the quotes of `applied` name, in order.

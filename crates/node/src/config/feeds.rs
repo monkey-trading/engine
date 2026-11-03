@@ -80,6 +80,16 @@ pub struct VenuesSection {
     /// the newest, bounding the sequencer load venue messages can demand.
     #[serde(with = "humantime_serde")]
     pub min_quote_spacing: Duration,
+    /// How often a connection pings its venue, on every connection but Databento's. The time since
+    /// the newest answered ping was sent bounds how far behind its stream may be.
+    #[serde(with = "humantime_serde")]
+    pub ping_interval: Duration,
+    /// How far behind a connection's stream may be before what it reads counts as no quote. A
+    /// quote's age when it reaches the engine is at most this under a hostile host, so a price's is
+    /// at most about this plus its market's `max_age_ms`. Past `ping_interval` by more than the round
+    /// trips and stalls an honest network shows, or the market loses its price without cause.
+    #[serde(with = "humantime_serde")]
+    pub max_delay: Duration,
     pub connections: Vec<VenueConnection>,
 }
 
@@ -93,12 +103,13 @@ pub struct VenueConnection {
     /// the quotes are labelled with. Databento's live gateway speaks only plain TCP, so its
     /// endpoint is `tcp://<gateway>.lsg.databento.com:13000`.
     ///
-    /// TODO: the host can rewrite a Databento feed in flight. The divergence bound limits what it
-    /// gains: a market priced from Databento and one TLS source moves at most half its
+    /// TODO: the host can rewrite or delay a Databento feed in flight. The divergence bound limits
+    /// what it gains: a market priced from Databento and one TLS source moves at most half its
     /// `max_divergence_bps`, and loses its price beyond that. On a futures market it can move both
     /// contracts' medians apart before a roll, so the roll's gap, and with it the index from then
     /// on, shifts by up to the full `max_divergence_bps` and keeps that shift. Databento offers no
-    /// TLS gateway.
+    /// TLS gateway, so its connection has no delay bound of its own: the TLS source's quote, which
+    /// must also be fresh, bounds the market's age.
     pub url: String,
     /// The environment variable holding the vendor's API key, which is a credential and stays out
     /// of config files: required for Massive, TraderMade, and Databento, and refused for a venue
@@ -208,8 +219,9 @@ impl VenuesSection {
     /// one source name twice, a symbol that could mean two instruments, a feed missing its
     /// credentials, or one the host could forge.
     /// Error cases:
-    /// - `timeout`, `reconnect_min`, or `stale_after` is zero, or `reconnect_min` exceeds
-    ///   `reconnect_max` (`min_quote_spacing`'s bounds are the config check's)
+    /// - `timeout`, `reconnect_min`, `stale_after`, or `ping_interval` is zero, `reconnect_min`
+    ///   exceeds `reconnect_max`, or `ping_interval` is not under `max_delay`
+    ///   (`min_quote_spacing`'s bounds are the config check's)
     /// - no connections, or a connection with no symbols
     /// - a URL that does not parse as `wss://` with a host on the venue's own domain (for Massive,
     ///   with one of its feed paths), or for Databento as `tcp://` on its domain with a port
@@ -223,6 +235,11 @@ impl VenuesSection {
             "timeout, reconnect_min, and stale_after must be non-zero"
         );
         ensure!(self.reconnect_min <= self.reconnect_max, "reconnect_min exceeds reconnect_max");
+        // A frame between pings is judged by the last answer, so this would refuse most of them.
+        ensure!(
+            !self.ping_interval.is_zero() && self.ping_interval < self.max_delay,
+            "ping_interval must be non-zero and shorter than max_delay"
+        );
         ensure!(!self.connections.is_empty(), "no connections");
         let mut instruments = BTreeSet::new();
         let mut endpoints = BTreeSet::new();

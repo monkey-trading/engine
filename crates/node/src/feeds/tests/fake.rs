@@ -12,7 +12,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tokio::time::{sleep, timeout};
+use tokio::time::{interval, timeout};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{WebSocketStream, accept_async};
 
@@ -64,7 +64,9 @@ pub async fn next_alert(alerts: &mut mpsc::UnboundedReceiver<Alert>) -> Alert {
     timeout(WAIT, alerts.recv()).await.expect("no alert in time").expect("alert channel closed")
 }
 
-/// Short timings, so reconnects and silence play out in milliseconds.
+/// Short timings, so reconnects and silence play out in milliseconds. A connection's opening ping,
+/// which `accept` answers, keeps it within its delay bound for the test: a test of that bound sets
+/// its own.
 pub fn fast(timeout: Duration) -> Timing {
     Timing {
         interval: Duration::from_millis(10),
@@ -72,6 +74,8 @@ pub fn fast(timeout: Duration) -> Timing {
         reconnect_min: Duration::from_millis(10),
         reconnect_max: Duration::from_millis(40),
         stale_after: Duration::from_secs(1),
+        ping_interval: Duration::from_secs(60 * 60),
+        max_delay: Duration::from_secs(24 * 60 * 60),
     }
 }
 
@@ -91,11 +95,14 @@ pub async fn accept(listener: &TcpListener) -> (Conn, String) {
     (ws, subscription)
 }
 
-/// The next text message from the feed.
+/// The next text message from the feed, answering any ping on the way as reading a stream does.
 pub async fn next_text(ws: &mut Conn) -> String {
-    match timeout(WAIT, ws.next()).await.expect("no message in time").expect("closed").expect("read") {
-        Message::Text(text) => text.as_str().to_owned(),
-        other => panic!("expected text, got {other:?}"),
+    loop {
+        match timeout(WAIT, ws.next()).await.expect("no message in time").expect("closed").expect("read") {
+            Message::Text(text) => return text.as_str().to_owned(),
+            Message::Ping(_) => {}
+            other => panic!("expected text, got {other:?}"),
+        }
     }
 }
 
@@ -106,16 +113,25 @@ pub async fn send(ws: &mut Conn, messages: &[String]) {
     }
 }
 
-/// Sends `messages()` to the feed every 20ms until it closes the connection.
+/// Sends `messages()` to the feed every 20ms until it closes the connection, answering its pings.
 pub fn stream(mut ws: Conn, messages: impl Fn() -> Vec<String> + Send + 'static) -> JoinHandle<()> {
     tokio::spawn(async move {
+        let mut every = interval(Duration::from_millis(20));
         loop {
-            for message in messages() {
-                if ws.send(Message::text(message)).await.is_err() {
-                    return;
+            tokio::select! {
+                read = ws.next() => {
+                    if !matches!(read, Some(Ok(_))) {
+                        return;
+                    }
+                }
+                _ = every.tick() => {
+                    for message in messages() {
+                        if ws.send(Message::text(message)).await.is_err() {
+                            return;
+                        }
+                    }
                 }
             }
-            sleep(Duration::from_millis(20)).await;
         }
     })
 }
@@ -141,6 +157,12 @@ pub fn spawn_feed(
                     Some(Request::Submit { cmd, reply }) => {
                         engine.apply(cmd.clone());
                         if tx.send(Request::Submit { cmd, reply }).await.is_err() {
+                            return;
+                        }
+                    }
+                    Some(Request::Quote { cmd, .. }) => {
+                        engine.apply(cmd.clone());
+                        if tx.send(Request::Submit { cmd, reply: None }).await.is_err() {
                             return;
                         }
                     }
