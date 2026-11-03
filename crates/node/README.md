@@ -444,7 +444,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/stats/activity.rs` — the bounded feed of loss allocations, stakes and unstakes
 - `src/stats/view.rs` — the answers built from the record and the engine
 - `src/stats/bench.rs` — the ignored cost benchmarks at 100k accounts: a scan, `observe`, and each command's
-  cost across a scan interval with the scan inline and handed to the worker
+  cost across a scan interval with the scan inline and handed to the worker, the worker's copy
+  of the engine in memory, and how far the worker falls behind at 1000 and 5000 commands a second
 - `src/stats/tests.rs`, `src/stats/tests/` — the record against the engine: volume and levels, the
   close-out map against engine close-outs, MONKEY totals and epochs, bounds, recovery
 - `src/sequencer/replay/stats.rs` — the replay's sink into the record
@@ -550,6 +551,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/limits/tests.rs` — the limiters' buckets, caps, and alert throttle
 - `src/config/mod.rs` — the node config schema, loading, and the config file's hash
 - `src/config/stats.rs` — the `[stats]` section: retention, activity length, position-map buckets
+- `src/config/api.rs` — the `[api]` section: connection and rate limits, timeouts, the quote, heartbeat and
+  stats scan intervals, origins, TLS and the proxy protocol
 - `src/config/api_defaults.rs` — defaults of the `[api]` keys with a default
 - `src/config/benchmarks.rs` — publisher endpoints, cadence, timeout, and catalogue coverage
 - `src/config/collateral.rs` — the `[tee]` keys of the attestation collateral relay and their bounds
@@ -563,7 +566,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/config/telemetry.rs` — the metrics listener and alert webhook config, and the redacting
   `WebhookUrl`
 - `src/config/tests.rs` — config loading and validation tests
-- `src/config/api_tests.rs` — the `[api]` heartbeat and quote intervals' defaults and minimums
+- `src/config/api_tests.rs` — the `[api]` heartbeat, quote and stats scan intervals' defaults and minimums
 - `src/config/mock_key_tests.rs` — published mock-only signer opt-in and hardware refusal regressions
 - `src/config/custody_tests.rs` — independent provider configuration checks
 - `src/config/production_tests.rs` — the config file's hash, and a production build's refusal of
@@ -1609,10 +1612,12 @@ command the log held when the node started, the route answers 503 (`history is c
 log`). History is public, like the log.
 
 `GET /v1/house` answers `cash`, `nav` and `gross_exposure` at the last command, and from the last
-account scan `seq`, `snapshot_ms`, `open_interest` (the notional of every client position, long and
-short), `open_margin` and `open_positions`, with `markets`: each market's `long`, `short` and `net`
-notional in USD, position counts, `unrealised` (the house's result at the mark) and `volume`. The
-scan figures are `null` until the first scan; `volume` sums the last 24 hourly buckets and
+scan `seq`, `snapshot_ms`, `open_interest` (the notional of every client position, long and
+short) and `open_positions`, with `markets`: each market's `long`, `short` and `net`
+notional in USD, position counts, `unrealised` (the house's result at the mark) and `volume`; those
+come from the latest scan of either kind, at most `api.stats_light_interval` old. `open_margin`, with
+its own `margin_seq` and `margin_snapshot_ms`, comes from the last full scan, at most
+`api.stats_interval` old. The scan figures are `null` until the first scan; `volume` sums the last 24 hourly buckets and
 `volume_since_ms` says where that window starts. `GET /v1/house/positions?market=` answers one
 market's positions as aggregates only: `closeout`, USD and counts by the move from the mark that
 would close the account out (the account's other positions held at their marks; a long falls, a
@@ -1626,17 +1631,23 @@ strings. `GET /v1/stats/series?metric=&market=&resolution=(1m|1h|1d)&from_ms=&to
 metric's buckets oldest first: `nav`, `cash`, `withdrawal_queue`, `total_staked`, `total_allocated`,
 `cumulative_distributed`, `long` and `short` (per market), `volume` (per market or all),
 `monkey_per_loss` and `distributed_per_epoch`. The series, activity and MONKEY answers state where their data begins
-(`begins_ms`, `begins_seq`, `from_genesis`), and positions are dated by their scan (`seq`, `snapshot_ms`);
+(`begins_ms`, `begins_seq`, `from_genesis`), and positions are dated by their full scan (`seq`, `snapshot_ms`);
 the activity feed also says when it has dropped older entries (`truncated`, `retained_from_ms`). The record is derived from the log and held in memory:
 recovery rebuilds it by replay, so after a recovery from a snapshot it begins at the first command
-after it. Scans of every account are due at most once per `api.stats_interval`
-of sequenced time. A running node takes them on a worker thread holding a copy of the engine that applies
+after it. A full scan of every account (margin, the position maps and the distribution excess) is due at
+most once per `api.stats_interval` of sequenced time, and between full scans a light one, which totals
+only each market's long and short, the open interest and the open positions, at most once per
+`api.stats_light_interval` (5 s by default; a value above `api.stats_interval` leaves the full scans
+alone). Each light scan samples the long and short series, whose buckets and retention are unchanged. A running node takes them on a worker thread holding a copy of the engine that applies
 every command the sequencer applies, so a scan reads the engine at the seq it fell due at and never holds
-the sequencer (100k levered accounts with staking initialised: a scan took about 30 ms on the sequencer's
-thread; with the worker the longest command in a scan interval cost 0.2 ms, `stats::bench`). The copy
-doubles the engine's memory; the result is installed by the next command or read after it finishes,
+the sequencer (100k levered accounts with staking initialised: a full scan takes about 29 ms and a light
+one about 5 ms, now on the worker, and the longest command in a scan interval cost 12 us on the
+sequencer's thread, `stats::bench`). The copy takes about 20 MiB at 100k such accounts and a core that
+the scans use 0.15% of; at 1000 and 5000 commands a second the worker fell at most 55 and 205 commands
+(55 and 41 ms) behind, against a queue of 100,000. The result is installed by the next command or read
+after it finishes,
 every due scan is taken, and if the worker stops the record scans on the
-sequencer's thread again and raises the `stats_scan_inline` warning. A replay scans on its own thread, lightly (about 9 ms at 100k accounts, as it no longer walks them for the distributable excess) for all but the last. `[stats]` sets each resolution's retention (1m 48h, 1h 90d, 1d
+sequencer's thread again and raises the `stats_scan_inline` warning. A replay scans on its own thread, lightly for all but the last, so a replay of a log at 100k accounts spends about 5 ms per light interval of sequenced time on it. `[stats]` sets each resolution's retention (1m 48h, 1h 90d, 1d
 unbounded by default), the activity length, and the close-out and profit buckets.
 
 `GET /v1/markets/{id}/marks?resolution=(1s|1m|1h|1d)&from_ms=&to_ms=&limit=` returns

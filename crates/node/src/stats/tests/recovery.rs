@@ -50,7 +50,7 @@ fn a_replay_scans_lightly_and_leaves_the_series_a_live_node_holds() {
     let mut rig = Rig::recording_into(replayed.clone());
     script(&mut rig);
     assert_eq!(json(replayed.house(&rig.engine))["snapshot_ms"], T0 + 4 * 60_000, "a light scan is the latest");
-    assert_eq!(json(replayed.house(&rig.engine))["open_margin"], "0", "and takes no margin");
+    assert!(json(replayed.house(&rig.engine))["open_margin"].is_null(), "and takes no margin");
     assert_eq!(replayed.dump(), live.stats.dump(), "the series are the live node's");
     // A light scan holds no position map, and the full scan at the end of recovery does.
     let mapped = |stats: &Stats, engine: &Engine| {
@@ -60,7 +60,7 @@ fn a_replay_scans_lightly_and_leaves_the_series_a_live_node_holds() {
         };
         count("closeout") + count("profit")
     };
-    assert_eq!(mapped(&replayed, &rig.engine), 0);
+    assert!(replayed.positions(&rig.engine, BTC).unwrap().is_none(), "a replay serves no position map");
     replayed.finish_recovery(&rig.engine);
     assert!(mapped(&replayed, &rig.engine) > 0);
     let house = json(replayed.house(&rig.engine));

@@ -95,7 +95,7 @@ an index: load only the rule whose hint matches the current action.
   time),
   the dashboard record (`stats/`, held in memory and rebuilt from the log's replay through a sink in it,
   with no file to roll back: `series.rs` 1m/1h/1d buckets with `[stats]` retention, `snapshot.rs` and
-  `closeout.rs` the scan of every account at most once per `api.stats_interval` of sequenced time, taken by `background.rs`'s worker over a copy of the engine so it never holds the sequencer, `activity.rs`
+  `closeout.rs` the full scan of every account at most once per `api.stats_interval` of sequenced time and a light one (totals only) every `api.stats_light_interval`, taken by `background.rs`'s worker over a copy of the engine so it never holds the sequencer, `activity.rs`
   the bounded MONKEY feed, `view.rs` the answers) served signed from `api/stats.rs` and `/v1/house`:
   `/v1/house/positions`, `/v1/monkey`, `/v1/monkey/activity` and `/v1/stats/series`, each stating where its
   data begins (`stats::bench` measures the scan at 100k accounts),
@@ -219,7 +219,8 @@ an index: load only the rule whose hint matches the current action.
   `custody.vault` under `eip712`, and `operator.public_key`, with the same chain id and vault, are
   recorded in the log when it first activates the protocol versions that need them, so changing
   either needs a fresh log.
-  `api.stats_interval` (default 60 s) spaces the account scans behind the dashboard figures, and
+  `api.stats_interval` (default 60 s) spaces the full account scans behind the dashboard figures and
+  `api.stats_light_interval` (default 5 s) the light ones between them, and
   `[stats]` tunes the dashboard record's retention (1m ~48h, 1h ~90d, 1d unbounded by default), its
   activity length and its close-out and profit buckets; unknown keys are refused.
   `[history.marks]` tunes the marks cache's per-resolution retention (1s ~48h, 1m ~60d, 1h ~2y,

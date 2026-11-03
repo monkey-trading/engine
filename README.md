@@ -256,7 +256,7 @@ gives the emission schedule and totals, the stake, and the distribution state, a
 serves bucketed series (NAV, cash, each market's long and short, the withdrawal queue, volume,
 MONKEY per dollar of realised loss, stake, allocation and distributions) at 1m, 1h and 1d, each
 answer stating where its data begins. A node holds these in memory and rebuilds them from the log
-at start, so nothing is stored for a host to alter; `[stats]` and `api.stats_interval` in the
+at start, so nothing is stored for a host to alter; `[stats]`, `api.stats_interval` and `api.stats_light_interval` in the
 config set retention, bucketing and how often the accounts are scanned.
 `./scripts/dev-dashboard-data.sh` runs them against a local node.
 

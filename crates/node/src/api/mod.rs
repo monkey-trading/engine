@@ -353,8 +353,8 @@ async fn benchmarks(State(s): State<ApiState>) -> ApiResult<engine_core::benchma
 
 /// House cash, NAV, and gross exposure at the last command, with the open interest, margin and
 /// positions, each market's long, short and net, the unrealised result and the traded volume the
-/// stats record holds. The scan figures are those of the last scan, at most `api.stats_interval`
-/// old, and carry its seq.
+/// stats record holds. The long, short, open interest and position figures are those of the last scan, at most
+/// `api.stats_light_interval` old, and the margin that of the last full scan; each carries its seq.
 /// Error cases:
 /// - the sequencer has stopped
 async fn house(State(s): State<ApiState>) -> ApiResult<HouseView> {

@@ -19,12 +19,12 @@ fn query(metric: &str, market: Option<MarketId>, resolution: &str) -> SeriesQuer
     }
 }
 
-/// The scan of every account runs once an `api.stats_interval` (60 s in the dev config) after the last
-/// one, wherever the commands fall: a scan late in its window does not bring the next forward.
+/// The full scan of every account runs once an `api.stats_interval` (60 s in the dev config) after the
+/// last one, wherever the commands fall: a scan late in its window does not bring the next forward.
 #[test]
 fn scans_are_a_whole_interval_apart_whenever_the_commands_arrive() {
     let mut rig = Rig::new();
-    let scanned = |rig: &Rig| json(rig.stats.house(&rig.engine))["snapshot_ms"].as_i64();
+    let scanned = |rig: &Rig| json(rig.stats.house(&rig.engine))["margin_snapshot_ms"].as_i64();
     assert_eq!(scanned(&rig), None, "no scan before the first interval has passed");
     rig.price(T0 + 59_999, 100_001);
     assert_eq!(scanned(&rig), None);
@@ -34,6 +34,47 @@ fn scans_are_a_whole_interval_apart_whenever_the_commands_arrive() {
     assert_eq!(scanned(&rig), Some(T0 + 100_000), "not a boundary, an interval after the last scan");
     rig.price(T0 + 160_000, 100_004);
     assert_eq!(scanned(&rig), Some(T0 + 160_000));
+}
+
+/// The light scan totals long, short, open interest and positions every `api.stats_light_interval` (5 s in
+/// the dev config) and a full scan stands in for it each `api.stats_interval`; the margin and the position
+/// maps stay at the last full scan, and each answer says when it was scanned.
+#[test]
+fn light_scans_come_every_light_interval_and_leave_margin_and_maps_at_the_last_full_scan() {
+    let mut rig = Rig::new();
+    rig.trade(T0 + 1_000, TRADER, Side::Buy, 2);
+    let house = |rig: &Rig| json(rig.stats.house(&rig.engine));
+    let scanned = |rig: &Rig| {
+        let house = house(rig);
+        (house["snapshot_ms"].as_i64(), house["margin_snapshot_ms"].as_i64())
+    };
+    rig.price(T0 + 4_999, 100_001);
+    assert_eq!(scanned(&rig), (None, None));
+    rig.price(T0 + 5_000, 100_002);
+    assert_eq!(scanned(&rig), (Some(T0 + 5_000), None), "a light scan, with no margin yet");
+    let light = house(&rig);
+    assert!(light["open_interest"].as_str().unwrap().parse::<Fixed>().unwrap().is_positive(), "{light}");
+    assert!(light["open_margin"].is_null() && light["open_positions"] == 1, "{light}");
+    assert!(rig.stats.positions(&rig.engine, BTC).unwrap().is_none(), "the maps wait for a full scan");
+    rig.price(T0 + 9_999, 100_003);
+    assert_eq!(scanned(&rig).0, Some(T0 + 5_000));
+    rig.price(T0 + 10_000, 100_004);
+    assert_eq!(scanned(&rig).0, Some(T0 + 10_000));
+    rig.price(T0 + 60_000, 100_005);
+    assert_eq!(scanned(&rig), (Some(T0 + 60_000), Some(T0 + 60_000)), "the full scan stands in for the light one");
+    let full = house(&rig);
+    assert!(full["open_margin"].as_str().unwrap().parse::<Fixed>().unwrap().is_positive(), "{full}");
+    rig.trade(T0 + 60_500, OTHER, Side::Buy, 1);
+    rig.price(T0 + 64_999, 100_006);
+    assert_eq!(scanned(&rig).0, Some(T0 + 60_000), "five seconds from the full scan, not from the light one before it");
+    rig.price(T0 + 65_000, 100_007);
+    let after = house(&rig);
+    assert_eq!((&after["snapshot_ms"], &after["margin_snapshot_ms"]), (&json(T0 + 65_000), &json(T0 + 60_000)));
+    assert_eq!(after["open_positions"], 2, "the light scan sees the new position");
+    assert_eq!(after["open_margin"], full["open_margin"], "the margin is the full scan's");
+    assert_eq!(after["margin_seq"], full["seq"]);
+    let maps = json(rig.stats.positions(&rig.engine, BTC).unwrap().unwrap());
+    assert_eq!(maps["snapshot_ms"], T0 + 60_000, "{maps}");
 }
 
 /// A series nothing is recorded to still ages out with the sequenced time, as a flow does after its

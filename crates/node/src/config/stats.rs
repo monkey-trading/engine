@@ -40,7 +40,7 @@ pub struct StatsSection {
     pub profit_bucket_bps: u32,
 }
 
-/// One second, the least `api.stats_interval`.
+/// One second, the least `api.stats_interval` and `api.stats_light_interval`.
 pub(super) const MIN_STATS_INTERVAL: Duration = Duration::from_secs(1);
 /// The most buckets either position map may have, so a setting cannot make a snapshot unbounded.
 pub(crate) const MAX_BUCKETS: u32 = 400;
@@ -164,6 +164,11 @@ fn default_profit_range_bps() -> u32 {
 /// Five percent.
 fn default_profit_bucket_bps() -> u32 {
     500
+}
+
+/// Five seconds, the default `api.stats_light_interval`.
+pub(super) fn default_stats_light_interval() -> Duration {
+    Duration::from_secs(5)
 }
 
 /// Sixty seconds, the default `api.stats_interval`.

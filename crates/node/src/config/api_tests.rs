@@ -92,3 +92,23 @@ fn the_stats_section_defaults_refuses_unknown_keys_and_unbounded_maps() {
         assert!(format!("{err:#}").contains(why), "{bad}: {err:#}");
     }
 }
+
+#[test]
+fn light_stats_scans_are_five_seconds_apart_unless_set_and_never_closer_than_a_second() {
+    let dev = std::fs::read_to_string(DEV).unwrap();
+    let interval = |text: &str| {
+        let cfg: NodeConfig = toml::from_str(text).unwrap();
+        cfg.validate().map(|()| cfg.api.stats_light_interval)
+    };
+    let unset = dev.replace("stats_light_interval = \"5s\"\n", "");
+    assert!(!unset.contains("stats_light_interval = "), "the dev config sets it");
+    assert_eq!(interval(&unset).unwrap(), Duration::from_secs(5));
+    let set =
+        |value: &str| dev.replace("stats_light_interval = \"5s\"", &format!("stats_light_interval = \"{value}\""));
+    assert_eq!(interval(&set("1s")).unwrap(), Duration::from_secs(1));
+    assert_eq!(interval(&set("10m")).unwrap(), Duration::from_secs(600), "above the full interval is allowed");
+    for short in ["999ms", "0s"] {
+        let err = interval(&set(short)).unwrap_err();
+        assert!(format!("{err:#}").contains("api.stats_light_interval must be at least 1s"), "{short}: {err:#}");
+    }
+}
