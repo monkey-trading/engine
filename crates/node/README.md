@@ -506,8 +506,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/history/tests/rebuild.rs` — power losses and other damage: an index left behind the log
   resumes, and one ahead of it, contradicting it, damaged, or pruned under another retention is
   rebuilt
-- `src/test_support/mod.rs` — the shared test harness, including the capture of alerts and their
-  levels
+- `src/test_support/mod.rs` — the shared test harness
+- `src/test_support/alerts.rs` — the capture of alerts, and of the lines that resolve them, for
+  the tests that assert them
 - `src/test_support/events.rs` — one sample of every engine event
 - `src/test_support/log_view.rs` — publishes a log directory's manifest for tests
 - `src/test_tracing.rs` — the tracing setup the test collectors share: one process-wide
