@@ -109,7 +109,7 @@ struct PageQuery {
 }
 
 /// One stored row as the chain maintenance reasons over it: its bucket, its stored content and
-/// chain link, and its authentication tag.
+/// chain link, its authentication tag, and the tag of the row below it that the tag binds.
 pub(crate) struct SnapRow {
     pub bucket: Millis,
     pub open: String,
@@ -183,8 +183,13 @@ pub struct Store {
     retentions: Retentions,
     /// Authenticates rows on write and verifies them on read; derived from the enclave key.
     mac: hmac::Hmac<sha2::Sha256>,
-    /// The key `mac` derives from, kept to rebuild the cache after a refused reset.
+    /// The enclave's marks key, which `mac` and every run key derive from: kept to draw the run
+    /// key of a rebuilt, reset, or imported cache.
     mac_key: [u8; 32],
+    /// The latest sequenced time any write has pruned back from, in this process: a backfill that
+    /// began earlier prunes back from this instead of its own, so it cannot recreate buckets a
+    /// live flush has already expired.
+    newest_seen: Millis,
     /// What `SCHEMA` creates, which every write checks the file against.
     schema: Vec<SchemaRow>,
     /// The committed chain anchors this store advances with every write and every read checks.
@@ -238,6 +243,7 @@ impl Store {
     /// - the transaction fails, a stored price does not parse, or a chain link no longer resolves
     pub fn observe(&mut self, samples: &[MarkSample]) -> anyhow::Result<()> {
         let Some(&newest) = samples.iter().map(|(_, ts, _)| ts).max() else { return Ok(()) };
+        let newest = newest.max(self.newest_seen);
         let prior = self.prior_anchors();
         let tx =
             self.conn.transaction_with_behavior(TransactionBehavior::Immediate).context("starting a marks write")?;
@@ -268,16 +274,19 @@ impl Store {
         let mut anchors = self.anchors.lock().expect("the marks chain anchors are never poisoned");
         tx.commit().context("committing a marks write")?;
         anchors.apply(updates);
+        self.newest_seen = newest;
         Ok(())
     }
 
     /// Seeds `rows`, provider candles turned into buckets, keeping every row already there: seeded
     /// history never overwrites log-derived marks or an earlier seed. Returns how many rows were
-    /// added. Drops seeded buckets older than the retention policy allows, counted back from
-    /// `newest`.
+    /// added. Drops buckets older than the retention policy allows, counted back from `newest` or
+    /// from the latest time a write has pruned back from, if later, so a seed that was read before
+    /// a flush expired its buckets does not recreate them.
     /// Error cases:
     /// - as for `observe`, or a stored row fails authentication
     pub fn seed(&mut self, rows: &[Seed], newest: Millis) -> anyhow::Result<usize> {
+        let newest = newest.max(self.newest_seen);
         let prior = self.prior_anchors();
         let tx =
             self.conn.transaction_with_behavior(TransactionBehavior::Immediate).context("starting a marks seed")?;
@@ -295,6 +304,7 @@ impl Store {
         let mut anchors = self.anchors.lock().expect("the marks chain anchors are never poisoned");
         tx.commit().context("committing a marks seed")?;
         anchors.apply(updates);
+        self.newest_seen = newest;
         Ok(inserted)
     }
 

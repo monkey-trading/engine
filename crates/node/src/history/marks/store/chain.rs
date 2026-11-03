@@ -220,7 +220,8 @@ pub(crate) fn check_anchors(
 
 /// Derives the updates for the touched pairs from the transaction's own post-write view, so the
 /// committed anchors describe exactly what the transaction wrote, never unvalidated disk. Every
-/// bucket the write rewrote is pinned at its tag. `rebound` marks a write that re-bound every row of the pairs, so no earlier pin survives.
+/// bucket the write rewrote is pinned at its tag. `rebound` marks a write that re-bound every row
+/// of the pairs, so no earlier pin survives.
 /// Error cases:
 /// - a pair's floor, head, or rewritten row cannot be read
 pub(crate) fn anchor_updates(

@@ -376,3 +376,52 @@ async fn a_live_mark_merging_into_a_pinned_head_keeps_it_readable_and_the_old_ro
     let c = BASE + 2 * MIN;
     assert_refused(&store, &[(i64::MIN, i64::MAX), (c, c), (BASE, c)]).await;
 }
+
+/// A backfill reads its candles, then live flushes move retention on; its seed must not bring back
+/// the buckets those flushes expired, which the host could then replace with copies of the old rows.
+#[tokio::test]
+async fn a_seed_that_began_before_a_flush_cannot_recreate_the_buckets_it_expired() {
+    let mut store = fresh_store("marks-replay-seed-late", hour_retentions());
+    store.observe(&[(1, BASE, fixed("1")), (1, BASE + 2 * MIN, fixed("3"))]).unwrap();
+    store.observe(&[(1, BASE + 2 * HOUR, fixed("5"))]).unwrap();
+    store.seed(&[seed_at(BASE, "1"), seed_at(BASE + MIN, "2"), seed_at(BASE + 2 * MIN, "3")], BASE + 3 * MIN).unwrap();
+    let entries = page(&store, i64::MIN, i64::MAX).await.unwrap().entries;
+    assert_eq!(entries.iter().map(|entry| entry.ts).collect::<Vec<_>>(), [BASE + 2 * HOUR]);
+}
+
+#[tokio::test]
+async fn emptying_a_pair_drops_its_pins() {
+    let mut store = fresh_store("marks-replay-empty-pair", hour_retentions());
+    store.observe(&[(1, BASE, fixed("1")), (1, BASE + 2 * MIN, fixed("3"))]).unwrap();
+    store.observe(&[(1, BASE + 3 * MIN, fixed("4"))]).unwrap();
+    store.seed(&[seed_at(BASE + MIN, "2")], BASE + 3 * MIN).unwrap();
+    assert!(!store.prior_anchors().interior((1, Resolution::M1)).is_empty());
+    // Another market's flush, two hours on, expires every row market 1 holds.
+    store.observe(&[(2, BASE + 2 * HOUR, fixed("5"))]).unwrap();
+    let anchors = store.prior_anchors();
+    assert!(anchors.get(&(1, Resolution::M1)).is_none());
+    assert!(anchors.interior((1, Resolution::M1)).is_empty());
+}
+
+#[tokio::test]
+async fn a_prior_cache_without_a_run_key_is_skipped_not_fatal() {
+    let prior_dir = scratch_dir("marks-replay-no-epoch-prior");
+    let prior_path = prior_dir.join("marks.sqlite");
+    let mut prior = Store::open(&prior_path, Retentions::defaults(), mac_key()).unwrap();
+    prior.observe(&[(1, BASE, fixed("1"))]).unwrap();
+    drop(prior);
+    Connection::open(&prior_path).unwrap().execute("DELETE FROM epoch", []).unwrap();
+    let mut store = fresh_store("marks-replay-no-epoch-fresh", Retentions::defaults());
+    assert_eq!(store.import_prior(&prior_path).unwrap(), 0);
+    assert!(page(&store, i64::MIN, i64::MAX).await.unwrap().entries.is_empty());
+}
+
+#[tokio::test]
+async fn a_cache_file_with_a_damaged_run_key_is_rebuilt_empty() {
+    let (path, mut store) = fresh_store_at("marks-replay-short-epoch", Retentions::defaults());
+    store.observe(&[(1, BASE, fixed("1"))]).unwrap();
+    drop(store);
+    Connection::open(&path).unwrap().execute("UPDATE epoch SET nonce = x'0102'", []).unwrap();
+    let store = Store::open(&path, Retentions::defaults(), mac_key()).unwrap();
+    assert!(page(&store, i64::MIN, i64::MAX).await.unwrap().entries.is_empty());
+}

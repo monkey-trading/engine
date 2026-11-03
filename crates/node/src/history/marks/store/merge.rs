@@ -115,7 +115,8 @@ impl<'tx> MergeStmts<'tx> {
 /// prices, another provenance, an unparseable value, or a broken chain link — fails the write,
 /// which then changes nothing.
 /// Error cases:
-/// - the transaction fails, a stored price does not parse, or a chain link no longer resolves
+/// - the transaction fails, a stored price does not parse, a chain link no longer resolves, or a row
+///   it builds on is not the version last written for it
 pub(crate) fn merge(
     mac: &hmac::Hmac<sha2::Sha256>,
     tx: &Transaction,
@@ -228,7 +229,8 @@ pub(crate) fn merge(
 /// or rewritten row the writer refuses to build on, never heals. Rows in `fresh`, inserted by
 /// the same transaction, are skipped: they chained to the bucket as they went in.
 /// Error cases:
-/// - the transaction fails, or the successor's row fails authentication
+/// - the transaction fails, the successor's row fails authentication, or it is not the version last
+///   written for it
 pub(crate) fn relink_successor(
     mac: &hmac::Hmac<sha2::Sha256>,
     tx: &Transaction,

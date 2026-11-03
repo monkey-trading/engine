@@ -12,6 +12,8 @@ use rand::rngs::OsRng;
 use rusqlite::{Connection, TransactionBehavior};
 use tracing::warn;
 
+use engine_core::types::Millis;
+
 use crate::history::marks::Retentions;
 use crate::history::marks::store::auth::{Epoch, run_mac};
 use crate::history::marks::store::{
@@ -87,7 +89,16 @@ impl Store {
         let epoch = read_epoch(&tx)?;
         tx.commit().context("committing the marks schema")?;
         let mac = run_mac(&mac_key, &epoch);
-        let store = Self { conn, path: path.to_owned(), retentions, mac, mac_key, schema, anchors: Arc::default() };
+        let store = Self {
+            conn,
+            path: path.to_owned(),
+            retentions,
+            mac,
+            mac_key,
+            newest_seen: Millis::MIN,
+            schema,
+            anchors: Arc::default(),
+        };
         // An existing file (a reopened cache in tests; production opens a fresh seed) gets its
         // anchors established here; re-derivation at recovery validates them before any read.
         store.establish_anchors()?;

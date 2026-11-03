@@ -149,7 +149,8 @@ pub(crate) struct Row<'a> {
 }
 
 /// The authentication tag of one row: the first half of an HMAC of every stored field under the
-/// enclave key's marks derivation, so a row the host rewrote fails verification.
+/// cache file's run key (see `run_mac`), so a row the host rewrote, or captured from another file
+/// or an earlier run, fails verification.
 pub(crate) fn tag(
     mac: &hmac::Hmac<sha2::Sha256>,
     market: MarketId,
