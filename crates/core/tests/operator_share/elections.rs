@@ -222,6 +222,42 @@ fn cancelling_a_successor_restores_the_election_it_superseded_with_or_without_a_
 }
 
 #[test]
+fn a_cancelled_election_is_never_kept_as_prior() {
+    // E1 under a key other than the one in effect is cancelled before its time; rotation on again,
+    // E2 is elected before E1's time and cancelled too. The cancelled E1 is not kept as `prior`
+    // when E2 supersedes it, so cancelling E2 restores nothing: no handover waits on E1's time,
+    // and the key in effect, and the share's recipient, stay past it.
+    let mut h = rotating(1_000_000_000);
+    let e1_at = h.ts + NOTICE_MS + 5 * DAY_MS;
+    elect(&mut h, 1, CANDIDATE, key(), e1_at);
+    let (block, chain_ref) = (h.log.len() as u64, "0xcancel1".to_owned());
+    h.cmd(Command::SwitchRotation { enabled: false, election_cancelled: true, block, chain_ref });
+    switch(&mut h, true);
+
+    let e2_at = h.ts + NOTICE_MS + DAY_MS;
+    elect(&mut h, 2, SECOND, Client::new(0x67).account, e2_at);
+    assert_eq!(h.engine.operator_election().prior, None);
+    let (block, chain_ref) = (h.log.len() as u64, "0xcancel2".to_owned());
+    h.cmd(Command::SwitchRotation { enabled: false, election_cancelled: true, block, chain_ref });
+    let last = h.engine.operator_election().last.expect("the cancelled successor stays the last");
+    assert_eq!((last.candidate, last.cancelled), (SECOND, true));
+    assert_eq!(h.engine.operator_bounds().rotation, None);
+
+    // Past E1's time, with the mirror's frontier at it, no restored handover applies and the key
+    // stays with the operator in effect.
+    h.advance_to(e1_at);
+    finalised(&mut h, e1_at);
+    h.cmd(Command::Tick);
+    assert_eq!(h.engine.operator().map(|operator| operator.address), Some(operator().address));
+    assert_eq!(h.engine.operator_bounds().rotation, None);
+
+    switch(&mut h, true);
+    stake(&mut h, STAKER_A, 1);
+    assert_eq!(share(&close(&mut h)), Some((operator().address, UsdcUnits(200_000_000))));
+    assert_eq!(leaf(&h, CANDIDATE), 0);
+}
+
+#[test]
 fn a_successor_keeps_nothing_of_an_election_that_has_taken_effect() {
     // Taken effect under the key already in effect, its candidate stays when the successor is
     // cancelled, with nothing to restore.
