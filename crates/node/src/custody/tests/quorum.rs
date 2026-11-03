@@ -1,6 +1,6 @@
 //! Majority voting at the custody boundary, including lies, lag, outages and recovery.
 
-use alloy::primitives::{B256, U256};
+use alloy::primitives::{Address, B256, U256};
 use engine_core::command::Command;
 
 use crate::config::EvmCustodySection;
@@ -428,6 +428,32 @@ async fn a_newly_admitted_head_sets_its_baseline_without_fabricating_progress() 
     tokio::time::advance(std::time::Duration::from_secs(2)).await;
     assert!(matches!(watcher.poll(&node.tx).await, Ok(Polled::Waiting)));
     assert_eq!(logs.lines_with("alert=\"custody_finality_stalled\"").len(), 1);
+}
+
+#[tokio::test]
+async fn a_balance_is_the_one_a_majority_reads_at_the_final_block() {
+    let chains = chains();
+    let one_eth = U256::from(10).pow(U256::from(18));
+    for chain in &chains {
+        chain.0.lock().unwrap().balance = one_eth;
+    }
+    // One provider reports a drained account: the two that agree win. With a second provider
+    // down, no two answers agree.
+    chains[0].0.lock().unwrap().balance = U256::ZERO;
+    let quorum = Quorum::new(chains.iter().enumerate().map(|(i, c)| (format!("p{i}"), c.clone())).collect()).unwrap();
+    assert_eq!(quorum.finalized_balance(Address::repeat_byte(5)).await.unwrap(), one_eth);
+    chains[1].0.lock().unwrap().failing = true;
+    assert!(quorum.finalized_balance(Address::repeat_byte(5)).await.is_err(), "no two providers agree");
+}
+
+#[tokio::test]
+async fn a_balance_needs_a_final_block_the_providers_name() {
+    let chains = chains();
+    for chain in &chains {
+        chain.set_final(None);
+    }
+    let quorum = Quorum::new(chains.iter().enumerate().map(|(i, c)| (format!("p{i}"), c.clone())).collect()).unwrap();
+    assert!(quorum.finalized_balance(Address::repeat_byte(5)).await.is_err());
 }
 
 // ── Helpers ──

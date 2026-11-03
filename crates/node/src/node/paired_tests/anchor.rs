@@ -139,6 +139,7 @@ async fn recover(cfg: &NodeConfig, finalized: &Checkpoint) -> anyhow::Result<Opt
         retry: Duration::from_millis(1),
         pending_deposits_critical_after: Duration::from_secs(1),
         post_withheld: Default::default(),
+        relayer_gas: None,
     };
     let mut seq_cfg = sequencer_config(&cfg.node.log_dir, watch::channel(Manifest::default()).0);
     seq_cfg.checkpoint_parent = parent;

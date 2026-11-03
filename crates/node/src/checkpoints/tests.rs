@@ -16,6 +16,7 @@ use crate::tee::EnclaveKey;
 mod distributions;
 mod latest;
 mod receipts;
+mod relayer_gas;
 
 mod collateral;
 mod torn;
@@ -47,6 +48,8 @@ pub(super) struct Chain {
     through: Arc<Mutex<Vec<Fixed>>>,
     /// Whether the vault's exit has started.
     exit: Arc<Mutex<bool>>,
+    /// The relayer's balance as the custody providers agree on it; `None` where none is watched.
+    relayer_balance: Arc<Mutex<Option<alloy::primitives::U256>>>,
 }
 
 impl Chain {
@@ -81,6 +84,9 @@ impl CheckpointChain for Chain {
     }
     async fn exit_started(&self) -> anyhow::Result<bool> {
         Ok(*self.exit.lock().unwrap())
+    }
+    async fn relayer_balance(&self) -> anyhow::Result<Option<alloy::primitives::U256>> {
+        Ok(*self.relayer_balance.lock().unwrap())
     }
 }
 
@@ -271,6 +277,7 @@ async fn a_provisional_then_orphaned_approval_never_releases_a_signature() {
         posts: Arc::new(Mutex::new(0)),
         through: Arc::new(Mutex::new(vec![work.liabilities])),
         exit: Arc::new(Mutex::new(false)),
+        relayer_balance: Arc::new(Mutex::new(None)),
     };
     let poster = Poster {
         registry: None,
@@ -280,6 +287,7 @@ async fn a_provisional_then_orphaned_approval_never_releases_a_signature() {
         retry: Duration::from_millis(1),
         pending_deposits_critical_after: Duration::from_secs(1),
         post_withheld: Default::default(),
+        relayer_gas: None,
     };
     for orphan in [false, true] {
         if orphan {
@@ -355,6 +363,7 @@ pub(super) fn poster() -> (Poster<Chain>, Work, EnclaveKey) {
         posts: Arc::new(Mutex::new(0)),
         through: Arc::new(Mutex::new(vec![work.liabilities])),
         exit: Arc::new(Mutex::new(false)),
+        relayer_balance: Arc::new(Mutex::new(None)),
     };
     (
         Poster {
@@ -365,6 +374,7 @@ pub(super) fn poster() -> (Poster<Chain>, Work, EnclaveKey) {
             retry: Duration::from_millis(10),
             pending_deposits_critical_after: Duration::from_secs(1),
             post_withheld: Default::default(),
+            relayer_gas: None,
         },
         work,
         key,

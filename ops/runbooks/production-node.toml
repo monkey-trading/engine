@@ -137,6 +137,11 @@ relayer = "0x5555555555555555555555555555555555555555" # REPLACE
 retry_interval = "2s"
 rpc_timeout = "10s"
 
+# Warns (`checkpoint_relayer_low`) when the relayer holds less than this many ether, read through
+# the custody providers. Set it to several days of posting at the current gas price.
+[checkpoints.relayer_gas]
+min_balance = "0.01" # REPLACE
+
 [feeds]
 provider = "venues"
 interval = "200ms"

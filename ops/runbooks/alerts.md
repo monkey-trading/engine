@@ -155,6 +155,7 @@ Rebuilt from the log. None changes the books.
 | Alert | Level | Meaning and response |
 | --- | --- | --- |
 | `checkpoint_backlog` | Warning | No checkpoint became final for too long, or the posting queue is full. See [withdrawal-stalls.md](withdrawal-stalls.md), "checkpoint_backlog". |
+| `checkpoint_relayer_low` | Warning | The checkpoint relayer's balance is below `checkpoints.relayer_gas.min_balance`; posts stop when it cannot pay for gas. Resolves once refilled. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Checkpoint endpoint". |
 | `checkpoint_post_failed` | Warning | A checkpoint post failed and is retried. See [withdrawal-stalls.md](withdrawal-stalls.md), "Posting fails". |
 | `checkpoint_withheld` | Warning | The node is not signing or posting a checkpoint; `cause` says why. See [withdrawal-stalls.md](withdrawal-stalls.md), "Checkpoints are held". |
 | `checkpoint_conflict` | Critical | The vault holds a root or signer the log does not; the node stops. See [withdrawal-stalls.md](withdrawal-stalls.md), "The node has stopped". |

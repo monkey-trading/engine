@@ -71,6 +71,28 @@ pub(crate) async fn prove_legacy_withdrawals(
     .await
 }
 
+/// The custody providers' agreed view of one account's native balance, for an account the vault
+/// does not hold, such as the checkpoint relayer. It has its own quorum state, apart from the
+/// deposit watcher's.
+pub(crate) struct BalanceQuorum(Quorum<VaultRpc>);
+
+impl BalanceQuorum {
+    /// Builds clients without accessing the network.
+    /// Error cases:
+    /// - fewer than three providers, or `custody.vault` or a client does not parse
+    pub(crate) fn connect(cfg: &CustodySection) -> anyhow::Result<Self> {
+        let evm = cfg.evm.as_ref().context("custody.provider = \"evm\" needs [custody.evm]")?;
+        Ok(Self(Quorum::connect(evm, cfg.vault.parse().context("custody.vault")?)?))
+    }
+
+    /// `account`'s balance in the highest block a majority of providers declares final.
+    /// Error cases:
+    /// - the providers lack an identity, finality or balance quorum
+    pub(crate) async fn balance(&self, account: Address) -> anyhow::Result<U256> {
+        self.0.finalized_balance(account).await
+    }
+}
+
 /// A connected custody provider, ready to run.
 pub struct Custody {
     /// Credits quorum-proven vault deposits and reconciles their principal finality; `None` is the

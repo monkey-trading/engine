@@ -165,6 +165,7 @@ fn poster(server: &Server, dir: &Path) -> Poster<CheckpointRpc> {
         retry: Duration::from_millis(10),
         pending_deposits_critical_after: Duration::from_secs(1),
         post_withheld: Default::default(),
+        relayer_gas: None,
     }
 }
 

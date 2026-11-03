@@ -174,7 +174,7 @@ async fn serve_node(
         info!(provider = %attestation.provider, "no attestation collateral to relay for this provider");
     }
 
-    let checkpoint_setup = registration::registered(&cfg, &key, &tls.acceptors, &attestation)
+    let checkpoint_setup = registration::registered(&cfg, &key, &tls.acceptors, &attestation, &metrics)
         .await
         .inspect_err(|e| error!(alert = "checkpoint_startup_failed", "refusing to serve: {e:#}"))?;
     // The takeover cut runs once the vault names this key: a promoted node's first start began

@@ -510,6 +510,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   levels
 - `src/test_support/events.rs` — one sample of every engine event
 - `src/test_support/log_view.rs` — publishes a log directory's manifest for tests
+- `src/test_support/tests.rs` — the time refresher's one sample per second and its end with the queue
 - `src/test_tracing.rs` — the tracing setup the test collectors share: one process-wide
   interested subscriber, so no callsite can be cached uninteresting and a collector never
   silently misses an alert or line
@@ -654,6 +655,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   with real attestation refuses, and their tests
 - `src/checkpoints/mod.rs` — posting, retry, signed-parent commitment checks, and collateral reconciliation
 - `src/checkpoints/chain.rs` — the chain access the worker reads and posts through, the vault's current release included
+- `src/checkpoints/relayer_gas.rs` — the relayer's balance read on each retry, its metric, and `checkpoint_relayer_low`
+- `src/checkpoints/tests/relayer_gas.rs` — the alert firing while the balance is below the minimum and resolving once it is refilled
 - `src/checkpoints/sweep.rs` — bounded approval pages and the sweep of further pages at one finalized block
 - `src/checkpoints/accounting.rs` — bounded custody totals and held reserves derived from computed engine events
 - `src/checkpoints/accounting/access_tests.rs` — actual pending and hold outputs against independent reconciliation totals
@@ -682,6 +685,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/tests/collateral.rs` — shortfall, ledger-difference, surplus, and uncredited-deposit deadline tests
 - `src/checkpoints/tests/torn.rs` — conflicts read once are retried; a conflict a fresh observation repeats stops the worker
 - `src/checkpoints/scenario.rs` — isolated Anvil posting, credited/held reconciliation, tampering, truncation, surplus booking, shortfall, and reorg checks
+- `src/checkpoints/scenario/anvil.rs` — the scenario's local Anvil child process, killed on drop
 - `src/checkpoints/scenario/source.rs` — signed synthetic source bound to the scenario vault
 - `src/checkpoints/scenario/tasks.rs` — the scenario's node tasks, and waits that fail on a stopped task, retry the checkpoint post until its inclusion, or report the poster's last alert
 - `src/checkpoints/emission_budget.rs` — the vault's MONKEY cap against the emission period budget
@@ -1191,7 +1195,16 @@ rpc_url = "http://127.0.0.1:8545"
 relayer = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
 retry_interval = "2s"
 rpc_timeout = "10s"
+
+[checkpoints.relayer_gas] # optional
+min_balance = "0.01"
 ```
+
+With `[checkpoints.relayer_gas]`, each retry reads the relayer's balance through the custody RPC quorum
+at the highest block a majority declares final, exports it as `engine_checkpoint_relayer_balance_eth`,
+and raises the Warning `checkpoint_relayer_low` while it is below `min_balance` (ether, a decimal
+string), resolving once it is at or above it. A read without a quorum changes nothing. The
+quorum's own `custody_rpc_*` alerts report the providers.
 
 The endpoint must support `eth_sendTransaction`, `eth_getTransactionByHash` and latest/pending
 `eth_getTransactionCount` for a funded relayer dedicated to this log. The node durably reserves an

@@ -7,6 +7,8 @@ pub(crate) use history::accepted_history;
 mod lifecycle;
 pub(crate) use lifecycle::{APPROVAL_PAGE_SIZE, AcceptedCheckpoint, ApprovalRegistry, Observation, SignerHistory};
 pub use lifecycle::{ApprovalId, ApprovalStatus, LifecycleEvidence};
+mod relayer_gas;
+pub(crate) use relayer_gas::RelayerGas;
 mod rpc;
 pub(crate) mod setup;
 pub(crate) mod signature;
@@ -201,6 +203,8 @@ pub(crate) struct Poster<R> {
     /// Whether the `checkpoint_withheld` episode for a diverged collateral view is open, so only
     /// the post that ends it logs the resolve.
     pub post_withheld: std::sync::atomic::AtomicBool,
+    /// The relayer's gas balance, watched when `[checkpoints.relayer_gas]` is set.
+    pub relayer_gas: Option<RelayerGas>,
 }
 
 impl<R: CheckpointChain> Poster<R> {
@@ -269,6 +273,7 @@ impl<R: CheckpointChain> Poster<R> {
                     None => return Ok(()),
                 },
                 _ = timer.tick() => {
+                    self.check_relayer_gas().await;
                     let work = queued.front().or(latest.as_ref());
                     let Some(work) = work else { continue };
                     let registered = self.registry.as_ref().map(|registry| registry.lock()
