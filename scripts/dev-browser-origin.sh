@@ -6,9 +6,10 @@
 #   3. a stream upgrade from the evil origin gets 403, and from the listed origin 101;
 #   4. /v1/admin gets no CORS headers and no successful preflight, even from the listed origin;
 #   5. a request the rate limiter refuses with 429 still carries the listed origin, and once the
-#      burst is spent a preflight from the listed origin is refused with 429 too.
+#      burst is spent a preflight from the listed origin is refused with 429 too, unless a stall
+#      of a second or more, measured between the two, let the bucket refill.
 #
-# Needs curl and jq, and the public Roughtime servers config/dev.toml names. API_PORT and
+# Needs curl, jq and python3, and the public Roughtime servers config/dev.toml names. API_PORT and
 # METRICS_PORT override 18380 and 19764; SCENARIO_ARTIFACTS keeps the node log.
 set -Eeuo pipefail
 
@@ -101,13 +102,28 @@ expect "admin preflight origin" "$(header Access-Control-Allow-Origin -X OPTIONS
 expect "admin post origin" "$(header Access-Control-Allow-Origin -X POST -H "Origin: $listed" -H 'Content-Type: application/json' -d '{}' "$base/v1/admin")" ""
 
 step "a rate-limited refusal still carries the listed origin"
-limited=""
-for _ in $(seq 1 80); do
-  response="$(curl -sk -D - -o /dev/null -H "Origin: $listed" "$base/v1/health" | tr -d '\r')"
-  if [[ "$(head -n 1 <<< "$response")" == *" 429"* ]]; then limited="$response"; break; fi
+# The bucket refills a token each second, the slowest the config allows. A preflight that follows a
+# refusal by less than that must be refused too, and only a measured stall of a second or more may
+# excuse a served one, which a new probe then repeats.
+refill_ms=1000
+now_ms() { python3 -c 'import time; print(time.time_ns() // 1000000)'; }
+preflight() { status -X OPTIONS -H "Origin: $listed" -H 'Access-Control-Request-Method: POST' "$base/v1/orders"; }
+after_refusal=""
+for _attempt in 1 2 3 4 5; do
+  limited=""
+  for _ in $(seq 1 80); do
+    response="$(curl -sk -D - -o /dev/null -H "Origin: $listed" "$base/v1/health" | tr -d '\r')"
+    if [[ "$(head -n 1 <<< "$response")" == *" 429"* ]]; then limited="$response"; break; fi
+  done
+  [[ -n "$limited" ]] || fail "the rate limiter never answered 429"
+  grep -qix "access-control-allow-origin: $listed" <<< "$limited" || fail "the 429 carries no allowed origin: $limited"
+  limited_at="$(now_ms)"
+  after_refusal="$(preflight)"
+  waited_ms=$(( $(now_ms) - limited_at ))
+  echo "limited; the preflight ${waited_ms}ms later got $after_refusal"
+  [[ "$after_refusal" == 429 ]] && break
+  (( waited_ms >= refill_ms )) || fail "limited preflight: expected '429', got '$after_refusal' ${waited_ms}ms after a refusal, before its bucket could refill"
 done
-[[ -n "$limited" ]] || fail "the rate limiter never answered 429"
-grep -qix "access-control-allow-origin: $listed" <<< "$limited" || fail "the 429 carries no allowed origin: $limited"
-expect "limited preflight status" "$(status -X OPTIONS -H "Origin: $listed" -H 'Access-Control-Request-Method: POST' "$base/v1/orders")" 429
+expect "limited preflight status" "$after_refusal" 429
 
 echo "PASS: browser origins"

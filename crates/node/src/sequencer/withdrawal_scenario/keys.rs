@@ -203,7 +203,10 @@ pub(super) async fn key_lifecycle() -> anyhow::Result<()> {
     old.ready().await?;
     copy.ready().await?;
     ensure!(copy.attested_signer().await? == signer, "the copy attests another signer");
-    let _ = tokio::join!(old.api()?.request_withdrawal(&request), copy.api()?.request_withdrawal(&request));
+    old.wait_withdrawals_enabled(0).await?;
+    copy.wait_withdrawals_enabled(0).await?;
+    let (old_request, copy_request) =
+        tokio::join!(old.api()?.request_withdrawal(&request), copy.api()?.request_withdrawal(&request));
     let stopped = timeout(LOADED_WAIT, async {
         loop {
             match (old.running(), copy.running()) {
@@ -216,13 +219,32 @@ pub(super) async fn key_lifecycle() -> anyhow::Result<()> {
     })
     .await
     .context("two copies of one release both kept signing")??;
-    let (stopped, survivor) = if stopped == 0 { (&old, 1) } else { (&copy, 0) };
+    let (stopped, survivor_idx) = if stopped == 0 { (&old, 1) } else { (&copy, 0) };
     ensure!(stopped.logged("checkpoint_conflict")?, "the stopped copy did not stop on the checkpoint conflict");
+    // The race above discards nothing, but a copy's half can still fail — a transport error, a
+    // non-503 status, the deadline — and then no withdrawal is sequenced for its history and the
+    // payout wait below would burn its whole deadline on a request that never landed. The engine
+    // refuses a duplicate nonce, so when the survivor's log lacks the request, only a failed half
+    // explains it and it is re-requested there, named.
+    let survivor = [&old, &copy][survivor_idx];
+    let survivor_request = if survivor_idx == 0 { old_request } else { copy_request };
+    let mut survivor_entries = entries(&survivor.data.join("log"))?;
+    let sequenced = survivor_entries
+        .iter()
+        .any(|e| matches!(e, LogEntry::Withdrawal(w) if w.account == request.account && w.amount == request.amount));
+    if !sequenced {
+        ensure!(
+            survivor_request.is_err(),
+            "the survivor answered the withdrawal request but its log holds no withdrawal entry"
+        );
+        survivor.api()?.request_withdrawal(&request).await.with_context(|| {
+            format!("the survivor's withdrawal request failed and its retry did too: {:?}", survivor_request.err())
+        })?;
+        survivor_entries = entries(&survivor.data.join("log"))?;
+    }
     // The survivor's stream replays its history from the start.
-    let survivor = [&old, &copy][survivor];
     let paid = survivor.api()?.stream().await?.payout(trader.account, 20).await?;
     // The stopped copy released no authorization the surviving history does not hold.
-    let survivor_entries = entries(&survivor.data.join("log"))?;
     for entry in entries(&stopped.data.join("log"))? {
         if let LogEntry::Withdrawal(signed) = &entry {
             ensure!(survivor_entries.contains(&entry), "the stopped copy signed a withdrawal of its own: {signed:?}");

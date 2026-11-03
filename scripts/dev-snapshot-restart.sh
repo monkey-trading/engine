@@ -2,8 +2,8 @@
 # Dev scenario for restarting from checkpoint snapshots, on a node with config/dev.toml's mocks,
 # checkpoints every 100 commands, and `[snapshots]` added:
 #   1. run the node, take its enclave address from the attestation line, and pin it;
-#   2. sequence 400 dev deposits, let history catch up, stop the node, and restart it from its
-#      newest paired cache;
+#   2. sequence 400 dev deposits, let history catch up and the snapshot writer store the newest
+#      checkpoint, stop the node, and restart it from its newest paired cache;
 #   3. sequence 3,600 more (a tenfold log and history), and stop and restart again the same way;
 #   4. corrupt the newest cache and restart once more.
 # Passes when every restart recovers from a cache and replays at most one checkpoint interval,
@@ -170,6 +170,32 @@ wait_for_events() {
   fail "history never reached $1 events"
 }
 
+# The seq of the newest checkpoint snapshot node log `$1` says it stored, or 0.
+stored_seq() {
+  { grep -o 'checkpoint snapshot stored seq=[0-9]*' "$work/$1.log" || true; } | sed 's/.*seq=//' | sort -n | tail -n 1 | grep . || echo 0
+}
+# The writer skips a checkpoint while the previous capture is in flight, and a stop in that window
+# leaves the newest cache more than a checkpoint interval behind. Waits until the newest checkpoint
+# the log holds is the one stored, which also means no capture is in flight. A burst can leave its
+# last checkpoint skipped, and nothing captures it before a stop, so each failed wait is followed by
+# one more checkpoint interval of deposits, which the idle writer stores.
+wait_for_stored_checkpoint() {
+  local newest stored
+  for _ in $(seq 1 10); do
+    for _ in $(seq 1 100); do
+      newest="$(curl -sk --max-time 5 "https://127.0.0.1:$api_port/v1/house/state" | jq -r '(.checkpoint.offset // "0:0") | split(":")[0]')"
+      stored="$(stored_seq "$1")"
+      (( newest > 0 && stored >= newest )) && return 0
+      kill -0 "$node_pid" 2>/dev/null || fail "the node exited"
+      sleep 0.2
+    done
+    deposit "$interval"
+    deposits=$(( deposits + interval ))
+    wait_for_events "$deposits"
+  done
+  fail "$1: the snapshot writer never stored the newest checkpoint ($stored stored, $newest written)"
+}
+
 step "boot once to read the enclave address and pin it"
 start_node boot
 wait_for_log boot 'enclave, config, and TLS key attested'
@@ -187,22 +213,23 @@ for target in 400 4000; do
   wait_for_log "grow-$target" 'first trusted time sample: sequencing started'
   deposit $(( target - deposits ))
   deposits="$target"
-  wait_for_events "$target"
+  wait_for_events "$deposits"
+  wait_for_stored_checkpoint "grow-$target"
   stop_node
 
-  step "restart from the newest cache with $target deposits in the log"
+  step "restart from the newest cache with $deposits deposits in the log"
   start_node "restart-$target"
   wait_for_history
   restart_ms="$(elapsed_ms)"
   line="$(recovery "restart-$target")"
   read -r seq commands <<< "$line"
-  [[ "$seq" != none ]] || fail "restart with $target deposits replayed the whole log"
+  [[ "$seq" != none ]] || fail "restart with $deposits deposits replayed the whole log"
   suffix=$(( commands - seq - 1 ))
   (( suffix <= interval )) || fail "restart replayed $suffix commands after the cache"
   expect_suffix_begin "$seq"
   served="$(history_events)"
-  [[ "$served" == "$target" ]] || fail "history served $served of $target deposits"
-  echo "restart scenario: deposits=$target log_commands=$commands restart_ms=$restart_ms suffix_commands=$suffix"
+  [[ "$served" == "$deposits" ]] || fail "history served $served of $deposits deposits"
+  echo "restart scenario: deposits=$deposits log_commands=$commands restart_ms=$restart_ms suffix_commands=$suffix"
   stop_node
 done
 
