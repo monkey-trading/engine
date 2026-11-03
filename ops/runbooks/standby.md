@@ -40,9 +40,9 @@ with the operator.
    is a different file from the registered release (different hash), which is fine: nothing is
    registered for it. It needs EVM custody and `[checkpoints]`, because it reads the vault and the
    registry. Its `operator.public_key` is the candidate's own admin key. No enclave runs it, so no
-   secret is delivered to it: drop `[tee.sealing.secrets]`, write its RPC URLs out in full, read its
-   webhook URLs with `url_env`, and keep this file private, which a production build allows for a
-   config with `[standby]`.
+   secret is delivered to it: drop `[tee.sealing.secrets]`, write its RPC and screening URLs out in
+   full, read its webhook URLs with `url_env` and any vendor key with `api_key_env`, and keep this file
+   private, which a production build allows for a config with `[standby]`.
 
    ```toml
    [standby]

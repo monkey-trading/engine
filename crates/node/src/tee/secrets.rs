@@ -52,8 +52,9 @@ struct SealedFile {
     ciphertext: String,
 }
 
-/// This release's sealed secrets, and whether its file opened. The delivery listener alone writes
-/// after startup, so the lock is never contended; a handover to the next release reads through it.
+/// This release's sealed secrets, and whether its file opened. The lock serializes the listener's
+/// connections, and a start's choice of what it runs against them; a handover to the next release
+/// reads through it.
 pub(crate) struct SecretStore {
     path: PathBuf,
     release: Release,

@@ -6,7 +6,6 @@ use std::path::PathBuf;
 
 use tokio::net::TcpStream;
 use tokio::task::JoinHandle;
-use tokio::time::timeout;
 
 use crate::alerts;
 use crate::handover::{receive, send};
@@ -100,6 +99,7 @@ async fn a_restart_opens_what_was_sealed_and_sets_it_everywhere_without_a_delive
     assert_eq!(delivered.api_key(connection).unwrap().unwrap().expose(), "FAKE-vendor-a");
     assert!(delivered.listener.is_some(), "the node goes on taking deliveries");
     assert_eq!(logs.critical("secret_missing"), 0);
+    assert_eq!(logs.count("alert_resolved=\"secrets_restart_required\""), 1, "a restart is what it asked for");
     assert_eq!(logs.count("FAKE"), 0, "a value reached the log");
 }
 
@@ -345,6 +345,39 @@ async fn a_start_that_fails_after_its_chain_read_ends_at_once() {
     assert!(outcome.expect("the node held").is_err());
     assert_eq!(logs.critical("secrets_start_failed"), 0);
     assert_eq!(logs.count("the node read the chain"), 1, "the failure must come after the read");
+}
+
+// A bundle sealed while the failed read was still out is the repair: the hold must not wait for another.
+#[tokio::test]
+async fn a_bundle_sealed_during_the_failed_read_ends_the_hold() {
+    let cfg = config("startup-sealed-during");
+    sealed_earlier(&cfg, full(1, "a"));
+    let (cfg, _, delivered) = timeout(WAIT, spawn_startup(cfg)).await.expect("it held").unwrap();
+    let delivered = delivered.unwrap();
+    assert_eq!(delivered.version, Some(1));
+    delivered.store.as_ref().unwrap().replace(full(2, "b").sign(domain_of(&cfg), &operator_key())).unwrap();
+    let mut listening = JoinSet::new();
+    listening.spawn(std::future::pending::<anyhow::Result<()>>());
+    let waited = wait_for_a_new_bundle(&delivered, &mut listening, Duration::from_secs(600));
+    timeout(UNDER_THE_HOLD, waited).await.expect("it waited for a bundle it already had");
+}
+
+// The exit powers the guest off, so going before the receipt leaves the operator nothing to retry on.
+#[tokio::test]
+async fn the_hold_outlasts_the_receipt_of_the_bundle_that_ended_it() {
+    let cfg = config("startup-receipt");
+    sealed_earlier(&cfg, full(1, "a"));
+    let (cfg, _, delivered) = timeout(WAIT, spawn_startup(cfg)).await.expect("it held").unwrap();
+    let (answering, answered) = watch::channel(None);
+    let delivered = Delivered { answered: Some(answered), ..delivered.unwrap() };
+    delivered.store.as_ref().unwrap().replace(full(2, "b").sign(domain_of(&cfg), &operator_key())).unwrap();
+    let mut listening = JoinSet::new();
+    listening.spawn(std::future::pending::<anyhow::Result<()>>());
+    let waited = wait_for_a_new_bundle(&delivered, &mut listening, Duration::from_secs(600));
+    tokio::pin!(waited);
+    assert!(timeout(NEW_BUNDLE_POLL * 3, &mut waited).await.is_err(), "it ended before the receipt");
+    answering.send_replace(Some(2));
+    timeout(UNDER_THE_HOLD, waited).await.expect("the receipt did not end it");
 }
 
 // With nothing required outstanding, a predecessor that never answers does not keep the keys' handover

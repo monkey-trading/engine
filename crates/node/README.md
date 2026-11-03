@@ -2181,8 +2181,8 @@ command line, and a host that could set one would choose the secret.
 - **A key a provider refuses.** A start whose first read of the chain fails, while `checkpoints.rpc_url`
   names a delivered key, does not power the guest off at once, since that key may be why and only a
   delivery can repair it. It serves only the delivery listener under `secrets_start_failed` (Critical)
-  for up to five minutes, then exits, or exits as soon as a new bundle is sealed, so the next start
-  takes it. A failure after that read is no delivered key's doing, and exits at once.
+  for up to five minutes, then exits, or exits once a new bundle is sealed and its receipt has gone
+  out, so the next start takes it. A failure after that read is no delivered key's doing, and exits at once.
 - **A rotation.** Deliver a higher `version`, holding every secret: a bundle replaces the whole sealed
   one, so the tool refuses one lacking what the node holds for unless given `--partial`. The enclave
   seals it at once, but what runs keeps the clients it built when it started, so the receipt says
@@ -2203,7 +2203,7 @@ command line, and a host that could set one would choose the secret.
   block that named the release and at the latest one: the keys go to the elected enclave,
   but its vendor accounts and provider keys are its own, delivered under its own key before or after
   it takes over. A standby runs outside any enclave on its operator's own host, so a config with
-  `[standby]` writes its keys out and may read `url_env` in a production build; its registered release
+  `[standby]` writes its keys out and may read `url_env` and `api_key_env` in a production build; its registered release
   takes its own delivery after a promotion.
 - **What the host can do.** It carries the connection and holds the file. It can delay or drop a
   delivery and forge a refusal, which is the denial it has anyway; the tool reports no receipt, and a

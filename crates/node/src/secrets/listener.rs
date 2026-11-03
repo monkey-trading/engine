@@ -70,6 +70,8 @@ struct Deliveries {
     named: Vec<NamedSecret>,
     /// The bundle this start runs with, once it has started: a later one needs a restart.
     running: OnceLock<Option<u64>>,
+    /// The newest version whose connection has finished answering, receipt sent or not.
+    answered: watch::Sender<Option<u64>>,
     connections: AtomicU64,
 }
 
@@ -132,9 +134,16 @@ impl Listener {
             store,
             named,
             running: OnceLock::new(),
+            answered: watch::Sender::new(None),
             connections: AtomicU64::new(0),
         };
         Ok(Self { listener, authority, deliveries: Arc::new(deliveries) })
+    }
+
+    /// The newest version whose connection has finished answering: a node about to exit waits on it,
+    /// or the operator has no receipt and no node left to retry on.
+    pub(crate) fn answered(&self) -> watch::Receiver<Option<u64>> {
+        self.deliveries.answered.subscribe()
     }
 
     /// The address the listener is bound to.
@@ -143,9 +152,13 @@ impl Listener {
         self.listener.local_addr().unwrap()
     }
 
-    /// Marks the start complete, running with `version`, so a later bundle says it needs a restart.
+    /// Marks the start complete, running with `version`, so a later bundle says it needs a restart,
+    /// and ends the warning a past start raised, a restart being what it asked for. `SecretStore`
+    /// calls this under the lock a delivery seals under, so a delivery's own warning always comes
+    /// after this, and this cannot end it.
     pub(crate) fn started(&self, version: Option<u64>) {
         let _ = self.deliveries.running.set(version);
+        info!(alert_resolved = "secrets_restart_required", "this start runs the newest sealed secrets");
     }
 
     /// Takes one more connection onto `serving`, or reaps one that ended. Cancel-safe, so a hold can
@@ -186,9 +199,13 @@ impl Deliveries {
     ) {
         let id = self.connections.fetch_add(1, Ordering::Relaxed) + 1;
         let span = info_span!("secrets_delivery", id, peer = %peer);
-        if let Err(e) = self.serve(&mut stream, &authority).instrument(span).await {
-            warn!("a secrets delivery connection ended: {e:#}");
+        async {
+            if let Err(e) = self.serve(&mut stream, &authority).await {
+                warn!("a secrets delivery connection ended: {e:#}");
+            }
         }
+        .instrument(span)
+        .await;
     }
 
     /// What this enclave reports it holds.
@@ -241,9 +258,15 @@ impl Deliveries {
         };
         match self.seal_delivery(&secret, &nonce, &delivery, authority).await {
             Ok(receipt) => {
+                let version = receipt.version;
                 let bound = receipt_report_data(self.domain, &nonce, &delivery, &receipt);
-                let evidence = self.quote(bound).await?;
-                send(stream, &Reply::Sealed { receipt, evidence }).await
+                let answer = async {
+                    let evidence = self.quote(bound).await?;
+                    send(stream, &Reply::Sealed { receipt, evidence }).await
+                };
+                let answered = answer.await;
+                self.answered.send_modify(|newest| *newest = (*newest).max(Some(version)));
+                answered
             }
             Err(e) => {
                 warn!("refusing the delivery: {e:#}");
@@ -283,7 +306,7 @@ impl Deliveries {
         if was_unreadable {
             info!(alert_resolved = "secrets_unreadable", "a delivery replaced the sealed file that did not open");
         }
-        let restart_required = self.running.get().is_some_and(|running| *running != Some(version));
+        let restart_required = self.running.get().is_some_and(|running| *running < Some(version));
         info!(version, %signer, ?replaced, restart_required, "sealed a delivered secrets bundle");
         if restart_required {
             warn!(

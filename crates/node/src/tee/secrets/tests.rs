@@ -219,3 +219,25 @@ fn a_secrets_file_does_not_open_as_keys_nor_keys_as_secrets() {
     assert_eq!(opened.current(), None, "keys opened as secrets");
     assert!(opened.unreadable().unwrap().contains("does not open"), "{:?}", opened.unreadable());
 }
+
+// What a start runs is chosen, and what it says about that is said, under the lock a delivery seals
+// under, so a delivery's warning about a newer bundle cannot come first and be ended by it.
+#[test]
+fn a_delivery_waits_for_a_start_to_finish_choosing_what_it_runs() {
+    let store = std::sync::Arc::new(store(&scratch_dir("secrets-choosing")));
+    store.replace(bundle(1, "FAKE-a")).unwrap();
+    let said = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut delivery = None;
+    let chosen = store.current_running(|version| {
+        assert_eq!(version, Some(1));
+        let (store, said) = (store.clone(), said.clone());
+        delivery = Some(std::thread::spawn(move || {
+            store.replace(bundle(2, "FAKE-b")).unwrap();
+            assert!(said.load(std::sync::atomic::Ordering::SeqCst), "it sealed before the start had chosen");
+        }));
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        said.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+    assert_eq!(chosen.unwrap().bundle.version, 1);
+    delivery.unwrap().join().unwrap();
+}

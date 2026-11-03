@@ -249,7 +249,7 @@ an index: load only the rule whose hint matches the current action.
   domain, the node and its release manifest, the logs to follow, and alert routing.
   A field reads a delivered secret by name, never its value: `{name}` in a URL's path or query,
   `api_key_secret`, or `url_secret`, with `[tee.sealing.secrets]` to receive them; a `production` build
-  refuses `api_key_env` and `url_env`.
+  refuses `api_key_env` and `url_env`, but for a config with `[standby]`, which no enclave runs.
   `test-keys.toml` lists the keys whose private keys the repo publishes for development (the dev
   configs' operator key, explicit published mock enclave signer, shared access-source test
   authority, and Anvil's default accounts); a node whose TEE is not the mock refuses them
@@ -351,7 +351,8 @@ an index: load only the rule whose hint matches the current action.
   `image/Dockerfile` so every download runs under `retry` and the cargo build stays `--frozen`,
   and checks the build's download retries.
 - **ops/** — operator assets: `grafana/engine-node.json`, the node's Grafana dashboard, and
-  `prometheus/engine-node-rules.yml`, the alerting rules for a down node, failing alert pages, or a
+  `prometheus/engine-node-rules.yml`, the alerting rules for a down node, failing alert pages, a webhook
+  left off for want of its delivered URL, or a
   missing or expiring API certificate. `runbooks/` holds the operator's procedures (`README.md`
   indexes them): deploy and rollback, reduce-only, restart and recovery, key recovery, corporate
   actions, incident response, withdrawal stalls and `checkpoint_backlog`, feed, custody and

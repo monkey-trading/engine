@@ -212,7 +212,9 @@ $ENGINE admin --config node.toml --key-file operator.key deliver-secrets --to $S
 ```
 
 Check: it prints `sealed: version <n>`. It refuses a bundle lacking a chain or screening key unless given
-`--partial`, and names any integration that stays off.
+`--partial`, and names any integration that stays off. After an operator rotation the config still
+names the old key, so signing under the new one takes `--rotated`, as for admin commands:
+`$ENGINE admin --config node.toml --key-file operator.key --rotated deliver-secrets ...`.
 
 **Rotate a secret.** Raise `version` and hold every secret, since a bundle replaces the whole sealed
 one. List the new key at its provider first, and leave the old one valid: what runs keeps the clients

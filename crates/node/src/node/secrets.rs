@@ -15,18 +15,20 @@ use engine_core::types::AccountId;
 use futures_util::future::BoxFuture;
 use tokio::sync::watch;
 use tokio::task::JoinSet;
-use tokio::time::{Instant, Interval, MissedTickBehavior, interval_at, sleep};
+use tokio::time::{Instant, Interval, MissedTickBehavior, interval_at, sleep, timeout};
 use tracing::{error, info, warn};
 
 use crate::config::{ApiKey, NamedSecret, NodeConfig, SecretUse, Values, VenueConnection};
 use crate::handover::fetch_secrets;
 use crate::node::keys::{KeyStart, attestor_for, sealer};
-use crate::secrets::{Authority, Listener};
+use crate::secrets::{Authority, Listener, SignedBundle};
 use crate::tee::secrets::{Replaced, SecretStore};
 use crate::telemetry::Telemetry;
 
-/// How often a failed start looks for a new bundle, and how long it leaves the receipt to go out.
+/// How often a failed start looks for a new bundle.
 const NEW_BUNDLE_POLL: Duration = Duration::from_millis(500);
+/// How long a failed start then waits for that bundle's receipt, whose quote fetches its collateral.
+const RECEIPT_WAIT: Duration = Duration::from_secs(60);
 /// How many failed attempts on `--predecessor`, refusals included since a refusal can be a read that
 /// failed over there, a start with no required secret outstanding waits through before it goes on to
 /// take the keys without the bundle.
@@ -39,6 +41,10 @@ const PREDECESSOR_RETRY: Duration = if cfg!(test) { Duration::from_millis(50) } 
 pub(crate) struct Delivered {
     /// The secrets it runs with.
     pub values: Values,
+    /// The bundle version they came from, which a failed start waits to see replaced.
+    pub version: Option<u64>,
+    /// The newest version whose connection has finished answering (see `Listener::answered`).
+    pub answered: Option<watch::Receiver<Option<u64>>>,
     /// Whether the first read of the chain uses a delivered key, which a provider may refuse.
     pub chain_read_keyed: bool,
     /// The delivery listener, with `[tee.sealing.secrets]`, which the node runs as a supervised task.
@@ -81,21 +87,26 @@ impl Delivered {
     }
 }
 
-/// Waits until a new bundle is sealed, with a moment for its receipt to go out, or until `hold` has
-/// passed or the listener has stopped: the listener takes deliveries meanwhile, and the caller exits
-/// so the next start takes what it sealed.
+/// Waits until a new bundle is sealed and its connection has answered, or until `hold` has passed or
+/// the listener has stopped: the listener takes deliveries meanwhile, and the caller exits so the next
+/// start takes what it sealed.
 pub(crate) async fn wait_for_a_new_bundle(
     delivered: &Delivered,
     listening: &mut JoinSet<anyhow::Result<()>>,
     hold: Duration,
 ) {
     let Some(store) = &delivered.store else { return };
-    let running = store.version();
     let sealed = async {
-        while store.version() == running {
+        // Against what this start read with: a bundle sealed while that read failed is the repair.
+        while store.version() == delivered.version {
             sleep(NEW_BUNDLE_POLL).await;
         }
-        sleep(NEW_BUNDLE_POLL).await;
+        // The exit powers the guest off, which would leave the operator no receipt and nothing to
+        // retry on.
+        if let Some(answered) = &delivered.answered {
+            let (mut answered, sealed) = (answered.clone(), store.version());
+            let _ = timeout(RECEIPT_WAIT, answered.wait_for(|newest| *newest >= sealed)).await;
+        }
     };
     tokio::select! {
         () = sealed => {}
@@ -141,7 +152,7 @@ pub(crate) async fn startup(
             break;
         }
         if !raised && !lacking.is_empty() {
-            report_missing(&store, &named);
+            report_missing(store.current().as_ref(), &named);
             raised = true;
         }
         match &mut moving {
@@ -157,6 +168,8 @@ pub(crate) async fn startup(
     let held = store.current_running(|version| listener.started(version));
     // Whatever else is connected finishes on its own deadlines, its receipt included.
     serving.detach_all();
+    // From what this start runs: a delivery still connected may already have sealed a newer one.
+    report_missing(held.as_ref(), &named);
     let version = held.as_ref().map(|signed| signed.bundle.version);
     let values = held.map(|signed| signed.bundle.secrets).unwrap_or_default();
     cfg.deliver_urls(&values).context("setting the delivered keys")?;
@@ -168,15 +181,20 @@ pub(crate) async fn startup(
         ),
     }
     telemetry.pages_critical = telemetry.alerts.pages_critical();
-    report_missing(&store, &named);
     if store.unreadable().is_none() {
         info!(alert_resolved = "secrets_unreadable", "this release's sealed secrets open");
     }
-    // A restart is what `secrets_restart_required` asks for.
-    info!(alert_resolved = "secrets_restart_required", "this start runs the newest sealed secrets");
     info!(?version, delivered = values.len(), named = named.len(), "the delivered secrets are set");
     let chain_read_keyed = cfg.checkpoints.as_ref().map_or(Ok(false), |section| section.rpc_url.names_a_secret())?;
-    Ok(Delivered { values, chain_read_keyed, listener: Some(listener), authority: Some(authority), store: Some(store) })
+    Ok(Delivered {
+        values,
+        version,
+        answered: Some(listener.answered()),
+        chain_read_keyed,
+        listener: Some(listener),
+        authority: Some(authority),
+        store: Some(store),
+    })
 }
 
 /// The required secrets `store` lacks, each once.
@@ -189,12 +207,11 @@ fn lacks_required(store: &SecretStore, named: &[NamedSecret]) -> Vec<NamedSecret
         .collect()
 }
 
-/// Raises `secret_missing` for each field whose secret `store` lacks, and resolves it for each it holds.
-fn report_missing(store: &SecretStore, named: &[NamedSecret]) {
-    let held = store.current().map(|signed| signed.bundle.secrets).unwrap_or_default();
+/// Raises `secret_missing` for each field whose secret `held` lacks, and resolves it for each it holds.
+fn report_missing(held: Option<&SignedBundle>, named: &[NamedSecret]) {
     for field in named {
         let (secret, field_name) = (&field.name, &field.field);
-        if held.contains_key(secret) {
+        if held.is_some_and(|signed| signed.bundle.secrets.contains_key(secret)) {
             info!(alert_resolved = "secret_missing", %secret, field = %field_name, "the field has its secret");
             continue;
         }
