@@ -482,7 +482,7 @@ Run from the repo root:
   then `forge fmt --check`, `forge build`, and `forge test`
 - Alert outbox kill/restart dev scenario: `./scripts/dev-alert-outbox.sh` (needs `python3`,
   `curl`, and `jq`; uses loopback endpoints and private temporary data)
-- Browser-origin dev scenario: `./scripts/dev-browser-origin.sh` (needs `curl` and `jq`; runs a dev node
+- Browser-origin dev scenario: `./scripts/dev-browser-origin.sh` (needs `python3`, `curl`, and `jq`; runs a dev node
   with `api.allowed_origins` on private temporary data and public Roughtime servers)
 - Dashboard data dev scenario: `./scripts/dev-dashboard-data.sh` (needs `python3`, `curl`, and `jq`;
   a dev node with a one-second account scan, a synthetic signed access source and free ports on private
