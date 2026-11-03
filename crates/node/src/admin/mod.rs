@@ -6,10 +6,12 @@
 
 mod benchmark_feed;
 mod benchmark_watch;
+mod input;
 mod secrets;
 mod tls;
 
-use std::fmt;
+pub use input::{HexKey, KeyEnv};
+
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -30,11 +32,9 @@ use engine_core::types::{AccountId, MarketId, Millis};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper::header::{CONTENT_TYPE, HOST};
-use hyper::http::uri::Authority;
 use hyper::{Method, Request, StatusCode, Uri};
 use hyper_util::rt::TokioIo;
 use k256::ecdsa::SigningKey;
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use tokio::time::timeout;
 
@@ -186,38 +186,6 @@ pub(crate) struct NodeApi {
     pub pin: [u8; 32],
 }
 
-/// Where the operator's key may come from besides `--key-file`: the environment, which `main` reads
-/// and passes in, so tests give their own.
-pub struct KeyEnv {
-    /// `OPERATOR_KEY_FILE`: a file holding the key.
-    pub key_file: Option<PathBuf>,
-    /// `OPERATOR_KEY`: the key itself.
-    pub key: Option<HexKey>,
-}
-
-/// A private key in hex, as read from a file or the environment. `Debug` and `Display` hide it.
-pub struct HexKey(pub String);
-
-/// The body of `GET /v1/accounts/{address}/nonce`.
-#[derive(Deserialize)]
-struct NonceView {
-    next_nonce: u64,
-}
-
-impl fmt::Debug for HexKey {
-    /// Redacted.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("HexKey(<redacted>)")
-    }
-}
-
-impl fmt::Display for HexKey {
-    /// Redacted.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("<redacted>")
-    }
-}
-
 impl AdminAction {
     /// The admin command this action sends.
     /// Error cases:
@@ -225,17 +193,17 @@ impl AdminAction {
     fn command(self) -> anyhow::Result<AdminCommand> {
         Ok(match self {
             AdminAction::ScheduleCorporateAction { file } => {
-                let action: CorporateAction = read_toml(&file)?;
+                let action: CorporateAction = input::read_toml(&file)?;
                 action.validate().map_err(anyhow::Error::msg)?;
                 AdminCommand::ScheduleCorporateAction(action)
             }
             AdminAction::UpsertMarket { file } => {
-                let spec: MarketSpec = read_toml(&file)?;
+                let spec: MarketSpec = input::read_toml(&file)?;
                 spec.validate().map_err(anyhow::Error::msg).with_context(|| file.display().to_string())?;
                 AdminCommand::UpsertMarket(spec)
             }
             AdminAction::SetParams { file } => {
-                let params: ProtocolParams = read_toml(&file)?;
+                let params: ProtocolParams = input::read_toml(&file)?;
                 // The node runs the latest version, so these are the parameters it would apply.
                 params
                     .validate_for(ProtocolVersion::LATEST)
@@ -290,7 +258,7 @@ pub async fn dispatch(args: AdminArgs, env: KeyEnv) -> anyhow::Result<()> {
         AdminAction::DeliverSecrets(deliver) => {
             let cfg = NodeConfig::load(&args.config)?;
             crate::init_logging(&cfg.logging.level)?;
-            let key = resolve_key(args.key_file.as_deref(), env)?;
+            let key = input::resolve_key(args.key_file.as_deref(), env)?;
             signing_operator(cfg.operator()?, &key, args.rotated, &args.config)?;
             secrets::deliver(&cfg, &key, deliver).await
         }
@@ -356,7 +324,7 @@ async fn run_configured(
     clock: impl Fn() -> Millis,
     cfg: NodeConfig,
 ) -> anyhow::Result<AdminRequest> {
-    let key = resolve_key(args.key_file.as_deref(), env)?;
+    let key = input::resolve_key(args.key_file.as_deref(), env)?;
     let operator = signing_operator(cfg.operator()?, &key, args.rotated, &args.config)?;
     if let AdminAction::RotateOperator { address } = &args.action {
         cfg.refuse_rotation_to_test_key(*address)?;
@@ -367,7 +335,7 @@ async fn run_configured(
     }
     let command = args.action.command()?;
     let path = format!("/v1/accounts/{}/nonce", operator.address);
-    let NonceView { next_nonce } = call(&node, Method::GET, &path, None).await?;
+    let input::NonceView { next_nonce } = call(&node, Method::GET, &path, None).await?;
     let req = sign(&key, &operator, command, next_nonce, clock() + EXPIRES_IN_MS);
     println!("{}", serde_json::to_string(&req)?);
     let events = submit(&node, &req).await?;
@@ -414,46 +382,6 @@ pub(crate) async fn submit(node: &NodeApi, req: &AdminRequest) -> anyhow::Result
     call(node, Method::POST, "/v1/admin", Some(serde_json::to_string(req)?)).await
 }
 
-/// The operator's signing key: from the `--key-file` flag if given, else `env`'s file, else `env`'s key.
-/// Error cases:
-/// - see `operator_key`
-fn resolve_key(flag: Option<&Path>, env: KeyEnv) -> anyhow::Result<SigningKey> {
-    operator_key(flag.or(env.key_file.as_deref()), env.key)
-}
-
-/// The operator's signing key: from `key_file` if given, else `env_key`, the value of
-/// `OPERATOR_KEY`.
-/// Error cases:
-/// - neither is given, or the file cannot be read
-/// - the key is not a secp256k1 private key in hex
-fn operator_key(key_file: Option<&Path>, env_key: Option<HexKey>) -> anyhow::Result<SigningKey> {
-    let HexKey(text) = match key_file {
-        Some(path) => HexKey(std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?),
-        None => env_key.context("no operator key: pass --key-file, or set OPERATOR_KEY_FILE or OPERATOR_KEY")?,
-    };
-    // The errors name neither the key nor the bytes that failed to parse.
-    hex::decode(text.trim().trim_start_matches("0x"))
-        .ok()
-        .and_then(|bytes| SigningKey::from_slice(&bytes).ok())
-        .context("the operator key is not a secp256k1 private key in hex")
-}
-
-/// Reads a TOML file into `T`.
-/// Error cases:
-/// - the file cannot be read, or is not valid TOML for `T` (unknown keys included)
-fn read_toml<T: DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
-    let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
-}
-
-/// The host and port to connect to for `authority`: an IPv6 literal without its URL brackets, which
-/// the `Host` header keeps, and port 443 when the URL names none.
-fn socket_target(authority: &Authority) -> (&str, u16) {
-    let host = authority.host();
-    let host = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
-    (host, authority.port_u16().unwrap_or(443))
-}
-
 /// Makes one HTTP/1.1 call to the node over TLS pinned to its key, and parses its JSON reply.
 /// Error cases:
 /// - the node URL is not an `https://host:port` URL: another scheme, or a path or query
@@ -474,7 +402,7 @@ async fn call<T: DeserializeOwned>(
     };
     let target = format!("{method} {url}{}", path.trim_start_matches('/'));
     let exchange = async {
-        let (host, port) = socket_target(authority);
+        let (host, port) = input::socket_target(authority);
         let stream = tls::connect(host, port, node.pin).await?;
         let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream)).await?;
         let request = Request::builder()

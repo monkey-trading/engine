@@ -15,7 +15,8 @@ use tokio::sync::watch as channel;
 use tokio::time::{Instant, sleep_until};
 use tracing::{info, warn};
 
-use crate::admin::{CALL_TIMEOUT, EXPIRES_IN_MS, NodeApi, NonceView, benchmark_watch, call, sign, submit};
+use crate::admin::input::NonceView;
+use crate::admin::{CALL_TIMEOUT, EXPIRES_IN_MS, NodeApi, benchmark_watch, call, sign, submit};
 use crate::benchmarks;
 use crate::config::NodeConfig;
 
