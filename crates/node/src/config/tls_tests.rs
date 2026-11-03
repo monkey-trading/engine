@@ -106,6 +106,33 @@ fn a_production_build_refuses_an_unsafe_proxy_range_at_load() {
     with_range("198.51.100.0/24").unwrap();
 }
 
+// A production build refuses fresh-account budgets above its values at load, not only when the check
+// is called, and names the budget.
+#[cfg(feature = "production")]
+#[test]
+fn a_production_build_refuses_fresh_account_budgets_above_its_values_at_load() {
+    let dir = crate::test_support::scratch_dir("production-budgets");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("node.toml");
+    let load = |budgets: &str| {
+        std::fs::write(&path, format!("{}{ACME}", real_providers_with(budgets))).unwrap();
+        NodeConfig::load(&path)
+    };
+    for (budgets, key) in [
+        ("shared = { per_minute = 61, burst = 120 }\nper_client = { per_minute = 12, burst = 6 }", "shared"),
+        ("shared = { per_minute = 60, burst = 121 }\nper_client = { per_minute = 12, burst = 6 }", "shared"),
+        ("shared = { per_minute = 60, burst = 120 }\nper_client = { per_minute = 13, burst = 6 }", "per_client"),
+        ("shared = { per_minute = 3000, burst = 100 }\nper_client = { per_minute = 600, burst = 20 }", "shared"),
+    ] {
+        let err = format!("{:#}", load(budgets).unwrap_err());
+        assert!(
+            err.contains(&format!("a production build allows api.fresh_accounts.{key} at most")),
+            "{budgets}: {err}"
+        );
+    }
+    load("shared = { per_minute = 60, burst = 120 }\nper_client = { per_minute = 12, burst = 6 }").unwrap();
+}
+
 // ── Helpers ──
 
 /// The committed dev config with `section` appended.
@@ -129,6 +156,12 @@ fn test_root() -> String {
 /// browser origin.
 #[cfg(feature = "production")]
 fn real_providers() -> String {
+    real_providers_with("shared = { per_minute = 60, burst = 120 }\nper_client = { per_minute = 12, burst = 6 }")
+}
+
+/// `real_providers` with `[api.fresh_accounts]` set to `budgets`.
+#[cfg(feature = "production")]
+fn real_providers_with(budgets: &str) -> String {
     let anvil = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/anvil.toml");
     let mut cfg: toml::Table = toml::from_str(&std::fs::read_to_string(anvil).unwrap()).unwrap();
     let dev: toml::Table = toml::from_str(&std::fs::read_to_string(DEV).unwrap()).unwrap();
@@ -136,6 +169,7 @@ fn real_providers() -> String {
     tee.insert("provider".into(), "configfs_tsm".into());
     tee.remove("use_published_mock_key");
     cfg["api"].as_table_mut().unwrap().remove("allowed_origins");
+    cfg["api"]["fresh_accounts"] = toml::from_str::<toml::Table>(budgets).unwrap().into();
     cfg["operator"]["public_key"] = crate::test_support::own_operator_key().into();
     cfg["custody"]["evm"]["finality_tag"] = "latest".into();
     let feeds = cfg["feeds"].as_table_mut().unwrap();

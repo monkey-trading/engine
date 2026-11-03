@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::FreshAccountBudgets;
 use std::net::Ipv4Addr;
 use std::num::{NonZeroU32, NonZeroUsize};
 
@@ -28,21 +29,82 @@ fn a_client_over_its_burst_waits_for_the_refill() {
 fn one_client_takes_only_its_share_of_the_fresh_account_budget_all_clients_share() {
     let clock = FakeRelativeClock::default();
     let mut cfg = section(1, 3);
-    cfg.per_account = RateLimit { per_second: NonZeroU32::new(1).unwrap(), burst: NonZeroU32::new(1).unwrap() };
+    cfg.fresh_accounts.shared = budget(60, 3);
+    cfg.fresh_accounts.per_client = budget(60, 1);
     let limits = ApiLimits::with_quota(&cfg, per_second, clock.clone());
     let client = |n| Some(IpAddr::from(Ipv4Addr::new(203, 0, 113, n)));
     limits.check_initial_account(client(1)).unwrap();
     // Over its share, a client's fresh keys spend none of the shared budget.
     for _ in 0..3 {
-        assert!(matches!(limits.check_initial_account(client(1)), Err(ApiError::RateLimited(_))));
+        assert!(matches!(limits.check_initial_account(client(1)), Err(ApiError::SetupLimited(_))));
     }
     limits.check_initial_account(client(2)).unwrap();
     limits.check_initial_account(client(3)).unwrap();
-    assert!(matches!(limits.check_initial_account(client(4)), Err(ApiError::RateLimited(_))));
-    assert!(matches!(limits.check_initial_account(None), Err(ApiError::RateLimited(_))));
+    assert!(matches!(limits.check_initial_account(client(4)), Err(ApiError::SetupLimited(_))));
+    assert!(matches!(limits.check_initial_account(None), Err(ApiError::SetupLimited(_))));
     clock.advance(Duration::from_secs(1));
     limits.check_initial_account(client(1)).unwrap();
-    assert!(matches!(limits.check_initial_account(client(4)), Err(ApiError::RateLimited(_))));
+    assert!(matches!(limits.check_initial_account(client(4)), Err(ApiError::SetupLimited(_))));
+}
+
+#[test]
+fn a_fresh_account_budget_counted_by_the_minute_refills_one_token_per_period() {
+    let clock = FakeRelativeClock::default();
+    let mut cfg = section(1, 3);
+    cfg.fresh_accounts.shared = budget(60, 2);
+    cfg.fresh_accounts.per_client = budget(12, 1);
+    let limits = ApiLimits::with_quota(&cfg, per_second, clock.clone());
+    let client = Some(IpAddr::from(Ipv4Addr::new(203, 0, 113, 1)));
+    limits.check_initial_account(client).unwrap();
+    // Twelve a minute is a token every five seconds: a client's share can go below one a second.
+    let Err(ApiError::SetupLimited(wait)) = limits.check_initial_account(client) else { panic!("over its share") };
+    // The second's twelfth is truncated to the nanosecond before it is scaled, so the wait is within a microsecond of 5s.
+    assert!(Duration::from_secs(5).abs_diff(wait) < Duration::from_micros(1), "{wait:?}");
+    clock.advance(Duration::from_millis(4999));
+    assert!(limits.check_initial_account(client).is_err());
+    clock.advance(Duration::from_millis(1));
+    limits.check_initial_account(client).unwrap();
+}
+
+#[test]
+fn a_paid_declaration_takes_nothing_from_the_unpaid_budgets_and_is_held_to_its_account_and_client() {
+    let mut cfg = section(1, 3);
+    cfg.fresh_accounts.shared = budget(60, 5);
+    cfg.fresh_accounts.per_client = budget(60, 2);
+    let limits = ApiLimits::with_quota(&cfg, per_second, FakeRelativeClock::default());
+    let (paid, other, third) = (AccountId([1; 20]), AccountId([2; 20]), AccountId([3; 20]));
+    for _ in 0..2 {
+        limits.check_paid_declaration(paid, client(1)).unwrap();
+    }
+    assert!(matches!(limits.check_paid_declaration(paid, client(1)), Err(ApiError::SetupLimited(_))), "per account");
+    assert!(limits.paid_declarations_full.due(Instant::now()), "an account's own refusal is not the paid budget's");
+    // Another account from the same client has its own bucket, but the client's paid share is out.
+    limits.check_paid_declaration(other, client(2)).unwrap();
+    limits.check_paid_declaration(third, client(2)).unwrap();
+    assert!(matches!(limits.check_paid_declaration(AccountId([4; 20]), client(2)), Err(ApiError::SetupLimited(_))));
+    // The unpaid shared budget and the client's unpaid share are whole.
+    limits.check_initial_account(client(1)).unwrap();
+    limits.check_initial_account(client(1)).unwrap();
+}
+
+#[test]
+fn all_paid_declarations_share_a_budget_and_its_alert_is_raised_once_per_episode() {
+    let mut cfg = section(1, 3);
+    cfg.fresh_accounts.shared = budget(60, 2);
+    cfg.fresh_accounts.per_client = budget(60, 1);
+    let limits = ApiLimits::with_quota(&cfg, per_second, FakeRelativeClock::default());
+    limits.check_paid_declaration(AccountId([1; 20]), client(1)).unwrap();
+    limits.check_paid_declaration(AccountId([2; 20]), client(2)).unwrap();
+    // A third account from a third client has its own buckets, but the paid budget is out.
+    let refused = |n: u8| limits.check_paid_declaration(AccountId([n; 20]), client(n));
+    assert!(matches!(refused(3), Err(ApiError::SetupLimited(_))));
+    assert!(!limits.paid_declarations_full.due(Instant::now()), "the refusal raised the alert");
+    // The refusal spent no unpaid budget.
+    limits.check_initial_account(client(1)).unwrap();
+}
+
+fn client(n: u8) -> Option<IpAddr> {
+    Some(IpAddr::from(Ipv4Addr::new(203, 0, 113, n)))
 }
 
 #[test]
@@ -72,13 +134,26 @@ fn refilled_buckets_are_forgotten() {
     limits.check_ip(IpAddr::V4(Ipv4Addr::LOCALHOST)).unwrap();
     limits.check_account(AccountId([1; 20])).unwrap();
     limits.check_connection(IpAddr::V4(Ipv4Addr::LOCALHOST)).unwrap();
-    let held = |l: &ApiLimits<_>| (l.per_ip.len(), l.per_account.len(), l.per_ip_connections.len());
+    limits.check_paid_declaration(AccountId([2; 20]), client(2)).unwrap();
+    let held = |l: &ApiLimits<_>| {
+        (
+            l.per_ip.len(),
+            l.per_account.len(),
+            l.per_ip_connections.len(),
+            l.paid_declarations.len(),
+            l.paid_per_ip.len(),
+        )
+    };
     limits.retain_recent();
-    assert_eq!(held(&limits), (1, 1, 1));
-    // A bucket one request below full refills in 100ms.
+    assert_eq!(held(&limits), (1, 1, 1, 1, 1));
+    // A bucket is forgotten once it would be full again: a burst of ten at 10 a second in 1s, and at
+    // 10 a minute in 60s, so the paid buckets outlast the others.
     clock.advance(Duration::from_secs(1));
     limits.retain_recent();
-    assert_eq!(held(&limits), (0, 0, 0));
+    assert_eq!(held(&limits), (0, 0, 0, 1, 1));
+    clock.advance(Duration::from_secs(59));
+    limits.retain_recent();
+    assert_eq!(held(&limits), (0, 0, 0, 0, 0));
 }
 
 #[test]
@@ -153,6 +228,10 @@ fn a_client_with_no_connection_left_is_forgotten() {
 
 // ── Helpers ──
 
+fn budget(per_minute: u32, burst: u32) -> Budget {
+    Budget { per_minute: NonZeroU32::new(per_minute).unwrap(), burst: NonZeroU32::new(burst).unwrap() }
+}
+
 /// An `[api]` section with the same rate per client and per account, and two subscribers.
 fn section(per_second: u32, burst: u32) -> ApiSection {
     let rate = RateLimit { per_second: NonZeroU32::new(per_second).unwrap(), burst: NonZeroU32::new(burst).unwrap() };
@@ -175,5 +254,9 @@ fn section(per_second: u32, burst: u32) -> ApiSection {
         allowed_origins: Vec::new(),
         tls: None,
         proxy_protocol: None,
+        fresh_accounts: FreshAccountBudgets {
+            shared: Budget { per_minute: rate.per_second, burst: rate.burst },
+            per_client: Budget { per_minute: rate.per_second, burst: rate.burst },
+        },
     }
 }

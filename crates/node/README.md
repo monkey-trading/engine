@@ -343,7 +343,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/access_tests/cancel.rs` — a client cancels its resting order while geo access is excluded, with no screening call
 - `src/api/access_tests/declarations.rs` — a declaration screened like an order: public refusals that leave its deposit pending until an allowed one is recorded
 - `src/api/access_tests/pre_deposit.rs` — a wallet's setup before its first deposit: the order of its declaration and session keys, what stays refused until a deposit credits it, both deposit orders, engine refusals, and the reads and scans it meets
-- `src/api/access_tests/pre_deposit_budgets.rs` — what those requests spend: a token from the client's share and the shared budget, nothing when refused before the log, and what a refused wallet sees
+- `src/api/access_tests/pre_deposit_budgets.rs` — what those requests spend: a token from the client's share and the shared budget, nothing when refused before the log, what a refused wallet sees, and a pending-deposit wallet's declaration past an empty budget
 - `src/api/access_tests/reissue.rs` — a reissue request screened like a withdrawal, by account and peer, refused with 403 before the log, and a request for an approval that does not exist refused with 404 before any screening call
 - `src/api/access_tests/session_keys.rs` — a registered session key trades for its account without the wallet until revoked, a withdrawal it signs refuses as out of scope in the log, an expired, mis-scoped, or rate-flooding key is refused before sequencing, and a never-credited account registers one only after declaring, with its cancels, stale nonces, and missing signatures
 - `src/api/access_tests/source.rs` — the mock screening source the access tests answer with
@@ -583,19 +583,20 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/config/telemetry.rs` — the metrics listener and alert webhook config, and the redacting
   `WebhookUrl`
 - `src/config/tests.rs` — config loading and validation tests
-- `src/config/api_tests.rs` — the `[api]` heartbeat, quote and stats scan intervals' defaults and minimums
+- `src/config/api_tests.rs` — the `[api]` heartbeat, quote and stats scan intervals' defaults and minimums, and the fresh-account budgets' check
 - `src/config/mock_key_tests.rs` — published mock-only signer opt-in and hardware refusal regressions
 - `src/config/custody_tests.rs` — independent provider configuration checks
-- `src/config/production_tests.rs` — the config file's hash, and a production build's refusal of
+- `src/config/production_tests.rs` — the config file's hash, a production build's refusal of fresh-account budgets above its values, and its refusal of
   mock providers
 - `src/config/tls.rs` — the `[api.tls.acme]` section, and a production build's refusal of an API with
   only its self-signed certificate
-- `src/config/tls_tests.rs` — `[api.tls.acme]` parsing and validation, and the production refusal
+- `src/config/tls_tests.rs` — `[api.tls.acme]` parsing and validation, the production refusal of fresh-account budgets above its values at load, and the production refusal
 - `src/config/sealing.rs` — the `[tee.sealing]` section and its checks
 - `src/config/telemetry_tests.rs` — metrics and alert config tests: the Critical route, the dev
   config's telemetry, and webhook URLs
 - `src/config/proxy.rs` — `[api.proxy_protocol]`: the trusted proxy ranges and a production build's refusal of loopback and wide ones
 - `src/config/proxy_tests.rs` — the proxy section's parsing, matching, and refusals
+- `src/config/fresh_accounts.rs` — `[api.fresh_accounts]`: the budgets a never-credited account's declaration and session-key requests share, the check that a client's share is below the shared budget, and a production build's refusal of rates above its values
 - `src/config/origins.rs` — `api.allowed_origins` validation: exact browser origins, `https` only in a production build
 - `src/config/origins_tests.rs` — the origin allowlist's accepted and refused spellings
 - `src/config/validation.rs` — the checks a parsed config must also pass, and the production
@@ -1591,8 +1592,9 @@ From V24, a wallet sets up before its first deposit, in this order:
   declaration.
 
 Each of these never-credited requests must expire within five minutes (400 otherwise) and takes one
-token from its client's share of a budget all clients share (429 with `Retry-After` when either is
-out). A declaration also waits for a screening slot (503 `declaration screening is at capacity` with
+token from its client's share of a budget all clients share (429 `too many new wallets are being set
+up; try again later` with `Retry-After` when either is out). A declaration from an account with a
+pending deposit takes neither, only a token from a bucket of its own at the share's rate and one from a budget all such declarations share. A declaration also waits for a screening slot (503 `declaration screening is at capacity` with
 `Retry-After` when declarations hold their share). See [access-source configuration](../../config/access-source.md) for the budgets' rates and the
 growth they allow.
 Authenticated policy refusals consume the nonce. The recorded source supplies geography

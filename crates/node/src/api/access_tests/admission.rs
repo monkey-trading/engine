@@ -15,10 +15,8 @@ use crate::trusted_time::tests::logs::Logs;
 async fn fresh_signers_declare_with_no_deposit_and_within_their_client_share() {
     let mut node = Node::start("access-initial-budget", true).await;
     let mut config = dev_config().api;
-    config.per_ip.per_second = NonZeroU32::new(1).unwrap();
-    config.per_ip.burst = NonZeroU32::new(2).unwrap();
-    config.per_account.per_second = NonZeroU32::new(1).unwrap();
-    config.per_account.burst = NonZeroU32::new(1).unwrap();
+    let budget = |burst| Budget { per_minute: NonZeroU32::MIN, burst: NonZeroU32::new(burst).unwrap() };
+    config.fresh_accounts = FreshAccountBudgets { shared: budget(2), per_client: budget(1) };
     node.state.limits = Arc::new(ApiLimits::with_quota(
         &config,
         |rate| governor::Quota::per_hour(rate.per_second).allow_burst(rate.burst),
@@ -53,9 +51,9 @@ async fn fresh_signers_declare_with_no_deposit_and_within_their_client_share() {
     assert!(matches!(again, Err(crate::api::ApiError::Forbidden("account has already declared"))), "{:?}", again.err());
     let too_far = declare_signed(3, 2, 0, NOW + engine_core::auth::MAX_EXPIRY_AHEAD_MS + 1).await;
     assert!(matches!(too_far, Err(crate::api::ApiError::BadRequest(_))), "{:?}", too_far.err());
-    assert!(matches!(declare(1, 2).await, Err(crate::api::ApiError::RateLimited(_))), "over its share");
+    assert!(matches!(declare(1, 2).await, Err(crate::api::ApiError::SetupLimited(_))), "over its share");
     assert!(declare(2, 3).await.is_ok(), "another client still has the shared budget");
-    assert!(matches!(declare(3, 4).await, Err(crate::api::ApiError::RateLimited(_))), "the budget is shared");
+    assert!(matches!(declare(3, 4).await, Err(crate::api::ApiError::SetupLimited(_))), "the budget is shared");
     assert_eq!(settled_entries(&node).await, before + 1);
     for seed in [2, 4] {
         let account = eip712::address(key(seed).verifying_key());

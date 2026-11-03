@@ -8,7 +8,7 @@ use engine_core::auth::MAX_EXPIRY_AHEAD_MS;
 
 use super::admission::settled_entries;
 use super::pre_deposit::{
-    HOUR_MS, address, key_management_auth, next_nonce, registration_hash, revocation_hash, screened,
+    HOUR_MS, address, deposit, key_management_auth, next_nonce, registration_hash, revocation_hash, screened,
 };
 use super::session_keys::{registration, revocation};
 use super::*;
@@ -16,7 +16,7 @@ use crate::trusted_time::tests::logs::Logs;
 
 #[tokio::test]
 async fn a_stale_expired_or_too_far_request_spends_no_nonce_and_no_budget() {
-    // Two tokens for the client and the account: one for the declaration, one for the registration.
+    // Two tokens for the client: one for the declaration, one for the registration.
     let node = limited(Node::start("pre-deposit-fresh", true).await, 20, 2);
     let (wallet, session) = (key(1), key(7));
     let account = address(&wallet);
@@ -73,7 +73,7 @@ async fn each_pre_deposit_request_takes_a_token_from_its_clients_share_and_the_s
     let node = Node::start("pre-deposit-budget", true).await;
     let credited = key(9);
     node.onboard(&credited).await;
-    // Three tokens per client and per account, five shared, none refilling within the test.
+    // Three tokens per client, five shared, none refilling within the test.
     let node = limited(node, 5, 3);
     let (first, second, fresh, session) = (key(1), key(2), key(3), key(7));
     let (entries, queries) = (settled_entries(&node).await, screened(&node));
@@ -102,7 +102,7 @@ async fn each_pre_deposit_request_takes_a_token_from_its_clients_share_and_the_s
         (6, remove.clone(), path, revocation(&second, &session, 2)),
     ] {
         let (status, body, retry_after) = send(&node, client, method, route, request).await;
-        assert_eq!((status, &body), (limited, &json!({ "error": "rate limited" })));
+        assert_eq!((status, &body), (limited, &json!({ "error": crate::api::SETUP_LIMITED })));
         assert!(retry_after.is_some_and(|seconds| seconds >= 1), "{retry_after:?}");
     }
     assert_eq!(settled_entries(&node).await, entries + 5);
@@ -117,15 +117,103 @@ async fn each_pre_deposit_request_takes_a_token_from_its_clients_share_and_the_s
     assert_eq!(status, ok, "{events}");
 }
 
+#[tokio::test]
+async fn a_wallet_with_a_pending_deposit_declares_past_an_exhausted_budget_and_spends_none_of_it() {
+    // One token for the shared budget and one per client, none refilling within the test.
+    let node = limited(Node::start("pre-deposit-paid", true).await, 2, 1);
+    let (free, paid, unpaid, late, other, session) = (key(1), key(2), key(3), key(5), key(4), key(7));
+    // A deposit for another account does not make a wallet paid.
+    deposit(&node, address(&other), "0xfunding:other").await;
+    deposit(&node, address(&paid), "0xfunding:paid").await;
+
+    let post = Method::POST;
+    let path = "/v1/session-keys";
+    let (ok, limited) = (StatusCode::OK, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(send(&node, 1, post.clone(), "/v1/eligibility", declaration(&free, 0)).await.0, ok);
+    // Client 1 is out of its share, which it would be for any unpaid wallet.
+    let (status, body, retry_after) = send(&node, 1, post.clone(), "/v1/eligibility", declaration(&unpaid, 0)).await;
+    assert_eq!((status, body["error"].as_str()), (limited, Some(crate::api::SETUP_LIMITED)));
+    assert!(retry_after.is_some_and(|seconds| seconds >= 1), "{retry_after:?}");
+    // The paid wallet declares from the same client, and took nothing from the shared budget: a
+    // client that has not used its share still takes the last shared token.
+    let queries = screened(&node);
+    assert_eq!(send(&node, 1, post.clone(), "/v1/eligibility", declaration(&paid, 0)).await.0, ok);
+    assert_eq!(screened(&node), queries + 1, "the paid wallet is still screened");
+    assert_eq!(send(&node, 2, post.clone(), "/v1/eligibility", declaration(&unpaid, 0)).await.0, ok);
+    // The shared budget is out now; the paid wallet's keys, which are not exempt, wait with everyone.
+    let register = registration(&paid, &session, 1, NOW + HOUR_MS);
+    assert_eq!(send(&node, 3, post.clone(), path, register).await.0, limited);
+    // A wallet with no deposit for it is refused, whoever else has one, and the paid wallet's second
+    // declaration is refused as before, before its rate.
+    assert_eq!(send(&node, 4, post.clone(), "/v1/eligibility", declaration(&late, 0)).await.0, limited);
+    assert_eq!(send(&node, 5, post, "/v1/eligibility", declaration(&paid, 1)).await.0, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn a_paid_wallets_refused_declarations_are_held_to_its_own_bucket_and_spend_no_budget() {
+    // Four shared tokens and two per client, none refilling within the test.
+    let node = limited(Node::start("pre-deposit-paid-refused", true).await, 4, 2);
+    let (first, second, paid, later) = (key(1), key(2), key(3), key(4));
+    deposit(&node, address(&paid), "0xfunding:paid").await;
+    let post = Method::POST;
+    let declare =
+        |client, wallet, nonce| send(&node, client, post.clone(), "/v1/eligibility", declaration(wallet, nonce));
+    // Client 1 spends its share.
+    assert_eq!(declare(1, &first, 0).await.0, StatusCode::OK);
+    assert_eq!(declare(1, &second, 0).await.0, StatusCode::OK);
+    assert_eq!(declare(1, &later, 0).await.0, StatusCode::TOO_MANY_REQUESTS);
+
+    // The source refuses the paid wallet's region, so the engine records the refusal and the wallet
+    // stays undeclared, paid and exempt from client 1's share.
+    node.source.lock().unwrap().jurisdiction = Jurisdiction::UnitedStates;
+    for nonce in 0..2 {
+        let (status, events, _) = declare(1, &paid, nonce).await;
+        assert_eq!((status, &events[0]["type"]), (StatusCode::OK, &json!("eligibility_rejected")), "{events}");
+    }
+    // Its own bucket is out, so a third attempt is told to wait before it reaches the source or the log.
+    let (entries, queries) = (settled_entries(&node).await, screened(&node));
+    let (status, body, retry_after) = declare(1, &paid, 2).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::TOO_MANY_REQUESTS, Some(crate::api::SETUP_LIMITED)));
+    assert!(retry_after.is_some_and(|seconds| seconds >= 1), "{retry_after:?}");
+    assert_eq!((settled_entries(&node).await, screened(&node)), (entries, queries));
+    assert_eq!(next_nonce(&node, address(&paid)).await, 2, "the refused attempt used no nonce");
+    // The refusals took nothing from the shared budget: two of its four tokens remain.
+    node.source.lock().unwrap().jurisdiction = Jurisdiction::Allowed;
+    assert_eq!(declare(2, &later, 0).await.0, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn the_paid_budget_running_out_is_an_alert_and_one_clients_refused_wallets_cannot_drain_it() {
+    let (logs, _guard) = Logs::capture();
+    // Two shared tokens and two per client, none refilling within the test.
+    let node = limited(Node::start("pre-deposit-paid-alert", true).await, 2, 2);
+    let wallets = [key(1), key(2), key(3), key(4)];
+    for (n, wallet) in wallets.iter().enumerate() {
+        deposit(&node, address(wallet), &format!("0xfunding:paid{n}")).await;
+    }
+    node.source.lock().unwrap().jurisdiction = Jurisdiction::UnitedStates;
+    let declare =
+        |client, wallet, nonce| send(&node, client, Method::POST, "/v1/eligibility", declaration(wallet, nonce));
+    // Client 1's two paid tokens go on two wallets; its third wallet is refused by its client share, which
+    // is no alert.
+    assert_eq!(declare(1, &wallets[0], 0).await.0, StatusCode::OK);
+    assert_eq!(declare(1, &wallets[1], 0).await.0, StatusCode::OK);
+    assert_eq!(declare(1, &wallets[2], 0).await.0, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(logs.count("alert=\"api_paid_declaration_budget_full\""), 0, "one client's share is its own problem");
+    // The two shared tokens are spent, so another client's wallet is refused, and the operator hears of it once.
+    assert_eq!(declare(2, &wallets[2], 0).await.0, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(declare(2, &wallets[3], 0).await.0, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(logs.count("alert=\"api_paid_declaration_budget_full\""), 1);
+}
+
 // ── Helpers ──
 
 /// `node` with fresh-account budgets of `shared` tokens and `share` per client, none refilling within
-/// a test. The budgets take their rates from `per_ip` and `per_account`, so an account also gets
-/// `share` tokens and a client `shared` for all its requests.
+/// a test.
 fn limited(mut node: Node, shared: u32, share: u32) -> Node {
     let mut config = dev_config().api;
-    config.per_ip = RateLimit { per_second: NonZeroU32::MIN, burst: NonZeroU32::new(shared).unwrap() };
-    config.per_account = RateLimit { per_second: NonZeroU32::MIN, burst: NonZeroU32::new(share).unwrap() };
+    let budget = |burst| Budget { per_minute: NonZeroU32::MIN, burst: NonZeroU32::new(burst).unwrap() };
+    config.fresh_accounts = FreshAccountBudgets { shared: budget(shared), per_client: budget(share) };
     node.state.limits = Arc::new(ApiLimits::with_quota(
         &config,
         |rate| Quota::per_hour(rate.per_second).allow_burst(rate.burst),

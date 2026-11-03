@@ -7,7 +7,7 @@ use serde::Deserialize;
 
 use super::api_defaults::{default_heartbeat_interval, default_quote_interval, default_quote_max_markets};
 use super::stats::{default_stats_interval, default_stats_light_interval};
-use super::{ApiTlsSection, ProxyProtocolSection};
+use super::{ApiTlsSection, FreshAccountBudgets, ProxyProtocolSection};
 
 /// Limits on the public API. A client is its socket peer IP, or the address a trusted proxy's PROXY
 /// protocol header names, with an IPv6 client counted by its /64; forwarding headers are ignored
@@ -30,8 +30,6 @@ pub struct ApiSection {
     /// may send, which ends its stream when larger.
     pub max_body_bytes: NonZeroUsize,
     /// Requests from one client, and requests that act for one account; excess requests get 429.
-    /// A never-credited account's free requests are also counted at these rates: `per_ip` is the
-    /// budget all clients share, and `per_account` each client's share of it.
     pub per_ip: RateLimit,
     pub per_account: RateLimit,
     /// New connections from one client; one over it is closed before its TLS handshake. Set it
@@ -79,6 +77,8 @@ pub struct ApiSection {
     /// A pass-through proxy in front of the node, whose PROXY protocol header names each client.
     /// Absent, the client is the socket peer.
     pub proxy_protocol: Option<ProxyProtocolSection>,
+    /// What a never-credited account's declaration and session-key requests may add to the log.
+    pub fresh_accounts: FreshAccountBudgets,
 }
 
 /// A token bucket: `burst` requests at once, refilled at `per_second`.

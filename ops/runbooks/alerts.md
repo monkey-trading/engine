@@ -194,7 +194,8 @@ Raised at most once a minute. The API refuses clients while it is true.
 | --- | --- | --- |
 | `api_connections_full` | Warning | The connection cap every client shares is full. Clients are being refused. Look for a flood from a few addresses; a cap that is too low for real traffic is a config change, so a new release. |
 | `api_subscribers_full` | Warning | The stream subscriber cap is full. As above, for stream subscribers. |
-| `api_initial_budget_full` | Warning | The shared budget for accounts that have not deposited is exhausted. Accounts that have not deposited share one request budget, and it is exhausted. Look for a flood from a few addresses (#482 sets the production budgets). |
+| `api_initial_budget_full` | Warning | The shared budget for accounts that have not deposited is exhausted. Accounts that have not deposited share one request budget, and it is exhausted. Look for a flood from a few addresses. |
+| `api_paid_declaration_budget_full` | Warning | The budget all declarations from wallets with a pending deposit share is exhausted. These wallets have paid, so they declare past the unpaid budgets, but they share this one, at the same rate. Look for a few clients repeating declarations the engine refuses, such as from a restricted region; their deposits stay pending until a declaration is recorded. |
 | `api_declaration_slots_full` | Warning | The screening slots for declarations are full. The screening slots for declarations are full. Look for a flood; check the access source's latency. |
 | `api_accept_failed` | Warning | Accepting connections is failing. Check the host's open-file limit and its network. |
 | `api_proxy_header_refused` | Warning | A trusted proxy's connection has no valid PROXY protocol header. Check `[api.proxy_protocol].trusted` against the proxy's real addresses, and that the proxy sends PROXY v2 headers. |

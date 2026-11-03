@@ -48,6 +48,34 @@ fn a_production_build_refuses_each_mock_provider() {
 }
 
 #[test]
+fn a_production_build_refuses_fresh_account_budgets_above_its_values() {
+    let dev = std::fs::read_to_string(DEV).unwrap();
+    let load = |text: &str| toml::from_str::<NodeConfig>(text).unwrap();
+    // The dev config's rates are refused, naming the budget; a dev build accepts them.
+    let cfg = load(&dev);
+    cfg.api.refuse_dev_fresh_budgets(false).unwrap();
+    let err = cfg.api.refuse_dev_fresh_budgets(true).unwrap_err().to_string();
+    assert!(err.contains("api.fresh_accounts.shared at most 60 a minute with a burst of 120"), "{err}");
+
+    // The production values pass, and any one of rate or burst above them is refused.
+    let at_ceiling = dev
+        .replace("shared = { per_minute = 3000, burst = 100 }", "shared = { per_minute = 60, burst = 120 }")
+        .replace("per_client = { per_minute = 600, burst = 20 }", "per_client = { per_minute = 12, burst = 6 }");
+    let cfg = load(&at_ceiling);
+    cfg.validate().unwrap();
+    cfg.api.refuse_dev_fresh_budgets(true).unwrap();
+    for (from, to, key) in [
+        ("shared = { per_minute = 60,", "shared = { per_minute = 61,", "shared"),
+        ("burst = 120 }", "burst = 121 }", "shared"),
+        ("per_client = { per_minute = 12,", "per_client = { per_minute = 13,", "per_client"),
+        ("burst = 6 }", "burst = 7 }", "per_client"),
+    ] {
+        let err = load(&at_ceiling.replace(from, to)).api.refuse_dev_fresh_budgets(true).unwrap_err().to_string();
+        assert!(err.contains(&format!("api.fresh_accounts.{key} at most")), "{to}: {err}");
+    }
+}
+
+#[test]
 fn a_dev_build_accepts_mock_providers() {
     let cfg: NodeConfig = toml::from_str(&std::fs::read_to_string(DEV).unwrap()).unwrap();
     cfg.refuse_mocks(false).unwrap();

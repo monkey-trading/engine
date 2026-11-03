@@ -78,6 +78,7 @@ impl NodeConfig {
     ///   `min_quote_spacing` outside `10ms..feeds.venues.timeout`
     /// - `time.servers` has fewer than two servers, lists a public key twice, or has an address
     ///   that is not `host:port`
+    /// - `api.fresh_accounts.per_client` is not below `shared` in both rate and burst
     /// - `api.allowed_origins` lists a wildcard, a malformed origin, or one twice (see
     ///   `validate_origins`)
     /// - `history.retention` is zero, or too long to count in milliseconds
@@ -150,6 +151,7 @@ impl NodeConfig {
         ensure!(self.api.stats_light_interval >= MIN_STATS_INTERVAL, "api.stats_light_interval must be at least 1s");
         StatsSection::millis(self.api.stats_light_interval).context("api.stats_light_interval")?;
         self.api.validate_origins()?;
+        self.api.validate_fresh_accounts()?;
         self.api.validate_proxy_protocol()?;
         if let Some(tls) = &self.api.tls {
             tls.acme.validate(self.tee.provider)?;

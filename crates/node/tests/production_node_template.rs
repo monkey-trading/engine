@@ -46,6 +46,10 @@ fn the_template_holds_what_a_production_build_requires() {
     assert!(cfg.checkpoints.is_some() && cfg.tee.sealing.is_some(), "hardware custody needs both");
     let evm = cfg.custody.evm.as_ref().expect("EVM custody");
     assert!(evm.providers.len() >= 3);
+    // The template's fresh-account budgets are the production values, the ceiling a production build enforces.
+    let fresh = cfg.api.fresh_accounts;
+    assert_eq!((fresh.shared.per_minute.get(), fresh.shared.burst.get()), (60, 120));
+    assert_eq!((fresh.per_client.per_minute.get(), fresh.per_client.burst.get()), (12, 6));
 }
 
 #[test]

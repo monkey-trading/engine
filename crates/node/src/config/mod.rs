@@ -310,10 +310,10 @@ impl NodeConfig {
     /// - genesis lists a market id, a market symbol, or a benchmark name twice
     /// - the engine would reject a genesis command
     /// - `[api.tls.acme]` fails validation (see `AcmeSection::validate`)
-    /// - `[api.proxy_protocol]` fails validation (see `ApiSection::validate_proxy_protocol`)
+    /// - `[api.proxy_protocol]` or `api.fresh_accounts` fails validation
     /// - this is a production build and a TEE, custody, or feed provider is `mock`, an allowed
-    ///   origin is not `https`, `[api.tls.acme]` is missing, or a trusted proxy range is loopback or
-    ///   too wide (see `ApiSection::refuse_unsafe_proxy`)
+    ///   origin is not `https`, `[api.tls.acme]` is missing, a trusted proxy range is loopback or too
+    ///   wide, or `api.fresh_accounts` is above the production values (see `ApiSection::refuse_dev_fresh_budgets`)
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         let mut cfg: NodeConfig = toml::from_str(&text)
@@ -324,6 +324,7 @@ impl NodeConfig {
         cfg.refuse_mocks(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
         cfg.api.refuse_self_signed(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
         cfg.api.refuse_unsafe_proxy(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
+        cfg.api.refuse_dev_fresh_budgets(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
         cfg.file_sha256 = Sha256::digest(text.as_bytes()).into();
         Ok(cfg)
     }
@@ -395,6 +396,8 @@ fn public_key<'de, D: Deserializer<'de>>(deserializer: D) -> Result<VerifyingKey
     VerifyingKey::from_bytes(&bytes).map_err(D::Error::custom)
 }
 
+mod fresh_accounts;
+pub use fresh_accounts::{Budget, FreshAccountBudgets};
 mod origins;
 mod test_keys;
 pub(crate) use test_keys::is_published_operator;

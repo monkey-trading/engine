@@ -54,7 +54,7 @@ runbook that depends on one says so where it does:
 - **No staging environment exists.** The deploy and rollback procedures have been checked against
   the pieces that run locally, not end to end.
 - **The values marked `OWNER` in [production-node.toml](production-node.toml)** wait on decisions:
-  the vault's and staking contract's launch values (#436), the fresh-account request budgets (#482),
+  the vault's and staking contract's launch values (#436),
   the vendor accounts and the access source.
 
 ## Keeping these in step

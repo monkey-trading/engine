@@ -112,7 +112,7 @@ A missing declaration, an unknown classification, or a screening source failure 
 uncredited and pending for bounded automatic retries.
 A wallet can declare and manage its session keys before its first deposit, so the fresh-account rate
 budgets, rather than a deposit's cost, bound what a free wallet can add to the public log and to state,
-and a client that exhausts the shared budget refuses other new wallets until it refills.
+and a client that exhausts the shared budget refuses other new wallets until it refills. A wallet with a pending deposit declares past those budgets, against a budget of its own.
 Confirmed sanctioned holds have no automatic release or refund path.
 Older logs retain their recorded authorization rules, including the standalone pre-access V25 rules. Access-source evidence is signed by a recorded
 authority and bounded by freshness, subject and request digest; the source classifications and

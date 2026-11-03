@@ -70,12 +70,15 @@ impl ApiState {
     /// put in the log, and each is admitted only with an expiry the engine accepts. The engine can
     /// still refuse one, using its nonce, so the account may try again; each attempt is counted
     /// against the account's rate, the share of fresh-account admissions its client `peer` may take,
-    /// and all clients' combined budget.
+    /// and all clients' combined budget. A declaration from an account with a pending deposit, which
+    /// has paid, takes neither, and is held to the share's rate for the account alone.
     /// Error cases:
     /// - as `authorise`, except that `before_credit` may admit a never-credited account
     /// - a never-credited account declares again, manages session keys before declaring, or signs an
     ///   expiry beyond `MAX_EXPIRY_AHEAD_MS`
-    /// - a never-credited account's admitted request is over its client's share or the combined budget
+    /// - a never-credited account's admitted request is over its client's share or the combined budget,
+    ///   or a declaration with a pending deposit is over the share's rate for its account or client,
+    ///   or the budget all paid declarations share: `SetupLimited`
     pub(super) async fn authorise_request(
         &self,
         account: AccountId,
@@ -122,11 +125,12 @@ impl ApiState {
         let auth = auth.expect("check refuses an unsigned request wherever signatures are required");
         // Accounts and declarations are never removed and nonces only grow, so none of these checks
         // can pass a request that the engine then sees ahead of its account's next nonce.
-        let (credited, declared, next, last_sequenced) = self
+        let (credited, declared, paid, next, last_sequenced) = self
             .query(move |e| {
                 let credited = e.accounts().contains_key(&account);
                 let declared = !credited && e.eligibility(account).is_some();
-                (credited, declared, e.next_request_nonce(account), e.now())
+                let paid = declaration && !credited && !declared && e.has_pending_deposit(account);
+                (credited, declared, paid, e.next_request_nonce(account), e.now())
             })
             .await?;
         if !credited {
@@ -153,7 +157,14 @@ impl ApiState {
                     "a never-credited account's request must expire by {latest}"
                 )));
             }
-            self.limits.check_initial_account(peer)?;
+            if paid {
+                // A pending deposit is a vault deposit (10 USDC at least) the custody quorum observed and the
+                // log holds, so the wallet has paid. It stays exempt until a declaration is recorded, so its own
+                // bucket, its client's and the paid budget bound the declarations the engine refuses.
+                self.limits.check_paid_declaration(account, peer)?;
+            } else {
+                self.limits.check_initial_account(peer)?;
+            }
         }
         // Counted last, so only a request the node would sequence spends the account's rate. Every
         // signed request is in the public log, so anyone can replay one; a replay fails the nonce

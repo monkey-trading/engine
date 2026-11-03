@@ -62,6 +62,9 @@ use crate::log::Manifest;
 use crate::sequencer::{self, ClaimAnswer, StreamMsg};
 use crate::tee::Attestation;
 
+/// What a never-credited account's refused request is told.
+pub(crate) const SETUP_LIMITED: &str = "too many new wallets are being set up; try again later";
+
 type ApiResult<T> = Result<Json<T>, ApiError>;
 
 #[derive(Debug)]
@@ -87,6 +90,9 @@ pub enum ApiError {
     },
     /// Over a rate limit; the client may retry after the wait.
     RateLimited(Duration),
+    /// A never-credited account's request is over the fresh-account budgets; the client may retry
+    /// after the wait.
+    SetupLimited(Duration),
     TooManySubscribers,
     BodyTooLarge,
     /// The client did not send the request body within the read timeout.
@@ -214,11 +220,8 @@ impl IntoResponse for ApiError {
                 let body = json!({ "error": "access refused", "reason": reason });
                 return (StatusCode::FORBIDDEN, Json(body)).into_response();
             }
-            ApiError::RateLimited(wait) => {
-                let secs = wait.as_secs() + u64::from(wait.subsec_nanos() > 0);
-                let body = Json(json!({ "error": "rate limited" }));
-                return (StatusCode::TOO_MANY_REQUESTS, [(RETRY_AFTER, secs.max(1).to_string())], body).into_response();
-            }
+            ApiError::RateLimited(wait) => return too_many_requests(wait, "rate limited"),
+            ApiError::SetupLimited(wait) => return too_many_requests(wait, SETUP_LIMITED),
             ApiError::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "engine unavailable".to_owned()),
             ApiError::CatchingUp => (StatusCode::SERVICE_UNAVAILABLE, "history is catching up with the log".to_owned()),
             ApiError::NotFound => (StatusCode::NOT_FOUND, "not found".to_owned()),
@@ -237,6 +240,13 @@ impl IntoResponse for ApiError {
         };
         (status, Json(json!({ "error": msg }))).into_response()
     }
+}
+
+/// 429 with `Retry-After` in whole seconds, rounded up, and `message` as the error.
+fn too_many_requests(wait: Duration, message: &str) -> Response {
+    let secs = wait.as_secs() + u64::from(wait.subsec_nanos() > 0);
+    let body = Json(json!({ "error": message }));
+    (StatusCode::TOO_MANY_REQUESTS, [(RETRY_AFTER, secs.max(1).to_string())], body).into_response()
 }
 
 /// Every route, with the request span outermost, then the browser origin check, the per-client rate,

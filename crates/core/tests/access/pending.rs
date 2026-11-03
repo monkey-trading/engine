@@ -177,9 +177,9 @@ fn undeclared_refused_or_unclassified_deposits_stay_pending_and_credit_once_cure
 }
 
 #[test]
-fn indexed_retry_candidates_match_a_full_scan_through_declarations() {
+fn indexed_retry_candidates_and_pending_lookups_match_a_full_scan_through_declarations() {
     let (mut h, client) = setup();
-    let other = crate::common::Client::new(2);
+    let (other, stranger) = (crate::common::Client::new(2), crate::common::Client::new(3));
     let unavailable = AccessEvidence::Failed { reason: SourceFailure::Unavailable };
     // An undeclared account's, a declared account's and the house's deposits all wait pending.
     let (undeclared, clear) = deposit(&h, Some(client.account), Some(client.account), "0xindex:1");
@@ -189,7 +189,7 @@ fn indexed_retry_candidates_match_a_full_scan_through_declarations() {
     h.cmd(Command::AccessDeposit { deposit: declared, evidence: unavailable.clone() });
     let (house, _) = deposit(&h, None, Some(other.account), "0xindex:3");
     h.cmd(Command::AccessDeposit { deposit: house, evidence: unavailable });
-    let check = |engine: &Engine, retryable: &[&str]| {
+    let check = |engine: &Engine, retryable: &[&str], pending: [bool; 3]| {
         let scanned: Engine = serde_json::from_slice(&serde_json::to_vec(engine).unwrap()).unwrap();
         for engine in [engine, &scanned] {
             let references = |after, limit| -> Vec<String> {
@@ -197,14 +197,16 @@ fn indexed_retry_candidates_match_a_full_scan_through_declarations() {
             };
             assert_eq!(references("", 8), retryable);
             assert_eq!(references(retryable.last().unwrap(), 1), &retryable[..1], "the scan wraps around");
+            let lookups = [client.account, other.account, stranger.account].map(|a| engine.has_pending_deposit(a));
+            assert_eq!(lookups, pending);
         }
     };
-    check(&h.engine, &["0xindex:2", "0xindex:3"]);
+    check(&h.engine, &["0xindex:2", "0xindex:3"], [true, true, false]);
     attest(&mut h, &client);
-    check(&h.engine, &["0xindex:1", "0xindex:2", "0xindex:3"]);
+    check(&h.engine, &["0xindex:1", "0xindex:2", "0xindex:3"], [true, true, false]);
     let retry = h.cmd(Command::RetryDepositScreening { chain_ref: undeclared.chain_ref, evidence: clear });
     assert!(matches!(retry.as_slice(), [Event::Deposited { .. }]), "{retry:?}");
-    check(&h.engine, &["0xindex:2", "0xindex:3"]);
+    check(&h.engine, &["0xindex:2", "0xindex:3"], [false, true, false]);
 }
 
 #[test]
