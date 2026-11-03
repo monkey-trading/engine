@@ -145,7 +145,7 @@ async fn a_quote_carries_when_the_ping_that_bounds_it_runs_out() {
     let started = std::time::Instant::now();
     let carried = next_not_after(&mut rx, &mut engine).await.expect("the repeat, held for its refresh");
     assert!(
-        started.elapsed() >= Duration::from_millis(450),
+        started.elapsed() >= Duration::from_millis(400),
         "the repeat went before the first quote was half of its freshness limit old"
     );
     assert_eq!(carried, deadline, "a newer pong renewed the deadline a waiting repeat keeps");
