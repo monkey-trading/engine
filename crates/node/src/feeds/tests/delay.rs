@@ -16,7 +16,8 @@ use crate::clock::now_ms;
 use crate::config::{ApiKey, Venue, VenueConnection, VenueSymbol};
 use crate::feeds::kraken;
 use crate::feeds::tests::fake::{
-    Conn, WAIT, accept, fast, kraken_book, listen, next_alert, next_prices, send, spawn_feed, spawn_feed_into, stream,
+    Conn, FakeEngine, WAIT, accept, fast, kraken_book, listen, next_alert, next_prices, send, spawn_feed,
+    spawn_feed_into, stream,
 };
 use crate::feeds::tests::vendors::{KEY, Prices, serve_databento};
 use crate::feeds::venue::{self, Timing};
@@ -156,12 +157,16 @@ async fn a_quote_on_a_connection_without_pings_carries_no_deadline() {
 
 // ── Helpers ──
 
-/// The `not_after` of the next quote the feed sequences.
+/// The `not_after` of the next quote the feed sequences, answering its queries meanwhile, since a
+/// feed takes an unanswered one for the sequencer gone.
 async fn next_not_after(rx: &mut mpsc::Receiver<Request>) -> Option<std::time::Instant> {
+    let engine = FakeEngine::new();
     let quote = async {
         loop {
-            if let Request::Quote { not_after, .. } = rx.recv().await.expect("feed running") {
-                return not_after;
+            match rx.recv().await.expect("feed running") {
+                Request::Quote { not_after, .. } => return not_after,
+                Request::Query(query) => engine.answer(query),
+                _ => {}
             }
         }
     };

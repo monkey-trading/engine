@@ -88,7 +88,8 @@ fn a_quote_held_back_past_its_deadline_is_dropped_however_fresh_its_stamp_looks(
     // the deadline kept it out.
     assert!(seq.sequence_quote(prices(stamp), Some(clock.instant() + MAX_DELAY)).unwrap().is_some());
     assert!(seq.engine.markets()[&1].index(seq.engine.now()).is_ok());
-    let later = clock.true_ms();
+    clock.advance(Duration::from_secs(1));
+    let later = clock.now_ms();
     assert!(seq.sequence_quote(prices(later), None).unwrap().is_some());
     assert_eq!(seq.engine.markets()[&1].quotes["venue-a"].ts, later);
 }
