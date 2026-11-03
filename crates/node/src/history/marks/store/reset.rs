@@ -19,7 +19,7 @@ use engine_core::types::{MarketId, Millis};
 
 use crate::history::marks::Provenance;
 use crate::history::marks::Resolution;
-use crate::history::marks::store::chain::{ChainUpdates, anchor_updates, check_anchors, retag, verify_row};
+use crate::history::marks::store::chain::{ChainUpdates, RETAG, anchor_updates, check_anchors, retag_with, verify_row};
 use crate::history::marks::store::{ChainAnchors, SnapRow};
 
 /// Validates every pair's chain as the file holds it: every row authenticates, and every link
@@ -99,13 +99,14 @@ fn rebind(
     snapshot: &Snapshot,
     deleted: &BTreeSet<(MarketId, Resolution, Millis)>,
 ) -> anyhow::Result<()> {
+    let mut update = tx.prepare(RETAG).context("preparing the re-tag")?;
     for ((market, resolution), rows) in snapshot {
         let mut pred: Option<(Millis, [u8; 16])> = None;
         for row in rows {
             if deleted.contains(&(*market, *resolution, row.bucket)) {
                 continue;
             }
-            let tag = retag(mac, tx, *market, *resolution, row, pred)?;
+            let tag = retag_with(&mut update, mac, *market, *resolution, row, pred)?;
             pred = Some((row.bucket, tag));
         }
     }

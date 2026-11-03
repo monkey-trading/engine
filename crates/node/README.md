@@ -1625,10 +1625,11 @@ unbounded by default), the activity length, and the close-out and profit buckets
 `{"market", "resolution", "entries", "next", "max_limit"}`: one market's index-mark history from the
 derived marks cache, oldest first. Each entry is one bucket — its window start `ts` and its OHLC,
 prices as decimal strings — with a `provenance` of `log_derived` or `seeded_from_provider`, so a
-client can weigh seeded history against what the public log proves; a bucket a log mark has reached
-holds exactly what the public log proves, and every recovery re-derives the log-derived buckets from
-the verified log, so a `log_derived` label never covers provider values or rows the host wrote while
-the node was stopped. Every row is also chained: each bucket names the bucket below it, the row's
+client can weigh seeded history against what the public log proves; after a full recovery without
+`[snapshots]`, a bucket a log mark has reached holds what the public log proves, because that
+recovery re-derives the log-derived buckets from the verified log, so a `log_derived` label does
+not cover rows the host wrote while the node was stopped. A node with `[snapshots]` re-derives
+none and serves the rows it imported. Every row is also chained: each bucket names the bucket below it, the row's
 authentication tag binds that name, and per-pair chain anchors — the floor and the head, committed
 in memory atomically with each write — reject a host that deletes, reorders, or rolls the cache
 back mid-run: the next read over the broken span or ends fails before anything is signed, and a
@@ -1649,14 +1650,16 @@ the anchors. At startup the prior cache's rows are verified under that file's ke
 and re-tagged under this run's key, so an older authentic row the host restores while the node is
 stopped, or newest rows it removes, are not detected. A full recovery without `[snapshots]`
 re-derives the log-derived rows from the verified log and corrects them, though not provider-seeded
-rows the host removed, and a node with `[snapshots]` replays only the suffix, so it corrects none.
+rows the host removed, and a node with `[snapshots]` attaches no marks sink, whichever way it
+recovers, so it corrects none.
 `?limit=` is 1 to `max_limit` (2000), 500 by default, and a window wider than that pages by
 passing a page's `next` as `from_ms`. The cache is derived state, never sequenced: recovery seeds
 it from the log's replay, the sequencer's live mark reports keep it current, and
 `[history.marks.backfill]`, where configured, fetches historical candles from the feed venue's
 public endpoint (Coinbase's, for its markets) to seed the depth a fresh log cannot have; removing
 `history.dir` while the node is stopped rebuilds it. A cache file written by an older version is
-not imported: the log re-derives what it proves and a configured backfill re-seeds the rest.
+not imported: a full recovery re-derives what the log proves and a configured backfill re-seeds
+the rest.
 `[history.marks]` also tunes
 each resolution's retention — 1s for 48h, 1m for 60d, 1h for 2y, 1d unbounded by default — and
 `[history.marks.backfill]` sets whether to backfill, the endpoint's base URL (the venue's own,

@@ -24,7 +24,7 @@ impl Store {
     /// of a predecessor's tag is carried over.
     /// Rows the host altered fail verification and are dropped with a warning, never imported. A
     /// prior file of another schema version is skipped: this build cannot authenticate its rows,
-    /// and the log re-derives what it proves while a configured backfill re-seeds the rest. One
+    /// and a configured backfill re-seeds the rest (a full recovery re-derives what the log proves). One
     /// transaction; the prior file is opened read-only and never modified.
     /// Error cases:
     /// - the prior file cannot be read

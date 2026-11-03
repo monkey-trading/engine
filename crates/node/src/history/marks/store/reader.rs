@@ -12,7 +12,7 @@ use rusqlite::{OptionalExtension, params};
 use tokio::sync::Semaphore;
 use tokio::task::spawn_blocking;
 
-use crate::history::marks::store::auth::Interior;
+use crate::history::marks::store::auth::Pins;
 use crate::history::marks::store::chain::verify_row;
 use crate::history::marks::store::{
     ChainAnchor, ChainAnchors, ChainHead, PageQuery, Row, SchemaRow, SnapRow, WINDOW, tag,
@@ -161,14 +161,14 @@ pub(crate) fn read_page_once(
     let conn = conn.transaction().context("starting a marks read")?;
     store::check_schema(&conn, schema, path)?;
     after_snapshot();
-    let (anchor, interior) = {
+    let (anchor, pins) = {
         let committed = anchors.lock().expect("the marks chain anchors are never poisoned");
-        (committed.get(&(market, resolution)).copied(), committed.interior((market, resolution)))
+        (committed.get(&(market, resolution)).copied(), committed.pins((market, resolution)))
     };
     // A row the write path rewrote under a row above it is accepted at its committed tag only: an
     // older authentic version is a replay, or, on a snapshot older than the anchors, a raced commit.
     let pinned = |bucket: Millis, stored: &[u8; 16]| -> anyhow::Result<()> {
-        if interior.get(&bucket).is_some_and(|committed| committed != stored) {
+        if pins.get(&bucket).is_some_and(|committed| committed != stored) {
             if allow_stale {
                 return Err(StaleAnchor.into());
             }
@@ -278,7 +278,7 @@ pub(crate) fn read_page_once(
                 "a stored mark at {ts} breaks the chain: its link does not name the bucket below it"
             );
             ensure!(
-                binds(&interior, previous, prev_tag),
+                binds(&pins, previous, prev_tag),
                 "a stored mark at {ts} breaks the chain: its link is bound to another version of the bucket below it"
             );
             previous = Some((ts, stored));
@@ -314,7 +314,7 @@ pub(crate) fn read_page_once(
             above.bucket
         );
         ensure!(
-            binds(&interior, previous, above.prev_tag),
+            binds(&pins, previous, above.prev_tag),
             "a stored mark at {} breaks the chain: its link is bound to another version of the bucket below it",
             above.bucket
         );
@@ -325,9 +325,9 @@ pub(crate) fn read_page_once(
 /// Whether a row's recorded tag of the row below it is the tag that row carries now. A row the
 /// write path rewrote under a row above it is pinned instead, at its committed tag, and the row
 /// above keeps the tag it recorded then. The floor records nothing.
-fn binds(interior: &Interior, below: Option<(Millis, [u8; 16])>, recorded: Option<[u8; 16]>) -> bool {
+fn binds(pins: &Pins, below: Option<(Millis, [u8; 16])>, recorded: Option<[u8; 16]>) -> bool {
     match below {
         None => recorded.is_none(),
-        Some((bucket, tag)) => interior.contains_key(&bucket) || recorded == Some(tag),
+        Some((bucket, tag)) => pins.contains_key(&bucket) || recorded == Some(tag),
     }
 }

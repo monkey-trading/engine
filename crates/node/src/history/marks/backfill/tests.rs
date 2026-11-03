@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use engine_core::Fixed;
 
-use super::{Candle, Candles, Source, parse_candles, seed_market, service_live, sources, windows};
+use super::{Candle, Candles, Source, StoreFault, parse_candles, seed_market, service_live, sources, windows};
 use crate::config::{BackfillSection, FeedProvider, FeedsSection, Venue, VenueConnection, VenueSymbol};
 use crate::history::marks::run::{FLUSH_EVERY, Live, QUEUE};
 use crate::history::marks::store::Store;
@@ -236,6 +236,20 @@ async fn service_live_holds_the_flush_deadline() {
     tx.send((1, 1_792_489_800_000, fixed("67100"))).await.unwrap();
     service_live(&mut live, &mut store).unwrap();
     assert_eq!(live.buffered.len(), 1, "before the deadline the buffer holds the sample");
+}
+
+/// A write the cache rejects is marked as the cache's own, so the run loop stops the node rather than
+/// retry a backfill under a run key whose aborted rows the host may have read.
+#[tokio::test]
+async fn a_cache_write_failure_in_the_shared_service_is_marked_as_the_caches_own() {
+    let dir = scratch_dir("backfill-store-fault");
+    let mut store = Store::open_in(&dir, Retentions::defaults(), [0x42; 32]).unwrap();
+    rusqlite::Connection::open(dir.join("marks.sqlite")).unwrap().execute("CREATE TABLE host_note (x)", []).unwrap();
+    let (tx, rx) = tokio::sync::mpsc::channel(QUEUE);
+    let mut live = Live { samples: rx, buffered: Vec::new(), flushed_at: tokio::time::Instant::now() - FLUSH_EVERY };
+    tx.send((1, 1_792_489_800_000, fixed("67000"))).await.unwrap();
+    let err = service_live(&mut live, &mut store).expect_err("a changed schema refuses the write");
+    assert!(err.downcast_ref::<StoreFault>().is_some(), "{err:#}");
 }
 
 /// End to end over `seed_market`: a queued live mark reaches the cache across a backfill's

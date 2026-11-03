@@ -14,7 +14,7 @@ use engine_core::types::{MarketId, Millis};
 use rusqlite::{Connection, OptionalExtension, Transaction, named_params, params};
 
 use crate::history::marks::Resolution;
-use crate::history::marks::store::auth::{Interior, PairCommit, Rewrites, Row, tag};
+use crate::history::marks::store::auth::{PairCommit, Pins, Rewrites, Row, tag};
 use crate::history::marks::store::merge;
 use crate::history::marks::store::{ChainAnchor, ChainAnchors, ChainHead, Seed, SnapRow};
 use crate::history::marks::{Provenance, Retentions};
@@ -34,9 +34,33 @@ pub(crate) fn verify_row(
     Ok(())
 }
 
-/// Re-links `row` to `prev` (the bucket below it, with the tag that row carries), keeping its
-/// content: updates the chain link and the tag that binds it, in the transaction that reasons over
-/// the chain. Returns the row's new tag.
+/// The statement `retag` runs, prepared once by a caller that re-tags many rows.
+pub(crate) const RETAG: &str = "UPDATE marks SET prev_bucket = ?4, tag = ?5, prev_tag = ?6
+     WHERE market = ?1 AND resolution = ?2 AND bucket = ?3";
+
+/// Re-links `row` to `below` (the bucket below it, with the tag that row carries), keeping its
+/// content: updates the chain link and the tag that binds it, through `update` prepared from
+/// `RETAG` in the transaction that reasons over the chain. Returns the row's new tag.
+/// Error cases:
+/// - the update fails
+pub(crate) fn retag_with(
+    update: &mut rusqlite::Statement<'_>,
+    mac: &hmac::Hmac<sha2::Sha256>,
+    market: MarketId,
+    resolution: Resolution,
+    row: &SnapRow,
+    below: Option<(Millis, [u8; 16])>,
+) -> anyhow::Result<[u8; 16]> {
+    let (prev, prev_tag) = (below.map(|below| below.0), below.map(|below| below.1));
+    let fields = Row { prev, prev_tag, ..row.fields() };
+    let tag = tag(mac, market, resolution, row.bucket, &fields);
+    update
+        .execute(params![i64::from(market), resolution as i64, row.bucket, prev, tag, prev_tag])
+        .with_context(|| format!("re-linking the {market} {resolution:?} bucket at {}", row.bucket))?;
+    Ok(tag)
+}
+
+/// `retag_with` for a single row.
 /// Error cases:
 /// - the update fails
 pub(crate) fn retag(
@@ -47,16 +71,8 @@ pub(crate) fn retag(
     row: &SnapRow,
     below: Option<(Millis, [u8; 16])>,
 ) -> anyhow::Result<[u8; 16]> {
-    let (prev, prev_tag) = (below.map(|below| below.0), below.map(|below| below.1));
-    let fields = Row { prev, prev_tag, ..row.fields() };
-    let tag = tag(mac, market, resolution, row.bucket, &fields);
-    tx.execute(
-        "UPDATE marks SET prev_bucket = ?4, tag = ?5, prev_tag = ?6
-         WHERE market = ?1 AND resolution = ?2 AND bucket = ?3",
-        params![i64::from(market), resolution as i64, row.bucket, prev, tag, prev_tag],
-    )
-    .with_context(|| format!("re-linking the {market} {resolution:?} bucket at {}", row.bucket))?;
-    Ok(tag)
+    let mut update = tx.prepare(RETAG).context("preparing a marks re-link")?;
+    retag_with(&mut update, mac, market, resolution, row, below)
 }
 
 /// Requires the stored row at `bucket` with `tag` to be the version this node last wrote for it
@@ -72,7 +88,7 @@ pub(crate) fn retag(
 pub(crate) fn ensure_current(
     mac: &hmac::Hmac<sha2::Sha256>,
     tx: &Transaction,
-    pins: Option<&Interior>,
+    pins: Option<&Pins>,
     written: Option<&BTreeSet<Millis>>,
     (market, resolution): (MarketId, Resolution),
     bucket: Millis,
@@ -149,7 +165,7 @@ const HEAD: &str = "SELECT bucket, tag FROM marks
     WHERE market = :market AND resolution = :resolution ORDER BY bucket DESC LIMIT 1";
 
 /// The updates one write publishes with its commit: `Some` for a pair's freshly committed floor
-/// and head and the interior rows it rewrote, `None` for a pair whose every bucket the write
+/// and head and the rows it rewrote, `None` for a pair whose every bucket the write
 /// removed.
 pub(crate) type ChainUpdates = BTreeMap<(MarketId, Resolution), Option<PairCommit>>;
 
@@ -236,7 +252,7 @@ pub(crate) fn anchor_updates(
             updates.insert((market, resolution), None);
             continue;
         };
-        let mut rewritten = Interior::new();
+        let mut rewritten = Pins::new();
         for &bucket in rewrites.get(&(market, resolution)).into_iter().flatten() {
             let tag: Option<[u8; 16]> = tx
                 .query_row(
@@ -363,7 +379,7 @@ pub(crate) fn apply_prune(
             floor.bucket
         );
         let pair = (market, resolution);
-        let pins = prior.interior(pair);
+        let pins = prior.pins(pair);
         ensure_current(mac, tx, Some(pins.as_ref()), rewrites.get(&pair), pair, floor.bucket, floor.tag)?;
         retag(mac, tx, market, resolution, &floor, None)?;
         rewrote(rewrites, market, resolution, floor.bucket);

@@ -81,7 +81,11 @@ async fn a_gap_filled_under_a_row_cannot_be_undone_by_restoring_the_row() {
     // Any window holding C refuses, and so does one that ends below it and would hide B: the row
     // above a window vouches for the span it closes.
     let c = BASE + 2 * MIN;
-    assert_refused(&store, &[(i64::MIN, i64::MAX), (c, c), (BASE, c), (c, BASE + 10 * MIN), (BASE, BASE + MIN)]).await;
+    assert_refused(
+        &store,
+        &[(i64::MIN, i64::MAX), (c, c), (BASE, c), (c, BASE + 10 * MIN), (BASE, BASE + MIN), (c + 1, i64::MAX)],
+    )
+    .await;
     assert_refused(&store, &[(BASE, BASE)]).await;
 }
 
@@ -117,7 +121,7 @@ async fn an_earlier_version_of_a_row_a_late_sample_merged_into_is_refused() {
 #[tokio::test]
 async fn head_merges_pin_nothing_and_a_prune_drops_the_pins_below_the_floor() {
     let (_path, mut store) = fresh_store_at("marks-replay-pins", hour_retentions());
-    let pinned = |store: &Store| store.prior_anchors().interior((1, Resolution::M1)).len();
+    let pinned = |store: &Store| store.prior_anchors().pins((1, Resolution::M1)).len();
     let samples: Vec<_> = (0..40).map(|n| (1, BASE + n * 15_000, fixed(&format!("{}", 1 + n % 7)))).collect();
     for sample in &samples {
         store.observe(&[*sample]).unwrap();
@@ -127,7 +131,7 @@ async fn head_merges_pin_nothing_and_a_prune_drops_the_pins_below_the_floor() {
     store.seed(&[seed_at(BASE - MIN, "1"), seed_at(BASE - 2 * MIN, "1")], BASE).unwrap();
     assert_eq!(pinned(&store), 1);
     store.observe(&[(1, BASE + 2 * HOUR, fixed("3"))]).unwrap();
-    let pins = store.prior_anchors().interior((1, Resolution::M1));
+    let pins = store.prior_anchors().pins((1, Resolution::M1));
     assert!(pins.keys().all(|bucket| *bucket >= BASE + 2 * HOUR), "pins below the floor are dropped: {pins:?}");
 }
 
@@ -137,9 +141,9 @@ async fn a_reset_re_binds_the_survivors_and_clears_the_pins() {
     store.observe(&[(1, BASE, fixed("1")), (1, BASE + 3 * MIN, fixed("4"))]).unwrap();
     store.observe(&[(1, BASE + 4 * MIN, fixed("5"))]).unwrap();
     store.seed(&[seed_at(BASE + 2 * MIN, "3"), seed_at(BASE + MIN, "2")], BASE + 4 * MIN).unwrap();
-    assert!(!store.prior_anchors().interior((1, Resolution::M1)).is_empty());
+    assert!(!store.prior_anchors().pins((1, Resolution::M1)).is_empty());
     store.reset_log_derived().unwrap();
-    assert!(store.prior_anchors().interior((1, Resolution::M1)).is_empty());
+    assert!(store.prior_anchors().pins((1, Resolution::M1)).is_empty());
     let entries = page(&store, i64::MIN, i64::MAX).await.unwrap().entries;
     assert_eq!(entries.iter().map(|entry| entry.ts).collect::<Vec<_>>(), [BASE + MIN, BASE + 2 * MIN]);
 }
@@ -221,7 +225,7 @@ async fn a_prune_pins_the_new_floor_and_pages_across_it_serve() {
     store.observe(&[(1, BASE + HOUR + 30_000, fixed("4"))]).unwrap();
     let entries = page(&store, i64::MIN, i64::MAX).await.unwrap().entries;
     assert_eq!(entries.iter().map(|entry| entry.ts).collect::<Vec<_>>(), [BASE + MIN, BASE + 2 * MIN, BASE + HOUR]);
-    assert!(store.prior_anchors().interior((1, Resolution::M1)).contains_key(&(BASE + MIN)), "the floor is pinned");
+    assert!(store.prior_anchors().pins((1, Resolution::M1)).contains_key(&(BASE + MIN)), "the floor is pinned");
 }
 
 /// A restart imports the prior run's rows without its pins; the import re-tags them, each
@@ -233,12 +237,12 @@ async fn an_imported_chain_with_rewritten_rows_reads_without_the_prior_runs_pins
     prior.observe(&[(1, BASE, fixed("1")), (1, BASE + 2 * MIN, fixed("3"))]).unwrap();
     prior.observe(&[(1, BASE + 3 * MIN, fixed("4"))]).unwrap();
     prior.seed(&[seed_at(BASE + MIN, "2")], BASE + 3 * MIN).unwrap();
-    assert!(!prior.prior_anchors().interior((1, Resolution::M1)).is_empty());
+    assert!(!prior.prior_anchors().pins((1, Resolution::M1)).is_empty());
     drop(prior);
     let mut store = fresh_store("marks-replay-import-fresh", Retentions::defaults());
     store.import_prior(&prior_dir.join("marks.sqlite")).unwrap();
     store.validate_chains().unwrap();
-    assert!(store.prior_anchors().interior((1, Resolution::M1)).is_empty());
+    assert!(store.prior_anchors().pins((1, Resolution::M1)).is_empty());
     assert_eq!(page(&store, i64::MIN, i64::MAX).await.unwrap().entries.len(), 4);
 }
 
@@ -395,12 +399,12 @@ async fn emptying_a_pair_drops_its_pins() {
     store.observe(&[(1, BASE, fixed("1")), (1, BASE + 2 * MIN, fixed("3"))]).unwrap();
     store.observe(&[(1, BASE + 3 * MIN, fixed("4"))]).unwrap();
     store.seed(&[seed_at(BASE + MIN, "2")], BASE + 3 * MIN).unwrap();
-    assert!(!store.prior_anchors().interior((1, Resolution::M1)).is_empty());
+    assert!(!store.prior_anchors().pins((1, Resolution::M1)).is_empty());
     // Another market's flush, two hours on, expires every row market 1 holds.
     store.observe(&[(2, BASE + 2 * HOUR, fixed("5"))]).unwrap();
     let anchors = store.prior_anchors();
     assert!(anchors.get(&(1, Resolution::M1)).is_none());
-    assert!(anchors.interior((1, Resolution::M1)).is_empty());
+    assert!(anchors.pins((1, Resolution::M1)).is_empty());
 }
 
 #[tokio::test]

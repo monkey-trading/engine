@@ -16,7 +16,7 @@ use crate::history::marks::Provenance;
 use crate::history::marks::Resolution;
 use crate::history::marks::store::ChainAnchors;
 use crate::history::marks::store::SnapRow;
-use crate::history::marks::store::auth::{Interior, Rewrites, Row, tag};
+use crate::history::marks::store::auth::{Pins, Rewrites, Row, tag};
 use crate::history::marks::store::chain::{PREDECESSOR, ROW_AT, SUCCESSOR, ensure_current, retag, rewrote, verify_row};
 
 /// The row store a merge writes, shared with nothing else so the statement is the merge's alone.
@@ -41,7 +41,7 @@ pub(crate) struct MergeStmts<'tx> {
 /// A pair as the write found it: where its head stood and the rows pinned in it.
 struct PairState {
     head: Millis,
-    pins: Arc<Interior>,
+    pins: Arc<Pins>,
 }
 
 impl<'tx> MergeStmts<'tx> {
@@ -63,7 +63,7 @@ impl<'tx> MergeStmts<'tx> {
                 .iter()
                 .filter_map(|&pair| {
                     let head = prior.get(&pair)?.head.bucket;
-                    Some((pair, PairState { head, pins: prior.interior(pair) }))
+                    Some((pair, PairState { head, pins: prior.pins(pair) }))
                 })
                 .collect(),
             rewrites: Rewrites::new(),

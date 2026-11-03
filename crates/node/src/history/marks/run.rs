@@ -152,6 +152,7 @@ async fn backfill_due(
                     .context("recording the backfill")?;
                 retry_at.remove(&market);
             }
+            Err(e) if e.downcast_ref::<backfill::StoreFault>().is_some() => return Err(e),
             Err(e) => {
                 warn!(alert = "marks_backfill_failed", market, venue = source.venue.name(), "{e:#}");
                 retry_at.insert(market, Instant::now() + RETRY_AFTER);

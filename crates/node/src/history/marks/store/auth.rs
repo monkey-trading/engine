@@ -56,17 +56,17 @@ pub(crate) fn run_mac(mac_key: &[u8; 32], epoch: &Epoch) -> hmac::Hmac<sha2::Sha
 /// time, by bucket and tag as committed: a successor binds its predecessor's tag as written with
 /// it, and a window's closing row vouches for the span it closes by its link, so for these rows
 /// the committed tag is the only version a read or a write accepts.
-pub(crate) type Interior = BTreeMap<Millis, [u8; 16]>;
+pub(crate) type Pins = BTreeMap<Millis, [u8; 16]>;
 
 /// The buckets a write rewrote in place, per pair, whose tags `anchor_updates` reads at commit.
 pub(crate) type Rewrites = BTreeMap<(MarketId, Resolution), BTreeSet<Millis>>;
 
-/// What one write commits for a pair: its anchor, the tags of the interior rows it rewrote, and
-/// whether it re-bound the whole pair, which clears the interior set.
+/// What one write commits for a pair: its anchor, the tags of the rows it rewrote, and
+/// whether it re-bound the whole pair, which clears its pins.
 #[derive(Debug, Clone)]
 pub(crate) struct PairCommit {
     pub anchor: ChainAnchor,
-    pub rewritten: Interior,
+    pub rewritten: Pins,
     pub rebound: bool,
 }
 
@@ -77,7 +77,7 @@ pub(crate) struct PairCommit {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ChainAnchors {
     anchors: BTreeMap<(MarketId, Resolution), ChainAnchor>,
-    interior: BTreeMap<(MarketId, Resolution), Arc<Interior>>,
+    pins: BTreeMap<(MarketId, Resolution), Arc<Pins>>,
 }
 
 impl ChainAnchors {
@@ -101,10 +101,10 @@ impl ChainAnchors {
         self.anchors.insert(pair, anchor);
     }
 
-    /// The interior rows pinned for `pair`: shared, so a reader holds the set it checked a page
+    /// The rows pinned for `pair`: shared, so a reader holds the set it checked a page
     /// against while the writer moves on.
-    pub(crate) fn interior(&self, pair: (MarketId, Resolution)) -> Arc<Interior> {
-        self.interior.get(&pair).cloned().unwrap_or_default()
+    pub(crate) fn pins(&self, pair: (MarketId, Resolution)) -> Arc<Pins> {
+        self.pins.get(&pair).cloned().unwrap_or_default()
     }
 
     /// Merges a transaction's commits: `Some` replaces the pair's anchor and pins what it
@@ -114,12 +114,12 @@ impl ChainAnchors {
         for (pair, commit) in updates {
             let Some(commit) = commit else {
                 self.anchors.remove(&pair);
-                self.interior.remove(&pair);
+                self.pins.remove(&pair);
                 continue;
             };
             let floor = commit.anchor.floor.bucket;
             self.anchors.insert(pair, commit.anchor);
-            let pinned = self.interior.entry(pair).or_default();
+            let pinned = self.pins.entry(pair).or_default();
             let expired = pinned.first_key_value().is_some_and(|(bucket, _)| *bucket < floor);
             if commit.rebound || expired || !commit.rewritten.is_empty() {
                 let pinned = Arc::make_mut(pinned);
