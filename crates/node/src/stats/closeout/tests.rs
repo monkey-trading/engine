@@ -5,7 +5,7 @@ fn f(n: i64) -> Fixed {
     Fixed::from_int(n)
 }
 
-/// BTC-USD of the dev genesis: 1% margin on the first million of notional and 20% above.
+/// BTC-USD of the dev genesis: 1% margin on the first two million of notional, 2% to ten million and 5% above.
 fn btc() -> MarketSpec {
     dev_config().genesis.markets.into_iter().find(|market| market.id == 1).unwrap()
 }
@@ -17,17 +17,17 @@ fn standing(equity: i64, margin: i64) -> Standing {
 #[test]
 fn a_close_out_across_a_margin_band_is_found_where_the_slack_reaches_zero() {
     let spec = btc();
-    // A long of 1.5M with 1M of equity and a 110k margin (1% of the first million, 20% of the rest),
-    // closed out at half the margin. Falling to notional N the equity is 1M + (N - 1.5M) and the
-    // margin 1% of N below the million, so the slack N - 0.5M - 0.005N is nil at N = 502513: 66.5%
+    // A long of 3M with 2M of equity and a 40k margin (1% of the first two million, 2% of the rest),
+    // closed out at half the margin. Falling to notional N the equity is 2M + (N - 3M) and the
+    // margin 1% of N below the two million, so the slack N - 1M - 0.005N is nil at N = 1005025: 66.5%
     // below the mark, in the first band although the position stands in the second.
-    let position = Position { notional: f(1_500_000), long: true, spec: &spec };
-    let reach = reach(standing(1_000_000, 110_000), position, 9_000);
+    let position = Position { notional: f(3_000_000), long: true, spec: &spec };
+    let reach = reach(standing(2_000_000, 40_000), position, 9_000);
     let Reach::At(offset) = reach else { panic!("{reach:?}") };
     assert!((-6_660..=-6_640).contains(&offset), "{offset}");
     // The same account's slack at the estimate is nil: its equity is the level's share of the margin.
-    let notional = f(1_500_000) + f(1_500_000).mul_bps(offset);
-    let equity = f(1_000_000) - (f(1_500_000) - notional);
+    let notional = f(3_000_000) + f(3_000_000).mul_bps(offset);
+    let equity = f(2_000_000) - (f(3_000_000) - notional);
     let margin = spec.margin_for(notional, Rounding::Up);
     assert!((equity - margin.mul_bps(5_000)).abs() < f(200), "{equity} vs {margin}");
 }

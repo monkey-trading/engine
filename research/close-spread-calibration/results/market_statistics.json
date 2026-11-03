@@ -1,8 +1,8 @@
 {
   "engine_revision": "41a9ef4a52cb26ac592c5a0e372f610d8d1ba067",
   "input_sha256": {
-    "genesis_inventory": "3569588aba17895b97247ac8c5a7adb2741cf51b0d49439c90822d7c096f7d8d",
-    "genesis_file_informational": "7da8130364beb3384043d8ed5b96dabc19805a9d8da039df6ef2c5c0d6356bdd",
+    "genesis_inventory": "349ab8689397b11ec6f853377865e863321cd8a0e1c99afed42691e3bdb035ef",
+    "genesis_file_informational": "c5b572511e0e2e6d13428b36482b1a38aee39090eabe6961a8ab99cf19d9d873",
     "bars": "d742bab6c751e97338bbb82d7801f22aec3a5bed7d01904b7dcdd9ed076ec522",
     "catalogue.py": "8426ed40b977bc18c2b80fa240b3d2c22c56b2c871363017e9b84af159cb6396",
     "derive/markets.py": "32629c08a2adcb27109f4dddd529828ccc81421fd583245e673d9108d1edd428",
@@ -79,11 +79,15 @@
         "house_cap_bps": 3000,
         "margin_tiers": [
           {
-            "up_to": "1000000",
+            "up_to": "2000000",
             "bps": 100
           },
           {
-            "bps": 2000
+            "up_to": "10000000",
+            "bps": 200
+          },
+          {
+            "bps": 500
           }
         ],
         "spread_tiers": [
@@ -159,11 +163,15 @@
         "house_cap_bps": 2000,
         "margin_tiers": [
           {
-            "up_to": "1000000",
+            "up_to": "2000000",
             "bps": 100
           },
           {
-            "bps": 2000
+            "up_to": "10000000",
+            "bps": 200
+          },
+          {
+            "bps": 500
           }
         ],
         "spread_tiers": [

@@ -283,7 +283,7 @@ asset_class = "crypto"
 max_slippage_bps = 25
 house_cap_bps = 3000
 house_cap_floor = "300000"
-margin_tiers = [{ up_to = "1000000", bps = 100 }, { bps = 2000 }]
+margin_tiers = [{ up_to = "2000000", bps = 100 }, { up_to = "10000000", bps = 200 }, { bps = 500 }]
 spread_tiers = [{ up_to = "2000000", bps = 0 }, { up_to = "10000000", bps = 3 }, { bps = 8 }]
 schedule = { kind = "always_open" }
 price_rules = { max_age_ms = 1000, max_divergence_bps = 25, min_sources = 2 }
@@ -296,7 +296,7 @@ asset_class = "crypto"
 max_slippage_bps = 25
 house_cap_bps = 2000
 house_cap_floor = "200000"
-margin_tiers = [{ up_to = "1000000", bps = 100 }, { bps = 2000 }]
+margin_tiers = [{ up_to = "2000000", bps = 100 }, { up_to = "10000000", bps = 200 }, { bps = 500 }]
 spread_tiers = [{ up_to = "1000000", bps = 0 }, { up_to = "5000000", bps = 3 }, { bps = 8 }]
 schedule = { kind = "always_open" }
 price_rules = { max_age_ms = 1000, max_divergence_bps = 25, min_sources = 2 }
