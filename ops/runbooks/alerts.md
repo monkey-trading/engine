@@ -100,6 +100,7 @@ Rebuilt from the log. None changes the books.
 | `benchmark_fetch_failed` | Warning | A publisher fetch failed; history is retained and the worker retries. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Benchmark rates". |
 | `benchmark_sync_failed` | Warning | The benchmark worker's submission failed; it retries. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Benchmark rates". |
 | `benchmark_schedule_watch_failed` | Warning | The benchmark worker's schedule watch dropped; it reconnects. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Benchmark rates". |
+| `benchmark_rate_refused` | Warning | The worker left out a published rate the `V46` cap refuses; the last applied rate keeps financing. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Benchmark rates". |
 | `benchmark_sync_pending` | Warning | The node waits for the worker's signed history before catching up. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Benchmark rates". |
 | `corporate_action_failed` | Critical | A scheduled dividend or split failed; no partial change is committed. See [corporate-actions.md](corporate-actions.md), "When an action fails". |
 | `house_deficit` | Warning | House NAV is below zero; trading continues within the cap floors. See [reduce-only.md](reduce-only.md), "When". |

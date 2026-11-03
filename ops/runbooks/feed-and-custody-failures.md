@@ -120,6 +120,11 @@ section 5). It does not affect prices.
 - `benchmark_fetch_failed`, `benchmark_sync_failed`, `benchmark_schedule_watch_failed` (Warnings): a
   publisher fetch or a call to the node failed; the worker retries by itself. Check the
   publisher's endpoint and the worker host.
+- `benchmark_rate_refused` (Warning): from `V46`, a published rate is more than 300 bps a day from the
+  applied rates next to its date, or differs from a date already applied. The worker leaves it out and
+  signs the rest, so nothing else waits on it, and the last applied rate keeps financing. The limit
+  grows with each day, so a real move lands once it fits; a revision of an applied date never does.
+  Check the rate against the publisher. Signing it by hand is refused for the same reason.
 - `benchmark_rate_stale` (Critical): the newest observation is older than five weekdays at a
   rollover; financing still applies. `benchmark_rate_missing` (Critical): no observation, no
   financing is charged on that benchmark's markets. `benchmark_rate_undated` (Critical): a legacy
