@@ -120,3 +120,83 @@ fn command_cost_across_a_scan_interval() {
         );
     }
 }
+
+/// This process's resident memory in KiB, from `ps`.
+fn rss_kib() -> u64 {
+    let out = std::process::Command::new("ps")
+        .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+        .output()
+        .expect("ps runs");
+    String::from_utf8_lossy(&out.stdout).trim().parse().expect("ps prints the resident size")
+}
+
+/// What the worker's copy of the engine takes at 100k accounts: the encoded state and the process's
+/// resident memory before the worker starts, with its copy decoded, and after a scan has run on it.
+#[test]
+#[ignore = "100k-account benchmark: run in an isolated CPU window"]
+fn worker_copy_memory() {
+    let (_rig, engine) = engine_with_accounts();
+    let encoded = serde_json::to_vec(&engine).expect("encoding").len();
+    let before = rss_kib();
+    let stats = crate::test_support::stats();
+    stats.scan_in_background(&engine);
+    // A scan requested of the worker returns only once its copy is decoded.
+    stats.observe(&engine, engine.now() + 1, &[]);
+    stats.observe(&engine, engine.now() + 61_000, &[]);
+    stats.settle();
+    let after = rss_kib();
+    println!(
+        "STATS copy accounts={ACCOUNTS} encoded_mib={} rss_before_mib={} rss_after_mib={} copy_mib={}",
+        encoded >> 20,
+        before >> 10,
+        after >> 10,
+        after.saturating_sub(before) >> 10
+    );
+}
+
+/// How far the worker falls behind a sequencer that applies `rate` commands a second, at 100k accounts,
+/// with sequenced time running 10 ms a command so the scans come ten times as often as in production: the
+/// most commands waiting for it, in commands and milliseconds, the longest `follow` plus `observe`, and
+/// what is left to apply when the commands stop. Ticks stand for the commands; each scan is what keeps
+/// the worker from them.
+#[test]
+#[ignore = "100k-account benchmark: run in an isolated CPU window"]
+fn worker_lag_at_the_sequencers_rate() {
+    use engine_core::command::{Command, Sequenced};
+    let (_rig, mut engine) = engine_with_accounts();
+    let stats = crate::test_support::stats();
+    stats.scan_in_background(&engine);
+    for rate in [1_000u64, 5_000] {
+        let (mut costs, mut most_behind, mut sent) = (Vec::new(), 0u64, 0u64);
+        let mut at = engine.now() + 10;
+        let began = Instant::now();
+        while began.elapsed().as_secs() < 14 {
+            // Hold to the rate: command `sent` is due `sent / rate` seconds in.
+            if began.elapsed().as_micros() < u128::from(sent * 1_000_000 / rate) {
+                continue;
+            }
+            let sequenced = Sequenced { seq: engine.last_seq().unwrap() + 1, ts: at, cmd: Command::Tick };
+            let events = engine.apply(&sequenced).expect("a tick applies");
+            let cost = Instant::now();
+            stats.follow(&sequenced);
+            stats.observe(&engine, at, &events);
+            costs.push((cost.elapsed().as_micros(), sent));
+            most_behind = most_behind.max(stats.behind());
+            at += 10;
+            sent += 1;
+        }
+        let left = stats.behind();
+        let drained = Instant::now();
+        stats.settle();
+        let mut sorted = costs.clone();
+        sorted.sort_unstable();
+        let (p99, p999) = (sorted[sorted.len() * 99 / 100].0, sorted[sorted.len() * 999 / 1000].0);
+        let over = sorted.iter().filter(|(micros, _)| *micros > 200).count();
+        let worst: Vec<_> = sorted.iter().rev().take(5).collect();
+        println!(
+            "STATS lag rate={rate}/s commands={sent} most_behind={most_behind} most_behind_ms={} p99_us={p99} p999_us={p999} over_200us={over} worst_us_at_command={worst:?} left_at_stop={left} drained_ms={}",
+            most_behind * 1_000 / rate,
+            drained.elapsed().as_millis()
+        );
+    }
+}

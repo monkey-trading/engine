@@ -9,6 +9,8 @@
 //! commands the log holds. If it stops, or its copy would differ, the record scans on the
 //! sequencer's thread as it did before, and an alert says so.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, channel, sync_channel};
 
 use engine_core::Engine;
@@ -24,7 +26,7 @@ const QUEUE: usize = 100_000;
 
 enum Job {
     Apply(Box<Sequenced>),
-    Scan { seq: u64, ts: Millis, layout: Layout },
+    Scan { seq: u64, ts: Millis, layout: Layout, full: bool },
 }
 
 pub(super) enum Done {
@@ -38,6 +40,10 @@ pub(super) struct Background {
     done: Receiver<Done>,
     /// Scans requested whose results are not yet taken.
     in_flight: usize,
+    /// Commands handed over, and commands the worker has applied.
+    sent: u64,
+    #[cfg(test)]
+    applied: Arc<AtomicU64>,
 }
 
 impl Background {
@@ -50,13 +56,30 @@ impl Background {
         let state = serde_json::to_vec(engine)?;
         let (jobs, work) = sync_channel(QUEUE);
         let (reply, done) = channel();
-        std::thread::Builder::new().name("stats-scan".into()).spawn(move || run(&state, &work, &reply))?;
-        Ok(Self { jobs, done, in_flight: 0 })
+        let applied = Arc::new(AtomicU64::new(0));
+        let counter = Arc::clone(&applied);
+        std::thread::Builder::new().name("stats-scan".into()).spawn(move || run(state, &work, &reply, &counter))?;
+        Ok(Self {
+            jobs,
+            done,
+            in_flight: 0,
+            sent: 0,
+            #[cfg(test)]
+            applied,
+        })
     }
 
     /// Hands the worker a command the sequencer applied. `false` once the worker has stopped.
-    pub(super) fn apply(&self, sequenced: &Sequenced) -> bool {
-        self.jobs.send(Job::Apply(Box::new(sequenced.clone()))).is_ok()
+    pub(super) fn apply(&mut self, sequenced: &Sequenced) -> bool {
+        let sent = self.jobs.send(Job::Apply(Box::new(sequenced.clone()))).is_ok();
+        self.sent += u64::from(sent);
+        sent
+    }
+
+    /// Commands handed over that the worker has not applied yet.
+    #[cfg(test)]
+    pub(super) fn behind(&self) -> u64 {
+        self.sent - self.applied.load(Ordering::Relaxed)
     }
 
     #[cfg(test)]
@@ -64,11 +87,11 @@ impl Background {
         self.in_flight
     }
 
-    /// Asks for a full scan of the state after the command at `seq`. Every due scan is asked for,
+    /// Asks for a scan, full or light, of the state after the command at `seq`. Every due scan is asked for,
     /// however many are still running, so what is sampled does not depend on how fast the worker
     /// is. `false` once the worker has stopped.
-    pub(super) fn request(&mut self, seq: u64, ts: Millis, layout: Layout) -> bool {
-        let sent = self.jobs.send(Job::Scan { seq, ts, layout }).is_ok();
+    pub(super) fn request(&mut self, seq: u64, ts: Millis, layout: Layout, full: bool) -> bool {
+        let sent = self.jobs.send(Job::Scan { seq, ts, layout, full }).is_ok();
         self.in_flight += usize::from(sent);
         sent
     }
@@ -100,8 +123,11 @@ impl Background {
     }
 }
 
-fn run(state: &[u8], work: &Receiver<Job>, reply: &std::sync::mpsc::Sender<Done>) {
-    let mut engine: Engine = match serde_json::from_slice(state) {
+fn run(state: Vec<u8>, work: &Receiver<Job>, reply: &std::sync::mpsc::Sender<Done>, applied: &AtomicU64) {
+    let decoded = serde_json::from_slice(&state);
+    // The encoding is as large as the engine; it is not kept for the life of the thread.
+    drop(state);
+    let mut engine: Engine = match decoded {
         Ok(engine) => engine,
         Err(error) => {
             let _ = reply.send(Done::Failed(format!("decoding the engine copy: {error}")));
@@ -115,14 +141,15 @@ fn run(state: &[u8], work: &Receiver<Job>, reply: &std::sync::mpsc::Sender<Done>
                     let _ = reply.send(Done::Failed(format!("applying seq {}: {error}", sequenced.seq)));
                     return;
                 }
+                applied.fetch_add(1, Ordering::Relaxed);
             }
-            Job::Scan { seq, ts, layout } => {
+            Job::Scan { seq, ts, layout, full } => {
                 if engine.last_seq() != Some(seq) {
                     let reason = format!("the copy is at {:?}, not seq {seq}", engine.last_seq());
                     let _ = reply.send(Done::Failed(reason));
                     return;
                 }
-                let snapshot = snapshot::scan(&engine, seq, ts, layout, true);
+                let snapshot = snapshot::scan(&engine, seq, ts, layout, full);
                 if reply.send(Done::Scan(Box::new(snapshot))).is_err() {
                     return;
                 }

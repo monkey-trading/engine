@@ -42,6 +42,7 @@ impl Inner {
         if first {
             self.begin = Some(Begin { ts, seq });
             self.next_scan = Some(ts.saturating_add(settings.interval_ms));
+            self.next_light = Some(ts.saturating_add(settings.light_interval_ms));
         }
         let mut stake_moved = false;
         let queued = engine.withdrawal_cash().is_some();
@@ -121,22 +122,29 @@ impl Inner {
             self.stakers = engine.staked_balances().len() as u64;
         }
         self.sample_levels(engine, ts);
+        // A full scan falls due every `interval_ms` and stands in for the light one due with it; a
+        // light scan every `light_interval_ms` after the last scan of either kind.
         if self.next_scan.is_some_and(|due| ts >= due) {
             self.next_scan = Some(ts.saturating_add(settings.interval_ms));
-            self.scan(settings, engine, seq, ts);
+            self.next_light = Some(ts.saturating_add(settings.light_interval_ms));
+            self.scan(settings, engine, seq, ts, true);
+        } else if self.next_light.is_some_and(|due| ts >= due) {
+            self.next_light = Some(ts.saturating_add(settings.light_interval_ms));
+            self.scan(settings, engine, seq, ts, false);
         }
     }
 
-    /// Takes the scan due at `seq`: requested of the worker, or run here when there is none.
-    fn scan(&mut self, settings: &Settings, engine: &Engine, seq: u64, ts: Millis) {
+    /// Takes the scan due at `seq`: requested of the worker, or run here when there is none. A replay
+    /// takes the light scan for every one, since nothing serves them.
+    fn scan(&mut self, settings: &Settings, engine: &Engine, seq: u64, ts: Millis, full: bool) {
         if let Some(worker) = &mut self.background {
-            if worker.request(seq, ts, settings.layout) {
+            if worker.request(seq, ts, settings.layout, full) {
                 return;
             }
             self.background = None;
             background::stopped("the worker's queue closed");
         }
-        self.install(snapshot::scan(engine, seq, ts, settings.layout, !self.recovering));
+        self.install(snapshot::scan(engine, seq, ts, settings.layout, full && !self.recovering));
     }
 
     /// Installs the finished background scans, oldest first.
@@ -157,6 +165,14 @@ impl Inner {
     pub(super) fn install(&mut self, snapshot: Snapshot) {
         for (market, book) in &snapshot.markets {
             self.sample_book(*market, book, snapshot.ts);
+        }
+        self.serve(snapshot);
+    }
+
+    /// Serves `snapshot` as the latest scan, and as the latest full one if it is.
+    pub(super) fn serve(&mut self, snapshot: Snapshot) {
+        if snapshot.full {
+            self.full = Some(snapshot.clone());
         }
         self.snapshot = Some(snapshot);
     }

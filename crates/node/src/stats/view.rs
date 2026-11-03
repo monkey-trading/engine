@@ -73,13 +73,18 @@ pub struct SeriesPage {
 /// The figures `GET /v1/house` adds to cash, NAV and gross exposure.
 #[derive(Serialize)]
 pub struct HouseFigures {
-    /// The seq the scan figures were taken at, `None` before the first scan.
+    /// The seq the long, short, open interest and open position figures were taken at, `None` before
+    /// the first scan.
     seq: Option<u64>,
     /// The sequenced time of that scan.
     snapshot_ms: Option<Millis>,
     open_interest: Option<Fixed>,
-    open_margin: Option<Fixed>,
     open_positions: Option<u64>,
+    /// The margin the accounts holding positions require, from the last full scan, which is older
+    /// than `seq` by up to `api.stats_interval`.
+    open_margin: Option<Fixed>,
+    margin_seq: Option<u64>,
+    margin_snapshot_ms: Option<Millis>,
     /// The house's unrealised result at the marks: NAV less cash.
     unrealised: Fixed,
     /// USD traded over the hourly buckets back to `volume_since_ms`.
@@ -228,13 +233,15 @@ impl Stats {
                 }
             })
             .collect();
-        let snapshot = inner.snapshot.as_ref();
+        let (snapshot, full) = (inner.snapshot.as_ref(), inner.full.as_ref());
         HouseFigures {
             seq: snapshot.map(|snapshot| snapshot.seq),
             snapshot_ms: snapshot.map(|snapshot| snapshot.ts),
             open_interest: snapshot.map(|snapshot| snapshot.open_interest),
-            open_margin: snapshot.map(|snapshot| snapshot.open_margin),
             open_positions: snapshot.map(|snapshot| snapshot.open_positions),
+            open_margin: full.map(|snapshot| snapshot.open_margin),
+            margin_seq: full.map(|snapshot| snapshot.seq),
+            margin_snapshot_ms: full.map(|snapshot| snapshot.ts),
             unrealised: engine.house_nav() - engine.house_cash(),
             volume,
             volume_since_ms,
@@ -242,7 +249,7 @@ impl Stats {
         }
     }
 
-    /// A market's position map from the last scan.
+    /// A market's position map from the last full scan.
     /// Error cases:
     /// - the market is not listed
     ///
@@ -250,7 +257,7 @@ impl Stats {
     pub(crate) fn positions(&self, engine: &Engine, market: MarketId) -> Result<Option<PositionsView>, String> {
         let state = engine.markets().get(&market).ok_or_else(|| format!("market {market} is not listed"))?;
         let inner = self.lock();
-        let Some(snapshot) = &inner.snapshot else { return Ok(None) };
+        let Some(snapshot) = &inner.full else { return Ok(None) };
         let Some(book) = snapshot.markets.get(&market) else { return Ok(None) };
         let layout = self.settings.layout;
         Ok(Some(PositionsView {

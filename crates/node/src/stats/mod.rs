@@ -6,7 +6,7 @@
 //! every answer says where its data begins.
 //!
 //! The scan of every account (`snapshot`) is due at most once per `api.stats_interval` of sequenced
-//! time, so the same log gives the same snapshots whenever it is replayed. A running node takes it
+//! time, with a light one (totals only) every `api.stats_light_interval` between, so the same log gives the same snapshots whenever it is replayed. A running node takes it
 //! on a worker thread that applies the same commands to a copy of the engine (`background`), so no
 //! scan holds the sequencer; a replay, and a node whose worker stopped, scan on the replaying or
 //! sequencing thread. Reads run on the sequencer's thread, between batches, and so see only commands
@@ -59,6 +59,8 @@ pub(crate) struct Distribution {
 pub(crate) struct Settings {
     retention: [Option<Millis>; 3],
     interval_ms: Millis,
+    /// Between light scans: `api.stats_light_interval`, or `interval_ms` if that is shorter.
+    light_interval_ms: Millis,
     activity_limit: usize,
     layout: Layout,
 }
@@ -67,9 +69,13 @@ pub(crate) struct Settings {
 pub(crate) struct Inner {
     series: SeriesStore,
     activity: Activity,
+    /// The latest scan of either kind: the totals every scan takes.
     snapshot: Option<Snapshot>,
+    /// The latest full scan: margin, the position maps and the distribution excess.
+    full: Option<Snapshot>,
     begin: Option<Begin>,
     next_scan: Option<Millis>,
+    next_light: Option<Millis>,
     queue_total: Fixed,
     staked: u128,
     stakers: u64,
@@ -92,7 +98,8 @@ pub struct Stats {
 impl Settings {
     /// The settings `cfg` gives.
     /// Error cases:
-    /// - a retention or `api.stats_interval` is too long to count in milliseconds
+    /// - a retention, `api.stats_interval` or `api.stats_light_interval` is too long to count in
+    ///   milliseconds
     fn new(cfg: &NodeConfig) -> anyhow::Result<Self> {
         let section: &StatsSection = &cfg.stats;
         let retention_1d = section.retention_1d.map(StatsSection::millis).transpose().context("stats.retention_1d")?;
@@ -103,6 +110,8 @@ impl Settings {
                 retention_1d,
             ],
             interval_ms: StatsSection::millis(cfg.api.stats_interval).context("api.stats_interval")?,
+            light_interval_ms: StatsSection::millis(cfg.api.stats_light_interval.min(cfg.api.stats_interval))
+                .context("api.stats_light_interval")?,
             activity_limit: section.activity_limit,
             layout: Layout {
                 closeout: Grid::new(section.closeout_range_bps, section.closeout_bucket_bps),
@@ -118,8 +127,10 @@ impl Inner {
             series: SeriesStore::new(settings.retention),
             activity: Activity::new(settings.activity_limit),
             snapshot: None,
+            full: None,
             begin: None,
             next_scan: None,
+            next_light: None,
             queue_total: Fixed::ZERO,
             staked: 0,
             stakers: 0,
@@ -159,10 +170,16 @@ impl Stats {
     /// Gives the worker, if there is one, a command the sequencer applied, before `observe` sees it.
     pub(crate) fn follow(&self, sequenced: &Sequenced) {
         let mut inner = self.lock();
-        if inner.background.as_ref().is_some_and(|worker| !worker.apply(sequenced)) {
+        if inner.background.as_mut().is_some_and(|worker| !worker.apply(sequenced)) {
             inner.background = None;
             background::stopped("the worker's queue closed");
         }
+    }
+
+    /// Commands the worker has been handed and not applied, for the benchmark.
+    #[cfg(test)]
+    pub(crate) fn behind(&self) -> u64 {
+        self.lock().background.as_ref().map_or(0, background::Background::behind)
     }
 
     /// Waits for the scans in flight and installs them. For tests.
@@ -195,10 +212,11 @@ impl Stats {
             inner.refresh_queue(engine);
             inner.refresh_stakers(engine);
         }
-        if inner.snapshot.as_ref().is_none_or(|snapshot| !snapshot.full)
+        if inner.full.is_none()
             && let Some(seq) = engine.last_seq()
         {
-            inner.snapshot = Some(snapshot::scan(engine, seq, engine.now(), self.settings.layout, true));
+            let snapshot = snapshot::scan(engine, seq, engine.now(), self.settings.layout, true);
+            inner.serve(snapshot);
         }
     }
 }

@@ -69,11 +69,15 @@ heartbeat_interval = "5s"
 # 100ms), for at most this many markets.
 quote_interval = "100ms"
 quote_max_markets = 4
-# The least sequenced time between two scans of every account, which feed the open interest, margin
-# and position figures of `GET /v1/house`, `GET /v1/house/positions` and the long and short series.
-# At least 1s. The scan runs on the sequencer's thread, so keep it far above the scan's cost (see
-# `cargo test -p engine-node --lib stats::bench -- --ignored --nocapture`).
+# The least sequenced time between two full scans of every account, which feed the margin and
+# position maps of `GET /v1/house`, `GET /v1/house/positions` and the distribution excess. At least 1s.
+# The scans run on a worker thread over a copy of the engine, which costs the engine's memory again and
+# a core (see `cargo test -p engine-node --lib stats::bench -- --ignored --nocapture`).
 stats_interval = "60s"
+# The least sequenced time between two light scans, which total the long, short, open interest and open
+# positions the House page shows live and sample the long and short series. At least 1s; a value
+# above `stats_interval` leaves the full scans alone.
+stats_light_interval = "5s"
 
 # A tracing filter directive; it must enable at least "error" for engine_node,
 # the level every Critical alert logs at.

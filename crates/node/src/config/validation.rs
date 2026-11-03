@@ -68,7 +68,8 @@ impl NodeConfig {
     ///   twice `time.max_drift` is not under 60s
     /// - `api.heartbeat_interval` is under one second
     /// - `api.quote_interval` is under 100 ms
-    /// - `api.stats_interval` is under one second, or too long to count in milliseconds
+    /// - `api.stats_interval` or `api.stats_light_interval` is under one second, or too long to count in
+    ///   milliseconds
     /// - `node.auth` is `none` with a TEE or custody provider other than `mock`
     /// - `tee.provider` is not `mock` and `operator.public_key` is a published test key (see
     ///   `refuse_test_keys`)
@@ -146,6 +147,8 @@ impl NodeConfig {
         ensure!(self.api.quote_interval >= MIN_QUOTE_INTERVAL, "api.quote_interval must be at least 100ms");
         ensure!(self.api.stats_interval >= MIN_STATS_INTERVAL, "api.stats_interval must be at least 1s");
         StatsSection::millis(self.api.stats_interval).context("api.stats_interval")?;
+        ensure!(self.api.stats_light_interval >= MIN_STATS_INTERVAL, "api.stats_light_interval must be at least 1s");
+        StatsSection::millis(self.api.stats_light_interval).context("api.stats_light_interval")?;
         self.api.validate_origins()?;
         self.api.validate_proxy_protocol()?;
         if let Some(tls) = &self.api.tls {

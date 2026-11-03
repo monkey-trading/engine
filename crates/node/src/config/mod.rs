@@ -45,7 +45,7 @@ mod stats;
 pub(crate) use marks::{default_marks_retention_1h, default_marks_retention_1m, default_marks_retention_1s};
 pub use stats::StatsSection;
 pub(crate) use stats::VOLUME_WINDOW_HOURS;
-use stats::{MIN_STATS_INTERVAL, default_stats_interval};
+use stats::{MIN_STATS_INTERVAL, default_stats_interval, default_stats_light_interval};
 mod api_defaults;
 use api_defaults::{default_heartbeat_interval, default_quote_interval, default_quote_max_markets};
 mod checkpoints;
@@ -201,6 +201,9 @@ pub struct ApiSection {
     /// least one second; 60 seconds by default.
     #[serde(default = "default_stats_interval", with = "humantime_serde")]
     pub stats_interval: Duration,
+    /// The least sequenced time between light scans (totals only); at least 1s, 5s by default.
+    #[serde(default = "default_stats_light_interval", with = "humantime_serde")]
+    pub stats_light_interval: Duration,
     /// Browser origins (`scheme://host[:port]`) that may read the REST API and open the stream. Empty
     /// by default, which sends no CORS headers and refuses a stream upgrade that carries any `Origin`
     /// (a client that sends none still connects). The
