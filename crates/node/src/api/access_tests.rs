@@ -42,7 +42,7 @@ use tower::ServiceExt;
 use crate::access::AccessClient;
 use crate::api::{ApiState, MAX_BACKFILLS, router};
 use crate::clock::test_clock::TestClock;
-use crate::config::{AccessSection, RateLimit};
+use crate::config::{AccessSection, Budget, FreshAccountBudgets, RateLimit};
 use crate::history::{INDEX_FILE, Reader};
 use crate::limits::ApiLimits;
 use crate::log::{LogEntry, Manifest};

@@ -107,6 +107,14 @@ impl Engine {
         &self.pending_deposits
     }
 
+    /// Whether a deposit for `account` is pending, in logarithmic time once the derived indexes exist.
+    pub fn has_pending_deposit(&self, account: AccountId) -> bool {
+        match &self.hot_indexes {
+            Some(indexes) => indexes.pending.contains_key(&Some(account)),
+            None => self.pending_deposits.values().any(|deposit| deposit.account == Some(account)),
+        }
+    }
+
     /// Up to `limit` pending deposits a retry could settle (the house's and declared accounts'), in
     /// reference order after `after`, wrapping around. Bounded by `limit` once the derived indexes
     /// exist; before then, as on an engine just decoded and not yet applied to, it scans.

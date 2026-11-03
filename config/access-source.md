@@ -109,8 +109,8 @@ like an order, with the account and the transport peer, and the engine records i
 fresh, allowed and clear evidence. A declaration from a US or sanctioned jurisdiction, or with
 unknown, unavailable, stale, mismatched or forged evidence, is refused in the public log with its
 reason (`eligibility_rejected`) and uses its nonce; any deposit for the account stays pending and is
-not retried. The account may declare again, each attempt counted against its rate, its client's share
-of fresh-account admissions and the shared budget.
+not retried. The account may declare again, each attempt counted against its rate and, unless it has a pending
+deposit, its client's share of fresh-account admissions and the shared budget.
 
 A deposit made after a recorded declaration credits at its first screening. A deposit made without
 one stays pending, so funds sent straight to the vault are never stuck, and the next retry after a
@@ -193,25 +193,50 @@ must be at least 2 for that to hold. A declaration past that gets 503
 `api_declaration_slots_full` is a Warning raised at most once a minute while this lasts.
 
 A declaration or session-key request from a never-credited account takes one token from its client's
-share, at `api.per_account`, and one from a budget all clients share, at `api.per_ip`. Fresh signing
-keys cannot multiply that budget, and no one client can take all of it. A second declaration, a key
-request before the declaration, a stale nonce, or a bad expiry is refused before it takes a token; a
-declaration answered 503 for want of a screening slot has already spent its tokens. These budgets are
-the only bound on what a wallet can add for free:
+share, `api.fresh_accounts.per_client`, and one from a budget all clients share,
+`api.fresh_accounts.shared`. Both are token buckets counted per minute, apart from `api.per_ip` and
+`api.per_account`, so tightening them changes nothing for credited traders, and a client's share can
+go below one a second. Config load refuses a share whose rate or burst is not below the shared
+budget's. Fresh signing keys cannot multiply the budget, and no one client can take all of it. A second
+declaration, a key request before the declaration, a stale nonce, or a bad expiry is refused before it
+takes a token; a declaration answered 503 for want of a screening slot has already spent its tokens.
+These budgets are the only bound on what a wallet can add for free:
 
 - Each admitted request adds one log command and one history index row, and a declaration one call to
   the source.
 - A wallet's first declaration adds two state entries, in `eligibility` and `request_nonces`. Its first
   registration adds two, in `session_keys` and `request_nonces`, whose entry for the key stays for good
   so a pruned key keeps its replay protection. Each later registration of a new address adds one.
-- All clients together therefore add at most `api.per_ip.per_second` x 86,400 commands a day, plus the
-  burst, and twice that in state entries, from fresh wallets that each declare and register once. One
-  client adds at most `api.per_account.per_second` x 86,400 commands a day, plus its burst.
+- All clients together therefore add at most `shared.per_minute` x 1,440 commands a day, plus the
+  burst, and twice that in state entries, from fresh wallets that each declare and register once.
+  Declarations alone make at most that many calls to the source. One client adds at most
+  `per_client.per_minute` x 1,440 commands a day, plus its burst.
 
-While the shared budget is exhausted, every new wallet's request gets 429 with `Retry-After` and uses
-no nonce, so it stays valid to resend until its expiry; a pending deposit stays pending, and credited
-accounts are unaffected. `api_initial_budget_full` is a Warning raised at most once a minute while
-this lasts.
+A production build refuses budgets above 60 a minute with a burst of 120 shared and 12 a minute with a
+burst of 6 per client, at config load; the dev configs' rates (3,000 a minute with a burst of 100, and
+600 with 20) are refused. At the production values, all clients together add at most 86,520 commands a
+day (about 93 MB of log at the measured 1,265 bytes a declaration and 896 a registration), 173,040
+state entries and 86,520 source calls, from 43,260 wallets that each declare and register once; one
+client adds at most 17,286 commands. Five clients at their share take the shared refill, and 20 at
+their burst empty the shared burst, so a new wallet can then be refused for as long as they keep
+going. Anyone refused sees 429 `too many new wallets are being set up; try again later` with
+`Retry-After`, and the request used no nonce, so it stays valid to resend until its expiry.
+
+A wallet with a pending deposit has paid at least the vault's 10 USDC minimum for it, so its
+declaration takes nothing from the client's share or the shared budget; the declaration still takes
+a token from a bucket of the account's own at the client share's rate, one from a budget all paid
+declarations share at the shared budget's rate, and a screening slot. Only the declaration is exempt,
+and only until one is recorded: a declaration the engine refuses, such as one from a restricted
+region, leaves the wallet undeclared and exempt. A paid wallet therefore adds at most
+`per_client.per_minute` x 1,440 declarations a day, plus its burst (17,286 at the production value),
+and all paid wallets together at most `shared.per_minute` x 1,440 plus the burst (86,520), each with
+one source call, on top of the unpaid budget's. Each paid wallet costs a deposit of at least 10 USDC,
+which it recovers once it declares from an allowed region. Past that budget a paid wallet is told to
+try again later, and `api_paid_declaration_budget_full` is a Warning raised at most once a minute.
+Its session-key requests take from both unpaid budgets.
+
+While the shared budget is exhausted, a pending deposit's wallet can still declare and be credited,
+and credited accounts are unaffected. `api_initial_budget_full` is a Warning raised at most once a minute while this lasts.
 
 ## Promotion and rollback
 

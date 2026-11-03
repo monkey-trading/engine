@@ -29,7 +29,7 @@ use webpki::EndEntityCert;
 
 use crate::api::{ApiState, MAX_BACKFILLS, router};
 use crate::clock::SystemClock;
-use crate::config::RateLimit;
+use crate::config::{Budget, FreshAccountBudgets, RateLimit};
 use crate::history::Reader;
 use crate::limits::ApiLimits;
 use crate::log::Manifest;
@@ -427,6 +427,10 @@ fn api() -> ApiSection {
         allowed_origins: Vec::new(),
         tls: None,
         proxy_protocol: None,
+        fresh_accounts: FreshAccountBudgets {
+            shared: Budget { per_minute: NonZeroU32::new(1).unwrap(), burst: NonZeroU32::new(5000).unwrap() },
+            per_client: Budget { per_minute: NonZeroU32::new(1).unwrap(), burst: NonZeroU32::new(5000).unwrap() },
+        },
     }
 }
 

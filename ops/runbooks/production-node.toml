@@ -39,13 +39,20 @@ max_connections_per_ip = 32
 handshake_timeout = "10s"
 read_timeout = "30s"
 max_body_bytes = 65536
-per_ip = { per_second = 50, burst = 100 } # OWNER: production limits for fresh accounts are open (#482)
-per_account = { per_second = 10, burst = 20 } # OWNER: as above (#482)
+per_ip = { per_second = 50, burst = 100 }
+per_account = { per_second = 10, burst = 20 }
 per_ip_connections = { per_second = 100, burst = 200 } # OWNER: keep it above per_ip
 max_subscribers = 256
 send_timeout = "30s"
 # The console's https origin; any other browser origin is refused. A production build takes only https.
 allowed_origins = ["https://console.example.com"] # REPLACE
+
+# What wallets that have paid nothing may add to the public log: a token bucket, `burst` requests at
+# once, refilled at `per_minute`, shared by all clients and one client's share of it. A production
+# build refuses anything above these values.
+[api.fresh_accounts]
+shared = { per_minute = 60, burst = 120 }
+per_client = { per_minute = 12, burst = 6 }
 
 [api.tls.acme]
 # The API's DNS name, lowercase. The CA connects to it on port 443.

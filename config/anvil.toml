@@ -25,8 +25,6 @@ read_timeout = "30s"
 # Largest request body (413 when larger) and largest message a stream subscriber may send.
 max_body_bytes = 65536
 # A token bucket: `burst` requests at once, refilled at `per_second`. Excess requests get 429.
-# per_ip and per_account also bound a never-credited wallet's free requests: per_ip is the budget all
-# clients share, and per_account each client's share of it.
 per_ip = { per_second = 50, burst = 100 }
 # Requests that act for one account: orders, cancels, and withdrawals.
 per_account = { per_second = 10, burst = 20 }
@@ -39,6 +37,16 @@ quote_max_markets = 4
 allowed_origins = ["http://localhost:3000"]
 # A client that takes longer than this to take a response, or a subscriber a message, is dropped.
 send_timeout = "30s"
+
+# What a wallet that has paid nothing may add to the public log and to permanent state, apart from
+# the rates above: each declaration or session-key request from a never-credited account takes a
+# token from its client's share and from the budget all clients share, and a client's share must be
+# below the shared budget. A token bucket: `burst` requests at once, refilled at `per_minute`. These
+# are the dev rates; a production build refuses anything above 60 a minute with a burst of 120
+# shared and 12 a minute with a burst of 6 per client.
+[api.fresh_accounts]
+shared = { per_minute = 3000, burst = 100 }
+per_client = { per_minute = 600, burst = 20 }
 
 [history]
 # The account history index, derived from the log; removing the directory while

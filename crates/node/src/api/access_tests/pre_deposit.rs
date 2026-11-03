@@ -317,7 +317,7 @@ pub(super) async fn next_nonce(node: &Node, account: AccountId) -> u64 {
 }
 
 /// `account`'s own deposit of 100000 under `reference`, screened as custody screens it.
-async fn deposit(node: &Node, account: AccountId, reference: &str) -> Vec<Event> {
+pub(super) async fn deposit(node: &Node, account: AccountId, reference: &str) -> Vec<Event> {
     let reference = reference.to_owned();
     let command = node
         .state

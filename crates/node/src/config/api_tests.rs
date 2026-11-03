@@ -112,3 +112,26 @@ fn light_stats_scans_are_five_seconds_apart_unless_set_and_never_closer_than_a_s
         assert!(format!("{err:#}").contains("api.stats_light_interval must be at least 1s"), "{short}: {err:#}");
     }
 }
+
+#[test]
+fn a_clients_fresh_account_share_must_be_below_the_shared_budget_in_rate_and_burst() {
+    let dev = std::fs::read_to_string(DEV).unwrap();
+    let load = |text: &str| {
+        let cfg: NodeConfig = toml::from_str(text).unwrap();
+        cfg.validate().map(|()| cfg.api.fresh_accounts)
+    };
+    let fresh = load(&dev).unwrap();
+    assert_eq!((fresh.shared.per_minute.get(), fresh.per_client.burst.get()), (3000, 20));
+    for (from, to) in [
+        ("per_client = { per_minute = 600, burst = 20 }", "per_client = { per_minute = 3000, burst = 20 }"),
+        ("per_client = { per_minute = 600, burst = 20 }", "per_client = { per_minute = 600, burst = 100 }"),
+        ("shared = { per_minute = 3000, burst = 100 }", "shared = { per_minute = 600, burst = 100 }"),
+    ] {
+        let err = load(&dev.replace(from, to)).unwrap_err();
+        assert!(format!("{err:#}").contains("api.fresh_accounts.per_client must be below"), "{to}: {err:#}");
+    }
+    // The share may go below one a second, and a budget needs both keys.
+    assert!(load(&dev.replace("per_minute = 600, burst = 20", "per_minute = 12, burst = 6")).is_ok());
+    assert!(toml::from_str::<NodeConfig>(&dev.replace("per_minute = 600, ", "")).is_err());
+    assert!(toml::from_str::<NodeConfig>(&dev.replace("[api.fresh_accounts]", "[api.fresh]")).is_err());
+}

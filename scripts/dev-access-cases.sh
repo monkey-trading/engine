@@ -197,6 +197,75 @@ wait_for rescanned_deposits "$expected_deposits"
 [[ "$(trader_balance)" == "$expected_balance" ]] || fail "restart credited a sanctioned hold"
 [[ "$(house_nav)" == "$expected_nav" ]] || fail "restart changed held collateral accounting"
 grep -Fq 'alert="access_deposit_held"' "$work/node.log" || fail "held collateral has no operator alert"
+step "A client past its fresh-account share is told to retry later, traders are unaffected, a pending deposit declares past the empty share, and the refusal clears on refill"
+# A share of two requests, refilled one every ten seconds; the shared budget is the config's.
+sed -E 's/^per_client = .*/per_client = { per_minute = 6, burst = 2 }/' "$work/anvil.toml" > "$work/anvil-budgets.toml"
+grep -Fq 'per_client = { per_minute = 6, burst = 2 }' "$work/anvil-budgets.toml" || fail "the low share was not written"
+stop_node
+start_node "$work/anvil-budgets.toml"
+setup_key="$(key 7)"
+setup_account="$(cast wallet address --private-key "$setup_key" | tr '[:upper:]' '[:lower:]')"
+late_key="$(key 8)"
+late_account="$(cast wallet address --private-key "$late_key" | tr '[:upper:]' '[:lower:]')"
+paid_key="$(key 9)"
+paid_account="$(cast wallet address --private-key "$paid_key" | tr '[:upper:]' '[:lower:]')"
+# Only the key's address is registered, so it needs no private key.
+setup_session=0x00000000000000000000000000000000000000a1
+late_nonce() { curl --max-time 2 -sk "$api/v1/accounts/$late_account/nonce" | jq -r .next_nonce; }
+paid_balance() { curl --max-time 2 -sk "$api/v1/accounts/$paid_account" | jq -r '.balance // "none"'; }
+# The status, Retry-After in seconds (0 if none) and error text of a POST, separated by `|`.
+budget_post() {
+  local route="$1" body="$2" out
+  out="$(curl --max-time 10 -sk -D "$work/budget.headers" -o "$work/budget.body" -w '%{http_code}' "$api$route" \
+    -H 'content-type: application/json' -d "$body")"
+  echo "$out|$(awk 'tolower($1) == "retry-after:" { print $2 + 0 }' "$work/budget.headers" | grep . || echo 0)|$(jq -r '.error // "ok"' "$work/budget.body" 2>/dev/null || echo ok)"
+}
+budget_code() { budget_post "$@" | cut -d'|' -f1; }
+late_declaration="{\"account\":\"$late_account\",\"class\":\"professional\"}"
+late_declares() { budget_code /v1/eligibility "$(access_signed_body "$late_key" eligibility "$late_declaration")"; }
+# Health answers before the node has trusted time, but a request is sequenced only after it: wait for
+# an order to fill, which spends none of the fresh-account budgets, before spending the share.
+trader_fills() {
+  local events
+  events="$(access_post /v1/orders "$(ACCESS_ORDER_SIDE=buy access_request "$trader_key" order)" || true)"
+  jq -e 'any(.[]?; .type == "fill")' <<< "$events" >/dev/null 2>&1 && echo filled || echo unfilled
+}
+wait_for trader_fills filled
+
+# A deposit for a wallet that has not declared waits pending: it has paid, and is not yet a setup.
+access_reference="$(access_funding_reference "$vault" 'depositFor(address,uint256)' "$paid_account" $((10 * usdc_units)) --private-key "$house_key")"
+mine 3
+wait_for access_pending_amount 10
+expected_deposits=$((expected_deposits + 1))
+paid_declaration="{\"account\":\"$paid_account\",\"class\":\"professional\"}"
+
+# Everything from here to the paid declaration takes about two seconds, inside the ten the share takes
+# to refill a token: every body is signed first, and nothing slow sits between the proof that the share
+# is empty and the paid wallet's post.
+paid_body="$(access_signed_body "$paid_key" eligibility "$paid_declaration")"
+late_body="$(access_signed_body "$late_key" eligibility "$late_declaration")"
+setup_declaration="{\"account\":\"$setup_account\",\"class\":\"professional\"}"
+setup_body="$(access_signed_body "$setup_key" eligibility "$setup_declaration")"
+[[ "$(budget_code /v1/eligibility "$setup_body")" == 200 ]] || fail "a fresh wallet's declaration was refused within the share"
+registration="{\"account\":\"$setup_account\",\"session_key\":\"$setup_session\",\"expires_at\":$session_expiry}"
+registration_body="$(access_signed_body "$setup_key" session_key_registration "$registration")"
+[[ "$(budget_code /v1/session-keys "$registration_body")" == 200 ]] || fail "a fresh wallet's registration was refused within the share"
+
+# The client's share is spent, so a second wallet is told when to try again; the wallet whose deposit
+# is pending has paid, so its declaration, posted right after, needs no token from the empty share.
+IFS='|' read -r code retry message <<< "$(budget_post /v1/eligibility "$late_body")"
+paid_code="$(budget_code /v1/eligibility "$paid_body")"
+[[ "$code" == 429 && "$retry" -ge 1 && "$retry" -le 10 ]] || fail "a second wallet answered $code with Retry-After $retry"
+[[ "$message" == "too many new wallets are being set up; try again later" ]] || fail "a second wallet was told: $message"
+[[ "$paid_code" == 200 ]] || fail "a wallet with a pending deposit was refused past the empty share"
+[[ "$(late_nonce)" == 0 ]] || fail "a refused declaration used the wallet's nonce"
+[[ "$(trader_fills)" == filled ]] || fail "the credited trader's order was affected by the exhausted share"
+wait_for paid_balance 10
+
+# The refusal clears when the share refills.
+wait_for late_declares 200
+[[ "$(curl --max-time 2 -sk "$api/v1/accounts/$late_account/eligibility" | jq -r .class)" == professional ]] || fail "the refilled declaration was not recorded"
+
 jq -se '
   [ .[] | select(.entry == "command") | .events[]? | select(.type == "order_rejected" or .type == "withdrawal_rejected") | .reason.reason ] as $reasons |
   ["united_states","sanctioned_jurisdiction","jurisdiction_unknown","account_sanctioned","source_unavailable","evidence_stale","account_unknown","source_invalid"] |

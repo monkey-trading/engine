@@ -32,7 +32,7 @@ use tokio::time::{interval, timeout};
 use tracing::{debug, warn};
 
 use crate::api::ApiError;
-use crate::config::{ApiSection, RateLimit};
+use crate::config::{ApiSection, Budget, RateLimit};
 
 /// How often the rate limiters forget clients and accounts whose buckets have refilled.
 const RETAIN_EVERY: Duration = Duration::from_secs(10);
@@ -55,9 +55,15 @@ pub struct ApiLimits<C: Clock = DefaultClock> {
     /// the per-account rate, separate from the account's own, so keys cannot multiply its
     /// allowance and a flooding key cannot starve the wallet's requests.
     session_accounts: KeyedLimiter<AccountId, C>,
+    /// The fresh-account budgets (`api.fresh_accounts`): all clients' shared budget, each client's
+    /// share of it, and the rate of a paid account's declarations.
     initial_accounts: KeyedLimiter<(), C>,
     initial_accounts_full: ThrottledAlert,
     initial_per_ip: KeyedLimiter<IpAddr, C>,
+    paid_declarations: KeyedLimiter<AccountId, C>,
+    paid_per_ip: KeyedLimiter<IpAddr, C>,
+    paid_declarations_shared: KeyedLimiter<(), C>,
+    paid_declarations_full: ThrottledAlert,
     per_ip_connections: KeyedLimiter<IpAddr, C>,
     subscribers: Arc<Semaphore>,
     subscribers_full: ThrottledAlert,
@@ -122,13 +128,21 @@ impl ApiLimits {
 impl<C: Clock + Clone> ApiLimits<C> {
     /// Limits from the `[api]` config on `clock`, each configured rate made a bucket by `quota`.
     pub(crate) fn with_quota(cfg: &ApiSection, quota: impl Fn(RateLimit) -> Quota, clock: C) -> Self {
+        let fresh = cfg.fresh_accounts;
         Self {
             per_ip: RateLimiter::dashmap_with_clock(quota(cfg.per_ip), clock.clone()),
             per_account: RateLimiter::dashmap_with_clock(quota(cfg.per_account), clock.clone()),
             session_accounts: RateLimiter::dashmap_with_clock(quota(cfg.per_account), clock.clone()),
-            initial_accounts: RateLimiter::dashmap_with_clock(quota(cfg.per_ip), clock.clone()),
+            initial_accounts: RateLimiter::dashmap_with_clock(budget_quota(&quota, fresh.shared), clock.clone()),
             initial_accounts_full: ThrottledAlert::new("api_initial_budget_full", SHARED_CAP_FULL),
-            initial_per_ip: RateLimiter::dashmap_with_clock(quota(cfg.per_account), clock.clone()),
+            initial_per_ip: RateLimiter::dashmap_with_clock(budget_quota(&quota, fresh.per_client), clock.clone()),
+            paid_declarations: RateLimiter::dashmap_with_clock(budget_quota(&quota, fresh.per_client), clock.clone()),
+            paid_per_ip: RateLimiter::dashmap_with_clock(budget_quota(&quota, fresh.per_client), clock.clone()),
+            paid_declarations_shared: RateLimiter::dashmap_with_clock(
+                budget_quota(&quota, fresh.shared),
+                clock.clone(),
+            ),
+            paid_declarations_full: ThrottledAlert::new("api_paid_declaration_budget_full", SHARED_CAP_FULL),
             per_ip_connections: RateLimiter::dashmap_with_clock(quota(cfg.per_ip_connections), clock),
             subscribers: Arc::new(Semaphore::new(cfg.max_subscribers.get())),
             subscribers_full: ThrottledAlert::new("api_subscribers_full", SHARED_CAP_FULL),
@@ -188,18 +202,36 @@ impl<C: Clock + Clone> ApiLimits<C> {
     }
 
     /// Counts one declaration or session-key request from a never-credited account: first against
-    /// its client's share, at the per-account rate, so no one client can take the whole budget, then
-    /// against the budget all clients share, at the per-IP rate, so fresh signing keys cannot multiply
-    /// it. These are the requests a wallet can put in the public log for free, so an exhausted shared
-    /// budget raises `api_initial_budget_full`: every new wallet is refused while it lasts.
+    /// its client's share, so no one client can take the whole budget, then against the budget all
+    /// clients share, so fresh signing keys cannot multiply it. These are the requests a wallet can
+    /// put in the public log for free, so an exhausted shared budget raises `api_initial_budget_full`:
+    /// every new wallet is refused while it lasts.
     /// Error cases:
-    /// - the client is over its share, or the shared budget is exhausted
+    /// - the client is over its share, or the shared budget is exhausted: `SetupLimited`
     pub(crate) fn check_initial_account(&self, ip: Option<IpAddr>) -> Result<(), ApiError> {
         if let Some(ip) = ip {
-            check(&self.initial_per_ip, &client_key(ip), "initial_ip")?;
+            setup_limited(check(&self.initial_per_ip, &client_key(ip), "initial_ip"))?;
         }
-        check(&self.initial_accounts, &(), "initial_account")
+        setup_limited(check(&self.initial_accounts, &(), "initial_account"))
             .inspect_err(|_| self.initial_accounts_full.raise(&"fresh-account admissions"))
+    }
+
+    /// Counts one declaration from a never-credited account with a pending deposit, which has paid:
+    /// it takes nothing from the unpaid budgets. The account is held to the client share's rate, so a
+    /// declaration the engine keeps refusing cannot be repeated freely, its client `ip` to the same
+    /// rate for all its paid wallets, and all paid declarations to a budget of their own at the shared
+    /// rate, so no one client and no crowd of paid wallets takes it all. A refusal spends the tokens of
+    /// the buckets checked before the one that refused. An exhausted paid budget raises
+    /// `api_paid_declaration_budget_full`.
+    /// Error cases:
+    /// - the account or its client is over its rate, or the paid budget is exhausted: `SetupLimited`
+    pub(crate) fn check_paid_declaration(&self, account: AccountId, ip: Option<IpAddr>) -> Result<(), ApiError> {
+        setup_limited(check(&self.paid_declarations, &account, "paid_declaration"))?;
+        if let Some(ip) = ip {
+            setup_limited(check(&self.paid_per_ip, &client_key(ip), "paid_declaration_ip"))?;
+        }
+        setup_limited(check(&self.paid_declarations_shared, &(), "paid_declaration_shared"))
+            .inspect_err(|_| self.paid_declarations_full.raise(&"paid declarations"))
     }
 
     /// A place for one more stream subscriber, held until it disconnects.
@@ -216,6 +248,8 @@ impl<C: Clock + Clone> ApiLimits<C> {
     fn retain_recent(&self) {
         self.per_ip.retain_recent();
         self.initial_per_ip.retain_recent();
+        self.paid_declarations.retain_recent();
+        self.paid_per_ip.retain_recent();
         self.session_accounts.retain_recent();
         self.per_account.retain_recent();
         self.per_ip_connections.retain_recent();
@@ -335,6 +369,22 @@ fn client_key(ip: IpAddr) -> IpAddr {
         IpAddr::V6(v6) => IpAddr::V6(Ipv6Addr::from_bits(v6.to_bits() & !u128::from(u64::MAX))),
         v4 => v4,
     }
+}
+
+/// The bucket `budget` names, counted per minute: the bucket `quota` makes of the same count per
+/// second, refilled sixty times slower. A bucket with no refill interval, which never runs out, is left as it is.
+fn budget_quota(quota: &impl Fn(RateLimit) -> Quota, budget: Budget) -> Quota {
+    let per_second = quota(RateLimit { per_second: budget.per_minute, burst: budget.burst });
+    Quota::with_period(per_second.replenish_interval() * 60).map_or(per_second, |slow| slow.allow_burst(budget.burst))
+}
+
+/// Answers a fresh-account refusal as `SetupLimited`, so the client is told to try again later
+/// rather than that it sent too many requests.
+fn setup_limited(checked: Result<(), ApiError>) -> Result<(), ApiError> {
+    checked.map_err(|e| match e {
+        ApiError::RateLimited(wait) => ApiError::SetupLimited(wait),
+        other => other,
+    })
 }
 
 /// A bucket of `burst` requests, refilled at `per_second`.
