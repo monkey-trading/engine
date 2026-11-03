@@ -25,9 +25,9 @@ pub trait Clock: Send + Sync {
     /// Monotonic time, for round trips, the age of a trusted time sample, the pace of sequenced
     /// time, and a venue connection's delay bound; the feeds read the same clock through tokio.
     ///
-    /// TODO: the host can scale the guest's monotonic clock unless its TSC is protected (TDX, or
-    /// SEV-SNP with Secure TSC), and every bound on a price's age rests on its rate; launch with it
-    /// and require it at attestation.
+    /// Every bound on a price's age rests on its rate, which the host cannot scale in the enclave
+    /// image: it launches with Secure TSC, which a verifier requires of a release, and a node with
+    /// real attestation starts only once the kernel times on that TSC (`tee::require_tsc_clocksource`).
     fn instant(&self) -> Instant;
 }
 

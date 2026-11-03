@@ -4,9 +4,10 @@
 //! root, and the time to check dates at. `engine verify-attestation` and `engine replay
 //! --attestation` fetch these and call this crate, and the browser build (`engine-verify-wasm`)
 //! runs the same code. Verification proves the quote's certificate chain up to a pinned vendor
-//! root, the launch measurement and guest policy against a release, the reported TCB against the
-//! release's minimum, and the report data's binding of the enclave address and a configuration the
-//! release lists. A mock quote never verifies; `verify_mock_attestation` reads one for development.
+//! root, the launch measurement and guest policy against a release that launches with Secure TSC,
+//! the reported TCB against the release's minimum, and the report data's binding of the enclave
+//! address and a configuration the release lists. A mock quote never verifies;
+//! `verify_mock_attestation` reads one for development.
 
 use anyhow::{Context, bail, ensure};
 use sha2::Digest as _;
@@ -28,6 +29,10 @@ pub use report::{SnpReport, Tcb};
 mod signature;
 #[cfg(test)]
 mod tests;
+
+/// The SEV_FEATURES bits a release must launch with: SNPActive (bit 0) and SecureTSC (bit 9), so the
+/// guest's TSC is one the host cannot scale (AMD64 APM vol. 2, 15.36.18 and Table B-4).
+const REQUIRED_GUEST_FEATURES: u64 = 1 | (1 << 9);
 
 /// What a verified attestation proves.
 #[derive(Debug)]
@@ -56,8 +61,8 @@ pub struct VerifiedAttestation {
 /// - `now` is out of the certificate time range
 /// - the quote is not an SEV-SNP attestation report, its chain does not verify to a pinned root,
 ///   its signature does not verify, or its report data does not bind the served bundle
-/// - no release admits the quote: with one release, the first of its measurement, policy, TCB, and
-///   configuration checks that fails; with several, each one's
+/// - no release admits the quote: with one release, the first of its guest feature, measurement,
+///   policy, TCB, and configuration checks that fails; with several, each one's
 pub fn verify_attestation(
     attestation: &Attestation,
     releases: &[ReleaseManifest],
@@ -218,15 +223,24 @@ fn match_release(
     Err(refusals.pop().map(|(_, err)| err).unwrap_or_else(|| anyhow::anyhow!("no release manifest to verify against")))
 }
 
-/// The configuration `release` runs that the quote's bundle names, once the quote's measurement,
-/// policy, and reported TCB match the release.
+/// The configuration `release` runs that the quote's bundle names, once the release launches with
+/// Secure TSC and the quote's measurement, policy, and reported TCB match it. The report carries no
+/// SEV features, but its measurement covers every vCPU's, so matching the launch digest holds the
+/// quote's launch to the release's.
 /// Error cases:
+/// - the release's guest features lack SNPActive or SecureTSC
 /// - the measurement, policy, or TCB does not match, or the bundle's configuration hash is not listed
 fn check_release(
     report: &SnpReport<'_>,
     bundle: &AttestationBundle,
     release: &ReleaseManifest,
 ) -> anyhow::Result<String> {
+    ensure!(
+        release.guest_features & REQUIRED_GUEST_FEATURES == REQUIRED_GUEST_FEATURES,
+        "the release launches without Secure TSC: its guest features 0x{:x} lack 0x{:x}",
+        release.guest_features,
+        REQUIRED_GUEST_FEATURES
+    );
     ensure!(
         report.measurement == release.launch_digest,
         "the quote's launch measurement matches no release launch digest"

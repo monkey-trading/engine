@@ -1,4 +1,5 @@
-//! The enclave's keys for this start, and their attestation. With `[tee.sealing]` they are the keys
+//! The enclave's keys for this start, and their attestation, which real attestation gives only to a
+//! guest whose kernel times on the TSC Secure TSC protects. With `[tee.sealing]` they are the keys
 //! sealed for this release, new ones only on the operator's `--new-key`, or the previous release's,
 //! taken over with `--predecessor`; with none of these the node refuses to start. With
 //! `[checkpoints]`, the vault's current release must be this one before it opens or seals keys,
@@ -19,7 +20,10 @@ use crate::handover::{current_release, ensure_named, vault_reader};
 use crate::log::Checkpoint;
 use crate::tee::keys::KeySet;
 use crate::tee::sealing::{KeyStore, MockSealer, Release, Sealer, file_for};
-use crate::tee::{Attestation, AttestationBundle, Attestor, ConfigfsTsm, EnclaveKey, MockAttestor, attest_bundle};
+use crate::tee::{
+    Attestation, AttestationBundle, Attestor, CURRENT_CLOCKSOURCE, ConfigfsTsm, EnclaveKey, MockAttestor,
+    attest_bundle, require_tsc_clocksource,
+};
 use crate::tls::TlsIdentity;
 use engine_core::types::AccountId;
 
@@ -55,6 +59,8 @@ pub(super) struct Keys {
 
 /// This start's keys, attested.
 /// Error cases:
+/// - with real attestation, the guest kernel does not time on the TSC (alert
+///   `clocksource_unprotected`)
 /// - the keys cannot be obtained (see `obtain`), or the attestor cannot produce a quote
 pub(super) async fn attested(cfg: &NodeConfig, start: &KeyStart) -> anyhow::Result<Keys> {
     if cfg.tee.provider == TeeProvider::Mock {

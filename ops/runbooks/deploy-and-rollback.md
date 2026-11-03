@@ -55,9 +55,10 @@ Nothing here touches a live system.
    names the key to fix.
 4. Hash it: `sha256sum node.toml`. This is `$CONFIG_HASH`, the second argument of `setCurrentRelease`.
    Do not edit the file again: one changed byte is another release.
-5. Write `release.toml` with the release name, `measurement.json`'s `launch_digest` and `policy`, the
-   minimum reported TCB, and `[config_hashes]` holding `"node.toml" = "0x<hash>"` (format in
-   `image/README.md`, "Release"). The minimum TCB is `OWNER`: take it from the host's firmware.
+5. Write `release.toml` with the release name, `measurement.json`'s `launch_digest`, `policy` and
+   `guest_features`, the minimum reported TCB, and `[config_hashes]` holding `"node.toml" = "0x<hash>"`
+   (format in `image/README.md`, "Release"). The minimum TCB is `OWNER`: take it from the host's
+   firmware. Check: `guest_features` is `0x201`; a verifier refuses a release without Secure TSC.
 6. Publish the GitHub release with the image files, `node.toml`, `release.toml` and the browser
    verifier package. The config holds no credential, only the names of the secrets the operator
    delivers.

@@ -237,10 +237,9 @@ rows it checks but whose deletion or rollback it cannot detect, and its cross-re
 uses an unsealed host clock; without snapshots, the
 account history index is read from host disk with only its schema checked, and is matched to the log
 by one command, the newest it has taken, though SQLite reads it in defensive mode and each event it
-serves names its place in the log, where anyone can check it; the sequencer and the signed answers,
-which bound the host's clock with signed time, trust the guest's monotonic clock without yet
-checking that the host cannot scale it; the SEV-SNP sealing key and the handover's hardware quotes
-are built to the firmware's guest interface but not yet run on SEV-SNP hardware (#108), and the
+serves names its place in the log, where anyone can check it; the SEV-SNP sealing key, the
+handover's hardware quotes, and the image's Secure TSC launch are built to the firmware's guest
+interface but not yet run on SEV-SNP hardware (#108), and the
 mock TEE's stand-in for sealing is a public key; two copies of one release unseal the same keys, and
 while the vault refuses the checkpoints of all but one, the other's signed API answers still verify;
 a release taking over the keys checks the running release's certificates at the host's clock, which
@@ -320,10 +319,17 @@ whatever the host clock reads and however the host delays the network. A
 production market needs two sources fresh, so a delay past the bound on either leaves it without a
 price. The bound on a market priced from Databento and one TLS source is that source's: the host can
 delay or alter Databento's half of the index, within the divergence bound, but the market has no price
-once the TLS source's quote ages out. Every part of this rests on the monotonic clock's rate, which
-the host can scale unless the guest's TSC is protected. The enclave image launches without Secure TSC,
-and Roughtime rounds are timed on that clock with nothing comparing the two, so until it does, a host
-that scales that clock is bounded by none of this, nor by `time.max_drift`.
+once the TLS source's quote ages out. Every part of this rests on the monotonic clock's rate, as do
+the Roughtime round trips that place trusted time and with them `time.max_drift`. The enclave image
+launches with Secure TSC: the guest's TSC is the processor's, scaled to the frequency the host asks
+for at launch by a factor the SEV-SNP firmware sets and the host cannot change afterwards, and the
+guest kernel reads that frequency from the hardware, so the guest's monotonic clock keeps true
+time's rate whatever frequency the host asked for. The launch measurement covers the setting, and a
+verifier refuses a release that launches without it. The kernel times on that TSC: kvm-clock, whose
+scale the host writes, is off; nothing the host supplies after boot can mark the TSC unstable, since
+the kernel has no frequency scaling and reads ACPI C-states only at boot; and a node with real
+attestation refuses to start when the host has had the kernel mark it unstable at boot, which moves
+the kernel to a clock the host emulates (`image/README.md`, "The guest's clock").
 The
 Certificate Transparency watcher (`engine ct-watch`) checks tree head signatures but not consistency
 or inclusion proofs, so a log that shows different views to different clients can hide a certificate

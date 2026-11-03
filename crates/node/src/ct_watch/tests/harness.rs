@@ -78,7 +78,7 @@ pub(super) async fn harness(name: &str, leaves: Vec<Vec<u8>>, start_index: Optio
     std::fs::write(
         dir.join("release.toml"),
         format!(
-            "name = \"test\"\nlaunch_digest = \"0x{}\"\npolicy = \"0x30000\"\n[minimum_tcb]\nboot_loader = 0\ntee = 0\nsnp = 0\nmicrocode = 0\n[config_hashes]\n\"node.toml\" = \"0x{}\"\n",
+            "name = \"test\"\nlaunch_digest = \"0x{}\"\npolicy = \"0x30000\"\nguest_features = \"0x201\"\n[minimum_tcb]\nboot_loader = 0\ntee = 0\nsnp = 0\nmicrocode = 0\n[config_hashes]\n\"node.toml\" = \"0x{}\"\n",
             "00".repeat(48),
             "00".repeat(32)
         ),
