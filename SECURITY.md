@@ -145,15 +145,40 @@ price, is in scope.
 Findings that need an operator's key or credentials to be compromised first are also out of scope,
 unless they defeat a guarantee the engine makes. The engine is designed not to trust whoever runs it
 or the machine it runs on: it bounds anything it takes from that machine's clock, disk, or network
-with a check, and whoever runs it cannot alter the published log without detection, have the enclave
+with a check, and whoever runs it cannot change or add an entry in the published log without
+detection (it can still cut back the tail no checkpoint anchors, as below), have the enclave
 sign a state its rules do not produce, act for an account without its owner's signature, credit an
 account with funds that no deposit brought in, or pay out funds the engine did not approve. A
 finding that breaks one of these guarantees, or gets past one of those checks, is in scope even when
 it starts from an operator's key. With `[checkpoints]` configured, startup verifies the replayed log
 against the latest posted vault commitment at custody finality and refuses a shorter or conflicting log before serving or opening
 history for writes; checkpoint signatures verify
-against their chain, vault, and named signer. New posts also sign the exact predecessor sequence
-and root, which the vault compares atomically to fence divergent same-key publishers. The checkpoint RPC still supplies the canonical chain
+against their chain, vault, and named signer. That check reaches only as far as the vault's
+checkpoints, so whoever runs the node can still choose after the fact whether its own recent
+commands happened, in two ways (#541). It can hold a batch's data sync while it watches the market,
+then let the sync finish or kill the node: replies, stream entries, and signed withdrawals go out
+only once their batch is durable, so until then nobody outside has seen it, and a batch the
+restarted log lacks never happened. No alert fires; the hold lasts only as long as the host stalls
+every reply and every new stream entry, which every client sees, and the signed heartbeats keep
+naming the old head unless the host holds the network too. It can also cut the log back to any
+entry after the latest checkpoint the vault has finalized and restart the node, erasing commands
+the node had already answered and streamed. A cut below a later checkpoint the vault accepted but
+has not finalized shows only when the node's checkpoint poster next compares a checkpoint with the
+vault (`checkpoint_conflict`), and a cut after the latest accepted checkpoint goes unnoticed by the
+node. Checkpoints go out about once per finality
+delay of the custody chain, so about two finality delays of commands can be erased while
+checkpoint delivery is healthy; a host that stalls or withholds the poster's submissions
+extends the window by however long the accumulated tail stays unanchored. Clients
+keep the signed replies and frames for them, but the node does not compare those with the
+restarted log. A standby following the operator's signed stream does: it takes a command only when a seal a checkpoint the copy
+holds names (or the followed enclave's) continues the standby's copy, so history sealed
+before a handover still extends it, and each stream it resumes must first repeat
+the copy's last command exactly. When the operator's log no longer holds what the standby copied (a
+signed heartbeat behind the copy, a repeat that differs, or a command that does not chain), the
+standby raises the Critical `operator_log_rollback` alert, through its own alert routing, naming
+the range; it takes nothing more and keeps its copy unchanged to restore from. New posts also sign the exact predecessor sequence
+and root, which the vault compares atomically to fence divergent same-key publishers. The standby's
+check reaches only as far as what it received: it detects a cut that goes back past that. The checkpoint RPC still supplies the canonical chain
 view, and a signature's named signer must be checked against a trusted attestation or the vault's
 authorized signer. A withdrawal signature never settles its approval: finalized custody nonce-use
 evidence does. Withdrawal completion evidence also requires that independently trusted signer

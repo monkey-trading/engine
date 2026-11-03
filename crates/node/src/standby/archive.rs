@@ -55,13 +55,15 @@ pub(crate) async fn bootstrap_archive(
 /// files are never overwritten: a local file with the segment's name is this follower's own
 /// frame-verified bytes, which wins over anything an archive serves. New segments are staged and
 /// linked before the manifest gains their lines, and the manifest keeps its local lines, so a
-/// crash leaves at most unlisted trailing files, which open as the open segment.
+/// crash leaves at most unlisted trailing files, which open as the open segment. Each staged
+/// segment is linked only once `accept` passes it.
 /// Error cases:
-/// - a manifest line is invalid, or a fetched file differs from its listing
+/// - a manifest line is invalid, a fetched file differs from its listing, or `accept` refuses one
 pub(crate) async fn refresh_archive(
     archive: &reqwest::Client,
     origins: &[String],
     dir: &std::path::Path,
+    mut accept: impl FnMut(&std::path::Path) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let listings = fetch_manifest(archive, origins).await.context("fetching the published manifest")?;
     let manifest = std::fs::read_to_string(dir.join(MANIFEST)).unwrap_or_default();
@@ -84,6 +86,10 @@ pub(crate) async fn refresh_archive(
         check_listing(listed, &bytes)?;
         let staged = dir.join(format!("{}.staging", listed.file));
         write_synced(&staged, &bytes)?;
+        if let Err(e) = accept(&staged) {
+            let _ = std::fs::remove_file(&staged);
+            return Err(e).with_context(|| format!("archive segment {}", listed.file));
+        }
         std::fs::rename(&staged, &path).with_context(|| format!("linking {}", listed.file))?;
         // Commit each segment's listing as it lands: a crash then leaves the manifest naming
         // exactly the linked prefix, which opens.

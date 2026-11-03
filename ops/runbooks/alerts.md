@@ -188,6 +188,7 @@ Rebuilt from the log. None changes the books.
 | `operator_elected` | Warning | An election names another operator (incumbent). See [operator-candidate.md](operator-candidate.md), "Handing the node to the next operator". |
 | `handover_overdue` | Critical | The election's effective time passed with no successor confirmed (incumbent). See [operator-candidate.md](operator-candidate.md), "Handing the node to the next operator". |
 | `standby_follow_failed` | Critical | The standby could not follow the operator's stream. See [standby.md](standby.md), "Run the standby". |
+| `operator_log_rollback` | Critical | The operator's log no longer holds entries the standby copied; the standby keeps its copy unchanged. See [standby.md](standby.md), "Run the standby". |
 | `standby_signal_failed` | Critical | The standby could not read the registry or vault for a promotion. See [standby.md](standby.md), "Run the standby". |
 | `standby_takeover_failed` | Critical | A promotion arrived and the standby's copy could not be finalized. See [standby.md](standby.md), "After a promotion". |
 

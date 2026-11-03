@@ -443,7 +443,7 @@ pub(crate) async fn sync_predecessor_log(
     let fetch = if !dir.join(crate::log::MANIFEST).exists() {
         crate::standby::archive::bootstrap_archive(&client, &origins, dir).await
     } else {
-        crate::standby::archive::refresh_archive(&client, &origins, dir).await
+        crate::standby::archive::refresh_archive(&client, &origins, dir, |_| Ok(())).await
     };
     if let Err(e) = fetch {
         // A transport failure is not fatal — a local copy from an earlier attempt may exist, and
