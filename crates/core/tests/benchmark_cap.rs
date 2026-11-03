@@ -229,6 +229,35 @@ fn a_first_dated_rate_is_measured_a_day_from_an_undated_one() {
     assert!(signs(&mut h, &[(2, "0.0999")]));
 }
 
+/// A log that set SOFR before `V18` and activates `V46` with no dated rate since.
+fn pre_v18_undated() -> Harness {
+    let mut h = Harness::v17();
+    h.operate(AdminCommand::SetBenchmarkRate { benchmark: "SOFR".into(), annual_bps: 400 });
+    install_expect(&mut h, ceilings());
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V46 });
+    h
+}
+
+/// `V46` admits this on a log from before `V18`, and the rules a log was written under stay as they
+/// are for its replay, so the test pins it: changing it needs a new protocol version. The README's
+/// account of the undated rate says why no log can hold it.
+#[test]
+fn a_backdated_rate_equal_to_a_pre_v18_undated_one_frees_the_next_rate_in_one_snapshot() {
+    let mut h = pre_v18_undated();
+    // Dated today, 100% is 96 points from the 4% undated rate, which a day's limit refuses.
+    assert!(!signs(&mut h, &[(0, "1")]));
+    assert!(signs(&mut h, &[(40, "0.04"), (0, "1")]));
+    assert_eq!(applied(&h, ago(&h, 0)), Some(f("1")));
+}
+
+#[test]
+fn a_backdated_rate_equal_to_a_pre_v18_undated_one_frees_the_next_rate_in_a_second_snapshot() {
+    let mut h = pre_v18_undated();
+    assert!(signs(&mut h, &[(40, "0.04")]));
+    assert!(signs(&mut h, &[(0, "1")]));
+    assert_eq!(applied(&h, ago(&h, 0)), Some(f("1")));
+}
+
 /// Opens a long BTC position that pays financing each rollover.
 fn hold(h: &mut Harness) {
     h.price(BTC, "100000");
