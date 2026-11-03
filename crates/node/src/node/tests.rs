@@ -142,6 +142,30 @@ async fn a_genesis_the_engine_would_reject_stops_the_node_with_an_alert_and_writ
     assert!(log_entries(&dir).is_empty(), "nothing reached the log");
 }
 
+// A production build reads secrets only from a delivered bundle: the refusal runs inside `run`, so
+// a test through `run` covers a node's start, not only the config check called directly.
+#[cfg(feature = "production")]
+#[tokio::test]
+async fn a_production_build_refuses_environment_secrets_at_a_nodes_start() {
+    let mut cfg: crate::config::NodeConfig =
+        toml::from_str(&fs::read_to_string(crate::test_support::DEV_CONFIG).unwrap()).unwrap();
+    cfg.alerts.critical = Some(toml::from_str("url_env = 'ENGINE_ALERTS_CRITICAL_URL'").unwrap());
+    // Without the refusal the start must still stop at once, on the held API port, so a regression
+    // fails here instead of running a node on the dev data.
+    let held = net::TcpListener::bind("127.0.0.1:0").unwrap();
+    cfg.node.listen = held.local_addr().unwrap();
+    cfg.metrics.listen = "127.0.0.1:0".parse().unwrap();
+    let root = scratch_dir("node-production-env-secrets");
+    (cfg.node.log_dir, cfg.history.dir, cfg.alerts.outbox.dir) =
+        (root.join("log"), root.join("history"), root.join("alerts"));
+    for server in &mut cfg.time.servers {
+        server.address = "127.0.0.1:1".into();
+    }
+    let (telemetry, _layer) = telemetry();
+    let err = run(cfg, telemetry).await.expect_err("a production build ran on an environment secret");
+    assert!(format!("{err:#}").contains("not the environment: alerts.critical.url_env"), "{err:#}");
+}
+
 // ── Helpers ──
 
 /// Telemetry with no webhooks, and the layer that feeds it, kept so the router stays open; the
