@@ -239,6 +239,7 @@ fn feed_with_rules(known: bool) -> (VenueFeed, mpsc::Receiver<Request>) {
         venue: Venue::Kraken,
         url: "wss://ws.kraken.com/v2".into(),
         api_key_env: None,
+        api_key_secret: None,
         dataset: None,
         symbols,
     };

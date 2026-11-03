@@ -37,6 +37,15 @@ groups:
         annotations:
           summary: "Engine node {{ $labels.instance }} keeps failing to post {{ $labels.route }} alert pages"
 
+      # A webhook the delivered secrets left off pages nothing, so nothing above counts it.
+      - alert: EngineAlertRouteOff
+        expr: >-
+          label_replace(engine_alert_route_off == 1, "route", "$1", "severity", "(.*)")
+        labels:
+          severity: critical
+        annotations:
+          summary: "Engine node {{ $labels.instance }} has no {{ $labels.route }} webhook: no delivered bundle holds its URL"
+
       - alert: EngineAlertLinesDropped
         expr: increase(engine_alerts_dropped_total[15m]) > 0
         labels:

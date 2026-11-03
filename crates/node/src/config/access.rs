@@ -32,7 +32,7 @@ impl AccessSection {
     /// - an invalid URL, insecure remote transport, zero bound, or oversized response bound
     /// - fewer than two screening slots, which would let a declaration hold every one an order needs
     pub fn validate(&self) -> anyhow::Result<()> {
-        let url = self.endpoint.expose().context("access.endpoint")?;
+        let url = self.endpoint.attested().context("access.endpoint")?;
         let loopback = url
             .host_str()
             .and_then(|host| host.trim_matches(['[', ']']).parse::<IpAddr>().ok())

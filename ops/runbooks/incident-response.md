@@ -168,7 +168,9 @@ withdrawals, checkpoints and distribution claims for good.
 
 `EngineNodeDown` (no metrics scrape for a minute), `EngineAlertPagesFailing` (pages failed or
 dropped in 15 minutes), `EngineAlertDeliveryFailing` (three failed posts in 5 minutes),
-`EngineAlertLinesDropped` and `EngineAlertOutboxOverflow` (the node dropped or refused pages).
+`EngineAlertLinesDropped` and `EngineAlertOutboxOverflow` (the node dropped or refused pages), and
+`EngineAlertRouteOff` (no delivered bundle holds the webhook's URL; deliver it,
+[key-recovery.md](key-recovery.md), "Secrets").
 
 - The node posts through a durable outbox and retries each page with backoff for up to an hour per
   run, bounded by `alerts.outbox.max_age`. A page is removed after acceptance, a permanent refusal

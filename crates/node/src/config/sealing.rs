@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use anyhow::ensure;
 use serde::Deserialize;
 
-use crate::config::{NodeConfig, TeeProvider};
+use crate::config::{NodeConfig, SecretsSection, TeeProvider};
 
 /// The enclave's keys sealed on the data disk, so a restart keeps them (see `tee::sealing`).
 #[derive(Debug, Deserialize)]
@@ -17,6 +17,8 @@ pub struct SealingSection {
     pub dir: PathBuf,
     /// Hands the keys to a successor release the vault names.
     pub handover: Option<HandoverSection>,
+    /// Takes delivered secrets, sealed beside the keys (see `secrets`).
+    pub secrets: Option<SecretsSection>,
 }
 
 /// Where a successor release asks this one for its keys, and where this release finds the

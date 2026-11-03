@@ -66,7 +66,11 @@ async fn segment_bytes_that_differ_from_the_listing_inside_the_keys_are_refused_
         send_bytes(&mut stream, b"lies").await.unwrap();
     });
     let named = CurrentRelease { id: Release { launch_digest: UPGRADE, config_sha256: config }.id(), generation: 4 };
-    let vault = Vault { signer: AccountId(old.enclave_key().unwrap().address()), current: Arc::new(Mutex::new(named)) };
+    let vault = Vault {
+        signer: AccountId(old.enclave_key().unwrap().address()),
+        current: Arc::new(Mutex::new(named)),
+        rotation: Default::default(),
+    };
     let sealer = MockSealer { launch_digest: UPGRADE };
     let err =
         take(&successor, &address, &sealer, &MockAttestor, &vault).await.err().expect("started on a tampered log");
@@ -105,7 +109,11 @@ async fn a_successor_without_the_signed_acknowledgement_keeps_the_keys_sealed_bu
         send(&mut stream, &Reply::Confirmed { signature: forged }).await.unwrap();
     });
     let named = CurrentRelease { id: Release { launch_digest: UPGRADE, config_sha256: config }.id(), generation: 2 };
-    let vault = Vault { signer: AccountId(old.enclave_key().unwrap().address()), current: Arc::new(Mutex::new(named)) };
+    let vault = Vault {
+        signer: AccountId(old.enclave_key().unwrap().address()),
+        current: Arc::new(Mutex::new(named)),
+        rotation: Default::default(),
+    };
     let sealer = MockSealer { launch_digest: UPGRADE };
     let err = take(&successor, &address, &sealer, &MockAttestor, &vault).await.err().expect("started unacknowledged");
     assert!(format!("{err:#}").contains("did not acknowledge"), "{err:#}");

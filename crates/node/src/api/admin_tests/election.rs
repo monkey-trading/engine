@@ -11,7 +11,7 @@ const CANDIDATE: &str = "0x00000000000000000000000000000000000000c1";
 
 impl Node {
     /// `start_on` the latest protocol with staking in the dev genesis, which registry mirrors need.
-    async fn staking(name: &str) -> Self {
+    pub(super) async fn staking(name: &str) -> Self {
         let mut genesis = dev_config().genesis;
         genesis.staking = Some(StakingConfig {
             liquidity_floor: Fixed::from_int(1_000_000),
@@ -24,7 +24,7 @@ impl Node {
 
     /// Sequences the registry's rotation switch on, then its election of `admin_key` at the
     /// earliest effective time, returning that time.
-    async fn elect(&self, admin_key: AccountId) -> Millis {
+    pub(super) async fn elect(&self, admin_key: AccountId) -> Millis {
         let on =
             Command::SwitchRotation { enabled: true, election_cancelled: false, block: 1, chain_ref: "0xon:0".into() };
         assert_eq!(
@@ -47,7 +47,7 @@ impl Node {
 
     /// Moves the node's clocks past the election's notice, and the staking mirror's finalised
     /// frontier past the registry's effective time `effective_at`.
-    async fn pass_the_notice(&mut self, effective_at: Millis) {
+    pub(super) async fn pass_the_notice(&mut self, effective_at: Millis) {
         self.stamps.advance(Duration::from_millis(after_the_notice() as u64 - NOW as u64));
         let sample = sample_around(self.stamps.as_ref());
         self.state.tx.send(crate::sequencer::Request::TimeSample(sample)).await.unwrap();

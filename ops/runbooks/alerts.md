@@ -8,7 +8,7 @@ Every alert the node and `engine ct-watch` can raise, what it means, and where t
 - An alert is a log line carrying `alert = "<name>"`. At `error` it is **Critical**; at `warn` it is a
   **Warning**. The same name with `alert_resolved = "<name>"` and the same fields ends it.
 - With `[alerts.critical]` and `[alerts.warning]` configured, the node posts the start and the end of
-  each episode as JSON to the webhook named by each section's `url_env`. A page has `status`
+  each episode as JSON to the webhook each section's `url_secret` names. A page has `status`
   (`firing` or `resolved`), `severity`, `alert`, a `key` that is the same for both so a receiver can
   match them, a `summary`, the line's `fields`, and its `context`. Delivery is at least once.
 - A repeat of the same key does not page again until it has been quiet for `alerts.episode_quiet`.
@@ -20,10 +20,14 @@ Every alert the node and `engine ct-watch` can raise, what it means, and where t
 
 ## Start-up refusals
 
-Most of these appear as `refusing to serve: <cause>`, after which the image powers the VM off. `signer_unregistered`, `legacy_deposit_unproven` and `log_tail_lost` do not stop the node by themselves.
+Most of these appear as `refusing to serve: <cause>`, after which the image powers the VM off. `secret_missing`, `secrets_unreadable`, `secret_unusable`, `signer_unregistered`, `legacy_deposit_unproven` and `log_tail_lost` do not stop the node by themselves.
 
 | Alert | Level | Meaning and response |
 | --- | --- | --- |
+| `secret_missing` | Critical | Not by itself a refusal: no delivered bundle holds a secret the config names. For a chain or screening key the node holds, serving only its delivery listener; for a vendor key that connection stays off; for a webhook that route stays off. See [key-recovery.md](key-recovery.md), "Secrets". |
+| `secrets_unreadable` | Critical | Not by itself a refusal: this release's sealed secrets file does not open, so the node runs as if it had none until a delivery replaces it. See [key-recovery.md](key-recovery.md), "Secrets". |
+| `secret_unusable` | Critical | Not by itself a refusal: a sealed webhook URL is not acceptable, so its route stays off. Deliver an acceptable one. |
+| `secrets_start_failed` | Critical | The node's first read of the chain failed, on a delivered key. Its delivery listener stays up for five minutes, or until a new bundle is sealed and its receipt has gone out, and then the image powers the VM off. If the provider refused the key, deliver a working one and start the VM again, with the `new-key` or `predecessor` file its first start had if it has no sealed keys yet. Otherwise see [feed-and-custody-failures.md](feed-and-custody-failures.md), "Checkpoint endpoint". |
 | `enclave_key_failed` | Critical | The sealed keys cannot be opened or made. See [key-recovery.md](key-recovery.md), "How the enclave key is kept". |
 | `signer_unregistered` | Critical | Not a refusal: the vault does not name this key, so only `/v1/attestation` is served. See [deploy-and-rollback.md](deploy-and-rollback.md), "First deployment, step 4". |
 | `custody_connect_failed` | Critical | The custody adapter could not start: providers unreachable or in disagreement. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Custody RPC providers". |
@@ -46,6 +50,7 @@ A part of the node stopped or stalled.
 
 | Alert | Level | Meaning and response |
 | --- | --- | --- |
+| `secrets_restart_required` | Warning | A bundle is sealed that the running node does not use: what runs keeps the secrets it started with. Restart when the rotation is ready, and revoke the old key after. See [key-recovery.md](key-recovery.md), "Secrets". |
 | `sequencer_failed` | Critical | The sequencer thread stopped with an error. The node exits. See [restart-and-recovery.md](restart-and-recovery.md), "After any restart". |
 | `task_stopped` | Critical | A supervised task stopped, so the node stops. See [restart-and-recovery.md](restart-and-recovery.md), "After any restart". |
 | `sequencer_stalled` | Critical | The sequencer answered no monitor sample for `alerts.no_price_after`. See [restart-and-recovery.md](restart-and-recovery.md), "Restart a healthy node". |
@@ -202,7 +207,7 @@ Raised at most once a minute. The API refuses clients while it is true.
 
 ## Prometheus rules
 
-`ops/prometheus/engine-node-rules.yml` holds seven rules for the operator's Prometheus, which runs
+`ops/prometheus/engine-node-rules.yml` holds eight rules for the operator's Prometheus, which runs
 outside the enclave and pages through a receiver other than the node's own webhook. They watch what
 the node cannot page itself, and escalate two certificate alerts.
 
@@ -211,12 +216,13 @@ the node cannot page itself, and escalate two certificate alerts.
 | `EngineNodeDown` | `up{job="engine"} == 0` for a minute | None: a node that is down cannot page. [restart-and-recovery.md](restart-and-recovery.md). |
 | `EngineAlertPagesFailing` | Pages failed or were dropped in 15 minutes (`engine_alert_deliveries_total`) | None: it is about the pages themselves. [incident-response.md](incident-response.md), "Pages stop arriving". |
 | `EngineAlertDeliveryFailing` | Three failed posts in 5 minutes (`engine_alert_attempts_failed_total`) | None, as above. |
+| `EngineAlertRouteOff` | No delivered bundle holds a severity's webhook URL, so its alerts are only logged (`engine_alert_route_off`) | `secret_missing`, which that route cannot page. [key-recovery.md](key-recovery.md), "Secrets". |
 | `EngineAlertLinesDropped` | Alert lines dropped before routing (`engine_alerts_dropped_total`) | None, as above. |
 | `EngineAlertOutboxOverflow` | Pages refused at the outbox bound (`engine_alert_outbox_overflows_total`) | None, as above. |
 | `EngineTlsCertificateMissing` | `engine_tls_certificate_pending == 1` for 30 minutes | `certificate_pending` ([certificate-renewal-failure.md](certificate-renewal-failure.md)) |
 | `EngineTlsCertificateExpiring` | The certificate expires within 7 days (`engine_tls_certificate_not_after_seconds`) | `certificate_expiring` (same runbook) |
 
-Five of the seven rules have no node alert behind them, by design. They exist because the node cannot
+Six of the eight rules have no node alert the node can page behind them, by design. They exist because the node cannot
 page that it, or its pages, are not getting through. The watcher exports the same alert metrics, so
 scrape it in the same job and the rules cover it.
 

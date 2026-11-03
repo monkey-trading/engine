@@ -1,13 +1,17 @@
 //! The whole handover over loopback between two mock enclaves, against a vault whose current release
 //! the test sets and a node that answers the request to stop sequencing.
 
+mod secrets;
 mod stop;
 mod successor;
+mod vault;
+use vault::{Rotation, Vault};
 
 use super::*;
 
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use anyhow::bail;
@@ -23,6 +27,7 @@ use crate::log::{CommandEntry, LogEntry, Offset};
 use crate::tee::MockAttestor;
 use crate::tee::keys::KeySet;
 use crate::tee::sealing::{MockSealer, file_for};
+use crate::tee::secrets::SecretStore;
 use crate::test_support::{capture_alerts, dev_config, scratch_dir};
 
 const RELEASE: [u8; 48] = [0x11; 48];
@@ -33,12 +38,6 @@ const PREDECESSOR_CONFIG: [u8; 32] = [0xc0; 32];
 const OTHER_CONFIG: [u8; 32] = [0xc2; 32];
 /// The vault's generation of the successor's release once it names it.
 const GENERATION: u64 = 4;
-
-/// A vault that names `signer`, and the release `current` holds as its current one.
-struct Vault {
-    signer: AccountId,
-    current: Arc<Mutex<CurrentRelease>>,
-}
 
 /// A running predecessor, the node behind it, and the successor's config.
 struct Exchange {
@@ -58,30 +57,10 @@ struct Exchange {
     current: Arc<Mutex<CurrentRelease>>,
     /// Whether the node behind the predecessor signs its checkpoints.
     signing: watch::Sender<bool>,
-}
-
-impl CheckpointChain for Vault {
-    async fn state(&self, _view: View) -> anyhow::Result<VaultState> {
-        let zero = Fixed::ZERO;
-        Ok(VaultState {
-            height: 1,
-            signer: self.signer,
-            checkpoint: None,
-            balance: zero,
-            deposits: 0,
-            deposited: zero,
-            distributions_paid: zero,
-        })
-    }
-
-    async fn post(&self, _checkpoint: &Checkpoint) -> anyhow::Result<()> {
-        bail!("this vault takes no checkpoints")
-    }
-
-    async fn current_release(&self, at: &Observation) -> anyhow::Result<CurrentRelease> {
-        ensure!(at.view == View::Finalized, "the current release is read at finality");
-        Ok(*self.current.lock().unwrap())
-    }
+    /// The registry's rotation switch, as the predecessor reads it.
+    rotation: Rotation,
+    /// The delivered secrets the predecessor holds.
+    secrets: Arc<SecretStore>,
 }
 
 #[tokio::test]
@@ -169,7 +148,7 @@ async fn a_successor_the_vault_no_longer_names_once_the_keys_arrive_seals_nothin
     // Governance names another release after the predecessor's check and before the successor's.
     let signer = AccountId(exchange.old.enclave_key().unwrap().address());
     let named_another = CurrentRelease { id: [0x99; 32], generation: GENERATION + 1 };
-    let vault = Vault { signer, current: Arc::new(Mutex::new(named_another)) };
+    let vault = Vault { signer, current: Arc::new(Mutex::new(named_another)), rotation: Default::default() };
     let err = exchange.take_reading(vault).await.err().expect("keys sealed for a release the vault no longer names");
     assert!(format!("{err:#}").contains("the vault's current release is"), "{err:#}");
     assert!(std::fs::read_dir(&exchange.successor_dir).is_err(), "the successor sealed keys");
@@ -261,6 +240,9 @@ impl Exchange {
         let (drain, drains) = mpsc::channel(1);
         let (signing, signing_rx) = watch::channel(true);
         let predecessor_log = scratch_dir(&format!("{name}-old-log"));
+        let rotation = Rotation::default();
+        let stand_in = Box::new(MockSealer { launch_digest: RELEASE });
+        let secrets = Arc::new(SecretStore::open(&dir, stand_in, PREDECESSOR_CONFIG).unwrap());
         let predecessor = Predecessor {
             listener,
             domain: CheckpointDomain {
@@ -273,15 +255,29 @@ impl Exchange {
             signer: AccountId(old.enclave_key().unwrap().address()),
             store: Arc::new(store),
             attestor: Box::new(MockAttestor),
-            vault: Vault { signer: AccountId([0; 20]), current: current.clone() },
+            vault: Vault { signer: AccountId([0; 20]), current: current.clone(), rotation: rotation.clone() },
             log_dir: predecessor_log.clone(),
             trusted: TrustedClock::new(Arc::new(SystemClock), watch::channel(None).1, Duration::from_secs(1)),
             drain,
             signing: signing_rx,
+            secrets: Some(secrets.clone()),
         };
         let run = tokio::spawn(predecessor.run());
         let successor_log = successor.node.log_dir.clone();
-        Self { address, run, drains, old, successor, successor_dir, successor_log, predecessor_log, current, signing }
+        Self {
+            address,
+            run,
+            drains,
+            old,
+            successor,
+            successor_dir,
+            successor_log,
+            predecessor_log,
+            current,
+            signing,
+            rotation,
+            secrets,
+        }
     }
 
     /// Connects as a successor running `UPGRADE`, takes the connection's challenge, and builds a
@@ -298,7 +294,9 @@ impl Exchange {
         let quoting = Quoting { provider: TeeProvider::Mock, processor: None, kds_base: "https://kds.test" };
         let evidence = evidence::produce(&quoting, &MockAttestor, &platform, report_data).await.unwrap();
         let config_sha256 = hex::encode(self.successor.file_sha256);
-        (stream, report_data, Request { public_key: hex::encode(&public), config_sha256, log_tip: None, evidence })
+        let message =
+            Request { public_key: hex::encode(&public), config_sha256, log_tip: None, secrets_only: false, evidence };
+        (stream, report_data, message)
     }
 
     /// The successor's release: `UPGRADE` running its config.
@@ -360,7 +358,7 @@ impl Exchange {
 
     /// The successor's side, against a vault naming `signer`.
     async fn take_naming(&self, signer: AccountId) -> anyhow::Result<KeyStore> {
-        self.take_reading(Vault { signer, current: self.current.clone() }).await
+        self.take_reading(Vault { signer, current: self.current.clone(), rotation: self.rotation.clone() }).await
     }
 
     /// The successor's side, reading `vault`.

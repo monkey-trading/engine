@@ -170,7 +170,18 @@ keys. As the vault's immutable guardian, the same multisig may also, without the
 withdrawals for seven days or retire the signer, which the vault then refuses for withdrawals and
 checkpoints until the timelock installs one, and for MONKEY and USDC claims until that signer posts
 a checkpoint, which an exit that starts first rules out; the node signs no withdrawal while either
-holds. With
+holds. The
+node's own credentials, its RPC provider keys, market-data vendor keys, and alert webhook URLs, reach
+it only encrypted to a one-time key its quote proves an enclave of the release holds, which the
+operator's tool checks against the release manifest first, under the signature of the operator key
+in effect: the attested config names which secret each field reads, and fixes each RPC provider's
+origin, so a bundle, even one a stolen operator key signs, can change a provider's key but never which
+provider credits deposits. They are sealed per release, a recorded delivery does not decrypt on a later
+connection, and an election moves none of them. A host that restores an older sealed file gets the
+older bundle, whose version the enclave's attested status shows; the operator revokes a rotated key at
+its provider, since nothing bounds that restore more tightly. Databento's gateway has no TLS, so a host
+can relay a login of its own under the operator's account by answering with what the node sends, though
+it never learns the key. With
 `[tee.sealing]` the keys are sealed on the host's disk under a key the SEV-SNP firmware derives from
 the chip, the launch measurement, the guest policy, and the committed TCB, with the config hash
 bound to the ciphertext, so neither the host nor another release, the same code under another

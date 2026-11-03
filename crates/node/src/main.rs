@@ -40,8 +40,9 @@ enum Cmd {
         mock_launch_digest: Option<[u8; 48]>,
         /// Run as the standby for the operator in effect: follow its stream into a local copy of
         /// the published log and take over when the registry's liveness rule promotes this node's
-        /// candidate (needs `[standby]`). The standby holds no keys; the key flags do not apply.
-        #[arg(long, conflicts_with_all = ["new_key", "predecessor", "mock_launch_digest"])]
+        /// candidate (needs `[standby]`). The standby holds no keys; the key flags do not apply, but
+        /// `--mock-launch-digest` still names the release its delivered secrets are sealed for.
+        #[arg(long, conflicts_with_all = ["new_key", "predecessor"])]
         standby: bool,
     },
     /// Replay a published log and verify every checkpoint root and signature. `--log` is a single log file, or a
@@ -164,9 +165,9 @@ enum Cmd {
         #[arg(long)]
         frames: PathBuf,
     },
-    /// Sign an admin command with the operator's key and submit it to a node. The key comes from
-    /// `--key-file`, or the `OPERATOR_KEY_FILE` or `OPERATOR_KEY` environment variable, never the
-    /// command line.
+    /// Sign an admin command with the operator's key and submit it to a node, or deliver secrets into
+    /// a node's attested enclave. The key comes from `--key-file`, or the `OPERATOR_KEY_FILE` or
+    /// `OPERATOR_KEY` environment variable, never the command line.
     Admin(AdminArgs),
     /// Watch Certificate Transparency logs for a certificate for the API's domain whose key no
     /// verified attestation of the node names, and alert on it. Run it outside the enclave, on a
@@ -214,10 +215,11 @@ fn main() -> anyhow::Result<()> {
             let cfg = NodeConfig::load(&config)?;
             let telemetry = init_telemetry(&cfg, |var| std::env::var(var).ok())?;
             if standby {
-                tokio::runtime::Builder::new_multi_thread()
-                    .enable_all()
-                    .build()?
-                    .block_on(engine_node::standby::run(cfg, telemetry))
+                tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(engine_node::standby::run(
+                    cfg,
+                    telemetry,
+                    KeyStart { mock_launch_digest, ..Default::default() },
+                ))
             } else {
                 run_dedicated(cfg, telemetry, KeyStart { new_key, predecessor, mock_launch_digest })
             }
@@ -348,7 +350,7 @@ fn main() -> anyhow::Result<()> {
                 key_file: std::env::var_os("OPERATOR_KEY_FILE").map(PathBuf::from),
                 key: std::env::var("OPERATOR_KEY").ok().map(HexKey),
             };
-            tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(admin::run(args, env)).map(drop)
+            tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(admin::dispatch(args, env))
         }
         Cmd::CtWatch(args) => {
             tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(ct_watch::run(args))

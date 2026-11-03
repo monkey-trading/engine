@@ -17,11 +17,10 @@
 //!
 //! The host controls the network and can drop pages. `ops/prometheus/engine-node-rules.yml` has the
 //! operator's Prometheus page when scrapes stop or posts fail, which catches an outage but not a
-//! hostile host: it can answer the plain-HTTP scrape itself and supplies the environment the
-//! webhook URL comes from.
+//! hostile host: it can answer the plain-HTTP scrape itself. The webhook URL comes from a delivered
+//! secret (`secrets`), or in a development build from the host's environment.
 //!
-//! TODO: bound a hostile host with signed metrics, or a heartbeat the enclave signs, and a webhook
-//! URL released to the attested enclave rather than read from the host's environment.
+//! TODO: bound a hostile host with signed metrics, or a heartbeat the enclave signs.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -44,7 +43,7 @@ mod episodes;
 use crate::alerts::episodes::Episodes;
 mod outbox;
 use crate::alerts::outbox::Outbox;
-use crate::config::OutboxSection;
+use crate::config::{AlertsSection, OutboxSection, Values};
 mod webhook;
 pub use crate::alerts::webhook::Routes;
 use crate::alerts::webhook::{Queues, RETRY, client};
@@ -264,13 +263,30 @@ impl LineFields {
 }
 
 impl Router {
+    /// Sets each route that names a delivered secret `values` holds; see `Routes::deliver`.
+    /// Error cases:
+    /// - a delivered URL is not acceptable
+    pub(crate) fn deliver_routes(&mut self, cfg: &AlertsSection, values: &Values) -> anyhow::Result<()> {
+        self.routes.deliver(cfg, values)
+    }
+
+    /// Whether Critical alerts have a webhook.
+    pub(crate) fn pages_critical(&self) -> bool {
+        self.routes.has(Severity::Critical)
+    }
+
     /// Starts the router and delivery tasks.
     /// Error cases:
     /// - opening or validating the outbox, or building the webhook client fails
     pub async fn spawn(self, episode_quiet: Duration, cfg: &OutboxSection) -> anyhow::Result<Routing> {
         let mut deliveries = JoinSet::new();
-        let routes = [self.routes.has(Severity::Critical), self.routes.has(Severity::Warning)];
+        let routes = [self.routes.keeps_pages(Severity::Critical), self.routes.keeps_pages(Severity::Warning)];
         let outbox = Outbox::start(cfg.clone(), routes, self.metrics.clone(), &mut deliveries).await?;
+        // A route off for want of its secret drops pages unseen, and the node cannot page that.
+        for severity in [Severity::Critical, Severity::Warning] {
+            let off = self.routes.keeps_pages(severity) && !self.routes.has(severity);
+            self.metrics.alert_route_off.get_or_create(&SeverityLabel { severity: severity.as_str() }).set(off.into());
+        }
         // Read before delivery starts removing the pages it delivers.
         let episodes = Episodes::resumed(episode_quiet, outbox.open_episodes().await?, Instant::now());
         let queues = Queues::start(self.routes, client()?, &self.metrics, RETRY, outbox, &mut deliveries);

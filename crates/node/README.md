@@ -10,6 +10,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 
 ## Features
 
+- Production secrets delivered into the attested enclave: RPC provider keys, vendor keys, and alert
+  webhook URLs, named by the config, encrypted to a one-time key the operator's tool first checks
+  against the release manifest, signed by the operator key, and sealed per release
 - Signed eligibility and fail-closed API/custody screening from V24, with public refusal reasons
   and reserved, uncredited sanctioned deposits
 - Dated publisher ingestion with a separate signing worker, startup synchronization, and per-date
@@ -165,6 +168,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/benchmarks/` — official CSV fetching (`mod.rs`), exact decimal parsing (`parse.rs`), compact
   schedule notifications (`schedule.rs`), and tests
 - `src/admin/tls.rs` — the TLS connection to a node, pinned to its attested key
+- `src/admin/secrets.rs` — `engine admin deliver-secrets` and `secrets-status`: the quote checked
+  against the release manifest before anything is encrypted, and the quoted receipt;
+  `src/admin/secrets/tests.rs` runs the tool against the listener and against forgeries
 - `src/admin/tests.rs` — `engine admin` tests: key sources, commands, signing, and pins
 - `src/ct_watch/mod.rs` — `engine ct-watch`: the poll loop over the node's attestation and the logs
 - `src/ct_watch/config.rs` — the watcher's config: domain, node, logs, and alert routing
@@ -185,6 +191,11 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   reaches the final checkpoint of the release that handed the keys over
 - `src/node/keys/tests.rs` — sealed, new, refused, and unsealed keys, the vault's current release,
   the stand-in measurement, and the first start's head check
+- `src/node/recovery.rs` — reading the log and the history index it must match before anything is
+  written
+- `src/node/secrets.rs` — this start's delivered secrets: opening the sealed bundle, asking a
+  predecessor, holding for what the node cannot run without, setting the rest into the config and
+  the alert routes, and `secret_missing`; `src/node/secrets/tests.rs` covers each
 - `src/node/registration.rs` — serving only the attestation until the vault names the key
 - `src/node/shutdown.rs` — supervising the tasks until one stops, a signal arrives, or a handover
   stops sequencing, which commits only once the sequencer admits its final checkpoint; then ending
@@ -492,7 +503,18 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   TLS key, the ACME account, the certificate, and the predecessor's final checkpoint
 - `src/tee/sealing.rs` — the sealed key file, AES-256-GCM under the platform's derived key, and the
   mock TEE's public stand-in for sealing; `src/tee/sealing/tests.rs` covers it
+- `src/tee/secrets.rs` — the sealed secrets file, per release and apart from the keys, and what the
+  host can do with it; `src/tee/secrets/tests.rs` covers it
 - `src/tee/snp.rs` — the SEV-SNP sealing key and report through `/dev/sev-guest` (Linux)
+- `src/secrets/mod.rs` — delivering secrets: who may, what binds a bundle, and what a host can do at
+  each step
+- `src/secrets/bundle.rs` — the bundle, the operator's signature over it, and what a config can use
+- `src/secrets/delivery.rs` — the delivery's messages, what each quote binds, and the encryption
+- `src/secrets/listener.rs` — the enclave's side: an offer per connection, the operator key in effect,
+  and the seal; `src/secrets/tests.rs` runs it over loopback from the host's side,
+  `src/secrets/listener/tests.rs` covers a real enclave's refusal of a published signer and the
+  connection cap, and `src/secrets/tests/leaks.rs` checks where a value must never go;
+  `src/secrets/bundle/tests.rs` covers what the signature binds and a file that does not parse
 - `src/handover/mod.rs` — the handover's messages, framing, report data, HPKE encryption of the keys,
   the vault's current release check that a start and a handover share, the registry's handover
   source an elected successor resolves the incumbent from, and the predecessor's published-log
@@ -505,6 +527,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   stop, the final checkpoint, and the sealed tail segments it sends after the keys;
   `src/handover/predecessor/tests/` runs it over loopback, the stop and final-checkpoint tests in
   `stop.rs`, the successor-side transfer tests in `successor.rs`
+- `src/handover/secrets.rs` — the new release's side of moving the delivered secrets with an
+  approved upgrade, checked by the operator's signature; `src/handover/predecessor/secrets.rs` is
+  the running release's, which refuses an election's successor; `src/handover/predecessor/tests/`'s
+  `secrets.rs` covers both, against the switch in its `vault.rs`
 - `src/handover/tests.rs` — what each step binds, the encryption, the framing, and the evidence
 - `src/verify/mod.rs` — attestation verification for the CLI and replay: loading or fetching the
   attestation, release manifest, and collateral, `engine-verify` on the system clock, and the
@@ -584,6 +610,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/config/access.rs` — redacted source configuration, recorded identity and freshness bounds
 - `src/config/custody.rs` — the `[custody.evm]` section, independent RPC providers, redacted
   URLs, and custody checks
+- `src/config/secrets.rs` — secrets a config names but never holds: `[tee.sealing.secrets]`, a URL's
+  `{name}`, the redacting `SecretUrl` and `SecretValue`, which field reads what, and a production
+  build's refusal of a secret from the environment; `src/config/secrets/tests.rs` covers them
 - `src/config/telemetry.rs` — the metrics listener and alert webhook config, and the redacting
   `WebhookUrl`
 - `src/config/tests.rs` — config loading and validation tests
@@ -700,6 +729,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/tests/staking/registry.rs` — registry events mirrored once with the stakes, a refused one stalling the mirror, and the staking contract's deployer checked against the configured registry
 - `src/api/house_state.rs` — `GET /v1/house/state`: the parameters with the seq that set them, and the latest checkpoint
 - `src/api/operator.rs` — `GET /v1/operator`: the key in effect, its pending rotation, whether rotation is on, and the last election
+- `src/api/admin_tests/delivery_authority.rs` — who a running node takes deliveries from: the key in
+  effect by trusted time, and a named successor's own
 - `src/api/admin_tests/election.rs` — the operator route and the admin route after an election, published keys included
 - `src/custody/staking.rs` — mirroring the staking contract's finalised events into `Stake`/`Unstake`
   commands once each, holding them until `InitStaking` has applied; V27 completed ranges, including
@@ -733,6 +764,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/tests/quorum.rs` — fabrication, disagreement, lag, outages, and quorum recovery
 - `src/custody/tests/quorum_diagnostics.rs` — malformed header exclusion, transport independence, and retained watchdog progress
 - `src/custody/tests/rpc.rs` — the RPC adapter's log decoding, deadlines, and URL scrubbing
+- `src/custody/tests/rpc/redaction.rs` — a key a provider's refusal echoes stays out of the error
 - `src/custody/tests/user_agent.rs` — the RPC adapter's JSON-RPC requests carry the engine's User-Agent
 - `src/custody/tests/confirmed.rs` — confirmed collateral and finality over the real quorum and sequencer
 - `src/custody/tests/confirmed/scan.rs` — empty-window progress during finality stalls, canonical hint invalidation and restart
@@ -977,10 +1009,25 @@ cargo build --release -p engine-node --features production
 # their share of an epoch through the vault, an epoch below the floor pays neither, and the
 # candidate's unclaimed leaf registers and pays through the vault's exit
 ./scripts/dev-operator-share.sh
+
+# Deliver secrets into a node's enclave, on its [tee.sealing.secrets] listener. The tool refuses unless
+# the enclave's quote matches the release manifest and the config's hash; --allow-mock accepts the mock
+# TEE, development only. The file holds `version = <n>` and a [secrets] table of names and values.
+cargo run -p engine-node -- admin --config <node.toml> --key-file <operator.key> deliver-secrets \
+  --to <host:port> --release <release.toml> --secrets-file <secrets.toml>
+
+# What the enclave attests it holds: the sealed and running versions, and the secrets it lacks
+cargo run -p engine-node -- admin --config <node.toml> --key-file <operator.key> secrets-status \
+  --to <host:port> --release <release.toml>
+
+# Run the production secrets scenario on isolated Anvil: a node that holds until its keys are
+# delivered, refused bundles, a restart, a rotation, a restored and a damaged sealed file
+./scripts/dev-production-secrets.sh
 ```
 
 EVM custody requires at least three entries in `custody.evm.providers`, each with a unique
-`name` and a distinct credential-bearing `rpc_url`. Use independently operated services in
+`name` and a distinct `rpc_url`, whose credential a delivered secret fills (see Delivered secrets).
+Use independently operated services in
 production; configuration cannot prove operator independence. Each URL must use HTTPS unless it
 is a literal loopback address and must serve state back to `custody.evm.start_block` (an archive
 node). The old single `custody.evm.rpc_url` config is rejected and must be migrated before restart.
@@ -2063,6 +2110,118 @@ per IP address every 3 hours, and 5 failed authorizations per identifier per acc
 a new key after a compromise, orders again under these limits, and rehearsals belong on the staging
 directory.
 
+### Delivered secrets
+
+A production node's credentials never reach the host in plaintext. The config, which is attested and
+published, names which secret each field reads, and the operator delivers the values into the enclave:
+
+```toml
+[tee.sealing.secrets]
+# The delivery listener, plain TCP: the host carries it, so the quote, the encryption, and the
+# operator's signature protect it, not the transport. Keep it off public interfaces (below).
+listen = "10.0.2.15:9472"
+
+[custody.evm]
+providers = [
+  # {name} in a URL's path or query. The host stays in the attested file: these providers' quorum
+  # credits deposits, so a bundle can change a provider's key, never which provider is asked.
+  { name = "provider-a", rpc_url = "https://rpc.provider-a.example/v2/{provider_a_key}" },
+]
+
+[[feeds.venues.connections]]
+venue = "massive"
+url = "wss://socket.massive.com/futures"
+api_key_secret = "massive_api_key"
+symbols = [{ market = 20, symbol = "ESZ6", contract = "ESZ6" }]
+
+[alerts.critical]
+url_secret = "alerts_critical_url"
+```
+
+`checkpoints.rpc_url` and `access.endpoint` take a `{name}` the same way. A value is percent-encoded
+into its place, so it cannot end the path or query it sits in. A URL with no `{name}` is used as
+written, for a provider that needs no key. A production build refuses `api_key_env` and `url_env`,
+but for `run --standby`, which no enclave runs: the guest's only environment is the measured kernel
+command line, and a host that could set one would choose the secret.
+
+- **Delivering.** `engine admin deliver-secrets` sends a fresh nonce to the listener, and the enclave
+  answers with a one-time HPKE key (the suite the key handover uses) and a quote over the nonce, that
+  key, its config's hash, and what it holds. The tool checks the quote's chain to the pinned vendor
+  roots, its measurement, policy, and TCB against the release manifest, and the config hash against
+  the manifest and its own `--config`, and only then encrypts, with the release's id in the HPKE
+  context. Another image or config has neither the private key nor the context, so it cannot read a
+  bundle, and it fails the tool's checks before one is sent.
+- **Who may deliver.** The bundle carries a signature over the chain id, the vault, its version, and
+  its contents. A running node takes the key the log records or a rotation's that has come due, as
+  `POST /v1/admin` does, by trusted time, so a host's clock brings no rotation in early; while the
+  registry has rotation on it takes only its own config's key, so an elected key reaches into no other
+  operator's enclave. A node that
+  has not yet recovered its log takes the key its attested config names, since reading the vault can
+  take a delivered key, so no log can be authenticated yet. That is the one key that can end a hold, so
+  a rotated operator keeps its old key until a release's config names the new one; a redelivery under
+  the new key replaces the sealed signature, for the upgrade that follows. A real enclave refuses a
+  published test key.
+- **Reaching the listener.** Anyone who can connect can read the offer, whose names are in the
+  published config anyway, and cause a quote; only the operator's signature seals anything. The listener
+  runs a few connections at once with short deadlines, so an idle peer does not hold up a delivery, but
+  a peer that fills them can delay one, as it can for any open port. The host forwards it only from the
+  operator's addresses, as it does the handover port.
+- **What a restart keeps.** The bundle is sealed per release in `<release id>.secrets.json` under
+  `tee.sealing.dir`, with AES-256-GCM under the platform's derived key and the config hash bound to the
+  ciphertext, and without the vault's generation: it must open before the vault can be read, and it
+  signs nothing a generation would need to fence. A restart opens it with no delivery.
+- **A missing or undecryptable bundle.** A missing or damaged file raises `secret_missing` (Critical)
+  for each field, and `secrets_unreadable` for a file that no longer opens, and no default or variable
+  stands in. Without a custody or checkpoint RPC key or a screening source's key, the node holds:
+  chain access is what opens its sealed keys, a smaller quorum would weaken what credits deposits, and
+  no screening would admit what it should refuse. It serves only the delivery listener until a bundle
+  supplies them, then goes on starting, with no restart. Without a vendor's key that connection stays
+  off and the markets it alone prices go unpriced (`market_no_price`). Without a webhook's URL that
+  route stays off, its alerts are only logged, and any pages waiting for it stay in the outbox;
+  `engine_alert_route_off` shows it to the operator's Prometheus, which pages by `EngineAlertRouteOff`.
+- **A key a provider refuses.** A start whose first read of the chain fails, while `checkpoints.rpc_url`
+  names a delivered key, does not power the guest off at once, since that key may be why and only a
+  delivery can repair it. It serves only the delivery listener under `secrets_start_failed` (Critical)
+  for up to five minutes, then exits, or exits once a new bundle is sealed and its receipt has gone
+  out, so the next start takes it. A failure after that read is no delivered key's doing, and exits at once.
+- **A rotation.** Deliver a higher `version`, holding every secret: a bundle replaces the whole sealed
+  one, so the tool refuses one lacking what the node holds for unless given `--partial`. The enclave
+  seals it at once, but what runs keeps the clients it built when it started, so the receipt says
+  `restart required`, `secrets_restart_required` (Warning) stays open until a restart, and the old key
+  should stay valid at its provider until then. The restart keeps the enclave's keys. A retry at the
+  same version with the same secrets, after a receipt the host dropped, is accepted as already sealed;
+  the same version with others is refused, as is a lower one.
+- **An upgrade.** With `--predecessor`, the new release asks the running one for the bundle before it
+  reads the vault. The running release checks the new one's quote and that the vault names it, and
+  sends the bundle encrypted to its one-time key, with no stop; the keys follow in their own handover.
+  The new release cannot yet read the vault to check who answered, so it takes a bundle only under the
+  signature of the operator its own config names; a bundle signed before a rotation is refused, and the
+  operator delivers again. The bundle moves whole, since the signature covers all of it: a higher version
+  without a retired secret removes it. Since the keys' handover ends the release
+  holding the bundle, the new release first makes a few attempts to take it.
+- **An election.** No secret moves. While the registry has rotation on, the vault's release changes
+  only by election or promotion, and the running release refuses, reading the switch at the finalized
+  block that named the release and at the latest one: the keys go to the elected enclave,
+  but its vendor accounts and provider keys are its own, delivered under its own key before or after
+  it takes over. A standby runs outside any enclave on its operator's own host, so a config with
+  `[standby]` writes its keys out and, run with `--standby`, may read `url_env` and `api_key_env` in a production build; its registered release
+  takes its own delivery after a promotion.
+- **What the host can do.** It carries the connection and holds the file. It can delay or drop a
+  delivery and forge a refusal, which is the denial it has anyway; the tool reports no receipt, and a
+  retry is safe. It cannot read a bundle, substitute an enclave, or replay an offer, since the quote
+  binds the connection's nonce; replay a delivery, since each connection has a new key; forge a bundle
+  or a receipt. Restoring an older sealed file gives the older bundle, which nothing on the disk can
+  tell from the newest: its URLs have the same attested origins, so it can hold only an older key for
+  the same provider, which a rotation for cause has revoked, or an older webhook. `secrets-status`
+  shows the version the enclave holds, under its quote, and a higher delivery repairs it. A Databento
+  key is the exception to what the host's network can touch: that gateway has no TLS, and its login
+  answers a challenge in the clear with the key's last five characters and a digest, so a host can
+  relay a login of its own under the operator's account without learning the key.
+- **Where a value goes.** Nowhere but the enclave's memory, the seal, and the connection it
+  authenticates. `Debug` and `Display` redact it, errors name a secret and never its value, the crates
+  that see a credential on its way out log only at `warn` or above whatever `logging.level` says, and
+  neither the log, metrics, nor a page holds one.
+
 ### Enclave keys
 
 With `[tee.sealing]`, the enclave's keys live on the data disk, sealed to the release: its launch
@@ -2253,15 +2412,16 @@ restarted feed walks a market that has split from its current mark.
 
 `OPERATOR_KEY_FILE`: a file holding the operator's private key in hex, for `admin`.
 
-The alert webhook URLs are credentials, so config names the environment variable that holds each
-(`alerts.critical.url_env`, `alerts.warning.url_env`) rather than the URL. A URL must be HTTPS
-unless it is HTTP to a loopback address, and the node refuses to start when a named variable is
-unset. A node whose TEE or custody provider is not `mock` refuses to start without
+The alert webhook URLs are credentials, so config names the delivered secret that holds each
+(`alerts.critical.url_secret`, `alerts.warning.url_secret`) or, in a development build, the
+environment variable (`url_env`), rather than the URL. A URL must be HTTPS unless it is HTTP to a
+loopback address, and the node refuses to start when a named variable is unset. A node whose TEE or custody provider is not `mock` refuses to start without
 `[alerts.critical]`, since its Critical alerts would otherwise page no one.
 
 Vendor API keys are credentials too: each `[[feeds.venues.connections]]` entry for Massive,
-TraderMade, or Databento names the environment variable that holds its key (`api_key_env`), and a
-node with `feeds.provider = "venues"` refuses to start while a named variable is unset or empty.
+TraderMade, or Databento names the delivered secret that holds its key (`api_key_secret`) or, in a
+development build, the environment variable (`api_key_env`), and a node with
+`feeds.provider = "venues"` refuses to start while a named variable is unset or empty.
 A Massive connection names one of its `/forex`, `/futures`, or `/stocks` feeds; a Databento one
 names its live gateway as `tcp://<gateway>.lsg.databento.com:13000` and the `dataset` it serves; a
 symbol for a market priced from futures names the `contract` it quotes, one listed in the market's

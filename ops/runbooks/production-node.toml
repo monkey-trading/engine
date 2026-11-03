@@ -10,9 +10,10 @@
 # the value and delete the comment; the assembled file must contain no marker.
 # ops/runbooks/deploy-and-rollback.md has the procedure.
 #
-# Secrets never appear in this file. Webhook URLs and vendor API keys are read from the environment
-# variables named here, and how they reach an enclave is not built yet (#356). An RPC credential
-# may sit in a provider URL, but then the config cannot be published for verification.
+# Secrets never appear in this file, so it can be published whole. It names them: `{name}` in an RPC
+# provider's or the screening source's URL, `api_key_secret`, and `url_secret`. The operator delivers
+# their values into the attested enclave (key-recovery.md, "Secrets"); a production build refuses
+# `api_key_env` and `url_env`. A URL's origin stays here, so a delivered value never changes who answers.
 #
 # Paths are under /data, the image's one writable disk. The alert outbox must be a sibling of the
 # log directory. A production build refuses mock providers, an unsigned API, plain-http origins and
@@ -74,6 +75,10 @@ processor = "Genoa" # OWNER: the host's CPU generation
 [tee.sealing]
 dir = "/data/keys"
 
+[tee.sealing.secrets]
+# Where the operator delivers secrets. Forward it from the operator's addresses, not the public.
+listen = "0.0.0.0:9472"
+
 [tee.sealing.handover]
 # Where a successor release asks this one for the keys. Reachable by the successor, not the public.
 listen = "0.0.0.0:9471"
@@ -94,11 +99,11 @@ vault = "0x1111111111111111111111111111111111111111" # REPLACE
 
 [custody.evm]
 # At least three providers run by different operators, each serving state back to start_block.
-# Credentials in a URL make the config unpublishable until #356.
+# Each `{name}` is a key the operator delivers, in the URL's path or query.
 providers = [
-  { name = "provider-a", rpc_url = "https://rpc-a.example.com/key" }, # REPLACE
-  { name = "provider-b", rpc_url = "https://rpc-b.example.com/key" }, # REPLACE
-  { name = "provider-c", rpc_url = "https://rpc-c.example.com/key" }, # REPLACE
+  { name = "provider-a", rpc_url = "https://rpc-a.example.com/v2/{provider_a_key}" }, # REPLACE
+  { name = "provider-b", rpc_url = "https://rpc-b.example.com/v2/{provider_b_key}" }, # REPLACE
+  { name = "provider-c", rpc_url = "https://rpc-c.example.com/v2/{provider_c_key}" }, # REPLACE
 ]
 usdc = "0x2222222222222222222222222222222222222222" # REPLACE: the vault's usdc()
 # Production credits at latest, less confirmations, and releases principal at finalized.
@@ -127,7 +132,7 @@ contract = "0x4444444444444444444444444444444444444444" # REPLACE
 [checkpoints]
 # A separate endpoint from the custody providers. It signs and funds the relayer's transactions,
 # so it must support eth_sendTransaction and hold a funded relayer dedicated to this log.
-rpc_url = "https://checkpoint-rpc.example.com/key" # REPLACE
+rpc_url = "https://checkpoint-rpc.example.com/v2/{checkpoint_rpc_key}" # REPLACE
 relayer = "0x5555555555555555555555555555555555555555" # REPLACE
 retry_interval = "2s"
 rpc_timeout = "10s"
@@ -160,11 +165,11 @@ symbols = [{ market = 1, symbol = "BTC/USD" }, { market = 2, symbol = "ETH/USD" 
 
 # Foreign exchange: two vendors a market. Every launch market has min_sources = 2, so a market
 # priced by two vendors has no price when either is down. The vendors' account plans, redistribution
-# rights and key variables are open (#6, #356).
+# rights are open (#6).
 [[feeds.venues.connections]]
 venue = "massive"
 url = "wss://socket.massive.com/forex"
-api_key_env = "MASSIVE_API_KEY"
+api_key_secret = "massive_api_key"
 symbols = [
   { market = 10, symbol = "EUR-USD" },
   { market = 11, symbol = "GBP-USD" },
@@ -175,7 +180,7 @@ symbols = [
 [[feeds.venues.connections]]
 venue = "tradermade"
 url = "wss://stream.tradermade.com/feedAdv"
-api_key_env = "TRADERMADE_API_KEY"
+api_key_secret = "tradermade_api_key"
 symbols = [
   { market = 10, symbol = "EURUSD" },
   { market = 11, symbol = "GBPUSD" },
@@ -190,7 +195,7 @@ symbols = [
 [[feeds.venues.connections]]
 venue = "massive"
 url = "wss://socket.massive.com/futures"
-api_key_env = "MASSIVE_API_KEY"
+api_key_secret = "massive_api_key"
 symbols = [
   { market = 20, symbol = "ESZ6", contract = "ESZ6" },
   { market = 20, symbol = "ESH7", contract = "ESH7" },
@@ -203,7 +208,7 @@ symbols = [
 [[feeds.venues.connections]]
 venue = "databento"
 url = "tcp://glbx-mdp3.lsg.databento.com:13000"
-api_key_env = "DATABENTO_API_KEY"
+api_key_secret = "databento_api_key"
 dataset = "GLBX.MDP3"
 symbols = [
   { market = 20, symbol = "ESZ6", contract = "ESZ6" },
@@ -218,13 +223,13 @@ symbols = [
 [[feeds.venues.connections]]
 venue = "massive"
 url = "wss://socket.massive.com/stocks"
-api_key_env = "MASSIVE_API_KEY"
+api_key_secret = "massive_api_key"
 symbols = [{ market = 40, symbol = "AAPL" }] # OWNER: add markets 41 to 59
 
 [[feeds.venues.connections]]
 venue = "databento"
 url = "tcp://equs-mini.lsg.databento.com:13000"
-api_key_env = "DATABENTO_API_KEY"
+api_key_secret = "databento_api_key"
 dataset = "EQUS.MINI"
 symbols = [{ market = 40, symbol = "AAPL" }] # OWNER: add markets 41 to 59
 
@@ -262,18 +267,18 @@ outbox = { dir = "/data/alerts", max_pages = 2048, max_bytes = 16777216, max_age
 no_price_after = "5s"
 episode_quiet = "15m"
 
-# The webhook URLs are credentials: the node reads them from these environment variables.
+# The webhook URLs are credentials: the operator delivers them.
 [alerts.critical]
-url_env = "ENGINE_ALERTS_CRITICAL_URL"
+url_secret = "alerts_critical_url"
 
 [alerts.warning]
-url_env = "ENGINE_ALERTS_WARNING_URL"
+url_secret = "alerts_warning_url"
 
 # The signed screening source. Its signing authority and freshness bound are recorded once in the
 # log. Without this section the actions it screens are refused. See config/access-source.md.
 [access]
 source = "0x6666666666666666666666666666666666666666" # REPLACE: the screening authority's address
-endpoint = "https://screening.example.com/key" # REPLACE
+endpoint = "https://screening.example.com/v1/{screening_key}" # REPLACE
 timeout = "2s" # OWNER
 max_age = "30s" # OWNER
 max_response_bytes = 4096

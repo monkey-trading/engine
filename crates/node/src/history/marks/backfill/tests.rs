@@ -118,6 +118,7 @@ fn venue_feeds() -> FeedsSection {
                     venue: Venue::Coinbase,
                     url: "wss://advanced-trade-ws.coinbase.com".to_owned(),
                     api_key_env: None,
+                    api_key_secret: None,
                     dataset: None,
                     symbols: vec![
                         VenueSymbol { market: 1, symbol: "BTC-USD".to_owned(), contract: None },
@@ -128,6 +129,7 @@ fn venue_feeds() -> FeedsSection {
                     venue: Venue::Kraken,
                     url: "wss://ws.kraken.com/v2".to_owned(),
                     api_key_env: None,
+                    api_key_secret: None,
                     dataset: None,
                     symbols: vec![VenueSymbol { market: 1, symbol: "BTC/USD".to_owned(), contract: None }],
                 },

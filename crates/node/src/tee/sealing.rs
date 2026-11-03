@@ -255,19 +255,7 @@ impl KeyStore {
             nonce: hex::encode(nonce),
             ciphertext: hex::encode(ciphertext),
         };
-        let partial = self.path.with_extension("partial");
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&partial)
-            .with_context(|| format!("creating {}", partial.display()))?;
-        file.write_all(&serde_json::to_vec(&sealed)?)
-            .and_then(|()| file.sync_all())
-            .context("writing the sealed keys")?;
-        std::fs::rename(&partial, &self.path).with_context(|| format!("replacing {}", self.path.display()))?;
-        let dir = self.path.parent().context("the sealed file has a directory")?;
-        File::open(dir).and_then(|dir| dir.sync_all()).with_context(|| format!("syncing {}", dir.display()))
+        write_replacing(&self.path, &serde_json::to_vec(&sealed)?)
     }
 
     /// The keys, whether or not a panic interrupted an earlier holder: `update` replaces them whole.
@@ -281,10 +269,29 @@ pub(crate) fn file_for(dir: &Path, release: &Release, generation: u64) -> PathBu
     dir.join(format!("{}-{generation}.sealed.json", hex::encode(release.id())))
 }
 
+/// Writes `bytes` to a new file beside `path`, syncs it, and renames it over `path`, so a crash
+/// leaves one whole file or the other.
+/// Error cases:
+/// - the write, a sync, or the rename fails
+pub(crate) fn write_replacing(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    let dir = path.parent().context("the sealed file has a directory")?;
+    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    let partial = path.with_extension("partial");
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&partial)
+        .with_context(|| format!("creating {}", partial.display()))?;
+    file.write_all(bytes).and_then(|()| file.sync_all()).context("writing the sealed file")?;
+    std::fs::rename(&partial, path).with_context(|| format!("replacing {}", path.display()))?;
+    File::open(dir).and_then(|dir| dir.sync_all()).with_context(|| format!("syncing {}", dir.display()))
+}
+
 /// The AEAD key the platform derives at `tcb`.
 /// Error cases:
 /// - the platform refuses the derivation
-fn aead_key(sealer: &dyn Sealer, tcb: u64) -> anyhow::Result<LessSafeKey> {
+pub(crate) fn aead_key(sealer: &dyn Sealer, tcb: u64) -> anyhow::Result<LessSafeKey> {
     let derived = sealer.sealing_key(tcb).context("deriving the sealing key")?;
     Ok(LessSafeKey::new(UnboundKey::new(&AES_256_GCM, &derived).expect("a 32-byte key is an AES-256 key")))
 }

@@ -96,7 +96,7 @@ async fn benchmark_undated_signed_calendar_rewind_resolves_the_matching_durable_
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/hook", listener.local_addr().unwrap());
         let mut cfg = dev_config().alerts;
-        cfg.critical = Some(WebhookRoute { url_env: "UNDATED_HOOK".into() });
+        cfg.critical = Some(WebhookRoute::from_env("UNDATED_HOOK"));
         cfg.warning = None;
         cfg.outbox.dir = dir.join("outbox");
         cfg.outbox.max_pages = 32;

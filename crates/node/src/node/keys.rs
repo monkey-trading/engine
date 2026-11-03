@@ -57,13 +57,10 @@ pub(super) struct Keys {
 /// Error cases:
 /// - the keys cannot be obtained (see `obtain`), or the attestor cannot produce a quote
 pub(super) async fn attested(cfg: &NodeConfig, start: &KeyStart) -> anyhow::Result<Keys> {
-    let attestor: Box<dyn Attestor> = match cfg.tee.provider {
-        TeeProvider::Mock => {
-            warn!("mock TEE: attestation reports are not backed by hardware");
-            Box::new(MockAttestor)
-        }
-        TeeProvider::ConfigfsTsm => Box::new(ConfigfsTsm::default()),
-    };
+    if cfg.tee.provider == TeeProvider::Mock {
+        warn!("mock TEE: attestation reports are not backed by hardware");
+    }
+    let attestor = attestor_for(cfg.tee.provider);
     let (enclave, tls, store) = obtain(cfg, start, attestor.as_ref())
         .await
         .inspect_err(|e| error!(alert = "enclave_key_failed", "refusing to serve: {e:#}"))?;
@@ -215,11 +212,19 @@ async fn obtain_with(
     Ok((keys.enclave_key()?, TlsIdentity::new(keys.tls_key()?)?, Some(store)))
 }
 
+/// The source of `provider`'s quotes.
+pub(super) fn attestor_for(provider: TeeProvider) -> Box<dyn Attestor> {
+    match provider {
+        TeeProvider::Mock => Box::new(MockAttestor),
+        TeeProvider::ConfigfsTsm => Box::new(ConfigfsTsm::default()),
+    }
+}
+
 /// The platform's sealing for `provider`.
 /// Error cases:
 /// - the mock TEE has no stand-in measurement, real attestation is given one, or SEV-SNP sealing is
 ///   asked for off Linux
-fn sealer(provider: TeeProvider, start: &KeyStart) -> anyhow::Result<Box<dyn Sealer>> {
+pub(super) fn sealer(provider: TeeProvider, start: &KeyStart) -> anyhow::Result<Box<dyn Sealer>> {
     if provider == TeeProvider::Mock {
         let launch_digest = start
             .mock_launch_digest

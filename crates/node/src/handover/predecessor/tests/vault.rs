@@ -1,0 +1,57 @@
+//! The test vault, whose current release and registry switch the test sets.
+
+use std::sync::atomic::AtomicBool;
+
+use super::*;
+
+/// A vault that names `signer`, and the release `current` holds as its current one.
+pub(super) struct Vault {
+    pub(super) signer: AccountId,
+    pub(super) current: Arc<Mutex<CurrentRelease>>,
+    /// The registry's rotation switch.
+    pub(super) rotation: Rotation,
+}
+
+/// The registry's rotation switch as the vault reads it, at the latest block and at finality, and
+/// whether reading it fails.
+#[derive(Clone, Default)]
+pub(super) struct Rotation {
+    pub(super) latest: Arc<AtomicBool>,
+    pub(super) finalized: Arc<AtomicBool>,
+    pub(super) fails: Arc<AtomicBool>,
+}
+
+impl CheckpointChain for Vault {
+    async fn state(&self, _view: View) -> anyhow::Result<VaultState> {
+        let zero = Fixed::ZERO;
+        Ok(VaultState {
+            height: 1,
+            signer: self.signer,
+            checkpoint: None,
+            balance: zero,
+            deposits: 0,
+            deposited: zero,
+            distributions_paid: zero,
+        })
+    }
+
+    async fn post(&self, _checkpoint: &Checkpoint) -> anyhow::Result<()> {
+        bail!("this vault takes no checkpoints")
+    }
+
+    async fn current_release(&self, at: &Observation) -> anyhow::Result<CurrentRelease> {
+        ensure!(at.view == View::Finalized, "the current release is read at finality");
+        Ok(*self.current.lock().unwrap())
+    }
+
+    async fn rotation_enabled(&self) -> anyhow::Result<bool> {
+        ensure!(!self.rotation.fails.load(Ordering::SeqCst), "the rotation switch cannot be read");
+        Ok(self.rotation.latest.load(Ordering::SeqCst))
+    }
+
+    async fn rotation_enabled_at(&self, at: &Observation) -> anyhow::Result<bool> {
+        ensure!(at.view == View::Finalized, "the rotation switch is read at finality");
+        ensure!(!self.rotation.fails.load(Ordering::SeqCst), "the rotation switch cannot be read");
+        Ok(self.rotation.finalized.load(Ordering::SeqCst))
+    }
+}

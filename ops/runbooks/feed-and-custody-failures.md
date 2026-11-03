@@ -193,8 +193,8 @@ so a quorum loss stops crediting. Trading continues.
    quorum protects against one provider lying only if the others are independent of it. Providers
    must serve state back to `custody.evm.start_block` (archive access).
 
-Credentials in a provider URL are in the config file (so the config cannot be published for
-verification); see [key-recovery.md](key-recovery.md), "Secrets".
+A provider's key is a delivered secret, not part of the config: rotating one needs a delivery and a
+restart, and no release. See [key-recovery.md](key-recovery.md), "Secrets".
 
 ## Checkpoint endpoint
 

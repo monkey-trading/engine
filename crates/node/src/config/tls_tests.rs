@@ -133,6 +133,37 @@ fn a_production_build_refuses_fresh_account_budgets_above_its_values_at_load() {
     load("shared = { per_minute = 60, burst = 120 }\nper_client = { per_minute = 12, burst = 6 }").unwrap();
 }
 
+// A secret the environment would supply is refused at load, for every field that can name one.
+#[cfg(feature = "production")]
+#[test]
+fn a_production_build_refuses_a_secret_from_the_environment_at_load() {
+    let dir = crate::test_support::scratch_dir("production-environment-secret");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("node.toml");
+    let delivered = format!("{}{ACME}", real_providers());
+    std::fs::write(&path, &delivered).unwrap();
+    NodeConfig::load(&path).unwrap();
+
+    let from_env =
+        delivered.replace("url_secret = \"alerts_critical_url\"", "url_env = \"ENGINE_ALERTS_CRITICAL_URL\"");
+    assert_ne!(from_env, delivered, "the edit must change the config");
+    std::fs::write(&path, &from_env).unwrap();
+    let err = format!("{:#}", NodeConfig::load(&path).unwrap_err());
+    assert!(
+        err.contains("reads secrets only from a delivered bundle") && err.contains("alerts.critical.url_env"),
+        "{err}"
+    );
+
+    // No enclave runs a standby, so its environment is its operator's own, but the section alone
+    // does not make a node one: only `--standby` does.
+    let standby = "[standby]\noperator = 'https://api.operator.example'\nmirrors = []\n\
+                   enclave = '0x0000000000000000000000000000000000000001'\n";
+    std::fs::write(&path, format!("{from_env}\n{standby}")).unwrap();
+    let loaded = NodeConfig::load(&path).unwrap();
+    let err = format!("{:#}", loaded.refuse_environment_secrets_on_a_node().unwrap_err());
+    assert!(err.contains("reads secrets only from a delivered bundle"), "{err}");
+}
+
 // ── Helpers ──
 
 /// The committed dev config with `section` appended.
@@ -152,8 +183,8 @@ fn test_root() -> String {
 }
 
 /// `config/anvil.toml` with every provider real, as a production node runs: a configfs-tsm TEE, an
-/// operator key nobody publishes, credit at latest, live venues, checkpoints, and no plain HTTP
-/// browser origin.
+/// operator key nobody publishes, credit at latest, live venues, checkpoints, its webhook a delivered
+/// secret, and no plain HTTP browser origin.
 #[cfg(feature = "production")]
 fn real_providers() -> String {
     real_providers_with("shared = { per_minute = 60, burst = 120 }\nper_client = { per_minute = 12, burst = 6 }")
@@ -168,6 +199,10 @@ fn real_providers_with(budgets: &str) -> String {
     let tee = cfg["tee"].as_table_mut().unwrap();
     tee.insert("provider".into(), "configfs_tsm".into());
     tee.remove("use_published_mock_key");
+    tee.insert("processor".into(), "Milan".into());
+    let sealing = "dir = 'keys'\n[secrets]\nlisten = '127.0.0.1:9472'";
+    tee.insert("sealing".into(), toml::from_str::<toml::Table>(sealing).unwrap().into());
+    cfg["alerts"]["critical"] = toml::from_str::<toml::Table>("url_secret = 'alerts_critical_url'").unwrap().into();
     cfg["api"].as_table_mut().unwrap().remove("allowed_origins");
     cfg["api"]["fresh_accounts"] = toml::from_str::<toml::Table>(budgets).unwrap().into();
     cfg["operator"]["public_key"] = crate::test_support::own_operator_key().into();

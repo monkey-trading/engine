@@ -86,7 +86,14 @@ fn a_kept_book_for_a_symbol_not_subscribed_is_refused_before_it_is_kept() {
         (Venue::Kraken, ["BTC/USD", "ETH/USD"], one_sided_kraken),
     ];
     for (venue, symbols, message) in cases {
-        let conn = VenueConnection { venue, url: String::new(), api_key_env: None, dataset: None, symbols: Vec::new() };
+        let conn = VenueConnection {
+            venue,
+            url: String::new(),
+            api_key_env: None,
+            api_key_secret: None,
+            dataset: None,
+            symbols: Vec::new(),
+        };
         let refused = Adapter::new(&conn, None, &symbols).read(&message, NOW);
         assert!(
             matches!(&refused, Err(Refusal::Connection(reason)) if reason.contains("SOL") && reason.contains("not subscribed")),
@@ -341,6 +348,13 @@ fn feed_at(venue: Venue, url: &str, symbols: &[(MarketId, &str)], timeout: Durat
         symbol: (*symbol).into(),
         contract: None,
     });
-    let conn = VenueConnection { venue, url: url.into(), api_key_env: None, dataset: None, symbols: symbols.collect() };
+    let conn = VenueConnection {
+        venue,
+        url: url.into(),
+        api_key_env: None,
+        api_key_secret: None,
+        dataset: None,
+        symbols: symbols.collect(),
+    };
     VenueFeed::new(conn, None, fast(timeout), tls_config().unwrap(), mpsc::channel(1).0)
 }

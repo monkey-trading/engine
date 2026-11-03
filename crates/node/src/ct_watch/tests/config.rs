@@ -16,6 +16,17 @@ fn the_committed_example_loads() {
     assert_eq!(cfg.domain, "api.example.com");
 }
 
+// The watcher runs outside the enclave, where no bundle reaches it: a route naming a delivered secret
+// would leave it paging no one, so it is refused rather than silently dropped.
+#[test]
+fn a_critical_route_takes_a_variable_and_never_a_delivered_secret() {
+    let delivered =
+        EXAMPLE.replace("url_env = \"CT_WATCH_ALERTS_CRITICAL_URL\"", "url_secret = \"alerts_critical_url\"");
+    assert_ne!(delivered, EXAMPLE, "the edit must change the config");
+    let err = parse(&delivered).validate(false).unwrap_err().to_string();
+    assert!(err.contains("no delivered secrets"), "{err}");
+}
+
 #[test]
 fn the_config_with_only_its_required_keys_loads_with_the_documented_defaults() {
     let minimum = r#"

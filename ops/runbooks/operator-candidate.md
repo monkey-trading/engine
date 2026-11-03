@@ -23,7 +23,7 @@ prints, in order, the epoch length, minimum term, finality margin, margin, eligi
 | A bare-metal AMD SEV-SNP host | Its own, with the image's launch flags ([deploy-and-rollback.md](deploy-and-rollback.md)) and a data disk. |
 | A hostname and a CAA record | The candidate's `apiHostname`, with DNS, port 443 forwarded unmodified to the node, and a CAA record naming the chosen CA and TLS-ALPN-01 ([certificate-renewal-failure.md](certificate-renewal-failure.md), "Before the first certificate"). The enclave orders its certificate for this name under the ACME account that moves with the keys. |
 | Its own custody providers | At least three, run by different operators, serving archive state back to the vault's deployment block. The quorum that credits deposits is the candidate's own choice, which is why the timelock approves each release. |
-| Its own market-data accounts and secrets | The venues and vendors in its config, with their API keys. How a secret reaches the enclave is not built (#356). |
+| Its own market-data accounts and secrets | The venues and vendors in its config, with their API keys. No secret moves from the incumbent: the candidate delivers its own to its own enclave ([key-recovery.md](key-recovery.md), "Secrets"). |
 | A checkpoint endpoint and a funded relayer | Its own, per [feed-and-custody-failures.md](feed-and-custody-failures.md), "Checkpoint endpoint". |
 | An alert receiver | `[alerts.critical]` is required with real attestation. |
 | An admin key | Made and kept offline, ideally on a hardware wallet. It signs `engine admin` commands and its registration. |
@@ -40,7 +40,7 @@ must match, and everything else is the candidate's own. Start from [production-n
 | --- | --- |
 | `[genesis]`: the launch genesis, close-spread ceilings and staking included | `node.listen`, `[api]` limits and origins, `[api.tls.acme]` (its hostname, contact) |
 | `node.auth = "eip712"`, `custody.chain_id`, `custody.vault` | `[custody.evm]` providers and their credentials, `[checkpoints]` endpoint and relayer |
-| `[custody.evm.staking]` contract and registry addresses | `[feeds]` venues, vendors, symbols and key variables |
+| `[custody.evm.staking]` contract and registry addresses | `[feeds]` venues, vendors, symbols and the names of their secrets |
 | `[access]` `source` and `max_age` (recorded once in the log) | `[time]` servers, `[metrics]`, `[alerts]`, the `[access]` endpoint |
 | | `operator.public_key`: **the candidate's own admin key** (the log records the incumbent until the election takes effect, and a config naming the key of a pending election on the same chain and vault is accepted); `[tee.sealing]` directory and the handover listener |
 
@@ -145,7 +145,8 @@ After an election, the sequence is fixed by the contracts. Times are the registr
 4. **Prepare your node before `effectiveAt`.** A successor needs: its disk with `config.toml` (the
    approved release, byte for byte), with `mirrors` under `[tee.sealing.handover]` set to your archive
    mirrors of the incumbent's log, and nothing else: no `new-key`, no `predecessor`. The disk must
-   hold no sealed keys for this release in the vault's generation of it.
+   hold no sealed keys for this release in the vault's generation of it. Have your own secrets in a
+   bundle file on your workstation: nothing comes from the incumbent.
 5. **After `effectiveAt`**, once the block is `finalized`, fold the release change into the vault's
    generation (anyone may; your node waits for it up to a minute, then refuses):
 
@@ -158,6 +159,8 @@ After an election, the sequence is fixed by the contracts. Times are the registr
 6. **Start your node.**
    **Changes the live system.** Needs the owner's approval to deploy this release and to take the
    incumbent's keys.
+   It holds first, with `secret_missing` and only its delivery listener up. Deliver your bundle, under
+   your admin key ([key-recovery.md](key-recovery.md), "Secrets"), and it goes on.
    On the console you will see: no sealed keys, rotation on, the incumbent resolved from the registry
    (`election handover: …`), the incumbent's published log fetched from its hostname or your mirrors, and
    the keys taken from its handover endpoint. The incumbent checks your quote against the vendor's chain

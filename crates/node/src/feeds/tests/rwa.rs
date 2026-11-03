@@ -176,7 +176,14 @@ async fn start_vendors(node: &Node, open_at: &Arc<AtomicI64>) -> Vec<AbortHandle
             .collect();
         let api_key = Some(ApiKey::from_env("VENDOR_API_KEY", |_| Some(KEY.into())).expect("a key"));
         let api_key_env = Some("VENDOR_API_KEY".into());
-        let conn = VenueConnection { venue, url, api_key_env, dataset: dataset.map(Into::into), symbols };
+        let conn = VenueConnection {
+            venue,
+            url,
+            api_key_env,
+            api_key_secret: None,
+            dataset: dataset.map(Into::into),
+            symbols,
+        };
         let feed =
             tokio::spawn(venue::run(conn, api_key, fast(WAIT), tls_config().expect("tls config"), node.tx.clone()));
         tasks.push(feed.abort_handle());

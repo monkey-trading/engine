@@ -50,6 +50,11 @@ fn the_template_holds_what_a_production_build_requires() {
     let fresh = cfg.api.fresh_accounts;
     assert_eq!((fresh.shared.per_minute.get(), fresh.shared.burst.get()), (60, 120));
     assert_eq!((fresh.per_client.per_minute.get(), fresh.per_client.burst.get()), (12, 6));
+    // A production build reads secrets only from a delivered bundle.
+    let sealing = cfg.tee.sealing.as_ref().expect("[tee.sealing]");
+    assert!(sealing.secrets.is_some(), "[tee.sealing.secrets] takes the delivery");
+    let text = template();
+    assert!(!text.contains("api_key_env =") && !text.contains("url_env ="), "the environment is refused");
 }
 
 #[test]

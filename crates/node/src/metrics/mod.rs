@@ -131,6 +131,7 @@ pub struct Metrics {
     pub alert_deliveries: Family<DeliveryLabels, Counter>,
     pub alert_attempts_failed: Family<SeverityLabel, Counter>,
     pub alert_pages_pending: Family<SeverityLabel, Gauge>,
+    pub alert_route_off: Family<SeverityLabel, Gauge>,
     pub tls_certificate_not_after: FloatGauge,
     pub tls_certificate_pending: Gauge,
 }
@@ -161,6 +162,7 @@ impl Metrics {
             alerts_dropped: Counter::default(),
             alert_outbox_overflows: Counter::default(),
             alert_deliveries: Family::default(),
+            alert_route_off: Family::default(),
             alert_attempts_failed: Family::default(),
             alert_pages_pending: Family::default(),
             tls_certificate_not_after: FloatGauge::default(),
@@ -240,6 +242,11 @@ impl Metrics {
             "alert_attempts_failed",
             "Webhook posts of alert pages that failed, each retry counted, by severity",
             metrics.alert_attempts_failed.clone(),
+        );
+        r.register(
+            "alert_route_off",
+            "1 while a severity's webhook names a delivered secret this start lacks, so its alerts are only logged",
+            metrics.alert_route_off.clone(),
         );
         r.register(
             "alert_pages_pending",

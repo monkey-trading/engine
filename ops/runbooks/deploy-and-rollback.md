@@ -59,8 +59,8 @@ Nothing here touches a live system.
    minimum reported TCB, and `[config_hashes]` holding `"node.toml" = "0x<hash>"` (format in
    `image/README.md`, "Release"). The minimum TCB is `OWNER`: take it from the host's firmware.
 6. Publish the GitHub release with the image files, `node.toml`, `release.toml` and the browser
-   verifier package. A config holding an RPC credential in a URL cannot be published; say so in the
-   release, and keep it where only the operators can read it.
+   verifier package. The config holds no credential, only the names of the secrets the operator
+   delivers.
 7. Ship a console build that pins `release.toml`, next to the previous release's, before the node
    release goes live. The attestation binds the config, so a console that does not pin the new
    manifest refuses the new node.
@@ -91,12 +91,18 @@ the first certificate"); a Critical alert receiver; and the companion processes 
    `cast keccak $(cast concat-hex $DIGEST $CONFIG_HASH)`, and `releaseGeneration()` rose by one.
    Wait until the block holding the execute is `finalized` (about 15 minutes after its batch posts;
    see reference.md): the node reads the release there.
-2. **Boot with new keys.** Make the data disk with `config.toml` (the file you hashed, renamed) and an
-   empty file `new-key`. Start the VM on the host with the launch flags in `measurement.json`
-   (`image/README.md`, "Boot on an SEV-SNP host").
+2. **Boot with new keys and deliver the secrets.** Make the data disk with `config.toml` (the file you
+   hashed, renamed) and an empty file `new-key`. Start the VM on the host with the launch flags in
+   `measurement.json` (`image/README.md`, "Boot on an SEV-SNP host"), forwarding
+   `tee.sealing.secrets.listen` from the operator's addresses.
    **Changes the live system.** Needs the owner's approval to deploy this image and config.
-   Check: `curl -sk $API/v1/attestation` answers and `/v1/markets` does not. The serial console shows
-   `signer_unregistered`. That is expected: the vault does not name this key yet.
+   The node holds, with `secret_missing` for each secret and only its delivery listener up: chain
+   access is what lets it go on. Deliver the bundle ([key-recovery.md](key-recovery.md), "Secrets").
+   **Changes the live system.** Needs the owner's approval of the delivery.
+   Check: the tool prints `sealed: version 1`, `curl -sk $API/v1/attestation` answers and `/v1/markets`
+   does not. The serial console shows `signer_unregistered`. That is expected: the vault does not name
+   this key yet. If it shows `secrets_start_failed` instead, a provider refused a delivered key: see
+   [alerts.md](alerts.md).
 3. **Verify the attestation**, as in reference.md ("The node's attested key and its pin"):
    `verify-attestation` against `release.toml`. Check that it exits 0 and that the config hash it
    names is `$CONFIG_HASH`.
@@ -154,15 +160,21 @@ Use this for a new image, a new config, or both. The running release is `A`, the
 3. **Prepare `B`'s disk.** On the new host or disk: `config.toml` (`B`'s config), a file
    `predecessor` holding `A`'s handover address, `host:port` (`tee.sealing.handover.listen`), and
    the log you copied at step 8 of section 1, in `/data/log`. Check: `A`'s handover port is
-   reachable from `B`'s network, and `B`'s `[tee.sealing.handover]` is configured the same way.
+   reachable from `B`'s network, and `B`'s `[tee.sealing.handover]` and `[tee.sealing.secrets]` are
+   configured the same way.
 4. **Start `B`.**
    **Changes the live system.** Needs the owner's approval to deploy this image and config and to
    hand the enclave's keys to it.
-   What happens: `B` connects to `A`. `A` checks `B`'s quote against the vendor's chain and the
-   vault's named release, stops sequencing, signs a final checkpoint, and sends the keys and the
+   What happens: `B` first asks `A` for the delivered secrets, with no stop: `A` checks `B`'s quote
+   against the vendor's chain and the vault's named release, and sends the bundle encrypted to `B`,
+   which takes it only under the signature of the operator `B`'s config names. If the move fails, `B`
+   raises `secret_missing`: deliver to `B` yourself ([key-recovery.md](key-recovery.md), "Secrets"): `A` refuses
+   while rotation is on, and a bundle signed before an operator rotation does not move.
+   `B` then connects to `A` for the keys. `A` checks `B`'s quote in the same way, stops sequencing, signs a final checkpoint, and sends the keys and the
    log tail encrypted to `B`. `B` writes the log, checks it reaches that checkpoint, seals the keys
    and confirms; `A` acknowledges and powers off.
-   Check: `B` serves `/v1/markets`; `curl -sf $API/v1/attestation | jq -r .enclave_address` still
+   Check: `B` serves `/v1/markets`; `secrets-status` on `B` shows the version `A` held;
+   `curl -sf $API/v1/attestation | jq -r .enclave_address` still
    equals `$SIGNER`; `A`'s VM has powered off; `release_superseded` resolves; and the chain of
    posted checkpoints continues: `cast call $VAULT 'latestSeq()(uint64)' --rpc-url $RPC` rises.
    The TLS key and certificate carry over, so `$PIN` is unchanged.
@@ -201,7 +213,8 @@ Choose by where you are.
    generation, so `A` takes the keys afresh from `B`.
 
 **`B` is the problem because of a config value** (a feed, a limit, a provider): that is also a new
-release. There is no way to change a running node's config.
+release. There is no way to change a running node's config. A secret's value is not a config value:
+a rotation needs a delivery and a restart, and no release ([key-recovery.md](key-recovery.md), "Secrets").
 
 ## 5. Companion processes
 

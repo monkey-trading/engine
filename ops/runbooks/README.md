@@ -43,14 +43,8 @@ other runbooks call.
 These runbooks describe the system as the code builds it today. These parts are not done, and a
 runbook that depends on one says so where it does:
 
-- **Secrets have no supported way into the enclave** (#356). The guest's only environment is its
-  measured kernel command line, which the host can read. The Critical webhook URL and the vendor API
-  keys are read from environment variables, so a node running the image cannot start with real
-  attestation until #356 is built. An RPC credential can sit in a URL in the config file, but then
-  the file cannot be published for verifiers to check its hash. Every procedure here that changes a
-  secret is a plan, not a tested step.
 - **The image has not run on SEV-SNP hardware** (#108).
-  The quote, the launch measurement and sealing on a real host are unverified.
+  The quote, the launch measurement, sealing and a delivery of secrets on a real host are unverified.
 - **No staging environment exists.** The deploy and rollback procedures have been checked against
   the pieces that run locally, not end to end.
 - **The values marked `OWNER` in [production-node.toml](production-node.toml)** wait on decisions:
