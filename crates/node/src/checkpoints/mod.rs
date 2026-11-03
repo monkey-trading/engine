@@ -356,6 +356,6 @@ mod lifecycle_tests;
 #[cfg(test)]
 pub(crate) mod scenario;
 #[cfg(test)]
-mod staking_scenario;
+pub(crate) mod staking_scenario;
 #[cfg(test)]
 mod tests;

@@ -261,9 +261,18 @@ pub enum Event {
         epoch: u64,
         amount: UsdcUnits,
     },
+    /// From `V47`, the operator's share of a closed distribution epoch: `amount` of USDC base units
+    /// added to the cumulative distribution of the candidate seated under the key in effect, or of the
+    /// key's address for an operator no election installed. An operator that also stakes has a `DistributionAllocated`
+    /// too, in the same leaf.
+    OperatorShareAllocated {
+        account: AccountId,
+        epoch: u64,
+        amount: UsdcUnits,
+    },
     /// From `V25`, a closed distribution epoch: the NAV and floor it measured, the excess above the
-    /// floor in whole USDC base units, and what stakers were allocated of it. House cash fell by
-    /// the allocated total; the dust is the house's.
+    /// floor in whole USDC base units, and what was allocated of it: to stakers, and from `V47` to
+    /// the operator. House cash fell by the allocated total; the dust is the house's.
     DistributionEpochClosed {
         epoch: u64,
         nav: Fixed,

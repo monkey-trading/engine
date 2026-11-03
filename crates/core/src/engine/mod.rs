@@ -156,7 +156,8 @@ pub struct Engine {
     /// rotations so far.
     #[serde(default, skip_serializing_if = "OperatorBounds::is_default")]
     pub(crate) operator_bounds: OperatorBounds,
-    /// From `V37`, the mirrored operator registry: whether rotation is on, and the last election.
+    /// From `V37`, the mirrored operator registry: whether rotation is on, and the last election;
+    /// from `V47`, the candidate seated.
     #[serde(default, skip_serializing_if = "OperatorElection::is_default")]
     pub(crate) operator_election: OperatorElection,
     /// From `V40`, the most each market's closing slice may pay, in bps of the index: adopted once
@@ -246,6 +247,8 @@ impl Engine {
         self.command_ms = sequenced.ts;
         // From `V35` a rotation whose notice has run hands over before the command is authorised.
         self.apply_due_rotation(sequenced.ts);
+        // From `V47` the candidate seated moves with the key, before any distribution closes.
+        self.settle_operator_candidate();
         // From `V40` a ceiling adoption whose notice has run applies before the command acts.
         self.apply_due_ceiling(sequenced.ts);
 

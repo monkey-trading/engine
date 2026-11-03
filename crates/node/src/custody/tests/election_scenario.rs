@@ -6,6 +6,7 @@
 
 mod chain;
 mod node;
+mod operator_share;
 
 use std::sync::Arc;
 
@@ -83,7 +84,7 @@ async fn dev_scenario_stakers_elect_the_key_that_signs_from_the_effective_time()
     //    to take effect seven days and the finality margin after the close.
     chain.govern(vec![setRotationCall { enabled: true }.abi_encode()]).await;
     node.wait("rotation to mirror on", |e| e.operator_election().rotation_enabled).await;
-    node.advance_to((ELECTION_CLOSE_SECS as Millis + 60) * 1000, || (ELECTION_CLOSE_SECS as Millis + 60) * 1000).await;
+    node.advance_to((ELECTION_CLOSE_SECS as Millis + 60) * 1000).await;
     chain.close_epoch_at(ELECTION_CLOSE_SECS).await;
     node.wait("the election to mirror", |e| e.operator_election().last.is_some()).await;
     let election = node.query(|e| e.operator_election().last).await.unwrap();
@@ -105,12 +106,12 @@ async fn dev_scenario_stakers_elect_the_key_that_signs_from_the_effective_time()
     //    watcher has mirrored a finalised block stamped at or after it, they are refused and the
     //    elected key's apply. No block follows that one before the deployer's last request, so the
     //    request reaches the log rather than being refused at the route.
-    node.advance_to(EFFECTIVE_MS - 60_000, || EFFECTIVE_MS - 60_000).await;
+    node.advance_to(EFFECTIVE_MS - 60_000).await;
     let block = chain.mine_at(EFFECTIVE_SECS - 60).await;
     node.wait("the mirror to settle before the effective time", move |e| completed_through(e) >= Some(block)).await;
     let reduce_only = |reduce_only| AdminCommand::SetReduceOnly { market: None, reduce_only };
     assert_eq!(node.admin(&deployer, reduce_only(true)).await, (StatusCode::OK, json!({ "type": "admin_applied" })));
-    node.advance_to(EFFECTIVE_MS + 60_000, || EFFECTIVE_MS + 60_000).await;
+    node.advance_to(EFFECTIVE_MS + 60_000).await;
     let block = chain.mine_at(EFFECTIVE_SECS + 60).await;
     node.wait("the mirror to pass the effective time", move |e| completed_through(e) >= Some(block)).await;
     let refused = json!({ "type": "admin_rejected", "reason": "invalid signature" });

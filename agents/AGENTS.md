@@ -33,7 +33,7 @@ an index: load only the rule whose hint matches the current action.
   `tests/operator_election.rs`), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
   shared by gross realised loss magnitudes from V43, net before it, halvings, and cumulative entitlements) and MONKEY staking with
   USDC distributions (`staking.rs`: stake mirroring, V27 authenticated identities and completed scan
-  anchors, epoch closes at NAV above a liquidity floor, cumulative distributions proven on chain; `Engine::distributable_excess` reads what a close would distribute),
+  anchors, epoch closes at NAV above a liquidity floor, from `V47` a fifth to the operator in effect while rotation is on, cumulative distributions proven on chain; `Engine::distributable_excess` reads what a close would distribute),
   protocol versions, and the
   state tree (a keccak-256 sparse Merkle tree over the state, with account and entitlement proofs, in
   `merkle/`; from `V38` `merkle/exit.rs` commits and proves what the vault's exit checks). It does no IO and uses no clocks,
@@ -184,7 +184,7 @@ an index: load only the rule whose hint matches the current action.
   claimed. `src/Staking.sol` holds
   MONKEY staked for USDC distributions, enforces the unstake cooldown — the constructor refuses a
   cooldown shorter than the engine's epoch, the lock-up that prices jumping in just before a
-  snapshot — and emits the events the engine mirrors; `claimDistribution` pays a staker the USDC
+  snapshot — and emits the events the engine mirrors; `claimDistribution` pays an account the USDC
   its cumulative distribution, proven
   against the root of any recorded checkpoint of the signer epoch in force, adds to what it was already
   paid. Each staker delegates its whole
@@ -290,6 +290,9 @@ an index: load only the rule whose hint matches the current action.
   `dev-monkey-emissions.sh`, the MONKEY emissions scenario on Anvil;
   `dev-monkey-staking.sh`, the MONKEY staking and USDC distributions scenario on Anvil;
   `dev-operator-election.sh`, the delegated operator election scenario on Anvil;
+  `dev-operator-share.sh`, the operator's share of distributions on Anvil: an elected candidate and a
+  staker each claim their share, an epoch below the floor pays neither, and the candidate's unclaimed
+  leaf registers and pays through the vault's exit;
   `dev-operator-handover.sh`, the operator handover scenario on Anvil: an elected candidate's enclave
   takes the keys and the log from the incumbent's at the election's effective time, a withdrawal the
   incumbent authorized pays, a stale sealed copy refuses, and a re-election hands the keys back;
@@ -347,7 +350,7 @@ an index: load only the rule whose hint matches the current action.
   invariant tests on x86_64 and aarch64 Linux, the unchanged-reference-log check, `cargo-deny`,
   the contracts' `forge fmt --check` / build /
   test, the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
-  deposit finality scenarios, the MONKEY staking, operator election, standby and handover dev scenarios, the enclave key
+  deposit finality scenarios, the MONKEY staking, operator election, operator's share, standby and handover dev scenarios, the enclave key
   lifecycle dev scenario, the signed withdrawal and FIFO dev
   scenario, the exit dev scenario, the API and direct-vault access enforcement dev scenario, the
   metrics and alert routing
@@ -545,6 +548,10 @@ Run from the repo root:
   through the real custody quorum, sequencer and API that the deployer's key is refused and the
   elected key applies from the effective time; needs Anvil, Forge, Python 3, and installed Soldeer
   dependencies)
+- Operator's share dev scenario: `./scripts/dev-operator-share.sh` (the same requirements; a real
+  election mirrored into the sequencer, a close above the floor crediting the candidate a fifth and
+  stakers the rest, both claims through the vault, an epoch below the floor paying neither, and the
+  candidate's unclaimed leaf registering and paying through the exit from the stopped node's log)
 - Operator handover dev scenario: `./scripts/dev-operator-handover.sh` (the same requirements; A runs
   as the operator in effect with rotation on, an election names B and, past its effective time, B
   takes the keys and the log from A through the handover listener, A exits, a withdrawal A

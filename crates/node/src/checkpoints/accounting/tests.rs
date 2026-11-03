@@ -109,14 +109,15 @@ fn distributions_preserve_cumulative_credits_and_the_deposit_count() {
         .apply(
             &Command::Tick,
             &[
+                Event::OperatorShareAllocated { account: TRADER, epoch: 0, amount: UsdcUnits(2) },
                 Event::DistributionAllocated { account: TRADER, epoch: 0, amount: UsdcUnits(4) },
                 Event::DistributionAllocated { account: AccountId([1; 20]), epoch: 0, amount: UsdcUnits(2) },
                 Event::DistributionEpochClosed {
                     epoch: 0,
                     nav: Fixed::from_int(10),
                     floor: Fixed::ONE,
-                    excess: UsdcUnits(6),
-                    allocated: UsdcUnits(6),
+                    excess: UsdcUnits(8),
+                    allocated: UsdcUnits(8),
                 },
             ],
         )
@@ -172,6 +173,12 @@ fn overflow_refuses_the_whole_accounting_batch_without_wrapping() {
             Accounting { liabilities: Fixed::ONE, deposits: 2, unpaid: Fixed::ZERO, ..Accounting::default() },
             Command::Tick,
             vec![Event::DistributionAllocated { account: TRADER, epoch: 0, amount: UsdcUnits(u128::MAX) }],
+            "checkpoint distribution overflow",
+        ),
+        (
+            Accounting { liabilities: Fixed::ONE, deposits: 2, unpaid: Fixed::ZERO, ..Accounting::default() },
+            Command::Tick,
+            vec![Event::OperatorShareAllocated { account: TRADER, epoch: 0, amount: UsdcUnits(u128::MAX) }],
             "checkpoint distribution overflow",
         ),
     ];

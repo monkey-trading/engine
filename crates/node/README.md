@@ -107,7 +107,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   other, and refuses to start on a log that records one
 - MONKEY staking from protocol `V25`: `engine admin init-staking` or a genesis `staking` entry
   records the liquidity floor, epoch length, start, and unstake cooldown once; each epoch the
-  engine distributes house NAV above the floor to stakers pro-rata, and
+  engine distributes house NAV above the floor to stakers pro-rata, from `V47` less a fifth to the
+  operator in effect while rotation is on, and
   `GET /v1/accounts/{address}/distributions` serves an account's cumulative USDC distribution with
   its proof, for the vault's `claimDistribution`; checkpoint
   reconciliation counts the USDC the vault has paid in distributions against the ledger
@@ -668,6 +669,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   RPC proxies, deployments, and registry and timelock calls
 - `src/custody/tests/election_scenario/node.rs` — the scenario's sequencer on a test clock, custody
   watcher, and API
+- `src/custody/tests/election_scenario/operator_share.rs` — the operator's share dev scenario on
+  isolated Anvil: the election's candidate and a staker claim through the vault, an epoch below the
+  floor pays neither, and the candidate's unclaimed leaf registers and pays through the exit
 - `src/history/preflight.rs` — immutable history planning before authorized SQLite mutation
 - `src/history/preflight/tests.rs` — private WAL resume and malformed geometry byte-preservation regressions
 - `src/node/tests/custody_preflight.rs` — local custody refusal preserves log/history across image states
@@ -957,6 +961,11 @@ cargo build --release -p engine-node --features production
 # Run the operator election scenario on isolated Anvil: delegation, an election mirrored through the
 # custody quorum, and the elected key signing from its effective time
 ./scripts/dev-operator-election.sh
+
+# Run the operator's share scenario on isolated Anvil: an elected candidate and a staker each claim
+# their share of an epoch through the vault, an epoch below the floor pays neither, and the
+# candidate's unclaimed leaf registers and pays through the vault's exit
+./scripts/dev-operator-share.sh
 ```
 
 EVM custody requires at least three entries in `custody.evm.providers`, each with a unique
@@ -1633,7 +1642,8 @@ one event `type`: `deposited`, `deposit_rejected`, `custody_deposit_changed`,
 index that reads at most `limit + 1` entries, and at most 16 pages are read at once. Until the index
 has taken every command the log held when the node started, the route answers 503 (`history is
 catching up with the log`). History is public, like the log.
-`emission_allocated`, `staked`, `unstaked`, `staking_rejected`, or `distribution_allocated`.
+`emission_allocated`, `staked`, `unstaked`, `staking_rejected`, `distribution_allocated`, or
+`operator_share_allocated`.
 `?limit=` is 1 to 200, 50 by default. A page is one search of a SQLite index that reads
 `emission_allocated`, `eligibility_attested`, `eligibility_rejected`, `deposit_pending`, or
 `deposit_held`. `?limit=` is 1 to 200, 50 by default. A page is one search of a SQLite index that reads
@@ -1855,7 +1865,8 @@ distribution the same way (`entitled` in the 6-decimal token's base units, with 
 `claimDistribution` pays the USDC the distribution adds to what the account was already paid,
 against the root of the proof's `seq`, under the same rule, and `claimable` does not read a withdrawal
 pause, under which the vault refuses the claim. An account has no distribution, and gets 404, until
-the first checkpoint after an epoch in which it was allocated a share.
+the first checkpoint after an epoch in which it was allocated a share. From `V47`, while rotation is on, the
+operator's fifth of each epoch's distribution is in this same leaf, under its candidate's address.
 
 `/v1/accounts/{address}/exit` returns, from `V38`, every proof the account exits the vault with
 against the state root of the last checkpoint: `terms` (the vault deposit cursor and the pending and

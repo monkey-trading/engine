@@ -240,11 +240,16 @@ pub enum ProtocolVersion {
     /// a higher floor in force at activation drops to level 1, and each floor then in force starts
     /// its 72 hours. The automatic triggers and `SetReduceOnly` do not change.
     V46,
+    /// While rotation is on, a fifth of each epoch's distribution, rounded down, credits the
+    /// operator in effect when the close runs, in the cumulative distribution leaf of its candidate
+    /// address, and stakers share the rest pro rata; their rounding dust stays the house's. An
+    /// epoch that distributes nothing, or a close with rotation off, credits the operator nothing.
+    V47,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V46;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V47;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

@@ -3,7 +3,7 @@
 //! the liquidity floor, USDC claims against posted checkpoint roots, unstaking through the
 //! cooldown, and a restart across an epoch boundary.
 
-mod access;
+pub(crate) mod access;
 mod claims;
 mod funding;
 mod scenario;

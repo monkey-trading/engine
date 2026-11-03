@@ -80,6 +80,9 @@ this crate and reproduce the signed state roots exactly.
   rotation on drops a signed rotation still pending, and while rotation is on `rotate_operator` is
   refused; turning rotation off with an election not yet in effect cancels the election and its
   rotation
+- From protocol `V47`, while rotation is on, a fifth of each epoch's distribution credits the
+  operator in effect when the close runs, in its candidate's cumulative distribution leaf, and stakers
+  share the rest (`src/staking.rs`)
 
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
@@ -215,13 +218,16 @@ this crate and reproduce the signed state roots exactly.
   adoption, the pricing-site clamp and reversal refusal, and the listing guards
 - `tests/operator_bounds.rs` — the V35 rate bounds, notices and rotation: each refusal and each change that takes effect after its notice
 - `tests/operator_price_rules.rs` — the V35 price-rule bound: held markets, reduce-only, FX dependents, relisting and futures
-- `src/election.rs` — the V37 elected operator key: the mirrored rotation switch and elections, and the pending rotation they record
+- `src/election.rs` — the V37 elected operator key: the mirrored rotation switch and elections, and the pending rotation they record; from `V47`, the candidate seated and the account the operator's share goes to
 - `tests/operator_election.rs` — the V37 elections: refusals, the effective time and its seven-day floor, cancellation, and the refused signed rotation
+- `tests/operator_share.rs` — `V47`: the operator's fifth of a distribution, with rotation on and off, an epoch that distributes nothing, a built-up sweep, an operator that also stakes, and the leaf's claim and exit proofs
+- `tests/operator_share/elections.rs` — who earns the share as elections, handovers, cancellations and signed rotations move the operator in effect
+- `tests/operator_share/rounding.rs` — the share's rounding and its dust, as a table and a property
 - `src/emissions.rs` — MONKEY emissions: the schedule, period results, finalisation, and
   entitlements
 - `src/staking.rs` — MONKEY staking and USDC distributions: the config, stake and unstake
-  mirroring, epoch finalisation, claimable distributions, and `distributable_excess`, the read-only
-  figure an epoch close would distribute
+  mirroring, epoch finalisation, the operator's share from `V47`, claimable distributions, and
+  `distributable_excess`, the read-only figure an epoch close would distribute
 - `src/staking/tests.rs` — staking tests: initialisation and validation, mirror crediting and
   refusals, epoch closes above and below the floor, rounding, skipped epochs, and the
   floor-preserving and principal locks
@@ -341,7 +347,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V46` parts (`v15.rs` to `v46.rs`)
+  `V15` to `V47` parts (`v15.rs` to `v47.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -536,6 +542,22 @@ level 1 when V46 activates drops to level 1, and each floor then in force starts
 automatic triggers and reduce-only do not change, and earlier logs replay unchanged, since nothing
 records a floor's time before V46. V46 does not bound a relisting's `financing.markup_bps`, or the
 `stress_levels` and triggers in `SetParams`: both still change at once. Its session is in `examples/reference_log/v46.rs`.
+
+Protocol V47 pays the operator a fifth of each epoch's distribution while rotation is on, through
+the cumulative distribution leaf the vault's claim and exit already pay, so the vault does not
+change. The share is the excess divided by five, rounded down, and stakers share the rest as before,
+so what the share rounds off goes to them and their own rounding dust stays with the house; the
+allocated total never passes the excess. It credits the operator in effect when the close runs, after
+any handover due then: the candidate an election seated, while the key it was elected under is the
+key in effect, or the address of the key for an operator no election installed, the identity the
+registry gives its initial operator. A candidate is seated with its key, and also when an election
+names the key already in effect. Earlier rules do not record the candidate, so an activation over a
+last election not yet in effect, or cancelled, pays the key's address until the next election takes
+effect; the version activates before rotation turns on, so a deployment never does. An operator that also
+stakes holds both parts in one leaf. A close with rotation off, below the floor, or with nothing
+staked credits the operator nothing, and a later close that sweeps an excess built up while nothing
+was staked pays it a fifth of the sweep. Before V47 the candidate is not recorded, so earlier logs
+replay unchanged. Its session is in `examples/reference_log/v47.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

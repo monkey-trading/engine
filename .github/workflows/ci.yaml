@@ -328,6 +328,8 @@ jobs:
         run: ./scripts/dev-monkey-staking.sh
       - name: Run the operator election dev scenario
         run: ./scripts/dev-operator-election.sh
+      - name: Run the operator's share dev scenario
+        run: ./scripts/dev-operator-share.sh
       - name: Run the standby operator dev scenario
         run: ./scripts/dev-standby-operator.sh
       - name: Run the operator handover dev scenario

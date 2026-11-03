@@ -209,6 +209,7 @@ pub fn every_event() -> Vec<Event> {
             reason: Reject::InsufficientStake,
         },
         Event::DistributionAllocated { account, epoch: 3, amount: engine_core::UsdcUnits(4_000) },
+        Event::OperatorShareAllocated { account, epoch: 3, amount: engine_core::UsdcUnits(1_000) },
         Event::DistributionEpochClosed {
             epoch: 3,
             nav: amount,
@@ -271,6 +272,7 @@ pub fn every_event() -> Vec<Event> {
             | Event::Unstaked { .. }
             | Event::StakingRejected { .. }
             | Event::DistributionAllocated { .. }
+            | Event::OperatorShareAllocated { .. }
             | Event::DistributionEpochClosed { .. }
             | Event::DistributionEpochsSkipped { .. }
             | Event::RotationSwitched { .. }

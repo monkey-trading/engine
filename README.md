@@ -109,6 +109,8 @@ rate moves at most 300 bps a day from the applied rates next to its date, a mark
 stays on its benchmark, and the operator's stress floor is at most level 1 and lapses after 72 hours.
 V46 does not bound a market's financing markup, or the stress levels and triggers in the signed
 parameters, which still change at once.
+While rotation is on, from protocol V47, the operator in effect earns a fifth of each epoch's
+distribution, which it claims from the vault as a staker claims its own.
 
 The reasoning behind each of these choices is recorded in the decision issues
 [#1](https://github.com/0xjevons/monkeytrading/issues/1) to
