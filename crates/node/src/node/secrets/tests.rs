@@ -353,7 +353,8 @@ async fn a_bundle_sealed_during_the_failed_read_ends_the_hold() {
     let cfg = config("startup-sealed-during");
     sealed_earlier(&cfg, full(1, "a"));
     let (cfg, _, delivered) = timeout(WAIT, spawn_startup(cfg)).await.expect("it held").unwrap();
-    let delivered = delivered.unwrap();
+    // No connection sealed this one, so there is no receipt to wait for.
+    let delivered = Delivered { answered: None, ..delivered.unwrap() };
     assert_eq!(delivered.version, Some(1));
     delivered.store.as_ref().unwrap().replace(full(2, "b").sign(domain_of(&cfg), &operator_key())).unwrap();
     let mut listening = JoinSet::new();

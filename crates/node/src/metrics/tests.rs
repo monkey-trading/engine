@@ -258,6 +258,8 @@ fn ops_queries_read_only_this_nodes_metrics_and_the_engine_jobs_up() {
     let _ = metrics.market_open.get_or_create(&market);
     let _ = metrics.market_priced.get_or_create(&market);
     let _ = metrics.quote_timestamp_seconds.get_or_create(&QuoteLabels { market: 1, venue: "venue-a".into() });
+    // And this one when alert routing starts.
+    let _ = metrics.alert_route_off.get_or_create(&SeverityLabel { severity: "critical" });
     let exported = metrics.encode();
     let ops = [
         ("dashboard", include_str!("../../../../ops/grafana/engine-node.json")),

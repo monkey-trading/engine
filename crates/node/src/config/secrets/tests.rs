@@ -234,7 +234,7 @@ fn an_alert_route_names_exactly_one_source() {
 }
 
 #[test]
-fn a_production_build_refuses_each_secret_from_the_environment_and_a_dev_build_does_not() {
+fn each_secret_from_the_environment_is_refused_when_production_is_set_and_not_otherwise() {
     let delivered = naming_each_kind();
     delivered.refuse_environment_secrets(true).unwrap();
 
