@@ -38,6 +38,7 @@ use k256::ecdsa::SigningKey;
 use serde::de::DeserializeOwned;
 use tokio::time::timeout;
 
+use crate::alerts::{Router, Routing};
 use crate::clock::now_ms;
 use crate::config::NodeConfig;
 use crate::telemetry::{Telemetry, init_telemetry};
@@ -290,16 +291,32 @@ pub async fn run(args: AdminArgs, env: KeyEnv) -> anyhow::Result<AdminRequest> {
     // The publisher worker is a process of its own, so its alerts need routing of their own, and an
     // outbox beside the node's rather than the node's.
     let Telemetry { alerts, .. } = init_telemetry(&cfg, |var| std::env::var(var).ok())?;
-    let mut outbox = cfg.alerts.outbox.clone();
-    let name = outbox.dir.file_name().context("alerts.outbox.dir names no directory")?.to_string_lossy();
-    outbox.dir = outbox.dir.with_file_name(format!("{name}-benchmark-worker"));
-    let mut routing = alerts.spawn(cfg.alerts.episode_quiet, &outbox).await?;
+    let mut routing = worker_routing(alerts, &cfg).await?;
     let outcome = tokio::select! {
         result = run_configured(args, env, now_ms, cfg) => result,
         stopped = routing.stopped() => Err(stopped),
     };
     routing.drain(ALERT_DRAIN_GRACE).await;
     outcome
+}
+
+/// Starts the publisher worker's alert routing, with an outbox in the node's outbox directory's name
+/// with `-benchmark-worker` added, which has to exist or be creatable on the worker's own host.
+/// Error cases:
+/// - `alerts.outbox.dir` names no directory
+/// - routing cannot start; the durable outbox at the named path must be creatable and writable,
+///   though a failure naming the path can also come from deeper routing setup
+async fn worker_routing(alerts: Router, cfg: &NodeConfig) -> anyhow::Result<Routing> {
+    let mut outbox = cfg.alerts.outbox.clone();
+    let name = outbox.dir.file_name().context("alerts.outbox.dir names no directory")?.to_string_lossy();
+    outbox.dir = outbox.dir.with_file_name(format!("{name}-benchmark-worker"));
+    alerts.spawn(cfg.alerts.episode_quiet, &outbox).await.with_context(|| {
+        format!(
+            "starting the benchmark worker's alert routing; its durable outbox at {} must be creatable \
+             and writable",
+            outbox.dir.display()
+        )
+    })
 }
 
 /// `run`, with expiries counted from `clock`.
