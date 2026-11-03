@@ -101,7 +101,7 @@ pub mod session;
 pub mod session_keys;
 pub mod staking;
 pub use staking::{Staking, StakingConfig, UsdcUnits};
-mod stress;
+pub mod stress;
 mod tracked;
 pub mod types;
 pub mod withdrawal;

@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, ensure};
 use chrono::NaiveDate;
-use engine_core::benchmark::{BenchmarkBatch, BenchmarkState, MAX_BENCHMARK_RATES};
+use engine_core::benchmark::{BenchmarkBatch, BenchmarkRate, BenchmarkState, MAX_BENCHMARK_RATES};
 use reqwest::{Client, Url};
 use rustls::{ClientConfig, RootCertStore};
 use tracing::{Instrument, info, info_span, warn};
@@ -38,7 +38,9 @@ pub(crate) fn client() -> anyhow::Result<Client> {
 }
 
 /// Fetches each required publisher, including all observations needed for missed rollovers.
-/// Failed publishers are recorded as checked: their prior effective observation still applies.
+/// Failed publishers are recorded as checked: their prior effective observation still applies, as it
+/// does for a rate the protocol's cap refuses, which stays out of the snapshot so the other rates
+/// and a rollover waiting for a snapshot are not held back by it.
 /// Error cases:
 /// - a required benchmark has no configured publisher, the snapshot is too large
 pub(crate) async fn snapshot(
@@ -61,7 +63,7 @@ pub(crate) async fn snapshot(
                         benchmark = source.publisher.benchmark(),
                         "publisher history fetched"
                     );
-                    observations
+                    within_cap(source, state, observations)
                 }
                 Err(err) => {
                     warn!(
@@ -80,6 +82,27 @@ pub(crate) async fn snapshot(
     ensure!(rates.len() <= MAX_BENCHMARK_RATES, "publisher snapshot exceeds the protocol batch bound");
     info!(observations = rates.len(), %as_of, "benchmark publisher snapshot fetched");
     Ok(BenchmarkBatch { as_of, checked, rates })
+}
+
+/// The observations the protocol's cap admits for one publisher. A refused rate is not signed: the
+/// Warning names it, and `benchmark_rate_stale` escalates if the benchmark stays behind.
+fn within_cap(
+    source: &BenchmarkSource,
+    state: &BenchmarkState,
+    observations: Vec<BenchmarkRate>,
+) -> Vec<BenchmarkRate> {
+    let benchmark = source.publisher.benchmark();
+    let (admitted, refused) = state.split_by_cap(&observations);
+    if refused.is_empty() {
+        info!(alert_resolved = "benchmark_rate_refused", benchmark, "publisher history is within the cap");
+    } else {
+        let refusals = refused.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ");
+        warn!(
+            alert = "benchmark_rate_refused",
+            benchmark, "not signing what the cap refuses, and the last applied rate stays in force: {refusals}"
+        );
+    }
+    admitted
 }
 
 /// Downloads and parses one publisher's history, bounded by both bytes and time.

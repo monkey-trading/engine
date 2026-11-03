@@ -1,7 +1,19 @@
 //! Dated benchmark inputs and financing lookup from V18. Published rates are annual fractions,
 //! preserving sub-basis-point precision; the signed batch is installed before catch-up financing.
+//!
+//! From V46 a signed rate moves at most `MAX_BENCHMARK_MOVE_BPS_PER_DAY` per calendar day between
+//! its date and each applied observation next to it, and a market holding positions stays on its
+//! benchmark (`check_held_benchmark`), so an elected operator cannot sign an outlying rate towards
+//! the NAV its electors own. A relisting still sets a market's markup at once, which `V46` does not
+//! bound. A refused rate changes nothing: the last applied rate keeps financing, and since the limit
+//! grows with the days from it, a real move lands once enough days have passed; only a rate measured
+//! from an undated rate, which a log from before `V18` can hold, keeps one day's limit. The operator's
+//! worker removes what the cap refuses before it signs (`split_by_cap`), so one refusal does not hold
+//! back the other benchmarks or a rollover waiting for a snapshot.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+use std::ops::Bound;
 
 use chrono::{DateTime, Datelike, NaiveDate, Weekday};
 use serde::{Deserialize, Serialize};
@@ -16,6 +28,9 @@ use crate::types::{MarketId, Millis};
 pub const MAX_BENCHMARK_RATES: usize = 16_384;
 pub type BenchmarkHistory = BTreeMap<String, BTreeMap<NaiveDate, Fixed>>;
 
+/// From V46, the most a benchmark rate may move from an applied rate, per calendar day between their
+/// dates. A constant, not a parameter, so the operator it bounds cannot change it.
+pub const MAX_BENCHMARK_MOVE_BPS_PER_DAY: i64 = 300;
 // Every offset in pinned chrono-tz 2025b is east of -18h (the minimum is -15:56:08).
 const MAX_WESTWARD_OFFSET_MS: Millis = 18 * 60 * 60 * 1_000;
 
@@ -36,6 +51,38 @@ pub struct BenchmarkBatch {
     /// Includes failed fetches: their previous rate still applies, or no financing if none exists.
     pub checked: BTreeSet<String>,
     pub rates: Vec<BenchmarkRate>,
+}
+
+/// A rate the V46 cap refuses, and the applied rate it is measured from: the date is `None` for a
+/// benchmark's undated rate.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RefusedBenchmarkRate {
+    pub rate: BenchmarkRate,
+    pub from_date: Option<NaiveDate>,
+    pub from_rate: Fixed,
+}
+
+impl fmt::Display for RefusedBenchmarkRate {
+    /// The refusal as it reads in an `AdminRejected` reason or an alert.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let rate = &self.rate;
+        if self.from_date == Some(rate.effective_date) {
+            return write!(
+                f,
+                "benchmark {} already holds {} for {}, and an applied date does not change",
+                rate.benchmark, self.from_rate, rate.effective_date
+            );
+        }
+        write!(
+            f,
+            "benchmark {} rate {} on {} moves more than {MAX_BENCHMARK_MOVE_BPS_PER_DAY} bps a day from {}",
+            rate.benchmark, rate.annual_rate, rate.effective_date, self.from_rate
+        )?;
+        match self.from_date {
+            Some(date) => write!(f, " on {date}"),
+            None => write!(f, " undated"),
+        }
+    }
 }
 
 impl Engine {
@@ -59,6 +106,7 @@ impl Engine {
     /// fetch attempt and deliberately retains the missing/stale financing policy.
     /// Error cases:
     /// - before V18, wrong as-of date, too many rates, an unchecked market, or invalid/duplicate data
+    /// - from V46, a rate the cap refuses (see `split_by_cap`)
     pub(crate) fn set_benchmark_rates(&mut self, batch: &BenchmarkBatch) -> Result<(), String> {
         if self.protocol_version < ProtocolVersion::V18 {
             return Err("dated benchmark rates need protocol V18".into());
@@ -87,6 +135,11 @@ impl Engine {
                 return Err("duplicate benchmark effective date".into());
             }
         }
+        if self.protocol_version >= ProtocolVersion::V46
+            && let Some(refused) = split_by_cap(&self.benchmark_history, &self.benchmarks, &batch.rates).1.first()
+        {
+            return Err(refused.to_string());
+        }
         for rate in &batch.rates {
             self.benchmark_history
                 .entry(rate.benchmark.clone())
@@ -97,6 +150,25 @@ impl Engine {
             self.prune_benchmark_history(self.benchmark_date(at));
         }
         Ok(())
+    }
+
+    /// From V46, checks a signed undated rate as an observation dated today, as `SetBenchmarkRate`
+    /// records it.
+    /// Error cases:
+    /// - a rate the cap refuses (see `split_by_cap`)
+    pub(crate) fn check_undated_benchmark_rate(&self, benchmark: &str, annual_bps: i64) -> Result<(), String> {
+        if self.protocol_version < ProtocolVersion::V46 {
+            return Ok(());
+        }
+        let rate = BenchmarkRate {
+            benchmark: benchmark.to_owned(),
+            effective_date: self.benchmark_date(self.now),
+            annual_rate: Fixed::from_bps(annual_bps),
+        };
+        match split_by_cap(&self.benchmark_history, &self.benchmarks, &[rate]).1.first() {
+            Some(refused) => Err(refused.to_string()),
+            None => Ok(()),
+        }
     }
 
     /// The last published observation effective on or before a rollover's local date.
@@ -141,6 +213,67 @@ impl Engine {
     }
 }
 
+/// Splits `rates` into those the V46 cap admits and those it refuses, taking each benchmark's rates
+/// in date order and measuring each from the observations next to its date, among `history` and
+/// what it has admitted so far: the limit is the cap times the days between them, in each direction.
+/// An applied date does not change: the rate it holds passes, as the worker sends it again, and any
+/// other is refused, since a change measured from its neighbours could be ratcheted, or walked from a
+/// backdated rate, past the cap. A benchmark with no dated observation measures from its undated rate,
+/// as one day away. A rate with no neighbour at all is the benchmark's first, bound only by the ±100%
+/// range.
+pub fn split_by_cap(
+    history: &BenchmarkHistory,
+    undated: &BTreeMap<String, i64>,
+    rates: &[BenchmarkRate],
+) -> (Vec<BenchmarkRate>, Vec<RefusedBenchmarkRate>) {
+    let mut sorted: Vec<&BenchmarkRate> = rates.iter().collect();
+    sorted.sort_by(|a, b| (&a.benchmark, a.effective_date).cmp(&(&b.benchmark, b.effective_date)));
+    let mut applied: BTreeMap<&str, BTreeMap<NaiveDate, Fixed>> = BTreeMap::new();
+    let (mut admitted, mut refused) = (Vec::new(), Vec::new());
+    for rate in sorted {
+        let observed =
+            applied.entry(&rate.benchmark).or_insert_with(|| history.get(&rate.benchmark).cloned().unwrap_or_default());
+        match refusal(rate, observed, undated.get(&rate.benchmark).copied()) {
+            Some(refusal) => refused.push(refusal),
+            None => {
+                observed.insert(rate.effective_date, rate.annual_rate);
+                admitted.push(rate.clone());
+            }
+        }
+    }
+    (admitted, refused)
+}
+
+/// Why the cap refuses `rate` against the observations `observed`, if it does.
+fn refusal(
+    rate: &BenchmarkRate,
+    observed: &BTreeMap<NaiveDate, Fixed>,
+    undated_bps: Option<i64>,
+) -> Option<RefusedBenchmarkRate> {
+    let date = rate.effective_date;
+    let refused = |from_date, from_rate| RefusedBenchmarkRate { rate: rate.clone(), from_date, from_rate };
+    if let Some(applied) = observed.get(&date) {
+        return (*applied != rate.annual_rate).then(|| refused(Some(date), *applied));
+    }
+    let before = observed.range(..date).next_back().map(|(day, value)| (Some(*day), *value, (date - *day).num_days()));
+    let before =
+        before.or_else(|| undated_bps.filter(|_| observed.is_empty()).map(|bps| (None, Fixed::from_bps(bps), 1)));
+    if let Some((day, value, days)) = before
+        && !within_cap(rate.annual_rate, value, days)
+    {
+        return Some(refused(day, value));
+    }
+    let after = observed.range((Bound::Excluded(date), Bound::Unbounded)).next();
+    after.and_then(|(day, value)| {
+        (!within_cap(*value, rate.annual_rate, (*day - date).num_days())).then(|| refused(Some(*day), *value))
+    })
+}
+
+/// Whether two rates `days` apart are within the V46 cap of each other.
+fn within_cap(rate: Fixed, from: Fixed, days: i64) -> bool {
+    (rate - from).abs() <= Fixed::from_bps(MAX_BENCHMARK_MOVE_BPS_PER_DAY.saturating_mul(days))
+}
+
 /// Weekdays strictly after `from`, through `to`; publisher holidays do not advance observations.
 pub fn business_days(from: NaiveDate, to: NaiveDate) -> i64 {
     let days = (to - from).num_days().max(0);
@@ -158,6 +291,12 @@ pub struct BenchmarkState {
     pub rollover: Option<crate::params::Rollover>,
     pub required: BTreeSet<String>,
     pub history: BenchmarkHistory,
+    /// Each benchmark's undated rate, in bps a year, which the V46 cap measures a first dated rate from.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub undated: BTreeMap<String, i64>,
+    /// The rules in force, which say whether the V46 cap applies.
+    #[serde(default)]
+    pub protocol_version: ProtocolVersion,
 }
 
 impl Engine {
@@ -168,11 +307,21 @@ impl Engine {
             rollover: self.params.as_ref().map(|p| p.rollover.clone()),
             required: self.markets.values().map(|m| m.spec.financing.benchmark.clone()).collect(),
             history: self.benchmark_history.clone(),
+            undated: self.benchmarks.clone(),
+            protocol_version: self.protocol_version,
         }
     }
 }
 
 impl BenchmarkState {
+    /// `rates` as the rules in force split them: before V46 the cap refuses nothing.
+    pub fn split_by_cap(&self, rates: &[BenchmarkRate]) -> (Vec<BenchmarkRate>, Vec<RefusedBenchmarkRate>) {
+        if self.protocol_version < ProtocolVersion::V46 {
+            return (rates.to_vec(), Vec::new());
+        }
+        split_by_cap(&self.history, &self.undated, rates)
+    }
+
     /// The rollover-local date at `ts`.
     pub fn date_at(&self, ts: Millis) -> NaiveDate {
         let utc = DateTime::from_timestamp_millis(ts).expect("timestamps fit chrono");

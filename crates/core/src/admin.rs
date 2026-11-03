@@ -38,9 +38,9 @@ impl Engine {
     ///   in force can be reached at, from `V14`, once any benchmark has a rate, that lists a
     ///   market, or moves one, onto a benchmark with none, with futures contracts before `V21`, or
     ///   that `MarketState::relisted` refuses for a listed market
-    /// - `SetBenchmarkRate` outside ±10000 bps a year
-    /// - `SetStressFloor` before parameters are set, at a level that does not exist, or for an
-    ///   unknown market
+    /// - `SetBenchmarkRate` outside ±10000 bps a year, or from `V46` a rate the cap refuses
+    /// - `SetStressFloor` before parameters are set, at a level that does not exist, for an unknown
+    ///   market, or from `V46` above level 1
     /// - `SetReduceOnly` for an unknown market, or for every market before `V8`
     /// - `SetClientAuth` once client auth is recorded
     /// - `SetOperator` once the operator is recorded
@@ -149,6 +149,7 @@ impl Engine {
                 if self.protocol_version >= ProtocolVersion::V35 {
                     self.check_priceable(spec)?;
                 }
+                self.check_held_benchmark(spec)?;
                 if let Some(params) = self.params.as_ref().filter(|_| self.protocol_version >= ProtocolVersion::V13) {
                     params.check_divergence_reachable(spec)?;
                 }
@@ -217,6 +218,7 @@ impl Engine {
                 if !(-MAX_BENCHMARK_BPS..=MAX_BENCHMARK_BPS).contains(annual_bps) {
                     return Err(format!("benchmark rate {annual_bps}bps out of range"));
                 }
+                self.check_undated_benchmark_rate(benchmark, *annual_bps)?;
                 self.benchmarks.insert(benchmark.clone(), *annual_bps);
                 if self.protocol_version >= ProtocolVersion::V18 {
                     let date = self.benchmark_date(self.now);
@@ -232,10 +234,7 @@ impl Engine {
                 if *level >= levels {
                     return Err(format!("stress level {level} does not exist"));
                 }
-                match market {
-                    None => self.global_stress_floor = *level,
-                    Some(id) => self.markets.get_mut(id).ok_or("unknown market")?.stress.floor = *level,
-                }
+                self.set_stress_floor(*market, *level)?;
                 self.restress_all(events);
             }
             AdminCommand::SetReduceOnly { market: Some(id), reduce_only } => {
@@ -376,6 +375,9 @@ impl Engine {
                 // The lifetime count of introduced session keys becomes a refilling budget.
                 if self.protocol_version < ProtocolVersion::V42 && *version >= ProtocolVersion::V42 {
                     self.start_introduction_budgets();
+                }
+                if self.protocol_version < ProtocolVersion::V46 && *version >= ProtocolVersion::V46 {
+                    self.bound_stress_floors(events);
                 }
                 self.protocol_version = *version;
                 if *version >= ProtocolVersion::V26 {

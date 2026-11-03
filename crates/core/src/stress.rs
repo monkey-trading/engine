@@ -1,7 +1,11 @@
 //! Stress levels. Each market's automatic level rises at once when any reading meets a level's
 //! trigger and steps down only after the cooldown; its effective level is the highest of that and
 //! the operator's floors. From `V17`, a market's move window survives a halt: prices observed
-//! within the window before the market closed still count after it reopens.
+//! within the window before the market closed still count after it reopens. From `V46` an operator's
+//! floor is at most `MAX_OPERATOR_STRESS_FLOOR` and lapses to the automatic level
+//! `STRESS_FLOOR_LAPSE_MS` of sequenced time after it is set, so no floor reaches or holds the higher
+//! levels. A signed `SetParams` still rewrites the levels and their triggers at once, which `V46`
+//! does not bound.
 
 use std::collections::VecDeque;
 
@@ -19,6 +23,10 @@ use crate::types::{MarketId, Millis};
 /// From `V13`, the move window keeps one low and high per tenth of `stress_move_window_ms`, so while
 /// the window is unchanged it holds at most a dozen buckets per market, however often prices arrive.
 const MOVE_BUCKETS: i64 = 10;
+/// From `V46`, the highest stress floor the operator can set, in a market or in all of them.
+pub const MAX_OPERATOR_STRESS_FLOOR: usize = 1;
+/// From `V46`, how long an operator's stress floor lasts unless it is set again: 72 hours.
+pub const STRESS_FLOOR_LAPSE_MS: Millis = 72 * 60 * 60 * 1000;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct StressState {
@@ -27,6 +35,10 @@ pub struct StressState {
     pub auto: usize,
     pub auto_since: Millis,
     pub floor: usize,
+    /// From `V46`, when a floor above level 0 was set, which starts its time to lapse. Left out of
+    /// the encoding while empty, so earlier roots do not change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub floor_set_at: Option<Millis>,
     /// Before `V13`, the time and index mid the current move window started at.
     pub move_ref: Option<(Millis, Fixed)>,
     /// From `V13`, the index mids of the trailing move window in time order, as the range of each
@@ -143,6 +155,78 @@ impl Engine {
             self.refresh_stress(market_id, nav, events);
         }
         events.extend(outcome);
+    }
+
+    /// Sets the operator's stress floor in `market`, or in every market, starting from `V46` its time
+    /// to lapse.
+    /// Error cases:
+    /// - from `V46`, a level above `MAX_OPERATOR_STRESS_FLOOR`
+    /// - an unknown market
+    pub(crate) fn set_stress_floor(&mut self, market: Option<MarketId>, level: usize) -> Result<(), String> {
+        let bounded = self.protocol_version >= ProtocolVersion::V46;
+        if bounded && level > MAX_OPERATOR_STRESS_FLOOR {
+            return Err(format!("the operator's stress floor is at most level {MAX_OPERATOR_STRESS_FLOOR}"));
+        }
+        let set_at = (bounded && level > 0).then_some(self.now);
+        match market {
+            None => {
+                self.global_stress_floor = level;
+                self.operator_bounds.global_floor_set_at = set_at;
+            }
+            Some(id) => {
+                let stress = &mut self.markets.get_mut(&id).ok_or("unknown market")?.stress;
+                stress.floor = level;
+                stress.floor_set_at = set_at;
+            }
+        }
+        Ok(())
+    }
+
+    /// When `V46` activates: a floor above `MAX_OPERATOR_STRESS_FLOOR` drops to it, and every floor
+    /// in force starts its time to lapse from now, since no earlier rule recorded when it was set.
+    pub(crate) fn bound_stress_floors(&mut self, events: &mut Vec<Event>) {
+        let now = self.now;
+        let held: Vec<MarketId> =
+            self.markets.iter().filter(|(_, market)| market.stress.floor > 0).map(|(id, _)| *id).collect();
+        for id in held {
+            let stress = &mut self.markets.get_mut(&id).expect("listed").stress;
+            stress.floor = stress.floor.min(MAX_OPERATOR_STRESS_FLOOR);
+            stress.floor_set_at = Some(now);
+        }
+        if self.global_stress_floor > 0 {
+            self.global_stress_floor = self.global_stress_floor.min(MAX_OPERATOR_STRESS_FLOOR);
+            self.operator_bounds.global_floor_set_at = Some(now);
+        }
+        self.restress_all(events);
+    }
+
+    /// From `V46`: drops each floor whose `STRESS_FLOOR_LAPSE_MS` has run by the engine's time, leaving
+    /// the automatic level. The corporate timeline runs it at each boundary it walks and at the
+    /// command's own time, before the command acts, so a boundary before the lapse is priced with the
+    /// floor. The bound on the work is the listed markets, which `refresh_all_stress` walks for every
+    /// command anyway.
+    pub(crate) fn lapse_stress_floors(&mut self, events: &mut Vec<Event>) {
+        if self.protocol_version < ProtocolVersion::V46 {
+            return;
+        }
+        let now = self.now;
+        let due = |set_at: Option<Millis>| set_at.is_some_and(|at| now - at >= STRESS_FLOOR_LAPSE_MS);
+        let lapsed: Vec<MarketId> =
+            self.markets.iter().filter(|(_, market)| due(market.stress.floor_set_at)).map(|(id, _)| *id).collect();
+        let global = due(self.operator_bounds.global_floor_set_at);
+        if lapsed.is_empty() && !global {
+            return;
+        }
+        for id in lapsed {
+            let stress = &mut self.markets.get_mut(&id).expect("listed").stress;
+            stress.floor = 0;
+            stress.floor_set_at = None;
+        }
+        if global {
+            self.global_stress_floor = 0;
+            self.operator_bounds.global_floor_set_at = None;
+        }
+        self.restress_all(events);
     }
 
     /// Recomputes every market's effective stress level after a floor or parameter change.

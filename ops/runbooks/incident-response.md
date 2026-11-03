@@ -55,7 +55,7 @@ system and needs the owner's approval for that action; the guardian steps need t
 | --- | --- | --- | --- |
 | Observe | Nothing changes. | n/a | The checks above. |
 | Reduce-only for a market or all | Refuses orders that grow a position. Closes still fill. | Yes, at once | [reduce-only.md](reduce-only.md) |
-| Raise the stress floor | Widens spreads. | Yes | `$ENGINE admin … set-stress-floor <level> [--market <id>]` (owner's approval) |
+| Raise the stress floor | Widens spreads. From `V46` at most level 1, and it lapses after 72 hours unless set again. | Yes | `$ENGINE admin … set-stress-floor <level> [--market <id>]` (owner's approval) |
 | Guardian: `pauseWithdrawals()` | No withdrawal or distribution claim pays for 7 days. Trading, checkpoints and deposits continue. | The timelock lifts it with `setPauses`; it also ends after 7 days | `cast send $VAULT 'pauseWithdrawals()' --rpc-url $RPC --account <guardian>` |
 | Timelock: `setPauses(depositsPaused, withdrawalsPaused)` | Pauses deposits and/or withdrawals until the timelock lifts it. | Yes, through the timelock | Pattern in reference.md; 3-day delay |
 | Guardian: `retireSigner()` | The vault accepts no checkpoint and no withdrawal signed in the current epoch, until the timelock installs a signer. | Only by a new signer through the timelock | [key-recovery.md](key-recovery.md), "New keys" |

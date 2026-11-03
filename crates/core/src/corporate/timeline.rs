@@ -66,6 +66,8 @@ impl Engine {
                 walked += 1;
             }
             self.now = at;
+            // A floor still in force at this boundary prices what the boundary does.
+            self.lapse_stress_floors(events);
             let captures: Vec<_> = self
                 .corporate_actions
                 .iter()
@@ -149,6 +151,7 @@ impl Engine {
             }
         }
         self.now = target;
+        self.lapse_stress_floors(events);
         Some(false)
     }
 }

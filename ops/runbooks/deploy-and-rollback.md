@@ -217,7 +217,10 @@ These run outside the enclave. None holds the enclave's keys.
 
   Start it before the node does, or as soon as the node serves its attestation: it retries until
   the node answers. Restart it after every node restart that changes the pin. Alerts:
-  `benchmark_sync_failed`, `benchmark_fetch_failed`, `benchmark_sync_pending`.
+  `benchmark_sync_failed`, `benchmark_fetch_failed`, `benchmark_sync_pending`,
+  `benchmark_rate_refused`. It posts its own alerts through the config's `[alerts]` webhooks, so set
+  their environment variables here too, and it keeps its own outbox beside the node's, in the outbox
+  directory's name with `-benchmark-worker` added.
 - **Certificate Transparency watcher**, on a host independent of the node's:
   `$ENGINE ct-watch --config ct-watch.toml` (template: `config/ct-watch.toml`). Start it before the
   first certificate is issued. See [unattested-certificate.md](unattested-certificate.md).

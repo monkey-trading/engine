@@ -356,6 +356,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   the exit proofs against its root, and the vault calls that carry them, ABI-encoded
 - `src/api/benchmark_schedule.rs` — capped, bounded watches of the durable rollover schedule
 - `src/api/benchmark_tests.rs` — deterministic publisher/TLS/API restart and financing dev scenario
+- `src/api/benchmark_tests/operator_bounds.rs` — the operator bounds dev scenario: rates inside and outside the cap, the worker signing around a refusal, the stress floor's limit and lapse, restart and replay
 - `src/api/benchmark_tests/recovery.rs` — publisher retries during an in-process trusted-time halt
 - `src/api/benchmark_tests/retention.rs` — failed publisher refreshes and calendar changes after restart
 - `src/api/benchmark_tests/schedule.rs` — actual worker rescheduling, in-flight nonce fencing, and financing
@@ -905,6 +906,7 @@ export OPERATOR_KEY=0x4242424242424242424242424242424242424242424242424242424242
 cargo run -p engine-node -- admin --pin $PIN set-reduce-only true             # every market
 cargo run -p engine-node -- admin --pin $PIN set-reduce-only false --market 2
 cargo run -p engine-node -- admin --pin $PIN set-stress-floor 1 --market 1
+# From protocol V46 a rate moves at most 300 bps a day from the applied rates next to its date.
 cargo run -p engine-node -- admin --pin $PIN set-benchmark-rate SOFR 430
 cargo run -p engine-node -- admin --pin $PIN upsert-market market.toml        # no table header
 cargo run -p engine-node -- admin --pin $PIN set-params params.toml           # no table header
@@ -2282,7 +2284,8 @@ Watches share the API subscriber cap, wait within the node-call timeout, and ref
 A recovered log with a rollover schedule must already record client auth, the operator, and toxicity
 notional weighting. Publisher synchronization refuses older logs missing those activation prerequisites
 before writing any command; migrate such logs separately before configuring the publisher worker.
-The public `GET /v1/benchmarks` returns the next rollover and retained rate history, so the worker
+The public `GET /v1/benchmarks` returns the next rollover, the retained rate history, any undated rate
+the cap measures from, and the protocol version in force, so the worker
 fetches histories covering downtime before a missed rollover is charged. A restart regenerates the
 TLS key: verify its attestation and restart the worker with the new pin before sequencing resumes.
 
@@ -2294,6 +2297,17 @@ that benchmark accrues no financing. An inherited undated rate still applies and
 `benchmark_rate_undated` until a dated observation covers the rollover. Applying that fallback
 resolves the independent missing-rate incident immediately. Fetch errors retain previously
 sequenced history; the separate worker logs `benchmark_fetch_failed` and retries at its next interval.
+From `V46` the protocol refuses a signed rate more than 300 bps per day from the applied rates next
+to its date, and any change to a date already applied, a publisher's revision included. The worker
+leaves such a rate out of its snapshot and logs `benchmark_rate_refused` at Warning severity, naming
+the benchmark, and signs everything else, so a refusal holds back neither the other benchmarks nor a
+rollover waiting for a snapshot. The worker routes its alerts through the config's `[alerts]` webhooks,
+so it needs their environment variables too, and keeps its own outbox beside the node's, in the
+outbox directory's name with `-benchmark-worker` added. The last applied rate keeps financing, the limit
+grows with each day from it, so a real move lands once it fits (but for a rate measured from an undated
+rate, which only a log from before V18 can hold with no dated history, and whose one-day limit is walked
+by hand), and `benchmark_rate_stale` escalates if the benchmark stays behind for five weekdays. `research/benchmark-cap/` lists what the cap would have
+refused in each benchmark's published history.
 When an accepted market update removes the final use of a benchmark, its alerts resolve after that
 command's rollover events, including incidents raised before the node restarted.
 

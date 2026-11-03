@@ -214,7 +214,9 @@ state, and a flaw in a release that has run still needs a signer rotation; from 
 follows the operator registry's elections, which the engine mirrors from finalised chain events, so
 the incumbent's host can delay an elected key's takeover, bounded only by the custody watcher's
 stall alerts, and the enclave keys and the vault's current release do not yet follow an election
-(#44); the dev configurations explicitly
+(#44); from V46 signed benchmark rates and the stress floor are bounded, but an operator's relisting
+still sets a market's financing markup at once, and its signed parameters still set the stress levels
+and triggers at once; the dev configurations explicitly
 use a published mock-only signer, which real attestation refuses; the custody adapter requires a strict
 majority of at least three configured independent RPC providers to agree on deposits, block hashes
 and finality, with reads compared at the same block height and empty log responses requiring the

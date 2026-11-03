@@ -38,12 +38,15 @@ use tokio::time::timeout;
 
 use crate::clock::now_ms;
 use crate::config::NodeConfig;
+use crate::telemetry::{Telemetry, init_telemetry};
 
 /// How long one call to the node may take, connection included.
 pub(crate) const CALL_TIMEOUT: Duration = Duration::from_secs(10);
 /// How far ahead a signed command expires: half the engine's bound, so it is accepted with this
 /// machine's clock up to two and a half minutes off the node's either way.
 const EXPIRES_IN_MS: Millis = MAX_EXPIRY_AHEAD_MS / 2;
+/// How long the publisher worker waits on stopping for its alerts to reach their webhooks.
+const ALERT_DRAIN_GRACE: Duration = Duration::from_secs(10);
 
 #[derive(Args)]
 pub struct AdminArgs {
@@ -79,7 +82,8 @@ pub enum AdminAction {
     UpsertMarket { file: PathBuf },
     /// Replace the protocol parameters from a TOML file.
     SetParams { file: PathBuf },
-    /// Set a benchmark rate, in bps a year.
+    /// Set a benchmark rate, in bps a year. From protocol V46 it moves at most 300 bps a day from the
+    /// applied rates next to its date.
     SetBenchmarkRate {
         benchmark: String,
         #[arg(allow_negative_numbers = true)]
@@ -92,7 +96,8 @@ pub enum AdminAction {
         watch: bool,
     },
     /// Set the operator's stress floor for one market, or for every market without `--market`.
-    /// A market's level never falls below what its automatic triggers set.
+    /// A market's level never falls below what its automatic triggers set. From protocol V46 the
+    /// floor is at most level 1 and lapses 72 hours after it is set, unless it is set again.
     SetStressFloor {
         level: usize,
         #[arg(short, long)]
@@ -274,10 +279,26 @@ impl AdminAction {
 /// - a spec or parameters file cannot be read, does not parse, or fails validation
 /// - the node cannot be reached in time, or refuses the request (see `call`)
 /// - the engine rejects the command
+/// - for the publisher worker, its alert routes or outbox cannot start, or stop
 pub async fn run(args: AdminArgs, env: KeyEnv) -> anyhow::Result<AdminRequest> {
     let cfg = NodeConfig::load(&args.config)?;
-    crate::init_logging(&cfg.logging.level)?;
-    run_configured(args, env, now_ms, cfg).await
+    if !matches!(args.action, AdminAction::SyncBenchmarks { .. }) {
+        crate::init_logging(&cfg.logging.level)?;
+        return run_configured(args, env, now_ms, cfg).await;
+    }
+    // The publisher worker is a process of its own, so its alerts need routing of their own, and an
+    // outbox beside the node's rather than the node's.
+    let Telemetry { alerts, .. } = init_telemetry(&cfg, |var| std::env::var(var).ok())?;
+    let mut outbox = cfg.alerts.outbox.clone();
+    let name = outbox.dir.file_name().context("alerts.outbox.dir names no directory")?.to_string_lossy();
+    outbox.dir = outbox.dir.with_file_name(format!("{name}-benchmark-worker"));
+    let mut routing = alerts.spawn(cfg.alerts.episode_quiet, &outbox).await?;
+    let outcome = tokio::select! {
+        result = run_configured(args, env, now_ms, cfg) => result,
+        stopped = routing.stopped() => Err(stopped),
+    };
+    routing.drain(ALERT_DRAIN_GRACE).await;
+    outcome
 }
 
 /// `run`, with expiries counted from `clock`.

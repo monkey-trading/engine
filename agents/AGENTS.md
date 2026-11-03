@@ -23,7 +23,8 @@ an index: load only the rule whose hint matches the current action.
   `Fixed::MAX_INPUT` units per entry), USD settlement of markets quoted in other currencies, admin commands signed
   by the operator key the log records and, from `V35`, bounded (`operator_bounds.rs`: profit fee and
   close-out level moves within ±50% after a seven-day notice, held markets kept priced by price-rule changes, and a
-  seven-day key rotation); the spread a close can pay, from `V40`, capped per market
+  seven-day key rotation, and from `V46` signed benchmark rates capped at 300 bps per day from the applied rates next to their
+  date in `benchmark.rs`, a market holding positions kept on its benchmark, and a stress floor of at most level 1 lapsing after 72 hours in `stress.rs`); the spread a close can pay, from `V40`, capped per market
   (`close_spread.rs`: a ceiling registry adopted at genesis, kept apart from `MarketSpec`, clamps every close at
   the pricing site, refuses a reversal over its ceiling while the pure close stays open, and admits a post-genesis
   entry only by a signed seven-day adoption that can only lower it); and, from `V37`, elected (`election.rs`: the operator registry's rotation switch and
@@ -252,7 +253,7 @@ an index: load only the rule whose hint matches the current action.
   `init`, `kernel.config`, the `sev-snp-measure` pins, `apt.conf` (the Debian snapshot's apt
   settings), and `retry`, which repeats each download after a failure. Its `README.md` covers the
   build, what the guest exposes, the attestation layout, booting on a host, and the release steps.
-- **research/** — studies that set protocol parameters from data, outside the build and CI except the close-spread study's `fixtures/`.
+- **research/** — studies that set protocol parameters from data, outside the build and CI except the close-spread study's `fixtures/` and the benchmark-cap study's `fixtures/` and `results/refused.csv`.
   `cap-calibration/` calibrates the house exposure-cap floors by Monte Carlo (#111): scripts that
   fetch and derive its public data (raw pulls in gitignored `data/raw/`, the derived dataset in
   `data/derived/`), the Python model behind `run.py`, its tests, and `results/`. Its `README.md`
@@ -268,8 +269,14 @@ an index: load only the rule whose hint matches the current action.
   per-market close-spread ceilings (#147): pinned inventory and source audit, a pricing model
   checked against `Engine::apply` fills, the isolated-position sweep, per-market results, and the
   ceiling representation proposal for #344. Its `README.md` documents the pipeline and tests.
+  `benchmark-cap/` checks the `V46` cap on signed benchmark rates against each launch benchmark's
+  published history (#435): scripts that fetch and derive it (raw pulls in gitignored `data/`, the
+  derived `fixtures/`), every rate the cap would have refused in `results/`, and an `engine-core` test
+  that requires the engine to refuse the same ones. Its `README.md` gives the findings and sources.
 - **scripts/** — `check-file-loc.sh`, the 500-line cap per Rust file, opted in per crate;
   `dev-corporate-actions.sh`, the signed localhost TLS/API dividend, split and restart scenario;
+  `dev-operator-bounds.sh`, the operator's bounds on a dev node: benchmark rates inside and outside the
+  cap, the worker signing around a refusal, the stress floor's limit and 72-hour lapse, restart and replay;
   `check-reference-logs.sh`, which fails a branch that changes a committed reference log;
   `check-merge-approved.sh`, the merge queue's approval gate, with `check-merge-approved-test.sh`
   running it against a stubbed GitHub API;
@@ -362,7 +369,8 @@ an index: load only the rule whose hint matches the current action.
   image, agent-script, and merge-approval areas from an explicit path list, and each job runs only
   when its area changed: `agents/` (but for the review-delta helper in
   `agents/skills/agent-code-review/scripts/`), `research/` (but for the close-spread study's
-  `fixtures/`, which an `engine-core` test reads), the root `README.md`, `SECURITY.md`,
+  `fixtures/` and the benchmark-cap study's `fixtures/` and `results/refused.csv`, which `engine-core`
+  tests read), the root `README.md`, `SECURITY.md`,
   `AGENTS.md`, and `CLAUDE.md`, and the `README.md` of `image/` and of each crate change none. A
   push to `main`, a merge group, a manual run, a workflow change, a failed diff, or any path the
   list does not name runs every job. A push to `main` whose commit passed a merge group (the queue
@@ -385,7 +393,7 @@ an index: load only the rule whose hint matches the current action.
   before, and a job that times out is cancelled rather than failed, so the run continues too.
   `gh run rerun --failed` re-runs the failed, cancelled, and unstarted jobs with `ci-passed`, so a
   re-run after a flake repeats everything the first failure cut short. The test job also runs the
-  corporate-action dev scenario and checks command latency budgets against 100k-account fixtures.
+  corporate-action and operator bounds dev scenarios and checks command latency budgets against 100k-account fixtures.
   `merge-approval.yaml` runs only on merge groups: its `merge-approved` job, the merge-group side of
   the required `merge-approved` check, runs `scripts/check-merge-approved.sh`, which follows the
   queue's entries from the group's head down to `main` and passes only if the latest
@@ -512,6 +520,8 @@ Run from the repo root:
   stream whose quotes fill at their price within a bound and decline once the index moves; needs
   what that scenario needs); the quote read's cost on the sequencer's thread:
   `cargo test -p engine-node --lib quotes::bench -- --ignored --nocapture`
+- Operator bounds dev scenario: `./scripts/dev-operator-bounds.sh` (runs the isolated signed
+  operator/worker/TLS/API scenario with deterministic time, restart and public replay)
 - Corporate-action dev scenario: `./scripts/dev-corporate-actions.sh` (runs the isolated signed
   operator/TLS/API scenario with deterministic venue time, restart and public replay)
 - Access enforcement dev scenario: `./scripts/dev-access-enforcement.sh` (Anvil, API and direct vault
@@ -568,6 +578,10 @@ Run from the repo root:
   `research/cap-calibration/requirements.txt`: `python -I research/cap-calibration/run.py <command>`
   (`all` re-runs the simulations and report from the committed data), and its tests with
   `python -I -m pytest research/cap-calibration/tests`
+- Benchmark cap research, from a virtualenv with `research/benchmark-cap/requirements.txt`:
+  `python -I research/benchmark-cap/fetch.py`, then `python -I research/benchmark-cap/derive.py`, then
+  `python -I research/benchmark-cap/check.py`; the engine's agreement:
+  `cargo test -p engine-core --test benchmark_cap_history --locked`
 - Close-spread research, from a virtualenv with `research/close-spread-calibration/requirements.txt`:
   `python -I research/close-spread-calibration/run.py`, then
   `python -I research/close-spread-calibration/calibrate.py`, then

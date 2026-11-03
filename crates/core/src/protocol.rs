@@ -233,11 +233,18 @@ pub enum ProtocolVersion {
     /// `position` for the next request. Before `V45` such a close is refused whole as
     /// `qty out of range`.
     V45,
+    /// An elected operator's powers over rates and stress are bounded. A signed benchmark rate more
+    /// than 300 bps per day between their dates from a neighbouring applied rate is refused, and a
+    /// benchmark's first rate is bound only by the ±100% range. The operator's stress floor, in one
+    /// market or in all, is at most level 1 and lapses 72 hours of sequenced time after it is set;
+    /// a higher floor in force at activation drops to level 1, and each floor then in force starts
+    /// its 72 hours. The automatic triggers and `SetReduceOnly` do not change.
+    V46,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V45;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V46;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

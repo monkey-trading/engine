@@ -77,8 +77,10 @@ jobs:
                 agents/skills/agent-code-review/scripts/*) areas+=" agent_scripts" ;;
                 # The merge queue's approval gate and its test.
                 scripts/check-merge-approved.sh | scripts/check-merge-approved-test.sh) areas+=" merge_approval" ;;
-                # The engine-core agreement test reads the research study's shared vectors.
-                research/close-spread-calibration/fixtures/*) areas+=" rust" ;;
+                # The engine-core agreement tests read the research studies' shared vectors.
+                research/close-spread-calibration/fixtures/* | research/benchmark-cap/fixtures/* \
+                  | research/benchmark-cap/results/refused.csv)
+                  areas+=" rust" ;;
                 # Read by no build, test, scenario, or image.
                 agents/* | AGENTS.md | CLAUDE.md | README.md | SECURITY.md | research/* | image/README.md \
                   | crates/core/README.md | crates/node/README.md | crates/verify/README.md \
@@ -97,8 +99,8 @@ jobs:
                   areas+=" rust" ;;
                 # The deposit and checkpoint scenarios deploy the vault.
                 contracts/*) areas+=" contracts scenarios" ;;
-                # The test job runs the corporate-action scenario.
-                scripts/dev-corporate-actions.sh) areas+=" rust" ;;
+                # The test job runs the corporate-action and operator bounds scenarios.
+                scripts/dev-corporate-actions.sh | scripts/dev-operator-bounds.sh) areas+=" rust" ;;
                 # The browser verifier's jobs build its package and run its scenario.
                 scripts/dev-* | scripts/build-wasm-verifier.sh) areas+=" scenarios" ;;
                 # The ACME scenario downloads its test CA under image/retry.
@@ -179,6 +181,8 @@ jobs:
       - name: Run the signed corporate-action dev scenario
         if: needs.changes.outputs.cache != 'true'
         run: ./scripts/dev-corporate-actions.sh
+      - name: Run the operator bounds dev scenario
+        run: ./scripts/dev-operator-bounds.sh
       - name: Check sequencer command latency at 100k accounts
         if: needs.changes.outputs.cache != 'true'
         run: cargo test -p engine-core --test hot_path_benchmark --locked -- --ignored --nocapture

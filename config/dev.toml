@@ -267,8 +267,9 @@ tiers = [
 prior = "10000"
 memory = "10000000"
 
-# Level 0 is normal. Higher levels widen spreads, either automatically on
-# any trigger or when the operator raises the floor. A divergence trigger is
+# Level 0 is normal. Higher levels widen spreads automatically on any trigger;
+# the operator's floor reaches level 1 alone, and lapses after 72 hours, from
+# protocol V46. A divergence trigger is
 # a share of each market's max_divergence_bps, so every market can reach each
 # level: 60% and 80% are 15 and 20 bps at crypto's 25 bps bound.
 [[genesis.params.stress_levels]]
