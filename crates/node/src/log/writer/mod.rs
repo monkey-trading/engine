@@ -228,13 +228,13 @@ impl LogWriter {
             }
         }
         let last = self.last;
-        // A pending deferred seal means the published view still holds the previous segment as the
-        // active one; publishing the new segment's prefix here would contradict it.
+        // A seal not yet published means the view still holds the previous segment as the active
+        // one; publishing the new segment's prefix here would contradict it.
         let active = self
             .open
             .as_ref()
             .filter(|(segment, _)| segment.bytes > 0)
-            .filter(|_| self.pending_seals.is_empty())
+            .filter(|_| self.pending_seals.is_empty() && self.taken_seals == 0)
             .and_then(|(segment, _)| last.map(|last| ActivePrefix { info: segment.info(), last }));
         self.manifest.send_modify(|published| {
             published.flushed = last;
@@ -279,6 +279,7 @@ impl LogWriter {
             .filter(|segment| segment.bytes > 0)
             .and_then(|segment| last.map(|last| ActivePrefix { info: segment.info(), last }));
         let seals = std::mem::take(&mut self.pending_seals);
+        self.taken_seals += seals.len() as u64;
         Ok(SyncJob { file, dir, epoch: self.appended, segment: segment.map(|s| s.first_seq), last, active, seals })
     }
 
@@ -299,6 +300,7 @@ impl LogWriter {
         for seal in &job.seals {
             self.list_deferred(seal);
         }
+        self.taken_seals -= job.seals.len() as u64;
         let current = self.open.as_ref().map(|(segment, _)| segment.first_seq);
         self.manifest.send_if_modified(|published| {
             if published.flushed > job.last {

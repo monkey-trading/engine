@@ -357,8 +357,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/log/tests/mod.rs` — log format, segment, and writer tests
 - `src/log/tests/durability.rs` — writer durability and rotation: per-batch sync, reopened segments,
   staging, opening the log while a writer rotates, and a deferred rotation seal publishing with its
-  sync, chaining within one sync, never covered by group commit, and recovering from a crash before
-  the seal as a crash mid-rotation does
+  sync, chaining within one sync, counting a seal riding an unfinished sync, never covered by group
+  commit, and recovering from a crash before the seal as a crash mid-rotation does
 - `src/log/tests/reader.rs` — reader tests: offsets, following the writer, flushed entries only,
   and the checks on what it reads
 - `src/api/mod.rs` — REST routes, read handlers and the request span

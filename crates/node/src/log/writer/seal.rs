@@ -83,12 +83,11 @@ impl LogWriter {
         out.flush().context("flushing log segment")?;
         let listed = segment.info();
         let line = listing_line(&listed)?;
-        // An earlier rotation's seal may still ride a queued job: its listing lands ahead of this
-        // one, so this one appends after every pending seal's line, not at the writer's length.
-        let base_len = self
-            .manifest_len
-            .checked_add(self.pending_seals.iter().map(|seal| seal.line.len() as u64).sum::<u64>())
-            .context("manifest length overflow")?;
+        // Count the listing now, before the seal can leave the writer: an earlier seal may already
+        // ride an unfinished sync job, out of `pending_seals`, and its line lands on the manifest
+        // before this one. The base is the length before this line; the advance covers it below.
+        let base_len = self.manifest_len;
+        self.manifest_len = self.manifest_len.checked_add(line.len() as u64).context("manifest length overflow")?;
         let seal = SealWork {
             file: out.get_ref().try_clone().context("duplicating the log file handle")?,
             dir: self.dir_handle.try_clone().context("duplicating the log directory handle")?,
@@ -106,11 +105,10 @@ impl LogWriter {
         Ok(())
     }
 
-    /// Publishes one deferred seal whose `SealWork` has run on the sync thread: the manifest length
-    /// it wrote is now the writer's, and the segment lists as completed with no active prefix, as
-    /// `seal_open_segment` does inline.
+    /// Publishes one deferred seal whose `SealWork` has run on the sync thread: the segment lists
+    /// as completed with no active prefix, as `seal_open_segment` does inline. The manifest length
+    /// counted the listing at defer time, so there is no advance here.
     pub(crate) fn list_deferred(&mut self, seal: &SealWork) {
-        self.manifest_len = self.manifest_len.checked_add(seal.line.len() as u64).expect("manifest length overflow");
         info!(
             file = %seal.listed.file,
             first_seq = seal.listed.first_seq,

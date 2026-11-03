@@ -238,6 +238,39 @@ fn a_deferred_seal_left_by_a_crash_recovers_as_a_crash_mid_rotation() {
     assert_eq!(log_entries(&dir), (0..4).map(cmd).collect::<Vec<_>>());
 }
 
+/// A second seal deferred while the first rides an unfinished sync job starts its listing after the
+/// first's: the manifest length counts seals already taken into a job, not only queued ones, so
+/// both listings land in order — the two-consecutive-batch-crossings case a busy node hits at
+/// nearly every rotation.
+#[test]
+fn a_deferred_seal_counts_a_seal_riding_an_unfinished_sync() {
+    let dir = scratch_dir("deferred-seal-in-flight");
+    let (published, view) = watch::channel(Manifest::default());
+    let mut writer = SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(2, published).unwrap();
+    writer.defer_seals();
+    for seq in 0..3 {
+        writer.append(&cmd(seq)).unwrap();
+    }
+    // The first batch's job carries the first seal but has not run.
+    let first = writer.begin_sync(false).unwrap();
+    // The next batch crosses another boundary before its predecessor's sync finishes.
+    for seq in 3..5 {
+        writer.append(&cmd(seq)).unwrap();
+    }
+    let second = writer.begin_sync(false).unwrap();
+    first.sync().unwrap();
+    writer.finish_sync(&first);
+    second.sync().unwrap();
+    writer.finish_sync(&second);
+
+    let ranges: Vec<_> = Manifest::load(&dir).unwrap().segments.iter().map(|s| (s.first_seq, s.last_seq)).collect();
+    assert_eq!(ranges, [(0, 1), (2, 3)], "both listings land in rotation order");
+    assert!(dir.join("00000000000000000004.jsonl").exists());
+    assert_eq!(log_entries(&dir), (0..5).map(cmd).collect::<Vec<_>>());
+    assert_eq!(view.borrow().completed_len(), 2);
+    assert_eq!(view.borrow().active.as_ref().unwrap().info.first_seq, 4);
+}
+
 /// A job carrying a seal is never covered by a later same-segment job: group commit may skip a
 /// batch's data sync, never its segment seal.
 #[test]
