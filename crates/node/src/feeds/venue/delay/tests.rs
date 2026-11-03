@@ -39,6 +39,19 @@ fn a_pong_answers_the_pings_before_it() {
 }
 
 #[test]
+fn a_pong_reports_the_ping_it_newly_answers() {
+    let at = Instant::now();
+    let (mut probe, payloads) = pinged(at, &[0, 100, 200]);
+    assert_eq!(probe.next_ping(), 3);
+    assert_eq!(probe.answered(&payloads[1]), Some((1, at + MS * 100)));
+    // A late answer to an older ping, a repeat, or one for no ping answers nothing new.
+    assert_eq!(probe.answered(&payloads[0]), None);
+    assert_eq!(probe.answered(&payloads[1]), None);
+    assert_eq!(probe.answered(&[1, 2, 3]), None);
+    assert_eq!(probe.answered(&payloads[2]), Some((2, at + MS * 200)));
+}
+
+#[test]
 fn a_late_answer_to_an_older_ping_does_not_move_the_bound_back() {
     let at = Instant::now();
     let (mut probe, payloads) = pinged(at, &[0, 100]);

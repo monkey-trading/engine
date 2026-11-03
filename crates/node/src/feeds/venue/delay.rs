@@ -48,12 +48,23 @@ impl DelayProbe {
     /// Takes a pong carrying `payload`. An endpoint may answer only the latest ping it has read
     /// (RFC 6455 §5.5.3), so a pong answers the pings before its own too. One for no ping sent, as
     /// an unsolicited pong is, says nothing of this stream's position and is ignored.
-    pub(super) fn answered(&mut self, payload: &[u8]) {
-        let Some(ping) = <[u8; 8]>::try_from(payload).ok().map(u64::from_be_bytes) else { return };
+    /// Returns the ping it newly answers, by number, with when it was sent; `None` when it answers
+    /// none not answered before.
+    pub(super) fn answered(&mut self, payload: &[u8]) -> Option<(u64, Instant)> {
+        let ping = <[u8; 8]>::try_from(payload).ok().map(u64::from_be_bytes)?;
         let answers = self.unanswered.iter().take_while(|(sent, _)| *sent <= ping).count();
-        if self.unanswered.get(answers.wrapping_sub(1)).is_some_and(|(sent, _)| *sent == ping) {
-            self.newest_answered = self.unanswered.drain(..answers).next_back().map(|(_, at)| at);
+        if !self.unanswered.get(answers.wrapping_sub(1)).is_some_and(|(sent, _)| *sent == ping) {
+            return None;
         }
+        let sent = self.unanswered.drain(..answers).next_back().map(|(_, at)| at)?;
+        self.newest_answered = Some(sent);
+        Some((ping, sent))
+    }
+
+    /// The number the next ping sent will carry: a frame read now came before every ping numbered
+    /// from it.
+    pub(super) fn next_ping(&self) -> u64 {
+        self.next_ping
     }
 
     /// How far behind the stream may be at `now`: the age of the newest answered ping. `None`
@@ -113,11 +124,10 @@ impl VenueFeed {
         timeout(self.timing.timeout, link.ping(payload)).await.context("ping timed out")?.context("ping")
     }
 
-    /// Takes a pong read from the connection.
-    pub(super) fn pong(&mut self, payload: &[u8]) {
-        if let Some(probe) = &mut self.delay {
-            probe.answered(payload);
-        }
+    /// Takes a pong read from the connection, returning the ping it newly answers (see
+    /// `DelayProbe::answered`).
+    pub(super) fn pong(&mut self, payload: &[u8]) -> Option<(u64, Instant)> {
+        self.delay.as_mut()?.answered(payload)
     }
 
     /// Whether a frame read now counts: on a connection without pings always, and otherwise while

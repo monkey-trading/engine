@@ -163,8 +163,10 @@ an index: load only the rule whose hint matches the current action.
   TraderMade over WebSocket, Databento's live gateway over TCP, with API keys from the delivered
   secrets the config names, or in a development build environment variables; `feeds/venue/delay.rs`
   bounds how far behind a TLS connection's stream can be from its pings on the monotonic clock, past
-  which its frames count as no quote, and `sequencer/quotes.rs` holds each quote to that bound at its
-  stamp) and a mock, Prometheus metrics on an operator
+  which its frames count as no quote, `feeds/venue/held.rs` re-sequences a quiet book on Coinbase,
+  Kraken and Bitstamp connections for up to 5 s, stamped at the answered ping, and
+  `sequencer/quotes.rs` holds each quote to that bound at its stamp) and a mock, Prometheus metrics
+  on an operator
   listener, and alert routing to webhooks with a bounded durable outbox outside the public log. Its
   `production` cargo feature refuses mock TEE, custody, and feed providers, an API without
   `[api.tls.acme]`, and a secret read from the environment, at config load; release images build with it. `engine ct-watch` (`ct_watch/`)

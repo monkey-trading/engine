@@ -9,6 +9,7 @@ mod hours;
 mod late;
 mod mock;
 mod quiet;
+mod redate;
 mod rwa;
 pub(super) mod rwa_support;
 mod scenario;

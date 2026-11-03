@@ -1,8 +1,10 @@
 //! A venue's protocol on one connection, whichever adapter speaks it.
 
+use engine_core::Fixed;
 use engine_core::types::Millis;
 
 use crate::config::{ApiKey, Venue, VenueConnection};
+use crate::feeds::venue::validation::mid_of;
 use crate::feeds::venue::{Frame, Refusal};
 use crate::feeds::{bitstamp, coinbase, databento, kraken, massive, tradermade};
 
@@ -52,6 +54,18 @@ impl Adapter {
     /// state can no longer be trusted.
     pub(super) fn keeps_state(&self) -> bool {
         matches!(self, Adapter::Coinbase(_) | Adapter::Kraken(_))
+    }
+
+    /// Whether the book kept for `symbol` still tops out at `mid`. A message that leaves a kept book
+    /// with an empty side yields no book, so only the kept book shows that its top has gone. Any
+    /// other adapter reads each top whole, so the last book it read is its top.
+    pub(super) fn tops_at(&self, symbol: &str, mid: Fixed) -> bool {
+        let top = match self {
+            Adapter::Coinbase(books) => books.top(symbol),
+            Adapter::Kraken(books) => books.top(symbol),
+            _ => return true,
+        };
+        top.is_some_and(|(bid, ask)| mid_of(bid, ask) == mid)
     }
 
     /// Reads one venue message at host time `now`.

@@ -23,8 +23,10 @@ for longer than `max_age_ms`. That holds for the crypto markets and for the vend
 ### A crypto venue is down or quiet
 
 BTC-USD and ETH-USD are priced from Coinbase and Kraken only, with `min_sources = 2` and
-`max_age_ms = 1000`. If either venue disconnects, or sends nothing for more than a second, both
-markets have no price: no fills and no close-outs until it is back. This halts those markets.
+`max_age_ms = 1000`. If either venue disconnects, or its book shows no change for more than about
+six seconds, both markets have no price: no fills and no close-outs until it is back. This halts
+those markets. A book that stands is kept quoting by the connection's pings for five seconds past
+its last change, and for about a second once the venue stops answering them.
 
 **Why it is the case to watch.** At the owner's decided terms (1% margin, 100x, up to $1M, close-out
 at 50% of margin) a full 100x position closes out about 0.5% from its entry and loses more than its

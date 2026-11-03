@@ -86,8 +86,10 @@ impl VenueFeed {
     }
 
     /// Logs a refused message, alerting at most once per `REALERT_AFTER`. The connection's API key
-    /// never reaches the log, though a venue may echo it.
+    /// never reaches the log, though a venue may echo it. The message may have changed a book, so
+    /// no book held to re-date is known to stand.
     pub(super) fn refuse(&mut self, reason: &str, text: &str) {
+        self.held.clear();
         let (venue, feed) = (self.conn.venue.name(), self.conn.url.as_str());
         let reason = self.redact(reason);
         let Some(suppressed) = self.refusals.ready(Instant::now()) else {
