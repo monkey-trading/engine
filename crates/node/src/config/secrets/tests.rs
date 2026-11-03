@@ -161,7 +161,8 @@ fn with_vendor(mut cfg: NodeConfig, name: &str) -> NodeConfig {
     cfg.feeds.venues = Some(
         toml::from_str(&format!(
             "timeout = '10s'\nreconnect_min = '1s'\nreconnect_max = '10s'\nstale_after = '10s'\n\
-             min_quote_spacing = '100ms'\n[[connections]]\nvenue = 'massive'\n\
+             min_quote_spacing = '100ms'\nping_interval = '500ms'\nmax_delay = '2s'\n\
+             [[connections]]\nvenue = 'massive'\n\
              url = 'wss://socket.massive.com/forex'\napi_key_secret = '{name}'\n\
              symbols = [{{ market = 1, symbol = 'C.EURUSD' }}]\n"
         ))

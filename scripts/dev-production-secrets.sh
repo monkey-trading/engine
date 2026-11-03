@@ -249,6 +249,8 @@ reconnect_min = "1s"
 reconnect_max = "10s"
 stale_after = "10s"
 min_quote_spacing = "100ms"
+ping_interval = "500ms"
+max_delay = "2s"
 [[feeds.venues.connections]]
 venue = "massive"
 url = "wss://socket.massive.com/forex"

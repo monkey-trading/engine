@@ -492,7 +492,6 @@ async fn serve_node(
     }
 }
 
-}
 #[cfg(test)]
 mod tests;
 

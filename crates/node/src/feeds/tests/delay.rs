@@ -169,8 +169,14 @@ async fn a_quote_on_a_connection_without_pings_carries_no_deadline() {
     let _venue = serve_databento(listener, prices);
     let (tx, mut rx) = mpsc::channel(1024);
     let symbols = vec![VenueSymbol { market: 1, symbol: "BTC".into(), contract: None }];
-    let conn =
-        VenueConnection { venue: Venue::Databento, url, api_key_env: None, dataset: Some("TEST".into()), symbols };
+    let conn = VenueConnection {
+        venue: Venue::Databento,
+        url,
+        api_key_env: None,
+        api_key_secret: None,
+        dataset: Some("TEST".into()),
+        symbols,
+    };
     let api_key = ApiKey::from_env("KEY", |_| Some(KEY.to_owned())).expect("a key");
     let tls = venue::tls_config().expect("tls config");
     let _feed = tokio::spawn(venue::run(conn, Some(api_key), TIMING, tls, tx));
