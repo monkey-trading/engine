@@ -6,6 +6,9 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
+use engine_core::futures::FuturesContract;
+use engine_core::market::MarketSpec;
 use engine_core::price::{PriceError, SourceQuote};
 use engine_core::types::Millis;
 use tokio::sync::{broadcast, mpsc, watch};
@@ -78,6 +81,38 @@ fn the_first_stamp_of_a_run_is_past_every_quote_carried_across_its_restart() {
     assert_eq!(seq.engine.now(), AT + max_age + 100);
     let quote = Some(clock.instant() + MAX_DELAY);
     assert!(seq.sequence_quote(prices(seq.engine.now()), quote).unwrap().is_some());
+}
+
+#[test]
+fn the_restart_hold_covers_a_futures_next_contracts_quotes() {
+    let dir = scratch_dir("pace-next-contract");
+    let clock = Arc::new(TestClock::at(AT));
+    let contract = |name: &str, from: Millis| FuturesContract {
+        contract: name.into(),
+        from: DateTime::<Utc>::from_timestamp_millis(from).expect("in range"),
+    };
+    let mut seq = fresh_listing(&dir, &clock, |market| {
+        market.contracts = vec![contract("ESZ6", AT - 86_400_000), contract("ESH7", AT + 86_400_000)];
+    });
+    let max_age = seq.engine.markets()[&1].spec.price_rules.max_age_ms;
+    // The front contract's quotes are stamped AT, the next contract's two seconds later.
+    seq.sequence(prices_for(AT, Some("ESZ6"))).unwrap().expect("admitted");
+    let later = Duration::from_secs(2);
+    clock.advance(later);
+    let next_ts = AT + later.as_millis() as Millis;
+    seq.sequence(prices_for(next_ts, Some("ESH7"))).unwrap().expect("admitted");
+    assert_eq!(seq.engine.markets()[&1].quotes_for(Some("ESH7")).map(|quotes| quotes.len()), Some(2));
+    seq.flush().unwrap();
+    drop(seq);
+
+    // The host clock reads where the log stopped, within the drift bound, after a restart.
+    let down = Duration::from_secs(5);
+    clock.advance(down);
+    clock.skew(-(down.as_millis() as Millis));
+    let mut seq = recovered(&dir, &clock);
+    seq.trust(sample_around(&TrueTime(clock.clone()))).unwrap();
+    seq.sequence(Command::Tick).unwrap().expect("within the drift bound");
+    assert_eq!(seq.engine.now(), next_ts + max_age + 1, "held past the next contract's quotes, not the front's");
 }
 
 #[test]
@@ -245,10 +280,15 @@ fn fresh(dir: &Path, clock: &Arc<TestClock>) -> Sequencer {
 
 /// `fresh`, with BTC-USD's `max_age_ms` set.
 fn fresh_with(dir: &Path, clock: &Arc<TestClock>, max_age_ms: Millis) -> Sequencer {
+    fresh_listing(dir, clock, |market| market.price_rules.max_age_ms = max_age_ms)
+}
+
+/// `fresh`, with BTC-USD's listing changed by `list`.
+fn fresh_listing(dir: &Path, clock: &Arc<TestClock>, list: impl FnOnce(&mut MarketSpec)) -> Sequencer {
     let mut seq = recovered(dir, clock);
     let mut genesis = dev_config().genesis;
     genesis.markets.retain(|market| market.id == 1);
-    genesis.markets[0].price_rules.max_age_ms = max_age_ms;
+    list(&mut genesis.markets[0]);
     genesis.close_spread_ceilings.retain(|ceiling| ceiling.market == 1);
     genesis.benchmarks.clear();
     seq.activate_protocol().unwrap();
@@ -259,9 +299,19 @@ fn fresh_with(dir: &Path, clock: &Arc<TestClock>, max_age_ms: Millis) -> Sequenc
 
 /// Two venues' quotes for BTC-USD, stamped `ts`.
 fn prices(ts: Millis) -> Command {
+    prices_for(ts, None)
+}
+
+/// Two venues' quotes for BTC-USD, stamped `ts`, naming `contract`.
+fn prices_for(ts: Millis, contract: Option<&str>) -> Command {
     let quotes = ["venue-a", "venue-b"]
         .into_iter()
-        .map(|source| SourceQuote { source: source.into(), mid: "100000".parse().unwrap(), ts, contract: None })
+        .map(|source| SourceQuote {
+            source: source.into(),
+            mid: "100000".parse().unwrap(),
+            ts,
+            contract: contract.map(Into::into),
+        })
         .collect();
     Command::Prices { market: 1, quotes }
 }
