@@ -3,6 +3,7 @@
 use super::*;
 
 use crate::secrets::Authority;
+use engine_core::election::RegistryElection;
 
 #[tokio::test]
 async fn a_running_node_takes_deliveries_from_the_key_in_effect_and_no_other() {
@@ -46,6 +47,144 @@ async fn a_running_node_takes_deliveries_from_the_key_in_effect_and_no_other() {
     assert_eq!(status, StatusCode::OK);
     assert!(due.admits(address).await.unwrap(), "the recorded key after the handover");
     assert!(!due.admits(old).await.unwrap(), "the key the log has moved on from");
+}
+
+// Rotation turning on records no operator change by itself: until an election is recorded the key
+// the log records keeps delivering, and the configured key the log rotated away from does not.
+#[tokio::test]
+async fn rotation_on_without_an_election_keeps_the_log_key_in_effect() {
+    let mut node = Node::staking("delivery-rotation-no-election").await;
+    let old = node.state.operator.address;
+    let next = SigningKey::from_slice(&[0x55; 32]).unwrap();
+    let rotated = engine_core::eip712::address(next.verifying_key());
+
+    // With rotation off the operator rotates to `rotated`, and the log records it once the
+    // notice has run and a command applies under the new key.
+    let rotation = node.sign(0, AdminCommand::RotateOperator { address: rotated }, NOW + 60_000);
+    let (status, _) = node.post("/v1/admin", serde_json::to_value(&rotation).unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+    node.stamps.advance(Duration::from_millis(after_the_notice() as u64 - NOW as u64));
+    let sample = sample_around(node.stamps.as_ref());
+    node.state.tx.send(crate::sequencer::Request::TimeSample(sample)).await.unwrap();
+    node.state.clock = std::sync::Arc::new(crate::clock::test_clock::TestClock::at(after_the_notice()));
+    let handover = sign(&next, &node.state.operator, reduce_only(Some(1)), 0, after_the_notice() + 60_000);
+    let (status, _) = node.post("/v1/admin", serde_json::to_value(&handover).unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // The timelock turns rotation on, with no election recorded.
+    let on = Command::SwitchRotation { enabled: true, election_cancelled: false, block: 1, chain_ref: "0xon:0".into() };
+    assert_eq!(
+        node.state.submit(on).await.unwrap(),
+        [Event::RotationSwitched { enabled: true, election_cancelled: false }]
+    );
+
+    let authority = Authority::Log {
+        tx: node.state.tx.downgrade(),
+        configured: old,
+        trusted: std::sync::Arc::new(crate::test_support::trusted(node.state.clock.clone())),
+    };
+    assert!(authority.admits(rotated).await.unwrap(), "the key the log records");
+    assert!(!authority.admits(old).await.unwrap(), "the configured key the log rotated away from");
+    assert!(!authority.admits(AccountId([7; 20])).await.unwrap(), "a stranger");
+
+    // A recorded election narrows deliveries to the configured key, but one the registry
+    // cancelled before it took effect does not: with no election in effect the log's key stays.
+    let elected = engine_core::eip712::address(SigningKey::from_slice(&[0x66; 32]).unwrap().verifying_key());
+    let election = Command::ElectOperator(RegistryElection {
+        epoch: 1,
+        candidate: "0x00000000000000000000000000000000000000c1".parse().unwrap(),
+        admin_key: elected,
+        effective_at: NOW + 3_600_000,
+        block: 2,
+        chain_ref: "0xelect:0".into(),
+    });
+    let events = node.state.submit(election).await.unwrap();
+    assert!(matches!(events.last(), Some(Event::OperatorElected { .. })), "{events:?}");
+    assert!(!authority.admits(elected).await.unwrap(), "the elected key before its time");
+    assert!(!authority.admits(rotated).await.unwrap(), "the log's key once an election narrows deliveries");
+    assert!(authority.admits(old).await.unwrap(), "the configured key once an election narrows deliveries");
+
+    let off =
+        Command::SwitchRotation { enabled: false, election_cancelled: true, block: 3, chain_ref: "0xoff:0".into() };
+    assert_eq!(
+        node.state.submit(off).await.unwrap(),
+        [Event::RotationSwitched { enabled: false, election_cancelled: true }]
+    );
+    let on =
+        Command::SwitchRotation { enabled: true, election_cancelled: false, block: 4, chain_ref: "0xon2:0".into() };
+    assert_eq!(
+        node.state.submit(on).await.unwrap(),
+        [Event::RotationSwitched { enabled: true, election_cancelled: false }]
+    );
+    assert!(authority.admits(rotated).await.unwrap(), "the recorded key with the election cancelled");
+    assert!(!authority.admits(elected).await.unwrap(), "the cancelled election's key");
+    assert!(!authority.admits(old).await.unwrap(), "the configured key the log rotated away from");
+}
+
+// An election that took effect, gave way to a signed rotation while rotation was off, and saw
+// rotation return is historical: it narrows nothing, and the key the log records keeps delivering.
+#[tokio::test]
+async fn a_historical_election_does_not_narrow_deliveries_once_rotation_returns() {
+    let mut node = Node::staking("delivery-historical-election").await;
+    let incumbent = node.state.operator.address;
+    let elected_key = SigningKey::from_slice(&[0x55; 32]).unwrap();
+    let elected = engine_core::eip712::address(elected_key.verifying_key());
+    let next_key = SigningKey::from_slice(&[0x66; 32]).unwrap();
+    let next = engine_core::eip712::address(next_key.verifying_key());
+
+    // An election takes effect, and a command under the elected key makes it the one the log
+    // records.
+    let effective_at = node.elect(elected).await;
+    node.pass_the_notice(effective_at).await;
+    let handover = sign(&elected_key, &node.state.operator, reduce_only(Some(1)), 0, after_the_notice() + 60_000);
+    let (status, _) = node.post("/v1/admin", serde_json::to_value(&handover).unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // The timelock turns rotation off without cancelling the election, and the operator the
+    // election seated rotates the key by a signed command.
+    let off =
+        Command::SwitchRotation { enabled: false, election_cancelled: false, block: 3, chain_ref: "0xoff:0".into() };
+    assert_eq!(
+        node.state.submit(off).await.unwrap(),
+        [Event::RotationSwitched { enabled: false, election_cancelled: false }]
+    );
+    let rotate = sign(
+        &elected_key,
+        &node.state.operator,
+        AdminCommand::RotateOperator { address: next },
+        1,
+        after_the_notice() + 120_000,
+    );
+    let (status, _) = node.post("/v1/admin", serde_json::to_value(&rotate).unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // The second notice runs, and a command under the new key records it.
+    let later = after_the_notice() + engine_core::operator_bounds::NOTICE_MS + 1_000;
+    node.stamps.advance(Duration::from_millis((later - after_the_notice()) as u64));
+    let sample = sample_around(node.stamps.as_ref());
+    node.state.tx.send(crate::sequencer::Request::TimeSample(sample)).await.unwrap();
+    node.state.clock = std::sync::Arc::new(crate::clock::test_clock::TestClock::at(later));
+    let handover = sign(&next_key, &node.state.operator, reduce_only(Some(1)), 0, later + 60_000);
+    let (status, _) = node.post("/v1/admin", serde_json::to_value(&handover).unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Rotation turns back on: the earlier election is historical, and the log's key delivers.
+    let on =
+        Command::SwitchRotation { enabled: true, election_cancelled: false, block: 4, chain_ref: "0xon2:0".into() };
+    assert_eq!(
+        node.state.submit(on).await.unwrap(),
+        [Event::RotationSwitched { enabled: true, election_cancelled: false }]
+    );
+
+    let authority = Authority::Log {
+        tx: node.state.tx.downgrade(),
+        configured: incumbent,
+        trusted: std::sync::Arc::new(crate::test_support::trusted(node.state.clock.clone())),
+    };
+    assert!(authority.admits(next).await.unwrap(), "the key the log records");
+    assert!(!authority.admits(elected).await.unwrap(), "the superseded election's key");
+    assert!(!authority.admits(incumbent).await.unwrap(), "the configured key the log rotated away from");
+    assert!(!authority.admits(AccountId([7; 20])).await.unwrap(), "a stranger");
 }
 
 // During a promotion's notice the outgoing key still signs admin commands, but the node the rotation

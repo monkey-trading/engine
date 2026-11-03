@@ -90,11 +90,23 @@ impl Authority {
                 tx.send(Request::Query(Box::new(move |engine| {
                     let recorded = engine.operator().map_or(configured, |operator| operator.address);
                     // Under elections each operator's secrets are its own, so a key the registry
-                    // elects reaches into no other operator's enclave. A pending rotation to this
-                    // node's own key names this node's operator the successor, as recovery reads it:
-                    // during a promotion's notice the outgoing key still signs admin commands, but it
-                    // reaches into no successor's enclave.
-                    let own_key_only = engine.operator_election().rotation_enabled
+                    // elects reaches into no other operator's enclave. That narrowing holds only
+                    // while an election that governs the key is in force: one still handing the
+                    // key over (the pending rotation is its), or one whose key the log records.
+                    // An election the log moved on from is historical and narrows nothing, and
+                    // with none recorded the key the log records stays in effect. A pending
+                    // rotation to this node's own key names this node's operator the successor,
+                    // as recovery reads it: during a promotion's notice the outgoing key still
+                    // signs admin commands, but it reaches into no successor's enclave.
+                    let election = engine.operator_election();
+                    let governing = election.last.filter(|last| !last.cancelled).is_some_and(|last| {
+                        engine
+                            .operator_bounds()
+                            .rotation
+                            .is_some_and(|r| r.address == last.admin_key && r.effective_at == last.effective_at)
+                            || last.admin_key == recorded
+                    });
+                    let own_key_only = (election.rotation_enabled && governing)
                         || engine.operator_bounds().rotation.is_some_and(|r| r.address == configured);
                     let due = now.and_then(|now| engine.due_rotation(now)).is_some_and(|r| r.address == signer);
                     let _ = reply.send(if own_key_only { signer == configured } else { signer == recorded || due });
