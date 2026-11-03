@@ -3,6 +3,8 @@
 //! reasons over is taken first: a surviving row whose link names a bucket this delete removed
 //! re-links; one whose link names a bucket that vanished any other way refuses, never healing a
 //! host deletion. Every pair is validated against its committed anchor before anything moves.
+//! The survivors are re-bound end to end — each one's link and recorded predecessor tag made the
+//! row actually below it — so no earlier pin outlives the reset.
 //! Each call takes one verified snapshot of the whole cache, linear in its size — the validation
 //! must precede the delete, and the cache is bounded by its retentions — and walks it once for
 //! both the links and the delete. Startup's validation and the reset each read the file afresh:
@@ -17,7 +19,7 @@ use engine_core::types::{MarketId, Millis};
 
 use crate::history::marks::Provenance;
 use crate::history::marks::Resolution;
-use crate::history::marks::store::chain::{ChainUpdates, anchor_updates, check_anchors, retag, verify_row};
+use crate::history::marks::store::chain::{ChainUpdates, RETAG, anchor_updates, check_anchors, retag_with, verify_row};
 use crate::history::marks::store::{ChainAnchors, SnapRow};
 
 /// Validates every pair's chain as the file holds it: every row authenticates, and every link
@@ -58,6 +60,7 @@ fn check_links(snapshot: &Snapshot) -> anyhow::Result<()> {
 ///   did not remove, or a pair no longer matches its committed anchor
 pub(crate) fn reset_log_derived(
     mac: &hmac::Hmac<sha2::Sha256>,
+    next: &hmac::Hmac<sha2::Sha256>,
     tx: &Transaction,
     prior: &ChainAnchors,
 ) -> anyhow::Result<(usize, ChainUpdates)> {
@@ -76,25 +79,38 @@ pub(crate) fn reset_log_derived(
     let removed = tx
         .execute("DELETE FROM marks WHERE provenance = ?1", [Provenance::LogDerived.as_str()])
         .context("resetting log-derived marks")?;
-    for ((market, resolution), rows) in &snapshot {
-        // validate_chains checked every link, including links on rows this delete removes: the
-        // delete also removes every reference to them, and a row whose own link names a missing
-        // bucket would let the delete launder a host deletion into a clean re-chain.
-        let mut pred = None;
+    // check_links covered every link, including links on rows this delete removes: the delete
+    // also removes every reference to them, and a row whose own link names a missing bucket
+    // would let the delete launder a host deletion into a clean re-chain.
+    rebind(next, tx, &snapshot, &deleted)?;
+    let updates = anchor_updates(tx, &pairs, &Default::default(), true)?;
+    Ok((removed, updates))
+}
+
+/// Re-tags every row of `snapshot` that `deleted` does not name under `mac`, the new run key: its
+/// link made the survivor actually below it, where its predecessor is a row the delete removed,
+/// and the tag it records made the tag that survivor carries now, so no earlier pin and no earlier
+/// version outlives it.
+/// Error cases:
+/// - an update fails
+fn rebind(
+    mac: &hmac::Hmac<sha2::Sha256>,
+    tx: &Transaction,
+    snapshot: &Snapshot,
+    deleted: &BTreeSet<(MarketId, Resolution, Millis)>,
+) -> anyhow::Result<()> {
+    let mut update = tx.prepare(RETAG).context("preparing the re-tag")?;
+    for ((market, resolution), rows) in snapshot {
+        let mut pred: Option<(Millis, [u8; 16])> = None;
         for row in rows {
             if deleted.contains(&(*market, *resolution, row.bucket)) {
                 continue;
             }
-            if row.prev != pred {
-                // The only re-tag the validated snapshot allows: the row's predecessor is a row
-                // this delete removed, and the survivors close over it.
-                retag(mac, tx, *market, *resolution, row, pred)?;
-            }
-            pred = Some(row.bucket);
+            let tag = retag_with(&mut update, mac, *market, *resolution, row, pred)?;
+            pred = Some((row.bucket, tag));
         }
     }
-    let updates = anchor_updates(tx, &pairs)?;
-    Ok((removed, updates))
+    Ok(())
 }
 
 /// Every pair's rows, verified, in bucket order: what a whole-cache re-chain reasons over.
@@ -106,25 +122,10 @@ type Snapshot = BTreeMap<(MarketId, Resolution), Vec<SnapRow>>;
 fn snapshot_all(mac: &hmac::Hmac<sha2::Sha256>, tx: &Transaction) -> anyhow::Result<Snapshot> {
     let mut pairs = Snapshot::new();
     let mut stmt = tx
-        .prepare("SELECT market, resolution, bucket, open, high, low, close, provenance, prev_bucket, tag FROM marks ORDER BY market, resolution, bucket")
+        .prepare("SELECT market, resolution, bucket, open, high, low, close, provenance, prev_bucket, tag, prev_tag FROM marks ORDER BY market, resolution, bucket")
         .context("snapshotting the marks cache")?;
     let rows = stmt
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, MarketId>(0)?,
-                row.get::<_, i64>(1)?,
-                SnapRow {
-                    bucket: row.get(2)?,
-                    open: row.get(3)?,
-                    high: row.get(4)?,
-                    low: row.get(5)?,
-                    close: row.get(6)?,
-                    provenance: row.get(7)?,
-                    prev: row.get(8)?,
-                    tag: row.get(9)?,
-                },
-            ))
-        })
+        .query_map([], |row| Ok((row.get::<_, MarketId>(0)?, row.get::<_, i64>(1)?, SnapRow::from_row(row, 2)?)))
         .context("snapshotting the marks cache")?;
     for row in rows {
         let (market, resolution, row) = row.context("snapshotting the marks cache")?;

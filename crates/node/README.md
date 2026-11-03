@@ -423,21 +423,27 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/history/marks/store/setup.rs` — opening the cache: schema creation and checks,
   discarding a file that fails them, and validating imported chains before serving
 - `src/history/marks/store/mod.rs` — the cache's SQLite schema, its writer (per-resolution
-  pruning, seeding that never overwrites log-derived rows, backfill markers), the committed
-  chain anchors, and its page reader
+  pruning, seeding that never overwrites log-derived rows, backfill markers), and its page reader
+- `src/history/marks/store/auth.rs` — the row tag, the coverage a backfill recorded, and the
+  committed state the writer and readers share: each pair's floor and head anchors and the pinned
+  rows inside them
 - `src/history/marks/store/chain.rs` — the chained index over the cache: each row names the bucket
-  below it, the writer re-links only over its own deletes and refuses the rest, and the reader
-  checks every link and chain head before serving; the prune plans from the committed anchors and
-  reads and deletes each pair by primary-key prefix (`tests/chain.rs`, `tests/refusals.rs`,
-  `tests/prune.rs`: the prune's query plan, and a read racing a commit)
+  below it and the tag that row carried, the writer re-links only over its own deletes, refuses
+  the rest and any row that is not the version it last wrote, and pins the rows it rewrote, and
+  the reader checks every link, pin, and chain head before serving; the prune plans from the
+  committed anchors and reads and deletes each pair by primary-key prefix (`tests/chain.rs`,
+  `tests/refusals.rs`, `tests/replay.rs`: a replayed row refused at serve time and by every
+  write, `tests/prune.rs`: the prune's query plan, and a read racing a commit)
 - `src/history/marks/store/merge.rs` — the live write path: merging a mark into its bucket and
   re-linking the row above a fresh insert, with the statements prepared once per write and shared
   by every sample (`store/chain.rs` holds the shared chain queries; `store/tests/bench.rs` is the
   write's ignored cost-per-sample timing)
 - `src/history/marks/store/reset.rs` — the recovery reset: validating every chain, deleting the
-  log-derived buckets, and re-chaining the survivors
-- `src/history/marks/store/import.rs` — importing a previous run's provider-seeded rows and
-  backfill markers into the seed file, skipping what cannot be authenticated
+  log-derived buckets, and re-chaining the survivors under a new run key
+- `src/history/marks/store/import.rs` — importing a previous run's rows (every row that verifies
+  under that file's run key, log-derived included, which a full recovery's reset then deletes) and
+  backfill markers into the seed file, re-tagged under this run's key; what cannot be
+  authenticated is skipped
 - `src/history/marks/backfill.rs` — the provider backfill: which feed symbols map to a candles
   adapter, the public candles client, and window paging (`tests.rs`)
 - `src/history/marks/run.rs` — the supervised marks task: flushing live mark reports and backfilling
@@ -1673,24 +1679,42 @@ unbounded by default), the activity length, and the close-out and profit buckets
 `{"market", "resolution", "entries", "next", "max_limit"}`: one market's index-mark history from the
 derived marks cache, oldest first. Each entry is one bucket — its window start `ts` and its OHLC,
 prices as decimal strings — with a `provenance` of `log_derived` or `seeded_from_provider`, so a
-client can weigh seeded history against what the public log proves; a bucket a log mark has reached
-holds exactly what the public log proves, and every recovery re-derives the log-derived buckets from
-the verified log, so a `log_derived` label never covers provider values or rows the host wrote while
-the node was stopped. Every row is also chained: each bucket names the bucket below it, the row's
+client can weigh seeded history against what the public log proves; after a full recovery without
+`[snapshots]`, a bucket a log mark has reached holds what the public log proves, because that
+recovery re-derives the log-derived buckets from the verified log, so a `log_derived` label does
+not cover rows the host wrote while the node was stopped. A node with `[snapshots]` re-derives
+none and serves the rows it imported. Every row is also chained: each bucket names the bucket below it, the row's
 authentication tag binds that name, and per-pair chain anchors — the floor and the head, committed
 in memory atomically with each write — reject a host that deletes, reorders, or rolls the cache
 back mid-run: the next read over the broken span or ends fails before anything is signed, and a
-write never re-links over a deletion it did not itself make. What a bounded read never spans, the
-links it does walk bind; what no read ever spans between an unchanged floor and head is rewritten
-by the next recovery's re-derivation before it can be trusted again. `?limit=` is 1 to `max_limit`
-(2000), 500 by default, and a
-window wider than that pages by passing a page's `next` as `from_ms`. The cache is derived state,
-never sequenced: recovery seeds it from the log's replay, the sequencer's live mark reports keep it
-current, and `[history.marks.backfill]`, where configured, fetches historical candles from the
-feed venue's public endpoint (Coinbase's, for its markets) to seed the depth a fresh log cannot
-have; removing `history.dir` while the node is stopped rebuilds it. A cache file written by an
-older version is not imported: the log re-derives what it proves and a configured backfill re-seeds
-the rest. `[history.marks]` also tunes
+write never re-links over a deletion it did not itself make. A row also records the tag the row
+below it carried when the row was written, so the row above vouches for the content a bucket ended
+with. A row a write re-links, or changes after another arrived above it (a gap filled under it, a
+late sample merged into it, a re-floor), is pinned in memory at its new tag, and a read refuses a
+pinned row at any other version, whether it serves the row or only ends beside it. A write refuses
+to merge into, re-link, re-floor, or bind the tag of a row that is not the version it last wrote.
+Rows are authenticated under a key derived from the enclave key and a nonce kept in each cache file,
+and the recovery reset draws a new nonce and re-tags the rows it keeps, so a row captured in an
+earlier run, or before the reset, does not verify after it, and an older authentic version of a row that the
+host puts back while the node runs is refused wherever it would be served, including by a page that
+would hide a bucket behind it. A host can still delete or corrupt the cache while the node runs,
+which fails reads, and stops the node when a later write trips over it, until the cache is rebuilt,
+but not make a read serve an older version of a row this run wrote. The pins live in memory with
+the anchors. At startup the prior cache's rows are verified under that file's key, checked by link,
+and re-tagged under this run's key, so an older authentic row the host restores while the node is
+stopped, or newest rows it removes, are not detected. A full recovery without `[snapshots]`
+re-derives the log-derived rows from the verified log and corrects them, though not provider-seeded
+rows the host removed, and a node with `[snapshots]` attaches no marks sink, whichever way it
+recovers, so it corrects none.
+`?limit=` is 1 to `max_limit` (2000), 500 by default, and a window wider than that pages by
+passing a page's `next` as `from_ms`. The cache is derived state, never sequenced: recovery seeds
+it from the log's replay, the sequencer's live mark reports keep it current, and
+`[history.marks.backfill]`, where configured, fetches historical candles from the feed venue's
+public endpoint (Coinbase's, for its markets) to seed the depth a fresh log cannot have; removing
+`history.dir` while the node is stopped rebuilds it. A cache file written by an older version is
+not imported: a full recovery re-derives what the log proves and a configured backfill re-seeds
+the rest.
+`[history.marks]` also tunes
 each resolution's retention — 1s for 48h, 1m for 60d, 1h for 2y, 1d unbounded by default — and
 `[history.marks.backfill]` sets whether to backfill, the endpoint's base URL (the venue's own,
 over TLS), and each resolution's depth. Markets no bucket has reached yet answer an empty page.

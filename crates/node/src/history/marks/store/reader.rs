@@ -12,6 +12,7 @@ use rusqlite::{OptionalExtension, params};
 use tokio::sync::Semaphore;
 use tokio::task::spawn_blocking;
 
+use crate::history::marks::store::auth::Pins;
 use crate::history::marks::store::chain::verify_row;
 use crate::history::marks::store::{
     ChainAnchor, ChainAnchors, ChainHead, PageQuery, Row, SchemaRow, SnapRow, WINDOW, tag,
@@ -20,10 +21,10 @@ use crate::history::marks::{MarkEntry, MarksPage, Provenance, Resolution};
 use crate::history::store::{self as store, read_only};
 
 /// The row just below a window: the predecessor the window's first row must name.
-const BELOW: &str = "SELECT bucket, open, high, low, close, provenance, prev_bucket, tag FROM marks
+const BELOW: &str = "SELECT bucket, open, high, low, close, provenance, prev_bucket, tag, prev_tag FROM marks
     WHERE market = :market AND resolution = :resolution AND bucket < :from ORDER BY bucket DESC LIMIT 1";
 /// The row just above a window: the successor whose link must name the window's last row.
-const ABOVE: &str = "SELECT bucket, open, high, low, close, provenance, prev_bucket, tag FROM marks
+const ABOVE: &str = "SELECT bucket, open, high, low, close, provenance, prev_bucket, tag, prev_tag FROM marks
     WHERE market = :market AND resolution = :resolution AND bucket > :to ORDER BY bucket ASC LIMIT 1";
 
 /// Reads pages of the cache, each on a new read-only connection.
@@ -160,8 +161,21 @@ pub(crate) fn read_page_once(
     let conn = conn.transaction().context("starting a marks read")?;
     store::check_schema(&conn, schema, path)?;
     after_snapshot();
-    let anchor =
-        anchors.lock().expect("the marks chain anchors are never poisoned").get(&(market, resolution)).copied();
+    let (anchor, pins) = {
+        let committed = anchors.lock().expect("the marks chain anchors are never poisoned");
+        (committed.get(&(market, resolution)).copied(), committed.pins((market, resolution)))
+    };
+    // A row the write path rewrote under a row above it is accepted at its committed tag only: an
+    // older authentic version is a replay, or, on a snapshot older than the anchors, a raced commit.
+    let pinned = |bucket: Millis, stored: &[u8; 16]| -> anyhow::Result<()> {
+        if pins.get(&bucket).is_some_and(|committed| committed != stored) {
+            if allow_stale {
+                return Err(StaleAnchor.into());
+            }
+            bail!("a stored mark at {bucket} is an older version than the one committed for it");
+        }
+        Ok(())
+    };
     let ends: Option<ChainAnchor> = conn
         .query_row(
             "SELECT
@@ -209,40 +223,20 @@ pub(crate) fn read_page_once(
         (None, None) => {}
     }
     let below: Option<SnapRow> = conn
-        .query_row(BELOW, params![i64::from(market), resolution as i64, from], |row| {
-            Ok(SnapRow {
-                bucket: row.get(0)?,
-                open: row.get(1)?,
-                high: row.get(2)?,
-                low: row.get(3)?,
-                close: row.get(4)?,
-                provenance: row.get(5)?,
-                prev: row.get(6)?,
-                tag: row.get(7)?,
-            })
-        })
+        .query_row(BELOW, params![i64::from(market), resolution as i64, from], |row| SnapRow::from_row(row, 0))
         .optional()
         .context("reading below the marks window")?;
     if let Some(below) = &below {
         verify_row(mac, market, resolution, below).context("reading below the marks window")?;
+        pinned(below.bucket, &below.tag)?;
     }
     let above: Option<SnapRow> = conn
-        .query_row(ABOVE, params![i64::from(market), resolution as i64, to], |row| {
-            Ok(SnapRow {
-                bucket: row.get(0)?,
-                open: row.get(1)?,
-                high: row.get(2)?,
-                low: row.get(3)?,
-                close: row.get(4)?,
-                provenance: row.get(5)?,
-                prev: row.get(6)?,
-                tag: row.get(7)?,
-            })
-        })
+        .query_row(ABOVE, params![i64::from(market), resolution as i64, to], |row| SnapRow::from_row(row, 0))
         .optional()
         .context("reading above the marks window")?;
     if let Some(above) = &above {
         verify_row(mac, market, resolution, above).context("reading above the marks window")?;
+        pinned(above.bucket, &above.tag)?;
     }
     // One more than the page, to learn whether a newer page follows.
     let fetched = i64::try_from(limit).context("page limit")?.saturating_add(1);
@@ -258,29 +252,36 @@ pub(crate) fn read_page_once(
                 row.get::<_, String>(5)?,
                 row.get::<_, Option<Millis>>(6)?,
                 row.get::<_, [u8; 16]>(7)?,
+                row.get::<_, Option<[u8; 16]>>(8)?,
             ))
         })
         .context("reading a marks page")?;
-    let mut previous = below.as_ref().map(|below| below.bucket);
+    let mut previous = below.as_ref().map(|below| (below.bucket, below.tag));
     let mut entries: Vec<MarkEntry> = rows
         .map(|row| {
-            let (ts, open, high, low, close, provenance, prev, stored) = row.context("reading a marks row")?;
+            let (ts, open, high, low, close, provenance, prev, stored, prev_tag) =
+                row.context("reading a marks row")?;
             // A row the host rewrote fails authentication before it can be served.
             let expected = tag(
                 mac,
                 market,
                 resolution,
                 ts,
-                &Row { open: &open, high: &high, low: &low, close: &close, provenance: &provenance, prev },
+                &Row { open: &open, high: &high, low: &low, close: &close, provenance: &provenance, prev, prev_tag },
             );
             ensure!(stored == expected, "a stored mark at {ts} fails authentication");
+            pinned(ts, &stored)?;
             // The chain link must name the bucket actually below the row, so a deletion or a
             // reorder breaks the page that spans it, and a floor row chains from nothing.
             ensure!(
-                prev == previous,
+                prev == previous.map(|below| below.0),
                 "a stored mark at {ts} breaks the chain: its link does not name the bucket below it"
             );
-            previous = Some(ts);
+            ensure!(
+                binds(&pins, previous, prev_tag),
+                "a stored mark at {ts} breaks the chain: its link is bound to another version of the bucket below it"
+            );
+            previous = Some((ts, stored));
             let parse = |text: String| text.parse::<Fixed>().with_context(|| format!("a stored mark {text:?}"));
             Ok(MarkEntry {
                 ts,
@@ -307,12 +308,26 @@ pub(crate) fn read_page_once(
     if next.is_none()
         && let Some(above) = &above
     {
-        let expected = entries.last().map(|entry| entry.ts).or(below.as_ref().map(|below| below.bucket));
         ensure!(
-            above.prev == expected,
+            above.prev == previous.map(|below| below.0),
             "a stored mark at {} breaks the chain: its link does not name the bucket below it",
+            above.bucket
+        );
+        ensure!(
+            binds(&pins, previous, above.prev_tag),
+            "a stored mark at {} breaks the chain: its link is bound to another version of the bucket below it",
             above.bucket
         );
     }
     Ok(MarksPage { market, resolution: resolution.as_str(), entries, next, max_limit })
+}
+
+/// Whether a row's recorded tag of the row below it is the tag that row carries now. A row the
+/// write path rewrote under a row above it is pinned instead, at its committed tag, and the row
+/// above keeps the tag it recorded then. The floor records nothing.
+fn binds(pins: &Pins, below: Option<(Millis, [u8; 16])>, recorded: Option<[u8; 16]>) -> bool {
+    match below {
+        None => recorded.is_none(),
+        Some((bucket, tag)) => pins.contains_key(&bucket) || recorded == Some(tag),
+    }
 }

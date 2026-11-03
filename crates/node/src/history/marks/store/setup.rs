@@ -6,12 +6,17 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, bail, ensure};
-use hmac::digest::KeyInit as _;
+use rand::RngCore;
+use rand::rngs::OsRng;
 
 use rusqlite::{Connection, TransactionBehavior};
+#[cfg(test)]
 use tracing::warn;
 
+use engine_core::types::Millis;
+
 use crate::history::marks::Retentions;
+use crate::history::marks::store::auth::{Epoch, run_mac};
 use crate::history::marks::store::{
     BUSY_TIMEOUT, Reader, SCHEMA, SCHEMA_VERSION, Store, expected_schema, reset, store,
 };
@@ -32,17 +37,28 @@ impl Store {
     /// outranks a rebuild.
     /// Error cases:
     /// - a fresh file cannot be created in place of a discarded one
+    #[cfg(test)]
     pub fn open(path: &Path, retentions: Retentions, mac_key: [u8; 32]) -> anyhow::Result<Self> {
         let found_file = path.exists();
-        match Self::open_checked(path, retentions, mac_key) {
+        match Self::open_checked(path, retentions, mac_key, false) {
             Ok(store) => Ok(store),
             Err(e) if !found_file => Err(e),
             Err(e) => {
                 warn!(alert = "marks_cache_discarded", path = %path.display(), "rebuilding the marks cache: {e:#}");
                 store::discard(path)?;
-                Self::open_checked(path, retentions, mac_key)
+                Self::open_checked(path, retentions, mac_key, false)
             }
         }
+    }
+
+    /// Creates the cache at `path`, which must hold no cache: the run nonce is drawn here, in the
+    /// node, and the store is keyed from that value, never from one the file carries, so a file
+    /// the host left or planted at the path cannot choose the key. Startup and a rebuild use it
+    /// after discarding what was there.
+    /// Error cases:
+    /// - the path already holds a cache or any schema, or as for `open_checked`
+    pub fn create(path: &Path, retentions: Retentions, mac_key: [u8; 32]) -> anyhow::Result<Self> {
+        Self::open_checked(path, retentions, mac_key, true)
     }
 
     /// Opens the cache at `path`, creating its directory, the file, and the schema if missing.
@@ -51,7 +67,9 @@ impl Store {
     /// - the directory or the file cannot be created or opened, or the file is not a SQLite database
     /// - the file holds another version of the schema, or a schema this code did not create
     /// - SQLite's integrity check finds the file damaged
-    fn open_checked(path: &Path, retentions: Retentions, mac_key: [u8; 32]) -> anyhow::Result<Self> {
+    /// - the file holds no run nonce, or one of another length
+    /// - `fresh` is set and the file already holds any schema
+    fn open_checked(path: &Path, retentions: Retentions, mac_key: [u8; 32], fresh: bool) -> anyhow::Result<Self> {
         if let Some(dir) = path.parent() {
             fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
         }
@@ -68,8 +86,12 @@ impl Store {
         match tx.pragma_query_value(None, "user_version", |row| row.get(0)).context("reading the schema version")? {
             0 => {
                 tx.execute_batch(SCHEMA).context("creating the marks schema")?;
+                let mut epoch = Epoch::default();
+                OsRng.fill_bytes(&mut epoch);
+                tx.execute("INSERT INTO epoch (id, nonce) VALUES (0, ?1)", [epoch]).context("drawing the run nonce")?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION).context("setting the schema version")?;
             }
+            _ if fresh => bail!("{} already holds a cache and is not created over", path.display()),
             SCHEMA_VERSION => {}
             other => bail!("{} holds marks schema {other}, not {SCHEMA_VERSION}", path.display()),
         }
@@ -79,9 +101,19 @@ impl Store {
         let integrity: String =
             tx.query_row("PRAGMA integrity_check(1)", [], |row| row.get(0)).context("checking the marks cache")?;
         ensure!(integrity == "ok", "{} is damaged: {integrity}", path.display());
+        let epoch = read_epoch(&tx)?;
         tx.commit().context("committing the marks schema")?;
-        let mac = hmac::Hmac::new_from_slice(&mac_key).context("building the marks authenticator")?;
-        let store = Self { conn, path: path.to_owned(), retentions, mac, mac_key, schema, anchors: Arc::default() };
+        let mac = run_mac(&mac_key, &epoch);
+        let store = Self {
+            conn,
+            path: path.to_owned(),
+            retentions,
+            mac,
+            mac_key,
+            newest_seen: Millis::MIN,
+            schema,
+            anchors: Arc::default(),
+        };
         // An existing file (a reopened cache in tests; production opens a fresh seed) gets its
         // anchors established here; re-derivation at recovery validates them before any read.
         store.establish_anchors()?;
@@ -123,4 +155,11 @@ impl Store {
         store::check_schema(&tx, &self.schema, &self.path)?;
         reset::validate_chains(&self.mac, &tx)
     }
+}
+
+/// The run nonce of the file `conn` holds.
+/// Error cases:
+/// - the file holds no run nonce, or one of another length
+pub(super) fn read_epoch(conn: &Connection) -> anyhow::Result<Epoch> {
+    conn.query_row("SELECT nonce FROM epoch WHERE id = 0", [], |row| row.get(0)).context("reading the run nonce")
 }

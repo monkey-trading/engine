@@ -15,6 +15,8 @@ use std::time::Duration;
 use anyhow::Context;
 use engine_core::Fixed;
 use engine_core::types::{MarketId, Millis};
+use rand::RngCore;
+use rand::rngs::OsRng;
 use rusqlite::{Connection, TransactionBehavior, params};
 use tracing::{debug, warn};
 
@@ -26,8 +28,8 @@ mod reader;
 mod reset;
 mod setup;
 
-pub(crate) use auth::{ChainAnchor, ChainHead, Coverage};
-use auth::{Row, tag};
+pub(crate) use auth::{ChainAnchor, ChainAnchors, ChainHead, Coverage};
+use auth::{Epoch, Row, run_mac, tag};
 pub use reader::Reader;
 
 use crate::history::marks::{MarkSample, Resolution, Retentions};
@@ -43,8 +45,16 @@ pub const MARKS_FILE: &str = "marks.sqlite";
 /// back breaks the chain the next read refuses on, and per-pair chain anchors — the floor and
 /// head committed in memory, atomically with each write — reject a restored old snapshot before
 /// any of it is served. Rows strictly between an unchanged floor and head are bound by the links
-/// walked per page; what a bounded read never spans, the next recovery's re-derivation rewrites.
-pub(crate) const SCHEMA_VERSION: i64 = 3;
+/// walked per page; what a bounded read never spans, a full recovery without `[snapshots]` rewrites
+/// (superseded by version 4's pins).
+/// Version 4 adds `prev_tag`, the tag of the row below as it stood when this row was written, which
+/// the tag binds: a successor vouches for its predecessor's final content, and the rows a write
+/// rewrote while they had a successor are pinned by tag in the committed anchors, so an older
+/// authentic version of an interior row is refused wherever it is served. `epoch` holds the random
+/// nonce a file is created with: rows are authenticated under a key derived from it, so a row
+/// captured in an earlier run does not verify in this one, and the next run imports this file's
+/// rows by verifying them under its epoch and re-tagging them under its own.
+pub(crate) const SCHEMA_VERSION: i64 = 4;
 pub(crate) const SCHEMA: &str = "
     CREATE TABLE marks (
         market INTEGER NOT NULL,
@@ -57,9 +67,14 @@ pub(crate) const SCHEMA: &str = "
         provenance TEXT NOT NULL,
         prev_bucket INTEGER,
         tag BLOB NOT NULL,
+        prev_tag BLOB,
         PRIMARY KEY (market, resolution, bucket)
     ) WITHOUT ROWID;
     CREATE INDEX marks_by_window ON marks (resolution, bucket);
+    CREATE TABLE epoch (
+        id INTEGER PRIMARY KEY CHECK (id = 0),
+        nonce BLOB NOT NULL
+    );
     CREATE TABLE backfilled (
         market INTEGER PRIMARY KEY,
         venue TEXT NOT NULL,
@@ -74,8 +89,9 @@ pub(crate) const SCHEMA: &str = "
         retention_1d INTEGER NOT NULL
     );
 ";
-/// A window read: the bucket, its OHLC, its chain link, and its authentication tag, as stored.
-const WINDOW: &str = "SELECT bucket, open, high, low, close, provenance, prev_bucket, tag FROM marks
+/// A window read: the bucket, its OHLC, its chain link, its authentication tag, and the tag of the
+/// row below it that the tag binds, as stored.
+const WINDOW: &str = "SELECT bucket, open, high, low, close, provenance, prev_bucket, tag, prev_tag FROM marks
     WHERE market = :market AND resolution = :resolution AND bucket >= :from AND bucket <= :to
     ORDER BY bucket ASC LIMIT :limit";
 /// How long a connection waits on another's lock before it fails.
@@ -94,7 +110,7 @@ struct PageQuery {
 }
 
 /// One stored row as the chain maintenance reasons over it: its bucket, its stored content and
-/// chain link, and its authentication tag.
+/// chain link, its authentication tag, and the tag of the row below it that the tag binds.
 pub(crate) struct SnapRow {
     pub bucket: Millis,
     pub open: String,
@@ -104,13 +120,41 @@ pub(crate) struct SnapRow {
     pub provenance: String,
     pub prev: Option<Millis>,
     pub tag: [u8; 16],
+    pub prev_tag: Option<[u8; 16]>,
 }
 
-/// The committed chain anchors of every (market, resolution) pair, established at recovery
-/// re-derivation and advanced by every write, atomically with its commit. The store and its
-/// readers share one map: the writer merges in the pairs a transaction touched, a reader checks
-/// one pair's floor and head before serving a page.
-pub(crate) type ChainAnchors = BTreeMap<(MarketId, Resolution), ChainAnchor>;
+impl SnapRow {
+    /// The row a query over `bucket, open, high, low, close, provenance, prev_bucket, tag, prev_tag`
+    /// returned, those columns starting at `first`.
+    /// Error cases:
+    /// - a column does not decode
+    pub(crate) fn from_row(row: &rusqlite::Row<'_>, first: usize) -> rusqlite::Result<Self> {
+        Ok(Self {
+            bucket: row.get(first)?,
+            open: row.get(first + 1)?,
+            high: row.get(first + 2)?,
+            low: row.get(first + 3)?,
+            close: row.get(first + 4)?,
+            provenance: row.get(first + 5)?,
+            prev: row.get(first + 6)?,
+            tag: row.get(first + 7)?,
+            prev_tag: row.get(first + 8)?,
+        })
+    }
+
+    /// The row's tag inputs, as `tag` binds them.
+    pub(crate) fn fields(&self) -> Row<'_> {
+        Row {
+            open: &self.open,
+            high: &self.high,
+            low: &self.low,
+            close: &self.close,
+            provenance: &self.provenance,
+            prev: self.prev,
+            prev_tag: self.prev_tag,
+        }
+    }
+}
 
 /// Removes the cache file at `path` and its write-ahead side files, as `history::store` does
 /// for the index. Startup uses it to clear a seed file a killed run left behind.
@@ -140,8 +184,13 @@ pub struct Store {
     retentions: Retentions,
     /// Authenticates rows on write and verifies them on read; derived from the enclave key.
     mac: hmac::Hmac<sha2::Sha256>,
-    /// The key `mac` derives from, kept to rebuild the cache after a refused reset.
+    /// The enclave's marks key, which `mac` and every run key derive from: kept to draw the run
+    /// key of a rebuilt, reset, or imported cache.
     mac_key: [u8; 32],
+    /// The latest sequenced time any write has pruned back from, in this process: a backfill that
+    /// began earlier prunes back from this instead of its own, so it cannot recreate buckets a
+    /// live flush has already expired.
+    newest_seen: Millis,
     /// What `SCHEMA` creates, which every write checks the file against.
     schema: Vec<SchemaRow>,
     /// The committed chain anchors this store advances with every write and every read checks.
@@ -171,7 +220,7 @@ impl Store {
             .context("reading the marks pairs")?
             .collect::<Result<Vec<_>, _>>()
             .context("reading the marks pairs")?;
-        let mut anchors = BTreeMap::new();
+        let mut anchors = ChainAnchors::default();
         for (market, resolution) in pairs {
             let resolution =
                 Resolution::from_tag(u8::try_from(resolution).context("a stored resolution is out of range")?)
@@ -192,9 +241,11 @@ impl Store {
     /// the newest sample.
     /// Error cases:
     /// - the file holds a schema this code did not create
-    /// - the transaction fails, a stored price does not parse, or a chain link no longer resolves
+    /// - the transaction fails, a stored price does not parse, a chain link no longer resolves, or a
+    ///   row it builds on is not the version last written for it
     pub fn observe(&mut self, samples: &[MarkSample]) -> anyhow::Result<()> {
         let Some(&newest) = samples.iter().map(|(_, ts, _)| ts).max() else { return Ok(()) };
+        let newest = newest.max(self.newest_seen);
         let prior = self.prior_anchors();
         let tx =
             self.conn.transaction_with_behavior(TransactionBehavior::Immediate).context("starting a marks write")?;
@@ -209,31 +260,35 @@ impl Store {
         // samples' pairs, so every pair with rows to prune after it is among these.
         touched.extend(chain::expiring_pairs(&prior, &self.retentions, newest));
         chain::check_anchors(&tx, &prior, &touched)?;
-        let mut stmts = merge::MergeStmts::prepare(&tx)?;
+        let mut stmts = merge::MergeStmts::prepare(&tx, &prior, &touched)?;
         for &(market, ts, mark) in samples {
             for resolution in Resolution::ALL {
                 merge::merge(&self.mac, &tx, &mut stmts, market, resolution, resolution.bucket(ts), mark)?;
             }
         }
-        drop(stmts);
+        let mut rewrites = stmts.into_rewrites();
         let plan = chain::plan_prune(&tx, &self.retentions, newest, &touched)?;
-        chain::apply_prune(&self.mac, &tx, &plan)?;
-        let updates = chain::anchor_updates(&tx, &touched)?;
+        chain::apply_prune(&self.mac, &tx, &plan, &mut rewrites, &prior)?;
+        let updates = chain::anchor_updates(&tx, &touched, &rewrites, false)?;
+        drop(prior);
         // The commit and the anchor publication are one critical section: a reader that sees an
         // older state than the anchor raced this flush and re-synchronizes instead of refusing.
         let mut anchors = self.anchors.lock().expect("the marks chain anchors are never poisoned");
         tx.commit().context("committing a marks write")?;
-        apply_updates(&mut anchors, updates);
+        anchors.apply(updates);
+        self.newest_seen = newest;
         Ok(())
     }
 
     /// Seeds `rows`, provider candles turned into buckets, keeping every row already there: seeded
     /// history never overwrites log-derived marks or an earlier seed. Returns how many rows were
-    /// added. Drops seeded buckets older than the retention policy allows, counted back from
-    /// `newest`.
+    /// added. Drops buckets older than the retention policy allows, counted back from `newest` or
+    /// from the latest time a write has pruned back from, if later, so a seed that was read before
+    /// a flush expired its buckets does not recreate them.
     /// Error cases:
     /// - as for `observe`, or a stored row fails authentication
     pub fn seed(&mut self, rows: &[Seed], newest: Millis) -> anyhow::Result<usize> {
+        let newest = newest.max(self.newest_seen);
         let prior = self.prior_anchors();
         let tx =
             self.conn.transaction_with_behavior(TransactionBehavior::Immediate).context("starting a marks seed")?;
@@ -241,21 +296,27 @@ impl Store {
         let mut touched = chain::expiring_pairs(&prior, &self.retentions, newest);
         touched.extend(rows.iter().map(|row| (row.market, row.resolution)));
         chain::check_anchors(&tx, &prior, &touched)?;
-        let inserted = chain::seed(&self.mac, &tx, rows)?;
+        let (inserted, mut rewrites) = chain::seed(&self.mac, &tx, rows, &prior)?;
         let plan = chain::plan_prune(&tx, &self.retentions, newest, &touched)?;
-        chain::apply_prune(&self.mac, &tx, &plan)?;
-        let updates = chain::anchor_updates(&tx, &touched)?;
+        chain::apply_prune(&self.mac, &tx, &plan, &mut rewrites, &prior)?;
+        let updates = chain::anchor_updates(&tx, &touched, &rewrites, false)?;
+        // The pins are shared copy-on-write: publishing while this write still holds the prior
+        // snapshot would copy the whole set for a prune that drops one.
+        drop(prior);
         let mut anchors = self.anchors.lock().expect("the marks chain anchors are never poisoned");
         tx.commit().context("committing a marks seed")?;
-        apply_updates(&mut anchors, updates);
+        anchors.apply(updates);
+        self.newest_seen = newest;
         Ok(inserted)
     }
 
     /// Deletes every log-derived bucket, so a recovery re-derivation rebuilds exactly what the
     /// verified log proves and nothing the host wrote into those rows while the node was stopped;
     /// provider-seeded buckets stay until a log mark replaces them, and the chains over them
-    /// re-link only over what this delete removed. A refused reset rebuilds the derived cache
-    /// from nothing.
+    /// re-link only over what this delete removed. The cache takes a new run key and every
+    /// survivor is re-tagged under it, so no row from before the reset verifies after it, whatever
+    /// the host captured. Readers are built after recovery, so none holds the key it replaces. A
+    /// refused reset rebuilds the derived cache from nothing.
     /// Error cases:
     /// - the cache file cannot be discarded or reopened
     pub fn reset_log_derived(&mut self) -> anyhow::Result<()> {
@@ -267,14 +328,8 @@ impl Store {
             warn!(alert = "marks_cache_rebuilt", "rebuilding the marks cache after a refused reset: {e:#}");
             let path = self.path.clone();
             store::discard(&path)?;
-            // Readers cloned before the rebuild share this store's anchor map: keep them on one
-            // map, reset to what the fresh, empty file commits.
-            let shared = self.anchors.clone();
-            *self = Self::open(&path, self.retentions, self.mac_key)
+            *self = Self::create(&path, self.retentions, self.mac_key)
                 .with_context(|| format!("rebuilding the marks cache after a refused reset: {e:#}"))?;
-            let fresh = self.prior_anchors();
-            self.anchors = shared;
-            *self.anchors.lock().expect("the marks chain anchors are never poisoned") = fresh;
         }
         Ok(())
     }
@@ -288,10 +343,16 @@ impl Store {
         let tx =
             self.conn.transaction_with_behavior(TransactionBehavior::Immediate).context("starting a marks reset")?;
         store::check_schema(&tx, &self.schema, &self.path)?;
-        let (removed, updates) = reset::reset_log_derived(&self.mac, &tx, &prior)?;
+        let mut epoch = Epoch::default();
+        OsRng.fill_bytes(&mut epoch);
+        let next = run_mac(&self.mac_key, &epoch);
+        let (removed, updates) = reset::reset_log_derived(&self.mac, &next, &tx, &prior)?;
+        tx.execute("UPDATE epoch SET nonce = ?1 WHERE id = 0", [epoch]).context("drawing the run nonce")?;
         let mut anchors = self.anchors.lock().expect("the marks chain anchors are never poisoned");
         tx.commit().context("committing a marks reset")?;
-        apply_updates(&mut anchors, updates);
+        anchors.apply(updates);
+        drop(anchors);
+        self.mac = next;
         debug!(removed, "log-derived marks reset for re-derivation");
         Ok(())
     }
@@ -373,21 +434,6 @@ impl Store {
             )
             .with_context(|| format!("recording the backfill of {market}"))?;
         Ok(())
-    }
-}
-
-/// Merges a transaction's anchor updates into the committed map: `Some` replaces the pair's
-/// anchor, `None` removes a pair whose every bucket the transaction deleted.
-fn apply_updates(anchors: &mut ChainAnchors, updates: chain::ChainUpdates) {
-    for (pair, anchor) in updates {
-        match anchor {
-            Some(anchor) => {
-                anchors.insert(pair, anchor);
-            }
-            None => {
-                anchors.remove(&pair);
-            }
-        }
     }
 }
 

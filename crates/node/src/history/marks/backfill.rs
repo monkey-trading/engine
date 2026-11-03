@@ -20,6 +20,18 @@ use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
 use reqwest::{Client, redirect};
 use serde_json::Value;
 
+/// Marks an error as the cache's own: a write that failed may have left tagged rows in host-readable
+/// pages, so the backfill's retry loop must not carry on under the same run key, and the marks task
+/// stops instead.
+#[derive(Debug)]
+pub(super) struct StoreFault;
+
+impl std::fmt::Display for StoreFault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the marks cache rejected a write")
+    }
+}
+
 /// The most candles the endpoint returns for one request.
 const MAX_CANDLES: Millis = 300;
 /// How long one candles request waits.
@@ -252,7 +264,7 @@ pub async fn seed_market(
             // the pace itself.
             service_live(live, store)?;
         }
-        seeded += store.seed(&rows, now)?;
+        seeded += store.seed(&rows, now).context(StoreFault)?;
     }
     Ok(seeded)
 }
@@ -267,7 +279,7 @@ fn service_live(live: &mut Live, store: &mut Store) -> anyhow::Result<()> {
         live.buffered.push(sample);
     }
     if !live.buffered.is_empty() && (live.buffered.len() >= BATCH || live.flushed_at.elapsed() >= FLUSH_EVERY) {
-        store.observe(&live.buffered)?;
+        store.observe(&live.buffered).context(StoreFault)?;
         live.buffered.clear();
         live.flushed_at = tokio::time::Instant::now();
     }

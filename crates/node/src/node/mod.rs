@@ -460,8 +460,8 @@ fn read_log_and_history_authorities(
     mut observe: impl FnMut(&crate::log::LogEntry),
 ) -> anyhow::Result<(ReplayedLog, HistoryPlan)> {
     if cfg.snapshots.is_some() {
-        // Snapshot recovery replays the authenticated suffix only; the marks cache seeds from that
-        // suffix, and the provider backfill gives the depth the suffix cannot.
+        // Snapshot recovery replays the authenticated suffix only and attaches no marks sink, so the
+        // cache keeps the rows it imported and the provider backfill gives the depth they lack.
         let (log, plan) = Sequencer::read_paired_log(cfg, signer, parent, authorities, Some(stats.clone()), observe)
             .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
         return Ok((log, HistoryPlan::authenticated(plan)?));

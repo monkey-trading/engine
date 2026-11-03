@@ -1,7 +1,7 @@
 //! The derived marks cache: each market's index-mark history, kept as per-resolution OHLC buckets
 //! in SQLite beside the account history index and served signed at `/v1/markets/{id}/marks`. The
-//! cache is rebuildable state, never sequenced: recovery seeds it from the log's replay (the same
-//! derivation as the live index), live commands keep it current, and an optional provider backfill
+//! cache is rebuildable state, never sequenced: a full recovery without `[snapshots]` seeds it from the
+//! log's replay (the same derivation as the live index), live commands keep it current, and an optional provider backfill
 //! seeds the depth a fresh log cannot have. Every bucket says whether it is log-derived or
 //! provider-seeded, so a client can weigh seeded history against what the public log proves. The
 //! buckets are chained: each row names the bucket below it under its authentication tag, and
