@@ -10,7 +10,7 @@
 //! and a symbol whose market is closed is not counted as silent. A frame read while the stream may
 //! be further behind than `timing.max_delay` counts as no quote (see `delay`), and a book its
 //! pings show the venue still showed is sequenced again, so a quiet venue does not age out (see
-//! `held`).
+//! `standing`).
 
 mod adapter;
 use adapter::Adapter;
@@ -21,8 +21,8 @@ mod delay;
 use delay::DelayProbe;
 mod emit;
 use emit::rearm;
-mod held;
-use held::{HeldBooks, redates};
+mod standing;
+use standing::{StandingBooks, redates};
 mod quotes;
 use quotes::Pending;
 mod setup;
@@ -164,8 +164,8 @@ struct VenueFeed {
     refused_since: Option<Instant>,
     /// Whether the venue is alerted as past its delay bound.
     delayed: bool,
-    /// The books a ping's answer may re-date (see `held`).
-    held: HeldBooks,
+    /// The books a ping's answer may re-date (see `standing`).
+    standing: StandingBooks,
 }
 
 impl Timing {
@@ -228,7 +228,7 @@ impl VenueFeed {
             delay: None,
             refused_since: None,
             delayed: false,
-            held: HeldBooks::default(),
+            standing: StandingBooks::default(),
         }
     }
 
@@ -273,7 +273,7 @@ impl VenueFeed {
         let mut link = timeout(self.timing.timeout, connect).await.context("connect timed out")?.context("connect")?;
         // Pinged before it opens, so the answer arrives ahead of the first book.
         self.delay = link.pings.then(DelayProbe::default);
-        self.held.connected(redates(self.conn.venue));
+        self.standing.connected(redates(self.conn.venue));
         self.ping(&mut link).await?;
         let symbols: Vec<&str> = self.instruments.keys().map(String::as_str).collect();
         let mut adapter = Adapter::new(&self.conn, self.api_key.as_ref(), &symbols);
@@ -327,7 +327,7 @@ impl VenueFeed {
                             if let Some(answered) = self.pong(&payload)
                                 && self.redate_books(answered, &adapter, &mut buffered)
                             {
-                                rearm(&mut emit_wake, self.emit(&mut buffered, &mut paced).await?);
+                                rearm(&mut emit_wake, self.emit(&mut buffered, &mut spent).await?);
                             }
                         }
                         Incoming::Other => {}
@@ -403,22 +403,22 @@ impl VenueFeed {
         };
         // The adapter has kept what the message changes; only the quotes wait for the stream.
         if !self.stream_current() {
-            books.iter().for_each(|book| self.held.forget(&book.symbol));
+            books.iter().for_each(|book| self.standing.forget(&book.symbol));
             return Ok(());
         }
         for book in books {
             match to_quote(self.conn.venue, &self.instruments, book, now) {
                 Ok((symbol, quote)) => {
-                    let quote = self.held.after_given(&symbol, quote);
+                    let quote = self.after_given(&symbol, quote);
                     let (market, ts) = (self.instruments[&symbol].market, quote.ts);
-                    self.held.hold(&symbol, &quote, self.delay.as_ref());
+                    self.standing.hold(&symbol, &quote, self.delay.as_ref());
                     match buffered.entry(symbol.clone()).or_default().add(quote, now) {
                         Ok(()) => {
                             let max_delay = self.timing.max_delay;
                             self.delay.iter_mut().for_each(|probe| probe.note_read(&symbol, ts, max_delay));
                         }
                         Err(lead_ms) => {
-                            self.held.forget(&symbol);
+                            self.standing.forget(&symbol);
                             self.clock_ahead(market, lead_ms);
                         }
                     }

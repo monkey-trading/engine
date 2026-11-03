@@ -11,8 +11,10 @@ use engine_core::Fixed;
 use engine_core::command::Command;
 use engine_core::price::{PriceError, SourceQuote};
 use engine_core::types::{MarketId, Millis};
+use futures_util::SinkExt;
 use futures_util::StreamExt;
-use tokio::sync::{Notify, oneshot};
+use futures_util::stream::SplitSink;
+use tokio::sync::{Mutex, Notify, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep, timeout};
 use tokio_tungstenite::tungstenite::Message;
@@ -41,7 +43,7 @@ const TIMING: Timing = Timing {
     ping_interval: Duration::from_millis(50),
     max_delay: Duration::from_secs(2),
 };
-/// The longest a book stays re-dated, as `held::MAX_BOOK_SILENCE` sets it.
+/// The longest a book stays re-dated, as `standing::MAX_BOOK_SILENCE` sets it.
 const MAX_BOOK_SILENCE_MS: Millis = 5_000;
 /// What a Kraken connection sends while its books stand.
 const KRAKEN_HEARTBEAT: &str = r#"{"channel":"heartbeat"}"#;
@@ -100,11 +102,17 @@ async fn a_book_is_redated_for_max_book_silence_and_no_longer() {
     // Heartbeats keep the connection's reads alive, and every ping is answered.
     let venue = stream(ws, || vec![KRAKEN_HEARTBEAT.to_owned()]);
     let mut last = read_ts;
-    while let Ok(Some(request)) = timeout(Duration::from_secs(1), rx.recv()).await {
-        if let Request::Submit { cmd: Command::Prices { quotes, .. }, .. } = request {
-            last = quotes[0].ts;
+    // A second with nothing sequenced ends the wait, which fails rather than hangs if the re-dating
+    // never stops.
+    let quiet = async {
+        while let Ok(Some(request)) = timeout(Duration::from_secs(1), rx.recv()).await {
+            if let Request::Submit { cmd: Command::Prices { quotes, .. }, .. } = request {
+                last = quotes[0].ts;
+            }
         }
-    }
+    };
+    let bound = Duration::from_millis(MAX_BOOK_SILENCE_MS as u64) + WAIT;
+    timeout(bound, quiet).await.expect("re-dated past the bound");
     // The last stamp is within a ping, and a busy runner's stall, of the bound, and never past it.
     let redated_for = last - read_ts;
     assert!(redated_for <= MAX_BOOK_SILENCE_MS, "re-dated {redated_for}ms past the book");
@@ -124,10 +132,11 @@ async fn a_venue_that_stops_answering_pings_is_redated_no_more() {
     next_prices(&mut rx).await;
 
     // The venue stays connected but reads nothing more, so it answers no ping from now on.
-    let _ws = venue.stop().await;
-    sleep(Duration::from_millis(100)).await;
-    while rx.try_recv().is_ok() {}
-    assert!(timeout(Duration::from_secs(1), rx.recv()).await.is_err(), "a quote no answer vouched for");
+    let _silent = venue.stop().await;
+    // A repeat the last answer deferred can still fire within the refresh margin; after it, only
+    // a new answer could re-date the book, and none comes.
+    let quiet = async { while timeout(Duration::from_secs(1), rx.recv()).await.is_ok() {} };
+    timeout(WAIT * 2, quiet).await.expect("a quote no answer vouched for");
 }
 
 #[tokio::test]
@@ -176,25 +185,56 @@ async fn a_book_read_after_a_redated_one_replaces_it_whatever_its_stamp() {
 #[tokio::test]
 async fn a_refused_message_stops_the_redating_until_the_next_book() {
     // Bitstamp keeps no book, so a refused message leaves the connection up: one that does not
-    // parse, and a book that does not check.
+    // parse, and a book that does not check. The venue answers pings throughout, so a held book
+    // re-dates until the refusal, and the next book is held again.
     for refused in ["not json".to_owned(), bitstamp_book("btcusd", "101", "100", now_ms())] {
         let (listener, url) = listen().await;
         let (mut rx, _feed) = spawn_feed(Venue::Bitstamp, &url, &[(1, "btcusd")], TIMING);
-        let (mut ws, _) = accept(&listener).await;
-        send(&mut ws, &[bitstamp_book("btcusd", "100", "101", now_ms())]).await;
-        next_prices(&mut rx).await;
-        send(&mut ws, &[refused.clone()]).await;
+        let (ws, _) = accept(&listener).await;
         let venue = answer_pings(ws, Duration::ZERO);
-        let quiet = timeout(Duration::from_millis(500), rx.recv()).await;
-        assert!(quiet.is_err(), "re-dated after a refused {refused}");
+        // A book read once a ping's answer is on its way is held and re-dates.
+        timeout(WAIT, async {
+            while venue.pinged.load(Ordering::SeqCst) == 0 {
+                sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("a ping answered in time");
+        venue.send(&[bitstamp_book("btcusd", "100", "101", now_ms())]).await;
+        assert_eq!(next_prices(&mut rx).await.1[0].mid, "100.5".parse().unwrap());
+        // The venue sends nothing more, so only the re-dating sequences again.
+        assert_eq!(next_prices(&mut rx).await.1[0].mid, "100.5".parse().unwrap());
 
-        // The next book is held again, and re-dated.
-        let mut ws = venue.stop().await;
-        send(&mut ws, &[bitstamp_book("btcusd", "100", "101", now_ms())]).await;
-        next_prices(&mut rx).await;
-        let _venue = answer_pings(ws, Duration::ZERO);
+        venue.send(std::slice::from_ref(&refused)).await;
+        // The refusal forgot the book, and a repeat it deferred can fire only within the refresh
+        // margin, so a second without a quote shows the re-dating stopped.
+        let quiet = async { while timeout(Duration::from_secs(1), rx.recv()).await.is_ok() {} };
+        timeout(WAIT * 2, quiet).await.expect("a quote after the refusal");
+
+        // The next book is held again and re-dates.
+        venue.send(&[bitstamp_book("btcusd", "100", "101", now_ms())]).await;
+        assert_eq!(next_prices(&mut rx).await.1[0].mid, "100.5".parse().unwrap());
         assert_eq!(next_prices(&mut rx).await.1[0].mid, "100.5".parse().unwrap());
     }
+}
+
+#[tokio::test]
+async fn a_changed_book_read_while_the_stream_is_behind_stops_the_redating() {
+    let (listener, url) = listen().await;
+    let timing = Timing { max_delay: Duration::from_millis(300), ..TIMING };
+    // Bitstamp keeps no book, so only the feed knows that a later book changed the one it holds.
+    let (mut rx, _feed) = spawn_feed(Venue::Bitstamp, &url, &[(1, "btcusd")], timing);
+    let (mut ws, _) = accept(&listener).await;
+    send(&mut ws, &[bitstamp_book("btcusd", "100", "101", now_ms())]).await;
+    next_prices(&mut rx).await;
+
+    // The venue reads nothing for longer than the delay bound, so the changed book it sends then is
+    // read while the stream may be behind, and dropped. It then answers pings again.
+    sleep(timing.max_delay * 2).await;
+    send(&mut ws, &[bitstamp_book("btcusd", "200", "201", now_ms())]).await;
+    let _venue = answer_pings(ws, Duration::ZERO);
+    let quiet = timeout(Duration::from_millis(500), rx.recv()).await;
+    assert!(quiet.is_err(), "re-dated a book a later one, dropped, had changed");
 }
 
 #[tokio::test]
@@ -317,43 +357,60 @@ async fn a_book_read_before_its_market_closes_is_not_redated_past_the_closure() 
 // ── Helpers ──
 
 /// A loopback venue that reads what the feed sends and sends nothing, answering each ping some
-/// time after it arrives, until stopped.
+/// time after it arrives, until stopped. Books can be sent on it while it runs.
 struct Answering {
     /// The host time the newest ping arrived.
     pinged: Arc<AtomicI64>,
     stop: Arc<Notify>,
-    task: JoinHandle<Conn>,
+    task: JoinHandle<()>,
+    send: Arc<Mutex<SplitSink<Conn, Message>>>,
+}
+
+/// Keeps a stopped venue's connection open while nothing reads or answers it.
+struct Silent {
+    _send: SplitSink<Conn, Message>,
 }
 
 impl Answering {
-    /// Stops reading, so no ping is answered from now on, and hands back the open connection.
-    async fn stop(self) -> Conn {
+    /// Sends `messages` to the feed.
+    async fn send(&self, messages: &[String]) {
+        let mut send = self.send.lock().await;
+        for message in messages {
+            send.send(Message::text(message.as_str())).await.expect("send");
+        }
+    }
+
+    /// Stops reading, so no ping is answered from now on, and keeps the connection open.
+    async fn stop(self) -> Silent {
         self.stop.notify_one();
-        self.task.await.expect("the venue task")
+        self.task.await.expect("the venue task");
+        let send = Arc::try_unwrap(self.send).expect("no other sender").into_inner();
+        Silent { _send: send }
     }
 }
 
 /// Answers the pings on `ws` `delay` after each arrives (see `Answering`).
-fn answer_pings(mut ws: Conn, delay: Duration) -> Answering {
+fn answer_pings(ws: Conn, delay: Duration) -> Answering {
+    let (send, mut read) = ws.split();
     let (pinged, stop) = (Arc::new(AtomicI64::new(0)), Arc::new(Notify::new()));
     let (noted, stopped) = (pinged.clone(), stop.clone());
     let task = tokio::spawn(async move {
         loop {
             // A ping read queues its answer, which the next read sends.
             tokio::select! {
-                () = stopped.notified() => return ws,
-                message = ws.next() => match message {
+                () = stopped.notified() => return,
+                message = read.next() => match message {
                     Some(Ok(Message::Ping(_))) => {
                         noted.store(now_ms(), Ordering::SeqCst);
                         sleep(delay).await;
                     }
                     Some(Ok(_)) => {}
-                    _ => return ws,
+                    _ => return,
                 },
             }
         }
     });
-    Answering { pinged, stop, task }
+    Answering { pinged, stop, task, send: Arc::new(Mutex::new(send)) }
 }
 
 impl Node {

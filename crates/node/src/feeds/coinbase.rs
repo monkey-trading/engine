@@ -168,8 +168,7 @@ impl Books {
             ts = ts.max(Some(event_time));
         }
         let ts = ts.ok_or_else(|| format!("{product_id} event without updates"))?;
-        let top = depth.bids.last().zip(depth.offers.first());
-        Ok(top.map(|(bid, ask)| Book { symbol: product_id, bid: *bid, ask: *ask, ts }))
+        Ok(self.top(&product_id).map(|(bid, ask)| Book { symbol: product_id, bid, ask, ts }))
     }
 }
 

@@ -157,8 +157,7 @@ impl Books {
             .map_err(|e| format!("bad timestamp {timestamp}: {e}"))?
             .timestamp_millis();
         check_time(&symbol, ts, now)?;
-        let top = depth.bids.last_key_value().zip(depth.asks.first_key_value());
-        Ok(top.map(|((bid, _), (ask, _))| Book { symbol, bid: *bid, ask: *ask, ts }))
+        Ok(self.top(&symbol).map(|(bid, ask)| Book { symbol, bid, ask, ts }))
     }
 }
 

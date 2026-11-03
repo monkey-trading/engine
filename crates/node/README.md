@@ -826,9 +826,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/feeds/venue/delay.rs` — how far behind a connection's stream can be, from its pings on the
   monotonic clock, refusing frames past `feeds.venues.max_delay` and giving each quote the time its
   bound runs out; its tests are in `src/feeds/venue/delay/tests.rs`
-- `src/feeds/venue/held.rs` — the book each symbol last showed on a connection, re-dated by a
-  ping's answer for up to 5 s after it was read, and a later book stamped no earlier than a re-dated
-  one; its tests are in `src/feeds/venue/held/tests.rs`
+- `src/feeds/venue/standing.rs` — the book each symbol last showed on a connection, re-dated by a
+  ping's answer for up to 5 s after the ping answered before it was read, and a later book stamped
+  no earlier than a re-dated one; its tests are in `src/feeds/venue/standing/tests.rs`
 - `src/feeds/venue/validation.rs` — the checks every venue's books pass before they are sequenced
 - `src/feeds/venue/confirm.rs` — confirming every symbol with the engine each tick: which the
   venue is quoting, which markets it does not list, which contracts the listing does not name or
@@ -863,9 +863,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   what the feed sequences, and the wait for the next alert
 - `src/feeds/tests/delay.rs` — a connection's pings against a venue that answers them or does not
 - `src/feeds/tests/redate.rs` — a quiet book re-dated by a venue's answers: its stamps, a delayed
-  answer, the 5 s limit, a venue that stops answering, a later book replacing it, refused messages
-  and emptied books; and, through the real sequencer, a market kept priced until the venue stops
-  answering
+  answer, the 5 s limit, a venue that stops answering, a later book replacing it, refused messages,
+  a changed book dropped while the stream is behind, and emptied books; and, through the real
+  sequencer, a market kept priced until the venue stops answering and a book not re-dated past its
+  market's closure
 - `src/feeds/tests/hostile.rs` — a host clock at the edge of the drift bound with frames held back
   to match, through the real sequencer: the market goes unpriced once the delay passes the bound
 - `src/feeds/tests/late.rs` — venue tasks against a sequencer that answers late: when a quote

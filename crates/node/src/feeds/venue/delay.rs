@@ -20,6 +20,7 @@ use engine_core::types::Millis;
 use tokio::time::{Instant, timeout};
 use tracing::{info, warn};
 
+use crate::clock::now_ms;
 use crate::feeds::venue::VenueFeed;
 use crate::feeds::venue::transport::Link;
 
@@ -29,36 +30,49 @@ pub(super) struct DelayProbe {
     next_ping: u64,
     /// Pings sent and not yet answered, oldest first. A ping unanswered for `timing.timeout` ends
     /// the connection, which bounds how many there are.
-    unanswered: VecDeque<(u64, Instant)>,
+    unanswered: VecDeque<Ping>,
     newest_answered: Option<Instant>,
     /// When the bound on the age of each symbol's quotes read and not yet sequenced runs out, by
     /// their stamps: at most one a millisecond within `MAX_QUOTE_LEAD_MS` of the host clock.
     not_after: BTreeMap<String, BTreeMap<Millis, std::time::Instant>>,
 }
 
+/// A ping, by number, and when it went out: on the monotonic clock, and as the host clock read then.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct Ping {
+    pub ping: u64,
+    pub sent: Instant,
+    pub sent_ms: Millis,
+}
+
 impl DelayProbe {
-    /// Records a ping sent at `now` and returns the payload it carries.
-    pub(super) fn sent(&mut self, now: Instant) -> Vec<u8> {
+    /// Records a ping sent at `now`, when the host clock read `now_ms`, and returns the payload it
+    /// carries.
+    pub(super) fn sent(&mut self, now: Instant, now_ms: Millis) -> Vec<u8> {
         let ping = self.next_ping;
         self.next_ping += 1;
-        self.unanswered.push_back((ping, now));
+        self.unanswered.push_back(Ping { ping, sent: now, sent_ms: now_ms });
         ping.to_be_bytes().to_vec()
     }
 
     /// Takes a pong carrying `payload`. An endpoint may answer only the latest ping it has read
     /// (RFC 6455 §5.5.3), so a pong answers the pings before its own too. One for no ping sent, as
     /// an unsolicited pong is, says nothing of this stream's position and is ignored.
-    /// Returns the ping it newly answers, by number, with when it was sent; `None` when it answers
-    /// none not answered before.
-    pub(super) fn answered(&mut self, payload: &[u8]) -> Option<(u64, Instant)> {
+    /// Returns the ping it newly answers; `None` when it answers none not answered before.
+    pub(super) fn answered(&mut self, payload: &[u8]) -> Option<Ping> {
         let ping = <[u8; 8]>::try_from(payload).ok().map(u64::from_be_bytes)?;
-        let answers = self.unanswered.iter().take_while(|(sent, _)| *sent <= ping).count();
-        if !self.unanswered.get(answers.wrapping_sub(1)).is_some_and(|(sent, _)| *sent == ping) {
+        let answers = self.unanswered.iter().take_while(|sent| sent.ping <= ping).count();
+        if self.unanswered.get(answers.wrapping_sub(1)).is_none_or(|sent| sent.ping != ping) {
             return None;
         }
-        let sent = self.unanswered.drain(..answers).next_back().map(|(_, at)| at)?;
-        self.newest_answered = Some(sent);
-        Some((ping, sent))
+        let answer = self.unanswered.drain(..answers).next_back()?;
+        self.newest_answered = Some(answer.sent);
+        Some(answer)
+    }
+
+    /// When the newest answered ping was sent: a frame read now was sent by the venue after it.
+    pub(super) fn newest_answered(&self) -> Option<Instant> {
+        self.newest_answered
     }
 
     /// The number the next ping sent will carry: a frame read now came before every ping numbered
@@ -103,7 +117,7 @@ impl DelayProbe {
 
     /// How long the oldest unanswered ping has waited at `now`.
     fn waiting(&self, now: Instant) -> Option<Duration> {
-        self.unanswered.front().map(|(_, sent)| now.saturating_duration_since(*sent))
+        self.unanswered.front().map(|ping| now.saturating_duration_since(ping.sent))
     }
 }
 
@@ -120,13 +134,13 @@ impl VenueFeed {
         {
             bail!("a ping unanswered for {waiting:?}");
         }
-        let payload = probe.sent(now);
+        let payload = probe.sent(now, now_ms());
         timeout(self.timing.timeout, link.ping(payload)).await.context("ping timed out")?.context("ping")
     }
 
     /// Takes a pong read from the connection, returning the ping it newly answers (see
     /// `DelayProbe::answered`).
-    pub(super) fn pong(&mut self, payload: &[u8]) -> Option<(u64, Instant)> {
+    pub(super) fn pong(&mut self, payload: &[u8]) -> Option<Ping> {
         self.delay.as_mut()?.answered(payload)
     }
 
