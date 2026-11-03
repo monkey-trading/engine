@@ -5,8 +5,11 @@ use std::time::Duration;
 
 use chrono::{DateTime, SecondsFormat};
 use engine_core::Engine;
+use engine_core::auth::ClientAuth;
 use engine_core::command::{AdminCommand, Command, Sequenced};
+use engine_core::event::Event;
 use engine_core::price::SourceQuote;
+use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{MarketId, Millis};
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -37,9 +40,20 @@ pub struct FakeEngine {
 }
 
 impl FakeEngine {
-    /// An engine with every dev genesis market listed.
+    /// An engine with every dev genesis market listed, under `V23` (the last version before access
+    /// screening), which stores a quote stamped ahead of the sequenced time as stamped at it, as
+    /// the latest version a node's log activates does.
     pub fn new() -> Self {
         let mut fake = FakeEngine { engine: Engine::new(), next_seq: 0 };
+        let operator = dev_config().operator().expect("the dev operator key");
+        for admin in [
+            AdminCommand::SetClientAuth(ClientAuth::Unsigned),
+            AdminCommand::SetOperator(operator),
+            AdminCommand::ActivateProtocol { version: ProtocolVersion::V23 },
+        ] {
+            let events = fake.apply(Command::Admin(admin));
+            assert!(!events.iter().any(|e| matches!(e, Event::AdminRejected { .. })), "{events:?}");
+        }
         for market in dev_config().genesis.markets {
             fake.apply(Command::Admin(AdminCommand::UpsertMarket(market)));
         }
@@ -47,10 +61,11 @@ impl FakeEngine {
     }
 
     /// Stamps and applies one command.
-    pub fn apply(&mut self, cmd: Command) {
+    pub fn apply(&mut self, cmd: Command) -> Vec<Event> {
         let ts = now_ms().max(self.engine.now());
-        self.engine.apply(&Sequenced { seq: self.next_seq, ts, cmd }).expect("applied in order");
+        let events = self.engine.apply(&Sequenced { seq: self.next_seq, ts, cmd }).expect("applied in order");
         self.next_seq += 1;
+        events
     }
 
     /// Runs a query against the engine as it stands.

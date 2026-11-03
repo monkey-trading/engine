@@ -75,9 +75,12 @@ pub struct VenuesSection {
     /// does not count as its venue quoting: it ends no outage or silence.
     #[serde(with = "humantime_serde")]
     pub stale_after: Duration,
-    /// The most often one symbol's latest quote is sequenced: a book update sequences its
-    /// symbol's newest reached quote at once, and updates closer together than this coalesce to
-    /// the newest, bounding the sequencer load venue messages can demand.
+    /// The rate a symbol's quotes may be sequenced at: one per spacing, after a burst of a few. A
+    /// book update that moves its mid sequences its symbol's newest quote at once while that budget
+    /// lasts, whatever the quote's stamp; past it, updates coalesce to the newest and wait for the
+    /// budget to refill, bounding the sequencer load venue messages can demand. A book update that
+    /// leaves the mid where it was waits until the quote the engine holds is half of `stale_after`
+    /// or the market's `max_age_ms` old, whichever is shorter, and then sequences.
     #[serde(with = "humantime_serde")]
     pub min_quote_spacing: Duration,
     /// How often a connection pings its venue, on every connection but Databento's. The time since

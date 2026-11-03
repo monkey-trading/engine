@@ -71,89 +71,6 @@ async fn clock_alerts_are_held_to_one_a_window() {
 }
 
 #[test]
-fn the_newest_quote_the_host_clock_has_reached_is_taken_and_those_ahead_wait() {
-    const NOW: Millis = 1_792_489_875_714;
-    let at = |ts: Millis| SourceQuote { source: "kraken".into(), mid: Fixed::from_int(100), ts, contract: None };
-    let mut pending = Pending::default();
-    // Received over one tick from a venue whose clock is a little ahead of the host's.
-    for ts in [NOW - 300, NOW - 100, NOW + 40, NOW + 400] {
-        assert_eq!(pending.add(at(ts), NOW), Ok(()));
-    }
-    assert_eq!(pending.take(NOW), Some(at(NOW - 100)));
-    assert_eq!(pending.take(NOW), None);
-    // Each quote ahead goes once the host clock reaches it.
-    assert_eq!(pending.take(NOW + 40), Some(at(NOW + 40)));
-    assert_eq!(pending.take(NOW + 1_000), Some(at(NOW + 400)));
-    assert_eq!(pending.take(NOW + 1_000), None);
-    // A later quote dated before those still ahead, as after the venue's clock steps back,
-    // supersedes them: they never go.
-    pending.add(at(NOW + 800), NOW).unwrap();
-    pending.add(at(NOW + 500), NOW).unwrap();
-    pending.add(at(NOW + 100), NOW + 100).unwrap();
-    assert_eq!(pending.take(NOW + 200), Some(at(NOW + 100)));
-    assert_eq!(pending.take(NOW + 1_000), None);
-    // Of a quote that waited and one received after its time, the newer goes; on a tie, the later.
-    pending.add(at(NOW + 50), NOW).unwrap();
-    pending.add(SourceQuote { mid: Fixed::from_int(101), ..at(NOW + 50) }, NOW + 60).unwrap();
-    assert_eq!(pending.take(NOW + 60).map(|quote| quote.mid), Some(Fixed::from_int(101)));
-    pending.add(at(NOW + 70), NOW).unwrap();
-    pending.add(at(NOW + 80), NOW + 90).unwrap();
-    assert_eq!(pending.take(NOW + 90), Some(at(NOW + 80)));
-}
-
-#[test]
-fn the_engine_holds_what_it_would_if_every_quote_went_once_its_time_came() {
-    // The engine stores a quote in place of the one it holds unless that one is newer and its time
-    // already reached.
-    let stores = |held: &Option<SourceQuote>, quote: &SourceQuote, now: Millis| {
-        held.as_ref().is_none_or(|held| quote.ts >= held.ts || held.ts > now)
-    };
-    let quote =
-        |id: i64, ts: Millis| SourceQuote { source: "kraken".into(), mid: Fixed::from_int(id), ts, contract: None };
-    // Every way three quotes can arrive at 0, 10, 20 or 30 ms dated 0 to 40 ms, with the engine
-    // first holding nothing, a reached quote, or one still ahead, and a tick every 10 ms from 5 ms.
-    // The reference sends, at each tick, every quote whose time has come, in arrival order, and
-    // withdraws a quote still ahead of the host clock when a later one is dated before it, as when
-    // the venue's clock steps back. After every tick the engine holds the same quote either way.
-    let times: Vec<(Millis, Millis)> = (0..4).flat_map(|at| (0..5).map(move |ts| (at * 10, ts * 10))).collect();
-    let grid = times.as_slice();
-    for start in [None, Some(quote(0, -10)), Some(quote(0, 50))] {
-        for (first, second, third) in
-            grid.iter().flat_map(move |a| grid.iter().flat_map(move |b| grid.iter().map(move |c| (a, b, c))))
-        {
-            let mut arrivals =
-                [(first.0, quote(1, first.1)), (second.0, quote(2, second.1)), (third.0, quote(3, third.1))];
-            // Stable, so quotes arriving together keep their order.
-            arrivals.sort_by_key(|(at, _)| *at);
-            let case = format!("{start:?} then {arrivals:?}");
-            let (mut reference, mut held, mut pending) = (start.clone(), start.clone(), Pending::default());
-            let mut waiting: Vec<SourceQuote> = Vec::new();
-            let mut arrivals = arrivals.into_iter().peekable();
-            for tick in (5..=55).step_by(10) {
-                while let Some((at, arrived)) = arrivals.next_if(|(at, _)| *at < tick) {
-                    waiting.retain(|quote| quote.ts <= at || quote.ts <= arrived.ts);
-                    waiting.push(arrived.clone());
-                    pending.add(arrived, at).unwrap();
-                }
-                let (due, ahead): (Vec<_>, Vec<_>) = waiting.into_iter().partition(|quote| quote.ts <= tick);
-                waiting = ahead;
-                for quote in due {
-                    if stores(&reference, &quote, tick) {
-                        reference = Some(quote);
-                    }
-                }
-                if let Some(taken) = pending.take(tick)
-                    && stores(&held, &taken, tick)
-                {
-                    held = Some(taken);
-                }
-                assert_eq!(held, reference, "at {tick}: {case}");
-            }
-        }
-    }
-}
-
-#[test]
 fn a_kept_book_for_a_symbol_not_subscribed_is_refused_before_it_is_kept() {
     const NOW: Millis = 1_792_489_875_714;
     // Two-sided books and one-sided ones, which have no top for the subscription check to catch.
@@ -180,55 +97,44 @@ fn a_kept_book_for_a_symbol_not_subscribed_is_refused_before_it_is_kept() {
 }
 
 #[test]
+fn the_newest_quote_is_kept_by_the_engines_own_rule() {
+    const NOW: Millis = 1_792_489_875_714;
+    let at = |ts: Millis| SourceQuote { source: "kraken".into(), mid: Fixed::from_int(100), ts, contract: None };
+    let mut pending = Pending::default();
+    assert!(!pending.waiting());
+    pending.add(at(NOW - 100), NOW).unwrap();
+    // One dated before a quote already reached is one the engine would not store.
+    pending.add(at(NOW - 300), NOW).unwrap();
+    assert_eq!(pending.take().map(|(quote, _)| quote), Some(at(NOW - 100)));
+    assert!(!pending.waiting());
+    // A quote ahead of the host clock waits for nothing, and a later one dated before it replaces
+    // it, as when the venue's clock steps back: the engine would store the first as stamped now.
+    pending.add(at(NOW + 400), NOW).unwrap();
+    assert!(pending.waiting());
+    pending.add(at(NOW + 100), NOW).unwrap();
+    assert_eq!(pending.take().map(|(quote, _)| quote), Some(at(NOW + 100)));
+    // A quote read ahead of the host clock is kept at the stamp the engine would store it at, the
+    // host time it was read, so a move whose stamp is before the venue's but after that replaces it,
+    // as when the venue's clock is corrected.
+    pending.add(at(NOW + 20), NOW + 10).unwrap();
+    let mut moved = at(NOW + 15);
+    moved.mid = Fixed::from_int(101);
+    pending.add(moved.clone(), NOW + 30).unwrap();
+    assert_eq!(pending.take().map(|(quote, _)| quote), Some(moved));
+    // The same stamp: the later arrival.
+    pending.add(SourceQuote { mid: Fixed::from_int(101), ..at(NOW) }, NOW).unwrap();
+    pending.add(at(NOW), NOW).unwrap();
+    assert_eq!(pending.take().map(|(quote, _)| quote), Some(at(NOW)));
+}
+
+#[test]
 fn a_quote_further_ahead_than_the_engine_takes_is_dropped() {
     const NOW: Millis = 1_792_489_875_714;
     let at = |ts: Millis| SourceQuote { source: "kraken".into(), mid: Fixed::from_int(100), ts, contract: None };
     let mut pending = Pending::default();
     assert_eq!(pending.add(at(NOW + MAX_QUOTE_LEAD_MS), NOW), Ok(()));
     assert_eq!(pending.add(at(NOW + MAX_QUOTE_LEAD_MS + 1), NOW), Err(MAX_QUOTE_LEAD_MS + 1));
-    assert_eq!(pending.take(NOW + 60_000), Some(at(NOW + MAX_QUOTE_LEAD_MS)));
-}
-
-#[test]
-fn pending_reports_what_waits_and_when_the_clock_reaches_it() {
-    const NOW: Millis = 1_792_489_875_714;
-    let at = |ts: Millis| SourceQuote { source: "kraken".into(), mid: Fixed::from_int(100), ts, contract: None };
-    let mut pending = Pending::default();
-    assert!(!pending.reached(NOW));
-    assert_eq!(pending.next_ahead(NOW), None);
-    pending.add(at(NOW - 100), NOW).unwrap();
-    pending.add(at(NOW + 40), NOW).unwrap();
-    assert!(pending.reached(NOW));
-    assert_eq!(pending.next_ahead(NOW), Some(NOW + 40));
-    // Once the clock reaches it, the waiting quote is the reached one, and nothing stays ahead.
-    assert!(pending.reached(NOW + 40));
-    assert_eq!(pending.next_ahead(NOW + 40), None);
-    assert_eq!(pending.take(NOW + 40), Some(at(NOW + 40)));
-    assert!(!pending.reached(NOW + 40));
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_rejected_quote_still_arms_the_emit_timer_for_what_waits() {
-    let (tx, mut rx) = mpsc::channel(1);
-    let mut feed = kraken_feed(&[(40, "AAPL")], WAIT);
-    feed.tx = tx;
-    let now = now_ms();
-    // Apple is closed for another 20 ms: a quote stamped inside the closure is held back, and
-    // one stamped just after it, at the reopen, is still ahead of the host clock.
-    feed.schedules = Arc::new(BTreeMap::from([(40, around_the_clock(Some((now - 60_000, now + 20))))]));
-    let at = |ts: Millis| SourceQuote { source: "kraken".into(), mid: Fixed::from_int(100), ts, contract: None };
-    let mut pending = Pending::default();
-    pending.add(at(now - 30_000), now).unwrap();
-    pending.add(at(now + 25), now).unwrap();
-    let mut buffered = BTreeMap::from([("AAPL".to_owned(), pending)]);
-
-    // The held-back quote is dropped, but the survivor keeps a scheduled way out: with the
-    // venue quiet, the emit timer still fires for it — the eventual submission once the clock
-    // reaches it and the session has opened is covered by the quiet-release integration test.
-    // A rejection that skips arming strands the survivor and fails this assertion.
-    let wake = feed.emit(&mut buffered, &mut BTreeMap::new()).await.unwrap();
-    assert!(wake.is_some(), "no wake armed for the survivor");
-    assert!(rx.try_recv().is_err(), "the held-back quote sequenced");
+    assert_eq!(pending.take().map(|(quote, _)| quote), Some(at(NOW + MAX_QUOTE_LEAD_MS)));
 }
 
 #[test]
@@ -414,6 +320,9 @@ fn a_quote_is_sent_only_while_its_market_stays_open_until_the_sequencer_stamps_i
     assert!(!feed.in_session(40, shut - 5, shut - 5));
     // Stamped before the close and sent after the reopen.
     assert!(!feed.in_session(40, shut - 5, shut + 60_000));
+    // Stamped ahead of the host clock across the close: the engine checks through the stamp.
+    assert!(!feed.in_session(40, shut + 300, shut - 500));
+    assert!(feed.in_session(40, shut - 300, shut - 500));
     // A market whose hours the feed has not learnt yet counts as open.
     assert!(feed.in_session(1, shut, shut));
 }

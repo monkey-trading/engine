@@ -7,6 +7,7 @@ use std::mem::take;
 use std::sync::Arc;
 
 use anyhow::anyhow;
+use engine_core::Fixed;
 use engine_core::session::Schedule;
 use engine_core::types::{MarketId, Millis};
 use tokio::sync::oneshot;
@@ -33,6 +34,14 @@ pub(super) struct Confirmation {
     pub(super) idle: Vec<String>,
     /// The trading hours of each market asked about whose hours differ from those the task holds.
     pub(super) schedules: BTreeMap<MarketId, Schedule>,
+    /// The `max_age_ms` of each market asked about that the engine lists, which sets how long a
+    /// repeated quote may wait (see `quotes::refresh_after`).
+    pub(super) max_age: BTreeMap<MarketId, Millis>,
+    /// The mid and stamp of the quote the engine holds from the venue for each symbol that has one.
+    pub(super) held: BTreeMap<String, (Fixed, Millis)>,
+    /// The mid and stamp of the newest quote the feed had sequenced for each symbol when it asked,
+    /// ahead of this question in the sequencer's queue.
+    pub(super) sent: BTreeMap<String, (Fixed, Millis)>,
 }
 
 impl VenueFeed {
@@ -53,14 +62,16 @@ impl VenueFeed {
             .map(|(symbol, instrument)| (symbol.clone(), instrument.market, instrument.contract.clone()))
             .collect();
         let known = Arc::clone(&self.schedules);
+        let sent = self.sent.clone();
         let query: Query = Box::new(move |engine| {
             let at = now_ms().max(engine.now());
-            let mut confirmation = Confirmation::default();
+            let mut confirmation = Confirmation { sent, ..Confirmation::default() };
             for (symbol, market, contract) in asked {
                 let Some(state) = engine.markets().get(&market) else {
                     confirmation.unlisted.push(symbol);
                     continue;
                 };
+                confirmation.max_age.insert(market, state.spec.price_rules.max_age_ms);
                 if known.get(&market) != Some(&state.spec.schedule) {
                     confirmation.schedules.entry(market).or_insert_with(|| state.spec.schedule.clone());
                 }
@@ -72,6 +83,9 @@ impl VenueFeed {
                     confirmation.idle.push(symbol);
                     continue;
                 };
+                if let Some(quote) = held.get(source) {
+                    confirmation.held.insert(symbol.clone(), (quote.mid, quote.ts));
+                }
                 let max_age_ms = state.spec.price_rules.max_age_ms;
                 if held.get(source).is_some_and(|quote| counts(quote.ts, at, stale_after, max_age_ms)) {
                     confirmation.fresh.push(symbol);
@@ -83,14 +97,23 @@ impl VenueFeed {
         Ok(answer)
     }
 
-    /// Records an answer: the hours that changed, the symbols quoted, the ones whose market the
-    /// engine does not list or whose contract its listing does not name, alerted once each and
-    /// held back from then on, and the idle ones, held back without an alert. A symbol held back
-    /// that the answer leaves out is taken again with a full silence window, and a silent symbol
-    /// that is held back is no longer silent.
+    /// Records an answer: the hours that changed, each market's `max_age_ms`, the symbols quoted,
+    /// the ones whose market the engine does not list or whose contract its listing does not name,
+    /// alerted once each and held back from then on, and the idle ones, held back without an
+    /// alert. A symbol held back that the answer leaves out is taken again with a full silence
+    /// window, and a silent symbol that is held back is no longer silent. A quote the feed
+    /// sequenced ahead of the question that the engine does not hold (the sequencer dropped it, or
+    /// the engine refused it) is forgotten, so the next quote for its symbol goes at once.
     pub(super) fn confirmed(&mut self, confirmation: Confirmation) {
         if !confirmation.schedules.is_empty() {
             Arc::make_mut(&mut self.schedules).extend(confirmation.schedules);
+        }
+        self.max_age.extend(confirmation.max_age);
+        for (symbol, asked) in confirmation.sent {
+            let held = confirmation.held.get(&symbol).is_some_and(|(mid, ts)| *mid == asked.0 && *ts >= asked.1);
+            if !held && self.sent.get(&symbol) == Some(&asked) {
+                self.sent.remove(&symbol);
+            }
         }
         let unlisted: BTreeSet<String> = confirmation.unlisted.into_iter().collect();
         let unnamed: BTreeSet<String> = confirmation.unnamed.into_iter().collect();

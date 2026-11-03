@@ -8,6 +8,7 @@ mod hostile;
 mod hours;
 mod late;
 mod mock;
+mod quiet;
 mod rwa;
 pub(super) mod rwa_support;
 mod scenario;

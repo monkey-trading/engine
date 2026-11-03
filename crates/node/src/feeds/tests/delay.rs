@@ -129,10 +129,10 @@ async fn a_quote_carries_when_the_ping_that_bounds_it_runs_out() {
     let before = std::time::Instant::now();
     let _feed = spawn_feed_into(tx, Venue::Kraken, &url, &MARKETS, timing);
     let (mut ws, _) = accept(&listener).await;
-    // One quote as the host clock reads, then one ahead of it, which waits for the clock.
-    let ahead = now_ms() + 300;
-    let frames = [kraken_book("BTC/USD", "100", "101", now_ms()), kraken_book("BTC/USD", "100", "101", ahead)];
-    send(&mut ws, &frames).await;
+    // One quote, then a repeat of its mid a moment later, which waits until the first is half of
+    // its freshness limit old: it carries the bound noted when it was read.
+    send(&mut ws, &[kraken_book("BTC/USD", "100", "101", now_ms() - 5)]).await;
+    send(&mut ws, &[kraken_book("BTC/USD", "100", "101", now_ms())]).await;
     for _ in 0..2 {
         let not_after = next_not_after(&mut rx, &engine).await.expect("a quote on a connection with pings");
         // The opening ping is the only one answered, and it was sent after `before`.

@@ -1,30 +1,20 @@
-//! The quotes a venue task holds between book updates, and the rule that judges whether the
+//! The newest quote a venue task holds between book updates, the rule that decides whether a quote
+//! repeats the mid already sequenced and when it falls due, and the rule that judges whether the
 //! quote the engine holds counts as the venue quoting.
 
-use std::collections::BTreeMap;
-use std::mem::replace;
-
+use engine_core::Fixed;
 use engine_core::price::{MAX_QUOTE_LEAD_MS, SourceQuote};
 use engine_core::types::Millis;
 
-/// One market's quotes received and not yet sequenced: the newest the host clock has reached, and
-/// those dated ahead of it, kept by venue time until the clock reaches them. The quote taken is the
-/// one the engine would hold under the rules before protocol `V12` had each quote been sent as it
-/// arrived: one still ahead of its time gives way to any later quote, as when the venue's clock
-/// steps back, and one already reached gives way only to a quote dated at or after it. A host clock
-/// a little behind the venue then still prices from the venue, a moment late, rather than handing
-/// the engine quotes those rules cannot use yet. Quotes ahead are kept one per venue millisecond
-/// and at most `MAX_QUOTE_LEAD_MS` ahead, which bounds how many are held.
-///
-/// A submission must never claim a venue time the host clock has not reached, though from `V12`
-/// the engine would count a quote dated ahead at once, as dated at the sequenced time: the stored
-/// stamp would be honest, but `max_age_ms` and `stale_after` police freshness against the venue
-/// stamp the log records, and the feed's own silence and outage judgements read it too. So a quote
-/// ahead waits here for the clock, and `emit` releases it the moment the clock reaches it.
+/// One symbol's newest quote received and not yet sequenced. A quote goes as soon as it is read,
+/// whatever its stamp: from `V12` the engine stores one stamped ahead of its sequenced time as
+/// stamped at it, so a venue clock ahead of the host's costs no delay, and the stored stamp never
+/// claims a time the sequencer has not reached. A newer quote replaces it unless its stamp, as the
+/// engine would store it (at most the host time it was read), is before the kept quote's.
 #[derive(Debug, Default)]
 pub(super) struct Pending {
-    reached: Option<SourceQuote>,
-    ahead: BTreeMap<Millis, SourceQuote>,
+    /// The quote, and the stamp the engine would store it at had it been sent when read.
+    quote: Option<(SourceQuote, Millis)>,
 }
 
 impl Pending {
@@ -37,46 +27,28 @@ impl Pending {
         if lead > MAX_QUOTE_LEAD_MS {
             return Err(lead);
         }
-        self.catch_up(now);
-        self.ahead.retain(|ts, _| *ts <= quote.ts);
-        if lead > 0 {
-            self.ahead.insert(quote.ts, quote);
-        } else {
-            self.keep(quote);
+        let stamp = quote.ts.min(now);
+        if self.quote.as_ref().is_none_or(|(_, kept)| stamp >= *kept) {
+            self.quote = Some((quote, stamp));
         }
         Ok(())
     }
 
-    /// Takes the newest quote the host clock has reached at `now`, keeping those still ahead.
-    pub(super) fn take(&mut self, now: Millis) -> Option<SourceQuote> {
-        self.catch_up(now);
-        self.reached.take()
+    /// Takes the newest quote, with the stamp it would have been stored at had it been sent when
+    /// read.
+    pub(super) fn take(&mut self) -> Option<(SourceQuote, Millis)> {
+        self.quote.take()
     }
 
-    /// Whether a quote the host clock has reached at `now` waits to be taken.
-    pub(super) fn reached(&mut self, now: Millis) -> bool {
-        self.catch_up(now);
-        self.reached.is_some()
+    /// Whether a quote waits.
+    pub(super) fn waiting(&self) -> bool {
+        self.quote.is_some()
     }
 
-    /// The earliest venue time still ahead of the host clock at `now`: when the clock reaches the
-    /// first waiting quote.
-    pub(super) fn next_ahead(&mut self, now: Millis) -> Option<Millis> {
-        self.catch_up(now);
-        self.ahead.keys().next().copied()
-    }
-
-    /// Moves the quotes the host clock has reached at `now` out of `ahead`, oldest first.
-    fn catch_up(&mut self, now: Millis) {
-        let ahead = self.ahead.split_off(&now.saturating_add(1));
-        replace(&mut self.ahead, ahead).into_values().for_each(|quote| self.keep(quote));
-    }
-
-    /// Keeps a reached quote unless the one kept is dated after it.
-    fn keep(&mut self, quote: SourceQuote) {
-        if self.reached.as_ref().is_none_or(|reached| quote.ts >= reached.ts) {
-            self.reached = Some(quote);
-        }
+    /// Puts back the quote just taken with its stamp, which `verdict` held for later: nothing
+    /// newer has been added since.
+    pub(super) fn defer(&mut self, quote: SourceQuote, stamp: Millis) {
+        self.quote = Some((quote, stamp));
     }
 }
 
@@ -84,4 +56,63 @@ impl Pending {
 /// quoting: its time reached, and no older than `stale_after` or the market's `max_age_ms`.
 pub(super) fn counts(ts: Millis, at: Millis, stale_after: Millis, max_age_ms: Millis) -> bool {
     ts <= at && at.saturating_sub(ts) <= stale_after.min(max_age_ms)
+}
+
+/// What to do with the newest quote of a symbol (see `verdict`).
+#[derive(Debug, PartialEq)]
+pub(super) enum Verdict {
+    /// Sequence it now.
+    Send,
+    /// It repeats the mid the engine holds from this venue, and that quote is not yet old enough
+    /// to need refreshing: keep it and sequence it at this host time.
+    Wait(Millis),
+    /// It adds nothing to the quote the engine holds: drop it.
+    Redundant,
+}
+
+/// How old, in host time past its stamp, the quote the engine holds from a venue may get before a
+/// repeat of its mid is sequenced to refresh it: half the shorter of `stale_after` and the
+/// market's `max_age_ms`. The refresh then has the other half to be sequenced and applied before
+/// the held quote stops counting, so a sequencer stall of up to that long costs no price; the
+/// venue's own delay does not enter, because the time is counted from the held quote's stamp on
+/// the clock the engine judges age by, so a quote that arrives late is refreshed the sooner.
+pub(super) fn refresh_after(stale_after: Millis, max_age_ms: Millis) -> Millis {
+    stale_after.min(max_age_ms) / 2
+}
+
+/// The record of the newest quote sequenced for a symbol once `quote` is sent at host time `now`:
+/// its mid and the stamp the engine stores it at, unless the engine would keep the quote already
+/// on record, which is stamped later (`sent`).
+pub(super) fn record(sent: Option<(Fixed, Millis)>, quote: &SourceQuote, now: Millis) -> (Fixed, Millis) {
+    let stamp = quote.ts.min(now);
+    match sent {
+        Some(kept) if stamp < kept.1 => kept,
+        _ => (quote.mid, stamp),
+    }
+}
+
+/// Whether `quote`, the newest for a symbol at host time `now`, need be sequenced, given
+/// `sent`, the mid and stamp (at most the host time it was sent) of the newest quote sequenced for
+/// it on this connection. A repeat of that mid with a newer stamp changes nothing the engine
+/// prices from but how long the venue counts as quoting, so it waits until `sent` is
+/// `refresh_after` old (`None`: the market's rules are not known yet, so nothing waits). A quote
+/// with a new mid goes at once, as does one dated before `sent`, which the engine will not store
+/// but which is no repeat to hold back.
+pub(super) fn verdict(
+    sent: Option<(Fixed, Millis)>,
+    quote: &SourceQuote,
+    refresh_after: Option<Millis>,
+    now: Millis,
+) -> Verdict {
+    let (Some((mid, ts)), Some(refresh_after)) = (sent, refresh_after) else { return Verdict::Send };
+    // The engine stores a quote stamped ahead of its sequenced time as stamped at it.
+    let stamp = quote.ts.min(now);
+    if quote.mid != mid || stamp < ts {
+        return Verdict::Send;
+    }
+    if stamp == ts {
+        return Verdict::Redundant;
+    }
+    let due = ts.saturating_add(refresh_after);
+    if now >= due { Verdict::Send } else { Verdict::Wait(due) }
 }
