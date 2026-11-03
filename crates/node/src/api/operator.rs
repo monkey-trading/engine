@@ -30,7 +30,7 @@ pub(super) struct OperatorView {
 pub(super) async fn operator(State(s): State<ApiState>) -> ApiResult<OperatorView> {
     let configured = s.operator.address;
     let view = s
-        .query(move |e| OperatorView {
+        .read(move |e| OperatorView {
             operator: e.operator().map_or(configured, |operator| operator.address),
             pending_rotation: e.operator_bounds().rotation,
             rotation_enabled: e.operator_election().rotation_enabled,

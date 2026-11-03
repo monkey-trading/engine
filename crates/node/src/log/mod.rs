@@ -26,6 +26,7 @@ pub use view::{ActivePrefix, ReadAuthority};
 mod suffix;
 mod writer;
 pub use suffix::CatalogBoundary;
+pub(crate) use writer::SyncJob;
 mod reader;
 pub use reader::LogReader;
 mod segments;

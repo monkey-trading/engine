@@ -4,10 +4,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, watch};
 use tokio::time::advance;
 
 use super::tests::{INTERVAL, Rig, prices};
+use crate::log::{Manifest, Offset};
 
 #[tokio::test(start_paused = true)]
 async fn a_read_after_a_quiet_spell_goes_out_the_moment_the_head_moves() {
@@ -55,4 +56,32 @@ async fn connections_queue_no_more_reads_than_the_shared_permits_allow() {
     rigs[2].within(Duration::from_secs(1)).await.expect("the waiting connection's quotes");
     assert_eq!(rigs[2].queries(), 1);
     assert_eq!(reads.available_permits(), 1, "the second connection's read still holds its permit");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_quote_waits_for_the_log_to_hold_its_state_and_a_dropped_poll_keeps_the_read() {
+    let mut rig = Rig::new();
+    let engine_seq = rig.engine.lock().unwrap().last_seq().expect("the engine has applied commands");
+    // The log is behind the engine the read will see.
+    rig.head.send_modify(|log| log.flushed = Some(Offset { seq: engine_seq - 1, index: 0 }));
+    rig.subscribe("[1]");
+    for _ in 0..3 {
+        assert_eq!(rig.within(Duration::from_millis(300)).await, None, "nothing goes out before the log holds it");
+    }
+    assert_eq!(rig.queries(), 1, "and the polls dropped meanwhile did not cost the read");
+    rig.head.send_modify(|log| log.flushed = Some(Offset { seq: engine_seq, index: 0 }));
+    rig.within(Duration::from_secs(1)).await.expect("the quote goes out once the log holds its state");
+    assert_eq!(rig.queries(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_quote_is_dropped_when_the_log_stops_before_holding_its_state() {
+    let mut rig = Rig::new();
+    let engine_seq = rig.engine.lock().unwrap().last_seq().expect("the engine has applied commands");
+    rig.head.send_modify(|log| log.flushed = Some(Offset { seq: engine_seq - 1, index: 0 }));
+    rig.subscribe("[1]");
+    assert_eq!(rig.within(Duration::from_millis(300)).await, None);
+    // The log writer ends, as when a sync fails.
+    drop(std::mem::replace(&mut rig.head, watch::channel(Manifest::default()).0));
+    assert_eq!(rig.within(Duration::from_secs(5)).await, None, "a quote resting on an unsynced command is never sent");
 }

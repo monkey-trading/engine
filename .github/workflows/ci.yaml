@@ -186,6 +186,9 @@ jobs:
       - name: Check sequencer command latency at 100k accounts
         if: needs.changes.outputs.cache != 'true'
         run: cargo test -p engine-core --test hot_path_benchmark --locked -- --ignored --nocapture
+      - name: Check the wait from a price entering the sequencer's channel to its stamp at 100k accounts
+        if: needs.changes.outputs.cache != 'true'
+        run: cargo test -p engine-node --lib --locked sequencer::wait_bench::price_wait_budget -- --ignored --nocapture
       - name: Test the node's production build
         if: needs.changes.outputs.cache != 'true'
         run: cargo test -p engine-node --features production --locked --lib production_build

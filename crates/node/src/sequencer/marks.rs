@@ -45,20 +45,34 @@ impl Marks {
         }
     }
 
-    /// Sends the buffered reports once their commands are durable. A full queue drops the sample:
+    /// The stats worker's jobs from the batch so far, for `deliver_stats` once it is durable.
+    pub(super) fn stage_stats(&self) -> Vec<crate::stats::background::Job> {
+        self.stats.as_ref().map(crate::stats::Stats::stage).unwrap_or_default()
+    }
+
+    /// Hands the stats worker the jobs of a batch that is durable.
+    pub(super) fn deliver_stats(&self, jobs: Vec<crate::stats::background::Job>) {
+        if let Some(stats) = &self.stats {
+            stats.deliver(jobs);
+        }
+    }
+
+    /// Takes the buffered reports, for `release` once their commands are durable.
+    pub(super) fn take_pending(&mut self) -> Vec<MarkSample> {
+        std::mem::take(&mut self.pending)
+    }
+
+    /// Sends `samples`, whose commands are durable. A full queue drops the sample:
     /// the cache is derived, and the next change or a recovery reseeds it; one alert per episode
     /// says so, and the first batch the queue takes whole ends the episode.
-    fn release(&mut self) {
-        if self.pending.is_empty() {
+    pub(super) fn release(&mut self, samples: Vec<MarkSample>) {
+        if samples.is_empty() {
             return;
         }
-        let Some(tx) = &self.tx else {
-            self.pending.clear();
-            return;
-        };
+        let Some(tx) = &self.tx else { return };
         let mut dropped = false;
         let mut closed = false;
-        for sample in self.pending.drain(..) {
+        for sample in samples {
             match tx.try_send(sample) {
                 Ok(()) => {}
                 Err(TrySendError::Full(_)) => dropped = true,
@@ -103,11 +117,6 @@ impl Sequencer {
             stats.observe(&self.engine, ts, events);
         }
     }
-
-    /// Releases buffered mark reports once their commands are durable in the log.
-    pub(super) fn release_marks(&mut self) {
-        self.marks.release();
-    }
 }
 
 impl Sequencer {
@@ -132,14 +141,12 @@ mod tests {
     #[test]
     fn a_full_queue_drops_samples_and_a_batch_it_takes_whole_ends_the_episode() {
         let (mut marks, mut rx) = marks_with(1);
-        marks.pending = vec![(1, 10, Fixed::from_int(1)), (2, 10, Fixed::from_int(2))];
-        marks.release();
+        marks.release(vec![(1, 10, Fixed::from_int(1)), (2, 10, Fixed::from_int(2))]);
         assert!(marks.overflow_warned, "the second sample found the queue full");
         assert_eq!(rx.try_recv().unwrap().0, 1);
         assert!(rx.try_recv().is_err(), "the dropped sample is not queued");
         // A later batch the queue takes whole clears the episode, so the next overflow alerts again.
-        marks.pending = vec![(1, 20, Fixed::from_int(3))];
-        marks.release();
+        marks.release(vec![(1, 20, Fixed::from_int(3))]);
         assert!(!marks.overflow_warned);
         assert_eq!(rx.try_recv().unwrap().2, Fixed::from_int(3));
     }
@@ -148,20 +155,16 @@ mod tests {
     fn a_closed_queue_is_not_a_drop_and_stops_reporting() {
         let (mut marks, rx) = marks_with(1);
         drop(rx);
-        marks.pending = vec![(1, 10, Fixed::from_int(1))];
-        marks.release();
+        marks.release(vec![(1, 10, Fixed::from_int(1))]);
         assert!(!marks.overflow_warned, "a receiver gone at shutdown is not an overflow");
         assert!(marks.tx.is_none());
-        assert!(marks.pending.is_empty());
     }
 
     #[test]
     fn an_episode_stays_open_while_the_queue_keeps_dropping() {
         let (mut marks, _rx) = marks_with(1);
-        marks.pending = vec![(1, 10, Fixed::from_int(1)), (2, 10, Fixed::from_int(2))];
-        marks.release();
-        marks.pending = vec![(1, 20, Fixed::from_int(3))];
-        marks.release();
+        marks.release(vec![(1, 10, Fixed::from_int(1)), (2, 10, Fixed::from_int(2))]);
+        marks.release(vec![(1, 20, Fixed::from_int(3))]);
         assert!(marks.overflow_warned, "the queue never drained");
     }
 }

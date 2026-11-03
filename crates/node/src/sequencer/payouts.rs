@@ -67,6 +67,7 @@ impl Sequencer {
         if gate.unswept > 0 {
             return Ok(());
         }
+        let mut loaded = std::collections::BTreeSet::new();
         for _ in 0..BACKLOG_WINDOW {
             let Some((key, index, latest)) = gate.backlog.pop_front() else { break };
             let approval = *self
@@ -86,7 +87,7 @@ impl Sequencer {
             gate.schedule.insert(payout.order, key, retired);
             gate.payouts.insert(key, payout);
             gate.unproved.insert(key);
-            gate.unregistered.insert(key);
+            loaded.insert(key);
             gate.unswept += 1;
         }
         let unloaded = match gate.backlog.front() {
@@ -100,7 +101,8 @@ impl Sequencer {
             None => None,
         };
         gate.schedule.hold_after(unloaded);
-        self.register_payouts()
+        // Only what was loaded here: an approval of a batch still syncing waits for its checkpoint.
+        self.register_payout_keys(loaded)
     }
 
     /// Proves loaded approvals against the checkpoint that already covers the engine state, or
@@ -136,9 +138,21 @@ impl Sequencer {
     /// - the worker registry is poisoned or an approval identity conflicts
     pub(super) fn register_payouts(&mut self) -> anyhow::Result<()> {
         let Some(gate) = &mut self.gate else { return Ok(()) };
+        let keys = std::mem::take(&mut gate.unregistered);
+        self.register_payout_keys(keys)
+    }
+
+    /// `register_payouts` for the approvals `keys` names.
+    /// Error cases:
+    /// - as `register_payouts`
+    pub(super) fn register_payout_keys(
+        &mut self,
+        keys: std::collections::BTreeSet<(AccountId, u64)>,
+    ) -> anyhow::Result<()> {
+        let Some(gate) = &mut self.gate else { return Ok(()) };
         let Some(registry) = &gate.approvals else { return Ok(()) };
         let mut registry = registry.lock().map_err(|_| anyhow::anyhow!("approval registry is poisoned"))?;
-        for key in std::mem::take(&mut gate.unregistered) {
+        for key in keys {
             let payout = gate.payouts.get(&key).expect("an unregistered payout is pending");
             let approval = payout.approval;
             let id =
@@ -242,10 +256,10 @@ impl Sequencer {
             payout.requested = false;
             info!(account = %approval.account, nonce = approval.nonce, approval_seq = approval.approved_seq, "durable withdrawal authorization issued");
         }
-        if batch > 0 {
-            // One sync per released batch, not per authorization: custody and the stream see a
-            // signature only after `flush` syncs again, and each release used to cost two syncs on
-            // the sequencer thread.
+        // With the syncs on their own thread, the batch's sync covers these: custody and the stream
+        // get a signature when the batch is released, and the payouts read answers with it then too.
+        // Otherwise one sync per released batch, not per authorization.
+        if batch > 0 && self.pipeline.is_none() {
             self.log.sync()?;
         }
         Ok(())

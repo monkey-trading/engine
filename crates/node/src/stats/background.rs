@@ -1,9 +1,13 @@
 //! The scan of every account off the sequencer's thread. A worker thread holds a copy of the engine
 //! and applies every command the sequencer applies, in order, so when the command that makes a
 //! scan due has been applied there, the worker's engine is the sequencer's at that seq and the scan
-//! reads exactly it. The sequencer pays one command clone and a channel send per command, and a
-//! scan request; nothing walks the accounts on its thread. The result is installed by the next
-//! command or read that finds it, with the seq and time of the command it was due at.
+//! reads exactly it. The sequencer pays one command clone per command, and a scan request; nothing
+//! walks the accounts on its thread. The result is installed by the next command or read that finds
+//! it, with the seq and time of the command it was due at.
+//!
+//! The copy is also what the API's views read (`Reader`): it applies a batch's commands only once
+//! the batch is durable in the log, and a read queues behind them, so a read sees every command
+//! whose reply its caller has had and none that a crash could take back.
 //!
 //! The worker is as deterministic as replay: `Engine::apply` is its only mutator, and it is fed the
 //! commands the log holds. If it stops, or its copy would differ, the record scans on the
@@ -11,7 +15,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, channel, sync_channel};
+use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError, channel, sync_channel};
 
 use engine_core::Engine;
 use engine_core::command::Sequenced;
@@ -24,9 +28,44 @@ use crate::stats::snapshot::{self, Layout, Snapshot};
 /// during one scan, so the wait is a bound on memory and not part of the normal path.
 const QUEUE: usize = 100_000;
 
-enum Job {
+/// One step of the worker's queue, in the order the sequencer produced it.
+pub(crate) enum Job {
     Apply(Box<Sequenced>),
     Scan { seq: u64, ts: Millis, layout: Layout, full: bool },
+    Read(ReadJob),
+}
+
+/// A read of the worker's copy of the engine.
+pub(crate) type ReadJob = Box<dyn FnOnce(&Engine) + Send>;
+
+/// A handle that queues reads behind the commands already handed to the worker.
+#[derive(Clone)]
+pub(crate) struct Reader {
+    jobs: SyncSender<Job>,
+    /// Commands handed over, shared with the worker's handle.
+    sent: Arc<AtomicU64>,
+}
+
+impl Reader {
+    /// Hands the worker a job, behind those already queued, waiting while its queue is full. A read
+    /// the worker runs takes the record's lock, so the caller must not hold it. `false` once the
+    /// worker has stopped.
+    pub(super) fn send(&self, job: Job) -> bool {
+        let command = matches!(job, Job::Apply(_));
+        let sent = self.jobs.send(job).is_ok();
+        self.sent.fetch_add(u64::from(sent && command), Ordering::Relaxed);
+        sent
+    }
+
+    /// Queues `read` to run on the worker's copy, after every command delivered so far. Hands it
+    /// back when the worker has stopped or its queue is full, for the caller to run elsewhere.
+    pub(crate) fn read(&self, read: ReadJob) -> Result<(), ReadJob> {
+        match self.jobs.try_send(Job::Read(read)) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(Job::Read(read)) | TrySendError::Disconnected(Job::Read(read))) => Err(read),
+            Err(_) => unreachable!("only a read was sent"),
+        }
+    }
 }
 
 pub(super) enum Done {
@@ -41,7 +80,7 @@ pub(super) struct Background {
     /// Scans requested whose results are not yet taken.
     in_flight: usize,
     /// Commands handed over, and commands the worker has applied.
-    sent: u64,
+    sent: Arc<AtomicU64>,
     #[cfg(test)]
     applied: Arc<AtomicU64>,
 }
@@ -63,23 +102,21 @@ impl Background {
             jobs,
             done,
             in_flight: 0,
-            sent: 0,
+            sent: Arc::default(),
             #[cfg(test)]
             applied,
         })
     }
 
-    /// Hands the worker a command the sequencer applied. `false` once the worker has stopped.
-    pub(super) fn apply(&mut self, sequenced: &Sequenced) -> bool {
-        let sent = self.jobs.send(Job::Apply(Box::new(sequenced.clone()))).is_ok();
-        self.sent += u64::from(sent);
-        sent
+    /// A handle for queueing jobs and reads.
+    pub(super) fn reader(&self) -> Reader {
+        Reader { jobs: self.jobs.clone(), sent: Arc::clone(&self.sent) }
     }
 
     /// Commands handed over that the worker has not applied yet.
     #[cfg(test)]
     pub(super) fn behind(&self) -> u64 {
-        self.sent - self.applied.load(Ordering::Relaxed)
+        self.sent.load(Ordering::Relaxed) - self.applied.load(Ordering::Relaxed)
     }
 
     #[cfg(test)]
@@ -87,13 +124,12 @@ impl Background {
         self.in_flight
     }
 
-    /// Asks for a scan, full or light, of the state after the command at `seq`. Every due scan is asked for,
-    /// however many are still running, so what is sampled does not depend on how fast the worker
-    /// is. `false` once the worker has stopped.
-    pub(super) fn request(&mut self, seq: u64, ts: Millis, layout: Layout, full: bool) -> bool {
-        let sent = self.jobs.send(Job::Scan { seq, ts, layout, full }).is_ok();
-        self.in_flight += usize::from(sent);
-        sent
+    /// The job that asks for a scan, full or light, of the state after the command at `seq`, to queue
+    /// behind that command. Every due scan is asked for, however many are still running, so what is
+    /// sampled does not depend on how fast the worker is.
+    pub(super) fn scan_job(&mut self, seq: u64, ts: Millis, layout: Layout, full: bool) -> Job {
+        self.in_flight += 1;
+        Job::Scan { seq, ts, layout, full }
     }
 
     /// The finished scan, if there is one. An `Err` says the worker is gone.
@@ -143,6 +179,7 @@ fn run(state: Vec<u8>, work: &Receiver<Job>, reply: &std::sync::mpsc::Sender<Don
                 }
                 applied.fetch_add(1, Ordering::Relaxed);
             }
+            Job::Read(read) => read(&engine),
             Job::Scan { seq, ts, layout, full } => {
                 if engine.last_seq() != Some(seq) {
                     let reason = format!("the copy is at {:?}, not seq {seq}", engine.last_seq());

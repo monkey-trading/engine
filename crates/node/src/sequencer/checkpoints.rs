@@ -63,6 +63,8 @@ pub(super) struct Gate {
     /// Told whether no cause is open after each checkpoint attempt, for a handover to check
     /// before it stops sequencing.
     pub signing: Option<tokio::sync::watch::Sender<bool>>,
+    /// Signed checkpoints whose post waits for their batch's sync (`After`), each owed a queue slot.
+    pub deferred_posts: usize,
 }
 
 /// Why signing is withheld. Each is its own alert episode, keyed by the cause alone: the sequence
@@ -140,6 +142,7 @@ impl Gate {
             earlier_run_open: true,
             withheld: Default::default(),
             signing: None,
+            deferred_posts: 0,
         }
     }
 
@@ -316,7 +319,7 @@ impl Sequencer {
         // instead of stopping the sequencer; unproved approvals wait for the next one that fits.
         if let Some(gate) = &mut self.gate
             && !gate.sink.is_closed()
-            && gate.sink.capacity() == 0
+            && gate.sink.capacity() <= gate.deferred_posts
         {
             gate.note_queue_full(seq);
             return Ok(());
@@ -343,9 +346,7 @@ impl Sequencer {
         self.command_link = crate::log::command_seal::checkpoint_link(&cp)?;
         self.capture_payout_proofs();
         if self.gate.is_some() {
-            self.log.sync_unpublished()?;
-            self.register_payouts()?;
-            self.queue_checkpoint(cp.clone())?;
+            self.publish_checkpoint(&cp)?;
             if let Some(gate) = &mut self.gate {
                 gate.parent = crate::log::CheckpointParent { has_checkpoint: true, seq, root: root.into() };
                 gate.note_queued(seq);
@@ -493,6 +494,7 @@ impl Sequencer {
 }
 
 mod hold_back;
+pub(super) mod publish;
 
 #[cfg(test)]
 mod accounting_tests;

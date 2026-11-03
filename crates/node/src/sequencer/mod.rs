@@ -19,6 +19,7 @@ pub use replay::{
     replay_with_signer,
 };
 mod checkpoints;
+use checkpoints::publish::After;
 use checkpoints::{Gate, HandoverGate};
 mod claims;
 pub use claims::ClaimAnswer;
@@ -34,6 +35,8 @@ mod payout_schedule;
 #[cfg(test)]
 mod payout_tests;
 mod payouts;
+mod pipeline;
+use pipeline::{Batch, Pipeline};
 #[cfg(test)]
 mod withdrawal_scenario;
 use access::AccessAlerts;
@@ -54,7 +57,7 @@ use engine_core::event::Event;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{AccountId, Millis};
 use tokio::sync::{broadcast, mpsc, watch};
-use tracing::{error, info, info_span, warn};
+use tracing::{info, info_span, warn};
 
 use crate::benchmarks::BenchmarkSchedule;
 use crate::checkpoints::accounting::Accounting;
@@ -134,6 +137,10 @@ pub struct Sequencer {
     /// Live mark reporting for the derived marks cache, and the dashboard record fed beside it.
     marks: marks::Marks,
     house: house::Latest,
+    /// The thread that syncs the log, once `pipeline_log_syncs` has started one.
+    pipeline: Option<Pipeline>,
+    /// What checkpoints written in the batch so far wait for its sync to do.
+    after_sync: Vec<After>,
 }
 
 /// A log read from disk and replayed, before anything is written to it.
@@ -147,8 +154,12 @@ pub struct ReplayedLog {
 impl Sequencer {
     /// Sequences requests until every sender is gone or an admitted handover stop ends the loop,
     /// then writes a final checkpoint. Each batch, of at most `MAX_BATCH` requests, is written and
-    /// its data synced before its replies, stream messages, and queries go out; one that carries a
-    /// sync request also syncs the directory entry naming its segment. A command trusted time
+    /// its data synced before its replies, stream messages, and mark reports go out; one that
+    /// carries a sync request or a signed withdrawal also syncs the directory entry naming its
+    /// segment. With `pipeline_log_syncs` the sync runs on its own thread while the next requests
+    /// are sequenced, and batches are released in order as their syncs finish. Queries run on the
+    /// sequencer's thread right after the batch is written, so they can see commands whose batch is
+    /// still syncing: a view a client sees reads the stats worker's copy instead (`ApiState::read`). A command trusted time
     /// refuses is dropped with its reply, which the API answers as unavailable. A handover's final
     /// checkpoint, once admitted, is written before the stop's reply and the loop ends, so what the
     /// handover hands over is never behind the last sequenced command.
@@ -157,11 +168,9 @@ impl Sequencer {
     ///   undurable commands
     /// - the engine rejects a queued required command
     pub async fn run(mut self, mut rx: mpsc::Receiver<Request>) -> anyhow::Result<()> {
-        let mut replies = Vec::new();
+        let mut batch = Batch::default();
         let mut queries: Vec<Query> = Vec::new();
-        let mut syncs = Vec::new();
-        let mut benchmark_watches = Vec::new();
-        while let Some(first) = rx.recv().await {
+        while let Some(first) = self.next_request(&mut rx).await? {
             let started = self.clock.instant();
             let mut sequenced = false;
             let (mut next, mut taken) = (Some(first), 0);
@@ -173,26 +182,30 @@ impl Sequencer {
                         let events = self.sequence(cmd)?;
                         sequenced |= events.is_some();
                         if let (Some(events), Some(reply)) = (events, reply) {
-                            replies.push((reply, events));
+                            batch.replies.push((reply, events));
                         }
                     }
                     Request::Quote { cmd, not_after } => sequenced |= self.sequence_quote(cmd, not_after)?.is_some(),
                     Request::Query(q) => queries.push(q),
                     Request::HouseState(reply) => self.house.wait(reply),
                     Request::TimeSample(sample) => self.take_sample(sample)?,
-                    Request::Sync(reply) => syncs.push(reply),
-                    Request::WatchBenchmarkSchedule(reply) => benchmark_watches.push(reply),
+                    Request::Sync(reply) => batch.syncs.push(reply),
+                    Request::WatchBenchmarkSchedule(reply) => batch.watches.push(reply),
                     Request::ReissueWithdrawal { account, nonce, replaces, screening, reply } => {
-                        let _ = reply.send(self.request_reissue(account, nonce, replaces, screening.as_ref()));
+                        let answer = self.request_reissue(account, nonce, replaces, screening.as_ref());
+                        batch.later.push(Box::new(move || _ = reply.send(answer)));
                     }
                     Request::AccountPayouts { account, after, limit, reply } => {
-                        let _ = reply.send(self.account_payouts(account, after, limit));
+                        let answer = self.account_payouts(account, after, limit);
+                        batch.later.push(Box::new(move || _ = reply.send(answer)));
                     }
                     Request::EntitlementClaim { account, reply } => {
-                        let _ = reply.send(self.claims.entitlement(&self.engine, account));
+                        let answer = self.claims.entitlement(&self.engine, account);
+                        batch.later.push(Box::new(move || _ = reply.send(answer)));
                     }
                     Request::DistributionClaim { account, reply } => {
-                        let _ = reply.send(self.claims.distribution(&self.engine, account));
+                        let answer = self.claims.distribution(&self.engine, account);
+                        batch.later.push(Box::new(move || _ = reply.send(answer)));
                     }
                     Request::CheckpointStatus { posted, latest, health, lifecycle } => {
                         if let Some(latest) = latest {
@@ -216,30 +229,19 @@ impl Sequencer {
                     next = rx.try_recv().ok();
                 }
             }
-            self.flush()?;
-            if !syncs.is_empty() {
-                self.log.sync()?;
-                let last_seq = self.engine.last_seq();
-                syncs.drain(..).for_each(|reply| {
-                    let _ = reply.send(last_seq);
-                });
-            }
-            replies.drain(..).for_each(|(reply, events)| {
-                let _ = reply.send(events);
-            });
-            benchmark_watches.drain(..).for_each(|reply| {
-                let _ = reply.send(self.benchmark_schedule.subscribe());
-            });
-            // Only admitted commands are written: a batch of reads or refusals would dilute the latency.
-            if sequenced {
-                self.metrics.batch_seconds.observe(self.clock.instant().duration_since(started).as_secs_f64());
-            }
+            batch.timing = sequenced.then_some(started);
+            let release = self.stage(std::mem::take(&mut batch))?;
+            self.submit(release)?;
             queries.drain(..).for_each(|q| q(&self.engine));
+            if handover_stop.is_some() {
+                self.settle_async().await?;
+            }
             // `seal_handover_tail` answers a failed seal as the stop's refusal: sequencing goes on.
             if self.seal_handover_tail(handover_stop) {
                 break;
             }
         }
+        self.settle_async().await?;
         let final_checkpoint = self.last_checkpoint != self.engine.last_seq();
         if final_checkpoint || self.uncaptured.is_some() {
             if let Some(endpoint) = self.sealing.clone()
@@ -439,33 +441,6 @@ impl Sequencer {
         self.outbox.push(Arc::new(StreamMsg::new(offset, entry)));
         Ok(offset)
     }
-
-    /// Makes buffered log entries durable, then publishes what they produced and hands signed
-    /// withdrawals to custody.
-    /// Error cases:
-    /// - the log cannot be written
-    fn flush(&mut self) -> anyhow::Result<()> {
-        if self.outbox.iter().any(|msg| matches!(msg.body, StreamBody::Withdrawal(_))) {
-            self.log.sync()?;
-        } else {
-            self.log.flush()?;
-        }
-        if std::mem::take(&mut self.benchmark_schedule_dirty) {
-            self.benchmark_schedule.send_replace(BenchmarkSchedule::from_engine(&self.engine));
-        }
-        self.release_marks();
-        self.house.answer(&self.engine, self.progress.params_seq);
-        for msg in self.outbox.drain(..) {
-            if let StreamBody::Withdrawal(w) = &msg.body
-                && self.withdrawals.send(w.clone()).is_err()
-            {
-                let (seq, account, nonce) = (msg.offset.seq, w.account, w.nonce);
-                error!(alert = "custody_unavailable", seq, %account, nonce, "signed withdrawal has no custody consumer");
-            }
-            let _ = self.stream.send(msg);
-        }
-        Ok(())
-    }
 }
 
 mod alerts;
@@ -485,6 +460,8 @@ mod metrics_tests;
 mod pace_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod wait_bench;
 
 #[cfg(test)]
 mod checkpoint_tests;

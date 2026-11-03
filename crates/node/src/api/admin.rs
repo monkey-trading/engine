@@ -32,6 +32,19 @@ use crate::config::is_published_operator;
 /// - an expiry already past
 /// - the sequencer has stopped
 pub(super) async fn admin(State(s): State<ApiState>, Json(req): Json<AdminRequest>) -> ApiResult<Vec<Event>> {
+    let mut seen = None;
+    let answered = sequence_admin(&s, req, &mut seen).await;
+    // A refusal states the operator and nonce the engine had taken in, which a crash could take back.
+    if answered.is_err() {
+        s.durable(seen).await?;
+    }
+    answered
+}
+
+/// `admin`, noting in `seen` the last seq of the state its refusals read.
+/// Error cases:
+/// - as `admin`
+async fn sequence_admin(s: &ApiState, req: AdminRequest, seen: &mut Option<u64>) -> ApiResult<Vec<Event>> {
     if !req.command.is_operator_command() {
         debug!("admin request refused: not an operator command");
         return Err(ApiError::BadRequest("the operator may not send this command".into()));
@@ -42,7 +55,9 @@ pub(super) async fn admin(State(s): State<ApiState>, Json(req): Json<AdminReques
     // no request the engine cannot yet authorise enters the log, where it could be copied and sent
     // again after the handover.
     let now = s.clock.now_ms();
-    let (recorded, due) = s.query(move |e| (e.operator().copied(), e.due_rotation(now))).await?;
+    let (recorded, due, last_seq) =
+        s.query(move |e| (e.operator().copied(), e.due_rotation(now), e.last_seq())).await?;
+    *seen = last_seq;
     let current = recorded.unwrap_or(s.operator);
     let next = due.map(|rotation| Operator { address: rotation.address, ..current });
     let Some(operator) =
@@ -75,7 +90,9 @@ pub(super) async fn admin(State(s): State<ApiState>, Json(req): Json<AdminReques
         debug!("admin request refused: {reason}");
         return Err(ApiError::BadRequest(reason));
     }
-    let (next, last_sequenced) = s.query(move |e| (e.next_request_nonce(operator.address), e.now())).await?;
+    let (next, last_sequenced, last_seq) =
+        s.query(move |e| (e.next_request_nonce(operator.address), e.now(), e.last_seq())).await?;
+    *seen = last_seq;
     s.check_fresh(&req.auth, next, last_sequenced)?;
     // As for an account's request: only one the node would sequence spends the operator's rate.
     s.limits.check_account(operator.address)?;

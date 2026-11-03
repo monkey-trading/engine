@@ -265,6 +265,7 @@ async fn serve_node(
         .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
     // Before activation and genesis sequence, so the record sees every command the log will hold.
     seq.track_stats(stats.clone());
+    seq.pipeline_log_syncs().context("starting the log sync thread")?;
     if cfg.benchmarks.is_some() {
         seq.wait_for_benchmarks()
             .inspect_err(|e| error!(alert = "benchmark_sync_prerequisites_missing", "refusing to serve: {e:#}"))?;

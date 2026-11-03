@@ -20,6 +20,6 @@ use crate::api::{ApiError, ApiResult, ApiState};
 pub(super) async fn exit(State(s): State<ApiState>, Path(address): Path<String>) -> ApiResult<ExitProof> {
     let id: AccountId = address.parse().map_err(|e| ApiError::BadRequest(format!("{e}")))?;
     Span::current().record("id", display(id));
-    let proof = s.query(move |e| e.exit_proof(id)).await?;
+    let proof = s.query_durable(move |e| e.exit_proof(id)).await?;
     proof.map(Json).ok_or(ApiError::NotFound)
 }

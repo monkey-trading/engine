@@ -372,6 +372,8 @@ impl Sequencer {
             snapshot_signers: checkpoint_signers,
             uncaptured: None,
             marks: Default::default(),
+            pipeline: None,
+            after_sync: Vec::new(),
             house: house::Latest::recovered(last_checkpoint_offset.zip(last_signed_checkpoint.clone())),
         };
         sequencer.marks.take_recovered(replayed_last_marks);

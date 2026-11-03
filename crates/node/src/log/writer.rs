@@ -16,6 +16,44 @@ use crate::log::{ActivePrefix, CatalogBoundary, LogEntry, LogWriter, Offset, Seg
 /// whole receipts, so a few turns drain what one checkpoint's folds retire.
 const MAX_CATALOG_GC_TURNS: usize = 8;
 
+/// A batch's bytes written to the operating system and waiting to reach storage. `sync` can run on
+/// any thread; `LogWriter::finish_sync` publishes the batch once it has.
+pub(crate) struct SyncJob {
+    file: Option<fs::File>,
+    dir: Option<fs::File>,
+    epoch: u64,
+    segment: Option<u64>,
+    last: Option<Offset>,
+    active: Option<ActivePrefix>,
+}
+
+impl SyncJob {
+    /// Whether the job has nothing to sync: no bytes were appended since the last sync.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.file.is_none() && self.dir.is_none()
+    }
+
+    /// Whether syncing `next`, queued after this job, makes syncing this one unnecessary: `next`
+    /// syncs the data of the same segment, which holds this job's entries, and this one has no
+    /// directory to sync.
+    pub(crate) fn covered_by(&self, next: &SyncJob) -> bool {
+        self.dir.is_none() && next.file.is_some() && self.segment == next.segment
+    }
+
+    /// Syncs the segment's data and, if asked for, the directory.
+    /// Error cases:
+    /// - either sync fails
+    pub(crate) fn sync(&self) -> anyhow::Result<()> {
+        if let Some(file) = &self.file {
+            file.sync_data().context("syncing log")?;
+        }
+        if let Some(dir) = &self.dir {
+            dir.sync_all().context("syncing log directory")?;
+        }
+        Ok(())
+    }
+}
+
 impl LogWriter {
     /// Collects retired catalog versions under the same catalog owner, in at most
     /// `MAX_CATALOG_GC_TURNS` bounded turns, stopping once a turn makes no progress. A live catalog
@@ -148,6 +186,7 @@ impl LogWriter {
         line.push(b'\n');
         // Set first: the buffer may reach the file before `flush`, and those bytes need syncing too.
         self.unsynced = true;
+        self.appended += 1;
         out.write_all(&line).context("writing log entry")?;
         if let LogEntry::Checkpoint(checkpoint) = entry {
             segment.checkpoints.push(CheckpointLocator {
@@ -200,6 +239,59 @@ impl LogWriter {
     pub fn sync(&mut self) -> anyhow::Result<()> {
         self.sync_unpublished()?;
         self.flush()
+    }
+
+    /// Hands every buffered entry to the operating system and returns the sync that makes them
+    /// durable, for a thread other than the writer's to run: nothing is published until
+    /// `finish_sync`, and the writer still counts the entries unsynced until then, so an inline
+    /// `sync` or `flush` in between syncs them again rather than trusting a sync not yet done.
+    /// With `directory`, the job also syncs the directory entries.
+    /// Error cases:
+    /// - the buffered write fails, or a file handle cannot be duplicated
+    pub(crate) fn begin_sync(&mut self, directory: bool) -> anyhow::Result<SyncJob> {
+        let mut file = None;
+        // Entries a job already took are that job's to sync, so a batch that appended nothing
+        // since carries none.
+        let new = self.begun != Some(self.appended);
+        if let Some((_, out)) = self.open.as_mut().filter(|_| self.unsynced && new) {
+            out.flush().context("flushing log")?;
+            file = Some(out.get_ref().try_clone().context("duplicating the log file handle")?);
+        }
+        let dir = directory
+            .then(|| self.dir_handle.try_clone().context("duplicating the log directory handle"))
+            .transpose()?;
+        self.begun = Some(self.appended);
+        let last = self.last;
+        let segment = self.open.as_ref().map(|(segment, _)| segment);
+        let active = segment
+            .filter(|segment| segment.bytes > 0)
+            .and_then(|segment| last.map(|last| ActivePrefix { info: segment.info(), last }));
+        Ok(SyncJob { file, dir, epoch: self.appended, segment: segment.map(|s| s.first_seq), last, active })
+    }
+
+    /// Takes `job`, which has run, as done: its entries are durable, so the writer no longer counts
+    /// them unsynced and the manifest publishes them as flushed. A job older than what an inline
+    /// flush already published changes nothing, and one whose segment has since been completed
+    /// leaves the manifest's active prefix as the completion set it.
+    pub(crate) fn finish_sync(&mut self, job: &SyncJob) {
+        if job.epoch == self.appended {
+            self.unsynced = false;
+        }
+        #[cfg(test)]
+        if job.file.is_some() {
+            self.syncs += 1;
+        }
+        let current = self.open.as_ref().map(|(segment, _)| segment.first_seq);
+        self.manifest.send_if_modified(|published| {
+            if published.flushed > job.last {
+                return false;
+            }
+            published.flushed = job.last;
+            if current == job.segment {
+                published.active = job.active.clone();
+            }
+            true
+        });
     }
 
     /// The offset of the last entry appended, or `None` before the first: a follower resumes the
