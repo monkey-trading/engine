@@ -135,6 +135,26 @@ fn the_newest_quote_is_kept_by_the_engines_own_rule() {
 }
 
 #[test]
+fn a_moved_mid_is_kept_when_the_host_clock_steps_back_while_a_repeat_waits() {
+    const T: Millis = 1_792_489_875_714;
+    let at = |ts: Millis| SourceQuote { source: "kraken".into(), mid: Fixed::from_int(100), ts, contract: None };
+    let mut pending = Pending::default();
+    // The engine holds a quote stamped T - 100; a repeat of its mid read at T waits, kept at
+    // stamp T, the host time it was read.
+    pending.add(at(T), T).unwrap();
+    // The host clock steps back 80ms, within [time] max_drift, and a moved mid stamped T + 20
+    // arrives: it is kept, clamped to the highest host time read, not the stepped-back one.
+    let mut moved = at(T + 20);
+    moved.mid = Fixed::from_int(101);
+    pending.add(moved.clone(), T - 80).unwrap();
+    assert_eq!(pending.take(), Some((moved, T)));
+    // So is every later update until the clock passes T.
+    pending.add(at(T), T).unwrap();
+    pending.add(at(T + 30), T - 70).unwrap();
+    assert_eq!(pending.take().map(|(quote, _)| quote), Some(at(T + 30)));
+}
+
+#[test]
 fn a_quote_further_ahead_than_the_engine_takes_is_dropped() {
     const NOW: Millis = 1_792_489_875_714;
     let at = |ts: Millis| SourceQuote { source: "kraken".into(), mid: Fixed::from_int(100), ts, contract: None };

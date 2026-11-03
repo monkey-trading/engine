@@ -10,11 +10,15 @@ use engine_core::types::Millis;
 /// whatever its stamp: from `V12` the engine stores one stamped ahead of its sequenced time as
 /// stamped at it, so a venue clock ahead of the host's costs no delay, and the stored stamp never
 /// claims a time the sequencer has not reached. A newer quote replaces it unless its stamp, as the
-/// engine would store it (at most the host time it was read), is before the kept quote's.
+/// engine would store it (at most the highest host time a quote was read at), is before the kept
+/// quote's: the host time never runs backwards for this comparison, so a host-clock step loses no
+/// moved mid to a kept stamp the stepped-back clock has fallen below.
 #[derive(Debug, Default)]
 pub(super) struct Pending {
     /// The quote, and the stamp the engine would store it at had it been sent when read.
     quote: Option<(SourceQuote, Millis)>,
+    /// The high-water mark of the host times quotes were read at, by which stamps are clamped.
+    read_hwm: Millis,
 }
 
 impl Pending {
@@ -27,7 +31,8 @@ impl Pending {
         if lead > MAX_QUOTE_LEAD_MS {
             return Err(lead);
         }
-        let stamp = quote.ts.min(now);
+        self.read_hwm = self.read_hwm.max(now);
+        let stamp = quote.ts.min(self.read_hwm);
         if self.quote.as_ref().is_none_or(|(_, kept)| stamp >= *kept) {
             self.quote = Some((quote, stamp));
         }
