@@ -90,7 +90,9 @@ impl Rig {
 
     pub(super) fn move_head(&mut self) {
         self.seq += 1;
-        self.head.send_modify(|manifest| manifest.flushed = Some(Offset::start_of(self.seq)));
+        // The log holds the engine's last command, and each move is a new head.
+        let seq = self.engine.lock().unwrap().last_seq().unwrap_or(0);
+        self.head.send_modify(|manifest| manifest.flushed = Some(Offset { seq, index: self.seq as u32 }));
     }
 
     /// The messages the next poll yields, or none if it yields nothing within `wait`.

@@ -61,7 +61,7 @@ pub(super) async fn series(State(s): State<ApiState>, Query(params): Query<Serie
         limit: params.limit,
     };
     let stats = s.stats.clone();
-    let rows = s.query(move |engine| stats.series(engine, &query)).await?.map_err(ApiError::BadRequest)?;
+    let rows = s.query_durable(move |engine| stats.series(engine, &query)).await?.map_err(ApiError::BadRequest)?;
     Ok(Json(rows.finish()))
 }
 
@@ -70,7 +70,7 @@ pub(super) async fn series(State(s): State<ApiState>, Query(params): Query<Serie
 /// - the sequencer has stopped
 pub(super) async fn monkey(State(s): State<ApiState>) -> ApiResult<MonkeyView> {
     let stats = s.stats.clone();
-    Ok(Json(s.query(move |engine| stats.monkey(engine)).await?))
+    Ok(Json(s.query_durable(move |engine| stats.monkey(engine)).await?))
 }
 
 /// A market's aggregate positions by close-out price and by profit, from the last scan.
@@ -84,7 +84,7 @@ pub(super) async fn positions(
 ) -> ApiResult<PositionsView> {
     Span::current().record("id", display(params.market));
     let stats = s.stats.clone();
-    let view = s.query(move |engine| stats.positions(engine, params.market)).await?;
+    let view = s.query_durable(move |engine| stats.positions(engine, params.market)).await?;
     match view.map_err(ApiError::BadRequest)? {
         Some(view) => Ok(Json(view)),
         None => Err(ApiError::NotReady("no position snapshot yet")),
@@ -106,6 +106,6 @@ pub(super) async fn activity(
         .transpose()
         .map_err(|_| ApiError::BadRequest("before must be an id from a previous page".to_owned()))?;
     let stats = s.stats.clone();
-    let page = s.query(move |_| stats.activity(before, limit)).await?;
+    let page = s.query_durable(move |_| stats.activity(before, limit)).await?;
     page.map(Json).map_err(ApiError::BadRequest)
 }

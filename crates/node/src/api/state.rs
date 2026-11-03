@@ -88,6 +88,29 @@ impl ApiState {
         before_credit: BeforeCredit,
         peer: Option<IpAddr>,
     ) -> Result<Option<RequestAuth>, ApiError> {
+        let mut seen = None;
+        let admitted = self.admit(account, auth, hash, session, before_credit, peer, &mut seen).await;
+        // A refusal states what the engine had taken in, a nonce a crash could still take back.
+        if admitted.is_err() {
+            self.durable(seen).await?;
+        }
+        admitted
+    }
+
+    /// `authorise_request`, noting in `seen` the last seq of the state its refusals read.
+    /// Error cases:
+    /// - as `authorise_request`
+    #[allow(clippy::too_many_arguments)]
+    async fn admit(
+        &self,
+        account: AccountId,
+        auth: Option<RequestAuth>,
+        hash: impl FnOnce(&Eip712Domain, &RequestAuth) -> B256,
+        session: bool,
+        before_credit: BeforeCredit,
+        peer: Option<IpAddr>,
+        seen: &mut Option<u64>,
+    ) -> Result<Option<RequestAuth>, ApiError> {
         Span::current().record("id", display(account));
         let declaration = before_credit == BeforeCredit::Declaration;
         let access = self.access_enforced();
@@ -120,19 +143,20 @@ impl ApiState {
                     _ => "invalid signature",
                 }));
             }
-            return self.authorise_session_key(account, auth, &mut digest, rules.domain()).await;
+            return self.authorise_session_key(account, auth, &mut digest, rules.domain(), seen).await;
         }
         let auth = auth.expect("check refuses an unsigned request wherever signatures are required");
         // Accounts and declarations are never removed and nonces only grow, so none of these checks
         // can pass a request that the engine then sees ahead of its account's next nonce.
-        let (credited, declared, paid, next, last_sequenced) = self
+        let (credited, declared, paid, next, last_sequenced, last_seq) = self
             .query(move |e| {
                 let credited = e.accounts().contains_key(&account);
                 let declared = !credited && e.eligibility(account).is_some();
                 let paid = declaration && !credited && !declared && e.has_pending_deposit(account);
-                (credited, declared, paid, e.next_request_nonce(account), e.now())
+                (credited, declared, paid, e.next_request_nonce(account), e.now(), e.last_seq())
             })
             .await?;
+        *seen = last_seq;
         if !credited {
             let refusal = match before_credit {
                 BeforeCredit::Refused => Some("account has never been credited"),
@@ -190,6 +214,7 @@ impl ApiState {
         auth: Option<RequestAuth>,
         digest: &mut impl FnMut(&Eip712Domain, &RequestAuth) -> B256,
         domain: Option<Eip712Domain>,
+        seen: &mut Option<u64>,
     ) -> Result<Option<RequestAuth>, ApiError> {
         let Some(domain) = domain else { return Err(ApiError::Unauthorized("invalid signature")) };
         let Some(auth) = auth else { return Err(ApiError::Unauthorized("missing signature")) };
@@ -199,16 +224,18 @@ impl ApiState {
         if signer == account {
             return Err(ApiError::Unauthorized("invalid signature"));
         }
-        let (credited, key, next, last_sequenced) = self
+        let (credited, key, next, last_sequenced, last_seq) = self
             .query(move |e| {
                 (
                     e.accounts().contains_key(&account),
                     e.session_key(account, signer),
                     e.next_request_nonce(signer),
                     e.now(),
+                    e.last_seq(),
                 )
             })
             .await?;
+        *seen = last_seq;
         let Some(key) = key else { return Err(ApiError::Unauthorized("invalid signature")) };
         if !credited {
             debug!("request refused: account never credited");
@@ -267,8 +294,9 @@ impl ApiState {
         rx.await.map_err(|_| ApiError::Unavailable)
     }
 
-    /// Runs a read on the sequencer between batches, so it sees a consistent, already-durable
-    /// state.
+    /// Runs a read on the sequencer right after the batch it arrives in is written, so it sees the
+    /// state every command sequenced so far leaves, whether or not that batch has reached storage
+    /// yet. For a decision about the next request; a view a client reads is `read`.
     /// Error cases:
     /// - the sequencer has stopped
     pub(super) async fn query<T: Send + 'static>(
@@ -282,4 +310,63 @@ impl ApiState {
         self.tx.send(sequencer::Request::Query(q)).await.map_err(|_| ApiError::Unavailable)?;
         rx.await.map_err(|_| ApiError::Unavailable)
     }
+
+    /// Waits until the log holds every command up to `seq`: what a client is shown must not be
+    /// something a crash could take back. A manifest that has published no log head, as on a fresh
+    /// node before its first batch is synced, has only genesis to show and nothing to wait for.
+    /// Error cases:
+    /// - the log writer has stopped
+    pub(super) async fn durable(&self, seq: Option<u64>) -> Result<(), ApiError> {
+        let Some(seq) = seq else { return Ok(()) };
+        let mut manifest = self.manifest.clone();
+        manifest
+            .wait_for(|log| log.flushed.is_none_or(|flushed| flushed.seq >= seq))
+            .await
+            .map(drop)
+            .map_err(|_| ApiError::Unavailable)
+    }
+
+    /// `query`, with the answer held until the state it was read from is durable: for a view a
+    /// client is shown.
+    /// Error cases:
+    /// - the sequencer has stopped
+    pub(super) async fn query_durable<T: Send + 'static>(
+        &self,
+        f: impl FnOnce(&Engine) -> T + Send + 'static,
+    ) -> Result<T, ApiError> {
+        let (view, seq) = self.query(move |e| (f(e), e.last_seq())).await?;
+        self.durable(seq).await?;
+        Ok(view)
+    }
+
+    /// Runs a view on the stats worker's copy of the engine, off the sequencer's thread. The copy
+    /// holds the commands of every batch that is durable and none that is not, and the read queues
+    /// behind them, so it sees each command whose reply its caller has had. With no worker, or one
+    /// whose queue is full, the sequencer runs it right after the batch it arrives in is written. Either
+    /// way the answer waits for the log to hold every command the engine it read had taken in. A view
+    /// of the dashboard record, which runs a batch ahead of the copy, is `query_durable`.
+    /// Error cases:
+    /// - the sequencer has stopped
+    pub(super) async fn read<T: Send + 'static>(
+        &self,
+        f: impl FnOnce(&Engine) -> T + Send + 'static,
+    ) -> Result<T, ApiError> {
+        let (reply, rx) = oneshot::channel();
+        let view: sequencer::Query = Box::new(move |e: &Engine| {
+            let _ = reply.send((f(e), e.last_seq()));
+        });
+        let refused = match self.stats.reader() {
+            Some(reader) => reader.read(view).err(),
+            None => Some(view),
+        };
+        if let Some(view) = refused {
+            self.tx.send(sequencer::Request::Query(view)).await.map_err(|_| ApiError::Unavailable)?;
+        }
+        let (view, seq) = rx.await.map_err(|_| ApiError::Unavailable)?;
+        self.durable(seq).await?;
+        Ok(view)
+    }
 }
+
+#[cfg(test)]
+mod durable_tests;

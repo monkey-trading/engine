@@ -79,7 +79,7 @@ an index: load only the rule whose hint matches the current action.
   under `secret_missing`; a rotation needs a restart and says so; an approved upgrade moves the bundle,
   an election moves none), the
   access-source screening (`access.rs`, signed decisions with bounded HTTP reads),
-  sequencer, the public log with signed checkpoints (segmented, with a public archive), `engine
+  sequencer (a batch's data sync runs on a `log-sync` thread, `sequencer/pipeline.rs`, so the next price is stamped while the last batch reaches storage, and replies, stream messages, signed withdrawals and checkpoint posts leave in batch order once their sync is done; the API's views, `ApiState::read`, run on the stats worker's engine copy, which applies only durable batches), the public log with signed checkpoints (segmented, with a public archive), `engine
   replay`, `engine exit-proof` (`exit.rs`: the exit's proofs and vault calls from a published log),
   `engine admin` (the operator's signing client), the REST API with the operator's admin
   route, the browser-origin allowlist (`api.allowed_origins`, in `api/origin.rs`), the
@@ -498,6 +498,10 @@ Run from the repo root:
   scan's cost at 100k accounts: `cargo test -p engine-node --lib stats::bench -- --ignored --nocapture`; the
   account read's close-outs for an account holding every launch market:
   `cargo test -p engine-node --lib stats::tests::closeout_cost -- --ignored --nocapture`
+- What a price waits behind on the sequencer's thread at 100k accounts (stamp, batch sync, reads,
+  checkpoint parts, payout release), and the wait from a price entering the channel to its stamp
+  while reads and checkpoints run (`price_wait_budget`, which CI runs):
+  `cargo test -p engine-node --lib sequencer::wait_bench -- --ignored --nocapture --test-threads=1`
 - A signed checkpoint's cost after a hold, at 100k changed accounts:
   `cargo test -p engine-node --lib held_checkpoint_cost -- --ignored --nocapture`
 - Proxy protocol dev scenario: `./scripts/dev-proxy-protocol.sh` (needs `python3`, `curl`, and `jq`; a

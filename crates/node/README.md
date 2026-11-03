@@ -215,6 +215,12 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   registry, set up before the node runs
 - `src/sequencer/mod.rs` — the sequencer, checkpoints, and metrics
 - `src/sequencer/config.rs` — the sequencer's construction config
+- `src/sequencer/pipeline.rs` — group commit: a batch's data sync runs on the `log-sync` thread while the next requests are sequenced, and each batch's replies, stream messages, signed withdrawals, mark reports, house reads, stats jobs and checkpoint posts are released in batch order once its sync is done; a failed sync stops the sequencer
+- `src/sequencer/checkpoints/publish.rs` — a signed checkpoint reaches the poster, and its approvals the nonce-use queries, only once its batch is durable
+- `src/sequencer/checkpoints/publish/tests.rs` — with the syncs on their own thread, a checkpoint and its approvals wait for their batch's sync, a failed sync posts nothing, and a post owed a queue slot defers the next checkpoint
+- `src/api/state/durable_tests.rs` — a proof, a dashboard view and a fallback view are answered only once the log holds the state they read
+- `src/sequencer/pipeline/tests.rs` — a batch leaves only after its sync and the next is sequenced meanwhile, a failed sync releases nothing and stops the sequencer, and a full pipeline takes no request
+- `src/sequencer/wait_bench.rs` — what a price waits behind at 100k accounts, per occurrence, and the channel-to-stamp wait budget under reads and checkpoints
 - `src/sequencer/messages.rs` — sequencer requests, stream messages, and signed withdrawals
 - `src/sequencer/checkpoints.rs` — checkpoint creation, custody reconciliation, and signature release
 - `src/sequencer/claims.rs` — MONKEY and USDC claim proofs retained for recently asking accounts at each new checkpoint, so one is served at the checkpoint the vault accepted
@@ -411,7 +417,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   signed fan-out at `api.max_subscribers`
 - `src/api/archive.rs` — the archive routes: the manifest and completed segments
 - `src/api/stats.rs` — the dashboard routes: `/v1/stats/series`, `/v1/house/positions`, `/v1/monkey`,
-  and `/v1/monkey/activity`, read on the sequencer's thread between batches
+  and `/v1/monkey/activity`, read on the sequencer's thread right after the batch they arrive in is
+  written, and answered once the log holds what they read
 - `src/api/stats_tests.rs` — those routes through the router: refusals, the 503 before the first scan
 - `src/api/auth_tests.rs` — signed-request API tests: signatures, nonces, expiries, refused
   accounts, and racing requests
@@ -476,7 +483,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/stats/snapshot.rs` — the scan of every account: open interest and margin, long and short, the
   close-out and profit maps; light for the scans a replay does not serve
 - `src/stats/background.rs` — the scan's worker thread: a copy of the engine that applies every command
-  the sequencer applies, so a scan reads the sequencer's state at its seq without holding the sequencer
+  the sequencer applies once its batch is durable, so a scan reads the sequencer's state at its seq without
+  holding the sequencer, and the API's views queue behind those commands on the same copy
 - `src/stats/closeout.rs` — the estimated close-out price of one position, other positions at their
   marks, across margin bands and for the market that converts its own currency (`closeout/tests.rs`),
   and each position's close-out in the account read (`tests/closeout_price.rs` checks it against the engine)
@@ -1493,7 +1501,8 @@ screening whatever its quote. A request the node cannot serve, such as an uncred
 unknown market, or too many markets, gets `{"type":"quote_error","error":"…"}` and no subscription, at most one such message per
 `api.quote_interval`.
 Without `signed=1`, what a connection sends is dropped. Each read runs on the sequencer's thread
-between batches. Many connections react to one head move, so at most four reads (across all
+right after the batch it arrives in is written, and its quotes are sent once the log holds the state
+they came from. Many connections react to one head move, so at most four reads (across all
 connections) wait in the sequencer's queue at once, and a connection past that waits its turn: a
 command waits behind at most four reads. `api/stream/quotes/bench.rs` measures the reads against the
 command latency budget, and the time from a head move to each connection's quote.
@@ -1751,7 +1760,13 @@ the sequencer (100k levered accounts with staking initialised: a full scan takes
 one about 5 ms, now on the worker, and the longest command in a scan interval cost 12 us on the
 sequencer's thread, `stats::bench`). The copy takes about 20 MiB at 100k such accounts and a core that
 the scans use 0.15% of; at 1000 and 5000 commands a second the worker fell at most 55 and 205 commands
-(55 and 41 ms) behind, against a queue of 100,000. The result is installed by the next command or read
+(55 and 41 ms) behind, against a queue of 100,000. The copy
+also answers the API's engine-only views (markets, benchmarks, account, nonce, withdrawal queue, operator and
+access holds) off the sequencer's thread: it applies a batch's commands once the batch is durable and a
+view queues behind them, so a view shows each command whose reply its caller has had and nothing a crash could
+take back, and a scan in progress delays views, not prices. House and dashboard views, which read the record
+a batch ahead of the copy, proofs, quote reads and the checks that admit a signed request stay on the
+sequencer, and their answers wait for the log to hold the seq they read. The result is installed by the next command or read
 after it finishes,
 every due scan is taken, and if the worker stops the record scans on the
 sequencer's thread again and raises the `stats_scan_inline` warning. A replay scans on its own thread, lightly for all but the last, so a replay of a log at 100k accounts spends about 5 ms per light interval of sequenced time on it. `[stats]` sets each resolution's retention (1m 48h, 1h 90d, 1d

@@ -61,7 +61,7 @@ async fn page(state: ApiState, params: Params, account: Option<AccountId>) -> Ap
         return Err(ApiError::BadRequest(format!("limit must be from 1 to {MAX_LIMIT}")));
     }
     let page = state
-        .query(move |engine| {
+        .read(move |engine| {
             let page = engine.withdrawal_queue_page(account, params.after, limit);
             let queue = page
                 .queue

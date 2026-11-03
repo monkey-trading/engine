@@ -64,6 +64,11 @@ enum Unquotable {
 
 type Reply = Result<Vec<MarketQuote>, Unquotable>;
 
+/// A read the sequencer has been asked for, finished once the log holds the state it came from: the
+/// engine can be a batch ahead of the log, and a quote must not rest on a command a crash could take
+/// back. It is kept across polls; `Err` says the sequencer or the log has stopped.
+type InFlight = Pin<Box<dyn Future<Output = Result<Reply, ()>> + Send>>;
+
 /// A claim on one of the reads that may be in the sequencer's queue; the semaphore is never closed.
 type Turn = Pin<Box<dyn Future<Output = OwnedSemaphorePermit> + Send>>;
 
@@ -90,7 +95,7 @@ pub(super) struct Quotes {
     turn: Option<Turn>,
     /// The log head the last read started at; `None` for a subscription not yet read.
     read_at: Option<Option<Offset>>,
-    in_flight: Option<oneshot::Receiver<Reply>>,
+    in_flight: Option<InFlight>,
     /// The last message sent per market, to send only what changed.
     sent: BTreeMap<MarketId, String>,
     /// The latest message per market that changed, waiting for the gate.
@@ -234,11 +239,19 @@ impl Quotes {
         let (reply, rx) = oneshot::channel();
         let query = Box::new(move |engine: &engine_core::Engine| {
             let _permit = permit;
-            let _ = reply.send(read(engine, account, &markets));
+            let _ = reply.send((read(engine, account, &markets), engine.last_seq()));
+        });
+        let mut log = self.manifest.clone();
+        let finished: InFlight = Box::pin(async move {
+            let (reply, seq) = rx.await.map_err(|_| ())?;
+            if let Some(seq) = seq {
+                log.wait_for(|log| log.flushed.is_none_or(|flushed| flushed.seq >= seq)).await.map_err(|_| ())?;
+            }
+            Ok(reply)
         });
         match tx.try_send(sequencer::Request::Query(query)) {
             Ok(()) => {
-                (self.in_flight, self.read_at) = (Some(rx), Some(head));
+                (self.in_flight, self.read_at) = (Some(finished), Some(head));
                 self.next_read = Instant::now() + self.interval;
             }
             Err(mpsc::error::TrySendError::Full(_)) => self.next_read = Instant::now() + self.interval,
@@ -248,7 +261,7 @@ impl Quotes {
 
     /// Holds the messages for the quotes in `reply` that differ from those last sent, and a refusal
     /// for a subscription the engine cannot serve, for the gate.
-    fn receive(&mut self, reply: Result<Reply, oneshot::error::RecvError>) {
+    fn receive(&mut self, reply: Result<Reply, ()>) {
         let quotes = match reply {
             Ok(Ok(quotes)) => quotes,
             Ok(Err(why)) => {
@@ -302,9 +315,9 @@ async fn waiting(turn: &mut Option<Turn>) -> OwnedSemaphorePermit {
 }
 
 /// The reply to the read in flight; never, with none.
-async fn in_flight(read: &mut Option<oneshot::Receiver<Reply>>) -> Result<Reply, oneshot::error::RecvError> {
+async fn in_flight(read: &mut Option<InFlight>) -> Result<Reply, ()> {
     match read {
-        Some(rx) => rx.await,
+        Some(finished) => finished.as_mut().await,
         None => pending().await,
     }
 }

@@ -82,16 +82,19 @@ impl Latest {
         self.waiting.push(reply);
     }
 
-    /// Answers every waiting read from `engine`, which holds the flushed state, and `params_seq`,
-    /// the seq of the `SetParams` that set its parameters.
-    pub(super) fn answer(&mut self, engine: &Engine, params_seq: Option<u64>) {
+    /// Takes every waiting read with the answer from `engine`, which holds the state they were
+    /// waiting for, and `params_seq`, the seq of the `SetParams` that set its parameters: they are
+    /// sent once the batch is durable.
+    pub(super) fn take_answer(
+        &mut self,
+        engine: &Engine,
+        params_seq: Option<u64>,
+    ) -> Option<(Vec<oneshot::Sender<HouseState>>, HouseState)> {
         if self.waiting.is_empty() {
-            return;
+            return None;
         }
         let params = engine.params().map(|params| ParamsAt { seq: params_seq, params: params.clone() });
         let state = HouseState { seq: engine.last_seq(), params, checkpoint: self.checkpoint.clone() };
-        for reply in self.waiting.drain(..) {
-            let _ = reply.send(state.clone());
-        }
+        Some((std::mem::take(&mut self.waiting), state))
     }
 }

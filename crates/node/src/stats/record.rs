@@ -134,15 +134,12 @@ impl Inner {
         }
     }
 
-    /// Takes the scan due at `seq`: requested of the worker, or run here when there is none. A replay
-    /// takes the light scan for every one, since nothing serves them.
+    /// Takes the scan due at `seq`: staged for the worker behind that command, or run here when
+    /// there is none. A replay takes the light scan for every one, since nothing serves them.
     fn scan(&mut self, settings: &Settings, engine: &Engine, seq: u64, ts: Millis, full: bool) {
         if let Some(worker) = &mut self.background {
-            if worker.request(seq, ts, settings.layout, full) {
-                return;
-            }
-            self.background = None;
-            background::stopped("the worker's queue closed");
+            self.staged.push(worker.scan_job(seq, ts, settings.layout, full));
+            return;
         }
         self.install(snapshot::scan(engine, seq, ts, settings.layout, full && !self.recovering));
     }

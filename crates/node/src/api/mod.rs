@@ -339,7 +339,7 @@ async fn attestation_collateral(State(s): State<ApiState>) -> Result<Response, A
 /// - the sequencer has stopped
 async fn markets(State(s): State<ApiState>) -> ApiResult<Vec<MarketView>> {
     let views = s
-        .query(|e| {
+        .read(|e| {
             e.markets()
                 .values()
                 .map(|m| MarketView {
@@ -360,7 +360,7 @@ async fn markets(State(s): State<ApiState>) -> ApiResult<Vec<MarketView>> {
 /// Error cases:
 /// - the sequencer has stopped
 async fn benchmarks(State(s): State<ApiState>) -> ApiResult<engine_core::benchmark::BenchmarkState> {
-    Ok(Json(s.query(Engine::benchmark_state).await?))
+    Ok(Json(s.read(Engine::benchmark_state).await?))
 }
 
 /// House cash, NAV, and gross exposure at the last command, with the open interest, margin and
@@ -372,7 +372,7 @@ async fn benchmarks(State(s): State<ApiState>) -> ApiResult<engine_core::benchma
 async fn house(State(s): State<ApiState>) -> ApiResult<HouseView> {
     let stats = s.stats.clone();
     let view = s
-        .query(move |e| HouseView {
+        .query_durable(move |e| HouseView {
             cash: e.house_cash(),
             nav: e.house_nav(),
             gross_exposure: e.house_gross_exposure(),
@@ -391,7 +391,7 @@ async fn account(State(s): State<ApiState>, Path(address): Path<String>) -> ApiR
     let id: AccountId = address.parse().map_err(|e| ApiError::BadRequest(format!("{e}")))?;
     Span::current().record("id", display(id));
     let view = s
-        .query(move |e| {
+        .read(move |e| {
             let acct = e.accounts().get(&id)?;
             let (equity, margin) = e.equity_and_margin(acct, None);
             let closeouts = crate::stats::account_closeouts(e, acct, (equity, margin));
@@ -417,7 +417,7 @@ async fn account(State(s): State<ApiState>, Path(address): Path<String>) -> ApiR
 async fn nonce(State(s): State<ApiState>, Path(address): Path<String>) -> ApiResult<NonceView> {
     let id: AccountId = address.parse().map_err(|e| ApiError::BadRequest(format!("{e}")))?;
     Span::current().record("id", display(id));
-    let next_nonce = s.query(move |e| e.next_request_nonce(id)).await?;
+    let next_nonce = s.read(move |e| e.next_request_nonce(id)).await?;
     Ok(Json(NonceView { next_nonce }))
 }
 
@@ -430,7 +430,7 @@ async fn nonce(State(s): State<ApiState>, Path(address): Path<String>) -> ApiRes
 async fn proof(State(s): State<ApiState>, Path(address): Path<String>) -> ApiResult<AccountProof> {
     let id: AccountId = address.parse().map_err(|e| ApiError::BadRequest(format!("{e}")))?;
     Span::current().record("id", display(id));
-    let proof = s.query(move |e| e.account_proof(id)).await?;
+    let proof = s.query_durable(move |e| e.account_proof(id)).await?;
     proof.map(Json).ok_or(ApiError::NotFound)
 }
 

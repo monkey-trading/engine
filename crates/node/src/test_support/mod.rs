@@ -59,7 +59,7 @@ pub const RETENTION: Duration = Duration::from_secs(10 * 365 * 24 * 60 * 60);
 /// One alert's fields, by name, and its `level`.
 pub type Alert = BTreeMap<String, String>;
 
-/// A sequencer task running on a log directory, with the ends of its channels.
+/// A sequencer task on a log directory, with the ends of its channels.
 pub struct TestSequencer {
     pub tx: mpsc::Sender<Request>,
     pub stream: broadcast::Sender<Arc<StreamMsg>>,
@@ -119,7 +119,8 @@ impl TestSequencer {
         let mut seq = Sequencer::recover(cfg, key, stream.clone(), withdrawals_tx).expect("sequencer recovers");
         let stats = stats();
         seq.track_stats(stats.clone());
-        // As the node does, parameters an older log set take the config's notional weighting first.
+        seq.pipeline_log_syncs().expect("log sync thread");
+        // As the node does: older parameters take the config's notional weighting first.
         let weighting = dev_config().genesis.params.toxicity.notional.expect("the dev config weighs by notional");
         seq.carry_toxicity_notional(weighting).expect("toxicity notional");
         if version == ProtocolVersion::LATEST {
@@ -130,8 +131,7 @@ impl TestSequencer {
         if seq.needs_genesis() {
             seq.genesis(&dev_config().genesis).expect("dev genesis");
         }
-        // Trusted time admits stamps on `clock`, so the queued genesis goes in now.
-        seq.trust(sample_around(clock.as_ref())).expect("dev genesis");
+        seq.trust(sample_around(clock.as_ref())).expect("trusted time admits the queued genesis");
         let (marks_tx, marks_rx) = mpsc::channel(crate::history::marks::run::QUEUE);
         seq.track_marks(marks_tx);
         let (tx, rx) = mpsc::channel(64);

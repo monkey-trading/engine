@@ -25,7 +25,7 @@ pub(super) async fn eligibility(
 ) -> ApiResult<EligibilityView> {
     let account: AccountId = address.parse().map_err(|_| ApiError::BadRequest("invalid account".into()))?;
     Span::current().record("id", display(account));
-    let class = state.query(move |engine| engine.eligibility(account)).await?;
+    let class = state.read(move |engine| engine.eligibility(account)).await?;
     Ok(Json(EligibilityView { class, statement: class.map(EligibilityClass::statement) }))
 }
 
@@ -34,7 +34,7 @@ pub(super) async fn eligibility(
 /// - missing hold or unavailable sequencer
 pub(super) async fn hold(State(state): State<ApiState>, Path(chain_ref): Path<String>) -> ApiResult<HeldDeposit> {
     Span::current().record("id", display(&chain_ref));
-    let hold = state.query(move |engine| engine.held_deposits().get(&chain_ref).cloned()).await?;
+    let hold = state.read(move |engine| engine.held_deposits().get(&chain_ref).cloned()).await?;
     hold.map(Json).ok_or(ApiError::NotFound)
 }
 
@@ -47,7 +47,7 @@ pub(super) async fn pending(
 ) -> ApiResult<engine_core::access::AccessDeposit> {
     Span::current().record("id", display(&chain_ref));
     state
-        .query(move |engine| engine.pending_deposits().get(&chain_ref).cloned())
+        .read(move |engine| engine.pending_deposits().get(&chain_ref).cloned())
         .await?
         .map(Json)
         .ok_or(ApiError::NotFound)

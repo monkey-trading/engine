@@ -1,7 +1,7 @@
 use engine_core::types::Side;
 
 use super::*;
-use crate::stats::background::Background;
+use crate::stats::background::{Background, Job};
 
 fn json(value: impl serde::Serialize) -> serde_json::Value {
     serde_json::to_value(value).unwrap()
@@ -71,7 +71,7 @@ fn a_worker_given_a_command_out_of_sequence_stops_without_scanning() {
     let rig = Rig::new();
     let mut worker = Background::start(&rig.engine).unwrap();
     let skipped = Sequenced { seq: rig.engine.last_seq().unwrap() + 5, ts: T0 + 1_000, cmd: Command::Tick };
-    assert!(worker.apply(&skipped));
+    assert!(worker.reader().send(Job::Apply(Box::new(skipped))));
     let stopped = worker.wait().expect_err("the worker refuses the gap");
     assert!(stopped.contains("applying seq"), "{stopped}");
 }

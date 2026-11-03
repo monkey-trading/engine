@@ -13,7 +13,7 @@
 //! the log already holds durably.
 
 mod activity;
-mod background;
+pub(crate) mod background;
 mod closeout;
 mod monkey;
 mod record;
@@ -83,13 +83,16 @@ pub(crate) struct Inner {
     distribution: Option<Distribution>,
     /// The worker that takes the scans, once the sequencer has started one.
     background: Option<background::Background>,
+    /// What the worker is to do next, in order, until the batch that produced it is durable.
+    staged: Vec<background::Job>,
     /// Set while a replay feeds the record, whose scans are light: only the last one is served.
     recovering: bool,
 }
 
-/// The dashboard statistics of one node. Clones share one record: the sequencer writes it, and a
-/// read runs on the sequencer's thread, so the lock is never contended; it stands for the thread
-/// boundary a recovery's replay and the sequencer hand the record across.
+/// The dashboard statistics of one node. Clones share one record: the sequencer writes it as it
+/// applies each command, and a view reads it from the stats worker's thread, so the lock is held
+/// briefly on both sides. The record can be a batch ahead of the log and of the worker's copy, so its
+/// views run on the sequencer, with the engine at the same seq, and wait for the log (`query_durable`).
 #[derive(Clone)]
 pub struct Stats {
     shared: Arc<Mutex<Inner>>,
@@ -137,6 +140,7 @@ impl Inner {
             stakers: 0,
             distribution: None,
             background: None,
+            staged: Vec::new(),
             recovering: false,
         }
     }
@@ -168,11 +172,31 @@ impl Stats {
         }
     }
 
-    /// Gives the worker, if there is one, a command the sequencer applied, before `observe` sees it.
+    /// Stages a command the sequencer applied for the worker, if there is one, before `observe` sees
+    /// it. It goes to the worker with `deliver`, once the command is durable.
     pub(crate) fn follow(&self, sequenced: &Sequenced) {
         let mut inner = self.lock();
-        if inner.background.as_mut().is_some_and(|worker| !worker.apply(sequenced)) {
-            inner.background = None;
+        if inner.background.is_some() {
+            inner.staged.push(background::Job::Apply(Box::new(sequenced.clone())));
+        }
+    }
+
+    /// Takes what `follow` and the due scans staged: the jobs of a batch to deliver when it is durable.
+    pub(crate) fn stage(&self) -> Vec<background::Job> {
+        std::mem::take(&mut self.lock().staged)
+    }
+
+    /// Hands the worker the jobs of a durable batch, in order. A worker that has stopped leaves the
+    /// scans on the sequencer's thread, with an alert.
+    pub(crate) fn deliver(&self, jobs: Vec<background::Job>) {
+        if jobs.is_empty() {
+            return;
+        }
+        // Not under the lock: a full queue makes this wait for the worker, and a read it is running
+        // needs the lock.
+        let Some(worker) = self.reader() else { return };
+        if !jobs.into_iter().all(|job| worker.send(job)) {
+            self.lock().background = None;
             background::stopped("the worker's queue closed");
         }
     }
@@ -183,9 +207,16 @@ impl Stats {
         self.lock().background.as_ref().map_or(0, background::Background::behind)
     }
 
+    /// A handle that runs reads on the worker's copy of the engine, which holds the commands
+    /// delivered so far; `None` when no worker runs, and the read goes to the sequencer.
+    pub(crate) fn reader(&self) -> Option<background::Reader> {
+        self.lock().background.as_ref().map(background::Background::reader)
+    }
+
     /// Waits for the scans in flight and installs them. For tests.
     #[cfg(test)]
     pub(crate) fn settle(&self) {
+        self.deliver(self.stage());
         let mut inner = self.lock();
         while let Some(worker) = inner.background.as_mut().filter(|worker| worker.in_flight() > 0) {
             match worker.wait() {
