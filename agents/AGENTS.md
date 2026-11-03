@@ -24,7 +24,7 @@ an index: load only the rule whose hint matches the current action.
   by the operator key the log records and, from `V35`, bounded (`operator_bounds.rs`: profit fee and
   close-out level moves within ±50% after a seven-day notice, held markets kept priced by price-rule changes, and a
   seven-day key rotation, and from `V46` signed benchmark rates capped at 300 bps per day from the applied rates next to their
-  date in `benchmark.rs`, and a stress floor of at most level 1 lapsing after 72 hours in `stress.rs`); the spread a close can pay, from `V40`, capped per market
+  date in `benchmark.rs`, a market holding positions kept on its benchmark, and a stress floor of at most level 1 lapsing after 72 hours in `stress.rs`); the spread a close can pay, from `V40`, capped per market
   (`close_spread.rs`: a ceiling registry adopted at genesis, kept apart from `MarketSpec`, clamps every close at
   the pricing site, refuses a reversal over its ceiling while the pure close stays open, and admits a post-genesis
   entry only by a signed seven-day adoption that can only lower it); and, from `V37`, elected (`election.rs`: the operator registry's rotation switch and

@@ -2,12 +2,14 @@
 //! preserving sub-basis-point precision; the signed batch is installed before catch-up financing.
 //!
 //! From V46 a signed rate moves at most `MAX_BENCHMARK_MOVE_BPS_PER_DAY` per calendar day between
-//! its date and each applied observation next to it, so an elected operator cannot sign an outlying
-//! rate towards the NAV its electors own. A refused rate changes nothing: the last applied rate
-//! keeps financing, and since the limit grows with the days from it, a real move lands once enough
-//! days have passed. The operator's worker removes what the cap refuses before it signs
-//! (`split_by_cap`), so one refusal does not hold back the other benchmarks or a rollover waiting
-//! for a snapshot.
+//! its date and each applied observation next to it, and a market holding positions stays on its
+//! benchmark (`check_held_benchmark`), so an elected operator cannot sign an outlying rate towards
+//! the NAV its electors own. A relisting still sets a market's markup at once, which `V46` does not
+//! bound. A refused rate changes nothing: the last applied rate keeps financing, and since the limit
+//! grows with the days from it, a real move lands once enough days have passed; only a rate measured
+//! from an undated rate, which a log from before `V18` can hold, keeps one day's limit. The operator's
+//! worker removes what the cap refuses before it signs (`split_by_cap`), so one refusal does not hold
+//! back the other benchmarks or a rollover waiting for a snapshot.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;

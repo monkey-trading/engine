@@ -106,6 +106,49 @@ fn a_rollover_a_catch_up_walks_before_the_lapse_is_priced_with_the_floor() {
     assert!(rolled.is_some() && lapsed.is_some() && rolled < lapsed, "{events:?}");
 }
 
+/// Sets a level 1 floor in BTC to lapse `gap` before a rollover, and returns that rollover.
+fn floor_lapsing_before_a_rollover(h: &mut Harness, gap: Millis) -> Millis {
+    let parameters = h.engine.params().expect("the fixture sets parameters");
+    let boundary = parameters.rollover.next_after(h.ts + STRESS_FLOOR_LAPSE_MS);
+    h.advance_to(boundary - STRESS_FLOOR_LAPSE_MS - gap);
+    h.operator_admin(floor(Some(BTC), 1));
+    boundary
+}
+
+#[test]
+fn a_floor_due_by_a_walked_rollover_lapses_before_it() {
+    // A floor due before the rollover and one due at it: at that instant the floor is over.
+    for gap in [1_000, 0] {
+        let mut h = at(ProtocolVersion::V46);
+        let boundary = floor_lapsing_before_a_rollover(&mut h, gap);
+        h.advance_to(boundary + 1);
+        let events = h.cmd(Command::Tick);
+        let lapsed = events.iter().position(|event| *event == Event::StressChanged { market: BTC, level: 0 });
+        let rolled = |event: &Event| {
+            matches!(
+                event,
+                Event::BenchmarkRateMissing { .. }
+                    | Event::BenchmarkRateObserved { .. }
+                    | Event::BenchmarkRateUndated { .. }
+            )
+        };
+        let (first, last) = (events.iter().position(rolled), events.iter().rposition(rolled));
+        assert!(first.is_some() && first < lapsed && lapsed < last, "gap {gap}: {events:?}");
+    }
+}
+
+#[test]
+fn a_command_stamped_on_a_rollover_lapses_a_floor_already_due() {
+    for gap in [1_000, 0] {
+        let mut h = at(ProtocolVersion::V46);
+        let boundary = floor_lapsing_before_a_rollover(&mut h, gap);
+        h.advance_to(boundary);
+        h.cmd(Command::Tick);
+        assert_eq!(h.engine.markets()[&BTC].stress.floor, 0, "gap {gap}");
+        assert_eq!(level(&h, BTC), 0, "gap {gap}");
+    }
+}
+
 #[test]
 fn setting_a_floor_again_restarts_its_time() {
     let mut h = at(ProtocolVersion::V46);
@@ -194,18 +237,44 @@ fn earlier_versions_take_any_level_and_never_lapse() {
     assert_eq!(level(&h, BTC), 2);
 }
 
-#[test]
-fn the_automatic_triggers_reach_higher_levels_and_a_lapse_leaves_them() {
-    let mut h = at(ProtocolVersion::V46);
-    // A move that meets level 1's trigger now reaches the top level by itself.
+/// Gives the top level level 1's trigger, so a move reaches it by itself, and returns a BTC price
+/// that makes that move from 100000.
+fn top_level_on_a_move(h: &mut Harness) -> String {
     let mut parameters = h.engine.params().unwrap().clone();
     parameters.stress_levels[2].trigger = parameters.stress_levels[1].trigger.clone();
     let move_bps = parameters.stress_levels[2].trigger.as_ref().unwrap().move_bps.unwrap();
     h.operator_admin(AdminCommand::SetParams(parameters));
+    (100_000 + 100_000 * move_bps / 10_000 + 1).to_string()
+}
+
+#[test]
+fn a_lapse_leaves_the_automatic_level_it_finds() {
+    let mut h = at(ProtocolVersion::V46);
+    let moved = top_level_on_a_move(&mut h);
+    h.operator_admin(floor(Some(BTC), 1));
+    let set = h.ts;
+
+    // A move just before the 72 hours, whose cooldown outlasts them.
+    h.advance_to(set + STRESS_FLOOR_LAPSE_MS - 1_000);
+    h.price(BTC, "100000");
+    h.price(BTC, &moved);
+    assert_eq!(h.engine.markets()[&BTC].stress.auto, 2);
+
+    h.advance_to(set + STRESS_FLOOR_LAPSE_MS);
+    let events = h.cmd(Command::Tick);
+    let stress = &h.engine.markets()[&BTC].stress;
+    assert_eq!((stress.floor, stress.floor_set_at), (0, None));
+    assert_eq!((stress.auto, stress.level), (2, 2));
+    assert!(!events.iter().any(|event| matches!(event, Event::StressChanged { market: BTC, .. })), "{events:?}");
+}
+
+#[test]
+fn the_automatic_triggers_reach_higher_levels_and_their_cooldown_lowers_them() {
+    let mut h = at(ProtocolVersion::V46);
+    let moved = top_level_on_a_move(&mut h);
     h.operator_admin(floor(Some(BTC), 1));
     let set = h.ts;
     h.price(BTC, "100000");
-    let moved = (100_000 + 100_000 * move_bps / 10_000 + 1).to_string();
     h.price(BTC, &moved);
     assert_eq!(h.engine.markets()[&BTC].stress.auto, 2);
     assert_eq!(level(&h, BTC), 2);

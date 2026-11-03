@@ -149,6 +149,7 @@ impl Engine {
                 if self.protocol_version >= ProtocolVersion::V35 {
                     self.check_priceable(spec)?;
                 }
+                self.check_held_benchmark(spec)?;
                 if let Some(params) = self.params.as_ref().filter(|_| self.protocol_version >= ProtocolVersion::V13) {
                     params.check_divergence_reachable(spec)?;
                 }

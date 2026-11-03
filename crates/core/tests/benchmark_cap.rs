@@ -5,8 +5,8 @@
 mod common;
 
 use chrono::{Duration, NaiveDate};
-use common::close_spread::{attest, ceilings, fund, install_expect, source_key, trade};
-use common::{BTC, Client, Harness, f};
+use common::close_spread::{attest, ceilings, fund, install_expect, reduce, rejected, source_key, trade};
+use common::{BTC, Client, ETH, Harness, f};
 use engine_core::Fixed;
 use engine_core::access::AccessPolicy;
 use engine_core::benchmark::{BenchmarkBatch, BenchmarkRate, split_by_cap};
@@ -308,6 +308,48 @@ fn a_rate_refused_for_long_enough_turns_the_observation_stale_without_stopping_f
     assert_eq!(charged.len(), 10);
     assert!(charged.windows(2).all(|pair| pair[0] == pair[1]), "{charged:?}");
     assert_eq!((stale.first(), stale.last()), (Some(&false), Some(&true)), "{stale:?}");
+}
+
+/// Lists `market` again on `benchmark`, as the operator signs it.
+fn moved_onto(h: &mut Harness, market: u32, benchmark: &str) -> Vec<Event> {
+    let mut spec = h.engine.markets()[&market].spec.clone();
+    spec.financing.benchmark = benchmark.into();
+    h.operate(AdminCommand::UpsertMarket(spec))
+}
+
+/// A first rate of 100% on a benchmark no market lists, and a long BTC position.
+fn fresh_benchmark_beside_a_position(h: &mut Harness) {
+    let first = AdminCommand::SetBenchmarkRate { benchmark: "FRESH".into(), annual_bps: 10_000 };
+    assert_eq!(h.operate(first).last(), Some(&Event::AdminApplied));
+    hold(h);
+}
+
+#[test]
+fn a_market_holding_positions_stays_on_its_benchmark() {
+    let mut h = capped();
+    assert!(signs(&mut h, &[(0, "0.04")]));
+    fresh_benchmark_beside_a_position(&mut h);
+
+    let events = moved_onto(&mut h, BTC, "FRESH");
+    assert_eq!(rejected(&events), format!("market {BTC} has open positions, so it stays on benchmark SOFR"));
+    assert_eq!(h.engine.markets()[&BTC].spec.financing.benchmark, "SOFR");
+
+    // Only the benchmark is held: the market can still be listed again on the one it has.
+    assert_eq!(moved_onto(&mut h, BTC, "SOFR").last(), Some(&Event::AdminApplied));
+
+    // A market with no positions moves, as it would list new, and BTC moves once its last one closes.
+    assert_eq!(moved_onto(&mut h, ETH, "FRESH").last(), Some(&Event::AdminApplied));
+    let events = reduce(&mut h, &Client::new(HOLDER), BTC, Side::Sell, "0.5", "100000");
+    assert!(events.iter().any(|event| matches!(event, Event::Fill(_))), "{events:?}");
+    assert_eq!(moved_onto(&mut h, BTC, "FRESH").last(), Some(&Event::AdminApplied));
+}
+
+#[test]
+fn a_market_holding_positions_moves_benchmark_before_v46() {
+    let mut h = at(ProtocolVersion::V45);
+    fresh_benchmark_beside_a_position(&mut h);
+    assert_eq!(moved_onto(&mut h, BTC, "FRESH").last(), Some(&Event::AdminApplied));
+    assert_eq!(h.engine.markets()[&BTC].spec.financing.benchmark, "FRESH");
 }
 
 #[test]

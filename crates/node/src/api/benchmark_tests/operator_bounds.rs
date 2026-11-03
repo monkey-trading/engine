@@ -210,6 +210,7 @@ endpoint = "{publisher}/estr"
     // 7. A restart and a public replay reach the same state.
     let node = start(&dir, lapsed, clock.clone()).await;
     assert_eq!(query(&node, |engine| engine.benchmark_history().clone()).await, history);
+    assert_eq!(query(&node, |engine| serde_json::to_value(&engine.markets()[&1].stress).unwrap()).await, market);
     node.stop().await;
     let replayed = replay(&log_entries(&dir)).unwrap();
     assert_eq!(*replayed.engine.benchmark_history(), history);

@@ -41,7 +41,8 @@ fn snapshot(h: &mut Harness, rates: &[(i64, &str)]) -> Vec<Event> {
 /// hours. A floor above level 1 is refused, in one market and in all, and one at level 1 applies; a
 /// floor set again restarts its time, and each lapses at its 72 hours. A benchmark's first rate is
 /// bound by its range alone, a move within the limit applies, a move past it refuses the whole
-/// snapshot, and a gap between dates scales the limit. A signed undated rate is held to the same cap.
+/// snapshot, and a gap between dates scales the limit. A signed undated rate is held to the same cap,
+/// and a market holding positions cannot be listed again on the new benchmark.
 pub(crate) fn session(h: &mut Harness) {
     // Levels only an operator's floor reaches, so a floor above level 1 names one that exists.
     let mut parameters = h.engine.params().expect("the session sets parameters").clone();
@@ -84,5 +85,10 @@ pub(crate) fn session(h: &mut Harness) {
 
     let undated = |annual_bps| AdminCommand::SetBenchmarkRate { benchmark: BENCHMARK.into(), annual_bps };
     let refused = h.operate_as(ELECTED_SEED, undated(5_000));
+    assert!(matches!(refused.last(), Some(Event::AdminRejected { .. })), "{refused:?}");
+
+    let mut relisted = h.engine.markets()[&BTC].spec.clone();
+    relisted.financing.benchmark = BENCHMARK.into();
+    let refused = h.operate_as(ELECTED_SEED, AdminCommand::UpsertMarket(relisted));
     assert!(matches!(refused.last(), Some(Event::AdminRejected { .. })), "{refused:?}");
 }

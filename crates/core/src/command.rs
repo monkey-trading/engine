@@ -228,7 +228,8 @@ pub enum AdminCommand {
     SetBenchmarkRates(BenchmarkBatch),
     /// The operator's stress floor for one market, or every market if
     /// `market` is `None`. The effective level is the higher of this and the
-    /// automatic level, so the operator can raise stress but never suppress it.
+    /// automatic level, so the operator can raise stress but never suppress it. From `V46` the level
+    /// is at most 1, and the floor lapses 72 hours after it is set.
     SetStressFloor {
         market: Option<MarketId>,
         level: usize,

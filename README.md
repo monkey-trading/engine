@@ -105,8 +105,10 @@ epoch closes, and the engine applies the elected key from the election's effecti
 seven days after it is logged. Rotation starts off, with the deployer as the only operator, until the
 governance timelock turns it on.
 Because stakers own the house NAV these powers move value towards, from protocol V46 a signed benchmark
-rate moves at most 300 bps a day from the applied rates next to its date, and the operator's stress
-floor is at most level 1 and lapses after 72 hours, leaving higher levels to the automatic triggers.
+rate moves at most 300 bps a day from the applied rates next to its date, a market holding positions
+stays on its benchmark, and the operator's stress floor is at most level 1 and lapses after 72 hours.
+V46 does not bound a market's financing markup, or the stress levels and triggers in the signed
+parameters, which still change at once.
 
 The reasoning behind each of these choices is recorded in the decision issues
 [#1](https://github.com/0xjevons/monkeytrading/issues/1) to

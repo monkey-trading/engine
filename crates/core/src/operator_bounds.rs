@@ -285,6 +285,24 @@ impl Engine {
         Ok(())
     }
 
+    /// From `V46`, checks a relisting leaves a market that holds positions on its benchmark: a first
+    /// rate is bound only by its range, so a new name would reach those positions past the cap. No
+    /// limit on the move would do, since fresh names walk any such limit within one second.
+    /// Error cases:
+    /// - a different benchmark, in a market that holds positions
+    pub(crate) fn check_held_benchmark(&self, spec: &MarketSpec) -> Result<(), String> {
+        let Some(market) = self.markets.get(&spec.id) else { return Ok(()) };
+        let current = &market.spec.financing.benchmark;
+        if self.protocol_version < ProtocolVersion::V46 || *current == spec.financing.benchmark {
+            return Ok(());
+        }
+        let holders = &self.hot_indexes.as_ref().expect("apply builds derived indexes").holders;
+        if holders.get(&spec.id).is_some_and(|accounts| !accounts.is_empty()) {
+            return Err(format!("market {} has open positions, so it stays on benchmark {current}", spec.id));
+        }
+        Ok(())
+    }
+
     fn require_bounds_protocol(&self, what: &str) -> Result<(), String> {
         if self.protocol_version < ProtocolVersion::V35 {
             return Err(format!("{what} needs protocol {:?}", ProtocolVersion::V35));

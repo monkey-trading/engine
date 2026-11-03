@@ -3,8 +3,9 @@
 //! the operator's floors. From `V17`, a market's move window survives a halt: prices observed
 //! within the window before the market closed still count after it reopens. From `V46` an operator's
 //! floor is at most `MAX_OPERATOR_STRESS_FLOOR` and lapses to the automatic level
-//! `STRESS_FLOOR_LAPSE_MS` of sequenced time after it is set, so only the automatic triggers reach
-//! the higher levels and hold them.
+//! `STRESS_FLOOR_LAPSE_MS` of sequenced time after it is set, so no floor reaches or holds the higher
+//! levels. A signed `SetParams` still rewrites the levels and their triggers at once, which `V46`
+//! does not bound.
 
 use std::collections::VecDeque;
 
