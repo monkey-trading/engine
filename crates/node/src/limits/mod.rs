@@ -40,6 +40,11 @@ const RETAIN_EVERY: Duration = Duration::from_secs(10);
 const ALERT_EVERY: Duration = Duration::from_secs(60);
 pub(crate) const SHARED_CAP_FULL: &str = "a cap every client shares is full; clients are being refused";
 
+/// Most quote reads, across all connections, queued at the sequencer at once. The sequencer runs the
+/// reads of a batch after its commands, so this bounds the time a command waits behind them to this
+/// many reads (`quotes::bench`).
+pub(crate) const QUOTE_READS_IN_FLIGHT: usize = 4;
+
 type KeyedLimiter<K, C> = RateLimiter<K, DashMapStateStore<K>, C, NoOpMiddleware<<C as Clock>::Instant>>;
 
 /// The limits checked per connection, per request, and per stream subscription.
@@ -64,6 +69,8 @@ pub struct ApiLimits<C: Clock = DefaultClock> {
     /// The least time between quote messages to one connection, and the most markets it may ask for.
     pub quote_interval: Duration,
     pub quote_max_markets: usize,
+    /// Permits for quote reads queued at the sequencer, shared by every connection.
+    quote_reads: Arc<Semaphore>,
     /// The browser origins `api.allowed_origins` lists.
     allowed_origins: BTreeSet<String>,
 }
@@ -130,8 +137,14 @@ impl<C: Clock + Clone> ApiLimits<C> {
             max_body_bytes: cfg.max_body_bytes.get(),
             quote_interval: cfg.quote_interval,
             quote_max_markets: cfg.quote_max_markets.get(),
+            quote_reads: Arc::new(Semaphore::new(QUOTE_READS_IN_FLIGHT)),
             allowed_origins: cfg.allowed_origins.iter().cloned().collect(),
         }
+    }
+
+    /// The permits a connection takes for each quote read it queues at the sequencer.
+    pub(crate) fn quote_reads(&self) -> Arc<Semaphore> {
+        self.quote_reads.clone()
     }
 
     /// Whether any browser origin is allowed.

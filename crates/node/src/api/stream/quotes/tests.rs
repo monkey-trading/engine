@@ -7,6 +7,7 @@ use engine_core::price::SourceQuote;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::Millis;
 use engine_core::{Engine, Fixed};
+use tokio::sync::Semaphore;
 use tokio::task::JoinHandle;
 use tokio::time::{advance, timeout};
 
@@ -15,36 +16,36 @@ use crate::test_support::dev_config;
 
 pub(super) const T0: Millis = 1_792_504_800_000;
 const BTC: MarketId = 1;
-const INTERVAL: Duration = Duration::from_millis(100);
+pub(super) const INTERVAL: Duration = Duration::from_millis(100);
 pub(super) const TRADER: AccountId = AccountId([7; 20]);
 /// An account with 150 USD.
 pub(super) const SMALL: AccountId = AccountId([8; 20]);
 
 /// A subscription over a stand-in sequencer that answers queries from an engine the test changes,
 /// and counts them.
-struct Rig {
-    quotes: Quotes,
+pub(super) struct Rig {
+    pub(super) quotes: Quotes,
     /// The channel's only strong sender, as the node's API state holds it.
-    tx: Option<mpsc::Sender<sequencer::Request>>,
-    sequencer: JoinHandle<()>,
+    pub(super) tx: Option<mpsc::Sender<sequencer::Request>>,
+    pub(super) sequencer: JoinHandle<()>,
     /// Closed, the stand-in sequencer holds each query until it opens.
-    open: watch::Sender<bool>,
-    inbox: watch::Sender<String>,
-    head: watch::Sender<Manifest>,
-    engine: Arc<Mutex<Engine>>,
-    queries: Arc<AtomicUsize>,
+    pub(super) open: watch::Sender<bool>,
+    pub(super) inbox: watch::Sender<String>,
+    pub(super) head: watch::Sender<Manifest>,
+    pub(super) engine: Arc<Mutex<Engine>>,
+    pub(super) queries: Arc<AtomicUsize>,
     /// Milliseconds the stand-in sequencer takes to answer a query.
-    latency: Arc<AtomicU64>,
-    seq: u64,
+    pub(super) latency: Arc<AtomicU64>,
+    pub(super) seq: u64,
 }
 
 impl Rig {
-    fn new() -> Self {
-        Self::at(Duration::ZERO)
+    pub(super) fn new() -> Self {
+        Self::sharing(Arc::new(Semaphore::new(crate::limits::QUOTE_READS_IN_FLIGHT)))
     }
 
-    /// A subscription that reads `phase` after it starts, and every interval after.
-    fn at(phase: Duration) -> Self {
+    /// A subscription whose reads take their permits from `reads`, as every connection's do.
+    pub(super) fn sharing(reads: Arc<Semaphore>) -> Self {
         let engine = Arc::new(Mutex::new(engine()));
         let queries = Arc::new(AtomicUsize::new(0));
         let (tx, mut rx) = mpsc::channel(4);
@@ -62,7 +63,7 @@ impl Rig {
         });
         let (inbox, requests) = watch::channel(String::new());
         let (head, manifest) = watch::channel(Manifest::default());
-        let quotes = Quotes::new(tx.downgrade(), manifest, requests, INTERVAL, 2, phase);
+        let quotes = Quotes::new(tx.downgrade(), manifest, requests, INTERVAL, 2, reads);
         Self { quotes, tx: Some(tx), sequencer, open, inbox, head, engine, queries, latency, seq: 0 }
     }
 
@@ -70,7 +71,7 @@ impl Rig {
         self.inbox.send_replace(text.to_owned());
     }
 
-    fn subscribe(&self, markets: &str) {
+    pub(super) fn subscribe(&self, markets: &str) {
         self.subscribe_as(TRADER, markets);
     }
 
@@ -79,7 +80,7 @@ impl Rig {
     }
 
     /// Changes the engine and moves the log head, as a sequenced command does.
-    fn sequence(&mut self, cmd: Command) {
+    pub(super) fn sequence(&mut self, cmd: Command) {
         let mut engine = self.engine.lock().unwrap();
         let seq = engine.last_seq().map_or(0, |seq| seq + 1);
         engine.apply(&Sequenced { seq, ts: T0 + seq as i64, cmd }).unwrap();
@@ -87,18 +88,18 @@ impl Rig {
         self.move_head();
     }
 
-    fn move_head(&mut self) {
+    pub(super) fn move_head(&mut self) {
         self.seq += 1;
         self.head.send_modify(|manifest| manifest.flushed = Some(Offset::start_of(self.seq)));
     }
 
     /// The messages the next poll yields, or none if it yields nothing within `wait`.
-    async fn within(&mut self, wait: Duration) -> Option<Vec<serde_json::Value>> {
+    pub(super) async fn within(&mut self, wait: Duration) -> Option<Vec<serde_json::Value>> {
         let texts = timeout(wait, self.quotes.next()).await.ok()?;
         Some(texts.iter().map(|text| serde_json::from_str(text).unwrap()).collect())
     }
 
-    fn queries(&self) -> usize {
+    pub(super) fn queries(&self) -> usize {
         self.queries.load(Ordering::SeqCst)
     }
 }
@@ -141,7 +142,7 @@ pub(super) fn engine_with(extra: u32) -> Engine {
     engine
 }
 
-fn prices(mid: i64) -> Command {
+pub(super) fn prices(mid: i64) -> Command {
     let quotes = ["a", "b"]
         .map(|source| SourceQuote { source: source.into(), mid: Fixed::from_int(mid), ts: T0, contract: None })
         .to_vec();
@@ -402,22 +403,6 @@ async fn a_refused_op_ends_the_subscription_before_it() {
     assert_eq!(rig.within(Duration::from_secs(5)).await, None);
 }
 
-#[tokio::test(start_paused = true)]
-async fn a_connection_reads_only_at_its_own_phase_of_the_interval() {
-    let mut rig = Rig::at(Duration::from_millis(30));
-    let began = tokio::time::Instant::now();
-    rig.subscribe("[1]");
-    assert_eq!(rig.within(Duration::from_millis(29)).await, None);
-    assert!(rig.within(Duration::from_millis(2)).await.is_some());
-    assert_eq!(began.elapsed(), Duration::from_millis(30));
-    // A change at 150 ms, past the gate, waits for the connection's next slot, 230 ms in.
-    advance(Duration::from_millis(120)).await;
-    rig.sequence(prices(101_000));
-    assert_eq!(rig.within(Duration::from_millis(79)).await, None);
-    assert!(rig.within(Duration::from_millis(2)).await.is_some());
-    assert_eq!(began.elapsed(), Duration::from_millis(230));
-}
-
 #[test]
 fn the_largest_size_search_keeps_a_known_size_nothing_larger_fits_and_finds_one_far_below_the_top() {
     let floor = Fixed::from_raw(100_000);
@@ -479,8 +464,8 @@ async fn a_full_sequencer_queue_leaves_the_read_for_the_next_interval() {
     poll_once(&mut rig).await;
     advance(Duration::from_millis(1)).await;
     assert_eq!(poll_once(&mut rig).await, 0, "the read does not retry in a loop");
-    // The next try waits for the next interval, not for the slot that just fired.
-    assert!(rig.quotes.next_read >= before + INTERVAL && rig.quotes.read_slot >= Some(before + INTERVAL));
+    // The next try waits for the next interval.
+    assert!(rig.quotes.next_read >= before + INTERVAL);
     // Once the queue drains, the read goes out and its quotes arrive.
     rig.open.send_replace(true);
     assert!(rig.within(Duration::from_secs(1)).await.is_some());

@@ -6,18 +6,25 @@
 //!
 //! The quotes are read from the engine on the sequencer's thread, one query per connection per
 //! interval, between batches of commands (`ladder`); the sequencer runs the queries gathered in a
-//! batch together after its commands. Nothing is read while the log head has
-//! not moved, since every input of a quote is a sequenced command's.
+//! batch together after its commands. Nothing is read while the log head has not moved, since every
+//! input of a quote is a sequenced command's. A connection whose last read began at least an interval
+//! ago reads as soon as the head moves, and one inside the interval when it ends. Many connections
+//! can react to one head move, so at most `QUOTE_READS_IN_FLIGHT` reads, across all connections,
+//! wait in the sequencer's queue at once: a connection past that waits its turn for a permit, which
+//! its query returns when it has run. That bounds the time prices wait behind quote reads.
 
 mod ladder;
 
 use std::collections::BTreeMap;
-use std::future::pending;
+use std::future::{Future, pending};
+use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
 use engine_core::types::{AccountId, MarketId};
+use futures_util::FutureExt;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch};
 use tokio::time::{Instant, sleep_until};
 use tracing::{debug, info};
 
@@ -57,6 +64,9 @@ enum Unquotable {
 
 type Reply = Result<Vec<MarketQuote>, Unquotable>;
 
+/// A claim on one of the reads that may be in the sequencer's queue; the semaphore is never closed.
+type Turn = Pin<Box<dyn Future<Output = OwnedSemaphorePermit> + Send>>;
+
 /// One connection's quote subscription.
 pub(super) struct Quotes {
     /// Weak, so an open stream does not keep the sequencer's channel open at shutdown.
@@ -70,13 +80,14 @@ pub(super) struct Quotes {
     /// The earliest the next message may be sent: an interval after the last one, so messages are
     /// at least an interval apart.
     gate: Instant,
-    /// The earliest the next read may start: an interval after the slot the last one started at, so
-    /// a changing index is read every interval, whatever the replies take.
+    /// The earliest the next read may start: an interval after the last one was queued, so a
+    /// changing index is read every interval, whatever the replies take.
     next_read: Instant,
-    /// The instant the connection's slots count from: reads start only at whole intervals after it.
-    anchor: Instant,
-    /// The slot the read that has fallen due waits for.
-    read_slot: Option<Instant>,
+    /// The reads that may be queued at the sequencer at once, shared by every connection.
+    reads: Arc<Semaphore>,
+    /// The connection's place in line for a read, once its read is due and the interval has passed;
+    /// kept across polls, so a poll that is dropped does not send it to the back.
+    turn: Option<Turn>,
     /// The log head the last read started at; `None` for a subscription not yet read.
     read_at: Option<Option<Offset>>,
     in_flight: Option<oneshot::Receiver<Reply>>,
@@ -90,14 +101,14 @@ pub(super) struct Quotes {
 
 impl Quotes {
     /// A subscription source for a connection whose client messages arrive on `inbox`, reading at
-    /// the instants `phase` after the connection's start, and every `interval` after.
+    /// most once per `interval` and only when `reads` has a permit.
     pub(super) fn new(
         tx: mpsc::WeakSender<sequencer::Request>,
         manifest: watch::Receiver<Manifest>,
         inbox: watch::Receiver<String>,
         interval: Duration,
         max_markets: usize,
-        phase: Duration,
+        reads: Arc<Semaphore>,
     ) -> Self {
         let now = Instant::now();
         Self {
@@ -109,8 +120,8 @@ impl Quotes {
             subscription: None,
             gate: now,
             next_read: now,
-            anchor: now + phase,
-            read_slot: None,
+            reads,
+            turn: None,
             read_at: None,
             in_flight: None,
             sent: BTreeMap::new(),
@@ -129,15 +140,9 @@ impl Quotes {
             let reading = self.subscription.is_some() && self.in_flight.is_none();
             let head = self.manifest.borrow().flushed;
             let due = reading && self.read_at != Some(head);
-            // The slot is fixed when a read falls due and kept across polls, so a poll that is dropped
-            // and made again, as the feed's messages do, cannot push the read to a later slot.
-            let slot = if due {
-                let wanted = self.slot(self.next_read.max(Instant::now()));
-                *self.read_slot.get_or_insert(wanted)
-            } else {
-                self.read_slot = None;
-                self.next_read
-            };
+            if !due {
+                self.turn = None;
+            }
             tokio::select! {
                 changed = self.inbox.changed() => {
                     if changed.is_err() {
@@ -151,7 +156,16 @@ impl Quotes {
                     self.receive(reply);
                 }
                 () = sleep_until(self.gate), if self.refusal.is_some() || !self.held.is_empty() => {}
-                () = sleep_until(slot), if due => self.read(head, slot),
+                () = sleep_until(self.next_read), if due && self.turn.is_none() => {
+                    self.turn = Some(Box::pin(self.reads.clone().acquire_owned().map(|permit| {
+                        permit.expect("the quote read semaphore is never closed")
+                    })));
+                }
+                permit = waiting(&mut self.turn) => {
+                    // The head may have moved again while waiting; the read is of the latest.
+                    let head = self.manifest.borrow().flushed;
+                    self.read(head, permit);
+                }
                 changed = self.manifest.changed(), if reading && !due => {
                     // The log has stopped, and the stream ends with it.
                     if changed.is_err() {
@@ -178,14 +192,6 @@ impl Quotes {
         Some(messages)
     }
 
-    /// The first instant at or after `from` that is a whole interval from the connection's anchor.
-    fn slot(&self, from: Instant) -> Instant {
-        let interval = self.interval.as_nanos().max(1);
-        let since = from.saturating_duration_since(self.anchor).as_nanos();
-        let slots = u64::try_from(since.div_ceil(interval) * interval).expect("a slot is within centuries");
-        self.anchor + Duration::from_nanos(slots)
-    }
-
     /// Replaces the subscription with what `text` asks for, dropping the read in flight for the one
     /// before it. A request the node cannot serve ends the subscription and waits to be refused.
     /// Error cases:
@@ -193,6 +199,7 @@ impl Quotes {
     fn subscribe(&mut self, text: &str) {
         self.subscription = None;
         self.in_flight = None;
+        self.turn = None;
         self.sent.clear();
         self.held.clear();
         self.read_at = None;
@@ -215,9 +222,9 @@ impl Quotes {
         self.refusal = Some(refusal(error));
     }
 
-    /// Asks the sequencer for the subscription's quotes. A full queue leaves the read for the next
-    /// interval.
-    fn read(&mut self, head: Option<Offset>, slot: Instant) {
+    /// Asks the sequencer for the subscription's quotes, the query holding `permit` until it has run.
+    /// A full queue leaves the read for the next interval.
+    fn read(&mut self, head: Option<Offset>, permit: OwnedSemaphorePermit) {
         let Some((account, markets)) = self.subscription.clone() else { return };
         let Some(tx) = self.tx.upgrade() else {
             // The sequencer is stopping, and the stream ends with it.
@@ -226,17 +233,15 @@ impl Quotes {
         };
         let (reply, rx) = oneshot::channel();
         let query = Box::new(move |engine: &engine_core::Engine| {
+            let _permit = permit;
             let _ = reply.send(read(engine, account, &markets));
         });
         match tx.try_send(sequencer::Request::Query(query)) {
             Ok(()) => {
                 (self.in_flight, self.read_at) = (Some(rx), Some(head));
-                self.next_read = slot + self.interval;
-            }
-            Err(mpsc::error::TrySendError::Full(_)) => {
                 self.next_read = Instant::now() + self.interval;
-                self.read_slot = None;
             }
+            Err(mpsc::error::TrySendError::Full(_)) => self.next_read = Instant::now() + self.interval,
             Err(mpsc::error::TrySendError::Closed(_)) => self.subscription = None,
         }
     }
@@ -284,6 +289,18 @@ fn refusal(error: String) -> String {
     serde_json::to_string(&QuoteError { error }).expect("a refusal encodes")
 }
 
+/// The permit for the read waiting its turn once it has one; never, with none.
+async fn waiting(turn: &mut Option<Turn>) -> OwnedSemaphorePermit {
+    match turn {
+        Some(waiting) => {
+            let permit = waiting.await;
+            *turn = None;
+            permit
+        }
+        None => pending().await,
+    }
+}
+
 /// The reply to the read in flight; never, with none.
 async fn in_flight(read: &mut Option<oneshot::Receiver<Reply>>) -> Result<Reply, oneshot::error::RecvError> {
     match read {
@@ -298,5 +315,7 @@ mod api_tests;
 mod bench;
 #[cfg(test)]
 mod ladder_tests;
+#[cfg(test)]
+mod pacing_tests;
 #[cfg(test)]
 mod tests;

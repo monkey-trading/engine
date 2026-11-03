@@ -62,7 +62,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   definitions
 - Executable quotes: a `signed=1` stream connection can ask for an account's quotes in up to
   `api.quote_max_markets` markets, and gets them again when one changes, at most every
-  `api.quote_interval` (at least 100 ms)
+  `api.quote_interval` (at least 100 ms), the first one as soon as the log head moves
 - Orders, cancels, and withdrawals signed by the account (EIP-712), checked before they are
   sequenced; from `V41`, a session key the account registered at `/v1/session-keys` signs its
   orders, cancels, and (from `V44`) cancel-all and close-all requests on the key's own nonce sequence, while withdrawals keep requiring the account
@@ -1355,8 +1355,9 @@ sending it again replaces the subscription, and an empty `markets` ends it) and 
 frames, one message per market,
 `{"type":"quote","market":1,"open":true,"reduce_only":false,"stress_level":0,"mark":"…","ask":[…],"bid":[…],"close":{…}|null}`,
 and again for each market whose message changed. The node reads the engine only after the log head
-has moved, once per `api.quote_interval` while it keeps moving, and sends no sooner than that after
-its last quote message on the connection. `ask` is what a buy pays and `bid` what a sell receives: a list of `{"qty","price"}`
+has moved: at once when the connection's last read began at least `api.quote_interval` ago, and
+otherwise when that interval ends, so a connection reads at most once per interval while the head keeps
+moving. It sends no sooner than an interval after its last quote message on the connection. `ask` is what a buy pays and `bid` what a sell receives: a list of `{"qty","price"}`
 steps by size, one for the top of each spread tier as the account would reach it, then, between the
 last tier top the account can open and the first it cannot, and in the unbounded last tier, one
 at the largest order it can open (its margin and the house's exposure caps limit it). A step the
@@ -1384,9 +1385,10 @@ screening whatever its quote. A request the node cannot serve, such as an uncred
 unknown market, or too many markets, gets `{"type":"quote_error","error":"…"}` and no subscription, at most one such message per
 `api.quote_interval`.
 Without `signed=1`, what a connection sends is dropped. Each read runs on the sequencer's thread
-between batches, at an instant of its own connection's phase of the interval so that the reads of
-many connections spread out; `api/stream/quotes/bench.rs` measures them against the command latency
-budget.
+between batches. Many connections react to one head move, so at most four reads (across all
+connections) wait in the sequencer's queue at once, and a connection past that waits its turn: a
+command waits behind at most four reads. `api/stream/quotes/bench.rs` measures the reads against the
+command latency budget, and the time from a head move to each connection's quote.
 
 `GET /v1/attestation/collateral` returns `vcek`, `intermediate`, `root`, and `crl` as `0x` hex DER,
 and `fetched_at` in Unix milliseconds by the host's clock, for a client that cannot call the

@@ -71,7 +71,7 @@ async fn a_signed_connection_streams_verified_quotes_that_fill_at_their_price_un
     // An order of the step's whole size at its price with no slippage allowed fills at or below it.
     let events = node.submit(order(Side::Buy, qty, price, 0)).await;
     let fill = events.iter().find_map(|event| if let Event::Fill(fill) = event { Some(fill) } else { None });
-    assert!(fill.expect("the order fills").price <= price, "{events:?}");
+    assert!(fill.unwrap_or_else(|| panic!("the order fills: {events:?}")).price <= price, "{events:?}");
     // The position moved, so the quotes are sent again.
     let after = next_quote(&mut ws, &mut verifier).await;
     assert_ne!(after["ask"], quote["ask"]);
