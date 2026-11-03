@@ -36,7 +36,7 @@ from pathlib import Path
 
 import numpy as np
 
-from catalogue import launch_markets, planned_crypto_tiers
+from catalogue import PLANNED_CRYPTO_TIERS, PREVIOUS_CRYPTO_TIERS, launch_markets
 
 OPEN = "0x88451ea1189f73b554f0bf39c09868560ed149b3d788fcc933ff66ba926827f3"
 CLOSE = "0x87902ed2451849f465fc4d36a01d7f5c67b53af12f63ee85d2814a2d582f89bf"
@@ -341,11 +341,11 @@ def flow_profile(pos: dict, hold_h: np.ndarray, hedged: np.ndarray, sample: np.n
 
 
 def launch_schedules() -> list[list[dict]]:
-    """The launch markets' distinct margin band schedules, and the planned crypto one."""
+    """The launch markets' distinct margin band schedules, and the planned crypto ones."""
     from model.flow import schedule_key
 
     markets = launch_markets()
-    tiers = [m["margin_tiers"] for m in markets] + [planned_crypto_tiers(markets)]
+    tiers = [m["margin_tiers"] for m in markets] + [PLANNED_CRYPTO_TIERS, PREVIOUS_CRYPTO_TIERS]
     return list({schedule_key(t): t for t in tiers}.values())
 
 

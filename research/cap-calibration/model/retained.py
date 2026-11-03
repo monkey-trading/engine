@@ -20,9 +20,9 @@ from dataclasses import replace
 import numpy as np
 
 from model import experiments, simulate
-from catalogue import load_genesis, planned_crypto_tiers
+from catalogue import PLANNED_CRYPTO_TIERS, PREVIOUS_CRYPTO_TIERS, load_genesis
 from model.flow import with_schedule
-from model.expansion import expand, planned_crypto, require_profiles
+from model.expansion import expand, require_profiles, with_crypto_bands
 
 TARGET = 0.01
 REFUSAL_LIMIT = 0.01
@@ -32,12 +32,17 @@ GRID_LOW, GRID_HIGH = 4e6, 3e9
 BASE_CLASS_WEIGHTS = {"equity": 1.0}
 BASE_SHARED = 0.7
 
-# name -> (scenario changes, expansion changes). The baseline is the planned margin on BTC-USD and
-# ETH-USD (1%, `catalogue.PLANNED_CRYPTO_FIRST_TIER_BPS`), and clones that are equity markets
+CRYPTO_BANDS = {"planned": PLANNED_CRYPTO_TIERS, "previous": PREVIOUS_CRYPTO_TIERS, "genesis": None}
+PREVIOUS = "crypto bands 1% to $1M, 20% above"
+GENESIS = "crypto margin 10% (genesis)"
+
+# name -> (scenario changes, expansion changes). The baseline is the planned bands on BTC-USD and
+# ETH-USD (`catalogue.PLANNED_CRYPTO_TIERS`), and clones that are equity markets
 # correlated 0.7 with their template, each as busy as it, with a sweep every hour.
 VARIANTS = {
     "baseline": ({}, {}),
-    "crypto margin 10% (genesis)": ({}, {"planned_crypto_margin": False}),
+    PREVIOUS: ({}, {"crypto_bands": "previous"}),
+    GENESIS: ({}, {"crypto_bands": "genesis"}),
     "no farming": ({"hedged_scale": 0.0}, {}),
     "farming x2": ({"hedged_scale": 2.0}, {}),
     "vol x1.5": ({"vol_scale": 1.5}, {}),
@@ -81,11 +86,10 @@ def batch_paths(n: int) -> int:
 
 def plan() -> list[tuple[str, int, int]]:
     """(variant, market count, paths) for the whole stage, in run order."""
-    compare = "crypto margin 10% (genesis)"
     runs = [("baseline", n, paths) for n, paths in HEADLINE_PATHS.items()]
-    runs += [(compare, n, paths) for n, paths in COMPARISON_PATHS.items()]
+    runs += [(v, n, paths) for v in (PREVIOUS, GENESIS) for n, paths in COMPARISON_PATHS.items()]
     for n, paths in SENSITIVITY_PATHS.items():
-        runs += [(v, n, paths) for v in VARIANTS if v not in ("baseline", compare)]
+        runs += [(v, n, paths) for v in VARIANTS if v not in ("baseline", PREVIOUS, GENESIS)]
     runs += [(v, n, paths) for v in SCALING_VARIANTS for n, paths in SCALING_PATHS.items()]
     first = {}
     for v, n, paths in runs:
@@ -103,12 +107,13 @@ def run_variant(scenario, markets, bars, flow, classes, listed, n: int, variant:
     the first that many paths)."""
     changes, expansion = VARIANTS[variant]
     scenario = replace(scenario, name=f"{variant} {n}", paths=paths, batch_paths=batch_paths(n), **({"sweep_epoch_h": 1} | changes))
-    spec = {"class_weights": BASE_CLASS_WEIGHTS, "shared": BASE_SHARED, "planned_crypto_margin": True} | expansion
-    if spec.pop("planned_crypto_margin"):
+    spec = {"class_weights": BASE_CLASS_WEIGHTS, "shared": BASE_SHARED, "crypto_bands": "planned"} | expansion
+    tiers = CRYPTO_BANDS[spec.pop("crypto_bands")]
+    if tiers is not None:
         genesis = load_genesis()["markets"]
-        markets = planned_crypto(markets, genesis)
-        source = next(m["margin_tiers"] for m in genesis if m["margin_tiers"][0]["bps"] == planned_crypto_tiers(genesis)[0]["bps"])
-        flow = with_schedule(flow, source, planned_crypto_tiers(genesis))
+        markets = with_crypto_bands(markets, tiers)
+        source = next(m["margin_tiers"] for m in genesis if m["margin_tiers"][0]["bps"] == tiers[0]["bps"])
+        flow = with_schedule(flow, source, tiers)
     require_profiles(markets, flow)
     m, b = expand(markets, bars, classes, listed, n, **spec)
     floors = np.zeros((len(grid), n))

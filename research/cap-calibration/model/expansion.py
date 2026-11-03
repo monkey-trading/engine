@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-from catalogue import PLANNED_CRYPTO_SYMBOLS, planned_crypto_tiers
+from catalogue import PLANNED_CRYPTO_SYMBOLS
 from model.flow import Flow, schedule_key
 from model.simulate import KINDS, Markets
 
@@ -106,11 +106,10 @@ def expand(
     return out, np.concatenate([bars, bars[:, markets.columns[index]]], axis=1)
 
 
-def planned_crypto(markets: Markets, genesis_markets: list[dict]) -> Markets:
-    """The launch markets with BTC-USD and ETH-USD on the planned margin bands
-    (`catalogue.planned_crypto_tiers`): the maximum leverage, the close-out trigger and the
-    flow's notional per margin follow, as do the sizes the caps are tested against."""
-    tiers = planned_crypto_tiers(genesis_markets)
+def with_crypto_bands(markets: Markets, tiers: list[dict]) -> Markets:
+    """The launch markets with BTC-USD and ETH-USD on the margin bands `tiers`: the maximum
+    leverage, the close-out trigger and the flow's notional per margin follow, as do the sizes the
+    caps are tested against."""
     rate = np.array(markets.margin_rate)
     schedule = list(markets.schedule)
     for symbol in PLANNED_CRYPTO_SYMBOLS:

@@ -115,14 +115,9 @@ def launch_markets(path: Path = GENESIS) -> list[dict]:
     return [dict(m, series=SERIES[m["symbol"]]) for m in markets]
 
 
-# The owner's planned margin for BTC-USD and ETH-USD: this first-tier rate up to the same
-# notional as today's first tier, then the rates above it unchanged (SOL-USD keeps the genesis
-# bands). Not yet in the production genesis; the retained-NAV study runs both.
+# The owner's planned margin bands for BTC-USD and ETH-USD (#520): 1% to $2M of notional, 2% to
+# $10M, 5% above. SOL-USD keeps the genesis bands. Not yet in the production genesis; the
+# retained-NAV study runs the planned bands, the plan before them, and the genesis bands.
 PLANNED_CRYPTO_SYMBOLS = ("BTC-USD", "ETH-USD")
-PLANNED_CRYPTO_FIRST_TIER_BPS = 100
-
-
-def planned_crypto_tiers(markets: list[dict]) -> list[dict]:
-    """BTC-USD's genesis margin bands with the first tier at the planned rate."""
-    tiers = next(m["margin_tiers"] for m in markets if m["symbol"] == PLANNED_CRYPTO_SYMBOLS[0])
-    return [dict(tiers[0], bps=PLANNED_CRYPTO_FIRST_TIER_BPS), *tiers[1:]]
+PLANNED_CRYPTO_TIERS = [{"up_to": "2000000", "bps": 100}, {"up_to": "10000000", "bps": 200}, {"bps": 500}]
+PREVIOUS_CRYPTO_TIERS = [{"up_to": "1000000", "bps": 100}, {"bps": 2000}]  # the plan #520 replaced

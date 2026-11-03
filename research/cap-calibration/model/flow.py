@@ -74,7 +74,8 @@ def with_schedule(flow: Flow, source: list[dict], tiers: list[dict]) -> Flow:
     `source` is at most the first bound of `tiers` keeps it. A larger one is taken to be bound
     by its bands, not by its own leverage: its margin is what buys that notional on `source`, and
     its notional on `tiers` is what that margin buys there. The leverage profile scales the two
-    higher bins by one factor, so the margin-weighted notional per margin falls as the sizes' does.
+    higher bins by one factor, so the notional per margin changes as the sizes' does, up to the
+    maximum leverage.
     The exact profile needs the papertrade positions (`derive-papertrade` with the bands among the
     launch schedules), and replaces this when present."""
     key, src_key = schedule_key(tiers), schedule_key(source)
@@ -90,14 +91,18 @@ def with_schedule(flow: Flow, source: list[dict], tiers: list[dict]) -> Flow:
         bounds, shares = flow.sizes[(kind, "capped", src_key)]
         moved = np.where(bounds <= keep_below, bounds, banded_notional(margin_for_notional(bounds, source), tiers))
         sizes[(kind, "capped", key)] = (np.maximum.accumulate(moved), shares)
-        mass = np.diff(shares, prepend=0.0)
-        before, after = float((mass * bounds).sum()), float((mass * np.maximum.accumulate(moved)).sum())
+        moved = np.maximum.accumulate(moved)
+        # Each size cell's notional is its margin share times the notional its margin buys on the
+        # source bands; the profile scales by how much that notional changes on `tiers`.
+        buys = bounds / np.maximum(margin_for_notional(bounds, source), 1e-12)
+        notional = np.diff(shares, prepend=0.0) * buys
+        change = float((notional * moved / bounds).sum() / notional.sum())
         ratio = leverage[(kind, "capped", src_key)].copy()
         by_bin = np.array([sum(c.margin_share for c in flow.classes if c.kind == kind and c.bucket == b) for b in range(len(ratio))])
         total = float((by_bin * ratio).sum())
         low = by_bin[0] * ratio[0]
-        scale = (total * after / before - low) / (total - low) if total > low else 1.0
-        ratio[1:] *= scale
+        scale = (total * change - low) / (total - low) if total > low else 1.0
+        ratio[1:] = np.minimum(ratio[1:] * scale, 1e4 / tiers[0]["bps"])  # no more than the maximum leverage
         leverage[(kind, "capped", key)] = ratio
     return replace(flow, sizes=sizes, leverage=leverage)
 
