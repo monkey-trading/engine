@@ -95,6 +95,17 @@ impl KeySet {
         })
     }
 
+    /// A set holding `key` as the signing key, with a fresh TLS key: tests that replay a log the
+    /// shared test key sealed a checkpoint under seal it, so a node's sealed keys open as that key.
+    /// Error cases:
+    /// - the TLS key cannot be generated
+    #[cfg(test)]
+    pub(crate) fn for_key(key: &EnclaveKey) -> anyhow::Result<Self> {
+        let mut set = Self::generate()?;
+        set.signing_key = hex::encode(key.key.to_bytes());
+        Ok(set)
+    }
+
     /// The signing key.
     /// Error cases:
     /// - the secret is not 32 bytes of hex or not a valid secp256k1 scalar

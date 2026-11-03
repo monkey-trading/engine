@@ -425,3 +425,19 @@ async fn the_status_read_reports_what_the_enclave_attests_and_delivers_nothing()
     status(&enclave.cfg, &peer(&enclave.address, manifest("tool-status-2", RELEASE, CONFIG))).await.unwrap();
     assert_eq!(enclave.store.version(), Some(9));
 }
+
+// `--allow-mock` answers a mock enclave's quote, which proves nothing; a production build refuses
+// it before anything is read or connected. Runs only in the production-feature lane, like the
+// node's other production refusals.
+#[cfg(feature = "production")]
+#[tokio::test]
+async fn a_production_build_refuses_allow_mock_before_it_reads_or_connects() {
+    let cfg: NodeConfig = toml::from_str(&std::fs::read_to_string(crate::test_support::DEV_CONFIG).unwrap()).unwrap();
+    let args =
+        PeerArgs { to: "127.0.0.1:1".into(), release: PathBuf::from("release.toml"), root: None, allow_mock: true };
+    let err = match connect(&cfg, &args).await {
+        Ok(_) => panic!("a production build took --allow-mock"),
+        Err(err) => err,
+    };
+    assert!(format!("{err:#}").contains("--allow-mock is refused in a production build"), "{err:#}");
+}

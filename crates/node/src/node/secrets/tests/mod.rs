@@ -16,6 +16,8 @@ use crate::tee::sealing::{MockSealer, Sealer};
 use crate::tee::secrets::file_for;
 use crate::trusted_time::tests::logs::Logs;
 
+mod wiring;
+
 /// How long a test waits for what must happen; a hold is checked over a shorter wait.
 const WAIT: Duration = Duration::from_secs(30);
 const HOLDING: Duration = Duration::from_millis(300);
@@ -59,6 +61,17 @@ fn spawn_startup(mut cfg: NodeConfig) -> JoinHandle<Started> {
 
 /// Delivers `bundle` to the listener at `address`, retrying until it is bound.
 async fn deliver(cfg: &NodeConfig, address: &str, bundle: crate::secrets::Bundle) -> Reply {
+    deliver_signed(cfg, address, bundle, &operator_key()).await
+}
+
+/// `deliver`, with the bundle signed by `key`: whose key the listener takes is itself the behaviour
+/// under test.
+async fn deliver_signed(
+    cfg: &NodeConfig,
+    address: &str,
+    bundle: crate::secrets::Bundle,
+    key: &k256::ecdsa::SigningKey,
+) -> Reply {
     let mut stream = timeout(WAIT, async {
         loop {
             match TcpStream::connect(address).await {
@@ -75,7 +88,7 @@ async fn deliver(cfg: &NodeConfig, address: &str, bundle: crate::secrets::Bundle
     let domain = domain_of(cfg);
     let public_key = hex::decode(&offer.public_key).unwrap();
     let release = crate::tee::sealing::Release { launch_digest: RELEASE, config_sha256: CONFIG };
-    let signed = bundle.sign(domain, &operator_key());
+    let signed = bundle.sign(domain, key);
     let message = delivery::encrypt(domain, &release, &public_key, &nonce, &signed).unwrap();
     send(&mut stream, &message).await.unwrap();
     receive(&mut stream).await.unwrap()

@@ -203,7 +203,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   written
 - `src/node/secrets.rs` — this start's delivered secrets: opening the sealed bundle, asking a
   predecessor, holding for what the node cannot run without, setting the rest into the config and
-  the alert routes, and `secret_missing`; `src/node/secrets/tests.rs` covers each
+  the alert routes, and `secret_missing`; `src/node/secrets/tests/` covers each, and
+  `src/node/secrets/tests/wiring.rs` drives `run_with_cpu` over a log that recorded a rotated
+  operator: the listener refuses the configured key and takes the recorded one
 - `src/node/registration.rs` — serving only the attestation until the vault names the key
 - `src/node/shutdown.rs` — supervising the tasks until one stops, a signal arrives, or a handover
   stops sequencing, which commits only once the sequencer admits its final checkpoint; then ending
