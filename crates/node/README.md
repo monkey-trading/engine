@@ -177,8 +177,16 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/standby/mod.rs` — the standby: following the operator in effect's signed stream into a local
   copy of the published log, the archive bootstrap and refresh, the takeover's promotion watch, and
   finalizing the copy at the vault's latest checkpoint
+- `src/standby/chain.rs` — whether the operator's stream extends the copy: a resumed stream repeats
+  the copy's last command exactly, each later command carries the enclave's seal over the link that
+  continues the copy, and a signed heartbeat never names a head behind it; otherwise the copy takes
+  nothing more and the standby raises `operator_log_rollback`
+- `src/standby/chain/tests.rs` — against a real sequencer's log, an operator that carries on extends
+  the copy, one cut back and restarted is caught at the first entry or heartbeat that shows it, and
+  an entry or archive segment that does not chain leaves the copy as it was
 - `src/standby/tests.rs` — copy appends that verify frames and refuse a wrong signer, truncation at
-  the resume checkpoint, and stream resumption after the last offset
+  the resume checkpoint, stream resumption at the copy's last command, and a follow that stops at a
+  cut-back operator or a heartbeat behind the copy with the copy unchanged
 - `src/node/mod.rs` — startup, task supervision, and shutdown
 - `src/node/ticker.rs` — the `Tick` command at `node.tick`, so sessions and rollovers fire without traffic
 - `src/node/keys.rs` — this start's enclave keys and their attestation, and the check that the log

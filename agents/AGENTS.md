@@ -128,6 +128,8 @@ an index: load only the rule whose hint matches the current action.
   registry's rotation switches and elections in the same proven blocks, `custody/registry.rs`), the
   standby (`standby/`: a `--standby` node follows the operator in effect's signed stream into a
   segment-for-segment copy, backfilled from the public archive and the archive mirrors #48 sets up,
+  taking only entries whose command seals continue the copy and raising `operator_log_rollback`, with
+  the copy left as it is, when the operator's log no longer holds it (`standby/chain.rs`),
   and takes over when the registry's liveness rule promotes its candidate: it finalizes the copy at
   the latest checkpoint the vault accepted, drops the unsigned tail, and exits for a `--new-key`
   start, which serves only its attestation until the timelock installs the registered enclave;

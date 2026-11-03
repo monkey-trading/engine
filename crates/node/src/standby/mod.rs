@@ -10,6 +10,13 @@
 //! checked against its manifest, and every checkpoint in them against the engine's replay when
 //! the standby resumes.
 //!
+//! The copy takes only history that extends it (`chain`): each stream resumes at the copy's last
+//! command, which the operator must repeat exactly, and each later command must carry the enclave's
+//! seal over the link that continues the copy. An operator whose host cut its log back and
+//! restarted it fails that check at the first entry, or signed heartbeat, that shows it. The
+//! standby then raises `operator_log_rollback`, appends nothing more, and keeps its copy as the
+//! source for restoring what the operator lost.
+//!
 //! A takeover starts when the registry's pending election names this node's admin key and the
 //! vault has had no checkpoint for the liveness timeout (a normal election, the incumbent still
 //! checkpointing, hands the keys over instead — #44). The standby then finalizes its copy: it
@@ -33,9 +40,13 @@ use tracing::{error, info, warn};
 use crate::checkpoints::Takeover;
 
 pub(crate) mod archive;
+mod chain;
+use chain::{Chain, Step, rollback_of};
 
 use crate::config::{CustodyProvider, NodeConfig, StandbySection};
-use crate::log::{LogEntry, LogWriter, MANIFEST, Manifest, Offset, SegmentedLog, offset_of, truncate_to_checkpoint};
+use crate::log::{
+    CheckpointDomain, LogEntry, LogWriter, MANIFEST, Manifest, Offset, SegmentedLog, truncate_to_checkpoint,
+};
 use crate::telemetry::Telemetry;
 
 /// How long one follow stint runs before the standby re-checks the chain for its promotion: the
@@ -49,6 +60,12 @@ pub(super) const MAX_ARCHIVE_LISTINGS: usize = 65_536;
 pub(super) const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long one archive body may take end to end.
 pub(super) const BODY_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// What a signed heartbeat names: the operator's flushed log head, or `None` before its first entry.
+#[derive(serde::Deserialize)]
+struct Heartbeat {
+    head: Option<Offset>,
+}
 
 /// Runs the standby until the registry promotes this node's candidate, then finalizes the copy
 /// and returns for a normal `--new-key` start.
@@ -79,8 +96,8 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
     let my_key: AccountId = cfg.operator()?.address;
     let chain = crate::handover::vault_reader(cfg)?.context("standby mode needs [checkpoints]")?;
     let archive = archive::archive_client(standby.danger_accept_invalid_certs)?;
-    // A cold start backfills completed segments from the archive; a restart resumes the stream
-    // after its own last entry, which backfills anything in between.
+    // A cold start backfills completed segments from the archive; a restart resumes the stream at
+    // its own last command, which backfills anything after it.
     let dir = cfg.node.log_dir.as_path();
     if !dir.join(MANIFEST).exists() {
         archive::bootstrap_archive(&archive, &origins(standby), dir).await?;
@@ -91,16 +108,20 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
             warn!("the backfilled copy does not replay: {e:#}");
         }
     }
-    let mut writer = open_copy(dir, cfg.node.segment_commands.max(1))?;
+    let domain =
+        CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse().context("custody.vault")? };
+    let (mut writer, mut copied) =
+        open_copy(dir, cfg.node.segment_commands.max(1), Chain::new(domain, standby.enclave))?;
     info!(operator = %standby.operator, enclave = %standby.enclave, "standby following the operator in effect");
     let mut follow_failed = false;
     let mut signal_failed = false;
+    let mut rolled_back = false;
     loop {
         match chain.takeover(my_key).await {
             Ok(Some(takeover)) => {
                 writer.flush().context("flushing the copy before the takeover")?;
                 drop(writer);
-                if let Err(e) = finalize(&archive, standby, dir, &takeover).await {
+                if let Err(e) = finalize(&archive, standby, dir, &takeover, copied).await {
                     error!(alert = "standby_takeover_failed", "the takeover could not finalize: {e:#}");
                     return Err(e);
                 }
@@ -128,10 +149,11 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
                 sleep(standby.poll_interval).await;
             }
         }
-        // The writer's last entry is the resume point, so an error mid-stint never duplicates
+        // The copy's last command is the resume point, so an error mid-stint never duplicates
         // appends: the next stint re-requests from it.
-        let resume = writer.last_offset();
-        if let Err(e) = follow(&mut writer, cfg, standby, resume, STINT).await {
+        let followed = follow(&mut writer, &mut copied, cfg, standby, STINT).await;
+        let rollback = followed.as_ref().err().and_then(rollback_of);
+        if let (Err(e), None) = (&followed, rollback) {
             if !follow_failed {
                 error!(alert = "standby_follow_failed", operator = %standby.operator, "following failed: {e:#}");
             }
@@ -139,9 +161,28 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
             // A dead operator refuses connections at once; the poll interval bounds the retry
             // rate for as long as the liveness window lasts.
             sleep(standby.poll_interval).await;
-        } else if follow_failed {
-            info!(alert_resolved = "standby_follow_failed", "following works again");
-            follow_failed = false;
+            continue;
+        }
+        // The stream itself worked: what it carried is another matter.
+        if std::mem::take(&mut follow_failed) {
+            info!(alert_resolved = "standby_follow_failed", operator = %standby.operator, "following works again");
+        }
+        if let Some(rollback) = rollback {
+            if !std::mem::replace(&mut rolled_back, true) {
+                error!(
+                    alert = "operator_log_rollback",
+                    operator = %standby.operator,
+                    "{rollback}; the copy takes nothing more and is kept as the source to restore it from"
+                );
+            }
+            sleep(standby.poll_interval).await;
+        } else if rolled_back && copied.confirmed() {
+            info!(
+                alert_resolved = "operator_log_rollback",
+                operator = %standby.operator,
+                "the operator's log holds the copy's history again"
+            );
+            rolled_back = false;
         } else {
             // A host that closes every connection at once must not spin this loop.
             sleep(Duration::from_secs(1)).await;
@@ -149,18 +190,21 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
     }
 }
 
-/// Opens the copy for appends, repairing an interrupted takeover first: a crash during
-/// finalization leaves a `takeover.json` marker, and re-running the truncation is idempotent, so
-/// the next start finishes the surgery before following again.
+/// Opens the copy for appends, with `empty` taking its entries as the copy's chain, repairing an
+/// interrupted takeover first: a crash during finalization leaves a `takeover.json` marker, and
+/// re-running the truncation is idempotent, so the next start finishes the surgery before
+/// following again.
 /// Error cases:
-/// - the copy cannot be opened, and no takeover marker repairs it
-fn open_copy(dir: &std::path::Path, segment_commands: u64) -> anyhow::Result<LogWriter> {
+/// - the copy cannot be opened, or its links computed, and no takeover marker repairs it
+fn open_copy(dir: &std::path::Path, segment_commands: u64, empty: Chain) -> anyhow::Result<(LogWriter, Chain)> {
     let open = |dir: &std::path::Path| {
         let (manifest_tx, _) = tokio::sync::watch::channel(Manifest::default());
-        SegmentedLog::open(dir, |_| Ok(()))?.into_writer(segment_commands, manifest_tx)
+        let mut copied = empty.clone();
+        let log = SegmentedLog::open(dir, |entry| copied.record(entry))?;
+        anyhow::Ok((log.into_writer(segment_commands, manifest_tx)?, copied))
     };
     match open(dir) {
-        Ok(writer) => Ok(writer),
+        Ok(opened) => Ok(opened),
         Err(e) => {
             let marker = dir.join("takeover.json");
             let bytes = std::fs::read(&marker).map_err(|_| e)?;
@@ -174,24 +218,25 @@ fn open_copy(dir: &std::path::Path, segment_commands: u64) -> anyhow::Result<Log
     }
 }
 
-/// One follow stint: opens a signed stream after `resume`, verifies every frame against the
-/// operator's enclave address, and appends each entry to the copy, for up to `budget`. A closed,
-/// failed, or ended connection returns to re-check the chain; the next stint opens a fresh
-/// connection, which the verifier binds, so a spliced connection is never trusted across stints.
+/// One follow stint: opens a signed stream at the copy's last command, verifies every frame against
+/// the operator's enclave address, checks each heartbeat and entry against the copy (`Chain`), and
+/// appends each new entry, for up to `budget`. Returns the copy's head. A closed, failed, or ended
+/// connection returns to re-check the chain; the next stint opens a fresh connection, which the
+/// verifier binds, so a spliced connection is never trusted across stints.
 /// Error cases:
-/// - the connection fails, a frame fails verification, the copy cannot be written, or an entry
-///   does not follow the last one
+/// - the connection fails, a frame fails verification, or the copy cannot be written
+/// - the operator's log no longer extends the copy (a `Rollback`); nothing more is appended
 async fn follow(
     writer: &mut LogWriter,
+    copied: &mut Chain,
     cfg: &NodeConfig,
     standby: &StandbySection,
-    resume: Option<Offset>,
     budget: Duration,
 ) -> anyhow::Result<Option<Offset>> {
     let mut challenge = [0u8; 32];
     rand::thread_rng().fill(&mut challenge);
-    let from = resume.map_or_else(|| "from=0".to_owned(), |offset| format!("after={offset}"));
-    let path_and_query = format!("/v1/stream?signed=1&challenge={}&{from}", hex::encode(challenge));
+    let path_and_query =
+        format!("/v1/stream?signed=1&challenge={}&from={}", hex::encode(challenge), copied.resume_seq());
     let url = stream_url(&standby.operator, &path_and_query)?;
     let connector = tokio_tungstenite::Connector::Rustls(tls(standby)?);
     let connect = tokio_tungstenite::connect_async_tls_with_config(url.as_str(), None, false, Some(connector));
@@ -209,8 +254,8 @@ async fn follow(
     );
     let deadline = sleep(budget);
     pin_mut!(deadline);
-    let mut last = resume;
-    // Every exit path flushes: a later stint resumes the stream after the writer's last entry, so
+    copied.begin();
+    // Every exit path flushes: a later stint resumes the stream from the copy's last command, so
     // an unflushed append would be skipped forever.
     let followed = async {
         loop {
@@ -234,22 +279,20 @@ async fn follow(
             };
             let value: serde_json::Value = serde_json::from_str(&frame.msg).context("a stream message is not JSON")?;
             if value.get("type").and_then(serde_json::Value::as_str) == Some("heartbeat") {
+                let heartbeat: Heartbeat = serde_json::from_value(value).context("a heartbeat names no log head")?;
+                copied.heartbeat(heartbeat.head)?;
                 continue;
             }
             let message: crate::sequencer::StreamMsg =
                 serde_json::from_value(value).context("a stream message is not a log entry")?;
             let entry = LogEntry::from(message.body);
-            let expected = offset_of(last, &entry).context("offsetting a stream entry")?;
-            ensure!(
-                message.offset == expected,
-                "the stream skipped from {last:?} to {}: history is missing",
-                message.offset
-            );
-            writer.append(&entry).context("appending a stream entry to the copy")?;
-            writer.flush().context("flushing the copy")?;
-            last = Some(expected);
+            if let Step::Extends(link) = copied.check(message.offset, &entry)? {
+                writer.append(&entry).context("appending a stream entry to the copy")?;
+                copied.extend(message.offset, entry, link);
+                writer.flush().context("flushing the copy")?;
+            }
         }
-        anyhow::Ok(last)
+        anyhow::Ok(copied.head())
     }
     .await;
     writer.sync().context("syncing the copy")?;
@@ -257,8 +300,9 @@ async fn follow(
 }
 
 /// Finalizes the copy for the takeover: refreshes completed segments from the archive in case the
-/// vault's last accepted checkpoint posted after the stream last delivered, then requires that
-/// checkpoint and truncates the copy after it, dropping the unsigned tail.
+/// vault's last accepted checkpoint posted after the stream last delivered, taking only segments
+/// that extend `copied`, then requires that checkpoint and truncates the copy after it, dropping
+/// the unsigned tail.
 /// Error cases:
 /// - the archive refresh fails hard, or the copy holds no checkpoint at the vault's latest
 async fn finalize(
@@ -266,9 +310,18 @@ async fn finalize(
     standby: &StandbySection,
     dir: &std::path::Path,
     takeover: &Takeover,
+    mut copied: Chain,
 ) -> anyhow::Result<()> {
-    if let Err(e) = archive::refresh_archive(archive, &origins(standby), dir).await {
-        warn!("refreshing the archive before the takeover failed: {e:#}");
+    let refreshed =
+        archive::refresh_archive(archive, &origins(standby), dir, |staged| copied.extend_with(staged)).await;
+    match refreshed.as_ref().err().map(|e| (e, rollback_of(e))) {
+        Some((_, Some(rollback))) => error!(
+            alert = "operator_log_rollback",
+            operator = %standby.operator,
+            "{rollback}; the archive's segments are not added to the copy"
+        ),
+        Some((e, None)) => warn!("refreshing the archive before the takeover failed: {e:#}"),
+        None => {}
     }
     // The whole copy must replay before any history is dropped: archive-fetched bytes were only
     // hash-checked against the server's own manifest, and this catches a forged prefix here

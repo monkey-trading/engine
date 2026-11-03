@@ -89,6 +89,7 @@ with the operator.
 | Alert | Meaning |
 | --- | --- |
 | `standby_follow_failed` (Critical) | The stream failed or a frame did not verify. The standby retries every `poll_interval`. A dead operator refuses connections at once, which is the case this exists for: it keeps the copy it has. |
+| `operator_log_rollback` (Critical) | The operator's log no longer holds entries the standby copied: its signed head is behind the copy, its repeat of the copy's last command differs, or a command it sent does not chain onto the copy. The message names the range. The standby appends nothing more and keeps its copy, which holds the entries the operator lost, signed by its enclave; it resolves by itself if the operator's log holds them again. Tell the operator and the owner, and keep a copy of the directory (`cp -R data/log /tmp/rollback-evidence`) before anything else touches it. |
 | `standby_signal_failed` (Critical) | Reading the registry or the vault for a promotion failed. Check `[checkpoints].rpc_url`. |
 | `standby_takeover_failed` (Critical) | A promotion arrived and the copy could not be finalized. See "After a promotion", step 3. |
 
