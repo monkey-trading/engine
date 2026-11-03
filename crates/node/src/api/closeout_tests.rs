@@ -32,7 +32,7 @@ async fn the_account_read_names_a_close_out_price_below_a_longs_mark_and_none_fo
     assert_eq!((closeouts[0]["market"].as_u64(), closeouts[0]["reach"].as_str()), (Some(1), Some("at")));
     let price: Fixed = closeouts[0]["price"].as_str().unwrap().parse().unwrap();
     assert!(
-        price > Fixed::from_int(80_000) && price < Fixed::from_int(90_000),
-        "a long of 5 on 100000 closes out about 15% down: {price}"
+        price > Fixed::from_int(75_000) && price < Fixed::from_int(90_000),
+        "a long of 5 on 100000 closes out about 20% down: {price}"
     );
 }

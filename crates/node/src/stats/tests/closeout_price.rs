@@ -170,7 +170,7 @@ fn a_usd_long_and_short_are_priced_where_the_engine_closes_them_out() {
     assert!(price > Fixed::from_int(100_000), "{price}");
 }
 
-/// 20 BTC is 2M of notional with a 10% band to a million and 20% above; the account closes out only
+/// 20 BTC is 2M of notional with a 1% band to a million and 20% above; the account closes out only
 /// once the fall takes it under a million.
 #[test]
 fn a_close_out_across_a_margin_band_is_priced_where_the_engine_closes_it_out() {
@@ -234,8 +234,8 @@ fn a_short_in_another_market_is_priced_with_its_margin_where_the_engine_closes_t
     Case::new(ETH, hedged).agrees();
 }
 
-/// 8 BTC short is 800k of notional, in the 10% band; with 500k of equity it closes out near 1.2M of
-/// notional, past the million where the rate is 20%, so the walk up from the mark crosses the band.
+/// 8 BTC short is 800k of notional, in the 1% band; with 500k of equity it closes out past a million of
+/// notional, where the rate is 20%, so the walk up from the mark crosses the band.
 #[test]
 fn a_short_that_crosses_a_margin_band_is_priced_where_the_engine_closes_it_out() {
     let price = Case::new(1, || btc(Side::Sell, 8, 400_000)).agrees();
@@ -311,8 +311,8 @@ fn a_short_is_priced_up_to_ten_times_its_mark_and_none_past_it() {
     }
 }
 
-/// A 1 BTC long at 100000 on 95250 of equity falls to 5000 before the slack is gone, a twentieth of its
-/// mark, so the range reaches at least that far down and the engine agrees.
+/// A 1 BTC long at 100000 on 95250 of equity falls to about 4800 before the slack is gone, under a twentieth
+/// of its mark, so the range reaches at least that far down and the engine agrees.
 #[test]
 fn a_long_is_priced_down_to_a_twentieth_of_its_mark() {
     let price = Case::new(1, || with_balance(btc(Side::Buy, 1, 0), 95_250)).agrees();
