@@ -264,7 +264,11 @@ an index: load only the rule whose hint matches the current action.
   `config/production-genesis.toml`. Its `toxicity` stage calibrates the production toxicity
   parameters (#130): `prior`, `memory`, tier thresholds and spreads from the observed fill sizes
   and the markets' markout volatility, proposed into
-  `config/production-genesis.toml`. Research may name the platforms whose
+  `config/production-genesis.toml`. Its `retained` stage sizes the staking liquidity floor
+  (#134): the house holds the floor as NAV against hourly sweeps under the genesis cap
+  fractions, and the lowest floor that serves the flow with house cash below zero in at most 1%
+  of Monte Carlo paths is the retained NAV ($107M at every market count 37–500 under the planned
+  BTC/ETH bands). Research may name the platforms whose
   public data it studies, inside `research/` and its PR only. `close-spread-calibration/` calibrates
   per-market close-spread ceilings (#147): pinned inventory and source audit, a pricing model
   checked against `Engine::apply` fills, the isolated-position sweep, per-market results, and the

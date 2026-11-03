@@ -233,11 +233,15 @@ def retained_section(results: Path) -> str:
     def floor(v):
         return "not in grid" if v is None else usd(v)
 
-    def summary(run_rows):
-        got = retained.retained_nav(run_rows)
+    def summary(run_rows, variant=None):
+        dollar = variant in retained.DOLLAR_PATHS
+        got = retained.retained_nav(run_rows, refusal=None if dollar else retained.REFUSAL_LIMIT)
         at = got["row"]
         # The highest share of paths with house cash below zero at any floor that serves the flow.
-        served = [r for r in run_rows if r["floor"] >= (got["serve_floor"] or float("inf"))]
+        # Dollar-cap variants measure no refusals, so every floor serves and the worst is taken at
+        # and above the retained NAV instead.
+        floor_from = got["retained_nav"] if dollar else got["serve_floor"]
+        served = [r for r in run_rows if r["floor"] >= (floor_from if floor_from is not None else float("inf"))]
         worst = max((r["p_short"] for r in served), default=float("nan"))
         return got, at, worst
 
@@ -267,7 +271,7 @@ def retained_section(results: Path) -> str:
             sub = [r for r in st if int(r["paths"]) == count]
             got = retained.retained_nav(sub)
             at = got["row"]
-            worst = max((r["p_short"] for r in sub if r["floor"] >= (got["serve_floor"] or float("inf"))), default=float("nan"))
+            worst = max((r["p_short"] for r in sub if r["floor"] >= (got["serve_floor"] if got["serve_floor"] is not None else float("inf"))), default=float("nan"))
             rows_st.append([count, usd(got["serve_floor"]), floor(got["retained_nav"]), pct(at["p_short"]) if at else "-", pct(worst), pct(retained.standard_error(max(worst, 1e-9), count), 2)])
         out += ["The 37-market baseline on the first 500, 1,000, 2,000 and 4,000 paths (SE at the worst share):", "", table(["Paths", "Serves flow from", "Retained NAV", "Cash<0 at it", "Worst served", "SE"], rows_st), ""]
     variants = [v for v in retained.VARIANTS if v != "baseline"]
@@ -280,11 +284,11 @@ def retained_section(results: Path) -> str:
             if not run_rows:
                 cells.append("-")
                 continue
-            got, at, worst = summary(run_rows)
+            got, at, worst = summary(run_rows, variant)
             cells.append(f"{floor(got['retained_nav'])} ({pct(worst)}; {int(run_rows[0]['paths'])})")
         table_rows.append(cells)
     out += [
-        "Sensitivities: retained NAV (worst cash<0 share at a served floor; paths) at the counts run.",
+        "Sensitivities: retained NAV (worst cash<0 share at a floor that serves the flow — at and above the retained NAV for the dollar-cap variants, which measure no refusals; paths) at the counts run.",
         "",
         table(["Variant", *[f"{n} markets" for n in counts]], table_rows),
         "",
