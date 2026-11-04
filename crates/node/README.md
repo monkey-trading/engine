@@ -728,8 +728,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/checkpoints/staking_scenario/claims.rs` — the scenario's on-chain steps: entitlement and
   distribution claims against posted roots, event mirroring, and balance reads
 - `src/custody/tests/election_scenario.rs` — the operator election dev scenario on isolated Anvil:
-  delegation, a close while rotation is off, an election mirrored through the custody quorum, and
-  the elected key signing from its effective time
+  amount delegations moved, taken back and reduced by an unstake, a close while rotation is off, an
+  election by those tallies mirrored through the custody quorum, and the elected key signing from
+  its effective time
 - `src/custody/tests/election_scenario/chain.rs` — the scenario's chain at a fixed genesis time, its
   RPC proxies, deployments, and registry and timelock calls
 - `src/custody/tests/election_scenario/node.rs` — the scenario's sequencer on a test clock, custody
@@ -1050,8 +1051,8 @@ cargo build --release -p engine-node --features production
 # floor paying nothing
 ./scripts/dev-monkey-staking.sh
 
-# Run the operator election scenario on isolated Anvil: delegation, an election mirrored through the
-# custody quorum, and the elected key signing from its effective time
+# Run the operator election scenario on isolated Anvil: amount delegations, an election by their
+# tallies mirrored through the custody quorum, and the elected key signing from its effective time
 ./scripts/dev-operator-election.sh
 
 # Run the operator's share scenario on isolated Anvil: an elected candidate and a staker each claim

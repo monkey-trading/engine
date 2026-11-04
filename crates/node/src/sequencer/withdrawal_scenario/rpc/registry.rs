@@ -228,15 +228,6 @@ impl Chain {
         Ok(())
     }
 
-    /// The candidate's self-delegation, which makes it the standby.
-    /// Error cases:
-    /// - the local transaction fails
-    pub(crate) async fn delegate_self(&self, account: Address) -> anyhow::Result<()> {
-        let staking: Address = self.read(self.registry, stakingCall {}).await?;
-        self.send(account, staking, delegateCall { candidate: account }.abi_encode()).await?;
-        Ok(())
-    }
-
     /// Promotes the top standby after the liveness timeout, folding the release change into the
     /// vault's state: anyone may call both, and the scenario's `payer` does.
     /// Error cases:
@@ -288,12 +279,12 @@ impl Chain {
         Ok(())
     }
 
-    /// `account` delegates all its stake to `candidate`.
+    /// `account` delegates `amount` of its undelegated stake to `candidate`.
     /// Error cases:
     /// - the local transaction fails
-    pub(crate) async fn delegate_from(&self, account: Address, candidate: Address) -> anyhow::Result<()> {
+    pub(crate) async fn delegate_from(&self, account: Address, candidate: Address, amount: U256) -> anyhow::Result<()> {
         let staking: Address = self.read(self.registry, stakingCall {}).await?;
-        self.send(account, staking, delegateCall { candidate }.abi_encode()).await?;
+        self.send(account, staking, delegateCall { candidate, amount }.abi_encode()).await?;
         Ok(())
     }
 

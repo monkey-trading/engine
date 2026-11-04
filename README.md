@@ -99,8 +99,8 @@ checks every one. From protocol V35 the operator's powers are bounded: the profi
 close-out level move only within half of their launch values and only after a public notice of at
 least seven days, a change of price rules cannot leave a market with open positions unpriced unless
 the market is reduce-only first, and the operator key rotates only by a signed command that takes effect seven
-days after it is logged. From protocol V37 stakers can elect the operator key instead: each delegates its
-staked MONKEY to a registered candidate, an operator registry contract elects one when an election
+days after it is logged. From protocol V37 stakers can elect the operator key instead: each delegates
+chosen amounts of its staked MONKEY to registered candidates, an operator registry contract elects one when an election
 epoch closes, and the engine applies the elected key from the election's effective time, at least
 seven days after it is logged. Rotation starts off, with the deployer as the only operator, until the
 governance timelock turns it on.

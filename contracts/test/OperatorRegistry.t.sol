@@ -384,6 +384,7 @@ contract OperatorRegistryTest is RegistryTest {
         _stake(voter, 200_000e18);
         assertFalse(registry.isEligible(alice));
         _stake(alice, 600e18);
+        _delegate(alice, alice);
         assertTrue(registry.isEligible(alice));
 
         // A raised minimum self-bond, then a withdrawn approval, each make it ineligible.
@@ -491,6 +492,7 @@ contract OperatorRegistryTest is RegistryTest {
         _closeNext();
         assertEq(registry.pendingElection().effectiveAt, 0);
         _stake(alice, 1);
+        _delegate(alice, alice);
         _closeNext();
         assertEq(registry.pendingElection().candidate, alice);
     }
@@ -521,6 +523,7 @@ contract OperatorRegistryTest is RegistryTest {
         _closeNext();
         assertEq(registry.pendingElection().effectiveAt, 0);
         _stake(alice, 2_500e18);
+        _delegate(alice, alice);
         _closeNext();
         assertEq(registry.pendingElection().candidate, alice);
     }
@@ -536,7 +539,7 @@ contract OperatorRegistryTest is RegistryTest {
         assertEq(registry.pendingElection().candidate, bob);
     }
 
-    function test_DelegationFollowsStakeAndCanChangeAtAnyTime() public {
+    function test_DelegatedAmountsVoteUntilMovedOrTakenBack() public {
         _candidate(alice, 10_000e18, 1);
         _candidate(bob, 10_000e18, 2);
         _stake(voter, 30_000e18);
@@ -545,14 +548,37 @@ contract OperatorRegistryTest is RegistryTest {
         vm.prank(voter);
         staking.startUnstake(5_000e18);
         assertEq(staking.votes(alice), 25_000e18, "unstaking stake stops voting");
-        _delegate(voter, bob);
-        assertEq(staking.votes(alice), 0);
-        assertEq(staking.votes(bob), 25_000e18);
+        vm.prank(voter);
+        staking.redelegate(alice, bob, 20_000e18);
+        assertEq(staking.votes(alice), 5_000e18);
+        assertEq(staking.votes(bob), 20_000e18);
         _stake(voter, 1_000e18);
-        assertEq(staking.votes(bob), 26_000e18);
-        _delegate(voter, address(0));
+        assertEq(staking.votes(bob), 20_000e18, "new stake abstains until delegated");
+        vm.prank(voter);
+        staking.undelegate(bob, 20_000e18);
         assertEq(staking.votes(bob), 0);
         assertEq(staking.totalStaked(), 46_000e18);
+    }
+
+    function test_ACloseElectsByDelegatedAmountsSplitAcrossCandidates() public {
+        _candidate(alice, 10_000e18, 1);
+        _candidate(bob, 10_000e18, 2);
+        _delegate(alice, alice);
+        _delegate(bob, bob);
+        // Split evenly, the tie would go to alice, the earlier registration; moving one base unit
+        // to bob elects bob.
+        _stake(voter, 20_000e18);
+        vm.startPrank(voter);
+        staking.delegate(alice, 10_000e18);
+        staking.delegate(bob, 10_000e18);
+        staking.redelegate(alice, bob, 1);
+        vm.stopPrank();
+        assertEq(staking.votes(alice), 20_000e18 - 1);
+        assertEq(staking.votes(bob), 20_000e18 + 1);
+        _setRotation(true);
+        vm.warp(block.timestamp + MIN_TERM);
+        _closeNext();
+        assertEq(registry.pendingElection().candidate, bob);
     }
 
     function test_TurningRotationOffCancelsAnElectionNotYetInEffect() public {

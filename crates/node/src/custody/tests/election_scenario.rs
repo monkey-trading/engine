@@ -1,8 +1,9 @@
-//! Operator election dev scenario on a local Anvil: stakers delegate to registered candidates in the
-//! real staking contract, the real operator registry elects, the custody watcher mirrors the
-//! registry's finalised events through the staking pipeline into the real sequencer, and the
-//! elected key signs admin commands from the election's effective time. MONKEY is minted by the
-//! vault, its only minter, impersonated in place of proven emission claims.
+//! Operator election dev scenario on a local Anvil: stakers delegate amounts to registered
+//! candidates in the real staking contract, move and take amounts back, and unstake past their
+//! undelegated stake; the real operator registry elects by those tallies, the custody watcher
+//! mirrors the registry's finalised events through the staking pipeline into the real sequencer,
+//! and the elected key signs admin commands from the election's effective time. MONKEY is minted
+//! by the vault, its only minter, impersonated in place of proven emission claims.
 
 mod chain;
 mod node;
@@ -22,7 +23,10 @@ use serde_json::json;
 use crate::sequencer::replay_path;
 use crate::tee::EnclaveKey;
 
-use chain::{Chain, Parameters, SelfBondLocked, delegateCall, operatorInEffectCall, setRotationCall, startUnstakeCall};
+use chain::{
+    Chain, Delegation, Parameters, SelfBondLocked, delegateCall, delegationsOfCall, operatorInEffectCall,
+    redelegateCall, setRotationCall, startUnstakeCall, undelegateCall, votesCall,
+};
 use node::Node;
 
 /// The chain's genesis time and the node's first sequenced time: Tue 20 Oct 2026 14:00 UTC.
@@ -58,30 +62,52 @@ async fn dev_scenario_stakers_elect_the_key_that_signs_from_the_effective_time()
     let enclave = Arc::new(EnclaveKey::generate());
     let mut chain = Chain::start(Address::from(enclave.address()), address(&deployer)).await;
     let mut node = Node::start(&chain, enclave).await;
-    let [a, b, c] = [chain.accounts[2], chain.accounts[3], chain.accounts[4]];
+    let [a, b, c, d] = [chain.accounts[2], chain.accounts[3], chain.accounts[4], chain.accounts[5]];
 
-    // 1–2. Three accounts stake, two register as candidates with self-bonds, the timelock approves
-    //      their releases, and all delegate: b leads with its own stake and c's.
-    for (staker, amount) in [(a, 30_000), (b, 40_000), (c, 20_000)] {
+    // 1. Four accounts stake, and two register as candidates with self-bonds, whose releases the
+    //    timelock approves.
+    for (staker, amount) in [(a, 30_000), (b, 40_000), (c, 20_000), (d, 1_000)] {
         chain.stake(staker, monkey(amount)).await;
     }
     chain.register(a, &key_a, monkey(2_000), DIGEST_A).await;
     chain.register(b, &key_b, monkey(2_000), DIGEST_B).await;
     let approvals = vec![chain.approval(a, DIGEST_A), chain.approval(b, DIGEST_B)];
     chain.govern(approvals).await;
-    for (staker, candidate) in [(a, a), (b, b), (c, b)] {
-        chain.send(staker, chain.staking, delegateCall { candidate }.abi_encode()).await;
+
+    // 2. d delegates 300 to a and 200 to b, moves 100 from a to b, and takes 100 back from b.
+    for call in [
+        delegateCall { candidate: a, amount: monkey(300) }.abi_encode(),
+        delegateCall { candidate: b, amount: monkey(200) }.abi_encode(),
+        redelegateCall { from: a, to: b, amount: monkey(100) }.abi_encode(),
+        undelegateCall { candidate: b, amount: monkey(100) }.abi_encode(),
+    ] {
+        chain.send(d, chain.staking, call).await;
     }
+    assert_eq!(votes(&chain, &[a, b]).await, [monkey(200), monkey(200)]);
+
+    // 3. d unstakes 700: the 600 undelegated, then 50 from each delegation.
+    chain.send(d, chain.staking, startUnstakeCall { amount: monkey(700) }.abi_encode()).await;
+    assert_eq!(votes(&chain, &[a, b]).await, [monkey(150), monkey(150)]);
+    let delegations = chain.view(chain.staking, delegationsOfCall { account: d }).await;
+    let delegations: Vec<_> =
+        delegations.into_iter().map(|Delegation { candidate, amount }| (candidate, amount)).collect();
+    assert_eq!(delegations, [(a, monkey(150)), (b, monkey(150))]);
+
+    // 4. The candidates and c delegate all their stake: b leads with its own stake and c's.
+    for (staker, candidate, amount) in [(a, a, 30_000), (b, b, 40_000), (c, b, 20_000)] {
+        chain.send(staker, chain.staking, delegateCall { candidate, amount: monkey(amount) }.abi_encode()).await;
+    }
+    assert_eq!(votes(&chain, &[a, b]).await, [monkey(30_150), monkey(60_150)]);
     let staked = TokenUnits(monkey(20_000).to());
     node.wait("the stakes to mirror", move |e| e.staked(AccountId(c.into())) == staked).await;
 
-    // 3. An epoch closes while rotation is off: it elects nothing, and the engine mirrors nothing.
+    // 5. An epoch closes while rotation is off: it elects nothing, and the engine mirrors nothing.
     let block = chain.close_epoch_at(OFF_CLOSE_SECS).await.block_number.unwrap();
     node.wait("the staking mirror to pass the close", move |e| completed_through(e) >= Some(block)).await;
     assert!(node.query(|e| e.operator_election().is_default()).await);
 
-    // 4. The timelock turns rotation on, and the close of a later epoch elects b; the engine logs it
-    //    to take effect seven days and the finality margin after the close.
+    // 6. The timelock turns rotation on, and the close of a later epoch elects b by those tallies;
+    //    the engine logs it to take effect seven days and the finality margin after the close.
     chain.govern(vec![setRotationCall { enabled: true }.abi_encode()]).await;
     node.wait("rotation to mirror on", |e| e.operator_election().rotation_enabled).await;
     node.advance_to((ELECTION_CLOSE_SECS as Millis + 60) * 1000).await;
@@ -102,7 +128,7 @@ async fn dev_scenario_stakers_elect_the_key_that_signs_from_the_effective_time()
         (json!(true), json!(format!("{b:#x}")))
     );
 
-    // 5. Before the effective time the deployer's commands apply. From it, once the custody
+    // 7. Before the effective time the deployer's commands apply. From it, once the custody
     //    watcher has mirrored a finalised block stamped at or after it, they are refused and the
     //    elected key's apply. No block follows that one before the deployer's last request, so the
     //    request reaches the log rather than being refused at the route.
@@ -181,6 +207,15 @@ fn monkey(amount: u64) -> U256 {
 
 fn address(key: &SigningKey) -> Address {
     Address::from(engine_core::eip712::address(key.verifying_key()).0)
+}
+
+/// Each candidate's votes on chain, in order.
+async fn votes(chain: &Chain, candidates: &[Address]) -> Vec<U256> {
+    let mut votes = Vec::with_capacity(candidates.len());
+    for &candidate in candidates {
+        votes.push(chain.view(chain.staking, votesCall { candidate }).await);
+    }
+    votes
 }
 
 /// The last finalised staking block the engine has recorded as fully mirrored.

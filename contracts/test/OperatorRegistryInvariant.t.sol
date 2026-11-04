@@ -28,6 +28,11 @@ contract RegistryHandler is Test {
     /// @notice Release moves that landed on a release not approved for the mover, or while an
     /// election waiting to take effect involved it, or that left the release moved off approved.
     uint256 public misplacedMoves;
+    /// @notice Moves that changed the mover's delegated stake or the votes' sum.
+    uint256 public unbalancedMoves;
+    /// @notice Unstakes that took delegated stake while undelegated stake covered them, or that
+    /// left delegated stake below what they did not take.
+    uint256 public misallocatedUnstakes;
 
     constructor(OperatorRegistry registry_, address vault_) {
         registry = registry_;
@@ -58,10 +63,19 @@ contract RegistryHandler is Test {
 
     function startUnstake(uint256 actorSeed, uint256 amount) external {
         address account = actors[actorSeed % actors.length];
-        uint256 free = staking.stakes(account) - staking.lockedBond(account);
+        uint256 staked = staking.stakes(account);
+        uint256 free = staked - staking.lockedBond(account);
         if (free == 0) return;
+        amount = bound(amount, 1, free);
+        uint256 delegated = staking.delegatedStake(account);
+        uint256 votes = _votes();
         vm.prank(account);
-        staking.startUnstake(bound(amount, 1, free));
+        staking.startUnstake(amount);
+        // Undelegated stake goes first; only the rest leaves the delegations, and the votes with it.
+        uint256 fromDelegations = amount > staked - delegated ? amount - (staked - delegated) : 0;
+        if (staking.delegatedStake(account) != delegated - fromDelegations || _votes() != votes - fromDelegations) {
+            misallocatedUnstakes++;
+        }
     }
 
     function completeUnstake(uint256 actorSeed) external {
@@ -72,12 +86,43 @@ contract RegistryHandler is Test {
         staking.completeUnstake();
     }
 
-    function delegate(uint256 actorSeed, uint256 candidateSeed) external {
+    function delegate(uint256 actorSeed, uint256 candidateSeed, uint256 amount) external {
         address account = actors[actorSeed % actors.length];
-        // One seed in six abstains.
-        uint256 choice = candidateSeed % (actors.length + 1);
+        uint256 undelegated = staking.stakes(account) - staking.delegatedStake(account);
+        if (undelegated == 0) return;
         vm.prank(account);
-        staking.delegate(choice == actors.length ? address(0) : actors[choice]);
+        staking.delegate(actors[candidateSeed % actors.length], bound(amount, 1, undelegated));
+    }
+
+    function undelegate(uint256 actorSeed, uint256 delegationSeed, uint256 amount) external {
+        address account = actors[actorSeed % actors.length];
+        Staking.Delegation[] memory delegations = staking.delegationsOf(account);
+        if (delegations.length == 0) return;
+        Staking.Delegation memory delegation = delegations[delegationSeed % delegations.length];
+        vm.prank(account);
+        staking.undelegate(delegation.candidate, bound(amount, 1, delegation.amount));
+    }
+
+    function redelegate(uint256 actorSeed, uint256 delegationSeed, uint256 toSeed, uint256 amount) external {
+        address account = actors[actorSeed % actors.length];
+        Staking.Delegation[] memory delegations = staking.delegationsOf(account);
+        if (delegations.length == 0) return;
+        Staking.Delegation memory from = delegations[delegationSeed % delegations.length];
+        uint256 toIndex = toSeed % actors.length;
+        if (actors[toIndex] == from.candidate) toIndex = (toIndex + 1) % actors.length;
+        address to = actors[toIndex];
+        uint256 delegated = staking.delegatedStake(account);
+        uint256 votes = _votes();
+        vm.prank(account);
+        staking.redelegate(from.candidate, to, bound(amount, 1, from.amount));
+        if (staking.delegatedStake(account) != delegated || _votes() != votes) unbalancedMoves++;
+    }
+
+    /// @dev The votes of every actor, the only candidates the handler delegates to.
+    function _votes() internal view returns (uint256 sum) {
+        for (uint256 i = 0; i < actors.length; i++) {
+            sum += staking.votes(actors[i]);
+        }
     }
 
     /// @dev Stakes up to the bond first, so candidacies are common. The admin key is the address of
@@ -237,17 +282,48 @@ contract OperatorRegistryInvariantTest is RegistryTest {
         assertEq(monkey.balanceOf(address(staking)), staked + exiting);
     }
 
-    /// @notice Each candidate's votes are exactly the stake of the accounts delegating to it.
-    function invariant_VotesAreTheDelegatedStake() public view {
+    /// @notice Each candidate's votes are exactly the amounts the accounts delegate to it.
+    function invariant_VotesAreTheDelegatedAmounts() public view {
         for (uint256 c = 0; c < handler.actorCount(); c++) {
             address candidate = handler.actor(c);
             uint256 delegated = 0;
             for (uint256 i = 0; i < handler.actorCount(); i++) {
-                address account = handler.actor(i);
-                if (staking.delegates(account) == candidate) delegated += staking.stakes(account);
+                delegated += staking.delegatedTo(handler.actor(i), candidate);
             }
             assertEq(staking.votes(candidate), delegated);
         }
+    }
+
+    /// @notice An account's delegations are its listed, nonzero, distinct amounts, which sum to its
+    /// delegated stake, and never exceed its stake.
+    function invariant_NoStakerDelegatesMoreThanItsStake() public view {
+        for (uint256 i = 0; i < handler.actorCount(); i++) {
+            address account = handler.actor(i);
+            Staking.Delegation[] memory delegations = staking.delegationsOf(account);
+            uint256 sum = 0;
+            uint256 listed = 0;
+            for (uint256 d = 0; d < delegations.length; d++) {
+                assertGt(delegations[d].amount, 0);
+                assertEq(staking.delegatedTo(account, delegations[d].candidate), delegations[d].amount);
+                for (uint256 e = 0; e < d; e++) {
+                    assertTrue(delegations[e].candidate != delegations[d].candidate);
+                }
+                sum += delegations[d].amount;
+            }
+            for (uint256 c = 0; c < handler.actorCount(); c++) {
+                if (staking.delegatedTo(account, handler.actor(c)) != 0) listed++;
+            }
+            assertEq(delegations.length, listed);
+            assertEq(staking.delegatedStake(account), sum);
+            assertLe(sum, staking.stakes(account));
+        }
+    }
+
+    /// @notice A move changes neither the mover's delegated stake nor the votes' sum, and an unstake
+    /// takes delegated stake only past the undelegated stake, the votes falling by the same amount.
+    function invariant_MovesAndUnstakesKeepTheTallies() public view {
+        assertEq(handler.unbalancedMoves(), 0);
+        assertEq(handler.misallocatedUnstakes(), 0);
     }
 
     /// @notice No account's stake falls below its locked self-bond, and a registered candidate's
