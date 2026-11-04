@@ -439,3 +439,18 @@ def test_the_farming_variants_scale_hedged_flow_alone():
     hedged = base["desired"] - base["desired_directional"]
     assert none["desired"] - none["desired_directional"] == 0.0
     assert double["desired"] - double["desired_directional"] == pytest.approx(2 * hedged)
+
+
+def test_spreads_are_house_income_on_a_flat_path():
+    without = run(bars(), market(), flow())
+    out = run(bars(), market(), flow(), spread_bps=(2.0,))
+    assert without["spread_income"] == 0.0
+    assert out["spread_income"] > 0.0
+    assert out["nav_end"] == pytest.approx(out["spread_income"])
+    assert float(out["identity_gap"]) < 1e-9
+
+
+def test_a_winning_close_pays_the_schedules_fee_at_its_hold():
+    out = run(bars(gap_at=50, gap=0.01), market(), flow(), fee_schedule=((3600.0, 0.5), (7200.0, 0.1)))
+    # The hour-long hold pays the schedule's 50% on its gain of 2, against the standard 0.2.
+    assert out["fee"] == pytest.approx(1.0, rel=1e-4)

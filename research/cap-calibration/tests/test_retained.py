@@ -204,3 +204,23 @@ def test_a_schedule_with_the_same_first_tier_keeps_small_orders_and_shrinks_larg
     assert with_schedule(out, source, tiers) is out
     with pytest.raises(ValueError):
         with_schedule(base, source, [{"up_to": "1000000", "bps": 200}, {"bps": 2000}])
+
+
+def test_genesis_profiles_fill_schedules_without_one_from_a_profiled_schedule_with_the_same_first_rate():
+    from model.flow import FlowClass, schedule_key, with_genesis_profiles
+
+    source = [{"up_to": "2000000", "bps": 100}, {"bps": 500}]
+    banded = [{"up_to": "2000000", "bps": 100}, {"up_to": "10000000", "bps": 200}, {"bps": 500}]
+    bounds = np.array([1e5, 1e6, 2e6, 1e7])
+    classes = [FlowClass(kind=k, hold_h=1, bucket=b, margin_share=1 / 6, mean_hold_h=1.0, mean_sqrt_hold_h=1.0, long_share=0.5)
+               for k in ("directional", "hedged") for b in range(3)]
+    base = flow()
+    keyed = {(k, "capped", schedule_key(source)) for k in ("directional", "hedged")}
+    base = base.__class__(classes=classes, leverage={key: np.array([25.0, 80.0, 100.0]) for key in keyed}, daily_margin=base.daily_margin,
+                          sizes={key: (bounds, np.array([0.25, 0.5, 0.75, 1.0])) for key in keyed}, long_share_ar1=0.0,
+                          long_share_resid_sd=0.0, long_share_slope=0.0)
+    out = with_genesis_profiles(base, [{"symbol": "A", "margin_tiers": source}, {"symbol": "B", "margin_tiers": banded}])
+    for kind in ("directional", "hedged"):
+        assert (kind, "capped", schedule_key(banded)) in out.sizes and (kind, "capped", schedule_key(banded)) in out.leverage
+    with pytest.raises(ValueError):
+        with_genesis_profiles(base, [{"symbol": "C", "margin_tiers": [{"bps": 1000}]}])

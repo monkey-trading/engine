@@ -308,6 +308,14 @@ withdrawn, and free balances leave at 5% a day, or 55% a day while NAV is below 
 public log), each compounded hourly. A withdrawal the vault cannot pay joins the #49 queue and is
 paid as deposits arrive.
 
+**Spreads and a holding-time fee.** The genesis prices every fill at the index, so by default the
+model charges no spread and the standard 10% profit fee. `Scenario.spread_bps` charges each fill a
+spread per market, which the house keeps as `spread_income`, and `Scenario.fee_schedule` replaces
+the 10% with a fee that falls with each class's mean hold (`accounting.fee_bps_at`).
+`research/spread-calibration` (#615) uses both, and `flow.with_genesis_profiles`, which gives the
+genesis's 100x bands on BTC-USD and ETH-USD a size and leverage profile approximated from a profiled
+schedule with the same first rate; no stage here uses them, so the committed results are unchanged.
+
 **Calibration.** Each market alone, at its share of the flow, gives each measure as a function of
 its floor, over 18 floors from $0 to $100M. A *risk level* `q` sets every market's floor to the
 largest floor at which that market alone stays at or below `q`, every smaller floor too. That

@@ -1,0 +1,408 @@
+[
+ {
+  "schedule": "standard 10%",
+  "points": {
+   "1.0": 0.1
+  },
+  "target_extra_share": 0.0,
+  "short_fee_share": 0.1,
+  "fast_take_per_day": 205664.4782482651,
+  "operator_latency_per_day": 3165102.1650898606
+ },
+ {
+  "schedule": "100% to 1 s, 10% at 10 min",
+  "points": {
+   "1.0": 1.0,
+   "600.0": 0.1
+  },
+  "target_extra_share": 0.0,
+  "short_fee_share": 0.2897239345377498,
+  "fast_take_per_day": 78922.22333201331,
+  "operator_latency_per_day": 299092.2315877885
+ },
+ {
+  "schedule": "100% to 10 s, 10% at 10 min",
+  "points": {
+   "10.0": 1.0,
+   "600.0": 0.1
+  },
+  "target_extra_share": 0.0,
+  "short_fee_share": 0.3933533879351748,
+  "fast_take_per_day": 78922.22333201331,
+  "operator_latency_per_day": 179641.16256070294
+ },
+ {
+  "schedule": "100% to 60 s, 10% at 10 min",
+  "points": {
+   "60.0": 1.0,
+   "600.0": 0.1
+  },
+  "target_extra_share": 0.0,
+  "short_fee_share": 0.5515130398653701,
+  "fast_take_per_day": 78922.22333201331,
+  "operator_latency_per_day": 179641.16256070294
+ },
+ {
+  "schedule": "100% to 300 s, 10% at 10 min",
+  "points": {
+   "300.0": 1.0,
+   "600.0": 0.1
+  },
+  "target_extra_share": 0.0,
+  "short_fee_share": 0.7575904581999076,
+  "fast_take_per_day": 78922.22333201331,
+  "operator_latency_per_day": 179641.16256070294
+ },
+ {
+  "schedule": "50% to 1 s, 10% at 10 min",
+  "points": {
+   "1.0": 0.5,
+   "600.0": 0.1
+  },
+  "target_extra_share": 0.0,
+  "short_fee_share": 0.18432174868344436,
+  "fast_take_per_day": 86348.52724406365,
+  "operator_latency_per_day": 1728432.3914295533
+ },
+ {
+  "schedule": "75% to 1 s, 10% at 10 min",
+  "points": {
+   "1.0": 0.75,
+   "600.0": 0.1
+  },
+  "target_extra_share": 0.0,
+  "short_fee_share": 0.23702284161059708,
+  "fast_take_per_day": 78922.22333201331,
+  "operator_latency_per_day": 830513.7828918599
+ },
+ {
+  "schedule": "100% to 1 s, 10% at 15 min",
+  "points": {
+   "1.0": 1.0,
+   "900.0": 0.1
+  },
+  "target_extra_share": 0.0,
+  "short_fee_share": 0.32749838095854417,
+  "fast_take_per_day": 78584.99708830813,
+  "operator_latency_per_day": 276336.5359468614
+ },
+ {
+  "schedule": "100% to 10 s, 10% at 15 min",
+  "points": {
+   "10.0": 1.0,
+   "900.0": 0.1
+  },
+  "target_extra_share": 0.0,
+  "short_fee_share": 0.44111953467078413,
+  "fast_take_per_day": 78584.99708830813,
+  "operator_latency_per_day": 159822.78946774258
+ },
+ {
+  "schedule": "100% to 60 s, 10% at 15 min",
+  "points": {
+   "60.0": 1.0,
+   "900.0": 0.1
+  },
+  "target_extra_share": 0.0,
+  "short_fee_share": 0.6072026827551885,
+  "fast_take_per_day": 78584.99708830813,
+  "operator_latency_per_day": 159822.78946774258
+ },
+ {
+  "schedule": "100% to 300 s, 10% at 15 min",
+  "points": {
+   "300.0": 1.0,
+   "900.0": 0.1
+  },
+  "target_extra_share": 0.0,
+  "short_fee_share": 0.8188069097334615,
+  "fast_take_per_day": 78584.99708830813,
+  "operator_latency_per_day": 159822.78946774258
+ },
+ {
+  "schedule": "50% to 1 s, 10% at 15 min",
+  "points": {
+   "1.0": 0.5,
+   "900.0": 0.1
+  },
+  "target_extra_share": 0.0,
+  "short_fee_share": 0.20111039153713073,
+  "fast_take_per_day": 84246.16484659037,
+  "operator_latency_per_day": 1728432.3914295533
+ },
+ {
+  "schedule": "75% to 1 s, 10% at 15 min",
+  "points": {
+   "1.0": 0.75,
+   "900.0": 0.1
+  },
+  "target_extra_share": 0.0,
+  "short_fee_share": 0.2643043862478374,
+  "fast_take_per_day": 78584.99708830813,
+  "operator_latency_per_day": 830513.7828918599
+ },
+ {
+  "schedule": "100% to 1 s, 10% at 20 min",
+  "points": {
+   "1.0": 1.0,
+   "1200.0": 0.1
+  },
+  "target_extra_share": 0.001220317105161519,
+  "short_fee_share": 0.3547853432826763,
+  "fast_take_per_day": 74297.13793598139,
+  "operator_latency_per_day": 262033.11456556793
+ },
+ {
+  "schedule": "100% to 10 s, 10% at 20 min",
+  "points": {
+   "10.0": 1.0,
+   "1200.0": 0.1
+  },
+  "target_extra_share": 0.0018072390521929576,
+  "short_fee_share": 0.47470285954254543,
+  "fast_take_per_day": 72955.24935886952,
+  "operator_latency_per_day": 129075.49918083326
+ },
+ {
+  "schedule": "100% to 60 s, 10% at 20 min",
+  "points": {
+   "60.0": 1.0,
+   "1200.0": 0.1
+  },
+  "target_extra_share": 0.0028881559664016825,
+  "short_fee_share": 0.6449232585476401,
+  "fast_take_per_day": 70483.93257250644,
+  "operator_latency_per_day": 121321.10502578442
+ },
+ {
+  "schedule": "100% to 300 s, 10% at 20 min",
+  "points": {
+   "300.0": 1.0,
+   "1200.0": 0.1
+  },
+  "target_extra_share": 0.0062412012068039854,
+  "short_fee_share": 0.8564078732688765,
+  "fast_take_per_day": 64530.2269292173,
+  "operator_latency_per_day": 114768.28307014327
+ },
+ {
+  "schedule": "50% to 1 s, 10% at 20 min",
+  "points": {
+   "1.0": 0.5,
+   "1200.0": 0.1
+  },
+  "target_extra_share": 0.0005423631578495635,
+  "short_fee_share": 0.21323793034785612,
+  "fast_take_per_day": 82122.62941222555,
+  "operator_latency_per_day": 1728432.3914295533
+ },
+ {
+  "schedule": "75% to 1 s, 10% at 20 min",
+  "points": {
+   "1.0": 0.75,
+   "1200.0": 0.1
+  },
+  "target_extra_share": 0.0008813401315055431,
+  "short_fee_share": 0.2840116368152662,
+  "fast_take_per_day": 75072.14614815265,
+  "operator_latency_per_day": 830513.7828918599
+ },
+ {
+  "schedule": "100% to 1 s, 10% at 30 min",
+  "points": {
+   "1.0": 1.0,
+   "1800.0": 0.1
+  },
+  "target_extra_share": 0.00689064822315597,
+  "short_fee_share": 0.38968769357267985,
+  "fast_take_per_day": 70728.45234910425,
+  "operator_latency_per_day": 245974.103074942
+ },
+ {
+  "schedule": "100% to 10 s, 10% at 30 min",
+  "points": {
+   "10.0": 1.0,
+   "1800.0": 0.1
+  },
+  "target_extra_share": 0.009945998832700314,
+  "short_fee_share": 0.5157179628758188,
+  "fast_take_per_day": 68054.42662333856,
+  "operator_latency_per_day": 116509.022651794
+ },
+ {
+  "schedule": "100% to 60 s, 10% at 30 min",
+  "points": {
+   "60.0": 1.0,
+   "1800.0": 0.1
+  },
+  "target_extra_share": 0.015185576425434135,
+  "short_fee_share": 0.6872528305201193,
+  "fast_take_per_day": 64695.27954694376,
+  "operator_latency_per_day": 114768.28307014327
+ },
+ {
+  "schedule": "100% to 300 s, 10% at 30 min",
+  "points": {
+   "300.0": 1.0,
+   "1800.0": 0.1
+  },
+  "target_extra_share": 0.028825935436227464,
+  "short_fee_share": 0.8889019653545737,
+  "fast_take_per_day": 60804.53693025053,
+  "operator_latency_per_day": 114768.28307014327
+ },
+ {
+  "schedule": "50% to 1 s, 10% at 30 min",
+  "points": {
+   "1.0": 0.5,
+   "1800.0": 0.1
+  },
+  "target_extra_share": 0.0030625103214026485,
+  "short_fee_share": 0.2287500860323021,
+  "fast_take_per_day": 81620.93392314004,
+  "operator_latency_per_day": 1728432.3914295533
+ },
+ {
+  "schedule": "75% to 1 s, 10% at 30 min",
+  "points": {
+   "1.0": 0.75,
+   "1800.0": 0.1
+  },
+  "target_extra_share": 0.004976579272279304,
+  "short_fee_share": 0.3092188898024909,
+  "fast_take_per_day": 72494.76211318582,
+  "operator_latency_per_day": 830513.7828918599
+ },
+ {
+  "schedule": "100% to 1 s, 10% at 45 min",
+  "points": {
+   "1.0": 1.0,
+   "2700.0": 0.1
+  },
+  "target_extra_share": 0.017457149255983045,
+  "short_fee_share": 0.42100779538715594,
+  "fast_take_per_day": 57332.63941504144,
+  "operator_latency_per_day": 231845.98602297713
+ },
+ {
+  "schedule": "100% to 10 s, 10% at 45 min",
+  "points": {
+   "10.0": 1.0,
+   "2700.0": 0.1
+  },
+  "target_extra_share": 0.024637131747011706,
+  "short_fee_share": 0.55079203731599,
+  "fast_take_per_day": 50183.604988467734,
+  "operator_latency_per_day": 79887.11003364873
+ },
+ {
+  "schedule": "100% to 60 s, 10% at 45 min",
+  "points": {
+   "60.0": 1.0,
+   "2700.0": 0.1
+  },
+  "target_extra_share": 0.03623359300958898,
+  "short_fee_share": 0.720564968179934,
+  "fast_take_per_day": 38637.12825315802,
+  "operator_latency_per_day": 66191.77528231188
+ },
+ {
+  "schedule": "100% to 300 s, 10% at 45 min",
+  "points": {
+   "300.0": 1.0,
+   "2700.0": 0.1
+  },
+  "target_extra_share": 0.062774220169348,
+  "short_fee_share": 0.9094034548667307,
+  "fast_take_per_day": 17890.370387074458,
+  "operator_latency_per_day": 41793.623739153874
+ },
+ {
+  "schedule": "50% to 1 s, 10% at 45 min",
+  "points": {
+   "1.0": 0.5,
+   "2700.0": 0.1
+  },
+  "target_extra_share": 0.007758733002659131,
+  "short_fee_share": 0.24267013128318038,
+  "fast_take_per_day": 79995.14695109871,
+  "operator_latency_per_day": 1728432.3914295533
+ },
+ {
+  "schedule": "75% to 1 s, 10% at 45 min",
+  "points": {
+   "1.0": 0.75,
+   "2700.0": 0.1
+  },
+  "target_extra_share": 0.012607941129321107,
+  "short_fee_share": 0.33183896333516816,
+  "fast_take_per_day": 62639.07790863711,
+  "operator_latency_per_day": 830513.7828918599
+ },
+ {
+  "schedule": "100% to 1 s, 10% at 60 min",
+  "points": {
+   "1.0": 1.0,
+   "3600.0": 0.1
+  },
+  "target_extra_share": 0.028168085123930216,
+  "short_fee_share": 0.44134874066241736,
+  "fast_take_per_day": 49040.59136265936,
+  "operator_latency_per_day": 222670.43297085783
+ },
+ {
+  "schedule": "100% to 10 s, 10% at 60 min",
+  "points": {
+   "10.0": 1.0,
+   "3600.0": 0.1
+  },
+  "target_extra_share": 0.039187158616005364,
+  "short_fee_share": 0.5727469801739979,
+  "fast_take_per_day": 38997.19810299136,
+  "operator_latency_per_day": 66428.30663666186
+ },
+ {
+  "schedule": "100% to 60 s, 10% at 60 min",
+  "points": {
+   "60.0": 1.0,
+   "3600.0": 0.1
+  },
+  "target_extra_share": 0.05633617024786044,
+  "short_fee_share": 0.7401989896571097,
+  "fast_take_per_day": 23951.432110553884,
+  "operator_latency_per_day": 46559.80425586843
+ },
+ {
+  "schedule": "100% to 300 s, 10% at 60 min",
+  "points": {
+   "300.0": 1.0,
+   "3600.0": 0.1
+  },
+  "target_extra_share": 0.09282428872345147,
+  "short_fee_share": 0.9198919783946201,
+  "fast_take_per_day": 9364.628443459418,
+  "operator_latency_per_day": 16757.220137750865
+ },
+ {
+  "schedule": "50% to 1 s, 10% at 60 min",
+  "points": {
+   "1.0": 0.5,
+   "3600.0": 0.1
+  },
+  "target_extra_share": 0.012519148943968966,
+  "short_fee_share": 0.2517105514055188,
+  "fast_take_per_day": 79603.74283993314,
+  "operator_latency_per_day": 1728432.3914295533
+ },
+ {
+  "schedule": "75% to 1 s, 10% at 60 min",
+  "points": {
+   "1.0": 0.75,
+   "3600.0": 0.1
+  },
+  "target_extra_share": 0.0203436170339496,
+  "short_fee_share": 0.3465296460339681,
+  "fast_take_per_day": 56238.270713229926,
+  "operator_latency_per_day": 830513.7828918599
+ }
+]

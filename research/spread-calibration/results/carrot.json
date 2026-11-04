@@ -1,0 +1,345 @@
+{
+ "tiers": [
+  {
+   "volume": 0.0,
+   "requests_per_s": 2.0,
+   "best_price_share": 0.25,
+   "leverage_share": 0.2,
+   "fee_floor": 0.1,
+   "financing_discount": 0.0,
+   "emissions_boost": 1.0
+  },
+  {
+   "volume": 1000000.0,
+   "requests_per_s": 5.0,
+   "best_price_share": 0.5,
+   "leverage_share": 0.5,
+   "fee_floor": 0.1,
+   "financing_discount": 0.0,
+   "emissions_boost": 1.1
+  },
+  {
+   "volume": 25000000.0,
+   "requests_per_s": 10.0,
+   "best_price_share": 1.0,
+   "leverage_share": 1.0,
+   "fee_floor": 0.09,
+   "financing_discount": 0.1,
+   "emissions_boost": 1.25
+  },
+  {
+   "volume": 250000000.0,
+   "requests_per_s": 20.0,
+   "best_price_share": 2.5,
+   "leverage_share": 1.0,
+   "fee_floor": 0.08,
+   "financing_discount": 0.2,
+   "emissions_boost": 1.5
+  }
+ ],
+ "days": [
+  0,
+  2,
+  5,
+  10
+ ],
+ "min_hold_s": 60.0,
+ "wallet_cost_usd": 10.0,
+ "add_on_bps": 2.0,
+ "markets": {
+  "BTC-USD": {
+   "market": {
+    "bound": 2000000.0,
+    "s1_bps": 2.0,
+    "s2_bps": 4.0,
+    "margin": 0.01
+   },
+   "farming_cost_bps": 3.1560869813902706,
+   "tiers": [
+    {
+     "volume": 0.0,
+     "best_price_usd": 500000.0,
+     "max_leverage": 20.0,
+     "farming_cost_usd": 0.0,
+     "per_day_cap_usd": 0.0
+    },
+    {
+     "volume": 1000000.0,
+     "best_price_usd": 1000000.0,
+     "max_leverage": 50.0,
+     "farming_cost_usd": 315.60869813902707,
+     "per_day_cap_usd": 500000.0
+    },
+    {
+     "volume": 25000000.0,
+     "best_price_usd": 2000000.0,
+     "max_leverage": 100.0,
+     "farming_cost_usd": 7890.217453475676,
+     "per_day_cap_usd": 5000000.0
+    },
+    {
+     "volume": 250000000.0,
+     "best_price_usd": 5000000.0,
+     "max_leverage": 100.0,
+     "farming_cost_usd": 78902.17453475676,
+     "per_day_cap_usd": 25000000.0
+    }
+   ],
+   "toxic_life_volume": 10000000.0,
+   "strategies": {
+    "0.25s": {
+     "keeper": {
+      "per_day": 2328.7451774950982,
+      "hold_s": 1800.0,
+      "theta_bps": 12.0,
+      "size": 6900000.0,
+      "tier": 3,
+      "trades_per_day": 1.1186179326099372,
+      "counted_per_month": 463107824.100514
+     },
+     "recycler": {
+      "per_day": 3294.1124533374737,
+      "hold_s": 1800.0,
+      "theta_bps": 12.0,
+      "size": 6900000.0,
+      "tier": 0,
+      "trades_per_day": 1.1186179326099372,
+      "counted_per_month": 463107824.100514
+     },
+     "at_recycler_best": {
+      "kept_tier": 3,
+      "gain_per_day": 2778.6469446030837,
+      "best_price_per_day": 1812.1610508280985,
+      "leverage_per_day": 75.61643835616438,
+      "wallets_per_day": 1.1186179326099372,
+      "forfeited_per_day": 1888.8961071168728
+     }
+    },
+    "3.0s": {
+     "keeper": {
+      "per_day": 16141.604637728897,
+      "hold_s": 1800.0,
+      "theta_bps": 20.0,
+      "size": 6900000.0,
+      "tier": 3,
+      "trades_per_day": 2.228669331810394,
+      "counted_per_month": 922669103.3695031
+     },
+     "recycler": {
+      "per_day": 18064.946271081266,
+      "hold_s": 1800.0,
+      "theta_bps": 20.0,
+      "size": 6900000.0,
+      "tier": 0,
+      "trades_per_day": 2.228669331810394,
+      "counted_per_month": 922669103.3695031
+     },
+     "at_recycler_best": {
+      "kept_tier": 3,
+      "gain_per_day": 5536.014620217019,
+      "best_price_per_day": 3610.4443175328383,
+      "leverage_per_day": 75.61643835616438,
+      "wallets_per_day": 2.228669331810394,
+      "forfeited_per_day": 3688.2894252208134
+     }
+    }
+   }
+  },
+  "ETH-USD": {
+   "market": {
+    "bound": 1000000.0,
+    "s1_bps": 3.0,
+    "s2_bps": 6.0,
+    "margin": 0.01
+   },
+   "farming_cost_bps": 4.74235980829306,
+   "tiers": [
+    {
+     "volume": 0.0,
+     "best_price_usd": 250000.0,
+     "max_leverage": 20.0,
+     "farming_cost_usd": 0.0,
+     "per_day_cap_usd": 0.0
+    },
+    {
+     "volume": 1000000.0,
+     "best_price_usd": 500000.0,
+     "max_leverage": 50.0,
+     "farming_cost_usd": 474.23598082930596,
+     "per_day_cap_usd": 500000.0
+    },
+    {
+     "volume": 25000000.0,
+     "best_price_usd": 1000000.0,
+     "max_leverage": 100.0,
+     "farming_cost_usd": 11855.899520732648,
+     "per_day_cap_usd": 5000000.0
+    },
+    {
+     "volume": 250000000.0,
+     "best_price_usd": 2500000.0,
+     "max_leverage": 100.0,
+     "farming_cost_usd": 118558.99520732649,
+     "per_day_cap_usd": 25000000.0
+    }
+   ],
+   "toxic_life_volume": 5000000.0,
+   "strategies": {
+    "0.25s": {
+     "keeper": {
+      "per_day": 5894.0160408322,
+      "hold_s": 900.0,
+      "theta_bps": 40.0,
+      "size": 6900000.0,
+      "tier": 2,
+      "trades_per_day": 0.5364764207686793,
+      "counted_per_month": 222101238.19823322
+     },
+     "recycler": {
+      "per_day": 8009.092066093863,
+      "hold_s": 1800.0,
+      "theta_bps": 20.0,
+      "size": 6900000.0,
+      "tier": 0,
+      "trades_per_day": 1.7934894346087948,
+      "counted_per_month": 742504625.9280411
+     },
+     "at_recycler_best": {
+      "kept_tier": 3,
+      "gain_per_day": 4455.027755568247,
+      "best_price_per_day": 2179.0896630496854,
+      "leverage_per_day": 75.61643835616438,
+      "wallets_per_day": 1.7934894346087948,
+      "forfeited_per_day": 2256.499590840459
+     }
+    },
+    "3.0s": {
+     "keeper": {
+      "per_day": 44546.99694187357,
+      "hold_s": 1800.0,
+      "theta_bps": 20.0,
+      "size": 6900000.0,
+      "tier": 3,
+      "trades_per_day": 8.280411193603655,
+      "counted_per_month": 3428090234.151913
+     },
+     "recycler": {
+      "per_day": 55046.55833536301,
+      "hold_s": 1800.0,
+      "theta_bps": 20.0,
+      "size": 6900000.0,
+      "tier": 0,
+      "trades_per_day": 8.280411193603655,
+      "counted_per_month": 3428090234.151913
+     },
+     "at_recycler_best": {
+      "kept_tier": 3,
+      "gain_per_day": 20568.54140491148,
+      "best_price_per_day": 10060.699600228441,
+      "leverage_per_day": 75.61643835616438,
+      "wallets_per_day": 8.280411193603655,
+      "forfeited_per_day": 10144.59644977821
+     }
+    }
+   }
+  },
+  "SOL-USD": {
+   "market": {
+    "bound": 1000000.0,
+    "s1_bps": 2.0,
+    "s2_bps": 4.0,
+    "margin": 0.1
+   },
+   "farming_cost_bps": 3.742455743706376,
+   "tiers": [
+    {
+     "volume": 0.0,
+     "best_price_usd": 250000.0,
+     "max_leverage": 2.0,
+     "farming_cost_usd": 0.0,
+     "per_day_cap_usd": 0.0
+    },
+    {
+     "volume": 1000000.0,
+     "best_price_usd": 500000.0,
+     "max_leverage": 5.0,
+     "farming_cost_usd": 374.24557437063766,
+     "per_day_cap_usd": 500000.0
+    },
+    {
+     "volume": 25000000.0,
+     "best_price_usd": 1000000.0,
+     "max_leverage": 10.0,
+     "farming_cost_usd": 9356.13935926594,
+     "per_day_cap_usd": 5000000.0
+    },
+    {
+     "volume": 250000000.0,
+     "best_price_usd": 2500000.0,
+     "max_leverage": 10.0,
+     "farming_cost_usd": 93561.39359265941,
+     "per_day_cap_usd": 25000000.0
+    }
+   ],
+   "toxic_life_volume": 5000000.0,
+   "strategies": {
+    "0.25s": {
+     "keeper": {
+      "per_day": 30313.904655250946,
+      "hold_s": 1800.0,
+      "theta_bps": 12.0,
+      "size": 6900000.0,
+      "tier": 3,
+      "trades_per_day": 11.46887492861222,
+      "counted_per_month": 4748114220.445459
+     },
+     "recycler": {
+      "per_day": 49501.33241081919,
+      "hold_s": 1800.0,
+      "theta_bps": 12.0,
+      "size": 6900000.0,
+      "tier": 0,
+      "trades_per_day": 11.46887492861222,
+      "counted_per_month": 4748114220.445459
+     },
+     "at_recycler_best": {
+      "kept_tier": 3,
+      "gain_per_day": 28488.68532267275,
+      "best_price_per_day": 9289.7886921759,
+      "leverage_per_day": 756.1643835616438,
+      "wallets_per_day": 11.46887492861222,
+      "forfeited_per_day": 10057.421950666156
+     }
+    },
+    "3.0s": {
+     "keeper": {
+      "per_day": 39466.378259681565,
+      "hold_s": 1800.0,
+      "theta_bps": 20.0,
+      "size": 6900000.0,
+      "tier": 3,
+      "trades_per_day": 7.05179897201599,
+      "counted_per_month": 2919444774.41462
+     },
+     "recycler": {
+      "per_day": 70348.84923123482,
+      "hold_s": 1800.0,
+      "theta_bps": 12.0,
+      "size": 6900000.0,
+      "tier": 0,
+      "trades_per_day": 24.623129640205597,
+      "counted_per_month": 10193975671.045116
+     },
+     "at_recycler_best": {
+      "kept_tier": 3,
+      "gain_per_day": 61163.8540262707,
+      "best_price_per_day": 19944.735008566535,
+      "leverage_per_day": 756.1643835616438,
+      "wallets_per_day": 24.623129640205597,
+      "forfeited_per_day": 20725.522521768384
+     }
+    }
+   }
+  }
+ }
+}

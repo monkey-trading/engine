@@ -96,6 +96,7 @@ def lane_stats(out: dict, lane: int) -> dict:
         "min_nav_p01": float(np.quantile(lowest_nav, 0.01)),
         "min_nav_p50": float(np.quantile(lowest_nav, 0.5)),
         "fee_mean": float(out["fee"][:, lane].mean()),
+        "spread_income_mean": (float(out["spread_income"][:, lane].mean()) if "spread_income" in out else 0.0),
         "financing_mean": float(out["financing"][:, lane].mean()),
         "bad_debt_mean": float(out["bad_debt"][:, lane].mean()),
         "bad_debt_p99": float(np.quantile(out["bad_debt"][:, lane], 0.99)),
