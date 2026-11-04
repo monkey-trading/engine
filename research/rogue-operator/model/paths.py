@@ -80,7 +80,7 @@ def resample(x: np.ndarray, every: int) -> np.ndarray:
 
 def divergence_clamped(x: np.ndarray, other: np.ndarray, bound_bps: float) -> np.ndarray:
     """`x` held at its last value wherever it sits more than `bound_bps` from `other`, in bps of
-    their midpoint: what the engine's index does when two sources diverge past the divergence bound,
+    `other`: what the engine's index does when two sources diverge past the divergence bound,
     which leaves the market with no price until they agree again. `other` is Kraken's last trade,
     which lags Kraken's book, so this also holds `x` through some genuine fast moves."""
     gap = np.abs(np.expm1(x - other)) * 1e4
