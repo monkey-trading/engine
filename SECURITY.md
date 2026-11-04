@@ -76,6 +76,30 @@ takes some back first, each call touching one or two, before such an unstake fit
 cost falls only on the staker that chose the delegations, and no one else can add to them, so a
 report that rests on it alone is not a new finding.
 
+The seed relay carries the RANDAO mix that seeds each daily operator turn: `SeedRelay` on Ethereum,
+`SeedReceiver` on Arbitrum, and the relayer every rotation-set member's node runs under
+`[seed_relay]`. The relay sends a seed only with a proof against a beacon block root the EIP-4788
+contract holds: the header hashes to that root, its state's `fork.current_version` is one the
+deployment accepts, its slot lies past the epoch's last slot and before `randao_mixes` reuses the
+epoch's index, and the state holds the seed at that index. The receiver takes a seed only from the
+relay's aliased address, only for the epoch the schedule fixes for its turn, and only before that
+turn's draw deadline, from which its answer for the turn is final. What it still trusts:
+- Ethereum's consensus, for the roots; the mix itself is biasable by the proposers of the epoch's
+  last slots, each of whom can withhold a block and so choose between two mixes.
+- Arbitrum's inbox, for delivery. Arbitrum One's sequencer can hold a relay's message for 24 hours
+  before anyone may force-include it, and a relay that misses the draw deadline is refused, so the
+  turn draws from the last relayed seed hashed with its number. The schedule leaves a relay two days
+  for that reason; whoever can withhold every relay until a deadline chooses between the mix and
+  that fallback. No turn draws before the first seed arrives.
+- Its relayers, for liveness: nothing relays by itself, and a turn that reaches its deadline without a
+  seed raises `seed_missing`.
+- The beacon state's layout. The relay's indices are those of the 64-field `BeaconState` from
+  Electra on, so a fork that changes it is refused until a new relay and receiver are deployed, and
+  turns draw from the fallback meanwhile. Epochs are counted from 12-second slots.
+The relayer's beacon node, Ethereum providers and signing endpoint are host-reached and untrusted:
+each read it acts on is a strict majority's or is checked again on chain, so a wrong answer costs a
+relay, never a wrong seed.
+
 The findings that matter most let someone take funds they are not owed, fill an order at a price the
 rules do not allow, make the state the node reports differ from the state its published log replays
 to, forge or reuse a signature the enclave makes, read or alter what the enclave holds from the

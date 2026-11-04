@@ -131,21 +131,7 @@ impl NodeConfig {
         {
             bail!("production custody requires finality_tag = latest and withdrawal_finality_tag = finalized");
         }
-        if evm.providers.len() < 3 {
-            bail!("custody.evm.providers requires at least three independent RPC providers");
-        }
-        let (mut names, mut urls) = (BTreeSet::new(), BTreeSet::new());
-        for provider in &evm.providers {
-            let url = provider.rpc_url.attested().context("custody.evm.providers.rpc_url")?;
-            if provider.name.trim().is_empty() || !names.insert(&provider.name) || !urls.insert(url.clone()) {
-                bail!("custody.evm.providers requires non-empty unique names and distinct URLs");
-            }
-            // Literal addresses only: `localhost` resolves through the host-controlled `/etc/hosts`.
-            let on_this_machine = matches!(url.host_str(), Some("127.0.0.1" | "[::1]"));
-            if url.scheme() != "https" && !(url.scheme() == "http" && on_this_machine) {
-                bail!("custody.evm.providers.rpc_url must use https unless it is on this machine");
-            }
-        }
+        check_providers(&evm.providers, "custody.evm.providers")?;
         if evm.max_block_range == 0 || evm.poll_interval.is_zero() || evm.rpc_timeout.is_zero() {
             bail!("custody.evm.max_block_range, poll_interval, and rpc_timeout must be non-zero");
         }
@@ -175,4 +161,27 @@ impl NodeConfig {
         }
         Ok(())
     }
+}
+
+/// Checks a quorum's providers: at least three, each named, each at its own URL, and each over HTTPS
+/// unless it is on this machine.
+/// Error cases:
+/// - fewer than three, an empty or repeated name, a repeated URL, or plain HTTP to another machine
+pub(super) fn check_providers(providers: &[RpcProviderSection], field: &str) -> anyhow::Result<()> {
+    if providers.len() < 3 {
+        bail!("{field} requires at least three independent RPC providers");
+    }
+    let (mut names, mut urls) = (BTreeSet::new(), BTreeSet::new());
+    for provider in providers {
+        let url = provider.rpc_url.attested().with_context(|| format!("{field}.rpc_url"))?;
+        if provider.name.trim().is_empty() || !names.insert(&provider.name) || !urls.insert(url.clone()) {
+            bail!("{field} requires non-empty unique names and distinct URLs");
+        }
+        // Literal addresses only: `localhost` resolves through the host-controlled `/etc/hosts`.
+        let on_this_machine = matches!(url.host_str(), Some("127.0.0.1" | "[::1]"));
+        if url.scheme() != "https" && !(url.scheme() == "http" && on_this_machine) {
+            bail!("{field}.rpc_url must use https unless it is on this machine");
+        }
+    }
+    Ok(())
 }

@@ -57,44 +57,44 @@ enum Field {
 
 /// The Fulu `BeaconState`'s 38 fields, in order.
 const FULU: [Field; 38] = [
-    Field::Fixed(&[8]),                                // genesis_time
-    Field::Fixed(&[32]),                               // genesis_validators_root
-    Field::Fixed(&[8]),                                // slot
-    Field::Fixed(&[4, 4, 8]),                          // fork
-    Field::Fixed(&[8, 8, 32, 32, 32]),                 // latest_block_header
-    Field::Roots(8192),                                // block_roots
-    Field::Roots(8192),                                // state_roots
-    Field::RootList(1 << 24),                          // historical_roots
-    Field::Fixed(&ETH1_DATA),                          // eth1_data
-    Field::Elements(&ETH1_DATA, 2048),                 // eth1_data_votes
-    Field::Fixed(&[8]),                                // eth1_deposit_index
-    Field::Elements(&VALIDATOR, 1 << 40),              // validators
-    Field::PackedList(8, 1 << 40),                     // balances
-    Field::Roots(65536),                               // randao_mixes
-    Field::Integers(8192),                             // slashings
-    Field::PackedList(1, 1 << 40),                     // previous_epoch_participation
-    Field::PackedList(1, 1 << 40),                     // current_epoch_participation
-    Field::Fixed(&[1]),                                // justification_bits
-    Field::Fixed(&[8, 32]),                            // previous_justified_checkpoint
-    Field::Fixed(&[8, 32]),                            // current_justified_checkpoint
-    Field::Fixed(&[8, 32]),                            // finalized_checkpoint
-    Field::PackedList(8, 1 << 40),                     // inactivity_scores
-    Field::SyncCommittee,                              // current_sync_committee
-    Field::SyncCommittee,                              // next_sync_committee
-    Field::PayloadHeader,                              // latest_execution_payload_header
-    Field::Fixed(&[8]),                                // next_withdrawal_index
-    Field::Fixed(&[8]),                                // next_withdrawal_validator_index
-    Field::Elements(&HISTORICAL_SUMMARY, 1 << 24),     // historical_summaries
-    Field::Fixed(&[8]),                                // deposit_requests_start_index
-    Field::Fixed(&[8]),                                // deposit_balance_to_consume
-    Field::Fixed(&[8]),                                // exit_balance_to_consume
-    Field::Fixed(&[8]),                                // earliest_exit_epoch
-    Field::Fixed(&[8]),                                // consolidation_balance_to_consume
-    Field::Fixed(&[8]),                                // earliest_consolidation_epoch
-    Field::Elements(&PENDING_DEPOSIT, 1 << 27),        // pending_deposits
+    Field::Fixed(&[8]),                                    // genesis_time
+    Field::Fixed(&[32]),                                   // genesis_validators_root
+    Field::Fixed(&[8]),                                    // slot
+    Field::Fixed(&[4, 4, 8]),                              // fork
+    Field::Fixed(&[8, 8, 32, 32, 32]),                     // latest_block_header
+    Field::Roots(8192),                                    // block_roots
+    Field::Roots(8192),                                    // state_roots
+    Field::RootList(1 << 24),                              // historical_roots
+    Field::Fixed(&ETH1_DATA),                              // eth1_data
+    Field::Elements(&ETH1_DATA, 2048),                     // eth1_data_votes
+    Field::Fixed(&[8]),                                    // eth1_deposit_index
+    Field::Elements(&VALIDATOR, 1 << 40),                  // validators
+    Field::PackedList(8, 1 << 40),                         // balances
+    Field::Roots(65536),                                   // randao_mixes
+    Field::Integers(8192),                                 // slashings
+    Field::PackedList(1, 1 << 40),                         // previous_epoch_participation
+    Field::PackedList(1, 1 << 40),                         // current_epoch_participation
+    Field::Fixed(&[1]),                                    // justification_bits
+    Field::Fixed(&[8, 32]),                                // previous_justified_checkpoint
+    Field::Fixed(&[8, 32]),                                // current_justified_checkpoint
+    Field::Fixed(&[8, 32]),                                // finalized_checkpoint
+    Field::PackedList(8, 1 << 40),                         // inactivity_scores
+    Field::SyncCommittee,                                  // current_sync_committee
+    Field::SyncCommittee,                                  // next_sync_committee
+    Field::PayloadHeader,                                  // latest_execution_payload_header
+    Field::Fixed(&[8]),                                    // next_withdrawal_index
+    Field::Fixed(&[8]),                                    // next_withdrawal_validator_index
+    Field::Elements(&HISTORICAL_SUMMARY, 1 << 24),         // historical_summaries
+    Field::Fixed(&[8]),                                    // deposit_requests_start_index
+    Field::Fixed(&[8]),                                    // deposit_balance_to_consume
+    Field::Fixed(&[8]),                                    // exit_balance_to_consume
+    Field::Fixed(&[8]),                                    // earliest_exit_epoch
+    Field::Fixed(&[8]),                                    // consolidation_balance_to_consume
+    Field::Fixed(&[8]),                                    // earliest_consolidation_epoch
+    Field::Elements(&PENDING_DEPOSIT, 1 << 27),            // pending_deposits
     Field::Elements(&PENDING_PARTIAL_WITHDRAWAL, 1 << 27), // pending_partial_withdrawals
-    Field::Elements(&PENDING_CONSOLIDATION, 1 << 18),  // pending_consolidations
-    Field::Integers(64),                               // proposer_lookahead
+    Field::Elements(&PENDING_CONSOLIDATION, 1 << 18),      // pending_consolidations
+    Field::Integers(64),                                   // proposer_lookahead
 ];
 
 /// What proves one epoch's RANDAO mix from a state: `SeedRelay`'s witness, less the block header.
@@ -161,16 +161,12 @@ pub fn prove_mix(state: &[u8], epoch: u64) -> anyhow::Result<MixProof> {
     let fields = split(state)?;
     let slot = u64::from_le_bytes(fields[SLOT_FIELD].try_into().context("slot")?);
     let first_after = |epochs: u64| epoch.checked_add(epochs)?.checked_mul(SLOTS_PER_EPOCH);
-    ensure!(
-        first_after(1).is_some_and(|end| slot >= end),
-        "the state's slot {slot} is not past epoch {epoch}"
-    );
+    ensure!(first_after(1).is_some_and(|end| slot >= end), "the state's slot {slot} is not past epoch {epoch}");
     ensure!(
         first_after(EPOCHS_PER_HISTORICAL_VECTOR).is_none_or(|reuse| slot < reuse),
         "the state's slot {slot} has reused epoch {epoch}'s mix index"
     );
-    let roots =
-        FULU.iter().zip(&fields).map(|(field, bytes)| field.root(bytes)).collect::<anyhow::Result<Vec<_>>>()?;
+    let roots = FULU.iter().zip(&fields).map(|(field, bytes)| field.root(bytes)).collect::<anyhow::Result<Vec<_>>>()?;
     let (state_root, top_to_fork) = branch(roots.clone(), STATE_DEPTH, FORK_FIELD)?;
     let (_, top_to_mixes) = branch(roots.clone(), STATE_DEPTH, RANDAO_MIXES_FIELD)?;
     // `previous_version`, `current_version` and `epoch`, one chunk each.

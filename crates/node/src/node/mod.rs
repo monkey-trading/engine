@@ -21,14 +21,14 @@ use tracing::{error, info, warn};
 use crate::alerts::Routing;
 use crate::api::{ApiState, Feed, MAX_BACKFILLS, Signing, router};
 use crate::clock::{Clock, SystemClock};
-use crate::config::{AuthMode, CustodyProvider, FeedProvider, NodeConfig};
+use crate::config::{AuthMode, CustodyProvider, NodeConfig};
 use crate::feeds;
-use crate::feeds::venue::{self, Timing};
 mod shutdown;
 use shutdown::{TaskResult, finish_history, handed_over, sequencer_outcome, supervise};
 mod handover;
 mod keys;
 mod marks;
+mod price_feeds;
 pub(crate) mod secrets;
 mod ticker;
 pub use keys::{KeyStart, parse_launch_digest};
@@ -338,34 +338,13 @@ async fn serve_node(
     if let Some(relay) = relay {
         tasks.spawn(async move { ("collateral", relay.run().await) });
     }
+    if let Some(seed_relay) = crate::seed_relay::task(&cfg, &metrics)? {
+        tasks.spawn(async move { ("seed_relay", seed_relay.await) });
+    }
 
     // The monitor exports quote times only for the sources this config still feeds.
     let sources = feeds::configured_sources(&cfg.feeds);
-    let feeds = cfg.feeds;
-    match feeds.provider {
-        FeedProvider::Mock => {
-            let feed_tx = tx.clone();
-            tasks.spawn(async move {
-                feeds::run_mock(&feeds, feed_tx).await;
-                ("feeds", Ok(()))
-            });
-        }
-        FeedProvider::Venues => {
-            let venues = feeds.venues.context("feeds.provider = \"venues\" needs [feeds.venues]")?;
-            let timing = Timing::for_venues(&venues);
-            let tls = venue::tls_config()?;
-            for conn in venues.connections {
-                let (name, tls, feed_tx) = (conn.venue.name(), tls.clone(), tx.clone());
-                // Off under the `secret_missing` startup raised; the monitor pages its markets.
-                if delivered.withholds(&conn) {
-                    continue;
-                }
-                let api_key = delivered.api_key(&conn)?;
-                info!(venue = name, url = %conn.url, symbols = conn.symbols.len(), "starting venue feed");
-                tasks.spawn(async move { (name, venue::run(conn, api_key, timing, tls, feed_tx).await) });
-            }
-        }
-    }
+    price_feeds::spawn(&mut tasks, cfg.feeds, delivered, &tx)?;
 
     let (trusted_clock, sealed) = (trusted(), store.clone().map(|store| Sealed { store, trusted: trusted() }));
     let time_cfg = cfg.time;

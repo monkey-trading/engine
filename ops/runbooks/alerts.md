@@ -202,6 +202,14 @@ Rebuilt from the log. None changes the books.
 | `standby_signal_failed` | Critical | The standby could not read the registry or vault for a promotion. See [standby.md](standby.md), "Run the standby". |
 | `standby_takeover_failed` | Critical | A promotion arrived and the standby's copy could not be finalized. See [standby.md](standby.md), "After a promotion". |
 
+## Seed relay
+
+| Alert | Level | Meaning and response |
+| --- | --- | --- |
+| `seed_missing` | Critical | The turn whose draw deadline last passed has no relayed seed, so it draws from the last relayed seed hashed with its number. Every member's relay failed or was withheld. Resolves once a turn reaches its draw deadline with its seed. See [seed-relay.md](seed-relay.md), "When `seed_missing` fires". |
+| `seed_relay_failed` | Warning | This node could not relay a turn's seed the receiver lacks, or a seed it relayed had not reached Arbitrum by `seed_relay.resend_after`. Resolves once both upcoming turns have their seeds. See [seed-relay.md](seed-relay.md), "When `seed_relay_failed` fires". |
+| `seed_relayer_unfunded` | Warning | The seed relayer's Ethereum balance is below `seed_relay.min_balance`; relays stop when it cannot pay for one. Resolves once refilled. See [seed-relay.md](seed-relay.md), "When `seed_relayer_unfunded` fires". |
+
 ## API limits
 
 Raised at most once a minute. The API refuses clients while it is true.

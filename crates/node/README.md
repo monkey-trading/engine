@@ -211,6 +211,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   the resume checkpoint, stream resumption at the copy's last command, and a follow that stops at a
   cut-back operator or a heartbeat behind the copy with the copy unchanged
 - `src/node/mod.rs` — startup, task supervision, and shutdown
+- `src/node/price_feeds.rs` — the price feed tasks: the mock feed, or one task per venue connection
 - `src/node/ticker.rs` — the `Tick` command at `node.tick`, so sessions and rollovers fire without traffic
 - `src/node/handover.rs` — the registry's rotation switch checked against the config at start, and the
   incumbent's election watcher
@@ -563,6 +564,21 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/tee/secrets.rs` — the sealed secrets file, per release and apart from the keys, and what the
   host can do with it; `src/tee/secrets/tests.rs` covers it
 - `src/tee/snp.rs` — the SEV-SNP sealing key and report through `/dev/sev-guest` (Linux)
+- `src/seed_relay/mod.rs` — the seed relayer: each poll reads the seed receiver at a final Arbitrum
+  block, raises `seed_missing` and `seed_relayer_unfunded`, and relays the seeds of the two upcoming
+  turns the receiver lacks, raising `seed_relay_failed` when it cannot; `src/seed_relay/tests.rs`
+  covers its decisions over fake chains, and `src/seed_relay/tests/scenario.rs` is the two-Anvil
+  dev scenario `scripts/dev-seed-relay.sh` runs
+- `src/seed_relay/abi.rs` — the relay's, receiver's and Inbox's ABIs
+- `src/seed_relay/beacon.rs` — the beacon API: the finalized header and its SSZ state, bounded in
+  time and size
+- `src/seed_relay/ethereum.rs` — Ethereum through a strict majority of the relayer's providers, and
+  sends through its signing endpoint
+- `src/seed_relay/header.rs` — the beacon block header and its SSZ root
+- `src/seed_relay/schedule.rs` — `SeedSchedule`'s turns, draw deadlines and seed epochs
+- `src/seed_relay/ssz.rs` — SSZ merkleization and branches; `src/seed_relay/ssz/tests.rs` covers them
+- `src/seed_relay/state.rs` — the Fulu `BeaconState`'s fields, and the branches to its fork version
+  and an epoch's mix; `src/seed_relay/state/tests.rs` covers them
 - `src/secrets/mod.rs` — delivering secrets: who may, what binds a bundle, and what a host can do at
   each step
 - `src/secrets/bundle.rs` — the bundle, the operator's signature over it, and what a config can use
@@ -663,6 +679,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/config/checkpoints.rs` — the `[checkpoints]` relayer config and validation, and the
   `[log_heads]` section: the LogHeads contract, a dedicated relayer distinct from the checkpoint
   relayer, and the posting interval
+- `src/config/seed_relay.rs` — the `[seed_relay]` section: Ethereum providers, the signing endpoint
+  and relayer, the beacon API, fees and the balance threshold, and their checks;
+  `src/config/seed_relay/tests.rs` covers them
 - `src/config/feeds.rs` — the `[feeds]` section: the mock feed, the venues and vendors with their
   redacted API keys, the checks on their endpoints, credentials, and symbols, and the venues
   quoting each instrument of a market
@@ -820,7 +839,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/node/preflight/tests.rs` — refused startup preserves history, WAL, and log bytes
 - `src/sequencer/replay/auth_tests.rs` — trusted immediate/deferred completion evidence regressions
 - `src/sequencer/replay/accounting_tests.rs` — historical fixture and outstanding-work accounting oracles
-- `src/custody/mod.rs` — the custody providers (mock and EVM) and the USDC-to-`Fixed` conversion
+- `src/custody/mod.rs` — the custody providers (mock and EVM), the USDC-to-`Fixed` conversion,
+  and `ContractQuorum`, the custody providers' agreed reads of a contract at a final block
 - `src/custody/evm.rs` — the deposit watcher: the chain and token check, range reads from blocks
   proven to lead to the tagged final block, the completeness check, and stall alerts
 - `src/custody/evm/lifecycle.rs` — confirmed receipt reconciliation, principal finality and the replayed scan frontier
@@ -992,6 +1012,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/alerts/outbox/tests.rs` — restart, bounds, corruption and storage-failure tests
 - `src/alerts/tests.rs` — alert routing tests
 - `examples/access_source.rs` — loopback-only signed synthetic source for the access scenario
+- `examples/seed_witness.rs` — a `SeedRelay` witness from a saved beacon state and header, for
+  `scripts/seed-relay-fixtures.sh`
 - `examples/reference_log.rs` — writes a protocol version's node reference log from engine-core's
 - `tests/reference_logs.rs` — replays every committed node reference log, events included
 - `tests/usd_settlement.rs` — the USD settlement dev scenario on the committed dev config: Germany 40

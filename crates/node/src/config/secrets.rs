@@ -79,6 +79,8 @@ pub(crate) enum SecretUse {
     VendorKey,
     /// An alert webhook's URL: the node runs, and those alerts are only logged.
     WebhookUrl,
+    /// A key in a seed relayer URL: the node runs, and the relayer stays off.
+    SeedRelay,
 }
 
 /// A field that names a secret.
@@ -330,6 +332,13 @@ impl NodeConfig {
                 named.push(NamedSecret { name: name.clone(), field, usage: SecretUse::WebhookUrl });
             }
         }
+        if let Some(relay) = &self.seed_relay {
+            for (url, field) in relay.urls() {
+                if let Some(name) = url.secret_name().with_context(|| field.clone())? {
+                    named.push(NamedSecret { name, field, usage: SecretUse::SeedRelay });
+                }
+            }
+        }
         Ok(named)
     }
 
@@ -348,6 +357,13 @@ impl NodeConfig {
         }
         if let Some(access) = &mut self.access {
             access.endpoint.deliver(values)?;
+        }
+        if let Some(relay) = &mut self.seed_relay {
+            for provider in &mut relay.providers {
+                provider.rpc_url.deliver(values)?;
+            }
+            relay.rpc_url.deliver(values)?;
+            relay.beacon_api.deliver(values)?;
         }
         Ok(())
     }

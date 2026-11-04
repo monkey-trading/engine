@@ -16,7 +16,7 @@
 
 use std::sync::Arc;
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, Bytes, U256};
 use anyhow::Context;
 use engine_core::Engine;
 use engine_core::Fixed;
@@ -33,7 +33,7 @@ mod credit;
 mod cursor;
 mod evm;
 pub(crate) mod pending;
-use crate::custody::evm::DepositWatcher;
+use crate::custody::evm::{DepositWatcher, VaultReader};
 mod quorum;
 pub(crate) use crate::custody::quorum::Quorum;
 mod operators;
@@ -105,6 +105,43 @@ impl BalanceQuorum {
 pub(crate) fn heads_reader(cfg: &CustodySection) -> anyhow::Result<Quorum<VaultRpc>> {
     let evm = cfg.evm.as_ref().context("log heads need [custody.evm]")?;
     Quorum::connect(evm, cfg.vault.parse().context("custody.vault")?)
+}
+
+/// The custody providers' agreed reads of one contract the vault does not hold, such as the seed
+/// receiver: every call at one block a majority declares final, with that block's time. It has its
+/// own quorum state, and its alerts are Warnings under its own name, since nothing it reads credits
+/// or pays.
+pub(crate) struct ContractQuorum(Quorum<VaultRpc>);
+
+impl ContractQuorum {
+    /// Builds clients without accessing the network.
+    /// Error cases:
+    /// - fewer than three providers, or `custody.vault` or a client does not parse
+    pub(crate) fn connect(cfg: &CustodySection, name: &'static str) -> anyhow::Result<Self> {
+        let evm = cfg.evm.as_ref().context("custody.provider = \"evm\" needs [custody.evm]")?;
+        Ok(Self(Quorum::connect(evm, cfg.vault.parse().context("custody.vault")?)?.named(name, false)))
+    }
+
+    /// The final block's time, in seconds, and each of the calls to `to` that `calls` names for that
+    /// time, made there under its operation name.
+    /// Error cases:
+    /// - the providers lack an identity, finality, header or call quorum, or name no final block
+    pub(crate) async fn read(
+        &self,
+        to: Address,
+        calls: impl FnOnce(u64) -> Vec<(&'static str, Bytes)>,
+    ) -> anyhow::Result<(u64, Vec<Bytes>)> {
+        self.0.identity().await?;
+        let block = self.0.finality().await?.tagged.context("custody providers name no final block")?;
+        let header = self.0.headers(block.number, block.number).await?;
+        let time = header.first().filter(|link| link.hash == block.hash).context("the final block's header")?.timestamp;
+        let calls = calls(time);
+        let mut answers = Vec::with_capacity(calls.len());
+        for (operation, data) in calls {
+            answers.push(self.0.call_as(operation, block, to, data).await?);
+        }
+        Ok((time, answers))
+    }
 }
 
 /// A connected custody provider, ready to run.

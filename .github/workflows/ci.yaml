@@ -84,7 +84,7 @@ jobs:
                 # Read by no build, test, scenario, or image.
                 agents/* | AGENTS.md | CLAUDE.md | README.md | SECURITY.md | research/* | image/README.md \
                   | crates/core/README.md | crates/node/README.md | crates/verify/README.md \
-                  | crates/verify-wasm/README.md | crates/wire/README.md) ;;
+                  | crates/verify-wasm/README.md | crates/wire/README.md | scripts/seed-relay-fixtures.sh) ;;
                 # The contracts' emission and exit tests read the engine's proof vectors.
                 crates/core/tests/fixtures/emissions.json | crates/core/tests/fixtures/exit.json)
                   areas+=" rust scenarios image contracts" ;;
@@ -351,6 +351,8 @@ jobs:
         run: ./scripts/dev-operator-election.sh
       - name: Run the staking reads dev scenario
         run: ./scripts/dev-staking-reads.sh
+      - name: Run the seed relay dev scenario
+        run: ./scripts/dev-seed-relay.sh
       - name: Run the operator's share dev scenario
         run: ./scripts/dev-operator-share.sh
       - name: Run the standby operator dev scenario

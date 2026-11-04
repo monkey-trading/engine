@@ -75,18 +75,29 @@ pub async fn run(mut cfg: NodeConfig, mut telemetry: Telemetry, start: crate::Ke
     let delivered = crate::node::secrets::startup(&mut cfg, &mut telemetry, &start)
         .await
         .inspect_err(|e| error!("refusing to serve: {e:#}"))?;
-    let Telemetry { metrics: _, alerts, pages_critical } = telemetry;
+    let Telemetry { metrics, alerts, pages_critical } = telemetry;
     if !pages_critical {
         warn!("no alerts.critical webhook: Critical alerts are only logged");
     }
     cfg.alerts.outbox.check_disk_location(&cfg.node.log_dir)?;
     let routing = alerts.spawn(cfg.alerts.episode_quiet, &cfg.alerts.outbox).await?;
-    let outcome = match delivered.listener {
-        Some(listener) => tokio::select! {
-            outcome = serve(&cfg, &standby) => outcome,
-            outcome = listener.run() => outcome,
+    // A standby relays seeds too: every rotation-set member's node runs the relayer.
+    let seed_relay = crate::seed_relay::task(&cfg, &metrics)?;
+    let following = async {
+        match delivered.listener {
+            Some(listener) => tokio::select! {
+                outcome = serve(&cfg, &standby) => outcome,
+                outcome = listener.run() => outcome,
+            },
+            None => serve(&cfg, &standby).await,
+        }
+    };
+    let outcome = match seed_relay {
+        Some(seed_relay) => tokio::select! {
+            outcome = following => outcome,
+            outcome = seed_relay => outcome,
         },
-        None => serve(&cfg, &standby).await,
+        None => following.await,
     };
     routing.drain(Duration::from_secs(10)).await;
     outcome
