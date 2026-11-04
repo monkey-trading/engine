@@ -1,12 +1,13 @@
 //! The `[feeds]` section: the mock feed, or the venues and market-data vendors the node reads
 //! quotes from, with the checks that keep a feed from failing silently or being forged by the host.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::time::Duration;
 
 use anyhow::{Context, anyhow, ensure};
 use engine_core::Fixed;
+use engine_core::market::MarketSpec;
 use engine_core::types::MarketId;
 use serde::Deserialize;
 use tokio_tungstenite::tungstenite::http::Uri;
@@ -37,8 +38,6 @@ pub enum Venue {
     Massive,
     /// TraderMade: FX quotes.
     Tradermade,
-    /// Databento: futures and US stock quotes from its live gateway.
-    Databento,
 }
 
 #[derive(Debug, Deserialize)]
@@ -85,8 +84,8 @@ pub struct VenuesSection {
     /// or the market's `max_age_ms` old, whichever is shorter, and then sequences.
     #[serde(with = "humantime_serde")]
     pub min_quote_spacing: Duration,
-    /// How often a connection pings its venue, on every connection but Databento's. The time since
-    /// the newest answered ping was sent bounds how far behind its stream may be.
+    /// How often a connection pings its venue. The time since the newest answered ping was sent
+    /// bounds how far behind its stream may be.
     #[serde(with = "humantime_serde")]
     pub ping_interval: Duration,
     /// How far behind a connection's stream may be before what it reads counts as no quote. A
@@ -103,21 +102,13 @@ pub struct VenuesSection {
 pub struct VenueConnection {
     pub venue: Venue,
     /// The venue's endpoint: `wss://` on the venue's own domain, and for Massive one of its
-    /// `/forex`, `/futures`, or `/stocks` feeds. The host controls the network, so plaintext would
-    /// let it forge prices, and TLS alone proves only the server's name, not that it is the venue
-    /// the quotes are labelled with. Databento's live gateway speaks only plain TCP, so its
-    /// endpoint is `tcp://<gateway>.lsg.databento.com:13000`.
-    ///
-    /// TODO: the host can rewrite or delay a Databento feed in flight. The divergence bound limits
-    /// what it gains: a market priced from Databento and one TLS source moves at most half its
-    /// `max_divergence_bps`, and loses its price beyond that. On a futures market it can move both
-    /// contracts' medians apart before a roll, so the roll's gap, and with it the index from then
-    /// on, shifts by up to the full `max_divergence_bps` and keeps that shift. Databento offers no
-    /// TLS gateway, so its connection has no delay bound of its own: the TLS source's quote, which
-    /// must also be fresh, bounds the market's age.
+    /// `/forex`, `/futures`, or `/stocks` feeds. Only a source reached over TLS that ends in the
+    /// enclave may set or move a price: the host controls the network, so plaintext would let it
+    /// forge prices, and TLS alone proves only the server's name, not that it is the venue the
+    /// quotes are labelled with.
     pub url: String,
     /// The environment variable holding the vendor's API key, which is a credential and stays out
-    /// of config files: required for Massive, TraderMade, and Databento unless `api_key_secret`
+    /// of config files: required for Massive and TraderMade unless `api_key_secret`
     /// names the key, and refused for a venue whose feed is public. The node refuses to start while
     /// a named variable is unset. A production build refuses this field: the guest has no
     /// environment to set it in.
@@ -125,8 +116,6 @@ pub struct VenueConnection {
     /// The delivered secret holding the vendor's API key, in place of `api_key_env`. Until it is
     /// delivered this connection stays off, under `secret_missing`.
     pub api_key_secret: Option<SecretName>,
-    /// The Databento dataset the gateway serves, e.g. `GLBX.MDP3`; required for Databento only.
-    pub dataset: Option<String>,
     pub symbols: Vec<VenueSymbol>,
 }
 
@@ -171,7 +160,6 @@ impl Venue {
             Venue::Kraken => "kraken",
             Venue::Massive => "massive",
             Venue::Tradermade => "tradermade",
-            Venue::Databento => "databento",
         }
     }
 
@@ -183,7 +171,6 @@ impl Venue {
             Venue::Kraken => "kraken.com",
             Venue::Massive => "massive.com",
             Venue::Tradermade => "tradermade.com",
-            Venue::Databento => "databento.com",
         }
     }
 
@@ -194,7 +181,7 @@ impl Venue {
 
     /// Whether the venue's feed needs an API key.
     pub(super) fn needs_key(self) -> bool {
-        matches!(self, Venue::Massive | Venue::Tradermade | Venue::Databento)
+        matches!(self, Venue::Massive | Venue::Tradermade)
     }
 }
 
@@ -239,9 +226,8 @@ impl VenuesSection {
     ///   (`min_quote_spacing`'s bounds are the config check's)
     /// - no connections, or a connection with no symbols
     /// - a URL that does not parse as `wss://` with a host on the venue's own domain (for Massive,
-    ///   with one of its feed paths), or for Databento as `tcp://` on its domain with a port
-    /// - an API key missing for a vendor or given for a public venue, or a dataset missing for
-    ///   Databento or given for any other venue
+    ///   with one of its feed paths)
+    /// - an API key missing for a vendor or given for a public venue
     /// - a symbol listed twice on one connection, or a market and contract, or a URL, listed twice
     ///   for one venue
     pub(super) fn validate(&self) -> anyhow::Result<()> {
@@ -271,10 +257,6 @@ impl VenuesSection {
                 conn.api_key_env.is_none() || conn.api_key_secret.is_none(),
                 "{name} names both api_key_env and api_key_secret"
             );
-            ensure!(
-                conn.dataset.is_some() == (conn.venue == Venue::Databento),
-                "{name} dataset must be set exactly for databento"
-            );
             ensure!(!conn.symbols.is_empty(), "{name} has no symbols");
             let mut symbols = BTreeSet::new();
             for s in &conn.symbols {
@@ -292,22 +274,41 @@ impl VenuesSection {
 }
 
 impl VenueConnection {
-    /// Checks the endpoint is the venue's own, over TLS except for Databento's plain TCP gateway.
+    /// Checks the endpoint is the venue's own, over TLS.
     /// Error cases:
     /// - as for `VenuesSection::validate`
     fn validate_endpoint(&self) -> anyhow::Result<()> {
         let name = self.venue.name();
         let uri: Uri = self.url.parse().with_context(|| format!("{name} url"))?;
-        let scheme = if self.venue == Venue::Databento { "tcp" } else { "wss" };
-        ensure!(uri.scheme_str() == Some(scheme), "{name} url must be {scheme}://");
+        ensure!(uri.scheme_str() == Some("wss"), "{name} url must be wss://");
         let domain = self.venue.domain();
         ensure!(uri.host().is_some_and(|host| self.venue.serves(host)), "{name} url must be on {domain}");
-        if self.venue == Venue::Databento {
-            ensure!(uri.port_u16().is_some(), "{name} url must name the gateway port");
-        }
         if self.venue == Venue::Massive {
             ensure!(MASSIVE_PATHS.contains(&uri.path()), "{name} url must be one of its {MASSIVE_PATHS:?} feeds");
         }
         Ok(())
     }
+}
+
+/// Each instrument `market`'s listing names, with the venues among `connections` that quote it:
+/// every one of its contracts, rolled off or not, for a market priced from futures, and the market
+/// itself (`None`) for one that is not. An instrument no venue quotes maps to none, and a symbol for
+/// an instrument the listing does not name can never price the market, so it counts for none.
+pub(super) fn venues_quoting<'a>(
+    connections: &[VenueConnection],
+    market: &'a MarketSpec,
+) -> BTreeMap<Option<&'a str>, BTreeSet<Venue>> {
+    let instruments: Vec<Option<&str>> = match market.contracts.as_slice() {
+        [] => vec![None],
+        contracts => contracts.iter().map(|listed| Some(listed.contract.as_str())).collect(),
+    };
+    instruments
+        .into_iter()
+        .map(|instrument| {
+            let quotes = |conn: &&VenueConnection| {
+                conn.symbols.iter().any(|s| s.market == market.id && s.contract.as_deref() == instrument)
+            };
+            (instrument, connections.iter().filter(quotes).map(|conn| conn.venue).collect())
+        })
+        .collect()
 }

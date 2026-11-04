@@ -12,6 +12,7 @@ use tracing::{Level, enabled};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, registry};
 
+use crate::config::feeds::venues_quoting;
 use crate::config::{
     AuthMode, CustodyProvider, FeedProvider, HistorySection, MIN_QUOTE_INTERVAL, MIN_STATS_INTERVAL, NodeConfig,
     PRODUCTION_BUILD, StatsSection, TeeProvider,
@@ -58,6 +59,54 @@ impl NodeConfig {
                 "a production build refuses tee.sealing.handover.danger_accept_invalid_certs: the log's signed checkpoints are the authenticity boundary, but TLS verification stays on"
             );
         }
+        Ok(())
+    }
+
+    /// Refuses, when `production` is set, a genesis market its venues cannot price. Every venue is
+    /// reached over TLS that ends in the enclave, the only sources that may set a price, so a market
+    /// with an instrument fewer of them quote than its `min_sources` has no price whenever the
+    /// market prices from that instrument. It reads the genesis listings, which every config of a
+    /// log carries: a market listed or relisted after genesis is left to the `market_unfed`,
+    /// `market_no_price`, and `futures_roll_overdue` alerts, and a release after a relisting that
+    /// lowers `min_sources` or rolls past a contract still keeps what genesis needs.
+    /// Error cases:
+    /// - `production` is set and an instrument a genesis market's listing names is quoted by fewer
+    ///   venues than its `min_sources` (see `venues_quoting`)
+    pub fn refuse_unmet_min_sources(&self, production: bool) -> anyhow::Result<()> {
+        if !production {
+            return Ok(());
+        }
+        // The mock feed's sources are refused by `refuse_mocks`, and none of them is a venue.
+        let connections = match (&self.feeds.venues, self.feeds.provider) {
+            (Some(venues), FeedProvider::Venues) => venues.connections.as_slice(),
+            _ => &[],
+        };
+        let unmet: Vec<String> = self
+            .genesis
+            .markets
+            .iter()
+            .flat_map(|market| {
+                let (id, symbol, needed) = (market.id, &market.symbol, market.price_rules.min_sources);
+                venues_quoting(connections, market).into_iter().filter(move |(_, by)| by.len() < needed).map(
+                    move |(contract, by)| {
+                        let contract = contract.map(|c| format!(" contract {c}")).unwrap_or_default();
+                        let names: Vec<&str> = by.iter().map(|venue| venue.name()).collect();
+                        let has = if by.is_empty() {
+                            "no venue".into()
+                        } else {
+                            format!("{} ({})", by.len(), names.join(", "))
+                        };
+                        format!("market {id} ({symbol}){contract} has {has} of {needed}")
+                    },
+                )
+            })
+            .collect();
+        ensure!(
+            unmet.is_empty(),
+            "a production build refuses a genesis market that fewer venues quote than its min_sources, since only \
+             a source reached over TLS may set a price: {}",
+            unmet.join("; ")
+        );
         Ok(())
     }
 

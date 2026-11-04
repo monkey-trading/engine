@@ -2096,7 +2096,6 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tokio-tungstenite",
- "tokio-util",
  "toml",
  "tower",
  "tower-service",

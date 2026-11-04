@@ -219,9 +219,7 @@ origin, so a bundle, even one a stolen operator key signs, can change a provider
 provider credits deposits. They are sealed per release, a recorded delivery does not decrypt on a later
 connection, and an election moves none of them. A host that restores an older sealed file gets the
 older bundle, whose version the enclave's attested status shows; the operator revokes a rotated key at
-its provider, since nothing bounds that restore more tightly. Databento's gateway has no TLS, so a host
-can relay a login of its own under the operator's account by answering with what the node sends, though
-it never learns the key. With
+its provider, since nothing bounds that restore more tightly. With
 `[tee.sealing]` the keys are sealed on the host's disk under a key the SEV-SNP firmware derives from
 the chip, the launch measurement, the guest policy, and the committed TCB, with the config hash
 bound to the ciphertext, so neither the host nor another release, the same code under another
@@ -309,11 +307,14 @@ TLS-ALPN-01, and, with sealed keys, an `accounturi` naming the enclave's ACME ac
 that account; a host that deletes the sealed keys forces new ones, which the vault must register.
 `engine ct-watch` raises an alert for such a certificate once a
 followed Certificate Transparency log shows it, and must be running before the first one is issued.
-Databento's live gateway, one of the sources for futures and US share prices, offers no TLS, so the
-host can alter its quotes in flight; the divergence bound limits how far that moves a market priced
-from it and one TLS source, and beyond that the market has no price. Before a futures roll the host
-can move the two contracts' prices apart, so the roll's gap shifts by up to the full divergence
-bound and the market's index keeps that shift after the roll.
+Only a source reached over TLS that ends in the enclave sets or moves a price: every venue endpoint
+is `wss://` on the venue's own domain, its certificate checked against roots compiled into the
+binary, so the host can delay or drop a source's quotes but not alter them. Certificate validity is
+judged by the host clock and revocation is not checked, so a host holding a venue key that has
+expired or been revoked could pose as that venue. A production build refuses a config in which fewer
+venues quote a genesis market, or any futures contract its genesis listing names, than its
+`min_sources`; a market listed or relisted after genesis is watched only by the `market_unfed`,
+`market_no_price` and `futures_roll_overdue` alerts.
 A price's age under a hostile host is bounded on the monotonic clock, not the wall clock. The host
 carries every byte and sets the wall clock, so it can hold back a venue's TLS stream and set its clock
 back to match, and a quote's venue stamp then looks fresh: the drift bound alone would let prices run
@@ -345,9 +346,7 @@ whole basis points), and past that the market has no price. This rests on those 
 pong behind what they sent before reading its ping, as they were measured to; Massive's and
 TraderMade's connections, which were not measured, re-date nothing. A
 production market needs two sources fresh, so a delay past the bound on either leaves it without a
-price. The bound on a market priced from Databento and one TLS source is that source's: the host can
-delay or alter Databento's half of the index, within the divergence bound, but the market has no price
-once the TLS source's quote ages out. Every part of this rests on the monotonic clock's rate, as do
+price. Every part of this rests on the monotonic clock's rate, as do
 the Roughtime round trips that place trusted time and with them `time.max_drift`. The enclave image
 launches with Secure TSC: the guest's TSC is the processor's, scaled to the frequency the host asks
 for at launch by a factor the SEV-SNP firmware sets and the host cannot change afterwards, and the

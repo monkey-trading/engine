@@ -1,5 +1,6 @@
 //! Test support for the RWA feed tests: schedules open around the clock, signed relistings that
-//! move an open or a roll after setup, and a record of every command the sequencer applies.
+//! move an open or a roll after setup, a record of every command the sequencer applies, and TLS in
+//! front of the plaintext vendor stand-ins.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -11,8 +12,16 @@ use engine_core::market::MarketSpec;
 use engine_core::session::{Period, Schedule};
 use engine_core::types::{MarketId, Millis};
 use k256::ecdsa::SigningKey;
+use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, Issuer, KeyPair};
+use rustls::crypto::ring;
+use rustls::pki_types::PrivatePkcs8KeyDer;
+use rustls::{ClientConfig, RootCertStore, ServerConfig};
+use tokio::io::copy_bidirectional;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
+use tokio::task::AbortHandle;
 use tokio::time::{sleep, timeout};
+use tokio_rustls::TlsAcceptor;
 
 use crate::admin::sign;
 use crate::clock::now_ms;
@@ -23,6 +32,63 @@ use crate::test_support::dev_config;
 
 /// Every command the sequencer applied, with its stamp and events, in order.
 pub type Applied = Arc<Mutex<Vec<(Millis, Command, Vec<Event>)>>>;
+
+/// A test CA, and loopback TLS fronts that relay to plaintext stand-ins under leaves it issues for
+/// `127.0.0.1`, so a feed reaches a stand-in only over TLS it verifies against this CA alone.
+pub struct TlsFront {
+    issuer: Issuer<'static, KeyPair>,
+    /// A venue connection's TLS client config, as the node builds it but trusting only this CA.
+    pub client: Arc<ClientConfig>,
+}
+
+impl TlsFront {
+    /// A fresh CA and the client config that trusts it.
+    pub fn new() -> Self {
+        let ca_key = KeyPair::generate().expect("a CA key");
+        let mut ca = CertificateParams::new(Vec::<String>::new()).expect("CA parameters");
+        ca.distinguished_name.push(DnType::CommonName, "vendor stand-in CA");
+        ca.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        let root = ca.self_signed(&ca_key).expect("a CA certificate");
+        let mut roots = RootCertStore::empty();
+        roots.add(root.der().clone()).expect("the CA's root");
+        let client = ClientConfig::builder_with_provider(Arc::new(ring::default_provider()))
+            .with_safe_default_protocol_versions()
+            .expect("TLS protocol versions")
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        TlsFront { issuer: Issuer::new(ca, ca_key), client: Arc::new(client) }
+    }
+
+    /// Serves TLS on a fresh loopback port, relaying each connection to the stand-in at `plain`, a
+    /// `ws://` URL. Returns the `wss://` URL that reaches it, and the task, which stops the front
+    /// when aborted.
+    pub async fn relay(&self, plain: &str) -> (String, AbortHandle) {
+        let key = KeyPair::generate().expect("a leaf key");
+        let params = CertificateParams::new(vec!["127.0.0.1".to_owned()]).expect("leaf parameters");
+        let leaf = params.signed_by(&key, &self.issuer).expect("a leaf certificate");
+        let config = ServerConfig::builder_with_provider(Arc::new(ring::default_provider()))
+            .with_safe_default_protocol_versions()
+            .expect("TLS protocol versions")
+            .with_no_client_auth()
+            .with_single_cert(vec![leaf.der().clone()], PrivatePkcs8KeyDer::from(key.serialize_der()).into())
+            .expect("a server config");
+        let acceptor = TlsAcceptor::from(Arc::new(config));
+        let target = plain.strip_prefix("ws://").expect("a ws:// stand-in").to_owned();
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
+        let url = format!("wss://{}", listener.local_addr().expect("local addr"));
+        let front = tokio::spawn(async move {
+            while let Ok((tcp, _)) = listener.accept().await {
+                let (acceptor, target) = (acceptor.clone(), target.clone());
+                tokio::spawn(async move {
+                    let Ok(mut tls) = acceptor.accept(tcp).await else { return };
+                    let Ok(mut plain) = TcpStream::connect(&target).await else { return };
+                    let _ = copy_bidirectional(&mut tls, &mut plain).await;
+                });
+            }
+        });
+        (url, front.abort_handle())
+    }
+}
 
 impl Node {
     /// Records every command the sequencer applies from now on.

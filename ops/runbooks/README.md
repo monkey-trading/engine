@@ -51,6 +51,8 @@ runbook that depends on one says so where it does:
 - **The values marked `OWNER` in [production-node.toml](production-node.toml)** wait on decisions:
   the vault's and staking contract's launch values (#436),
   the vendor accounts and the access source.
+- **A production build refuses the template's feeds** until every futures and share market has
+  `min_sources` venues reached over TLS: #621 lists which markets fall short and the options.
 
 ## Keeping these in step
 

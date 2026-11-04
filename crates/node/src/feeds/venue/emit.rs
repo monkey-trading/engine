@@ -142,15 +142,15 @@ impl VenueFeed {
 
 impl VenueFeed {
     /// When the bound on the age of `symbol`'s quote stamped `ts` runs out, read without consuming
-    /// it (see `delay`), or `None` on a connection without pings.
+    /// it (see `delay`), if one is noted.
     fn peek_not_after(&self, symbol: &str, ts: Millis) -> Option<std::time::Instant> {
-        self.delay.as_ref().and_then(|probe| probe.peek_not_after(symbol, ts))
+        self.delay.peek_not_after(symbol, ts)
     }
 
     /// Takes when the bound on the age of `symbol`'s quote stamped `ts` runs out (see `delay`),
-    /// forgetting it and any older, or `None` on a connection without pings.
-    fn take_not_after(&mut self, symbol: &str, ts: Millis) -> Option<std::time::Instant> {
-        self.delay.as_mut().map(|probe| probe.take_not_after(symbol, ts))
+    /// forgetting it and any older.
+    fn take_not_after(&mut self, symbol: &str, ts: Millis) -> std::time::Instant {
+        self.delay.take_not_after(symbol, ts)
     }
 }
 

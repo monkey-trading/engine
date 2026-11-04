@@ -106,6 +106,22 @@ fn a_production_build_refuses_an_unsafe_proxy_range_at_load() {
     with_range("198.51.100.0/24").unwrap();
 }
 
+// A production build refuses at load, not only when the check is called, a genesis market fewer
+// venues quote than its min_sources.
+#[cfg(feature = "production")]
+#[test]
+fn a_production_build_refuses_a_market_its_venues_cannot_price_at_load() {
+    let dir = crate::test_support::scratch_dir("production-min-sources");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("node.toml");
+    let mut cfg: toml::Table = toml::from_str(&format!("{}{ACME}", real_providers())).unwrap();
+    // Coinbase and Kraken quote BTC-USD: two venues of the three it now needs.
+    cfg["genesis"]["markets"][0]["price_rules"]["min_sources"] = toml::Value::Integer(3);
+    std::fs::write(&path, toml::to_string(&cfg).unwrap()).unwrap();
+    let err = format!("{:#}", NodeConfig::load(&path).unwrap_err());
+    assert!(err.contains("market 1 (BTC-USD) has 2 (coinbase, kraken) of 3"), "{err}");
+}
+
 // A production build refuses fresh-account budgets above its values at load, not only when the check
 // is called, and names the budget.
 #[cfg(feature = "production")]

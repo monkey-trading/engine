@@ -135,17 +135,15 @@ fn a_connection_that_does_not_redate_holds_nothing_and_a_new_one_starts_empty() 
     let payload = probe.sent(Instant::now(), 1_000);
     let mut held = StandingBooks::default();
     held.connected(true);
-    held.hold("BTC", &quote("100", 1_000), LATE, Some(&probe));
+    held.hold("BTC", &quote("100", 1_000), LATE, &probe);
     assert!(held.books.is_empty(), "held before any ping was answered");
     probe.answered(&payload);
     probe.sent(Instant::now(), 1_001);
     held.connected(false);
-    held.hold("BTC", &quote("100", 1_000), LATE, Some(&probe));
+    held.hold("BTC", &quote("100", 1_000), LATE, &probe);
     assert!(held.books.is_empty(), "held on a connection that does not re-date");
     held.connected(true);
-    held.hold("BTC", &quote("100", 1_000), LATE, None);
-    assert!(held.books.is_empty(), "held on a connection without pings");
-    held.hold("BTC", &quote("100", 1_000), LATE, Some(&probe));
+    held.hold("BTC", &quote("100", 1_000), LATE, &probe);
     assert_eq!(held.books["BTC"].next_ping, 2, "read before the next ping, numbered 2");
     assert_eq!(Some(held.books["BTC"].vouched_from), probe.newest_answered());
     held.given.insert("BTC".into(), 1_300);
@@ -163,7 +161,7 @@ fn a_book_stamped_ahead_of_the_host_clock_is_redated_from_the_stamp_the_engine_s
     probe.answered(&payload);
     let mut held = StandingBooks::default();
     held.connected(true);
-    held.hold("BTC", &quote("100", 1_800), 1_000, Some(&probe));
+    held.hold("BTC", &quote("100", 1_800), 1_000, &probe);
     let read_at = held.books["BTC"].read_at;
     let redated = held.redate(ping(1, read_at + MS * 300, 1_300));
     assert_eq!(redated, [Redated { symbol: "BTC".into(), read_ts: 1_000, quote: quote("100", 1_300) }]);
@@ -250,7 +248,7 @@ fn a_redated_quote_dated_ahead_of_a_stepped_back_host_clock_is_refused_and_its_b
 #[test]
 fn only_venues_measured_to_answer_pings_in_order_redate() {
     let measured = [Venue::Bitstamp, Venue::Coinbase, Venue::Kraken];
-    let others = [Venue::Massive, Venue::Tradermade, Venue::Databento];
+    let others = [Venue::Massive, Venue::Tradermade];
     measured.into_iter().for_each(|venue| assert!(redates(venue), "{venue:?}"));
     others.into_iter().for_each(|venue| assert!(!redates(venue), "{venue:?}"));
 }
@@ -279,7 +277,6 @@ fn feed(venue: Venue, symbols: &[(MarketId, &str)]) -> VenueFeed {
         url: "ws://127.0.0.1:1".into(),
         api_key_env: None,
         api_key_secret: None,
-        dataset: None,
         symbols: symbols.collect(),
     };
     VenueFeed::new(conn, None, fast(WAIT), tls_config().expect("tls config"), mpsc::channel(1).0)

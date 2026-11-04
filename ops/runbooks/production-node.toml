@@ -195,8 +195,13 @@ symbols = [
 
 # Index and commodity futures. A symbol names the contract it quotes, one of the market's `contracts`
 # in config/production-genesis.toml, and the feed sends each contract the market takes now. Shown
-# for US500 (market 20); every other futures market (21 to 25, 30 to 33) needs the same two vendors
-# and its own contracts.
+# for US500 (market 20); every other futures market (21 to 25, 30 to 33) needs its own contracts,
+# every one its listing names, rolled off or not. Only a source reached over TLS may set a price.
+# Massive's futures feed covers CME, CBOT, NYMEX and COMEX contracts, so it is one of the two sources
+# markets 20 to 22, 25 and 30 to 32 need, and no integrated vendor quotes DE40 (Eurex), UK100 or
+# BRENT (ICE): a production build refuses the config until each market has its min_sources (#621).
+# The check reads the genesis listing for the life of the log, so keep every venue and contract it
+# needs even after a relisting lowers min_sources or the market rolls past a contract.
 [[feeds.venues.connections]]
 venue = "massive"
 url = "wss://socket.massive.com/futures"
@@ -208,35 +213,14 @@ symbols = [
   { market = 20, symbol = "ESU7", contract = "ESU7" },
   { market = 20, symbol = "ESZ7", contract = "ESZ7" },
   { market = 20, symbol = "ESH8", contract = "ESH8" },
-] # OWNER: add markets 21 to 25 and 30 to 33
-
-[[feeds.venues.connections]]
-venue = "databento"
-url = "tcp://glbx-mdp3.lsg.databento.com:13000"
-api_key_secret = "databento_api_key"
-dataset = "GLBX.MDP3"
-symbols = [
-  { market = 20, symbol = "ESZ6", contract = "ESZ6" },
-  { market = 20, symbol = "ESH7", contract = "ESH7" },
-  { market = 20, symbol = "ESM7", contract = "ESM7" },
-  { market = 20, symbol = "ESU7", contract = "ESU7" },
-  { market = 20, symbol = "ESZ7", contract = "ESZ7" },
-  { market = 20, symbol = "ESH8", contract = "ESH8" },
-] # OWNER: add the same markets, with each exchange's dataset
+] # OWNER: add markets 21, 22, 25 and 30 to 32, a second TLS source for each, and sources for 23, 24, 33
 
 # US shares, shown for AAPL (market 40).
 [[feeds.venues.connections]]
 venue = "massive"
 url = "wss://socket.massive.com/stocks"
 api_key_secret = "massive_api_key"
-symbols = [{ market = 40, symbol = "AAPL" }] # OWNER: add markets 41 to 59
-
-[[feeds.venues.connections]]
-venue = "databento"
-url = "tcp://equs-mini.lsg.databento.com:13000"
-api_key_secret = "databento_api_key"
-dataset = "EQUS.MINI"
-symbols = [{ market = 40, symbol = "AAPL" }] # OWNER: add markets 41 to 59
+symbols = [{ market = 40, symbol = "AAPL" }] # OWNER: add markets 41 to 59, and a second TLS source for each
 
 # Trusted time: a strict majority of these independent servers must agree. The attestation binds
 # this file, so a verifier checks the keys against a published copy.
