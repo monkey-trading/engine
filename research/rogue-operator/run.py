@@ -13,6 +13,7 @@ deterministic: every hour's client arrivals are seeded by the hour. `report` als
 import argparse
 import csv
 import gzip
+import io
 import json
 import sys
 from multiprocessing import Pool
@@ -43,7 +44,8 @@ def simulate(workers: int):
     keys = sorted({k for r in rows for k in r})
     RESULTS.mkdir(exist_ok=True)
     rows.sort(key=lambda r: (r["attack"], r["market"], r["hour"], json.dumps({k: r.get(k) for k in keys}, default=str)))
-    with gzip.open(HOURLY, "wt", newline="") as fh:
+    # A zero modification time in the gzip header, so a rerun writes the same bytes.
+    with HOURLY.open("wb") as raw, gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as gz, io.TextIOWrapper(gz, newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=keys)
         w.writeheader()
         w.writerows(rows)
