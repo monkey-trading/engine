@@ -15,25 +15,41 @@ use crate::sequencer::Sequencer;
 
 impl Sequencer {
     /// Stamps and sequences `cmd` at `ts`, after the catch-up the engine owes before `ts`.
+    /// `None`, with nothing logged, when a detected rollback froze sequencing while the request
+    /// was admitted: the remaining ticks and the command itself are refused, like an unadmitted
+    /// stamp.
     /// Error cases:
     /// - as `stamp_once`
     /// - the engine defers a command although the catch-up was drained, which means the engine's
     ///   deferral and `Engine::catch_up_pending` disagree
-    pub(super) fn stamp(&mut self, ts: Millis, cmd: Command) -> Result<Vec<Event>> {
+    pub(super) fn stamp(&mut self, ts: Millis, cmd: Command) -> Result<Option<Vec<Event>>> {
+        if self.frozen() {
+            return Ok(None);
+        }
         let snapshot = cmd.is_benchmark_batch();
         let activation =
             cmd.is_dated_rate_activation() || matches!(cmd, Command::Admin(AdminCommand::ActivateProtocol { .. }));
         if !snapshot && !activation {
             self.drain_catch_up(ts)?;
         }
+        if self.frozen() {
+            // The latch tripped while the catch-up drained (a blocked log write, say): refuse the
+            // command itself, like an unadmitted stamp.
+            return Ok(None);
+        }
         let events = self.stamp_once(ts, cmd)?;
+        if self.frozen() {
+            // The latch tripped between the request's admission checks and the stamp itself:
+            // `stamp_once` refused it, and a refused stamp is never acknowledged as applied.
+            return Ok(None);
+        }
         if is_deferred(&events) {
             if !snapshot {
                 bail!("the engine deferred a command after the catch-up was drained");
             }
             self.drain_catch_up(ts)?;
         }
-        Ok(events)
+        Ok(Some(events))
     }
 
     /// Sequences `Tick`s until no command at `ts` would be deferred. The `Tick`s are stamped one
@@ -44,7 +60,7 @@ impl Sequencer {
     fn drain_catch_up(&mut self, ts: Millis) -> Result<()> {
         let tick_at = if self.last_ts < ts { ts - 1 } else { ts };
         let mut ticks = 0_u64;
-        while self.engine.catch_up_pending(ts) {
+        while self.engine.catch_up_pending(ts) && !self.frozen() {
             let events = self.stamp_once(tick_at, Command::Tick)?;
             if !is_deferred(&events) && self.engine.catch_up_pending(ts) {
                 bail!("a tick finished its catch-up but the engine still reports one pending");

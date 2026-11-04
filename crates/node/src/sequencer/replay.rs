@@ -2,8 +2,6 @@
 //! produces.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::fs;
-use std::path::Path;
 
 use anyhow::{Context, bail, ensure};
 use engine_core::deposits::LegacyDeposit;
@@ -27,6 +25,8 @@ pub struct Replayed {
     pub(crate) accounting: Accounting,
     pub commands: u64,
     pub(crate) command_prefix: [u8; 32],
+    /// The replay-authenticated prefix ring the log-head poster adopts against.
+    pub(crate) prefix_ring: crate::log::PrefixRing,
     pub checkpoints: u64,
     pub(crate) recovery_work: Vec<crate::checkpoints::Work>,
     pub(crate) recovery_anchor_work: Option<crate::checkpoints::Work>,
@@ -65,6 +65,10 @@ pub struct Replayed {
     /// The last mark sampled per market, so the recovered sequencer continues change-only
     /// reporting exactly where the replay left off. Empty without a marks sink.
     pub last_marks: BTreeMap<MarketId, Fixed>,
+    /// The cumulative command-prefix digest the replay captured at the posted head's seq, for the
+    /// startup check. Checkpoints do not reset it, so a posted head binds every command's sealed
+    /// bytes, not only the state since the last checkpoint.
+    pub link_at: Option<engine_core::eip712::B256>,
 }
 
 /// Re-applies a log entry by entry, as it is read, and checks every checkpoint root, logged event,
@@ -123,6 +127,13 @@ pub(super) struct Replay {
     last_marks: BTreeMap<engine_core::types::MarketId, Fixed>,
     /// The dashboard record recovery seeds: it takes every command this replay applies.
     stats: Option<crate::stats::Stats>,
+    /// When set, the command arm records the cumulative command-prefix digest at this seq for the
+    /// posted-head check.
+    capture_link_at: Option<u64>,
+    captured_link: Option<engine_core::eip712::B256>,
+    /// The last `crate::log::PrefixRing::CAPACITY` (seq, cumulative-prefix) pairs: the poster's
+    /// adoption evidence, seeded before its first tick.
+    prefix_ring: crate::log::PrefixRing,
 }
 
 impl Replay {
@@ -155,6 +166,13 @@ impl Replay {
             ..Self::with_trust(domain, trusted_signer)
         }
     }
+
+    /// Records the cumulative command-prefix digest at `seq` as the replay passes its command: the
+    /// posted-head check binds to the replayed bytes' own prefix, never a second read of host files.
+    pub(super) fn capture_link_at(&mut self, seq: u64) {
+        self.capture_link_at = Some(seq);
+    }
+
     /// Applies the log's next entry.
     /// Error cases:
     /// - a command out of sequence, with time running backwards, or stamped past the range the
@@ -223,6 +241,10 @@ impl Replay {
                 self.logs_events = c.events.is_some();
                 self.command_prefix =
                     crate::log::extend_command_prefix(self.command_prefix, crate::log::command_digest(c)?);
+                self.prefix_ring.record(seq, engine_core::eip712::B256::from(self.command_prefix));
+                if self.capture_link_at == Some(seq) {
+                    self.captured_link = Some(engine_core::eip712::B256::from(self.command_prefix));
+                }
                 self.commands += 1;
             }
             LogEntry::Withdrawal(w) => {
@@ -411,13 +433,38 @@ impl Replay {
             recovery_base,
             legacy_deposits: self.legacy_deposits,
             legacy_approvals: self.legacy_approvals,
+            link_at: self.captured_link,
+            prefix_ring: self.prefix_ring,
         }
     }
 }
 
+pub(crate) use paths::replay_path_with_authorities;
 pub use paths::{
     replay_path, replay_path_in_domain, replay_path_with_attested, replay_path_with_trust, replay_with_signer,
 };
+
+/// A log read from disk and replayed, before anything is written to it.
+pub struct ReplayedLog {
+    pub(crate) log: SegmentedLog,
+    pub(crate) replayed: Replayed,
+    pub(crate) snapshot_seq: Option<u64>,
+    pub(crate) legacy_authorizations: crate::sequencer::legacy::Authorizations,
+}
+
+impl ReplayedLog {
+    /// The cumulative command-prefix digest after the log's last command: the head commitment this
+    /// node publishes on chain. A trailing checkpoint does not change it.
+    pub fn head_link(&self) -> engine_core::eip712::B256 {
+        engine_core::eip712::B256::from(self.replayed.command_prefix)
+    }
+
+    /// The replay-authenticated prefix ring: the last `crate::log::PrefixRing::CAPACITY`
+    /// (seq, cumulative-prefix) pairs, the poster's adoption evidence for on-chain heads.
+    pub(crate) fn prefix_ring(&self) -> crate::log::PrefixRing {
+        self.replayed.prefix_ring.clone()
+    }
+}
 
 /// Replays `entries`, a whole log held in memory (see `Replay`).
 /// Error cases:
@@ -426,45 +473,6 @@ pub fn replay(entries: &[LogEntry]) -> anyhow::Result<Replayed> {
     let mut replay = Replay::default();
     entries.iter().try_for_each(|entry| replay.apply(entry))?;
     Ok(replay.finish())
-}
-
-/// Replays one exact finalized prefix with independently authenticated historical authorities.
-/// Error cases:
-/// - log, root, signature, authority, parent continuity, or finalized anchor validation fails
-pub(crate) fn replay_path_with_authorities(
-    path: &Path,
-    domain: CheckpointDomain,
-    signer: AccountId,
-    parent: crate::log::CheckpointParent,
-    authorities: crate::checkpoints::SignerHistory,
-) -> anyhow::Result<Replayed> {
-    let found = fs::metadata(path).with_context(|| format!("no readable log at {}", path.display()))?;
-    let mut replay = Replay::with_recovery(Some(domain), Some(signer), parent);
-    replay.set_authorities(authorities)?;
-    let mut anchored = !parent.has_checkpoint;
-    let mut visit = |entry: LogEntry| {
-        if let LogEntry::Checkpoint(cp) = &entry
-            && parent.has_checkpoint
-            && cp.seq == parent.seq
-        {
-            ensure!(
-                cp.root.parse::<engine_core::eip712::B256>()? == parent.root,
-                "public log differs from the finalized vault anchor"
-            );
-            anchored = true;
-        }
-        replay.apply(&entry)
-    };
-    if found.is_dir() {
-        SegmentedLog::open(path, &mut visit)?;
-    } else {
-        log::read_file(path, &mut visit)?;
-    }
-    ensure!(anchored, "public log is shorter than or omits the finalized vault anchor");
-    let replayed = replay.finish();
-    replayed.origin.require_recovery(domain, signer)?;
-    ensure!(replayed.commands > 0 && replayed.checkpoints > 0, "public log has no verified command/checkpoint");
-    Ok(replayed)
 }
 
 #[cfg(test)]

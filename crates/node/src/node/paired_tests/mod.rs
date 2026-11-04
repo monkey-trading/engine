@@ -4,6 +4,7 @@ mod anchor;
 mod custody;
 pub(crate) mod harness;
 mod http;
+mod log_heads;
 mod publication;
 mod restart;
 mod scenario;

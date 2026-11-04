@@ -39,6 +39,26 @@ fn ether<'de, D: Deserializer<'de>>(deserializer: D) -> Result<U256, D::Error> {
     parse_ether(&amount).map_err(serde::de::Error::custom)
 }
 
+/// The hourly default posting interval (see #541).
+fn default_log_heads_interval() -> Duration {
+    Duration::from_secs(3600)
+}
+
+/// On-chain log-head commitments: the node posts its newest released `(seq, link)` at most every
+/// `interval` and refuses to start on a log that lacks the posted head (#541).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LogHeadsSection {
+    /// The LogHeads companion contract on the custody chain.
+    pub contract: Address,
+    /// The dedicated relayer account the checkpoint endpoint funds. It must differ from the
+    /// checkpoint relayer, whose nonce tracking assumes it alone uses its relayer.
+    pub relayer: Address,
+    /// How often the poster reposts the newest released head; a post lands only when the head moved.
+    #[serde(with = "humantime_serde", default = "default_log_heads_interval")]
+    pub interval: Duration,
+}
+
 impl NodeConfig {
     /// Validates checkpoint transport and refuses hardware custody without rollback protection.
     /// Error cases:
@@ -65,6 +85,20 @@ impl NodeConfig {
             cfg.relayer_gas.as_ref().is_none_or(|gas| !gas.min_balance.is_zero()),
             "checkpoints.relayer_gas.min_balance must be non-zero"
         );
+        Ok(())
+    }
+
+    /// Validates log-head transport and its checkpoint-endpoint dependency.
+    /// Error cases:
+    /// - `[log_heads]` is set without `[checkpoints]`, names the zero contract or relayer, reuses
+    ///   the checkpoint relayer, or sets a zero interval
+    pub(super) fn validate_log_heads(&self) -> anyhow::Result<()> {
+        let Some(cfg) = &self.log_heads else { return Ok(()) };
+        let checkpoints = self.checkpoints.as_ref().context("[log_heads] requires [checkpoints]")?;
+        ensure!(!cfg.contract.is_zero(), "log_heads.contract must be non-zero");
+        ensure!(!cfg.relayer.is_zero(), "log_heads.relayer must be non-zero");
+        ensure!(cfg.relayer != checkpoints.relayer, "log_heads.relayer must differ from the checkpoint relayer");
+        ensure!(!cfg.interval.is_zero(), "log_heads.interval must be non-zero");
         Ok(())
     }
 }

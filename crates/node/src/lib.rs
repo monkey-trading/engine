@@ -22,6 +22,7 @@ mod handover;
 mod history;
 mod limits;
 pub mod log;
+mod log_heads;
 mod metrics;
 mod monitor;
 mod node;

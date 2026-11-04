@@ -162,6 +162,15 @@ an index: load only the rule whose hint matches the current action.
   (`log/command_seal.rs`, `sequencer/origin.rs`), bounded FIFO reissue scheduling
   (`sequencer/payout_schedule.rs`), public queue/account-position reads, and an account's unpaid
   payouts with their latest authorizations (`api/payouts.rs`, answered from the sequencer's memory).
+  With `[log_heads]` (#541), `log_heads/` posts the enclave's newest released `(seq, prefix)` — the
+  cumulative command-prefix digest, which checkpoints do not reset, and every post names the
+  previously accepted head it extends — the
+  sequencer publishes it on a watch after each durable batch (`sequencer/pipeline.rs`), the poster
+  signs it off the sequencer and relays it through the checkpoint endpoint on a dedicated funded
+  relayer, an hour by default, reading back through the custody RPC quorum — and refuses to start
+  on a log the posted head does not hold, freezing sequencing when a posted head overtakes it or
+  names another prefix at a seq it retains (`log_rollback`); the check is per signer epoch, so a standby takeover dropping the outgoing
+  key's tail is not refused.
   Withdrawal authorizations carry EIP-712 data and an approval inclusion proof; custody's used nonce
   determines payment, and unpaid approvals are reissued on signer rotation or on their account's
   signed request, never on a schedule. It also has price feeds: live crypto
@@ -239,7 +248,11 @@ an index: load only the rule whose hint matches the current action.
   through the timelock; `src/StateTree.sol` is the shared proof check. `src/RegistryLens.sol` is a
   stateless read-only view over the registry and its staking contract, outside custody: the registry's switch,
   parameters and operators, and every listed candidate's registration, votes, eligibility and role, in pages,
-  for the node's `/v1/operators`. `foundry.toml` enables the
+  for the node's `/v1/operators`. `src/LogHeads.sol` (from #541) takes the enclave's
+  newest released `(seq, link)` under an `engine.log-head.v1` signature checked against the vault's current
+  `checkpointSigner` and `signerEpoch`, keeping the highest seq per epoch so a restarted node refuses a truncated
+  log before writing anything; the posting interval is config, an hour by default, on its own relayer sender.
+  `foundry.toml` enables the
   optimizer, without which the vault exceeds EIP-170's size limit.
 - **config/** — node configs. `dev.toml` runs the TEE, custody and feeds as mocks on one machine,
   and checks the clock against public Roughtime servers, citing each server's key source;
@@ -267,6 +280,9 @@ an index: load only the rule whose hint matches the current action.
   `benchmark-publishers.toml` supplies the optional benchmark section with official publisher endpoints;
   a separate `engine admin ... sync-benchmarks --watch` worker signs daily snapshots and releases
   synchronization before startup catch-up and after trusted-time halts spanning unpaid rollovers.
+  The optional `[log_heads]` (#541) names the LogHeads contract, a dedicated funded relayer distinct
+  from the checkpoint relayer, and the posting interval (an hour by default); it requires
+  `[checkpoints]`, and with it the node refuses to start on a log the posted head does not hold.
   `ct-watch.toml` is the Certificate Transparency watcher's config, documenting what it needs: the
   domain, the node and its release manifest, the logs to follow, and alert routing.
   A field reads a delivered secret by name, never its value: `{name}` in a URL's path or query,
@@ -337,6 +353,9 @@ an index: load only the rule whose hint matches the current action.
   kill/restart scenario; `dev-browser-origin.sh`, the browser-origin allowlist scenario against a dev node;
   `dev-proxy-protocol.sh`, the proxied client address scenario against a dev node;
   `dev-batch-orders.sh`, the cancel-all and close-all scenario against a dev node, ending in a log replay;
+  `dev-log-heads.sh`, the on-chain log heads scenario on Anvil: the poster releases the head on chain,
+  a clean restart accepts, a log cut below the posted head is refused with Critical `log_rollback`
+  naming the range, and a second copy on the same key posting an overtaking head freezes sequencing;
   `dev-monkey-emissions.sh`, the MONKEY emissions scenario on Anvil;
   `dev-monkey-staking.sh`, the MONKEY staking and USDC distributions scenario on Anvil;
   `dev-operator-election.sh`, the delegated operator election scenario on Anvil;
@@ -641,6 +660,11 @@ Run from the repo root:
   liveness rule promotes B, the timelock's `setSigner` installs only B's registered enclave, B
   resumes at A's last vault-accepted checkpoint and the reissued authorization pays once, the log
   replays across the change of signer, and a promotion with no qualifying standby reverts)
+- On-chain log heads dev scenario: `./scripts/dev-log-heads.sh` (needs Anvil, Forge, Cast, Cargo,
+  `curl`, `jq`, `python3`, installed Soldeer dependencies, and the public Roughtime servers
+  `config/anvil.toml` names; its own ports; `ENGINE_PREBUILT=1` skips the build: the node posts its
+  released head, restarts and accepts it, refuses a log cut below the posted head naming the range,
+  and freezes on an overtaking head)
 - Signed withdrawal and FIFO dev scenario: `./scripts/dev-withdrawals.sh` (needs Anvil, Forge,
   Cargo and pinned contract dependencies; uses local signed time and price servers and a loopback
   alert webhook, ends with the guardian pause and signer retirement flow, and preserves

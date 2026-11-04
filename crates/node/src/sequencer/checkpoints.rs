@@ -167,7 +167,7 @@ impl Gate {
 
 /// A handover's stop at the checkpoint gate: admitted with a final checkpoint written, or refused
 /// with the gate's reason while it would withhold one.
-pub(super) enum HandoverGate {
+pub(crate) enum HandoverGate {
     /// A checkpoint of the last command exists to hand over.
     Admitted,
     /// The gate withholds or defers the final checkpoint; a `HandoverRefused` error, so the node
@@ -197,28 +197,6 @@ impl Sequencer {
         ok
     }
 
-    /// Attempts the checkpoint a key handover hands over as the final one. The gate's verdict owns
-    /// the stop: refused while it would withhold or defer the checkpoint, so the node refuses the
-    /// handover and goes on sequencing.
-    /// Error cases:
-    /// - the log cannot be written
-    pub(super) fn handover_checkpoint(&mut self) -> anyhow::Result<HandoverGate> {
-        let Some(seq) = self.engine.last_seq() else {
-            return Ok(HandoverGate::Refused(anyhow::anyhow!(crate::sequencer::HandoverRefused::new(
-                "no command has applied: there is no checkpoint to hand over".into(),
-            ))));
-        };
-        self.checkpoint()?;
-        if self.last_checkpoint == Some(seq) {
-            return Ok(HandoverGate::Admitted);
-        }
-        let causes = self.gate.as_ref().map_or_else(|| "no checkpoint was written".to_string(), Gate::withhold_causes);
-        Ok(HandoverGate::Refused(anyhow::anyhow!(crate::sequencer::HandoverRefused::new(format!(
-            "the final checkpoint is withheld ({causes}): the handover is refused and this node goes on \
-                 sequencing until the checkpoint_withheld alert clears"
-        ),))))
-    }
-
     /// Transfers replayed durable work to the worker before admitting live commands. A deployment
     /// recovering posted checkpoints has not yet observed collateral this process: signing waits
     /// for the worker's first reconciliation.
@@ -246,10 +224,16 @@ impl Sequencer {
     }
 
     /// Attempts a checkpoint, held back if `paced`. A held attempt still runs the gate's withholding
-    /// checks, so their alerts and the handover's `signing` view stay current.
+    /// checks, so their alerts and the handover's `signing` view stay current. While a detected log
+    /// rollback freezes sequencing, every checkpoint path — scheduled, approval-driven, required —
+    /// is a logged no-op: what a checkpoint would attest must not stand as healthy history.
     /// Error cases:
     /// - as `paced_checkpoint`
     fn attempt_checkpoint(&mut self, paced: bool) -> anyhow::Result<()> {
+        if self.frozen() {
+            debug!("no checkpoint signed: sequencing is frozen after a detected log rollback");
+            return Ok(());
+        }
         let seq = self.engine.last_seq().context("checkpoint before any command")?;
         if self.dedup_checkpoint_seq == Some(seq) {
             // A scheduled and an explicit checkpoint can meet at one seq; the earlier entry
@@ -493,6 +477,7 @@ impl Sequencer {
     }
 }
 
+mod handover;
 mod hold_back;
 pub(super) mod publish;
 

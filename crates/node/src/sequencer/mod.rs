@@ -10,13 +10,13 @@ pub use config::SequencerConfig;
 pub(crate) mod history_rebuild;
 pub(crate) mod legacy;
 mod marks;
-mod origin;
+pub(crate) mod origin;
 mod recovery;
 mod replay;
 pub(crate) use replay::replay_path_with_authorities;
 pub use replay::{
-    Replayed, replay, replay_path, replay_path_in_domain, replay_path_with_attested, replay_path_with_trust,
-    replay_with_signer,
+    Replayed, ReplayedLog, replay, replay_path, replay_path_in_domain, replay_path_with_attested,
+    replay_path_with_trust, replay_with_signer,
 };
 mod checkpoints;
 use checkpoints::publish::After;
@@ -146,17 +146,20 @@ pub struct Sequencer {
     pipeline: Option<Pipeline>,
     /// What checkpoints written in the batch so far wait for its sync to do.
     after_sync: Vec<After>,
-}
-
-/// A log read from disk and replayed, before anything is written to it.
-pub struct ReplayedLog {
-    log: SegmentedLog,
-    replayed: Replayed,
-    snapshot_seq: Option<u64>,
-    legacy_authorizations: legacy::Authorizations,
+    /// The on-chain log-head poster's publish end: the released-head watch, and the rollback
+    /// freeze latch the poster sets the moment it detects a rollback — before its `Freeze`
+    /// request dequeues — so nothing queued behind the detection is stamped or checkpointed.
+    log_heads: Option<crate::log_heads::Publisher>,
 }
 
 impl Sequencer {
+    /// Whether a detected log rollback froze sequencing: no stamp and no checkpoint is admitted,
+    /// and the drain writes no final checkpoint. The poster's latch, not the request queue, is
+    /// the source: it is set before the `Freeze` request travels.
+    fn frozen(&self) -> bool {
+        self.log_heads.as_ref().is_some_and(|publisher| publisher.freeze.frozen())
+    }
+
     /// Sequences requests until every sender is gone or an admitted handover stop ends the loop,
     /// then writes a final checkpoint. Each batch, of at most `MAX_BATCH` requests, is written and
     /// its data synced before its replies, stream messages, and mark reports go out; one that
@@ -165,7 +168,8 @@ impl Sequencer {
     /// are sequenced, and batches are released in order as their syncs finish. Queries run on the
     /// sequencer's thread right after the batch is written, so they can see commands whose batch is
     /// still syncing: a view a client sees reads the stats worker's copy instead (`ApiState::read`). A command trusted time
-    /// refuses is dropped with its reply, which the API answers as unavailable. A handover's final
+    /// refuses is dropped with its reply, which the API answers as unavailable, as is any command
+    /// after a `Freeze`, a detected log rollback. A handover's final
     /// checkpoint, once admitted, is written before the stop's reply and the loop ends, so what the
     /// handover hands over is never behind the last sequenced command.
     /// Error cases:
@@ -229,6 +233,9 @@ impl Sequencer {
                             }
                         }
                     }
+                    // The poster latched the freeze before sending this; nothing queued behind the
+                    // detection is stamped, and the drain writes no final checkpoint.
+                    Request::Freeze => {}
                 }
                 if taken < MAX_BATCH && handover_stop.is_none() {
                     next = self.next_queued(&mut rx);
@@ -247,8 +254,10 @@ impl Sequencer {
             }
         }
         self.settle_async().await?;
-        let final_checkpoint = self.last_checkpoint != self.engine.last_seq();
-        if final_checkpoint || self.uncaptured.is_some() {
+        // A frozen sequencer — a detected log rollback — writes no final checkpoint: what it would
+        // attest is exactly what must not stand as healthy history.
+        if !self.frozen() && (self.last_checkpoint != self.engine.last_seq() || self.uncaptured.is_some()) {
+            let final_checkpoint = self.last_checkpoint != self.engine.last_seq();
             if let Some(endpoint) = self.sealing.clone()
                 && tokio::time::timeout(SHUTDOWN_CAPTURE_WAIT, endpoint.idle()).await.is_err()
             {
@@ -300,7 +309,10 @@ impl Sequencer {
             return Ok(None);
         }
         let snapshot = matches!(&cmd, Command::SignedAdmin(req) if req.command.is_benchmark_snapshot());
-        let events = self.stamp(ts, cmd)?;
+        let Some(events) = self.stamp(ts, cmd)? else {
+            // Frozen mid-request: refuse like an unadmitted stamp, dropping the reply.
+            return Ok(None);
+        };
         if snapshot && events.contains(&Event::AdminApplied) {
             self.benchmark_schedule_pending = false;
             if std::mem::take(&mut self.benchmark_sync_skipped) {
@@ -353,6 +365,12 @@ impl Sequencer {
     /// - the log cannot be written
     /// - the engine refuses the sequence, which means this sequencer is broken
     fn stamp_once(&mut self, ts: Millis, cmd: Command) -> anyhow::Result<Vec<Event>> {
+        if self.frozen() {
+            // The common per-command boundary: a rollback that froze sequencing while this request
+            // was admitted — mid catch-up, or before its own stamp — refuses here, like an
+            // unadmitted stamp, with nothing logged.
+            return Ok(Vec::new());
+        }
         let previous_schedule =
             house::set_params_of(&cmd).map(|_| self.engine.params().map(|params| params.rollover.clone()));
         let previous_benchmarks =

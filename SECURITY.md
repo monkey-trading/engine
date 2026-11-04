@@ -151,14 +151,14 @@ Findings that need an operator's key or credentials to be compromised first are 
 unless they defeat a guarantee the engine makes. The engine is designed not to trust whoever runs it
 or the machine it runs on: it bounds anything it takes from that machine's clock, disk, or network
 with a check, and whoever runs it cannot change or add an entry in the published log without
-detection (it can still cut back the tail no checkpoint anchors, as below), have the enclave
+detection (cutting the log back is bounded by what an on-chain anchor covers, as below), have the enclave
 sign a state its rules do not produce, act for an account without its owner's signature, credit an
 account with funds that no deposit brought in, or pay out funds the engine did not approve. A
 finding that breaks one of these guarantees, or gets past one of those checks, is in scope even when
 it starts from an operator's key. With `[checkpoints]` configured, startup verifies the replayed log
 against the latest posted vault commitment at custody finality and refuses a shorter or conflicting log before serving or opening
 history for writes; checkpoint signatures verify
-against their chain, vault, and named signer. That check reaches only as far as the vault's
+against their chain, vault, and named signer. Those checks reach only as far as the vault's
 checkpoints, so whoever runs the node can still choose after the fact whether its own recent
 commands happened, in two ways (#541). It can hold a batch's data sync while it watches the market,
 then let the sync finish or kill the node: replies, stream entries, and signed withdrawals go out
@@ -171,14 +171,39 @@ loses it; the `engine_log_sync_held` gauge, served from memory on the metrics li
 hold meanwhile (`EngineLogSyncHeld`), though a host that holds the disk can also answer for the
 listener. The snapshot capture's sync, the checkpoint's catalog maintenance, a rotation's catalog
 fold, and a handover's segment seal write on the sequencer's thread outside this bound: a hold there
-stops sequencing too and pages as `sequencer_stalled`. The hold lasts only as long as
-the host stalls every reply and every new stream entry, which every client sees, and the signed heartbeats keep
-naming the old head unless the host holds the network too. It can also cut the log back to any
-entry after the latest checkpoint the vault has finalized and restart the node, erasing commands
-the node had already answered and streamed. A cut below a later checkpoint the vault accepted but
-has not finalized shows only when the node's checkpoint poster next compares a checkpoint with the
-vault (`checkpoint_conflict`), and a cut after the latest accepted checkpoint goes unnoticed by the
-node. Checkpoints go out about once per finality
+stops sequencing too and pages as `sequencer_stalled`. What the hold can gain the host is bounded
+the same way as its ordinary trading: its commands still price at their stamps under the size,
+stress, and toxicity rules, and the house's exposure caps still bind what it can open. The hold
+lasts only as long as the host stalls every reply and every new stream entry, which every client
+sees, and the signed heartbeats keep naming the old head unless the host holds the network too.
+Nothing anchors a batch before its release, so posting log heads on chain does not close this: a
+host that kills the node before a post can withhold the post too. It can also cut the log back and
+restart the node, erasing commands the node had already answered and streamed. With `[log_heads]`
+configured the bound on an undetected cut is
+the commands after the latest posted head: the enclave signs its newest released `(seq, prefix)` —
+the cumulative command-prefix digest, a running hash over every command's sealed bytes that
+checkpoints do not reset, so a posted head commits to the whole history — under an
+`engine.log-head.v1` signature,
+off the sequencer, and a relayer posts it to a companion contract that checks the signer against the
+vault's `checkpointSigner` and `signerEpoch` and keeps the highest seq per epoch. Before the
+restarted node writes anything, it reads the posted head through the custody RPC quorum and refuses
+to start on a log that lacks it, naming the missing range or the seq whose link differs (Critical
+`log_rollback`), and a posted head that overtakes the running node — a higher seq, or the same seq
+naming another prefix — freezes sequencing. On chain the posts form a predecessor chain: each post
+names the previously accepted head it extends, so a longer divergent copy cannot replace the
+anchor without containing it. The running node adopts an on-chain head as the parent of its next
+post only when the head's prefix is the one its own log holds at that seq — the key proves
+nothing here, since a second copy of it signs correctly too: a head naming another prefix at a seq
+the node retains freezes sequencing, and a head at a seq it retains no prefix for is not adopted,
+so posting halts (`log_head_stalled`) until a restart checks the posted head against the whole
+log. Posts go at most every
+`log_heads.interval` (an hour by default) and only when the head moved, so a cut must land within
+about the posting interval plus chain inclusion of the log's end to pass; a host that stalls or
+withholds the poster's submissions extends the window by however long the tail stays unposted.
+Without `[log_heads]`, the bound is the commands after the latest checkpoint the vault has
+finalized: a cut below a later accepted-but-unfinalized checkpoint shows when the node's checkpoint
+poster next compares a checkpoint with the vault (`checkpoint_conflict`), and a cut after the latest
+accepted checkpoint goes unnoticed by the node. Checkpoints go out about once per finality
 delay of the custody chain, so about two finality delays of commands can be erased while
 checkpoint delivery is healthy; a host that stalls or withholds the poster's submissions
 extends the window by however long the accumulated tail stays unanchored. Clients
@@ -191,7 +216,9 @@ signed heartbeat behind the copy, a repeat that differs, or a command that does 
 standby raises the Critical `operator_log_rollback` alert, through its own alert routing, naming
 the range; it takes nothing more and keeps its copy unchanged to restore from. New posts also sign the exact predecessor sequence
 and root, which the vault compares atomically to fence divergent same-key publishers. The standby's
-check reaches only as far as what it received: it detects a cut that goes back past that. The checkpoint RPC still supplies the canonical chain
+check reaches only as far as what it received: it detects a cut that goes back past that. Posted log
+heads are per signer epoch, so a standby's takeover — which drops the outgoing key's tail by design —
+is not refused: a new epoch starts with no posted head. The checkpoint RPC still supplies the canonical chain
 view, and a signature's named signer must be checked against a trusted attestation or the vault's
 authorized signer. A withdrawal signature never settles its approval: finalized custody nonce-use
 evidence does. Withdrawal completion evidence also requires that independently trusted signer

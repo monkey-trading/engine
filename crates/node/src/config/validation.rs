@@ -260,6 +260,7 @@ impl NodeConfig {
         self.stats.validate()?;
         self.validate_custody()?;
         self.validate_checkpoints()?;
+        self.validate_log_heads()?;
         // Without a Critical webhook, Critical alerts reach only the node's own log, so a node
         // beside a real enclave or real funds must have one.
         if self.alerts.critical.is_none()

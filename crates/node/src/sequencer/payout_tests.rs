@@ -255,6 +255,7 @@ fn rotation_requires_accepted_historical_signers_and_reissues_with_the_current_e
         |_| {},
         None,
         None,
+        None,
     )
     .unwrap();
     let cfg = SequencerConfig { checkpoint_parent: parent, ..node.config() };
@@ -298,6 +299,7 @@ fn rotation_requires_accepted_historical_signers_and_reissues_with_the_current_e
         Some(parent),
         history,
         |_| {},
+        None,
         None,
         None,
     )

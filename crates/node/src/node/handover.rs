@@ -1,18 +1,40 @@
 //! The registry's rotation switch against the config at start, and the incumbent's election
 //! watcher: alerts while an election naming another operator is mirrored and unhanded.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::bail;
 use engine_core::types::Millis;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{error, info, warn};
 
+use super::keys::RELEASE_CHECK_EVERY;
+use super::shutdown::TaskResult;
 use crate::checkpoints::CheckpointChain;
+use crate::clock::Clock;
 use crate::config::NodeConfig;
 use crate::sequencer::Request;
-use crate::trusted_time::TrustedClock;
+use crate::trusted_time::{Sample, TrustedClock};
 use engine_core::types::AccountId;
+
+/// Spawns the incumbent's election watch under rotation; pages when an election names another
+/// operator and, past the effective time, when no successor has taken the keys.
+pub(super) fn spawn_watch(
+    tasks: &mut tokio::task::JoinSet<TaskResult>,
+    tx: mpsc::Sender<Request>,
+    operator: AccountId,
+    clock: Arc<dyn Clock>,
+    samples: watch::Receiver<Option<Sample>>,
+    max_drift: Duration,
+) {
+    tasks.spawn(async move {
+        (
+            "handover",
+            watch_handover(tx, operator, TrustedClock::new(clock, samples, max_drift), RELEASE_CHECK_EVERY).await,
+        )
+    });
+}
 
 /// The alert episode an incumbent's election implies: none while the election names this operator
 /// or is cancelled, `elected` once another operator is named, and `overdue` past the registry's

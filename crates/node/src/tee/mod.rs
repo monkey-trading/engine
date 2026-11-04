@@ -24,7 +24,6 @@ pub use engine_verify::{Attestation, AttestationBundle};
 use k256::ecdsa::SigningKey;
 use k256::elliptic_curve::Generate;
 use sha2::Sha256;
-use sha3::{Digest, Keccak256};
 
 pub(crate) mod clock;
 pub(crate) mod keys;
@@ -32,6 +31,10 @@ pub(crate) mod sealing;
 pub(crate) mod secrets;
 #[cfg(target_os = "linux")]
 pub(crate) mod snp;
+
+mod digests;
+
+pub(crate) use digests::*;
 
 /// Mints each quote's report entry name.
 static NEXT_REPORT: AtomicU64 = AtomicU64::new(0);
@@ -172,6 +175,21 @@ impl EnclaveKey {
         self.sign_digest(checkpoint_digest(chain_id, vault, seq, root))
     }
 
+    /// Signs the newest released log head for the LogHeads companion contract (#541), naming the
+    /// previously accepted head it extends (`None` for the first post of the signer epoch).
+    pub(crate) fn sign_log_head(
+        &self,
+        chain_id: u64,
+        vault: &[u8; 20],
+        epoch: u64,
+        seq: u64,
+        link: &[u8; 32],
+        parent: Option<(u64, B256)>,
+    ) -> String {
+        let (parent_seq, parent_link) = parent.unwrap_or((0, B256::ZERO));
+        self.sign_digest(log_head_digest(chain_id, vault, epoch, seq, link, parent_seq, &parent_link.0))
+    }
+
     /// Signs an atomic extension of the exact prior vault commitment.
     pub fn sign_checkpoint_v2(
         &self,
@@ -236,55 +254,6 @@ pub fn attest_bundle(attestor: &dyn Attestor, bundle: &AttestationBundle) -> any
     })
 }
 
-/// Historical withdrawal authorization bytes, unchanged across checkpoint versions.
-pub(crate) fn withdrawal_digest(
-    chain_id: u64,
-    vault: &[u8; 20],
-    account: AccountId,
-    amount: Fixed,
-    nonce: u64,
-) -> [u8; 32] {
-    let mut h = Keccak256::new();
-    h.update(b"engine.withdrawal.v1");
-    h.update(chain_id.to_be_bytes());
-    h.update(vault);
-    h.update(account.0);
-    h.update(amount.to_be_bytes());
-    h.update(nonce.to_be_bytes());
-    h.finalize().into()
-}
-
-/// V2 binds the exact parent so two authorized publishers cannot extend divergent forks.
-pub(crate) fn checkpoint_digest_v2(
-    chain_id: u64,
-    vault: &[u8; 20],
-    seq: u64,
-    root: &[u8; 32],
-    parent: crate::log::CheckpointParent,
-) -> [u8; 32] {
-    let mut h = Keccak256::new();
-    h.update(b"engine.checkpoint.v2");
-    h.update(chain_id.to_be_bytes());
-    h.update(vault);
-    h.update(seq.to_be_bytes());
-    h.update(root);
-    h.update([u8::from(parent.has_checkpoint)]);
-    h.update(parent.seq.to_be_bytes());
-    h.update(parent.root.0);
-    h.finalize().into()
-}
-
-/// The digest a checkpoint signature covers: domain tag, chain id, vault, seq, and root.
-pub(crate) fn checkpoint_digest(chain_id: u64, vault: &[u8; 20], seq: u64, root: &[u8; 32]) -> [u8; 32] {
-    let mut h = Keccak256::new();
-    h.update(b"engine.checkpoint.v1");
-    h.update(chain_id.to_be_bytes());
-    h.update(vault);
-    h.update(seq.to_be_bytes());
-    h.update(root);
-    h.finalize().into()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,6 +269,46 @@ mod tests {
         let key = VerifyingKey::recover_from_prehash(&digest, &signature, recid).unwrap();
         key.verify_prehash(&digest, &signature).unwrap();
         key
+    }
+
+    #[test]
+    fn log_head_signature_matches_the_contract_vector_byte_for_byte() {
+        // The same fixed inputs and expected signature as `LogHeads.t.sol`'s vector test: key
+        // 0x1234, chain 31337, vault 0x1111…11, epoch 7, seq 42, link 0x…2a, parent (41, 0x…29).
+        let secret = 0x1234u64.to_be_bytes();
+        let mut raw = [0u8; 32];
+        raw[24..].copy_from_slice(&secret);
+        let key = EnclaveKey { key: SigningKey::from_bytes((&raw).into()).unwrap() };
+        let vault = [0x11; 20];
+        let mut link = [0u8; 32];
+        link[31] = 0x2a;
+        let mut parent_link = [0u8; 32];
+        parent_link[31] = 0x29;
+        assert_eq!(key.address_hex(), "0xcf03dd0a894ef79cb5b601a43c4b25e3ae4c67ed");
+        let parent = Some((41u64, B256::from(parent_link)));
+        assert_eq!(
+            key.sign_log_head(31337, &vault, 7, 42, &link, parent),
+            "0xe6fb2b7d4ce26a25aa0997e2e550785451f8aa52a66a0b3f5f81092acd9f1162753bcfa3ee2e0626\
+             ab9261097d77d213d96d3498c5dc6d99ddfbd4d6d1865dfa1b"
+        );
+        let digest = log_head_digest(31337, &vault, 7, 42, &link, 41, &parent_link);
+        assert_eq!(&recover(digest, &key.sign_log_head(31337, &vault, 7, 42, &link, parent)), key.key.verifying_key());
+        // The domain separates heads from checkpoints and withdrawals over the same values.
+        assert_ne!(digest, checkpoint_digest(31337, &vault, 42, &link));
+        assert_ne!(digest, checkpoint_digest_v2(31337, &vault, 42, &link, Default::default()));
+    }
+
+    #[test]
+    fn log_head_digests_bind_the_chain_vault_epoch_seq_link_and_parent() {
+        let (vault, link) = ([9u8; 20], [7u8; 32]);
+        let digest = log_head_digest(1, &vault, 3, 42, &link, 10, &link);
+        assert_ne!(digest, log_head_digest(2, &vault, 3, 42, &link, 10, &link));
+        assert_ne!(digest, log_head_digest(1, &[8u8; 20], 3, 42, &link, 10, &link));
+        assert_ne!(digest, log_head_digest(1, &vault, 4, 42, &link, 10, &link));
+        assert_ne!(digest, log_head_digest(1, &vault, 3, 43, &link, 10, &link));
+        assert_ne!(digest, log_head_digest(1, &vault, 3, 42, &[8u8; 32], 10, &link));
+        assert_ne!(digest, log_head_digest(1, &vault, 3, 42, &link, 11, &link));
+        assert_ne!(digest, log_head_digest(1, &vault, 3, 42, &link, 10, &[8u8; 32]));
     }
 
     #[test]

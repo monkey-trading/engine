@@ -23,6 +23,7 @@ export API=https://api.example.com     # the node's public API: api.tls.acme.dom
 export ENGINE=./engine                  # the binary above
 export CONFIG=node.toml                 # the config the running release was started with
 export VAULT=0x...                      # custody.vault
+export LOG_HEADS=0x...                  # log_heads.contract, if configured
 export REGISTRY=0x...                   # custody.evm.staking.registry.contract
 export USDC=0x...                       # custody.evm.usdc
 export TIMELOCK=0x...                   # the vault's governance(): cast call $VAULT 'governance()(address)'
@@ -190,7 +191,7 @@ The image mounts one data disk at `/data`. Nothing else persists.
 | Path | Holds | Keep a copy? |
 | --- | --- | --- |
 | `/data/config.toml` | The config. Its SHA-256 is bound into the attestation. | Yes. It is also the release's config. |
-| `/data/log` | The event log and `manifest.jsonl`; `checkpoint-submission.json` and its `.lock` beside the segments. | Yes, continuously. See below. |
+| `/data/log` | The event log and `manifest.jsonl`; `checkpoint-submission.json`, `log-head-submission.json`, and their `.lock` files beside the segments. | Yes, continuously. See below. |
 | `/data/history` | The account history index and marks cache, both rebuilt from the log. | No. |
 | `/data/alerts` | The alert outbox: pages not yet delivered. | Yes, with the log. |
 | `/data/keys` | Sealed enclave keys, one file per release and generation, and the delivered secrets, one `<release id>.secrets.json` per release. | A copy is useless on another chip, but keep it: it is the proof of what was sealed. |

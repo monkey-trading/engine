@@ -9,7 +9,7 @@ pub(crate) mod command_seal;
 pub use command_seal::CommandSeal;
 mod checked;
 mod commitment;
-pub(crate) use commitment::{command_digest, extend_command_prefix};
+pub(crate) use commitment::{PrefixRing, command_digest, extend_command_prefix};
 mod truncate;
 pub(crate) use truncate::truncate_to_checkpoint;
 mod archive;

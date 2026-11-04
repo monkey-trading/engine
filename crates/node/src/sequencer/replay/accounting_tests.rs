@@ -1,7 +1,9 @@
 use super::*;
 
 use std::collections::BTreeSet;
+use std::fs;
 use std::hint::black_box;
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use crate::checkpoints::accounting::tests::{approved, assert_matches, recompute_work};

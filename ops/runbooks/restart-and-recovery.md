@@ -69,6 +69,8 @@ only record of the books.
 | `signer_unregistered` | Not a refusal: the vault does not name this key, so the node serves only its attestation. | Governance registers the key ([key-recovery.md](key-recovery.md), "New keys"). |
 | `custody_connect_failed` | The custody adapter could not start: the providers could not be reached, or too few agreed on the chain and token. | [feed-and-custody-failures.md](feed-and-custody-failures.md). |
 | `checkpoint_startup_failed` | The log against the vault, before anything is written. The cause says which: `vault signer differs from this enclave; signer recovery is required`, `log is shorter than the latest posted checkpoint`, `log differs from the latest posted checkpoint at seq N`, `vault did not authenticate the posted checkpoint`, a checkpoint RPC that cannot be read, or the checkpoint sidecar naming work the log does not hold. | See "A log shorter than the vault" below. For an unreadable RPC, [feed-and-custody-failures.md](feed-and-custody-failures.md). |
+| `log_rollback` | With `[log_heads]`, the head the current signer epoch posted on chain: the log ends before the posted seq, or the log's cumulative command-prefix digest at the posted seq differs. The disk was rolled back or the host cut the log, or a second copy of the key sequenced a fork. | See "A log the posted head does not hold" below. |
+| `log_heads_startup_failed` | With `[log_heads]`, the posted head could not be read through the custody quorum within the finality budget, or the poster could not be built. Or a log-head submission deployment mismatch after a change of `log_heads.relayer` or `log_heads.contract`: the reservation carries no authority, so move `/data/log/log-head-submission.json` aside. | [feed-and-custody-failures.md](feed-and-custody-failures.md), "Custody RPC providers". |
 | `log_recovery_failed` | The log against the config and the rules: a config naming another operator, client auth, access policy, chain, vault or genesis than the log records; a signature or root that does not verify; a command after the last checkpoint that the enclave key did not seal. | Compare the config with the log's banner (below). A config that differs from what the log records is a wrong config: use the one the log was written under. Never edit the log. |
 | `history_recovery_failed`, `marks_cache_failed` | The account history index or the marks cache cannot be opened or repaired. Both are derived from the log. | See "Rebuild the derived stores" below. |
 | `emission_budget_mismatch` | The log records an emission schedule whose period budget differs from the one the vault's MONKEY cap was derived from. | Stop and call the owner. This cannot be repaired on a live log. |
@@ -108,6 +110,30 @@ because signing on this log would diverge from the vault.
    rebuilt. Stop. This is the case the exit exists for: see [incident-response.md](incident-response.md),
    "Checkpoints cannot resume".
 
+### A log the posted head does not hold
+
+`log_rollback` at start — naming a range of seqs the log does not hold, or one seq whose link
+differs — means the LogHeads contract holds a head signed by this enclave key that this disk's log
+does not reproduce. Either the disk was rolled back or the host cut the log, or a second copy of
+the key sequenced a fork. The node refuses before writing anything. (A standby's takeover drops the
+outgoing key's tail by design and is not this: posted heads are per signer epoch, and the new epoch
+starts with none.)
+
+1. Do not start it again. Keep the disk as it is.
+2. Read the posted head: `cast call $VAULT 'signerEpoch()(uint64)' --rpc-url $RPC`, then
+   `cast call $LOG_HEADS 'heads(uint64)(uint64,bytes32)' <epoch> --rpc-url $RPC`. The alert named
+   the missing seqs, or the seq whose link differs.
+3. A refusal at the same seq with a different link is a fork, not a disk problem: the key sequenced
+   on another copy. Stop and call the owner.
+4. Otherwise find a copy that holds the missing range: a standby's copy
+   ([standby.md](standby.md)), then the archive mirrors. A mirror holds completed segments only; a
+   tail inside the active segment is not in it.
+5. Check the candidate: `$ENGINE replay --log <candidate>` ends in `verified:` and its last seq is
+   at least the posted one. The start itself compares the posted link, so a wrong copy is refused
+   before anything is written.
+6. Put it on a fresh data disk with the config. Start per "Restart a healthy node".
+   **Changes the live system.** Needs the owner's approval to replace the log.
+
 ### Rebuild the derived stores
 
 The account history index and the marks cache are rebuilt from the log when their directory is gone.
@@ -133,4 +159,6 @@ restart this node.
   and after). The owner needs it if a deadline was close.
 - If the stop was not planned, find the cause in the console log before closing it:
   `sequencer_failed`, `task_stopped` or `sequencer_stalled` mean a fault in the node;
-  [incident-response.md](incident-response.md) covers reporting one.
+  a runtime `log_rollback` means an on-chain head overtook this log — a truncation or a second copy
+  of the key — so do not restart onto a cut-down disk (see "A log the posted head does not hold"
+  above) and read [incident-response.md](incident-response.md) either way.

@@ -398,7 +398,7 @@ mod benchmark_tests {
             AdminCommand::SetParams(genesis.params),
             AdminCommand::UpsertMarket(market.clone()),
         ] {
-            let events = seq.stamp(START, Command::Admin(command)).unwrap();
+            let events = seq.stamp(START, Command::Admin(command)).unwrap().expect("trusted time admits the stamp");
             assert!(events.contains(&Event::AdminApplied), "{events:?}");
         }
         let first = seq.engine.next_rollover().unwrap();
@@ -407,7 +407,10 @@ mod benchmark_tests {
 
         market.financing.benchmark = "SONIA".into();
         let second = seq.engine.next_rollover().unwrap();
-        let events = seq.stamp(second + 1, Command::Admin(AdminCommand::UpsertMarket(market.clone()))).unwrap();
+        let events = seq
+            .stamp(second + 1, Command::Admin(AdminCommand::UpsertMarket(market.clone())))
+            .unwrap()
+            .expect("trusted time admits the stamp");
         assert!(events.contains(&Event::AdminApplied), "{events:?}");
         assert!(
             events
@@ -422,7 +425,10 @@ mod benchmark_tests {
         assert_eq!(seq.benchmark_alerts.tracked.len(), 1);
         assert_eq!(seq.benchmark_alerts.tracked["SONIA"].missing, Some(false));
         market.financing.benchmark = "SOFR".into();
-        let events = seq.stamp(third + 1, Command::Admin(AdminCommand::UpsertMarket(market))).unwrap();
+        let events = seq
+            .stamp(third + 1, Command::Admin(AdminCommand::UpsertMarket(market)))
+            .unwrap()
+            .expect("trusted time admits the stamp");
         assert!(events.contains(&Event::AdminApplied), "{events:?}");
         assert!(seq.benchmark_alerts.tracked.is_empty());
         let fourth = seq.engine.next_rollover().unwrap();

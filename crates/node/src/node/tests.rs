@@ -35,7 +35,7 @@ async fn startup_resumes_a_history_index_its_read_of_the_log_matches() {
     cfg.alerts.outbox.dir = scratch_dir(&format!("node-outbox-{}", rand::random::<u64>()));
     (cfg.node.log_dir, cfg.history.dir, cfg.history.retention) = (dir, index, RETENTION);
     let (_guard, mut alerts) = capture_alerts();
-    let (_, history) = read_log_and_history(&cfg).unwrap();
+    let (_, history) = read_log_and_history(&cfg).await.unwrap();
     assert_eq!(history.resume_at(), Offset::start_of(last + 1));
     assert!(alerts.try_recv().is_err(), "no alert");
 }
@@ -221,9 +221,9 @@ mod custody_preflight;
 /// Error cases:
 /// - the history index cannot be opened, nor a fresh one in its place (see `HistoryCheck`)
 /// - the log cannot be read or replayed (see `Sequencer::read_log`)
-pub(crate) fn read_log_and_history(cfg: &NodeConfig) -> anyhow::Result<(ReplayedLog, crate::history::History)> {
+pub(crate) async fn read_log_and_history(cfg: &NodeConfig) -> anyhow::Result<(ReplayedLog, crate::history::History)> {
     let key = crate::tee::EnclaveKey::test_key();
-    let (log, plan) = read_log_and_history_observe(cfg, Some(AccountId(key.address())), None, |_| {})?;
+    let (log, plan) = read_log_and_history_observe(cfg, None, |_| {}).await?;
     plan.finish_with_log(log, Arc::new(key))
 }
 
@@ -243,24 +243,26 @@ pub(crate) fn read_log_and_history_recording(
 /// Replays and checks history while exposing the same entries for the on-chain anchor check.
 /// Error cases:
 /// - the log or history index cannot be read or verified
-pub(crate) fn read_log_and_history_observe(
+pub(crate) async fn read_log_and_history_observe(
     cfg: &NodeConfig,
-    signer: Option<AccountId>,
     parent: Option<crate::log::CheckpointParent>,
     mut observe: impl FnMut(&crate::log::LogEntry),
 ) -> anyhow::Result<(ReplayedLog, HistoryPlan)> {
     // Tests that do not assert on marks seed a scratch cache they discard with the log.
     // Outside `cfg.history.dir`: refused-startup byte-preservation snapshots cover that dir.
     let scratch = marks_store(cfg)?;
-    super::read_log_and_history_authorities(
+    let key = Arc::new(crate::tee::EnclaveKey::test_key());
+    let (log, plan, _pending) = super::read_log_and_history_authorities(
         cfg,
-        signer,
+        &key,
         parent,
         Default::default(),
         &scratch,
         &crate::test_support::stats(),
         &mut observe,
     )
+    .await?;
+    Ok((log, plan))
 }
 
 /// A scratch marks store outside `cfg.history.dir`, which refused-startup byte-preservation

@@ -191,6 +191,7 @@ pub fn spawn_feed(
                         | Request::DistributionClaim { .. },
                     ) => unreachable!("only the API asks for payouts and claims"),
                     Some(Request::FinalCheckpoint(_)) => unreachable!("only a handover asks for the final checkpoint"),
+                    Some(Request::Freeze) => unreachable!("only the log-head poster freezes sequencing"),
                     Some(Request::TimeSample(_)) => unreachable!("a feed sends no time samples"),
                     Some(Request::Sync(_)) => unreachable!("only custody asks for a log sync"),
                     None => return,

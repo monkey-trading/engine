@@ -64,6 +64,7 @@ async fn the_cursor_moves_only_after_the_log_is_synced_past_the_credits() {
                     unreachable!("only the API asks for payouts and claims")
                 }
                 Request::FinalCheckpoint(_) => unreachable!("only a handover asks for the final checkpoint"),
+                Request::Freeze => unreachable!("only the log-head poster freezes sequencing"),
                 Request::Quote { .. } => unreachable!("custody sends no quotes"),
                 Request::TimeSample(_) => unreachable!("custody sends no time samples"),
             }
