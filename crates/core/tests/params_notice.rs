@@ -1,5 +1,5 @@
 //! The seven-day notice on the stress parameters and on a listed market's financing markup from
-//! `V50`, through `Engine::apply`: a change with no notice, or before its time, is refused, the named
+//! `V49`, through `Engine::apply`: a change with no notice, or before its time, is refused, the named
 //! value applies once from its time on, a new listing needs none, and earlier versions take either at
 //! once.
 
@@ -23,8 +23,8 @@ fn at(version: ProtocolVersion) -> Harness {
     h
 }
 
-fn v50() -> Harness {
-    at(ProtocolVersion::V50)
+fn v49() -> Harness {
+    at(ProtocolVersion::V49)
 }
 
 /// The parameters in force with the top level's spread a basis point wider.
@@ -57,7 +57,7 @@ fn applied(events: &[Event]) -> bool {
 
 #[test]
 fn a_stress_change_needs_a_notice_and_applies_once_from_its_time() {
-    let mut h = v50();
+    let mut h = v49();
     let before = h.engine.params().unwrap().clone();
     let params = wider(&h);
     let events = h.operate(AdminCommand::SetParams(params.clone()));
@@ -80,7 +80,7 @@ fn a_stress_change_needs_a_notice_and_applies_once_from_its_time() {
 
 #[test]
 fn every_stress_parameter_takes_the_notice() {
-    let mut h = v50();
+    let mut h = v49();
     let current = h.engine.params().unwrap().clone();
     let top = current.stress_levels.len() - 1;
     // A trigger every reading meets holds every priced market at the top level.
@@ -105,7 +105,7 @@ fn every_stress_parameter_takes_the_notice() {
 
 #[test]
 fn only_the_noticed_stress_parameters_apply() {
-    let mut h = v50();
+    let mut h = v49();
     let params = wider(&h);
     let due = h.ts + NOTICE_MS;
     h.operator_admin(stress_notice(&params, due));
@@ -119,7 +119,7 @@ fn only_the_noticed_stress_parameters_apply() {
 
 #[test]
 fn parameters_that_leave_the_stress_alone_need_no_stress_notice_and_keep_a_pending_one() {
-    let mut h = v50();
+    let mut h = v49();
     let noticed = wider(&h);
     let due = h.ts + NOTICE_MS;
     h.operator_admin(stress_notice(&noticed, due));
@@ -138,7 +138,7 @@ fn parameters_that_leave_the_stress_alone_need_no_stress_notice_and_keep_a_pendi
 
 #[test]
 fn a_rate_and_stress_notice_is_spent_part_by_part_and_a_new_notice_replaces_it() {
-    let mut h = v50();
+    let mut h = v49();
     let params = wider(&h);
     let fee = h.engine.params().unwrap().profit_fee_bps + 1;
     let due = h.ts + NOTICE_MS;
@@ -159,13 +159,13 @@ fn a_rate_and_stress_notice_is_spent_part_by_part_and_a_new_notice_replaces_it()
 }
 
 #[test]
-fn a_stress_notice_is_refused_before_v50_invalid_or_too_soon() {
+fn a_stress_notice_is_refused_before_v49_invalid_or_too_soon() {
     let mut h = at(ProtocolVersion::V47);
     let params = wider(&h);
     let events = h.operate(stress_notice(&params, h.ts + NOTICE_MS));
-    assert_eq!(rejected(&events), "a stress notice needs protocol V50");
+    assert_eq!(rejected(&events), "a stress notice needs protocol V49");
 
-    let mut h = v50();
+    let mut h = v49();
     let mut empty = wider(&h);
     empty.stress_levels.clear();
     let events = h.operate(stress_notice(&empty, h.ts + NOTICE_MS));
@@ -184,7 +184,7 @@ fn a_stress_notice_is_refused_before_v50_invalid_or_too_soon() {
 }
 
 #[test]
-fn before_v50_the_stress_parameters_and_the_markup_move_at_once() {
+fn before_v49_the_stress_parameters_and_the_markup_move_at_once() {
     let mut h = at(ProtocolVersion::V47);
     let params = wider(&h);
     assert!(applied(&h.operate(AdminCommand::SetParams(params.clone()))));
@@ -195,12 +195,12 @@ fn before_v50_the_stress_parameters_and_the_markup_move_at_once() {
     assert_eq!(markup_of(&h, BTC), markup);
     let events =
         h.operate(AdminCommand::AnnounceMarkup { market: BTC, markup_bps: markup, effective_at: h.ts + NOTICE_MS });
-    assert_eq!(rejected(&events), "a markup notice needs protocol V50");
+    assert_eq!(rejected(&events), "a markup notice needs protocol V49");
 }
 
 #[test]
 fn a_markup_change_needs_a_notice_and_applies_once_from_its_time() {
-    let mut h = v50();
+    let mut h = v49();
     let before = markup_of(&h, BTC);
     // The top of the allowed range.
     let markup = 10_000;
@@ -237,7 +237,7 @@ fn a_markup_change_needs_a_notice_and_applies_once_from_its_time() {
 
 #[test]
 fn each_market_keeps_its_own_markup_notice() {
-    let mut h = v50();
+    let mut h = v49();
     let (btc, eth) = (markup_of(&h, BTC) + 1, markup_of(&h, ETH) + 2);
     let due = h.ts + NOTICE_MS;
     h.operator_admin(AdminCommand::AnnounceMarkup { market: BTC, markup_bps: btc, effective_at: due });
@@ -259,7 +259,7 @@ fn each_market_keeps_its_own_markup_notice() {
 
 #[test]
 fn a_relisting_that_keeps_the_markup_and_a_new_listing_need_no_notice() {
-    let mut h = v50();
+    let mut h = v49();
     let pending = markup_of(&h, BTC) + 1;
     let due = h.ts + NOTICE_MS;
     h.operator_admin(AdminCommand::AnnounceMarkup { market: BTC, markup_bps: pending, effective_at: due });
@@ -286,7 +286,7 @@ fn a_relisting_that_keeps_the_markup_and_a_new_listing_need_no_notice() {
 
 #[test]
 fn a_markup_notice_is_refused_for_an_unlisted_market_out_of_range_too_soon_or_unsigned() {
-    let mut h = v50();
+    let mut h = v49();
     let due = h.ts + NOTICE_MS;
     let announce = |market, markup_bps, effective_at| AdminCommand::AnnounceMarkup { market, markup_bps, effective_at };
     assert_eq!(rejected(&h.operate(announce(9, 100, due))), "market 9 is not listed");
@@ -304,7 +304,7 @@ fn a_markup_notice_is_refused_for_an_unlisted_market_out_of_range_too_soon_or_un
 
 #[test]
 fn a_replay_reaches_the_same_root_over_notices() {
-    let mut h = v50();
+    let mut h = v49();
     let params = wider(&h);
     let markup = markup_of(&h, BTC) + 1;
     let due = h.ts + NOTICE_MS;
@@ -323,7 +323,7 @@ fn a_replay_reaches_the_same_root_over_notices() {
 
 #[test]
 fn a_refused_relisting_keeps_its_markup_notice() {
-    let mut h = v50();
+    let mut h = v49();
     let markup = markup_of(&h, BTC) + 1;
     let due = h.ts + NOTICE_MS;
     h.operator_admin(AdminCommand::AnnounceMarkup { market: BTC, markup_bps: markup, effective_at: due });
@@ -341,7 +341,7 @@ fn a_refused_relisting_keeps_its_markup_notice() {
 
 #[test]
 fn pending_notices_survive_a_snapshot() {
-    let mut h = v50();
+    let mut h = v49();
     let params = wider(&h);
     let markup = markup_of(&h, BTC) + 1;
     let due = h.ts + NOTICE_MS;

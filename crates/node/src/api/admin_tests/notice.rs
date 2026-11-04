@@ -1,4 +1,4 @@
-//! The `V50` dev scenario: the stress parameters and a listed market's financing markup move only
+//! The `V49` dev scenario: the stress parameters and a listed market's financing markup move only
 //! after a seven-day notice, through `engine admin`, the signed admin route and TLS, on deterministic
 //! time, and the public log replays to the same state.
 

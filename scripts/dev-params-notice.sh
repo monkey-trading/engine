@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The seven-day notice on the stress parameters and a listed market's markup, from protocol V50, on a
+# The seven-day notice on the stress parameters and a listed market's markup, from protocol V49, on a
 # dev node through `engine admin`, the signed admin route and TLS on deterministic time with isolated
 # temporary state: each change is refused with no notice and before its time, applies at it, and the
 # public log replays to the same state.

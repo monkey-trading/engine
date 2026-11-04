@@ -107,7 +107,7 @@ governance timelock turns it on.
 Because stakers own the house NAV these powers move value towards, from protocol V46 a signed benchmark
 rate moves at most 300 bps a day from the applied rates next to its date, a market holding positions
 stays on its benchmark, and the operator's stress floor is at most level 1 and lapses after 72 hours.
-From V50 a market's financing markup and the stress levels and triggers in the signed parameters
+From V49 a market's financing markup and the stress levels and triggers in the signed parameters
 change only seven days after a signed notice, as the profit fee and close-out level do.
 While rotation is on, from protocol V47, the operator in effect earns a fifth of each epoch's
 distribution, which it claims from the vault as a staker claims its own.

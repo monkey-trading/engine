@@ -258,12 +258,12 @@ pub enum ProtocolVersion {
     /// stress levels, move window and cooldown, which a `SetParams` applies from the notice's time
     /// on, and `AnnounceMarkup` a market's new markup, which a relisting applies from its time on;
     /// each applies once. A new listing needs no notice.
-    V50,
+    V49,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V50;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V49;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

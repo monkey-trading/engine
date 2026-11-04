@@ -1,4 +1,4 @@
-//! The session's `V50` part: the stress parameters and a listed market's financing markup move only
+//! The session's `V49` part: the stress parameters and a listed market's financing markup move only
 //! after a seven-day notice.
 
 use engine_core::command::AdminCommand;
@@ -21,11 +21,11 @@ fn applied(events: &[Event]) {
     assert_eq!(events.last(), Some(&Event::AdminApplied), "{events:?}");
 }
 
-/// `V50` activates. A wider top stress level and a higher BTC markup are each refused without a
+/// `V49` activates. A wider top stress level and a higher BTC markup are each refused without a
 /// notice; each is announced for seven days on, refused a millisecond before then, and applies then,
 /// spending its notice.
 pub(crate) fn session(h: &mut Harness) {
-    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V50 });
+    h.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V49 });
     let mut params = h.engine.params().expect("the session sets parameters").clone();
     let top = params.stress_levels.len() - 1;
     params.stress_levels[top].min_spread_bps += 1;

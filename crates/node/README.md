@@ -759,7 +759,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/api/admin_tests/delivery_authority.rs` — who a running node takes deliveries from: the key in
   effect by trusted time, and a named successor's own
 - `src/api/admin_tests/election.rs` — the operator route and the admin route after an election, published keys included
-- `src/api/admin_tests/notice.rs` — the V50 dev scenario: stress parameters and a market's markup refused with no notice and before its time, applied at it through `engine admin` and TLS, and replayed
+- `src/api/admin_tests/notice.rs` — the V49 dev scenario: stress parameters and a market's markup refused with no notice and before its time, applied at it through `engine admin` and TLS, and replayed
 - `src/custody/staking.rs` — mirroring the staking contract's finalised events into `Stake`/`Unstake`
   commands once each, holding them until `InitStaking` has applied; V27 completed ranges, including
   empty ones, are authenticated by `StakingProgress` and the host cursor cannot advance them
@@ -988,7 +988,7 @@ cargo run -p engine-node -- admin --pin $PIN set-stress-floor 1 --market 1
 cargo run -p engine-node -- admin --pin $PIN set-benchmark-rate SOFR 430
 cargo run -p engine-node -- admin --pin $PIN upsert-market market.toml        # no table header
 cargo run -p engine-node -- admin --pin $PIN set-params params.toml           # no table header
-# From protocol V50, new stress parameters and a listed market's markup apply only seven days after
+# From protocol V49, new stress parameters and a listed market's markup apply only seven days after
 # a notice, by a set-params carrying that file or an upsert-market carrying that markup.
 cargo run -p engine-node -- admin --pin $PIN announce-params --stress-from params.toml --effective-at 2027-01-08T00:00:00Z
 cargo run -p engine-node -- admin --pin $PIN announce-markup 1 300 --effective-at 2027-01-08T00:00:00Z
@@ -1915,7 +1915,7 @@ log; changing it needs a fresh log, except by a rotation: from `V35`, `engine ad
 <address>` hands the role to another key seven days after it is logged, `--rotated` signs with that
 key, and a restart accepts the log's rotated key under the config that names the original one, as
 long as the chain and vault match. `announce-params` gives the notice a profit fee or close-out level
-change needs, and from `V50` with `--stress-from <params.toml>` the notice for the stress levels, move
+change needs, and from `V49` with `--stress-from <params.toml>` the notice for the stress levels, move
 window and cooldown that a `set-params` carrying that file applies; `announce-markup <market> <bps>
 --effective-at <time>` gives the notice a listed market's markup change needs before an
 `upsert-market` carries it. From `V37`, while the operator registry has rotation on, the engine refuses

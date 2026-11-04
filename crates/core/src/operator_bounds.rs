@@ -7,7 +7,7 @@
 //! unless the market is reduce-only. The operator key rotates only by a signed `RotateOperator`,
 //! which takes effect seven days after it is logged; from then the old key signs nothing.
 //!
-//! From `V50` the stress parameters and a listed market's financing markup take the same seven-day
+//! From `V49` the stress parameters and a listed market's financing markup take the same seven-day
 //! notice, with no range: an `AnnounceParams` may name new stress parameters, and an
 //! `AnnounceMarkup` one market's new markup, each applying once from its time on.
 
@@ -42,7 +42,7 @@ pub struct ParamsNotice {
     pub profit_fee_bps: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub closeout_level_bps: Option<i64>,
-    /// From `V50`, new stress parameters, left out of the encoding when none are named.
+    /// From `V49`, new stress parameters, left out of the encoding when none are named.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stress: Option<StressSettings>,
     /// The sequenced time the new values may apply from.
@@ -70,7 +70,7 @@ impl StressSettings {
     }
 }
 
-/// From `V50`, the operator's notice of one listed market's new financing markup, which a relisting
+/// From `V49`, the operator's notice of one listed market's new financing markup, which a relisting
 /// may apply from `effective_at` on, once.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -103,7 +103,7 @@ pub struct OperatorBounds {
     /// From `V46`, when a global stress floor above level 0 was set, which starts its time to lapse.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub global_floor_set_at: Option<Millis>,
-    /// From `V50`, each listed market's pending markup notice.
+    /// From `V49`, each listed market's pending markup notice.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub markups: BTreeMap<MarketId, MarkupNotice>,
 }
@@ -140,20 +140,20 @@ impl Engine {
         }
     }
 
-    /// Records a notice of new rates, and from `V50` of new stress parameters, replacing any pending
+    /// Records a notice of new rates, and from `V49` of new stress parameters, replacing any pending
     /// one.
     /// Error cases:
     /// - before `V35`, or before parameters are set
     /// - a notice naming no rate, a rate outside its valid range or outside ±50% of its launch value
-    /// - stress parameters before `V50`, or ones that, with the other parameters in force, fail
+    /// - stress parameters before `V49`, or ones that, with the other parameters in force, fail
     ///   `ProtocolParams::validate_for` or `ProtocolParams::check_closing_spread`
     /// - an effective time less than seven days after the sequenced time, or past the latest stamp
     pub(crate) fn announce_params(&mut self, notice: &ParamsNotice) -> Result<(), String> {
         self.require_bounds_protocol("a parameter notice")?;
         let launch = self.operator_bounds.launch.ok_or("protocol params not set")?;
         if let Some(stress) = &notice.stress {
-            if self.protocol_version < ProtocolVersion::V50 {
-                return Err(format!("a stress notice needs protocol {:?}", ProtocolVersion::V50));
+            if self.protocol_version < ProtocolVersion::V49 {
+                return Err(format!("a stress notice needs protocol {:?}", ProtocolVersion::V49));
             }
             let current = self.params.as_ref().expect("launch rates are recorded with the parameters");
             let params = ProtocolParams {
@@ -195,15 +195,15 @@ impl Engine {
         Ok(())
     }
 
-    /// From `V50`, records a notice of `market`'s new financing markup, replacing any pending one for
+    /// From `V49`, records a notice of `market`'s new financing markup, replacing any pending one for
     /// that market.
     /// Error cases:
-    /// - before `V50`, or for a market that is not listed
+    /// - before `V49`, or for a market that is not listed
     /// - a markup outside ±10000 bps a year
     /// - an effective time less than seven days after the sequenced time, or past the latest stamp
     pub(crate) fn announce_markup(&mut self, market: MarketId, markup_bps: i64, at: Millis) -> Result<(), String> {
-        if self.protocol_version < ProtocolVersion::V50 {
-            return Err(format!("a markup notice needs protocol {:?}", ProtocolVersion::V50));
+        if self.protocol_version < ProtocolVersion::V49 {
+            return Err(format!("a markup notice needs protocol {:?}", ProtocolVersion::V49));
         }
         if !self.markets.contains_key(&market) {
             return Err(format!("market {market} is not listed"));
@@ -216,14 +216,14 @@ impl Engine {
         Ok(())
     }
 
-    /// From `V50`, checks a relisting changes a listed market's markup only to the value its notice
+    /// From `V49`, checks a relisting changes a listed market's markup only to the value its notice
     /// names, once that notice's time has come, and returns whether the relisting spends it.
     /// Error cases:
     /// - a changed markup no notice names, or whose notice takes effect later than the sequenced time
     pub(crate) fn check_markup_change(&self, spec: &MarketSpec) -> Result<bool, String> {
         let Some(market) = self.markets.get(&spec.id) else { return Ok(false) };
         let (id, new) = (spec.id, spec.financing.markup_bps);
-        if self.protocol_version < ProtocolVersion::V50 || market.spec.financing.markup_bps == new {
+        if self.protocol_version < ProtocolVersion::V49 || market.spec.financing.markup_bps == new {
             return Ok(false);
         }
         match self.operator_bounds.markups.get(&id).filter(|notice| notice.markup_bps == new) {
@@ -248,12 +248,12 @@ impl Engine {
     }
 
     /// Checks `params` against the bounds: a changed profit fee or close-out level is within ±50% of
-    /// its launch value and named by a notice whose time has come, and from `V50` so are changed
+    /// its launch value and named by a notice whose time has come, and from `V49` so are changed
     /// stress parameters, with no range.
     /// Error cases:
     /// - a changed rate outside ±50% of its launch value
     /// - a changed rate no notice names, or whose notice takes effect later than the sequenced time
-    /// - from `V50`, changed stress parameters no notice names, or whose notice takes effect later than the
+    /// - from `V49`, changed stress parameters no notice names, or whose notice takes effect later than the
     ///   sequenced time
     pub(crate) fn check_rate_changes(&self, params: &ProtocolParams) -> Result<(), String> {
         let Some(current) = &self.params else { return Ok(()) };
@@ -284,7 +284,7 @@ impl Engine {
             }
         }
         let stress = StressSettings::of(params);
-        if self.protocol_version < ProtocolVersion::V50 || stress == StressSettings::of(current) {
+        if self.protocol_version < ProtocolVersion::V49 || stress == StressSettings::of(current) {
             return Ok(());
         }
         match self.operator_bounds.notice.as_ref().filter(|notice| notice.stress.as_ref() == Some(&stress)) {

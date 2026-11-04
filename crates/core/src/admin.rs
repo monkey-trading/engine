@@ -63,7 +63,7 @@ impl Engine {
     ///   positions unpriced and not reduce-only (see `Engine::check_priceable`)
     /// - `AnnounceParams` and `RotateOperator` with any error case of `Engine::announce_params` and
     ///   `Engine::rotate_operator`
-    /// - from `V50`, `SetParams` that changes the stress parameters without a notice whose time has
+    /// - from `V49`, `SetParams` that changes the stress parameters without a notice whose time has
     ///   come (see `Engine::check_rate_changes`); `UpsertMarket` that changes a listed market's
     ///   markup without one (see `Engine::check_markup_change`); `AnnounceMarkup` with any error case
     ///   of `Engine::announce_markup`

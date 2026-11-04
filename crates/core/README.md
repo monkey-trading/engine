@@ -48,7 +48,7 @@ this crate and reproduce the signed state roots exactly.
   next to its date (`src/benchmark.rs`), a market holding positions stays on its benchmark
   (`src/operator_bounds.rs`), and the operator's stress floor is at most level 1 and lapses after 72
   hours (`src/stress.rs`)
-- From protocol `V50`, the stress parameters and a listed market's financing markup change only
+- From protocol `V49`, the stress parameters and a listed market's financing markup change only
   after a seven-day notice, as the profit fee and close-out level do (`src/operator_bounds.rs`)
 - From protocol `V35`, the operator's powers are bounded (`src/operator_bounds.rs`). The profit fee
   and the close-out level change only within ±50% of their launch values, the rates in force when
@@ -218,7 +218,7 @@ this crate and reproduce the signed state roots exactly.
 - `src/operator_bounds.rs` — the V35 bounds: launch rates, rate notices, price-rule checks, and operator rotation
 - `src/close_spread.rs` — the V40 close-spread ceilings: the genesis registry, the seven-day
   adoption, the pricing-site clamp and reversal refusal, and the listing guards
-- `tests/params_notice.rs` — the V50 notice on the stress parameters and on a listed market's markup: each refusal, each change from its time, a notice spent once, per-market notices, new listings, and replay
+- `tests/params_notice.rs` — the V49 notice on the stress parameters and on a listed market's markup: each refusal, each change from its time, a notice spent once, per-market notices, new listings, and replay
 - `tests/operator_bounds.rs` — the V35 rate bounds, notices and rotation: each refusal and each change that takes effect after its notice
 - `tests/operator_price_rules.rs` — the V35 price-rule bound: held markets, reduce-only, FX dependents, relisting and futures
 - `src/election.rs` — the V37 elected operator key: the mirrored rotation switch and elections, and the pending rotation they record; from `V47`, the candidate seated and the account the operator's share goes to; from `V48`, the timelock-only installation the failed-key fallback mirrors
@@ -351,7 +351,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V50` parts (`v15.rs` to `v50.rs`)
+  `V15` to `V49` parts (`v15.rs` to `v49.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -550,7 +550,7 @@ prices the boundaries before that time with the floor. A floor above
 level 1 when V46 activates drops to level 1, and each floor then in force starts its 72 hours. The
 automatic triggers and reduce-only do not change, and earlier logs replay unchanged, since nothing
 records a floor's time before V46. V46 does not bound a relisting's `financing.markup_bps`, or the
-`stress_levels` and triggers in `SetParams`: both still change at once, until V50 gives them a
+`stress_levels` and triggers in `SetParams`: both still change at once, until V49 gives them a
 notice. Its session is in `examples/reference_log/v46.rs`.
 
 Protocol V47 pays the operator a fifth of each epoch's distribution while rotation is on, through
@@ -569,7 +569,7 @@ staked credits the operator nothing, and a later close that sweeps an excess bui
 was staked pays it a fifth of the sweep. Before V47 the candidate is not recorded, so earlier logs
 replay unchanged. Its session is in `examples/reference_log/v47.rs`.
 
-Protocol V50 gives the stress parameters and a listed market's financing markup the seven-day notice
+Protocol V49 gives the stress parameters and a listed market's financing markup the seven-day notice
 the profit fee and close-out level already take, with no range. An `AnnounceParams` may name new
 stress levels, with their spreads and triggers, a move window and a cooldown, which together decide
 when a market reaches a level and how long it stays there; a `SetParams` that changes any of them
@@ -578,8 +578,8 @@ one pending parameter notice, which a new notice replaces whatever it names. `An
 one listed market's new markup, each market's notice kept and replaced apart, and a relisting that
 changes it applies only that value, from its time on, once. A new listing needs no notice, since no
 one holds it, and a relisting that keeps the markup leaves a pending notice waiting. Earlier versions
-change both at once, and nothing records a stress or markup notice before V50, so earlier logs replay
-unchanged. Its session is in `examples/reference_log/v50.rs`.
+change both at once, and nothing records a stress or markup notice before V49, so earlier logs replay
+unchanged. Its session is in `examples/reference_log/v49.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

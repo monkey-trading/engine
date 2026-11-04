@@ -116,7 +116,7 @@ pub enum AdminAction {
         market: Option<MarketId>,
     },
     /// Give notice of a new profit fee and/or close-out level (from V35), and of new stress
-    /// parameters (from V50): a `set-params` carrying them applies only from `--effective-at`, at
+    /// parameters (from V49): a `set-params` carrying them applies only from `--effective-at`, at
     /// least seven days after the notice is logged, and the fee and level must each stay within 50%
     /// of their launch values. It replaces a pending notice, whatever that names.
     AnnounceParams {
@@ -132,7 +132,7 @@ pub enum AdminAction {
         #[arg(long)]
         effective_at: DateTime<Utc>,
     },
-    /// Give notice of a listed market's new financing markup, in bps a year (from V50): an
+    /// Give notice of a listed market's new financing markup, in bps a year (from V49): an
     /// `upsert-market` carrying it applies only from `--effective-at`, at least seven days after the
     /// notice is logged. It replaces that market's pending markup notice.
     AnnounceMarkup {
