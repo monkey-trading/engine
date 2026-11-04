@@ -444,7 +444,8 @@ an index: load only the rule whose hint matches the current action.
   before, and a job that times out is cancelled rather than failed, so the run continues too.
   `gh run rerun --failed` re-runs the failed, cancelled, and unstarted jobs with `ci-passed`, so a
   re-run after a flake repeats everything the first failure cut short. The test job also runs the
-  corporate-action, operator bounds and parameter notice dev scenarios and checks command latency budgets against 100k-account fixtures.
+  corporate-action, operator bounds and parameter notice dev scenarios and checks command latency budgets against 100k-account fixtures; the node's production-build tests run in
+  their own job, `test-production`, which compiles a different feature set.
   `merge-approval.yaml` runs only on merge groups: its `merge-approved` job, the merge-group side of
   the required `merge-approved` check, runs `scripts/check-merge-approved.sh`, which follows the
   queue's entries from the group's head down to `main` and passes only if the latest
