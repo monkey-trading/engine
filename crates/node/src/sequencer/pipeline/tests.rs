@@ -254,9 +254,11 @@ async fn a_sync_held_past_the_bound_pages_and_stamps_nothing_until_it_finishes()
     assert_eq!(page.get("alert").map(String::as_str), Some("log_sync_held"));
     assert_eq!(page.get("level").map(String::as_str), Some("ERROR"), "a held sync is Critical");
     assert!(alerts.try_recv().is_err(), "one page per hold");
-    // The sync finishes: the request is taken and the episode ends.
+    // The sync finishes on the real disk, so real time resumes: the request is taken and the
+    // episode ends.
+    tokio::time::resume();
     permits.send(Verdict::Pass).unwrap();
-    let taken = timeout(Duration::from_secs(1), seq.next_request(&mut rx)).await.expect("a finished sync frees it");
+    let taken = timeout(Duration::from_secs(10), seq.next_request(&mut rx)).await.expect("a finished sync frees it");
     assert!(matches!(taken.unwrap(), Some(Request::Query(_))));
     let end = resolved.try_recv().expect("the finished sync resolves the hold");
     assert_eq!(end.get("alert_resolved").map(String::as_str), Some("log_sync_held"));
