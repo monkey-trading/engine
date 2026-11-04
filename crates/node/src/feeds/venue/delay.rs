@@ -8,8 +8,7 @@
 //! carries when it stops being so to the sequencer, since the host can hold that back too.
 //!
 //! This holds only while the monotonic clock's rate is honest (see `Clock::instant`), and only over
-//! TLS: on Databento's plain TCP the host could answer a ping itself, so that connection carries
-//! none, and the other source a market needs is what bounds it.
+//! TLS, which every venue connection is: over plaintext the host could answer a ping itself.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::mem::take;
@@ -122,36 +121,34 @@ impl DelayProbe {
 }
 
 impl VenueFeed {
-    /// Sends the connection's next ping, if it carries them.
+    /// Sends the connection's next ping.
     /// Error cases:
     /// - a ping has gone unanswered for `timing.timeout`
     /// - the ping cannot be sent within `timing.timeout`, or the connection fails
     pub(super) async fn ping(&mut self, link: &mut Link) -> anyhow::Result<()> {
-        let Some(probe) = &mut self.delay else { return Ok(()) };
         let now = Instant::now();
-        if let Some(waiting) = probe.waiting(now)
+        if let Some(waiting) = self.delay.waiting(now)
             && waiting >= self.timing.timeout
         {
             bail!("a ping unanswered for {waiting:?}");
         }
-        let payload = probe.sent(now, now_ms());
+        let payload = self.delay.sent(now, now_ms());
         timeout(self.timing.timeout, link.ping(payload)).await.context("ping timed out")?.context("ping")
     }
 
     /// Takes a pong read from the connection, returning the ping it newly answers (see
     /// `DelayProbe::answered`).
     pub(super) fn pong(&mut self, payload: &[u8]) -> Option<Ping> {
-        self.delay.as_mut()?.answered(payload)
+        self.delay.answered(payload)
     }
 
-    /// Whether a frame read now counts: on a connection without pings always, and otherwise while
-    /// the stream is within `timing.max_delay`. Frames refused for `timing.max_delay` alert once,
-    /// and the next that counts resolves it, so a late answer honest networks show raises nothing.
+    /// Whether a frame read now counts: while the stream is within `timing.max_delay`. Frames
+    /// refused for `timing.max_delay` alert once, and the next that counts resolves it, so a late
+    /// answer honest networks show raises nothing.
     pub(super) fn stream_current(&mut self) -> bool {
-        let Some(probe) = &self.delay else { return true };
         let now = Instant::now();
         let max_delay = self.timing.max_delay;
-        let behind = probe.behind(now);
+        let behind = self.delay.behind(now);
         let (venue, feed) = (self.conn.venue.name(), self.conn.url.as_str());
         if behind.is_some_and(|behind| behind <= max_delay) {
             self.refused_since = None;

@@ -57,10 +57,9 @@ async fn a_quiet_book_is_sequenced_again_at_later_stamps_each_bounded_by_a_ping_
     let (mut ws, _) = accept(&listener).await;
     let read_ts = now_ms();
     send(&mut ws, &[kraken_book("BTC/USD", "100", "101", read_ts)]).await;
+    // Read under the bound of the ping answered before the book was read.
     let (first, read_bound) = next_quote(&mut rx, &mut engine).await;
     assert_eq!(first, quote(Venue::Kraken, "100.5", read_ts));
-    // The bound of the ping answered before the book was read.
-    let read_bound = read_bound.expect("a connection with pings");
 
     // The venue sends nothing more but answers each ping as it arrives, noting when the newest did.
     let venue = answer_pings(ws, Duration::ZERO);
@@ -71,7 +70,6 @@ async fn a_quiet_book_is_sequenced_again_at_later_stamps_each_bounded_by_a_ping_
         assert!(redated.ts > last, "each stamp is later than the one before");
         assert!(redated.ts <= venue.pinged.load(Ordering::SeqCst), "stamped after the newest ping reached the venue");
         // Bounded by the ping whose answer re-dated it, sent after the book was read.
-        let bound = bound.expect("a connection with pings");
         assert!(bound > read_bound, "a re-dated quote kept the bound of the ping answered before the read");
         assert!(bound <= std::time::Instant::now() + TIMING.max_delay, "bounded by a ping not yet sent");
         last = redated.ts;
@@ -399,10 +397,7 @@ impl Answering {
 
 /// The next quote the feed sequences on `rx`, with when its delay bound runs out, applied to
 /// `engine`, which answers the feed's queries meanwhile.
-async fn next_quote(
-    rx: &mut mpsc::Receiver<Request>,
-    engine: &mut FakeEngine,
-) -> (SourceQuote, Option<std::time::Instant>) {
+async fn next_quote(rx: &mut mpsc::Receiver<Request>, engine: &mut FakeEngine) -> (SourceQuote, std::time::Instant) {
     let quote = async {
         loop {
             match rx.recv().await.expect("feed running") {

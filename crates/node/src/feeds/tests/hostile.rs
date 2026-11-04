@@ -110,9 +110,9 @@ async fn a_running_sequencer_drops_a_quote_past_its_deadline() {
             contract: None,
         }],
     };
-    let past = std::time::Instant::now() - Duration::from_secs(1);
-    node.tx.send(Request::Quote { cmd: quote("late"), not_after: Some(past) }).await.expect("sequencer up");
-    node.tx.send(Request::Quote { cmd: quote("in-time"), not_after: None }).await.expect("sequencer up");
+    let (past, ahead) = (std::time::Instant::now() - Duration::from_secs(1), std::time::Instant::now() + WAIT);
+    node.tx.send(Request::Quote { cmd: quote("late"), not_after: past }).await.expect("sequencer up");
+    node.tx.send(Request::Quote { cmd: quote("in-time"), not_after: ahead }).await.expect("sequencer up");
 
     // In order, so the second having been sequenced means the first has been judged.
     node.wait_for_quotes(&[(1, "in-time")]).await;

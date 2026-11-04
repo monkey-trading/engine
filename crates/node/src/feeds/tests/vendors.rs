@@ -1,7 +1,7 @@
-//! Test support: loopback market-data vendors that speak Massive's, TraderMade's, and Databento's
-//! protocols, logins and handshakes included, and stream each subscribed symbol's quotes every
-//! 20ms, as a shared price function sets them, until the feed hangs up. Each accepts connection
-//! after connection, so a feed's reconnects find it again.
+//! Test support: loopback market-data vendors that speak Massive's and TraderMade's protocols,
+//! logins included, and stream each subscribed symbol's quotes every 20ms, as a shared price
+//! function sets them, until the feed hangs up. Each accepts connection after connection, so a
+//! feed's reconnects find it again.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -11,10 +11,7 @@ use engine_core::Fixed;
 use engine_core::types::Millis;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::net::TcpListener;
-use tokio::net::tcp::OwnedReadHalf;
 use tokio::task::JoinHandle;
 use tokio::time::{interval, timeout};
 use tokio_tungstenite::accept_async;
@@ -115,57 +112,6 @@ pub fn serve_tradermade(listener: TcpListener, prices: Prices) -> JoinHandle<()>
     })
 }
 
-/// Serves Databento's live gateway over plain TCP: greets, challenges, checks the response
-/// against `KEY`, reads the subscription and the session start, then maps each symbol to an
-/// instrument id and streams `mbp-1` records.
-pub fn serve_databento(listener: TcpListener, prices: Prices) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        loop {
-            let Ok((tcp, _)) = listener.accept().await else { continue };
-            let prices = prices.clone();
-            tokio::spawn(async move {
-                let (read, mut write) = tcp.into_split();
-                let mut lines = BufReader::new(read).lines();
-                let _ = write.write_all(b"lsg_version=0.6.0\ncram=fake-challenge\n").await;
-                let expected = hex::encode(Sha256::digest(format!("fake-challenge|{KEY}").as_bytes()));
-                let Some(auth) = next_line(&mut lines).await else { return };
-                assert!(auth.starts_with(&format!("auth={expected}-{}|", &KEY[KEY.len() - 5..])), "{auth}");
-                let _ = write.write_all(b"success=1|session_id=1\n").await;
-                let Some(subscription) = next_line(&mut lines).await else { return };
-                let symbols: Vec<String> = subscription
-                    .split('|')
-                    .find_map(|field| field.strip_prefix("symbols="))
-                    .expect("symbols")
-                    .split(',')
-                    .map(str::to_owned)
-                    .collect();
-                assert_eq!(next_line(&mut lines).await.as_deref(), Some("start_session"));
-                for (id, symbol) in symbols.iter().enumerate() {
-                    let mapping = json!({ "hd": { "ts_event": "0", "rtype": 22, "publisher_id": 1, "instrument_id": id },
-                        "stype_in_symbol": symbol, "stype_out_symbol": symbol });
-                    let _ = write.write_all(format!("{mapping}\n").as_bytes()).await;
-                }
-                let mut every = interval(EVERY);
-                loop {
-                    every.tick().await;
-                    let ts = now_ms();
-                    for (id, symbol) in symbols.iter().enumerate() {
-                        let Some((bid, ask)) = prices(symbol, ts) else { continue };
-                        let record = json!({
-                            "hd": { "ts_event": (ts * 1_000_000).to_string(), "rtype": 1, "publisher_id": 1, "instrument_id": id },
-                            "levels": [{ "bid_px": bid.raw().to_string(), "ask_px": ask.raw().to_string(),
-                                "bid_sz": 5, "ask_sz": 6, "bid_ct": 1, "ask_ct": 1 }],
-                        });
-                        if write.write_all(format!("{record}\n").as_bytes()).await.is_err() {
-                            return;
-                        }
-                    }
-                }
-            });
-        }
-    })
-}
-
 /// The next WebSocket connection, however long it takes, and the first message the feed sends on
 /// it; none if the handshake or that message fails.
 async fn accept_next(listener: &TcpListener) -> Option<(Conn, String)> {
@@ -178,11 +124,6 @@ async fn accept_next(listener: &TcpListener) -> Option<(Conn, String)> {
             _ => return None,
         }
     }
-}
-
-/// The next line the feed sends, or none once it hangs up.
-async fn next_line(lines: &mut Lines<BufReader<OwnedReadHalf>>) -> Option<String> {
-    timeout(WAIT, lines.next_line()).await.expect("a line in time").ok().flatten()
 }
 
 /// A price as a JSON number, written exactly as its decimal text.

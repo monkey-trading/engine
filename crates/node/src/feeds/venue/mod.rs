@@ -158,8 +158,8 @@ struct VenueFeed {
     sent: BTreeMap<String, (Fixed, Millis)>,
     refusals: Throttle,
     clock_alerts: Throttle,
-    /// The current connection's pings, on a connection that carries them.
-    delay: Option<DelayProbe>,
+    /// The current connection's pings.
+    delay: DelayProbe,
     /// Since when frames have been refused as too far behind, without one counting.
     refused_since: Option<Instant>,
     /// Whether the venue is alerted as past its delay bound.
@@ -225,7 +225,7 @@ impl VenueFeed {
             sent: BTreeMap::new(),
             refusals: Throttle::default(),
             clock_alerts: Throttle::default(),
-            delay: None,
+            delay: DelayProbe::default(),
             refused_since: None,
             delayed: false,
             standing: StandingBooks::default(),
@@ -272,7 +272,7 @@ impl VenueFeed {
         let connect = transport::connect(&self.conn, self.tls.clone());
         let mut link = timeout(self.timing.timeout, connect).await.context("connect timed out")?.context("connect")?;
         // Pinged before it opens, so the answer arrives ahead of the first book.
-        self.delay = link.pings.then(DelayProbe::default);
+        self.delay = DelayProbe::default();
         self.standing.connected(redates(self.conn.venue));
         self.ping(&mut link).await?;
         let symbols: Vec<&str> = self.instruments.keys().map(String::as_str).collect();
@@ -333,7 +333,7 @@ impl VenueFeed {
                         Incoming::Other => {}
                     }
                 }
-                _ = pings.tick(), if link.pings => self.ping(&mut link).await?,
+                _ = pings.tick() => self.ping(&mut link).await?,
                 answer = async {
                     match &mut self.confirming {
                         Some(reply) => reply.await,
@@ -410,8 +410,7 @@ impl VenueFeed {
             match to_quote(self.conn.venue, &self.instruments, book, now) {
                 Ok((symbol, quote)) => match self.take_book(&symbol, quote, now, buffered) {
                     Ok(ts) => {
-                        let max_delay = self.timing.max_delay;
-                        self.delay.iter_mut().for_each(|probe| probe.note_read(&symbol, ts, max_delay));
+                        self.delay.note_read(&symbol, ts, self.timing.max_delay);
                     }
                     Err(lead_ms) => self.clock_ahead(self.instruments[&symbol].market, lead_ms),
                 },

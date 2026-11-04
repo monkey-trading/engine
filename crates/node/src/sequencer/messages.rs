@@ -49,10 +49,10 @@ pub enum Request {
         reply: Option<oneshot::Sender<Vec<Event>>>,
     },
     /// A venue's quote, sequenced only while the monotonic clock has not passed `not_after`, by when
-    /// its connection's pings stop bounding its age. `None` on a connection without pings.
+    /// its connection's pings stop bounding its age.
     Quote {
         cmd: Command,
-        not_after: Option<Instant>,
+        not_after: Instant,
     },
     Query(Query),
     /// The parameters and latest checkpoint, answered once every prior request is flushed.

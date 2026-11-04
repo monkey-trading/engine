@@ -44,8 +44,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   and the TLS key's hash; with configfs-tsm a start refuses, raising `clocksource_unprotected`,
   unless the guest kernel times on the TSC, the clock Secure TSC keeps the host from scaling, in
   the frequency the hardware reports
-- A `production` cargo feature that refuses mock TEE, custody, and feed providers, and an API
-  without `[api.tls.acme]`, at config load
+- A `production` cargo feature that refuses mock TEE, custody, and feed providers, an API
+  without `[api.tls.acme]`, and a genesis market quoted by fewer venues than its `min_sources`, at
+  config load
 - Trusted time: every stamp is checked against signed Roughtime readings that independent servers
   agree on, and nothing, genesis included, is stamped before the first; sequencing halts with a
   Critical alert when the host clock is beyond the drift bound, or 60 seconds after the last
@@ -128,18 +129,19 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - Supervised tasks: any task stopping stops the node, and SIGTERM drains to a final checkpoint
 - Live crypto prices from Coinbase and Kraken over WebSocket: one supervised task per
   venue connection, quotes stamped with the venue's own time, and reconnects with backoff
-- A bound on a price's age under a hostile host, on the monotonic clock: every TLS venue connection
+- Prices only from sources reached over TLS that ends in the enclave: every venue endpoint is
+  `wss://` on the venue's own domain, so the host can delay a source's quotes but not alter them
+- A bound on a price's age under a hostile host, on the monotonic clock: every venue connection
   pings its venue every `feeds.venues.ping_interval`, and a quote is sequenced only within
   `feeds.venues.max_delay` of the newest ping answered when it was read; `SECURITY.md` states the
   bound
 - A quiet venue kept quoting: on Coinbase, Kraken and Bitstamp connections, a pong with no change to
   a symbol's book since one read before its ping sequences that book's mid again, stamped no later
   than the venue's clock when the ping went out, for up to 5 s after the book was read
-- Live FX, index and commodity futures, and US share prices from market-data vendors, two per
-  market: Massive (FX, futures, and stocks feeds) and TraderMade over WebSocket with their API
-  keys, and Databento's live gateway over TCP with challenge-response authentication; quotes for
-  a futures contract carry its name, and a feed holds back quotes stamped or sent while their
-  market is closed and quotes for a contract the market does not take
+- Live FX, index and commodity futures, and US share prices from market-data vendors: Massive
+  (FX, futures, and stocks feeds) and TraderMade over WebSocket with their API keys; quotes for a
+  futures contract carry its name, and a feed holds back quotes stamped or sent while their market
+  is closed and quotes for a contract the market does not take
 - Alerts for refused venue messages (at most one a minute per venue, counting the rest, with any API
   key redacted), venue outages, symbols with no fresh quote while their market is open, venue
   times well ahead of the host clock, a venue stream past its delay bound, and a host clock falling
@@ -637,8 +639,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/config/collateral.rs` — the `[tee]` keys of the attestation collateral relay and their bounds
 - `src/config/checkpoints.rs` — checkpoint relayer config and validation
 - `src/config/feeds.rs` — the `[feeds]` section: the mock feed, the venues and vendors with their
-  redacted API keys, and the checks on their endpoints, credentials, and symbols
-- `src/config/feeds_tests.rs` — vendor connection config tests
+  redacted API keys, the checks on their endpoints, credentials, and symbols, and the venues
+  quoting each instrument of a market
+- `src/config/feeds_tests.rs` — vendor connection config tests, and the production build's refusal
+  of a market fewer venues quote than its `min_sources`
 - `src/config/access.rs` — redacted source configuration, recorded identity and freshness bounds
 - `src/config/custody.rs` — the `[custody.evm]` section, independent RPC providers, redacted
   URLs, and custody checks
@@ -665,7 +669,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/config/origins.rs` — `api.allowed_origins` validation: exact browser origins, `https` only in a production build
 - `src/config/origins_tests.rs` — the origin allowlist's accepted and refused spellings
 - `src/config/validation.rs` — the checks a parsed config must also pass, and the production
-  build's refusal of mocks
+  build's refusal of mocks and of a genesis market fewer venues quote than its `min_sources`
 - `src/config/test_keys.rs` — the published test keys from `config/test-keys.toml`, which a node
   with real attestation refuses, and their tests
 - `src/checkpoints/mod.rs` — posting, retry, signed-parent commitment checks, and collateral reconciliation
@@ -827,8 +831,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   burst, past which updates coalesce to the newest), holding a repeat of the sequenced mid until
   the engine's quote is half of `stale_after` or the market's `max_age_ms` old, and the emit timer
   that releases what the budget held or a repeat that falls due
-- `src/feeds/venue/transport.rs` — a connection's messages and pings over a WebSocket, or lines
-  over TCP
+- `src/feeds/venue/transport.rs` — a connection's messages and pings over a WebSocket over TLS
 - `src/feeds/venue/delay.rs` — how far behind a connection's stream can be, from its pings on the
   monotonic clock, refusing frames past `feeds.venues.max_delay` and giving each quote the time its
   bound runs out; its tests are in `src/feeds/venue/delay/tests.rs`
@@ -855,8 +858,6 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/feeds/coinbase.rs`, `src/feeds/bitstamp.rs` — venue adapters
 - `src/feeds/massive.rs`, `src/feeds/tradermade.rs` — the Massive and TraderMade adapters: login,
   subscription, and quotes; Massive's tests are in `src/feeds/massive/tests.rs`
-- `src/feeds/databento.rs` — the Databento adapter: the gateway's challenge-response handshake,
-  symbol mappings, and top-of-book records; its tests are in `src/feeds/databento/tests.rs`
 - `src/feeds/kraken/mod.rs` — the Kraken adapter: a kept order book verified against Kraken's
   checksum; `src/feeds/kraken/tests.rs` replays recorded book messages against it
 - `src/feeds/tests/mod.rs` — venue tasks against loopback venues: what they sequence, refuse,
@@ -886,7 +887,7 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/feeds/tests/rwa.rs` — the RWA price feeds' dev scenario: loopback vendors price FX, index,
   commodity, and share markets through the sequencer, across a market open and a futures roll,
   and the log replays
-- `src/feeds/tests/vendors.rs` — loopback Massive, TraderMade, and Databento vendors
+- `src/feeds/tests/vendors.rs` — loopback Massive and TraderMade vendors
 - `src/feeds/tests/hours.rs` — quotes held back while a market is closed and for a contract the
   market does not take, without silence alerts
 - `src/feeds/tests/rwa_support.rs` — schedules open around the clock, signed relistings, and a
@@ -2285,10 +2286,7 @@ command line, and a host that could set one would choose the secret.
   or a receipt. Restoring an older sealed file gives the older bundle, which nothing on the disk can
   tell from the newest: its URLs have the same attested origins, so it can hold only an older key for
   the same provider, which a rotation for cause has revoked, or an older webhook. `secrets-status`
-  shows the version the enclave holds, under its quote, and a higher delivery repairs it. A Databento
-  key is the exception to what the host's network can touch: that gateway has no TLS, and its login
-  answers a challenge in the clear with the key's last five characters and a digest, so a host can
-  relay a login of its own under the operator's account without learning the key.
+  shows the version the enclave holds, under its quote, and a higher delivery repairs it.
 - **Where a value goes.** Nowhere but the enclave's memory, the seal, and the connection it
   authenticates. `Debug` and `Display` redact it, errors name a secret and never its value, the crates
   that see a credential on its way out log only at `warn` or above whatever `logging.level` says, and
@@ -2490,27 +2488,22 @@ environment variable (`url_env`), rather than the URL. A URL must be HTTPS unles
 loopback address, and the node refuses to start when a named variable is unset. A node whose TEE or custody provider is not `mock` refuses to start without
 `[alerts.critical]`, since its Critical alerts would otherwise page no one.
 
-Vendor API keys are credentials too: each `[[feeds.venues.connections]]` entry for Massive,
-TraderMade, or Databento names the delivered secret that holds its key (`api_key_secret`) or, in a
-development build, the environment variable (`api_key_env`), and a node with
-`feeds.provider = "venues"` refuses to start while a named variable is unset or empty.
-A Massive connection names one of its `/forex`, `/futures`, or `/stocks` feeds; a Databento one
-names its live gateway as `tcp://<gateway>.lsg.databento.com:13000` and the `dataset` it serves; a
-symbol for a market priced from futures names the `contract` it quotes, one listed in the market's
-`contracts`, and the feed sends quotes for each contract the market takes now:
+Vendor API keys are credentials too: each `[[feeds.venues.connections]]` entry for Massive or
+TraderMade names the delivered secret that holds its key (`api_key_secret`) or, in a development
+build, the environment variable (`api_key_env`), and a node with `feeds.provider = "venues"`
+refuses to start while a named variable is unset or empty. Every endpoint is `wss://` on the
+venue's own domain, since only a source reached over TLS that ends in the enclave may set a price.
+A Massive connection names one of its `/forex`, `/futures`, or `/stocks` feeds; a symbol for a
+market priced from futures names the `contract` it quotes, one listed in the market's `contracts`,
+and the feed sends quotes for each contract the market takes now. A production build refuses a
+config in which fewer venues quote a genesis market, or one of its contracts, than its
+`min_sources`:
 
 ```toml
 [[feeds.venues.connections]]
 venue = "massive"
 url = "wss://socket.massive.com/futures"
 api_key_env = "MASSIVE_API_KEY"
-symbols = [{ market = 20, symbol = "ESZ6", contract = "ESZ6" }, { market = 20, symbol = "ESH7", contract = "ESH7" }]
-
-[[feeds.venues.connections]]
-venue = "databento"
-url = "tcp://glbx-mdp3.lsg.databento.com:13000"
-api_key_env = "DATABENTO_API_KEY"
-dataset = "GLBX.MDP3"
 symbols = [{ market = 20, symbol = "ESZ6", contract = "ESZ6" }, { market = 20, symbol = "ESH7", contract = "ESH7" }]
 ```
 

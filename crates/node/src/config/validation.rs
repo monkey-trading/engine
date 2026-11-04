@@ -61,6 +61,50 @@ impl NodeConfig {
         Ok(())
     }
 
+    /// Refuses, when `production` is set, a genesis market its venues cannot price. Every venue is
+    /// reached over TLS that ends in the enclave, the only sources that may set a price, so a market
+    /// with an instrument fewer of them quote than its `min_sources` has no price whenever the
+    /// market prices from that instrument.
+    /// Error cases:
+    /// - `production` is set and a genesis market has no instrument its listing names quoted by a
+    ///   venue, or one quoted by fewer venues than its `min_sources` (see
+    ///   `VenuesSection::venues_quoting`)
+    pub(super) fn refuse_unmet_min_sources(&self, production: bool) -> anyhow::Result<()> {
+        if !production {
+            return Ok(());
+        }
+        // The mock feed's sources are refused by `refuse_mocks`, and none of them is a venue.
+        let venues = self.feeds.venues.as_ref().filter(|_| self.feeds.provider == FeedProvider::Venues);
+        let unmet: Vec<String> = self
+            .genesis
+            .markets
+            .iter()
+            .flat_map(|market| {
+                let (id, symbol, needed) = (market.id, &market.symbol, market.price_rules.min_sources);
+                let quoting = venues.map(|venues| venues.venues_quoting(market)).unwrap_or_default();
+                if quoting.is_empty() {
+                    return vec![format!("market {id} ({symbol}) has no venue of {needed}")];
+                }
+                quoting
+                    .into_iter()
+                    .filter(|(_, by)| by.len() < needed)
+                    .map(|(contract, by)| {
+                        let contract = contract.map(|c| format!(" contract {c}")).unwrap_or_default();
+                        let names: Vec<&str> = by.iter().map(|venue| venue.name()).collect();
+                        format!("market {id} ({symbol}){contract} has {} ({}) of {needed}", by.len(), names.join(", "))
+                    })
+                    .collect()
+            })
+            .collect();
+        ensure!(
+            unmet.is_empty(),
+            "a production build refuses a genesis market that fewer venues quote than its min_sources, since only \
+             a source reached over TLS may set a price: {}",
+            unmet.join("; ")
+        );
+        Ok(())
+    }
+
     /// Checks values that parse but would fail silently or at the wrong moment.
     /// Error cases:
     /// - `logging.level` is not a valid filter directive, or one that disables the node's errors

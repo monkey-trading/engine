@@ -86,10 +86,12 @@ impl StandingBooks {
     }
 
     /// Holds `quote`, `symbol`'s book read now, at host time `now`, on a connection that re-dates
-    /// books and is pinged by `probe`, once a ping has been answered. It is held stamped as the
-    /// engine stores it, no later than `now`, so a venue clock ahead of the host's still gains on it.
-    pub(super) fn hold(&mut self, symbol: &str, quote: &SourceQuote, now: Millis, probe: Option<&DelayProbe>) {
-        let Some(probe) = probe.filter(|_| self.redating) else { return };
+    /// books, once `probe`, its pings, has had one answered. It is held stamped as the engine stores
+    /// it, no later than `now`, so a venue clock ahead of the host's still gains on it.
+    pub(super) fn hold(&mut self, symbol: &str, quote: &SourceQuote, now: Millis, probe: &DelayProbe) {
+        if !self.redating {
+            return;
+        }
         if let Some(vouched_from) = probe.newest_answered() {
             let quote = SourceQuote { ts: quote.ts.min(now), ..quote.clone() };
             self.hold_at(symbol, quote, Instant::now(), vouched_from, probe.next_ping());
@@ -190,8 +192,7 @@ impl VenueFeed {
             let ts = quote.ts;
             match buffered.entry(symbol.clone()).or_default().add(quote, now) {
                 Ok(()) => {
-                    let max_delay = self.timing.max_delay;
-                    self.delay.iter_mut().for_each(|probe| probe.note_read(&symbol, ts, max_delay));
+                    self.delay.note_read(&symbol, ts, self.timing.max_delay);
                     trace!(venue, feed, symbol, ts, "quiet book re-dated");
                     self.standing.given.insert(symbol, ts);
                     redated = true;
@@ -233,7 +234,7 @@ impl VenueFeed {
         };
         match taken {
             Ok(quote) => {
-                self.standing.hold(symbol, &quote, now, self.delay.as_ref());
+                self.standing.hold(symbol, &quote, now, &self.delay);
                 Ok(quote.ts)
             }
             Err(lead_ms) => {
@@ -264,8 +265,7 @@ impl VenueFeed {
 }
 
 /// Whether `venue`'s connections re-date quiet books: those measured to write a pong behind what
-/// they sent before reading its ping. Massive's and TraderMade's are not measured, and Databento's
-/// gateway carries no pings.
+/// they sent before reading its ping. Massive's and TraderMade's are not measured.
 pub(super) fn redates(venue: Venue) -> bool {
     matches!(venue, Venue::Bitstamp | Venue::Coinbase | Venue::Kraken)
 }

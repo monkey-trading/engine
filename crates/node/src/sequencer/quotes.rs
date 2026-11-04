@@ -18,11 +18,7 @@ impl Sequencer {
     /// longer: dropped as no quote, it returns `None`, as for a stamp trusted time refuses.
     /// Error cases:
     /// - as `sequence`
-    pub(super) fn sequence_quote(
-        &mut self,
-        cmd: Command,
-        not_after: Option<Instant>,
-    ) -> anyhow::Result<Option<Vec<Event>>> {
+    pub(super) fn sequence_quote(&mut self, cmd: Command, not_after: Instant) -> anyhow::Result<Option<Vec<Event>>> {
         self.sequence_stamped(cmd, Some(not_after))
     }
 
@@ -32,10 +28,10 @@ impl Sequencer {
     /// For a venue's quote, `quote` holds its `not_after`, and the stamp is refused, on the same
     /// readings it is made from, once the monotonic clock has passed that or while the run's stamps
     /// hold at its start.
-    pub(super) fn admitted_ts(&mut self, quote: Option<Option<Instant>>) -> Option<Millis> {
+    pub(super) fn admitted_ts(&mut self, quote: Option<Instant>) -> Option<Millis> {
         let (host_ms, now) = (self.clock.now_ms(), self.clock.instant());
         if let Some(not_after) = quote {
-            if not_after.is_some_and(|not_after| now > not_after) {
+            if now > not_after {
                 debug!("venue quote reached the sequencer past its delay bound: dropped");
                 return None;
             }

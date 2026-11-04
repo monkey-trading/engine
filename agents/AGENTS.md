@@ -162,16 +162,18 @@ an index: load only the rule whose hint matches the current action.
   determines payment, and unpaid approvals are reissued on signer rotation or on their account's
   signed request, never on a schedule. It also has price feeds: live crypto
   venue WebSockets and RWA market-data vendors (`feeds/`, one adapter per venue: Massive and
-  TraderMade over WebSocket, Databento's live gateway over TCP, with API keys from the delivered
-  secrets the config names, or in a development build environment variables; `feeds/venue/delay.rs`
-  bounds how far behind a TLS connection's stream can be from its pings on the monotonic clock, past
+  TraderMade over WebSocket, with API keys from the delivered secrets the config names, or in a
+  development build environment variables; every venue is reached over TLS that ends in the
+  enclave, the only sources that may set a price; `feeds/venue/delay.rs`
+  bounds how far behind a connection's stream can be from its pings on the monotonic clock, past
   which its frames count as no quote, `feeds/venue/standing.rs` re-sequences a quiet book on
   Coinbase, Kraken and Bitstamp connections for up to 5 s, stamped at the answered ping, and
   `sequencer/quotes.rs` holds each quote to that bound at its stamp) and a mock, Prometheus metrics
   on an operator
   listener, and alert routing to webhooks with a bounded durable outbox outside the public log. Its
   `production` cargo feature refuses mock TEE, custody, and feed providers, an API without
-  `[api.tls.acme]`, and a secret read from the environment, at config load; release images build with it. `engine ct-watch` (`ct_watch/`)
+  `[api.tls.acme]`, a genesis market fewer venues quote than its `min_sources`, and a secret read
+  from the environment, at config load; release images build with it. `engine ct-watch` (`ct_watch/`)
   is a separate process outside the enclave,
   holding no key of the node's: it verifies the node's attestation, follows RFC 6962 logs (bounded
   reads, tree head signatures checked, no consistency proofs), and raises `unattested_certificate`
@@ -540,9 +542,9 @@ Run from the repo root:
   `jq`; runs a dev node with `[snapshots]` on private temporary data and public Roughtime servers)
 - Deposit finality dev scenario: `./scripts/dev-deposit-finality.sh` (same Anvil/Foundry requirements
   as the vault scenario; exercises sequencer/core withdrawal approval eligibility while #23 owns payout)
-- RWA price feeds dev scenario: `./scripts/dev-rwa-feeds.sh` (loopback Massive, TraderMade, and
-  Databento stand-ins price FX, index, commodity, and share markets across a market open and a
-  futures roll, then the log replays; no vendor account or key)
+- RWA price feeds dev scenario: `./scripts/dev-rwa-feeds.sh` (loopback Massive and TraderMade
+  stand-ins price FX, index, commodity, and share markets across a market open and a futures roll,
+  then the log replays; no vendor account or key)
 - Attestation verifier dev scenario: `./scripts/dev-attestation-verifier.sh` (a loopback
   key-distribution stand-in issues a test certificate chain; a test-signed SEV-SNP report verifies
   against a release manifest and names the release, while a mock quote, an unlisted configuration,

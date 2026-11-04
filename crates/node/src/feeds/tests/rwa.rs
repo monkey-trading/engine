@@ -1,8 +1,9 @@
-//! The RWA price feeds' dev scenario offline: loopback Massive, TraderMade, and Databento vendors
-//! price an FX pair, an index and a commodity from front futures contracts, and a US share through
-//! the sequencer, two vendors each. The share's market is closed while the vendors start quoting
-//! it; once setup is done, a signed relisting opens it two seconds on, and another rolls the index
-//! onto its next contract. The log then replays with `engine replay`'s checks.
+//! The RWA price feeds' dev scenario offline: loopback stand-ins for Massive and TraderMade, the
+//! vendors reached over TLS that price these markets, price an FX pair from both, and an index and
+//! a commodity from front futures contracts and a US share from Massive alone, through the sequencer.
+//! The share's market is closed while the vendors start quoting it; once setup is done, a signed
+//! relisting opens it two seconds on, and another rolls the index onto its next contract. The log
+//! then replays with `engine replay`'s checks.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -13,9 +14,8 @@ use engine_core::close_spread::CloseSpreadCeiling;
 use engine_core::command::{Command, OrderKind};
 use engine_core::event::Event;
 use engine_core::futures::FuturesContract;
-use engine_core::market::MarketSpec;
+use engine_core::market::{MarketSpec, PriceRules};
 use engine_core::types::{MarketId, Millis};
-use tokio::net::TcpListener;
 use tokio::task::{AbortHandle, JoinHandle};
 
 use crate::clock::now_ms;
@@ -23,7 +23,7 @@ use crate::config::{ApiKey, Genesis, Venue, VenueConnection, VenueSymbol};
 use crate::feeds::tests::fake::{WAIT, fast, listen};
 use crate::feeds::tests::rwa_support::{Applied, around_the_clock, events_of, listing, priced, wait_for};
 use crate::feeds::tests::scenario::Node;
-use crate::feeds::tests::vendors::{KEY, Prices, serve_databento, serve_massive, serve_tradermade};
+use crate::feeds::tests::vendors::{KEY, Prices, serve_massive, serve_tradermade};
 use crate::feeds::venue::{self, tls_config};
 use crate::replay_path;
 use crate::test_support::dev_config;
@@ -41,15 +41,16 @@ const LATER_MS: Millis = 600_000;
 async fn dev_scenario_rwa_price_feeds() {
     let start = now_ms();
     let open_at = Arc::new(AtomicI64::new(start + LATER_MS));
-    let apple = |open: Millis| MarketSpec { schedule: around_the_clock(Some((start - 60_000, open))), ..listing(AAPL) };
+    let apple =
+        |open: Millis| MarketSpec { schedule: around_the_clock(Some((start - 60_000, open))), ..one_vendor(AAPL) };
     let us500 = |roll_at: Millis| {
         let contracts = vec![contract("ESZ6", start - 86_400_000), contract("ESH7", roll_at)];
-        MarketSpec { schedule: around_the_clock(None), contracts, ..listing(US500) }
+        MarketSpec { schedule: around_the_clock(None), contracts, ..one_vendor(US500) }
     };
     let gold = MarketSpec {
         schedule: around_the_clock(None),
         contracts: vec![contract("GCZ6", start - 86_400_000)],
-        ..listing(GOLD)
+        ..one_vendor(GOLD)
     };
     let eurusd = MarketSpec { schedule: around_the_clock(None), ..listing(EURUSD) };
     let genesis = genesis(vec![eurusd, us500(start + LATER_MS), gold, apple(start + LATER_MS)]);
@@ -57,11 +58,10 @@ async fn dev_scenario_rwa_price_feeds() {
     let applied = node.record();
     let vendors = start_vendors(&node, &open_at).await;
 
-    // Each market prices from its two vendors: the fill is at the median of their mids.
-    let both = [(EURUSD, "massive"), (EURUSD, "tradermade"), (US500, "massive"), (US500, "databento")];
-    node.wait_for_quotes(&[both.as_slice(), &[(GOLD, "massive"), (GOLD, "databento")]].concat()).await;
+    // EUR-USD prices from both vendors, at the median of their mids; the others from Massive's.
+    node.wait_for_quotes(&[(EURUSD, "massive"), (EURUSD, "tradermade"), (US500, "massive"), (GOLD, "massive")]).await;
     node.deposit().await;
-    for (market, mid) in [(EURUSD, "1.08002"), (US500, "6000.6"), (GOLD, "2650.3")] {
+    for (market, mid) in [(EURUSD, "1.08002"), (US500, "6000.5"), (GOLD, "2650.2")] {
         assert_eq!(fill_index(&node.buy(market, mid).await), Some(mid.parse().unwrap()), "market {market}");
     }
 
@@ -74,7 +74,7 @@ async fn dev_scenario_rwa_price_feeds() {
     open_at.store(opens, Ordering::SeqCst);
     node.relist(apple(opens)).await;
     let fills = wait_for(WAIT, || Some(filled(&applied, AAPL)).filter(|fills| !fills.is_empty())).await;
-    assert_eq!(fills.iter().map(|(_, index)| *index).collect::<Vec<_>>(), ["230.11".parse().unwrap()], "{fills:?}");
+    assert_eq!(fills.iter().map(|(_, index)| *index).collect::<Vec<_>>(), ["230.01".parse().unwrap()], "{fills:?}");
     assert!(fills[0].0 >= opens, "filled at {} before the open at {opens}", fills[0].0);
     assert!(priced(&applied, AAPL).iter().all(|(ts, _)| *ts >= opens), "Apple priced before its open");
 
@@ -82,7 +82,7 @@ async fn dev_scenario_rwa_price_feeds() {
     node.relist(us500(now_ms() + 500)).await;
     let rolled = Event::MarketRolled { market: US500, contract: "ESH7".into(), adjustment: "-40".parse().unwrap() };
     wait_for(WAIT, || events_of(&applied).contains(&rolled).then_some(())).await;
-    assert_eq!(fill_index(&node.buy(US500, "6000.6").await), Some("6000.6".parse().unwrap()));
+    assert_eq!(fill_index(&node.buy(US500, "6000.5").await), Some("6000.5".parse().unwrap()));
 
     // No quote reached the engine for it to refuse: none from outside its market's hours, and
     // none for a contract it does not take.
@@ -112,13 +112,20 @@ fn genesis(markets: Vec<MarketSpec>) -> Genesis {
     genesis
 }
 
+/// The listing of dev genesis market `id`, priced from one source: among the vendors reached over
+/// TLS, only Massive quotes futures and US shares.
+fn one_vendor(id: MarketId) -> MarketSpec {
+    let spec = listing(id);
+    MarketSpec { price_rules: PriceRules { min_sources: 1, ..spec.price_rules }, ..spec }
+}
+
 /// A contract rolling in at `from`.
 fn contract(name: &str, from: Millis) -> FuturesContract {
     FuturesContract { contract: name.into(), from: DateTime::<Utc>::from_timestamp_millis(from).expect("in range") }
 }
 
-/// Each vendor's books: Databento's 0.2 above Massive's and TraderMade's 0.00002 above, Apple 30
-/// higher from `open_at`. Two vendors' medians are the mean of their mids.
+/// Each vendor's books: TraderMade's 0.00002 above Massive's, Apple 30 higher from `open_at`. Two
+/// vendors' medians are the mean of their mids.
 fn prices(venue: Venue, open_at: Arc<AtomicI64>) -> Prices {
     Arc::new(move |symbol, ts| {
         let (bid, ask) = match symbol {
@@ -130,42 +137,32 @@ fn prices(venue: Venue, open_at: Arc<AtomicI64>) -> Prices {
             "AAPL" => ("230", "230.02"),
             _ => return None,
         };
-        let shift = match venue {
-            Venue::Tradermade => "0.00002",
-            Venue::Databento => "0.2",
-            _ => "0",
-        };
+        let shift = if venue == Venue::Tradermade { "0.00002" } else { "0" };
         let at = |price: &str| price.parse::<Fixed>().expect("a price") + shift.parse::<Fixed>().expect("a shift");
         Some((at(bid), at(ask)))
     })
 }
 
-/// Starts the loopback vendors and the six feeds that read them: Massive's FX, futures, and stocks
-/// feeds, TraderMade, and Databento's CME futures and US equities datasets. Aborting the returned
-/// tasks stops them all.
+/// Starts the loopback vendors and the four feeds that read them: Massive's FX, futures, and
+/// stocks feeds, and TraderMade. Aborting the returned tasks stops them all.
 async fn start_vendors(node: &Node, open_at: &Arc<AtomicI64>) -> Vec<AbortHandle> {
     let (massive, massive_url) = listen().await;
     let (tradermade, tradermade_url) = listen().await;
-    let databento = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
-    let databento_url = format!("tcp://{}", databento.local_addr().expect("local addr"));
     let futures = [(US500, "ESZ6", Some("ESZ6")), (US500, "ESH7", Some("ESH7")), (GOLD, "GCZ6", Some("GCZ6"))];
     let feeds = [
-        (Venue::Massive, format!("{massive_url}/forex"), None, vec![(EURUSD, "EUR-USD", None)]),
-        (Venue::Massive, format!("{massive_url}/futures"), None, futures.to_vec()),
-        (Venue::Massive, format!("{massive_url}/stocks"), None, vec![(AAPL, "AAPL", None)]),
-        (Venue::Tradermade, tradermade_url, None, vec![(EURUSD, "EURUSD", None)]),
-        (Venue::Databento, databento_url.clone(), Some("GLBX.MDP3"), futures.to_vec()),
-        (Venue::Databento, databento_url, Some("EQUS.MINI"), vec![(AAPL, "AAPL", None)]),
+        (Venue::Massive, format!("{massive_url}/forex"), vec![(EURUSD, "EUR-USD", None)]),
+        (Venue::Massive, format!("{massive_url}/futures"), futures.to_vec()),
+        (Venue::Massive, format!("{massive_url}/stocks"), vec![(AAPL, "AAPL", None)]),
+        (Venue::Tradermade, tradermade_url, vec![(EURUSD, "EURUSD", None)]),
     ];
     let mut tasks: Vec<AbortHandle> = [
         serve_massive(massive, prices(Venue::Massive, open_at.clone())),
         serve_tradermade(tradermade, prices(Venue::Tradermade, open_at.clone())),
-        serve_databento(databento, prices(Venue::Databento, open_at.clone())),
     ]
     .iter()
     .map(JoinHandle::abort_handle)
     .collect();
-    for (venue, url, dataset, symbols) in feeds {
+    for (venue, url, symbols) in feeds {
         let symbols = symbols
             .into_iter()
             .map(|(market, symbol, contract)| VenueSymbol {
@@ -176,14 +173,7 @@ async fn start_vendors(node: &Node, open_at: &Arc<AtomicI64>) -> Vec<AbortHandle
             .collect();
         let api_key = Some(ApiKey::from_env("VENDOR_API_KEY", |_| Some(KEY.into())).expect("a key"));
         let api_key_env = Some("VENDOR_API_KEY".into());
-        let conn = VenueConnection {
-            venue,
-            url,
-            api_key_env,
-            api_key_secret: None,
-            dataset: dataset.map(Into::into),
-            symbols,
-        };
+        let conn = VenueConnection { venue, url, api_key_env, api_key_secret: None, symbols };
         let feed =
             tokio::spawn(venue::run(conn, api_key, fast(WAIT), tls_config().expect("tls config"), node.tx.clone()));
         tasks.push(feed.abort_handle());

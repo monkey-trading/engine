@@ -317,7 +317,9 @@ impl NodeConfig {
     /// - this is a production build and a TEE, custody, or feed provider is `mock`, an allowed
     ///   origin is not `https`, `[api.tls.acme]` is missing, a trusted proxy range is loopback or too
     ///   wide, `api.fresh_accounts` is above the production values (see `ApiSection::refuse_dev_fresh_budgets`),
-    ///   or a field reads a secret from the environment (see `refuse_environment_secrets`)
+    ///   a genesis market is quoted by fewer venues than its `min_sources` (see
+    ///   `refuse_unmet_min_sources`), or a field reads a secret from the environment (see
+    ///   `refuse_environment_secrets`)
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         let mut cfg: NodeConfig = toml::from_str(&text)
@@ -326,6 +328,7 @@ impl NodeConfig {
         cfg.validate().with_context(|| format!("validating {}", path.display()))?;
         cfg.api.refuse_insecure_origins(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
         cfg.refuse_mocks(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
+        cfg.refuse_unmet_min_sources(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
         cfg.api.refuse_self_signed(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
         cfg.api.refuse_unsafe_proxy(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
         cfg.api.refuse_dev_fresh_budgets(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;

@@ -1,7 +1,6 @@
 //! A connection's pings against a loopback venue that answers them or does not: what counts as a
 //! quote before and after an answer.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use engine_core::types::MarketId;
@@ -13,14 +12,13 @@ use tokio_tungstenite::accept_async;
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::clock::now_ms;
-use crate::config::{ApiKey, Venue, VenueConnection, VenueSymbol};
+use crate::config::Venue;
 use crate::feeds::kraken;
 use crate::feeds::tests::fake::{
     Conn, FakeEngine, WAIT, accept, fast, kraken_book, listen, next_alert, next_prices, send, spawn_feed,
     spawn_feed_into, stream,
 };
-use crate::feeds::tests::vendors::{KEY, Prices, serve_databento};
-use crate::feeds::venue::{self, Timing};
+use crate::feeds::venue::Timing;
 use crate::sequencer::Request;
 use crate::test_support::capture_alerts;
 use crate::trusted_time::tests::logs::Logs;
@@ -134,7 +132,7 @@ async fn a_quote_carries_when_the_ping_that_bounds_it_runs_out() {
     // One quote: it carries the bound the answered opening ping noted for it. Applied to the
     // engine, the confirmation behind it keeps the record of what this connection sequenced.
     send(&mut ws, &[kraken_book("BTC/USD", "100", "101", now_ms() - 5)]).await;
-    let deadline = next_not_after(&mut rx, &mut engine).await.expect("a quote on a connection with pings");
+    let deadline = next_not_after(&mut rx, &mut engine).await;
     // The opening ping is the only one answered, and it was sent after `before`.
     assert!(deadline >= before + max_delay && deadline <= std::time::Instant::now() + max_delay);
     // A repeat of its mid, sent only now that the engine holds the first, waits until the first is
@@ -144,7 +142,7 @@ async fn a_quote_carries_when_the_ping_that_bounds_it_runs_out() {
     send(&mut ws, &[kraken_book("BTC/USD", "100", "101", now_ms()), "not json".to_owned()]).await;
     let served = stream(ws, Vec::new);
     let started = std::time::Instant::now();
-    let carried = next_not_after(&mut rx, &mut engine).await.expect("the repeat, held for its refresh");
+    let carried = next_not_after(&mut rx, &mut engine).await;
     assert!(
         started.elapsed() >= Duration::from_millis(400),
         "the repeat went before the first quote was half of its freshness limit old"
@@ -166,34 +164,11 @@ async fn a_venue_clock_a_little_ahead_of_the_host_keeps_quoting_past_the_bound()
     let books = stream(ws, || vec![kraken_book("BTC/USD", "100", "101", now_ms() + 100)]);
     let started = tokio::time::Instant::now();
     while started.elapsed() < timing.max_delay * 4 {
-        next_not_after(&mut rx, &mut engine).await.expect("a quote on a connection with pings");
+        next_not_after(&mut rx, &mut engine).await;
     }
-    let not_after = next_not_after(&mut rx, &mut engine).await.expect("a quote on a connection with pings");
+    let not_after = next_not_after(&mut rx, &mut engine).await;
     assert!(not_after > std::time::Instant::now(), "the quote's bound ran out while pongs arrived");
     books.abort();
-}
-
-#[tokio::test]
-async fn a_quote_on_a_connection_without_pings_carries_no_deadline() {
-    let mut engine = FakeEngine::new();
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
-    let url = format!("tcp://{}", listener.local_addr().expect("address"));
-    let prices: Prices = Arc::new(|_, _| Some(("100".parse().unwrap(), "101".parse().unwrap())));
-    let _venue = serve_databento(listener, prices);
-    let (tx, mut rx) = mpsc::channel(1024);
-    let symbols = vec![VenueSymbol { market: 1, symbol: "BTC".into(), contract: None }];
-    let conn = VenueConnection {
-        venue: Venue::Databento,
-        url,
-        api_key_env: None,
-        api_key_secret: None,
-        dataset: Some("TEST".into()),
-        symbols,
-    };
-    let api_key = ApiKey::from_env("KEY", |_| Some(KEY.to_owned())).expect("a key");
-    let tls = venue::tls_config().expect("tls config");
-    let _feed = tokio::spawn(venue::run(conn, Some(api_key), TIMING, tls, tx));
-    assert_eq!(next_not_after(&mut rx, &mut engine).await, None);
 }
 
 // ── Helpers ──
@@ -201,7 +176,7 @@ async fn a_quote_on_a_connection_without_pings_carries_no_deadline() {
 /// The `not_after` of the next quote the feed sequences, applying it to the engine and answering
 /// its queries meanwhile, since a feed takes an unanswered one for the sequencer gone and reads
 /// the engine through its confirmations.
-async fn next_not_after(rx: &mut mpsc::Receiver<Request>, engine: &mut FakeEngine) -> Option<std::time::Instant> {
+async fn next_not_after(rx: &mut mpsc::Receiver<Request>, engine: &mut FakeEngine) -> std::time::Instant {
     let quote = async {
         loop {
             match rx.recv().await.expect("feed running") {

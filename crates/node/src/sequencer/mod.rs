@@ -283,11 +283,7 @@ impl Sequencer {
     /// - the log cannot be written
     /// - the engine rejects a queued required command
     /// - the engine refuses the sequence, which means this sequencer is broken
-    fn sequence_stamped(
-        &mut self,
-        mut cmd: Command,
-        quote: Option<Option<Instant>>,
-    ) -> anyhow::Result<Option<Vec<Event>>> {
+    fn sequence_stamped(&mut self, mut cmd: Command, quote: Option<Instant>) -> anyhow::Result<Option<Vec<Event>>> {
         let Some(ts) = self.admitted_ts(quote) else {
             return Ok(None);
         };
