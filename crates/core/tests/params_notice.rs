@@ -331,8 +331,9 @@ fn a_refused_relisting_keeps_its_markup_notice() {
     // The noticed markup passes, then the listing fails a later check.
     let mut spec = h.engine.markets()[&BTC].spec.clone();
     spec.financing.markup_bps = markup;
-    spec.financing.benchmark = "NO-SUCH-RATE".into();
-    assert_eq!(rejected(&h.operate(AdminCommand::UpsertMarket(spec))), "benchmark NO-SUCH-RATE has no rate");
+    spec.price_rules.max_divergence_bps = 0;
+    let events = h.operate(AdminCommand::UpsertMarket(spec));
+    assert!(rejected(&events).starts_with("a divergence share above zero can never fire in"), "{events:?}");
     assert_eq!(h.engine.operator_bounds().markups[&BTC], MarkupNotice { markup_bps: markup, effective_at: due });
     let command = relisted(&h, BTC, markup);
     assert!(applied(&h.operate(command)));
