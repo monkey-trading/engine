@@ -1,0 +1,97 @@
+market,hour_utc,measure,usd
+BTC-USD,15:00,"held sync, loss a kill avoids, per use per $1M",18.261043130893597
+BTC-USD,20:00,"held sync, loss a kill avoids, per use per $1M",19.536387615544815
+BTC-USD,21:00,"held sync, loss a kill avoids, per use per $1M",36.123990274871105
+BTC-USD,22:00,"held sync, loss a kill avoids, per use per $1M",26.528441274193455
+ETH-USD,15:00,"held sync, loss a kill avoids, per use per $1M",48.11674301833247
+ETH-USD,20:00,"held sync, loss a kill avoids, per use per $1M",15.903369927563679
+ETH-USD,21:00,"held sync, loss a kill avoids, per use per $1M",57.01708887540478
+ETH-USD,22:00,"held sync, loss a kill avoids, per use per $1M",42.874075492201506
+SOL-USD,15:00,"held sync, loss a kill avoids, per use per $1M",40.77282466473029
+SOL-USD,20:00,"held sync, loss a kill avoids, per use per $1M",28.116438523611425
+SOL-USD,21:00,"held sync, loss a kill avoids, per use per $1M",58.60000711041882
+SOL-USD,22:00,"held sync, loss a kill avoids, per use per $1M",51.73711589792802
+BTC-USD,15:00,"latency, extra 0 bps, tier 2",684947.2078244659
+BTC-USD,15:00,"latency, extra 0 bps, laundered",4601857.134012196
+BTC-USD,15:00,"latency, extra 2 bps, tier 2",277663.0639758914
+BTC-USD,15:00,"latency, extra 2 bps, laundered",1130694.2941698462
+BTC-USD,20:00,"latency, extra 0 bps, tier 2",408142.5523828572
+BTC-USD,20:00,"latency, extra 0 bps, laundered",1993224.2399388943
+BTC-USD,20:00,"latency, extra 2 bps, tier 2",270096.0118307287
+BTC-USD,20:00,"latency, extra 2 bps, laundered",576497.7349424133
+BTC-USD,21:00,"latency, extra 0 bps, tier 2",25210211.173011508
+BTC-USD,21:00,"latency, extra 0 bps, laundered",34839183.54525791
+BTC-USD,21:00,"latency, extra 2 bps, tier 2",21207831.448824357
+BTC-USD,21:00,"latency, extra 2 bps, laundered",27767962.664918683
+BTC-USD,22:00,"latency, extra 0 bps, tier 2",3809926.9008753207
+BTC-USD,22:00,"latency, extra 0 bps, laundered",13274385.411395581
+BTC-USD,22:00,"latency, extra 2 bps, tier 2",2099151.4403162575
+BTC-USD,22:00,"latency, extra 2 bps, laundered",5285196.243954682
+ETH-USD,15:00,"latency, extra 0 bps, tier 2",3009261.9476144966
+ETH-USD,15:00,"latency, extra 0 bps, laundered",8831870.507575383
+ETH-USD,15:00,"latency, extra 2 bps, tier 2",1854661.8701818178
+ETH-USD,15:00,"latency, extra 2 bps, laundered",3925540.391835403
+ETH-USD,20:00,"latency, extra 0 bps, tier 2",1524428.9559544562
+ETH-USD,20:00,"latency, extra 0 bps, laundered",4299292.724449146
+ETH-USD,20:00,"latency, extra 2 bps, tier 2",1064887.2830687563
+ETH-USD,20:00,"latency, extra 2 bps, laundered",1903442.253483392
+ETH-USD,21:00,"latency, extra 0 bps, tier 2",42931023.3534849
+ETH-USD,21:00,"latency, extra 0 bps, laundered",54907769.40541368
+ETH-USD,21:00,"latency, extra 2 bps, tier 2",36852375.650075994
+ETH-USD,21:00,"latency, extra 2 bps, laundered",46458971.012454346
+ETH-USD,22:00,"latency, extra 0 bps, tier 2",8701029.821615912
+ETH-USD,22:00,"latency, extra 0 bps, laundered",16893827.001526684
+ETH-USD,22:00,"latency, extra 2 bps, tier 2",6055328.455972961
+ETH-USD,22:00,"latency, extra 2 bps, laundered",10569110.440851886
+SOL-USD,15:00,"latency, extra 0 bps, tier 2",3416496.948251143
+SOL-USD,15:00,"latency, extra 0 bps, laundered",9511504.010445112
+SOL-USD,15:00,"latency, extra 2 bps, tier 2",2065389.761343778
+SOL-USD,15:00,"latency, extra 2 bps, laundered",4474820.617727854
+SOL-USD,20:00,"latency, extra 0 bps, tier 2",2021405.722739998
+SOL-USD,20:00,"latency, extra 0 bps, laundered",5292762.639651225
+SOL-USD,20:00,"latency, extra 2 bps, tier 2",1472541.004136756
+SOL-USD,20:00,"latency, extra 2 bps, laundered",2513028.04526785
+SOL-USD,21:00,"latency, extra 0 bps, tier 2",86777024.38347358
+SOL-USD,21:00,"latency, extra 0 bps, laundered",97668727.97148465
+SOL-USD,21:00,"latency, extra 2 bps, tier 2",80797592.05051613
+SOL-USD,21:00,"latency, extra 2 bps, laundered",90042331.52254748
+SOL-USD,22:00,"latency, extra 0 bps, tier 2",13142596.543786662
+SOL-USD,22:00,"latency, extra 0 bps, laundered",20680537.205948934
+SOL-USD,22:00,"latency, extra 2 bps, tier 2",10255085.918456938
+SOL-USD,22:00,"latency, extra 2 bps, laundered",15091837.420675261
+BTC-USD,15:00,"skim, sequenced, launch flow",85060.06188862298
+BTC-USD,20:00,"skim, sequenced, launch flow",64970.06113058941
+BTC-USD,21:00,"skim, sequenced, launch flow",803395.6917233439
+BTC-USD,22:00,"skim, sequenced, launch flow",223459.57525179116
+ETH-USD,15:00,"skim, sequenced, launch flow",89639.09512766643
+ETH-USD,20:00,"skim, sequenced, launch flow",56348.491323483635
+ETH-USD,21:00,"skim, sequenced, launch flow",589463.4288044939
+ETH-USD,22:00,"skim, sequenced, launch flow",202753.87955284023
+SOL-USD,15:00,"skim, sequenced, launch flow",2497.359086891822
+SOL-USD,20:00,"skim, sequenced, launch flow",1785.0993016259324
+SOL-USD,21:00,"skim, sequenced, launch flow",21154.81563283155
+SOL-USD,22:00,"skim, sequenced, launch flow",10981.291374307635
+BTC-USD,15:00,"unpriced pairs, 60 s, best",0.0
+BTC-USD,15:00,"unpriced pairs, 60 s, causal",-2456.8405031147686
+BTC-USD,20:00,"unpriced pairs, 60 s, best",389645.2368558155
+BTC-USD,20:00,"unpriced pairs, 60 s, causal",-172737.07028212197
+BTC-USD,21:00,"unpriced pairs, 60 s, best",890821.1418809218
+BTC-USD,21:00,"unpriced pairs, 60 s, causal",11676506.117133044
+BTC-USD,22:00,"unpriced pairs, 60 s, best",198470.3393844719
+BTC-USD,22:00,"unpriced pairs, 60 s, causal",-196663.31808125644
+ETH-USD,15:00,"unpriced pairs, 60 s, best",137754.5019617819
+ETH-USD,15:00,"unpriced pairs, 60 s, causal",-560887.9088456541
+ETH-USD,20:00,"unpriced pairs, 60 s, best",405080.8557654235
+ETH-USD,20:00,"unpriced pairs, 60 s, causal",-473839.42523669475
+ETH-USD,21:00,"unpriced pairs, 60 s, best",1983098.433032561
+ETH-USD,21:00,"unpriced pairs, 60 s, causal",23158905.050752006
+ETH-USD,22:00,"unpriced pairs, 60 s, best",511362.96910331445
+ETH-USD,22:00,"unpriced pairs, 60 s, causal",-940723.6102555873
+SOL-USD,15:00,"unpriced pairs, 60 s, best",0.0
+SOL-USD,15:00,"unpriced pairs, 60 s, causal",-557782.3943280166
+SOL-USD,20:00,"unpriced pairs, 60 s, best",0.0
+SOL-USD,20:00,"unpriced pairs, 60 s, causal",-743033.7807098407
+SOL-USD,21:00,"unpriced pairs, 60 s, best",0.0
+SOL-USD,21:00,"unpriced pairs, 60 s, causal",-9767585.832465455
+SOL-USD,22:00,"unpriced pairs, 60 s, best",0.0
+SOL-USD,22:00,"unpriced pairs, 60 s, causal",-3733062.487326463

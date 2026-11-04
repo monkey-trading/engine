@@ -1,0 +1,1194 @@
+{
+ "seed": 549,
+ "start": "2025-11-01T00:00:00+00:00",
+ "end": "2026-11-01T00:00:00+00:00",
+ "markets": {
+  "BTC-USD": {
+   "year_hours": 8755,
+   "missing_hours": 5,
+   "strata": [
+    {
+     "rank_from": 0.0,
+     "rank_to": 0.5000571102227299,
+     "hours": 4378,
+     "vol_from": 0.00019914427149953306,
+     "vol_to": 0.003020168513573283,
+     "sampled": [
+      1764068400,
+      1766282400,
+      1767074400,
+      1768046400,
+      1769853600,
+      1771700400,
+      1774321200,
+      1776546000,
+      1786172400,
+      1792897200
+     ]
+    },
+    {
+     "rank_from": 0.5000571102227299,
+     "rank_to": 0.8,
+     "hours": 2626,
+     "vol_from": 0.0030212575021165812,
+     "vol_to": 0.005232077868166488,
+     "sampled": [
+      1762966800,
+      1767020400,
+      1772103600,
+      1773979200,
+      1777006800,
+      1784188800,
+      1786971600,
+      1790161200,
+      1790226000,
+      1793293200
+     ]
+    },
+    {
+     "rank_from": 0.8,
+     "rank_to": 0.949971444888635,
+     "hours": 1313,
+     "vol_from": 0.005233730164456574,
+     "vol_to": 0.009213223456953634,
+     "sampled": [
+      1763755200,
+      1765832400,
+      1768924800,
+      1771142400,
+      1774213200,
+      1780462800,
+      1781139600,
+      1788400800,
+      1788436800,
+      1792170000
+     ]
+    },
+    {
+     "rank_from": 0.949971444888635,
+     "rank_to": 0.9899486007995432,
+     "hours": 350,
+     "vol_from": 0.009216744921242491,
+     "vol_to": 0.015171295152739087,
+     "sampled": [
+      1763398800,
+      1765893600,
+      1773108000,
+      1773421200,
+      1773903600,
+      1775746800,
+      1777888800,
+      1782331200,
+      1782698400,
+      1783350000
+     ]
+    },
+    {
+     "rank_from": 0.9899486007995432,
+     "rank_to": 1.0,
+     "hours": 88,
+     "vol_from": 0.015219726563366755,
+     "vol_to": 0.03641093903361881,
+     "sampled": [
+      1763737200,
+      1764950400,
+      1765980000,
+      1769878800,
+      1770303600,
+      1770307200,
+      1770325200,
+      1770336000,
+      1771246800,
+      1772611200,
+      1780642800,
+      1787374800
+     ]
+    }
+   ],
+   "stress": [
+    1760108400,
+    1760126400,
+    1760130000,
+    1760133600
+   ],
+   "stress_vol": [
+    0.01092844366087805,
+    0.022356628725380766,
+    0.044120370374636314,
+    0.014742107254564086
+   ]
+  },
+  "ETH-USD": {
+   "year_hours": 8755,
+   "missing_hours": 5,
+   "strata": [
+    {
+     "rank_from": 0.0,
+     "rank_to": 0.5000571102227299,
+     "hours": 4378,
+     "vol_from": 0.00038993538821356497,
+     "vol_to": 0.0040223066933238625,
+     "sampled": [
+      1761998400,
+      1768464000,
+      1769299200,
+      1775901600,
+      1782651600,
+      1783281600,
+      1784368800,
+      1787806800,
+      1791666000,
+      1793455200
+     ]
+    },
+    {
+     "rank_from": 0.5000571102227299,
+     "rank_to": 0.8,
+     "hours": 2626,
+     "vol_from": 0.00402294267584758,
+     "vol_to": 0.007139920649442832,
+     "sampled": [
+      1762844400,
+      1763082000,
+      1763204400,
+      1763294400,
+      1770112800,
+      1776387600,
+      1783054800,
+      1785312000,
+      1785837600,
+      1790596800
+     ]
+    },
+    {
+     "rank_from": 0.8,
+     "rank_to": 0.949971444888635,
+     "hours": 1313,
+     "vol_from": 0.007141871504514796,
+     "vol_to": 0.012906331997132207,
+     "sampled": [
+      1763766000,
+      1768406400,
+      1769893200,
+      1770202800,
+      1770235200,
+      1770573600,
+      1771340400,
+      1772715600,
+      1773061200,
+      1776031200
+     ]
+    },
+    {
+     "rank_from": 0.949971444888635,
+     "rank_to": 0.9899486007995432,
+     "hours": 350,
+     "vol_from": 0.012912729481730681,
+     "vol_to": 0.021789120936075233,
+     "sampled": [
+      1764079200,
+      1765810800,
+      1765987200,
+      1767970800,
+      1769803200,
+      1770598800,
+      1770994800,
+      1775829600,
+      1775930400,
+      1782298800
+     ]
+    },
+    {
+     "rank_from": 0.9899486007995432,
+     "rank_to": 1.0,
+     "hours": 88,
+     "vol_from": 0.021949916614424154,
+     "vol_to": 0.04881362056182442,
+     "sampled": [
+      1763092800,
+      1763708400,
+      1765116000,
+      1768341600,
+      1769734800,
+      1770141600,
+      1770148800,
+      1770228000,
+      1770303600,
+      1780635600,
+      1787173200,
+      1791471600
+     ]
+    }
+   ],
+   "stress": [
+    1760108400,
+    1760126400,
+    1760130000,
+    1760133600
+   ],
+   "stress_vol": [
+    0.030301406752757467,
+    0.026825800784527645,
+    0.07728853709001288,
+    0.02054329159378216
+   ]
+  },
+  "SOL-USD": {
+   "year_hours": 8755,
+   "missing_hours": 5,
+   "strata": [
+    {
+     "rank_from": 0.0,
+     "rank_to": 0.5000571102227299,
+     "hours": 4378,
+     "vol_from": 0.00047752019827752753,
+     "vol_to": 0.004703051631963218,
+     "sampled": [
+      1767438000,
+      1771059600,
+      1775325600,
+      1777057200,
+      1779202800,
+      1779343200,
+      1779418800,
+      1788548400,
+      1788606000,
+      1789880400
+     ]
+    },
+    {
+     "rank_from": 0.5000571102227299,
+     "rank_to": 0.8,
+     "hours": 2626,
+     "vol_from": 0.004703189338899633,
+     "vol_to": 0.008030618142586946,
+     "sampled": [
+      1762484400,
+      1762646400,
+      1766005200,
+      1770721200,
+      1771380000,
+      1773028800,
+      1773266400,
+      1781427600,
+      1782338400,
+      1788890400
+     ]
+    },
+    {
+     "rank_from": 0.8,
+     "rank_to": 0.949971444888635,
+     "hours": 1313,
+     "vol_from": 0.008035964427052929,
+     "vol_to": 0.0139330003572032,
+     "sampled": [
+      1763996400,
+      1768953600,
+      1773306000,
+      1775426400,
+      1778158800,
+      1779292800,
+      1781614800,
+      1781928000,
+      1789722000,
+      1790042400
+     ]
+    },
+    {
+     "rank_from": 0.949971444888635,
+     "rank_to": 0.9899486007995432,
+     "hours": 350,
+     "vol_from": 0.013945338614309188,
+     "vol_to": 0.022380277745840383,
+     "sampled": [
+      1762826400,
+      1763316000,
+      1763604000,
+      1763762400,
+      1765216800,
+      1767884400,
+      1768777200,
+      1772028000,
+      1772121600,
+      1780740000
+     ]
+    },
+    {
+     "rank_from": 0.9899486007995432,
+     "rank_to": 1.0,
+     "hours": 88,
+     "vol_from": 0.022564128365966694,
+     "vol_to": 0.09191542279029774,
+     "sampled": [
+      1762286400,
+      1762304400,
+      1766077200,
+      1768341600,
+      1769868000,
+      1770001200,
+      1770303600,
+      1770343200,
+      1774263600,
+      1787173200,
+      1787616000,
+      1791849600
+     ]
+    }
+   ],
+   "stress": [
+    1760108400,
+    1760126400,
+    1760130000,
+    1760133600
+   ],
+   "stress_vol": [
+    0.03132174507202601,
+    0.04441748789123148,
+    0.10317978710554315,
+    0.034754180953694265
+   ]
+  }
+ },
+ "hours": [
+  {
+   "market": "BTC-USD",
+   "hour": 1764068400,
+   "stratum": 0
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1766282400,
+   "stratum": 0
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1767074400,
+   "stratum": 0
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1768046400,
+   "stratum": 0
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1769853600,
+   "stratum": 0
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1771700400,
+   "stratum": 0
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1774321200,
+   "stratum": 0
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1776546000,
+   "stratum": 0
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1786172400,
+   "stratum": 0
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1792897200,
+   "stratum": 0
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1762966800,
+   "stratum": 1
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1767020400,
+   "stratum": 1
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1772103600,
+   "stratum": 1
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1773979200,
+   "stratum": 1
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1777006800,
+   "stratum": 1
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1784188800,
+   "stratum": 1
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1786971600,
+   "stratum": 1
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1790161200,
+   "stratum": 1
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1790226000,
+   "stratum": 1
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1793293200,
+   "stratum": 1
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1763755200,
+   "stratum": 2
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1765832400,
+   "stratum": 2
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1768924800,
+   "stratum": 2
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1771142400,
+   "stratum": 2
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1774213200,
+   "stratum": 2
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1780462800,
+   "stratum": 2
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1781139600,
+   "stratum": 2
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1788400800,
+   "stratum": 2
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1788436800,
+   "stratum": 2
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1792170000,
+   "stratum": 2
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1763398800,
+   "stratum": 3
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1765893600,
+   "stratum": 3
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1773108000,
+   "stratum": 3
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1773421200,
+   "stratum": 3
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1773903600,
+   "stratum": 3
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1775746800,
+   "stratum": 3
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1777888800,
+   "stratum": 3
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1782331200,
+   "stratum": 3
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1782698400,
+   "stratum": 3
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1783350000,
+   "stratum": 3
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1763737200,
+   "stratum": 4
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1764950400,
+   "stratum": 4
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1765980000,
+   "stratum": 4
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1769878800,
+   "stratum": 4
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1770303600,
+   "stratum": 4
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1770307200,
+   "stratum": 4
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1770325200,
+   "stratum": 4
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1770336000,
+   "stratum": 4
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1771246800,
+   "stratum": 4
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1772611200,
+   "stratum": 4
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1780642800,
+   "stratum": 4
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1787374800,
+   "stratum": 4
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1760108400,
+   "stratum": "stress"
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1760126400,
+   "stratum": "stress"
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1760130000,
+   "stratum": "stress"
+  },
+  {
+   "market": "BTC-USD",
+   "hour": 1760133600,
+   "stratum": "stress"
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1761998400,
+   "stratum": 0
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1768464000,
+   "stratum": 0
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1769299200,
+   "stratum": 0
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1775901600,
+   "stratum": 0
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1782651600,
+   "stratum": 0
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1783281600,
+   "stratum": 0
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1784368800,
+   "stratum": 0
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1787806800,
+   "stratum": 0
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1791666000,
+   "stratum": 0
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1793455200,
+   "stratum": 0
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1762844400,
+   "stratum": 1
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1763082000,
+   "stratum": 1
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1763204400,
+   "stratum": 1
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1763294400,
+   "stratum": 1
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1770112800,
+   "stratum": 1
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1776387600,
+   "stratum": 1
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1783054800,
+   "stratum": 1
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1785312000,
+   "stratum": 1
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1785837600,
+   "stratum": 1
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1790596800,
+   "stratum": 1
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1763766000,
+   "stratum": 2
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1768406400,
+   "stratum": 2
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1769893200,
+   "stratum": 2
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1770202800,
+   "stratum": 2
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1770235200,
+   "stratum": 2
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1770573600,
+   "stratum": 2
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1771340400,
+   "stratum": 2
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1772715600,
+   "stratum": 2
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1773061200,
+   "stratum": 2
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1776031200,
+   "stratum": 2
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1764079200,
+   "stratum": 3
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1765810800,
+   "stratum": 3
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1765987200,
+   "stratum": 3
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1767970800,
+   "stratum": 3
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1769803200,
+   "stratum": 3
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1770598800,
+   "stratum": 3
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1770994800,
+   "stratum": 3
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1775829600,
+   "stratum": 3
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1775930400,
+   "stratum": 3
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1782298800,
+   "stratum": 3
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1763092800,
+   "stratum": 4
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1763708400,
+   "stratum": 4
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1765116000,
+   "stratum": 4
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1768341600,
+   "stratum": 4
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1769734800,
+   "stratum": 4
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1770141600,
+   "stratum": 4
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1770148800,
+   "stratum": 4
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1770228000,
+   "stratum": 4
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1770303600,
+   "stratum": 4
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1780635600,
+   "stratum": 4
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1787173200,
+   "stratum": 4
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1791471600,
+   "stratum": 4
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1760108400,
+   "stratum": "stress"
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1760126400,
+   "stratum": "stress"
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1760130000,
+   "stratum": "stress"
+  },
+  {
+   "market": "ETH-USD",
+   "hour": 1760133600,
+   "stratum": "stress"
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1767438000,
+   "stratum": 0
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1771059600,
+   "stratum": 0
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1775325600,
+   "stratum": 0
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1777057200,
+   "stratum": 0
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1779202800,
+   "stratum": 0
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1779343200,
+   "stratum": 0
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1779418800,
+   "stratum": 0
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1788548400,
+   "stratum": 0
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1788606000,
+   "stratum": 0
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1789880400,
+   "stratum": 0
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1762484400,
+   "stratum": 1
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1762646400,
+   "stratum": 1
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1766005200,
+   "stratum": 1
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1770721200,
+   "stratum": 1
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1771380000,
+   "stratum": 1
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1773028800,
+   "stratum": 1
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1773266400,
+   "stratum": 1
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1781427600,
+   "stratum": 1
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1782338400,
+   "stratum": 1
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1788890400,
+   "stratum": 1
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1763996400,
+   "stratum": 2
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1768953600,
+   "stratum": 2
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1773306000,
+   "stratum": 2
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1775426400,
+   "stratum": 2
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1778158800,
+   "stratum": 2
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1779292800,
+   "stratum": 2
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1781614800,
+   "stratum": 2
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1781928000,
+   "stratum": 2
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1789722000,
+   "stratum": 2
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1790042400,
+   "stratum": 2
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1762826400,
+   "stratum": 3
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1763316000,
+   "stratum": 3
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1763604000,
+   "stratum": 3
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1763762400,
+   "stratum": 3
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1765216800,
+   "stratum": 3
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1767884400,
+   "stratum": 3
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1768777200,
+   "stratum": 3
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1772028000,
+   "stratum": 3
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1772121600,
+   "stratum": 3
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1780740000,
+   "stratum": 3
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1762286400,
+   "stratum": 4
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1762304400,
+   "stratum": 4
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1766077200,
+   "stratum": 4
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1768341600,
+   "stratum": 4
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1769868000,
+   "stratum": 4
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1770001200,
+   "stratum": 4
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1770303600,
+   "stratum": 4
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1770343200,
+   "stratum": 4
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1774263600,
+   "stratum": 4
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1787173200,
+   "stratum": 4
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1787616000,
+   "stratum": 4
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1791849600,
+   "stratum": 4
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1760108400,
+   "stratum": "stress"
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1760126400,
+   "stratum": "stress"
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1760130000,
+   "stratum": "stress"
+  },
+  {
+   "market": "SOL-USD",
+   "hour": 1760133600,
+   "stratum": "stress"
+  }
+ ]
+}

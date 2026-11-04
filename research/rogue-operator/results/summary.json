@@ -1,0 +1,46 @@
+{
+ "positions": {
+  "launch": {
+   "BTC-USD": 6899999.999999999,
+   "ETH-USD": 6899999.999999999,
+   "SOL-USD": 6899999.999999999
+  },
+  "retained NAV": {
+   "BTC-USD": 22226455.756799996,
+   "ETH-USD": 14817637.171200002,
+   "SOL-USD": 7408818.585600001
+  }
+ },
+ "pair_notional": 50000000.0,
+ "flow": {
+  "1.0": {
+   "BTC-USD": {
+    "fill_notional_per_day": 11994487948.328133,
+    "fills_per_second": 1.5392201424998957
+   },
+   "ETH-USD": {
+    "fill_notional_per_day": 5381157643.699143,
+    "fills_per_second": 0.6905493815851894
+   },
+   "SOL-USD": {
+    "fill_notional_per_day": 184875811.60532993,
+    "fills_per_second": 0.1741209662529405
+   }
+  },
+  "10.0": {
+   "BTC-USD": {
+    "fill_notional_per_day": 119944879483.28134,
+    "fills_per_second": 15.392201424998962
+   },
+   "ETH-USD": {
+    "fill_notional_per_day": 53811576436.99145,
+    "fills_per_second": 6.905493815851895
+   },
+   "SOL-USD": {
+    "fill_notional_per_day": 1848758116.053299,
+    "fills_per_second": 1.7412096625294045
+   }
+  }
+ },
+ "honest_distributions_per_day": 845094.0092207416
+}
