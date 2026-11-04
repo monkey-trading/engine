@@ -745,6 +745,10 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/custody/tests/election_scenario/operator_share.rs` — the operator's share dev scenario on
   isolated Anvil: the election's candidate and a staker claim through the vault, an epoch below the
   floor pays neither, and the candidate's unclaimed leaf registers and pays through the exit
+- `src/custody/tests/election_scenario/time_in_office.rs` — the `V50` part of the operator's share
+  dev scenario: a second election takes effect halfway through an epoch, whose close credits the
+  outgoing and incoming candidates about half the share each, both in their histories and both
+  claimed through the vault
 - `src/history/preflight.rs` — immutable history planning before authorized SQLite mutation
 - `src/history/preflight/tests.rs` — private WAL resume and malformed geometry byte-preservation regressions
 - `src/node/tests/custody_preflight.rs` — local custody refusal preserves log/history across image states
@@ -1066,7 +1070,8 @@ cargo build --release -p engine-node --features production
 
 # Run the operator's share scenario on isolated Anvil: an elected candidate and a staker each claim
 # their share of an epoch through the vault, an epoch below the floor pays neither, and the
-# candidate's unclaimed leaf registers and pays through the vault's exit
+# candidate's unclaimed leaf registers and pays through the vault's exit; then a second election
+# takes effect halfway through an epoch, and its close splits the share between the two candidates
 ./scripts/dev-operator-share.sh
 
 # Deliver secrets into a node's enclave, on its [tee.sealing.secrets] listener. The tool refuses unless
