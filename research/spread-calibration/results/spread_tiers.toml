@@ -1,0 +1,74 @@
+# BTC-USD
+spread_tiers = [{ up_to = "2000000", bps = 2 }, { up_to = "10000000", bps = 4 }, { bps = 8 }]
+# ETH-USD
+spread_tiers = [{ up_to = "1000000", bps = 3 }, { up_to = "5000000", bps = 6 }, { bps = 12 }]
+# SOL-USD
+spread_tiers = [{ up_to = "1000000", bps = 2 }, { up_to = "5000000", bps = 4 }, { bps = 8 }]
+# EUR-USD
+spread_tiers = [{ up_to = "10000000", bps = 1 }, { up_to = "50000000", bps = 2 }, { bps = 4 }]
+# GBP-USD
+spread_tiers = [{ up_to = "10000000", bps = 1 }, { up_to = "50000000", bps = 2 }, { bps = 4 }]
+# USD-JPY
+spread_tiers = [{ up_to = "10000000", bps = 1 }, { up_to = "50000000", bps = 2 }, { bps = 4 }]
+# AUD-USD
+spread_tiers = [{ up_to = "10000000", bps = 1 }, { up_to = "50000000", bps = 2 }, { bps = 4 }]
+# US500
+spread_tiers = [{ up_to = "5000000", bps = 1 }, { up_to = "25000000", bps = 2 }, { bps = 4 }]
+# US100
+spread_tiers = [{ up_to = "5000000", bps = 1 }, { up_to = "25000000", bps = 2 }, { bps = 4 }]
+# US30
+spread_tiers = [{ up_to = "5000000", bps = 1 }, { up_to = "25000000", bps = 2 }, { bps = 4 }]
+# DE40
+spread_tiers = [{ up_to = "5000000", bps = 1 }, { up_to = "25000000", bps = 2 }, { bps = 4 }]
+# UK100
+spread_tiers = [{ up_to = "5000000", bps = 1 }, { up_to = "25000000", bps = 2 }, { bps = 4 }]
+# JP225
+spread_tiers = [{ up_to = "5000000", bps = 1 }, { up_to = "25000000", bps = 2 }, { bps = 4 }]
+# XAU-USD
+spread_tiers = [{ up_to = "2000000", bps = 2 }, { up_to = "10000000", bps = 4 }, { bps = 8 }]
+# XAG-USD
+spread_tiers = [{ up_to = "2000000", bps = 2 }, { up_to = "10000000", bps = 4 }, { bps = 8 }]
+# WTI
+spread_tiers = [{ up_to = "2000000", bps = 2 }, { up_to = "10000000", bps = 4 }, { bps = 8 }]
+# BRENT
+spread_tiers = [{ up_to = "2000000", bps = 3 }, { up_to = "10000000", bps = 6 }, { bps = 12 }]
+# AAPL
+spread_tiers = [{ up_to = "500000", bps = 2 }, { up_to = "2000000", bps = 4 }, { bps = 8 }]
+# MSFT
+spread_tiers = [{ up_to = "500000", bps = 2 }, { up_to = "2000000", bps = 4 }, { bps = 8 }]
+# NVDA
+spread_tiers = [{ up_to = "500000", bps = 3 }, { up_to = "2000000", bps = 6 }, { bps = 12 }]
+# AMZN
+spread_tiers = [{ up_to = "500000", bps = 2 }, { up_to = "2000000", bps = 4 }, { bps = 8 }]
+# GOOGL
+spread_tiers = [{ up_to = "500000", bps = 2 }, { up_to = "2000000", bps = 4 }, { bps = 8 }]
+# META
+spread_tiers = [{ up_to = "500000", bps = 2 }, { up_to = "2000000", bps = 4 }, { bps = 8 }]
+# TSLA
+spread_tiers = [{ up_to = "500000", bps = 3 }, { up_to = "2000000", bps = 6 }, { bps = 12 }]
+# AVGO
+spread_tiers = [{ up_to = "500000", bps = 3 }, { up_to = "2000000", bps = 6 }, { bps = 12 }]
+# BRK.B
+spread_tiers = [{ up_to = "500000", bps = 2 }, { up_to = "2000000", bps = 4 }, { bps = 8 }]
+# JPM
+spread_tiers = [{ up_to = "500000", bps = 2 }, { up_to = "2000000", bps = 4 }, { bps = 8 }]
+# V
+spread_tiers = [{ up_to = "500000", bps = 2 }, { up_to = "2000000", bps = 4 }, { bps = 8 }]
+# MA
+spread_tiers = [{ up_to = "500000", bps = 2 }, { up_to = "2000000", bps = 4 }, { bps = 8 }]
+# LLY
+spread_tiers = [{ up_to = "500000", bps = 3 }, { up_to = "2000000", bps = 6 }, { bps = 12 }]
+# JNJ
+spread_tiers = [{ up_to = "500000", bps = 2 }, { up_to = "2000000", bps = 4 }, { bps = 8 }]
+# XOM
+spread_tiers = [{ up_to = "500000", bps = 2 }, { up_to = "2000000", bps = 4 }, { bps = 8 }]
+# WMT
+spread_tiers = [{ up_to = "500000", bps = 2 }, { up_to = "2000000", bps = 4 }, { bps = 8 }]
+# COST
+spread_tiers = [{ up_to = "500000", bps = 2 }, { up_to = "2000000", bps = 4 }, { bps = 8 }]
+# NFLX
+spread_tiers = [{ up_to = "500000", bps = 2 }, { up_to = "2000000", bps = 4 }, { bps = 8 }]
+# AMD
+spread_tiers = [{ up_to = "500000", bps = 3 }, { up_to = "2000000", bps = 6 }, { bps = 12 }]
+# ORCL
+spread_tiers = [{ up_to = "500000", bps = 3 }, { up_to = "2000000", bps = 6 }, { bps = 12 }]

@@ -107,6 +107,26 @@ def with_schedule(flow: Flow, source: list[dict], tiers: list[dict]) -> Flow:
     return replace(flow, sizes=sizes, leverage=leverage)
 
 
+def with_genesis_profiles(flow: Flow, specs: list[dict]) -> Flow:
+    """`flow` with `capped` profiles for every genesis margin schedule that has none, each
+    approximated (`with_schedule`) from a schedule with profiles and the same first-tier rate.
+    BTC-USD's and ETH-USD's bands (1% to $2M, 2% to $10M, 5% above) have no profile of their own in
+    the derived data, and a market without one would open nothing, which would read as safe."""
+    def profiled(tiers):
+        key = schedule_key(tiers)
+        return all((kind, "capped", key) in flow.sizes and (kind, "capped", key) in flow.leverage for kind in ("directional", "hedged"))
+
+    for spec in specs:
+        tiers = spec["margin_tiers"]
+        if profiled(tiers):
+            continue
+        source = next((s["margin_tiers"] for s in specs if s["margin_tiers"][0]["bps"] == tiers[0]["bps"] and profiled(s["margin_tiers"])), None)
+        if source is None:
+            raise ValueError(f"{spec['symbol']}: no profiled schedule shares its first-tier rate")
+        flow = with_schedule(flow, source, tiers)
+    return flow
+
+
 def load(derived: Path) -> Flow:
     with (derived / "papertrade_flow.csv").open() as fh:
         rows = list(csv.DictReader(fh))

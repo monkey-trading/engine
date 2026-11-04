@@ -306,7 +306,13 @@ an index: load only the rule whose hint matches the current action.
   in gitignored `data/raw/`, the price grids in `data/derived/`), the operator's share, self-bond and
   removal times against what each attack takes, and `results/`; `crates/core/tests/rogue_operator.rs`
   checks the two engine mechanisms it rests on. Its `README.md` gives the method, data, results,
-  limits and how to re-run.
+  limits and how to re-run. `spread-calibration/` calibrates what #614 decided (#615) on those
+  hours and the cap study's flow and house model: spread tiers for every launch market from its
+  price-lag move, a profit fee that falls with holding time and how a hold is measured, a toxicity
+  score that round trips and size cannot dilute, volume tiers and how volume counts, the retained
+  NAV with spread income on current and target flow, #549's attack classes against the operator's
+  honest share, and #500's 100x question for BTC-USD and ETH-USD; it adds spread and fee-schedule
+  fields to the cap study's `Scenario`. Its `README.md` gives the method, results and proposals.
 - **scripts/** — `check-file-loc.sh`, the 500-line cap per Rust file, opted in per crate;
   `dev-corporate-actions.sh`, the signed localhost TLS/API dividend, split and restart scenario;
   `dev-operator-bounds.sh`, the operator's bounds on a dev node: benchmark rates inside and outside the
@@ -651,6 +657,10 @@ Run from the repo root:
   `research/rogue-operator/requirements.txt`, in `research/rogue-operator/`: `python -I run.py all`
   (every attack on the committed grids, then `results/`), its tests with `python -I -m pytest tests`,
   and the engine's agreement with `cargo test -p engine-core --test rogue_operator --locked`
+- Spread calibration research, from a virtualenv outside the repo with
+  `research/spread-calibration/requirements.txt`, in `research/spread-calibration/`: `python -I run.py
+  <stage>` (`spreads`, `latency`, `scaled`, `fee`, `frontier`, `fx_tiers`, `toxicity`, `carrot`,
+  `attacks`, `per_market`, `gaps`, `retained`, then `report`), and its tests with `python -I -m pytest tests`
 - Close-spread research, from a virtualenv with `research/close-spread-calibration/requirements.txt`:
   `python -I research/close-spread-calibration/run.py`, then
   `python -I research/close-spread-calibration/calibrate.py`, then
