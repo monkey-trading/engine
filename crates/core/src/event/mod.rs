@@ -301,6 +301,14 @@ pub enum Event {
         admin_key: AccountId,
         effective_at: Millis,
     },
+    /// From `V48`, an operator the timelock installed, mirrored: `admin_key` signs admin commands
+    /// from `effective_at`, seven days after the installation was logged, when it is not the key
+    /// in effect already.
+    OperatorInstalled {
+        candidate: AccountId,
+        admin_key: AccountId,
+        effective_at: Millis,
+    },
     /// From `V37`, a registry mirror the engine refused: before `V37` or staking, a reference
     /// already credited, or an event that contradicts the registry state the log holds.
     ElectionRejected {

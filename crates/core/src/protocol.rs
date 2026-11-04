@@ -245,11 +245,19 @@ pub enum ProtocolVersion {
     /// address, and stakers share the rest pro rata; their rounding dust stays the house's. An
     /// epoch that distributes nothing, or a close with rotation off, credits the operator nothing.
     V47,
+    /// The timelock-only fallback for a failed operator whose key is gone (`election`): the
+    /// registry's `OperatorInstalled` event, mirrored while rotation is off, records an installed
+    /// handover whose key takes effect seven days after it is logged, replacing any pending
+    /// rotation; a signed `RotateOperator` is refused while one waits. The registry installs at
+    /// once on chain, behind the timelock's delay, so the mirror waits no finalised frontier. An
+    /// installed operator was seated by no election: the operator's share, once rotation is on
+    /// again, credits its key's address.
+    V48,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V47;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V48;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

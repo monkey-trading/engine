@@ -172,8 +172,9 @@ it is recorded in the log, and changing it in the config for a log that has begu
   delivered — treat both as compromise.
 - **The key is lost.** No other key can sign an admin command or a rotation while rotation is off.
   Keep two copies of the key in separate places. With rotation on, only an election replaces the
-  operator ([operator-candidate.md](operator-candidate.md)); the governance fallback in
-  [standby.md](standby.md) restores the node but not the admin key.
+  operator ([operator-candidate.md](operator-candidate.md)); with rotation off, the governance
+  fallback in [standby.md](standby.md) restores the node, and its `installOperator` step seats a
+  new admin key the timelock alone can name.
 
 ## Relayer
 

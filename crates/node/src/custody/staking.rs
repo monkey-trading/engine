@@ -11,7 +11,7 @@ use std::path::Path;
 use alloy::primitives::{B256, U256};
 use anyhow::{Context, anyhow, bail};
 use engine_core::command::Command;
-use engine_core::election::RegistryElection;
+use engine_core::election::{RegistryElection, RegistryInstallation};
 use engine_core::emissions::TokenUnits;
 use engine_core::event::Event;
 use engine_core::protocol::ProtocolVersion;
@@ -48,6 +48,9 @@ pub enum StakingEventKind {
     /// The registry elected `candidate`, whose `admin_key` takes effect at `effective_at`
     /// milliseconds.
     Elected { epoch: u64, candidate: AccountId, admin_key: AccountId, effective_at: Millis },
+    /// The timelock installed `candidate`, whose `admin_key` takes effect seven days after the
+    /// mirror is logged.
+    Installed { candidate: AccountId, admin_key: AccountId },
 }
 
 impl StakingEvent {
@@ -72,6 +75,9 @@ impl StakingEvent {
             }
             StakingEventKind::Elected { epoch, candidate, admin_key, effective_at } => {
                 Command::ElectOperator(RegistryElection { epoch, candidate, admin_key, effective_at, block, chain_ref })
+            }
+            StakingEventKind::Installed { candidate, admin_key } => {
+                Command::InstallOperator(RegistryInstallation { candidate, admin_key, block, chain_ref })
             }
         }
     }
@@ -271,7 +277,9 @@ async fn mirror_one(tx: &mpsc::Sender<Request>, event: StakingEvent) -> Result<(
             StakingEventKind::Staked { account, amount } | StakingEventKind::UnstakeCompleted { account, amount } => {
                 info!(%account, amount, "staking event mirrored");
             }
-            StakingEventKind::RotationChanged { .. } | StakingEventKind::Elected { .. } => {
+            StakingEventKind::RotationChanged { .. }
+            | StakingEventKind::Elected { .. }
+            | StakingEventKind::Installed { .. } => {
                 info!("operator registry event mirrored");
             }
         }

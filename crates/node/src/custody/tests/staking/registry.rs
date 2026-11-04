@@ -40,6 +40,24 @@ async fn registry_events_mirror_with_the_stakes_once_and_a_refused_one_stalls() 
 }
 
 #[tokio::test]
+async fn an_installation_mirrors_while_rotation_is_off() {
+    let dir = scratch("registry-install");
+    let node = Node::start_confirmed(&dir);
+    init_staking(&node).await;
+    let installed = AccountId([0xa2; 20]);
+    let install = StakingEventKind::Installed { candidate: AccountId([0xc2; 20]), admin_key: installed };
+    let reader = StubReader(vec![event(2, 2, install)]);
+    let mut cursor = cursor_at(1);
+    mirror_range(&node, &reader, &mut cursor, &dir, 1, 2).await.unwrap();
+    assert_eq!(cursor.next_block, 3);
+    let (recorded, rotation) =
+        node.read(move |e| (e.operator_election().installed.map(|i| i.admin_key), e.operator_bounds().rotation)).await;
+    assert_eq!(recorded, Some(installed));
+    assert_eq!(rotation.map(|rotation| rotation.address), Some(installed));
+    node.stop().await;
+}
+
+#[tokio::test]
 async fn a_staking_contract_another_registry_deployed_stalls_the_poll_before_any_mirror() {
     let dir = scratch("registry-binding");
     let node = Node::start_confirmed(&dir);

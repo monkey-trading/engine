@@ -416,6 +416,7 @@ pub fn account_of(event: &Event) -> Option<AccountId> {
         | Event::DistributionEpochsSkipped { .. }
         | Event::RotationSwitched { .. }
         | Event::OperatorElected { .. }
+        | Event::OperatorInstalled { .. }
         | Event::ElectionRejected { .. }
         | Event::CatchUpDeferred { .. } => None,
     }

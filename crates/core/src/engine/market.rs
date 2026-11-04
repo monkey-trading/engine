@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
 use crate::engine::Engine;
-use crate::event::Event;
+use crate::event::{Event, Reject};
 use crate::fixed::Rounding;
 use crate::futures::FuturesState;
 use crate::market::MarketSpec;
@@ -143,6 +143,31 @@ impl Engine {
             .collect();
         for market_id in ids {
             self.markets.get_mut(&market_id).expect("listed").drop_quotes_to(last_now);
+        }
+    }
+}
+
+impl Engine {
+    /// The FX index a fill in `market_id` converts at now: its FX market's live index, or `None` for
+    /// a USD market.
+    /// Error cases:
+    /// - the FX market's schedule is closed at the sequenced time, or it has no valid index, or one
+    ///   that cannot convert the currency
+    /// - the market has no FX mark yet, so a position in it could not be valued
+    pub fn live_fx(&self, market_id: MarketId) -> Result<Option<Fixed>, Reject> {
+        let market = &self.markets[&market_id];
+        let currency = market.spec.quote_currency;
+        let Some(fx_market) = currency.fx_market() else { return Ok(None) };
+        // Listing checks the FX market is listed, and no market is ever removed.
+        let fx = self.markets.get(&fx_market).expect("an FX market is listed before markets that use it");
+        let no_price = Reject::NoFxPrice { fx_market };
+        // The schedule, not the stored flag, which only the FX market's own commands refresh.
+        if !fx.spec.schedule.is_open(self.now) || market.fx_mark.is_none() {
+            return Err(no_price);
+        }
+        match fx.index(self.now) {
+            Ok(index) if currency.converts_at(index.mid) => Ok(Some(index.mid)),
+            _ => Err(no_price),
         }
     }
 }

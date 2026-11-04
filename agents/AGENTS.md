@@ -30,7 +30,9 @@ an index: load only the rule whose hint matches the current action.
   entry only by a signed seven-day adoption that can only lower it); and, from `V37`, elected (`election.rs`: the operator registry's rotation switch and
   elections mirrored on the staking mirror, the elected key in effect at the election's time or seven days after it
   is logged and once the mirror's finalised block time reaches it, `RotateOperator` refused while rotation is on;
-  `tests/operator_election.rs`), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
+  from `V48`, the timelock-only `installOperator` fallback mirrored the same way while rotation is off, its key in
+  effect seven days after it is logged with no finalised frontier, `tests/operator_election.rs` and
+  `tests/operator_install.rs`), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
   shared by gross realised loss magnitudes from V43, net before it, halvings, and cumulative entitlements) and MONKEY staking with
   USDC distributions (`staking.rs`: stake mirroring, V27 authenticated identities and completed scan
   anchors, epoch closes at NAV above a liquidity floor, from `V47` a fifth to the operator in effect while rotation is on, cumulative distributions proven on chain; `Engine::distributable_excess` reads what a close would distribute),
@@ -206,7 +208,8 @@ an index: load only the rule whose hint matches the current action.
   key, API hostname, handover endpoint and release — the registration carrying the admin key's
   EIP-712 authorization of the candidate, so a key is registered only for a candidate it
   authorized — the timelock approves releases, switches rotation
-  (off at deployment, the deployer in effect) and moves parameters within deployment bounds, and
+  (off at deployment, the deployer in effect), installs a new operator in effect while rotation is
+  off (`installOperator`, the timelock-only fallback for a failed operator whose key is gone) and moves parameters within deployment bounds, and
   anyone closes an election epoch, electing the top eligible candidate past quorum, minimum term and
   margin to take effect seven days plus a finality margin later. Deployment gives that
   timelock its multisig proposer. The timelock manages signer rotation, the current release that

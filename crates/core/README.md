@@ -218,8 +218,9 @@ this crate and reproduce the signed state roots exactly.
   adoption, the pricing-site clamp and reversal refusal, and the listing guards
 - `tests/operator_bounds.rs` — the V35 rate bounds, notices and rotation: each refusal and each change that takes effect after its notice
 - `tests/operator_price_rules.rs` — the V35 price-rule bound: held markets, reduce-only, FX dependents, relisting and futures
-- `src/election.rs` — the V37 elected operator key: the mirrored rotation switch and elections, and the pending rotation they record; from `V47`, the candidate seated and the account the operator's share goes to
+- `src/election.rs` — the V37 elected operator key: the mirrored rotation switch and elections, and the pending rotation they record; from `V47`, the candidate seated and the account the operator's share goes to; from `V48`, the timelock-only installation the failed-key fallback mirrors
 - `tests/operator_election.rs` — the V37 elections: refusals, the effective time and its seven-day floor, cancellation, and the refused signed rotation
+- `tests/operator_install.rs` — `V48`: the timelock's installed operator: refusals, the seven-day log notice with no finalised frontier, replaced rotations, and the refused signed rotation
 - `tests/operator_share.rs` — `V47`: the operator's fifth of a distribution, with rotation on and off, an epoch that distributes nothing, a built-up sweep, an operator that also stakes, and the leaf's claim and exit proofs
 - `tests/operator_share/elections.rs` — who earns the share as elections, handovers, cancellations and signed rotations move the operator in effect
 - `tests/operator_share/rounding.rs` — the share's rounding and its dust, as a table and a property

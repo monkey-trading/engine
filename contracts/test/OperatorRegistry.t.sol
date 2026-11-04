@@ -576,6 +576,73 @@ contract OperatorRegistryTest is RegistryTest {
         assertEq(_inEffect(), bob);
     }
 
+    function test_TheTimelockAloneInstallsAnOperatorWhileRotationIsOff() public {
+        address adminKey = _key(carol);
+        vm.expectRevert(OperatorRegistry.UnauthorizedGovernance.selector);
+        registry.installOperator(carol, adminKey, _digest(7), CONFIG);
+        vm.expectRevert(OperatorRegistry.ZeroAddress.selector);
+        vm.prank(address(governance));
+        registry.installOperator(address(0), adminKey, _digest(7), CONFIG);
+        vm.expectRevert(OperatorRegistry.ZeroAddress.selector);
+        vm.prank(address(governance));
+        registry.installOperator(carol, address(0), _digest(7), CONFIG);
+        vm.expectRevert(OperatorRegistry.InvalidLaunchDigest.selector);
+        vm.prank(address(governance));
+        registry.installOperator(carol, adminKey, hex"01", CONFIG);
+
+        uint256 since = block.timestamp;
+        vm.expectEmit(address(registry));
+        emit OperatorRegistry.OperatorInstalled(carol, adminKey, _release(7));
+        vm.prank(address(governance));
+        registry.installOperator(carol, adminKey, _digest(7), CONFIG);
+        OperatorRegistry.Operator memory installed = registry.operatorInEffect();
+        assertEq(installed.candidate, carol);
+        assertEq(installed.adminKey, adminKey);
+        assertEq(installed.release, _release(7));
+        assertEq(installed.since, since);
+        assertEq(registry.namedOperator().adminKey, adminKey);
+        assertEq(registry.operatorRelease(), _release(7));
+        assertEq(registry.pendingElection().effectiveAt, 0);
+        // Reinstalling the same operator is governance's prerogative; it only re-stamps `since`.
+        _govern(
+            address(registry), abi.encodeCall(OperatorRegistry.installOperator, (carol, adminKey, _digest(7), CONFIG))
+        );
+        assertEq(_inEffect(), carol);
+    }
+
+    function test_InstallOperatorRefusesWhileRotationIsOn() public {
+        _elect(bob);
+        vm.expectRevert(OperatorRegistry.RotationActive.selector);
+        vm.prank(address(governance));
+        registry.installOperator(carol, _key(carol), _digest(7), CONFIG);
+        // Still refused once the election has taken effect: the timelock turns rotation off first.
+        vm.warp(registry.pendingElection().effectiveAt);
+        assertEq(_inEffect(), bob);
+        vm.expectRevert(OperatorRegistry.RotationActive.selector);
+        vm.prank(address(governance));
+        registry.installOperator(carol, _key(carol), _digest(7), CONFIG);
+    }
+
+    function test_TheFallbackInstallsANewOperatorAfterAnElectionTookEffect() public {
+        // The failed operator won an election; its key is then gone, and no election can move the
+        // role back until rotation is off and its minimum term has passed.
+        uint64 effectiveAt = _elect(bob);
+        vm.warp(effectiveAt);
+        assertEq(_inEffect(), bob);
+        _setRotation(false);
+        // The old admin key signs nothing here: the timelock alone installs the fallback.
+        _govern(
+            address(registry),
+            abi.encodeCall(OperatorRegistry.installOperator, (carol, _key(carol), _digest(8), CONFIG))
+        );
+        OperatorRegistry.Operator memory installed = registry.operatorInEffect();
+        assertEq(installed.candidate, carol);
+        assertEq(installed.adminKey, _key(carol));
+        assertEq(installed.release, _release(8));
+        // Rotation is off, so the registry names the installed operator's release directly.
+        assertEq(registry.operatorRelease(), _release(8));
+    }
+
     function test_TheOperatorInEffectAndAPendingWinnerCannotLeave() public {
         _elect(bob);
         vm.expectRevert(OperatorRegistry.OperatorCannotLeave.selector);

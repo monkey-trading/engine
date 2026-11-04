@@ -32,10 +32,11 @@ interface IVault {
 /// @dev Not upgradeable. Rotation starts off, with the deployment's initial operator in effect, and
 /// while it is off a close elects nothing. Only the timelock turns rotation on and off (turning it
 /// off cancels an election not yet in effect), approves candidates' releases, and changes the
-/// parameters within the bounds fixed at deployment. The operator in effect, and a candidate elected
-/// and waiting to take effect, cannot leave: an operator leaves by losing a vote. A candidate
-/// registers an admin key only with that key's EIP-712 authorization, so no one can reserve a key
-/// the candidate advertised before it registers.
+/// parameters within the bounds fixed at deployment. While rotation is off the timelock alone may
+/// also install a new operator in effect (#502), the fallback for a failed operator whose key is
+/// gone. The operator in effect, and a candidate elected and waiting to take effect, cannot leave:
+/// an operator leaves by losing a vote. A candidate registers an admin key only with that key's
+/// EIP-712 authorization, so no one can reserve a key the candidate advertised before it registers.
 contract OperatorRegistry {
     /// @notice The election's adjustable values; the timelock changes them within deployment bounds.
     struct Parameters {
@@ -220,6 +221,10 @@ contract OperatorRegistry {
         uint64 indexed epoch, address indexed candidate, address adminKey, bytes32 release, uint64 effectiveAt
     );
 
+    /// @notice The timelock installed `candidate`, whose `adminKey` runs `release`, as the operator in
+    /// effect: the governance fallback for a failed operator whose key is gone (#502).
+    event OperatorInstalled(address indexed candidate, address indexed adminKey, bytes32 indexed release);
+
     event ParametersChanged(Parameters parameters);
 
     error ZeroAddress();
@@ -239,6 +244,7 @@ contract OperatorRegistry {
     error RotationUnchanged(bool enabled);
     error EpochNotEnded(uint256 endsAt);
     error RotationDisabled();
+    error RotationActive();
     error ElectionPending();
     error VaultNotSet();
     error VaultAlreadySet(address vault);
@@ -506,6 +512,23 @@ contract OperatorRegistry {
         pending = Election(epoch, standby, promoted.adminKey, promoted.release, effectiveAt, true);
         source = _source();
         emit Elected(epoch, standby, promoted.adminKey, promoted.release, effectiveAt);
+    }
+
+    /// @notice Installs `candidate` with `adminKey` as the operator in effect, running the release
+    /// `launchDigest`/`configHash` names: the timelock-only fallback for a failed operator whose key
+    /// is gone and no election can move, since an election needs rotation on and the minimum term
+    /// (#502). Rotation must be off — while it is on, elections and promotions move the role — so a
+    /// pending election is already cancelled. The installed operator takes effect at once; the engine
+    /// mirrors this with its seven-day log notice before its key signs.
+    function installOperator(address candidate, address adminKey, bytes calldata launchDigest, bytes32 configHash)
+        external
+        onlyGovernance
+    {
+        if (rotationEnabled) revert RotationActive();
+        if (candidate == address(0) || adminKey == address(0)) revert ZeroAddress();
+        bytes32 release = _release(launchDigest, configHash);
+        current = Operator(candidate, adminKey, release, uint64(block.timestamp));
+        emit OperatorInstalled(candidate, adminKey, release);
     }
 
     /// @notice The operator in effect: the last election once its time has come, or before it the
