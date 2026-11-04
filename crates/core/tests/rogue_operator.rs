@@ -67,7 +67,7 @@ fn cycle(h: &mut Harness, account: AccountId, mid: &mut Fixed, wash: bool) -> i6
     h.price(BTC, &mid.to_string());
     let edge = fill(h, account, Side::Buy, "5", &mid.to_string());
     h.advance(2_000);
-    *mid = *mid + mid.mul_bps(10);
+    *mid += mid.mul_bps(10);
     h.price(BTC, &mid.to_string());
     fill(h, account, Side::Sell, "5", &mid.to_string());
     h.advance(2_000);
