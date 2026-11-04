@@ -68,8 +68,8 @@ pub(super) async fn standby_takes_over() -> anyhow::Result<()> {
     let in_effect = chain.read(chain.registry, operatorInEffectCall {}).await?;
     ensure!(in_effect.candidate == operator_address, "the failed promotion moved the operator");
 
-    // B registers as the standby: self-bond, approved release, its bond delegated to itself. Its release is the
-    // normal config's hash, which must exist before the registration names it.
+    // B registers as the standby: self-bond, approved release, its bond delegated to itself. Its
+    // release is the normal config's hash, which must exist before the registration names it.
     let b_admin = SigningKey::from_slice(&B_ADMIN)?;
     let b_admin_address = Address::from(engine_core::eip712::address(b_admin.verifying_key()).0);
     let b_candidate = chain.funder;

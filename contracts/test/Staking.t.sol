@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity 0.8.36;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, Vm} from "forge-std/Test.sol";
 import {console} from "forge-std/console.sol";
 import {IERC20} from "@openzeppelin-contracts/token/ERC20/IERC20.sol";
 import {TimelockController} from "@openzeppelin-contracts/governance/TimelockController.sol";
@@ -340,6 +340,25 @@ contract StakingTest is Test {
         assertEq(staking.votes(candidateC), 1);
         assertEq(staking.delegatedStake(staker), 1);
         _assertDelegations(staker, [candidateC, address(0)], [uint256(1), 0], 1);
+    }
+
+    function test_AReductionThatRoundsToNothingEmitsNoEvent() public {
+        _stakeFor(staker, 1_000_001);
+        vm.startPrank(staker);
+        staking.delegate(candidateA, 1_000_000);
+        staking.delegate(candidateB, 1);
+        // B, last listed, owes a share of the 1 taken that rounds down to nothing; A gives the 1.
+        vm.recordLogs();
+        staking.startUnstake(1);
+        vm.stopPrank();
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 2, "one Undelegated, then UnstakeStarted");
+        assertEq(logs[0].topics[0], Staking.Undelegated.selector);
+        assertEq(address(uint160(uint256(logs[0].topics[2]))), candidateA);
+        assertEq(abi.decode(logs[0].data, (uint256)), 1);
+        assertEq(logs[1].topics[0], Staking.UnstakeStarted.selector);
+        assertEq(staking.votes(candidateA), 999_999);
+        assertEq(staking.votes(candidateB), 1);
     }
 
     function test_AFullUnstakeEmptiesEveryDelegation() public {
