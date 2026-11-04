@@ -20,10 +20,13 @@ client flow of #111 and #134 and Secure TSC on, each attack takes:
 | Held sync, four restarts a day | $2k | the same | $2k | the 5 s alert |
 | Unpricing across moves, $50M of pairs | $156k (-$3k to $431k); $35M on 2025-10-10 | the same | $125k | the 1% margin; not the spell's length |
 | Altering Databento quotes, every RWA fill | up to $1.80M | up to $18.0M | $360k | the divergence bound |
-| All of it, toxicity score laundered | | | $65.2M ($60.0M to $71.1M) | |
-| All of it, if the add-on were paid | | | $8.7M ($7.4M to $10.2M) | |
+| Choosing the venue, if `min_sources` were 1 | $806k | $8.06M | $161k | the venues' half-gap |
+| All the crypto attacks together, score laundered | | | $65.2M ($60.0M to $71.1M) | |
+| All the crypto attacks together, add-on paid | | | $8.7M ($7.4M to $10.2M) | |
 
-The 95% intervals are a stratified bootstrap of the sampled hours. Against this, the operator's
+The 95% intervals are a stratified bootstrap of the sampled hours. The combined rows are the
+operator's take from its own latency arbitrage, held syncs and pairs on the three crypto markets
+plus its share of skimming every client fill there, at once. Against this, the operator's
 20% of distributions is worth $169k a day at launch flow, $61.7M a year, and ten times that at
 10x. The attacks the operator's own accounts run cost the house; skimming, censoring and altered
 quotes cost clients and pay the house, so the operator receives only its 20% of them.
