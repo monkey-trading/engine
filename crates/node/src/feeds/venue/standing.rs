@@ -231,11 +231,12 @@ impl VenueFeed {
 
     /// Buffers `quote`, a book just read for `symbol` at host time `now`, for `emit` to sequence,
     /// stamped no earlier than the newest stamp a ping's answer gave the symbol (`after_given`),
-    /// and holds it to be re-dated. When that stamp leads `now` by more than the engine allows, as
-    /// after the host clock steps back, the quote waiting for the symbol, which this book changes,
-    /// is dropped and the book goes at its own stamp. Returns the stamp it is buffered at.
+    /// and holds it to be re-dated. When that stamp leads the highest host time read for the symbol
+    /// (`now` or a higher one) by more than the engine allows, the quote waiting for the symbol,
+    /// which this book changes, is dropped and the book goes at its own stamp. Returns the stamp it
+    /// is buffered at.
     /// Error cases:
-    /// - the book's own stamp leads `now` by more than `MAX_QUOTE_LEAD_MS`, which the engine
+    /// - the book's own stamp leads that time by more than `MAX_QUOTE_LEAD_MS`, which the engine
     ///   refuses, so it is dropped and the symbol's standing book forgotten; the error is its lead
     pub(super) fn take_book(
         &mut self,
