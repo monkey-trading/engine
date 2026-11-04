@@ -12,7 +12,9 @@ use engine_core::types::Millis;
 /// claims a time the sequencer has not reached. A newer quote replaces it unless its stamp, as the
 /// engine would store it (at most the highest host time a quote was read at), is before the kept
 /// quote's: the host time never runs backwards for this comparison, so a host-clock step loses no
-/// moved mid to a kept stamp the stepped-back clock has fallen below.
+/// moved mid to a kept stamp the stepped-back clock has fallen below. A quote's lead is judged the
+/// same way, against the highest host time read: sequenced time does not step back with the host
+/// clock, so a quote the engine would take stays takeable after a step.
 #[derive(Debug, Default)]
 pub(super) struct Pending {
     /// The quote, and the stamp the engine would store it at had it been sent when read.
@@ -24,10 +26,10 @@ pub(super) struct Pending {
 impl Pending {
     /// Adds a quote received at host time `now`.
     /// Error cases:
-    /// - the quote is dated more than `MAX_QUOTE_LEAD_MS` ahead of `now`, which the engine
-    ///   refuses, so it is dropped; the error is its lead
+    /// - the quote is dated more than `MAX_QUOTE_LEAD_MS` ahead of the highest host time read, `now`
+    ///   or a higher one before it, which the engine refuses, so it is dropped; the error is its lead
     pub(super) fn add(&mut self, quote: SourceQuote, now: Millis) -> Result<(), Millis> {
-        let lead = quote.ts.saturating_sub(now);
+        let lead = quote.ts.saturating_sub(now.max(self.read_hwm));
         if lead > MAX_QUOTE_LEAD_MS {
             return Err(lead);
         }

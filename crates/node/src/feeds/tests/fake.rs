@@ -62,7 +62,12 @@ impl FakeEngine {
 
     /// Stamps and applies one command.
     pub fn apply(&mut self, cmd: Command) -> Vec<Event> {
-        let ts = now_ms().max(self.engine.now());
+        self.apply_at(now_ms(), cmd)
+    }
+
+    /// Applies one command at sequenced time `ts`, or the engine's time if that is later.
+    pub fn apply_at(&mut self, ts: Millis, cmd: Command) -> Vec<Event> {
+        let ts = ts.max(self.engine.now());
         let events = self.engine.apply(&Sequenced { seq: self.next_seq, ts, cmd }).expect("applied in order");
         self.next_seq += 1;
         events
