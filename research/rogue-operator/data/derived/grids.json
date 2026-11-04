@@ -1,0 +1,3362 @@
+[
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1764068400,
+  "stratum": 0,
+  "trades": 14634,
+  "max_gap_s": 9.496,
+  "flagged": false,
+  "sha256": "45377be8ba9cbe6115a2cfc1d74e353186d0092189dfbc6acf8ba73d31623c16"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1766282400,
+  "stratum": 0,
+  "trades": 16668,
+  "max_gap_s": 6.765,
+  "flagged": false,
+  "sha256": "ed5e20fc0029657185d7ebbc39c5fa7ee45933818e29c23874ffc82c62f881e4"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1767074400,
+  "stratum": 0,
+  "trades": 15698,
+  "max_gap_s": 6.898,
+  "flagged": false,
+  "sha256": "92a8f51d6ac575bf0a385baee37562f65b8c8c93018c3d0f356181a44f5e811c"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1768046400,
+  "stratum": 0,
+  "trades": 7116,
+  "max_gap_s": 12.696,
+  "flagged": false,
+  "sha256": "d241f50086bd134bd5fdb6f9c84da2911147fd6550d039f61d378c3bacb52f1a"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1769853600,
+  "stratum": 0,
+  "trades": 12343,
+  "max_gap_s": 10.759,
+  "flagged": false,
+  "sha256": "f559a4cbdd29d073427d3108f81b130da2bbf895f1ede7fdeb3d890a4b84a09f"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1771700400,
+  "stratum": 0,
+  "trades": 11828,
+  "max_gap_s": 6.062,
+  "flagged": false,
+  "sha256": "d27c9b964962a01c67d7f17a3db76cfce82d03e322ccce4e691cb6780624df8f"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1774321200,
+  "stratum": 0,
+  "trades": 18568,
+  "max_gap_s": 10.9,
+  "flagged": false,
+  "sha256": "9ea1b88f6198e064e9bb340325de4efeca8bf1a0667a1fb8504f112869c5ed9e"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1776546000,
+  "stratum": 0,
+  "trades": 14684,
+  "max_gap_s": 7.486,
+  "flagged": false,
+  "sha256": "d1c503ef5aac36b9a6f79e5c4ac304abc7e781e0ebcc2d18509987ce22cfde88"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1786172400,
+  "stratum": 0,
+  "trades": 4635,
+  "max_gap_s": 5.002,
+  "flagged": false,
+  "sha256": "9aeb30f4cfff912015830e2f306f80a379f696ca491704d12d92193678638756"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1792897200,
+  "stratum": 0,
+  "trades": 8132,
+  "max_gap_s": 14.5,
+  "flagged": false,
+  "sha256": "a299f86b98abe8fad9ee406b76c47f564c952d0634b149b9e625be20f7a6bcf6"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1762966800,
+  "stratum": 1,
+  "trades": 33319,
+  "max_gap_s": 5.4,
+  "flagged": false,
+  "sha256": "a8455e04018ccf8ef9b79b93d7d97a687f64ee1af533170c03fdd85b300cc12a"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1767020400,
+  "stratum": 1,
+  "trades": 35980,
+  "max_gap_s": 4.111,
+  "flagged": false,
+  "sha256": "59deaa37ebbb789822cc38f8018ee04d9a756d2fe0ba54a903ca682792c787db"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1772103600,
+  "stratum": 1,
+  "trades": 16781,
+  "max_gap_s": 8.196,
+  "flagged": false,
+  "sha256": "c56cc095f768a5c608483a36277f0beb1bf23b498a80d0407cdd796b89dfd1bb"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1773979200,
+  "stratum": 1,
+  "trades": 20349,
+  "max_gap_s": 5.078,
+  "flagged": false,
+  "sha256": "a86878f1a50e43d104b725595831cb48b580b20357c867d01519559b5994dee0"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1777006800,
+  "stratum": 1,
+  "trades": 23341,
+  "max_gap_s": 6.517,
+  "flagged": false,
+  "sha256": "71160edd42245dd251c3d0269814b3ae6fc9b720057755f771fbcd9e64ccf9bb"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1784188800,
+  "stratum": 1,
+  "trades": 22803,
+  "max_gap_s": 8.373,
+  "flagged": false,
+  "sha256": "552ee21a75ead0bbd4dc0938424cc6dbd1da6a8ab0ab6cb5599815ae52782bc4"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1786971600,
+  "stratum": 1,
+  "trades": 51897,
+  "max_gap_s": 4.033,
+  "flagged": false,
+  "sha256": "0ee9f8981b33ed0676e2102501edfb35f5e0fd7972b43b194bf31c2472251fc2"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1790161200,
+  "stratum": 1,
+  "trades": 23030,
+  "max_gap_s": 1.625,
+  "flagged": false,
+  "sha256": "873acfe2dad637360b6fa624d617472597171e363c66875bed3b1f20340d34da"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1790226000,
+  "stratum": 1,
+  "trades": 19459,
+  "max_gap_s": 2.348,
+  "flagged": false,
+  "sha256": "c026d4f1de8859bce26c5af4c0b79f9d56f58495a1a8e6e7ba9d8b217ad11c82"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1793293200,
+  "stratum": 1,
+  "trades": 26589,
+  "max_gap_s": 2.716,
+  "flagged": false,
+  "sha256": "47c9df3bd4d7761d4d1e903da7531c5ffbfb559d067f20bb06cb398665f9b28d"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1763755200,
+  "stratum": 2,
+  "trades": 65361,
+  "max_gap_s": 2.578,
+  "flagged": false,
+  "sha256": "f8df164483ba0935a55b1893b3b69cc8a6398b7b441371b7d80d4d55e3b01efa"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1765832400,
+  "stratum": 2,
+  "trades": 32646,
+  "max_gap_s": 4.682,
+  "flagged": false,
+  "sha256": "cd09f935fdb3ff0e100003f1fb1bdfd82c9c0c4ffb43c2e24ec44f7ead65a9f9"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1768924800,
+  "stratum": 2,
+  "trades": 49302,
+  "max_gap_s": 3.67,
+  "flagged": false,
+  "sha256": "25213fde50a5b836af71203bbf928365c4254d1730e7f7e2be986403b0207c45"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1771142400,
+  "stratum": 2,
+  "trades": 14317,
+  "max_gap_s": 9.215,
+  "flagged": false,
+  "sha256": "4a39d718e8a7642ca5752fa9045f14f5d5a85aaefbdd2e6965944e5427a955d8"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1774213200,
+  "stratum": 2,
+  "trades": 41430,
+  "max_gap_s": 4.138,
+  "flagged": false,
+  "sha256": "95b35f8bd687cda6b79116c690077be9ba5a15adc314df3d5a5faabb769e6f0e"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1780462800,
+  "stratum": 2,
+  "trades": 25774,
+  "max_gap_s": 4.394,
+  "flagged": false,
+  "sha256": "d2985898b20d6f5e4b5526063a42060abe2dbdce8f7a3f24047a7b188c473a8a"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1781139600,
+  "stratum": 2,
+  "trades": 23753,
+  "max_gap_s": 2.597,
+  "flagged": false,
+  "sha256": "16ab7b74ccfdbafa7bd00c68dfda7d73088bb500340c0da34d3ad379dc970545"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1788400800,
+  "stratum": 2,
+  "trades": 20274,
+  "max_gap_s": 7.74,
+  "flagged": false,
+  "sha256": "5b56a46496680b5433c682d0d66e30d9363914e19a5b20dc29e9e024aa2ad95b"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1788436800,
+  "stratum": 2,
+  "trades": 25283,
+  "max_gap_s": 8.868,
+  "flagged": false,
+  "sha256": "8e0569d1c3ae6b5b4d3f2fc9a0b2dab3ec820993571ce996bf66611da177e887"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1792170000,
+  "stratum": 2,
+  "trades": 42020,
+  "max_gap_s": 4.109,
+  "flagged": false,
+  "sha256": "48da874ed2801bc1bc7908f276fe6e3f5ef4d61d96d36977b5a02c5198b1b11c"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1763398800,
+  "stratum": 3,
+  "trades": 48751,
+  "max_gap_s": 2.932,
+  "flagged": false,
+  "sha256": "af5660f746136ea3b6889b759dbb08457865954299bde9a78839a5089309da41"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1765893600,
+  "stratum": 3,
+  "trades": 56851,
+  "max_gap_s": 5.111,
+  "flagged": false,
+  "sha256": "5143900f59630e32a2f33a28a311b9a78f6a8e2e5668b3b8f819389634e61ac2"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1773108000,
+  "stratum": 3,
+  "trades": 35791,
+  "max_gap_s": 6.266,
+  "flagged": false,
+  "sha256": "eb5faebb74401d172ccfe0b8e881012e8239756336c5e6bf14f1cde50442766a"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1773421200,
+  "stratum": 3,
+  "trades": 61169,
+  "max_gap_s": 1.779,
+  "flagged": false,
+  "sha256": "9478a8e0565df57f8b34da285a46a2aaa8461d25f1208d4bad66d54bf93094dc"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1773903600,
+  "stratum": 3,
+  "trades": 34514,
+  "max_gap_s": 9.514,
+  "flagged": false,
+  "sha256": "754ca378547ff8de9f538674156577cb8b8b5406d5b2fa340e86b21068bc2b3f"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1775746800,
+  "stratum": 3,
+  "trades": 79138,
+  "max_gap_s": 2.556,
+  "flagged": false,
+  "sha256": "973dd364948c11299db7a61c5e3f04bc3f4f20bdb51fda6dad24c97c58bea049"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1777888800,
+  "stratum": 3,
+  "trades": 54790,
+  "max_gap_s": 3.36,
+  "flagged": false,
+  "sha256": "d876d3a8fd8bbed79a979eeffaa4cff592f48c97b8a1fa329b83c1b26c43d797"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1782331200,
+  "stratum": 3,
+  "trades": 60019,
+  "max_gap_s": 2.695,
+  "flagged": false,
+  "sha256": "68fbd0972e3e4e55159038c6e2cad23f297d00326036bc4c62070a76fa820528"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1782698400,
+  "stratum": 3,
+  "trades": 33041,
+  "max_gap_s": 3.038,
+  "flagged": false,
+  "sha256": "ccac8c5b8bf50053777ac9662dcfe8a01b8a0d194cf932a2df0c13ffa404995d"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1783350000,
+  "stratum": 3,
+  "trades": 67395,
+  "max_gap_s": 1.478,
+  "flagged": false,
+  "sha256": "b885eb15886ac7b828677027cc8f6fd47f6027e8566fbb41b1d7e897609287c2"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1763737200,
+  "stratum": 4,
+  "trades": 103736,
+  "max_gap_s": 1.359,
+  "flagged": false,
+  "sha256": "076590b2063bc38168e43bf0a505fd1e88e06ee36c0904d67a14d3b3d5542d95"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1764950400,
+  "stratum": 4,
+  "trades": 67323,
+  "max_gap_s": 2.262,
+  "flagged": false,
+  "sha256": "22f55a930c5d784cc51e177b487b163c5b10a26cd90a0fe7ac897bcd234617a4"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1765980000,
+  "stratum": 4,
+  "trades": 102403,
+  "max_gap_s": 3.636,
+  "flagged": false,
+  "sha256": "e8db2731147d58a32760bd6819e224d27e48707eaa1f055cbab0a4d7be5af238"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1769878800,
+  "stratum": 4,
+  "trades": 123371,
+  "max_gap_s": 1.674,
+  "flagged": false,
+  "sha256": "496f2d7c18e1c3a7d8fb586152dc04c9c7c6f109d8f57f1550e06aaa5d44d49e"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1770303600,
+  "stratum": 4,
+  "trades": 240538,
+  "max_gap_s": 0.814,
+  "flagged": false,
+  "sha256": "e3ddec3f24e34d7d4f9891dd8495a6beb6158f4ecf8d26cd81212d87a23fdcaa"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1770307200,
+  "stratum": 4,
+  "trades": 145549,
+  "max_gap_s": 1.008,
+  "flagged": false,
+  "sha256": "4b1b0a3c0ea430ad4ebba312c2e143d49e1d1946437461fe901932cd738c9a7f"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1770325200,
+  "stratum": 4,
+  "trades": 186634,
+  "max_gap_s": 0.792,
+  "flagged": false,
+  "sha256": "bf60e9586d1384e12ff8c7b6f496662a88cac54654cd9cea0d303c6f07f882a4"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1770336000,
+  "stratum": 4,
+  "trades": 246243,
+  "max_gap_s": 1.161,
+  "flagged": false,
+  "sha256": "a080a9f9d19809d50f4db9a29b37d03e8197d7ca6d93ec0b2c5a4ce1bd5bca26"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1771246800,
+  "stratum": 4,
+  "trades": 36974,
+  "max_gap_s": 1.721,
+  "flagged": false,
+  "sha256": "04c62b1ae4703da655bed8651d425f758f7a769bf5bd56712640d1d70bd3b274"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1772611200,
+  "stratum": 4,
+  "trades": 54001,
+  "max_gap_s": 2.326,
+  "flagged": false,
+  "sha256": "543cd05da2459f5632780944dc370376bb6f24a750bffdcbc3faae081c359f1a"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1780642800,
+  "stratum": 4,
+  "trades": 55201,
+  "max_gap_s": 4.716,
+  "flagged": false,
+  "sha256": "ca798f9e72093b4608cc7571098edd88ed9c609a826b2f0729cdedba94c5d607"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1787374800,
+  "stratum": 4,
+  "trades": 153738,
+  "max_gap_s": 1.113,
+  "flagged": false,
+  "sha256": "5381bee2677f66d265486f24fe6ba170146a6d5d59e35853c167127c9ceaacdb"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1760108400,
+  "stratum": "stress",
+  "trades": 80495,
+  "max_gap_s": 2.694,
+  "flagged": false,
+  "sha256": "3dca1157b29c49890267e00c1f61389a2b7e7c0bcf6cf95b42447aa2768dfd47"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1760126400,
+  "stratum": "stress",
+  "trades": 58655,
+  "max_gap_s": 3.174,
+  "flagged": false,
+  "sha256": "e3a6abbe98511d558cccaecfac55f9472f5bf84fb6a6b8f4918872b86314b710"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1760130000,
+  "stratum": "stress",
+  "trades": 215662,
+  "max_gap_s": 1.372,
+  "flagged": false,
+  "sha256": "cd04a893937d4356ed74a8ceb23b11c359c141c29783209844b39d28fc742b3e"
+ },
+ {
+  "venue": "coinbase",
+  "market": "BTC-USD",
+  "hour": 1760133600,
+  "stratum": "stress",
+  "trades": 136189,
+  "max_gap_s": 1.2,
+  "flagged": false,
+  "sha256": "94fcf9eefa732e90d575a7c67b4a274224c4393e64ab453e366dbe998ab9e686"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1761998400,
+  "stratum": 0,
+  "trades": 22202,
+  "max_gap_s": 6.901,
+  "flagged": false,
+  "sha256": "944625a5664a956934b6fb08d956922bf6babc128b53df24a5cb9ec35020d4ff"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1768464000,
+  "stratum": 0,
+  "trades": 12660,
+  "max_gap_s": 17.075,
+  "flagged": false,
+  "sha256": "934989611a22c8a66757b14affcf38b41a4ca44903cbf31fa09da42f13685fdd"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1769299200,
+  "stratum": 0,
+  "trades": 9729,
+  "max_gap_s": 12.362,
+  "flagged": false,
+  "sha256": "5722194b20b8d4acac8fc064e90a3ff8b054fb430828a8d2f314a74266203bc8"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1775901600,
+  "stratum": 0,
+  "trades": 7902,
+  "max_gap_s": 21.577,
+  "flagged": false,
+  "sha256": "0fb2bbda1207fff4acef404430e9627dd9dd6ff3d3f5f3876ed8acb7f96a1496"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1782651600,
+  "stratum": 0,
+  "trades": 4646,
+  "max_gap_s": 17.374,
+  "flagged": false,
+  "sha256": "15b5d0cc751d02550b43b7c8749694a8bea9e12ffda04e5a008b4d04be4c3234"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1783281600,
+  "stratum": 0,
+  "trades": 6979,
+  "max_gap_s": 16.763,
+  "flagged": false,
+  "sha256": "484d7a102016553b23537fa60a8f952f2555e0f0e4cd55ccdd559138eeacb70d"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1784368800,
+  "stratum": 0,
+  "trades": 2743,
+  "max_gap_s": 44.837,
+  "flagged": false,
+  "sha256": "0c968e0b0460ec7917af71a2b792b91592a5e0ca568db1abb3d49066e2783d3e"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1787806800,
+  "stratum": 0,
+  "trades": 6993,
+  "max_gap_s": 15.759,
+  "flagged": false,
+  "sha256": "d5f68743e071eaefd1a738874f89eac2ba7f6cd0d4f474c76b9c3cd5ae6b35a7"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1791666000,
+  "stratum": 0,
+  "trades": 4161,
+  "max_gap_s": 13.217,
+  "flagged": false,
+  "sha256": "fa736230818e27d95986958a6ef96d3669929b7f3849bcf5f5619b3fe0ff6da7"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1793455200,
+  "stratum": 0,
+  "trades": 4956,
+  "max_gap_s": 15.696,
+  "flagged": false,
+  "sha256": "2dbe47919c2f3f710d48d11c4bf1b02edbc87bbd47be82304b1f262964627a0b"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1762844400,
+  "stratum": 1,
+  "trades": 10994,
+  "max_gap_s": 11.82,
+  "flagged": false,
+  "sha256": "d6942408e179c2153131026a698191275e37e83a00e160aae21a24752777b6d2"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1763082000,
+  "stratum": 1,
+  "trades": 39341,
+  "max_gap_s": 4.017,
+  "flagged": false,
+  "sha256": "42b3e2cf59c21d4f0c18c95b54a527ebe54aa74dce6997d70139fbefa137be34"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1763204400,
+  "stratum": 1,
+  "trades": 8969,
+  "max_gap_s": 19.548,
+  "flagged": false,
+  "sha256": "76de2a64e52bf80566c9dc6fa81ea26a7705496bb0c7b9fe9bb00e22f22eff57"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1763294400,
+  "stratum": 1,
+  "trades": 24002,
+  "max_gap_s": 12.563,
+  "flagged": false,
+  "sha256": "b42c04d186ddb322c8b1868320d413a569db19276de62734f83b0f949e1ae1dc"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1770112800,
+  "stratum": 1,
+  "trades": 15724,
+  "max_gap_s": 13.925,
+  "flagged": false,
+  "sha256": "12dbba96f9eec52d61ab39bf875557a8e79998ceed243cc59107b4ea6beb71a5"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1776387600,
+  "stratum": 1,
+  "trades": 17080,
+  "max_gap_s": 9.935,
+  "flagged": false,
+  "sha256": "2c9714c838b10c0ae795a6a00035b87d94ceef9312aad69dba729a105d0495a6"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1783054800,
+  "stratum": 1,
+  "trades": 9322,
+  "max_gap_s": 12.42,
+  "flagged": false,
+  "sha256": "eab0508388889423ef4c681207b34dba74055702986b8d75a0ffabb19931144b"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1785312000,
+  "stratum": 1,
+  "trades": 6550,
+  "max_gap_s": 18.381,
+  "flagged": false,
+  "sha256": "8669bcaafc66378e72b930dbd58785bfe06b4867d8d7a3b7ddb43b99497d2bb3"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1785837600,
+  "stratum": 1,
+  "trades": 8449,
+  "max_gap_s": 19.974,
+  "flagged": false,
+  "sha256": "f57e4ab76f99de982c26dc0656891a91df973f4beb1ada274f800b926994c0d6"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1790596800,
+  "stratum": 1,
+  "trades": 12546,
+  "max_gap_s": 10.138,
+  "flagged": false,
+  "sha256": "3c85bb0abff0961a6b3db856c052fe6eec9a54041ddd565963c054a0244ec18f"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1763766000,
+  "stratum": 2,
+  "trades": 31851,
+  "max_gap_s": 8.497,
+  "flagged": false,
+  "sha256": "2a9939a96cffa2b0a21cf2506c42cd3f1c92b97237e5dbc3881e6a4d6831af6b"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1768406400,
+  "stratum": 2,
+  "trades": 54840,
+  "max_gap_s": 5.729,
+  "flagged": false,
+  "sha256": "574c8f8eb035c905f96bf76836a5b72cb7c9a4f234638b03ce96028e6824f8cd"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1769893200,
+  "stratum": 2,
+  "trades": 31347,
+  "max_gap_s": 3.234,
+  "flagged": false,
+  "sha256": "f5f6539669e6ee8ff1578b2649495696cac56cf5422d6204df72a3a2ed8bf411"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1770202800,
+  "stratum": 2,
+  "trades": 23423,
+  "max_gap_s": 13.379,
+  "flagged": false,
+  "sha256": "22cc4063f40f7fd125bdc2efb9f2c7d626795f466172c86242348f8923e02751"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1770235200,
+  "stratum": 2,
+  "trades": 49539,
+  "max_gap_s": 5.229,
+  "flagged": false,
+  "sha256": "336742fa38e78216498007eaebf0edd63b8db46deb282aa832583a97732bdea7"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1770573600,
+  "stratum": 2,
+  "trades": 15933,
+  "max_gap_s": 9.729,
+  "flagged": false,
+  "sha256": "557f26639c26d0c5f8105d09d924e4136f77f61871fef5c98d15c635dc0ae36d"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1771340400,
+  "stratum": 2,
+  "trades": 55913,
+  "max_gap_s": 4.847,
+  "flagged": false,
+  "sha256": "8dd284d7ee00d3f5bcc08adee980a7af1aa6c777c9f167bfec2fd5e011e94043"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1772715600,
+  "stratum": 2,
+  "trades": 39185,
+  "max_gap_s": 7.883,
+  "flagged": false,
+  "sha256": "336a2475c58eff6490efa54e36bb742e2f125a8ecb5e3e57335f53b2e58e5a52"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1773061200,
+  "stratum": 2,
+  "trades": 48114,
+  "max_gap_s": 10.856,
+  "flagged": false,
+  "sha256": "ebc0cf0d76c9ab3cb94d9cbd2206d01d6bfab68630b3cfaaefa5c646788a1041"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1776031200,
+  "stratum": 2,
+  "trades": 21952,
+  "max_gap_s": 11.369,
+  "flagged": false,
+  "sha256": "34d271766f5fb63e69b09b56e3d7da13037b93fce6db6fe4512b76a988f933a5"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1764079200,
+  "stratum": 3,
+  "trades": 32002,
+  "max_gap_s": 9.418,
+  "flagged": false,
+  "sha256": "cdc1ee4f81addcecf52d57047a66f2e45ae60eda1680c62c3165a2c528c7dad1"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1765810800,
+  "stratum": 3,
+  "trades": 66728,
+  "max_gap_s": 3.18,
+  "flagged": false,
+  "sha256": "b333b5fbc169ce0a6c17d147208436d318b28cad36d55c7c72bcf38b56e5890f"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1765987200,
+  "stratum": 3,
+  "trades": 74749,
+  "max_gap_s": 3.159,
+  "flagged": false,
+  "sha256": "d778ef17c64a65a16a3b870d6ff266601a02359dbb78e220593c958d715f2bab"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1767970800,
+  "stratum": 3,
+  "trades": 44647,
+  "max_gap_s": 5.415,
+  "flagged": false,
+  "sha256": "696039a6c835de7e722645b20098d9c77cc60e8dec006267e57d4281913cdfd4"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1769803200,
+  "stratum": 3,
+  "trades": 47263,
+  "max_gap_s": 4.218,
+  "flagged": false,
+  "sha256": "c3823390627edb197bfb4ea2e0bc851a08b65ef9702ef647d1494e91bf3792c1"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1770598800,
+  "stratum": 3,
+  "trades": 26132,
+  "max_gap_s": 8.343,
+  "flagged": false,
+  "sha256": "1482f7b5259780bafc6a025fcb07f8fdf8e44275261f483967eb19672d05a6dc"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1770994800,
+  "stratum": 3,
+  "trades": 89544,
+  "max_gap_s": 3.541,
+  "flagged": false,
+  "sha256": "eb81eb879a220ae6ed0f52a29de259066115c37c0759d123626def1dbc6f308c"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1775829600,
+  "stratum": 3,
+  "trades": 68354,
+  "max_gap_s": 5.227,
+  "flagged": false,
+  "sha256": "b17b22507d4cd7ff10f95bfba307cfdeda85773dd19bb78b03e70942bbd86f9b"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1775930400,
+  "stratum": 3,
+  "trades": 21459,
+  "max_gap_s": 12.841,
+  "flagged": false,
+  "sha256": "022b3ffdeced9a0885ae789e4fd8a10bf66fb937bbff7c89363bb215e6c8d94b"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1782298800,
+  "stratum": 3,
+  "trades": 15268,
+  "max_gap_s": 13.528,
+  "flagged": false,
+  "sha256": "4470c64e286af4bce44749ff24f388d355492bfb7c7581e269324a967fac2dd5"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1763092800,
+  "stratum": 4,
+  "trades": 37568,
+  "max_gap_s": 9.558,
+  "flagged": false,
+  "sha256": "b943b3cdf63d823b3054b0457de03224815ff0a163808b71250d78d5249456a2"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1763708400,
+  "stratum": 4,
+  "trades": 68014,
+  "max_gap_s": 5.522,
+  "flagged": false,
+  "sha256": "01eb1a58c16fafbf5f42590b6d40cb52c6c60a14efd01f723f0613a04913c097"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1765116000,
+  "stratum": 4,
+  "trades": 27816,
+  "max_gap_s": 14.841,
+  "flagged": false,
+  "sha256": "c39cafb50e7070f7b6dd6d190a07f1aba403619a4f428a0da6bcd3fda38b8266"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1768341600,
+  "stratum": 4,
+  "trades": 52841,
+  "max_gap_s": 9.213,
+  "flagged": false,
+  "sha256": "c1191de2dec6b680765a4c524d67a470d33d508536f54d4053452cd43dfc5951"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1769734800,
+  "stratum": 4,
+  "trades": 41513,
+  "max_gap_s": 4.799,
+  "flagged": false,
+  "sha256": "80bf68f27ee4f966e212f701c5eebb4019e61cd3dcb37b175342561abdeaaa8b"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1770141600,
+  "stratum": 4,
+  "trades": 82218,
+  "max_gap_s": 3.171,
+  "flagged": false,
+  "sha256": "c8a6bcd65dfc581ad3a8cb7f44cd92ab09f089b7dff44ac83a45f99df15e59ab"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1770148800,
+  "stratum": 4,
+  "trades": 111816,
+  "max_gap_s": 2.496,
+  "flagged": false,
+  "sha256": "53e58df43a1b8884192fbb7aae03ee04ed2dab91cf47c64662dcf8cb42ffb021"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1770228000,
+  "stratum": 4,
+  "trades": 106499,
+  "max_gap_s": 1.947,
+  "flagged": false,
+  "sha256": "89dc881dd93de7edc41b48a0c0d1e90ca6b71883455c80c26a9e0a41a2f4b08b"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1770303600,
+  "stratum": 4,
+  "trades": 136597,
+  "max_gap_s": 1.086,
+  "flagged": false,
+  "sha256": "4410c154ee3642c132cd3e210645edb8ab4a326a55fc05a0a267f085756eedc5"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1780635600,
+  "stratum": 4,
+  "trades": 66595,
+  "max_gap_s": 7.158,
+  "flagged": false,
+  "sha256": "9889561e5cb240cd99987eb5c3ae644425214bc0a1978d1df45586ac9be00eb9"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1787173200,
+  "stratum": 4,
+  "trades": 87257,
+  "max_gap_s": 3.677,
+  "flagged": false,
+  "sha256": "feec441b162620d9408597a70977bb44e805198117d1671beb52e58d5ed1b535"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1791471600,
+  "stratum": 4,
+  "trades": 44401,
+  "max_gap_s": 8.075,
+  "flagged": false,
+  "sha256": "660149cb426c95fd84355a4f458dbd7b339b213172f210dff5de9cb286f51bda"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1760108400,
+  "stratum": "stress",
+  "trades": 129637,
+  "max_gap_s": 1.901,
+  "flagged": false,
+  "sha256": "531ec2c931d93e088f886fef5006580a30dd7c9184331a54e25d4509645f81f6"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1760126400,
+  "stratum": "stress",
+  "trades": 59016,
+  "max_gap_s": 4.047,
+  "flagged": false,
+  "sha256": "9bdebdca47a0d7a327d12862ea93fdcac6594b6ec0645a1e6ed949283a47e78f"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1760130000,
+  "stratum": "stress",
+  "trades": 157985,
+  "max_gap_s": 1.372,
+  "flagged": false,
+  "sha256": "bdaac3a25954b832f4ec120bba0f1e4245354501e96b5cd70d9663735df7c7f2"
+ },
+ {
+  "venue": "coinbase",
+  "market": "ETH-USD",
+  "hour": 1760133600,
+  "stratum": "stress",
+  "trades": 84345,
+  "max_gap_s": 1.932,
+  "flagged": false,
+  "sha256": "c79775b0bfbcaa9dd735ab2d0bfc3c90414264a3d8f5d194232b6b8932c459f2"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1767438000,
+  "stratum": 0,
+  "trades": 4161,
+  "max_gap_s": 22.856,
+  "flagged": false,
+  "sha256": "a62bec1fbd2f74e95afe006a025867aa26e9eee499a3d83271192f79963d91bc"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1771059600,
+  "stratum": 0,
+  "trades": 6833,
+  "max_gap_s": 16.145,
+  "flagged": false,
+  "sha256": "c0ae7f87df2256ac5fc49f64569dd718e6cdd9a8ce0e10c3b6001f8f83c32dc0"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1775325600,
+  "stratum": 0,
+  "trades": 3839,
+  "max_gap_s": 20.26,
+  "flagged": false,
+  "sha256": "b25942d3ea52227112191a2b388f5b8dee4a3ec7e523178427491f140d6149a7"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1777057200,
+  "stratum": 0,
+  "trades": 6492,
+  "max_gap_s": 19.712,
+  "flagged": false,
+  "sha256": "75d47964e1853078923e517fc4e938a6237972f555a7c7e27a02cf314878293e"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1779202800,
+  "stratum": 0,
+  "trades": 6530,
+  "max_gap_s": 12.857,
+  "flagged": false,
+  "sha256": "2e3a7888b6b843ed3199322de2b3af8c2127455e1dbd717f6a1ace506ad1e845"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1779343200,
+  "stratum": 0,
+  "trades": 3726,
+  "max_gap_s": 23.606,
+  "flagged": false,
+  "sha256": "cc7de3388530a9e4e4154aa36e6018859de4b64575df5059a771555f962bc738"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1779418800,
+  "stratum": 0,
+  "trades": 3659,
+  "max_gap_s": 15.883,
+  "flagged": false,
+  "sha256": "8907b6f155ba6eb2a58d3850f4e1010b15922cd995e90f51c5c5326607ce18ab"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1788548400,
+  "stratum": 0,
+  "trades": 4346,
+  "max_gap_s": 21.765,
+  "flagged": false,
+  "sha256": "1cead2d41cd035132b73bb8a51ac0a287534f84356de3656e55f45652316433e"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1788606000,
+  "stratum": 0,
+  "trades": 3628,
+  "max_gap_s": 20.686,
+  "flagged": false,
+  "sha256": "b219baefa4df35432742afd516322865e50434b0f3289e13211e99279a41fa6f"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1789880400,
+  "stratum": 0,
+  "trades": 7003,
+  "max_gap_s": 16.884,
+  "flagged": false,
+  "sha256": "8743018fa96cc07c6c095460f9dd04c3c06ddbcfba4aa0f2b534e6120ccdc4e7"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1762484400,
+  "stratum": 1,
+  "trades": 15975,
+  "max_gap_s": 8.917,
+  "flagged": false,
+  "sha256": "ebe8f513ef7ee79f4f95a7c95659836e5f991f00f85e2f03bc6a21384a1a1170"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1762646400,
+  "stratum": 1,
+  "trades": 6765,
+  "max_gap_s": 14.004,
+  "flagged": false,
+  "sha256": "dfacbbae29eb0da393dc15f15bd108f3113189e4084436fd048ecbc0b0db8d4b"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1766005200,
+  "stratum": 1,
+  "trades": 9265,
+  "max_gap_s": 8.695,
+  "flagged": false,
+  "sha256": "aad17ee27253a24b3562f6d1727d611c1834f96a859b97d405638534fdb63b32"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1770721200,
+  "stratum": 1,
+  "trades": 7955,
+  "max_gap_s": 15.299,
+  "flagged": false,
+  "sha256": "20cec4b10fbb34bede86f1a895809b10758a5847f8bdb24cc286b07882d11f5a"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1771380000,
+  "stratum": 1,
+  "trades": 5301,
+  "max_gap_s": 10.442,
+  "flagged": false,
+  "sha256": "1e0dbe56149b683f6d15fbf8a2588e2811e2594d72c545eb23d8eb26b13e0f62"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1773028800,
+  "stratum": 1,
+  "trades": 5233,
+  "max_gap_s": 19.255,
+  "flagged": false,
+  "sha256": "2c65b8182262a5fb489ae70a906640a257bc3a81eb25a50f35b7a08c078efed2"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1773266400,
+  "stratum": 1,
+  "trades": 7372,
+  "max_gap_s": 16.467,
+  "flagged": false,
+  "sha256": "dfc495dfed8027b89d861e672094f3ef99d4a62bca5d12a636cc8b65ce923467"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1781427600,
+  "stratum": 1,
+  "trades": 1571,
+  "max_gap_s": 32.652,
+  "flagged": false,
+  "sha256": "2e4acee3ecaf56ba0f73ea69c90d2ec47ede75912cd36a5e1c329602f097ffeb"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1782338400,
+  "stratum": 1,
+  "trades": 5205,
+  "max_gap_s": 14.858,
+  "flagged": false,
+  "sha256": "33d309f454dc4b94f60c540af0778c1673727ea87980995733503ffb82c419c3"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1788890400,
+  "stratum": 1,
+  "trades": 5709,
+  "max_gap_s": 12.177,
+  "flagged": false,
+  "sha256": "ca2081c1b9a97d794cd1c34242b9824fbc8809b52afa13e8258133f1d6f8fd53"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1763996400,
+  "stratum": 2,
+  "trades": 25271,
+  "max_gap_s": 6.872,
+  "flagged": false,
+  "sha256": "b9cf1e0c59ed1a745f196dd6d336e6b07313f3eeea3b5c39b055b007f165fc1e"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1768953600,
+  "stratum": 2,
+  "trades": 11171,
+  "max_gap_s": 8.602,
+  "flagged": false,
+  "sha256": "0a2b1ed235402e9c17c4e2335f41b9e00f6e2e570994d2da56fb763edbb5cbc6"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1773306000,
+  "stratum": 2,
+  "trades": 6277,
+  "max_gap_s": 25.452,
+  "flagged": false,
+  "sha256": "1ed9111f0f790204624ca25c5bf6a5ffb56cc074f89428c4ca2a4ff47e5d8c07"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1775426400,
+  "stratum": 2,
+  "trades": 12014,
+  "max_gap_s": 12.464,
+  "flagged": false,
+  "sha256": "c6cb6f72aa23571755197928ba0918ad704aa35fbbe0bec55188d6987e3f4686"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1778158800,
+  "stratum": 2,
+  "trades": 10562,
+  "max_gap_s": 12.677,
+  "flagged": false,
+  "sha256": "7655e64f459369f17b1e9d6cf147635b7ae5eb19bb25683b6a5fd232ecd4f150"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1779292800,
+  "stratum": 2,
+  "trades": 11426,
+  "max_gap_s": 10.968,
+  "flagged": false,
+  "sha256": "c04d18abd0160c42c96c8492786e0589b7fbd1c16a19288f53477bccd1875a1d"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1781614800,
+  "stratum": 2,
+  "trades": 11472,
+  "max_gap_s": 11.004,
+  "flagged": false,
+  "sha256": "ea5047bfe36f6aea7cb75b1428fcda212036182613d83b784799c969ff8a6c30"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1781928000,
+  "stratum": 2,
+  "trades": 3419,
+  "max_gap_s": 25.466,
+  "flagged": false,
+  "sha256": "ea0755b6b591b0cc9331f5d65c935687f1e8e46f127d2f3f265e1f2f61a508dd"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1789722000,
+  "stratum": 2,
+  "trades": 10656,
+  "max_gap_s": 23.217,
+  "flagged": false,
+  "sha256": "88b79f0ce67ddb5ccc636703595798cfee4f4841d64fd371f356839190742a96"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1790042400,
+  "stratum": 2,
+  "trades": 10950,
+  "max_gap_s": 11.104,
+  "flagged": false,
+  "sha256": "e1a604ab47e17b085745497051df3deb4b2786a01734f014f1b12923f5ac86df"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1762826400,
+  "stratum": 3,
+  "trades": 23024,
+  "max_gap_s": 11.568,
+  "flagged": false,
+  "sha256": "41bf5a55a507a6dd38d610e05e337b6bd0b45187300a8a6bacfe32cc58ec831d"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1763316000,
+  "stratum": 3,
+  "trades": 23761,
+  "max_gap_s": 6.191,
+  "flagged": false,
+  "sha256": "96ef516f11b1da872936fdde3c81e6c9b01dbe48ce1c4a94d4c3d9899f186f09"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1763604000,
+  "stratum": 3,
+  "trades": 33428,
+  "max_gap_s": 9.32,
+  "flagged": false,
+  "sha256": "a2267805726c2ac571be6cadb4d9716156903e582f3adb04e1b4c0e34100ebaa"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1763762400,
+  "stratum": 3,
+  "trades": 18215,
+  "max_gap_s": 9.511,
+  "flagged": false,
+  "sha256": "77d7281f68302d0d46d0c19d99d26055b38c17408cb514e081fd197863aeb6f1"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1765216800,
+  "stratum": 3,
+  "trades": 19699,
+  "max_gap_s": 9.279,
+  "flagged": false,
+  "sha256": "677cb54baded83bb150b263d1786b093edaa068de12a1001a6a646f6b699cfec"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1767884400,
+  "stratum": 3,
+  "trades": 26372,
+  "max_gap_s": 8.084,
+  "flagged": false,
+  "sha256": "b7cb551002562fc61dce93a360478c2d0368784d7c6417c4178a499e2e1f0905"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1768777200,
+  "stratum": 3,
+  "trades": 36620,
+  "max_gap_s": 10.269,
+  "flagged": false,
+  "sha256": "a183f194bff721a4dba7b38d8c8cfd4fb8aaa67ca66b6ccf269326b4e0d3fa51"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1772028000,
+  "stratum": 3,
+  "trades": 20160,
+  "max_gap_s": 8.764,
+  "flagged": false,
+  "sha256": "e937d22d6438c02c98984af166679aae9136fbdb3ef110271b7dec0ea1e261fc"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1772121600,
+  "stratum": 3,
+  "trades": 18034,
+  "max_gap_s": 12.013,
+  "flagged": false,
+  "sha256": "5544ff1653efef8e8c8376f795148aba5b7578302d074874292130869e200d46"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1780740000,
+  "stratum": 3,
+  "trades": 7232,
+  "max_gap_s": 15.055,
+  "flagged": false,
+  "sha256": "4d89d8d975573da50a4056a82f18a74b6a91df6d0fd6b8b34f0e6681e8990c78"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1762286400,
+  "stratum": 4,
+  "trades": 75531,
+  "max_gap_s": 1.726,
+  "flagged": false,
+  "sha256": "8925e906a1997dfc8a5103cfcf489cdbd4c03c0ce0c3c6f2fa91450839fa0b0c"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1762304400,
+  "stratum": 4,
+  "trades": 47341,
+  "max_gap_s": 3.697,
+  "flagged": false,
+  "sha256": "772eb68917e785545b3bade49b6c8c33aa7109fcaeca4d1777af8b39d150a05b"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1766077200,
+  "stratum": 4,
+  "trades": 33322,
+  "max_gap_s": 7.511,
+  "flagged": false,
+  "sha256": "47d94af3131eca04af004914343803d06e1cac17a862743096c1a1122bd10088"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1768341600,
+  "stratum": 4,
+  "trades": 37809,
+  "max_gap_s": 7.728,
+  "flagged": false,
+  "sha256": "038d600f57e906e74926df82dd7f88d1eb81d0326dc2587e0096a359e1cc1c6f"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1769868000,
+  "stratum": 4,
+  "trades": 37299,
+  "max_gap_s": 4.978,
+  "flagged": false,
+  "sha256": "59d4326e8bc80a3de22c30ec804e74b23e5b3432cdea113b7f1abb492126ef55"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1770001200,
+  "stratum": 4,
+  "trades": 43142,
+  "max_gap_s": 3.927,
+  "flagged": false,
+  "sha256": "9d75bdccbae5638a1e718b38755f22b4cbb99a40c08f15aefd19442ac42007fb"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1770303600,
+  "stratum": 4,
+  "trades": 59738,
+  "max_gap_s": 2.41,
+  "flagged": false,
+  "sha256": "030efc718d2abe5e60a7f59f7192c1797a0b5064565b0e67006e52b87f0e5049"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1770343200,
+  "stratum": 4,
+  "trades": 32822,
+  "max_gap_s": 3.997,
+  "flagged": false,
+  "sha256": "2188ee5888f7a68f2f1bb9ebb2569bda68d35ef507ae374d66f8086ef6533ccb"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1774263600,
+  "stratum": 4,
+  "trades": 37219,
+  "max_gap_s": 13.459,
+  "flagged": false,
+  "sha256": "3c6a466804edd29943b130f6672334948836b3197a20e9e6694aed7fcb46acb9"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1787173200,
+  "stratum": 4,
+  "trades": 28255,
+  "max_gap_s": 9.749,
+  "flagged": false,
+  "sha256": "241edf6b0034eee7fdc1e1b863b6eb1bf2d313c9be86b52d2765564cabcbdb43"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1787616000,
+  "stratum": 4,
+  "trades": 35413,
+  "max_gap_s": 8.114,
+  "flagged": false,
+  "sha256": "de975fbfbe9030ee7ae8094ebfdffec08d33e445c8f185e06ab8817dc262f3ae"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1791849600,
+  "stratum": 4,
+  "trades": 15573,
+  "max_gap_s": 8.327,
+  "flagged": false,
+  "sha256": "02e8670b7635925f765b420af0e992dda33a44949d8729a044d0d766275f245e"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1760108400,
+  "stratum": "stress",
+  "trades": 72186,
+  "max_gap_s": 3.434,
+  "flagged": false,
+  "sha256": "e5c334f25a0496fcd85b8896c4a7d06a4d50157767e71ae00ad729e648199dcf"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1760126400,
+  "stratum": "stress",
+  "trades": 47897,
+  "max_gap_s": 4.731,
+  "flagged": false,
+  "sha256": "9a3e4da8e30cc5e0d4c053df0622ca010973c8d1f50bf22e054b7b02b60a81a2"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1760130000,
+  "stratum": "stress",
+  "trades": 130927,
+  "max_gap_s": 1.886,
+  "flagged": false,
+  "sha256": "20deaca2ef1d307545a18c1a767d8ad052438e3af99872226dd63e4e1f5a20de"
+ },
+ {
+  "venue": "coinbase",
+  "market": "SOL-USD",
+  "hour": 1760133600,
+  "stratum": "stress",
+  "trades": 88141,
+  "max_gap_s": 1.608,
+  "flagged": false,
+  "sha256": "aa78a151e9b2ad59e98368680ae09ee2dd5aab6723beaa91acddb0db11c979ce"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1764068400,
+  "stratum": 0,
+  "trades": 1100,
+  "max_gap_s": 59.855,
+  "flagged": false,
+  "sha256": "6ffd136ee060f3328347ccd6b76a95c4e9353e53c501f80e28bc4b04521e553e"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1766282400,
+  "stratum": 0,
+  "trades": 1831,
+  "max_gap_s": 37.828,
+  "flagged": false,
+  "sha256": "96f52cdcf4fc2f1695264a2e8578225e7b0e80f8f0321d122e66cf99d578d7f1"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1767074400,
+  "stratum": 0,
+  "trades": 1200,
+  "max_gap_s": 71.409,
+  "flagged": true,
+  "sha256": "fe638bf2fd9651f0fed667ead3a3933fe34cb481f75cf260d390c461e82b1e22"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1768046400,
+  "stratum": 0,
+  "trades": 829,
+  "max_gap_s": 55.679,
+  "flagged": false,
+  "sha256": "5cf8c9f456d5f345b2b8313aa1c815a3c6497df7e5b1aaa8bc99423d9f0fa958"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1769853600,
+  "stratum": 0,
+  "trades": 1676,
+  "max_gap_s": 43.542,
+  "flagged": false,
+  "sha256": "b58463b8ad3d928346c65e8342c17e6d02640d1b2ed144be22c772d5ee533b71"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1771700400,
+  "stratum": 0,
+  "trades": 1881,
+  "max_gap_s": 37.996,
+  "flagged": false,
+  "sha256": "1808438ff0d01f340e2251ae5fff95f3909b2766379b04abbc3516193006f925"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1774321200,
+  "stratum": 0,
+  "trades": 1408,
+  "max_gap_s": 47.414,
+  "flagged": false,
+  "sha256": "4a65ef0c6aef3901695507eaf832bbd6e9d2eb72a078502254c7ab189f55d024"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1776546000,
+  "stratum": 0,
+  "trades": 1629,
+  "max_gap_s": 31.078,
+  "flagged": false,
+  "sha256": "ec7bbda6fef2f0fb122a60d012ce669c979eb17c9053ff30b544cfe1f6dc553f"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1786172400,
+  "stratum": 0,
+  "trades": 596,
+  "max_gap_s": 71.577,
+  "flagged": true,
+  "sha256": "9cc3f70d06f88062245c1d4cbb3b2d22d791f081802bdac407acf43acf99ee06"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1792897200,
+  "stratum": 0,
+  "trades": 2067,
+  "max_gap_s": 30.106,
+  "flagged": false,
+  "sha256": "4a5aeeab079c5647b73eda51713765f9822bde40c20310be9a508ff29ffc0291"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1762966800,
+  "stratum": 1,
+  "trades": 2764,
+  "max_gap_s": 24.99,
+  "flagged": false,
+  "sha256": "74c767cdfc0eaf4e72f9e4cf525708cd9a33821ff73a7b5d14be71a08ea0eabe"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1767020400,
+  "stratum": 1,
+  "trades": 4110,
+  "max_gap_s": 23.473,
+  "flagged": false,
+  "sha256": "c4aadbb948b37f697b8ad3197afad2b8324d4a0698357cde61fe445419a6b849"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1772103600,
+  "stratum": 1,
+  "trades": 1651,
+  "max_gap_s": 34.751,
+  "flagged": false,
+  "sha256": "30b8b68fc5d12330417e825ada69ad9f7fb562d36e57b65ec85fec73d93177ea"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1773979200,
+  "stratum": 1,
+  "trades": 1742,
+  "max_gap_s": 54.251,
+  "flagged": false,
+  "sha256": "c963d4ae2821007788ebf5883a4d53b8ae4cc88021aeebcb5827095d8d97ba55"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1777006800,
+  "stratum": 1,
+  "trades": 1505,
+  "max_gap_s": 39.674,
+  "flagged": false,
+  "sha256": "26be6b9ca3e77bd65ab3e6964181920278bba34f9541c0e404ab68b04c9b3190"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1784188800,
+  "stratum": 1,
+  "trades": 2674,
+  "max_gap_s": 44.79,
+  "flagged": false,
+  "sha256": "d70ec9efe28f904c1817057e269e552f15e9de8b8d22f2940dc4d8f90d2b5491"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1786971600,
+  "stratum": 1,
+  "trades": 3170,
+  "max_gap_s": 27.224,
+  "flagged": false,
+  "sha256": "7da78238ed6d7834d70668c27c551b9b31e1d9628ee2d3af4265b46412f2ca9a"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1790161200,
+  "stratum": 1,
+  "trades": 5887,
+  "max_gap_s": 16.619,
+  "flagged": false,
+  "sha256": "6e2880b222290fddcede19f8088fa19fc48cbc1a263d5a24c36c1941781e436b"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1790226000,
+  "stratum": 1,
+  "trades": 5525,
+  "max_gap_s": 14.749,
+  "flagged": false,
+  "sha256": "9499c87f9c394d41e4e03820a663b46c6e88d927d3bf7bab00ce72370458f495"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1793293200,
+  "stratum": 1,
+  "trades": 10095,
+  "max_gap_s": 15.148,
+  "flagged": false,
+  "sha256": "31bc43f9e90f74cf6e804421c871126750655f94f7dfb3b5e1aa32f25e047df8"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1763755200,
+  "stratum": 2,
+  "trades": 3277,
+  "max_gap_s": 17.87,
+  "flagged": false,
+  "sha256": "8bda7105c3cb165ac71d58cfd53787db0482c4cfbb90ffc879336c8b3499f690"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1765832400,
+  "stratum": 2,
+  "trades": 3494,
+  "max_gap_s": 25.119,
+  "flagged": false,
+  "sha256": "30e30a3289c5f2b9c8b5a391d78d40df9dd5acefebb8e82f895b5329794c7409"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1768924800,
+  "stratum": 2,
+  "trades": 4876,
+  "max_gap_s": 23.15,
+  "flagged": false,
+  "sha256": "543d554eb43cd432242d87b8e844b20db85b2ecaad5f5bd13b89ca2aeb2f37ce"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1771142400,
+  "stratum": 2,
+  "trades": 1937,
+  "max_gap_s": 53.961,
+  "flagged": false,
+  "sha256": "f16062b902f3fe1ec3423b918b107c5c2092b10cc569914762d284ab0f0ca348"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1774213200,
+  "stratum": 2,
+  "trades": 5768,
+  "max_gap_s": 22.762,
+  "flagged": false,
+  "sha256": "ee305352a5313d352a05f7ce3a9630f2f5c5664ee6936723e7076e6cc216f4e7"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1780462800,
+  "stratum": 2,
+  "trades": 5724,
+  "max_gap_s": 23.767,
+  "flagged": false,
+  "sha256": "0dbe5fd4898c9757d87fb0aadafc88b35431ffb7e514180c9ff6b95bfb833919"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1781139600,
+  "stratum": 2,
+  "trades": 2825,
+  "max_gap_s": 26.277,
+  "flagged": false,
+  "sha256": "d164817a00927bebc545473d91ff295652e192d726cbc99caaa2a1d38d80d176"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1788400800,
+  "stratum": 2,
+  "trades": 5433,
+  "max_gap_s": 17.609,
+  "flagged": false,
+  "sha256": "a725c2515789b12a4d82f0e4f0fad7be487a06b91cbabfd99b0452609c8073ba"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1788436800,
+  "stratum": 2,
+  "trades": 7049,
+  "max_gap_s": 17.522,
+  "flagged": false,
+  "sha256": "bbd2756cd44fb6aba5915b0b8277532657416cb86f900b359a3774b832beedd8"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1792170000,
+  "stratum": 2,
+  "trades": 12429,
+  "max_gap_s": 14.828,
+  "flagged": false,
+  "sha256": "16d9e75d0cd93f81eb11da01b1e5b304d867dab71abac1d940ff2a805fee9069"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1763398800,
+  "stratum": 3,
+  "trades": 4565,
+  "max_gap_s": 19.883,
+  "flagged": false,
+  "sha256": "9596b72a7e3aafcf41eae3fe87802d3f70b83bd94de0a4e4b901c89a213c52e6"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1765893600,
+  "stratum": 3,
+  "trades": 5939,
+  "max_gap_s": 23.113,
+  "flagged": false,
+  "sha256": "81098661ee1702329ea2bd62533e249f0f7da0bf8fca6fe22576941669509516"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1773108000,
+  "stratum": 3,
+  "trades": 5015,
+  "max_gap_s": 32.189,
+  "flagged": false,
+  "sha256": "fcf0c0cef7dac281537c00a3b5947b1ac995136c12dcfdf0b135064e85e57cf2"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1773421200,
+  "stratum": 3,
+  "trades": 5366,
+  "max_gap_s": 20.547,
+  "flagged": false,
+  "sha256": "8e5b6b2ac96b0de15b651b84fc8455e632e2017b9de83df17618e1be573ea55d"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1773903600,
+  "stratum": 3,
+  "trades": 6170,
+  "max_gap_s": 53.226,
+  "flagged": false,
+  "sha256": "18254a52b04036d701a4d745dba5ad64f5aebdd14e4cfee6bc2b01bc443f557d"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1775746800,
+  "stratum": 3,
+  "trades": 5699,
+  "max_gap_s": 16.808,
+  "flagged": false,
+  "sha256": "ac4ed252a51d32e6b516fe82e719b4b3b2fbcb11c628a27ebe4e734f08629f42"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1777888800,
+  "stratum": 3,
+  "trades": 6464,
+  "max_gap_s": 35.743,
+  "flagged": false,
+  "sha256": "f8633dbd9e7f325e8e2045929b0fcb9d73d9fd6d37cf1ea697e6ffd76502e3f0"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1782331200,
+  "stratum": 3,
+  "trades": 5436,
+  "max_gap_s": 17.515,
+  "flagged": false,
+  "sha256": "200b6e1042a1513de825685e1e718528243d6ef07425dd93818bb2397755e552"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1782698400,
+  "stratum": 3,
+  "trades": 3809,
+  "max_gap_s": 34.727,
+  "flagged": false,
+  "sha256": "915fb5216ff85488ae015730cc6b9645891ae3dac3736d6fcafaa0947a6fff30"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1783350000,
+  "stratum": 3,
+  "trades": 4791,
+  "max_gap_s": 21.852,
+  "flagged": false,
+  "sha256": "fa47d4a70ea14dfcfbf8cbc0fa39956508140425e491faf639def7bf0dbdd080"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1763737200,
+  "stratum": 4,
+  "trades": 5390,
+  "max_gap_s": 15.552,
+  "flagged": false,
+  "sha256": "147493d5d385c51445d88c87217c3889e8fffa36a5837d92750d408586372bee"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1764950400,
+  "stratum": 4,
+  "trades": 6917,
+  "max_gap_s": 16.709,
+  "flagged": false,
+  "sha256": "7768b7b376b9cfbd13140aa8d3e419ad8832eb3c3e33a6237b0e7ba4cd71e57f"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1765980000,
+  "stratum": 4,
+  "trades": 7907,
+  "max_gap_s": 32.793,
+  "flagged": false,
+  "sha256": "0e32bbfca2e7e33a6383397cb9a98712adecbb5da052ddc2894c4332d468d407"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1769878800,
+  "stratum": 4,
+  "trades": 18082,
+  "max_gap_s": 9.835,
+  "flagged": false,
+  "sha256": "dc5df191a5e8f74047bf5234cc684dfc041ca177957c5e2b083b942dc22cfa45"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1770303600,
+  "stratum": 4,
+  "trades": 27083,
+  "max_gap_s": 6.069,
+  "flagged": false,
+  "sha256": "6c11b1062d38bc885cf2cbd2b9fd8c45cb67d8fe86e5f7e2ccfae356d59067c0"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1770307200,
+  "stratum": 4,
+  "trades": 13756,
+  "max_gap_s": 7.896,
+  "flagged": false,
+  "sha256": "b2041646f003103aa221d239b6eca3a8a0f0bf9d071a98a5f8e11a5c144a3416"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1770325200,
+  "stratum": 4,
+  "trades": 16446,
+  "max_gap_s": 7.943,
+  "flagged": false,
+  "sha256": "e1399ccd40ecd87271d79dd1ead0312281abf7c782874dac72a688290c973de9"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1770336000,
+  "stratum": 4,
+  "trades": 27903,
+  "max_gap_s": 8.947,
+  "flagged": false,
+  "sha256": "5f9d63d47692f266b265e6be3ed8afcbac23e8ec606f5ce7356eeb1e04daa6ba"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1771246800,
+  "stratum": 4,
+  "trades": 4168,
+  "max_gap_s": 23.921,
+  "flagged": false,
+  "sha256": "a4d5c09fed787c11132c1f36dec680b47bb59fedce16fa2d44dbaead3197adc8"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1772611200,
+  "stratum": 4,
+  "trades": 8631,
+  "max_gap_s": 24.834,
+  "flagged": false,
+  "sha256": "bb2bdd2aaf8a5b64f8138a8badf71901db1e8eaf9d55da4943a9e73e89dc69c0"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1780642800,
+  "stratum": 4,
+  "trades": 5345,
+  "max_gap_s": 16.372,
+  "flagged": false,
+  "sha256": "dee64b075078667dc92a4b0250a6ff145d7be834d28020d091b4e17dd51bdf92"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1787374800,
+  "stratum": 4,
+  "trades": 10259,
+  "max_gap_s": 21.422,
+  "flagged": false,
+  "sha256": "9938a603be40141a8e9ea8abfcb5f7af8b2f2ccb321c43058fb4029d1baea1f3"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1760108400,
+  "stratum": "stress",
+  "trades": 10638,
+  "max_gap_s": 20.513,
+  "flagged": false,
+  "sha256": "39a3264026d656f26965ad7a4a650c521a184b8dc1e2b492adf1179e77b513d2"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1760126400,
+  "stratum": "stress",
+  "trades": 8707,
+  "max_gap_s": 16.573,
+  "flagged": false,
+  "sha256": "da560ccd58f7f3db589581c145848ce7c0f357a2aa53092baedde8329abb7c24"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1760130000,
+  "stratum": "stress",
+  "trades": 56005,
+  "max_gap_s": 5.218,
+  "flagged": false,
+  "sha256": "cf0dd7490c8a34a4fd7cf2abc3e160e06d7b5a16d9ff7395c2a59c6c0ce66b4e"
+ },
+ {
+  "venue": "kraken",
+  "market": "BTC-USD",
+  "hour": 1760133600,
+  "stratum": "stress",
+  "trades": 21601,
+  "max_gap_s": 6.381,
+  "flagged": false,
+  "sha256": "880512124eacb7570c3216e79bc582970505a32cc997cbbdda775b7b698bd628"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1761998400,
+  "stratum": 0,
+  "trades": 445,
+  "max_gap_s": 86.134,
+  "flagged": true,
+  "sha256": "f130224c642b80eaa2d09b3c3a6ce14dc19348f1e33e57c0a0f48003c04782e4"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1768464000,
+  "stratum": 0,
+  "trades": 572,
+  "max_gap_s": 499.763,
+  "flagged": true,
+  "sha256": "8a86ffe765f74500b2b7363893d61cc7af5aeb6d6f40d7e229e4f0811c7d4492"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1769299200,
+  "stratum": 0,
+  "trades": 405,
+  "max_gap_s": 105.535,
+  "flagged": true,
+  "sha256": "e7375d0c968989e250daf8ecfab1ddf22957220f984c078ac3d36182bb2008f4"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1775901600,
+  "stratum": 0,
+  "trades": 848,
+  "max_gap_s": 44.167,
+  "flagged": false,
+  "sha256": "129e074e17a5c177566c981e674865d318084c730df4109ca60514a8cfccee2f"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1782651600,
+  "stratum": 0,
+  "trades": 477,
+  "max_gap_s": 79.414,
+  "flagged": true,
+  "sha256": "1d80232a4252b13f5b07e1d12b0824475ad3dea9c5ca9905709af14bc250addc"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1783281600,
+  "stratum": 0,
+  "trades": 720,
+  "max_gap_s": 48.004,
+  "flagged": false,
+  "sha256": "8add13fa1f9e895f1b419c5411b208bd5d0cbc3ce933466be071c7e1b25573bd"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1784368800,
+  "stratum": 0,
+  "trades": 331,
+  "max_gap_s": 82.74,
+  "flagged": true,
+  "sha256": "683779eea2fd674ba305408cf30266269a7257c7753ad840d22497265a2275a2"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1787806800,
+  "stratum": 0,
+  "trades": 796,
+  "max_gap_s": 63.14,
+  "flagged": true,
+  "sha256": "f00139f6e80cc5427dbebbb4a9e9565f74abd6c1a08c94bc2ddc5125af3824c0"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1791666000,
+  "stratum": 0,
+  "trades": 1440,
+  "max_gap_s": 31.767,
+  "flagged": false,
+  "sha256": "00a4474274045e85da0575c4dcc9db056ff1f8ad742af2ec1da4136fabc3ff78"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1793455200,
+  "stratum": 0,
+  "trades": 1108,
+  "max_gap_s": 36.606,
+  "flagged": false,
+  "sha256": "860d60bfd7279ee8255994290fe423c2a74d1003af142395a56c4893bd9cdf29"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1762844400,
+  "stratum": 1,
+  "trades": 526,
+  "max_gap_s": 139.824,
+  "flagged": true,
+  "sha256": "55d467507a6afdf3a2f9530b6288ecc7bf1b02f489bd616095469a1c644704c5"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1763082000,
+  "stratum": 1,
+  "trades": 1716,
+  "max_gap_s": 38.228,
+  "flagged": false,
+  "sha256": "524e3708aaac66515c20b2f199d983124aaddea190a219810d8c064e0fb4252c"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1763204400,
+  "stratum": 1,
+  "trades": 453,
+  "max_gap_s": 79.708,
+  "flagged": true,
+  "sha256": "d0975690d1ab42c7d10293426d56341722b434f672b42cc2e263e70d2caa8aaa"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1763294400,
+  "stratum": 1,
+  "trades": 435,
+  "max_gap_s": 75.001,
+  "flagged": true,
+  "sha256": "4be9fc174e1d45496c87b3a696616e3bde07334c4c9766db91fa22cbca5d01be"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1770112800,
+  "stratum": 1,
+  "trades": 727,
+  "max_gap_s": 49.91,
+  "flagged": false,
+  "sha256": "b939feaf9ba00220ebf2a91a99555f48f4744055b1fe72eb422f1cc0f1775389"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1776387600,
+  "stratum": 1,
+  "trades": 992,
+  "max_gap_s": 115.429,
+  "flagged": true,
+  "sha256": "a29063c9c93ac575166eeade63c29ca10463dfcf663f2337a0cd5ee932278a52"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1783054800,
+  "stratum": 1,
+  "trades": 996,
+  "max_gap_s": 68.325,
+  "flagged": true,
+  "sha256": "9511f2689d8e8e0c9603a0c47b57a52aa55630eb427f1a381fc7de442ef6352c"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1785312000,
+  "stratum": 1,
+  "trades": 579,
+  "max_gap_s": 110.222,
+  "flagged": true,
+  "sha256": "f9c766dd3e082981118e5f9b13878aec04ebb88e5a2422263b9054a2d75284dc"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1785837600,
+  "stratum": 1,
+  "trades": 765,
+  "max_gap_s": 136.002,
+  "flagged": true,
+  "sha256": "ff3e32403eacdbbd22b732271d191faf28dba4296ffca861542fef158591a0ff"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1790596800,
+  "stratum": 1,
+  "trades": 3368,
+  "max_gap_s": 21.495,
+  "flagged": false,
+  "sha256": "7c69bb7a7df90fdbe836f609a467741c2a8de4f282e7ed2939bb103298ea06ee"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1763766000,
+  "stratum": 2,
+  "trades": 1040,
+  "max_gap_s": 54.103,
+  "flagged": false,
+  "sha256": "dd044e29b0899b2b48d60a64e3a463c10bfeb7fda2d814dea2617c0023831c63"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1768406400,
+  "stratum": 2,
+  "trades": 3621,
+  "max_gap_s": 25.809,
+  "flagged": false,
+  "sha256": "9a73a33efb209f5f0d11941a4de2430a8d66faa447181a39b56afdd76d574eb9"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1769893200,
+  "stratum": 2,
+  "trades": 2634,
+  "max_gap_s": 18.905,
+  "flagged": false,
+  "sha256": "60a91a56e47cf4b1d97bc02a0e8d281c18340bfe9c32bb9f4f450f9b141b8314"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1770202800,
+  "stratum": 2,
+  "trades": 1450,
+  "max_gap_s": 1254.355,
+  "flagged": true,
+  "sha256": "69aeea6bf3346c625aa019b7cf5f05b78e6c56badb6afc8692669ef3cf193bf2"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1770235200,
+  "stratum": 2,
+  "trades": 1626,
+  "max_gap_s": 43.738,
+  "flagged": false,
+  "sha256": "64b512db13d3aaa75b8ad69b4a741584dd9ecf897805c6d0632242b9a6cbc13a"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1770573600,
+  "stratum": 2,
+  "trades": 1040,
+  "max_gap_s": 44.745,
+  "flagged": false,
+  "sha256": "f65ca3d901589dd5584bd1ae6ca6968154c967918db197fa359179c41500ff4f"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1771340400,
+  "stratum": 2,
+  "trades": 1439,
+  "max_gap_s": 44.803,
+  "flagged": false,
+  "sha256": "281ca09cdc030eb75916c4331b0da42ef1b33431abbe1785efebcee6340ef2a2"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1772715600,
+  "stratum": 2,
+  "trades": 1450,
+  "max_gap_s": 53.777,
+  "flagged": false,
+  "sha256": "8c4dcce17176ef08810432678db06137dc3fcb2506ea3bb8377167ba477c9a75"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1773061200,
+  "stratum": 2,
+  "trades": 1661,
+  "max_gap_s": 39.552,
+  "flagged": false,
+  "sha256": "ad8bd4890bf1a4e058b3f3f42a4bf8cdd8d4e8d4bfc7201d75f032d267fed43b"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1776031200,
+  "stratum": 2,
+  "trades": 1158,
+  "max_gap_s": 63.833,
+  "flagged": true,
+  "sha256": "ca47f7902eabad917d7f4bc3bbcbf95ce7ae5913ef4a1fa76850c1d006a572c2"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1764079200,
+  "stratum": 3,
+  "trades": 2480,
+  "max_gap_s": 58.378,
+  "flagged": false,
+  "sha256": "b391ce9088f520f50bfd133f2bcc2807372a14146f17ab2f2d6e8077e4ab8beb"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1765810800,
+  "stratum": 3,
+  "trades": 6570,
+  "max_gap_s": 16.072,
+  "flagged": false,
+  "sha256": "18904af608836cc622a16937f0146660ec813922ddfa8b5d493d8b2333cd8e16"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1765987200,
+  "stratum": 3,
+  "trades": 4916,
+  "max_gap_s": 20.804,
+  "flagged": false,
+  "sha256": "9b4049d164fc8762be1047d36aace71ed780b5c8e9222d61b6f9d03532b3aef0"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1767970800,
+  "stratum": 3,
+  "trades": 1994,
+  "max_gap_s": 51.771,
+  "flagged": false,
+  "sha256": "6af93e1cab8d63cc79e37b21cb07c8fda6ecbb780477d5f066e35ae361aa90a2"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1769803200,
+  "stratum": 3,
+  "trades": 3391,
+  "max_gap_s": 32.69,
+  "flagged": false,
+  "sha256": "fe62e75c00be824310411868bd2d827160fd1bc046adf91b78c99fa396316faf"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1770598800,
+  "stratum": 3,
+  "trades": 1766,
+  "max_gap_s": 48.347,
+  "flagged": false,
+  "sha256": "222416162634056147d9c2f4e5947545a637ebdd58990db57f3bf5c4c46a9fca"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1770994800,
+  "stratum": 3,
+  "trades": 2581,
+  "max_gap_s": 25.933,
+  "flagged": false,
+  "sha256": "e76faef6684d641e3bcf65d7a860f2f64d79458126cb4ec1a9b881f29d92f350"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1775829600,
+  "stratum": 3,
+  "trades": 2639,
+  "max_gap_s": 27.496,
+  "flagged": false,
+  "sha256": "5cf06e56fc5bfec0b27b5e2fd205fd5d6191ffadf385e0ccb7ee99614526156c"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1775930400,
+  "stratum": 3,
+  "trades": 2809,
+  "max_gap_s": 50.149,
+  "flagged": false,
+  "sha256": "089f809791a096bd6a18dda2bed0b0837ab02607ca4943f9f8ebaefb79648d48"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1782298800,
+  "stratum": 3,
+  "trades": 1076,
+  "max_gap_s": 79.308,
+  "flagged": true,
+  "sha256": "19d20f9f4fadb02a0015147ab22049fb86e297b870828ac399abcffc13ecdc97"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1763092800,
+  "stratum": 4,
+  "trades": 2409,
+  "max_gap_s": 63.376,
+  "flagged": true,
+  "sha256": "c6d4fb782464c89d17db303fee1e5cc5a204b10ca095557dfc6b0f99eafe2074"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1763708400,
+  "stratum": 4,
+  "trades": 5938,
+  "max_gap_s": 47.494,
+  "flagged": false,
+  "sha256": "2a1fa9db62119e64f389158c2014a7d2d174b647b2ad9d93199f0b0c22090f9b"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1765116000,
+  "stratum": 4,
+  "trades": 3773,
+  "max_gap_s": 62.457,
+  "flagged": true,
+  "sha256": "899b640250e4e1428971d1ca315846171febf87d9fea993c2966a3cba5ffac63"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1768341600,
+  "stratum": 4,
+  "trades": 6843,
+  "max_gap_s": 24.599,
+  "flagged": false,
+  "sha256": "550149caa354ea1fda977e116e99eddb0dea35962abb32c86be8219677239146"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1769734800,
+  "stratum": 4,
+  "trades": 6476,
+  "max_gap_s": 58.17,
+  "flagged": false,
+  "sha256": "0ea1c9e702df4b93caca29041cca073b3340baa7339f0682e0653680ad4bb696"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1770141600,
+  "stratum": 4,
+  "trades": 5822,
+  "max_gap_s": 16.233,
+  "flagged": false,
+  "sha256": "f4460489aa68486496289f3c05bb446bdcf21e8dd8a3f1a1b0be07f01fcb39c8"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1770148800,
+  "stratum": 4,
+  "trades": 4344,
+  "max_gap_s": 32.163,
+  "flagged": false,
+  "sha256": "85141863fbb2f081375a2a1d5234e6d74b2c65f876b52431ca4fcdcce8bb3871"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1770228000,
+  "stratum": 4,
+  "trades": 5081,
+  "max_gap_s": 22.919,
+  "flagged": false,
+  "sha256": "c315ccf67ec892f2e34fe3d7ddb33476579ee093c8f5153c30b00d87dc85e235"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1770303600,
+  "stratum": 4,
+  "trades": 13012,
+  "max_gap_s": 10.368,
+  "flagged": false,
+  "sha256": "12936927cad838a6a54312e2debbfeb1512a4570f5a46ff8c3af936ce1bdfef9"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1780635600,
+  "stratum": 4,
+  "trades": 3802,
+  "max_gap_s": 70.78,
+  "flagged": true,
+  "sha256": "e615d390224487ce525aad2238047fd3fe4bd933959695413a2f73ec51afccb9"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1787173200,
+  "stratum": 4,
+  "trades": 13074,
+  "max_gap_s": 18.167,
+  "flagged": false,
+  "sha256": "0a68757bd5b7ee67e60c0747014dd23a24c2ffa554069d7de60db565158652cb"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1791471600,
+  "stratum": 4,
+  "trades": 12565,
+  "max_gap_s": 10.47,
+  "flagged": false,
+  "sha256": "e4f83c806de23868f24197857554bb25e702c319130e1f7afa53468ce89c1e2f"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1760108400,
+  "stratum": "stress",
+  "trades": 9308,
+  "max_gap_s": 17.564,
+  "flagged": false,
+  "sha256": "9e8d505af8135dc875a83e9a2a1076dfafeed1e0d5e3d6cd1e50956a1e893f10"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1760126400,
+  "stratum": "stress",
+  "trades": 6418,
+  "max_gap_s": 29.039,
+  "flagged": false,
+  "sha256": "239ee8ee0c545075d87f21e6d229a6915e65cd0aaf9affeed6f61ab0d436fc8a"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1760130000,
+  "stratum": "stress",
+  "trades": 41227,
+  "max_gap_s": 7.583,
+  "flagged": false,
+  "sha256": "2db7369a61d9ab1ac020c950c947bbc4f03154f1344819cb267f5371491c5df7"
+ },
+ {
+  "venue": "kraken",
+  "market": "ETH-USD",
+  "hour": 1760133600,
+  "stratum": "stress",
+  "trades": 14315,
+  "max_gap_s": 9.362,
+  "flagged": false,
+  "sha256": "a68e3d1fe1125db2d1b0b324570d0ea54800c3df6a3a278e6d8493539b8e5be9"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1767438000,
+  "stratum": 0,
+  "trades": 473,
+  "max_gap_s": 91.476,
+  "flagged": true,
+  "sha256": "d435654e8aadcf4e5b69eb299208cc3993a40ac2329eea145f96d0f92deb479a"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1771059600,
+  "stratum": 0,
+  "trades": 565,
+  "max_gap_s": 91.311,
+  "flagged": true,
+  "sha256": "55cd1d6238ae9e767d9ff1f4d0df714a2965022ce2a6a240f577625696cdda31"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1775325600,
+  "stratum": 0,
+  "trades": 594,
+  "max_gap_s": 79.489,
+  "flagged": true,
+  "sha256": "b983c51a21c1ac09320094bcbbe01b5c3b3f613f47c758e2403f7f109543723c"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1777057200,
+  "stratum": 0,
+  "trades": 692,
+  "max_gap_s": 60.019,
+  "flagged": true,
+  "sha256": "1b4dce412bfe5ef026ad82bb8a1634bdbecb0c632b67c46abba98d8a26a6d637"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1779202800,
+  "stratum": 0,
+  "trades": 664,
+  "max_gap_s": 57.909,
+  "flagged": false,
+  "sha256": "954e4e69c14d14bbe2c7701630dda5e30646567a063b894f32c7872655d2c8c0"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1779343200,
+  "stratum": 0,
+  "trades": 469,
+  "max_gap_s": 83.034,
+  "flagged": true,
+  "sha256": "e4c3d39c955b45f8835a202dbd2daef2d6778d12534e7218851aafb16382d292"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1779418800,
+  "stratum": 0,
+  "trades": 386,
+  "max_gap_s": 79.841,
+  "flagged": true,
+  "sha256": "890ef8df23769902338ae8c14b599a6095c42caaaabf9347fca867e6b6d2c796"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1788548400,
+  "stratum": 0,
+  "trades": 1716,
+  "max_gap_s": 22.302,
+  "flagged": false,
+  "sha256": "ec0fa82edb2b1cd658c1621949fe150ece5caaedc99b30ead391c3656791705a"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1788606000,
+  "stratum": 0,
+  "trades": 1206,
+  "max_gap_s": 33.662,
+  "flagged": false,
+  "sha256": "be3e018eec05ad4479eb2ac520236b883254b6d70e562e899328110743c0b7ed"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1789880400,
+  "stratum": 0,
+  "trades": 868,
+  "max_gap_s": 47.687,
+  "flagged": false,
+  "sha256": "963c52b6d59c657f8ea54a34b1d1dc0ae708e6a9172a77f1b988642858d8820a"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1762484400,
+  "stratum": 1,
+  "trades": 566,
+  "max_gap_s": 55.737,
+  "flagged": false,
+  "sha256": "960cc00715850efaf552fa8c851435769a1f8fb0062edc4c1d539740310d34e3"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1762646400,
+  "stratum": 1,
+  "trades": 431,
+  "max_gap_s": 93.962,
+  "flagged": true,
+  "sha256": "655242203e760a98dfd1938b36d961f5d0ab50e70d8db70a64958d2afa0a9905"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1766005200,
+  "stratum": 1,
+  "trades": 1284,
+  "max_gap_s": 39.648,
+  "flagged": false,
+  "sha256": "4f74e4526f8ee52efadf93daa7cfe3c3b7e2697b4a6238b0cbe9d24cc0b6dc70"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1770721200,
+  "stratum": 1,
+  "trades": 626,
+  "max_gap_s": 87.356,
+  "flagged": true,
+  "sha256": "7a03ec394b4858776b26cdd3f488d4abda95295f21f0f74d608d549efa40bc5d"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1771380000,
+  "stratum": 1,
+  "trades": 528,
+  "max_gap_s": 101.284,
+  "flagged": true,
+  "sha256": "c3b32c188a67d390257a680daf938f8819615c3b98a77943ceaebbae921b6350"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1773028800,
+  "stratum": 1,
+  "trades": 804,
+  "max_gap_s": 76.952,
+  "flagged": true,
+  "sha256": "7ef270d5e0fde41ef94384408023257e53e15dd15675f5b6cdae96468a02c05c"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1773266400,
+  "stratum": 1,
+  "trades": 763,
+  "max_gap_s": 61.06,
+  "flagged": true,
+  "sha256": "0b29757ed7de1c9a78c09f144c12487c86f02fc678b89a9e517514505acfa3ed"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1781427600,
+  "stratum": 1,
+  "trades": 502,
+  "max_gap_s": 140.362,
+  "flagged": true,
+  "sha256": "ed152e107613490e9f680b657de28c96ef1e7640f9b08770852d1a70302b848f"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1782338400,
+  "stratum": 1,
+  "trades": 1089,
+  "max_gap_s": 64.871,
+  "flagged": true,
+  "sha256": "53e0a2afabee8967346257d2e3b6ce50ce3d02ea08b693ab90c4080dbfe6f753"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1788890400,
+  "stratum": 1,
+  "trades": 1826,
+  "max_gap_s": 23.631,
+  "flagged": false,
+  "sha256": "3f1931703e83a5cd79ebbff88127c03ed29ff81c805af7752f4d601ccb9283e5"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1763996400,
+  "stratum": 2,
+  "trades": 1443,
+  "max_gap_s": 41.111,
+  "flagged": false,
+  "sha256": "e9a0faa904b9aafbcf2d2d5835058c37b0b1793fb3a83ea8e45c489d3680f8dc"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1768953600,
+  "stratum": 2,
+  "trades": 1250,
+  "max_gap_s": 36.166,
+  "flagged": false,
+  "sha256": "58ceaf79df0476f4bbcc67535f320b2009bad5c30e9517ea4d6661bc00c99305"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1773306000,
+  "stratum": 2,
+  "trades": 1080,
+  "max_gap_s": 69.455,
+  "flagged": true,
+  "sha256": "8bed360b39564dbffdcd10d863aac1ab5997162365868dd595a0392bc814d913"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1775426400,
+  "stratum": 2,
+  "trades": 1127,
+  "max_gap_s": 64.216,
+  "flagged": true,
+  "sha256": "40cb565ef1303dafd3704ae9fcdc886e178f1a6d320a2b86e6fe9143e0c5baf7"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1778158800,
+  "stratum": 2,
+  "trades": 1358,
+  "max_gap_s": 51.186,
+  "flagged": false,
+  "sha256": "607e740866acd0a2c0e25aeebae7ef3df71a06916233394a346ab26495ef0353"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1779292800,
+  "stratum": 2,
+  "trades": 1579,
+  "max_gap_s": 44.588,
+  "flagged": false,
+  "sha256": "37225c9e9ea2754cdc132ad5fad234d7a19b4b98659ad597eda8fd7b7b45129c"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1781614800,
+  "stratum": 2,
+  "trades": 1193,
+  "max_gap_s": 54.959,
+  "flagged": false,
+  "sha256": "0768985669bfe7954a477d02320e9554244cfd190da4ed4d8c4bb08a52b76865"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1781928000,
+  "stratum": 2,
+  "trades": 1130,
+  "max_gap_s": 54.381,
+  "flagged": false,
+  "sha256": "3f63c0f18a4481d30a2f0a7790f8228b1c33f1a5d6323f0d5bdaf95d0631bcda"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1789722000,
+  "stratum": 2,
+  "trades": 2057,
+  "max_gap_s": 31.033,
+  "flagged": false,
+  "sha256": "a073668659ec87ac9bb324f6500db3014d5bebb77b37d9e1c7dbf63fc1ff7dfc"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1790042400,
+  "stratum": 2,
+  "trades": 1686,
+  "max_gap_s": 33.642,
+  "flagged": false,
+  "sha256": "ed7872b58e801ddc78a5e9fbf5330f00bbab0cb0f0ac33f8f027352a29aff9fa"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1762826400,
+  "stratum": 3,
+  "trades": 1026,
+  "max_gap_s": 42.385,
+  "flagged": false,
+  "sha256": "0807e0384f98c412d2599e168920b5335f3463b79dff45e69cba40780e614db7"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1763316000,
+  "stratum": 3,
+  "trades": 1422,
+  "max_gap_s": 52.62,
+  "flagged": false,
+  "sha256": "030d27ca492852eb91ecca1291f11041d9661be117ea2a489da382ae67aae809"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1763604000,
+  "stratum": 3,
+  "trades": 2398,
+  "max_gap_s": 51.646,
+  "flagged": false,
+  "sha256": "14a0060ab090b421746aeb20e505d00af5b3084fbe14dba8f567926c1da28fab"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1763762400,
+  "stratum": 3,
+  "trades": 1132,
+  "max_gap_s": 59.9,
+  "flagged": false,
+  "sha256": "5d8503c2bab63d4cd22478e2f966b9a38b9c86ef75ce2f0ad36109c21618b269"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1765216800,
+  "stratum": 3,
+  "trades": 1221,
+  "max_gap_s": 43.812,
+  "flagged": false,
+  "sha256": "ace95cf929e5b36e4b36bbd3e5d66665e59aa260d7cbafd8f985d049ea14615c"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1767884400,
+  "stratum": 3,
+  "trades": 2101,
+  "max_gap_s": 48.502,
+  "flagged": false,
+  "sha256": "b96a5e996de6908e86a9633f59b90952cfd9d1d24f2e56e29656c5e7500f6505"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1768777200,
+  "stratum": 3,
+  "trades": 5853,
+  "max_gap_s": 36.589,
+  "flagged": false,
+  "sha256": "a8139b75b2bb46e598a91bc09fd95aecd7bedefe18b99393ffaa6d9eb66b632c"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1772028000,
+  "stratum": 3,
+  "trades": 1940,
+  "max_gap_s": 40.491,
+  "flagged": false,
+  "sha256": "2bbb6f52f9769613e509b2fcac97e20c782a7e73107e163e3e2d2961d9bed383"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1772121600,
+  "stratum": 3,
+  "trades": 2030,
+  "max_gap_s": 53.473,
+  "flagged": false,
+  "sha256": "038376ee5cff7c9226d05fd7c8210550c36b9b3c67b41521c378e5fd6fdc06a0"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1780740000,
+  "stratum": 3,
+  "trades": 1554,
+  "max_gap_s": 58.807,
+  "flagged": false,
+  "sha256": "83faeb1c5e921ee5c6a9dd684269c5d21badde797874ea6e2b6b2aa745343097"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1762286400,
+  "stratum": 4,
+  "trades": 5305,
+  "max_gap_s": 27.249,
+  "flagged": false,
+  "sha256": "22fa2d92f5933bf55bbfaa01dc61f8520eebdb0452691569f11bd3c66c3e5136"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1762304400,
+  "stratum": 4,
+  "trades": 1794,
+  "max_gap_s": 31.833,
+  "flagged": false,
+  "sha256": "a90f2160e1222e5fe1cc8afdc632fda904ee371f5b49ea6754d9cf7da5949a72"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1766077200,
+  "stratum": 4,
+  "trades": 4867,
+  "max_gap_s": 38.309,
+  "flagged": false,
+  "sha256": "08fe378318a71a7364bdb4fbd681bf764a0088bc94e0e62281b97079a9a5af54"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1768341600,
+  "stratum": 4,
+  "trades": 5892,
+  "max_gap_s": 36.322,
+  "flagged": false,
+  "sha256": "3564be98faa739ec89daabf50f834984e55e4e444723b26bc3f31d1311ff4a58"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1769868000,
+  "stratum": 4,
+  "trades": 4819,
+  "max_gap_s": 38.692,
+  "flagged": false,
+  "sha256": "6537ddfc7a33335f07f02b43a12f05ccf422c519f2eff3d54b50eba78c3657db"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1770001200,
+  "stratum": 4,
+  "trades": 4817,
+  "max_gap_s": 20.004,
+  "flagged": false,
+  "sha256": "418fc0a5e8dd16a6814ce7f21f8b5367b582a838d731452d744e7a579d0a688b"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1770303600,
+  "stratum": 4,
+  "trades": 9477,
+  "max_gap_s": 14.361,
+  "flagged": false,
+  "sha256": "958ae8f97431f758474cba3aa38051123df93fd94717bd51565454251dd0f4fe"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1770343200,
+  "stratum": 4,
+  "trades": 3870,
+  "max_gap_s": 21.77,
+  "flagged": false,
+  "sha256": "463e7432ee4f61ccd61c3c10dd3c67fe431e2de4f84ce8ce5dcaa8c50d60c2aa"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1774263600,
+  "stratum": 4,
+  "trades": 4204,
+  "max_gap_s": 65.194,
+  "flagged": true,
+  "sha256": "3451736768f9759c388f324c85fb51e70dc57cbca5960898cd3b7fc8dd33240d"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1787173200,
+  "stratum": 4,
+  "trades": 6096,
+  "max_gap_s": 19.551,
+  "flagged": false,
+  "sha256": "8bdea8d1691591b225dc85c3f0ab1b04681a81142434e01adc33db49384f2ab8"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1787616000,
+  "stratum": 4,
+  "trades": 7116,
+  "max_gap_s": 26.876,
+  "flagged": false,
+  "sha256": "2c440923fff3844086c95ddfc7c92fb4f74c3f390f0aac7f8863074783a0c987"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1791849600,
+  "stratum": 4,
+  "trades": 6985,
+  "max_gap_s": 14.905,
+  "flagged": false,
+  "sha256": "2dacdb81038d561db77d9655ab1ee5e1e9375442ae6cf8dffb07c9ef9aca0fd3"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1760108400,
+  "stratum": "stress",
+  "trades": 6410,
+  "max_gap_s": 25.933,
+  "flagged": false,
+  "sha256": "c7ab1e07e9d1b96395f7a9c5a4edb8f9ceb1a0d52e98951fcf93e5a6815eeb82"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1760126400,
+  "stratum": "stress",
+  "trades": 4342,
+  "max_gap_s": 42.72,
+  "flagged": false,
+  "sha256": "603a31197f0a5d51c9c190f7965d80ead18af2b2bd4341296b5afc5133f05204"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1760130000,
+  "stratum": "stress",
+  "trades": 33847,
+  "max_gap_s": 9.1,
+  "flagged": false,
+  "sha256": "99fd1decb8a73e5578017ea50c1ce1e672cb35a85c8dd3c7e6bfffc4d1a3c6d9"
+ },
+ {
+  "venue": "kraken",
+  "market": "SOL-USD",
+  "hour": 1760133600,
+  "stratum": "stress",
+  "trades": 13856,
+  "max_gap_s": 12.357,
+  "flagged": false,
+  "sha256": "8ed0ae4b5a58f9ca0bed1b95c619f4177046214b4751109c6bd43ea9a62e1f94"
+ }
+]

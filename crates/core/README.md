@@ -284,6 +284,10 @@ this crate and reproduce the signed state roots exactly.
   governance path, the pricing-site clamp and reversal refusal, and the listing guards
 - `tests/close_spread_calibration.rs` — fill, rounding and liquidation agreement vectors for the
   research-only close-spread model; shares input fixtures with the Python study
+- `tests/rogue_operator.rs` — the two engine mechanisms `research/rogue-operator` rests on: free
+  round trips at a zero spread tier holding a toxic account's score under the first tier, and a pair
+  of opposite positions across an unpriced jump paying the move less the fee and the losing leg's
+  balance, the rest bad debt
 - `tests/access.rs`, `tests/access/` — signed declarations, source proofs, policy refusals, holds,
   resting orders covered by their placement screening, replay compatibility, and the `V24`
   reference session (`examples/reference_log/v24.rs`) with its assertions

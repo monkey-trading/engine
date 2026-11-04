@@ -300,6 +300,13 @@ an index: load only the rule whose hint matches the current action.
   published history (#435): scripts that fetch and derive it (raw pulls in gitignored `data/`, the
   derived `fixtures/`), every rate the cap would have refused in `results/`, and an `engine-core` test
   that requires the engine to refuse the same ones. Its `README.md` gives the findings and sources.
+  `rogue-operator/` bounds what a rogue operator can extract through delay, reordering, holding a
+  sync, censorship and unpricing (#549): an attacker model, a Monte Carlo of each attack on hours
+  of venue trades sampled by volatility stratum over a year (raw pulls and the live book recording
+  in gitignored `data/raw/`, the price grids in `data/derived/`), the operator's share, self-bond and
+  removal times against what each attack takes, and `results/`; `crates/core/tests/rogue_operator.rs`
+  checks the two engine mechanisms it rests on. Its `README.md` gives the method, data, results,
+  limits and how to re-run.
 - **scripts/** — `check-file-loc.sh`, the 500-line cap per Rust file, opted in per crate;
   `dev-corporate-actions.sh`, the signed localhost TLS/API dividend, split and restart scenario;
   `dev-operator-bounds.sh`, the operator's bounds on a dev node: benchmark rates inside and outside the
@@ -640,6 +647,10 @@ Run from the repo root:
   `python -I research/benchmark-cap/fetch.py`, then `python -I research/benchmark-cap/derive.py`, then
   `python -I research/benchmark-cap/check.py`; the engine's agreement:
   `cargo test -p engine-core --test benchmark_cap_history --locked`
+- Rogue-operator research, from a virtualenv outside the repo with
+  `research/rogue-operator/requirements.txt`, in `research/rogue-operator/`: `python -I run.py all`
+  (every attack on the committed grids, then `results/`), its tests with `python -I -m pytest tests`,
+  and the engine's agreement with `cargo test -p engine-core --test rogue_operator --locked`
 - Close-spread research, from a virtualenv with `research/close-spread-calibration/requirements.txt`:
   `python -I research/close-spread-calibration/run.py`, then
   `python -I research/close-spread-calibration/calibrate.py`, then
