@@ -9,7 +9,7 @@ import numpy as np
 
 from model import hold, latency, skim, stress, unprice
 from model.flow import MarketFlow
-from model.paths import Hour
+from model.paths import Hour, divergence_clamped
 
 DECIDE_S = 0.25
 # Latency arbitrage: lags (s), extra spreads (bps), with and without laundering the toxicity score.
@@ -143,6 +143,40 @@ def divergence_rows(h: Hour) -> list[dict]:
              "level2_share": float((gap >= 24).mean()), "p99_bps": float(np.percentile(gap, 99))}]
 
 
+# Crypto markets' divergence bound (config/production-genesis.toml), for the clamped sensitivity.
+DIVERGENCE_BPS = 25
+
+
+def clamped_rows(h: Hour, flows: dict[float, MarketFlow]) -> list[dict]:
+    """The headline measures again on the index held wherever Coinbase's last trade sits past the
+    divergence bound from Kraken's (`paths.divergence_clamped`): a venue-specific print or sweep,
+    which the engine's two-venue index would not show, then counts as an unpriced spell."""
+    from dataclasses import replace
+
+    c = replace(h, x=divergence_clamped(h.x, h.kraken, DIVERGENCE_BPS))
+    rows = []
+    for launder in (True, False):
+        out = latency.arbitrage(c.x, c.step_s, c.lead, DECIDE_S, 3, 0, launder)
+        rows.append({**base(h), "attack": "clamped", "measure": f"latency {'laundered' if launder else 'add-on paid'}", "value": out["pnl"]})
+    span = c.analysis
+    f = flows[1.0]
+    rng = np.random.default_rng([h.hour, 10, 549])
+    at, side = skim.arrivals(rng, f.fills_per_second, span.start, span.stop - span.start, c.step_s)
+    size = f.sample_sizes(rng, len(at))
+    g = skim.schedule(c.x, at, side, size, c.steps(3), 0)
+    rows.append({**base(h), "attack": "clamped", "measure": "skim sequenced", "value": float((size * g).sum()), "notional": float(size.sum())})
+    if h.market != "SOL-USD":
+        every = c.steps(1.0)
+        open_cost = 2 * np.repeat(stress.min_spread(c.x[::every], 1.0), every)[: len(c.x)]
+        for spell in (60, 300):
+            best, _ = unprice.best_spell(c.x, span.start, span.stop - span.start, c.steps(spell), 0.01, open_cost)
+            rows.append({**base(h), "attack": "clamped", "measure": f"unprice best {spell} s", "value": best})
+        out = unprice.causal_spells(c.x, span.start, span.stop - span.start, c.step_s, c.steps(300), c.steps(3), 0.01, 0.004, open_cost)
+        rows.append({**base(h), "attack": "clamped", "measure": "unprice causal 300 s 40 bps", "value": out["payoff"]})
+    return rows
+
+
 def all_rows(args) -> list[dict]:
     h, flows = args
-    return latency_rows(h) + skim_rows(h, flows) + hold_rows(h) + unprice_rows(h) + drift_rows(h) + divergence_rows(h)
+    return (latency_rows(h) + skim_rows(h, flows) + hold_rows(h) + unprice_rows(h) + drift_rows(h) + divergence_rows(h)
+            + clamped_rows(h, flows))

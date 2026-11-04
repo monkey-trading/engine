@@ -39,7 +39,7 @@ PRODUCTION = {"lag_s": 3.0, "hold_s": 5.0, "extra_bps": 0.0, "decide_s": 0.25}
 NUMERIC = {"lag_s", "extra_bps", "decide_s", "pnl", "gross", "spread", "fee", "positions", "units_traded", "win_share",
            "scale", "delay_s", "fills", "notional", "usd", "mean_bps", "sd_bps", "hold_s", "uses", "held", "without",
            "kill_share", "now", "spell_s", "payoff", "spells", "paying", "unpriced_s", "theta_bps", "ahead_s", "events",
-           "sum_bps", "sum_sq_bps", "hour", "margin", "level1_share", "level2_share", "p99_bps"}
+           "sum_bps", "sum_sq_bps", "hour", "margin", "level1_share", "level2_share", "p99_bps", "value"}
 
 
 def load(path: Path) -> list[dict]:
@@ -549,6 +549,14 @@ def write_report(results: Path, tables: dict, summary: dict):
                "", md_table(["Symbol", "Mean half-gap between the venues (bps)", "Highest hourly p99 (bps)", "Time past 16 bps", "Time past 24 bps"],
                             [[sym, f"{v['half_gap_bps_mean']:.2f}", f"{v['half_gap_bps_p99']:.2f}", f"{v['divergence_time_share']['16']:.2%}",
                               f"{v['divergence_time_share']['24']:.2%}"] for sym, v in c["summary"].items()]), ""]
+    md += ["## Venue-specific moves held out", "",
+           "The headline measures a year with Coinbase's trades taken as the index, and with the index held "
+           "wherever Coinbase's last trade sits more than the 25 bps divergence bound from Kraken's, as the "
+           "engine's two-venue index has no price there. Kraken's last trade lags its book, so the held "
+           "version also stops some genuine fast moves.", "",
+           md_table(["Measure", "A year, proxy", "A year, divergence held out"],
+                    [[r["measure"], f"{money(r['year'])} ({money(r['year_lo'])} to {money(r['year_hi'])})",
+                      f"{money(r['clamped_year'])} ({money(r['clamped_year_lo'])} to {money(r['clamped_year_hi'])})"] for r in t["clamped"]]), ""]
     md += ["## What the operator risks", "",
            "The seat is one year of the operator's 20% of #134's distributions, at its share of the days. "
            "An attack pays, even if it is acted on the day it starts, when the operator's take an operating "
@@ -560,6 +568,32 @@ def write_report(results: Path, tables: dict, summary: dict):
         ["Market", "Hour (UTC)", "Measure", "Dollars"],
         [[r["market"], r["hour_utc"], r["measure"], money(r["usd"])] for r in sorted(t["stress_day"], key=lambda r: (r["measure"], r["market"], r["hour_utc"]))]), ""]
     (results / "report.md").write_text("\n".join(md) + "\n")
+
+
+def clamped_table(rows, y: Year):
+    """The headline measures with and without the divergence clamp, a year, on the same hours."""
+    out = []
+    pairs = [
+        ("latency laundered", select(rows, attack="latency", decide_s=0.25, stress=True, lag_s=3.0, extra_bps=0.0, launder=True),
+         lambda r, m: r["pnl"] * POSITIONS["launch"][m], lambda r, m: r["value"] * POSITIONS["launch"][m], MARKETS),
+        ("latency add-on paid", select(rows, attack="latency", decide_s=0.25, stress=True, lag_s=3.0, extra_bps=0.0, launder=False),
+         lambda r, m: r["pnl"] * POSITIONS["launch"][m], lambda r, m: r["value"] * POSITIONS["launch"][m], MARKETS),
+        ("skim sequenced", select(rows, attack="skim", kind="sequenced", lag_s=3.0, delay_s=0.0, scale=1.0),
+         lambda r, m: r["usd"], lambda r, m: r["value"], MARKETS),
+        ("unprice best 60 s", select(rows, attack="unprice", kind="best", spell_s=60.0, margin=0.01),
+         lambda r, m: r["payoff"] * PAIR_NOTIONAL, lambda r, m: r["value"] * PAIR_NOTIONAL, ("BTC-USD", "ETH-USD")),
+        ("unprice best 300 s", select(rows, attack="unprice", kind="best", spell_s=300.0, margin=0.01),
+         lambda r, m: r["payoff"] * PAIR_NOTIONAL, lambda r, m: r["value"] * PAIR_NOTIONAL, ("BTC-USD", "ETH-USD")),
+        ("unprice causal 300 s 40 bps", select(rows, attack="unprice", kind="causal", spell_s=300.0, trigger=0.004, margin=0.01),
+         lambda r, m: r["payoff"] * PAIR_NOTIONAL, lambda r, m: r["value"] * PAIR_NOTIONAL, ("BTC-USD", "ETH-USD")),
+    ]
+    for measure, base_rows, base_value, clamp_value, markets in pairs:
+        clamped = select(rows, attack="clamped", measure=measure)
+        a = y.total(base_rows, base_value, markets)
+        b = y.total(clamped, clamp_value, markets)
+        out.append({"measure": measure, "year": a.year, "year_lo": a.year_lo, "year_hi": a.year_hi,
+                    "clamped_year": b.year, "clamped_year_lo": b.year_lo, "clamped_year_hi": b.year_hi})
+    return out
 
 
 def main(hourly_path: Path, results: Path):
@@ -581,10 +615,11 @@ def main(hourly_path: Path, results: Path):
         sel = [r for r in select(rows, attack="divergence") if r["stratum"] == k]
         dv.append({"stratum": k, "hours": len(sel), "level1": float(np.mean([r["level1_share"] for r in sel])),
                    "level2": float(np.mean([r["level2_share"] for r in sel])), "p99": float(np.mean([r["p99_bps"] for r in sel]))})
+    clamp = clamped_table(rows, y)
     head = headline(rows, y, calibration)
     econ = economics_table(head)
     tables = {"latency": lat, "latency_sensitivity": lat_sens, "skim": sk, "hold": hd, "unprice": up, "drift": dr,
-              "stress_day": sd, "divergence": dv, "headline": head, "economics": econ}
+              "stress_day": sd, "divergence": dv, "clamped": clamp, "headline": head, "economics": econ}
     for name, table in tables.items():
         write_csv(results / f"{name}.csv", table)
     tables["calibration"] = calibration

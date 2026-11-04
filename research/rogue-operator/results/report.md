@@ -314,6 +314,19 @@ The engine's two-venue book-mid index over the Coinbase trade proxy, on 1 whole 
 | ETH | 0.48 | 1.40 | 0.00% | 0.00% |
 | SOL | 0.38 | 1.61 | 0.00% | 0.00% |
 
+## Venue-specific moves held out
+
+The headline measures a year with Coinbase's trades taken as the index, and with the index held wherever Coinbase's last trade sits more than the 25 bps divergence bound from Kraken's, as the engine's two-venue index has no price there. Kraken's last trade lags its book, so the held version also stops some genuine fast moves.
+
+| Measure | A year, proxy | A year, divergence held out |
+|---|---|---|
+| latency laundered | $29.63B ($27.28B to $32.18B) | $29.55B ($27.21B to $32.12B) |
+| latency add-on paid | $3.84B ($3.33B to $4.43B) | $3.79B ($3.28B to $4.38B) |
+| skim sequenced | $290.63M ($263.63M to $320.41M) | $288.94M ($262.02M to $318.55M) |
+| unprice best 60 s | $68.78M ($37.42M to $110.92M) | $48.82M ($31.20M to $66.59M) |
+| unprice best 300 s | $220.19M ($160.67M to $285.99M) | $182.52M ($137.55M to $228.71M) |
+| unprice causal 300 s 40 bps | $57.05M (-$1.26M to $157.42M) | $158.71M (-$9.81M to $482.15M) |
+
 ## What the operator risks
 
 The seat is one year of the operator's 20% of #134's distributions, at its share of the days. An attack pays, even if it is acted on the day it starts, when the operator's take an operating day exceeds the break-even.

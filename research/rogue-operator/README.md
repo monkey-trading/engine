@@ -47,7 +47,8 @@ quotes cost clients and pay the house, so the operator receives only its 20% of 
   pairs, long in one account and short in another, unprices a market across a fast move, and the
   losing leg's loss past its 1% margin becomes the house's bad debt. A simple rule on $50M of pairs
   nets $57M a year (-$1.3M to $157M) and about $35M across four hours of 2025-10-10; the pairs, and
-  the take, grow with the operator's capital. At 2% margin every rule tried loses money over the
+  the take, grow with the operator's capital. This is the study's least robust figure: holding the
+  index where the venues diverge, as the engine would, moves it to $159M (-$9.8M to $482M). At 2% margin every rule tried loses money over the
   year, and the best of them makes $0.3M on that day.
 - **Skimming costs clients 0.45 bps of what they fill** ($796k a day at launch flow; 0.34 bps and
   $5.9M at 10x), each fill priced at the worst index of its last 3 s. The operator's 20% roughly
@@ -401,6 +402,18 @@ In the historical sample, by the venues' last trades, which overstate it, the le
 trigger would have fired 2% of the time in the top 1% of hours and 29% of the time on 2025-10-10,
 when the stress spreads it brings would cut the operator's take below what is measured here.
 
+**Venue-specific moves.** Coinbase alone sometimes moves far from Kraken: on 2026-01-31 at 17:12 UTC
+a sweep printed 4,286 trades between $77,000 and $78,064 within two seconds while Kraken's trades
+stayed above $78,082, 1.4% apart, past the 25 bps divergence bound, where the engine's index has no
+price. Holding the proxy at its last value wherever Coinbase's last trade sits past the bound from
+Kraken's moves the laundered latency take by 0.3%, the add-on-paid take by 1.3% and skimming by
+0.6%, and lowers the hindsight unpricing figures by 17% to 29% (to $48.8M a year for 60 s spells and
+$182.5M for 300 s). It raises the causal unpricing rule's figure from $57.0M to $158.7M a year,
+because an index held through a divergence and then released jumps, and the rule collects those
+jumps; Kraken's last trade lags its book, so the held version also holds through some genuine fast
+moves. The causal unpricing figure is therefore the study's least robust: the two treatments bracket
+it between $57M and $159M a year (`results/report.md`, "Venue-specific moves held out").
+
 ### What the operator risks
 
 | Removal | Operating days | Seat (one year of its share) | Break-even take an operating day, launch | at 10x |
@@ -471,8 +484,9 @@ None of these changes a genesis value; each is for the owner to decide.
   10 ms grid would take more), skimming keeps clients in arrival order (reordering them would take
   more), and the unpricing rule is one simple trigger. Each is achievable, so against the same
   index the operator could take at least what is measured; the proxy's error, above, cuts both ways.
-- **The engine is simplified.** The model leaves out the divergence trigger (the historical sample
-  has no Kraken book; live, the venues never came near it), the size spread past the first tier,
+- **The engine is simplified.** The model leaves out the divergence trigger and, but for the
+  sensitivity above, the divergence bound (the historical sample has no Kraken book; live, the venues
+  never came near either), the size spread past the first tier,
   financing, and rounding. The two mechanisms the conclusions rest on, laundering a toxicity score
   and a pair across an unpriced jump, are checked through `Engine::apply`.
 - **The operator's position ignores clients'.** Clients' net exposure shares the cap with it; the
