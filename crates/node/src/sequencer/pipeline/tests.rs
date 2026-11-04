@@ -26,7 +26,7 @@ use tower::ServiceExt;
 
 use super::*;
 use crate::log::Manifest;
-use crate::sequencer::Reissue;
+use crate::sequencer::{Reissue, Request};
 use crate::test_support::{dev_config, sample_around, scratch_dir, sequencer_config};
 
 /// What a sync does when the test lets it.

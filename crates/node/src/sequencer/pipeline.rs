@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
 use engine_core::event::Event;
-use tokio::sync::{Notify, mpsc, oneshot, watch};
+use tokio::sync::{Notify, oneshot, watch};
 use tracing::{error, info};
 
 use crate::benchmarks::BenchmarkSchedule;
@@ -34,7 +34,7 @@ use crate::history::marks::MarkSample;
 use crate::log::SyncJob;
 use crate::sequencer::checkpoints::publish::After;
 use crate::sequencer::house::HouseState;
-use crate::sequencer::{Request, Sequencer, StreamBody, StreamMsg};
+use crate::sequencer::{Sequencer, StreamBody, StreamMsg};
 use crate::stats::background::Job as StatsJob;
 
 /// Batches whose sync may be pending at once. A disk that stalls longer than that many batches
