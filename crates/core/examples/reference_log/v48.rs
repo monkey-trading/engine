@@ -13,7 +13,7 @@ use crate::common::{BTC, Client, Harness};
 use crate::v37::ELECTED_SEED;
 
 /// The seed of the installed operator's admin key.
-const INSTALLED_SEED: u8 = 0x57;
+pub(crate) const INSTALLED_SEED: u8 = 0x57;
 const CANDIDATE: AccountId = AccountId([0x58; 20]);
 
 /// `V48` activates over rotation left on by `V47`'s part. An installation is refused while

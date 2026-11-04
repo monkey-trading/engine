@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use crate::Fixed;
 use crate::engine::{Engine, Markout};
 use crate::fixed::Rounding;
+use crate::params::ProtocolParams;
 use crate::protocol::ProtocolVersion;
 use crate::types::MarketId;
 
@@ -13,6 +14,29 @@ use crate::types::MarketId;
 const MAX_MARKOUT_BPS: i64 = 1_000;
 
 impl Engine {
+    /// From `V16`, clamps every account's toxicity history to the memory `params` weighs markouts
+    /// over. A lowered memory reweighs old history at once: without the clamp, the account's next
+    /// markout still weighs the history it built under the earlier memory, and caps it only then.
+    /// Raising the memory clamps nothing, since history never exceeds the memory it built under.
+    /// `SetToxicityNotional` lands only where no history exists to clamp: parameters without
+    /// weighting predate every notional-weighted markout. Read to select first: a touched account
+    /// re-encodes its leaf at the next root, so touch only what the clamp changes.
+    pub(crate) fn clamp_toxicity_history(&mut self, params: &ProtocolParams) {
+        if self.protocol_version >= ProtocolVersion::V16
+            && let Some(memory) = params.toxicity.notional.map(|weighting| weighting.memory)
+        {
+            let over: Vec<_> = self
+                .accounts
+                .iter()
+                .filter(|(_, acct)| acct.toxicity_history > memory)
+                .map(|(account, _)| *account)
+                .collect();
+            for account in over {
+                self.accounts.get_mut(&account).expect("selected above").toxicity_history = memory;
+            }
+        }
+    }
+
     /// Queues a fill's markout, with the fill's notional in USD. From `V11` the notional weighs it,
     /// and it joins the queue in due order, so a shortened horizon's markouts wait behind none;
     /// before, it carries no notional and joins the back, as it always did.

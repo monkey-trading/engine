@@ -253,11 +253,17 @@ pub enum ProtocolVersion {
     /// installed operator was seated by no election: the operator's share, once rotation is on
     /// again, credits its key's address.
     V48,
+    /// The stress parameters and a listed market's financing markup move only after a notice of at
+    /// least seven days, as the profit fee and close-out level do. `AnnounceParams` may name new
+    /// stress levels, move window and cooldown, which a `SetParams` applies from the notice's time
+    /// on, and `AnnounceMarkup` a market's new markup, which a relisting applies from its time on;
+    /// each applies once. A new listing needs no notice.
+    V49,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V48;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V49;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {
