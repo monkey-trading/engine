@@ -20,12 +20,12 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
 use engine_core::event::Event;
 use tokio::sync::{Notify, mpsc, oneshot, watch};
-use tracing::error;
+use tracing::{error, info};
 
 use crate::benchmarks::BenchmarkSchedule;
 use crate::history::marks::MarkSample;
@@ -39,6 +39,12 @@ use crate::stats::background::Job as StatsJob;
 /// takes the sequencer's next request down with it, rather than letting what cannot be released
 /// pile up.
 const MAX_IN_FLIGHT: usize = 64;
+
+/// How long the oldest batch may wait for its sync before the sequencer stops taking requests and
+/// raises Critical `log_sync_held`. An honest disk syncs in milliseconds; a host that holds the sync
+/// keeps every command behind it unreleased while it decides whether to let the batch reach the
+/// log, so the hold is paged and nothing more is stamped behind it.
+const MAX_SYNC_HOLD: Duration = Duration::from_secs(5);
 
 /// The requests of a batch that wait for its entries to be durable.
 #[derive(Default)]
@@ -57,6 +63,8 @@ pub(super) struct Release {
     job: Arc<SyncJob>,
     batch: Batch,
     last_seq: Option<u64>,
+    /// When the batch was staged: the hold bound runs from here.
+    staged: tokio::time::Instant,
     outbox: Vec<Arc<StreamMsg>>,
     marks: Vec<MarkSample>,
     house: Option<(Vec<oneshot::Sender<HouseState>>, HouseState)>,
@@ -124,6 +132,8 @@ pub(super) struct Pipeline {
     jobs: Sender<Arc<SyncJob>>,
     shared: Arc<Shared>,
     in_flight: VecDeque<Release>,
+    /// Whether the oldest batch's sync is held past `MAX_SYNC_HOLD`: one `log_sync_held` episode.
+    held: bool,
 }
 
 impl Pipeline {
@@ -148,7 +158,14 @@ impl Pipeline {
         });
         let worker = shared.clone();
         std::thread::Builder::new().name("log-sync".into()).spawn(move || run_syncs(&queue, &worker, sync))?;
-        Ok(Self { jobs, shared, in_flight: VecDeque::new() })
+        Ok(Self { jobs, shared, in_flight: VecDeque::new(), held: false })
+    }
+
+    /// Ends the `log_sync_held` episode, if one is open: no batch in flight is past the bound.
+    fn end_hold(&mut self) {
+        if std::mem::take(&mut self.held) {
+            info!(alert_resolved = "log_sync_held", "the held log sync finished: sequencing resumes");
+        }
     }
 }
 
@@ -268,6 +285,7 @@ impl Sequencer {
             job,
             batch,
             last_seq: self.engine.last_seq(),
+            staged: tokio::time::Instant::now(),
             outbox: std::mem::take(&mut self.outbox),
             marks: self.marks.take_pending(),
             house: self.house.take_answer(&self.engine, self.progress.params_seq),
@@ -363,23 +381,46 @@ impl Sequencer {
     }
 
     /// The next request, releasing batches as their syncs finish meanwhile. With `MAX_IN_FLIGHT`
-    /// batches pending it takes no request until one is done.
+    /// batches pending, or the oldest one's sync held past `MAX_SYNC_HOLD`, it takes no request
+    /// until a sync is done; a hold past the bound raises Critical `log_sync_held` once, resolved
+    /// when no batch in flight is past it.
     /// Error cases:
     /// - a sync failed, or its thread ended
     pub(super) async fn next_request(&mut self, rx: &mut mpsc::Receiver<Request>) -> anyhow::Result<Option<Request>> {
         loop {
-            let Some(pipeline) = self.pipeline.as_ref().filter(|pipeline| !pipeline.in_flight.is_empty()) else {
+            let Some(pipeline) = self.pipeline.as_mut() else { return Ok(rx.recv().await) };
+            let Some(oldest) = pipeline.in_flight.front() else {
+                pipeline.end_hold();
                 return Ok(rx.recv().await);
             };
+            let (deadline, through) = (oldest.staged + MAX_SYNC_HOLD, oldest.last_seq);
             let (pending, shared) = (pipeline.in_flight.len(), pipeline.shared.clone());
-            if pending >= MAX_IN_FLIGHT {
+            if tokio::time::Instant::now() >= deadline {
+                if !std::mem::replace(&mut pipeline.held, true) {
+                    error!(
+                        alert = "log_sync_held",
+                        "the log sync of the batch through seq {} has been held for over {MAX_SYNC_HOLD:?}: \
+                         sequencing stops until it finishes",
+                        through.map_or_else(|| "none".to_owned(), |seq| seq.to_string())
+                    );
+                }
                 let done = shared.next().await;
                 self.complete(done)?;
+                continue;
+            }
+            pipeline.end_hold();
+            if pending >= MAX_IN_FLIGHT {
+                tokio::select! {
+                    biased;
+                    done = shared.next() => self.complete(done)?,
+                    () = tokio::time::sleep_until(deadline) => {}
+                }
                 continue;
             }
             tokio::select! {
                 biased;
                 done = shared.next() => self.complete(done)?,
+                () = tokio::time::sleep_until(deadline) => {}
                 request = rx.recv() => return Ok(request),
             }
         }

@@ -82,7 +82,7 @@ an index: load only the rule whose hint matches the current action.
   under `secret_missing`; a rotation needs a restart and says so; an approved upgrade moves the bundle,
   an election moves none), the
   access-source screening (`access.rs`, signed decisions with bounded HTTP reads),
-  sequencer (a batch's data sync runs on a `log-sync` thread, `sequencer/pipeline.rs`, so the next price is stamped while the last batch reaches storage, and replies, stream messages, signed withdrawals and checkpoint posts leave in batch order once their sync is done; the API's views, `ApiState::read`, run on the stats worker's engine copy, which applies only durable batches), the public log with signed checkpoints (segmented, with a public archive), `engine
+  sequencer (a batch's data sync runs on a `log-sync` thread, `sequencer/pipeline.rs`, so the next price is stamped while the last batch reaches storage, and replies, stream messages, signed withdrawals and checkpoint posts leave in batch order once their sync is done, with no request taken while the oldest batch's sync is held past 5 s (Critical `log_sync_held`); the API's views, `ApiState::read`, run on the stats worker's engine copy, which applies only durable batches), the public log with signed checkpoints (segmented, with a public archive), `engine
   replay`, `engine exit-proof` (`exit.rs`: the exit's proofs and vault calls from a published log),
   `engine admin` (the operator's signing client), the REST API with the operator's admin
   route, the browser-origin allowlist (`api.allowed_origins`, in `api/origin.rs`), the

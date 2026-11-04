@@ -158,8 +158,10 @@ checkpoints, so whoever runs the node can still choose after the fact whether it
 commands happened, in two ways (#541). It can hold a batch's data sync while it watches the market,
 then let the sync finish or kill the node: replies, stream entries, and signed withdrawals go out
 only once their batch is durable, so until then nobody outside has seen it, and a batch the
-restarted log lacks never happened. No alert fires; the hold lasts only as long as the host stalls
-every reply and every new stream entry, which every client sees, and the signed heartbeats keep
+restarted log lacks never happened. Once the oldest unsynced batch has waited 5 s for its sync,
+the sequencer takes no further request and raises Critical `log_sync_held`, so nothing is stamped
+behind a held batch and a hold of the disk alone pages within 5 s; the hold lasts only as long as
+the host stalls every reply and every new stream entry, which every client sees, and the signed heartbeats keep
 naming the old head unless the host holds the network too. It can also cut the log back to any
 entry after the latest checkpoint the vault has finalized and restart the node, erasing commands
 the node had already answered and streamed. A cut below a later checkpoint the vault accepted but

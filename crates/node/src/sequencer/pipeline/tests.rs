@@ -212,6 +212,56 @@ async fn a_full_pipeline_takes_no_request_until_a_sync_is_done() {
     assert!(matches!(taken.unwrap(), Some(Request::Query(_))));
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_sync_held_past_the_bound_pages_and_stamps_nothing_until_it_finishes() {
+    let dir = scratch_dir("pipeline-held");
+    let (stream, _) = broadcast::channel(256);
+    let (withdrawals, _custody) = mpsc::unbounded_channel();
+    let clock = Arc::new(crate::clock::test_clock::TestClock::default());
+    let cfg = crate::sequencer::SequencerConfig {
+        clock: clock.clone(),
+        ..sequencer_config(&dir, watch::channel(Manifest::default()).0)
+    };
+    let mut seq = Sequencer::recover(cfg, Arc::new(crate::tee::EnclaveKey::test_key()), stream, withdrawals).unwrap();
+    let (permits, verdicts): (StdSender<Verdict>, StdReceiver<Verdict>) = channel();
+    let verdicts = Mutex::new(verdicts);
+    seq.pipeline_with_syncs(move |job| match verdicts.lock().unwrap().recv() {
+        Ok(Verdict::Pass) => job.sync(),
+        _ => anyhow::bail!("the disk failed"),
+    })
+    .unwrap();
+    let weighting = dev_config().genesis.params.toxicity.notional.expect("the dev config weighs by notional");
+    seq.carry_toxicity_notional(weighting).unwrap();
+    seq.activate_protocol().unwrap();
+    seq.genesis(&dev_config().genesis).unwrap();
+    seq.trust(sample_around(clock.as_ref())).unwrap();
+    let (_guard, mut alerts, mut resolved) = crate::test_support::capture_alerts_and_resolutions();
+    seq.sequence(Command::Tick).unwrap().unwrap();
+    let release = seq.stage(Batch::default()).unwrap();
+    seq.submit(release).unwrap();
+    let (tx, mut rx) = mpsc::channel(4);
+    // Inside the bound the next request is taken while the sync runs.
+    tx.send(Request::Query(Box::new(|_| {}))).await.unwrap();
+    let taken = timeout(Duration::from_secs(1), seq.next_request(&mut rx)).await.expect("inside the bound");
+    assert!(matches!(taken.unwrap(), Some(Request::Query(_))));
+    assert!(alerts.try_recv().is_err(), "no page inside the bound");
+    // Past it, the request waits behind the held sync and the hold pages once.
+    tokio::time::advance(MAX_SYNC_HOLD).await;
+    tx.send(Request::Query(Box::new(|_| {}))).await.unwrap();
+    let held = timeout(MAX_SYNC_HOLD * 3, seq.next_request(&mut rx)).await;
+    assert!(held.is_err(), "past the bound the sequencer takes no request");
+    let page = alerts.try_recv().expect("the hold pages");
+    assert_eq!(page.get("alert").map(String::as_str), Some("log_sync_held"));
+    assert_eq!(page.get("level").map(String::as_str), Some("ERROR"), "a held sync is Critical");
+    assert!(alerts.try_recv().is_err(), "one page per hold");
+    // The sync finishes: the request is taken and the episode ends.
+    permits.send(Verdict::Pass).unwrap();
+    let taken = timeout(Duration::from_secs(1), seq.next_request(&mut rx)).await.expect("a finished sync frees it");
+    assert!(matches!(taken.unwrap(), Some(Request::Query(_))));
+    let end = resolved.try_recv().expect("the finished sync resolves the hold");
+    assert_eq!(end.get("alert_resolved").map(String::as_str), Some("log_sync_held"));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn batches_queued_behind_a_sync_share_the_next_one() {
     let node = Gated::start("pipeline-grouped");
