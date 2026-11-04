@@ -231,7 +231,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - `src/sequencer/payout_tests.rs` — release order across claim pages, durability, restart, expiry without reissue, and rotation
 - `src/sequencer/payout_tests/` — the account payouts read across signing, reissue, payment and an unfinished restart load, paginated replacement signature order, paused claim acknowledgement, sealed approval recovery, FIFO signing across unloaded recovery windows, expired authorizations a rotation leaves unsigned, and no issuance or reissue while the vault pauses withdrawals or has a retired signer
 - `src/sequencer/withdrawal_scenario/` — actual Anvil/TLS/stream/custody crash, FIFO, and guardian pause and signer retirement scenarios with local signed time,
-  the enclave key lifecycle scenario (`keys.rs`), and the elected operator's handover (`handover.rs`)
+  the enclave key lifecycle scenario (`keys.rs`), and the elected operator's handover (`handover/mod.rs`), ending with the
+  operator in effect's upgrade while rotation is on (`handover/upgrade.rs`)
 - `src/sequencer/withdrawal_scenario/` — actual Anvil/TLS/stream/custody crash, FIFO, and guardian pause and signer retirement scenarios with local signed time
 - `src/sequencer/payout_tests/` — paginated replacement signature order, paused claim acknowledgement, sealed approval recovery, FIFO signing across unloaded recovery windows, and expired authorizations a rotation leaves unsigned
 - `src/sequencer/withdrawal_scenario/` — actual Anvil/TLS/stream/custody crash and FIFO scenarios with local signed time,

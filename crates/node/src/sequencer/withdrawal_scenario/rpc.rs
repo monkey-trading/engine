@@ -90,6 +90,7 @@ sol! {
     function register(CandidateRegistration registration, bytes signature) external;
     function setEnclave(address enclave) external;
     function setReleaseApproval(address candidate, bytes launchDigest, bytes32 configHash, bool approved) external;
+    function setRelease(bytes launchDigest, bytes32 configHash) external;
     function setRotation(bool enabled) external;
     function promote() external returns (uint64);
     function setVault(address vault) external;

@@ -20,9 +20,9 @@ approval; an approval for one step is not one for the next.
   new one (`git diff <old tag> <new tag> -- crates/core/src/protocol.rs`). If it changed, the upgrade
   cannot be rolled back to the old image: fix forward.
 - **While operator rotation is on, `setCurrentRelease` reverts** (`RotationActive`): the release the
-  vault names is then the operator in effect's registered release, and the registry has no call that
-  changes it. Run these procedures with rotation off. How an operator upgrades with rotation on is
-  an open question for the owner ([operator-candidate.md](operator-candidate.md), "Open questions").
+  vault names is then the operator in effect's. Naming a release is instead the timelock's approval
+  of it for the operator's candidacy and the candidacy's move to it
+  ([operator-candidate.md](operator-candidate.md), section 5); the handover in section 3 is the same.
 - **No staging environment exists yet.** Run this on a testnet vault first; the steps are the same.
 
 ## 1. Prepare a release
@@ -153,7 +153,8 @@ Use this for a new image, a new config, or both. The running release is `A`, the
 
 1. Prepare `B` (section 1). Check that the protocol-version note in "Know before you start" is
    settled, so you know whether this can be undone.
-2. **Name `B`.** Section 2, step 1, with `B`'s digest and config hash.
+2. **Name `B`.** Section 2, step 1, with `B`'s digest and config hash. With rotation on, follow
+   [operator-candidate.md](operator-candidate.md), section 5, steps 2 to 4, instead.
    **Changes the live system.** Needs the owner's approval of this contract call.
    Check: `A` raises `release_superseded` (Critical) within a minute of the block being `finalized`,
    and keeps sequencing. This page is expected; it says a restart of `A` would now find no keys.
@@ -198,6 +199,8 @@ Choose by where you are.
 
 **`A` still running; `B` has not taken the keys.** Call the upgrade off.
 1. The timelock calls `setCurrentRelease(A's digest, A's config hash)` again (section 2, step 1).
+   With rotation on, follow the rollback in [operator-candidate.md](operator-candidate.md),
+   section 5, instead.
    **Changes the live system.** Needs the owner's approval of this contract call.
    This starts another generation, so `A` keeps raising `release_superseded`: its sealed keys are
    from the earlier generation.

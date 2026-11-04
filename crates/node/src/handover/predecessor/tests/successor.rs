@@ -70,6 +70,7 @@ async fn segment_bytes_that_differ_from_the_listing_inside_the_keys_are_refused_
         signer: AccountId(old.enclave_key().unwrap().address()),
         current: Arc::new(Mutex::new(named)),
         rotation: Default::default(),
+        synced: Arc::default(),
     };
     let sealer = MockSealer { launch_digest: UPGRADE };
     let err =
@@ -113,6 +114,7 @@ async fn a_successor_without_the_signed_acknowledgement_keeps_the_keys_sealed_bu
         signer: AccountId(old.enclave_key().unwrap().address()),
         current: Arc::new(Mutex::new(named)),
         rotation: Default::default(),
+        synced: Arc::default(),
     };
     let sealer = MockSealer { launch_digest: UPGRADE };
     let err = take(&successor, &address, &sealer, &MockAttestor, &vault).await.err().expect("started unacknowledged");

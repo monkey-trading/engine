@@ -3,7 +3,12 @@
 //! its effective time, B reads A's handover endpoint from the registry, fetches the published log,
 //! takes the keys and the final log segment, and continues at the seq after A's final checkpoint;
 //! A exits; A's stale sealed copy refuses to open; a re-election of A hands the keys back, and
-//! A's old sealed copy cannot reopen under the new release generation.
+//! A's old sealed copy cannot reopen under the new release generation. Then A, the operator in
+//! effect, upgrades with rotation on: its candidacy cannot move to a release the timelock has not
+//! approved; once the timelock approves one, the move makes the vault name it at once, the
+//! upgrade takes the keys and the whole log from the running release, which exits, and continues
+//! past its final checkpoint under the same signer and signer epoch; the old release's sealed copy
+//! no longer opens.
 //!
 //! The vault reads chain time while an authorization's 24-hour lifetime is issued at the engine's
 //! sequenced time; the election's seven-day notice is crossed by warping the chain alone, so the
@@ -25,12 +30,17 @@ use tokio::time::{sleep, timeout};
 use crate::clock::now_ms;
 use crate::sequencer::withdrawal_scenario::client::{Client, User};
 use crate::sequencer::withdrawal_scenario::flows::last_seq;
+mod upgrade;
+use crate::sequencer::withdrawal_scenario::handover::upgrade::upgrade_with_rotation_on;
 use crate::sequencer::withdrawal_scenario::node::{ChildProcess, Node, free_port, write_config};
 use crate::sequencer::withdrawal_scenario::rpc::{
-    Chain, latestSeqCall, rotationEnabledCall, setEnclaveCall, setRotationCall, setSignerCall,
+    Chain, latestSeqCall, operatorInEffectCall, rotationEnabledCall, setEnclaveCall, setReleaseCall, setRotationCall,
+    setSignerCall,
 };
 use crate::sequencer::withdrawal_scenario::standby::{pay_b, rotation_and_staking};
-use crate::sequencer::withdrawal_scenario::{CHILD_ALERTS, CHILD_CONFIG, CHILD_FEED, CHILD_LAUNCH_DIGEST, CHILD_TEST};
+use crate::sequencer::withdrawal_scenario::{
+    CHILD_ALERTS, CHILD_CONFIG, CHILD_FEED, CHILD_KEYS, CHILD_LAUNCH_DIGEST, CHILD_TEST,
+};
 use crate::test_support::LOADED_WAIT;
 
 /// The deployer's operator key, which `config/anvil.toml` names: the initial operator in effect.
@@ -40,7 +50,8 @@ const B_ADMIN: [u8; 32] = [0x63; 32];
 /// The candidates' stand-in launch measurements; the releases differ through the config hashes.
 const A_DIGEST: [u8; 48] = [0x5a; 48];
 const B_DIGEST: [u8; 48] = [0x71; 48];
-/// A release the deployment names before A's config exists; superseded before A seals keys.
+/// A release the deployment names before A's config exists; the timelock names A's in the vault,
+/// and A's candidacy moves the registry's operator release to it, before A seals keys.
 const PLACEHOLDER_CONFIG: [u8; 32] = [0x99; 32];
 /// The registry's seven-day notice and its finality margin, both from the scenario's deployment.
 const NOTICE_SECS: u64 = 7 * 86_400;
@@ -101,9 +112,10 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
         log.lines().rev().take(20).collect::<Vec<_>>().join("\n")
     );
 
-    // 2. The operator in effect registers as a candidate with its handover endpoint, rotation
-    //    turns on, the release change folds, and A seals new keys once the timelock installs the
-    //    enclave it attests.
+    // 2. The operator in effect registers as a candidate with its handover endpoint and moves its
+    //    operator release from the deployment's placeholder to the release the vault names, so
+    //    turning rotation on leaves the vault naming A's; A seals new keys once the timelock
+    //    installs the enclave it attests.
     node.chain
         .register_impersonated_candidate(
             operator,
@@ -116,6 +128,13 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
             &format!("127.0.0.1:{a_handover}"),
         )
         .await?;
+    let align = setReleaseCall { launchDigest: A_DIGEST.to_vec().into(), configHash: a_config_hash.into() };
+    node.chain.impersonate_send(operator, node.chain.registry, align.abi_encode()).await?;
+    let a_release = keccak256([A_DIGEST.as_slice(), &a_config_hash].concat());
+    ensure!(
+        node.chain.read(node.chain.registry, operatorInEffectCall {}).await?.release == a_release,
+        "the operator in effect's release is not A's before rotation turns on"
+    );
     node.chain.govern_target(node.chain.registry, setRotationCall { enabled: true }.abi_encode()).await?;
     ensure!(node.chain.read(node.chain.registry, rotationEnabledCall {}).await?, "rotation never turned on");
     node.chain.sync_release().await?;
@@ -224,9 +243,9 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
 
     // 5. B starts: it resolves A's handover endpoint from the registry, fetches the published log,
     //    takes the keys and the final segment, and continues; A exits; A's authorization pays.
-    let mut b_child = spawn_b(&b_dir, &b_config_path, &node, B_DIGEST)?;
+    let mut b_child = spawn_release(&b_dir, &b_config_path, &node, B_DIGEST, None)?;
     let b_client = Client::new(b_port, node.chain.vault)?;
-    let mut b_check = b_child_checker(&mut b_child);
+    let mut b_check = child_checker(&mut b_child);
     wait_serving(&b_client, &mut b_check).await?;
     let status = node.exited(LOADED_WAIT).await?;
     ensure!(status.success(), "A exited with {status} after handing the keys over");
@@ -287,7 +306,6 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
     // time passes the notice the scenario does not outrun.
     wait_operator(&b_client, &mut b_check, Some(&format!("{operator:#x}")), true).await?;
     drop(b_check);
-    let a_release = keccak256([A_DIGEST.as_slice(), &a_config_hash].concat());
     node.chain.warp_to(effective2 + 120).await?;
     node.chain.sync_release().await?;
     node.chain.wait_finalized_release(a_release).await?;
@@ -295,7 +313,9 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
     let status = b_child.exited(LOADED_WAIT).await?;
     ensure!(status.success(), "B exited with {status} after handing the keys back");
     println!("PASS: the re-elected operator's enclave took the keys back; the stale sealed copy never opened");
-    Ok(())
+
+    // 8. A, the operator in effect again, upgrades with rotation on.
+    upgrade_with_rotation_on(&mut node, operator, a_enclave, a_handover, &staking, staking_start).await
 }
 
 /// `amount` whole MONKEY in base units.
@@ -303,23 +323,29 @@ fn monkey(amount: u64) -> U256 {
     U256::from(amount) * U256::from(10).pow(U256::from(18))
 }
 
-/// Spawns B as a child with the automatic key start: an election names its release, so it takes
-/// the keys from the incumbent the registry names.
-fn spawn_b(b_dir: &Path, config: &Path, node: &Node, digest: [u8; 48]) -> anyhow::Result<ChildProcess> {
-    let path = config.to_str().context("B config path is UTF-8")?;
-    let log = b_dir.join("node-b.log");
-    ChildProcess::spawn(
-        std::env::current_exe()?,
-        &["--ignored", "--exact", CHILD_TEST, "--nocapture", "--test-threads=1"],
-        &log,
-        &[
-            (CHILD_CONFIG, path),
-            (CHILD_FEED, &node.services.feed),
-            (CHILD_ALERTS, &node.services.alerts),
-            (CHILD_LAUNCH_DIGEST, &hex::encode(digest)),
-        ],
-        Some(b_dir),
-    )
+/// Spawns another release as a child in `dir`, logging to `node-<dir name>.log`: with `keys` its
+/// one-off key start, or without it the automatic one, which takes the keys from the incumbent an
+/// election replaced when the vault names this release through it.
+fn spawn_release(
+    dir: &Path,
+    config: &Path,
+    node: &Node,
+    digest: [u8; 48],
+    keys: Option<&str>,
+) -> anyhow::Result<ChildProcess> {
+    let path = config.to_str().context("the child's config path is UTF-8")?;
+    let name = dir.file_name().context("the child's directory name")?.to_string_lossy();
+    let log = dir.join(format!("node-{name}.log"));
+    let digest = hex::encode(digest);
+    let mut env = vec![
+        (CHILD_CONFIG, path),
+        (CHILD_FEED, node.services.feed.as_str()),
+        (CHILD_ALERTS, node.services.alerts.as_str()),
+        (CHILD_LAUNCH_DIGEST, digest.as_str()),
+    ];
+    env.extend(keys.map(|keys| (CHILD_KEYS, keys)));
+    let args = ["--ignored", "--exact", CHILD_TEST, "--nocapture", "--test-threads=1"];
+    ChildProcess::spawn(std::env::current_exe()?, &args, &log, &env, Some(dir))
 }
 
 /// Polls the attestation route until the node serves one, returning the enclave address; the
@@ -417,6 +443,6 @@ async fn wait_serving(client: &Client, check: &mut dyn FnMut() -> anyhow::Result
 }
 
 /// A check closure over a raw child process.
-fn b_child_checker(child: &mut ChildProcess) -> impl FnMut() -> anyhow::Result<()> + '_ {
+fn child_checker(child: &mut ChildProcess) -> impl FnMut() -> anyhow::Result<()> + '_ {
     move || child.check()
 }

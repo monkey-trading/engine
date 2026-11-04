@@ -8,8 +8,8 @@ import {OperatorRegistry} from "../src/OperatorRegistry.sol";
 import {Staking} from "../src/Staking.sol";
 import {RegistryTest} from "./helpers/RegistryTest.sol";
 
-/// @notice Random staking, delegation, candidacy, approvals, rotation switches, closes and clock
-/// moves among a few actors, recording each election the registry makes.
+/// @notice Random staking, delegation, candidacy, approvals, release moves, rotation switches,
+/// closes and clock moves among a few actors, recording each election the registry makes.
 contract RegistryHandler is Test {
     OperatorRegistry internal registry;
     Staking internal staking;
@@ -25,6 +25,9 @@ contract RegistryHandler is Test {
     uint256 public elections;
     /// @notice Every candidate an election named.
     mapping(address candidate => bool) public everElected;
+    /// @notice Release moves that landed on a release not approved for the mover, or while an
+    /// election waiting to take effect involved it, or that left the release moved off approved.
+    uint256 public misplacedMoves;
 
     constructor(OperatorRegistry registry_, address vault_) {
         registry = registry_;
@@ -113,11 +116,49 @@ contract RegistryHandler is Test {
         registry.deregister();
     }
 
-    /// @dev Approves three times in four, and withdraws approval otherwise.
+    /// @dev Approves three times in four, and withdraws approval otherwise, of one of the actor's
+    /// two releases: the one it registers, or the one it may move to.
     function approve(uint256 actorSeed, uint256 approvedSeed) external {
         uint256 index = actorSeed % actors.length;
         vm.prank(governance);
-        registry.setReleaseApproval(actors[index], _digest(index), bytes32(0), approvedSeed % 4 != 0);
+        registry.setReleaseApproval(
+            actors[index], _digest(_releaseIndex(index, approvedSeed / 4)), bytes32(0), approvedSeed % 4 != 0
+        );
+    }
+
+    /// @dev Tries to move an actor to one of its two releases, counting a move that should have
+    /// been refused. While an election waits, each call is an upgrade attempt by either side of it;
+    /// otherwise every third call is one by the operator in effect; either only when that is an
+    /// actor, and to a release the timelock approves for it first.
+    function moveRelease(uint256 actorSeed, uint256 releaseSeed) external {
+        uint256 index = actorSeed % actors.length;
+        bool upgrade = false;
+        OperatorRegistry.Election memory waiting = registry.pendingElection();
+        address target;
+        if (waiting.effectiveAt != 0) {
+            target = actorSeed % 2 == 0 ? waiting.candidate : registry.operatorInEffect().candidate;
+        } else if (actorSeed % 3 == 0) {
+            target = registry.operatorInEffect().candidate;
+        }
+        for (uint256 i = 0; i < actors.length; i++) {
+            if (target != address(0) && actors[i] == target) (index, upgrade) = (i, true);
+        }
+        address account = actors[index];
+        bytes memory digest = _digest(_releaseIndex(index, releaseSeed));
+        bytes32 release = keccak256(abi.encodePacked(digest, bytes32(0)));
+        if (upgrade) {
+            vm.prank(governance);
+            registry.setReleaseApproval(account, digest, bytes32(0), true);
+        }
+        bool approved = registry.releaseApproved(keccak256(abi.encode(account, release)));
+        bool involved = waiting.effectiveAt != 0
+            && (account == waiting.candidate || account == registry.operatorInEffect().candidate);
+        bytes32 left = registry.candidateOf(account).release;
+        vm.prank(account);
+        try registry.setRelease(digest, bytes32(0)) {
+            bool stillApproved = left != release && registry.releaseApproved(keccak256(abi.encode(account, left)));
+            if (!approved || involved || stillApproved) misplacedMoves++;
+        } catch {}
     }
 
     function switchRotation() external {
@@ -150,8 +191,20 @@ contract RegistryHandler is Test {
         vm.warp(block.timestamp + bound(seconds_, 1, 10 days));
     }
 
+    /// @dev Warps to a waiting election's effective time, so elections take effect within a run
+    /// rather than mostly being cancelled during their notice.
+    function awaitElection() external {
+        uint64 effectiveAt = registry.pendingElection().effectiveAt;
+        if (effectiveAt != 0) vm.warp(effectiveAt);
+    }
+
     function _digest(uint256 index) internal pure returns (bytes memory) {
         return abi.encodePacked(keccak256(abi.encode(index)), bytes16(0));
+    }
+
+    /// @dev The actor's registered release index, or its alternative one, by `seed`'s parity.
+    function _releaseIndex(uint256 index, uint256 seed) internal view returns (uint256) {
+        return index + (seed % 2) * actors.length;
     }
 }
 
@@ -216,5 +269,35 @@ contract OperatorRegistryInvariantTest is RegistryTest {
         assertEq(handler.misplacedElections(), 0);
         address inEffect = registry.operatorInEffect().candidate;
         assertTrue(inEffect == deployerKey || handler.everElected(inEffect));
+    }
+
+    /// @notice A release moves only to one the timelock approved for the mover, never for either
+    /// side of an election waiting to take effect, and one way: the release left loses its approval.
+    function invariant_ReleasesMoveOnlyWhenApprovedAndNoElectionWaits() public view {
+        assertEq(handler.misplacedMoves(), 0);
+    }
+
+    /// @notice A candidate is listed exactly while it is registered and the release it registered,
+    /// or last moved to, is approved for it.
+    function invariant_ListingFollowsTheRegisteredReleasesApproval() public view {
+        for (uint256 i = 0; i < handler.actorCount(); i++) {
+            address account = handler.actor(i);
+            OperatorRegistry.Candidate memory candidate = registry.candidateOf(account);
+            bool approved = candidate.adminKey != address(0)
+                && registry.releaseApproved(keccak256(abi.encode(account, candidate.release)));
+            bool listed = false;
+            for (uint256 j = 0; j < registry.candidateCount(); j++) {
+                listed = listed || registry.candidateList(j) == account;
+            }
+            assertEq(listed, approved);
+        }
+    }
+
+    /// @notice An elected operator in effect runs the release its candidacy holds: an election
+    /// names the release registered at its close, and the operator's move changes both.
+    function invariant_AnElectedOperatorRunsItsCandidacysRelease() public view {
+        OperatorRegistry.Operator memory operator = registry.operatorInEffect();
+        if (operator.candidate == deployerKey) return;
+        assertEq(operator.release, registry.candidateOf(operator.candidate).release);
     }
 }

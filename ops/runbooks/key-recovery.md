@@ -71,7 +71,8 @@ remain, the owner decides whether to start the install anyway or let the exit ru
      generation opens in the new one, so no old file stands in the way. Use the pattern in reference.md
      with `DATA=$(cast calldata 'setCurrentRelease(bytes,bytes32)' $DIGEST $CONFIG_HASH)`.
      **Changes the live system.** Needs the owner's approval of this contract call. This is not
-     available while operator rotation is on; see [operator-candidate.md](operator-candidate.md).
+     available while operator rotation is on; the operator's move to another approved release raises
+     the generation instead ([operator-candidate.md](operator-candidate.md), section 5).
    - *Delete the old file.* With the VM stopped, remove `/data/keys/<release id>-<generation>.sealed.json`
      from the data disk. **Changes the live system.** Needs the owner's approval to delete keys. A
      host that deletes the file gets the same result as one that cannot read it, so only do this when

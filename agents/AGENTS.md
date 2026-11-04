@@ -207,7 +207,8 @@ an index: load only the rule whose hint matches the current action.
   deploys the staking contract and elects the operator key: candidates register a self-bond, admin
   key, API hostname, handover endpoint and release — the registration carrying the admin key's
   EIP-712 authorization of the candidate, so a key is registered only for a candidate it
-  authorized — the timelock approves releases, switches rotation
+  authorized — and move to another release the timelock approved for them (`setRelease`, how the
+  operator in effect upgrades while rotation is on), the timelock approves releases, switches rotation
   (off at deployment, the deployer in effect), installs a new operator in effect while rotation is
   off (`installOperator`, the timelock-only fallback for a failed operator whose key is gone) and moves parameters within deployment bounds, and
   anyone closes an election epoch, electing the top eligible candidate past quorum, minimum term and
@@ -317,7 +318,8 @@ an index: load only the rule whose hint matches the current action.
   leaf registers and pays through the vault's exit;
   `dev-operator-handover.sh`, the operator handover scenario on Anvil: an elected candidate's enclave
   takes the keys and the log from the incumbent's at the election's effective time, a withdrawal the
-  incumbent authorized pays, a stale sealed copy refuses, and a re-election hands the keys back;
+  incumbent authorized pays, a stale sealed copy refuses, a re-election hands the keys back, and
+  the operator in effect upgrades with rotation on to a release the timelock approved;
   `dev-standby-operator.sh`, the standby takeover scenario on Anvil: a failed operator, the liveness
   rule's promotion, the limited `setSigner`, and the reissued payout across the signer change;
   `dev-production-secrets.sh`, delivering secrets into a dev node's attested enclave on Anvil: a hold
@@ -593,7 +595,8 @@ Run from the repo root:
   as the operator in effect with rotation on, an election names B and, past its effective time, B
   takes the keys and the log from A through the handover listener, A exits, a withdrawal A
   authorized pays, A's stale sealed copy refuses to open, and a re-election of A hands the keys back
-  from B)
+  from B; then A's candidacy moves to a release the timelock approved, with rotation on, and that
+  release takes the keys and the whole log from A over `--predecessor`, under the same signer)
 - Standby operator dev scenario: `./scripts/dev-standby-operator.sh` (the same requirements; A runs
   with rotation on and payouts paused, B follows A's stream into a copy, A fails, the registry's
   liveness rule promotes B, the timelock's `setSigner` installs only B's registered enclave, B

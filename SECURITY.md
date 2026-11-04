@@ -190,8 +190,10 @@ authenticates historical roots; immutable signer-epoch history independently aut
 against older roots during recovery and custody-backed replay. The unanchored checkpoint tail still
 requires the current signer. The deployment's multisig proposes changes through its nonzero-delay
 timelock, which alone rotates the signer, lifts a withdrawal pause or changes the deposit pause, or
-sets the current release: the one launch measurement and config hash that may hold the enclave's
-keys. As the vault's immutable guardian, the same multisig may also, without the delay, pause
+names the release that may hold the enclave's keys: the one launch measurement and config hash it
+sets as current while operator rotation is off, and, while it is on, each release it approves for
+the operator in effect, whose candidate account moves the vault's release to it, withdrawing the
+approval of the release it leaves. As the vault's immutable guardian, the same multisig may also, without the delay, pause
 withdrawals for seven days or retire the signer, which the vault then refuses for withdrawals and
 checkpoints until the timelock installs one, and for MONKEY and USDC claims until that signer posts
 a checkpoint, which an exit that starts first rules out; the node signs no withdrawal while either
@@ -212,8 +214,9 @@ the chip, the launch measurement, the guest policy, and the committed TCB, with 
 bound to the ciphertext, so neither the host nor another release, the same code under another
 config included, can open them. A node opens or seals keys only while the vault names its release
 as current at custody finality, and only in the vault's current generation of it, which every
-change of the current release raises, so a release the timelock has superseded never signs again
-from its old sealed file, even once it is named again; the keys move to a new release only after the timelock makes it current and
+change of the current release raises, and keys are sealed or handed over only once that generation
+has folded the change, so a release the timelock has superseded never signs again
+from its old sealed file, even once it is named again; the keys move to a new release only after the vault names it and
 each release attests the other over a challenge fresh to the connection, and only encrypted to the
 new release's attested one-time key, which takes them only if the vault already names their
 signing key; a release that has stopped to hand them over serves new releases until one confirms. Two copies of the current

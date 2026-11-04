@@ -13,7 +13,7 @@ use std::time::Duration;
 use anyhow::{Context, bail, ensure};
 use tracing::{error, info, warn};
 
-use crate::checkpoints::CheckpointChain;
+use crate::checkpoints::{CheckpointChain, CurrentRelease};
 use crate::config::{NodeConfig, TeeProvider};
 use crate::handover::{current_release, ensure_named, vault_reader};
 use crate::log::Checkpoint;
@@ -323,10 +323,23 @@ pub(super) async fn cut_to_finalized_anchor(cfg: &NodeConfig, key: &Arc<EnclaveK
 
 /// How often a running node with sealed keys reads the vault's current release.
 pub(super) const RELEASE_CHECK_EVERY: Duration = Duration::from_secs(60);
+
+/// The release the vault names at custody finality, whether or not its generation has folded the
+/// change: unlike `handover::current_release`, this read must not wait for the fold, since the
+/// supersession watch alerts on the release move itself.
+/// Error cases:
+/// - the vault cannot be read
+async fn named_release(vault: &impl CheckpointChain) -> anyhow::Result<CurrentRelease> {
+    let finalized = vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
+    vault.current_release(&finalized).await
+}
+
 /// Raises `release_superseded` (Critical) once the vault's current release at finality is no longer
 /// `sealed` in `generation`, the release and generation the keys are sealed in, reading it every
 /// `every`: a restart would then find no keys to open, so they must be handed to the release the
-/// vault names before this node stops. A failed read is retried.
+/// vault names before this node stops. The read does not wait for the vault's generation to fold
+/// the change: the running release is superseded from the block the change reads at finality, and
+/// the fold can lag that by anyone's `syncRelease`. A failed read is retried.
 /// Error cases:
 /// - none; it runs until the node stops
 pub(super) async fn watch_release(
@@ -339,7 +352,7 @@ pub(super) async fn watch_release(
     let mut tick = tokio::time::interval(every);
     loop {
         tick.tick().await;
-        let current = match current_release(&vault).await {
+        let current = match named_release(&vault).await {
             Ok(current) => current,
             Err(e) => {
                 warn!("reading the vault's current release failed: {e:#}");

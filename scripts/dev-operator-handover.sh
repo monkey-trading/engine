@@ -5,7 +5,9 @@
 # an election names B and, past its effective time, B reads A's handover endpoint from the
 # registry, fetches the published log, takes the keys and the final log segments, and continues at
 # the seq after A's final checkpoint while the vault accepts B's checkpoints; A exits; A's stale
-# sealed copy refuses to open; a re-election of A hands the keys back.
+# sealed copy refuses to open; a re-election of A hands the keys back; then A upgrades with
+# rotation on: its candidacy moves to a release the timelock approved, and that release takes the
+# keys and the whole log from A and continues under the same signer.
 # Needs Anvil, Forge, Python 3, Cargo, and installed Soldeer dependencies. No external RPC or keys
 # are used.
 set -euo pipefail

@@ -20,7 +20,7 @@ use crate::config::NodeConfig;
 use crate::handover::evidence::{self, Quoting};
 use crate::handover::{
     Challenge, Confirm, Kx, MESSAGE_TIMEOUT, REPLY_TIMEOUT, Reply, Request, confirm_digest, confirmed_digest,
-    ensure_named, keys_report_data, open_keys, receive, receive_bytes, request_report_data, send,
+    ensure_named, folded_release, keys_report_data, open_keys, receive, receive_bytes, request_report_data, send,
 };
 use crate::log::{CheckpointDomain, LogEntry, Manifest, SegmentInfo, segment_seq};
 use crate::tee::Attestor;
@@ -113,7 +113,7 @@ pub(crate) async fn take(
         enclave.address_hex()
     );
     let release = Release { launch_digest: platform.launch_digest, config_sha256: cfg.file_sha256 };
-    let generation = ensure_named(vault.current_release(&observation).await?, &release)?;
+    let generation = ensure_named(folded_release(vault, &observation).await?, &release)?;
     let signers = crate::handover::vault_signers(vault, &observation).await?;
     let mut tip = log_tip;
     for listed in &tails {

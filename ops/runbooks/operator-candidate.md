@@ -4,9 +4,9 @@ The operator runs the enclave host, holds the admin key, and is chosen on chain:
 their MONKEY to a candidate, and anyone may close an election epoch, which elects the eligible
 candidate with the most delegated stake. Rotation is **off at launch**. The deployer is the only
 operator until the timelock turns it on, and until then none of the election steps here has an
-effect. This runbook has three parts: standing for election, becoming the operator when elected, and
-handing the node to the next operator. Running as a standby is in [standby.md](standby.md). Read
-[reference.md](reference.md) first.
+effect. This runbook has four parts: standing for election, becoming the operator when elected,
+handing the node to the next operator, and upgrading while you are the operator. Running as a
+standby is in [standby.md](standby.md). Read [reference.md](reference.md) first.
 
 The registry's launch parameters (#360): epoch 14 days, minimum term 90 days, finality margin 1 day,
 challenger margin 10% of the incumbent's votes, eligibility 1% of total stake, quorum 25% of total
@@ -27,7 +27,7 @@ prints, in order, the epoch length, minimum term, finality margin, margin, eligi
 | A checkpoint endpoint and a funded relayer | Its own, per [feed-and-custody-failures.md](feed-and-custody-failures.md), "Checkpoint endpoint". |
 | An alert receiver | `[alerts.critical]` is required with real attestation. |
 | An admin key | Made and kept offline, ideally on a hardware wallet. It signs `engine admin` commands and its registration. |
-| A candidate account | An Arbitrum account holding the self-bond in staked MONKEY and ETH for gas. It may differ from the admin key. |
+| A candidate account | An Arbitrum account holding the self-bond in staked MONKEY and ETH for gas. It may differ from the admin key. While its candidate is the operator in effect, it also moves the vault's release to any release the timelock approved for it (section 5), and the operator in effect cannot deregister to revoke it: keep it like the admin key, offline, on a hardware wallet or a multisig. |
 | A Certificate Transparency watcher | On a host independent of the node's, started before its first certificate. |
 | An archive mirror | At least one store that does not share a failure with the node. A successor reads the log from mirrors when the node is dead. |
 
@@ -107,12 +107,15 @@ config hash is what the timelock approves, so every change after approval is a n
    Check: `cast call $REGISTRY 'isEligible(address)(bool)' <candidate address> --rpc-url $RPC`
    prints `true` once the candidate also has the eligibility share of total stake in votes
    (`cast call $STAKING 'votes(address)(uint256)' <candidate address>`). Withdrawing the approval
-   delists it.
+   delists it, until the candidate moves to another release still approved for it (section 5): to
+   keep a candidate off the list, withdraw every release approved for it.
 6. **Run the standby** ([standby.md](standby.md)) so the candidate is ready for a promotion. A
    candidate that wins an election instead takes the keys by handover (below).
 
 A candidate cannot leave while it is the operator in effect, or elected and waiting. Otherwise
-`cast send $REGISTRY 'deregister()'` removes it and frees the bond one cooldown later.
+`cast send $REGISTRY 'deregister()'` removes it and frees the bond one cooldown later. A candidate
+changes its release without leaving, as in section 5, steps 2 and 3: an election names the release
+the candidacy holds when the epoch closes.
 
 ## 2. The incumbent registers too
 
@@ -124,6 +127,20 @@ owner turns rotation on**, the initial operator registers as a candidate from it
 address (the initial operator's candidate identity is its admin key), with its real hostname and
 handover endpoint and a release the timelock approves. Use steps 2 to 5 above with the admin key as
 the candidate account.
+
+Registering does not change the release the registry names for the operator in effect: until it
+moves, that is the release the deployment named, and it is what the vault names once rotation is
+on. So, before rotation turns on, register with the release the vault names now and move the
+candidacy to it (section 5, step 3, with that release: a move to the release the candidacy holds
+keeps its approval), and check that the two agree:
+
+```sh
+cast call $REGISTRY 'operatorInEffect()((address,address,bytes32,uint64))' --rpc-url $RPC   # the third field
+cast call $VAULT 'currentRelease()(bytes32)' --rpc-url $RPC
+```
+
+Otherwise turning rotation on makes the vault name another release, and the running node's keys
+no longer open on a restart (`release_superseded`).
 
 Check, once an election exists: `cast call $REGISTRY 'handoverSource()((address,bytes32,string,string))'
 --rpc-url $RPC` names the incumbent, its release, hostname and endpoint.
@@ -192,19 +209,60 @@ You are the incumbent and an election has named another operator.
 6. After the handover your admin key signs nothing from `effectiveAt`. Keep the log copy and the
    attestation of your enclave: the log's earlier checkpoints verify only against it.
 
+## 5. Upgrading while you are the operator
+
+While rotation is on, the vault's `setCurrentRelease` reverts (`RotationActive`): the vault names
+the operator in effect's release. You upgrade by moving your candidacy to a release the timelock has
+approved for it; the vault names the new release at once, and the running release hands it the keys
+and the log as in an ordinary upgrade. The timelock's delay still stands between any release and the
+keys, since only the timelock approves releases, and a move is one-way: it withdraws the approval of
+the release it leaves, so moving back needs a new approval. The running release is `A`, the new one
+`B`.
+
+1. **Prepare `B`** ([deploy-and-rollback.md](deploy-and-rollback.md), section 1). Keep the
+   hostname and handover endpoint you registered: the registry has no call that changes them while
+   you are the operator, so `B` serves them once `A` has powered off.
+2. **Get `B` approved for your candidacy**, as in section 1, step 5, with `B`'s digest and config
+   hash.
+   **Changes the live system.** Needs the owner's approval of this contract call.
+3. **Move your candidacy to `B`.** From the candidate account:
+
+   ```sh
+   cast send $REGISTRY 'setRelease(bytes,bytes32)' $DIGEST $CONFIG_HASH --rpc-url $RPC --account <candidate>
+   ```
+
+   **Changes the live system.** Needs the owner's approval of this transaction: from it, a restart
+   of `A` finds no keys, and `A`'s approval is gone (`ReleaseApprovalChanged(<candidate>, <A's
+   release>, false)`). Errors: `NotRegistered`; `ReleaseNotApproved(<release>)` (step 2 has not
+   executed); `ElectionPending` (an election or promotion that replaces you or names you waits to
+   take effect: upgrade after it takes effect, or let the successor run its own release);
+   `CandidateCapReached` (your candidacy was delisted and the list is full, past the one place the
+   operator in effect may take beyond the cap).
+   Check: the third field of `operatorInEffect()` and `cast call $VAULT 'currentRelease()(bytes32)'`
+   both equal `cast keccak $(cast concat-hex $DIGEST $CONFIG_HASH)`.
+4. **Fold the change into the vault's generation** (anyone may; `B` waits for it up to a minute,
+   then refuses, and `A` hands over no keys until it lands):
+
+   ```sh
+   cast send $VAULT 'syncRelease()' --rpc-url $RPC --account <any>
+   ```
+
+   Check: `releaseGeneration()` rose by one. `A` raises `release_superseded` (Critical) once the
+   block is `finalized`, and keeps sequencing; the page is expected.
+5. **Start `B` with a `predecessor` file**, as in [deploy-and-rollback.md](deploy-and-rollback.md),
+   section 3, steps 3 to 7. The enclave address, the signer epoch and `$PIN` carry over. Do not
+   start `B` without the file: with no sealed keys and no flag, a node takes the keys from the
+   operator the last election replaced (`handoverSource()`), not from `A`.
+
+To roll back before `B` takes the keys, the timelock approves `A` again (section 1, step 5), then
+move the candidacy back to `A` (steps 3 and 4) and make `A` restart-safe again as in
+deploy-and-rollback.md, section 4. A candidate that is not the operator moves its release the same
+way, steps 2 and 3, with no effect on the vault.
+
 ## Open questions
 
 These are gaps in the contracts as written. Do not work around them on a live system; the owner
 decides.
 
-- **Upgrading the operator in effect while rotation is on.** `setCurrentRelease` reverts with
-  `RotationActive`, the registry has no call that changes a registered release, and the operator in
-  effect cannot deregister. The only registered releases are the ones candidates registered before.
-  Turning rotation off, upgrading, and turning it on again makes the vault name the registry's
-  (old) operator release again — unless the timelock also `installOperator`s the operator with the
-  new release while rotation is off, the same call as the failed-operator fallback
-  ([standby.md](standby.md), "When no standby qualifies"), naming the upgraded release for the same
-  candidate. While rotation stays on, a new release for the operator in effect has no path other
-  than a second candidacy winning an election (14-day epoch, 90-day minimum term).
 - **The first election needs a registered incumbent** (section 2). The contracts accept an election
   that leaves `handoverSource()` empty, and the successor then cannot start.
