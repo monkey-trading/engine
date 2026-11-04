@@ -67,7 +67,8 @@ impl NodeConfig {
     /// with an instrument fewer of them quote than its `min_sources` has no price whenever the
     /// market prices from that instrument. It reads the genesis listings, which every config of a
     /// log carries: a market listed or relisted after genesis is left to the `market_unfed`,
-    /// `market_no_price`, and `futures_roll_overdue` alerts.
+    /// `market_no_price`, and `futures_roll_overdue` alerts, and a release after a relisting that
+    /// lowers `min_sources` or rolls past a contract still keeps what genesis needs.
     /// Error cases:
     /// - `production` is set and an instrument a genesis market's listing names is quoted by fewer
     ///   venues than its `min_sources` (see `venues_quoting`)

@@ -2498,7 +2498,9 @@ A Massive connection names one of its `/forex`, `/futures`, or `/stocks` feeds; 
 market priced from futures names the `contract` it quotes, one listed in the market's `contracts`,
 and the feed sends quotes for each contract the market takes now. A production build refuses a
 config in which fewer venues quote a genesis market, or any contract its genesis listing names,
-rolled off or not, than its `min_sources`:
+rolled off or not, than its `min_sources`. Genesis is fixed for the life of a log, so a later
+release keeps those venues and contracts even after a relisting lowers `min_sources` or rolls past
+a contract. A futures connection, in a development build:
 
 ```toml
 [[feeds.venues.connections]]
