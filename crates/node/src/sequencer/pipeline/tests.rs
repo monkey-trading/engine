@@ -1,19 +1,32 @@
 //! A batch leaves the sequencer only once its sync is done, the next one is sequenced meanwhile, and
-//! a failed sync stops the node. The sync is a gate the test opens, so no test sleeps to order events.
+//! a failed sync stops the node. The sync is a gate the test opens, so no test sleeps to order
+//! events. What the API answers a client waits for the same gate: a refusal states the state the
+//! speculative engine had taken in, and the batch's `later` answers go out with its release.
 
+use std::net::SocketAddr;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver as StdReceiver, Sender as StdSender, channel};
 use std::time::Duration;
 
-use engine_core::command::Command;
+use axum::body::Body;
+use axum::extract::connect_info::MockConnectInfo;
+use axum::http::Request as HttpRequest;
+use axum::http::StatusCode;
+use engine_core::auth::{ClientAuth, RequestAuth};
+use engine_core::command::{AdminCommand, Command, OrderKind, OrderRequest};
+use engine_core::eip712::{self, order_hash};
 use engine_core::event::Event;
-use tokio::sync::{broadcast, mpsc, oneshot};
+use engine_core::types::{AccountId, Side};
+use k256::ecdsa::SigningKey;
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
+use tower::ServiceExt;
 
 use super::*;
 use crate::log::Manifest;
+use crate::sequencer::Reissue;
 use crate::test_support::{dev_config, sample_around, scratch_dir, sequencer_config};
 
 /// What a sync does when the test lets it.
@@ -32,6 +45,8 @@ struct Gated {
     syncs: Arc<AtomicUsize>,
     /// One message each time the thread starts a sync, before it waits for its verdict.
     entered: StdReceiver<()>,
+    /// The log writer's manifest, as the API watches it.
+    manifest: watch::Receiver<Manifest>,
     task: JoinHandle<anyhow::Result<()>>,
 }
 
@@ -41,10 +56,8 @@ impl Gated {
         let (stream, stream_rx) = broadcast::channel(256);
         let (withdrawals, _custody) = mpsc::unbounded_channel();
         let clock = Arc::new(crate::clock::test_clock::TestClock::default());
-        let cfg = crate::sequencer::SequencerConfig {
-            clock: clock.clone(),
-            ..sequencer_config(&dir, watch::channel(Manifest::default()).0)
-        };
+        let (manifest_tx, manifest) = watch::channel(Manifest::default());
+        let cfg = crate::sequencer::SequencerConfig { clock: clock.clone(), ..sequencer_config(&dir, manifest_tx) };
         let mut seq =
             Sequencer::recover(cfg, Arc::new(crate::tee::EnclaveKey::test_key()), stream, withdrawals).unwrap();
         let stats = crate::test_support::stats();
@@ -73,7 +86,7 @@ impl Gated {
         seq.trust(sample_around(clock.as_ref())).unwrap();
         let (tx, rx) = mpsc::channel(64);
         let task = tokio::spawn(seq.run(rx));
-        Self { tx, permits, stream: stream_rx, stats, syncs, entered, task }
+        Self { tx, permits, stream: stream_rx, stats, syncs, entered, manifest, task }
     }
 
     /// Waits until the sync thread has started a sync and is waiting for its verdict.
@@ -110,6 +123,16 @@ impl Gated {
 /// Whether `rx` has nothing yet, after the sequencer has had every chance to answer.
 async fn silent<T>(rx: &mut oneshot::Receiver<T>) -> bool {
     timeout(Duration::from_millis(150), rx).await.is_err()
+}
+
+/// The node's API client surface over `node`: the same request channel and log manifest, with
+/// signatures enforced under the chain and vault the sequencer config records.
+fn api_over(node: &Gated) -> crate::api::ApiState {
+    let (mut api, _unread) = crate::api::tests::api_state(true);
+    api.tx = node.tx.clone();
+    api.manifest = node.manifest.clone();
+    api.auth = ClientAuth::Eip712 { chain_id: 31337, vault: AccountId([0; 20]) };
+    api
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -257,4 +280,108 @@ async fn batches_that_only_answer_reads_take_no_pipeline_slot() {
         timeout(Duration::from_secs(10), answer).await.expect("answered").unwrap();
     }
     price.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_batchs_later_answers_go_out_with_its_release() {
+    let node = Gated::start("pipeline-later");
+    let first = node.tick().await;
+    node.applied().await;
+    node.sync_started();
+    // Reads of the state the batch changed: payouts, claims, and a withdrawal reissue. None of them
+    // wrote anything, so they ride the held batch's release.
+    let account = AccountId([0xbb; 20]);
+    let (payouts, mut payouts_rx) = oneshot::channel();
+    node.tx.send(Request::AccountPayouts { account, after: None, limit: 10, reply: payouts }).await.unwrap();
+    let (entitlement, mut entitlement_rx) = oneshot::channel();
+    node.tx.send(Request::EntitlementClaim { account, reply: entitlement }).await.unwrap();
+    let (distribution, mut distribution_rx) = oneshot::channel();
+    node.tx.send(Request::DistributionClaim { account, reply: distribution }).await.unwrap();
+    let (reissue, mut reissue_rx) = oneshot::channel();
+    let reissue_req = Request::ReissueWithdrawal { account, nonce: 0, replaces: 0, screening: None, reply: reissue };
+    node.tx.send(reissue_req).await.unwrap();
+    node.applied().await;
+
+    assert!(silent(&mut payouts_rx).await, "payouts wait for the batch's sync");
+    assert!(silent(&mut entitlement_rx).await, "the entitlement claim waits");
+    assert!(silent(&mut distribution_rx).await, "the distribution claim waits");
+    assert!(silent(&mut reissue_rx).await, "the reissue waits");
+
+    node.permits.send(Verdict::Pass).unwrap();
+    first.await.unwrap();
+    let payouts = timeout(Duration::from_secs(10), payouts_rx).await.expect("payouts answered").unwrap();
+    assert!(!payouts.loaded, "mock custody holds no payout gate");
+    let _ = timeout(Duration::from_secs(10), entitlement_rx).await.expect("the entitlement claim is answered");
+    let _ = timeout(Duration::from_secs(10), distribution_rx).await.expect("the distribution claim is answered");
+    let reissue = timeout(Duration::from_secs(10), reissue_rx).await.expect("the reissue is answered").unwrap();
+    assert!(
+        matches!(reissue, Reissue::Refused { .. }),
+        "no screening evidence, so the reissue is refused: {reissue:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn refused_signed_and_admin_requests_wait_for_their_batchs_sync() {
+    let node = Gated::start("pipeline-refusals");
+    let api = api_over(&node);
+    let first = node.tick().await;
+    node.applied().await;
+    node.sync_started();
+    let expires_at = api.clock.now_ms() + 60_000;
+
+    // A signed order from an account the engine has never credited: refused on the speculative
+    // engine's state, which the held sync could still take back.
+    let stranger = SigningKey::from_slice(&[9; 32]).unwrap();
+    let mut order = OrderRequest {
+        account: eip712::address(stranger.verifying_key()),
+        client_id: 1,
+        market: 1,
+        side: Side::Buy,
+        qty: "0.1".parse().unwrap(),
+        kind: OrderKind::Market { quoted: "100000".parse().unwrap(), max_slippage_bps: None },
+        reduce_only: false,
+        auth: None,
+    };
+    let domain = eip712::domain(31337, AccountId([0; 20]));
+    let signature = eip712::sign(&stranger, &order_hash(&domain, &order, 0, expires_at));
+    order.auth = Some(RequestAuth { nonce: 0, expires_at, signature });
+    // An admin command the operator key did not sign: refused on the same state.
+    let forged = crate::admin::sign(
+        &SigningKey::from_slice(&[8; 32]).unwrap(),
+        &api.operator,
+        AdminCommand::SetReduceOnly { market: None, reduce_only: true },
+        0,
+        expires_at,
+    );
+    let peer = MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9)));
+    let (orders_app, admin_app) = (crate::api::router(api.clone()).layer(peer), crate::api::router(api).layer(peer));
+    let (signed_tx, mut signed_rx) = oneshot::channel();
+    tokio::spawn(async move {
+        let request = HttpRequest::post("/v1/orders")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&order).unwrap()))
+            .unwrap();
+        _ = signed_tx.send(orders_app.oneshot(request).await.unwrap().status());
+    });
+    let (admin_tx, mut admin_rx) = oneshot::channel();
+    tokio::spawn(async move {
+        let request = HttpRequest::post("/v1/admin")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&forged).unwrap()))
+            .unwrap();
+        _ = admin_tx.send(admin_app.oneshot(request).await.unwrap().status());
+    });
+
+    // The channel is FIFO: this query answering proves the API's reads above ran, so the refusals
+    // are decided and now wait on the held sync's publish.
+    node.applied().await;
+    assert!(silent(&mut signed_rx).await, "the signed refusal waits for the batch's sync");
+    assert!(silent(&mut admin_rx).await, "the admin refusal waits for it too");
+
+    node.permits.send(Verdict::Pass).unwrap();
+    first.await.unwrap();
+    let signed = timeout(Duration::from_secs(10), signed_rx).await.expect("the signed refusal is answered").unwrap();
+    assert_eq!(signed, StatusCode::FORBIDDEN);
+    let admin = timeout(Duration::from_secs(10), admin_rx).await.expect("the admin refusal is answered").unwrap();
+    assert_eq!(admin, StatusCode::UNAUTHORIZED);
 }
