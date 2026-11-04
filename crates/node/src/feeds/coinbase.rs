@@ -102,6 +102,12 @@ impl Books {
         }
     }
 
+    /// The best bid and offer kept for `product`, while its book has both sides.
+    pub(super) fn top(&self, product: &str) -> Option<(Fixed, Fixed)> {
+        let depth = self.depths.get(product)?;
+        depth.bids.last().zip(depth.offers.first()).map(|(bid, ask)| (*bid, *ask))
+    }
+
     /// Applies `level2` events and returns the top of each changed product's book, stamped with
     /// the latest event time applied to it. A product whose book has an empty side has no top.
     /// Error cases:
@@ -162,8 +168,7 @@ impl Books {
             ts = ts.max(Some(event_time));
         }
         let ts = ts.ok_or_else(|| format!("{product_id} event without updates"))?;
-        let top = depth.bids.last().zip(depth.offers.first());
-        Ok(top.map(|(bid, ask)| Book { symbol: product_id, bid: *bid, ask: *ask, ts }))
+        Ok(self.top(&product_id).map(|(bid, ask)| Book { symbol: product_id, bid, ask, ts }))
     }
 }
 

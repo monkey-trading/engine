@@ -37,9 +37,14 @@ pub(in crate::feeds) fn to_quote(
         return Err(format!("{symbol} book crossed: bid {bid}, ask {ask}"));
     }
     check_time(&symbol, ts, now)?;
-    let mid = (bid + ask).div_int(2);
+    let mid = mid_of(bid, ask);
     let quote = SourceQuote { source: venue.name().to_owned(), mid, ts, contract: instrument.contract.clone() };
     Ok((symbol, quote))
+}
+
+/// The mid a venue's top of book quotes.
+pub(super) fn mid_of(bid: Fixed, ask: Fixed) -> Fixed {
+    (bid + ask).div_int(2)
 }
 
 /// Refuses a top-of-book size no working venue could show.

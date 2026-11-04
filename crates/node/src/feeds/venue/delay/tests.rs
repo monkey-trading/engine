@@ -5,7 +5,7 @@ const MS: Duration = Duration::from_millis(1);
 /// A probe with one ping sent at `at` for each offset in `pings`, and their payloads.
 fn pinged(at: Instant, pings: &[u32]) -> (DelayProbe, Vec<Vec<u8>>) {
     let mut probe = DelayProbe::default();
-    let payloads = pings.iter().map(|ms| probe.sent(at + MS * *ms)).collect();
+    let payloads = pings.iter().map(|ms| probe.sent(at + MS * *ms, 1_000 + Millis::from(*ms))).collect();
     (probe, payloads)
 }
 
@@ -36,6 +36,20 @@ fn a_pong_answers_the_pings_before_it() {
     probe.answered(&payloads[1]);
     assert_eq!(probe.behind(at + MS * 100), Some(Duration::ZERO));
     assert_eq!(probe.waiting(at + MS * 200), Some(Duration::ZERO), "only the third still waits");
+}
+
+#[test]
+fn a_pong_reports_the_ping_it_newly_answers() {
+    let at = Instant::now();
+    let (mut probe, payloads) = pinged(at, &[0, 100, 200]);
+    assert_eq!(probe.next_ping(), 3);
+    assert_eq!(probe.answered(&payloads[1]), Some(Ping { ping: 1, sent: at + MS * 100, sent_ms: 1_100 }));
+    assert_eq!(probe.newest_answered(), Some(at + MS * 100));
+    // A late answer to an older ping, a repeat, or one for no ping answers nothing new.
+    assert_eq!(probe.answered(&payloads[0]), None);
+    assert_eq!(probe.answered(&payloads[1]), None);
+    assert_eq!(probe.answered(&[1, 2, 3]), None);
+    assert_eq!(probe.answered(&payloads[2]), Some(Ping { ping: 2, sent: at + MS * 200, sent_ms: 1_200 }));
 }
 
 #[test]

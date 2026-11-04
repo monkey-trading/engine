@@ -108,6 +108,12 @@ impl Books {
         }
     }
 
+    /// The best bid and ask kept for `symbol`, while its book has both sides.
+    pub(super) fn top(&self, symbol: &str) -> Option<(Fixed, Fixed)> {
+        let depth = self.depths.get(symbol)?;
+        depth.bids.last_key_value().zip(depth.asks.first_key_value()).map(|((bid, _), (ask, _))| (*bid, *ask))
+    }
+
     /// Applies a `book` message and returns each verified top of book. A book with an empty side
     /// has no top.
     /// Error cases:
@@ -151,8 +157,7 @@ impl Books {
             .map_err(|e| format!("bad timestamp {timestamp}: {e}"))?
             .timestamp_millis();
         check_time(&symbol, ts, now)?;
-        let top = depth.bids.last_key_value().zip(depth.asks.first_key_value());
-        Ok(top.map(|((bid, _), (ask, _))| Book { symbol, bid: *bid, ask: *ask, ts }))
+        Ok(self.top(&symbol).map(|(bid, ask)| Book { symbol, bid, ask, ts }))
     }
 }
 

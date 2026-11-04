@@ -139,8 +139,9 @@ async fn a_quote_carries_when_the_ping_that_bounds_it_runs_out() {
     assert!(deadline >= before + max_delay && deadline <= std::time::Instant::now() + max_delay);
     // A repeat of its mid, sent only now that the engine holds the first, waits until the first is
     // half of its freshness limit old (half of `stale_after`, the shorter limit), and carries the
-    // bound noted when it was read.
-    send(&mut ws, &[kraken_book("BTC/USD", "100", "101", now_ms())]).await;
+    // bound noted when it was read. A message the feed refuses follows it, so no newer pong re-dates
+    // its book (see `venue::standing`) and the repeat itself is what waits.
+    send(&mut ws, &[kraken_book("BTC/USD", "100", "101", now_ms()), "not json".to_owned()]).await;
     let served = stream(ws, Vec::new);
     let started = std::time::Instant::now();
     let carried = next_not_after(&mut rx, &mut engine).await.expect("the repeat, held for its refresh");

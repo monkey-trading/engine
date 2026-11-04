@@ -78,7 +78,7 @@ async fn a_repeat_is_released_before_its_delay_bound_runs_out() {
     // The newest answered ping is 900ms old, none answered since: a quote read now stops counting
     // 300ms from now, before the refresh of one held now falls due 500ms after it was sequenced.
     let mut probe = DelayProbe::default();
-    let payload = probe.sent(Instant::now() - Duration::from_millis(900));
+    let payload = probe.sent(Instant::now() - Duration::from_millis(900), now_ms() - 900);
     probe.answered(&payload);
     feed.delay = Some(probe);
     let mut buffered = BTreeMap::from([(SYMBOL.to_owned(), Pending::default())]);
@@ -119,7 +119,7 @@ async fn a_repeat_within_the_send_margin_of_its_bound_goes_at_once() {
     // The newest answered ping is 1.1s old: a quote read now stops counting in 100ms, at the send
     // margin, so one held for its refresh would reach the sequencer only past its bound.
     let mut probe = DelayProbe::default();
-    let payload = probe.sent(Instant::now() - Duration::from_millis(1_100));
+    let payload = probe.sent(Instant::now() - Duration::from_millis(1_100), now_ms() - 1_100);
     probe.answered(&payload);
     feed.delay = Some(probe);
     let mut buffered = BTreeMap::from([(SYMBOL.to_owned(), Pending::default())]);

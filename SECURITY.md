@@ -316,7 +316,21 @@ the last stamp passes every quote carried across it (for a market whose `max_age
 `max_age_ms` at most once it reaches the engine. A stall after a command is stamped delays that
 command but not the stamp of any after it. A price an order fills at is therefore at most about
 `max_delay` plus `max_age_ms` old, from when the venue sent it: 3 s under production's 2 s and 1 s,
-whatever the host clock reads and however the host delays the network. A
+whatever the host clock reads and however the host delays the network. A venue sends a book only
+when it changes, so on a Coinbase, Kraken or Bitstamp connection a pong with no change to a symbol's
+book since one read before its ping went out sequences that book's mid again, stamped no later than
+the venue's clock, or the host clock, when the ping went out, and held to that ping's deadline: it
+keeps the same bound, and a host that delays the pong only ages it. Pings re-date a book for at
+most 5 s after the newest ping answered when it was read, which went out before the venue sent the
+book, so a venue whose book stream stalls while its connection still answers pings holds its leg of
+the index for at most 5 s plus `max_delay` plus `max_age_ms` past its sending of the stalled book:
+8 s under production's values, about 6 s when nothing delays the stream. The market prices
+meanwhile only while its sources' spread, in whole basis points of their median, is within
+`max_divergence_bps`, so with the two sources BTC-USD and ETH-USD take, the stalled leg moves the
+index at most about 13 bps from the venue still quoting (half their 25 bps, plus the rounding to
+whole basis points), and past that the market has no price. This rests on those venues writing a
+pong behind what they sent before reading its ping, as they were measured to; Massive's and
+TraderMade's connections, which were not measured, re-date nothing. A
 production market needs two sources fresh, so a delay past the bound on either leaves it without a
 price. The bound on a market priced from Databento and one TLS source is that source's: the host can
 delay or alter Databento's half of the index, within the divergence bound, but the market has no price
