@@ -403,9 +403,9 @@ trigger would have fired 2% of the time in the top 1% of hours and 29% of the ti
 when the stress spreads it brings would cut the operator's take below what is measured here.
 
 **Venue-specific moves.** Coinbase alone sometimes moves far from Kraken: on 2026-01-31 at 17:12 UTC
-a sweep printed 4,286 trades between $77,000 and $78,064 within two seconds while Kraken's trades
-stayed above $78,082, 1.4% apart, past the 25 bps divergence bound, where the engine's index has no
-price. Holding the proxy at its last value wherever Coinbase's last trade sits past the bound from
+a sweep printed 4,286 Coinbase trades between $77,000 and $78,451 in four seconds, while Kraken's
+lowest trade in those seconds was $78,082. Coinbase went 1.4% below it, far past the 25 bps
+divergence bound, where the engine's index has no price. Holding the proxy at its last value wherever Coinbase's last trade sits past the bound from
 Kraken's moves the laundered latency take by 0.3%, the add-on-paid take by 1.3% and skimming by
 0.6%, and lowers the hindsight unpricing figures by 17% to 29% (to $48.8M a year for 60 s spells and
 $182.5M for 300 s). It raises the causal unpricing rule's figure from $57.0M to $158.7M a year,
