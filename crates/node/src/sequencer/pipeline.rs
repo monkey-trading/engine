@@ -301,7 +301,7 @@ impl Sequencer {
     /// Error cases:
     /// - a checkpoint cannot be posted
     fn finish(&mut self, release: Release) -> anyhow::Result<()> {
-        let Release { job, batch, last_seq, outbox, marks, house, schedule, stats, after } = release;
+        let Release { job, batch, last_seq, staged: _, outbox, marks, house, schedule, stats, after } = release;
         self.marks.deliver_stats(stats);
         self.log.finish_sync(&job);
         self.run_after(after)?;
