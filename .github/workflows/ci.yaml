@@ -166,7 +166,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.cache == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -192,9 +192,24 @@ jobs:
       - name: Check the wait from a price entering the sequencer's channel to its stamp at 100k accounts
         if: needs.changes.outputs.cache != 'true'
         run: cargo test -p engine-node --lib --locked sequencer::wait_bench::price_wait_budget -- --ignored --nocapture
+
+  # The production feature set compiles apart from `test`'s, so it has its own job and cache.
+  test-production:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.cache == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
       - name: Test the node's production build
-        if: needs.changes.outputs.cache != 'true'
-        run: cargo test -p engine-node --features production --locked --lib production_build
+        run: cargo test -p engine-node --features production --locked --lib production_build ${{ needs.changes.outputs.cache == 'true' && '--no-run' || '' }}
 
   # The reference sessions' example tests assert each session's end state without writing a
   # fixture; `cargo test --workspace` builds the examples but never runs these, so they need
@@ -875,6 +890,23 @@ jobs:
           gh run cancel ${{ github.run_id }} \
             || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
 
+  cancel-test-production:
+    needs: test-production
+    if: failure() && needs.test-production.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
   cancel-reference-examples:
     needs: reference-examples
     if: failure() && needs.reference-examples.result == 'failure'
@@ -1322,7 +1354,7 @@ jobs:
   # `changes` set its area false. Add every new job to `needs`, and a gated one to `$area` below.
   ci-passed:
     if: always()
-    needs: [changes, fmt, file-loc, clippy, test, reference-examples, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, engine-build, dev-metrics-alerts, dev-alert-outbox, dev-ct-watch, dev-browser-origin, dev-dashboard-data, dev-proxy-protocol, dev-batch-orders, dev-snapshot-restart, dev-rwa-feeds, dev-attestation-verifier, dev-signed-api, dev-production-secrets, dev-acme, wasm-verifier, wasm-verifier-compare, image, image-compare, review-delta, merge-approval]
+    needs: [changes, fmt, file-loc, clippy, test, test-production, reference-examples, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, engine-build, dev-metrics-alerts, dev-alert-outbox, dev-ct-watch, dev-browser-origin, dev-dashboard-data, dev-proxy-protocol, dev-batch-orders, dev-snapshot-restart, dev-rwa-feeds, dev-attestation-verifier, dev-signed-api, dev-production-secrets, dev-acme, wasm-verifier, wasm-verifier-compare, image, image-compare, review-delta, merge-approval]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -1334,7 +1366,7 @@ jobs:
           echo "$NEEDS"
           echo "$NEEDS" | jq -e '
             .changes.outputs as $run
-            | {fmt: "rust", "file-loc": "rust", clippy: "rust", test: "rust", "reference-examples": "rust",
+            | {fmt: "rust", "file-loc": "rust", clippy: "rust", test: "rust", "test-production": "rust", "reference-examples": "rust",
                "reference-logs": "rust", "reference-logs-frozen": "rust", "cargo-deny": "rust", contracts: "contracts",
                "dev-vault-deposits": "scenarios", "engine-build": "scenarios", "dev-metrics-alerts": "scenarios",
                "dev-alert-outbox": "scenarios", "dev-ct-watch": "scenarios", "dev-browser-origin": "scenarios", "dev-dashboard-data": "scenarios", "dev-proxy-protocol": "scenarios", "dev-batch-orders": "scenarios",
