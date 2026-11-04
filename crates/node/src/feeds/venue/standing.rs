@@ -4,17 +4,20 @@
 //! every frame the venue sent before answering it (see `delay`). When a symbol's last book was read
 //! before a ping went out and nothing has changed it by the ping's pong, the venue had sent no
 //! change to that book by the time it answered, so its mid is sequenced again, stamped at the
-//! venue's clock when the ping went out: the book's own stamp plus the time from its read to the
-//! ping on the monotonic clock, and no later than the host clock read when the ping went out. The
-//! stamp is fixed when the ping goes out, so a host that delays the answer only ages the quote, and
-//! the ping's deadline bounds when it may be sequenced, as for any frame read after that pong.
+//! venue's clock when the ping went out: the book's stamp as the engine stores it (no later than
+//! the host clock when it was read) plus the time from its read to the ping on the monotonic clock,
+//! and no later than the host clock read when the ping went out. The stamp is fixed when the ping
+//! goes out, so a host that delays the answer only ages the quote, and the ping's deadline bounds
+//! when it may be sequenced, as for any frame read after that pong.
 //!
 //! A book is re-dated only by pings sent within `MAX_BOOK_SILENCE` of the newest ping answered when
 //! it was read, which went out before the venue sent the book, so a host that delays the book's
 //! read gains nothing on it; after that the venue's quote ages out as any other. A book the venue
 //! sends after a re-dated one is stamped no earlier than it: the venue sent it after answering that
 //! ping, so it showed this book by then, and the engine, which keeps the later-stamped of a venue's
-//! quotes, takes it in the re-dated one's place.
+//! quotes, takes it in the re-dated one's place. When that stamp would lead the host clock by more
+//! than the engine allows, as after the host clock steps back, the book goes at its own stamp in
+//! place of any quote waiting for its symbol, which it changes.
 //!
 //! This rests on a venue writing its pong behind what it sent before reading the ping, which was
 //! measured on Coinbase, Kraken and Bitstamp, so only their connections re-date books.
@@ -82,12 +85,14 @@ impl StandingBooks {
         self.books.clear();
     }
 
-    /// Holds `quote`, `symbol`'s book read now, on a connection that re-dates books and is pinged
-    /// by `probe`, once a ping has been answered.
-    pub(super) fn hold(&mut self, symbol: &str, quote: &SourceQuote, probe: Option<&DelayProbe>) {
+    /// Holds `quote`, `symbol`'s book read now, at host time `now`, on a connection that re-dates
+    /// books and is pinged by `probe`, once a ping has been answered. It is held stamped as the
+    /// engine stores it, no later than `now`, so a venue clock ahead of the host's still gains on it.
+    pub(super) fn hold(&mut self, symbol: &str, quote: &SourceQuote, now: Millis, probe: Option<&DelayProbe>) {
         let Some(probe) = probe.filter(|_| self.redating) else { return };
         if let Some(vouched_from) = probe.newest_answered() {
-            self.hold_at(symbol, quote.clone(), Instant::now(), vouched_from, probe.next_ping());
+            let quote = SourceQuote { ts: quote.ts.min(now), ..quote.clone() };
+            self.hold_at(symbol, quote, Instant::now(), vouched_from, probe.next_ping());
         }
     }
 
@@ -155,7 +160,9 @@ impl VenueFeed {
         adapter: &Adapter,
         buffered: &mut BTreeMap<String, Pending>,
     ) -> bool {
-        let (venue, feed) = (self.conn.venue.name(), self.conn.url.as_str());
+        // Owned, so the alert for a refused quote can borrow the feed mutably.
+        let url = self.conn.url.clone();
+        let (venue, feed) = (self.conn.venue.name(), url.as_str());
         for symbol in self.standing.expire(ping.sent) {
             debug!(venue, feed, symbol, "venue book quiet for {MAX_BOOK_SILENCE:?}: no longer re-dated");
         }
@@ -181,21 +188,65 @@ impl VenueFeed {
                 continue;
             }
             let ts = quote.ts;
-            if buffered.entry(symbol.clone()).or_default().add(quote, now).is_ok() {
-                let max_delay = self.timing.max_delay;
-                self.delay.iter_mut().for_each(|probe| probe.note_read(&symbol, ts, max_delay));
-                trace!(venue, feed, symbol, ts, "quiet book re-dated");
-                self.standing.given.insert(symbol, ts);
-                redated = true;
+            match buffered.entry(symbol.clone()).or_default().add(quote, now) {
+                Ok(()) => {
+                    let max_delay = self.timing.max_delay;
+                    self.delay.iter_mut().for_each(|probe| probe.note_read(&symbol, ts, max_delay));
+                    trace!(venue, feed, symbol, ts, "quiet book re-dated");
+                    self.standing.given.insert(symbol, ts);
+                    redated = true;
+                }
+                // The host clock stepped back since the ping went out, past the lead the engine
+                // allows: refused as a book dated ahead is.
+                Err(lead_ms) => {
+                    self.standing.forget(&symbol);
+                    self.clock_ahead(market, lead_ms);
+                }
             }
         }
         redated
     }
 
+    /// Buffers `quote`, a book just read for `symbol` at host time `now`, for `emit` to sequence,
+    /// stamped no earlier than the newest stamp a ping's answer gave the symbol (`after_given`),
+    /// and holds it to be re-dated. When that stamp leads `now` by more than the engine allows, as
+    /// after the host clock steps back, the quote waiting for the symbol, which this book changes,
+    /// is dropped and the book goes at its own stamp. Returns the stamp it is buffered at.
+    /// Error cases:
+    /// - the book's own stamp leads `now` by more than `MAX_QUOTE_LEAD_MS`, which the engine
+    ///   refuses, so it is dropped and the symbol's standing book forgotten; the error is its lead
+    pub(super) fn take_book(
+        &mut self,
+        symbol: &str,
+        quote: SourceQuote,
+        now: Millis,
+        buffered: &mut BTreeMap<String, Pending>,
+    ) -> Result<Millis, Millis> {
+        let raised = self.after_given(symbol, quote.clone());
+        let pending = buffered.entry(symbol.to_owned()).or_default();
+        let taken = match pending.add(raised.clone(), now) {
+            Err(_) if raised.ts != quote.ts => {
+                pending.take();
+                pending.add(quote.clone(), now).map(|()| quote)
+            }
+            added => added.map(|()| raised),
+        };
+        match taken {
+            Ok(quote) => {
+                self.standing.hold(symbol, &quote, now, self.delay.as_ref());
+                Ok(quote.ts)
+            }
+            Err(lead_ms) => {
+                self.standing.forget(symbol);
+                Err(lead_ms)
+            }
+        }
+    }
+
     /// `quote`, a book just read for `symbol`, stamped no earlier than the newest stamp a ping's
     /// answer gave the symbol (see the module), unless its market was not open throughout from its
     /// own stamp to that one: a book from a closure is not carried past it.
-    pub(super) fn after_given(&self, symbol: &str, quote: SourceQuote) -> SourceQuote {
+    fn after_given(&self, symbol: &str, quote: SourceQuote) -> SourceQuote {
         let market = self.instruments[symbol].market;
         match self.standing.given_for(symbol) {
             Some(given) if given > quote.ts && self.open_throughout(market, quote.ts, given) => {

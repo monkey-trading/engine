@@ -3,9 +3,11 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use super::*;
+use crate::clock::now_ms;
 use crate::config::{VenueConnection, VenueSymbol};
 use crate::feeds::tests::fake::{WAIT, fast};
 use crate::feeds::tests::rwa_support::around_the_clock;
+use crate::feeds::venue::adapter::Adapter;
 use crate::feeds::venue::setup::tls_config;
 
 const MS: Duration = Duration::from_millis(1);
@@ -112,7 +114,7 @@ fn a_stamp_no_later_than_one_given_the_symbol_is_left_out() {
 fn a_book_read_after_a_given_stamp_is_raised_to_it_unless_a_closure_lies_between() {
     // Market 40 closes from `T + 1_000` to `T + 2_000`; market 1 is always open.
     const T: Millis = 1_793_000_000_000;
-    let mut feed = feed(&[(1, "BTC"), (40, "AAPL")]);
+    let mut feed = feed(Venue::Kraken, &[(1, "BTC"), (40, "AAPL")]);
     feed.schedules = Arc::new(BTreeMap::from([(40, around_the_clock(Some((T + 1_000, T + 2_000))))]));
     feed.standing.given.insert("BTC".into(), T + 2_200);
     feed.standing.given.insert("AAPL".into(), T + 2_200);
@@ -133,23 +135,116 @@ fn a_connection_that_does_not_redate_holds_nothing_and_a_new_one_starts_empty() 
     let payload = probe.sent(Instant::now(), 1_000);
     let mut held = StandingBooks::default();
     held.connected(true);
-    held.hold("BTC", &quote("100", 1_000), Some(&probe));
+    held.hold("BTC", &quote("100", 1_000), LATE, Some(&probe));
     assert!(held.books.is_empty(), "held before any ping was answered");
     probe.answered(&payload);
     probe.sent(Instant::now(), 1_001);
     held.connected(false);
-    held.hold("BTC", &quote("100", 1_000), Some(&probe));
+    held.hold("BTC", &quote("100", 1_000), LATE, Some(&probe));
     assert!(held.books.is_empty(), "held on a connection that does not re-date");
     held.connected(true);
-    held.hold("BTC", &quote("100", 1_000), None);
+    held.hold("BTC", &quote("100", 1_000), LATE, None);
     assert!(held.books.is_empty(), "held on a connection without pings");
-    held.hold("BTC", &quote("100", 1_000), Some(&probe));
+    held.hold("BTC", &quote("100", 1_000), LATE, Some(&probe));
     assert_eq!(held.books["BTC"].next_ping, 2, "read before the next ping, numbered 2");
     assert_eq!(Some(held.books["BTC"].vouched_from), probe.newest_answered());
     held.given.insert("BTC".into(), 1_300);
     held.connected(true);
     assert!(held.books.is_empty(), "a new connection holds no book");
     assert_eq!(held.given["BTC"], 1_300, "the stamps given outlive the connection");
+}
+
+#[test]
+fn a_book_stamped_ahead_of_the_host_clock_is_redated_from_the_stamp_the_engine_stores() {
+    // The venue's clock leads the host's by 800 ms. The engine stores the book at the host time it
+    // was read, 1_000, so the answer to a ping sent 300 ms later refreshes it.
+    let mut probe = DelayProbe::default();
+    let payload = probe.sent(Instant::now(), 900);
+    probe.answered(&payload);
+    let mut held = StandingBooks::default();
+    held.connected(true);
+    held.hold("BTC", &quote("100", 1_800), 1_000, Some(&probe));
+    let read_at = held.books["BTC"].read_at;
+    let redated = held.redate(ping(1, read_at + MS * 300, 1_300));
+    assert_eq!(redated, [Redated { symbol: "BTC".into(), read_ts: 1_000, quote: quote("100", 1_300) }]);
+}
+
+#[test]
+fn a_book_read_after_a_redated_one_is_buffered_at_the_stamp_given_in_its_place() {
+    const T: Millis = 1_793_000_000_000;
+    let mut feed = feed(Venue::Kraken, &[(1, "BTC")]);
+    feed.standing.given.insert("BTC".into(), T + 450);
+    let mut buffered = BTreeMap::from([("BTC".to_owned(), Pending::default())]);
+    buffered.get_mut("BTC").expect("pending").add(quote("100", T + 450), T + 460).expect("in range");
+    // A moved book stamped before the re-dated one is raised to its stamp, so it replaces it.
+    assert_eq!(feed.take_book("BTC", quote("101", T + 400), T + 500, &mut buffered), Ok(T + 450));
+    assert_eq!(buffered.get_mut("BTC").expect("pending").take(), Some((quote("101", T + 450), T + 450)));
+}
+
+#[test]
+fn a_book_raised_past_the_lead_the_engine_allows_goes_at_its_own_stamp_in_place_of_the_waiting_quote() {
+    const T: Millis = 1_793_000_000_000;
+    let mut feed = feed(Venue::Kraken, &[(1, "BTC")]);
+    feed.standing.given.insert("BTC".into(), T + 450);
+    let mut buffered = BTreeMap::from([("BTC".to_owned(), Pending::default())]);
+    buffered.get_mut("BTC").expect("pending").add(quote("100", T + 450), T + 460).expect("in range");
+    // The host clock steps back 1.3 s. Raised to the given stamp, the moved book would lead it by
+    // 1_290 ms, so it goes at its own stamp, 940 ms ahead, and the re-dated quote it changes waits no
+    // more.
+    assert_eq!(feed.take_book("BTC", quote("101", T + 100), T - 840, &mut buffered), Ok(T + 100));
+    assert_eq!(buffered.get_mut("BTC").expect("pending").take(), Some((quote("101", T + 100), T + 100)));
+    // A book whose own stamp leads that far is refused, and its symbol's standing book forgotten.
+    feed.standing.hold_at("BTC", quote("101", T + 100), Instant::now(), Instant::now(), 0);
+    assert_eq!(feed.take_book("BTC", quote("102", T + 500), T - 840, &mut buffered), Err(1_340));
+    assert!(feed.standing.books.is_empty(), "the standing book is forgotten");
+}
+
+#[test]
+fn an_answer_older_than_the_delay_bound_redates_nothing() {
+    let (mut feed, adapter) = bitstamp();
+    let now = now_ms();
+    let read_at = Instant::now() - Duration::from_secs(3);
+    feed.standing.hold_at("btcusd", quote("100", now - 3_000), read_at, read_at, 0);
+    let mut buffered = BTreeMap::new();
+    // Sent 2.5 s ago, past the 2 s bound, its answer re-dates nothing.
+    let late = ping(0, Instant::now() - Duration::from_millis(2_500), now - 2_500);
+    assert!(!feed.redate_books(late, &adapter, &mut buffered));
+    assert!(buffered.values().all(|pending| !pending.waiting()), "nothing buffered");
+    // Sent 1 s ago, within it, it re-dates the book to when it went out.
+    let timely = ping(0, Instant::now() - Duration::from_secs(1), now - 1_000);
+    assert!(feed.redate_books(timely, &adapter, &mut buffered));
+    let redated = buffered.get_mut("btcusd").expect("buffered").take().map(|(quote, _)| quote.ts);
+    assert_eq!(redated, Some(now - 1_000));
+}
+
+#[test]
+fn an_answer_for_a_held_back_symbol_forgets_its_book() {
+    let (mut feed, adapter) = bitstamp();
+    let now = now_ms();
+    let read_at = Instant::now() - Duration::from_secs(1);
+    feed.standing.hold_at("btcusd", quote("100", now - 1_000), read_at, read_at, 0);
+    feed.idle.insert("btcusd".into());
+    let mut buffered = BTreeMap::new();
+    let answered = ping(0, Instant::now(), now);
+    assert!(!feed.redate_books(answered, &adapter, &mut buffered));
+    assert!(buffered.values().all(|pending| !pending.waiting()), "nothing buffered");
+    assert!(feed.standing.books.is_empty(), "the book is forgotten");
+}
+
+#[test]
+fn a_redated_quote_dated_ahead_of_a_stepped_back_host_clock_is_refused_and_its_book_forgotten() {
+    let (mut feed, adapter) = bitstamp();
+    let now = now_ms();
+    // Read 1 s ago at a host clock 1 s ahead of the current one, and pinged 900 ms later, before the
+    // host clock stepped back 2 s: the re-dated stamp would lead it by 1.9 s.
+    let read_at = Instant::now() - Duration::from_secs(1);
+    feed.standing.hold_at("btcusd", quote("100", now + 1_000), read_at, read_at, 0);
+    let mut buffered = BTreeMap::new();
+    let answered = ping(0, read_at + MS * 900, now + 2_000);
+    assert!(!feed.redate_books(answered, &adapter, &mut buffered));
+    assert!(buffered.values().all(|pending| !pending.waiting()), "nothing buffered");
+    assert!(feed.standing.books.is_empty(), "the book is forgotten");
+    assert_eq!(feed.standing.given_for("btcusd"), None, "no stamp given");
 }
 
 #[test]
@@ -172,15 +267,15 @@ fn ping(number: u64, sent: Instant, sent_ms: Millis) -> Ping {
     Ping { ping: number, sent, sent_ms }
 }
 
-/// A Kraken feed for `symbols`, connected to nothing.
-fn feed(symbols: &[(MarketId, &str)]) -> VenueFeed {
+/// A feed on `venue` for `symbols`, connected to nothing.
+fn feed(venue: Venue, symbols: &[(MarketId, &str)]) -> VenueFeed {
     let symbols = symbols.iter().map(|(market, symbol)| VenueSymbol {
         market: *market,
         symbol: (*symbol).into(),
         contract: None,
     });
     let conn = VenueConnection {
-        venue: Venue::Kraken,
+        venue,
         url: "ws://127.0.0.1:1".into(),
         api_key_env: None,
         api_key_secret: None,
@@ -188,4 +283,13 @@ fn feed(symbols: &[(MarketId, &str)]) -> VenueFeed {
         symbols: symbols.collect(),
     };
     VenueFeed::new(conn, None, fast(WAIT), tls_config().expect("tls config"), mpsc::channel(1).0)
+}
+
+/// A Bitstamp feed for `btcusd` (market 1) with a 2 s delay bound, and the adapter it reads with:
+/// Bitstamp reads each top whole, so a standing book always tops out at its mid.
+fn bitstamp() -> (VenueFeed, Adapter) {
+    let mut feed = feed(Venue::Bitstamp, &[(1, "btcusd")]);
+    feed.timing.max_delay = Duration::from_secs(2);
+    let adapter = Adapter::new(&feed.conn, None, &["btcusd"]);
+    (feed, adapter)
 }

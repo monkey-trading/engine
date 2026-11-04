@@ -408,21 +408,13 @@ impl VenueFeed {
         }
         for book in books {
             match to_quote(self.conn.venue, &self.instruments, book, now) {
-                Ok((symbol, quote)) => {
-                    let quote = self.after_given(&symbol, quote);
-                    let (market, ts) = (self.instruments[&symbol].market, quote.ts);
-                    self.standing.hold(&symbol, &quote, self.delay.as_ref());
-                    match buffered.entry(symbol.clone()).or_default().add(quote, now) {
-                        Ok(()) => {
-                            let max_delay = self.timing.max_delay;
-                            self.delay.iter_mut().for_each(|probe| probe.note_read(&symbol, ts, max_delay));
-                        }
-                        Err(lead_ms) => {
-                            self.standing.forget(&symbol);
-                            self.clock_ahead(market, lead_ms);
-                        }
+                Ok((symbol, quote)) => match self.take_book(&symbol, quote, now, buffered) {
+                    Ok(ts) => {
+                        let max_delay = self.timing.max_delay;
+                        self.delay.iter_mut().for_each(|probe| probe.note_read(&symbol, ts, max_delay));
                     }
-                }
+                    Err(lead_ms) => self.clock_ahead(self.instruments[&symbol].market, lead_ms),
+                },
                 Err(reason) if adapter.keeps_state() => {
                     self.refuse(&reason, text);
                     bail!("resyncing: {reason}");

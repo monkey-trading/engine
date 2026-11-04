@@ -14,7 +14,7 @@ use engine_core::types::{MarketId, Millis};
 use futures_util::SinkExt;
 use futures_util::StreamExt;
 use futures_util::stream::SplitSink;
-use tokio::sync::{Mutex, Notify, oneshot};
+use tokio::sync::{Mutex, Notify, mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep, timeout};
 use tokio_tungstenite::tungstenite::Message;
@@ -49,23 +49,31 @@ const MAX_BOOK_SILENCE_MS: Millis = 5_000;
 const KRAKEN_HEARTBEAT: &str = r#"{"channel":"heartbeat"}"#;
 
 #[tokio::test]
-async fn a_quiet_book_is_sequenced_again_on_each_answered_ping_stamped_no_later_than_it() {
+async fn a_quiet_book_is_sequenced_again_at_later_stamps_each_bounded_by_a_ping_sent_after_its_read() {
+    let mut engine = FakeEngine::new();
     let (listener, url) = listen().await;
-    let (mut rx, _feed) = spawn_feed(Venue::Kraken, &url, &BTC, TIMING);
+    let (tx, mut rx) = mpsc::channel(1024);
+    let _feed = spawn_feed_into(tx, Venue::Kraken, &url, &BTC, TIMING);
     let (mut ws, _) = accept(&listener).await;
     let read_ts = now_ms();
     send(&mut ws, &[kraken_book("BTC/USD", "100", "101", read_ts)]).await;
-    assert_eq!(next_prices(&mut rx).await, (1, vec![quote(Venue::Kraken, "100.5", read_ts)]));
+    let (first, read_bound) = next_quote(&mut rx, &mut engine).await;
+    assert_eq!(first, quote(Venue::Kraken, "100.5", read_ts));
+    // The bound of the ping answered before the book was read.
+    let read_bound = read_bound.expect("a connection with pings");
 
     // The venue sends nothing more but answers each ping as it arrives, noting when the newest did.
     let venue = answer_pings(ws, Duration::ZERO);
     let mut last = read_ts;
     while last < read_ts + 1_500 {
-        let (market, quotes) = next_prices(&mut rx).await;
-        let [redated] = quotes.as_slice() else { panic!("one quote a command: {quotes:?}") };
-        assert_eq!((market, redated.mid), (1, "100.5".parse().unwrap()));
+        let (redated, bound) = next_quote(&mut rx, &mut engine).await;
+        assert_eq!(redated.mid, "100.5".parse().unwrap());
         assert!(redated.ts > last, "each stamp is later than the one before");
         assert!(redated.ts <= venue.pinged.load(Ordering::SeqCst), "stamped after the newest ping reached the venue");
+        // Bounded by the ping whose answer re-dated it, sent after the book was read.
+        let bound = bound.expect("a connection with pings");
+        assert!(bound > read_bound, "a re-dated quote kept the bound of the ping answered before the read");
+        assert!(bound <= std::time::Instant::now() + TIMING.max_delay, "bounded by a ping not yet sent");
         last = redated.ts;
     }
 }
@@ -387,6 +395,29 @@ impl Answering {
         let send = Arc::try_unwrap(self.send).expect("no other sender").into_inner();
         Silent { _send: send }
     }
+}
+
+/// The next quote the feed sequences on `rx`, with when its delay bound runs out, applied to
+/// `engine`, which answers the feed's queries meanwhile.
+async fn next_quote(
+    rx: &mut mpsc::Receiver<Request>,
+    engine: &mut FakeEngine,
+) -> (SourceQuote, Option<std::time::Instant>) {
+    let quote = async {
+        loop {
+            match rx.recv().await.expect("feed running") {
+                Request::Quote { cmd: Command::Prices { market, quotes }, not_after } => {
+                    let [quote] = quotes.as_slice() else { panic!("one quote a command: {quotes:?}") };
+                    let quote = quote.clone();
+                    engine.apply(Command::Prices { market, quotes });
+                    return (quote, not_after);
+                }
+                Request::Query(query) => engine.answer(query),
+                _ => {}
+            }
+        }
+    };
+    timeout(WAIT, quote).await.expect("a quote in time")
 }
 
 /// Answers the pings on `ws` `delay` after each arrives (see `Answering`).
