@@ -59,20 +59,28 @@ price returned, and `bad_debt` pages after it, for the owner.
 
 ### Tightening `max_age_ms`
 
-A change to a market's `max_age_ms` is signed against the quotes the market holds when it is
-sequenced. While the market has open positions it applies only if those quotes, at their age then,
-still price it under the shorter limit; otherwise it is refused with "price rules it cannot price
-under". A venue's quote keeps the venue's own timestamp, and the feed's repeat rule only delays a
-repeat of an unchanged price, so a quiet mid leaves quotes older than a tighter limit even though
-the venues are healthy.
+A change to a market's `max_age_ms` is checked, when it is sequenced, against the quotes the market
+holds. While the market, or a market quoted in the currency it converts, has open positions, it
+applies only if those quotes, at their age then, still price it under the shorter limit; otherwise
+it is refused with "price rules it cannot price under" (or, for a held market that converts at the
+one being changed, "which the price rules cannot price under"). A venue's quote keeps the venue's
+own timestamp, and the feed's repeat rule only delays a repeat of an unchanged price, so a quiet mid
+leaves quotes older than a tighter limit even though the venues are healthy.
 
-1. Check the market has a price: `market_no_price` is not firing.
-2. Sign the change. If it is refused, wait for the venues to quote again, which moves the mid or
-   fires the repeat, and sign the same change once more.
-3. For a large cut, tighten in steps, so each step still prices the market from quotes that have
-   arrived since the last.
-4. Failing that, make the market reduce-only first ([reduce-only.md](reduce-only.md)): the check
-   then does not apply.
+1. Check that the market is open and priced: `engine_market_priced` reads 1 for it, as under
+   [Find what is down](#find-what-is-down). A closed market holds old quotes and refuses every
+   tightening until it opens. `market_no_price` only fires after `alerts.no_price_after`, so its
+   silence proves nothing.
+2. Sign the change with `upsert-market` as under [Futures markets](#futures-markets). **Changes the
+   live system.** Needs the owner's approval of the exact spec. If it is refused, wait for the venues
+   to quote again, which moves the mid or fires the repeat, and sign the same change once more.
+3. For a large cut, tighten in steps, each signed after the venues have quoted again, so each step
+   still prices the market from quotes that have arrived since the last.
+4. Failing that, make every held market the refusal names reduce-only first, the edited market and
+   any market that converts at it ([reduce-only.md](reduce-only.md)): the check then does not apply.
+   **Changes the live system.** Needs the owner's approval. Afterwards check the market still has a
+   mark; if it has none, restore the previous limit, which is always accepted, and resume normal
+   trading as in [reduce-only.md](reduce-only.md#resume-normal-trading).
 
 ### Find what is down
 
