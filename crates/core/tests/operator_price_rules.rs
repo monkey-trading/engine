@@ -68,7 +68,7 @@ fn an_upsert_that_leaves_a_market_with_open_positions_unpriced_is_refused() {
 #[test]
 fn a_max_age_tightening_refused_for_aged_quotes_applies_once_fresh_quotes_arrive() {
     let (mut h, _) = with_position();
-    // The mid has sat still, so the quotes the market prices from have aged to 600 ms: counted
+    // No venue has quoted for 600 ms, so the quotes the market prices from are that old: counted
     // under the limit in force, but past the tighter one, so the change would leave it unpriced.
     h.advance(600);
     let tighter = btc_with(&h, |spec| spec.price_rules.max_age_ms = 400);

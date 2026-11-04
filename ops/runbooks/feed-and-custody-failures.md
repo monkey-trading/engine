@@ -75,12 +75,18 @@ leaves quotes older than a tighter limit even though the venues are healthy.
    live system.** Needs the owner's approval of the exact spec. If it is refused, wait for the venues
    to quote again, which moves the mid or fires the repeat, and sign the same change once more.
 3. For a large cut, tighten in steps, each signed after the venues have quoted again, so each step
-   still prices the market from quotes that have arrived since the last.
+   still prices the market from quotes that have arrived since the last. **Changes the live system.**
+   Each step is its own `upsert-market`, so each needs the owner's approval of its exact spec, or
+   one approval naming the whole sequence of limits.
 4. Failing that, make every held market the refusal names reduce-only first, the edited market and
-   any market that converts at it ([reduce-only.md](reduce-only.md)): the check then does not apply.
-   **Changes the live system.** Needs the owner's approval. Afterwards check the market still has a
-   mark; if it has none, restore the previous limit, which is always accepted, and resume normal
-   trading as in [reduce-only.md](reduce-only.md#resume-normal-trading).
+   any market that converts at it ([reduce-only.md](reduce-only.md)), then sign the change again: the
+   check then does not apply. **Changes the live system.** Needs the owner's approval of the
+   reduce-only commands, the change, and the commands below. Then check, as in step 1, that
+   `engine_market_priced` reads 1 for the edited market and each market that converts at it. The
+   `mark` in `/v1/markets` is the last stored value and stays after pricing is lost, so it proves
+   nothing. If one reads 0, restore the previous limit, which is always accepted, and wait for the
+   venues to quote again: loosening discards quotes stale under the tighter limit. Either way, resume
+   normal trading as in [reduce-only.md](reduce-only.md#resume-normal-trading).
 
 ### Find what is down
 

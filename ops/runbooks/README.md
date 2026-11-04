@@ -15,6 +15,7 @@ other runbooks call.
 | Respond to a page you do not recognise, or to anything that looks like an attack | [incident-response.md](incident-response.md) |
 | Withdrawals stop being authorised, or `checkpoint_backlog` fires | [withdrawal-stalls.md](withdrawal-stalls.md) |
 | A price feed fails (a crypto venue outage halts BTC-USD and ETH-USD), a custody RPC provider fails, or the checkpoint endpoint fails | [feed-and-custody-failures.md](feed-and-custody-failures.md) |
+| Tighten a market's `max_age_ms` | [feed-and-custody-failures.md](feed-and-custody-failures.md#tightening-max_age_ms) |
 | The API certificate is missing or will not renew | [certificate-renewal-failure.md](certificate-renewal-failure.md) |
 | `unattested_certificate` fires | [unattested-certificate.md](unattested-certificate.md) |
 | Stand for election as the operator, or hand the node to or from the operator in effect | [operator-candidate.md](operator-candidate.md) |
