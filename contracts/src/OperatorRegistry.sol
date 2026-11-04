@@ -29,6 +29,9 @@ interface IVault {
 /// promotion takes effect like an election, and moves the vault's current release to the standby
 /// at once; the standby's registered enclave address is the only one the vault's timelock-gated
 /// `setSigner` installs while rotation is on.
+/// @notice Releases: a candidate moves its candidacy to a release the timelock approved for it.
+/// The operator in effect's move is how it upgrades while rotation is on: the vault names the new
+/// release at once, and the running release hands it the keys and the log.
 /// @dev Not upgradeable. Rotation starts off, with the deployment's initial operator in effect, and
 /// while it is off a close elects nothing. Only the timelock turns rotation on and off (turning it
 /// off cancels an election not yet in effect), approves candidates' releases, and changes the
@@ -141,8 +144,8 @@ contract OperatorRegistry {
     bytes32 private constant DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
-    /// @notice The largest candidate cap any parameters may set: it bounds the gas of a close, which
-    /// reads every candidate.
+    /// @notice The largest candidate cap any parameters may set: with the one place beyond the cap the
+    /// operator in effect may take, it bounds the gas of a close, which reads every candidate.
     uint256 public constant CANDIDATE_LIMIT = 100;
 
     uint256 private constant BPS = 10_000;
@@ -174,8 +177,8 @@ contract OperatorRegistry {
     uint64 public openEpochStart;
 
     /// @notice Registered candidates whose release the timelock has approved, in no fixed order. The
-    /// candidate cap bounds this list's length, so unapproved registrations cannot fill it and the
-    /// close's scan stays bounded.
+    /// candidate cap, plus one place the operator in effect may take, bounds this list's length, so
+    /// unapproved registrations cannot fill it and the close's scan stays bounded.
     address[] public candidateList;
 
     /// @notice Each registered candidate's admin key's holder, so no two share a key.
@@ -207,6 +210,11 @@ contract OperatorRegistry {
     );
     event CandidateDeregistered(address indexed candidate);
     event CandidateEnclaveChanged(address indexed candidate, address indexed enclave);
+    /// @notice `candidate`'s candidacy moved to `release`; for the operator in effect, the release
+    /// the vault names while rotation is on.
+    event CandidateReleaseChanged(
+        address indexed candidate, bytes32 indexed release, bytes launchDigest, bytes32 configHash
+    );
     event ReleaseApprovalChanged(address indexed candidate, bytes32 indexed release, bool approved);
 
     /// @notice Rotation turned on or off; `electionCancelled` when turning it off cancelled an
@@ -236,6 +244,7 @@ contract OperatorRegistry {
     error InvalidEndpoint();
     error AlreadyRegistered();
     error NotRegistered();
+    error ReleaseNotApproved(bytes32 release);
     error CandidateCapReached(uint256 cap);
     error AdminKeyTaken(address candidate);
     error BondBelowMinimum(uint256 bond, uint256 minimum);
@@ -407,6 +416,37 @@ contract OperatorRegistry {
         emit CandidateEnclaveChanged(msg.sender, enclave);
     }
 
+    /// @notice Moves the caller's candidacy to the release with SEV-SNP launch measurement
+    /// `launchDigest` and config SHA-256 `configHash`, which the timelock must have approved for it,
+    /// so no release holds the keys without the timelock's delay. When the caller is the operator in
+    /// effect, its operator release moves too: while rotation is on the vault names the new release
+    /// at once, the running release hands it the keys and the log, and `syncRelease` folds the change
+    /// into the vault's generation. An operator the timelock installed moves the same way. A move
+    /// is one-way: the approval of each release it leaves is withdrawn — the candidacy's, and for
+    /// the operator in effect the one it ran, which a deployment or an installation may have named
+    /// apart from its candidacy — so moving back needs the timelock to approve it again, as naming a
+    /// release does while rotation is off. A candidate whose registered release was unapproved is
+    /// listed again, under the candidate cap. While an election or promotion waits to take effect,
+    /// neither the operator it replaces nor the candidate it names may move: the election keeps the
+    /// release and the handover source it was made with.
+    function setRelease(bytes calldata launchDigest, bytes32 configHash) external {
+        Candidate storage registered = candidates[msg.sender];
+        if (registered.adminKey == address(0)) revert NotRegistered();
+        bytes32 release = _release(launchDigest, configHash);
+        if (!releaseApproved[keccak256(abi.encode(msg.sender, release))]) revert ReleaseNotApproved(release);
+        _settle();
+        bool operator = msg.sender == current.candidate;
+        if (pending.effectiveAt != 0 && (operator || msg.sender == pending.candidate)) revert ElectionPending();
+        _leave(msg.sender, registered.release, release);
+        registered.release = release;
+        if (operator) {
+            _leave(msg.sender, current.release, release);
+            current.release = release;
+        }
+        emit CandidateReleaseChanged(msg.sender, release, launchDigest, configHash);
+        if (listed[msg.sender] == 0) _enlist(msg.sender);
+    }
+
     /// @notice Names the deployment's vault, whose `lastCheckpointAt` the liveness clock reads.
     /// Set once, after both contracts deploy.
     function setVault(address vault_) external onlyGovernance {
@@ -416,9 +456,10 @@ contract OperatorRegistry {
     }
 
     /// @notice Approves, or withdraws approval of, `candidate` running the release with SEV-SNP launch
-    /// measurement `launchDigest` and config SHA-256 `configHash`. Approving a registered candidate
-    /// adds it to `candidateList` under the candidate cap; withdrawing approval removes it from the
-    /// list while it stays registered.
+    /// measurement `launchDigest` and config SHA-256 `configHash`. Approving a registered candidate's
+    /// release adds it to `candidateList` under the candidate cap; withdrawing approval removes it from
+    /// the list while it stays registered. Approving another release lets the candidate move to it
+    /// (`setRelease`); withdrawing it once the candidate has moved on stops a move back.
     function setReleaseApproval(address candidate, bytes calldata launchDigest, bytes32 configHash, bool approved)
         external
         onlyGovernance
@@ -427,8 +468,8 @@ contract OperatorRegistry {
         releaseApproved[keccak256(abi.encode(candidate, release))] = approved;
         emit ReleaseApprovalChanged(candidate, release, approved);
         Candidate memory registered = candidates[candidate];
-        // Listing follows the release the candidate registered, not any other release the timelock
-        // names for it.
+        // Listing follows the release the candidate holds, registered or moved to, not any other
+        // release the timelock names for it.
         if (registered.adminKey == address(0) || registered.release != release) return;
         if (approved) {
             if (listed[candidate] == 0) _enlist(candidate);
@@ -519,7 +560,9 @@ contract OperatorRegistry {
     /// is gone and no election can move, since an election needs rotation on and the minimum term
     /// (#502). Rotation must be off — while it is on, elections and promotions move the role — so a
     /// pending election is already cancelled. The installed operator takes effect at once; the engine
-    /// mirrors this with its seven-day log notice before its key signs.
+    /// mirrors this with its seven-day log notice before its key signs. No candidacy changes: the
+    /// replaced operator keeps its release, approvals and listing, and the installed candidate,
+    /// when registered, keeps its own and moves with `setRelease` like any operator in effect.
     function installOperator(address candidate, address adminKey, bytes calldata launchDigest, bytes32 configHash)
         external
         onlyGovernance
@@ -556,7 +599,8 @@ contract OperatorRegistry {
 
     /// @notice The release the vault names while rotation is on: the named operator's. A promoted
     /// standby's enclave unseals only under the release it runs, so a promotion names it at once;
-    /// an election's release moves at its effective time, as #359 §10 decides.
+    /// an election's release moves at its effective time, as #359 §10 decides; the operator in
+    /// effect's `setRelease` moves it at once.
     function operatorRelease() external view returns (bytes32) {
         return _named().release;
     }
@@ -707,12 +751,28 @@ contract OperatorRegistry {
     }
 
     /// @dev Adds registered `candidate` to `candidateList`, refusing a full approved cap. Only
-    /// approved candidates count toward the cap, so unapproved registrations cannot fill it.
+    /// approved candidates count toward the cap, so unapproved registrations cannot fill it. The
+    /// operator in effect may take one place beyond it, so a full list never blocks its listing,
+    /// and with it its upgrade — unless an operator an installation replaced took that place
+    /// first: the list stays bounded at the cap plus one, and the timelock frees a place by
+    /// withdrawing an approval or raising the cap. The exemption reads the pending-or-current
+    /// operator, not the settled `current`: an election past its time that nobody settled yet has
+    /// already moved the operator in effect, and entry points that enlist do not settle first.
     function _enlist(address candidate) private {
         Parameters memory p = parameters;
-        if (candidateList.length >= p.maxCandidates) revert CandidateCapReached(p.maxCandidates);
+        uint256 places = uint256(p.maxCandidates) + (candidate == _named().candidate ? 1 : 0);
+        if (candidateList.length >= places) revert CandidateCapReached(p.maxCandidates);
         candidateList.push(candidate);
         listed[candidate] = candidateList.length;
+    }
+
+    /// @dev Withdraws `candidate`'s approval of `left`, a release its move to `release` leaves,
+    /// reporting the withdrawal when there was an approval to withdraw.
+    function _leave(address candidate, bytes32 left, bytes32 release) private {
+        bytes32 key = keccak256(abi.encode(candidate, left));
+        if (left == release || !releaseApproved[key]) return;
+        delete releaseApproved[key];
+        emit ReleaseApprovalChanged(candidate, left, false);
     }
 
     /// @dev Removes `candidate` from `candidateList`, keeping it registered.

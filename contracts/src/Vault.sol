@@ -146,9 +146,10 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     /// keys afresh from the running release instead of reopening an old copy.
     uint64 public releaseGeneration;
     /// @notice The effective release the generation last synced at; the first `syncRelease` after an
-    /// election or promotion takes effect bumps the generation when it differs. A node reads this
-    /// beside `currentRelease()` and refuses to seal keys until the two agree, so a key service
-    /// never seals under a generation a later sync would supersede.
+    /// election, a promotion, or the operator's own release move takes effect bumps the generation
+    /// when it differs. A node reads this beside `currentRelease()` and refuses to seal or hand over
+    /// keys until the two agree, so a key service never seals under a generation a later sync would
+    /// supersede.
     bytes32 public syncedRelease;
     /// @notice The operator registry this vault follows while rotation is on, set once by
     /// governance; the zero address behaves as rotation off.
@@ -402,11 +403,10 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     }
 
     /// @notice Folds a registry-driven release change into this contract's state, raising the
-    /// release generation: anyone calls it once an election or promotion moves the operator. A
-    /// standby seals its keys only after this, so they are sealed under the generation the release
-    /// change raised. Every state-changing entry point syncs first, so the generation a key
-    /// service observes can never lag the release it names for longer than one read: once the
-    /// operator acts, identity and generation move together.
+    /// release generation: anyone calls it once an election or promotion moves the operator, or
+    /// the operator in effect moves its own release through the registry's `setRelease`. A node
+    /// seals its keys only after this, so they are sealed under the generation the release change
+    /// raised.
     function syncRelease() public {
         bytes32 effective = currentRelease();
         if (effective == syncedRelease) return;
@@ -418,7 +418,8 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     /// @notice Makes the release with SEV-SNP launch measurement `launchDigest`, running the config
     /// whose SHA-256 is `configHash`, the one that holds the enclave's keys, in a new generation: the
     /// running release hands them to it, and no copy sealed in an earlier generation opens. Applies
-    /// only while rotation is off; while it is on, the registry's operator names the release.
+    /// only while rotation is off; while it is on, the registry's operator names the release, and
+    /// the operator in effect upgrades by moving to a release the timelock approved for it.
     function setCurrentRelease(bytes calldata launchDigest, bytes32 configHash) external onlyGovernance {
         if (launchDigest.length != 48) revert InvalidLaunchDigest();
         OperatorRegistry reg = registry;

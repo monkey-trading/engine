@@ -13,14 +13,16 @@ use crate::test_support::{capture_alerts, dev_config, scratch_dir};
 
 const DIGEST: [u8; 48] = [0x11; 48];
 
-/// A vault whose current release is the one `current` holds.
+/// A vault whose current release is the one `current` holds; with `synced` set it reads the fold
+/// too, and that is the release its generation has folded.
 struct Vault {
     current: Arc<Mutex<CurrentRelease>>,
+    synced: Arc<Mutex<Option<[u8; 32]>>>,
 }
 
 impl Vault {
     fn naming(current: CurrentRelease) -> Self {
-        Self { current: Arc::new(Mutex::new(current)) }
+        Self { current: Arc::new(Mutex::new(current)), synced: Arc::new(Mutex::new(None)) }
     }
 }
 
@@ -45,6 +47,16 @@ impl CheckpointChain for Vault {
     async fn current_release(&self, at: &Observation) -> anyhow::Result<CurrentRelease> {
         ensure!(at.view == View::Finalized, "the current release is read at finality");
         Ok(*self.current.lock().unwrap())
+    }
+
+    fn reads_release_fold(&self) -> bool {
+        self.synced.lock().unwrap().is_some()
+    }
+
+    async fn synced_release(&self, at: &Observation) -> anyhow::Result<[u8; 32]> {
+        ensure!(at.view == View::Finalized, "the folded release is read at finality");
+        let synced = *self.synced.lock().unwrap();
+        synced.context("this vault reads no fold")
     }
 }
 
@@ -119,6 +131,28 @@ async fn a_running_node_alerts_once_the_vault_names_another_release_or_generatio
     *current.lock().unwrap() = CurrentRelease { id: [0x99; 32], generation: 4 };
     tokio::time::sleep(every * 3).await;
     assert!(alerts.try_recv().is_err(), "the same episode alerted again");
+    watch.abort();
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_superseded_release_alerts_before_the_vault_folds_the_change() {
+    let (_guard, mut alerts) = capture_alerts();
+    let sealed = Release { launch_digest: DIGEST, config_sha256: [0xc1; 32] };
+    let vault = Vault::naming(CurrentRelease { id: sealed.id(), generation: 2 });
+    *vault.synced.lock().unwrap() = Some(sealed.id());
+    let current = vault.current.clone();
+    let every = Duration::from_secs(60);
+    let watch = tokio::spawn(watch_release(vault, sealed, 2, every));
+    tokio::time::sleep(every * 3).await;
+    assert!(alerts.try_recv().is_err(), "the release the vault names raised an alert");
+
+    // The operator moves to another release and the finalized block shows it, but nobody folded
+    // the change: the running release is already superseded and a restart finds no keys, so the
+    // watch must alert now rather than wait for anyone's syncRelease.
+    *current.lock().unwrap() = CurrentRelease { id: [0x99; 32], generation: 3 };
+    tokio::time::sleep(every).await;
+    let alert = alerts.try_recv().expect("a superseded release raises Critical before the fold");
+    assert_eq!((alert["alert"].as_str(), alert["level"].as_str()), ("release_superseded", "ERROR"));
     watch.abort();
 }
 

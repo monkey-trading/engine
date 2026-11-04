@@ -10,8 +10,8 @@
 //! (the predecessor, `Predecessor`), which answers with a fresh challenge, and sends a quote over
 //! the challenge, a fresh HPKE (RFC 9180) public key, and its config's hash. The predecessor checks the quote against the vendor's chain at trusted time; the
 //! release it proves, the measurement and that config, against the vault's current release at
-//! custody finality, which only the timelock sets; and the guest policy and TCB against its own. It
-//! then stops sequencing, takes its final checkpoint, seals the log's tail segment — the archive
+//! custody finality, once the vault's generation has folded it; and the guest policy and TCB
+//! against its own. It then stops sequencing, takes its final checkpoint, seals the log's tail segment — the archive
 //! serves only completed segments, and the API is already down when the successor could fetch it —
 //! and sends the keys, that checkpoint, and the segment encrypted to the successor's key, with its
 //! own quote over the ciphertext. The successor checks that quote, opens the keys, accepts them
@@ -19,9 +19,9 @@
 //! segment, requires the log to end at the handed-over checkpoint, and confirms by signing with the
 //! handed-over key; the predecessor then exits, so the two never sign at once. The successor serves
 //! only once its log reaches the predecessor's final checkpoint (`node::keys::check_predecessor_head`)
-//! and the vault names the key. It seals them in the vault's generation of its release, and once
-//! the vault names the successor, no start unseals the predecessor's copy, even if governance names
-//! that release again (`ensure_named`).
+//! and the vault names the key. It seals them in the vault's generation of its release, once that
+//! generation has folded it (`folded_release`), and once the vault names the successor, no start
+//! unseals the predecessor's copy, even if governance names that release again (`ensure_named`).
 //!
 //! The host carries the connection, so it can delay or drop it. It cannot read the keys, which only
 //! the attested successor can decrypt; substitute another successor, since the vault names the
@@ -59,7 +59,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::time::timeout;
 use tracing::{info, warn};
 
-use crate::checkpoints::{CheckpointChain, CheckpointRpc, CurrentRelease, View};
+use crate::checkpoints::{CheckpointChain, CheckpointRpc, CurrentRelease, Observation, View};
 use crate::config::NodeConfig;
 use crate::log::CheckpointDomain;
 use crate::tee::keys::KeySet;
@@ -84,12 +84,31 @@ pub(crate) fn vault_reader(cfg: &NodeConfig) -> anyhow::Result<Option<Checkpoint
     CheckpointRpc::read_only(checkpoints, domain, evm.usdc, evm.withdrawal_finality_tag, 0).map(Some)
 }
 
-/// The vault's current release, and its generation, at finality.
+/// The vault's current release, and its generation, at finality, once the generation has folded it
+/// (see `folded_release`).
 /// Error cases:
-/// - the vault cannot be read
+/// - the vault cannot be read, or its generation has not folded the release it names
 pub(crate) async fn current_release(vault: &impl CheckpointChain) -> anyhow::Result<CurrentRelease> {
     let finalized = vault.observe(View::Finalized, &[]).await?;
-    vault.current_release(&finalized).await
+    folded_release(vault, &finalized).await
+}
+
+/// The release the vault names at `at`, and its generation, once the generation has folded it: the
+/// vault's `syncedRelease` is that release. A registry-driven change waits for `syncRelease` to raise
+/// the generation, and a round trip back to a release no fold saw leave would keep the generation its
+/// superseded sealed copy was made in, so keys are handed over and sealed only under a folded one.
+/// Error cases:
+/// - the vault cannot be read, or its generation has not folded the release it names
+pub(crate) async fn folded_release(vault: &impl CheckpointChain, at: &Observation) -> anyhow::Result<CurrentRelease> {
+    let current = vault.current_release(at).await?;
+    if vault.reads_release_fold() {
+        ensure!(
+            vault.synced_release(at).await? == current.id,
+            "the vault has not folded the change to release 0x{} into its generation: anyone may call syncRelease",
+            hex::encode(current.id)
+        );
+    }
+    Ok(current)
 }
 
 /// The generation of `current`, once it is `release`: governance names one release at a time, so

@@ -2,12 +2,17 @@
 
 use std::sync::atomic::AtomicBool;
 
+use anyhow::Context as _;
+
 use super::*;
 
-/// A vault that names `signer`, and the release `current` holds as its current one.
+/// A vault that names `signer`, and the release `current` holds as its current one; with `synced`
+/// set it reads the fold too, and that is the release its generation has folded.
 pub(super) struct Vault {
     pub(super) signer: AccountId,
     pub(super) current: Arc<Mutex<CurrentRelease>>,
+    /// The release the vault's generation has folded; `None` reads no fold.
+    pub(super) synced: Arc<Mutex<Option<[u8; 32]>>>,
     /// The registry's rotation switch.
     pub(super) rotation: Rotation,
 }
@@ -53,5 +58,15 @@ impl CheckpointChain for Vault {
         ensure!(at.view == View::Finalized, "the rotation switch is read at finality");
         ensure!(!self.rotation.fails.load(Ordering::SeqCst), "the rotation switch cannot be read");
         Ok(self.rotation.finalized.load(Ordering::SeqCst))
+    }
+
+    fn reads_release_fold(&self) -> bool {
+        self.synced.lock().unwrap().is_some()
+    }
+
+    async fn synced_release(&self, at: &Observation) -> anyhow::Result<[u8; 32]> {
+        ensure!(at.view == View::Finalized, "the folded release is read at finality");
+        let synced = *self.synced.lock().unwrap();
+        synced.context("this vault reads no fold")
     }
 }

@@ -1,6 +1,7 @@
 //! The whole handover over loopback between two mock enclaves, against a vault whose current release
 //! the test sets and a node that answers the request to stop sequencing.
 
+mod fold;
 mod secrets;
 mod stop;
 mod successor;
@@ -55,6 +56,8 @@ struct Exchange {
     predecessor_log: PathBuf,
     /// The vault's current release, as both sides read it.
     current: Arc<Mutex<CurrentRelease>>,
+    /// The release the vault's generation has folded, as both sides read it; `None` reads no fold.
+    synced: Arc<Mutex<Option<[u8; 32]>>>,
     /// Whether the node behind the predecessor signs its checkpoints.
     signing: watch::Sender<bool>,
     /// The registry's rotation switch, as the predecessor reads it.
@@ -148,7 +151,12 @@ async fn a_successor_the_vault_no_longer_names_once_the_keys_arrive_seals_nothin
     // Governance names another release after the predecessor's check and before the successor's.
     let signer = AccountId(exchange.old.enclave_key().unwrap().address());
     let named_another = CurrentRelease { id: [0x99; 32], generation: GENERATION + 1 };
-    let vault = Vault { signer, current: Arc::new(Mutex::new(named_another)), rotation: Default::default() };
+    let vault = Vault {
+        signer,
+        current: Arc::new(Mutex::new(named_another)),
+        synced: Arc::default(),
+        rotation: Default::default(),
+    };
     let err = exchange.take_reading(vault).await.err().expect("keys sealed for a release the vault no longer names");
     assert!(format!("{err:#}").contains("the vault's current release is"), "{err:#}");
     assert!(std::fs::read_dir(&exchange.successor_dir).is_err(), "the successor sealed keys");
@@ -235,6 +243,7 @@ impl Exchange {
         // The predecessor runs another config than the successor's, as a config change does.
         let store = KeyStore::create(&dir, &sealer, PREDECESSOR_CONFIG, 1, old.clone()).unwrap();
         let current = Arc::new(Mutex::new(CurrentRelease::default()));
+        let synced = Arc::new(Mutex::new(None));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap().to_string();
         let (drain, drains) = mpsc::channel(1);
@@ -255,7 +264,12 @@ impl Exchange {
             signer: AccountId(old.enclave_key().unwrap().address()),
             store: Arc::new(store),
             attestor: Box::new(MockAttestor),
-            vault: Vault { signer: AccountId([0; 20]), current: current.clone(), rotation: rotation.clone() },
+            vault: Vault {
+                signer: AccountId([0; 20]),
+                current: current.clone(),
+                synced: synced.clone(),
+                rotation: rotation.clone(),
+            },
             log_dir: predecessor_log.clone(),
             trusted: TrustedClock::new(Arc::new(SystemClock), watch::channel(None).1, Duration::from_secs(1)),
             drain,
@@ -274,6 +288,7 @@ impl Exchange {
             successor_log,
             predecessor_log,
             current,
+            synced,
             signing,
             rotation,
             secrets,
@@ -358,7 +373,13 @@ impl Exchange {
 
     /// The successor's side, against a vault naming `signer`.
     async fn take_naming(&self, signer: AccountId) -> anyhow::Result<KeyStore> {
-        self.take_reading(Vault { signer, current: self.current.clone(), rotation: self.rotation.clone() }).await
+        self.take_reading(Vault {
+            signer,
+            current: self.current.clone(),
+            synced: self.synced.clone(),
+            rotation: self.rotation.clone(),
+        })
+        .await
     }
 
     /// The successor's side, reading `vault`.
