@@ -90,6 +90,9 @@ async fn dev_scenario_a_handover_halfway_through_an_epoch_splits_the_operators_s
     let handover_secs = start_secs + DISTRIBUTION_EPOCH_SECS / 2;
     let close_secs = handover_secs - 7 * 86_400 - FINALITY_MARGIN_SECS;
     node.advance_to((close_secs as Millis + 60) * 1000).await;
+    // Anvil estimates the close's gas at the pending block, which must already be past b's minimum
+    // term, or the estimate leaves out the election's writes and the close runs out of gas.
+    chain.mine_at(close_secs - 60).await;
     chain.close_epoch_at(close_secs).await;
     node.wait("the second election to mirror", move |e| {
         e.operator_election().last.is_some_and(|last| last.candidate == incoming)
