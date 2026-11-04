@@ -1,7 +1,7 @@
 # Standing as an operator candidate
 
 The operator runs the enclave host, holds the admin key, and is chosen on chain: stakers delegate
-their MONKEY to a candidate, and anyone may close an election epoch, which elects the eligible
+amounts of their MONKEY to candidates, and anyone may close an election epoch, which elects the eligible
 candidate with the most delegated stake. Rotation is **off at launch**. The deployer is the only
 operator until the timelock turns it on, and until then none of the election steps here has an
 effect. This runbook has four parts: standing for election, becoming the operator when elected,
@@ -60,13 +60,16 @@ config hash is what the timelock approves, so every change after approval is a n
    MONKEY=$(cast call $VAULT 'monkey()(address)' --rpc-url $RPC)
    cast send $MONKEY 'approve(address,uint256)' $STAKING $AMOUNT --rpc-url $RPC --account <candidate>
    cast send $STAKING 'stake(uint256)' $AMOUNT --rpc-url $RPC --account <candidate>
-   cast send $STAKING 'delegate(address)' <candidate address> --rpc-url $RPC --account <candidate>
+   cast send $STAKING 'delegate(address,uint256)' <candidate address> $AMOUNT --rpc-url $RPC --account <candidate>
    ```
 
    **Changes the live system.** Needs the owner's approval (these are the candidate's own funds and
-   transactions; the owner decides whether this party may stand). `delegate` to itself is optional;
-   votes may come from any staker. Check: `cast call $STAKING 'stakes(address)(uint256)'
-   <candidate address> --rpc-url $RPC` is at least the bond, and the minimum self-bond is below it.
+   transactions; the owner decides whether this party may stand). New stake is undelegated until a
+   `delegate` gives it a candidate. Delegating to itself is optional, and any amount up to the
+   undelegated stake may be delegated; votes may come from any staker. Check: `cast call $STAKING
+   'stakes(address)(uint256)' <candidate address> --rpc-url $RPC` is at least the bond, the minimum
+   self-bond is below it, and `cast call $STAKING 'delegationsOf(address)((address,uint256)[])'
+   <candidate address> --rpc-url $RPC` lists the delegations made.
 3. **Authorize the key.** The admin key signs an EIP-712 authorization of this candidate, so no one
    can register a key the candidate did not choose. The registry computes the digest; the admin key
    signs it as a hash, without the Ethereum message prefix:

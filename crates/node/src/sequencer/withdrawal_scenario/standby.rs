@@ -68,7 +68,7 @@ pub(super) async fn standby_takes_over() -> anyhow::Result<()> {
     let in_effect = chain.read(chain.registry, operatorInEffectCall {}).await?;
     ensure!(in_effect.candidate == operator_address, "the failed promotion moved the operator");
 
-    // B registers as the standby: self-bond, approved release, self-delegation. Its release is the
+    // B registers as the standby: self-bond, approved release, its bond delegated to itself. Its release is the
     // normal config's hash, which must exist before the registration names it.
     let b_admin = SigningKey::from_slice(&B_ADMIN)?;
     let b_admin_address = Address::from(engine_core::eip712::address(b_admin.verifying_key()).0);
@@ -97,7 +97,7 @@ pub(super) async fn standby_takes_over() -> anyhow::Result<()> {
             "127.0.0.1:9444",
         )
         .await?;
-    chain.delegate_self(b_candidate).await?;
+    chain.delegate_from(b_candidate, b_candidate, U256::from(10_000)).await?;
 
     // A boots with rotation on and the staking mirror configured.
     let a_port = free_port()?;

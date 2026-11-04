@@ -69,7 +69,12 @@ the enclave image, built from `image`, is in scope as published here too. A trad
 able to sign requests with its own key, since the engine accepts no contract signatures: a contract
 wallet funds a key that signs for it through the vault's `depositFor`, and a balance credited to a
 contract account can be recovered only through the exit (#48), so a report of that alone is not a
-new finding.
+new finding. The staking contract keeps each staker's delegations as amounts, with no limit on how
+many candidates one staker delegates to: an unstake larger than the staker's undelegated stake
+reduces every one of its delegations in one transaction, so a staker with very many delegations
+takes some back first, each call touching one or two, before such an unstake fits in a block. That
+cost falls only on the staker that chose the delegations, and no one else can add to them, so a
+report that rests on it alone is not a new finding.
 
 The findings that matter most let someone take funds they are not owed, fill an order at a price the
 rules do not allow, make the state the node reports differ from the state its published log replays

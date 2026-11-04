@@ -41,13 +41,18 @@ sol! {
         string handoverEndpoint;
     }
     struct Operator { address candidate; address adminKey; bytes32 release; uint64 since; }
+    struct Delegation { address candidate; uint256 amount; }
     function monkey() external view returns (address);
     function staking() external view returns (address);
     function mint(address to, uint256 amount) external;
     function approve(address spender, uint256 amount) external returns (bool);
     function stake(uint256 amount) external;
     function startUnstake(uint256 amount) external;
-    function delegate(address candidate) external;
+    function delegate(address candidate, uint256 amount) external;
+    function undelegate(address candidate, uint256 amount) external;
+    function redelegate(address from, address to, uint256 amount) external;
+    function votes(address candidate) external view returns (uint256);
+    function delegationsOf(address account) external view returns (Delegation[]);
     function registrationDigest(address candidate, address adminKey) external view returns (bytes32);
     function register(Registration registration, bytes signature) external;
     function setReleaseApproval(address candidate, bytes launchDigest, bytes32 configHash, bool approved) external;

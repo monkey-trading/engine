@@ -203,9 +203,11 @@ an index: load only the rule whose hint matches the current action.
   snapshot — and emits the events the engine mirrors; `claimDistribution` pays an account the USDC
   its cumulative distribution, proven
   against the root of any recorded checkpoint of the signer epoch in force, adds to what it was already
-  paid. Each staker delegates its whole
-  stake to one candidate, changeable at any time; votes drop at `startUnstake`, and a registered
-  candidate's self-bond cannot be unstaked until one cooldown after it leaves. `src/OperatorRegistry.sol`
+  paid. New stake is undelegated; a staker delegates chosen amounts of it to any number of
+  candidates (`delegate`), moves amounts between them (`redelegate`), and takes amounts back
+  (`undelegate`), with `delegationsOf` listing them; `startUnstake` takes undelegated stake first,
+  then each delegation in proportion, so votes drop there, and a registered candidate's self-bond
+  cannot be unstaked until one cooldown after it leaves. `src/OperatorRegistry.sol`
   deploys the staking contract and elects the operator key: candidates register a self-bond, admin
   key, API hostname, handover endpoint and release — the registration carrying the admin key's
   EIP-712 authorization of the candidate, so a key is registered only for a candidate it
@@ -588,7 +590,8 @@ Run from the repo root:
 - Production secrets dev scenario: `./scripts/dev-production-secrets.sh` (the vault scenario's
   requirements; obviously fake values, private temporary data, and its own free ports)
 - Operator election dev scenario: `./scripts/dev-operator-election.sh` (starts Anvil, deploys the
-  vault, the registry and its staking contract, delegates to two candidates, elects one, and checks
+  vault, the registry and its staking contract, delegates amounts to two candidates, moves and takes
+  amounts back, unstakes past the undelegated stake, elects one by those tallies, and checks
   through the real custody quorum, sequencer and API that the deployer's key is refused and the
   elected key applies from the effective time; needs Anvil, Forge, Python 3, and installed Soldeer
   dependencies)

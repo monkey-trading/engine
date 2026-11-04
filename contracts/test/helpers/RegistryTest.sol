@@ -92,9 +92,11 @@ abstract contract RegistryTest is GovernanceTest {
         vm.stopPrank();
     }
 
+    /// @dev Delegates all of `account`'s undelegated stake to `candidate`.
     function _delegate(address account, address candidate) internal {
+        uint256 undelegated = staking.stakes(account) - staking.delegatedStake(account);
         vm.prank(account);
-        staking.delegate(candidate);
+        staking.delegate(candidate, undelegated);
     }
 
     function _registration(address adminKey, uint256 bond, uint256 seed)

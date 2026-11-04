@@ -88,8 +88,8 @@ async fn dev_scenario_the_elected_operator_and_a_staker_each_claim_their_share()
     chain.register(b, &key_b, monkey(2_000), DIGEST_B).await;
     let approvals = vec![chain.approval(a, DIGEST_A), chain.approval(b, DIGEST_B)];
     chain.govern(approvals).await;
-    for (from, candidate) in [(a, a), (b, b), (c, b)] {
-        chain.send(from, chain.staking, delegateCall { candidate }.abi_encode()).await;
+    for (from, candidate, amount) in [(a, a, 30_000), (b, b, 40_000), (c, b, 20_000)] {
+        chain.send(from, chain.staking, delegateCall { candidate, amount: monkey(amount) }.abi_encode()).await;
     }
     chain.govern(vec![setRotationCall { enabled: true }.abi_encode()]).await;
     node.wait("rotation to mirror on", |e| e.operator_election().rotation_enabled).await;
