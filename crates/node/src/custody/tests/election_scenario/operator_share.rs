@@ -293,7 +293,7 @@ pub(super) fn allocated_of(events: &[Event]) -> UsdcUnits {
 }
 
 /// The excess a close's events measured.
-fn excess_of(events: &[Event]) -> UsdcUnits {
+pub(super) fn excess_of(events: &[Event]) -> UsdcUnits {
     events
         .iter()
         .find_map(|e| match e {
@@ -323,7 +323,7 @@ pub(super) async fn posted_proof(node: &Node, account: AccountId, entitled: Usdc
 }
 
 /// Has a relayer claim `account`'s distribution, returning the USDC `account` received.
-async fn claim(chain: &Chain, node: &Node, account: Address, entitled: UsdcUnits) -> U256 {
+pub(super) async fn claim(chain: &Chain, node: &Node, account: Address, entitled: UsdcUnits) -> U256 {
     let relayer = chain.accounts[1];
     let before = chain.view(chain.usdc, balanceOfCall { account }).await;
     let proof = posted_proof(node, AccountId(account.into()), entitled).await;

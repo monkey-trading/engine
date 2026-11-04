@@ -114,7 +114,8 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
 - MONKEY staking from protocol `V25`: `engine admin init-staking` or a genesis `staking` entry
   records the liquidity floor, epoch length, start, and unstake cooldown once; each epoch the
   engine distributes house NAV above the floor to stakers pro-rata, from `V47` less a fifth to the
-  operator in effect while rotation is on, and
+  operator in effect while rotation is on, from `V50` split among the operators by their time in
+  office, and
   `GET /v1/accounts/{address}/distributions` serves an account's cumulative USDC distribution with
   its proof, for the vault's `claimDistribution`; checkpoint
   reconciliation counts the USDC the vault has paid in distributions against the ledger
@@ -2024,7 +2025,8 @@ distribution the same way (`entitled` in the 6-decimal token's base units, with 
 against the root of the proof's `seq`, under the same rule, and `claimable` does not read a withdrawal
 pause, under which the vault refuses the claim. An account has no distribution, and gets 404, until
 the first checkpoint after an epoch in which it was allocated a share. From `V47`, while rotation is on, the
-operator's fifth of each epoch's distribution is in this same leaf, under its candidate's address.
+operator's fifth of each epoch's distribution is in this same leaf, under its candidate's address,
+and from `V50` each operator's part of it by time in office is in its own.
 
 `/v1/accounts/{address}/exit` returns, from `V38`, every proof the account exits the vault with
 against the state root of the last checkpoint: `terms` (the vault deposit cursor and the pending and

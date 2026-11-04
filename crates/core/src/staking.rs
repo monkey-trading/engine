@@ -30,7 +30,8 @@
 //!   a close that sweeps what built up while nothing was staked pays the operator a fifth of it.
 //!   It credits the leaf of the candidate seated under the key in effect (`election`), which is also
 //!   that candidate's leaf as a staker, so the vault's claim and exit pay the operator as they pay
-//!   anyone.
+//!   anyone. From `V50` the share is split among the operators by their time in office during the
+//!   open epoch (`office`).
 //! - **Reconciliation.** Allocations reduce house cash before any USDC leaves the vault; the
 //!   vault's cumulative `distributionsPaid` explains the difference at the next checkpoint.
 
@@ -47,6 +48,8 @@ use crate::engine::Engine;
 use crate::event::Event;
 use crate::protocol::ProtocolVersion;
 use crate::types::{AccountId, MAX_STAMP_MS, Millis};
+mod office;
+pub use office::TimeInOffice;
 
 /// One USDC base unit in `Fixed`'s raw units (9 decimals against USDC's 6).
 pub(crate) const USDC_SCALE: i128 = 1_000;
@@ -76,7 +79,8 @@ pub struct StakingConfig {
     pub cooldown_ms: Millis,
 }
 
-/// Staking once initialised: the config, the open epoch, and what closed epochs allocated.
+/// Staking once initialised: the config, the open epoch, what closed epochs allocated, and from `V50`
+/// the open epoch's time in office.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Staking {
     pub config: StakingConfig,
@@ -92,6 +96,9 @@ pub struct Staking {
     /// The last fully verified finalized staking block, recorded only after its complete event range.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completed_through: Option<StakingCheckpoint>,
+    /// From `V50`, the time in office the open epoch's close splits the operator's share by.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub office: Option<TimeInOffice>,
 }
 
 /// The authenticated anchor of a completed finalized staking scan.
@@ -253,7 +260,11 @@ impl Engine {
             distributed: UsdcUnits(0),
             mirrored_through: None,
             completed_through: None,
+            office: None,
         });
+        if self.protocol_version >= ProtocolVersion::V50 {
+            self.start_time_in_office();
+        }
         Ok(())
     }
 
@@ -328,8 +339,8 @@ impl Engine {
 
     /// Closes every epoch the sequenced time has ended, before anything else the command does: the
     /// latest one distributes `NAV − floor` pro-rata to the staked snapshot, less from `V47` the
-    /// operator's share while rotation is on; the ones before it, whose end no command witnessed,
-    /// distribute nothing, like emission periods.
+    /// operator's share while rotation is on, and from `V50` the share its time in office earned;
+    /// the ones before it, whose end no command witnessed, distribute nothing, like emission periods.
     pub(crate) fn finalise_staking(&mut self, events: &mut Vec<Event>) {
         let Some(staking) = &self.staking else { return };
         let (config, open) = (staking.config, staking.epoch);
@@ -348,14 +359,11 @@ impl Engine {
         let mut allocated = 0u128;
         if usdc_excess > 0 && !self.staked.is_empty() {
             let mut to_stakers = usdc_excess;
-            if let Some(account) = self.operator_share_account() {
-                let amount = usdc_excess / OPERATOR_SHARE_DIVISOR;
-                if amount > 0 {
-                    self.credit_distribution(account, amount);
-                    to_stakers -= amount;
-                    allocated += amount;
-                    events.push(Event::OperatorShareAllocated { account, epoch: closed, amount: UsdcUnits(amount) });
-                }
+            for (account, amount) in self.operator_shares(usdc_excess / OPERATOR_SHARE_DIVISOR) {
+                self.credit_distribution(account, amount);
+                to_stakers -= amount;
+                allocated += amount;
+                events.push(Event::OperatorShareAllocated { account, epoch: closed, amount: UsdcUnits(amount) });
             }
             let stakes: Vec<(AccountId, u128)> =
                 self.staked.iter().map(|(account, staked)| (*account, staked.0)).collect();
@@ -387,10 +395,22 @@ impl Engine {
         let staking = self.staking.as_mut().expect("read above");
         staking.epoch = elapsed;
         staking.distributed.0 += allocated;
+        if self.protocol_version >= ProtocolVersion::V50 {
+            self.start_time_in_office();
+        }
     }
 }
 
 impl Engine {
+    /// The operator's share of a close, `share` USDC base units, by recipient: from `V50` split by the
+    /// open epoch's time in office, and from `V47` all to the account in office while rotation is on.
+    fn operator_shares(&self, share: u128) -> Vec<(AccountId, u128)> {
+        if self.protocol_version >= ProtocolVersion::V50 {
+            return self.split_by_time_in_office(share);
+        }
+        self.operator_share_account().filter(|_| share > 0).map(|account| (account, share)).into_iter().collect()
+    }
+
     /// Adds `amount` to `account`'s cumulative distribution.
     fn credit_distribution(&mut self, account: AccountId, amount: u128) {
         let distribution = self.distributions.entry(account).or_default();

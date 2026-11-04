@@ -35,7 +35,7 @@ an index: load only the rule whose hint matches the current action.
   `tests/operator_install.rs`), MONKEY emissions (`emissions.rs`: fixed ten-minute budgets
   shared by gross realised loss magnitudes from V43, net before it, halvings, and cumulative entitlements) and MONKEY staking with
   USDC distributions (`staking.rs`: stake mirroring, V27 authenticated identities and completed scan
-  anchors, epoch closes at NAV above a liquidity floor, from `V47` a fifth to the operator in effect while rotation is on, cumulative distributions proven on chain; `Engine::distributable_excess` reads what a close would distribute),
+  anchors, epoch closes at NAV above a liquidity floor, from `V47` a fifth to the operator in effect while rotation is on, from `V50` split by time in office (`staking/office.rs`), cumulative distributions proven on chain; `Engine::distributable_excess` reads what a close would distribute),
   protocol versions, and the
   state tree (a keccak-256 sparse Merkle tree over the state, with account and entitlement proofs, in
   `merkle/`; from `V38` `merkle/exit.rs` commits and proves what the vault's exit checks). It does no IO and uses no clocks,

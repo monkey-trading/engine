@@ -344,10 +344,10 @@ impl Engine {
         self.operator_election.seated.filter(|seated| seated.admin_key == operator).map(|seated| seated.candidate)
     }
 
-    /// From `V47`, the account that earns the operator's share of a distribution closing now: while
-    /// rotation is on, the candidate seated under the key in effect, or for an operator no election
-    /// installed the address of its key. `None` before `V47` or while rotation is off; `V8` on always
-    /// records an operator.
+    /// From `V47`, the account in office for the operator's share: while rotation is on, the
+    /// candidate seated under the key in effect, or for an operator no election installed the address
+    /// of its key. A close pays it the whole share under `V47`, and from `V50` it earns time in office.
+    /// `None` before `V47` or while rotation is off; `V8` on always records an operator.
     pub(crate) fn operator_share_account(&self) -> Option<AccountId> {
         if self.protocol_version < ProtocolVersion::V47 || !self.operator_election.rotation_enabled {
             return None;

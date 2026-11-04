@@ -84,7 +84,9 @@ this crate and reproduce the signed state roots exactly.
   rotation
 - From protocol `V47`, while rotation is on, a fifth of each epoch's distribution credits the
   operator in effect when the close runs, in its candidate's cumulative distribution leaf, and stakers
-  share the rest (`src/staking.rs`)
+  share the rest (`src/staking.rs`); from `V50` the fifth is split among the operators by their
+  sequenced time in office during the epoch, and the time no one served goes to stakers
+  (`src/staking/office.rs`)
 
 - One command that makes every market reduce-only, including markets listed later; trades that
   reduce or close a position fill in every reduce-only mode, and from `V8` parameters whose stress
@@ -227,11 +229,17 @@ this crate and reproduce the signed state roots exactly.
 - `tests/operator_share.rs` — `V47`: the operator's fifth of a distribution, with rotation on and off, an epoch that distributes nothing, a built-up sweep, an operator that also stakes, and the leaf's claim and exit proofs
 - `tests/operator_share/elections.rs` — who earns the share as elections, handovers, cancellations and signed rotations move the operator in effect
 - `tests/operator_share/rounding.rs` — the share's rounding and its dust, as a table and a property
+- `tests/operator_share/time_in_office.rs` — `V50`: the share split by time in office: a handover
+  mid-epoch and in the close's own command, skipped epochs, an epoch no one served, rotation off for
+  part of one, the count's start at activation, initialisation and each close, replay, and a property
+  that the parts never pass the fifth nor the allocation the excess
 - `src/emissions.rs` — MONKEY emissions: the schedule, period results, finalisation, and
   entitlements
 - `src/staking.rs` — MONKEY staking and USDC distributions: the config, stake and unstake
   mirroring, epoch finalisation, the operator's share from `V47`, claimable distributions, and
   `distributable_excess`, the read-only figure an epoch close would distribute
+- `src/staking/office.rs` — from `V50`, each account's time in office in the open epoch, and the
+  split of the operator's share by it
 - `src/staking/tests.rs` — staking tests: initialisation and validation, mirror crediting and
   refusals, epoch closes above and below the floor, rounding, skipped epochs, and the
   floor-preserving and principal locks
@@ -355,7 +363,7 @@ this crate and reproduce the signed state roots exactly.
 - `examples/reference_log/` — writes the reference log for a new protocol version: the session
   (`main.rs`), the requests and event names it uses (`helpers.rs`), its `V10` to `V12` parts
   (`v10.rs`, `v11.rs`, `v12.rs`), its `V13` part (`stress.rs`), its `V14` part (`v14.rs`), and its
-  `V15` to `V49` parts (`v15.rs` to `v49.rs`)
+  `V15` to `V50` parts (`v15.rs` to `v50.rs`)
 
 - `examples/sign_request.rs` — a client signing a request body for the API
 - `examples/verify_proof.rs` — checks an account proof from the API against a root
@@ -584,6 +592,23 @@ changes it applies only that value, from its time on, once. A new listing needs 
 one holds it, and a relisting that keeps the markup leaves a pending notice waiting. Earlier versions
 change both at once, and nothing records a stress or markup notice before V49, so earlier logs replay
 unchanged. Its session is in `examples/reference_log/v49.rs`.
+
+Protocol V50 splits the operator's share of each distribution among the operators by their sequenced
+time in office, instead of paying all of it to the operator in effect at the close. While rotation is
+on, each command first credits the time since the command before it to the account in office over
+it, as V47 names that account and as the earlier command left it, so a handover counts from the
+command that applies it. The open epoch counts from the command that closed the epoch before it, or
+from V50's activation or staking's initialisation under it, to the command that closes it; skipped
+epochs stay inside that count, as the close pays the excess they built up. The close divides the
+fifth, `floor(excess / 5)`, by that count: each account earns `floor(fifth · served / counted)` in
+its cumulative distribution leaf, with its own `OperatorShareAllocated`, in account order. The time
+no one served, while rotation was off, and the parts' rounding go to stakers, so the allocated total
+never passes the excess, and with rotation on throughout the parts sum to the fifth less under a
+unit per operator. A handover in the close's own command leaves the whole epoch to the outgoing
+operator, and the count restarts at every close, including one that distributes nothing. The epoch
+the activation's own command closes still pays under V47's rule. Before V50 nothing records time in
+office, and the staking state encodes as before, so earlier logs replay unchanged. Its session is in
+`examples/reference_log/v50.rs`.
 
 Protocol V37 hands the operator key to the operator registry's elections while the registry has
 rotation on: an election takes effect at its effective time, never less than seven days after it

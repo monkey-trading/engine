@@ -259,11 +259,18 @@ pub enum ProtocolVersion {
     /// on, and `AnnounceMarkup` a market's new markup, which a relisting applies from its time on;
     /// each applies once. A new listing needs no notice.
     V49,
+    /// The operator's share is split by time in office (`staking::office`). While rotation is on,
+    /// each command credits the sequenced time since the last one to the account in office over it,
+    /// as `V47` names it, before its own handover. A close splits its fifth by the time the open epoch
+    /// counted, from the close before it, `V50`'s activation or staking's initialisation: each
+    /// account's part rounds down, and the time no one served with rotation off and the rounding go
+    /// to stakers. A handover in the close's own command leaves that epoch to the outgoing operator.
+    V50,
 }
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V49;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V50;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

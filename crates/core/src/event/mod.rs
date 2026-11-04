@@ -264,7 +264,8 @@ pub enum Event {
     /// From `V47`, the operator's share of a closed distribution epoch: `amount` of USDC base units
     /// added to the cumulative distribution of the candidate seated under the key in effect, or of the
     /// key's address for an operator no election installed. An operator that also stakes has a `DistributionAllocated`
-    /// too, in the same leaf.
+    /// too, in the same leaf. From `V50` a close has one for each account whose time in office earned
+    /// a part, in account order.
     OperatorShareAllocated {
         account: AccountId,
         epoch: u64,

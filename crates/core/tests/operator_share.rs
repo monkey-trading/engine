@@ -328,3 +328,6 @@ mod elections;
 
 #[path = "operator_share/rounding.rs"]
 mod rounding;
+
+#[path = "operator_share/time_in_office.rs"]
+mod time_in_office;

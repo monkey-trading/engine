@@ -368,6 +368,9 @@ impl Engine {
                 if self.protocol_version < ProtocolVersion::V46 && *version >= ProtocolVersion::V46 {
                     self.bound_stress_floors(events);
                 }
+                if self.protocol_version < ProtocolVersion::V50 && *version >= ProtocolVersion::V50 {
+                    self.start_time_in_office();
+                }
                 self.protocol_version = *version;
                 if *version >= ProtocolVersion::V26 {
                     self.hot_indexes = None;
