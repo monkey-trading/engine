@@ -146,10 +146,11 @@ async fn dev_scenario_the_operator_list_and_distribution_history_are_signed_read
     // 5. What each staker was allocated across the epochs, summed from its `distribution_allocated`
     //    history, is its entitlement in the engine and in the proof the vault pays against.
     assert_eq!(paid.len(), REGISTERED);
+    let last_close = epochs["epochs"][0]["close_seq"].as_u64().expect("the newest epoch names its close");
     for (account, total) in &paid {
         let account = *account;
         assert_eq!(node.query(move |e| e.distribution(account)).await, UsdcUnits(*total));
-        assert_eq!(history_sum(&node, account).await, *total, "{account}'s history");
+        assert_eq!(history_sum(&node, account, last_close).await, *total, "{account}'s history");
         let proof = super::operator_share::posted_proof(&node, account, UsdcUnits(*total)).await;
         assert_eq!(proof.entitled.0, *total);
     }
@@ -279,21 +280,24 @@ async fn check_list(chain: &Chain, candidates: &[(Address, Address)], list: &Val
     assert_eq!(list["block"]["time_ms"].as_i64(), Some(time as Millis * 1000));
 }
 
-/// The sum of `account`'s `distribution_allocated` events in its history, once the index has them.
-async fn history_sum(node: &Node, account: AccountId) -> u128 {
+/// The sum of `account`'s `distribution_allocated` events in its history, once the index holds the
+/// allocation of the close at `through_seq`, the newest: the route answers as soon as the index has
+/// caught up with the log it started from, which can trail a close the scenario has just made.
+async fn history_sum(node: &Node, account: AccountId, through_seq: u64) -> u128 {
     let path = format!("/v1/accounts/{account}/history?kind=distribution_allocated&limit=200");
-    for _ in 0..200 {
+    let mut newest = None;
+    for _ in 0..300 {
         let (status, page) = node.get(&path).await;
         if status == StatusCode::OK {
-            assert!(page["next"].is_null(), "a staker has few enough allocations for one page");
-            return page["events"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|e| e["amount"].as_str().unwrap().parse::<u128>().unwrap())
-                .sum();
+            let events = page["events"].as_array().unwrap();
+            // Newest first; a cursor is `<seq>:<index>`.
+            newest = events.first().and_then(|e| e["cursor"].as_str()?.split(':').next()?.parse::<u64>().ok());
+            if newest.is_some_and(|seq| seq >= through_seq) {
+                assert!(page["next"].is_null(), "a staker has few enough allocations for one page");
+                return events.iter().map(|e| e["amount"].as_str().unwrap().parse::<u128>().unwrap()).sum();
+            }
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    panic!("the history index never caught up");
+    panic!("the history index never took the close at seq {through_seq}; its newest allocation is at {newest:?}");
 }
