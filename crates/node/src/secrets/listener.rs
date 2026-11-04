@@ -17,6 +17,7 @@ use tokio::task::JoinSet;
 use tokio::time::{sleep, timeout};
 use tracing::{Instrument, info, info_span, warn};
 
+use crate::checkpoints::RegistryOperator;
 use crate::config::{NamedSecret, NodeConfig, TeeProvider, is_published_operator};
 use crate::handover::evidence::{self, Quoting};
 use crate::handover::{Kx, MESSAGE_TIMEOUT, receive, send};
@@ -45,10 +46,16 @@ pub(crate) enum Authority {
     Configured(AccountId),
     /// The key the log records, or a rotation's that has come due by trusted time, as
     /// `POST /v1/admin` checks it, with the configured key until the log records one. While the
-    /// registry elects operators, or on a node a pending rotation names as the successor, its own
-    /// configured key alone. Weak, so a listener that outlives the node's other tasks does not hold
-    /// the sequencer open past its drain.
-    Log { tx: mpsc::WeakSender<Request>, configured: AccountId, trusted: Arc<TrustedClock> },
+    /// registry elects operators, or on a node a pending rotation names as the successor, or one
+    /// whose configured key the finalised registry `installed` (`RegistryOperator::unscanned`), its
+    /// own configured key alone. Weak, so a listener that outlives the node's other tasks does not
+    /// hold the sequencer open past its drain.
+    Log {
+        tx: mpsc::WeakSender<Request>,
+        configured: AccountId,
+        installed: Option<RegistryOperator>,
+        trusted: Arc<TrustedClock>,
+    },
 }
 
 /// The delivery listener.
@@ -83,9 +90,9 @@ impl Authority {
     pub(crate) async fn admits(&self, signer: AccountId) -> anyhow::Result<bool> {
         match self {
             Authority::Configured(configured) => Ok(signer == *configured),
-            Authority::Log { tx, configured, trusted } => {
+            Authority::Log { tx, configured, installed, trusted } => {
                 let tx = tx.upgrade().ok_or_else(|| anyhow!("the node is stopping"))?;
-                let (now, configured) = (trusted.now_ms(), *configured);
+                let (now, configured, installed) = (trusted.now_ms(), *configured, *installed);
                 let (reply, answered) = oneshot::channel();
                 tx.send(Request::Query(Box::new(move |engine| {
                     let recorded = engine.operator().map_or(configured, |operator| operator.address);
@@ -97,7 +104,8 @@ impl Authority {
                     // with none recorded the key the log records stays in effect. A pending
                     // rotation to this node's own key names this node's operator the successor,
                     // as recovery reads it: during a promotion's notice the outgoing key still
-                    // signs admin commands, but it reaches into no successor's enclave.
+                    // signs admin commands, but it reaches into no successor's enclave. So does
+                    // the registry's installation of this node's key, before the log's scan passes it.
                     let election = engine.operator_election();
                     let governing = election.last.filter(|last| !last.cancelled).is_some_and(|last| {
                         engine
@@ -107,7 +115,8 @@ impl Authority {
                             || last.admin_key == recorded
                     });
                     let own_key_only = (election.rotation_enabled && governing)
-                        || engine.operator_bounds().rotation.is_some_and(|r| r.address == configured);
+                        || engine.operator_bounds().rotation.is_some_and(|r| r.address == configured)
+                        || installed.and_then(|seated| seated.unscanned(engine)) == Some(configured);
                     let due = now.and_then(|now| engine.due_rotation(now)).is_some_and(|r| r.address == signer);
                     let _ = reply.send(if own_key_only { signer == configured } else { signer == recorded || due });
                 })))

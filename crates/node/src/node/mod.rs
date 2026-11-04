@@ -10,7 +10,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, anyhow, bail};
+use anyhow::{Context, anyhow};
 use engine_core::types::AccountId;
 use tokio::net::TcpListener;
 use tokio::sync::{Semaphore, broadcast, mpsc, watch};
@@ -20,7 +20,6 @@ use tracing::{error, info, warn};
 
 use crate::alerts::Routing;
 use crate::api::{ApiState, Feed, MAX_BACKFILLS, Signing, router};
-use crate::checkpoints::CheckpointChain;
 use crate::clock::{Clock, SystemClock};
 use crate::config::{AuthMode, CustodyProvider, FeedProvider, NodeConfig};
 use crate::feeds;
@@ -135,26 +134,7 @@ async fn serve_node(
     delivered: &secrets::Delivered,
     chain_read: &mut bool,
 ) -> anyhow::Result<()> {
-    if let Some(vault) = crate::handover::vault_reader(&cfg)? {
-        let on = vault.rotation_enabled().await?;
-        *chain_read = true;
-        info!(alert_resolved = "secrets_start_failed", "the node read the chain");
-        if cfg.operator.rotation_enabled && !on {
-            bail!("operator.rotation_enabled = true, but the vault's registry has rotation off");
-        }
-        if on && !cfg.operator.rotation_enabled {
-            warn!(
-                "the vault's registry has rotation on, but operator.rotation_enabled is false: an election naming another operator moves the admin key this node does not expect"
-            );
-        }
-        // While rotation is on, the certificate the enclave orders names the API hostname the
-        // registry records for the operator in effect.
-        if on {
-            crate::handover::check_operator_hostname(&cfg, &vault).await?;
-        }
-    } else if cfg.operator.rotation_enabled {
-        bail!("operator.rotation_enabled = true needs [checkpoints] with EVM custody to read the registry");
-    }
+    handover::check_rotation(&cfg, chain_read).await?;
     if cfg.node.auth == AuthMode::None {
         warn!("API authentication is OFF: development only");
     }
@@ -219,6 +199,7 @@ async fn serve_node(
     let vault: AccountId = cfg.custody.vault.parse().context("custody.vault")?;
     let client_auth = cfg.client_auth()?;
     let operator = cfg.operator()?;
+    let registry_operator = checkpoint_setup.as_ref().and_then(|setup| setup.registry_operator);
     let access = cfg.access.as_ref().map(crate::access::AccessClient::new).transpose()?.map(Arc::new);
     let (stream_tx, _) = broadcast::channel(CHANNEL_CAPACITY);
     let (withdrawals_tx, withdrawals_rx) = mpsc::unbounded_channel();
@@ -247,6 +228,7 @@ async fn serve_node(
         close_spread_ceilings: cfg.genesis.close_spread_ceilings.clone(),
         history_sealing: None,
         checkpoint_signing: Some(signing_tx),
+        registry_operator,
     };
     let custody = Custody::connect(&cfg.custody, log.last_seq())
         .inspect_err(|e| error!(alert = "custody_connect_failed", "refusing to serve: {e:#}"))?
@@ -347,6 +329,7 @@ async fn serve_node(
         authority.send_replace(crate::secrets::Authority::Log {
             tx: tx.downgrade(),
             configured: operator.address,
+            installed: registry_operator,
             trusted: Arc::new(trusted()),
         });
     }

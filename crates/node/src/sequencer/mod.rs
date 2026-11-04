@@ -113,6 +113,8 @@ pub struct Sequencer {
     benchmark_alerts: BenchmarkAlerts,
     access_alerts: AccessAlerts,
     operator: Operator,
+    /// The registry's operator in effect at startup, while rotation is off (see `hold_has_signer`).
+    registry_operator: Option<crate::checkpoints::RegistryOperator>,
     metrics: Arc<Metrics>,
     gate: Option<Gate>,
     claims: claims::Claims,
@@ -120,6 +122,9 @@ pub struct Sequencer {
     /// Startup and recovery wait for a signed, complete publisher attempt before catch-up.
     benchmark_sync: bool,
     benchmark_sync_enabled: bool,
+    /// A `benchmark_sync_skipped` episode may be open, until a snapshot applies: from each start, since
+    /// the alert outbox keeps an episode an earlier start opened, and from each lifted hold.
+    benchmark_sync_skipped: bool,
     benchmark_time_refused: bool,
     benchmark_schedule: watch::Sender<BenchmarkSchedule>,
     benchmark_schedule_dirty: bool,
@@ -298,6 +303,9 @@ impl Sequencer {
         let events = self.stamp(ts, cmd)?;
         if snapshot && events.contains(&Event::AdminApplied) {
             self.benchmark_schedule_pending = false;
+            if std::mem::take(&mut self.benchmark_sync_skipped) {
+                info!(alert_resolved = "benchmark_sync_skipped", "publisher snapshot installed");
+            }
         }
         if self.benchmark_sync && snapshot && events.contains(&Event::AdminApplied) {
             self.benchmark_sync = false;

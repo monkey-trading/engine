@@ -47,7 +47,8 @@ Read [reference.md](reference.md) first.
    - No page is open that was not open before. Pages from the stop (`EngineNodeDown`) resolve.
 6. Restart the companions that depend on the node: the benchmark worker ([deploy-and-rollback.md](deploy-and-rollback.md),
    section 5). A node with `[benchmarks]` sequences nothing but required commands until the worker
-   has delivered a snapshot (`benchmark_sync_pending`).
+   has delivered a snapshot (`benchmark_sync_pending`), unless the registry has installed an
+   operator in place of the log's key (`benchmark_sync_skipped`, [standby.md](standby.md)).
 7. Tell clients that a signed withdrawal reissue request queued before the restart was lost: the
    account sends the same signed body again (the body stays valid until a new authorization replaces it).
 

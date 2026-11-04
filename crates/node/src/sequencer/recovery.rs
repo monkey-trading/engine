@@ -89,10 +89,12 @@ impl ReplayedLog {
                     Some(recorded) => same_domain(recorded),
                     None => false,
                 };
-        if let Some(recorded) = engine
-            .operator()
-            .filter(|recorded| **recorded != cfg.operator && !(rotated && same_domain(recorded)) && !named_successor)
-        {
+        // So does the key the finalised registry installed while rotation is off, before the log's
+        // scan has passed the installation: the fallback for a failed operator boots under its config.
+        let installed = cfg.registry_operator.and_then(|seated| seated.unscanned(engine)) == Some(cfg.operator.address);
+        if let Some(recorded) = engine.operator().filter(|recorded| {
+            **recorded != cfg.operator && !named_successor && !((rotated || installed) && same_domain(recorded))
+        }) {
             bail!("the log records operator {recorded:?}, but the config gives {:?}", cfg.operator);
         }
         if let Some(recorded) = engine.access_policy()
@@ -346,6 +348,7 @@ impl Sequencer {
             benchmark_alerts: BenchmarkAlerts::default(),
             access_alerts,
             operator: cfg.operator,
+            registry_operator: cfg.registry_operator,
             metrics: cfg.metrics,
             claims: Default::default(),
             gate: cfg.checkpoints.map(|sink| {
@@ -359,6 +362,7 @@ impl Sequencer {
             accounting,
             benchmark_sync: false,
             benchmark_sync_enabled: false,
+            benchmark_sync_skipped: true,
             benchmark_time_refused: false,
             benchmark_schedule,
             benchmark_schedule_dirty: false,

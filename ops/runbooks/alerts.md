@@ -110,6 +110,7 @@ Rebuilt from the log. None changes the books.
 | `benchmark_schedule_watch_failed` | Warning | The benchmark worker's schedule watch dropped; it reconnects. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Benchmark rates". |
 | `benchmark_rate_refused` | Warning | The worker left out a published rate the `V46` cap refuses; the last applied rate keeps financing. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Benchmark rates". |
 | `benchmark_sync_pending` | Warning | The node waits for the worker's signed history before catching up. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Benchmark rates". |
+| `benchmark_sync_skipped` | Warning | The registry installed an operator whose key has yet to take effect, so the node does not wait for the worker's history; financing uses the last applied rates until a snapshot applies, which resolves it. See [feed-and-custody-failures.md](feed-and-custody-failures.md), "Benchmark rates". |
 | `corporate_action_failed` | Critical | A scheduled dividend or split failed; no partial change is committed. See [corporate-actions.md](corporate-actions.md), "When an action fails". |
 | `house_deficit` | Warning | House NAV is below zero; trading continues within the cap floors. See [reduce-only.md](reduce-only.md), "When". |
 | `bad_debt` | Warning | An account's loss beyond its balance was written off against the house. The house absorbed a loss. Informational: read it with `house_deficit` and the house NAV in `/v1/house`. |
