@@ -76,6 +76,10 @@ stats_interval = "60s"
 # positions the House page shows live and sample the long and short series. At least 1s; a value
 # above `stats_interval` leaves the full scans alone.
 stats_light_interval = "5s"
+# How often `GET /v1/operators` reads the operator registry through the custody quorum, at one
+# finalised block, when `custody.evm.staking.registry.lens` names the `RegistryLens` beside the
+# registry (the mock custody here has none, so the route answers 404). At least 1s; 60s by default.
+operators_interval = "60s"
 
 # What a wallet that has paid nothing may add to the public log and to permanent state, apart from
 # the rates above: each declaration or session-key request from a never-credited account takes a

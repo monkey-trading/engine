@@ -13,8 +13,8 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, registry};
 
 use crate::config::{
-    AuthMode, CustodyProvider, FeedProvider, HistorySection, MIN_QUOTE_INTERVAL, MIN_STATS_INTERVAL, NodeConfig,
-    PRODUCTION_BUILD, StatsSection, TeeProvider,
+    AuthMode, CustodyProvider, FeedProvider, HistorySection, MIN_OPERATORS_INTERVAL, MIN_QUOTE_INTERVAL,
+    MIN_STATS_INTERVAL, NodeConfig, PRODUCTION_BUILD, StatsSection, TeeProvider,
 };
 use crate::sequencer::genesis::check_genesis;
 use crate::trusted_time::NO_SAMPLE_GRACE;
@@ -67,7 +67,7 @@ impl NodeConfig {
     /// - `node.tick`, `node.checkpoint_every`, `node.segment_commands`, `feeds.interval`,
     ///   `time.max_drift`, `time.interval`, or an `api` timeout is zero, or `time.interval` plus
     ///   twice `time.max_drift` is not under 60s
-    /// - `api.heartbeat_interval` is under one second
+    /// - `api.heartbeat_interval` or `api.operators_interval` is under one second
     /// - `api.quote_interval` is under 100 ms
     /// - `api.stats_interval` or `api.stats_light_interval` is under one second, or too long to count in
     ///   milliseconds
@@ -153,6 +153,7 @@ impl NodeConfig {
         StatsSection::millis(self.api.stats_interval).context("api.stats_interval")?;
         ensure!(self.api.stats_light_interval >= MIN_STATS_INTERVAL, "api.stats_light_interval must be at least 1s");
         StatsSection::millis(self.api.stats_light_interval).context("api.stats_light_interval")?;
+        ensure!(self.api.operators_interval >= MIN_OPERATORS_INTERVAL, "api.operators_interval must be at least 1s");
         self.api.validate_origins()?;
         self.api.validate_fresh_accounts()?;
         self.api.validate_proxy_protocol()?;

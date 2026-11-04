@@ -16,8 +16,7 @@ use engine_core::emissions::{EmissionSchedule, TokenUnits};
 use engine_core::event::Event;
 use engine_core::price::SourceQuote;
 use engine_core::protocol::ProtocolVersion;
-use governor::Quota;
-use governor::clock::DefaultClock;
+use governor::{Quota, clock::DefaultClock};
 use k256::ecdsa::SigningKey;
 use serde_json::Value;
 use tokio::net::TcpListener;
@@ -395,6 +394,7 @@ impl Node {
             emission_budget: None,
             collateral: None,
             listing: Default::default(),
+            operators: None,
             signing: crate::test_support::signing(),
         };
         Node { state, dir, tls, stamps, key, task }

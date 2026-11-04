@@ -30,16 +30,16 @@ use super::chain::Chain;
 use super::{COOLDOWN_SECS, DISTRIBUTION_EPOCH_SECS, T0_SECS};
 use crate::api::{ApiState, MAX_BACKFILLS, router};
 use crate::checkpoints::staking_scenario::access::Source;
-use crate::checkpoints::{CheckpointRpc, Poster};
+use crate::checkpoints::{CheckpointChain, CheckpointRpc, Poster, View};
 use crate::clock::Clock;
 use crate::clock::test_clock::TestClock;
 use crate::config::{
     CheckpointSection, CustodyProvider, CustodySection, FinalityTag, Genesis, RateLimit, RpcProviderSection,
 };
-use crate::custody::Custody;
+use crate::custody::{Custody, OperatorsReader};
 use crate::history::{INDEX_FILE, Reader};
 use crate::limits::ApiLimits;
-use crate::log::{CheckpointDomain, Manifest};
+use crate::log::{CheckpointDomain, CheckpointParent, Manifest};
 use crate::sequencer::{Request, Sequencer, SequencerConfig, genesis_commands};
 use crate::tee::{AttestationBundle, EnclaveKey, MockAttestor, attest_bundle};
 use crate::test_support::{CHECKPOINT_EVERY, dev_config, sample_around, scratch_dir, sequencer_config};
@@ -59,37 +59,58 @@ pub(super) struct Node {
     /// The checkpoint worker and the task relaying its status, when the scenario posts checkpoints.
     checkpoints: Option<(JoinHandle<anyhow::Result<()>>, JoinHandle<()>)>,
     /// The signed screening source deposits and orders pass through, when the scenario moves funds.
-    _access: Option<Source>,
+    access: Option<Source>,
+    /// The operator list's reader, when the chain has a lens.
+    operators: Option<JoinHandle<anyhow::Result<()>>>,
+    key: Arc<EnclaveKey>,
+    posting: bool,
 }
+
+/// What a restart keeps of the node it replaces: its log directory, clock and screening source.
+type Resume = (PathBuf, Arc<TestClock>, Option<Source>);
 
 impl Node {
     /// Starts the sequencer on a fresh log at `T0_SECS`, with the operator `deployer` signs as and
     /// the staking config the registry's staking contract was deployed with in its genesis, and the
     /// custody watcher reading the chain through its proxies.
     pub(super) async fn start(chain: &Chain, key: Arc<EnclaveKey>) -> Self {
-        Self::launch(chain, key, false).await
+        Self::launch(chain, key, false, None).await
     }
 
     /// `start`, with the checkpoint worker posting roots to the vault and a signed screening source,
     /// for a scenario that moves funds.
     pub(super) async fn start_posting_checkpoints(chain: &Chain, key: Arc<EnclaveKey>) -> Self {
-        Self::launch(chain, key, true).await
+        Self::launch(chain, key, true, None).await
     }
 
-    async fn launch(chain: &Chain, key: Arc<EnclaveKey>, post_checkpoints: bool) -> Self {
-        let dir = scratch_dir(if post_checkpoints { "operator-share-anvil" } else { "election-anvil" });
-        let clock = Arc::new(TestClock::at(T0_SECS as Millis * 1000));
+    /// Stops this node and starts another over the same log, clock and screening source, recovering
+    /// as a boot does: from the vault's posted checkpoint.
+    pub(super) async fn restart(self, chain: &Chain) -> Self {
+        let (key, posting, dir, clock) = (self.key.clone(), self.posting, self.dir.clone(), self.clock.clone());
+        let access = self.stop().await;
+        Self::launch(chain, key, posting, Some((dir, clock, access))).await
+    }
+
+    async fn launch(chain: &Chain, key: Arc<EnclaveKey>, post_checkpoints: bool, resume: Option<Resume>) -> Self {
+        let (dir, clock, resumed_source) = match resume {
+            Some((dir, clock, source)) => (dir, clock, Some(source)),
+            None => (
+                scratch_dir(if post_checkpoints { "operator-share-anvil" } else { "election-anvil" }),
+                Arc::new(TestClock::at(T0_SECS as Millis * 1000)),
+                None,
+            ),
+        };
         let mut cfg = dev_config();
         cfg.custody.provider = CustodyProvider::Evm;
         cfg.custody.vault = format!("{:#x}", chain.vault);
         let operator = Operator { vault: AccountId(chain.vault.into()), ..cfg.operator().unwrap() };
-        let custody = custody_section(chain, &dir, cfg.custody);
+        let custody_cfg = custody_section(chain, &dir, cfg.custody);
         let mut genesis: Genesis = cfg.genesis;
         genesis.house_capital = engine_core::Fixed::ZERO;
         genesis.staking = Some(StakingConfig {
             liquidity_floor: engine_core::Fixed::from_int(1_000_000),
             epoch_ms: DISTRIBUTION_EPOCH_SECS as Millis * 1000,
-            start_ms: clock.now_ms(),
+            start_ms: T0_SECS as Millis * 1000,
             cooldown_ms: COOLDOWN_SECS as Millis * 1000,
         });
         let (stream, _) = broadcast::channel(1024);
@@ -97,9 +118,18 @@ impl Node {
         let (manifest_tx, manifest) = watch::channel(Manifest::default());
         let auth = ClientAuth::Eip712 { chain_id: 31337, vault: operator.vault };
         let (work_tx, work_rx) = mpsc::channel(64);
-        let source = match post_checkpoints {
-            true => Some(Source::start(clock.clone(), operator).await),
-            false => None,
+        let source = match (resumed_source, post_checkpoints) {
+            (Some(source), _) => source,
+            (None, true) => Some(Source::start(clock.clone(), operator).await),
+            (None, false) => None,
+        };
+        let poster = post_checkpoints.then(|| poster(chain, &dir, &key));
+        let checkpoint_parent = match &poster {
+            Some(poster) => match poster.chain.state(View::Finalized).await.unwrap().checkpoint {
+                Some((seq, root)) => CheckpointParent { has_checkpoint: true, seq, root: root.parse().unwrap() },
+                None => CheckpointParent::default(),
+            },
+            None => CheckpointParent::default(),
         };
         let seq_cfg = SequencerConfig {
             vault: operator.vault,
@@ -108,15 +138,32 @@ impl Node {
             clock: clock.clone(),
             genesis: genesis_commands(&genesis),
             checkpoint_every: if post_checkpoints { POSTED_CHECKPOINT_EVERY } else { CHECKPOINT_EVERY },
+            checkpoint_parent,
             checkpoints: post_checkpoints.then_some(work_tx),
             access_policy: source.as_ref().map(|source| source.policy.clone()),
             ..sequencer_config(&dir, manifest_tx)
         };
-        let mut seq = Sequencer::recover(seq_cfg, key.clone(), stream.clone(), withdrawals).unwrap();
+        // As a boot does: the replay feeds the dashboard record, so a restart serves what it served.
+        let stats = crate::test_support::stats();
+        let replayed = Sequencer::read_log_with_authorities(
+            seq_cfg.log_dir,
+            Some(CheckpointDomain { chain_id: seq_cfg.chain_id, vault: seq_cfg.vault }),
+            Some(AccountId(key.address())),
+            seq_cfg.checkpoints.as_ref().map(|_| seq_cfg.checkpoint_parent),
+            Default::default(),
+            |_| {},
+            None,
+            Some(stats.clone()),
+        )
+        .unwrap();
+        let mut seq = Sequencer::recover_from(replayed, seq_cfg, key.clone(), stream.clone(), withdrawals).unwrap();
+        seq.track_stats(stats.clone());
         let access = source.as_ref().map(|source| source.client.clone());
-        let custody = Custody::connect(&custody, seq.last_seq()).unwrap().with_access(access.clone());
+        let custody = Custody::connect(&custody_cfg, seq.last_seq()).unwrap().with_access(access.clone());
         seq.activate_protocol().unwrap();
-        seq.genesis(&genesis).unwrap();
+        if seq.needs_genesis() {
+            seq.genesis(&genesis).unwrap();
+        }
         seq.trust(sample_around(clock.as_ref())).unwrap();
         let (tx, rx) = mpsc::channel(1024);
         let recovery = seq.take_recovery_checkpoints();
@@ -132,9 +179,18 @@ impl Node {
                     }
                 }
             });
-            let poster = poster(chain, &dir, &key);
+            let poster = poster.expect("a posting node builds its poster");
             (tokio::spawn(poster.run_with_recovery(work_rx, status_tx, recovery)), status)
         });
+        let api_cfg = {
+            let mut api = dev_config().api;
+            api.operators_interval = Duration::from_millis(300);
+            api
+        };
+        let (operators, feed) = match OperatorsReader::connect(&custody_cfg, &api_cfg).unwrap() {
+            Some((reader, feed)) => (Some(tokio::spawn(reader.run())), Some(feed)),
+            None => (None, None),
+        };
         let bundle = AttestationBundle {
             enclave_address: key.address(),
             config_sha256: [0; 32],
@@ -150,21 +206,33 @@ impl Node {
             access,
             operator,
             mock_custody: false,
-            clock: Arc::new(TestClock::at(T0_SECS as Millis * 1000)),
+            clock: Arc::new(TestClock::at(clock.now_ms())),
             log_dir: dir.clone(),
             manifest,
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
             limits: Arc::new(ApiLimits::with_quota(&dev_config().api, unlimited, DefaultClock::default())),
             history: Reader::new(dir.join(INDEX_FILE), watch::channel(true).1),
             marks: crate::test_support::marks_reader(),
-            stats: crate::test_support::stats(),
+            stats,
             emission_budget: None,
             payouts_enabled: false,
             collateral: None,
             listing: Default::default(),
+            operators: feed,
             signing: crate::test_support::signing(),
         };
-        Node { state, clock, dir, sequencer, custody, checkpoints, _access: source }
+        Node {
+            state,
+            clock,
+            dir,
+            sequencer,
+            custody,
+            checkpoints,
+            access: source,
+            operators,
+            key,
+            posting: post_checkpoints,
+        }
     }
 
     /// Moves the sequenced time to `ms`, and trusted time and the API's clock with it.
@@ -227,6 +295,17 @@ impl Node {
         self.send(HttpRequest::get(path).body(Body::empty()).unwrap()).await
     }
 
+    /// The status, headers and body bytes of a GET of `path` under `challenge`, as a client saves them.
+    pub(super) async fn get_signed(&self, path: &str, challenge: &str) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
+        let request =
+            HttpRequest::get(path).header(engine_wire::CHALLENGE_HEADER, challenge).body(Body::empty()).unwrap();
+        let app: Router =
+            router(self.state.clone()).layer(Extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9)))));
+        let response = app.oneshot(request).await.unwrap();
+        let (status, headers) = (response.status(), response.headers().clone());
+        (status, headers, to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec())
+    }
+
     /// The status and JSON body of a POST of `body` to `path`.
     pub(super) async fn post(&self, path: &str, body: Value) -> (StatusCode, Value) {
         let request =
@@ -234,8 +313,13 @@ impl Node {
         self.send(request.unwrap()).await
     }
 
-    /// Stops the checkpoint worker and the custody watcher, and drains the sequencer.
-    pub(super) async fn stop(self) {
+    /// Stops the checkpoint worker, the operator list's reader and the custody watcher, and drains the
+    /// sequencer. Returns the screening source, for a node that resumes.
+    pub(super) async fn stop(self) -> Option<Source> {
+        if let Some(operators) = self.operators {
+            operators.abort();
+            let _ = operators.await;
+        }
         if let Some((poster, status)) = self.checkpoints {
             poster.abort();
             let _ = poster.await;
@@ -246,6 +330,7 @@ impl Node {
         let _ = self.custody.await;
         drop(self.state);
         self.sequencer.await.unwrap().unwrap();
+        self.access
     }
 
     async fn send(&self, request: HttpRequest<Body>) -> (StatusCode, Value) {
@@ -302,10 +387,11 @@ fn custody_section(chain: &Chain, dir: &std::path::Path, mut custody: CustodySec
     evm.cursor_path = dir.join("custody.json");
     evm.staking = Some(
         toml::from_str(&format!(
-            "contract = '{:#x}'\ncursor_path = '{}'\n[registry]\ncontract = '{:#x}'",
+            "contract = '{:#x}'\ncursor_path = '{}'\n[registry]\ncontract = '{:#x}'{}",
             chain.staking,
             dir.join("staking.json").display(),
-            chain.registry
+            chain.registry,
+            chain.lens.map(|lens| format!("\nlens = '{lens:#x}'")).unwrap_or_default()
         ))
         .unwrap(),
     );

@@ -111,8 +111,9 @@ an index: load only the rule whose hint matches the current action.
   with no file to roll back: `series.rs` 1m/1h/1d buckets with `[stats]` retention, `snapshot.rs` and
   `closeout.rs` the full scan of every account at most once per `api.stats_interval` of sequenced time and a light one (totals only) every `api.stats_light_interval`, taken by `background.rs`'s worker over a copy of the engine so it never holds the sequencer, and, from the full scan's rule, each position's `closeouts` price in `GET /v1/accounts/{address}`, `activity.rs`
   the bounded MONKEY feed, `view.rs` the answers) served signed from `api/stats.rs` and `/v1/house`:
-  `/v1/house/positions`, `/v1/monkey`, `/v1/monkey/activity` and `/v1/stats/series`, each stating where its
-  data begins (`stats::bench` measures the scan at 100k accounts),
+  `/v1/house/positions`, `/v1/monkey`, `/v1/monkey/activity`, `/v1/monkey/distributions` (`distributions.rs`: the
+  closed epochs, their operator-share recipients and skipped ranges, in a ring of `[stats] distribution_limit`) and
+  `/v1/stats/series`, each stating where its data begins (`stats::bench` measures the scan at 100k accounts),
   dated benchmark ingestion (`benchmarks/` and the separate `admin/benchmark_feed.rs` signing worker
   with bounded durable schedule watches in `admin/benchmark_watch.rs` and `api/benchmark_schedule.rs`),
   optional checkpoint snapshots authenticated by pinned attested signers for suffix recovery,
@@ -148,6 +149,9 @@ an index: load only the rule whose hint matches the current action.
   start, which serves only its attestation until the timelock installs the registered enclave;
   `engine replay --attestation` pairs one attestation with each signer), the
   `/v1/operator` read of the key in effect, its pending rotation, and the last election, the
+  `/v1/operators` list of the registry's approved candidates with their stake and role (`custody/operators/`:
+  `RegistryLens` read over its own custody quorum at one final block every `api.operators_interval`, the answer
+  naming the block; 404 without `custody.evm.staking.registry.lens`), the
   `/v1/house/state` read of the protocol parameters (with the seq that set them) and the latest checkpoint
   (`api/house_state.rs`, `sequencer/house.rs`), checkpoint posting
   and collateral reconciliation, distributions paid included (`checkpoints/`), at most one signed checkpoint on its way to
@@ -230,7 +234,10 @@ an index: load only the rule whose hint matches the current action.
   against that root through `src/ExitVerifier.sol` for the claim window (account equity at its
   marks, unpaid approvals and queued remainders, then distributions), pays them pro rata, refunds
   deposits the root does not hold or holds pending to their payers, and releases the remainder
-  through the timelock; `src/StateTree.sol` is the shared proof check. `foundry.toml` enables the
+  through the timelock; `src/StateTree.sol` is the shared proof check. `src/RegistryLens.sol` is a
+  stateless read-only view over the registry and its staking contract, outside custody: the registry's switch,
+  parameters and operators, and every listed candidate's registration, votes, eligibility and role, in pages,
+  for the node's `/v1/operators`. `foundry.toml` enables the
   optimizer, without which the vault exceeds EIP-170's size limit.
 - **config/** — node configs. `dev.toml` runs the TEE, custody and feeds as mocks on one machine,
   and checks the clock against public Roughtime servers, citing each server's key source;
@@ -249,7 +256,8 @@ an index: load only the rule whose hint matches the current action.
   `api.stats_interval` (default 60 s) spaces the full account scans behind the dashboard figures and
   `api.stats_light_interval` (default 5 s) the light ones between them, and
   `[stats]` tunes the dashboard record's retention (1m ~48h, 1h ~90d, 1d unbounded by default), its
-  activity length and its close-out and profit buckets; unknown keys are refused.
+  activity length, the closed epochs it keeps (`distribution_limit`) and its close-out and profit buckets;
+  unknown keys are refused. `api.operators_interval` (default 60 s) spaces the operator list's reads.
   `[history.marks]` tunes the marks cache's per-resolution retention (1s ~48h, 1m ~60d, 1h ~2y,
   1d unbounded by default) and its optional provider backfill (`enabled`, the venue-domain
   `base_url`, per-resolution `depth`s); only the feed venue's public candles endpoint is
@@ -333,6 +341,10 @@ an index: load only the rule whose hint matches the current action.
   `dev-operator-share.sh`, the operator's share of distributions on Anvil: an elected candidate and a
   staker each claim their share, an epoch below the floor pays neither, and the candidate's unclaimed
   leaf registers and pays through the vault's exit;
+  `dev-staking-reads.sh`, the staking reads scenario on Anvil: forty candidates register and thirty-five are
+  approved, `/v1/operators` lists them with the chain's votes and the final block it names, three
+  distribution epochs close and `/v1/monkey/distributions` lists them, a later delegation shows in a later
+  list, a restart keeps the epoch list, and `engine verify-response` verifies every answer;
   `dev-operator-handover.sh`, the operator handover scenario on Anvil: an elected candidate's enclave
   takes the keys and the log from the incumbent's at the election's effective time, a withdrawal the
   incumbent authorized pays, a stale sealed copy refuses, a re-election hands the keys back, and
@@ -612,6 +624,9 @@ Run from the repo root:
   election mirrored into the sequencer, a close above the floor crediting the candidate a fifth and
   stakers the rest, both claims through the vault, an epoch below the floor paying neither, and the
   candidate's unclaimed leaf registering and paying through the exit from the stopped node's log)
+- Staking reads dev scenario: `./scripts/dev-staking-reads.sh` (the same requirements; the registry's lens
+  read through the custody quorum into `/v1/operators`, the closed epochs in `/v1/monkey/distributions`
+  across a delegation and a restart, and each saved answer verified with `engine verify-response`)
 - Operator handover dev scenario: `./scripts/dev-operator-handover.sh` (the same requirements; A runs
   as the operator in effect with rotation on, an election names B and, past its effective time, B
   takes the keys and the log from A through the handover listener, A exits, a withdrawal A

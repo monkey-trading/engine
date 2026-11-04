@@ -322,6 +322,7 @@ impl Node {
             emission_budget: None,
             collateral: None,
             listing: Default::default(),
+            operators: None,
             signing: crate::test_support::signing(),
         };
         assert_eq!(

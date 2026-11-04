@@ -9,7 +9,7 @@
 use std::collections::BTreeSet;
 use std::sync::Mutex;
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, Bytes, U256};
 use anyhow::{Context, bail, ensure};
 use futures_util::future::join_all;
 use tracing::{error, info, warn};
@@ -115,7 +115,7 @@ impl<R> Quorum<R> {
                 error!(
                     alert = "custody_rpc_quorum_lost",
                     operation,
-                    "custody requires {} identical votes; crediting paused, trading continues",
+                    "custody requires {} identical votes; this custody read is paused, trading continues",
                     self.required
                 );
             }
@@ -235,6 +235,21 @@ impl<R: VaultReader + Sync> VaultReader for Quorum<R> {
         }))
         .await;
         self.vote("account_balance", answers).map(|v| v.0)
+    }
+
+    /// Identical return data of the call at the same canonical block hash.
+    /// Error cases:
+    /// - no quorum
+    async fn contract_call(&self, at: BlockRef, to: Address, data: Bytes) -> anyhow::Result<Bytes> {
+        let answers = join_all(self.providers.iter().enumerate().map(|(i, (_, r))| {
+            let data = data.clone();
+            async move {
+                self.qualified(i)?;
+                r.contract_call(at, to, data).await
+            }
+        }))
+        .await;
+        self.vote("contract_call", answers).map(|v| v.0)
     }
 }
 

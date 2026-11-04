@@ -4,11 +4,13 @@ use std::collections::BTreeMap;
 
 use engine_core::event::{Event, Fill};
 use engine_core::fixed::Rounding;
+use engine_core::staking::UsdcUnits;
 use engine_core::types::Millis;
 use engine_core::{Engine, Fixed};
 
 use crate::stats::activity::{Entry, Kind, id};
 use crate::stats::background::{self, Background};
+use crate::stats::distributions::{EpochClose, OperatorShare, Skipped};
 use crate::stats::series::{Amount, Metric, from_raw, from_units};
 use crate::stats::snapshot::{self, MarketBook, Snapshot};
 use crate::stats::{Begin, Distribution, Inner, Settings, Stats};
@@ -16,6 +18,15 @@ use crate::stats::{Begin, Distribution, Inner, Settings, Stats};
 /// A base unit count as a series value.
 fn units(amount: u128) -> Amount {
     from_units(amount)
+}
+
+/// What an epoch close has allocated so far in its command.
+#[derive(Default)]
+struct CloseSoFar {
+    stakers_usdc_units: u128,
+    stakers: u64,
+    operator_shares: Vec<OperatorShare>,
+    skipped: Option<Skipped>,
 }
 
 /// The USD notional of a fill, or `None` for a fill the market's current currency cannot value. A fill
@@ -48,6 +59,8 @@ impl Inner {
         let queued = engine.withdrawal_cash().is_some();
         // Allocations of the period the command closes: MONKEY base units, and the weight they share.
         let mut periods: BTreeMap<u64, (Amount, Amount)> = BTreeMap::new();
+        // What the command's epoch close allocated before its closing event says so.
+        let mut close = CloseSoFar::default();
         for (index, event) in events.iter().enumerate() {
             match event {
                 Event::Fill(fill) => {
@@ -98,8 +111,32 @@ impl Inner {
                         self.series.ratio(Metric::MonkeyPerLoss, ended, amount, weight);
                     }
                 }
+                Event::DistributionEpochsSkipped { first, last } => {
+                    close.skipped = Some(Skipped { first: *first, last: *last })
+                }
+                Event::DistributionAllocated { amount, .. } => {
+                    close.stakers_usdc_units = close.stakers_usdc_units.saturating_add(amount.0);
+                    close.stakers += 1;
+                }
+                Event::OperatorShareAllocated { account, amount, .. } => {
+                    close.operator_shares.push(OperatorShare { account: *account, amount: *amount });
+                }
                 Event::DistributionEpochClosed { epoch, nav, floor, excess, allocated } => {
                     let closed_ms = engine.staking().map_or(ts, |s| s.config.epoch_end(*epoch));
+                    self.distributions.push(EpochClose {
+                        epoch: *epoch,
+                        close_seq: seq,
+                        close_ms: ts,
+                        ended_ms: closed_ms,
+                        nav: *nav,
+                        floor: *floor,
+                        excess_usdc_units: *excess,
+                        allocated_usdc_units: *allocated,
+                        stakers_usdc_units: UsdcUnits(close.stakers_usdc_units),
+                        stakers: close.stakers,
+                        operator_shares: std::mem::take(&mut close.operator_shares),
+                        skipped: close.skipped.take(),
+                    });
                     self.series.add(Metric::DistributedPerEpoch, None, closed_ms, units(allocated.0));
                     self.distribution = Some(Distribution {
                         epoch: *epoch,

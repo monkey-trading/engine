@@ -2,7 +2,7 @@
 
 use std::future::Future;
 
-use alloy::primitives::{Address, B256, U256};
+use alloy::primitives::{Address, B256, Bytes, U256};
 use engine_core::types::AccountId;
 
 use crate::custody::chain::BlockLink;
@@ -57,6 +57,18 @@ pub trait VaultReader {
     fn account_balance(&self, at: BlockRef, account: Address) -> impl Future<Output = anyhow::Result<U256>> + Send {
         let _ = (at, account);
         async { anyhow::bail!("this reader does not read account balances") }
+    }
+
+    /// The return data of a read-only call of `data` to the contract `to`, executed in the canonical
+    /// block `at`. A reader that cannot make it refuses.
+    fn contract_call(
+        &self,
+        at: BlockRef,
+        to: Address,
+        data: Bytes,
+    ) -> impl Future<Output = anyhow::Result<Bytes>> + Send {
+        let _ = (at, to, data);
+        async { anyhow::bail!("this reader does not make contract calls") }
     }
 }
 

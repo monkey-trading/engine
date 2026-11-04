@@ -15,12 +15,14 @@
 mod activity;
 pub(crate) mod background;
 mod closeout;
+mod distributions;
 mod monkey;
 mod record;
 mod series;
 mod snapshot;
 mod view;
 pub(crate) use closeout::{PositionCloseout, account_closeouts};
+pub(crate) use distributions::DistributionsPage;
 pub(crate) use monkey::MonkeyView;
 pub(crate) use view::{ActivityPage, HouseFigures, PositionsView, SeriesPage, SeriesQuery};
 
@@ -33,6 +35,7 @@ use engine_core::{Engine, Fixed};
 
 use crate::config::{NodeConfig, StatsSection};
 use crate::stats::activity::Activity;
+use crate::stats::distributions::Distributions;
 use crate::stats::series::SeriesStore;
 use crate::stats::snapshot::{Grid, Layout, Snapshot};
 
@@ -63,6 +66,7 @@ pub(crate) struct Settings {
     /// Between light scans: `api.stats_light_interval`, or `interval_ms` if that is shorter.
     light_interval_ms: Millis,
     activity_limit: usize,
+    distribution_limit: usize,
     layout: Layout,
 }
 
@@ -70,6 +74,8 @@ pub(crate) struct Settings {
 pub(crate) struct Inner {
     series: SeriesStore,
     activity: Activity,
+    /// Every distribution epoch closed since the record began, as far as `[stats]` keeps them.
+    distributions: Distributions,
     /// The latest scan of either kind: the totals every scan takes.
     snapshot: Option<Snapshot>,
     /// The latest full scan: margin, the position maps and the distribution excess.
@@ -117,6 +123,7 @@ impl Settings {
             light_interval_ms: StatsSection::millis(cfg.api.stats_light_interval.min(cfg.api.stats_interval))
                 .context("api.stats_light_interval")?,
             activity_limit: section.activity_limit,
+            distribution_limit: section.distribution_limit,
             layout: Layout {
                 closeout: Grid::new(section.closeout_range_bps, section.closeout_bucket_bps),
                 profit: Grid::new(section.profit_range_bps, section.profit_bucket_bps),
@@ -130,6 +137,7 @@ impl Inner {
         Self {
             series: SeriesStore::new(settings.retention),
             activity: Activity::new(settings.activity_limit),
+            distributions: Distributions::new(settings.distribution_limit),
             snapshot: None,
             full: None,
             begin: None,
@@ -259,7 +267,13 @@ impl Stats {
     pub(crate) fn dump(&self) -> String {
         let inner = self.lock();
         let (activity, _) = inner.activity.page(None, usize::MAX);
-        format!("{:?}\n{:?}\n{:?}", inner.series.rows(), activity, inner.begin)
+        format!(
+            "{:?}\n{:?}\n{:?}\n{:?}",
+            inner.series.rows(),
+            activity,
+            inner.distributions.page(None, usize::MAX),
+            inner.begin
+        )
     }
 }
 

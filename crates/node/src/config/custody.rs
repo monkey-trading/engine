@@ -95,6 +95,10 @@ pub struct StakingCustodySection {
 pub struct RegistryCustodySection {
     /// The `OperatorRegistry` contract, whose `staking()` is the staking contract above.
     pub contract: Address,
+    /// The `RegistryLens` beside the registry, which `GET /v1/operators` reads the operator list
+    /// through. Absent, that route answers 404.
+    #[serde(default)]
+    pub lens: Option<Address>,
 }
 
 /// Independently operated RPC service; its name identifies alerts without exposing credentials.
@@ -113,6 +117,7 @@ impl NodeConfig {
     /// - `custody.evm.providers[].rpc_url` is not a URL, or is plain HTTP to another machine, where the host
     ///   could rewrite every answer
     /// - a range, interval, or timeout in `[custody.evm]` is zero
+    /// - `custody.evm.staking.registry.lens` is the token, the vault, the staking contract, or the registry
     /// - `genesis.house_capital` is not zero with EVM custody
     pub(super) fn validate_custody(&self) -> anyhow::Result<()> {
         let evm = match (self.custody.provider, &self.custody.evm) {
@@ -155,6 +160,13 @@ impl NodeConfig {
             if [evm.usdc, vault, staking.contract].contains(&staking.registry.contract) {
                 bail!(
                     "custody.evm.staking.registry.contract must be the operator registry, not the token, vault, or staking contract"
+                );
+            }
+            if let Some(lens) = staking.registry.lens
+                && [evm.usdc, vault, staking.contract, staking.registry.contract].contains(&lens)
+            {
+                bail!(
+                    "custody.evm.staking.registry.lens must be the registry lens, not the token, vault, staking contract, or registry"
                 );
             }
         }

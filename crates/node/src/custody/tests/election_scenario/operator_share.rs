@@ -35,11 +35,11 @@ use crate::tee::EnclaveKey;
 use crate::test_support::DEV_EXIT_SCHEDULE;
 
 /// The liquidity floor the scenario's genesis records, in USDC base units.
-const FLOOR_UNITS: u64 = 1_000_000_000_000;
+pub(super) const FLOOR_UNITS: u64 = 1_000_000_000_000;
 /// The published private key of the default Anvil account the scenario trades through, index 5.
-const TRADER_KEY: &str = "8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba";
+pub(super) const TRADER_KEY: &str = "8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba";
 /// BTC, as the dev config lists it.
-const BTC: u32 = 1;
+pub(super) const BTC: u32 = 1;
 
 sol! {
     function balanceOf(address account) external view returns (uint256);
@@ -193,7 +193,7 @@ async fn dev_scenario_the_elected_operator_and_a_staker_each_claim_their_share()
 }
 
 /// Declares the key's account eligible through the API, as a client does before its deposit credits.
-async fn declare(node: &Node, key: &SigningKey) {
+pub(super) async fn declare(node: &Node, key: &SigningKey) {
     let account = eip712::address(key.verifying_key());
     let nonce = node.query(move |engine| engine.next_request_nonce(account)).await;
     let expires_at = node.clock.now_ms() + 60_000;
@@ -211,7 +211,7 @@ async fn declare(node: &Node, key: &SigningKey) {
 }
 
 /// The trader opens with `open` at `from` and closes the other way at `to`, through the API.
-async fn round_trip(node: &Node, key: &SigningKey, open: Side, qty: &str, from: &str, to: &str) {
+pub(super) async fn round_trip(node: &Node, key: &SigningKey, open: Side, qty: &str, from: &str, to: &str) {
     let close = if open == Side::Buy { Side::Sell } else { Side::Buy };
     for (mid, side) in [(from, open), (to, close)] {
         let ts = node.clock.now_ms();
@@ -248,7 +248,7 @@ async fn round_trip(node: &Node, key: &SigningKey, open: Side, qty: &str, from: 
 }
 
 /// Ticks at the end of the open epoch, closing it, and returns the tick's events.
-async fn next_epoch(node: &mut Node) -> Vec<Event> {
+pub(super) async fn next_epoch(node: &mut Node) -> Vec<Event> {
     let end = node
         .query(|e| {
             let staking = e.staking().expect("the genesis stakes");
@@ -260,7 +260,7 @@ async fn next_epoch(node: &mut Node) -> Vec<Event> {
 }
 
 /// The epoch a close's events closed.
-fn closed_epoch(events: &[Event]) -> u64 {
+pub(super) fn closed_epoch(events: &[Event]) -> u64 {
     events
         .iter()
         .find_map(|e| match e {
@@ -282,7 +282,7 @@ fn share_of(events: &[Event]) -> UsdcUnits {
 }
 
 /// What a close's events allocated.
-fn allocated_of(events: &[Event]) -> UsdcUnits {
+pub(super) fn allocated_of(events: &[Event]) -> UsdcUnits {
     events
         .iter()
         .find_map(|e| match e {
@@ -305,7 +305,7 @@ fn excess_of(events: &[Event]) -> UsdcUnits {
 
 /// `account`'s distribution proof from the API once the vault has recorded a root naming `entitled`,
 /// ticking until a checkpoint carries it there.
-async fn posted_proof(node: &Node, account: AccountId, entitled: UsdcUnits) -> DistributionProof {
+pub(super) async fn posted_proof(node: &Node, account: AccountId, entitled: UsdcUnits) -> DistributionProof {
     crate::test_support::wait_for("the checkpoint worker to post the distribution's root", async {
         loop {
             node.submit(Command::Tick).await;

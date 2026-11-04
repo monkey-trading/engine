@@ -8,6 +8,7 @@
 mod chain;
 mod node;
 mod operator_share;
+mod staking_reads;
 
 use std::sync::Arc;
 
