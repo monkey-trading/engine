@@ -57,6 +57,23 @@ live terms from `margin_tiers` in `curl -sf $API/v1/markets`.
 The books are safe throughout; what is at stake is the house's exposure at the gap. Keep the time the
 price returned, and `bad_debt` pages after it, for the owner.
 
+### Tightening `max_age_ms`
+
+A change to a market's `max_age_ms` is signed against the quotes the market holds when it is
+sequenced. While the market has open positions it applies only if those quotes, at their age then,
+still price it under the shorter limit; otherwise it is refused with "price rules it cannot price
+under". A venue's quote keeps the venue's own timestamp, and the feed's repeat rule only delays a
+repeat of an unchanged price, so a quiet mid leaves quotes older than a tighter limit even though
+the venues are healthy.
+
+1. Check the market has a price: `market_no_price` is not firing.
+2. Sign the change. If it is refused, wait for the venues to quote again, which moves the mid or
+   fires the repeat, and sign the same change once more.
+3. For a large cut, tighten in steps, so each step still prices the market from quotes that have
+   arrived since the last.
+4. Failing that, make the market reduce-only first ([reduce-only.md](reduce-only.md)): the check
+   then does not apply.
+
 ### Find what is down
 
 ```sh
