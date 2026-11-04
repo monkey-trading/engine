@@ -139,15 +139,16 @@ async fn dev_scenario_the_operator_list_and_distribution_history_are_signed_read
     let second = node.get_signed_json(&mut answers, "/v1/monkey/distributions?limit=2&before=1").await;
     assert_eq!((second["epochs"][0]["epoch"].clone(), second["next"].clone()), (0.into(), Value::Null));
 
-    // 5. What each staker was allocated across the epochs is its entitlement in the engine and in the
-    //    proof the vault pays against.
+    // 5. What each staker was allocated across the epochs, summed from its `distribution_allocated`
+    //    history, is its entitlement in the engine and in the proof the vault pays against.
+    assert_eq!(paid.len(), REGISTERED);
     for (account, total) in &paid {
         let account = *account;
         assert_eq!(node.query(move |e| e.distribution(account)).await, UsdcUnits(*total));
+        assert_eq!(history_sum(&node, account).await, *total, "{account}'s history");
+        let proof = super::operator_share::posted_proof(&node, account, UsdcUnits(*total)).await;
+        assert_eq!(proof.entitled.0, *total);
     }
-    let (staker, total) = paid.iter().next().map(|(account, total)| (*account, *total)).unwrap();
-    let proof = super::operator_share::posted_proof(&node, staker, UsdcUnits(total)).await;
-    assert_eq!(proof.entitled.0, total);
 
     // 6. Ten stakers delegate again, to the second candidate: a later answer shows the new votes.
     for (account, _) in &candidates[10..20] {
@@ -267,4 +268,23 @@ async fn check_list(chain: &Chain, candidates: &[(Address, Address)], list: &Val
     assert_eq!(list["block"]["hash"], block["hash"]);
     let time = u64::from_str_radix(block["timestamp"].as_str().unwrap().trim_start_matches("0x"), 16).unwrap();
     assert_eq!(list["block"]["time_ms"].as_i64(), Some(time as Millis * 1000));
+}
+
+/// The sum of `account`'s `distribution_allocated` events in its history, once the index has them.
+async fn history_sum(node: &Node, account: AccountId) -> u128 {
+    let path = format!("/v1/accounts/{account}/history?kind=distribution_allocated&limit=200");
+    for _ in 0..200 {
+        let (status, page) = node.get(&path).await;
+        if status == StatusCode::OK {
+            assert!(page["next"].is_null(), "a staker has few enough allocations for one page");
+            return page["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|e| e["amount"].as_str().unwrap().parse::<u128>().unwrap())
+                .sum();
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("the history index never caught up");
 }

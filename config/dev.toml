@@ -224,6 +224,8 @@ retention = "365d"
 # 1d buckets stay unbounded without retention_1d.
 # Most MONKEY events the activity feed keeps.
 # activity_limit = 5000
+# Most closed distribution epochs `GET /v1/monkey/distributions` keeps, newest first.
+# distribution_limit = 5000
 # The close-out map reaches this far from a market's mark each way, in buckets of this width (bps).
 # closeout_range_bps = 2000
 # closeout_bucket_bps = 100

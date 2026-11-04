@@ -1800,8 +1800,8 @@ strings. `GET /v1/monkey/distributions?limit=&before=` pages the closed distribu
 `allocated_usdc_units`, `stakers_usdc_units` with the number of `stakers` paid, `operator_shares` (every
 recipient with its `amount`, none while rotation is off) and `skipped` (the range of earlier epochs no command
 saw the end of, which that close distributed nothing for). It states where its data begins like the other
-answers, and `truncated` with `retained_from_epoch` when `[stats] distribution_limit` (5000 by default) has
-dropped older epochs. `GET /v1/stats/series?metric=&market=&resolution=(1m|1h|1d)&from_ms=&to_ms=&limit=` pages a
+answers, and `retained_from_epoch` names the oldest epoch held, with `truncated` true once `[stats] distribution_limit`
+(5000 by default) has dropped older epochs. `GET /v1/stats/series?metric=&market=&resolution=(1m|1h|1d)&from_ms=&to_ms=&limit=` pages a
 metric's buckets oldest first: `nav`, `cash`, `withdrawal_queue`, `total_staked`, `total_allocated`,
 `cumulative_distributed`, `long` and `short` (per market), `volume` (per market or all),
 `monkey_per_loss` and `distributed_per_epoch`. The series, activity and MONKEY answers state where their data begins

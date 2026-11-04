@@ -41,6 +41,8 @@ struct Provider {
     calls: Arc<Mutex<Vec<[u8; 4]>>>,
     /// Fails every lens call, as a provider that lost the block's state.
     down: bool,
+    /// Fails the lens calls with this selector only, as a provider that caps the gas of one.
+    fails: Option<[u8; 4]>,
 }
 
 /// `index`'s candidate: addresses and registration order run opposite ways, so a list in the lens's
@@ -115,7 +117,7 @@ impl Provider {
             overview: overview(count),
             rows: (0..count).map(|index| row(index, count)).collect(),
         };
-        Self { model, calls: Arc::default(), down: false }
+        Self { model, calls: Arc::default(), down: false, fails: None }
     }
 
     fn calls(&self) -> Vec<[u8; 4]> {
@@ -159,6 +161,7 @@ impl VaultReader for Provider {
         anyhow::ensure!(at == final_block() && to == LENS, "the call is not to the lens at the final block");
         anyhow::ensure!(!self.down, "the provider lost the block's state");
         let selector: [u8; 4] = data[..4].try_into().unwrap();
+        anyhow::ensure!(self.fails != Some(selector), "the provider caps this call's gas");
         self.calls.lock().unwrap().push(selector);
         let model = &self.model;
         Ok(match selector {
@@ -289,6 +292,19 @@ async fn one_provider_that_lost_the_blocks_state_does_not_stop_the_read() {
 }
 
 #[tokio::test]
+async fn each_lens_call_keeps_its_own_quorum_episode_and_none_pages_critical() {
+    let mut providers = honest(3);
+    providers.iter_mut().for_each(|provider| provider.fails = Some(candidatesCall::SELECTOR));
+    let (reader, _) = reader(providers, Duration::from_secs(60));
+    // The registry and the overview win their votes; the pages never do.
+    assert!(format!("{:#}", reader.read().await.unwrap_err()).contains("quorum lost for lens_candidates"));
+    assert_eq!(reader.quorum.lost_operations(), ["lens_candidates"]);
+    assert_eq!(reader.quorum.lost_operations().len(), 1, "a call that wins its vote ends no other call's episode");
+    reader.read().await.unwrap_err();
+    assert_eq!(reader.quorum.lost_operations(), ["lens_candidates"]);
+}
+
+#[tokio::test]
 async fn providers_on_another_chain_or_token_or_without_a_final_block_are_refused() {
     let refuse = |tweak: fn(&mut Provider)| async move {
         let mut providers = honest(1);
@@ -336,7 +352,7 @@ async fn the_feed_serves_nothing_before_a_read_the_list_while_fresh_and_nothing_
 }
 
 #[test]
-fn the_lens_abi_encodes_the_way_the_contract_does() {
+fn the_lens_selectors_and_return_data_round_trip() {
     // The contract's overview has no dynamic member, so its return data is the tuple's static
     // encoding: a fixed number of words.
     let encoded = overviewCall::abi_encode_returns(&overview(0));

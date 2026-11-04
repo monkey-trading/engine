@@ -23,6 +23,10 @@ use crate::custody::rpc::{InvalidRpcResponse, VaultRpc};
 pub(crate) struct Quorum<R> {
     pub(super) providers: Vec<(String, R)>,
     required: usize,
+    /// Whose reads these are, which every alert names so two quorums over the same providers keep
+    /// separate episodes; `critical` is whether losing the quorum pages Critical.
+    name: &'static str,
+    critical: bool,
     // The watcher owns this reader and polls serially. VaultReader uses shared references;
     // this lock guards synchronous admission/alert transitions and is never held across IO.
     alerts: Mutex<Alerts>,
@@ -57,7 +61,26 @@ impl<R> Quorum<R> {
         if providers.len() < 3 {
             bail!("custody quorum needs at least three providers");
         }
-        Ok(Self { required: providers.len() / 2 + 1, providers, alerts: Mutex::default() })
+        Ok(Self {
+            required: providers.len() / 2 + 1,
+            providers,
+            name: "custody",
+            critical: true,
+            alerts: Mutex::default(),
+        })
+    }
+
+    /// The operations whose quorum alert is open, for the tests.
+    #[cfg(test)]
+    pub(super) fn lost_operations(&self) -> Vec<&'static str> {
+        self.alerts.lock().expect("quorum alert lock poisoned").lost.iter().copied().collect()
+    }
+
+    /// This quorum's alerts under `name`, and at Warning only when `critical` is false: a read that
+    /// feeds no credit or checkpoint pauses nothing when it is lost.
+    pub(super) fn named(mut self, name: &'static str, critical: bool) -> Self {
+        (self.name, self.critical) = (name, critical);
+        self
     }
 
     /// Refuses reads until this poll's identity majority has admitted the provider.
@@ -87,6 +110,7 @@ impl<R> Quorum<R> {
                     if alerts.providers.insert((index, operation, "custody_rpc_provider_failed")) {
                         warn!(
                             alert = "custody_rpc_provider_failed",
+                            quorum = self.name,
                             provider = name,
                             operation,
                             "provider failed: {cause:#}"
@@ -94,13 +118,14 @@ impl<R> Quorum<R> {
                     }
                 }
                 Ok(value) => {
-                    resolve(&mut alerts, index, name, operation, "custody_rpc_provider_failed");
+                    resolve(&mut alerts, (self.name, index, name), operation, "custody_rpc_provider_failed");
                     if let Some(winner) = winner {
                         if value == winner {
-                            resolve(&mut alerts, index, name, operation, "custody_rpc_provider_disagreed");
+                            resolve(&mut alerts, (self.name, index, name), operation, "custody_rpc_provider_disagreed");
                         } else if alerts.providers.insert((index, operation, "custody_rpc_provider_disagreed")) {
                             warn!(
                                 alert = "custody_rpc_provider_disagreed",
+                                quorum = self.name,
                                 provider = name,
                                 operation,
                                 "provider disagrees with custody quorum"
@@ -112,17 +137,27 @@ impl<R> Quorum<R> {
         }
         let Some(value) = winner else {
             if alerts.lost.insert(operation) {
-                error!(
-                    alert = "custody_rpc_quorum_lost",
-                    operation,
-                    "custody requires {} identical votes; this custody read is paused, trading continues",
-                    self.required
-                );
+                let (quorum, required) = (self.name, self.required);
+                if self.critical {
+                    error!(
+                        alert = "custody_rpc_quorum_lost",
+                        quorum,
+                        operation,
+                        "custody requires {required} identical votes; crediting paused, trading continues"
+                    );
+                } else {
+                    warn!(
+                        alert = "custody_rpc_quorum_lost",
+                        quorum,
+                        operation,
+                        "custody requires {required} identical votes; the {quorum} read is paused, trading continues"
+                    );
+                }
             }
             bail!("custody RPC quorum lost for {operation}: need {} identical votes", self.required);
         };
         if alerts.lost.remove(operation) {
-            info!(alert_resolved = "custody_rpc_quorum_lost", operation, "custody quorum restored");
+            info!(alert_resolved = "custody_rpc_quorum_lost", quorum = self.name, operation, "custody quorum restored");
         }
         let voters = answers
             .iter()
@@ -241,6 +276,22 @@ impl<R: VaultReader + Sync> VaultReader for Quorum<R> {
     /// Error cases:
     /// - no quorum
     async fn contract_call(&self, at: BlockRef, to: Address, data: Bytes) -> anyhow::Result<Bytes> {
+        self.call_as("contract_call", at, to, data).await
+    }
+}
+
+impl<R: VaultReader + Sync> Quorum<R> {
+    /// `contract_call`, its quorum and provider alerts kept under `operation`, so each distinct call
+    /// of a caller has its own episode and one that succeeds cannot end another's.
+    /// Error cases:
+    /// - no quorum
+    pub(super) async fn call_as(
+        &self,
+        operation: &'static str,
+        at: BlockRef,
+        to: Address,
+        data: Bytes,
+    ) -> anyhow::Result<Bytes> {
         let answers = join_all(self.providers.iter().enumerate().map(|(i, (_, r))| {
             let data = data.clone();
             async move {
@@ -249,11 +300,9 @@ impl<R: VaultReader + Sync> VaultReader for Quorum<R> {
             }
         }))
         .await;
-        self.vote("contract_call", answers).map(|v| v.0)
+        self.vote(operation, answers).map(|v| v.0)
     }
-}
 
-impl<R: VaultReader + Sync> Quorum<R> {
     /// `account`'s balance at the highest block a majority declares final.
     /// Error cases:
     /// - the providers have no identity, finality or balance quorum, or name no final block
@@ -408,8 +457,13 @@ fn last_header(headers: Vec<BlockLink>, number: u64) -> anyhow::Result<BlockLink
 }
 
 /// Ends one provider's alert once that operation has a healthy response.
-fn resolve(alerts: &mut Alerts, index: usize, name: &str, operation: &'static str, alert: &'static str) {
+fn resolve(
+    alerts: &mut Alerts,
+    (quorum, index, name): (&'static str, usize, &str),
+    operation: &'static str,
+    alert: &'static str,
+) {
     if alerts.providers.remove(&(index, operation, alert)) {
-        info!(alert_resolved = alert, provider = name, operation, "provider recovered");
+        info!(alert_resolved = alert, quorum, provider = name, operation, "provider recovered");
     }
 }

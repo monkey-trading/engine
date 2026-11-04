@@ -75,7 +75,7 @@ async fn the_routes_refuse_what_they_cannot_serve_and_answer_the_rest() {
 }
 
 #[tokio::test]
-async fn distributions_answer_signed_data_newest_first_and_refuse_a_bad_page() {
+async fn distributions_answer_an_empty_history_and_refuse_a_bad_page() {
     let (app, owner) = serve(Rig::staking());
     let (status, _, body) = get(&app, "/v1/monkey/distributions").await;
     assert_eq!(status, StatusCode::OK, "{body}");

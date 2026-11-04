@@ -28,7 +28,7 @@ use tower::ServiceExt;
 
 use super::chain::Chain;
 use super::{COOLDOWN_SECS, DISTRIBUTION_EPOCH_SECS, T0_SECS};
-use crate::api::{ApiState, MAX_BACKFILLS, router};
+use crate::api::{ApiState, Feed, MAX_BACKFILLS, router};
 use crate::checkpoints::staking_scenario::access::Source;
 use crate::checkpoints::{CheckpointChain, CheckpointRpc, Poster, View};
 use crate::clock::Clock;
@@ -37,7 +37,6 @@ use crate::config::{
     CheckpointSection, CustodyProvider, CustodySection, FinalityTag, Genesis, RateLimit, RpcProviderSection,
 };
 use crate::custody::{Custody, OperatorsReader};
-use crate::history::{INDEX_FILE, Reader};
 use crate::limits::ApiLimits;
 use crate::log::{CheckpointDomain, CheckpointParent, Manifest};
 use crate::sequencer::{Request, Sequencer, SequencerConfig, genesis_commands};
@@ -62,6 +61,7 @@ pub(super) struct Node {
     access: Option<Source>,
     /// The operator list's reader, when the chain has a lens.
     operators: Option<JoinHandle<anyhow::Result<()>>>,
+    history: JoinHandle<anyhow::Result<()>>,
     key: Arc<EnclaveKey>,
     posting: bool,
 }
@@ -131,7 +131,7 @@ impl Node {
             },
             None => CheckpointParent::default(),
         };
-        let seq_cfg = SequencerConfig {
+        let mut seq_cfg = SequencerConfig {
             vault: operator.vault,
             operator,
             client_auth: auth.clone(),
@@ -143,19 +143,22 @@ impl Node {
             access_policy: source.as_ref().map(|source| source.policy.clone()),
             ..sequencer_config(&dir, manifest_tx)
         };
-        // As a boot does: the replay feeds the dashboard record, so a restart serves what it served.
+        // As a boot does: the replay feeds the dashboard record and checks the history index.
         let stats = crate::test_support::stats();
-        let replayed = Sequencer::read_log_with_authorities(
-            seq_cfg.log_dir,
-            Some(CheckpointDomain { chain_id: seq_cfg.chain_id, vault: seq_cfg.vault }),
+        let mut history_cfg = dev_config();
+        history_cfg.node.log_dir = dir.clone();
+        history_cfg.history.dir = dir.join("history");
+        history_cfg.custody.chain_id = 31337;
+        history_cfg.custody.vault = format!("{:#x}", chain.vault);
+        let (replayed, plan) = crate::node::tests::read_log_and_history_recording(
+            &history_cfg,
             Some(AccountId(key.address())),
             seq_cfg.checkpoints.as_ref().map(|_| seq_cfg.checkpoint_parent),
-            Default::default(),
-            |_| {},
-            None,
-            Some(stats.clone()),
+            &stats,
         )
         .unwrap();
+        let (replayed, mut history) = plan.finish_with_log(replayed, key.clone()).unwrap();
+        seq_cfg.history_sealing = history.sealing();
         let mut seq = Sequencer::recover_from(replayed, seq_cfg, key.clone(), stream.clone(), withdrawals).unwrap();
         seq.track_stats(stats.clone());
         let access = source.as_ref().map(|source| source.client.clone());
@@ -165,6 +168,16 @@ impl Node {
             seq.genesis(&genesis).unwrap();
         }
         seq.trust(sample_around(clock.as_ref())).unwrap();
+        history.catch_up_to(seq.last_seq());
+        let feed = Feed::new(
+            stream.subscribe(),
+            dir.clone(),
+            manifest.clone(),
+            Arc::new(Semaphore::new(MAX_BACKFILLS)),
+            Some(history.resume_at()),
+        );
+        let history_reader = history.reader();
+        let history_task = tokio::spawn(history.run(feed));
         let (tx, rx) = mpsc::channel(1024);
         let recovery = seq.take_recovery_checkpoints();
         let sequencer = tokio::spawn(seq.run(rx));
@@ -211,7 +224,7 @@ impl Node {
             manifest,
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
             limits: Arc::new(ApiLimits::with_quota(&dev_config().api, unlimited, DefaultClock::default())),
-            history: Reader::new(dir.join(INDEX_FILE), watch::channel(true).1),
+            history: history_reader,
             marks: crate::test_support::marks_reader(),
             stats,
             emission_budget: None,
@@ -230,6 +243,7 @@ impl Node {
             checkpoints,
             access: source,
             operators,
+            history: history_task,
             key,
             posting: post_checkpoints,
         }
@@ -330,6 +344,8 @@ impl Node {
         let _ = self.custody.await;
         drop(self.state);
         self.sequencer.await.unwrap().unwrap();
+        self.history.abort();
+        let _ = self.history.await;
         self.access
     }
 

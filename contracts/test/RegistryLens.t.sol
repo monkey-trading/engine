@@ -197,6 +197,25 @@ contract RegistryLensTest is RegistryTest {
         assertEq(uint8(lens.candidates(0, LIMIT)[1].role), uint8(RegistryLens.Role.Elected));
     }
 
+    function test_APromotionThatHasTakenEffectIsNoLongerPending() public {
+        _candidate(alice, 10_000e18, 1);
+        _candidate(bob, 20_000e18, 2);
+        _delegate(alice, alice);
+        _delegate(bob, bob);
+        _setRotation(true);
+        _govern(address(registry), abi.encodeCall(OperatorRegistry.setVault, (address(vault))));
+        vm.warp(block.timestamp + LIVENESS + 1);
+        registry.promote();
+        uint64 effectiveAt = registry.pendingElection().effectiveAt;
+        vm.warp(effectiveAt);
+        assertTrue(registry.pendingPromotion(), "the registry's getter keeps answering until it settles");
+        RegistryLens.Overview memory overview = lens.overview();
+        assertEq(overview.pending.effectiveAt, 0);
+        assertFalse(overview.pendingPromotion, "the lens agrees with its own pending election");
+        assertEq(overview.inEffect.candidate, bob);
+        assertEq(uint8(lens.candidates(0, LIMIT)[1].role), uint8(RegistryLens.Role.Operator));
+    }
+
     function test_ADeregisteredCandidateLeavesTheListWithoutGapsOrDuplicates() public {
         address[] memory candidates = new address[](5);
         for (uint256 i = 0; i < candidates.length; ++i) {

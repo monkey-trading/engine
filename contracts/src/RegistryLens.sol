@@ -78,7 +78,8 @@ contract RegistryLens {
         view_.inEffect = registry.operatorInEffect();
         view_.named = registry.namedOperator();
         view_.pending = registry.pendingElection();
-        view_.pendingPromotion = registry.pendingPromotion();
+        // The registry's getter has no time check; the election read above clears once it takes effect.
+        view_.pendingPromotion = view_.pending.effectiveAt != 0 && view_.pending.promoted;
     }
 
     /// @dev The registry's parameters in force. Its getter returns the struct's nine static fields as

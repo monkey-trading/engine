@@ -19,7 +19,7 @@ use alloy::sol_types::SolCall;
 use anyhow::{Context, bail, ensure};
 use tokio::sync::watch;
 use tokio::time::{MissedTickBehavior, interval};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 pub use lens::OperatorList;
 use lens::{BlockStamp, Reads, candidatesCall, overviewCall, registryCall};
@@ -88,7 +88,9 @@ impl OperatorsReader<VaultRpc> {
         let Some(evm) = &custody.evm else { return Ok(None) };
         let Some(staking) = &evm.staking else { return Ok(None) };
         let Some(lens) = staking.registry.lens else { return Ok(None) };
-        let quorum = Quorum::connect(evm, custody.vault.parse().context("custody.vault")?)?;
+        // A lost read pauses nothing but this list, so its quorum alerts at Warning, apart from the
+        // deposit watcher's.
+        let quorum = Quorum::connect(evm, custody.vault.parse().context("custody.vault")?)?.named("operators", false);
         let chain = (custody.chain_id, evm.usdc);
         let (registry, every) = (staking.registry.contract, api.operators_interval);
         Ok(Some(Self::new(quorum, chain, (registry, lens), every, evm.finality_stalled_after)))
@@ -121,7 +123,7 @@ impl<R: VaultReader + Sync> OperatorsReader<R> {
             ticks.tick().await;
             match self.read().await {
                 Ok(list) => {
-                    info!(
+                    debug!(
                         block = list.block.number,
                         candidates = list.candidate_count(),
                         "operator list read at a final block"
@@ -167,10 +169,14 @@ impl<R: VaultReader + Sync> OperatorsReader<R> {
             .context("the final block's time is out of range")?;
         let block = BlockStamp { number: at.number, hash: at.hash, time_ms };
 
-        let registry = registryCall::abi_decode_returns_validate(&self.call(at, registryCall {}.abi_encode()).await?)
-            .context("decoding the lens's registry")?;
-        let overview = overviewCall::abi_decode_returns_validate(&self.call(at, overviewCall {}.abi_encode()).await?)
-            .context("decoding the lens's overview")?;
+        let registry = registryCall::abi_decode_returns_validate(
+            &self.call("lens_registry", at, registryCall {}.abi_encode()).await?,
+        )
+        .context("decoding the lens's registry")?;
+        let overview = overviewCall::abi_decode_returns_validate(
+            &self.call("lens_overview", at, overviewCall {}.abi_encode()).await?,
+        )
+        .context("decoding the lens's overview")?;
         let count = usize::try_from(overview.candidateCount)
             .ok()
             .filter(|count| *count <= lens::CANDIDATE_LIMIT)
@@ -180,7 +186,7 @@ impl<R: VaultReader + Sync> OperatorsReader<R> {
             let start = U256::from(rows.len());
             let limit = U256::from(PAGE);
             let page = candidatesCall::abi_decode_returns_validate(
-                &self.call(at, candidatesCall { start, limit }.abi_encode()).await?,
+                &self.call("lens_candidates", at, candidatesCall { start, limit }.abi_encode()).await?,
             )
             .context("decoding a page of the lens's candidates")?;
             ensure!(
@@ -197,7 +203,7 @@ impl<R: VaultReader + Sync> OperatorsReader<R> {
     /// The lens's return data for `input` at `at`, identical across a majority.
     /// Error cases:
     /// - the providers lack a quorum for the call
-    async fn call(&self, at: BlockRef, input: Vec<u8>) -> anyhow::Result<Bytes> {
-        self.quorum.contract_call(at, self.lens, input.into()).await
+    async fn call(&self, operation: &'static str, at: BlockRef, input: Vec<u8>) -> anyhow::Result<Bytes> {
+        self.quorum.call_as(operation, at, self.lens, input.into()).await
     }
 }
