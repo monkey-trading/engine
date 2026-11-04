@@ -45,6 +45,12 @@ const TIMING: Timing = Timing {
 };
 /// The longest a book stays re-dated, as `standing::MAX_BOOK_SILENCE` sets it.
 const MAX_BOOK_SILENCE_MS: Millis = 5_000;
+/// How long a test waits for a second with no quote after re-dating should have stopped: the
+/// quiet second begins within the refresh margin, half of `TIMING.stale_after`, plus slack for a
+/// busy runner, about 2 s in all. The wait is far shorter than the 5 s the re-dating window and
+/// the connection's read deadline each last, so a test that waits it out fails for re-dating that
+/// does not stop, and not for the window's end or a closed connection.
+const QUIET_WITHIN: Duration = Duration::from_secs(3);
 /// What a Kraken connection sends while its books stand.
 const KRAKEN_HEARTBEAT: &str = r#"{"channel":"heartbeat"}"#;
 
@@ -78,20 +84,28 @@ async fn a_quiet_book_is_sequenced_again_at_later_stamps_each_bounded_by_a_ping_
 
 #[tokio::test]
 async fn an_answer_the_host_delays_only_ages_the_quote_it_redates() {
+    let mut engine = FakeEngine::new();
     let (listener, url) = listen().await;
-    let (mut rx, _feed) = spawn_feed(Venue::Kraken, &url, &BTC, TIMING);
+    let (tx, mut rx) = mpsc::channel(1024);
+    let _feed = spawn_feed_into(tx, Venue::Kraken, &url, &BTC, TIMING);
     let (mut ws, _) = accept(&listener).await;
     send(&mut ws, &[kraken_book("BTC/USD", "100", "101", now_ms())]).await;
-    next_prices(&mut rx).await;
+    next_quote(&mut rx, &mut engine).await;
 
     // Each answer leaves `held` after its ping arrived, so the quote it re-dates is at least that
-    // old when it is sequenced.
-    let held = Duration::from_millis(300);
+    // old when it is sequenced, and its delay bound runs from when the ping went out, not from the
+    // answer, which would give the host `held` more to sequence it.
+    let held = Duration::from_millis(500);
     let _venue = answer_pings(ws, held);
     for _ in 0..3 {
-        let (_, quotes) = next_prices(&mut rx).await;
-        let age = now_ms() - quotes[0].ts;
+        let (quote, not_after) = next_quote(&mut rx, &mut engine).await;
+        let (received, received_ms) = (std::time::Instant::now(), now_ms());
+        let age = received_ms - quote.ts;
         assert!(age >= held.as_millis() as Millis, "a quote {age}ms old came through an answer held {held:?}");
+        // The quote is stamped when its ping went out, give or take the ms the book took to be read.
+        let bound = received - Duration::from_millis(age as u64) + TIMING.max_delay;
+        let off = if not_after > bound { not_after - bound } else { bound - not_after };
+        assert!(off < held / 2, "bounded {off:?} from the answered ping's send plus max_delay");
     }
 }
 
@@ -142,7 +156,7 @@ async fn a_venue_that_stops_answering_pings_is_redated_no_more() {
     // A repeat the last answer deferred can still fire within the refresh margin; after it, only
     // a new answer could re-date the book, and none comes.
     let quiet = async { while timeout(Duration::from_secs(1), rx.recv()).await.is_ok() {} };
-    timeout(WAIT * 2, quiet).await.expect("a quote no answer vouched for");
+    timeout(QUIET_WITHIN, quiet).await.expect("a quote no answer vouched for");
 }
 
 #[tokio::test]
@@ -215,7 +229,7 @@ async fn a_refused_message_stops_the_redating_until_the_next_book() {
         // The refusal forgot the book, and a repeat it deferred can fire only within the refresh
         // margin, so a second without a quote shows the re-dating stopped.
         let quiet = async { while timeout(Duration::from_secs(1), rx.recv()).await.is_ok() {} };
-        timeout(WAIT * 2, quiet).await.expect("a quote after the refusal");
+        timeout(QUIET_WITHIN, quiet).await.expect("a quote after the refusal");
 
         // The next book is held again and re-dates.
         venue.send(&[bitstamp_book("btcusd", "100", "101", now_ms())]).await;

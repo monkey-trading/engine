@@ -16,8 +16,11 @@
 //! sends after a re-dated one is stamped no earlier than it: the venue sent it after answering that
 //! ping, so it showed this book by then, and the engine, which keeps the later-stamped of a venue's
 //! quotes, takes it in the re-dated one's place. When that stamp would lead the host clock by more
-//! than the engine allows, as after the host clock steps back, the book goes at its own stamp in
-//! place of any quote waiting for its symbol, which it changes.
+//! than the engine allows, judged against the highest host time a quote for the symbol was read at
+//! (sequenced time does not step back with the host clock), the book goes at its own stamp in place
+//! of any quote waiting for its symbol, which it changes. A book keeps the stamp its venue gave it
+//! for the session checks, so one a leading venue clock stamped inside a closure is not re-dated
+//! into the session before it.
 //!
 //! This rests on a venue writing its pong behind what it sent before reading the ping, which was
 //! measured on Coinbase, Kraken and Bitstamp, so only their connections re-date books.
@@ -63,6 +66,8 @@ pub(super) struct StandingBooks {
 #[derive(Debug)]
 struct StandingBook {
     quote: SourceQuote,
+    /// The stamp the venue gave the book, which `quote` may carry clamped to the host clock.
+    venue_ts: Millis,
     read_at: Instant,
     vouched_from: Instant,
     next_ping: u64,
@@ -74,6 +79,8 @@ pub(super) struct Redated {
     pub symbol: String,
     /// The stamp the book was read with.
     pub read_ts: Millis,
+    /// The stamp the venue gave it.
+    pub venue_ts: Millis,
     /// Its quote, stamped afresh.
     pub quote: SourceQuote,
 }
@@ -93,15 +100,24 @@ impl StandingBooks {
             return;
         }
         if let Some(vouched_from) = probe.newest_answered() {
-            let quote = SourceQuote { ts: quote.ts.min(now), ..quote.clone() };
-            self.hold_at(symbol, quote, Instant::now(), vouched_from, probe.next_ping());
+            let held = SourceQuote { ts: quote.ts.min(now), ..quote.clone() };
+            self.hold_at(symbol, held, quote.ts, Instant::now(), vouched_from, probe.next_ping());
         }
     }
 
-    /// Holds `quote`, `symbol`'s book read at `read_at`, when the newest ping answered had gone out
-    /// at `vouched_from`, before the ping numbered `next_ping` went out.
-    fn hold_at(&mut self, symbol: &str, quote: SourceQuote, read_at: Instant, vouched_from: Instant, next_ping: u64) {
-        self.books.insert(symbol.to_owned(), StandingBook { quote, read_at, vouched_from, next_ping });
+    /// Holds `quote`, `symbol`'s book read at `read_at`, which its venue stamped `venue_ts`, when
+    /// the newest ping answered had gone out at `vouched_from`, before the ping numbered
+    /// `next_ping` went out.
+    fn hold_at(
+        &mut self,
+        symbol: &str,
+        quote: SourceQuote,
+        venue_ts: Millis,
+        read_at: Instant,
+        vouched_from: Instant,
+        next_ping: u64,
+    ) {
+        self.books.insert(symbol.to_owned(), StandingBook { quote, venue_ts, read_at, vouched_from, next_ping });
     }
 
     /// Forgets `symbol`'s book, as after one read for it that is not held.
@@ -144,7 +160,12 @@ impl StandingBooks {
                 let ts = book.quote.ts.saturating_add(quiet).min(ping.sent_ms);
                 let gains = ts > book.quote.ts && self.given_for(symbol).is_none_or(|given| ts > given);
                 let quote = SourceQuote { ts, ..book.quote.clone() };
-                gains.then(|| Redated { symbol: symbol.clone(), read_ts: book.quote.ts, quote })
+                gains.then(|| Redated {
+                    symbol: symbol.clone(),
+                    read_ts: book.quote.ts,
+                    venue_ts: book.venue_ts,
+                    quote,
+                })
             })
             .collect()
     }
@@ -173,11 +194,11 @@ impl VenueFeed {
         }
         let now = now_ms();
         let mut redated = false;
-        for Redated { symbol, read_ts, quote } in self.standing.redate(ping) {
+        for Redated { symbol, read_ts, venue_ts, quote } in self.standing.redate(ping) {
             let market = self.instruments[&symbol].market;
             let why = if self.is_held(&symbol) {
                 Some("its symbol is held back")
-            } else if !self.open_throughout(market, read_ts, now) {
+            } else if !self.open_throughout(market, read_ts, now.max(venue_ts)) {
                 Some("its market has not stayed open since it")
             } else if !adapter.tops_at(&symbol, quote.mid) {
                 Some("the kept book has no top at its mid")

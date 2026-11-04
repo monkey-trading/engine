@@ -844,8 +844,9 @@ and posts alerts to webhooks. The same binary replays a published log and verifi
   bound runs out; its tests are in `src/feeds/venue/delay/tests.rs`
 - `src/feeds/venue/standing.rs` — the book each symbol last showed on a connection, re-dated by a
   ping's answer for up to 5 s after the ping answered before it was read, and a later book stamped
-  no earlier than a re-dated one unless that stamp would lead the host clock by more than the
-  engine allows; its tests are in `src/feeds/venue/standing/tests.rs`
+  no earlier than a re-dated one unless that stamp would lead the highest host time read by more
+  than the engine allows, and not re-dated into the session before a closure its venue stamp lies
+  in; its tests are in `src/feeds/venue/standing/tests.rs`
 - `src/feeds/venue/validation.rs` — the checks every venue's books pass before they are sequenced
 - `src/feeds/venue/confirm.rs` — confirming every symbol with the engine each tick: which the
   venue is quoting, which markets it does not list, which contracts the listing does not name or
