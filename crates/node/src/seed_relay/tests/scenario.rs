@@ -205,9 +205,12 @@ impl Chain {
     }
 }
 
+/// A finalized block's header and its serialized state.
+type Finalized = (BeaconBlockHeader, Arc<Vec<u8>>);
+
 /// A beacon node that serves one synthetic finalized block and its state.
 #[derive(Clone, Default)]
-struct Beacon(Arc<Mutex<Option<(BeaconBlockHeader, Arc<Vec<u8>>)>>>);
+struct Beacon(Arc<Mutex<Option<Finalized>>>);
 
 impl Beacon {
     /// Finalizes a block at `slot` and returns its root.
@@ -220,7 +223,7 @@ impl Beacon {
         header.root()
     }
 
-    fn finalized(&self) -> Option<(BeaconBlockHeader, Arc<Vec<u8>>)> {
+    fn finalized(&self) -> Option<Finalized> {
         self.0.lock().unwrap().clone()
     }
 

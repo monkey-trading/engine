@@ -136,7 +136,7 @@ impl Field {
             Field::Roots(count) => merkleize(pack(bytes), count as u64),
             Field::Integers(count) => merkleize(pack(bytes), (8 * count as u64).div_ceil(32)),
             Field::RootList(limit) => {
-                ensure!(bytes.len() % 32 == 0, "a list of roots holds {} bytes", bytes.len());
+                ensure!(bytes.len().is_multiple_of(32), "a list of roots holds {} bytes", bytes.len());
                 Ok(mix_in_length(merkleize(pack(bytes), limit)?, (bytes.len() / 32) as u64))
             }
             Field::Elements(sizes, limit) => {

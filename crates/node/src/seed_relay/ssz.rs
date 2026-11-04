@@ -99,7 +99,7 @@ pub(crate) fn element_list_root(
     limit: u64,
     root: impl Fn(&[u8]) -> anyhow::Result<[u8; 32]>,
 ) -> anyhow::Result<[u8; 32]> {
-    ensure!(bytes.len() % size == 0, "a list of {size}-byte elements holds {} bytes", bytes.len());
+    ensure!(bytes.len().is_multiple_of(size), "a list of {size}-byte elements holds {} bytes", bytes.len());
     let roots = bytes.chunks(size).map(root).collect::<anyhow::Result<Vec<_>>>()?;
     let length = roots.len() as u64;
     Ok(mix_in_length(merkleize(roots, limit)?, length))
@@ -109,7 +109,7 @@ pub(crate) fn element_list_root(
 /// Error cases:
 /// - the bytes are not whole integers, or hold more than `limit`
 pub(crate) fn packed_list_root(bytes: &[u8], size: usize, limit: u64) -> anyhow::Result<[u8; 32]> {
-    ensure!(bytes.len() % size == 0, "a list of {size}-byte integers holds {} bytes", bytes.len());
+    ensure!(bytes.len().is_multiple_of(size), "a list of {size}-byte integers holds {} bytes", bytes.len());
     let length = (bytes.len() / size) as u64;
     ensure!(length <= limit, "a list of {length} exceeds its limit of {limit}");
     Ok(mix_in_length(merkleize(pack(bytes), (limit * size as u64).div_ceil(32))?, length))
@@ -139,7 +139,9 @@ pub(crate) fn branch(leaves: Vec<[u8; 32]>, depth: usize, index: usize) -> anyho
     Ok((root, siblings))
 }
 
-/// The consensus specification's `is_valid_merkle_branch`, as `SeedRelay` checks it.
+/// The consensus specification's `is_valid_merkle_branch`, as `SeedRelay` checks it; the tests check
+/// the witnesses with it.
+#[cfg(test)]
 pub(crate) fn is_valid_merkle_branch(leaf: [u8; 32], branch: &[B256], index: usize, root: [u8; 32]) -> bool {
     let value = branch.iter().enumerate().fold(leaf, |value, (level, sibling)| {
         if (index >> level) & 1 == 1 { hash(&sibling.0, &value) } else { hash(&value, &sibling.0) }
